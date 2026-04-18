@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist/server",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo-server",
+    "lib": ["ES2022"],
+    "types": ["node"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "references": [{ "path": "./tsconfig.core.json" }],
+  "include": ["src/server/**/*.ts", "src/core/**/*.ts", "src/shared-types/**/*.ts"],
+  "exclude": ["src/server/**/*.test.ts", "**/__fixtures__/**"]
+}

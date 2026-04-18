@@ -1,0 +1,23 @@
+/**
+ * BOUNDARY-ENFORCEMENT CANARY — DO NOT RENAME TO .ts IN PRODUCTION.
+ *
+ * This file deliberately imports a client-only library from inside src/core.
+ * When renamed from `.ts.disabled` to `.ts`, CI (via eslint-plugin-import's
+ * no-restricted-imports rule, configured in eslint.config.js) MUST fail with
+ * a boundary violation error.
+ *
+ * This file exists to prove the enforcement mechanism is live. If toggling
+ * the extension does NOT fail CI, the boundary is broken and the whole
+ * "no web leaks" guarantee is void. See root CLAUDE.md invariant #1.
+ *
+ * To test locally:
+ *   1. Rename this file to `leak.ts`.
+ *   2. Run `pnpm lint`.
+ *   3. Expect a non-zero exit with a `no-restricted-imports` error.
+ *   4. Rename back to `leak.ts.disabled` before committing.
+ */
+
+// @ts-expect-error — intentional boundary violation; never compiled in production.
+import * as PIXI from 'pixi.js';
+
+export const __leak = PIXI;

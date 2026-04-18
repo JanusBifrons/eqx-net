@@ -1,0 +1,29 @@
+node_modules/
+dist/
+.pnpm-store/
+.vite/
+*.tsbuildinfo
+.tsbuildinfo*
+
+# test artefacts
+playwright-report/
+test-results/
+coverage/
+
+# editor/os
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# runtime data (SQLite lands here from Phase 7 onward)
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# env
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist/core",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo-core",
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src/core/**/*.ts", "src/shared-types/**/*.ts"],
+  "exclude": ["src/core/**/*.test.ts", "src/core/**/__fixtures__/**"]
+}

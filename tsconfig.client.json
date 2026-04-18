@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist/client",
+    "tsBuildInfoFile": "./dist/.tsbuildinfo-client",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "jsx": "react-jsx",
+    "module": "ESNext",
+    "moduleResolution": "Bundler"
+  },
+  "references": [{ "path": "./tsconfig.core.json" }],
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/core/**/*.ts", "src/shared-types/**/*.ts"],
+  "exclude": ["src/client/**/*.test.ts", "src/client/**/*.test.tsx", "**/__fixtures__/**"]
+}
