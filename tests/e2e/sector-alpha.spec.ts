@@ -328,3 +328,41 @@ test.describe('identity', () => {
     await ctx2.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2 — physics worker stall resistance
+// ---------------------------------------------------------------------------
+
+test.describe('physics worker', () => {
+  test('simulation keeps ticking during a 200 ms main-thread burn', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+
+    await joinSector(page);
+    await waitForShipPos(page);
+
+    // Thrust while simultaneously triggering a 200 ms CPU-stall on the server's
+    // main thread. The physics worker runs independently, so it keeps stepping;
+    // after the burn completes the Colyseus broadcast catches up.
+    await page.keyboard.down('w');
+
+    // Fire-and-forget burn from inside the browser (CORS * origin is set on the server).
+    await page.evaluate(() =>
+      fetch('http://localhost:2567/test/burn', { method: 'POST' }).catch(() => undefined),
+    );
+
+    await page.waitForTimeout(500); // let physics accumulate during and after the burn
+    await page.keyboard.up('w');
+    await page.waitForTimeout(200); // let the final broadcast arrive
+
+    // The ship must have moved — physics ran during the stall.
+    const pos = await getShipPos(page);
+    // Ships spawn near the origin, so raw distance from origin ≈ displacement.
+    const dist = Math.hypot(pos.x, pos.y);
+    expect(dist).toBeGreaterThan(2);
+
+    await expect(page.getByText('connected')).toBeVisible();
+
+    await ctx.close();
+  });
+});

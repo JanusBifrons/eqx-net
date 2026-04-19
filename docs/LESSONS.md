@@ -88,6 +88,28 @@ Two browser tabs in the same Chrome profile share `localStorage`. Both tabs read
 
 **Downstream (Phase 8)**: Limbo reconnection relies on presenting the stored playerId to resume a mid-transit session. The collision guard must NOT fire when the reconnecting client is the *same* person on the *same* device — it fires only when a truly different session presents the same ID. At Phase 8, the Limbo flow should close the old session before the new one calls `onJoin`, so `playerToSession` will no longer contain that ID when the reconnect arrives. Verify this assumption when implementing Limbo.
 
+## 2026-04-19 — Phase 2 — tsx ESM loader does not rewrite imports inside worker_threads on Node.js v24
+Commit: Phase 2 worker fix.
+
+The Phase 2 plan calls for `execArgv: ['--import', 'tsx/esm']` to load the TypeScript physics worker. This approach fails silently on Node.js v24: tsx IS registered in the worker (it handles the `.ts` entry file), but its resolve hook does NOT rewrite `.js`-extension or extensionless imports inside the worker to `.ts`. Both `import './World.js'` and `import './World'` fail with `ERR_MODULE_NOT_FOUND` even though `World.ts` exists alongside the worker.
+
+Root cause is an incompatibility between tsx v4.21 and the Node.js v24 module loader internals. The same pattern works on Node.js 20/22.
+
+**Fix**: bundle `worker.ts` to a self-contained CommonJS string at room startup using esbuild (`{ bundle: true, platform: 'node', format: 'cjs', write: false, external: ['@dimforge/rapier2d-compat'] }`), then spawn it as `new Worker(code, { eval: true, workerData: { sab } })`. esbuild resolves all TypeScript imports at bundle time, so the runtime worker is plain JS with no loader dependency.
+
+**Why Rapier is external**: Rapier ships a pre-built WASM binary. Including it in the esbuild bundle doubles the binary size and causes a second WASM init. Keeping it external means the worker loads the same package copy as the main thread.
+
+**Rule**: never rely on tsx/ESM loader hooks inside `worker_threads.execArgv` — it is fragile across Node versions. Bundle to JS with esbuild for workers that import project code.
+
+## 2026-04-19 — Phase 2 — SharedArrayBuffer seqlock guarantees linearisable reads without locking the main thread
+Commit: Phase 2 SAB implementation.
+
+The physics worker writes state to SAB under a seqlock (SEQLOCK_IDX word flipped odd→even around each write batch). The Colyseus main thread reads under a spin-retry loop: load seq1, read all ship fields, load seq2 — retry if seq1 is odd or seq1 ≠ seq2. This guarantees the main thread always reads a consistent snapshot without any OS-level mutex.
+
+The worker uses `Atomics.add(u32, SEQLOCK_IDX, 1)` (not `store`) for the lock/unlock increments. `add` issues a full memory barrier on x86 and ARM, which is necessary so that the subsequent `f32[base + ...] = ...` writes are not reordered past the unlock increment. `Atomics.store` only provides a release barrier, which is asymmetric and would allow reads to observe the unlock before all slot writes complete on some architectures.
+
+**Rule**: use `Atomics.add` for seqlock increments in SharedArrayBuffer, not `Atomics.store`.
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

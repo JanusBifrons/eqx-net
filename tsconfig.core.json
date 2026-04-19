@@ -5,7 +5,7 @@
     "outDir": "./dist/core",
     "tsBuildInfoFile": "./dist/.tsbuildinfo-core",
     "lib": ["ES2022"],
-    "types": []
+    "types": ["node"]
   },
   "include": ["src/core/**/*.ts", "src/shared-types/**/*.ts"],
   "exclude": ["src/core/**/*.test.ts", "src/core/**/__fixtures__/**"]
