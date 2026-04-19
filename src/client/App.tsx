@@ -121,6 +121,12 @@ function GameSurface(): JSX.Element {
             el.dataset['shipY'] = localShip.y.toFixed(3);
             el.dataset['shipAngle'] = localShip.angle.toFixed(4);
           }
+          // Expose all ship positions for E2E cross-client position assertions.
+          const posMap: Record<string, { x: number; y: number }> = {};
+          for (const [id, s] of gameClient.mirror.ships) {
+            posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
+          }
+          el.dataset['shipPositions'] = JSON.stringify(posMap);
           animFrameRef.current = requestAnimationFrame(loop);
         }
       };

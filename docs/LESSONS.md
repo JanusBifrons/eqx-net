@@ -61,6 +61,33 @@ Three separate decorator-related crashes appeared together:
 
 **Downstream phases**: any server-side schema class must use `@type` decorators (not `defineTypes()`). The tsconfig settings apply to the entire server zone.
 
+## 2026-04-19 — Phase 1 — Rapier ball collider mass far exceeds expectations
+Commit: Phase 1 movement fix.
+
+`THRUST_IMPULSE = 0.15` produced visually invisible movement. Root cause: Rapier's default density is 1.0; a ball collider with radius=12 has area=π×144≈452, giving mass≈452. `dv = impulse/mass = 0.15/452 ≈ 0.00033 units/step` — after 800 ms of thrust the ship moved <0.01 units, indistinguishable from stationary.
+
+**Fix**: set collider density to `1/(π×r²)` so mass≈1, keeping THRUST_IMPULSE at 0.15. At mass=1, 800 ms of continuous thrust yields ~4 units of displacement — clearly perceptible.
+
+**Rule for future phases**: when tuning physics constants, always verify with a quick unit test or console readout that mass is in a sane range before assuming impulse values are reasonable. The Rapier default density of 1 is designed for meter/kg/second units; game worlds using "pixel-ish" units need explicit density or mass overrides.
+
+## 2026-04-19 — Phase 1 — React StrictMode async IIFE needs disposal guard
+Commit: Phase 1 StrictMode fix.
+
+React StrictMode fires the effect cleanup synchronously after the effect function returns, then re-runs the effect. Because the async IIFE inside `useEffect` yields at `await renderer.init(el)`, the cleanup (setting `disposed = true`) fires before the IIFE resumes. Without a guard, the IIFE continues after `init()` resolves: it appends a second orphan canvas, starts a second render loop, and calls `gameClient.connect()` — resulting in two rooms joined per browser tab.
+
+**Fix**: immediately after `await renderer.init(el)`, check `if (disposed) { renderer.dispose(); return; }`. This tears down the just-initialised canvas and exits the first IIFE cleanly, leaving the second (real) mount to proceed normally.
+
+**Rule**: any async `useEffect` that allocates resources must guard against disposal at every `await` boundary, not only at the start.
+
+## 2026-04-19 — Phase 1 — Shared localStorage causes playerId collision between tabs
+Commit: Phase 1 identity collision fix.
+
+Two browser tabs in the same Chrome profile share `localStorage`. Both tabs read the same `eqxPlayerId` and present it to the server. `assignPlayerId` accepts any valid UUID, so both sessions got the same playerId → server found an existing ship and skipped spawning a second one → both sessions drove the same ship.
+
+**Fix**: in `SectorRoom.onJoin`, if `playerToSession.has(playerId)` (the ID is already held by an active session), call `assignPlayerId(null)` to generate a fresh UUID. The incoming tab gets a new identity rather than colliding.
+
+**Downstream (Phase 8)**: Limbo reconnection relies on presenting the stored playerId to resume a mid-transit session. The collision guard must NOT fire when the reconnecting client is the *same* person on the *same* device — it fires only when a truly different session presents the same ID. At Phase 8, the Limbo flow should close the old session before the new one calls `onJoin`, so `playerToSession` will no longer contain that ID when the reconnect arrives. Verify this assumption when implementing Limbo.
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

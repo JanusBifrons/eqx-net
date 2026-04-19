@@ -221,6 +221,54 @@ test.describe('movement', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Cross-client position agreement (Phase 1 acceptance gate)
+// "both mirror the same positions within tolerance"
+// ---------------------------------------------------------------------------
+
+test.describe('server-authoritative broadcast', () => {
+  test('both clients see P1 ship at the same position after movement', async ({ browser }) => {
+    const ctx1 = await browser.newContext();
+    const ctx2 = await browser.newContext();
+    const page1 = await ctx1.newPage();
+    const page2 = await ctx2.newPage();
+
+    await joinSector(page1);
+    await joinSector(page2);
+
+    // Get P1's durable playerId from localStorage.
+    const p1Id = await page1.evaluate(() => localStorage.getItem('eqxPlayerId'));
+    expect(p1Id).not.toBeNull();
+
+    // Thrust P1 so the position is clearly non-zero.
+    await waitForShipPos(page1);
+    await page1.keyboard.down('w');
+    await page1.waitForTimeout(1000);
+    await page1.keyboard.up('w');
+    await page1.waitForTimeout(300); // wait for final server broadcast to reach both clients
+
+    // Read P1's self-reported position.
+    const p1Self = await getShipPos(page1);
+
+    // Read all ship positions from P2's mirror and find P1's entry.
+    const p2Positions = await page2.evaluate<Record<string, { x: number; y: number }>>(() => {
+      const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-ship-positions');
+      return JSON.parse(raw ?? '{}') as Record<string, { x: number; y: number }>;
+    });
+
+    expect(p1Id).not.toBeNull();
+    const p1FromP2 = p2Positions[p1Id!];
+    expect(p1FromP2).toBeDefined(); // P2 must know about P1's ship
+
+    // Positions must agree within 5 units (one server tick at max speed ≈ 0.15 units).
+    const diff = Math.hypot(p1Self.x - p1FromP2.x, p1Self.y - p1FromP2.y);
+    expect(diff).toBeLessThan(5);
+
+    await ctx1.close();
+    await ctx2.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Identity persistence
 // ---------------------------------------------------------------------------
 
