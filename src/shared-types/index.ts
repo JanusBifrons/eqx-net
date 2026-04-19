@@ -6,4 +6,9 @@
  * SAB layout constants.
  */
 
-export {};
+export {
+  InputMessageSchema,
+  IdentifyMessageSchema,
+  ClientMessageSchema,
+} from './messages.js';
+export type { InputMessage, IdentifyMessage, ClientMessage, WelcomeMessage } from './messages.js';

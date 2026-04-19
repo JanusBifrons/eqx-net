@@ -86,3 +86,17 @@ At each phase's acceptance gate:
 3. **Review Cross-Phase Invariants** — if one was added or amended, update this file.
 
 Phase 0 seeds all CLAUDE.md files; every subsequent phase amends them.
+
+---
+
+## Verification Protocol (apply after every server-touching change)
+
+After any change to `src/server/` or its config, **boot the server before reporting success**:
+
+```
+timeout 8 pnpm dev:server
+```
+
+A clean boot prints `INFO: EQX Peri server started port: 2567` with no uncaught exceptions. A crash (exit code non-143) means the change broke the runtime even if typecheck passes — fix it before moving on. Exit code 143 is normal (SIGTERM from `timeout`).
+
+This exists because TypeScript's type system cannot catch runtime issues like decorator transform mismatches, missing `Symbol.metadata`, or ESM resolution failures that only surface at Node.js startup.

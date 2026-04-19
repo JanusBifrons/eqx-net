@@ -1,17 +1,27 @@
-/**
- * src/client — Phase 0 stub.
- *
- * Phase 1 replaces this with a React/MUI splash → Pixi mount.
- * See the approved plan file.
- */
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import { App } from './App';
+
+const theme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: { main: '#00ff88' },
+    background: { default: '#05070f', paper: '#0d1117' },
+  },
+  typography: {
+    fontFamily: '"Inter", "Roboto Mono", monospace',
+  },
+});
 
 const root = document.getElementById('root');
-if (root) {
-  createRoot(root).render(
-    <div style={{ padding: 24 }}>
-      <h1>EQX Peri</h1>
-      <p>Phase 0 foundation. Join screen arrives in Phase 1.</p>
-    </div>,
-  );
-}
+if (!root) throw new Error('No #root element found');
+
+createRoot(root).render(
+  <StrictMode>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <App />
+    </ThemeProvider>
+  </StrictMode>,
+);

@@ -25,10 +25,18 @@ export default defineConfig({
   ],
   webServer: process.env.CI
     ? undefined
-    : {
-        command: 'pnpm dev:client',
-        port: 5173,
-        reuseExistingServer: true,
-        timeout: 60_000,
-      },
+    : [
+        {
+          command: 'pnpm dev:server',
+          port: 2567,
+          reuseExistingServer: true,
+          timeout: 30_000,
+        },
+        {
+          command: 'pnpm dev:client',
+          port: 5173,
+          reuseExistingServer: true,
+          timeout: 60_000,
+        },
+      ],
 });
