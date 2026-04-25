@@ -1,7 +1,7 @@
 import RAPIER from '@dimforge/rapier2d-compat';
 
 const FIXED_DT = 1 / 60;
-const THRUST_IMPULSE = 0.15;
+const THRUST_IMPULSE = 1.5;
 const TURN_SPEED = 2.5; // rad/s
 const LINEAR_DAMPING = 0.01;
 const ANGULAR_DAMPING = 8.0;
@@ -13,6 +13,8 @@ export interface ShipPhysicsState {
   angle: number;
   vx: number;
   vy: number;
+  /** Angular velocity in rad/s. Optional for back-compat with server snapshots that omit it. */
+  angvel?: number;
 }
 
 export interface ShipInput {
@@ -57,6 +59,24 @@ export class PhysicsWorld {
     this.bodies.set(id, body);
   }
 
+  /**
+   * Spawn a passive dynamic body (asteroid-ish) for collision testing. No damping
+   * on linear or angular motion so an initial velocity / spin persists. Renders
+   * via the same ship mirror entry; the renderer draws it as a remote-coloured
+   * triangle, which is fine for diagnostics.
+   */
+  spawnObstacle(id: string, x: number, y: number, radius = 24, mass = 3): void {
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, y)
+      .setLinearDamping(0)
+      .setAngularDamping(0);
+    const body = this.world.createRigidBody(bodyDesc);
+    const density = mass / (Math.PI * radius * radius);
+    const collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
+    this.world.createCollider(collider, body);
+    this.bodies.set(id, body);
+  }
+
   despawnShip(id: string): void {
     const body = this.bodies.get(id);
     if (!body) return;
@@ -85,12 +105,22 @@ export class PhysicsWorld {
     }
   }
 
+  setShipState(id: string, state: ShipPhysicsState): void {
+    const body = this.bodies.get(id);
+    if (!body) return;
+    body.setTranslation({ x: state.x, y: state.y }, true);
+    body.setLinvel({ x: state.vx, y: state.vy }, true);
+    body.setRotation(state.angle, true);
+    // Also restore angular velocity so replay starts from the correct spin state.
+    if (state.angvel !== undefined) body.setAngvel(state.angvel, true);
+  }
+
   getShipState(id: string): ShipPhysicsState | null {
     const body = this.bodies.get(id);
     if (!body) return null;
     const t = body.translation();
     const v = body.linvel();
-    return { x: t.x, y: t.y, angle: body.rotation(), vx: v.x, vy: v.y };
+    return { x: t.x, y: t.y, angle: body.rotation(), vx: v.x, vy: v.y, angvel: body.angvel() };
   }
 
   getAllShipStates(): Map<string, ShipPhysicsState> {
@@ -98,7 +128,7 @@ export class PhysicsWorld {
     for (const [id, body] of this.bodies) {
       const t = body.translation();
       const v = body.linvel();
-      result.set(id, { x: t.x, y: t.y, angle: body.rotation(), vx: v.x, vy: v.y });
+      result.set(id, { x: t.x, y: t.y, angle: body.rotation(), vx: v.x, vy: v.y, angvel: body.angvel() });
     }
     return result;
   }

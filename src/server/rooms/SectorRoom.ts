@@ -5,10 +5,11 @@ import { build } from 'esbuild';
 import { z } from 'zod';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
-import { SectorState, ShipState } from './schema/SectorState.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { SectorState, ShipState, ObstacleState } from './schema/SectorState.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage } from '../../shared-types/messages.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -17,6 +18,8 @@ import {
   SLOT_VX_OFF,
   SLOT_VY_OFF,
   SLOT_ANGLE_OFF,
+  SLOT_ANGVEL_OFF,
+  SLOT_APPLIED_TICK_OFF,
   slotBase,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
@@ -59,9 +62,18 @@ const JoinOptionsSchema = z
 const MAX_INPUTS_PER_TICK = 3;
 
 type WorkerCmd =
-  | { type: 'SPAWN';   slot: number; playerId: string; x: number; y: number }
-  | { type: 'DESPAWN'; slot: number; playerId: string }
-  | { type: 'INPUT';   slot: number; thrust: boolean; turnLeft: boolean; turnRight: boolean };
+  | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
+  | { type: 'DESPAWN';        slot: number; playerId: string }
+  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number };
+
+/** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so both
+ *  server and client-side prediction worlds stay in agreement. */
+const ASTEROIDS: ReadonlyArray<{ id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }> = [
+  { id: 'asteroid-0', x:  200, y:    0, vx: 0,   vy: 0,    radius: 32, mass: 5 },
+  { id: 'asteroid-1', x: -180, y:  120, vx: 0.3, vy: -0.2, radius: 24, mass: 3 },
+  { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 40, mass: 7 },
+];
 
 export class SectorRoom extends Room<SectorState> {
   private physicsWorker!: Worker;
@@ -74,11 +86,20 @@ export class SectorRoom extends Room<SectorState> {
   private slotToPlayer = new Map<number, string>();
   private freeSlots: number[] = [];
 
+  // Obstacles live in the same SAB slot pool as ships so the worker's state-
+  // readout loop treats them uniformly; these maps let update() know which
+  // entries feed the ships schema vs. the obstacles schema.
+  private obstacleIdToSlot = new Map<string, number>();
+  private slotToObstacleId = new Map<number, string>();
+
   private bus!: Bus;
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
+  /** Last client input tick the physics worker confirmed it applied, read from SAB. */
+  private sabAppliedTicks = new Map<string, number>();
   private serverTick = 0;
+  private lastBroadcastTick = -1;
 
   override async onCreate(_options: unknown): Promise<void> {
     this.setState(new SectorState());
@@ -94,6 +115,38 @@ export class SectorRoom extends Room<SectorState> {
 
     await this.spawnWorker();
 
+    // Seed the room with the deterministic asteroid roster. These exist for
+    // the lifetime of the room and are never respawned.
+    for (const a of ASTEROIDS) {
+      const slot = this.freeSlots.pop();
+      if (slot === undefined) {
+        logger.error({ obstacleId: a.id }, 'no free SAB slots for asteroid');
+        break;
+      }
+      this.obstacleIdToSlot.set(a.id, slot);
+      this.slotToObstacleId.set(slot, a.id);
+
+      const base = slotBase(slot);
+      this.sabF32[base + SLOT_X_OFF]  = a.x;
+      this.sabF32[base + SLOT_Y_OFF]  = a.y;
+      this.sabF32[base + SLOT_VX_OFF] = a.vx;
+      this.sabF32[base + SLOT_VY_OFF] = a.vy;
+
+      const entry = new ObstacleState();
+      entry.obstacleId = a.id;
+      entry.x = a.x; entry.y = a.y;
+      entry.vx = a.vx; entry.vy = a.vy;
+      entry.radius = a.radius;
+      this.state.obstacles.set(a.id, entry);
+
+      this.postToWorker({
+        type: 'SPAWN_OBSTACLE', slot,
+        obstacleId: a.id,
+        x: a.x, y: a.y, vx: a.vx, vy: a.vy,
+        radius: a.radius, mass: a.mass,
+      });
+    }
+
     this.onMessage('input', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
@@ -107,10 +160,10 @@ export class SectorRoom extends Room<SectorState> {
         logger.warn({ sessionId: client.sessionId }, 'malformed input message');
         return;
       }
-      const { thrust, turnLeft, turnRight } = result.data;
+      const { tick, thrust, turnLeft, turnRight } = result.data;
       const slot = this.playerToSlot.get(playerId);
       if (slot !== undefined) {
-        this.postToWorker({ type: 'INPUT', slot, thrust, turnLeft, turnRight });
+        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight });
       }
     });
 
@@ -203,10 +256,12 @@ export class SectorRoom extends Room<SectorState> {
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
 
-    const welcome: WelcomeMessage = { type: 'welcome', playerId };
+    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
+    const welcome: WelcomeMessage = { type: 'welcome', playerId, serverTick: currentServerTick };
     client.send('welcome', welcome);
 
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
+    serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
     logger.info({ playerId, sessionId: client.sessionId }, 'player joined');
   }
 
@@ -216,6 +271,7 @@ export class SectorRoom extends Room<SectorState> {
 
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
+    this.sabAppliedTicks.delete(playerId);
 
     const slot = this.playerToSlot.get(playerId);
     if (slot !== undefined) {
@@ -227,6 +283,7 @@ export class SectorRoom extends Room<SectorState> {
 
     this.state.ships.delete(playerId);
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
+    serverLogEvent('player_leave', { playerId });
     logger.info({ playerId }, 'player left');
   }
 
@@ -239,7 +296,7 @@ export class SectorRoom extends Room<SectorState> {
 
   private update(): void {
     this.inputCountThisTick.clear();
-    if (this.playerToSlot.size === 0) return;
+    if (this.playerToSlot.size === 0 && this.obstacleIdToSlot.size === 0) return;
 
     // Seqlock read: retry if a write is in progress or if data was torn
     // (seqlock changed between the two loads).
@@ -256,6 +313,22 @@ export class SectorRoom extends Room<SectorState> {
         ship.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
         ship.vx    = this.sabF32[b + SLOT_VX_OFF]!;
         ship.vy    = this.sabF32[b + SLOT_VY_OFF]!;
+        ship.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+        // Decode applied tick: storedValue=0 means no input applied yet (use 0);
+        // storedValue=N+1 means client tick N was applied.
+        const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
+        this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
+      }
+
+      for (const [obstacleId, slot] of this.obstacleIdToSlot) {
+        const obs = this.state.obstacles.get(obstacleId);
+        if (!obs) continue;
+        const b = slotBase(slot);
+        obs.x     = this.sabF32[b + SLOT_X_OFF]!;
+        obs.y     = this.sabF32[b + SLOT_Y_OFF]!;
+        obs.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+        obs.vx    = this.sabF32[b + SLOT_VX_OFF]!;
+        obs.vy    = this.sabF32[b + SLOT_VY_OFF]!;
       }
 
       const seq2 = Atomics.load(this.sabU32, SEQLOCK_IDX);
@@ -265,5 +338,37 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+
+    // Broadcast authoritative snapshot every 10 ticks for client-side reconciliation.
+    // Guard lastBroadcastTick so we never broadcast the same tick twice when the
+    // physics worker is slightly ahead and the SAB read lands on two consecutive
+    // multiples of 10 within a single Colyseus simulation-interval window.
+    if (this.serverTick > 0 && this.serverTick % 10 === 0 && this.serverTick !== this.lastBroadcastTick) {
+      this.lastBroadcastTick = this.serverTick;
+      const states: SnapshotMessage['states'] = {};
+      const ackedTicks: SnapshotMessage['ackedTicks'] = {};
+      for (const [playerId] of this.playerToSlot) {
+        const ship = this.state.ships.get(playerId);
+        if (ship) {
+          states[playerId] = { x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy, angle: ship.angle, angvel: ship.angvel };
+          ackedTicks[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
+        }
+      }
+      const obstacles: SnapshotMessage['obstacles'] = {};
+      for (const [id] of this.obstacleIdToSlot) {
+        const o = this.state.obstacles.get(id);
+        if (o) obstacles[id] = { x: o.x, y: o.y, vx: o.vx, vy: o.vy, angle: o.angle };
+      }
+      const snap: SnapshotMessage = { type: 'snapshot', serverTick: this.serverTick, states, ackedTicks, obstacles };
+      this.broadcast('snapshot', snap);
+      serverLogEvent('snapshot_broadcast', {
+        serverTick: this.serverTick,
+        playerCount: this.playerToSlot.size,
+        ackedTicks,
+        states: Object.fromEntries(
+          Object.entries(states).map(([id, s]) => [id, { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)), vx: parseFloat(s.vx.toFixed(3)), vy: parseFloat(s.vy.toFixed(3)) }]),
+        ),
+      });
+    }
   }
 }

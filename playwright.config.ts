@@ -23,7 +23,7 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: process.env.CI
+  webServer: process.env.CI_SKIP_WEBSERVER
     ? undefined
     : [
         {

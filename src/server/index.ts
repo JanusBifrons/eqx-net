@@ -4,6 +4,7 @@ import express from 'express';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
+import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 
 const logger = pino({
   name: 'server',
@@ -13,6 +14,7 @@ const logger = pino({
 });
 
 const PORT = Number(process.env['PORT'] ?? 2567);
+const MAX_DEV_EVENTS = 500;
 
 const app = express();
 
@@ -28,12 +30,23 @@ app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', tick: Date.now() });
 });
 
-// Deliberate 200 ms CPU stall used in Phase 2 E2E acceptance tests.
-// Proves the physics worker keeps ticking even when the main thread is busy.
+// Dev-only endpoints for E2E test inspection and debugging.
 if (process.env['NODE_ENV'] !== 'production') {
   app.post('/test/burn', (_req, res) => {
     const deadline = Date.now() + 200;
     while (Date.now() < deadline) { /* intentional busy-wait */ }
+    res.json({ ok: true });
+  });
+
+  // GET /dev/events?limit=N — recent server events (snapshots, joins, leaves).
+  app.get('/dev/events', (req, res) => {
+    const limit = Math.min(Number(req.query['limit'] ?? 200), MAX_DEV_EVENTS);
+    res.json({ events: getRecentEvents(limit) });
+  });
+
+  // POST /dev/events/clear — reset the ring buffer between test runs.
+  app.post('/dev/events/clear', (_req, res) => {
+    clearEvents();
     res.json({ ok: true });
   });
 }

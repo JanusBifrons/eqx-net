@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { installWindowLogger } from './debug/ClientLogger';
 import {
   Box,
   Button,
@@ -10,13 +11,136 @@ import {
 import { ColyseusGameClient } from './net/ColyseusClient';
 import { PixiRenderer } from './render/PixiRenderer';
 import { Keyboard } from './input/Keyboard';
+import { LocalGameClient } from './local/LocalGameClient';
 import { loadStoredPlayerId, persistPlayerId } from './identity/token';
 import { useUIStore } from './state/store';
 
 const SERVER_URL = import.meta.env['VITE_WS_URL'] ?? 'http://localhost:5173';
 
+// Install window.__eqxLogs and window.__eqxClearLogs at module load time.
+installWindowLogger();
+
+interface EqxLogEntry {
+  ts: number;
+  tag: string;
+  data: Record<string, unknown>;
+}
+
+declare global {
+  interface Window {
+    __eqxLogs?: EqxLogEntry[];
+    __eqxEpoch?: number;
+  }
+}
+
+/** Live scrolling log of the last N correction events, updating every 300 ms. */
+function LogPanel(): JSX.Element {
+  const [entries, setEntries] = useState<EqxLogEntry[]>([]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      const all: EqxLogEntry[] = window.__eqxLogs ?? [];
+      // Show last 20 correction or snapshot entries.
+      const relevant = all.filter((e) => e.tag === 'correction' || e.tag === 'snapshot').slice(-20);
+      setEntries([...relevant]);
+    }, 300);
+    return () => clearInterval(id);
+  }, []);
+
+  const epoch = typeof window.__eqxEpoch === 'number' ? window.__eqxEpoch : 0;
+  const t0 = entries[0]?.ts ?? 0;
+
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        bottom: 16,
+        left: 16,
+        right: 16,
+        zIndex: 10,
+        bgcolor: 'rgba(0,0,0,0.82)',
+        color: '#ccc',
+        fontFamily: 'monospace',
+        fontSize: 10,
+        p: 1,
+        borderRadius: 1,
+        pointerEvents: 'none',
+        maxHeight: 180,
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ color: '#888', marginBottom: 2 }}>
+        Log (epoch+{epoch ? ((Date.now() - epoch) / 1000).toFixed(1) : '?'}s) — corrections=orange, snapshots=grey
+      </div>
+      {entries.map((e, i) => {
+        const isCorr = e.tag === 'correction';
+        const rel = (e.ts - t0).toFixed(0).padStart(5);
+        const color = isCorr ? '#ff6622' : '#667';
+        const d = (k: string): string => String(e.data[k] ?? '?');
+        if (isCorr) {
+          return (
+            <div key={i} style={{ color }}>
+              t+{rel}ms CORR  drift={d('driftUnits').slice(0, 8)}  ahead={d('ticksAhead')}  acked={d('ackedTick')}  tick={d('serverTick')}
+            </div>
+          );
+        }
+        return (
+          <div key={i} style={{ color }}>
+            t+{rel}ms snap  drift={d('driftUnits').slice(0, 8)}  ahead={d('ticksAhead')}  acked={d('ackedTick')}  tick={d('serverTick')}
+          </div>
+        );
+      })}
+    </Box>
+  );
+}
+
+function DevOverlay(): JSX.Element {
+  const { devData } = useUIStore();
+  const corrRate = devData.snapshotCount > 0
+    ? ((devData.significantCorrectionCount / devData.snapshotCount) * 100).toFixed(0)
+    : '0';
+  const f = (n: number): string => n.toFixed(2);
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        top: 16,
+        right: 16,
+        zIndex: 10,
+        bgcolor: 'rgba(0,0,0,0.82)',
+        color: '#0f0',
+        fontFamily: 'monospace',
+        fontSize: 11,
+        p: 1,
+        borderRadius: 1,
+        pointerEvents: 'none',
+        lineHeight: 1.6,
+        minWidth: 260,
+      }}
+    >
+      <div style={{ color: '#0f8', fontWeight: 'bold' }}>── Sync ──</div>
+      <div>RTT: {devData.rtt} ms</div>
+      <div>Drift: {devData.drift.toFixed(4)} u  Max: {devData.maxDriftUnits.toFixed(4)} u</div>
+      <div style={{ color: devData.significantCorrectionCount / Math.max(1, devData.snapshotCount) > 0.05 ? '#f44' : '#0f0' }}>
+        Corrections: {devData.significantCorrectionCount}/{devData.snapshotCount} ({corrRate}%)
+      </div>
+      <div>Lerping: {devData.lerping ? 'yes' : 'no'}</div>
+      <div style={{ borderTop: '1px solid #0f04', marginTop: 4, paddingTop: 4, color: '#0f8', fontWeight: 'bold' }}>── Ticks ──</div>
+      <div>ackedTick: {devData.ackedTick}  inputTick: {devData.inputTick}</div>
+      <div style={{ color: devData.ticksAhead > 10 ? '#ff0' : '#0f0' }}>
+        ticksAhead: {devData.ticksAhead}  serverTick: {devData.serverTick}
+      </div>
+      <div>Snap interval: {devData.snapshotIntervalMs.toFixed(0)} ms</div>
+      <div style={{ borderTop: '1px solid #0f04', marginTop: 4, paddingTop: 4, color: '#0f8', fontWeight: 'bold' }}>── Positions ──</div>
+      <div style={{ color: '#ff6622' }}>Server(ghost): ({f(devData.serverX)}, {f(devData.serverY)})</div>
+      <div>Before: ({f(devData.beforeX)}, {f(devData.beforeY)})</div>
+      <div>After:  ({f(devData.afterX)}, {f(devData.afterY)})</div>
+    </Box>
+  );
+}
+
 function HUD(): JSX.Element {
-  const { connectionStatus, sectorName, hullPct, ammo, sectorAlert, playerId, shipCount } =
+  const { connectionStatus, sectorName, hullPct, ammo, sectorAlert, playerId, shipCount, correctionRate, devData } =
     useUIStore();
 
   return (
@@ -74,6 +198,16 @@ function HUD(): JSX.Element {
       >
         Ships: {shipCount}
       </Typography>
+      <Typography
+        variant="caption"
+        sx={{
+          fontSize: 10,
+          color: correctionRate === 0 ? '#0f0' : correctionRate < 0.2 ? '#ff0' : '#f44',
+          fontFamily: 'monospace',
+        }}
+      >
+        Corr: {devData.significantCorrectionCount}/{devData.snapshotCount} ({(correctionRate * 100).toFixed(0)}%)
+      </Typography>
     </Box>
   );
 }
@@ -84,7 +218,8 @@ function GameSurface(): JSX.Element {
   const rendererRef = useRef<PixiRenderer | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
   const animFrameRef = useRef<number>(0);
-  const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
+  const { setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay } =
+    useUIStore();
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -100,6 +235,11 @@ function GameSurface(): JSX.Element {
     const gameClient = new ColyseusGameClient();
     clientRef.current = gameClient;
 
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.shiftKey && e.key === 'D') toggleDevOverlay();
+    };
+    window.addEventListener('keydown', onKey);
+
     (async () => {
       await renderer.init(el);
 
@@ -111,8 +251,13 @@ function GameSurface(): JSX.Element {
         return;
       }
 
-      const loop = (): void => {
+      let lastFrameTime = 0;
+      const loop = (now: number): void => {
         if (!disposed) {
+          const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
+          lastFrameTime = now;
+          gameClient.tickPhysics(deltaMs);
+          gameClient.updateMirror();
           renderer.update(gameClient.mirror);
           const localId = gameClient.mirror.localPlayerId;
           const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
@@ -127,6 +272,7 @@ function GameSurface(): JSX.Element {
             posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
           }
           el.dataset['shipPositions'] = JSON.stringify(posMap);
+          el.dataset['predStats'] = JSON.stringify(gameClient.stats);
           animFrameRef.current = requestAnimationFrame(loop);
         }
       };
@@ -150,29 +296,105 @@ function GameSurface(): JSX.Element {
     return () => {
       disposed = true;
       cancelAnimationFrame(animFrameRef.current);
+      window.removeEventListener('keydown', onKey);
       keyboard.dispose();
       gameClient.dispose();
       renderer.dispose();
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay]);
 
   return (
     <Box sx={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: '#05070f' }}>
       <div ref={containerRef} data-testid="game-surface" style={{ width: '100%', height: '100%' }} />
       <HUD />
+      <DevOverlay />
+      <LogPanel />
+    </Box>
+  );
+}
+
+function LocalSurface(): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const clientRef = useRef<LocalGameClient | null>(null);
+  const rendererRef = useRef<PixiRenderer | null>(null);
+  const keyboardRef = useRef<Keyboard | null>(null);
+  const animFrameRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const el = containerRef.current;
+    let disposed = false;
+
+    const keyboard = new Keyboard();
+    keyboardRef.current = keyboard;
+
+    const renderer = new PixiRenderer();
+    rendererRef.current = renderer;
+
+    const gameClient = new LocalGameClient();
+    clientRef.current = gameClient;
+
+    (async () => {
+      await renderer.init(el);
+      if (disposed) {
+        renderer.dispose();
+        return;
+      }
+      await gameClient.start(keyboard);
+
+      const loop = (_now: number): void => {
+        if (!disposed) {
+          gameClient.updateMirror();
+          renderer.update(gameClient.mirror);
+          animFrameRef.current = requestAnimationFrame(loop);
+        }
+      };
+      animFrameRef.current = requestAnimationFrame(loop);
+    })().catch((err: unknown) => {
+      console.error('[LocalSurface] start failed', err);
+    });
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(animFrameRef.current);
+      keyboard.dispose();
+      gameClient.dispose();
+      renderer.dispose();
+    };
+  }, []);
+
+  return (
+    <Box sx={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: '#05070f' }}>
+      <div ref={containerRef} data-testid="game-surface" style={{ width: '100%', height: '100%' }} />
+      <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10, pointerEvents: 'none' }}>
+        <Typography variant="overline" sx={{ color: '#ff8800' }}>
+          Single-Player Diagnostic — no network
+        </Typography>
+        <Typography variant="caption" sx={{ display: 'block', color: '#888' }}>
+          WASD to move. Three asteroids spawned nearby. If this jitters, the sim itself is bad.
+        </Typography>
+      </Box>
     </Box>
   );
 }
 
 export function App(): JSX.Element {
-  const [phase, setPhase] = useState<'splash' | 'connecting' | 'game'>('splash');
+  const [phase, setPhase] = useState<'splash' | 'connecting' | 'game' | 'local'>('splash');
 
   const handleJoin = useCallback(() => {
     setPhase('game');
   }, []);
 
+  const handleLocal = useCallback(() => {
+    setPhase('local');
+  }, []);
+
   if (phase === 'game') {
     return <GameSurface />;
+  }
+
+  if (phase === 'local') {
+    return <LocalSurface />;
   }
 
   return (
@@ -199,20 +421,34 @@ export function App(): JSX.Element {
       {phase === 'connecting' ? (
         <CircularProgress sx={{ color: '#00ff88' }} />
       ) : (
-        <Button
-          variant="contained"
-          size="large"
-          onClick={handleJoin}
-          sx={{
-            bgcolor: '#00ff88',
-            color: '#000',
-            fontWeight: 700,
-            px: 6,
-            '&:hover': { bgcolor: '#00cc6a' },
-          }}
-        >
-          Enter Sector Alpha
-        </Button>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+          <Button
+            variant="contained"
+            size="large"
+            onClick={handleJoin}
+            sx={{
+              bgcolor: '#00ff88',
+              color: '#000',
+              fontWeight: 700,
+              px: 6,
+              '&:hover': { bgcolor: '#00cc6a' },
+            }}
+          >
+            Enter Sector Alpha
+          </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={handleLocal}
+            sx={{
+              color: '#ff8800',
+              borderColor: '#ff8800',
+              '&:hover': { borderColor: '#ffaa33', bgcolor: 'rgba(255,136,0,0.1)' },
+            }}
+          >
+            Single Player (Diagnostic)
+          </Button>
+        </Box>
       )}
     </Box>
   );

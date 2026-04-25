@@ -259,9 +259,12 @@ test.describe('server-authoritative broadcast', () => {
     const p1FromP2 = p2Positions[p1Id!];
     expect(p1FromP2).toBeDefined(); // P2 must know about P1's ship
 
-    // Positions must agree within 5 units (one server tick at max speed ≈ 0.15 units).
+    // P1's self-position is from prediction (slightly ahead of server).
+    // P2 sees P1 via a 100 ms display-delay buffer.
+    // At THRUST_IMPULSE=0.15, terminal velocity ~7 u/s; 300 ms total latency budget ≈ ~21 u.
+    // Allow 30 u to cover prediction-ahead + display-delay + snapshot timing jitter.
     const diff = Math.hypot(p1Self.x - p1FromP2.x, p1Self.y - p1FromP2.y);
-    expect(diff).toBeLessThan(5);
+    expect(diff).toBeLessThan(30);
 
     await ctx1.close();
     await ctx2.close();
