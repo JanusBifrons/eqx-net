@@ -10,7 +10,8 @@
  *   3. Compares the resulting "corrected" position+angle to the pre-reconciliation
  *      prediction.
  *   4. If drift ≥ threshold, sets a visual offset (lerpOffset / lerpAngleOffset)
- *      that decays to zero over LERP_FRAMES render frames.
+ *      that decays to zero over an adaptive number of render frames (scaled by
+ *      correction magnitude so large collisions lerp smoothly instead of snapping).
  *
  * The prediction world itself always holds the most up-to-date authoritative
  * estimate; lerpOffset is a pure render-layer shim.
@@ -18,11 +19,18 @@
 import type { PhysicsWorld, ShipPhysicsState } from '../physics/World.js';
 
 const BUFFER_SIZE = 128; // ~2 s at 60 Hz
-const LERP_FRAMES = 5;
 // Lerp ANY correction above noise floor so there are no silent position snaps.
 // Float32 serialisation noise ≈ 1e-5 u; 0.05 u is well above that.
 const LERP_THRESHOLD = 0.05;       // world units for position
 const ANGLE_LERP_THRESHOLD = 0.001; // radians (~0.057°) for rotation
+
+/** Scale lerp duration to correction magnitude so large snaps don't look jerky. */
+function lerpFramesForDrift(drift: number): number {
+  if (drift < 0.5)  return 3;   //  50 ms — sub-pixel, barely visible
+  if (drift < 5.0)  return 8;   // 133 ms — small positional nudge
+  if (drift < 20.0) return 12;  // 200 ms — medium collision correction
+  return 18;                    // 300 ms — large collision snap (> 20 u)
+}
 
 export interface InputRecord {
   tick: number;
@@ -39,12 +47,13 @@ export class Reconciler {
 
   private readonly buffer: (InputRecord | undefined)[];
 
-  /** Visual position offset applied to rendered position, decaying to zero over LERP_FRAMES. */
+  /** Visual position offset applied to rendered position, decaying to zero. */
   readonly lerpOffset = { x: 0, y: 0 };
   private lerpInitial = { x: 0, y: 0 };
   private lerpFramesLeft = 0;
+  private lerpTotalFrames = 0;
 
-  /** Visual angle offset applied to rendered rotation, decaying to zero over LERP_FRAMES. */
+  /** Visual angle offset applied to rendered rotation, decaying to zero. */
   lerpAngleOffset = 0;
   private lerpAngleInitial = 0;
 
@@ -94,7 +103,7 @@ export class Reconciler {
       this.lerpOffset.y = 0;
       this.lerpAngleOffset = 0;
     } else {
-      const ratio = this.lerpFramesLeft / LERP_FRAMES; // decays from 1 → 0
+      const ratio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
       this.lerpOffset.x = this.lerpInitial.x * ratio;
       this.lerpOffset.y = this.lerpInitial.y * ratio;
       this.lerpAngleOffset = this.lerpAngleInitial * ratio;
@@ -158,14 +167,17 @@ export class Reconciler {
 
     if (drift >= LERP_THRESHOLD || angleDrift >= ANGLE_LERP_THRESHOLD) {
       // Apply visual offsets equal to the pre-reconciliation error, then
-      // decay them to zero over LERP_FRAMES to avoid a visible snap.
+      // decay them to zero over an adaptive number of frames to avoid a
+      // visible snap. Large corrections get more frames so they appear smooth.
       this.lerpInitial.x = before.x - after.x;
       this.lerpInitial.y = before.y - after.y;
       this.lerpOffset.x = this.lerpInitial.x;
       this.lerpOffset.y = this.lerpInitial.y;
       this.lerpAngleInitial = normalizeAngle(before.angle - after.angle);
       this.lerpAngleOffset = this.lerpAngleInitial;
-      this.lerpFramesLeft = LERP_FRAMES;
+      const frames = lerpFramesForDrift(drift);
+      this.lerpTotalFrames = frames;
+      this.lerpFramesLeft = frames;
     }
     // Prediction world now holds the corrected state.
   }

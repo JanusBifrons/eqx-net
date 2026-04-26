@@ -52,6 +52,10 @@ export interface PredictionStats {
   maxAngleDriftRad: number;
   /** Sum of all angle drift magnitudes. Divide by snapshotCount for mean. */
   totalAngleDriftRad: number;
+  /** Max − min of the last 10 snapshot intervals (ms). 0 if < 2 snapshots. */
+  snapshotJitterMs: number;
+  /** Correction rate over the most recent 10-snapshot rolling window (0–1). */
+  rollingCorrRate: number;
 }
 
 /** Position drift below this is float32-serialisation noise. */
@@ -86,6 +90,8 @@ export class ColyseusGameClient {
     totalDriftUnits: 0,
     maxAngleDriftRad: 0,
     totalAngleDriftRad: 0,
+    snapshotJitterMs: 0,
+    rollingCorrRate: 0,
   };
 
   private room: Room | null = null;
@@ -113,6 +119,9 @@ export class ColyseusGameClient {
 
   // Snapshot timing
   private lastSnapshotAt = 0;
+  // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
+  private readonly _recentIntervals: number[] = [];
+  private readonly _recentCorrFlags: number[] = [];
 
   // Remote ship interpolation: per-player timestamped history
   private remoteHistory = new Map<string, RemoteEntry[]>();
@@ -219,6 +228,15 @@ export class ColyseusGameClient {
     this.stats.snapshotIntervalMs = intervalMs;
     this.stats.lastServerTick = snap.serverTick;
 
+    // Rolling jitter: max − min of the last 10 snapshot intervals.
+    if (intervalMs > 0) {
+      this._recentIntervals.push(intervalMs);
+      if (this._recentIntervals.length > 10) this._recentIntervals.shift();
+    }
+    this.stats.snapshotJitterMs = this._recentIntervals.length >= 2
+      ? Math.max(...this._recentIntervals) - Math.min(...this._recentIntervals)
+      : 0;
+
     if (!localId || !this.reconciler) {
       // Still sync obstacles even if we can't reconcile.
       if (this.predWorld && snap.obstacles) {
@@ -259,6 +277,13 @@ export class ColyseusGameClient {
       if (angCorrection) {
         this.stats.significantAngleCorrectionCount++;
       }
+
+      // Rolling correction rate over the last 10 snapshots.
+      this._recentCorrFlags.push(posCorrection || angCorrection ? 1 : 0);
+      if (this._recentCorrFlags.length > 10) this._recentCorrFlags.shift();
+      this.stats.rollingCorrRate = this._recentCorrFlags.length > 0
+        ? this._recentCorrFlags.reduce((a, b) => a + b, 0) / this._recentCorrFlags.length
+        : 0;
       // Reconciler positions — valid because reconciler is non-null here.
       const rec = this.reconciler;
       const px = (n: number): number => parseFloat(n.toFixed(3));
@@ -323,11 +348,34 @@ export class ColyseusGameClient {
       });
     }
 
-    // Reset obstacles AFTER reconciliation so the replay's world.tick() calls ran
-    // against pre-snapshot obstacle positions (the correct state for replay).
+    // After reconciliation, the Rapier replay has already advanced obstacle positions
+    // to approximately inputTick (the replay stepped ticksAhead ticks forward).
+    // We do NOT hard-reset obstacles to serverTick — that teleports them 20 ticks
+    // backward, out of sync with the ship.
+    //
+    // Instead: compare Rapier's post-replay position against a linear extrapolation
+    // of the server snapshot (serverPos + velocity × ticksAhead/60). If they differ
+    // by > 8u, another ship hit the asteroid on the server without the client knowing
+    // — resync to the server's extrapolated position. Otherwise keep Rapier's state
+    // (which accounts for any client-side ship-asteroid collision response).
     if (this.predWorld && snap.obstacles) {
+      const extrapolationTicks = Math.max(0, this.inputTick - snap.serverTick);
+      const dtSec = extrapolationTicks / 60;
       for (const [id, state] of Object.entries(snap.obstacles)) {
-        if (this.predWorld.hasShip(id)) this.predWorld.setShipState(id, state);
+        if (!this.predWorld.hasShip(id)) continue;
+        const current = this.predWorld.getShipState(id);
+        if (!current) continue;
+        const expectedX = state.x + state.vx * dtSec;
+        const expectedY = state.y + state.vy * dtSec;
+        const dist = Math.hypot(current.x - expectedX, current.y - expectedY);
+        if (dist > 8) {
+          // Server and client disagree significantly — another ship likely hit the
+          // asteroid on the server. Force a resync to the server-authoritative position.
+          this.predWorld.setShipState(id, {
+            x: expectedX, y: expectedY, vx: state.vx, vy: state.vy, angle: state.angle,
+          });
+        }
+        // Otherwise keep Rapier's post-collision state (correct temporal frame).
       }
     }
   }
@@ -400,6 +448,7 @@ export class ColyseusGameClient {
         angle: Number(sh['angle'] ?? 0),
         vx: Number(sh['vx'] ?? 0),
         vy: Number(sh['vy'] ?? 0),
+        angvel: sh['angvel'] !== undefined ? Number(sh['angvel']) : undefined,
       };
       seen.add(playerId);
 
@@ -525,29 +574,58 @@ export class ColyseusGameClient {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Linearly interpolate between the two history entries that bracket `renderTime`. */
+/**
+ * Interpolate between the two history entries that bracket `renderTime`.
+ * When `renderTime` is newer than all entries, dead-reckons using the last
+ * known velocity (capped at 100 ms) so remote ships don't freeze during
+ * momentary snapshot gaps.
+ */
 function interpolateHistory(hist: RemoteEntry[], renderTime: number): ShipPhysicsState | null {
   if (hist.length === 0) return null;
 
   const afterIdx = hist.findIndex((e) => e.ts >= renderTime);
 
-  if (afterIdx === -1) return hist[hist.length - 1]!.state; // all older, use most recent
+  if (afterIdx === -1) {
+    // renderTime is newer than all entries — dead-reckon from the last snapshot.
+    const last = hist[hist.length - 1]!;
+    const dtSec = Math.min((renderTime - last.ts) / 1000, 0.1); // cap at 100 ms
+    return {
+      x: last.state.x + last.state.vx * dtSec,
+      y: last.state.y + last.state.vy * dtSec,
+      vx: last.state.vx,
+      vy: last.state.vy,
+      angle: last.state.angle + (last.state.angvel ?? 0) * dtSec,
+      angvel: last.state.angvel,
+    };
+  }
+
   if (afterIdx === 0) return hist[0]!.state; // all newer, use oldest
 
   const a = hist[afterIdx - 1]!;
   const b = hist[afterIdx]!;
   const t = (renderTime - a.ts) / (b.ts - a.ts);
 
+  // Wrap angle difference to [-π, π] so ships rotating through 0/2π boundary
+  // interpolate the short way instead of spinning backwards through π.
+  const dAngle = wrapAngle(b.state.angle - a.state.angle);
+
   return {
     x: lerp(a.state.x, b.state.x, t),
     y: lerp(a.state.y, b.state.y, t),
     vx: lerp(a.state.vx, b.state.vx, t),
     vy: lerp(a.state.vy, b.state.vy, t),
-    // Simple linear angle interpolation — sufficient for short inter-snapshot periods.
-    angle: lerp(a.state.angle, b.state.angle, t),
+    angle: a.state.angle + dAngle * t,
   };
 }
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function wrapAngle(a: number): number {
+  const TWO_PI = 2 * Math.PI;
+  let r = a % TWO_PI;
+  if (r > Math.PI) r -= TWO_PI;
+  if (r < -Math.PI) r += TWO_PI;
+  return r;
 }

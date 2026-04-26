@@ -59,17 +59,18 @@ describe('Reconciler', () => {
     expect(Math.abs(r.lerpOffset.y)).toBeGreaterThan(0);
   });
 
-  it('advanceLerp decays offset to zero over LERP_FRAMES frames', async () => {
+  it('advanceLerp decays offset to zero within adaptive frame count', async () => {
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
+    // drift = hypot(50,50) ≈ 70.7 u → adaptive tier: 18 frames (> 20 u)
     r.reconcile({ x: 50, y: 50, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
 
     expect(r.isLerping).toBe(true);
 
-    // Advance until done
+    // Advance until done; guard at 30 to prevent infinite loop
     let frames = 0;
-    while (r.isLerping && frames < 20) {
+    while (r.isLerping && frames < 30) {
       r.advanceLerp();
       frames++;
     }
@@ -77,7 +78,8 @@ describe('Reconciler', () => {
     expect(r.isLerping).toBe(false);
     expect(r.lerpOffset.x).toBe(0);
     expect(r.lerpOffset.y).toBe(0);
-    expect(frames).toBeLessThanOrEqual(5);
+    // Adaptive: 70.7 u drift → 18 frames
+    expect(frames).toBeLessThanOrEqual(18);
   });
 
   it('ring buffer wraps at 128 without corrupting adjacent ticks', async () => {

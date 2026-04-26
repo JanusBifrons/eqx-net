@@ -36,6 +36,7 @@ Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `z
 
 Phase 0: placeholder. These tighten as each phase ships:
 
+- **Phase 3 — snapshot broadcast rate**: 20 Hz (every 3 main-thread `update()` calls, via `broadcastCounter` field). Do NOT use SAB tick divisibility — two independent 60 Hz loops (physics worker + Colyseus) are never in phase and cause ~25% missed broadcasts. See `docs/LESSONS.md` for details.
 - **Phase 4 — micro rate limit**: max 3 inputs per entity per tick in `onMessage`. Excess silently dropped.
 - **Phase 4 — temporal plausibility**: hit claims older than 12 ticks (~200 ms) rejected.
 - **Phase 4 — backpressure**: `ws.bufferedAmount > 50 KB` drops oldest queued snapshot; `> 250 KB` force-closes the socket.

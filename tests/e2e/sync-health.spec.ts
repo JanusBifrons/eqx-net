@@ -2,10 +2,10 @@
  * Sync-health regression suite.
  *
  * These tests assert that the correction rate stays below a bound under specific
- * input conditions. They are the canary for the two fixes described in
- * docs/LESSONS.md:
+ * input conditions. They are the canary for the fixes described in docs/LESSONS.md:
  *   Fix 1 — rAF fixed-timestep accumulator (stops client running at ~70 Hz vs server 60 Hz)
  *   Fix 2 — FIFO input queue in the physics worker (stops ackedTick jumping ahead of serverTick)
+ *   Fix 3 — Snapshot rate raised to 20 Hz (every 3 ticks) for faster correction feedback
  *
  * Run with --reporter=list to see the console output inline.
  */
@@ -14,7 +14,7 @@ import { test, expect } from './fixtures/test-with-logs';
 // ---------------------------------------------------------------------------
 // Thrust correction rate
 // ---------------------------------------------------------------------------
-test('W-thrust: correction rate stays under 40% after 3 s continuous thrust', async ({
+test('W-thrust: correction rate stays under 15% after 3 s continuous thrust', async ({
   eqxPage,
   getPredStats,
   clearEqxLogs,
@@ -46,7 +46,7 @@ test('W-thrust: correction rate stays under 40% after 3 s continuous thrust', as
 
   console.log('\n=== W-thrust sync health ===');
   console.log(`Snapshots (window): ${deltaSnaps}`);
-  console.log(`Corrections:        ${deltaCorrections}  (${(corrRate * 100).toFixed(1)}%  — limit 40%)`);
+  console.log(`Corrections:        ${deltaCorrections}  (${(corrRate * 100).toFixed(1)}%  — limit 15%)`);
   console.log(`Max drift:          ${stats.maxDriftUnits.toFixed(4)} u`);
   console.log(`Ticks ahead:        ${stats.ticksAhead}`);
   console.log(`RTT:                ${stats.rttMs} ms`);
@@ -61,15 +61,14 @@ test('W-thrust: correction rate stays under 40% after 3 s continuous thrust', as
   // Must receive at least 10 snapshots in the thrust+release window.
   expect(deltaSnaps).toBeGreaterThan(10);
 
-  // Collision corrections are expected when the ship encounters an asteroid during
-  // the thrust window (client predicts the collision ~18 ticks before the server
-  // resolves it; the reconciler corrects once when the server snapshot arrives).
-  // The 40% threshold distinguishes the fixed system (~20-28% from collision events)
-  // from the pre-fix regression bugs:
+  // At 20 Hz snapshots (every 3 ticks), collision corrections spread over ~80
+  // snapshots per 4 s window. The same 5 collision events = ~6-12% correction rate.
+  // 15% gives headroom for 2 independent collision events in a single thrust window.
+  // Pre-fix regression thresholds for reference:
   //   - setInterval at 70 Hz + overwrite-latest input model: ~93% corrections
   //   - rAF-fixed + overwrite-latest:                        ~59% corrections
-  // If this regression to >40%, re-run sync-diagnostics.spec.ts to isolate.
-  expect(corrRate).toBeLessThan(0.40);
+  // If this regresses to >15%, re-run sync-diagnostics.spec.ts to isolate.
+  expect(corrRate).toBeLessThan(0.15);
 
   // ticksAhead should stay bounded (~18-20 for ~300 ms RTT). A runaway
   // input queue (regression to overwrite-latest model) would push this to 100+.

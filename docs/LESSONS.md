@@ -241,6 +241,39 @@ The additional `expect(stats.ticksAhead).toBeLessThan(30)` guard catches queue-r
 
 **Rule**: do not reduce collision corrections by lowering `DRIFT_THRESHOLD` — that would mask real physics divergences. Instead, spawn test ships in asteroid-free zones if zero-correction tests are required.
 
+## 2026-04-26 — Phase 3 — Snapshot-rate broadcast using tick divisibility missed ~25% of broadcasts
+
+Two independent 60 Hz `setInterval` loops — the physics worker and the Colyseus main thread — are never in phase. When `SectorRoom.update()` reads the SAB tick counter with `% 3 === 0`, the counter has often already advanced past the next multiple of 3. In a 5 s window, 77 out of ~100 expected broadcasts fired (15.4 Hz, not 20 Hz). Gaps of 163–178 ms were observed between consecutive snapshots that should have been 50 ms apart.
+
+**Fix**: replaced divisibility check with an independent `broadcastCounter` field incremented every `update()` call. The broadcast fires whenever `++broadcastCounter >= 3`, then resets. This is decoupled from the SAB tick value entirely — guaranteed every 3 main-thread update calls, regardless of whether the worker has advanced its tick counter by 1, 2, or 3 during that window.
+
+**Why not track `lastBroadcastTick`**: the seqlock could re-read the same tick value on consecutive `update()` calls (if the worker is slow). `lastBroadcastTick` would prevent the duplicate but still skip a broadcast when the divisibility misses. The counter approach never skips.
+
+**Rule**: never gate a broadcast on SAB tick divisibility when the broadcast period is driven by the main thread. Use an independent counter on the broadcasting thread.
+
+## 2026-04-26 — Phase 3 — Obstacle temporal-frame mismatch caused large collision corrections
+
+**Symptom**: asteroid collisions produced corrections of 10–30u even though both client and server simulated the same physics. Corrections should be near-zero for a deterministic collision.
+
+**Root cause**: after each snapshot, obstacles were teleported to `serverTick` positions in the prediction world, while the local ship remained at `inputTick` (~20 ticks ahead). Collision detection then ran with the ship 20 ticks ahead of the asteroids — meaning the ship would "see" the asteroid 20 ticks too late or too early depending on trajectory.
+
+**Fix**: After the reconciler replay (which naturally advances obstacles to approximately `inputTick`), keep Rapier's post-replay obstacle positions rather than teleporting them backward. A soft correction fires only if client and server differ by > 8u (indicating another ship changed the asteroid's velocity on the server). This preserves the client-side collision response while handling server-divergent cases.
+
+**Why linear extrapolation caused oscillation**: Setting obstacles to `serverPos + serverVelocity × ticksAhead` ignores velocity changes from client-side collisions. The obstacle gets put back to its pre-collision trajectory, potentially causing a re-collision on the next frame → another correction → oscillation. The threshold-based approach avoids this by keeping Rapier's post-collision state.
+
+**Rule**: Never hard-teleport obstacles to `serverTick` position when the prediction world is running at `inputTick`. Either extrapolate to `inputTick` or keep the simulation's post-replay position. Hard teleports backward break collision prediction.
+
+## 2026-04-26 — Phase 3 — 20 Hz snapshot rate with adaptive lerp eliminated the "2-ship lag" feeling
+
+At 6 Hz (every 10 ticks, 167 ms), human-perceptible lag persisted because prediction errors accumulated for up to 167 ms before the server corrected them (human lag threshold ≈ 70 ms). Three improvements shipped together:
+
+1. **20 Hz snapshots** (every 3 main-thread update calls, 50 ms): correction window shrinks 3.3×
+2. **Adaptive lerp duration** (lerpFramesForDrift): sub-pixel corrections (< 0.5 u) lerp over 3 frames (50 ms); large collision corrections (> 20 u) lerp over 18 frames (300 ms). Fixed 5-frame lerp made collision corrections jerky.
+3. **Angle wrap in remote interpolation**: ships rotating through the 0/2π boundary were interpolating the wrong direction (backward through π). Fixed with `wrapAngle(b - a)` before lerp.
+4. **Dead reckoning for remote ships**: when `renderTime > newest history entry` (snapshot slightly late), extrapolate using last known velocity for up to 100 ms. Previously froze at last position.
+
+**Test signals to watch**: `snapshotJitterMs < 25` (catches scheduling regression), `rollingCorrRate < 0.25` (rolling 10-snapshot window, catches sustained drift).
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

@@ -99,7 +99,7 @@ export class SectorRoom extends Room<SectorState> {
   /** Last client input tick the physics worker confirmed it applied, read from SAB. */
   private sabAppliedTicks = new Map<string, number>();
   private serverTick = 0;
-  private lastBroadcastTick = -1;
+  private broadcastCounter = 0;
 
   override async onCreate(_options: unknown): Promise<void> {
     this.setState(new SectorState());
@@ -339,12 +339,13 @@ export class SectorRoom extends Room<SectorState> {
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
 
-    // Broadcast authoritative snapshot every 10 ticks for client-side reconciliation.
-    // Guard lastBroadcastTick so we never broadcast the same tick twice when the
-    // physics worker is slightly ahead and the SAB read lands on two consecutive
-    // multiples of 10 within a single Colyseus simulation-interval window.
-    if (this.serverTick > 0 && this.serverTick % 10 === 0 && this.serverTick !== this.lastBroadcastTick) {
-      this.lastBroadcastTick = this.serverTick;
+    // Broadcast authoritative snapshot at 20 Hz using an independent counter
+    // on the main thread, not a SAB tick divisibility check. Divisibility caused
+    // ~25% missed broadcasts when the two 60 Hz loops (worker + Colyseus) were
+    // slightly out of phase. The counter fires every 3 main-thread update() calls
+    // (= every 50 ms) regardless of which SAB tick value is currently visible.
+    if (++this.broadcastCounter >= 3 && this.serverTick > 0) {
+      this.broadcastCounter = 0;
       const states: SnapshotMessage['states'] = {};
       const ackedTicks: SnapshotMessage['ackedTicks'] = {};
       for (const [playerId] of this.playerToSlot) {
