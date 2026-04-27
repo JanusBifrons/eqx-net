@@ -274,6 +274,61 @@ At 6 Hz (every 10 ticks, 167 ms), human-perceptible lag persisted because predic
 
 **Test signals to watch**: `snapshotJitterMs < 25` (catches scheduling regression), `rollingCorrRate < 0.25` (rolling 10-snapshot window, catches sustained drift).
 
+## 2026-04-26 — Phase 3 — Obstacle double-advancement during reconcile replay caused post-collision jitter
+
+**Symptom**: after any ship-asteroid collision, the impacted asteroid jumped and jittered at ~50 ms intervals indefinitely. Correction magnitudes for the LOCAL ship also drifted upward across snapshots rather than returning to near-zero.
+
+**Root cause**: the `reconcile()` replay loop calls `world.tick(1/60)` once per replay step (≈ 19 iterations at ~300 ms RTT). This advances ALL Rapier bodies, including obstacle rigid bodies. Before the fix, obstacles were left at their current `predWorld` position (≈ `inputTick`) when reconcile started, so the replay advanced them a further 19 ticks to ≈ `inputTick + 19`. This overshoot of 19 ticks compounded across every 50 ms snapshot: for a 30 u/s asteroid, ≈ 9.5u per snapshot (19 × 30/60). When the accumulated overshoot exceeded the old 8u correction threshold, a hard teleport fired — then the overshoot started again. Fast post-collision asteroids (>26 u/s) exceeded the threshold on every snapshot, causing a hard jump every 50 ms.
+
+**Fix**: Reset obstacles to the server's `serverTick` position BEFORE calling `reconcile()`. The replay loop then naturally advances them together with the ship from `serverTick` → `inputTick`. After reconcile, compute the visual lerp offset as `preReset - postReconcile` (not `preReset - serverTick`): in normal motion these are equal so no lerp fires; only a server-side velocity change (another ship hitting the asteroid) produces a non-zero offset that needs visual smoothing.
+
+**Why lerp offset must be computed AFTER reconcile**: recording `offset = current - state` (inputTick - serverTick = v × ticksAhead/60) BEFORE reconcile is incorrect. After reconcile, predWorld is again at ≈ inputTick, so adding that offset to the rendered position pushes it to ≈ inputTick + ticksAhead — double-advancing the render. The correct formulation is `offset = preReset - postReconcile`, matching the ship's lerp pattern (`lerpInitial = before - after`).
+
+**Why the previous "keep Rapier's post-replay state" comment was wrong**: the comment said "do NOT hard-reset obstacles to serverTick — that teleports them 20 ticks backward, out of sync with the ship." This is backwards. Resetting to serverTick and letting the replay advance them IS how both ship and obstacles end up at inputTick together. The old code failed because it tried to keep a position that was already 19 ticks too far ahead.
+
+**Test**: `robustness.spec.ts` test 8 (post-collision asteroid frame-delta < 5u) catches this regression. Pre-fix: 10.53u jumps. Post-fix: < 2.06u (normal physics motion).
+
+**Rule**: always reset obstacles to `serverTick` position BEFORE `reconcile()`, not after. The reconcile replay is the mechanism that brings both ship and obstacles to `inputTick` simultaneously.
+
+## 2026-04-26 — Phase 3 — Remote ships absent from predWorld caused P2P collision delay and drift accumulation
+
+**Symptom**: P2P collision response was delayed by ~RTT/2 (~200 ms), ships visually overlapped, and corrections accumulated with each successive hit (rollingCorrRate → 1.0 while ships were near each other).
+
+**Root cause**: Remote ships were never spawned in `predWorld`. The local ship's prediction world had no rigid body for them, so it stepped freely through their positions — Rapier collision detection never fired client-side. When the server snapshot arrived with the authoritative post-collision state, a large correction fired (50–100 u drift) every snapshot for as long as ships remained near each other. This is the same temporal-mismatch pattern as the obstacle jitter bug, but more fundamental: obstacles were in predWorld at the wrong time; remote ships were not in predWorld at all.
+
+**Fix**: apply the obstacle fix pattern to remote ships:
+1. `syncMirror()` spawns a predWorld body via `world.spawnShip()` the first time a remote ship is seen.
+2. `handleSnapshot()` resets each remote ship to `snap.states[remoteId]` (serverTick position) BEFORE calling `reconciler.reconcile()` — the replay then advances all bodies together from serverTick → inputTick.
+3. After reconcile, compute lerp offsets (`preReset − postReconcile`) for each remote ship; apply in `updateMirror()` with the same decaying-offset pattern as local ship and obstacles.
+4. `updateMirror()` reads remote ship positions from predWorld (not remoteHistory) so Pixi renders them at the same temporal frame as the local ship, with Rapier physics providing smooth intermediate positions between snapshots.
+
+**Why the 100 ms display delay (remoteHistory) was wrong**: The display delay buffered the symptom (visual latency) without fixing the cause (no collision body). With predWorld, Rapier provides 60 Hz smooth intermediate positions between 20 Hz snapshots, making the delay unnecessary. Lerp offsets replace it for correction smoothing.
+
+**Rule**: every physics entity the local ship can collide with must have a body in `predWorld`. Remote ships are no different from obstacles in this respect. Spawn via `world.spawnShip()`, reset before `reconcile()`, render from predWorld. See `syncMirror()` + `handleSnapshot()` in `src/client/net/ColyseusClient.ts`.
+
+## 2026-04-27 — Phase 3 — Pre-welcome state patch caused local ship to be spawned as remote, killing the reconciler
+
+**Symptom**: after the remote-ship predWorld fix landed, the W-key movement test returned dist=0 (ship not moving) and the two-client drift test showed ~56u divergence instead of the expected ~1u. `ticksAhead` was always 0 even during sustained W-thrust — a sign the prediction world was never stepping.
+
+**Root cause**: Colyseus delivers the initial state patch (`onStateChange`) before the welcome message (`onMessage('welcome')`) resolves on the client. At patch time, `mirror.localPlayerId` is still `null`. Inside `syncMirror()`, the guard `if (playerId !== localId)` evaluates to `true` for ALL players (including the joining player's own ship, since any UUID `!== null`). My new code — added to spawn remote ships in predWorld — therefore ran for the local player's ship, calling `predWorld.spawnShip(localId, ...)` and adding `localId` to `predRemoteShipIds`.
+
+When the welcome message then arrived and called `tryInitPredWorld(localId)`, the method saw `predWorld.hasShip(localId) === true` and returned immediately **without creating the Reconciler**. With no reconciler:
+- `tickPhysics()` skipped the `predWorld.tick()` call (guarded by `&& this.reconciler`)
+- `updateMirror()` skipped the local-ship update (same guard)
+- The ship appeared frozen at spawn coordinates regardless of input
+
+The 56u divergence in the two-client test was P2's `predRemoteShipIds` tracking P1 correctly, but P2's OWN ship frozen at its spawn Y-position because P2 had no reconciler — `updateMirror()` was never writing P2's mirror from predWorld.
+
+**Fix — two changes**:
+1. Guard the remote-ship predWorld spawn in `syncMirror()` with `&& localId !== null`. This prevents any ship from being spawned as remote during the pre-welcome window.
+2. In `tryInitPredWorld()`, after creating the reconciler, iterate `mirror.ships` and retrospectively spawn any remote ships that were seen before `localId` was set (they had their mirror entries populated by `syncMirror()` but no predWorld body).
+
+**Why this is subtle**: the existing `else if (!predWorld.hasShip(playerId))` branch in `syncMirror()` was safe even without the guard, because it only fires when `localId` is set (the `if` branch consumes all ships when `localId === null`). The new predWorld spawn code was the only caller that needed the guard.
+
+**Diagnostic signal**: the pre-welcome bug produced exactly the same surface symptom as the earlier Phase-3 lesson (2026-04-19) about `remoteHistory` — dist=0 after W-press, position stuck at spawn. The difference is the mechanism: old bug = remoteHistory overwrote predWorld output in `updateMirror`; new bug = no predWorld output at all (reconciler null).
+
+**Rule**: when adding any code to `syncMirror()` that spawns entities in predWorld as remote, always guard with `localId !== null`. Pre-welcome state patches are delivered before the client knows its own identity; spawning the local player's ship as remote breaks `tryInitPredWorld()`.
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

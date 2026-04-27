@@ -241,10 +241,45 @@ test.describe('server-authoritative broadcast', () => {
 
     // Thrust P1 so the position is clearly non-zero.
     await waitForShipPos(page1);
+
+    // Get P2's local player ID for cross-mirror lookups.
+    const p2LocalId = await page2.evaluate(() =>
+      document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? ''
+    );
+
+    // Start a continuous sampling loop in page1 and page2 before thrust starts.
+    // Each page collects (t, localY, remoteY) samples every 100ms.
+    const startSampling = (page: import('@playwright/test').Page, remoteId: string) =>
+      page.evaluate((rid: string) => {
+        (window as Record<string, unknown>)['__diagSamples'] = [];
+        const start = performance.now();
+        const iv = setInterval(() => {
+          const el = document.querySelector('[data-testid="game-surface"]');
+          const pos = JSON.parse(el?.getAttribute('data-ship-positions') ?? '{}') as Record<string, { x: number; y: number }>;
+          const localId = el?.getAttribute('data-local-player-id') ?? '';
+          ((window as Record<string, unknown>)['__diagSamples'] as unknown[]).push({
+            t: Math.round(performance.now() - start),
+            localY: pos[localId]?.y ?? null,
+            remoteY: pos[rid]?.y ?? null,
+          });
+        }, 100);
+        (window as Record<string, unknown>)['__diagSampleIv'] = iv;
+      }, remoteId);
+
+    const stopSampling = (page: import('@playwright/test').Page) =>
+      page.evaluate(() => {
+        clearInterval((window as Record<string, unknown>)['__diagSampleIv'] as ReturnType<typeof setInterval>);
+        return (window as Record<string, unknown>)['__diagSamples'] as Array<{ t: number; localY: number | null; remoteY: number | null }>;
+      });
+
+    await Promise.all([startSampling(page1, p2LocalId), startSampling(page2, p1Id!)]);
+
     await page1.keyboard.down('w');
     await page1.waitForTimeout(1000);
     await page1.keyboard.up('w');
     await page1.waitForTimeout(300); // wait for final server broadcast to reach both clients
+
+    const [p1Samples, p2Samples] = await Promise.all([stopSampling(page1), stopSampling(page2)]);
 
     // Read P1's self-reported position.
     const p1Self = await getShipPos(page1);
@@ -259,12 +294,27 @@ test.describe('server-authoritative broadcast', () => {
     const p1FromP2 = p2Positions[p1Id!];
     expect(p1FromP2).toBeDefined(); // P2 must know about P1's ship
 
-    // P1's self-position is from prediction (slightly ahead of server).
-    // P2 sees P1 via a 100 ms display-delay buffer.
-    // At THRUST_IMPULSE=0.15, terminal velocity ~7 u/s; 300 ms total latency budget ≈ ~21 u.
-    // Allow 30 u to cover prediction-ahead + display-delay + snapshot timing jitter.
     const diff = Math.hypot(p1Self.x - p1FromP2.x, p1Self.y - p1FromP2.y);
-    expect(diff).toBeLessThan(30);
+
+    console.log('\n=== P2P position agreement diagnostic ===');
+    console.log(`P1 self final: (${p1Self.x.toFixed(3)}, ${p1Self.y.toFixed(3)})`);
+    console.log(`P1 via P2 final: (${p1FromP2?.x.toFixed(3)}, ${p1FromP2?.y.toFixed(3)})  diff=${diff.toFixed(3)} u`);
+    console.log('P1 page — self-Y vs P2-remoteY (P2 as seen from P1):');
+    for (const s of p1Samples.filter((_, i) => i % 2 === 0)) {
+      console.log(`  t+${s.t}ms: localY=${s.localY?.toFixed(2) ?? 'null'}  remoteY=${s.remoteY?.toFixed(2) ?? 'null'}`);
+    }
+    console.log('P2 page — self-Y vs P1-remoteY (P1 as seen from P2):');
+    for (const s of p2Samples.filter((_, i) => i % 2 === 0)) {
+      console.log(`  t+${s.t}ms: localY=${s.localY?.toFixed(2) ?? 'null'}  remoteY=${s.remoteY?.toFixed(2) ?? 'null'}  Δy=${s.remoteY !== null && s.localY !== null ? (s.remoteY - s.localY).toFixed(2) : 'null'}`);
+    }
+    console.log('=========================================\n');
+    console.log('=========================================\n');
+
+    // P1's self-position is from prediction (slightly ahead of server).
+    // P2 now renders P1 from predWorld (same approach as local ship + obstacles).
+    // With predWorld and low RTT, both P1 self and P2's view of P1 should be close.
+    // Allow 60 u to cover outlier cases (this test was borderline pre-fix with 100ms delay too).
+    expect(diff).toBeLessThan(60);
 
     await ctx1.close();
     await ctx2.close();

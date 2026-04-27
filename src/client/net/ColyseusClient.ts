@@ -17,7 +17,6 @@ interface RemoteEntry {
   state: ShipPhysicsState;
 }
 
-const INTERP_DELAY_MS = 100;
 const HISTORY_MAX = 30;
 
 /** Live prediction/latency metrics readable from the DOM or tests. */
@@ -63,6 +62,13 @@ const NOISE_THRESHOLD = 0.05;
 /** Angle drift below this is float32-serialisation noise (~0.057°). */
 const ANGLE_NOISE_THRESHOLD = 0.001;
 
+/** Scale obstacle lerp duration to correction magnitude. */
+function lerpFramesForObstacleDrift(drift: number): number {
+  if (drift < 3.0)  return 6;   // 100 ms
+  if (drift < 10.0) return 10;  // 167 ms
+  return 14;                    // 233 ms — large post-collision snap
+}
+
 export class ColyseusGameClient {
   readonly mirror: RenderMirror = {
     ships: new Map(),
@@ -72,6 +78,11 @@ export class ColyseusGameClient {
 
   /** Radii of obstacles we've spawned in the prediction world, keyed by id. */
   private predObstacleRadii = new Map<string, number>();
+
+  /** IDs of remote ships currently spawned in the prediction world. */
+  private predRemoteShipIds = new Set<string>();
+  /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections. */
+  private readonly _remoteShipOffsets = new Map<string, { ox: number; oy: number; framesLeft: number; totalFrames: number }>();
 
   /** Publicly readable prediction/latency stats. Updated on every snapshot. */
   readonly stats: PredictionStats = {
@@ -122,6 +133,9 @@ export class ColyseusGameClient {
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
   private readonly _recentCorrFlags: number[] = [];
+
+  // Per-obstacle render lerp offsets — applied in updateMirror() to smooth corrections.
+  private readonly _obstacleOffsets = new Map<string, { ox: number; oy: number; framesLeft: number; totalFrames: number }>();
 
   // Remote ship interpolation: per-player timestamped history
   private remoteHistory = new Map<string, RemoteEntry[]>();
@@ -213,6 +227,15 @@ export class ColyseusGameClient {
     this.predWorld.setShipState(playerId, existing);
     this.reconciler = new Reconciler(this.predWorld, playerId);
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
+    // Retrospectively spawn any remote ships that arrived in the initial Colyseus
+    // state patch (before localId was set, so syncMirror skipped predWorld spawn).
+    for (const [id, state] of this.mirror.ships) {
+      if (id === playerId) continue;
+      if (this.predWorld.hasShip(id) || this.predRemoteShipIds.has(id)) continue;
+      this.predWorld.spawnShip(id, state.x, state.y);
+      this.predWorld.setShipState(id, state);
+      this.predRemoteShipIds.add(id);
+    }
   }
 
   // ── Snapshot / reconciliation ───────────────────────────────────────────
@@ -238,10 +261,18 @@ export class ColyseusGameClient {
       : 0;
 
     if (!localId || !this.reconciler) {
-      // Still sync obstacles even if we can't reconcile.
-      if (this.predWorld && snap.obstacles) {
-        for (const [id, state] of Object.entries(snap.obstacles)) {
-          if (this.predWorld.hasShip(id)) this.predWorld.setShipState(id, state);
+      if (this.predWorld) {
+        // Sync obstacles.
+        if (snap.obstacles) {
+          for (const [id, state] of Object.entries(snap.obstacles)) {
+            if (this.predWorld.hasShip(id)) this.predWorld.setShipState(id, state);
+          }
+        }
+        // Sync remote ships — keep them at their latest server position until
+        // the reconciler bootstraps so they don't drift before the first reconcile.
+        for (const [remoteId, state] of Object.entries(snap.states)) {
+          if (remoteId === localId) continue;
+          if (this.predWorld.hasShip(remoteId)) this.predWorld.setShipState(remoteId, state);
         }
       }
       return;
@@ -253,10 +284,83 @@ export class ColyseusGameClient {
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
-      // Reconcile BEFORE resetting obstacles so replay's world.tick() calls use
-      // pre-snapshot obstacle positions (correct), not snapshot-time positions.
+      // Reset remote ships to serverTick state BEFORE reconcile — exact same reason
+      // as obstacles: the replay loop calls world.tick() ~19 times and advances ALL
+      // Rapier bodies.  Without this reset, remote ships start the replay at ≈ inputTick
+      // and land at ≈ inputTick + 19, compounding across snapshots into large corrections.
+      // Resetting to serverTick lets the replay bring remote ships to inputTick together
+      // with the local ship, so Rapier collision detection sees consistent positions.
+      const preResetRemotePos = new Map<string, { x: number; y: number }>();
+      for (const [remoteId, state] of Object.entries(snap.states)) {
+        if (remoteId === localId) continue;
+        if (!this.predWorld?.hasShip(remoteId)) continue;
+        const current = this.predWorld.getShipState(remoteId);
+        if (current) preResetRemotePos.set(remoteId, { x: current.x, y: current.y });
+        this.predWorld.setShipState(remoteId, state);
+      }
+
+      // Reset obstacles to serverTick state BEFORE reconcile so that the replay
+      // loop (which calls world.tick() once per replay step) advances both ship
+      // and obstacles together from serverTick → inputTick.  Without this, the
+      // obstacles are already at ≈ inputTick when reconcile starts, and the
+      // replay advances them a further ticksAhead steps (≈ 19), leaving them
+      // ≈ 19 ticks ahead of where they should be.  That systematic overshoot
+      // compounds across snapshots until it exceeds the old 8u threshold and
+      // produces hard-teleport jumps (the post-collision jitter bug).
+      //
+      // Lerp offsets are computed AFTER reconcile (preReset − postReconcile),
+      // not before. The post-reconcile position is ≈ inputTick again, so for
+      // normal smooth motion (no velocity change) the offset ≈ 0 and no lerp
+      // fires. Only a server-side velocity change (another ship hitting the
+      // asteroid) produces a non-zero offset, which is then lerped smoothly.
+      const preResetObstaclePos = new Map<string, { x: number; y: number }>();
+      if (this.predWorld && snap.obstacles) {
+        for (const [id, state] of Object.entries(snap.obstacles)) {
+          if (!this.predWorld.hasShip(id)) continue;
+          const current = this.predWorld.getShipState(id);
+          if (current) preResetObstaclePos.set(id, { x: current.x, y: current.y });
+          this.predWorld.setShipState(id, {
+            x: state.x, y: state.y, vx: state.vx, vy: state.vy, angle: state.angle,
+          });
+        }
+      }
+
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
       this.reconciler.reconcile(serverState, snap.serverTick, this.inputTick, ackedTick);
+
+      // Compute lerp offsets now that reconcile has advanced obstacles to ≈ inputTick.
+      if (this.predWorld && snap.obstacles) {
+        for (const [id] of Object.entries(snap.obstacles)) {
+          const preReset = preResetObstaclePos.get(id);
+          if (!preReset) continue;
+          const postReconcile = this.predWorld.getShipState(id);
+          if (!postReconcile) continue;
+          const ox = preReset.x - postReconcile.x;
+          const oy = preReset.y - postReconcile.y;
+          const dist = Math.hypot(ox, oy);
+          if (dist > 1) {
+            const frames = lerpFramesForObstacleDrift(dist);
+            this._obstacleOffsets.set(id, { ox, oy, framesLeft: frames, totalFrames: frames });
+          }
+        }
+      }
+
+      // Compute lerp offsets for remote ships (same pattern as obstacles).
+      // preReset − postReconcile ≈ 0 in normal motion; non-zero only when the
+      // remote player changed direction during the replay window.
+      if (this.predWorld) {
+        for (const [remoteId, preReset] of preResetRemotePos) {
+          const postReconcile = this.predWorld.getShipState(remoteId);
+          if (!postReconcile) continue;
+          const ox = preReset.x - postReconcile.x;
+          const oy = preReset.y - postReconcile.y;
+          const dist = Math.hypot(ox, oy);
+          if (dist > 1) {
+            const frames = lerpFramesForObstacleDrift(dist);
+            this._remoteShipOffsets.set(remoteId, { ox, oy, framesLeft: frames, totalFrames: frames });
+          }
+        }
+      }
 
       const drift = this.reconciler.lastDrift;
       const angleDrift = this.reconciler.lastAngleDrift;
@@ -348,36 +452,6 @@ export class ColyseusGameClient {
       });
     }
 
-    // After reconciliation, the Rapier replay has already advanced obstacle positions
-    // to approximately inputTick (the replay stepped ticksAhead ticks forward).
-    // We do NOT hard-reset obstacles to serverTick — that teleports them 20 ticks
-    // backward, out of sync with the ship.
-    //
-    // Instead: compare Rapier's post-replay position against a linear extrapolation
-    // of the server snapshot (serverPos + velocity × ticksAhead/60). If they differ
-    // by > 8u, another ship hit the asteroid on the server without the client knowing
-    // — resync to the server's extrapolated position. Otherwise keep Rapier's state
-    // (which accounts for any client-side ship-asteroid collision response).
-    if (this.predWorld && snap.obstacles) {
-      const extrapolationTicks = Math.max(0, this.inputTick - snap.serverTick);
-      const dtSec = extrapolationTicks / 60;
-      for (const [id, state] of Object.entries(snap.obstacles)) {
-        if (!this.predWorld.hasShip(id)) continue;
-        const current = this.predWorld.getShipState(id);
-        if (!current) continue;
-        const expectedX = state.x + state.vx * dtSec;
-        const expectedY = state.y + state.vy * dtSec;
-        const dist = Math.hypot(current.x - expectedX, current.y - expectedY);
-        if (dist > 8) {
-          // Server and client disagree significantly — another ship likely hit the
-          // asteroid on the server. Force a resync to the server-authoritative position.
-          this.predWorld.setShipState(id, {
-            x: expectedX, y: expectedY, vx: state.vx, vy: state.vy, angle: state.angle,
-          });
-        }
-        // Otherwise keep Rapier's post-collision state (correct temporal frame).
-      }
-    }
   }
 
   /**
@@ -422,6 +496,7 @@ export class ColyseusGameClient {
         mirrorObstacles.delete(id);
         this.predWorld?.despawnShip(id);
         this.predObstacleRadii.delete(id);
+        this._obstacleOffsets.delete(id);
       }
     }
   }
@@ -453,13 +528,31 @@ export class ColyseusGameClient {
       seen.add(playerId);
 
       if (playerId !== localId) {
-        // Store timestamped entry for display-delay interpolation.
+        // Store timestamped entry for display-delay interpolation (kept as spawn-detection fallback).
         const hist = this.remoteHistory.get(playerId) ?? [];
         hist.push({ ts: now, state: parsed });
         if (hist.length > HISTORY_MAX) hist.shift();
         this.remoteHistory.set(playerId, hist);
         // Seed mirror so ship-count is correct even before first updateMirror call.
         this.mirror.ships.set(playerId, parsed);
+        // Spawn a physics body in predWorld for collision prediction.
+        // Remote ships need the same presence in predWorld as obstacles so that
+        // reconcile() can advance them together with the local ship from
+        // serverTick → inputTick, and Rapier collision detection fires client-side.
+        //
+        // Guard: only spawn if we know who the local player is (localId !== null).
+        // On initial join, Colyseus sends the full state BEFORE the welcome message
+        // arrives, so localId is null and ALL ships — including the joining player's
+        // own ship — appear to pass the `playerId !== localId` check above.  If we
+        // spawn the local ship as a remote body here, tryInitPredWorld() sees
+        // hasShip()===true and returns early without creating the reconciler, breaking
+        // all physics.  Skipping when localId===null is safe: tryInitPredWorld()
+        // retrospectively spawns any unseen remote ships once the reconciler exists.
+        if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null) {
+          this.predWorld.spawnShip(playerId, parsed.x, parsed.y);
+          this.predWorld.setShipState(playerId, parsed);
+          this.predRemoteShipIds.add(playerId);
+        }
       } else if (!this.predWorld?.hasShip(playerId)) {
         // Bootstrap prediction world as soon as we know our position.
         this.mirror.ships.set(playerId, parsed);
@@ -472,6 +565,11 @@ export class ColyseusGameClient {
       if (!seen.has(key)) {
         this.mirror.ships.delete(key);
         this.remoteHistory.delete(key);
+        if (this.predRemoteShipIds.has(key)) {
+          this.predWorld?.despawnShip(key);
+          this.predRemoteShipIds.delete(key);
+          this._remoteShipOffsets.delete(key);
+        }
       }
     }
 
@@ -486,7 +584,6 @@ export class ColyseusGameClient {
    */
   updateMirror(): void {
     const localId = this.mirror.localPlayerId;
-    const now = performance.now();
 
     // Local ship — prediction + lerp correction.
     if (localId && this.predWorld && this.reconciler) {
@@ -510,23 +607,46 @@ export class ColyseusGameClient {
     // Server ghost position — orange diamond drawn at the raw snapshot coords.
     this.mirror.serverGhostPos = this.lastSnapshotPos;
 
-    // Obstacles — read from the prediction world every frame for 60 Hz
-    // smoothness (schema patches only arrive at ~20 Hz).
+    // Obstacles — read from prediction world at 60 Hz with decaying lerp offsets
+    // to smooth any server-correction position deltas (same pattern as local ship).
     if (this.predWorld && this.mirror.obstacles) {
       for (const [id, radius] of this.predObstacleRadii) {
         const s = this.predWorld.getShipState(id);
-        if (s) this.mirror.obstacles.set(id, { ...s, radius });
+        if (!s) continue;
+        const off = this._obstacleOffsets.get(id);
+        let ox = 0, oy = 0;
+        if (off && off.framesLeft > 0) {
+          const ratio = off.framesLeft / off.totalFrames;
+          ox = off.ox * ratio;
+          oy = off.oy * ratio;
+          off.framesLeft--;
+          if (off.framesLeft === 0) this._obstacleOffsets.delete(id);
+        }
+        this.mirror.obstacles.set(id, { ...s, x: s.x + ox, y: s.y + oy, radius });
       }
     }
 
-    // Remote ships — 100 ms display delay interpolation.
-    // Skip localId: if state arrived before welcome, it was accidentally added to remoteHistory;
-    // the prediction world is the authoritative source for the local ship.
-    const renderTime = now - INTERP_DELAY_MS;
-    for (const [playerId, hist] of this.remoteHistory) {
-      if (playerId === localId) continue;
-      const interp = interpolateHistory(hist, renderTime);
-      if (interp) this.mirror.ships.set(playerId, interp);
+    // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
+    // predWorld bodies advance continuously via Rapier physics between snapshots,
+    // giving smooth intermediate positions without a 100 ms display delay.
+    // Lerp offsets smooth any server correction that fires at snapshot boundaries
+    // (same pattern as local ship and obstacles).
+    if (this.predWorld) {
+      for (const remoteId of this.predRemoteShipIds) {
+        if (remoteId === localId) continue;
+        const s = this.predWorld.getShipState(remoteId);
+        if (!s) continue;
+        const off = this._remoteShipOffsets.get(remoteId);
+        let ox = 0, oy = 0;
+        if (off && off.framesLeft > 0) {
+          const ratio = off.framesLeft / off.totalFrames;
+          ox = off.ox * ratio;
+          oy = off.oy * ratio;
+          off.framesLeft--;
+          if (off.framesLeft === 0) this._remoteShipOffsets.delete(remoteId);
+        }
+        this.mirror.ships.set(remoteId, { ...s, x: s.x + ox, y: s.y + oy });
+      }
     }
   }
 
@@ -567,65 +687,10 @@ export class ColyseusGameClient {
     this.predWorld = null;
     this.reconciler = null;
     this.remoteHistory.clear();
+    this.predRemoteShipIds.clear();
+    this._remoteShipOffsets.clear();
     this.mirror.obstacles?.clear();
     this.predObstacleRadii.clear();
   }
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-/**
- * Interpolate between the two history entries that bracket `renderTime`.
- * When `renderTime` is newer than all entries, dead-reckons using the last
- * known velocity (capped at 100 ms) so remote ships don't freeze during
- * momentary snapshot gaps.
- */
-function interpolateHistory(hist: RemoteEntry[], renderTime: number): ShipPhysicsState | null {
-  if (hist.length === 0) return null;
-
-  const afterIdx = hist.findIndex((e) => e.ts >= renderTime);
-
-  if (afterIdx === -1) {
-    // renderTime is newer than all entries — dead-reckon from the last snapshot.
-    const last = hist[hist.length - 1]!;
-    const dtSec = Math.min((renderTime - last.ts) / 1000, 0.1); // cap at 100 ms
-    return {
-      x: last.state.x + last.state.vx * dtSec,
-      y: last.state.y + last.state.vy * dtSec,
-      vx: last.state.vx,
-      vy: last.state.vy,
-      angle: last.state.angle + (last.state.angvel ?? 0) * dtSec,
-      angvel: last.state.angvel,
-    };
-  }
-
-  if (afterIdx === 0) return hist[0]!.state; // all newer, use oldest
-
-  const a = hist[afterIdx - 1]!;
-  const b = hist[afterIdx]!;
-  const t = (renderTime - a.ts) / (b.ts - a.ts);
-
-  // Wrap angle difference to [-π, π] so ships rotating through 0/2π boundary
-  // interpolate the short way instead of spinning backwards through π.
-  const dAngle = wrapAngle(b.state.angle - a.state.angle);
-
-  return {
-    x: lerp(a.state.x, b.state.x, t),
-    y: lerp(a.state.y, b.state.y, t),
-    vx: lerp(a.state.vx, b.state.vx, t),
-    vy: lerp(a.state.vy, b.state.vy, t),
-    angle: a.state.angle + dAngle * t,
-  };
-}
-
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-function wrapAngle(a: number): number {
-  const TWO_PI = 2 * Math.PI;
-  let r = a % TWO_PI;
-  if (r > Math.PI) r -= TWO_PI;
-  if (r < -Math.PI) r += TWO_PI;
-  return r;
-}

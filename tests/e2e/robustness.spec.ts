@@ -216,10 +216,12 @@ test('two clients thrust simultaneously — both stay within bounds', async ({ b
 
     console.log(`${label}: ticksAhead=${raw.ticksAhead}  rollingCorrRate=${(raw.rollingCorrRate * 100).toFixed(1)}%`);
 
-    // Two simultaneous thrusting ships have more collision interactions, so allow
-    // a slightly wider correction budget (25%) vs. single-client (15%).
+    // Two simultaneous thrusting ships can now produce P2P collisions (remote ships
+    // are in predWorld after the Phase-3 fix).  A collision burst can push the
+    // rolling rate to ~30-40% for a snapshot window; 40% is the same ceiling used
+    // in the dedicated p2p correction-rate test (test 10).
     expect(raw.ticksAhead).toBeLessThan(30);
-    expect(raw.rollingCorrRate).toBeLessThan(0.25);
+    expect(raw.rollingCorrRate).toBeLessThan(0.40);
 
     await ctx.close();
   }
@@ -268,8 +270,277 @@ test('asteroid collision: max correction magnitude < 15u (temporal-frame fix)', 
     return;
   }
 
-  // The temporal-frame fix (extrapolating obstacles to inputTick) should keep
-  // collision corrections well below 15u. Before the fix, corrections of 40–75u
-  // were common because the ship and obstacles were 20 ticks out of sync.
+  // Obstacle sync now happens before reconcile so obstacles step forward
+  // together with the ship replay.  Corrections should be well below 15u.
   expect(maxDrift).toBeLessThan(15);
+});
+
+// ---------------------------------------------------------------------------
+// 8. Post-collision asteroid position stability
+// ---------------------------------------------------------------------------
+test('post-collision: asteroid does not jump at snapshot boundaries', async ({
+  eqxPage,
+}) => {
+  await eqxPage.waitForTimeout(1000);
+  // Thrust toward asteroids to provoke a collision.
+  await eqxPage.keyboard.down('w');
+  await eqxPage.waitForTimeout(3000);
+  await eqxPage.keyboard.up('w');
+  await eqxPage.waitForTimeout(200);
+
+  // Sample all obstacle positions at 16 ms intervals for 2.5 s.
+  const samples = await eqxPage.evaluate(() =>
+    new Promise<{ t: number; obs: Record<string, { x: number; y: number }> }[]>((resolve) => {
+      const results: { t: number; obs: Record<string, { x: number; y: number }> }[] = [];
+      const start = performance.now();
+      const iv = setInterval(() => {
+        const el = document.querySelector('[data-testid="game-surface"]');
+        const raw = el?.getAttribute('data-obstacle-positions');
+        results.push({ t: performance.now() - start, obs: JSON.parse(raw ?? '{}') as Record<string, { x: number; y: number }> });
+        if (results.length >= 150) { clearInterval(iv); resolve(results); }
+      }, 16);
+    })
+  );
+
+  // Compute max frame-to-frame displacement per asteroid.
+  const ids = Object.keys(samples[0]?.obs ?? {});
+  const maxDeltas: number[] = [];
+  for (const id of ids) {
+    let maxD = 0;
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1]!.obs[id];
+      const b = samples[i]!.obs[id];
+      if (!a || !b) continue;
+      const d = Math.hypot(b.x - a.x, b.y - a.y);
+      if (d > maxD) maxD = d;
+    }
+    maxDeltas.push(maxD);
+  }
+
+  console.log('\n=== Post-collision asteroid stability ===');
+  console.log(`Asteroids tracked: ${ids.length}`);
+  console.log(`Max per-frame deltas: ${maxDeltas.map((d) => d.toFixed(2)).join(', ')} u`);
+  const worst = maxDeltas.length > 0 ? Math.max(...maxDeltas) : 0;
+  console.log(`Worst: ${worst.toFixed(2)} u  (limit 5 u)`);
+  console.log('=========================================\n');
+
+  if (ids.length === 0) {
+    console.log('No obstacles visible — inconclusive.');
+    return;
+  }
+
+  // 5u per frame catches hard-teleport jumps at snapshot boundaries.
+  // Normal physics movement at 25 u/s max = 25/60 ≈ 0.42u per frame.
+  // The pre-fix bug caused jumps of 4–10u every ~50 ms (3 frames) when
+  // the > 8u threshold was breached.
+  expect(worst).toBeLessThan(5);
+});
+
+// ---------------------------------------------------------------------------
+// 10. P2P collision — correction rate stays bounded during two-client thrust
+// ---------------------------------------------------------------------------
+test('p2p: rolling correction rate stays bounded during sustained two-client thrust', async ({ browser }) => {
+  async function joinClient() {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(BASE_URL);
+    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="ship-count"]');
+        return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+      },
+      { timeout: 12000 },
+    );
+    return { ctx, page };
+  }
+
+  const [c1, c2] = await Promise.all([joinClient(), joinClient()]);
+  await Promise.all([c1.page.waitForTimeout(1500), c2.page.waitForTimeout(1500)]);
+
+  // Both clients thrust for 6 s to maximise the chance of a P2P encounter.
+  await Promise.all([c1.page.keyboard.down('w'), c2.page.keyboard.down('w')]);
+  await Promise.all([c1.page.waitForTimeout(6000), c2.page.waitForTimeout(6000)]);
+  await Promise.all([c1.page.keyboard.up('w'), c2.page.keyboard.up('w')]);
+  await Promise.all([c1.page.waitForTimeout(500), c2.page.waitForTimeout(500)]);
+
+  console.log('\n=== P2P correction rate ===');
+
+  for (const [label, { page, ctx }] of [['Client 1', c1], ['Client 2', c2]] as const) {
+    const raw = await page.evaluate((): PredictionStats =>
+      JSON.parse(
+        document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pred-stats') ?? '{}',
+      ) as PredictionStats,
+    );
+
+    console.log(
+      `${label}: rollingCorrRate=${(raw.rollingCorrRate * 100).toFixed(1)}%  ticksAhead=${raw.ticksAhead}`,
+    );
+
+    // Pre-fix: every snapshot fired a large correction while ships were near each
+    // other (remote ship not in predWorld → predWorld always wrong → rollingCorrRate → 1.0).
+    // Post-fix: collision corrections appear once at contact and decay → rate stays low.
+    expect(raw.ticksAhead).toBeLessThan(30);
+    expect(raw.rollingCorrRate).toBeLessThan(0.40);
+
+    await ctx.close();
+  }
+
+  console.log('===========================\n');
+});
+
+// ---------------------------------------------------------------------------
+// 11. P2P collision — ships do not significantly overlap during close approach
+// ---------------------------------------------------------------------------
+test('p2p: ships do not significantly overlap during close approach', async ({ browser }) => {
+  const SHIP_DIAMETER = 24; // 2 × SHIP_RADIUS (12 u)
+
+  async function joinClient() {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(BASE_URL);
+    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="ship-count"]');
+        return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+      },
+      { timeout: 12000 },
+    );
+    return { ctx, page };
+  }
+
+  const [c1, c2] = await Promise.all([joinClient(), joinClient()]);
+  await Promise.all([c1.page.waitForTimeout(1500), c2.page.waitForTimeout(1500)]);
+
+  // Get C2's local player ID so we can find C2 in C1's ship-position map.
+  const c2LocalId = await c2.page.evaluate(() =>
+    document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-local-player-id') ?? ''
+  );
+
+  // Both thrust for 6 s to maximise the chance of a close encounter.
+  await Promise.all([c1.page.keyboard.down('w'), c2.page.keyboard.down('w')]);
+
+  // Sample: get the C2 ship's position from C1's mirror at 16 ms intervals.
+  const remoteId = c2LocalId;
+  const samples = await c1.page.evaluate((rid: string) =>
+    new Promise<{ t: number; localX: number; localY: number; remoteX: number | null; remoteY: number | null }[]>((resolve) => {
+      const results: { t: number; localX: number; localY: number; remoteX: number | null; remoteY: number | null }[] = [];
+      const start = performance.now();
+      const iv = setInterval(() => {
+        const el = document.querySelector('[data-testid="game-surface"]');
+        const ships = JSON.parse(el?.getAttribute('data-ship-positions') ?? '{}') as Record<string, { x: number; y: number }>;
+        const localId = el?.getAttribute('data-local-player-id') ?? '';
+        const local = ships[localId];
+        const remote = rid ? ships[rid] : undefined;
+        results.push({
+          t: performance.now() - start,
+          localX: local?.x ?? 0,
+          localY: local?.y ?? 0,
+          remoteX: remote?.x ?? null,
+          remoteY: remote?.y ?? null,
+        });
+        if (results.length >= 360) { clearInterval(iv); resolve(results); }
+      }, 16);
+    }),
+    remoteId,
+  );
+
+  await Promise.all([c1.page.keyboard.up('w'), c2.page.keyboard.up('w')]);
+  await c1.ctx.close();
+  await c2.ctx.close();
+
+  // Find frames where both ships were visible and compute inter-ship distance.
+  const distances: number[] = [];
+  for (const s of samples) {
+    if (s.remoteX === null || s.remoteY === null) continue;
+    distances.push(Math.hypot(s.remoteX - s.localX, s.remoteY - s.localY));
+  }
+
+  const framesWithinApproachRange = distances.filter((d) => d < 80);
+  const minDist = distances.length > 0 ? Math.min(...distances) : Infinity;
+
+  console.log('\n=== P2P overlap check ===');
+  console.log(`Frames with remote ship visible: ${distances.length}`);
+  console.log(`Frames within 80 u: ${framesWithinApproachRange.length}`);
+  console.log(`Min inter-ship distance: ${minDist === Infinity ? 'N/A' : minDist.toFixed(2)} u  (collision diameter ${SHIP_DIAMETER} u)`);
+  console.log('=========================\n');
+
+  if (framesWithinApproachRange.length === 0) {
+    // Ships never came within 80 u — test is inconclusive, not a failure.
+    // Re-run will use different spawn positions; the assertion fires when ships meet.
+    console.log('Ships never within 80 u — inconclusive (spawn positions too far apart).');
+    return;
+  }
+
+  // Pre-fix: remote ships had no body in predWorld, so the local ship predicted freely
+  // through them. Physical overlap was unbounded — centers could coincide (0 u distance).
+  // Post-fix: Rapier collision detection prevents overlap. Visual distance ≥ ~10 u
+  // even accounting for lerp-offset smoothing on both ships (up to ~12 u combined).
+  expect(minDist).toBeGreaterThan(10);
+});
+
+// ---------------------------------------------------------------------------
+// 9. Two-client asteroid position agreement after collision
+// ---------------------------------------------------------------------------
+test('two clients agree on asteroid position after collision (< 8u)', async ({ browser }) => {
+  async function joinClient() {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(BASE_URL);
+    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="ship-count"]');
+        return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+      },
+      { timeout: 12000 },
+    );
+    return { ctx, page };
+  }
+
+  const [c1, c2] = await Promise.all([joinClient(), joinClient()]);
+  await Promise.all([c1.page.waitForTimeout(1000), c2.page.waitForTimeout(1000)]);
+
+  // Client 1 thrusts toward asteroids to provoke a collision.
+  await c1.page.keyboard.down('w');
+  await c1.page.waitForTimeout(4000);
+  await c1.page.keyboard.up('w');
+  await c1.page.waitForTimeout(500);
+
+  const getObs = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => {
+      const el = document.querySelector('[data-testid="game-surface"]');
+      return JSON.parse(el?.getAttribute('data-obstacle-positions') ?? '{}') as Record<string, { x: number; y: number }>;
+    });
+
+  const [obs1, obs2] = await Promise.all([getObs(c1.page), getObs(c2.page)]);
+
+  const diffs: number[] = [];
+  for (const id of Object.keys(obs1)) {
+    const a = obs1[id];
+    const b = obs2[id];
+    if (!a || !b) continue;
+    diffs.push(Math.hypot(a.x - b.x, a.y - b.y));
+  }
+
+  console.log('\n=== Two-client asteroid position agreement ===');
+  console.log(`Asteroids compared: ${diffs.length}`);
+  const worst = diffs.length > 0 ? Math.max(...diffs) : 0;
+  console.log(`Max divergence: ${worst.toFixed(2)} u  (limit 8 u)`);
+  console.log('  Expected: C1 prediction slightly ahead of C2 display-delay view');
+  console.log('==============================================\n');
+
+  await c1.ctx.close();
+  await c2.ctx.close();
+
+  if (diffs.length === 0) {
+    console.log('No common obstacles — inconclusive.');
+    return;
+  }
+
+  // 8u = 100 ms display delay × 80 u/s max post-collision asteroid velocity
+  // = 8u maximum expected divergence from display-delay alone.
+  // Catches the pre-fix double-advancement bug which produced 20–40u disagreement.
+  expect(worst).toBeLessThan(8);
 });

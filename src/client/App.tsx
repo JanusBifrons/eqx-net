@@ -272,7 +272,16 @@ function GameSurface(): JSX.Element {
             posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
           }
           el.dataset['shipPositions'] = JSON.stringify(posMap);
+          el.dataset['localPlayerId'] = localId ?? '';
           el.dataset['predStats'] = JSON.stringify(gameClient.stats);
+          // Expose obstacle positions for E2E collision stability assertions.
+          if (gameClient.mirror.obstacles) {
+            const obsMap: Record<string, { x: number; y: number }> = {};
+            for (const [id, obs] of gameClient.mirror.obstacles.entries()) {
+              obsMap[id] = { x: parseFloat(obs.x.toFixed(3)), y: parseFloat(obs.y.toFixed(3)) };
+            }
+            el.dataset['obstaclePositions'] = JSON.stringify(obsMap);
+          }
           animFrameRef.current = requestAnimationFrame(loop);
         }
       };
