@@ -27,6 +27,8 @@ export class PhysicsWorld {
   private world: RAPIER.World;
   private accumulator = 0;
   private bodies = new Map<string, RAPIER.RigidBody>();
+  /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
+  private handleToId = new Map<number, string>();
 
   private constructor(world: RAPIER.World) {
     this.world = world;
@@ -57,6 +59,7 @@ export class PhysicsWorld {
     const collider = RAPIER.ColliderDesc.ball(SHIP_RADIUS).setRestitution(0.3).setFriction(0).setDensity(density);
     this.world.createCollider(collider, body);
     this.bodies.set(id, body);
+    this.handleToId.set(body.handle, id);
   }
 
   /**
@@ -75,11 +78,29 @@ export class PhysicsWorld {
     const collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
     this.world.createCollider(collider, body);
     this.bodies.set(id, body);
+    this.handleToId.set(body.handle, id);
+  }
+
+  /** Spawn a fast-moving kinematic projectile body (sensor — no physics impulses). */
+  spawnProjectile(id: string, x: number, y: number, vx: number, vy: number, radius: number): void {
+    const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(x, y)
+      .setLinvel(vx, vy)
+      .setLinearDamping(0)
+      .setAngularDamping(0);
+    const body = this.world.createRigidBody(bodyDesc);
+    const collider = RAPIER.ColliderDesc.ball(radius)
+      .setSensor(true)
+      .setDensity(0.001);
+    this.world.createCollider(collider, body);
+    this.bodies.set(id, body);
+    this.handleToId.set(body.handle, id);
   }
 
   despawnShip(id: string): void {
     const body = this.bodies.get(id);
     if (!body) return;
+    this.handleToId.delete(body.handle);
     this.world.removeRigidBody(body);
     this.bodies.delete(id);
   }
@@ -135,6 +156,37 @@ export class PhysicsWorld {
 
   hasShip(id: string): boolean {
     return this.bodies.has(id);
+  }
+
+  /**
+   * Cast a ray through the world and return the first entity hit (excluding the shooter).
+   * Returns null if no entity is within maxDist along the ray.
+   */
+  hitscan(
+    fromX: number, fromY: number,
+    dirX: number, dirY: number,
+    maxDist: number,
+    excludeId: string,
+  ): { hitId: string; dist: number } | null {
+    const excludeBody = this.bodies.get(excludeId);
+    const ray = new RAPIER.Ray({ x: fromX, y: fromY }, { x: dirX, y: dirY });
+    // World.castRay returns RayColliderHit where .collider is already a Collider
+    // object, and .timeOfImpact is the distance along the ray.
+    const hit = this.world.castRay(
+      ray,
+      maxDist,
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      undefined,
+      excludeBody,
+    );
+    if (!hit) return null;
+    const parentBody = hit.collider.parent();
+    if (!parentBody) return null;
+    const hitId = this.handleToId.get(parentBody.handle);
+    if (!hitId) return null;
+    return { hitId, dist: hit.timeOfImpact };
   }
 
   dispose(): void {

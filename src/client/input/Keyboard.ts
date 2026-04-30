@@ -2,12 +2,15 @@ export interface InputState {
   thrust: boolean;
   turnLeft: boolean;
   turnRight: boolean;
+  /** True every read() call while space is held. */
+  fireHeld: boolean;
 }
 
 export class Keyboard {
   thrust = false;
   turnLeft = false;
   turnRight = false;
+  private spaceDown = false;
 
   private onKeyDown = (e: KeyboardEvent): void => {
     switch (e.code) {
@@ -22,6 +25,9 @@ export class Keyboard {
       case 'ArrowRight':
       case 'KeyD':
         this.turnRight = true;
+        break;
+      case 'Space':
+        this.spaceDown = true;
         break;
     }
   };
@@ -40,6 +46,9 @@ export class Keyboard {
       case 'KeyD':
         this.turnRight = false;
         break;
+      case 'Space':
+        this.spaceDown = false;
+        break;
     }
   };
 
@@ -54,6 +63,11 @@ export class Keyboard {
   }
 
   read(): InputState {
-    return { thrust: this.thrust, turnLeft: this.turnLeft, turnRight: this.turnRight };
+    return {
+      thrust: this.thrust,
+      turnLeft: this.turnLeft,
+      turnRight: this.turnRight,
+      fireHeld: this.spaceDown,
+    };
   }
 }

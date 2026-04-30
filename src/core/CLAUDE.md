@@ -54,6 +54,15 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 
 ---
 
+## Rapier `castRay` API (Phase 4 — do not look these up again)
+
+- `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
+- `hit.collider` is already a `Collider` object; do NOT wrap it in `world.getCollider()` (that takes a number).
+- `hit.timeOfImpact` — there is no `hit.toi` property.
+- **Query pipeline lag**: `castRay` queries the Rapier broadphase/narrowphase, which is only updated inside `world.step()`. Bodies spawned after the last `step()` are invisible to `castRay`. In unit tests, call `world.tick(1/60)` in `beforeEach` after spawning bodies, before any hitscan calls.
+
+---
+
 ## What belongs in src/core
 
 - Pure simulation: physics, AI behaviour trees, combat math, reconciliation.
@@ -61,6 +70,7 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - DI contracts.
 - Shared math utilities.
 - Deterministic state machines (e.g., Phase 8 `TransitStateMachine`).
+- Combat constants and pure geometry helpers (`src/core/combat/Weapons.ts`): `HITSCAN_DAMAGE`, `PROJECTILE_DAMAGE`, `HITSCAN_RANGE`, `PROJECTILE_SPEED`, `WEAPON_COOLDOWN_TICKS`, `rayHitsSphere()`.
 
 ## What does NOT belong in src/core
 

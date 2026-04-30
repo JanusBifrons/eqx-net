@@ -329,6 +329,36 @@ The 56u divergence in the two-client test was P2's `predRemoteShipIds` tracking 
 
 **Rule**: when adding any code to `syncMirror()` that spawns entities in predWorld as remote, always guard with `localId !== null`. Pre-welcome state patches are delivered before the client knows its own identity; spawning the local player's ship as remote breaks `tryInitPredWorld()`.
 
+## 2026-04-30 — Phase 4 — Rapier `castRay`: `hit.collider` is already a `Collider`, `hit.toi` doesn't exist
+Commit: Phase 4 combat.
+
+Two Rapier API mismatches caused TypeScript errors when implementing hitscan:
+
+1. `world.castRay(...)` returns a `RayColliderHit`. Its `.collider` property is already a `Collider` object — NOT a `ColliderHandle` number. Passing `hit.collider` to `world.getCollider()` (which expects a `number`) is a type error.
+   - **Fix**: call `hit.collider.parent()` directly to get the parent `RigidBody`.
+
+2. The toi (time of impact) property is `hit.timeOfImpact`, not `hit.toi`. The `toi` alias does not exist on this type.
+
+**Rule**: when in doubt, read the `@dimforge/rapier2d-compat` TypeScript declaration file directly — the API surface differs from the Rust docs.
+
+## 2026-04-30 — Phase 4 — Rapier query pipeline requires `world.step()` before `castRay` sees new bodies
+Commit: Phase 4 combat.
+
+Three `hitscanRaycast` unit tests returned `null` even though target bodies were spawned. Root cause: Rapier's broadphase/narrowphase (the "query pipeline") is only updated inside `world.step()`. Bodies spawned after the last `step()` do not yet exist in the pipeline — `castRay` cannot find them. In tests, the `beforeEach` spawned ships and immediately called `hitscan` without stepping.
+
+**Fix**: call `world.tick(1/60)` in `beforeEach` after spawning all bodies, before any `castRay` call.
+
+**Rule**: whenever a unit test spawns Rapier bodies and then calls `castRay` or any shape query, call `world.tick(1/60)` first to register the bodies in the query pipeline.
+
+## 2026-04-30 — Phase 4 — Server-side lag-comp must use geometric ray-sphere math, not Rapier `castRay`
+Commit: Phase 4 combat.
+
+The server main thread does not have a live Rapier world — physics runs in the `worker_threads` physics worker (Phase 2). Calling `castRay` on the main thread would require a separate Rapier world initialisation just for lag-comp, which is heavyweight and unnecessary.
+
+**Fix**: lag-comp uses `rayHitsSphere()` from `src/core/combat/Weapons.ts` — a pure-geometry ray-sphere intersection that operates on the `Float32Array` positions stored in `SnapshotRing`. No Rapier world needed.
+
+**Rule**: server-side hit validation must use the `SnapshotRing` positions + `rayHitsSphere()` combo, not Rapier. Rapier is physics worker-only.
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

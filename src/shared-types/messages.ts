@@ -17,13 +17,28 @@ export const IdentifyMessageSchema = z
   })
   .strict();
 
+export const FireMessageSchema = z
+  .object({
+    type: z.literal('fire'),
+    tick: z.number().int().nonnegative(),
+    clientShotId: z.string(),
+    weapon: z.enum(['hitscan', 'projectile']).default('hitscan'),
+    rayFromX: z.number(),
+    rayFromY: z.number(),
+    rayDirX: z.number(),
+    rayDirY: z.number(),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
+  FireMessageSchema,
 ]);
 
 export type InputMessage = z.infer<typeof InputMessageSchema>;
 export type IdentifyMessage = z.infer<typeof IdentifyMessageSchema>;
+export type FireMessage = z.infer<typeof FireMessageSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
 
 export interface WelcomeMessage {
@@ -44,4 +59,30 @@ export interface SnapshotMessage {
   /** Authoritative obstacle states. Client overwrites its predicted obstacle state
    *  with these each snapshot — no input replay, just a fresh re-sync. */
   obstacles: Record<string, { x: number; y: number; vx: number; vy: number; angle: number }>;
+}
+
+/** Server → client (direct): result of a fire request. */
+export interface HitAckMessage {
+  type: 'hit_ack';
+  clientShotId: string;
+  hit: boolean;
+  targetId?: string;
+  /** True only when the server discarded the shot (cooldown or temporal plausibility). */
+  rejected?: boolean;
+}
+
+/** Server → client (broadcast): a ship took damage. */
+export interface DamageEvent {
+  type: 'damage';
+  targetId: string;
+  damage: number;
+  newHealth: number;
+  shooterId: string;
+}
+
+/** Server → client (broadcast): a ship was destroyed. */
+export interface DestroyEvent {
+  type: 'destroy';
+  targetId: string;
+  shooterId: string;
 }

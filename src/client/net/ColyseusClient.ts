@@ -1,10 +1,12 @@
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ObstacleRenderState } from '@core/contracts/IRenderer';
-import type { WelcomeMessage, SnapshotMessage } from '@shared-types/messages';
+import type { RenderMirror, ObstacleRenderState, ProjectileRenderState } from '@core/contracts/IRenderer';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
+import { GhostManager } from '../combat/GhostProjectile';
+import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '@core/combat/Weapons';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -69,11 +71,20 @@ function lerpFramesForObstacleDrift(drift: number): number {
   return 14;                    // 233 ms — large post-collision snap
 }
 
+/** Simple monotonically incrementing shot ID generator. */
+let _shotCounter = 0;
+function nextShotId(): string {
+  return `shot-${_shotCounter++}`;
+}
+
 export class ColyseusGameClient {
   readonly mirror: RenderMirror = {
     ships: new Map(),
     obstacles: new Map(),
+    projectiles: new Map(),
     localPlayerId: null,
+    damagedShips: new Set(),
+    explodingShips: new Set(),
   };
 
   /** Radii of obstacles we've spawned in the prediction world, keyed by id. */
@@ -111,18 +122,17 @@ export class ColyseusGameClient {
   private lastSnapshotPos: { x: number; y: number } | null = null;
   /**
    * Server physics tick recorded from the welcome message.
-   * Used to normalise snap.serverTick into client-tick space:
-   *   clientRelativeServerTick = snap.serverTick - serverTickAtWelcome
-   * Without this, a player joining after the server has been running will have
-   * inputTick (starts at 0) << snap.serverTick (absolute from server start),
-   * producing a negative replay window and snapping predWorld every broadcast.
+   * Used to normalise snap.serverTick into client-tick space.
    */
   private serverTickAtWelcome = 0;
   private disposed = false;
 
   // Fixed-timestep accumulator for the input loop (driven by rAF in App.tsx).
-  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean } } | null = null;
+  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } } | null = null;
+  private lastFiredAtTick = -999;
   private accumulator = 0;
+  /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
+  private lastFrameMs = 1000 / 60;
 
   // Prediction
   private predWorld: PhysicsWorld | null = null;
@@ -140,10 +150,15 @@ export class ColyseusGameClient {
   // Remote ship interpolation: per-player timestamped history
   private remoteHistory = new Map<string, RemoteEntry[]>();
 
+  // Combat
+  private readonly ghostManager = new GhostManager();
+  /** Damage flash: set of player IDs currently flashing red (cleared after one frame). */
+  private readonly _damageFlashFrames = new Map<string, number>();
+
   async connect(
     wsUrl: string,
     storedPlayerId: string | null,
-    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean } },
+    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } },
     callbacks: ColyseusClientCallbacks,
   ): Promise<void> {
     // Init client-side prediction world before joining so it is ready as soon as
@@ -184,6 +199,7 @@ export class ColyseusGameClient {
         'serverTick:', msg.serverTick,
       );
       this.serverTickAtWelcome = msg.serverTick;
+      this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
       callbacks.onPlayerId(msg.playerId);
@@ -193,6 +209,22 @@ export class ColyseusGameClient {
 
     this.room.onMessage('snapshot', (snap: SnapshotMessage) => {
       this.handleSnapshot(snap);
+    });
+
+    this.room.onMessage('damage', (evt: DamageEvent) => {
+      this.handleDamage(evt);
+    });
+
+    this.room.onMessage('destroy', (evt: DestroyEvent) => {
+      this.handleDestroy(evt);
+    });
+
+    this.room.onMessage('hit_ack', (ack: HitAckMessage) => {
+      this.ghostManager.resolve(ack.clientShotId, ack.hit);
+      if (ack.rejected) {
+        useUIStore.getState().setSectorAlert('shot_rejected');
+        setTimeout(() => useUIStore.getState().setSectorAlert(null), 1500);
+      }
     });
 
     this.room.onStateChange((state: unknown) => {
@@ -215,6 +247,22 @@ export class ColyseusGameClient {
     callbacks.onConnectionStatus('connected');
     console.log('[ColyseusClient] connected — input loop driven by rAF');
     this.keyboard = keyboard;
+  }
+
+  // ── Combat event handlers ────────────────────────────────────────────────
+
+  private handleDamage(evt: DamageEvent): void {
+    const localId = this.mirror.localPlayerId;
+    if (evt.targetId === localId) {
+      const pct = Math.round((evt.newHealth / 100) * 100);
+      useUIStore.getState().setHullPct(pct);
+    }
+    // Flash the damaged ship for 6 frames.
+    this._damageFlashFrames.set(evt.targetId, 6);
+  }
+
+  private handleDestroy(evt: DestroyEvent): void {
+    this.mirror.explodingShips?.add(evt.targetId);
   }
 
   // ── Prediction bootstrap ────────────────────────────────────────────────
@@ -284,12 +332,7 @@ export class ColyseusGameClient {
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
-      // Reset remote ships to serverTick state BEFORE reconcile — exact same reason
-      // as obstacles: the replay loop calls world.tick() ~19 times and advances ALL
-      // Rapier bodies.  Without this reset, remote ships start the replay at ≈ inputTick
-      // and land at ≈ inputTick + 19, compounding across snapshots into large corrections.
-      // Resetting to serverTick lets the replay bring remote ships to inputTick together
-      // with the local ship, so Rapier collision detection sees consistent positions.
+      // Reset remote ships to serverTick state BEFORE reconcile.
       const preResetRemotePos = new Map<string, { x: number; y: number }>();
       for (const [remoteId, state] of Object.entries(snap.states)) {
         if (remoteId === localId) continue;
@@ -299,20 +342,7 @@ export class ColyseusGameClient {
         this.predWorld.setShipState(remoteId, state);
       }
 
-      // Reset obstacles to serverTick state BEFORE reconcile so that the replay
-      // loop (which calls world.tick() once per replay step) advances both ship
-      // and obstacles together from serverTick → inputTick.  Without this, the
-      // obstacles are already at ≈ inputTick when reconcile starts, and the
-      // replay advances them a further ticksAhead steps (≈ 19), leaving them
-      // ≈ 19 ticks ahead of where they should be.  That systematic overshoot
-      // compounds across snapshots until it exceeds the old 8u threshold and
-      // produces hard-teleport jumps (the post-collision jitter bug).
-      //
-      // Lerp offsets are computed AFTER reconcile (preReset − postReconcile),
-      // not before. The post-reconcile position is ≈ inputTick again, so for
-      // normal smooth motion (no velocity change) the offset ≈ 0 and no lerp
-      // fires. Only a server-side velocity change (another ship hitting the
-      // asteroid) produces a non-zero offset, which is then lerped smoothly.
+      // Reset obstacles to serverTick state BEFORE reconcile.
       const preResetObstaclePos = new Map<string, { x: number; y: number }>();
       if (this.predWorld && snap.obstacles) {
         for (const [id, state] of Object.entries(snap.obstacles)) {
@@ -328,7 +358,7 @@ export class ColyseusGameClient {
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
       this.reconciler.reconcile(serverState, snap.serverTick, this.inputTick, ackedTick);
 
-      // Compute lerp offsets now that reconcile has advanced obstacles to ≈ inputTick.
+      // Compute obstacle lerp offsets.
       if (this.predWorld && snap.obstacles) {
         for (const [id] of Object.entries(snap.obstacles)) {
           const preReset = preResetObstaclePos.get(id);
@@ -345,9 +375,7 @@ export class ColyseusGameClient {
         }
       }
 
-      // Compute lerp offsets for remote ships (same pattern as obstacles).
-      // preReset − postReconcile ≈ 0 in normal motion; non-zero only when the
-      // remote player changed direction during the replay window.
+      // Compute remote ship lerp offsets.
       if (this.predWorld) {
         for (const [remoteId, preReset] of preResetRemotePos) {
           const postReconcile = this.predWorld.getShipState(remoteId);
@@ -388,7 +416,6 @@ export class ColyseusGameClient {
       this.stats.rollingCorrRate = this._recentCorrFlags.length > 0
         ? this._recentCorrFlags.reduce((a, b) => a + b, 0) / this._recentCorrFlags.length
         : 0;
-      // Reconciler positions — valid because reconciler is non-null here.
       const rec = this.reconciler;
       const px = (n: number): number => parseFloat(n.toFixed(3));
       const recPositions = {
@@ -451,16 +478,11 @@ export class ColyseusGameClient {
         afterY: this.reconciler.lastAfterPos.y,
       });
     }
-
   }
 
   /**
    * Bootstrap any obstacles we haven't seen yet into the prediction world and
-   * publish their current state to the render mirror. Obstacles are NOT
-   * reconciled against the server — both sides simulate from the same initial
-   * state deterministically. Any mild divergence is visually acceptable for
-   * the diagnostic; the authoritative server result still drives ship motion
-   * via the snapshot reconciler.
+   * publish their current state to the render mirror.
    */
   private syncObstacles(obstacles: Map<string, unknown> | undefined): void {
     if (!obstacles) return;
@@ -479,8 +501,6 @@ export class ColyseusGameClient {
       };
       const radius = Number(o['radius'] ?? 24);
 
-      // Bootstrap into prediction world on first sight. Spawn at the current
-      // server position so the client picks up mid-simulation without a jump.
       if (this.predWorld && !this.predWorld.hasShip(id)) {
         this.predWorld.spawnObstacle(id, state.x, state.y, radius, 3);
         this.predWorld.setShipState(id, state);
@@ -501,6 +521,28 @@ export class ColyseusGameClient {
     }
   }
 
+  /** Sync authoritative projectile positions from Colyseus schema state. */
+  private syncProjectiles(projectiles: Map<string, unknown> | undefined): void {
+    if (!projectiles || !this.mirror.projectiles) return;
+    const seen = new Set<string>();
+    for (const [projId, raw] of projectiles.entries()) {
+      const p = raw as Record<string, unknown>;
+      if (p['destroyed']) continue;
+      seen.add(projId);
+      this.mirror.projectiles.set(projId, {
+        x: Number(p['x'] ?? 0),
+        y: Number(p['y'] ?? 0),
+        vx: Number(p['vx'] ?? 0),
+        vy: Number(p['vy'] ?? 0),
+        ownerId: String(p['ownerId'] ?? ''),
+        isGhost: false,
+      } satisfies ProjectileRenderState);
+    }
+    for (const id of this.mirror.projectiles.keys()) {
+      if (!seen.has(id)) this.mirror.projectiles.delete(id);
+    }
+  }
+
   // ── State mirror ────────────────────────────────────────────────────────
 
   private syncMirror(state: unknown): void {
@@ -508,7 +550,9 @@ export class ColyseusGameClient {
     const s = state as Record<string, unknown>;
     const ships = s['ships'] as Map<string, unknown> | undefined;
     const obstacles = s['obstacles'] as Map<string, unknown> | undefined;
+    const projectiles = s['projectiles'] as Map<string, unknown> | undefined;
     this.syncObstacles(obstacles);
+    this.syncProjectiles(projectiles);
     if (!ships) return;
 
     const localId = this.mirror.localPlayerId;
@@ -528,33 +572,20 @@ export class ColyseusGameClient {
       seen.add(playerId);
 
       if (playerId !== localId) {
-        // Store timestamped entry for display-delay interpolation (kept as spawn-detection fallback).
+        // Store timestamped entry for spawn-detection fallback.
         const hist = this.remoteHistory.get(playerId) ?? [];
         hist.push({ ts: now, state: parsed });
         if (hist.length > HISTORY_MAX) hist.shift();
         this.remoteHistory.set(playerId, hist);
-        // Seed mirror so ship-count is correct even before first updateMirror call.
         this.mirror.ships.set(playerId, parsed);
-        // Spawn a physics body in predWorld for collision prediction.
-        // Remote ships need the same presence in predWorld as obstacles so that
-        // reconcile() can advance them together with the local ship from
-        // serverTick → inputTick, and Rapier collision detection fires client-side.
-        //
-        // Guard: only spawn if we know who the local player is (localId !== null).
-        // On initial join, Colyseus sends the full state BEFORE the welcome message
-        // arrives, so localId is null and ALL ships — including the joining player's
-        // own ship — appear to pass the `playerId !== localId` check above.  If we
-        // spawn the local ship as a remote body here, tryInitPredWorld() sees
-        // hasShip()===true and returns early without creating the reconciler, breaking
-        // all physics.  Skipping when localId===null is safe: tryInitPredWorld()
-        // retrospectively spawns any unseen remote ships once the reconciler exists.
+
+        // Guard: only spawn if we know who the local player is.
         if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null) {
           this.predWorld.spawnShip(playerId, parsed.x, parsed.y);
           this.predWorld.setShipState(playerId, parsed);
           this.predRemoteShipIds.add(playerId);
         }
       } else if (!this.predWorld?.hasShip(playerId)) {
-        // Bootstrap prediction world as soon as we know our position.
         this.mirror.ships.set(playerId, parsed);
         this.tryInitPredWorld(playerId);
       }
@@ -578,9 +609,6 @@ export class ColyseusGameClient {
 
   /**
    * Called once per render frame by App.tsx before renderer.update().
-   * Updates the mirror:
-   *   - Local ship: prediction world state + decaying lerp offset.
-   *   - Remote ships: linearly interpolated with a 100 ms display delay.
    */
   updateMirror(): void {
     const localId = this.mirror.localPlayerId;
@@ -589,7 +617,6 @@ export class ColyseusGameClient {
     if (localId && this.predWorld && this.reconciler) {
       const state = this.predWorld.getShipState(localId);
       if (state) {
-        // Read offsets first, then advance (so this frame's render uses current offsets).
         const ox = this.reconciler.lerpOffset.x;
         const oy = this.reconciler.lerpOffset.y;
         const oa = this.reconciler.lerpAngleOffset;
@@ -607,8 +634,7 @@ export class ColyseusGameClient {
     // Server ghost position — orange diamond drawn at the raw snapshot coords.
     this.mirror.serverGhostPos = this.lastSnapshotPos;
 
-    // Obstacles — read from prediction world at 60 Hz with decaying lerp offsets
-    // to smooth any server-correction position deltas (same pattern as local ship).
+    // Obstacles — read from prediction world at 60 Hz with decaying lerp offsets.
     if (this.predWorld && this.mirror.obstacles) {
       for (const [id, radius] of this.predObstacleRadii) {
         const s = this.predWorld.getShipState(id);
@@ -627,10 +653,6 @@ export class ColyseusGameClient {
     }
 
     // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
-    // predWorld bodies advance continuously via Rapier physics between snapshots,
-    // giving smooth intermediate positions without a 100 ms display delay.
-    // Lerp offsets smooth any server correction that fires at snapshot boundaries
-    // (same pattern as local ship and obstacles).
     if (this.predWorld) {
       for (const remoteId of this.predRemoteShipIds) {
         if (remoteId === localId) continue;
@@ -648,25 +670,42 @@ export class ColyseusGameClient {
         this.mirror.ships.set(remoteId, { ...s, x: s.x + ox, y: s.y + oy });
       }
     }
+
+    // Ghost projectiles — advance and write to mirror.projectiles.
+    if (this.mirror.projectiles) {
+      this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
+    }
+
+    // Damage flash — advance counters, populate mirror.damagedShips.
+    this.mirror.damagedShips?.clear();
+    for (const [id, frames] of this._damageFlashFrames) {
+      if (frames <= 0) {
+        this._damageFlashFrames.delete(id);
+      } else {
+        this.mirror.damagedShips?.add(id);
+        this._damageFlashFrames.set(id, frames - 1);
+      }
+    }
+
+    // Exploding ships are a one-frame trigger — clear after renderer sees them.
+    this.mirror.explodingShips?.clear();
   }
 
   // ── Input loop (fixed-timestep, driven by rAF in App.tsx) ─────────────
 
   /**
    * Called once per rAF frame. Steps the input loop by however many 1/60-s
-   * ticks fit in the elapsed time. Using rAF instead of setInterval prevents
-   * the browser timer from firing at ~70 Hz and accumulating extra physics
-   * steps relative to the 60 Hz server — the root cause of high correction
-   * rates during thrust.
+   * ticks fit in the elapsed time.
    */
   tickPhysics(elapsedMs: number): void {
     if (!this.room || !this.keyboard) return;
+    this.lastFrameMs = elapsedMs;
     const FIXED_MS = 1000 / 60;
     // Cap to 5 ticks to avoid spiral-of-death after long frames or background tabs.
     this.accumulator += Math.min(elapsedMs, FIXED_MS * 5);
     while (this.accumulator >= FIXED_MS) {
       this.accumulator -= FIXED_MS;
-      const { thrust, turnLeft, turnRight } = this.keyboard.read();
+      const { thrust, turnLeft, turnRight, fireHeld } = this.keyboard.read();
       const tick = this.inputTick++;
       if (this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, sentAt: performance.now() };
@@ -675,7 +714,56 @@ export class ColyseusGameClient {
         this.reconciler.recordInput(rec);
       }
       this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight });
+
+      if (fireHeld && this.mirror.localPlayerId) {
+        this.updateLiveBeam();
+        if (tick - this.lastFiredAtTick >= WEAPON_COOLDOWN_TICKS) {
+          this.sendFire(tick);
+          this.lastFiredAtTick = tick;
+        }
+      } else {
+        this.mirror.liveBeam = null;
+      }
     }
+  }
+
+  /** Recomputes mirror.liveBeam from current predWorld ship state + client-side hitscan. */
+  private updateLiveBeam(): void {
+    const localId = this.mirror.localPlayerId;
+    if (!localId || !this.predWorld) return;
+    const state = this.predWorld.getShipState(localId);
+    if (!state) return;
+    const fwdX = -Math.sin(state.angle);
+    const fwdY = Math.cos(state.angle);
+    const fromX = state.x + fwdX * 20;
+    const fromY = state.y + fwdY * 20;
+    const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+    this.mirror.liveBeam = {
+      fromX,
+      fromY,
+      toX: hit ? fromX + fwdX * hit.dist : fromX + fwdX * HITSCAN_RANGE,
+      toY: hit ? fromY + fwdY * hit.dist : fromY + fwdY * HITSCAN_RANGE,
+      hitId: hit?.hitId,
+    };
+  }
+
+  private sendFire(tick: number): void {
+    const localId = this.mirror.localPlayerId;
+    if (!localId || !this.predWorld || !this.room) return;
+    const beam = this.mirror.liveBeam;
+    if (!beam) return;
+    const fwdX = -Math.sin(this.predWorld.getShipState(localId)?.angle ?? 0);
+    const fwdY = Math.cos(this.predWorld.getShipState(localId)?.angle ?? 0);
+    this.room.send('fire', {
+      type: 'fire',
+      tick,
+      clientShotId: nextShotId(),
+      weapon: 'hitscan',
+      rayFromX: beam.fromX,
+      rayFromY: beam.fromY,
+      rayDirX: fwdX,
+      rayDirY: fwdY,
+    });
   }
 
   dispose(): void {
@@ -690,7 +778,7 @@ export class ColyseusGameClient {
     this.predRemoteShipIds.clear();
     this._remoteShipOffsets.clear();
     this.mirror.obstacles?.clear();
+    this.mirror.projectiles?.clear();
     this.predObstacleRadii.clear();
   }
 }
-

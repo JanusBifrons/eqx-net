@@ -3,6 +3,8 @@ export interface BusEventPayloads {
   SHIP_DESPAWNED: { type: 'SHIP_DESPAWNED'; playerId: string };
   SHIP_INPUT_APPLIED: { type: 'SHIP_INPUT_APPLIED'; playerId: string; tick: number };
   LASER_FIRED: { type: 'LASER_FIRED'; shooterId: string; x: number; y: number; angle: number };
+  PLAYER_DAMAGED: { type: 'PLAYER_DAMAGED'; targetId: string; damage: number; newHealth: number };
+  SHIP_DESTROYED: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string };
   ENTITY_DESTROYED: { type: 'ENTITY_DESTROYED'; entityId: string };
   ENTITY_SLEPT: { type: 'ENTITY_SLEPT'; entityId: string };
   ENTITY_WOKE: { type: 'ENTITY_WOKE'; entityId: string };

@@ -61,7 +61,9 @@ Why: Zustand triggers React re-renders on subscription changes. Putting per-fram
 ## Client Prediction + Ghost Projectiles
 
 - **Prediction** (Phase 3): the client predicts its own ship by stepping the same `src/core/physics/World` the server uses, then reconciles against authoritative snapshots. Drift ≥ 2 units → 5-frame lerp. Remote ships interpolated with a 100 ms display-delay buffer.
-- **Ghost projectiles** (Phase 4): on fire input, immediately spawn a client-only sprite and play SFX. Match to authoritative projectile by `clientShotId` when it arrives; fade ghost, fade authoritative in. Ghosts never declare destruction — that is server-authoritative.
+- **Ghost projectiles** (Phase 4): on fire input, immediately spawn a client-only sprite (`GhostManager` in `src/client/combat/GhostProjectile.ts`). On `hit_ack` arrival, call `ghostManager.resolve(clientShotId, hit)` to fade the ghost. TTL 500 ms — if no `hit_ack` arrives, ghost fades automatically. Ghosts never declare destruction server-side.
+- **Fire input**: `Keyboard.fire` is a one-shot boolean. `read()` returns `fire: this.firePending` and immediately clears `firePending = false`. The keydown handler sets `firePending` only when `!e.repeat` — no hold-fire. `tickPhysics()` calls `sendFire(tick)` when `fire` is true, then the field is already cleared.
+- **Forward direction for fire ray**: same as thrust — `(-sin(angle), cos(angle))`. Ray origin offset 20 units ahead of ship centre to avoid self-hit.
 - Prediction and ghosts are presentation only. They must not influence authoritative state or be visible to other clients.
 
 ---

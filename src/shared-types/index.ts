@@ -9,9 +9,20 @@
 export {
   InputMessageSchema,
   IdentifyMessageSchema,
+  FireMessageSchema,
   ClientMessageSchema,
 } from './messages.js';
-export type { InputMessage, IdentifyMessage, ClientMessage, WelcomeMessage, SnapshotMessage } from './messages.js';
+export type {
+  InputMessage,
+  IdentifyMessage,
+  FireMessage,
+  ClientMessage,
+  WelcomeMessage,
+  SnapshotMessage,
+  HitAckMessage,
+  DamageEvent,
+  DestroyEvent,
+} from './messages.js';
 
 export {
   SEQLOCK_IDX, TICK_IDX, COUNT_IDX, HEADER_WORDS,

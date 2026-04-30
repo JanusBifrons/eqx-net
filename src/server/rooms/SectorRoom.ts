@@ -6,10 +6,10 @@ import { z } from 'zod';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import { SectorState, ShipState, ObstacleState } from './schema/SectorState.js';
+import { SectorState, ShipState, ObstacleState, ProjectileState } from './schema/SectorState.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
-import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage } from '../../shared-types/messages.js';
+import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -24,6 +24,18 @@ import {
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
+import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
+import { checkBackpressure } from '../net/Backpressure.js';
+import {
+  rayHitsSphere,
+  HITSCAN_DAMAGE,
+  PROJECTILE_DAMAGE,
+  HITSCAN_RANGE,
+  PROJECTILE_SPEED,
+  WEAPON_COOLDOWN_TICKS,
+  PROJECTILE_RADIUS,
+  SHIP_COLLISION_RADIUS,
+} from '../../core/combat/Weapons.js';
 
 const logger = pino({
   name: 'SectorRoom',
@@ -60,6 +72,8 @@ const JoinOptionsSchema = z
   .passthrough();
 
 const MAX_INPUTS_PER_TICK = 3;
+const LAG_COMP_WINDOW = 12;
+const PROJECTILE_MAX_TICKS = 180; // 3 s at 60 Hz
 
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
@@ -74,6 +88,15 @@ const ASTEROIDS: ReadonlyArray<{ id: string; x: number; y: number; vx: number; v
   { id: 'asteroid-1', x: -180, y:  120, vx: 0.3, vy: -0.2, radius: 24, mass: 3 },
   { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 40, mass: 7 },
 ];
+
+interface ProjectileRecord {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  ownerId: string;
+  birthTick: number;
+}
 
 export class SectorRoom extends Room<SectorState> {
   private physicsWorker!: Worker;
@@ -100,6 +123,12 @@ export class SectorRoom extends Room<SectorState> {
   private sabAppliedTicks = new Map<string, number>();
   private serverTick = 0;
   private broadcastCounter = 0;
+
+  // Combat
+  private readonly snapshotRing = new SnapshotRing();
+  private readonly lastFireClientTick = new Map<string, number>();
+  private readonly liveProjectiles = new Map<string, ProjectileRecord>();
+  private projectileCounter = 0;
 
   override async onCreate(_options: unknown): Promise<void> {
     this.setState(new SectorState());
@@ -167,8 +196,181 @@ export class SectorRoom extends Room<SectorState> {
       }
     });
 
+    this.onMessage('fire', (client: Client, raw: unknown) => {
+      this.handleFire(client, raw);
+    });
+
     this.setSimulationInterval(() => this.update(), 1000 / 60);
     logger.info('SectorRoom created');
+  }
+
+  // ── Combat ──────────────────────────────────────────────────────────────
+
+  private handleFire(client: Client, raw: unknown): void {
+    const parsed = FireMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      logger.warn({ sessionId: client.sessionId }, 'malformed fire message');
+      return;
+    }
+    const { tick, clientShotId, weapon, rayFromX, rayFromY, rayDirX, rayDirY } = parsed.data;
+
+    const shooterId = this.sessionToPlayer.get(client.sessionId);
+    if (!shooterId) return;
+
+    const ship = this.state.ships.get(shooterId);
+    if (!ship || !ship.alive) return;
+
+    // Temporal plausibility: reject claims older than LAG_COMP_WINDOW ticks (~200 ms).
+    if (this.serverTick - tick > LAG_COMP_WINDOW) {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+      client.send('hit_ack', ack);
+      return;
+    }
+
+    // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
+    // RTT jitter between consecutive messages doesn't cause false rejections.
+    const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
+    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+      client.send('hit_ack', ack);
+      return;
+    }
+    this.lastFireClientTick.set(shooterId, tick);
+
+    // Normalize ray direction defensively.
+    const len = Math.hypot(rayDirX, rayDirY);
+    if (len < 0.001) return;
+    const ndx = rayDirX / len;
+    const ndy = rayDirY / len;
+
+    if (weapon === 'projectile') {
+      this.spawnServerProjectile(shooterId, rayFromX, rayFromY, ndx * PROJECTILE_SPEED, ndy * PROJECTILE_SPEED);
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
+      client.send('hit_ack', ack);
+      return;
+    }
+
+    // Hitscan: lag-comp check against rewound positions of all other ships.
+    let hitId: string | null = null;
+    let hitDist = Infinity;
+
+    for (const [targetId] of this.playerToSlot) {
+      if (targetId === shooterId) continue;
+      const targetShip = this.state.ships.get(targetId);
+      if (!targetShip || !targetShip.alive) continue;
+
+      // Use rewound position if available; fall back to current position.
+      const rewound = this.snapshotRing.getAt(targetId, tick);
+      const cx = rewound?.x ?? targetShip.x;
+      const cy = rewound?.y ?? targetShip.y;
+
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, SHIP_COLLISION_RADIUS);
+      if (dist !== null && dist < hitDist) {
+        hitDist = dist;
+        hitId = targetId;
+      }
+    }
+
+    if (hitId) {
+      // Sampled LASER_FIRED log at 1 %.
+      if (Math.random() < 0.01) {
+        logger.info({ shooterId, hitId }, 'LASER_FIRED (1% sample)');
+      }
+      this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: hitId };
+      client.send('hit_ack', ack);
+    } else {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
+      client.send('hit_ack', ack);
+    }
+  }
+
+  private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number): void {
+    const projId = `proj-${this.projectileCounter++}`;
+    this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick });
+    const ps = new ProjectileState();
+    ps.projectileId = projId;
+    ps.ownerId = ownerId;
+    ps.x = x; ps.y = y;
+    ps.vx = vx; ps.vy = vy;
+    this.state.projectiles.set(projId, ps);
+  }
+
+  private applyDamage(targetId: string, shooterId: string, damage: number): void {
+    const ship = this.state.ships.get(targetId);
+    if (!ship || !ship.alive) return;
+    ship.health = Math.max(0, ship.health - damage);
+
+    const dmgEvent: DamageEvent = {
+      type: 'damage',
+      targetId,
+      damage,
+      newHealth: ship.health,
+      shooterId,
+    };
+    this.broadcast('damage', dmgEvent);
+    this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
+
+    if (ship.health <= 0) {
+      ship.alive = false;
+      const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
+      this.broadcast('destroy', destroyEvent);
+      this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
+      logger.info({ targetId, shooterId }, 'ship destroyed');
+    }
+  }
+
+  private advanceProjectiles(): void {
+    const DT = 1 / 60;
+    for (const [projId, proj] of this.liveProjectiles) {
+      proj.x += proj.vx * DT;
+      proj.y += proj.vy * DT;
+
+      // Lifetime check.
+      if (this.serverTick - proj.birthTick >= PROJECTILE_MAX_TICKS) {
+        this.liveProjectiles.delete(projId);
+        this.state.projectiles.delete(projId);
+        continue;
+      }
+
+      // Collision check against live ships.
+      let hit = false;
+      for (const [targetId] of this.playerToSlot) {
+        if (targetId === proj.ownerId) continue;
+        const targetShip = this.state.ships.get(targetId);
+        if (!targetShip || !targetShip.alive) continue;
+        const dx = proj.x - targetShip.x;
+        const dy = proj.y - targetShip.y;
+        const minDist = PROJECTILE_RADIUS + SHIP_COLLISION_RADIUS;
+        if (dx * dx + dy * dy < minDist * minDist) {
+          this.applyDamage(targetId, proj.ownerId, PROJECTILE_DAMAGE);
+          hit = true;
+          break;
+        }
+      }
+
+      if (hit) {
+        const ps = this.state.projectiles.get(projId);
+        if (ps) ps.destroyed = true;
+        this.liveProjectiles.delete(projId);
+        // Leave destroyed state in schema briefly so client sees it, then clean up next tick.
+        continue;
+      }
+
+      // Update schema position.
+      const ps = this.state.projectiles.get(projId);
+      if (ps) {
+        ps.x = proj.x;
+        ps.y = proj.y;
+      }
+    }
+
+    // Clean up destroyed entries from schema.
+    for (const [projId, ps] of this.state.projectiles) {
+      if (ps.destroyed && !this.liveProjectiles.has(projId)) {
+        this.state.projectiles.delete(projId);
+      }
+    }
   }
 
   // ── Worker lifecycle ────────────────────────────────────────────────────
@@ -237,6 +439,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     this.playerToSlot.set(playerId, slot);
     this.slotToPlayer.set(slot, playerId);
+    this.snapshotRing.registerEntity(playerId);
 
     const spawnX = (Math.random() - 0.5) * 400;
     const spawnY = (Math.random() - 0.5) * 400;
@@ -272,6 +475,8 @@ export class SectorRoom extends Room<SectorState> {
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
     this.sabAppliedTicks.delete(playerId);
+    this.lastFireClientTick.delete(playerId);
+    this.snapshotRing.unregisterEntity(playerId);
 
     const slot = this.playerToSlot.get(playerId);
     if (slot !== undefined) {
@@ -339,6 +544,20 @@ export class SectorRoom extends Room<SectorState> {
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
 
+    // Record positions for lag compensation.
+    this.snapshotRing.record(
+      this.serverTick,
+      Array.from(this.playerToSlot.keys())
+        .filter((id) => this.state.ships.has(id))
+        .map((id) => {
+          const s = this.state.ships.get(id)!;
+          return { id, x: s.x, y: s.y, vx: s.vx, vy: s.vy };
+        }),
+    );
+
+    // Advance physical projectiles and check for collisions.
+    this.advanceProjectiles();
+
     // Broadcast authoritative snapshot at 20 Hz using an independent counter
     // on the main thread, not a SAB tick divisibility check. Divisibility caused
     // ~25% missed broadcasts when the two 60 Hz loops (worker + Colyseus) were
@@ -361,7 +580,18 @@ export class SectorRoom extends Room<SectorState> {
         if (o) obstacles[id] = { x: o.x, y: o.y, vx: o.vx, vy: o.vy, angle: o.angle };
       }
       const snap: SnapshotMessage = { type: 'snapshot', serverTick: this.serverTick, states, ackedTicks, obstacles };
-      this.broadcast('snapshot', snap);
+
+      // Per-client backpressure check before broadcast.
+      for (const client of this.clients) {
+        const bp = checkBackpressure(client, logger);
+        if (bp === 'close') {
+          client.leave(4002);
+          continue;
+        }
+        if (bp === 'drop') continue;
+        client.send('snapshot', snap);
+      }
+
       serverLogEvent('snapshot_broadcast', {
         serverTick: this.serverTick,
         playerCount: this.playerToSlot.size,

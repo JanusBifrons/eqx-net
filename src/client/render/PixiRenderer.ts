@@ -14,6 +14,11 @@ const BACKGROUND_COLOR = 0x05070f;
 const GRID_CELL = 200;
 const GRID_COLOR = 0x1a2040;
 const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
+const DAMAGE_FLASH_COLOR = 0xff2222;
+const PROJECTILE_COLOR = 0xffdd44;
+const GHOST_PROJECTILE_COLOR = 0xff8800;
+const LASER_BEAM_COLOR = 0x00eeff;
+const LASER_CORE_COLOR = 0xffffff;
 
 function buildGrid(): Graphics {
   const g = new Graphics();
@@ -37,7 +42,6 @@ function buildShipGfx(color: number): Graphics {
     { x: 10, y: 10 },
   ]);
   g.fill({ color });
-  // Overlay the true collision radius so the player can see where the hitbox is.
   g.circle(0, 0, SHIP_HITBOX_RADIUS);
   g.stroke({ color: HITBOX_COLOR, width: 1, alpha: 0.6 });
   return g;
@@ -54,11 +58,43 @@ function buildAsteroidGfx(radius: number): Graphics {
 
 function buildGhostGfx(): Graphics {
   const g = new Graphics();
-  // Diamond shape — clearly distinct from the ship triangle.
   g.poly([{ x: 0, y: -14 }, { x: 10, y: 0 }, { x: 0, y: 14 }, { x: -10, y: 0 }]);
   g.fill({ color: SERVER_GHOST_COLOR, alpha: 0.55 });
   g.circle(0, 0, 12);
   g.stroke({ color: SERVER_GHOST_COLOR, width: 1.5, alpha: 0.9 });
+  return g;
+}
+
+function buildProjectileGfx(isGhost: boolean): Graphics {
+  const g = new Graphics();
+  const color = isGhost ? GHOST_PROJECTILE_COLOR : PROJECTILE_COLOR;
+  g.circle(0, 0, 4);
+  g.fill({ color, alpha: isGhost ? 0.7 : 1 });
+  return g;
+}
+
+function buildBeamGfx(dx: number, dy: number): Graphics {
+  const g = new Graphics();
+  // Outer glow
+  g.moveTo(0, 0).lineTo(dx, dy);
+  g.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
+  // Bright core
+  g.moveTo(0, 0).lineTo(dx, dy);
+  g.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
+  return g;
+}
+
+function buildExplosionGfx(): Graphics {
+  const g = new Graphics();
+  // Simple starburst: 8 lines radiating from center.
+  for (let i = 0; i < 8; i++) {
+    const angle = (i / 8) * Math.PI * 2;
+    const r = 20;
+    g.moveTo(0, 0).lineTo(Math.cos(angle) * r, Math.sin(angle) * r);
+  }
+  g.stroke({ color: 0xff6600, width: 2, alpha: 0.9 });
+  g.circle(0, 0, 8);
+  g.fill({ color: 0xffaa00, alpha: 0.8 });
   return g;
 }
 
@@ -68,6 +104,9 @@ export class PixiRenderer implements IRenderer {
   private shipContainer!: Container;
   private sprites = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
+  private projectileSprites = new Map<string, Graphics>();
+  private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
+  private liveBeamGfx: Graphics | null = null;
   private initialized = false;
 
   async init(rawContainer: unknown): Promise<void> {
@@ -104,7 +143,6 @@ export class PixiRenderer implements IRenderer {
     };
     window.addEventListener('resize', resize);
 
-    // Store cleanup ref on the app for dispose()
     (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
   }
 
@@ -123,8 +161,44 @@ export class PixiRenderer implements IRenderer {
       }
 
       sprite.x = ship.x;
-      sprite.y = -ship.y; // Rapier Y-up → Pixi Y-down
+      sprite.y = -ship.y;
       sprite.rotation = -ship.angle;
+
+      // Damage flash takes priority; beam hit tint is secondary.
+      if (mirror.damagedShips?.has(playerId)) {
+        sprite.tint = DAMAGE_FLASH_COLOR;
+      } else if (mirror.liveBeam?.hitId === playerId) {
+        sprite.tint = 0xff2222;
+      } else {
+        sprite.tint = 0xffffff;
+      }
+    }
+
+    // Explosion sprites spawned this frame for destroyed ships.
+    if (mirror.explodingShips) {
+      for (const targetId of mirror.explodingShips) {
+        const shipSprite = this.sprites.get(targetId);
+        const x = shipSprite?.x ?? 0;
+        const y = shipSprite?.y ?? 0;
+        const expl = buildExplosionGfx();
+        expl.x = x;
+        expl.y = y;
+        this.shipContainer.addChild(expl);
+        this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+      }
+    }
+
+    // Advance and remove expired explosion sprites.
+    for (let i = this.explosionSprites.length - 1; i >= 0; i--) {
+      const e = this.explosionSprites[i]!;
+      e.framesLeft--;
+      e.gfx.alpha = e.framesLeft / 30;
+      e.gfx.scale.set(1 + (1 - e.framesLeft / 30) * 1.5);
+      if (e.framesLeft <= 0) {
+        this.shipContainer.removeChild(e.gfx);
+        e.gfx.destroy();
+        this.explosionSprites.splice(i, 1);
+      }
     }
 
     if (mirror.obstacles) {
@@ -139,6 +213,7 @@ export class PixiRenderer implements IRenderer {
         sprite.x = obs.x;
         sprite.y = -obs.y;
         sprite.rotation = -obs.angle;
+        sprite.tint = (mirror.liveBeam?.hitId === id) ? 0xff2222 : 0xffffff;
       }
     }
 
@@ -147,6 +222,36 @@ export class PixiRenderer implements IRenderer {
         this.shipContainer.removeChild(sprite);
         sprite.destroy();
         this.sprites.delete(id);
+      }
+    }
+
+    // Projectiles and ghost projectiles.
+    if (mirror.projectiles) {
+      const projSeen = new Set<string>();
+      for (const [projId, proj] of mirror.projectiles) {
+        projSeen.add(projId);
+        let ps = this.projectileSprites.get(projId);
+        if (!ps) {
+          if (proj.beam) {
+            const dx = proj.beam.toX - proj.x;
+            const dy = -(proj.beam.toY - proj.y); // Y-flip for Pixi
+            ps = buildBeamGfx(dx, dy);
+          } else {
+            ps = buildProjectileGfx(proj.isGhost ?? false);
+          }
+          this.shipContainer.addChild(ps);
+          this.projectileSprites.set(projId, ps);
+        }
+        ps.x = proj.x;
+        ps.y = -proj.y;
+        ps.alpha = proj.alpha ?? 1;
+      }
+      for (const [projId, ps] of this.projectileSprites) {
+        if (!projSeen.has(projId)) {
+          this.shipContainer.removeChild(ps);
+          ps.destroy();
+          this.projectileSprites.delete(projId);
+        }
       }
     }
 
@@ -162,6 +267,28 @@ export class PixiRenderer implements IRenderer {
       this.serverGhost.y = -mirror.serverGhostPos.y;
     } else if (this.serverGhost) {
       this.serverGhost.visible = false;
+    }
+
+    // Live hitscan beam — redrawn every frame so it tracks ship rotation.
+    if (mirror.liveBeam) {
+      if (!this.liveBeamGfx) {
+        this.liveBeamGfx = new Graphics();
+        this.shipContainer.addChild(this.liveBeamGfx);
+      }
+      const b = mirror.liveBeam;
+      const dx = b.toX - b.fromX;
+      const dy = -(b.toY - b.fromY); // Y-flip for Pixi
+      this.liveBeamGfx.clear();
+      // Outer glow
+      this.liveBeamGfx.moveTo(b.fromX, -b.fromY).lineTo(b.toX, -b.toY);
+      this.liveBeamGfx.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
+      // Bright core
+      this.liveBeamGfx.moveTo(b.fromX, -b.fromY).lineTo(b.toX, -b.toY);
+      this.liveBeamGfx.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
+      this.liveBeamGfx.visible = true;
+      void dx; void dy;
+    } else {
+      if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;

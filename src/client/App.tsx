@@ -274,6 +274,12 @@ function GameSurface(): JSX.Element {
           el.dataset['shipPositions'] = JSON.stringify(posMap);
           el.dataset['localPlayerId'] = localId ?? '';
           el.dataset['predStats'] = JSON.stringify(gameClient.stats);
+          // Expose combat state for E2E assertions.
+          const uiState = useUIStore.getState();
+          el.dataset['hullPct'] = String(uiState.hullPct);
+          el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
+          el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
+          el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
           // Expose obstacle positions for E2E collision stability assertions.
           if (gameClient.mirror.obstacles) {
             const obsMap: Record<string, { x: number; y: number }> = {};
