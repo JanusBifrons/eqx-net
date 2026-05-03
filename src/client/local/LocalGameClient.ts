@@ -1,4 +1,5 @@
-import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '@core/contracts/IRenderer';
+import { POSE_RING_DEPTH } from '@core/contracts/IRenderer';
 import { PhysicsWorld } from '@core/physics/World';
 import type { Keyboard } from '../input/Keyboard';
 import { SWARM_KIND_ASTEROID } from '../../shared-types/swarmWireFormat.js';
@@ -69,13 +70,22 @@ export class LocalGameClient {
     for (const [id, s] of states) {
       const meta = this.asteroidMeta.get(id);
       if (meta !== undefined) {
-        // Local mode has no wire packets, so prev == latest each frame and
-        // arrival timestamps tick with each render. The interpolator returns
-        // the latest pose unchanged when prev == latest.
+        // Local mode has no wire packets, so prev == latest each frame. The
+        // interpolator returns the latest pose unchanged when only one ring
+        // entry is populated.
+        const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
+        for (let i = 0; i < POSE_RING_DEPTH; i++) {
+          ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+        }
+        ring[0]!.x = s.x; ring[0]!.y = s.y; ring[0]!.angle = s.angle;
+        ring[0]!.vx = s.vx; ring[0]!.vy = s.vy;
+        ring[0]!.empty = false;
         const entry: SwarmRenderState = {
           x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle,
           prevX: s.x, prevY: s.y, prevAngle: s.angle,
           prevArrivalMs: 0, latestArrivalMs: 0,
+          poseRing: ring,
+          ringHead: 1,
           radius: meta.radius,
           kind: SWARM_KIND_ASTEROID,
           sleeping: false,

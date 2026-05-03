@@ -12,21 +12,61 @@ export interface ShipRenderState {
  * longer carried on Colyseus MapSchema. Radius is implied by `kind` (renderer
  * draws asteroids vs drones with their own visuals). Sleeping entries freeze
  * interpolation and stay parked at the last server-shipped pose.
+ *
+ * Phase 6.5 (jitter mitigation): `poseRing` is the authoritative source of
+ * truth for interpolation — a 3-deep circular buffer of recent arrivals,
+ * read by `swarmInterpolation` at `now − DISPLAY_DELAY_MS`. The
+ * `prev` and `latest` scalars are retained as a bookkeeping shadow of the last
+ * two ring writes for callers that still read them directly (e.g. local
+ * mode, decoder tests). Renderer code path goes through `interpolateSwarmPose`
+ * exclusively — those scalars are no longer read on the hot path.
  */
+export interface PoseRingEntry {
+  x: number;
+  y: number;
+  angle: number;
+  vx: number;
+  vy: number;
+  /** Wall-clock arrival timestamp (performance.now()) of the originating packet. */
+  arrivalMs: number;
+  /** Server tick of the originating packet — used for ordering when arrivals stack. */
+  serverTick: number;
+  /** True when the server told us this entity is at rest. */
+  sleeping: boolean;
+  /** Set to false on initialised slots; true on uninitialised pre-allocated slots. */
+  empty: boolean;
+}
+
+/** Depth of the per-entity pose ring. Must be ≥ ceil((DISPLAY_DELAY_MS +
+ *  one inter-arrival) / inter-arrival) + 1 so the *oldest* arrival the
+ *  interpolator might still be lerping FROM is still resident in the ring
+ *  when a new arrival lands. With DISPLAY_DELAY_MS=100 and 50ms broadcasts,
+ *  depth 3 is the theoretical minimum but offers no margin under jitter — a
+ *  late arrival evicts the oldest just as the interpolator still needs it,
+ *  producing a single-frame snap. Depth 4 has measured headroom for ±30 ms
+ *  arrival jitter. */
+export const POSE_RING_DEPTH = 4;
+
 export interface SwarmRenderState {
-  /** Latest pose received from the wire. Renderer lerps from `prev*` to this. */
+  /** Latest pose received from the wire. Mirror of `poseRing[ringHead − 1]`'s pose. */
   x: number;
   y: number;
   vx: number;
   vy: number;
   angle: number;
-  /** Pose from the previous packet — interpolation source. Equal to (x,y,angle) on first packet. */
+  /** Pose from the previous packet — bookkeeping shadow of `poseRing[ringHead − 2]`. */
   prevX: number;
   prevY: number;
   prevAngle: number;
-  /** Wall-clock arrival timestamps (performance.now()) for lerp t calculation. */
+  /** Wall-clock arrival timestamps (performance.now()) for the prev/latest pair. */
   prevArrivalMs: number;
   latestArrivalMs: number;
+  /** Phase 6.5 — fixed 3-deep circular buffer of recent poses, read by the
+   *  display-delay interpolator. Entries are pre-allocated; `empty` flag
+   *  distinguishes initialised slots from pre-allocated holes. */
+  poseRing: PoseRingEntry[];
+  /** Index of the next slot to write in `poseRing`. Wraps mod POSE_RING_DEPTH. */
+  ringHead: number;
   /** Collision radius. Renderer draws asteroids as circles of this size. */
   radius: number;
   /** 0 = asteroid, 1 = drone. */

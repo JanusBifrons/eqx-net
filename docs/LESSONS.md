@@ -14,6 +14,19 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-03 — Phase 6.5 — Wire-arrival-time interpolation breaks under jitter; display-delay buffer is immune
+Phase 6.5 sub-phase A.
+
+A 4000-entity diagnostic capture showed `avgMs.total = 1.5 ms / 16.67 ms` — server CPU was idle from a budget perspective — yet the user felt visible lag. Cause: `snapshotJitterMs = 29.3 ms`. Snapshot inter-arrival times scatter ±30 ms around the nominal 50 ms (broadcast every 3 ticks at 60 Hz) due to V8 minor-GC bursts and Colyseus's `setSimulationInterval` granularity, even when the server has 90 % budget headroom. TiDi (Phase 6) doesn't help — it scales physics dt under *budget overrun*, not arrival-time variance.
+
+The interpolator before this fix lerped between exactly two cached arrivals using `prevArrivalMs → latestArrivalMs` as the time axis. When arrivals stalled (a 30 ms wire-late packet), the sprite hit `t = 1` and froze at the latest pose; when the late packet finally arrived the sprite caught up in one jump. Visually: freeze-burst-freeze-burst at ~1 Hz.
+
+**Fix**: 3-deep `poseRing` per `SwarmRenderState`. Renderer reads at `now − DISPLAY_DELAY_MS` (100 ms) and walks the ring for the two arrivals bracketing that target time. Continuous lerp keyed by *render time* (always advancing at 60 Hz) instead of *arrival time* (jittery). 100 ms matches the Phase 3 remote-ship buffer so swarm and ship visuals stay temporally aligned.
+
+**What downstream phases need to know**: any future test that reads `prevX/latestArrivalMs` directly is reading bookkeeping shadows now, not the interpolation source. The decoder still maintains those fields for back-compat, but the renderer's hot path goes through `interpolateSwarmPose(entry, now, out)` which only reads `entry.poseRing` + `entry.ringHead`. If you bump `MAX_ENTITIES` past ~50 000, the `populated.sort` allocation in the interpolator will start showing up; promote to in-place sort or single-pass scan.
+
+---
+
 ## 2026-05-03 — Phase 5e — 500-entity acceptance gate met on dev machine
 Commit: Phase 5e — bulk seed + bandwidth + sleep + benchmark.
 

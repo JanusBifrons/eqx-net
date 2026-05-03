@@ -10,7 +10,8 @@
  * and then drop out until they wake. The decoder marks `sleeping=true` so
  * the renderer freezes interpolation; the entry stays in the mirror.
  */
-import type { RenderMirror, SwarmRenderState } from '../../core/contracts/IRenderer.js';
+import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
+import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
   SWARM_FLAG_FULL,
@@ -20,6 +21,16 @@ import {
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
+}
+
+/** Build a 3-deep ring of pre-allocated empty pose entries. Reused per entity
+ *  for the lifetime of that entity in the mirror — no per-packet allocation. */
+function makeEmptyRing(): PoseRingEntry[] {
+  const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
+  for (let i = 0; i < POSE_RING_DEPTH; i++) {
+    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+  }
+  return ring;
 }
 
 /**
@@ -93,16 +104,26 @@ export function decodeSwarmPacket(
     let entry = swarm.get(entityId);
     if (!entry) {
       // First sighting: prev = latest so the renderer's lerp returns the new
-      // pose with t = 1 (no lerp window yet to interpolate over).
+      // pose with t = 1 (no lerp window yet to interpolate over). Pose ring
+      // starts with this single arrival populated; the rest stay `empty`.
+      const ring = makeEmptyRing();
+      const slot = ring[0]!;
+      slot.x = x; slot.y = y; slot.angle = angle;
+      slot.vx = vx; slot.vy = vy;
+      slot.arrivalMs = nowMs; slot.serverTick = tick;
+      slot.sleeping = sleeping; slot.empty = false;
       entry = {
         x, y, vx, vy, angle, radius, kind, sleeping, lastUpdateTick: tick,
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
+        poseRing: ring,
+        ringHead: 1,
       };
       swarm.set(entityId, entry);
     } else {
       // Snapshot the old "latest" into "prev" before stamping the new pose,
-      // so the renderer can lerp from old → new across the inter-packet gap.
+      // so callers reading the prev/latest scalars (decoder tests, local
+      // mode) see the same shape they always did.
       entry.prevX = entry.x;
       entry.prevY = entry.y;
       entry.prevAngle = entry.angle;
@@ -118,6 +139,15 @@ export function decodeSwarmPacket(
       entry.kind = kind;
       entry.sleeping = sleeping;
       entry.lastUpdateTick = tick;
+
+      // Push the new pose into the ring at ringHead, then advance. This is
+      // what `interpolateSwarmPose` reads on the hot path.
+      const slot = entry.poseRing[entry.ringHead]!;
+      slot.x = x; slot.y = y; slot.angle = angle;
+      slot.vx = vx; slot.vy = vy;
+      slot.arrivalMs = nowMs; slot.serverTick = tick;
+      slot.sleeping = sleeping; slot.empty = false;
+      entry.ringHead = (entry.ringHead + 1) % POSE_RING_DEPTH;
     }
 
     if (seen) seen.add(entityId);

@@ -9,6 +9,7 @@ import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
+import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -193,6 +194,9 @@ export class ColyseusGameClient {
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
+  /** Phase 6.5 — EWMA of `snapshotIntervalMs`, used to size the adaptive
+   *  swarm display-delay buffer. 0 = uninitialised; first snapshot seeds. */
+  private _intervalEwma = 0;
   private readonly _recentCorrFlags: number[] = [];
 
   // Remote ship interpolation: per-player timestamped history
@@ -580,6 +584,17 @@ export class ColyseusGameClient {
       const prev = useUIStore.getState().serverTickHz;
       const smoothed = prev * 0.8 + instantHz * 0.2;
       useUIStore.getState().setServerTickHz(smoothed);
+
+      // Phase 6.5 — adapt the swarm display-delay buffer's lookback window
+      // to the observed inter-arrival cadence. EWMA-smoothed so single-tick
+      // jitter doesn't make sprites stutter as the delay snaps around.
+      // Steady-state at 60 Hz server: intervalMs ≈ 50 → delay = 75 → clamped
+      // to 100 (the floor). Burn / overload at 19 Hz: intervalMs ≈ 170 →
+      // delay = 255 — buffer always has half an arrival of headroom.
+      this._intervalEwma = this._intervalEwma === 0
+        ? intervalMs
+        : this._intervalEwma * 0.85 + intervalMs * 0.15;
+      setSwarmDisplayDelayMs(this._intervalEwma * ADAPTIVE_DELAY_FACTOR);
     }
 
     // Rolling jitter: max − min of the last 10 snapshot intervals.
