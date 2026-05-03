@@ -157,7 +157,8 @@ export class Reconciler {
       this.world.tick(1 / 60);
     }
 
-    const after = this.world.getShipState(this.playerId)!;
+    const after = this.world.getShipState(this.playerId);
+    if (!after) return;
     this.lastAfterPos.x = after.x;
     this.lastAfterPos.y = after.y;
     const drift = Math.hypot(after.x - before.x, after.y - before.y);

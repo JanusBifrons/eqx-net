@@ -22,6 +22,8 @@ export type {
   HitAckMessage,
   DamageEvent,
   DestroyEvent,
+  LaserFiredEvent,
+  RespawnAckMessage,
 } from './messages.js';
 
 export {

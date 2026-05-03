@@ -1,6 +1,6 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ObstacleRenderState, ProjectileRenderState } from '@core/contracts/IRenderer';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { useUIStore, type ConnectionStatus } from '../state/store';
@@ -85,6 +85,7 @@ export class ColyseusGameClient {
     localPlayerId: null,
     damagedShips: new Set(),
     explodingShips: new Set(),
+    remoteLasers: new Map(),
   };
 
   /** Radii of obstacles we've spawned in the prediction world, keyed by id. */
@@ -154,6 +155,8 @@ export class ColyseusGameClient {
   private readonly ghostManager = new GhostManager();
   /** Damage flash: set of player IDs currently flashing red (cleared after one frame). */
   private readonly _damageFlashFrames = new Map<string, number>();
+  /** Set when the local ship is destroyed — blocks firing until reconnect. */
+  private localDead = false;
 
   async connect(
     wsUrl: string,
@@ -227,6 +230,25 @@ export class ColyseusGameClient {
       }
     });
 
+    this.room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
+      // Own shots are already shown as liveBeam — only store remote ones.
+      if (evt.shooterId === this.mirror.localPlayerId) return;
+      const dx = evt.toX - evt.fromX;
+      const dy = evt.toY - evt.fromY;
+      const range = Math.hypot(dx, dy);
+      // Upsert: replaces the previous beam from this shooter so there is never
+      // more than one entry per shooter and the TTL resets on each shot.
+      (this.mirror.remoteLasers ??= new Map()).set(evt.shooterId, {
+        range,
+        hit: evt.hit,
+        expiresAt: performance.now() + 400,
+      });
+    });
+
+    this.room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
+      this.handleRespawnAck(msg);
+    });
+
     this.room.onStateChange((state: unknown) => {
       this.syncMirror(state);
     });
@@ -261,8 +283,68 @@ export class ColyseusGameClient {
     this._damageFlashFrames.set(evt.targetId, 6);
   }
 
+  /**
+   * Single authoritative path for removing any entity from the simulation.
+   * Called immediately on destroy event for both local and remote ships.
+   * syncMirror acts as a defensive fallback only.
+   */
+  private killEntity(id: string): void {
+    // Trigger explosion sprite on this frame (renderer consumes then App.tsx clears).
+    this.mirror.explodingShips?.add(id);
+
+    // Immediately remove physics body so hitscan and collisions cannot hit it.
+    this.predWorld?.despawnShip(id);
+
+    // Remove from render mirror so the sprite is culled this frame.
+    this.mirror.ships.delete(id);
+
+    if (id === this.mirror.localPlayerId) {
+      this.localDead = true;
+      this.mirror.liveBeam = null;
+      this.ghostManager.clearForShip(id);
+      useUIStore.getState().setHullPct(0);
+      useUIStore.getState().setDead(true);
+      useUIStore.getState().setSectorAlert('SHIP DESTROYED');
+      setTimeout(() => useUIStore.getState().setSectorAlert(null), 3000);
+    } else {
+      this.predRemoteShipIds.delete(id);
+      this.remoteHistory.delete(id);
+      this._remoteShipOffsets.delete(id);
+    }
+  }
+
   private handleDestroy(evt: DestroyEvent): void {
-    this.mirror.explodingShips?.add(evt.targetId);
+    this.killEntity(evt.targetId);
+  }
+
+  private handleRespawnAck(msg: RespawnAckMessage): void {
+    const playerId = this.mirror.localPlayerId;
+    if (!playerId || !this.predWorld) return;
+
+    // Spawn new physics body at server-assigned position.
+    this.predWorld.spawnShip(playerId, msg.x, msg.y);
+
+    // Re-initialise reconciler so it doesn't try to replay inputs from before death.
+    this.reconciler = new Reconciler(this.predWorld, playerId);
+
+    // Sync input tick to server tick so first fire passes temporal plausibility.
+    this.inputTick = msg.serverTick;
+
+    // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
+    this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
+
+    this.localDead = false;
+    useUIStore.getState().setDead(false);
+    useUIStore.getState().setHullPct(100);
+    useUIStore.getState().setSectorAlert(null);
+
+    console.log('[ColyseusClient] respawned at', msg.x.toFixed(1), msg.y.toFixed(1));
+  }
+
+  /** Send a respawn request to the server. Only valid while the local ship is dead. */
+  respawnShip(): void {
+    if (!this.room || !this.localDead) return;
+    this.room.send('respawn', { type: 'respawn' });
   }
 
   // ── Prediction bootstrap ────────────────────────────────────────────────
@@ -561,6 +643,12 @@ export class ColyseusGameClient {
 
     for (const [playerId, ship] of ships.entries()) {
       const sh = ship as Record<string, unknown>;
+      // Skip all dead ships — killEntity handles immediate cleanup when the destroy
+      // event arrives; this guard is a defensive fallback for the case where the
+      // state patch arrives before the destroy message.
+      const alive = (sh['alive'] as boolean | undefined) !== false;
+      if (!alive) continue;
+
       const parsed: ShipPhysicsState = {
         x: Number(sh['x'] ?? 0),
         y: Number(sh['y'] ?? 0),
@@ -687,8 +775,16 @@ export class ColyseusGameClient {
       }
     }
 
-    // Exploding ships are a one-frame trigger — clear after renderer sees them.
-    this.mirror.explodingShips?.clear();
+    // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
+    // actually sees the set on the frame it was populated.
+
+    // Expire remote lasers past their TTL.
+    if (this.mirror.remoteLasers && this.mirror.remoteLasers.size > 0) {
+      const now = performance.now();
+      for (const [id, laser] of this.mirror.remoteLasers) {
+        if (laser.expiresAt <= now) this.mirror.remoteLasers.delete(id);
+      }
+    }
   }
 
   // ── Input loop (fixed-timestep, driven by rAF in App.tsx) ─────────────
@@ -707,15 +803,18 @@ export class ColyseusGameClient {
       this.accumulator -= FIXED_MS;
       const { thrust, turnLeft, turnRight, fireHeld } = this.keyboard.read();
       const tick = this.inputTick++;
-      if (this.predWorld && this.reconciler && this.mirror.localPlayerId) {
+      if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, sentAt: performance.now() };
         this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight });
-        this.predWorld.tick(1 / 60);
         this.reconciler.recordInput(rec);
+        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight });
       }
-      this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight });
+      // Always advance physics — remote ships and obstacles must keep moving even while dead.
+      if (this.predWorld) {
+        this.predWorld.tick(1 / 60);
+      }
 
-      if (fireHeld && this.mirror.localPlayerId) {
+      if (fireHeld && this.mirror.localPlayerId && !this.localDead) {
         this.updateLiveBeam();
         if (tick - this.lastFiredAtTick >= WEAPON_COOLDOWN_TICKS) {
           this.sendFire(tick);
@@ -768,6 +867,8 @@ export class ColyseusGameClient {
 
   dispose(): void {
     this.disposed = true;
+    this.localDead = false;
+    useUIStore.getState().setDead(false);
     this.keyboard = null;
     this.room?.leave();
     this.room = null;
@@ -779,6 +880,7 @@ export class ColyseusGameClient {
     this._remoteShipOffsets.clear();
     this.mirror.obstacles?.clear();
     this.mirror.projectiles?.clear();
+    this.mirror.remoteLasers?.clear();
     this.predObstacleRadii.clear();
   }
 }

@@ -45,6 +45,13 @@ export interface RenderMirror {
   explodingShips?: Set<string>;
   /** Live hitscan beam, drawn every frame while fire is held. Null when not firing. */
   liveBeam?: { fromX: number; fromY: number; toX: number; toY: number; hitId?: string } | null;
+  /**
+   * Server-authoritative beams from remote players. Keyed by shooterId so a new shot
+   * from the same player always replaces the previous entry (no flicker, no accumulation).
+   * The renderer reads the shooter's current angle from mirror.ships each frame so the
+   * beam continuously sweeps as the remote ship rotates.
+   */
+  remoteLasers?: Map<string, { range: number; hit: boolean; expiresAt: number }>;
 }
 
 export interface IRenderer {

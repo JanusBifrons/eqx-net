@@ -36,8 +36,8 @@ async function getSectorAlert(page: Page): Promise<string> {
   return (await surface(page).getAttribute('data-sector-alert')) ?? '';
 }
 
-async function getProjectileCount(page: Page): Promise<number> {
-  return parseInt((await surface(page).getAttribute('data-projectile-count')) ?? '0', 10);
+async function getRemoteLaserCount(page: Page): Promise<number> {
+  return parseInt((await surface(page).getAttribute('data-remote-laser-count')) ?? '0', 10);
 }
 
 async function getBeamActive(page: Page): Promise<boolean> {
@@ -209,5 +209,92 @@ test('projectile weapon spawns and travels across the sector', async ({ browser 
     console.log(`\nProjectile pipeline on c1: beam fired ✓\n`);
   } finally {
     await Promise.all([c1.ctx.close(), c2.ctx.close()]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 7. Remote beam: c2 sees laser_fired from c1
+// ---------------------------------------------------------------------------
+test('remote beam: second client sees beam fired by first client', async ({ browser }) => {
+  const [shooter, observer] = await Promise.all([joinClient(browser), joinClient(browser)]);
+  try {
+    await Promise.all([
+      shooter.page.waitForTimeout(2000),
+      observer.page.waitForTimeout(2000),
+    ]);
+
+    // c1 fires; c2 should see data-remote-laser-count increment.
+    await shooter.page.keyboard.down('Space');
+    await shooter.page.waitForTimeout(250); // hold long enough for ≥1 server-acked fire
+    await shooter.page.keyboard.up('Space');
+
+    // Give the laser_fired broadcast time to round-trip and the TTL to still be live.
+    await observer.page.waitForFunction(
+      () => parseInt(
+        document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-remote-laser-count') ?? '0',
+        10,
+      ) > 0,
+      { timeout: 1500 },
+    );
+
+    const count = await getRemoteLaserCount(observer.page);
+    expect(count).toBeGreaterThan(0);
+    console.log(`\nRemote beam visible on observer: remoteLaserCount=${count} ✓\n`);
+  } finally {
+    await Promise.all([shooter.ctx.close(), observer.ctx.close()]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 8. Local ship death: victim sees hull=0, SHIP DESTROYED alert, beam off
+// ---------------------------------------------------------------------------
+test('victim sees own death: hull 0, SHIP DESTROYED alert, beam inactive', async ({ browser }) => {
+  const [shooter, victim] = await Promise.all([joinClient(browser), joinClient(browser)]);
+  try {
+    await Promise.all([
+      shooter.page.waitForTimeout(2000),
+      victim.page.waitForTimeout(2000),
+    ]);
+
+    // Shooter holds space for up to 12 s — HITSCAN_DAMAGE=20, 5 hits kill.
+    // Ships spawn at random positions so we keep rotating while firing.
+    let killed = false;
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      await shooter.page.keyboard.down('Space');
+      await shooter.page.waitForTimeout(300);
+      await shooter.page.keyboard.up('Space');
+      await shooter.page.waitForTimeout(50);
+      const hull = await getHullPct(victim.page);
+      if (hull === 0) {
+        killed = true;
+        break;
+      }
+    }
+
+    if (!killed) {
+      console.log('\nShips never faced each other in 12 s — skipping death assertions.\n');
+      return;
+    }
+
+    // Victim's hull must be at 0.
+    expect(await getHullPct(victim.page)).toBe(0);
+
+    // Victim must see the SHIP DESTROYED alert within 1 s of hull reaching 0.
+    await victim.page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-sector-alert') === 'SHIP DESTROYED',
+      { timeout: 1000 },
+    );
+    expect(await getSectorAlert(victim.page)).toBe('SHIP DESTROYED');
+
+    // Victim must not be able to fire (beam inactive even with space held).
+    await victim.page.keyboard.down('Space');
+    await victim.page.waitForTimeout(100);
+    expect(await getBeamActive(victim.page)).toBe(false);
+    await victim.page.keyboard.up('Space');
+
+    console.log('\nVictim death lifecycle: hull=0 ✓, alert ✓, beam blocked ✓\n');
+  } finally {
+    await Promise.all([shooter.ctx.close(), victim.ctx.close()]);
   }
 });

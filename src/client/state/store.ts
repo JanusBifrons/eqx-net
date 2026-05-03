@@ -38,6 +38,8 @@ interface UIStore {
   devData: DevData;
   /** Fraction 0–1 of snapshots that triggered a significant correction. Always-visible HUD stat. */
   correctionRate: number;
+  /** True when the local ship has been destroyed and is awaiting respawn. */
+  isDead: boolean;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -48,6 +50,7 @@ interface UIStore {
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;
   setDevData: (d: DevData) => void;
+  setDead: (dead: boolean) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -61,6 +64,7 @@ export const useUIStore = create<UIStore>((set) => ({
   shipCount: 0,
   devData: { rtt: 0, drift: 0, angleDrift: 0, lerping: false, snapshotIntervalMs: 0, ticksAhead: 0, snapshotCount: 0, significantCorrectionCount: 0, significantAngleCorrectionCount: 0, maxDriftUnits: 0, maxAngleDriftRad: 0, ackedTick: 0, inputTick: 0, serverTick: 0, serverX: 0, serverY: 0, beforeX: 0, beforeY: 0, afterX: 0, afterY: 0 },
   correctionRate: 0,
+  isDead: false,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -74,4 +78,5 @@ export const useUIStore = create<UIStore>((set) => ({
     devData: d,
     correctionRate: d.snapshotCount > 0 ? d.significantCorrectionCount / d.snapshotCount : 0,
   }),
+  setDead: (dead) => set({ isDead: dead }),
 }));

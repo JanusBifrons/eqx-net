@@ -19,6 +19,7 @@ const PROJECTILE_COLOR = 0xffdd44;
 const GHOST_PROJECTILE_COLOR = 0xff8800;
 const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
+const REMOTE_LASER_COLOR = 0xff6600;
 
 function buildGrid(): Graphics {
   const g = new Graphics();
@@ -107,6 +108,7 @@ export class PixiRenderer implements IRenderer {
   private projectileSprites = new Map<string, Graphics>();
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
   private liveBeamGfx: Graphics | null = null;
+  private remoteBeamGfx: Graphics | null = null;
   private initialized = false;
 
   async init(rawContainer: unknown): Promise<void> {
@@ -267,6 +269,44 @@ export class PixiRenderer implements IRenderer {
       this.serverGhost.y = -mirror.serverGhostPos.y;
     } else if (this.serverGhost) {
       this.serverGhost.visible = false;
+    }
+
+    // Remote beams from other players — orange, continuously tracking shooter rotation.
+    // Uses shooter's current angle from mirror.ships so the beam sweeps smoothly between
+    // server-acked shot events (every ~167ms). One Map entry per shooter — no flicker.
+    if (mirror.remoteLasers && mirror.remoteLasers.size > 0) {
+      if (!this.remoteBeamGfx) {
+        this.remoteBeamGfx = new Graphics();
+        this.shipContainer.addChild(this.remoteBeamGfx);
+      }
+      this.remoteBeamGfx.clear();
+      const now = performance.now();
+      for (const [shooterId, laser] of mirror.remoteLasers) {
+        const shooter = mirror.ships.get(shooterId);
+        if (!shooter) continue;
+        // Hold full brightness while shooter is actively firing; fade only in the
+        // last 150 ms of TTL (i.e. after they stop shooting).  With WEAPON_COOLDOWN
+        // = 167 ms and TTL = 400 ms, each new shot resets expiresAt well before the
+        // fade window, so the beam is solid-on while space is held.
+        const ttlRemaining = laser.expiresAt - now;
+        const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
+        // Derive direction from shooter's current angle so it sweeps in real time.
+        const fwdX = -Math.sin(shooter.angle);
+        const fwdY =  Math.cos(shooter.angle);
+        const fromX = shooter.x + fwdX * 20;
+        const fromY = shooter.y + fwdY * 20;
+        const toX = fromX + fwdX * laser.range;
+        const toY = fromY + fwdY * laser.range;
+        // Outer glow
+        this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+        this.remoteBeamGfx.stroke({ color: REMOTE_LASER_COLOR, width: 3, alpha: alpha * 0.4 });
+        // Bright core
+        this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+        this.remoteBeamGfx.stroke({ color: 0xffaa44, width: 1, alpha });
+      }
+      this.remoteBeamGfx.visible = true;
+    } else if (this.remoteBeamGfx) {
+      this.remoteBeamGfx.visible = false;
     }
 
     // Live hitscan beam — redrawn every frame so it tracks ship rotation.

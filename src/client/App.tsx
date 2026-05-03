@@ -212,6 +212,49 @@ function HUD(): JSX.Element {
   );
 }
 
+function DeathOverlay({ onRespawn }: { onRespawn: () => void }): JSX.Element {
+  const isDead = useUIStore((s) => s.isDead);
+  if (!isDead) return <></>;
+  return (
+    <Box
+      sx={{
+        position: 'absolute',
+        inset: 0,
+        zIndex: 20,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        bgcolor: 'rgba(0,0,0,0.65)',
+        gap: 3,
+        pointerEvents: 'all',
+      }}
+    >
+      <Typography
+        variant="h2"
+        sx={{ color: '#ff3333', fontWeight: 700, letterSpacing: 6, textTransform: 'uppercase', textShadow: '0 0 30px #ff0000' }}
+      >
+        You Died
+      </Typography>
+      <Button
+        variant="contained"
+        size="large"
+        onClick={onRespawn}
+        sx={{
+          bgcolor: '#00ff88',
+          color: '#000',
+          fontWeight: 700,
+          px: 6,
+          fontSize: '1.1rem',
+          '&:hover': { bgcolor: '#00cc6a' },
+        }}
+      >
+        Respawn
+      </Button>
+    </Box>
+  );
+}
+
 function GameSurface(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
@@ -220,6 +263,10 @@ function GameSurface(): JSX.Element {
   const animFrameRef = useRef<number>(0);
   const { setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay } =
     useUIStore();
+
+  const handleRespawn = useCallback(() => {
+    clientRef.current?.respawnShip();
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -259,6 +306,8 @@ function GameSurface(): JSX.Element {
           gameClient.tickPhysics(deltaMs);
           gameClient.updateMirror();
           renderer.update(gameClient.mirror);
+          // Clear one-frame triggers after the renderer has consumed them.
+          gameClient.mirror.explodingShips?.clear();
           const localId = gameClient.mirror.localPlayerId;
           const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
           if (localShip) {
@@ -280,6 +329,7 @@ function GameSurface(): JSX.Element {
           el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
           el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
+          el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
           // Expose obstacle positions for E2E collision stability assertions.
           if (gameClient.mirror.obstacles) {
             const obsMap: Record<string, { x: number; y: number }> = {};
@@ -324,6 +374,7 @@ function GameSurface(): JSX.Element {
       <HUD />
       <DevOverlay />
       <LogPanel />
+      <DeathOverlay onRespawn={handleRespawn} />
     </Box>
   );
 }

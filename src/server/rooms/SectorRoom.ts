@@ -9,7 +9,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SectorState, ShipState, ObstacleState, ProjectileState } from './schema/SectorState.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -200,6 +200,10 @@ export class SectorRoom extends Room<SectorState> {
       this.handleFire(client, raw);
     });
 
+    this.onMessage('respawn', (client: Client) => {
+      this.handleRespawn(client);
+    });
+
     this.setSimulationInterval(() => this.update(), 1000 / 60);
     logger.info('SectorRoom created');
   }
@@ -283,6 +287,20 @@ export class SectorRoom extends Room<SectorState> {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
     }
+
+    // Broadcast authoritative beam endpoint to ALL clients so they can render it.
+    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+    this.broadcast('laser_fired', {
+      type: 'laser_fired',
+      shooterId,
+      fromX: rayFromX,
+      fromY: rayFromY,
+      toX: beamEndX,
+      toY: beamEndY,
+      hit: !!hitId,
+      targetId: hitId ?? undefined,
+    } satisfies LaserFiredEvent);
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number): void {
@@ -318,6 +336,48 @@ export class SectorRoom extends Room<SectorState> {
       this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
       logger.info({ targetId, shooterId }, 'ship destroyed');
     }
+  }
+
+  private handleRespawn(client: Client): void {
+    const playerId = this.sessionToPlayer.get(client.sessionId);
+    if (!playerId) return;
+
+    const ship = this.state.ships.get(playerId);
+    if (!ship || ship.alive) return; // only dead ships may respawn
+
+    const slot = this.playerToSlot.get(playerId);
+    if (slot === undefined) return;
+
+    const spawnX = (Math.random() - 0.5) * 400;
+    const spawnY = (Math.random() - 0.5) * 400;
+
+    // Reset physics body in worker to new spawn position.
+    this.postToWorker({ type: 'DESPAWN', slot, playerId });
+    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
+
+    // Pre-populate SAB so update() reads a sane position before the worker responds.
+    const base = slotBase(slot);
+    this.sabF32[base + SLOT_X_OFF]  = spawnX;
+    this.sabF32[base + SLOT_Y_OFF]  = spawnY;
+    this.sabF32[base + SLOT_VX_OFF] = 0;
+    this.sabF32[base + SLOT_VY_OFF] = 0;
+
+    // Reset authoritative ship state.
+    ship.health = 100;
+    ship.alive  = true;
+    ship.x      = spawnX;
+    ship.y      = spawnY;
+    ship.vx     = 0;
+    ship.vy     = 0;
+
+    // Clear fire cooldown so first shot after respawn isn't rejected.
+    this.lastFireClientTick.delete(playerId);
+
+    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
+    const ack: RespawnAckMessage = { type: 'respawn_ack', x: spawnX, y: spawnY, serverTick: currentServerTick };
+    client.send('respawn_ack', ack);
+
+    logger.info({ playerId, spawnX, spawnY }, 'player respawned');
   }
 
   private advanceProjectiles(): void {
@@ -544,11 +604,14 @@ export class SectorRoom extends Room<SectorState> {
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
 
-    // Record positions for lag compensation.
+    // Record positions for lag compensation — alive ships only.
     this.snapshotRing.record(
       this.serverTick,
       Array.from(this.playerToSlot.keys())
-        .filter((id) => this.state.ships.has(id))
+        .filter((id) => {
+          const ship = this.state.ships.get(id);
+          return ship?.alive === true;
+        })
         .map((id) => {
           const s = this.state.ships.get(id)!;
           return { id, x: s.x, y: s.y, vx: s.vx, vy: s.vy };
@@ -569,7 +632,7 @@ export class SectorRoom extends Room<SectorState> {
       const ackedTicks: SnapshotMessage['ackedTicks'] = {};
       for (const [playerId] of this.playerToSlot) {
         const ship = this.state.ships.get(playerId);
-        if (ship) {
+        if (ship && ship.alive) {
           states[playerId] = { x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy, angle: ship.angle, angvel: ship.angvel };
           ackedTicks[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
         }

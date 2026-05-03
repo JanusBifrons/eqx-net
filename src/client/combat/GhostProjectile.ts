@@ -110,6 +110,13 @@ export class GhostManager {
     }
   }
 
+  /** Evict all unresolved ghosts for a ship that just died. */
+  clearForShip(ownerId: string): void {
+    for (const [id, ghost] of this.ghosts) {
+      if (ghost.ownerId === ownerId) this.ghosts.delete(id);
+    }
+  }
+
   get pendingCount(): number {
     return this.ghosts.size;
   }

@@ -86,3 +86,24 @@ export interface DestroyEvent {
   targetId: string;
   shooterId: string;
 }
+
+/** Server → client (direct): respawn confirmed — new position and server tick to reseed input clock. */
+export interface RespawnAckMessage {
+  type: 'respawn_ack';
+  x: number;
+  y: number;
+  serverTick: number;
+}
+
+/** Server → client (broadcast): a hitscan shot was fired. Sent to ALL clients so
+ *  they can render the beam. The endpoint is server-authoritative (lag-comp result). */
+export interface LaserFiredEvent {
+  type: 'laser_fired';
+  shooterId: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  hit: boolean;
+  targetId?: string;
+}
