@@ -388,6 +388,17 @@ function GameSurface(): JSX.Element {
           }
           el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
           el.dataset['remoteLaserRanges'] = JSON.stringify(remoteLaserRanges);
+          // Phase 5e: per-entity sleeping flags for the sleep-handshake E2E.
+          // Map of entityId → boolean. Empty when there's no swarm in view.
+          if (gameClient.mirror.swarm) {
+            const sleepMap: Record<string, boolean> = {};
+            for (const [entityId, s] of gameClient.mirror.swarm) {
+              sleepMap[String(entityId)] = !!s.sleeping;
+            }
+            el.dataset['swarmSleeping'] = JSON.stringify(sleepMap);
+          } else {
+            delete el.dataset['swarmSleeping'];
+          }
           // Expose swarm positions (asteroids/drones) for E2E collision stability
           // assertions. The string-keyed `data-obstacle-positions` attribute is
           // preserved so existing E2E tests keep working: each swarm entityId is
@@ -422,6 +433,11 @@ function GameSurface(): JSX.Element {
       const extraJoinOptions: Record<string, unknown> = {};
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
+      // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
+      if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
+      if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);
+      if (urlParams.has('swarmRadius')) extraJoinOptions['swarmRadius'] = parseFloat(urlParams.get('swarmRadius')!);
+      if (urlParams.has('singleAsteroid')) extraJoinOptions['singleAsteroid'] = urlParams.get('singleAsteroid') === '1';
 
       await gameClient.connect(SERVER_URL, storedId, keyboard, {
         onConnectionStatus: setConnectionStatus,

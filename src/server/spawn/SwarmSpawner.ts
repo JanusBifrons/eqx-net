@@ -70,6 +70,47 @@ export class SwarmSpawner {
     return spawned;
   }
 
+  /**
+   * Phase 5e bulk seed. Distributes `count` entities across an asteroid/drone
+   * mix (`ratio` is the asteroid fraction, default 0.8) over a deterministic
+   * spiral within `radius` of origin. Deterministic because tests need to
+   * count-and-locate seeded entities; the spawn pattern itself isn't game-
+   * critical. Returns the number actually spawned (capped by free slots).
+   *
+   * Slot exhaustion is logged by the caller — `seed()` returns the truncated
+   * count without throwing so a too-large `swarmCount` degrades gracefully.
+   */
+  seed(count: number, ratio = 0.8, radius = 18_000): number {
+    if (count <= 0) return 0;
+    const asteroidCount = Math.floor(count * ratio);
+    let spawned = 0;
+    // Sunflower-spiral spread across a disc bounded by `radius`. Gives a
+    // visually uniform distribution without clustering near origin.
+    const PHI = Math.PI * (3 - Math.sqrt(5)); // golden angle
+    for (let i = 0; i < count; i++) {
+      const t = (i + 0.5) / count;
+      const r = Math.sqrt(t) * radius;
+      const angle = i * PHI;
+      const x = Math.cos(angle) * r;
+      const y = Math.sin(angle) * r;
+      const isDrone = i >= asteroidCount;
+      const ok = isDrone
+        ? this.spawnDrone({ id: `swarm-drone-${i}`, x, y })
+        : this.spawnAsteroid({
+          id: `swarm-asteroid-${i}`,
+          x, y,
+          // Tiny drift so the wire isn't entirely static at low speeds.
+          vx: Math.cos(angle * 1.7) * 0.5,
+          vy: Math.sin(angle * 1.7) * 0.5,
+          radius: 24,
+          mass: 1,
+        });
+      if (!ok) break;
+      spawned++;
+    }
+    return spawned;
+  }
+
   /** Spawn one asteroid. Returns true on success, false if no free slot. */
   spawnAsteroid(a: AsteroidSpec): boolean {
     return this.spawnOne(0, a, undefined);

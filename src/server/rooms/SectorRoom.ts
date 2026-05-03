@@ -203,9 +203,25 @@ export class SectorRoom extends Room<SectorState> {
       asteroidConfig?: typeof ASTEROIDS;
       /** How many drones to seed at room start. 0 to skip. Defaults to 30 for non-test rooms. */
       droneCount?: number;
+      /**
+       * Phase 5e: bulk-seed N entities (asteroids + drones in `swarmRatio`
+       * mix) instead of using `asteroidConfig` + `droneCount`. When set,
+       * suppresses both legacy paths so we don't double-spawn.
+       */
+      swarmCount?: number;
+      swarmRatio?: number; // asteroid fraction; default 0.8
+      swarmRadius?: number; // spawn disc radius; default 18 000
+      /**
+       * Phase 5e sleep handshake test mode. Spawns exactly one stationary
+       * asteroid at a known position so the test can observe its sleep
+       * transition. Suppresses every other seed path.
+       */
+      singleAsteroid?: boolean;
     };
     this.testMode = roomOpts.testMode ?? false;
-    const asteroidRoster = roomOpts.asteroidConfig ?? ASTEROIDS;
+    const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
+    const useSingleAsteroid = roomOpts.singleAsteroid === true;
+    const asteroidRoster = (useBulkSeed || useSingleAsteroid) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -233,20 +249,40 @@ export class SectorRoom extends Room<SectorState> {
       logger.error({ requested: asteroidRoster.length, seeded }, 'swarm spawner: not all asteroids seeded (slot pool exhausted)');
     }
 
-    // Seed a small drone wave for early manual testing — Phase 5e will scale
-    // this to 500 entities behind the interest grid + spawner pacing. Drones
-    // ring the spawn area at distance 350u so the player can engage them
-    // without being instantly swarmed.
-    const droneCount = roomOpts.droneCount ?? (this.testMode ? 0 : 30);
-    for (let i = 0; i < droneCount; i++) {
-      const angle = (i / droneCount) * Math.PI * 2;
-      const r = 350;
-      const id = `drone-${i}`;
-      const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
-      if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
-      // Drones take 2 hitscan hits (HITSCAN_DAMAGE=20 → 40 health gives the
-      // satisfying 2-tap kill while still being tankier than ghost projectiles.)
-      this.swarmHealth.set(id, 40);
+    if (useSingleAsteroid) {
+      // Stationary asteroid 600 u from spawn — far enough that the worker's
+      // sleep hysteresis (12 ticks at v ≈ 0) trips quickly without the
+      // player accidentally bumping it. No drone, no AI behaviour wired.
+      this.swarmSpawner.spawnAsteroid({ id: 'sleep-rock', x: 600, y: 0, vx: 0, vy: 0, radius: 24, mass: 1 });
+      logger.info('Phase 5e single-asteroid sleep test seed');
+    } else if (useBulkSeed) {
+      // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
+      // small drone ring with a sunflower-spiral spread across a disc, sized
+      // by `swarmCount`. Used by the bandwidth E2E and the dev-machine soak.
+      const requested = roomOpts.swarmCount ?? 0;
+      const bulk = this.swarmSpawner.seed(requested, roomOpts.swarmRatio, roomOpts.swarmRadius);
+      if (bulk < requested) {
+        logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
+      }
+      // Match the per-drone health bookkeeping the legacy ring did, so the
+      // seeded drones still take 2 hitscan hits to die.
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind === 1) this.swarmHealth.set(rec.id, 40);
+      }
+      logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
+    } else {
+      // Seed a small drone wave for early manual testing. Drones ring the
+      // spawn area at distance 350u so the player can engage them without
+      // being instantly swarmed.
+      const droneCount = roomOpts.droneCount ?? (this.testMode ? 0 : 30);
+      for (let i = 0; i < droneCount; i++) {
+        const angle = (i / droneCount) * Math.PI * 2;
+        const r = 350;
+        const id = `drone-${i}`;
+        const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+        if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
+        this.swarmHealth.set(id, 40);
+      }
     }
 
     this.onMessage('input', (client: Client, raw: unknown) => {

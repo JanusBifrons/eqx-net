@@ -61,6 +61,21 @@ export interface PredictionStats {
   rollingCorrRate: number;
 }
 
+/** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
+interface BwStats {
+  startedAt: number;
+  swarmBytes: number;
+  swarmPackets: number;
+  snapshotBytes: number;
+  snapshotCount: number;
+  reset(): void;
+}
+
+function bwStats(): BwStats | null {
+  if (!import.meta.env.DEV) return null;
+  return (window as unknown as { __EQX_BW_STATS?: BwStats }).__EQX_BW_STATS ?? null;
+}
+
 /** Position drift below this is float32-serialisation noise. */
 const NOISE_THRESHOLD = 0.05;
 /** Angle drift below this is float32-serialisation noise (~0.057°). */
@@ -234,6 +249,32 @@ export class ColyseusGameClient {
     this.room = resolvedRoom;
     console.log('[ColyseusClient] joinOrCreate resolved, roomId:', this.room.roomId);
 
+    // Phase 5e: DEV-only inbound-bandwidth tally exposed on `window` so the
+    // swarm-bandwidth E2E can sample bytes/sec without DPI-level WS plumbing.
+    // Tracks `swarmBytes` (binary channel — the dominant cost) and
+    // `snapshotBytes` (JSON-shape approximation). Production builds tree-
+    // shake the window assignment via the import.meta.env.DEV branch.
+    if (import.meta.env.DEV) {
+      const w = window as unknown as { __EQX_BW_STATS?: BwStats };
+      if (!w.__EQX_BW_STATS) {
+        const stats: BwStats = {
+          startedAt: performance.now(),
+          swarmBytes: 0,
+          swarmPackets: 0,
+          snapshotBytes: 0,
+          snapshotCount: 0,
+          reset(): void {
+            this.startedAt = performance.now();
+            this.swarmBytes = 0;
+            this.swarmPackets = 0;
+            this.snapshotBytes = 0;
+            this.snapshotCount = 0;
+          },
+        };
+        w.__EQX_BW_STATS = stats;
+      }
+    }
+
     this.room.onMessage('welcome', (msg: WelcomeMessage) => {
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       console.log(
@@ -254,6 +295,14 @@ export class ColyseusGameClient {
     });
 
     this.room.onMessage('snapshot', (snap: SnapshotMessage) => {
+      const bw = bwStats();
+      if (bw) {
+        // Approximation — Colyseus uses msgpack on the wire, which is
+        // typically ~70% of the JSON length. Using JSON length is a
+        // conservative upper bound that's easy to compute without DPI.
+        bw.snapshotBytes += JSON.stringify(snap).length;
+        bw.snapshotCount += 1;
+      }
       this.handleSnapshot(snap);
     });
 
@@ -265,9 +314,12 @@ export class ColyseusGameClient {
     // keyed by `swarm-${entityId}` to avoid colliding with playerIds; the
     // server's `laser_fired` events use the same key for swarm hits.
     this.room.onMessage('swarm', (raw: unknown) => {
+      const bw = bwStats();
       if (raw instanceof ArrayBuffer) {
+        if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
         decodeSwarmPacket(raw, this.mirror);
       } else if (ArrayBuffer.isView(raw)) {
+        if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
         decodeSwarmPacket(raw, this.mirror);
       }
       this.syncSwarmIntoPredWorld();

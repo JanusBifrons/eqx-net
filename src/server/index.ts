@@ -76,6 +76,14 @@ gameServer.define('test-sector', SectorRoom, {
   asteroidConfig: [],
   maxClients: 8,
 });
+// Phase 5e soak room. swarmCount can be overridden per join via room
+// options, but the default of 500 is the master plan's acceptance gate.
+gameServer.define('swarm-soak', SectorRoom, {
+  swarmCount: 500,
+  swarmRatio: 0.8,
+  swarmRadius: 18_000,
+  maxClients: 8,
+});
 
 httpServer.on('upgrade', (req) => {
   logger.info({ url: req.url }, 'WS upgrade received');

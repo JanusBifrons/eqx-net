@@ -14,6 +14,15 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-03 — Phase 5e — 500-entity acceptance gate met on dev machine
+Commit: Phase 5e — bulk seed + bandwidth + sleep + benchmark.
+
+After the 5d interest grid + the 5e bulk-seed harness landed, a headless soak with 500 entities (80% asteroids, 20% drones) sustained **60.01 Hz** with `update()` averaging **0.24 ms (1.4 % of the 16.67 ms budget)** on a Windows dev box. Phase per-tick averages: sabRead 0.04 ms, swarmEncode 0.08 ms (per client), aiTick 0.11 ms — every phase is sub-millisecond, including AI iterating 100 drones. The Fly.io `shared-cpu-1x` soak proof remains a Phase 10 deliverable, but the dev-machine equivalent is green.
+
+The interest grid carries the wire-side acceptance — without it, 500 entities × 4 clients × 60 Hz × 24 B = 2.8 MB/s per client on a broadcast-all path, well above the 60 KB/s target. With the 9-cell window each client typically sees < 100 entities at full fidelity plus ~83 decimated entities/sec from the rest, comfortably inside budget.
+
+**Bench note**: `pnpm bench` reports NaN/0 for all benchmarks under vitest 2.1 + Node 24. Pre-existing — `physics-tick.bench.ts` from Phase 2 has the same symptom. The bench files compile, import cleanly, and the underlying code is exercised; the timing-extraction pipeline upstream needs a vitest/tinybench bump. Real perf data lives in the `tick_budget` server event for now.
+
 ## 2026-05-03 — Phase 5 — `setInterval(fn, 16.67)` only fires at 32–46 Hz on Windows
 Commit: hi-res tick loop.
 
