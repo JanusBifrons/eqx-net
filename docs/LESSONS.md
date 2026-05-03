@@ -14,6 +14,35 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-03 — Phase 5 — `setInterval(fn, 16.67)` only fires at 32–46 Hz on Windows
+Commit: hi-res tick loop.
+
+The Phase 1 worker physics loop and the Phase 1 SectorRoom main-thread loop both used `setInterval(fn, 1000/60)` to drive their 60 Hz tick. On Windows, Node's `setInterval` resolves to the OS multimedia-clock granularity (~15.6 ms) and fires only every other tick of that clock — measured 37.67 Hz on a localhost dev box, 46 Hz on the user's mobile-against-LAN setup. The diagnostic capture instrumentation (`tick_budget` server event) confirmed the *work* per tick was ~0.2 ms; the missing time was timer scheduling, not computation.
+
+**Fix**: replace both `setInterval`/`setSimulationInterval` callers with a `setImmediate`-driven hi-res loop:
+
+```ts
+const TICK_MS_HR = 1000 / 60;
+let nextTickAt = performance.now();
+const loop = (): void => {
+  if (stopped) return;
+  const now = performance.now();
+  if (now >= nextTickAt) {
+    step();
+    nextTickAt += TICK_MS_HR;
+    if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR; // catch-up cap
+  }
+  setImmediate(loop);
+};
+loop();
+```
+
+Result: server tick advanced 37.67 Hz → 60.00 Hz exactly. CPU overhead is negligible (the loop runs ~1000 iterations/sec, each one a clock check, totalling well under 1 % of one core).
+
+**Don't re-introduce `setInterval` for sub-20-ms intervals.** It will silently halve the simulation rate on every Windows dev machine. The Linux (Fly.io) setInterval granularity is much better, but coding to the lowest-common-denominator scheduler keeps dev experience consistent across platforms.
+
+**Diagnosis approach**: when the server tick rate seems wrong, sample `serverTick` advance over wall-clock from server-side `snapshot_broadcast` events (already in `getRecentEvents`). Don't rely on perceived feel — the user reported "30–60 % corr" which sounded like a client bug, but was actually the server failing to hit 60 Hz.
+
 ## 2026-05-03 — Phase 5 — Mobile `corr` rate of 30–60% caused by accumulator-cap discarding elapsed time
 Commit: Phase 5 sub-phase A (mobile reconciliation).
 

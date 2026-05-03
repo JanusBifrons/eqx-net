@@ -70,6 +70,8 @@ export default [
       '.pnpm-store/**',
       'playwright-report/**',
       'test-results/**',
+      'scripts/**',
+      'diag/**',
       '**/*.disabled',
     ],
   },

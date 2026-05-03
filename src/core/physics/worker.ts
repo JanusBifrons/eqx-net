@@ -120,7 +120,13 @@ async function main(): Promise<void> {
 
   parentPort!.postMessage({ type: 'READY' });
 
-  setInterval(() => {
+  // Hi-res tick loop. `setInterval(fn, 16.67)` on Windows quantises to the
+  // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
+  // which is what made the May 2026 capture show 37–46 Hz instead of 60.
+  // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
+  const TICK_MS_HR = 1000 / 60;
+  let nextTickAt = performance.now();
+  const step = (): void => {
     // Dequeue exactly one input per slot per step. Holding the last applied input
     // when the queue runs dry keeps the ship at its most recent control state.
     const appliedTicks = new Map<number, number>(); // slot → inputTick
@@ -207,7 +213,21 @@ async function main(): Promise<void> {
     for (const t of transitions) {
       parentPort!.postMessage({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
     }
-  }, TICK_MS);
+  };
+
+  const loop = (): void => {
+    const now = performance.now();
+    if (now >= nextTickAt) {
+      step();
+      nextTickAt += TICK_MS_HR;
+      // Catch-up cap: if we're more than 5 ticks behind (e.g. after a long GC
+      // pause), jump forward to "now" so we don't spiral. The simulation
+      // re-syncs to wall-clock instead of trying to replay a backlog.
+      if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+    }
+    setImmediate(loop);
+  };
+  loop();
 }
 
 main().catch((err: unknown) => {

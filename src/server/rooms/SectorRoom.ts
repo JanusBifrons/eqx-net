@@ -159,6 +159,23 @@ export class SectorRoom extends Room<SectorState> {
   /** Per-swarm-entity health. Drones are killable; asteroids are not present in this map. */
   private readonly swarmHealth = new Map<string, number>();
 
+  // Tick-budget telemetry. Accumulated each `update()`; flushed every 60 ticks
+  // (≈ 1 s wall-clock) to a single serverLogEvent so a diagnostic capture can
+  // see the breakdown without saturating the 500-entry server-event buffer.
+  private readonly tickBudgetSums: Record<string, number> = {
+    sabRead: 0,
+    projectiles: 0,
+    swarmEncode: 0,
+    swarmBroadcast: 0,
+    snapshotBroadcast: 0,
+    aiTick: 0,
+    aiFire: 0,
+    total: 0,
+  };
+  private tickBudgetSampleCount = 0;
+  private tickBudgetMaxTotalMs = 0;
+  private tickBudgetOverBudgetCount = 0;
+
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
@@ -274,9 +291,31 @@ export class SectorRoom extends Room<SectorState> {
       recordKill(killerUser, victimUser, 'hitscan', this.roomId);
     });
 
-    this.setSimulationInterval(() => this.update(), 1000 / 60);
+    // Hi-res tick loop. Colyseus's `setSimulationInterval` uses `setInterval`,
+    // which on Windows quantises to the ~15.6 ms multimedia-clock granularity
+    // and fires only ~32–46 times/sec instead of 60 (root cause of the May
+    // 2026 mobile-corr capture's 46 Hz server rate). setImmediate has ~1 ms
+    // granularity and lets us hit 60 Hz reliably across platforms.
+    const TICK_MS_HR = 1000 / 60;
+    let nextTickAt = performance.now();
+    const loop = (): void => {
+      if (this.simLoopStopped) return;
+      const now = performance.now();
+      if (now >= nextTickAt) {
+        this.update();
+        nextTickAt += TICK_MS_HR;
+        // Catch-up cap: if we're more than 5 ticks behind (e.g. GC pause),
+        // jump forward so we don't spiral.
+        if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+      }
+      setImmediate(loop);
+    };
+    loop();
     logger.info('SectorRoom created');
   }
+
+  /** Set in onDispose() so the setImmediate loop exits cleanly. */
+  private simLoopStopped = false;
 
   // ── Combat ──────────────────────────────────────────────────────────────
 
@@ -811,6 +850,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onDispose(): void {
+    this.simLoopStopped = true;
     this.physicsWorker?.terminate();
     logger.info('SectorRoom disposed');
   }
@@ -820,6 +860,14 @@ export class SectorRoom extends Room<SectorState> {
   private update(): void {
     this.inputCountThisTick.clear();
     if (this.playerToSlot.size === 0 && this.swarmRegistry.size() === 0) return;
+
+    const tStart = performance.now();
+    let tPhase = tStart;
+    const phaseTime = (key: keyof typeof this.tickBudgetSums): void => {
+      const now = performance.now();
+      this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + (now - tPhase);
+      tPhase = now;
+    };
 
     // Seqlock read: retry if a write is in progress or if data was torn
     // (seqlock changed between the two loads). Only player ships are mirrored
@@ -852,6 +900,7 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+    phaseTime('sabRead');
 
     // Record positions for lag compensation — alive ships only.
     this.snapshotRing.record(
@@ -869,6 +918,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
+    phaseTime('projectiles');
 
     // Periodic snapshot: every 5 minutes (60 Hz × 300 s = 18 000 ticks).
     if (this.serverTick > 0 && this.serverTick % 18_000 === 0) {
@@ -888,6 +938,7 @@ export class SectorRoom extends Room<SectorState> {
     const swarmPacket = this.serverTick > 0
       ? this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick)
       : null;
+    phaseTime('swarmEncode');
     if (swarmPacket) {
       for (const client of this.clients) {
         const bp = checkBackpressure(client, logger);
@@ -896,6 +947,7 @@ export class SectorRoom extends Room<SectorState> {
         client.send('swarm', swarmPacket);
       }
     }
+    phaseTime('swarmBroadcast');
 
     if (++this.broadcastCounter >= 3 && this.serverTick > 0) {
       this.broadcastCounter = 0;
@@ -930,6 +982,7 @@ export class SectorRoom extends Room<SectorState> {
         ),
       });
     }
+    phaseTime('snapshotBroadcast');
 
     // Tick AI behaviours AT THE END of update() so impulses posted now reach
     // the worker BEFORE the next SAB read. Defect 1 (5c-stabilise plan): if
@@ -945,9 +998,41 @@ export class SectorRoom extends Room<SectorState> {
         this.aiPlayerScratch.push({ id: pid, x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy });
       }
       this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
+      phaseTime('aiTick');
 
       const fires = this.aiController.drainFireRequests();
       for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
+      phaseTime('aiFire');
+    }
+
+    // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
+    // are emitted as one server event per second. The first capture told us
+    // server tick rate was 46 Hz instead of 60 — this breakdown will tell us
+    // which phase ate the budget so the fix is targeted, not speculative.
+    const totalMs = performance.now() - tStart;
+    this.tickBudgetSums['total'] = (this.tickBudgetSums['total'] ?? 0) + totalMs;
+    this.tickBudgetSampleCount++;
+    if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
+    if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
+    if (this.tickBudgetSampleCount >= 60) {
+      const avg: Record<string, number> = {};
+      for (const k of Object.keys(this.tickBudgetSums)) {
+        avg[k] = parseFloat((this.tickBudgetSums[k]! / this.tickBudgetSampleCount).toFixed(3));
+      }
+      serverLogEvent('tick_budget', {
+        serverTick: this.serverTick,
+        sampleCount: this.tickBudgetSampleCount,
+        avgMs: avg,
+        maxTotalMs: parseFloat(this.tickBudgetMaxTotalMs.toFixed(3)),
+        overBudgetCount: this.tickBudgetOverBudgetCount,
+        playerCount: this.playerToSlot.size,
+        swarmCount: this.swarmRegistry.size(),
+        aiSize: this.aiController.size(),
+      });
+      for (const k of Object.keys(this.tickBudgetSums)) this.tickBudgetSums[k] = 0;
+      this.tickBudgetSampleCount = 0;
+      this.tickBudgetMaxTotalMs = 0;
+      this.tickBudgetOverBudgetCount = 0;
     }
   }
 }
