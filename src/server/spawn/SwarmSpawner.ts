@@ -82,10 +82,18 @@ export class SwarmSpawner {
    */
   seed(count: number, ratio = 0.8, radius = 18_000): number {
     if (count <= 0) return 0;
-    const asteroidCount = Math.floor(count * ratio);
     let spawned = 0;
     // Sunflower-spiral spread across a disc bounded by `radius`. Gives a
     // visually uniform distribution without clustering near origin.
+    //
+    // Drone/asteroid kind is INTERLEAVED across the spiral via a stride
+    // derived from `ratio`, not segregated to the outer band by index. The
+    // older "i >= asteroidCount" approach put every drone at radii 16-18k —
+    // far outside any reasonable interest window — so the player at origin
+    // never saw a drone. Interleaving keeps the kind ratio while putting
+    // drones at every distance band.
+    const dronesPerCycle = Math.max(1, Math.round((1 - ratio) * 10));
+    const droneStride = 10; // 10 entities per cycle; `dronesPerCycle` of them are drones
     const PHI = Math.PI * (3 - Math.sqrt(5)); // golden angle
     for (let i = 0; i < count; i++) {
       const t = (i + 0.5) / count;
@@ -93,7 +101,7 @@ export class SwarmSpawner {
       const angle = i * PHI;
       const x = Math.cos(angle) * r;
       const y = Math.sin(angle) * r;
-      const isDrone = i >= asteroidCount;
+      const isDrone = (i % droneStride) < dronesPerCycle;
       const ok = isDrone
         ? this.spawnDrone({ id: `swarm-drone-${i}`, x, y })
         : this.spawnAsteroid({
