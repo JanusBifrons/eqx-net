@@ -10,6 +10,7 @@ import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS, SHIP_MAX_HEALTH } from '@core/com
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
+import { updateAnchor } from './clockAnchor';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -170,6 +171,9 @@ export class ColyseusGameClient {
    */
   private clockAnchorServerTick = 0;
   private clockAnchorPerfNow = 0;
+  /** True after the first snapshot has anchored the clock. Subsequent
+   *  snapshots EWMA-smooth the anchor PerfNow instead of snapping it. */
+  private _anchorInitialised = false;
   /**
    * Estimated half-RTT in ticks. The client should aim to be this many ticks
    * AHEAD of the latest known server tick so its inputs arrive at the server
@@ -291,6 +295,9 @@ export class ColyseusGameClient {
       this.welcomePerfNow = performance.now();
       this.clockAnchorServerTick = msg.serverTick;
       this.clockAnchorPerfNow = this.welcomePerfNow;
+      // The welcome handshake gives us a perfect anchor; let the next
+      // snapshot drop straight into EWMA-smoothing instead of snapping.
+      this._anchorInitialised = true;
       this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
@@ -502,6 +509,7 @@ export class ColyseusGameClient {
     this.welcomePerfNow = performance.now();
     this.clockAnchorServerTick = msg.serverTick;
     this.clockAnchorPerfNow = this.welcomePerfNow;
+    this._anchorInitialised = true;
 
     // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
     this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
@@ -606,13 +614,25 @@ export class ColyseusGameClient {
       ? Math.max(...this._recentIntervals) - Math.min(...this._recentIntervals)
       : 0;
 
-    // Re-anchor the input clock to this snapshot's server tick. Critical when
-    // the server is over-budget and effectively running below 60 Hz: without
-    // re-anchoring, the client's wall-clock-derived `targetTick` runs ahead
-    // of `serverTick` and the reconciler's replay window grows unboundedly,
-    // producing the 30-60% mobile `corr` rate observed in the May 2026 capture.
-    this.clockAnchorServerTick = snap.serverTick;
-    this.clockAnchorPerfNow = now;
+    // Re-anchor the input clock against this snapshot. Phase 6.5 Sub-phase B
+    // EWMA-smooths the anchor instead of snapping on every packet — a 30 ms-
+    // early arrival followed by a 30 ms-late one used to yank `targetTick`
+    // back and forth, blowing up the reconciler replay window into a 90 %
+    // correction storm under server-clock skew. Logic lives in `clockAnchor.ts`
+    // for unit-testability; see that module for the mechanic + thresholds.
+    if (this._anchorInitialised) {
+      const next = updateAnchor(
+        { anchorServerTick: this.clockAnchorServerTick, anchorPerfNow: this.clockAnchorPerfNow },
+        snap.serverTick,
+        now,
+      );
+      this.clockAnchorServerTick = next.anchorServerTick;
+      this.clockAnchorPerfNow = next.anchorPerfNow;
+    } else {
+      this.clockAnchorServerTick = snap.serverTick;
+      this.clockAnchorPerfNow = now;
+      this._anchorInitialised = true;
+    }
     // Smooth the half-RTT lead so a single jitter spike doesn't whip targetTick
     // around. 1/60 s = 16.67 ms per tick; clamp to a sane window.
     if (this.reconciler) {
