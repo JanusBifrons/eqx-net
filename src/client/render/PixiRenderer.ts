@@ -151,6 +151,14 @@ export class PixiRenderer implements IRenderer {
   update(mirror: RenderMirror): void {
     const seen = new Set<string>();
 
+    // Precompute the set of entities hit by any active remote beam this frame.
+    const remoteHitTargets = new Set<string>();
+    if (mirror.remoteLasers) {
+      for (const laser of mirror.remoteLasers.values()) {
+        if (laser.targetId) remoteHitTargets.add(laser.targetId);
+      }
+    }
+
     for (const [playerId, ship] of mirror.ships) {
       seen.add(playerId);
 
@@ -169,7 +177,7 @@ export class PixiRenderer implements IRenderer {
       // Damage flash takes priority; beam hit tint is secondary.
       if (mirror.damagedShips?.has(playerId)) {
         sprite.tint = DAMAGE_FLASH_COLOR;
-      } else if (mirror.liveBeam?.hitId === playerId) {
+      } else if (mirror.liveBeam?.hitId === playerId || remoteHitTargets.has(playerId)) {
         sprite.tint = 0xff2222;
       } else {
         sprite.tint = 0xffffff;
@@ -215,7 +223,7 @@ export class PixiRenderer implements IRenderer {
         sprite.x = obs.x;
         sprite.y = -obs.y;
         sprite.rotation = -obs.angle;
-        sprite.tint = (mirror.liveBeam?.hitId === id) ? 0xff2222 : 0xffffff;
+        sprite.tint = (mirror.liveBeam?.hitId === id || remoteHitTargets.has(id)) ? 0xff2222 : 0xffffff;
       }
     }
 

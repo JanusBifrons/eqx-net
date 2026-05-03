@@ -249,6 +249,7 @@ export class ColyseusGameClient {
       (this.mirror.remoteLasers ??= new Map()).set(evt.shooterId, {
         range,
         hit: evt.hit,
+        targetId: evt.targetId,
         expiresAt: performance.now() + 400,
       });
     });

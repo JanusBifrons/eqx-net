@@ -334,6 +334,13 @@ function GameSurface(): JSX.Element {
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
           el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
           el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
+          const remoteHitTargetIds: string[] = [];
+          if (gameClient.mirror.remoteLasers) {
+            for (const l of gameClient.mirror.remoteLasers.values()) {
+              if (l.targetId) remoteHitTargetIds.push(l.targetId);
+            }
+          }
+          el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
           // Expose obstacle positions for E2E collision stability assertions.
           if (gameClient.mirror.obstacles) {
             const obsMap: Record<string, { x: number; y: number }> = {};

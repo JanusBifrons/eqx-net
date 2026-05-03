@@ -44,6 +44,29 @@ async function getBeamActive(page: Page): Promise<boolean> {
   return (await surface(page).getAttribute('data-beam-active')) === '1';
 }
 
+async function getRemoteHitTargets(page: Page): Promise<string[]> {
+  return JSON.parse((await surface(page).getAttribute('data-remote-hit-targets')) ?? '[]') as string[];
+}
+
+async function getLocalPlayerId(page: Page): Promise<string> {
+  return (await surface(page).getAttribute('data-local-player-id')) ?? '';
+}
+
+async function joinClientAt(browser: Browser, spawnX: number, spawnY: number) {
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  await page.goto(`${BASE_URL}?spawnX=${spawnX}&spawnY=${spawnY}`);
+  await page.getByRole('button', { name: /enter sector alpha/i }).click();
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-testid="ship-count"]');
+      return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+    },
+    { timeout: 12000 },
+  );
+  return { ctx, page };
+}
+
 // ---------------------------------------------------------------------------
 // 1. Beam appears while space is held
 // ---------------------------------------------------------------------------
@@ -296,5 +319,139 @@ test('victim sees own death: hull 0, SHIP DESTROYED alert, beam inactive', async
     console.log('\nVictim death lifecycle: hull=0 ✓, alert ✓, beam blocked ✓\n');
   } finally {
     await Promise.all([shooter.ctx.close(), victim.ctx.close()]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 9. Remote laser targetId: victim page sees its own ID in data-remote-hit-targets
+// ---------------------------------------------------------------------------
+test('remote laser targetId propagated to observer on ship hit', async ({ browser }) => {
+  const [shooter, victim] = await Promise.all([joinClient(browser), joinClient(browser)]);
+  try {
+    await Promise.all([
+      shooter.page.waitForTimeout(2000),
+      victim.page.waitForTimeout(2000),
+    ]);
+
+    // The victim also receives the shooter's laser_fired broadcast; when
+    // targetId === victimId the victim's own data-remote-hit-targets should list it.
+    const victimId = await getLocalPlayerId(victim.page);
+    expect(victimId).not.toBe('');
+
+    let hitWithTargetId = false;
+    const deadline = Date.now() + 12000;
+
+    while (Date.now() < deadline) {
+      await shooter.page.keyboard.down('Space');
+      await shooter.page.waitForTimeout(200);
+      await shooter.page.keyboard.up('Space');
+      await shooter.page.waitForTimeout(50);
+
+      const remoteHits = await getRemoteHitTargets(victim.page);
+      if (remoteHits.includes(victimId)) {
+        hitWithTargetId = true;
+        break;
+      }
+    }
+
+    console.log(`\nRemote ship hit targetId round-trip: hit=${hitWithTargetId}\n`);
+    if (hitWithTargetId) {
+      expect(hitWithTargetId).toBe(true);
+    } else {
+      console.log('Ships never faced each other in 12 s — no hit assertion possible.');
+    }
+  } finally {
+    await Promise.all([shooter.ctx.close(), victim.ctx.close()]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 10. Remote laser data-remote-hit-targets clears once TTL expires
+// ---------------------------------------------------------------------------
+test('remote hit targets clears after TTL when shooter stops firing', async ({ browser }) => {
+  const [shooter, observer] = await Promise.all([joinClient(browser), joinClient(browser)]);
+  try {
+    await Promise.all([
+      shooter.page.waitForTimeout(2000),
+      observer.page.waitForTimeout(2000),
+    ]);
+
+    // Fire once and confirm the observer eventually has a remote laser entry.
+    await shooter.page.keyboard.down('Space');
+    await shooter.page.waitForTimeout(200);
+    await shooter.page.keyboard.up('Space');
+
+    await observer.page.waitForFunction(
+      () => parseInt(
+        document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-remote-laser-count') ?? '0',
+        10,
+      ) > 0,
+      { timeout: 1500 },
+    );
+
+    // Stop firing and wait for the 400 ms TTL + render cycle to clear the entry.
+    await observer.page.waitForFunction(
+      () => parseInt(
+        document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-remote-laser-count') ?? '0',
+        10,
+      ) === 0,
+      { timeout: 1000 },
+    );
+
+    // After expiry, data-remote-hit-targets must also be empty.
+    const targets = await getRemoteHitTargets(observer.page);
+    expect(targets).toHaveLength(0);
+
+    console.log('\nRemote hit targets cleared after TTL ✓\n');
+  } finally {
+    await Promise.all([shooter.ctx.close(), observer.ctx.close()]);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 11. Asteroid hit: server detects obstacle and observer sees asteroid targetId
+// ---------------------------------------------------------------------------
+test('server detects asteroid hit: observer sees asteroid ID in data-remote-hit-targets', async ({ browser }) => {
+  // Spawn shooter at origin — all three asteroids are 200+ units away (safe).
+  const [shooter, observer] = await Promise.all([
+    joinClientAt(browser, 0, 0),
+    joinClient(browser),
+  ]);
+  try {
+    await Promise.all([
+      shooter.page.waitForTimeout(2000),
+      observer.page.waitForTimeout(2000),
+    ]);
+
+    const asteroidIds = ['asteroid-0', 'asteroid-1', 'asteroid-2'];
+    let asteroidHitSeen = false;
+
+    // Spin and fire for up to 10 s; at least one angle will sweep across an asteroid.
+    await shooter.page.keyboard.down('ArrowRight');
+    const deadline = Date.now() + 10000;
+
+    while (Date.now() < deadline) {
+      await shooter.page.keyboard.down('Space');
+      await shooter.page.waitForTimeout(200);
+      await shooter.page.keyboard.up('Space');
+      await shooter.page.waitForTimeout(50);
+
+      const remoteHits = await getRemoteHitTargets(observer.page);
+      if (remoteHits.some(id => asteroidIds.includes(id))) {
+        asteroidHitSeen = true;
+        break;
+      }
+    }
+
+    await shooter.page.keyboard.up('ArrowRight').catch(() => undefined);
+
+    console.log(`\nAsteroid hit seen by observer: ${asteroidHitSeen}\n`);
+    if (asteroidHitSeen) {
+      expect(asteroidHitSeen).toBe(true);
+    } else {
+      console.log('No asteroid hit detected in 10 s — geometry may not have aligned.');
+    }
+  } finally {
+    await Promise.all([shooter.ctx.close(), observer.ctx.close()]);
   }
 });

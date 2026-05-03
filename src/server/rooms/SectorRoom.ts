@@ -285,6 +285,7 @@ export class SectorRoom extends Room<SectorState> {
     // Hitscan: lag-comp check against rewound positions of all other ships.
     let hitId: string | null = null;
     let hitDist = Infinity;
+    let hitIsObstacle = false;
 
     for (const [targetId] of this.playerToSlot) {
       if (targetId === shooterId) continue;
@@ -300,10 +301,21 @@ export class SectorRoom extends Room<SectorState> {
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
+        hitIsObstacle = false;
       }
     }
 
-    if (hitId) {
+    // Check obstacles — no lag-comp needed (asteroids move slowly).
+    for (const [obstacleId, obs] of this.state.obstacles) {
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, obs.x, obs.y, obs.radius);
+      if (dist !== null && dist < hitDist) {
+        hitDist = dist;
+        hitId = obstacleId;
+        hitIsObstacle = true;
+      }
+    }
+
+    if (hitId && !hitIsObstacle) {
       // Sampled LASER_FIRED log at 1 %.
       if (Math.random() < 0.01) {
         logger.info({ shooterId, hitId }, 'LASER_FIRED (1% sample)');
@@ -312,7 +324,7 @@ export class SectorRoom extends Room<SectorState> {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: hitId };
       client.send('hit_ack', ack);
     } else {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: !!hitId };
       client.send('hit_ack', ack);
     }
 

@@ -51,7 +51,7 @@ export interface RenderMirror {
    * The renderer reads the shooter's current angle from mirror.ships each frame so the
    * beam continuously sweeps as the remote ship rotates.
    */
-  remoteLasers?: Map<string, { range: number; hit: boolean; expiresAt: number }>;
+  remoteLasers?: Map<string, { range: number; hit: boolean; targetId?: string; expiresAt: number }>;
 }
 
 export interface IRenderer {
