@@ -7,6 +7,7 @@ import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
+import { diagRouter } from './routes/diagRouter.js';
 
 const logger = pino({
   name: 'server',
@@ -55,6 +56,12 @@ if (process.env['NODE_ENV'] !== 'production') {
     clearEvents();
     res.json({ ok: true });
   });
+
+  // POST /diag/capture — accepts a JSON capture from a connected client and
+  // writes it to diag/captures/<timestamp>-<id>.json. Used to diagnose mobile
+  // reconciliation issues (and any other "play for a bit then capture" loop).
+  // Files there are gitignored.
+  app.use('/diag', diagRouter);
 }
 
 const httpServer = createServer(app);

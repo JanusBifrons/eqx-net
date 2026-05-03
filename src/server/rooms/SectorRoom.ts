@@ -243,6 +243,21 @@ export class SectorRoom extends Room<SectorState> {
       if (slot !== undefined) {
         this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight });
       }
+      // Diagnostic: log every 30th input plus any input whose claimed tick is
+      // far from the current server tick (indicates clock drift). The delta
+      // tells us how the client's tick numbering relates to the server's.
+      const tickDelta = tick - this.serverTick;
+      if ((tick % 30) === 0 || Math.abs(tickDelta) > 5) {
+        serverLogEvent('input_received', {
+          playerId,
+          claimedTick: tick,
+          serverTick: this.serverTick,
+          tickDelta,
+          thrust,
+          turnLeft,
+          turnRight,
+        });
+      }
     });
 
     this.onMessage('fire', (client: Client, raw: unknown) => {

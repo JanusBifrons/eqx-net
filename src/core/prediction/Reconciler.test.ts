@@ -98,6 +98,83 @@ describe('Reconciler', () => {
     expect(() => r.reconcile(state, 130, 132, 130)).not.toThrow();
   });
 
+  it('variable-length replay (mobile catch-up) produces zero drift when inputs were correctly recorded', async () => {
+    // Reproduces the post-fix mobile scenario: each catch-up tick records its
+    // own input; when the next snapshot acks tick K, replay K+1..currentTick
+    // re-applies the same inputs — producing no drift if predWorld and the
+    // server agree about the input history.
+    for (const lag of [0, 1, 2, 3, 5]) {
+      const world = await makeWorld(0, 0);
+      const r = new Reconciler(world, PLAYER);
+
+      // Advance predWorld with thrust for `lag + 1` ticks, recording each input.
+      for (let t = 0; t < lag + 1; t++) {
+        const rec = makeInput(t, /* thrust */ true);
+        world.applyInput(PLAYER, rec);
+        r.recordInput(rec);
+        world.tick(1 / 60);
+      }
+      const predState = world.getShipState(PLAYER)!;
+      const predX = predState.x;
+      const predY = predState.y;
+
+      // Compute what the server's authoritative state would be: the same
+      // ticks 0..lag-1 applied. (Server has acked through tick `lag-1` if
+      // ackedTick = lag-1.)
+      const ref = await PhysicsWorld.create();
+      ref.spawnShip(PLAYER, 0, 0);
+      for (let t = 0; t < lag; t++) {
+        ref.applyInput(PLAYER, makeInput(t, true));
+        ref.tick(1 / 60);
+      }
+      const serverState = ref.getShipState(PLAYER)!;
+      const ackedTick = lag - 1;
+
+      // Reconcile: rolls predWorld back to serverState, replays ticks ackedTick+1..currentTick-1
+      // (= ticks lag..lag, just the latest one), arriving at the same state.
+      r.reconcile({ x: serverState.x, y: serverState.y, vx: serverState.vx, vy: serverState.vy, angle: serverState.angle }, lag, lag + 1, ackedTick);
+
+      // Pre-reconcile prediction matches post-reconcile prediction → no drift.
+      const after = world.getShipState(PLAYER)!;
+      expect(Math.hypot(after.x - predX, after.y - predY)).toBeLessThan(1e-3);
+      expect(r.lastDrift).toBeLessThan(1e-3);
+      expect(r.isLerping).toBe(false);
+    }
+  });
+
+  it('replay skipping a recorded thrust input produces drift', async () => {
+    // Reproduces the pre-fix mobile bug: the catch-up loop "lost" an input
+    // for one tick (e.g. input was sent for tick 5 but the buffer entry was
+    // overwritten / never recorded). Replay would integrate as no-thrust for
+    // that tick, producing positional drift versus the server.
+    const world = await makeWorld(0, 0);
+    const r = new Reconciler(world, PLAYER);
+    for (let t = 0; t < 5; t++) {
+      const rec = makeInput(t, true);
+      world.applyInput(PLAYER, rec);
+      r.recordInput(rec);
+      world.tick(1 / 60);
+    }
+    // Drop the buffer entry for tick 2 to simulate a missed catch-up step.
+    // (Direct mutation through internals isn't possible, so simulate by
+    // recording a no-op over it — same effect: replay applies no thrust at t=2.)
+    r.recordInput({ tick: 2, thrust: false, turnLeft: false, turnRight: false, sentAt: performance.now() });
+
+    // Server state: full thrust at ticks 0..1 (acked = 1), reconcile from there.
+    const ref = await PhysicsWorld.create();
+    ref.spawnShip(PLAYER, 0, 0);
+    for (let t = 0; t < 2; t++) {
+      ref.applyInput(PLAYER, makeInput(t, true));
+      ref.tick(1 / 60);
+    }
+    const serverState = ref.getShipState(PLAYER)!;
+
+    r.reconcile({ x: serverState.x, y: serverState.y, vx: serverState.vx, vy: serverState.vy, angle: serverState.angle }, 1, 5, 1);
+
+    // Predicted-but-corrupted predWorld replay misses tick 2's thrust → drift.
+    expect(r.lastDrift).toBeGreaterThan(0.05);
+  });
+
   it('lerpOffset magnitude shrinks each advanceLerp call', async () => {
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);

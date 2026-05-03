@@ -14,6 +14,17 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-03 — Phase 5 — Mobile `corr` rate of 30–60% caused by accumulator-cap discarding elapsed time
+Commit: Phase 5 sub-phase A (mobile reconciliation).
+
+`ColyseusClient.tickPhysics()` originally used a fixed-timestep accumulator with a 5-frame cap: `this.accumulator += Math.min(elapsedMs, FIXED_MS * 5)`. On mobile the main thread is regularly blocked for tens of ms (touch dispatch, scroll, GPU composite hiccups). Each block discarded the over-cap elapsed time, so `inputTick` permanently fell behind real wall-clock time — and therefore behind `serverTick`, which advances strictly at 60 Hz. Over a 30-second session the desync accumulated to a steady-state offset where 30–60 % of snapshots produced reconciliation drift > `LERP_THRESHOLD` (0.05 u) and triggered a visible lerp.
+
+**Fix**: derive `targetTick` directly from wall clock — `serverTickAtWelcome + Math.floor((now − welcomePerfNow) / FIXED_MS)` — and step the input loop until `inputTick === targetTick`, capped at `MAX_CATCH_UP_TICKS = 4` per RAF (so a long pause amortises catch-up over several frames rather than burning CPU). Identical mechanism on respawn: re-anchor `welcomePerfNow` and `serverTickAtWelcome` to `msg.serverTick`.
+
+**Why the existing `logEvent('snapshot', …)` ring buffer was sufficient for diagnosis**: it already captures `serverTick`, `ackedTick`, `ticksAhead = inputTick − ackedTick`, and `driftUnits` per snapshot. Any future "the corrections feel weird" investigation should start by reading `window.__eqxLogs.filter(e => e.tag === 'snapshot')` rather than adding new instrumentation. Specifically, a steady `ticksAhead` that shrinks rather than holds at the expected RTT/2 ticks is the smoking gun for a clock-anchor bug like this one.
+
+**Don't re-introduce an accumulator-cap design** — the cap is a property of the inner loop (`MAX_CATCH_UP_TICKS`), not of the elapsed-time measurement. Capping `elapsedMs` itself is the bug.
+
 ## 2026-04-18 — Phase 0 — Foundation seeded
 Commit: initial scaffolding.
 

@@ -307,6 +307,11 @@ function GameSurface(): JSX.Element {
 
     const gameClient = new ColyseusGameClient();
     clientRef.current = gameClient;
+    // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
+    // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
+    if (import.meta.env.DEV) {
+      (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
+    }
 
     const onKey = (e: KeyboardEvent): void => {
       if (e.shiftKey && e.key === 'D') toggleDevOverlay();

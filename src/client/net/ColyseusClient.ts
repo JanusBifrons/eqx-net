@@ -138,13 +138,34 @@ export class ColyseusGameClient {
    * Used to normalise snap.serverTick into client-tick space.
    */
   private serverTickAtWelcome = 0;
+  /**
+   * `performance.now()` when the welcome message was processed. Used as the
+   * initial anchor for `inputTick`; on every subsequent snapshot the anchor is
+   * advanced to the snapshot's `serverTick` (`updateClockAnchor()`). See
+   * `tickPhysics()`.
+   */
+  private welcomePerfNow = 0;
+  /**
+   * Server tick recorded at `clockAnchorPerfNow` — the live reference frame
+   * the client uses to compute `targetTick`. Updated on every snapshot so a
+   * server that's running below 60 Hz (overloaded) drags the client's tick
+   * advance down with it instead of letting `inputTick` race ahead.
+   */
+  private clockAnchorServerTick = 0;
+  private clockAnchorPerfNow = 0;
+  /**
+   * Estimated half-RTT in ticks. The client should aim to be this many ticks
+   * AHEAD of the latest known server tick so its inputs arrive at the server
+   * just-in-time for the corresponding server tick. Kept as a smoothed value;
+   * jumpy RTT causes oscillation otherwise.
+   */
+  private leadTicks = 6;
   private disposed = false;
 
-  // Fixed-timestep accumulator for the input loop (driven by rAF in App.tsx).
+  // Wall-clock-anchored input loop (driven by rAF in App.tsx).
   private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
-  private accumulator = 0;
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
   private lastFrameMs = 1000 / 60;
 
@@ -221,6 +242,9 @@ export class ColyseusGameClient {
         'serverTick:', msg.serverTick,
       );
       this.serverTickAtWelcome = msg.serverTick;
+      this.welcomePerfNow = performance.now();
+      this.clockAnchorServerTick = msg.serverTick;
+      this.clockAnchorPerfNow = this.welcomePerfNow;
       this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
@@ -408,8 +432,14 @@ export class ColyseusGameClient {
     // Re-initialise reconciler so it doesn't try to replay inputs from before death.
     this.reconciler = new Reconciler(this.predWorld, playerId);
 
-    // Sync input tick to server tick so first fire passes temporal plausibility.
+    // Sync input tick to server tick so first fire passes temporal plausibility,
+    // and re-anchor the clock so tickPhysics()'s `targetTick` derivation stays
+    // consistent with the new tick base.
     this.inputTick = msg.serverTick;
+    this.serverTickAtWelcome = msg.serverTick;
+    this.welcomePerfNow = performance.now();
+    this.clockAnchorServerTick = msg.serverTick;
+    this.clockAnchorPerfNow = this.welcomePerfNow;
 
     // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
     this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
@@ -473,6 +503,20 @@ export class ColyseusGameClient {
     this.stats.snapshotJitterMs = this._recentIntervals.length >= 2
       ? Math.max(...this._recentIntervals) - Math.min(...this._recentIntervals)
       : 0;
+
+    // Re-anchor the input clock to this snapshot's server tick. Critical when
+    // the server is over-budget and effectively running below 60 Hz: without
+    // re-anchoring, the client's wall-clock-derived `targetTick` runs ahead
+    // of `serverTick` and the reconciler's replay window grows unboundedly,
+    // producing the 30-60% mobile `corr` rate observed in the May 2026 capture.
+    this.clockAnchorServerTick = snap.serverTick;
+    this.clockAnchorPerfNow = now;
+    // Smooth the half-RTT lead so a single jitter spike doesn't whip targetTick
+    // around. 1/60 s = 16.67 ms per tick; clamp to a sane window.
+    if (this.reconciler) {
+      const desiredLead = Math.max(3, Math.min(20, Math.round(this.reconciler.lastRtt / 33)));
+      this.leadTicks = Math.round(this.leadTicks * 0.85 + desiredLead * 0.15);
+    }
 
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
@@ -823,20 +867,37 @@ export class ColyseusGameClient {
     }
   }
 
-  // ── Input loop (fixed-timestep, driven by rAF in App.tsx) ─────────────
+  // ── Input loop (server-tick-anchored, driven by rAF in App.tsx) ───────
 
   /**
-   * Called once per rAF frame. Steps the input loop by however many 1/60-s
-   * ticks fit in the elapsed time.
+   * Called once per rAF frame. Catches `inputTick` up to the server-tick-
+   * derived target (re-anchored on every snapshot), at most
+   * `MAX_CATCH_UP_TICKS` per frame.
+   *
+   * Why we anchor on the latest `serverTick` instead of the welcome time:
+   * if the server falls below 60 Hz (over-budget AI tick, swarm physics, etc.)
+   * a wall-clock-from-welcome anchor advances `inputTick` at 60 Hz regardless,
+   * leaving it tens of ticks ahead of the server within a few seconds. The
+   * reconciler then replays a huge input window every snapshot and `corr`
+   * climbs to 30-60% (May 2026 mobile capture: server measured at 46.3 Hz).
+   *
+   * Anchoring on the snapshot's server tick + half-RTT lead means a slow
+   * server drags the client's tick advance down with it, keeping the replay
+   * window small. `MAX_CATCH_UP_TICKS = 4` per RAF still bounds CPU after a
+   * long background-tab pause.
    */
   tickPhysics(elapsedMs: number): void {
     if (!this.room || !this.keyboard) return;
     this.lastFrameMs = elapsedMs;
+    if (this.welcomePerfNow === 0) return; // welcome not yet received
     const FIXED_MS = 1000 / 60;
-    // Cap to 5 ticks to avoid spiral-of-death after long frames or background tabs.
-    this.accumulator += Math.min(elapsedMs, FIXED_MS * 5);
-    while (this.accumulator >= FIXED_MS) {
-      this.accumulator -= FIXED_MS;
+    const MAX_CATCH_UP_TICKS = 4;
+    const ticksSinceAnchor = Math.floor((performance.now() - this.clockAnchorPerfNow) / FIXED_MS);
+    const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
+    const tickDeficitBefore = targetTick - this.inputTick;
+    let stepsThisFrame = 0;
+    while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
+      stepsThisFrame++;
       const kb = this.keyboard.read();
       let tcThrust = false, tcTurnLeft = false, tcTurnRight = false, tcFire = false;
       if (this.touchInput) {
@@ -877,6 +938,12 @@ export class ColyseusGameClient {
         this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight });
         this.reconciler.recordInput(rec);
         this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight });
+        // Log only state-change-relevant inputs to avoid saturating the buffer:
+        // every input where any control bit is on (carrying meaningful action),
+        // plus a sparse heartbeat every 60th tick of all-idle.
+        if (thrust || turnLeft || turnRight || (tick % 60) === 0) {
+          logEvent('inputSent', { tick, thrust, turnLeft, turnRight });
+        }
       }
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
@@ -892,6 +959,24 @@ export class ColyseusGameClient {
       } else {
         this.mirror.liveBeam = null;
       }
+    }
+
+    // One ring-buffer entry per RAF — diagnostic data for capture analysis.
+    // Sampled to keep buffer-friendly: every 6th RAF, plus any frame whose
+    // catch-up window was non-trivial (≥ 2 ticks deficit). One log line per
+    // frame would saturate the 500-entry buffer in ~10 s.
+    const anomalous = tickDeficitBefore >= 2;
+    if (anomalous || (this.inputTick & 0b11) === 0) {
+      logEvent('rafTick', {
+        elapsedMs: Math.round(elapsedMs * 100) / 100,
+        targetTick,
+        inputTick: this.inputTick,
+        deficitBefore: tickDeficitBefore,
+        stepsThisFrame,
+        capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
+        anchorServerTick: this.clockAnchorServerTick,
+        leadTicks: this.leadTicks,
+      });
     }
   }
 

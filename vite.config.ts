@@ -78,6 +78,14 @@ export default defineConfig({
         target: 'http://localhost:2567',
         changeOrigin: true,
       },
+      '/diag': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+      },
+      '/dev': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+      },
     },
   },
   build: {
