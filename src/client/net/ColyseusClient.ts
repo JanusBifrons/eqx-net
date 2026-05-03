@@ -6,7 +6,7 @@ import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 
@@ -357,7 +357,7 @@ export class ColyseusGameClient {
   private handleDamage(evt: DamageEvent): void {
     const localId = this.mirror.localPlayerId;
     if (evt.targetId === localId) {
-      const pct = Math.round((evt.newHealth / 100) * 100);
+      const pct = Math.round((evt.newHealth / SHIP_MAX_HEALTH) * 100);
       useUIStore.getState().setHullPct(pct);
     }
     // Flash the damaged ship for 6 frames.

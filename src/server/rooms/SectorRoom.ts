@@ -43,6 +43,7 @@ import {
   WEAPON_COOLDOWN_TICKS,
   PROJECTILE_RADIUS,
   SHIP_COLLISION_RADIUS,
+  SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 
 const logger = pino({
@@ -631,7 +632,7 @@ export class SectorRoom extends Room<SectorState> {
     this.sabF32[base + SLOT_VY_OFF] = 0;
 
     // Reset authoritative ship state.
-    ship.health = 100;
+    ship.health = SHIP_MAX_HEALTH;
     ship.alive  = true;
     ship.x      = spawnX;
     ship.y      = spawnY;

@@ -1,4 +1,5 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
+import { SHIP_MAX_HEALTH } from '../../../core/combat/Weapons.js';
 
 export class ShipState extends Schema {
   @type('string') playerId: string = '';
@@ -8,8 +9,8 @@ export class ShipState extends Schema {
   @type('number') vx: number = 0;
   @type('number') vy: number = 0;
   @type('number') angvel: number = 0;
-  @type('float32') health: number = 100;
-  @type('float32') maxHealth: number = 100;
+  @type('float32') health: number = SHIP_MAX_HEALTH;
+  @type('float32') maxHealth: number = SHIP_MAX_HEALTH;
   @type('boolean') alive: boolean = true;
 }
 

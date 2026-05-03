@@ -7,6 +7,10 @@ export const PROJECTILE_SPEED = 300;
 export const WEAPON_COOLDOWN_TICKS = 10;
 export const PROJECTILE_RADIUS = 4;
 export const SHIP_COLLISION_RADIUS = 12;
+/** Initial and max hull HP. Bumped during sub-phase B testing — 25 hitscan
+ *  hits to die was too brittle for "fly around and watch a remote laser
+ *  flash without dying every 5 s". Tune at balance pass. */
+export const SHIP_MAX_HEALTH = 500;
 
 /**
  * Instant hitscan weapon. Returns the first entity hit along the ray
