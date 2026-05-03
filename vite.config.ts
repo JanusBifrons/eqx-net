@@ -62,6 +62,19 @@ export default defineConfig({
         target: 'http://localhost:2567',
         changeOrigin: true,
       },
+      '/auth': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+        bypass(req) {
+          // Let Vite serve TypeScript/JS source files; proxy everything else to backend
+          if (req.url?.match(/\.(ts|tsx|js|jsx|json|css|svg|png)(\?.*)?$/)) return req.url;
+          return null;
+        },
+      },
+      '/healthz': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+      },
     },
   },
   build: {

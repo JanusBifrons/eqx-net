@@ -177,7 +177,13 @@ export class ColyseusGameClient {
     let resolvedRoom: Room;
     try {
       console.log('[ColyseusClient] calling joinOrCreate…');
-      const joinPromise = client.joinOrCreate<unknown>(roomName, { playerId: storedPlayerId, ...extraJoinOptions });
+      const { loadToken } = await import('../auth/tokenStorage.js');
+      const authToken = loadToken();
+      const joinPromise = client.joinOrCreate<unknown>(roomName, {
+        playerId: storedPlayerId,
+        ...(authToken ? { authToken } : {}),
+        ...extraJoinOptions,
+      });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('joinOrCreate timed out after 12 s — WS proxy likely broken')), 12000),
       );

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Server } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
@@ -5,6 +6,7 @@ import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
+import { authRouter } from './routes/authRouter.js';
 
 const logger = pino({
   name: 'server',
@@ -20,11 +22,15 @@ const app = express();
 
 app.use((_req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
   next();
 });
 
+app.options('*', (_req, res) => { res.sendStatus(204); });
+
 app.use(express.json());
+app.use('/auth', authRouter);
 
 app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', tick: Date.now() });

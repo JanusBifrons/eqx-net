@@ -359,6 +359,15 @@ The server main thread does not have a live Rapier world — physics runs in the
 
 **Rule**: server-side hit validation must use the `SnapshotRing` positions + `rayHitsSphere()` combo, not Rapier. Rapier is physics worker-only.
 
+## 2026-05-03 — Auth — better-sqlite3 still broken on Node 24; use node:sqlite instead
+Commit: auth system.
+
+`better-sqlite3@^12` (v12.9.0) was supposed to fix Node 24 compatibility but still has no prebuilt Windows x64 binaries for Node 24.14.0 on this machine — `prebuild-install` finds nothing, and `node-gyp` cannot run because Python is not properly accessible even though 3.11 is installed (version string returns empty). Do not attempt to compile from source.
+
+**Resolution**: use `node:sqlite` (built-in Node.js module, available from v22.5.0 as experimental, stable in v24). API is nearly identical to better-sqlite3 — `DatabaseSync`, `prepare().run()/.get()/.all()`. No install needed. Shows `ExperimentalWarning: SQLite is an experimental feature` at runtime — acceptable until Node.js removes the warning.
+
+**Downstream rule**: All server persistence code must import `{ DatabaseSync } from 'node:sqlite'`, not `better-sqlite3`. Remove `better-sqlite3` from the allowed-deps list in `src/server/CLAUDE.md` and replace with `node:sqlite`. The Phase 7 threading plan (move DB to its own worker) is still valid but the binding changes.
+
 ## 2026-04-18 — Phase 0 — ESLint `no-undef` disabled globally
 Commit: initial scaffolding.
 

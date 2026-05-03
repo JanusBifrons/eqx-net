@@ -12,7 +12,7 @@ Never import from `src/server/`:
 - The client-side Colyseus package: `colyseus.js` (the server uses `colyseus`, not `colyseus.js`)
 - Anything under `src/client/**`
 
-Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `better-sqlite3`, `pino` + `pino-pretty`, `src/core`, `src/shared-types`. Phase 9 may additionally allow `@colyseus/redis-driver` / `@colyseus/redis-presence` *iff* the multi-VM deployment shape is chosen.
+Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `zod`, `node:sqlite` (built-in, replaces `better-sqlite3` — see `docs/LESSONS.md` for why), `bcryptjs`, `jose`, `dotenv`, `pino` + `pino-pretty`, `src/core`, `src/shared-types`. Phase 9 may additionally allow `@colyseus/redis-driver` / `@colyseus/redis-presence` *iff* the multi-VM deployment shape is chosen.
 
 ---
 
@@ -42,6 +42,7 @@ Phase 0: placeholder. These tighten as each phase ships:
 - **Phase 4 — backpressure**: `ws.bufferedAmount > 50 KB` drops oldest queued snapshot; `> 250 KB` force-closes the socket.
 - **Phase 4 — lag-comp buffer**: pre-allocated 1000 entities × 12 ticks × 16 bytes = 192 KB per sector. No per-tick allocation.
 - **Phase 6 — TiDi**: simulation-clock rate ramps toward 0.7× when >14 ms/tick for 30 consecutive ticks. At floor, load-shedder despawns farthest-from-any-player AI.
+- **Auth (pre-Phase 5)**: `node:sqlite` introduced early for auth/stats. Currently runs on main thread (low-frequency queries). Phase 7 threading plan still applies: move DB worker to `worker_threads`.
 - **Phase 7 — SQLite**: WAL mode. Two priority queues (`CRITICAL` with coalescing write-ahead buffer, `VOLATILE` purgeable). Graceful shutdown flushes `CRITICAL`.
 - **Phase 8 — Limbo**: 5-minute TTL, keyed by `playerId` (NOT `sessionId` — sessionIds are ephemeral). 15-second Colyseus seat reservation TTL on destination rooms.
 

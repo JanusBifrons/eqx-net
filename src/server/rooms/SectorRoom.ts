@@ -26,6 +26,8 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { checkBackpressure } from '../net/Backpressure.js';
+import { validateToken } from '../auth/AuthService.js';
+import { recordGameJoin, recordGameLeave, recordKill, saveSnapshot } from '../stats/StatsService.js';
 import {
   rayHitsSphere,
   HITSCAN_DAMAGE,
@@ -70,6 +72,7 @@ async function bundleWorker(): Promise<string> {
 const JoinOptionsSchema = z
   .object({
     playerId: z.string().nullable().optional(),
+    authToken: z.string().optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
   })
@@ -129,6 +132,10 @@ export class SectorRoom extends Room<SectorState> {
   private serverTick = 0;
   private broadcastCounter = 0;
   private testMode = false;
+
+  // Auth — maps playerId → userId (null for anonymous)
+  private readonly playerToUser = new Map<string, string | null>();
+  private readonly gameSessionRowIds = new Map<string, number>();
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
@@ -217,6 +224,12 @@ export class SectorRoom extends Room<SectorState> {
 
     this.onMessage('respawn', (client: Client) => {
       this.handleRespawn(client);
+    });
+
+    this.bus.on('SHIP_DESTROYED', (evt) => {
+      const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
+      const victimUser = this.playerToUser.get(evt.targetId) ?? null;
+      recordKill(killerUser, victimUser, 'hitscan', this.roomId);
     });
 
     this.setSimulationInterval(() => this.update(), 1000 / 60);
@@ -492,11 +505,14 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── Colyseus room hooks ─────────────────────────────────────────────────
 
-  override onJoin(client: Client, options: unknown): void {
+  override async onJoin(client: Client, options: unknown): Promise<void> {
     logger.info({ sessionId: client.sessionId, options }, 'onJoin called');
     const parsed = JoinOptionsSchema.safeParse(options);
     const requestedId = parsed.success ? parsed.data.playerId : null;
     let playerId = assignPlayerId(requestedId);
+
+    const authToken = parsed.success ? parsed.data.authToken : undefined;
+    const userId = authToken ? await validateToken(authToken) : null;
 
     // If the requested ID is already held by an active session (e.g. two tabs
     // sharing the same localStorage), assign a fresh UUID.
@@ -542,9 +558,13 @@ export class SectorRoom extends Room<SectorState> {
     const welcome: WelcomeMessage = { type: 'welcome', playerId, serverTick: currentServerTick };
     client.send('welcome', welcome);
 
+    this.playerToUser.set(playerId, userId);
+    const rowId = recordGameJoin(userId, playerId, this.roomId);
+    this.gameSessionRowIds.set(playerId, rowId);
+
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
-    logger.info({ playerId, sessionId: client.sessionId }, 'player joined');
+    logger.info({ playerId, sessionId: client.sessionId, userId }, 'player joined');
   }
 
   override onLeave(client: Client, _consented: boolean): void {
@@ -567,6 +587,12 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.state.ships.delete(playerId);
+    const rowId = this.gameSessionRowIds.get(playerId);
+    if (rowId !== undefined) {
+      recordGameLeave(rowId);
+      this.gameSessionRowIds.delete(playerId);
+    }
+    this.playerToUser.delete(playerId);
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     serverLogEvent('player_leave', { playerId });
     logger.info({ playerId }, 'player left');
@@ -640,6 +666,11 @@ export class SectorRoom extends Room<SectorState> {
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
+
+    // Periodic snapshot: every 5 minutes (60 Hz × 300 s = 18 000 ticks).
+    if (this.serverTick > 0 && this.serverTick % 18_000 === 0) {
+      try { saveSnapshot(this.roomId, this.state.toJSON()); } catch { /* non-critical */ }
+    }
 
     // Broadcast authoritative snapshot at 20 Hz using an independent counter
     // on the main thread, not a SAB tick divisibility check. Divisibility caused

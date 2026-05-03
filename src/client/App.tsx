@@ -14,6 +14,10 @@ import { Keyboard } from './input/Keyboard';
 import { LocalGameClient } from './local/LocalGameClient';
 import { loadStoredPlayerId, persistPlayerId } from './identity/token';
 import { useUIStore } from './state/store';
+import { useAuthStore } from './auth/authStore';
+import { AppHeader } from './components/AppHeader';
+import { LoginPage } from './components/LoginPage';
+import { ProfileModal } from './components/ProfileModal';
 
 const SERVER_URL = import.meta.env['VITE_WS_URL'] ?? 'http://localhost:5173';
 
@@ -452,7 +456,19 @@ function LocalSurface(): JSX.Element {
 
 export function App(): JSX.Element {
   const autoJoin = new URLSearchParams(window.location.search).has('room');
-  const [phase, setPhase] = useState<'splash' | 'connecting' | 'game' | 'local'>(autoJoin ? 'game' : 'splash');
+  const { user } = useAuthStore();
+  const [phase, setPhase] = useState<'auth' | 'splash' | 'connecting' | 'game' | 'local'>(
+    // Skip auth gate for E2E test auto-join URLs (?room=...) and if already authenticated.
+    autoJoin || user ? (autoJoin ? 'game' : 'splash') : 'auth',
+  );
+  const [profileOpen, setProfileOpen] = useState(false);
+
+  // If user logs out while on splash, go back to auth.
+  useEffect(() => {
+    if (!user && phase !== 'auth' && phase !== 'game' && phase !== 'local') {
+      setPhase('auth');
+    }
+  }, [user, phase]);
 
   const handleJoin = useCallback(() => {
     setPhase('game');
@@ -462,67 +478,92 @@ export function App(): JSX.Element {
     setPhase('local');
   }, []);
 
+  const handleAuthSuccess = useCallback(() => {
+    setPhase('splash');
+  }, []);
+
   if (phase === 'game') {
-    return <GameSurface />;
+    return (
+      <>
+        <AppHeader onLoginClick={() => setPhase('auth')} onProfileClick={() => setProfileOpen(true)} />
+        <GameSurface />
+        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      </>
+    );
   }
 
   if (phase === 'local') {
     return <LocalSurface />;
   }
 
+  if (phase === 'auth') {
+    return (
+      <>
+        <AppHeader onLoginClick={() => {}} onProfileClick={() => setProfileOpen(true)} />
+        <LoginPage onSuccess={handleAuthSuccess} onSkip={handleAuthSuccess} />
+        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      </>
+    );
+  }
+
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: '100vh',
-        bgcolor: '#05070f',
-        gap: 3,
-      }}
-    >
-      <Typography
-        variant="h2"
-        sx={{ color: '#00ff88', fontWeight: 700, letterSpacing: 4, textTransform: 'uppercase' }}
+    <>
+      <AppHeader onLoginClick={() => setPhase('auth')} onProfileClick={() => setProfileOpen(true)} />
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          pt: '48px',
+          bgcolor: '#05070f',
+          gap: 3,
+        }}
       >
-        EQX Peri
-      </Typography>
-      <Typography variant="subtitle1" sx={{ color: '#888' }}>
-        Sector Alpha · Asteroids-class engagement zone
-      </Typography>
-      {phase === 'connecting' ? (
-        <CircularProgress sx={{ color: '#00ff88' }} />
-      ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-          <Button
-            variant="contained"
-            size="large"
-            onClick={handleJoin}
-            sx={{
-              bgcolor: '#00ff88',
-              color: '#000',
-              fontWeight: 700,
-              px: 6,
-              '&:hover': { bgcolor: '#00cc6a' },
-            }}
-          >
-            Enter Sector Alpha
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleLocal}
-            sx={{
-              color: '#ff8800',
-              borderColor: '#ff8800',
-              '&:hover': { borderColor: '#ffaa33', bgcolor: 'rgba(255,136,0,0.1)' },
-            }}
-          >
-            Single Player (Diagnostic)
-          </Button>
-        </Box>
-      )}
-    </Box>
+        <Typography
+          variant="h2"
+          sx={{ color: '#00ff88', fontWeight: 700, letterSpacing: 4, textTransform: 'uppercase' }}
+        >
+          EQX Peri
+        </Typography>
+        <Typography variant="subtitle1" sx={{ color: '#888' }}>
+          Sector Alpha · Asteroids-class engagement zone
+        </Typography>
+        {phase === 'connecting' ? (
+          <CircularProgress sx={{ color: '#00ff88' }} />
+        ) : (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
+            <Button
+              variant="contained"
+              size="large"
+              onClick={handleJoin}
+              sx={{
+                bgcolor: '#00ff88',
+                color: '#000',
+                fontWeight: 700,
+                px: 6,
+                '&:hover': { bgcolor: '#00cc6a' },
+              }}
+            >
+              Enter Sector Alpha
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={handleLocal}
+              sx={{
+                color: '#ff8800',
+                borderColor: '#ff8800',
+                '&:hover': { borderColor: '#ffaa33', bgcolor: 'rgba(255,136,0,0.1)' },
+              }}
+            >
+              Single Player (Diagnostic)
+            </Button>
+          </Box>
+        )}
+      </Box>
+      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+    </>
   );
 }

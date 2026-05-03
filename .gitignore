@@ -5,6 +5,11 @@ dist/
 *.tsbuildinfo
 .tsbuildinfo*
 
+# database
+eqx.db
+eqx.db-wal
+eqx.db-shm
+
 # test artefacts
 playwright-report/
 test-results/
