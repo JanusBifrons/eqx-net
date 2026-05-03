@@ -58,6 +58,11 @@ const gameServer = new Server({
 });
 
 gameServer.define('sector', SectorRoom, { maxClients: 16 });
+gameServer.define('test-sector', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  maxClients: 8,
+});
 
 httpServer.on('upgrade', (req) => {
   logger.info({ url: req.url }, 'WS upgrade received');

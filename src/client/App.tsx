@@ -344,15 +344,21 @@ function GameSurface(): JSX.Element {
       animFrameRef.current = requestAnimationFrame(loop);
 
       const storedId = loadStoredPlayerId();
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomName = urlParams.get('room') ?? 'sector';
+      const extraJoinOptions: Record<string, unknown> = {};
+      if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
+      if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
+
       await gameClient.connect(SERVER_URL, storedId, keyboard, {
         onConnectionStatus: setConnectionStatus,
         onPlayerId: (id) => {
           persistPlayerId(id);
           setPlayerId(id);
         },
-      });
+      }, roomName, extraJoinOptions);
 
-      setSectorName('Sector Alpha');
+      setSectorName(roomName === 'test-sector' ? 'Test Sector' : 'Sector Alpha');
     })().catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');
@@ -445,7 +451,8 @@ function LocalSurface(): JSX.Element {
 }
 
 export function App(): JSX.Element {
-  const [phase, setPhase] = useState<'splash' | 'connecting' | 'game' | 'local'>('splash');
+  const autoJoin = new URLSearchParams(window.location.search).has('room');
+  const [phase, setPhase] = useState<'splash' | 'connecting' | 'game' | 'local'>(autoJoin ? 'game' : 'splash');
 
   const handleJoin = useCallback(() => {
     setPhase('game');

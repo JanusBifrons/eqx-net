@@ -163,6 +163,8 @@ export class ColyseusGameClient {
     storedPlayerId: string | null,
     keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } },
     callbacks: ColyseusClientCallbacks,
+    roomName = 'sector',
+    extraJoinOptions: Record<string, unknown> = {},
   ): Promise<void> {
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
@@ -175,7 +177,7 @@ export class ColyseusGameClient {
     let resolvedRoom: Room;
     try {
       console.log('[ColyseusClient] calling joinOrCreate…');
-      const joinPromise = client.joinOrCreate<unknown>('sector', { playerId: storedPlayerId });
+      const joinPromise = client.joinOrCreate<unknown>(roomName, { playerId: storedPlayerId, ...extraJoinOptions });
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('joinOrCreate timed out after 12 s — WS proxy likely broken')), 12000),
       );

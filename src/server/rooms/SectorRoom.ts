@@ -68,7 +68,11 @@ async function bundleWorker(): Promise<string> {
 }
 
 const JoinOptionsSchema = z
-  .object({ playerId: z.string().nullable().optional() })
+  .object({
+    playerId: z.string().nullable().optional(),
+    spawnX: z.number().optional(),
+    spawnY: z.number().optional(),
+  })
   .passthrough();
 
 const MAX_INPUTS_PER_TICK = 3;
@@ -108,6 +112,7 @@ export class SectorRoom extends Room<SectorState> {
   private playerToSlot = new Map<string, number>();
   private slotToPlayer = new Map<number, string>();
   private freeSlots: number[] = [];
+  private initialSpawnPositions = new Map<string, { x: number; y: number }>();
 
   // Obstacles live in the same SAB slot pool as ships so the worker's state-
   // readout loop treats them uniformly; these maps let update() know which
@@ -123,6 +128,7 @@ export class SectorRoom extends Room<SectorState> {
   private sabAppliedTicks = new Map<string, number>();
   private serverTick = 0;
   private broadcastCounter = 0;
+  private testMode = false;
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
@@ -130,7 +136,7 @@ export class SectorRoom extends Room<SectorState> {
   private readonly liveProjectiles = new Map<string, ProjectileRecord>();
   private projectileCounter = 0;
 
-  override async onCreate(_options: unknown): Promise<void> {
+  override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
 
@@ -144,9 +150,18 @@ export class SectorRoom extends Room<SectorState> {
 
     await this.spawnWorker();
 
-    // Seed the room with the deterministic asteroid roster. These exist for
+    // gameServer.define()'s 3rd arg flows into onCreate(options). test-sector
+    // passes { testMode: true, asteroidConfig: [] } to run with no obstacles.
+    const roomOpts = (options ?? {}) as {
+      testMode?: boolean;
+      asteroidConfig?: typeof ASTEROIDS;
+    };
+    this.testMode = roomOpts.testMode ?? false;
+    const asteroidRoster = roomOpts.asteroidConfig ?? ASTEROIDS;
+
+    // Seed the room with the asteroid roster. These exist for
     // the lifetime of the room and are never respawned.
-    for (const a of ASTEROIDS) {
+    for (const a of asteroidRoster) {
       const slot = this.freeSlots.pop();
       if (slot === undefined) {
         logger.error({ obstacleId: a.id }, 'no free SAB slots for asteroid');
@@ -348,8 +363,9 @@ export class SectorRoom extends Room<SectorState> {
     const slot = this.playerToSlot.get(playerId);
     if (slot === undefined) return;
 
-    const spawnX = (Math.random() - 0.5) * 400;
-    const spawnY = (Math.random() - 0.5) * 400;
+    const storedPos = this.initialSpawnPositions.get(playerId);
+    const spawnX = (this.testMode && storedPos) ? storedPos.x : (Math.random() - 0.5) * 400;
+    const spawnY = (this.testMode && storedPos) ? storedPos.y : (Math.random() - 0.5) * 400;
 
     // Reset physics body in worker to new spawn position.
     this.postToWorker({ type: 'DESPAWN', slot, playerId });
@@ -501,8 +517,11 @@ export class SectorRoom extends Room<SectorState> {
     this.slotToPlayer.set(slot, playerId);
     this.snapshotRing.registerEntity(playerId);
 
-    const spawnX = (Math.random() - 0.5) * 400;
-    const spawnY = (Math.random() - 0.5) * 400;
+    const parsedSpawnX = parsed.success ? parsed.data.spawnX : undefined;
+    const parsedSpawnY = parsed.success ? parsed.data.spawnY : undefined;
+    const spawnX = parsedSpawnX ?? (Math.random() - 0.5) * 400;
+    const spawnY = parsedSpawnY ?? (Math.random() - 0.5) * 400;
+    this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
     // Pre-populate the SAB slot so the update() loop sees a sane position
     // immediately, before the worker processes the SPAWN command.
@@ -536,6 +555,7 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToSession.delete(playerId);
     this.sabAppliedTicks.delete(playerId);
     this.lastFireClientTick.delete(playerId);
+    this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
 
     const slot = this.playerToSlot.get(playerId);
