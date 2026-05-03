@@ -1,46 +1,37 @@
-import type { InputState } from './Keyboard';
-
-const JOYSTICK_THRESHOLD = 0.3;
-
 /**
- * Mutable input state written by MobileControls (React) and read by
+ * Mutable input state written by MobileControls (React) and consumed by
  * ColyseusClient (game loop). Plain class — no Zustand, no event bus —
  * because it is updated every frame.
+ *
+ * The joystick stores the raw normalised vector. ColyseusClient resolves
+ * it to turn/thrust booleans using the ship's current heading: the stick
+ * angle is the desired heading, and rotation/thrust are derived from the
+ * angular delta + magnitude.
  */
 export class TouchInput {
-  private _thrust = false;
-  private _turnLeft = false;
-  private _turnRight = false;
+  private vector: { x: number; y: number } | null = null;
   private _fireHeld = false;
 
-  /**
-   * Called by the nipplejs `move` event with the normalised vector.
-   * nipplejs screen-space convention: y positive = DOWN, so y < 0 = stick
-   * pushed up = thrust forward.
-   */
-  setJoystick(vector: { x: number; y: number }): void {
-    this._thrust    = vector.y < -JOYSTICK_THRESHOLD;
-    this._turnLeft  = vector.x < -JOYSTICK_THRESHOLD;
-    this._turnRight = vector.x >  JOYSTICK_THRESHOLD;
+  setJoystick(v: { x: number; y: number }): void {
+    this.vector = v;
   }
 
   setJoystickIdle(): void {
-    this._thrust    = false;
-    this._turnLeft  = false;
-    this._turnRight = false;
+    this.vector = null;
   }
 
   setFireHeld(v: boolean): void {
     this._fireHeld = v;
   }
 
-  read(): InputState {
-    return {
-      thrust:    this._thrust,
-      turnLeft:  this._turnLeft,
-      turnRight: this._turnRight,
-      fireHeld:  this._fireHeld,
-    };
+  /** Raw normalised joystick vector (each axis -1..1), or null when idle.
+   *  nipplejs convention: y positive = DOWN on screen. */
+  getJoystickVector(): { x: number; y: number } | null {
+    return this.vector;
+  }
+
+  getFireHeld(): boolean {
+    return this._fireHeld;
   }
 }
 

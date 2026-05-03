@@ -23,9 +23,11 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
       zone,
       mode: 'static',
       position: { left: '50%', top: '50%' },
-      size: 120,
-      color: '#00ff88',
-      restOpacity: 0.6,
+      size: 100,
+      // Translucent so the playfield is still visible behind, but clearly visible.
+      color: { back: 'rgba(255,255,255,0.18)', front: 'rgba(0,255,136,0.55)' },
+      restOpacity: 1,
+      fadeTime: 150,
     });
 
     manager.on('move', (evt) => {
@@ -59,15 +61,14 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
         ref={joystickZoneRef}
         sx={{
           position: 'fixed',
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 32px)',
-          left: 'calc(env(safe-area-inset-left, 0px) + 32px)',
-          width: 140,
-          height: 140,
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 28px)',
+          left: 'calc(env(safe-area-inset-left, 0px) + 28px)',
+          width: 120,
+          height: 120,
           zIndex: 15,
           touchAction: 'none',
-          bgcolor: 'rgba(0, 255, 136, 0.05)',
+          bgcolor: 'transparent',
           borderRadius: '50%',
-          border: '1px solid rgba(0, 255, 136, 0.2)',
         }}
       />
 
@@ -78,17 +79,17 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
         onTouchCancel={onFireEnd}
         sx={{
           position: 'fixed',
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 48px)',
-          right: 'calc(env(safe-area-inset-right, 0px) + 48px)',
-          width: 80,
-          height: 80,
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 32px)',
+          right: 'calc(env(safe-area-inset-right, 0px) + 32px)',
+          width: 76,
+          height: 76,
           zIndex: 15,
           touchAction: 'none',
           borderRadius: '50%',
-          bgcolor: 'rgba(5, 7, 15, 0.75)',
-          border: '2px solid rgba(0, 255, 136, 0.5)',
-          color: '#00ff88',
-          fontSize: 11,
+          bgcolor: 'rgba(0, 255, 136, 0.12)',
+          border: '1.5px solid rgba(0, 255, 136, 0.55)',
+          color: 'rgba(0, 255, 136, 0.95)',
+          fontSize: 10,
           fontFamily: 'monospace',
           fontWeight: 700,
           letterSpacing: 1,
@@ -101,8 +102,9 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
           justifyContent: 'center',
           padding: 0,
           '&:active': {
-            bgcolor: 'rgba(0, 255, 136, 0.25)',
-            border: '2px solid #00ff88',
+            bgcolor: 'rgba(0, 255, 136, 0.18)',
+            border: '1px solid rgba(0, 255, 136, 0.7)',
+            color: '#00ff88',
           },
         }}
       >

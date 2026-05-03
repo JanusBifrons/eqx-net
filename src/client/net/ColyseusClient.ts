@@ -78,7 +78,14 @@ function nextShotId(): string {
   return `shot-${_shotCounter++}`;
 }
 
-const IDLE_INPUT = { thrust: false, turnLeft: false, turnRight: false, fireHeld: false } as const;
+/** Joystick magnitude below this is treated as idle (deadzone). */
+const TOUCH_DEADZONE = 0.2;
+/** Stick magnitude above this engages thrust (when roughly aligned with target). */
+const TOUCH_THRUST_MAG = 0.4;
+/** Allow thrust within this cone (radians) around the desired heading. */
+const TOUCH_THRUST_CONE = Math.PI / 3; // 60°
+/** Minimum |angular delta| (radians) before turning. Prevents jitter when aligned. */
+const TOUCH_TURN_TOLERANCE = 0.08; // ~4.6°
 
 export class ColyseusGameClient {
   readonly mirror: RenderMirror = {
@@ -818,11 +825,39 @@ export class ColyseusGameClient {
     while (this.accumulator >= FIXED_MS) {
       this.accumulator -= FIXED_MS;
       const kb = this.keyboard.read();
-      const tc = this.touchInput?.read() ?? IDLE_INPUT;
-      const thrust    = kb.thrust    || tc.thrust;
-      const turnLeft  = kb.turnLeft  || tc.turnLeft;
-      const turnRight = kb.turnRight || tc.turnRight;
-      const fireHeld  = kb.fireHeld  || tc.fireHeld;
+      let tcThrust = false, tcTurnLeft = false, tcTurnRight = false, tcFire = false;
+      if (this.touchInput) {
+        tcFire = this.touchInput.getFireHeld();
+        const v = this.touchInput.getJoystickVector();
+        const localId = this.mirror.localPlayerId;
+        const localShip = localId ? this.mirror.ships.get(localId) : null;
+        if (v && localShip) {
+          const mag = Math.hypot(v.x, v.y);
+          if (mag > TOUCH_DEADZONE) {
+            // Physics: ship at angle θ has forward = (-sin θ, cos θ) in world coords.
+            // Renderer: sprite.y = -ship.y (world +Y → screen UP).
+            // nipplejs: vector.y is already inverted from screen y, so stick UP → v.y > 0.
+            // Mapping: stick UP (v=(0,1)) → forward=(0,1) → θ=0;
+            //          stick RIGHT (v=(1,0)) → forward=(1,0) → θ=-π/2.
+            const targetAngle = Math.atan2(-v.x, v.y);
+            let delta = targetAngle - localShip.angle;
+            // Wrap to [-π, π] so the ship turns the short way around.
+            while (delta >  Math.PI) delta -= 2 * Math.PI;
+            while (delta < -Math.PI) delta += 2 * Math.PI;
+            // World.applyInput: turnLeft → +angvel (CCW, increasing angle).
+            if (delta >  TOUCH_TURN_TOLERANCE) tcTurnLeft  = true;
+            else if (delta < -TOUCH_TURN_TOLERANCE) tcTurnRight = true;
+            // Thrust only when stick is pushed firmly AND ship roughly faces target.
+            if (Math.abs(delta) < TOUCH_THRUST_CONE && mag > TOUCH_THRUST_MAG) {
+              tcThrust = true;
+            }
+          }
+        }
+      }
+      const thrust    = kb.thrust    || tcThrust;
+      const turnLeft  = kb.turnLeft  || tcTurnLeft;
+      const turnRight = kb.turnRight || tcTurnRight;
+      const fireHeld  = kb.fireHeld  || tcFire;
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, sentAt: performance.now() };
