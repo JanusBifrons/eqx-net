@@ -4,6 +4,9 @@ import Popover from '@mui/material/Popover';
 import MenuList from '@mui/material/MenuList';
 import MenuItem from '@mui/material/MenuItem';
 import ListItemText from '@mui/material/ListItemText';
+import Typography from '@mui/material/Typography';
+import Divider from '@mui/material/Divider';
+import Box from '@mui/material/Box';
 import { useAuthStore } from '../auth/authStore.js';
 
 interface Props {
@@ -41,7 +44,18 @@ export function AvatarMenu({ onProfileClick }: Props) {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
         transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <MenuList dense sx={{ minWidth: 140 }}>
+        <Box sx={{ px: 2, py: 1.5 }}>
+          {user.displayName && (
+            <Typography variant="body2" fontWeight={600} noWrap sx={{ maxWidth: 220 }}>
+              {user.displayName}
+            </Typography>
+          )}
+          <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', maxWidth: 220 }}>
+            {user.email}
+          </Typography>
+        </Box>
+        <Divider />
+        <MenuList dense sx={{ minWidth: 180 }}>
           <MenuItem onClick={() => { setAnchorEl(null); onProfileClick(); }}>
             <ListItemText>Profile</ListItemText>
           </MenuItem>
