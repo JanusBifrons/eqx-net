@@ -377,12 +377,17 @@ function GameSurface(): JSX.Element {
           }
           el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
           const remoteHitTargetIds: string[] = [];
+          // Wire-side beam ranges per shooter — exposed so E2E can assert
+          // that a hit beam was truncated server-side (range < HITSCAN_RANGE).
+          const remoteLaserRanges: Record<string, number> = {};
           if (gameClient.mirror.remoteLasers) {
-            for (const l of gameClient.mirror.remoteLasers.values()) {
+            for (const [shooterId, l] of gameClient.mirror.remoteLasers) {
               if (l.targetId) remoteHitTargetIds.push(l.targetId);
+              remoteLaserRanges[shooterId] = parseFloat(l.range.toFixed(2));
             }
           }
           el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
+          el.dataset['remoteLaserRanges'] = JSON.stringify(remoteLaserRanges);
           // Expose swarm positions (asteroids/drones) for E2E collision stability
           // assertions. The string-keyed `data-obstacle-positions` attribute is
           // preserved so existing E2E tests keep working: each swarm entityId is

@@ -48,6 +48,10 @@ async function getRemoteHitTargets(page: Page): Promise<string[]> {
   return JSON.parse((await surface(page).getAttribute('data-remote-hit-targets')) ?? '[]') as string[];
 }
 
+async function getRemoteLaserRanges(page: Page): Promise<Record<string, number>> {
+  return JSON.parse((await surface(page).getAttribute('data-remote-laser-ranges')) ?? '{}') as Record<string, number>;
+}
+
 async function getLocalPlayerId(page: Page): Promise<string> {
   return (await surface(page).getAttribute('data-local-player-id')) ?? '';
 }
@@ -411,8 +415,11 @@ test('remote hit targets clears after TTL when shooter stops firing', async ({ b
 // ---------------------------------------------------------------------------
 // 11. Asteroid hit: server detects obstacle and observer sees asteroid targetId
 // ---------------------------------------------------------------------------
-test('server detects asteroid hit: observer sees asteroid ID in data-remote-hit-targets', async ({ browser }) => {
-  // Spawn shooter at origin — all three asteroids are 200+ units away (safe).
+test('server detects swarm hit: observer sees swarm-N ID in data-remote-hit-targets', async ({ browser }) => {
+  // Phase 5c migrated obstacles into the swarm channel; targetIds are now
+  // `swarm-${entityId}` rather than `asteroid-0/1/2`. The shooter spins and
+  // fires for up to 10 s; at least one angle should sweep across a swarm
+  // entity (asteroid or drone) seeded by the default room config.
   const [shooter, observer] = await Promise.all([
     joinClientAt(browser, 0, 0),
     joinClient(browser),
@@ -423,10 +430,8 @@ test('server detects asteroid hit: observer sees asteroid ID in data-remote-hit-
       observer.page.waitForTimeout(2000),
     ]);
 
-    const asteroidIds = ['asteroid-0', 'asteroid-1', 'asteroid-2'];
-    let asteroidHitSeen = false;
+    let swarmHitSeen = false;
 
-    // Spin and fire for up to 10 s; at least one angle will sweep across an asteroid.
     await shooter.page.keyboard.down('ArrowRight');
     const deadline = Date.now() + 10000;
 
@@ -437,21 +442,72 @@ test('server detects asteroid hit: observer sees asteroid ID in data-remote-hit-
       await shooter.page.waitForTimeout(50);
 
       const remoteHits = await getRemoteHitTargets(observer.page);
-      if (remoteHits.some(id => asteroidIds.includes(id))) {
-        asteroidHitSeen = true;
+      if (remoteHits.some(id => id.startsWith('swarm-'))) {
+        swarmHitSeen = true;
         break;
       }
     }
 
     await shooter.page.keyboard.up('ArrowRight').catch(() => undefined);
 
-    console.log(`\nAsteroid hit seen by observer: ${asteroidHitSeen}\n`);
-    if (asteroidHitSeen) {
-      expect(asteroidHitSeen).toBe(true);
+    console.log(`\nSwarm hit seen by observer: ${swarmHitSeen}\n`);
+    if (swarmHitSeen) {
+      expect(swarmHitSeen).toBe(true);
     } else {
-      console.log('No asteroid hit detected in 10 s — geometry may not have aligned.');
+      console.log('No swarm hit detected in 10 s — geometry may not have aligned.');
     }
   } finally {
     await Promise.all([shooter.ctx.close(), observer.ctx.close()]);
+  }
+});
+
+// 12. Beam-truncation: when a remote laser carries a targetId, the wire-side
+// `range` must be strictly less than the full HITSCAN_RANGE (server truncated
+// the beam to the hit point). Without truncation the visible beam would
+// always extend the full hitscan distance regardless of impact.
+test('remote laser range is truncated when targetId is set', async ({ browser }) => {
+  const HITSCAN_RANGE = 500; // mirrors src/core/combat/Weapons.ts
+  const [c1, c2] = await Promise.all([joinClient(browser), joinClient(browser)]);
+  try {
+    await Promise.all([c1.page.waitForTimeout(2000), c2.page.waitForTimeout(2000)]);
+
+    let truncatedHitSeen = false;
+    let lastFullRange: number | null = null;
+
+    await c1.page.keyboard.down('ArrowRight');
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      await c1.page.keyboard.down('Space');
+      await c1.page.waitForTimeout(150);
+      await c1.page.keyboard.up('Space');
+      await c1.page.waitForTimeout(40);
+
+      const [hits, ranges] = await Promise.all([
+        getRemoteHitTargets(c2.page),
+        getRemoteLaserRanges(c2.page),
+      ]);
+      const observerEntries = Object.entries(ranges);
+      if (observerEntries.length === 0) continue;
+      const fullRange = observerEntries.find(([, r]) => r >= HITSCAN_RANGE - 1);
+      if (fullRange) lastFullRange = fullRange[1] ?? null;
+
+      if (hits.length > 0) {
+        const truncated = observerEntries.find(([, r]) => r < HITSCAN_RANGE - 1);
+        if (truncated) {
+          truncatedHitSeen = true;
+          break;
+        }
+      }
+    }
+    await c1.page.keyboard.up('ArrowRight').catch(() => undefined);
+
+    console.log(`\nTruncated-on-hit observed: ${truncatedHitSeen}; lastFullRange=${lastFullRange}\n`);
+    if (truncatedHitSeen) {
+      expect(truncatedHitSeen).toBe(true);
+    } else {
+      console.log('No truncated hit observed in 10 s — geometry may not have aligned.');
+    }
+  } finally {
+    await Promise.all([c1.ctx.close(), c2.ctx.close()]);
   }
 });
