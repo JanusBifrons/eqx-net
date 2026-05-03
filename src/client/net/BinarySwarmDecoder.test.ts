@@ -1,0 +1,139 @@
+import { describe, it, expect } from 'vitest';
+import { decodeSwarmPacket } from './BinarySwarmDecoder.js';
+import type { RenderMirror } from '../../core/contracts/IRenderer.js';
+import {
+  SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_FLAG_FULL,
+  SWARM_RECORD_FLAG_SLEEPING,
+  SWARM_WIRE_VERSION,
+} from '../../shared-types/swarmWireFormat.js';
+
+interface SwarmRecord {
+  entityId: number;
+  kind: number;
+  recFlags: number;
+  x: number; y: number; vx: number; vy: number; angle: number; radius: number;
+}
+
+/**
+ * Hand-build a wire packet matching the spec in `swarmWireFormat.ts`. This
+ * avoids cross-zone imports (the decoder lives in `src/client` and cannot
+ * pull in the encoder from `src/server`); the round-trip is implicit in
+ * agreeing with the published byte layout.
+ */
+function buildPacket(tick: number, isFull: boolean, records: SwarmRecord[]): Uint8Array {
+  const buf = new ArrayBuffer(SWARM_HEADER_BYTES + records.length * SWARM_RECORD_BYTES);
+  const view = new DataView(buf);
+  view.setUint8(0, SWARM_WIRE_VERSION);
+  view.setUint8(1, isFull ? SWARM_FLAG_FULL : 0);
+  view.setUint16(2, records.length, true);
+  view.setUint32(4, tick, true);
+  let off = SWARM_HEADER_BYTES;
+  for (const r of records) {
+    view.setUint16(off + 0, r.entityId, true);
+    view.setUint8(off + 2, r.kind);
+    view.setUint8(off + 3, r.recFlags);
+    view.setFloat32(off + 4, r.x, true);
+    view.setFloat32(off + 8, r.y, true);
+    view.setFloat32(off + 12, r.vx, true);
+    view.setFloat32(off + 16, r.vy, true);
+    view.setFloat32(off + 20, r.angle, true);
+    view.setFloat32(off + 24, r.radius, true);
+    off += SWARM_RECORD_BYTES;
+  }
+  return new Uint8Array(buf);
+}
+
+function makeMirror(): RenderMirror {
+  return { ships: new Map(), localPlayerId: null };
+}
+
+describe('decodeSwarmPacket', () => {
+  it('mirrors a full snapshot into mirror.swarm', () => {
+    const mirror = makeMirror();
+    const packet = buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 100, y: 200, vx: 0.1, vy: 0.2, angle: 0.5, radius: 32 },
+      { entityId: 1, kind: 1, recFlags: 0, x: -50, y: 0, vx: -1, vy: 0, angle: 0, radius: 14 },
+    ]);
+    decodeSwarmPacket(packet, mirror);
+
+    expect(mirror.swarm).toBeDefined();
+    expect(mirror.swarm!.size).toBe(2);
+    const a = mirror.swarm!.get(0)!;
+    expect(a.x).toBeCloseTo(100, 4);
+    expect(a.angle).toBeCloseTo(0.5, 4);
+    expect(a.kind).toBe(0);
+    expect(a.radius).toBeCloseTo(32, 4);
+    expect(a.sleeping).toBe(false);
+    expect(a.lastUpdateTick).toBe(60);
+
+    const b = mirror.swarm!.get(1)!;
+    expect(b.kind).toBe(1);
+    expect(b.radius).toBeCloseTo(14, 4);
+  });
+
+  it('full snapshot omitting an entity removes it from the mirror', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+      { entityId: 1, kind: 0, recFlags: 0, x: 100, y: 0, vx: 0, vy: 0, angle: 0, radius: 24 },
+    ]), mirror);
+    expect(mirror.swarm!.size).toBe(2);
+
+    // Fresh full snapshot — entity 1 is gone.
+    decodeSwarmPacket(buildPacket(120, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror);
+    expect(mirror.swarm!.size).toBe(1);
+    expect(mirror.swarm!.has(0)).toBe(true);
+    expect(mirror.swarm!.has(1)).toBe(false);
+  });
+
+  it('delta packet does NOT remove entities the server is silently keeping at last pose', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+      { entityId: 1, kind: 0, recFlags: 0, x: 100, y: 0, vx: 0, vy: 0, angle: 0, radius: 24 },
+    ]), mirror);
+    expect(mirror.swarm!.size).toBe(2);
+
+    decodeSwarmPacket(buildPacket(61, false, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0.06, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror);
+    expect(mirror.swarm!.size).toBe(2); // entity 1 still there
+    expect(mirror.swarm!.get(0)!.x).toBeCloseTo(0.06, 4);
+  });
+
+  it('decodes the SLEEPING bit into entry.sleeping', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: SWARM_RECORD_FLAG_SLEEPING, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror);
+    expect(mirror.swarm!.get(0)!.sleeping).toBe(true);
+  });
+
+  it('rejects malformed packets silently (truncated, wrong version)', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(new Uint8Array([1, 0, 0]), mirror); // shorter than header
+    expect(mirror.swarm).toBeUndefined();
+
+    const buf = new ArrayBuffer(8);
+    new DataView(buf).setUint8(0, 99); // unknown version
+    decodeSwarmPacket(buf, mirror);
+    expect(mirror.swarm).toBeUndefined();
+  });
+
+  it('reuses entry objects on repeated decode (no per-tick allocation)', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror);
+    const beforeRef = mirror.swarm!.get(0)!;
+    decodeSwarmPacket(buildPacket(61, false, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 5, y: 0, vx: 0.1, vy: 0, angle: 0, radius: 32 },
+    ]), mirror);
+    const afterRef = mirror.swarm!.get(0)!;
+    expect(afterRef).toBe(beforeRef); // same object reference
+    expect(afterRef.x).toBeCloseTo(5, 4);
+  });
+});

@@ -1,0 +1,111 @@
+import type { IAiBehaviour, AiEntity, AiPlayerView, AiWorldView } from '../../core/contracts/IAiBehaviour.js';
+
+/**
+ * Per-tick fire request emitted by a behaviour. The controller buffers these
+ * and exposes them via `drainFireRequests()` so `SectorRoom.update()` can
+ * route them through the existing `handleFire()` lag-comp path. This keeps
+ * AI authority single-sourced — drones don't get their own projectile path,
+ * they use the same one player shots flow through, with an `ai-${id}` shot id.
+ */
+export interface AiFireRequest {
+  shooterId: string;
+  dirX: number;
+  dirY: number;
+  /** Server tick at which the AI declared the shot. */
+  tick: number;
+}
+
+export interface AiIntentSink {
+  /** Posts an AI_INTENT command to the physics worker for the given slot. */
+  postIntent(slot: number, fx: number, fy: number, torque: number): void;
+}
+
+interface AiRegistration {
+  slot: number;
+  behaviour: IAiBehaviour;
+}
+
+/**
+ * Owns the registered swarm AI entities, ticks them all once per server tick,
+ * routes their impulse intents to the physics worker, and surfaces fire
+ * requests for the room to drain. Pure server-side glue — no Rapier handles
+ * here, no networking. The behaviours themselves stay zone-blind in `src/core`.
+ *
+ * Thread model: this runs on the main thread alongside `SectorRoom.update()`.
+ * Reasoning is recorded in the Phase 5 plan ("AI runs on the main thread") and
+ * the deviation is documented in [src/server/CLAUDE.md].
+ */
+export class AiController {
+  private readonly entities = new Map<string, AiRegistration>();
+  private readonly fireQueue: AiFireRequest[] = [];
+
+  constructor(private readonly sink: AiIntentSink) {}
+
+  register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
+    this.entities.set(entityId, { slot, behaviour });
+  }
+
+  unregister(entityId: string): void {
+    this.entities.delete(entityId);
+  }
+
+  has(entityId: string): boolean {
+    return this.entities.has(entityId);
+  }
+
+  size(): number {
+    return this.entities.size;
+  }
+
+  /**
+   * Tick every registered AI once. `entitySnapshot(id)` must return the live
+   * pose (read from SAB by the caller earlier in the tick); behaviours never
+   * touch the worker themselves. `players` is the up-to-date list of alive
+   * player poses for nearest-target queries.
+   *
+   * Intents are posted to the worker immediately; fire requests buffer for the
+   * caller to drain via `drainFireRequests()` after physics steps.
+   */
+  tick(
+    tick: number,
+    dtSec: number,
+    players: ReadonlyArray<AiPlayerView>,
+    entitySnapshot: (id: string) => AiEntity | null,
+  ): void {
+    if (this.entities.size === 0) return;
+    const view: AiWorldView = { players, tick, dtSec };
+
+    for (const [id, reg] of this.entities) {
+      const self = entitySnapshot(id);
+      if (!self) continue;
+      const intent = reg.behaviour.tick(self, view);
+
+      if (intent.fx !== 0 || intent.fy !== 0 || intent.torque !== 0) {
+        this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque);
+      }
+
+      if (intent.fire) {
+        this.fireQueue.push({
+          shooterId: id,
+          dirX: intent.fire.dirX,
+          dirY: intent.fire.dirY,
+          tick,
+        });
+      }
+    }
+  }
+
+  /**
+   * Returns and clears the fire requests accumulated this tick. Caller should
+   * route each through the same `handleFire()` path used by player shots.
+   * Returns the live array to avoid allocations; caller must not retain it.
+   */
+  drainFireRequests(): AiFireRequest[] {
+    if (this.fireQueue.length === 0) return EMPTY;
+    const out = this.fireQueue.slice();
+    this.fireQueue.length = 0;
+    return out;
+  }
+}
+
+const EMPTY: AiFireRequest[] = [];

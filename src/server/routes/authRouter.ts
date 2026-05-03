@@ -7,6 +7,7 @@ import {
   getUser,
   updateDisplayName,
   findOrCreateGoogleUser,
+  findOrCreateTestUser,
 } from '../auth/AuthService.js';
 import { authorizationUrl, exchangeCode } from '../auth/GoogleOAuth.js';
 import { recordLoginEvent } from '../stats/StatsService.js';
@@ -98,6 +99,22 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
 // In-memory state store for CSRF protection on the OAuth round-trip.
 const oauthStates = new Map<string, number>();
 const STATE_TTL_MS = 10 * 60 * 1000;
+
+// Dev-only: mint a real JWT for a deterministic test user. Used by the
+// Playwright globalSetup to bypass the login UI without faking auth state.
+// Hard-gated on NODE_ENV so this can never be reached in production.
+if (process.env['NODE_ENV'] !== 'production') {
+  authRouter.post('/dev/test-token', async (_req: Request, res: Response) => {
+    try {
+      const { token, user } = await findOrCreateTestUser('e2e@test.local');
+      res.json({ token, user });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      console.error('[auth/dev/test-token]', msg);
+      res.status(500).json({ error: 'dev test-token mint failed' });
+    }
+  });
+}
 
 authRouter.get('/google', (_req: Request, res: Response) => {
   const state = randomUUID();

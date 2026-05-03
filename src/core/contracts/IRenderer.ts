@@ -6,10 +6,27 @@ export interface ShipRenderState {
   vy: number;
 }
 
-export interface ObstacleRenderState extends ShipRenderState {
-  /** World-unit collision radius. Renderer draws a circle of this exact size so
-   *  collisions visually line up with the simulation. */
+/**
+ * One swarm-channel render entry. Replaces the Phase 1–4 `ObstacleRenderState`:
+ * asteroids and drones flow through the binary swarm broadcast and are no
+ * longer carried on Colyseus MapSchema. Radius is implied by `kind` (renderer
+ * draws asteroids vs drones with their own visuals). Sleeping entries freeze
+ * interpolation and stay parked at the last server-shipped pose.
+ */
+export interface SwarmRenderState {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  /** Collision radius. Renderer draws asteroids as circles of this size. */
   radius: number;
+  /** 0 = asteroid, 1 = drone. */
+  kind: number;
+  /** True when the server told us this entity is at rest. Renderer keeps the sprite static. */
+  sleeping: boolean;
+  /** Server tick of the most recent packet that included this entity. */
+  lastUpdateTick: number;
 }
 
 export interface ProjectileRenderState {
@@ -28,8 +45,12 @@ export interface ProjectileRenderState {
 
 export interface RenderMirror {
   ships: Map<string, ShipRenderState>;
-  /** Optional. When present, renderer draws each entry as a circle matching its collision radius. */
-  obstacles?: Map<string, ObstacleRenderState>;
+  /**
+   * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
+   * Keyed by the server's dense u16 entityId. Sleeping entries remain in the
+   * map at their last-shipped pose and the renderer freezes interpolation.
+   */
+  swarm?: Map<number, SwarmRenderState>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   localPlayerId: string | null;
@@ -53,12 +74,23 @@ export interface RenderMirror {
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**
-   * Server-authoritative beams from remote players. Keyed by shooterId so a new shot
-   * from the same player always replaces the previous entry (no flicker, no accumulation).
-   * The renderer reads the shooter's current angle from mirror.ships each frame so the
-   * beam continuously sweeps as the remote ship rotates.
+   * Server-authoritative beams from remote shooters (players and drones). Keyed
+   * by shooterId; a new shot replaces the previous entry so there's no flicker.
+   * For player shooters, the renderer derives geometry from the shooter's live
+   * pose in `mirror.ships` so the beam sweeps with rotation. For non-ship
+   * shooters (drones — not in `mirror.ships`), the renderer falls back to the
+   * server-shipped `fromX/fromY/toX/toY` endpoints.
    */
-  remoteLasers?: Map<string, { range: number; hit: boolean; targetId?: string; expiresAt: number }>;
+  remoteLasers?: Map<string, {
+    range: number;
+    hit: boolean;
+    targetId?: string;
+    expiresAt: number;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+  }>;
 }
 
 export interface IRenderer {

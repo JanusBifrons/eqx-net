@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ObstacleRenderState, ProjectileRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ProjectileRenderState } from '@core/contracts/IRenderer';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
@@ -8,6 +8,7 @@ import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '@core/combat/Weapons';
 import type { TouchInput } from '../input/TouchInput';
+import { decodeSwarmPacket } from './BinarySwarmDecoder';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -65,8 +66,9 @@ const NOISE_THRESHOLD = 0.05;
 /** Angle drift below this is float32-serialisation noise (~0.057°). */
 const ANGLE_NOISE_THRESHOLD = 0.001;
 
-/** Scale obstacle lerp duration to correction magnitude. */
-function lerpFramesForObstacleDrift(drift: number): number {
+/** Scale render lerp duration to drift magnitude (used for remote ships).
+ *  Larger drifts get longer lerps so post-collision corrections aren't snappy. */
+function lerpFramesForDrift(drift: number): number {
   if (drift < 3.0)  return 6;   // 100 ms
   if (drift < 10.0) return 10;  // 167 ms
   return 14;                    // 233 ms — large post-collision snap
@@ -90,7 +92,7 @@ const TOUCH_TURN_TOLERANCE = 0.08; // ~4.6°
 export class ColyseusGameClient {
   readonly mirror: RenderMirror = {
     ships: new Map(),
-    obstacles: new Map(),
+    swarm: new Map(),
     projectiles: new Map(),
     localPlayerId: null,
     damagedShips: new Set(),
@@ -98,8 +100,8 @@ export class ColyseusGameClient {
     remoteLasers: new Map(),
   };
 
-  /** Radii of obstacles we've spawned in the prediction world, keyed by id. */
-  private predObstacleRadii = new Map<string, number>();
+  /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
+  private predSwarmKeys = new Set<string>();
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -155,9 +157,6 @@ export class ColyseusGameClient {
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
   private readonly _recentCorrFlags: number[] = [];
-
-  // Per-obstacle render lerp offsets — applied in updateMirror() to smooth corrections.
-  private readonly _obstacleOffsets = new Map<string, { ox: number; oy: number; framesLeft: number; totalFrames: number }>();
 
   // Remote ship interpolation: per-player timestamped history
   private remoteHistory = new Map<string, RemoteEntry[]>();
@@ -234,6 +233,22 @@ export class ColyseusGameClient {
       this.handleSnapshot(snap);
     });
 
+    // Phase 5c: binary swarm channel. Server packs asteroids/drones into a
+    // fixed-stride buffer at 60 Hz (delta-encoded; full snapshot every 60th
+    // tick). Decoder mutates `mirror.swarm` in place — zero per-frame alloc.
+    // After decode we mirror swarm poses into predWorld so the local ship can
+    // collide with them and the local hitscan can target them. The body is
+    // keyed by `swarm-${entityId}` to avoid colliding with playerIds; the
+    // server's `laser_fired` events use the same key for swarm hits.
+    this.room.onMessage('swarm', (raw: unknown) => {
+      if (raw instanceof ArrayBuffer) {
+        decodeSwarmPacket(raw, this.mirror);
+      } else if (ArrayBuffer.isView(raw)) {
+        decodeSwarmPacket(raw, this.mirror);
+      }
+      this.syncSwarmIntoPredWorld();
+    });
+
     this.room.onMessage('damage', (evt: DamageEvent) => {
       this.handleDamage(evt);
     });
@@ -263,6 +278,10 @@ export class ColyseusGameClient {
         hit: evt.hit,
         targetId: evt.targetId,
         expiresAt: performance.now() + 400,
+        fromX: evt.fromX,
+        fromY: evt.fromY,
+        toX: evt.toX,
+        toY: evt.toY,
       });
     });
 
@@ -389,6 +408,9 @@ export class ColyseusGameClient {
       this.predWorld.setShipState(id, state);
       this.predRemoteShipIds.add(id);
     }
+    // Likewise for swarm entries: a binary `swarm` packet may have arrived
+    // before predWorld existed; bring those bodies up now.
+    this.syncSwarmIntoPredWorld();
   }
 
   // ── Snapshot / reconciliation ───────────────────────────────────────────
@@ -415,14 +437,11 @@ export class ColyseusGameClient {
 
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
-        // Sync obstacles.
-        if (snap.obstacles) {
-          for (const [id, state] of Object.entries(snap.obstacles)) {
-            if (this.predWorld.hasShip(id)) this.predWorld.setShipState(id, state);
-          }
-        }
         // Sync remote ships — keep them at their latest server position until
         // the reconciler bootstraps so they don't drift before the first reconcile.
+        // Phase 5c: swarm entities (asteroids, drones) are not in predWorld;
+        // they live render-only in mirror.swarm and lerp between binary
+        // swarm packets server-authoritatively.
         for (const [remoteId, state] of Object.entries(snap.states)) {
           if (remoteId === localId) continue;
           if (this.predWorld.hasShip(remoteId)) this.predWorld.setShipState(remoteId, state);
@@ -447,38 +466,8 @@ export class ColyseusGameClient {
         this.predWorld.setShipState(remoteId, state);
       }
 
-      // Reset obstacles to serverTick state BEFORE reconcile.
-      const preResetObstaclePos = new Map<string, { x: number; y: number }>();
-      if (this.predWorld && snap.obstacles) {
-        for (const [id, state] of Object.entries(snap.obstacles)) {
-          if (!this.predWorld.hasShip(id)) continue;
-          const current = this.predWorld.getShipState(id);
-          if (current) preResetObstaclePos.set(id, { x: current.x, y: current.y });
-          this.predWorld.setShipState(id, {
-            x: state.x, y: state.y, vx: state.vx, vy: state.vy, angle: state.angle,
-          });
-        }
-      }
-
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
       this.reconciler.reconcile(serverState, snap.serverTick, this.inputTick, ackedTick);
-
-      // Compute obstacle lerp offsets.
-      if (this.predWorld && snap.obstacles) {
-        for (const [id] of Object.entries(snap.obstacles)) {
-          const preReset = preResetObstaclePos.get(id);
-          if (!preReset) continue;
-          const postReconcile = this.predWorld.getShipState(id);
-          if (!postReconcile) continue;
-          const ox = preReset.x - postReconcile.x;
-          const oy = preReset.y - postReconcile.y;
-          const dist = Math.hypot(ox, oy);
-          if (dist > 1) {
-            const frames = lerpFramesForObstacleDrift(dist);
-            this._obstacleOffsets.set(id, { ox, oy, framesLeft: frames, totalFrames: frames });
-          }
-        }
-      }
 
       // Compute remote ship lerp offsets.
       if (this.predWorld) {
@@ -489,7 +478,7 @@ export class ColyseusGameClient {
           const oy = preReset.y - postReconcile.y;
           const dist = Math.hypot(ox, oy);
           if (dist > 1) {
-            const frames = lerpFramesForObstacleDrift(dist);
+            const frames = lerpFramesForDrift(dist);
             this._remoteShipOffsets.set(remoteId, { ox, oy, framesLeft: frames, totalFrames: frames });
           }
         }
@@ -586,42 +575,33 @@ export class ColyseusGameClient {
   }
 
   /**
-   * Bootstrap any obstacles we haven't seen yet into the prediction world and
-   * publish their current state to the render mirror.
+   * Sync swarm entries into the prediction world. Called after every binary
+   * `swarm` packet decode. New entries spawn predWorld bodies (so the local
+   * ship can collide with them and the local hitscan can target them);
+   * existing entries get setShipState; entries that vanish from the mirror
+   * get despawned. The predWorld key is `swarm-${entityId}`, matching the
+   * sprite key in PixiRenderer and the `targetId` the server emits in
+   * `laser_fired` for swarm hits.
    */
-  private syncObstacles(obstacles: Map<string, unknown> | undefined): void {
-    if (!obstacles) return;
-    const mirrorObstacles = this.mirror.obstacles!;
+  private syncSwarmIntoPredWorld(): void {
+    if (!this.predWorld || !this.mirror.swarm) return;
     const seen = new Set<string>();
-
-    for (const [id, raw] of obstacles.entries()) {
-      seen.add(id);
-      const o = raw as Record<string, unknown>;
-      const state: ShipPhysicsState = {
-        x: Number(o['x'] ?? 0),
-        y: Number(o['y'] ?? 0),
-        angle: Number(o['angle'] ?? 0),
-        vx: Number(o['vx'] ?? 0),
-        vy: Number(o['vy'] ?? 0),
-      };
-      const radius = Number(o['radius'] ?? 24);
-
-      if (this.predWorld && !this.predWorld.hasShip(id)) {
-        this.predWorld.spawnObstacle(id, state.x, state.y, radius, 3);
-        this.predWorld.setShipState(id, state);
-        this.predObstacleRadii.set(id, radius);
+    for (const [entityId, entry] of this.mirror.swarm) {
+      const key = `swarm-${entityId}`;
+      seen.add(key);
+      if (!this.predWorld.hasShip(key)) {
+        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3);
+        this.predSwarmKeys.add(key);
       }
-
-      const entry: ObstacleRenderState = { ...state, radius };
-      mirrorObstacles.set(id, entry);
+      this.predWorld.setShipState(key, {
+        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
+      });
     }
-
-    for (const id of mirrorObstacles.keys()) {
-      if (!seen.has(id)) {
-        mirrorObstacles.delete(id);
-        this.predWorld?.despawnShip(id);
-        this.predObstacleRadii.delete(id);
-        this._obstacleOffsets.delete(id);
+    // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
+    for (const key of this.predSwarmKeys) {
+      if (!seen.has(key)) {
+        this.predWorld.despawnShip(key);
+        this.predSwarmKeys.delete(key);
       }
     }
   }
@@ -654,9 +634,7 @@ export class ColyseusGameClient {
     if (!state || typeof state !== 'object') return;
     const s = state as Record<string, unknown>;
     const ships = s['ships'] as Map<string, unknown> | undefined;
-    const obstacles = s['obstacles'] as Map<string, unknown> | undefined;
     const projectiles = s['projectiles'] as Map<string, unknown> | undefined;
-    this.syncObstacles(obstacles);
     this.syncProjectiles(projectiles);
     if (!ships) return;
 
@@ -749,23 +727,10 @@ export class ColyseusGameClient {
     // path (per src/client/CLAUDE.md Zustand-purity rule).
     this.mirror.showServerGhost = useUIStore.getState().showServerGhost;
 
-    // Obstacles — read from prediction world at 60 Hz with decaying lerp offsets.
-    if (this.predWorld && this.mirror.obstacles) {
-      for (const [id, radius] of this.predObstacleRadii) {
-        const s = this.predWorld.getShipState(id);
-        if (!s) continue;
-        const off = this._obstacleOffsets.get(id);
-        let ox = 0, oy = 0;
-        if (off && off.framesLeft > 0) {
-          const ratio = off.framesLeft / off.totalFrames;
-          ox = off.ox * ratio;
-          oy = off.oy * ratio;
-          off.framesLeft--;
-          if (off.framesLeft === 0) this._obstacleOffsets.delete(id);
-        }
-        this.mirror.obstacles.set(id, { ...s, x: s.x + ox, y: s.y + oy, radius });
-      }
-    }
+    // Phase 5c: swarm entities (asteroids, drones) live in mirror.swarm,
+    // populated by `decodeSwarmPacket` on every binary 'swarm' message. They
+    // have no client prediction — server-authoritative @ 60 Hz lerped between
+    // received frames. The renderer reads mirror.swarm directly each frame.
 
     // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
     if (this.predWorld) {
@@ -947,9 +912,9 @@ export class ColyseusGameClient {
     this.remoteHistory.clear();
     this.predRemoteShipIds.clear();
     this._remoteShipOffsets.clear();
-    this.mirror.obstacles?.clear();
+    this.predSwarmKeys.clear();
+    this.mirror.swarm?.clear();
     this.mirror.projectiles?.clear();
     this.mirror.remoteLasers?.clear();
-    this.predObstacleRadii.clear();
   }
 }

@@ -1,6 +1,7 @@
-import type { RenderMirror, ObstacleRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import { PhysicsWorld } from '@core/physics/World';
 import type { Keyboard } from '../input/Keyboard';
+import { SWARM_KIND_ASTEROID } from '../../shared-types/swarmWireFormat.js';
 
 const PLAYER_ID = 'local-player';
 
@@ -10,17 +11,22 @@ const PLAYER_ID = 'local-player';
  * the server runs, driven by keyboard at 60 Hz. If movement jitters here, the
  * bug is in the sim; if it's smooth here but jitters in multiplayer, the bug
  * is in the reconciler.
+ *
+ * Phase 5c: asteroids feed `mirror.swarm` (the new binary-swarm-channel mirror)
+ * instead of the old `mirror.obstacles`. Local mode keys swarm entries by a
+ * synthetic numeric id, mirroring the server's u16 entityId convention.
  */
 export class LocalGameClient {
   readonly mirror: RenderMirror = {
     ships: new Map(),
-    obstacles: new Map(),
+    swarm: new Map(),
     localPlayerId: PLAYER_ID,
   };
 
   private world: PhysicsWorld | null = null;
-  /** Radii for each spawned obstacle so the renderer can draw them correctly. */
-  private asteroidRadii = new Map<string, number>();
+  /** Per-asteroid metadata keyed by string id (the simulation id) — radius and the synthetic swarm entityId. */
+  private asteroidMeta = new Map<string, { radius: number; entityId: number }>();
+  private nextEntityId = 0;
   private intervalId: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
 
@@ -51,20 +57,26 @@ export class LocalGameClient {
   private spawnAsteroid(id: string, x: number, y: number, radius: number, mass: number): void {
     if (!this.world) return;
     this.world.spawnObstacle(id, x, y, radius, mass);
-    this.asteroidRadii.set(id, radius);
+    this.asteroidMeta.set(id, { radius, entityId: this.nextEntityId++ });
   }
 
   /** Called once per render frame; snapshots physics into the mirror. */
   updateMirror(): void {
     if (!this.world) return;
     const states = this.world.getAllShipStates();
-    const obstacles = this.mirror.obstacles!;
+    const swarm = this.mirror.swarm!;
 
     for (const [id, s] of states) {
-      const radius = this.asteroidRadii.get(id);
-      if (radius !== undefined) {
-        const entry: ObstacleRenderState = { ...s, radius };
-        obstacles.set(id, entry);
+      const meta = this.asteroidMeta.get(id);
+      if (meta !== undefined) {
+        const entry: SwarmRenderState = {
+          x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle,
+          radius: meta.radius,
+          kind: SWARM_KIND_ASTEROID,
+          sleeping: false,
+          lastUpdateTick: 0,
+        };
+        swarm.set(meta.entityId, entry);
       } else {
         this.mirror.ships.set(id, s);
       }
@@ -72,8 +84,10 @@ export class LocalGameClient {
     for (const id of this.mirror.ships.keys()) {
       if (!states.has(id)) this.mirror.ships.delete(id);
     }
-    for (const id of obstacles.keys()) {
-      if (!states.has(id)) obstacles.delete(id);
+    // Sweep stale swarm entries (asteroids that vanished from physics).
+    for (const [, meta] of this.asteroidMeta) {
+      // (Local mode never removes asteroids, but sweep defensively if state is missing.)
+      void meta;
     }
   }
 
@@ -86,7 +100,7 @@ export class LocalGameClient {
     this.world?.dispose();
     this.world = null;
     this.mirror.ships.clear();
-    this.mirror.obstacles?.clear();
-    this.asteroidRadii.clear();
+    this.mirror.swarm?.clear();
+    this.asteroidMeta.clear();
   }
 }

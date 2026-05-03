@@ -48,7 +48,10 @@ export interface WelcomeMessage {
   serverTick: number;
 }
 
-/** Authoritative snapshot broadcast by the server every 10 ticks for client-side reconciliation. */
+/** Authoritative snapshot broadcast by the server at 20 Hz for client-side
+ *  reconciliation. Phase 5c: `obstacles` removed — asteroids and drones now
+ *  flow through the binary swarm channel (see `client.send('swarm', buf)`)
+ *  instead of being carried on every snapshot. */
 export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
@@ -56,9 +59,6 @@ export interface SnapshotMessage {
   states: Record<string, { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>;
   /** Last client input tick acknowledged by the server for each player. */
   ackedTicks: Record<string, number>;
-  /** Authoritative obstacle states. Client overwrites its predicted obstacle state
-   *  with these each snapshot — no input replay, just a fresh re-sync. */
-  obstacles: Record<string, { x: number; y: number; vx: number; vy: number; angle: number }>;
 }
 
 /** Server → client (direct): result of a fire request. */

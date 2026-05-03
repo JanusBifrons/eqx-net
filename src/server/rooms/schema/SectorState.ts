@@ -13,15 +13,10 @@ export class ShipState extends Schema {
   @type('boolean') alive: boolean = true;
 }
 
-export class ObstacleState extends Schema {
-  @type('string') obstacleId: string = '';
-  @type('number') x: number = 0;
-  @type('number') y: number = 0;
-  @type('number') angle: number = 0;
-  @type('number') vx: number = 0;
-  @type('number') vy: number = 0;
-  @type('number') radius: number = 24;
-}
+// Phase 5c: ObstacleState removed. Asteroids and drones now flow through the
+// binary swarm channel (see src/server/net/BinarySwarmBroadcast.ts) which
+// bypasses MapSchema entirely. This was the master plan's "binary packed
+// broadcast" deliverable for scaling past ~16 entities.
 
 export class ProjectileState extends Schema {
   @type('string') projectileId: string = '';
@@ -35,7 +30,6 @@ export class ProjectileState extends Schema {
 
 export class SectorState extends Schema {
   @type({ map: ShipState }) ships = new MapSchema<ShipState>();
-  @type({ map: ObstacleState }) obstacles = new MapSchema<ObstacleState>();
   @type({ map: ProjectileState }) projectiles = new MapSchema<ProjectileState>();
   @type('number') tick: number = 0;
   @type('number') clockRate: number = 1.0;

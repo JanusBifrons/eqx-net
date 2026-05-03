@@ -81,6 +81,35 @@ export function updateDisplayName(userId: string, displayName: string): AuthUser
   return getUser(userId);
 }
 
+/**
+ * Dev/E2E helper: idempotently mint a JWT for a fixed test user. Creates the
+ * row on first call, returns a fresh token on every call. Has no password —
+ * the user can never log in via /auth/login. Only callable from the dev-only
+ * /auth/dev/test-token route, which is itself NODE_ENV-gated.
+ */
+export async function findOrCreateTestUser(email: string): Promise<{ token: string; user: AuthUser }> {
+  const existing = db
+    .prepare('SELECT id, email, display_name FROM users WHERE email = ?')
+    .get(email.toLowerCase()) as Pick<UserRow, 'id' | 'email' | 'display_name'> | undefined;
+
+  if (existing) {
+    const token = await signToken(existing.id);
+    return { token, user: { id: existing.id, email: existing.email, displayName: existing.display_name } };
+  }
+
+  const id = randomUUID();
+  const now = Date.now();
+  db.prepare(
+    'INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+  ).run(id, email.toLowerCase(), null, 'E2E Tester', now, now);
+  db.prepare(
+    'INSERT INTO auth_providers (id, user_id, provider, provider_id) VALUES (?, ?, ?, ?)',
+  ).run(randomUUID(), id, 'e2e', email.toLowerCase());
+
+  const token = await signToken(id);
+  return { token, user: { id, email: email.toLowerCase(), displayName: 'E2E Tester' } };
+}
+
 export async function findOrCreateGoogleUser(profile: GoogleProfile): Promise<{ token: string; user: AuthUser }> {
   const existing = db
     .prepare(

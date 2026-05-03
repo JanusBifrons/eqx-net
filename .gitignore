@@ -14,6 +14,7 @@ eqx.db-shm
 playwright-report/
 test-results/
 coverage/
+tests/e2e/.auth/
 
 # editor/os
 .DS_Store

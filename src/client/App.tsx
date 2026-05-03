@@ -378,13 +378,17 @@ function GameSurface(): JSX.Element {
             }
           }
           el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
-          // Expose obstacle positions for E2E collision stability assertions.
-          if (gameClient.mirror.obstacles) {
-            const obsMap: Record<string, { x: number; y: number }> = {};
-            for (const [id, obs] of gameClient.mirror.obstacles.entries()) {
-              obsMap[id] = { x: parseFloat(obs.x.toFixed(3)), y: parseFloat(obs.y.toFixed(3)) };
+          // Expose swarm positions (asteroids/drones) for E2E collision stability
+          // assertions. The string-keyed `data-obstacle-positions` attribute is
+          // preserved so existing E2E tests keep working: each swarm entityId is
+          // serialised as `swarm-${entityId}` to differentiate from the old
+          // hand-rolled `asteroid-N` ids the legacy MapSchema used.
+          if (gameClient.mirror.swarm) {
+            const swarmMap: Record<string, { x: number; y: number }> = {};
+            for (const [entityId, entry] of gameClient.mirror.swarm.entries()) {
+              swarmMap[`swarm-${entityId}`] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
             }
-            el.dataset['obstaclePositions'] = JSON.stringify(obsMap);
+            el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
           }
           animFrameRef.current = requestAnimationFrame(loop);
         }

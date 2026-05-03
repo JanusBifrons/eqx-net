@@ -126,6 +126,33 @@ export class PhysicsWorld {
     }
   }
 
+  /**
+   * Apply a single-step linear and angular impulse, used by AI behaviours and
+   * (via the `AI_INTENT` worker command) by drone steering. Wakes the body if
+   * it was sleeping. Silently no-ops on unknown ids so a stale intent posted
+   * after despawn is harmless.
+   */
+  applyImpulse(id: string, fx: number, fy: number, torque: number): void {
+    const body = this.bodies.get(id);
+    if (!body) return;
+    if (fx !== 0 || fy !== 0) body.applyImpulse({ x: fx, y: fy }, true);
+    if (torque !== 0) body.applyTorqueImpulse(torque, true);
+  }
+
+  /** True when Rapier reports the body as sleeping (motion below its threshold). */
+  isSleeping(id: string): boolean {
+    const body = this.bodies.get(id);
+    if (!body) return false;
+    return body.isSleeping();
+  }
+
+  /** Force-wake a body. Safe no-op if already awake or unknown. */
+  wakeUp(id: string): void {
+    const body = this.bodies.get(id);
+    if (!body) return;
+    body.wakeUp();
+  }
+
   setShipState(id: string, state: ShipPhysicsState): void {
     const body = this.bodies.get(id);
     if (!body) return;

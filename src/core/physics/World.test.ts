@@ -51,4 +51,37 @@ describe('PhysicsWorld', () => {
     expect(all.has('multi-a')).toBe(true);
     expect(all.has('multi-b')).toBe(true);
   });
+
+  it('applyImpulse imparts linear velocity in the requested direction', () => {
+    world.spawnShip('imp-linear', 500, 500);
+    world.applyImpulse('imp-linear', 5, 0, 0);
+    world.tick(1 / 60);
+    const state = world.getShipState('imp-linear');
+    expect(state!.vx).toBeGreaterThan(0);
+    expect(Math.abs(state!.vy)).toBeLessThan(0.01);
+  });
+
+  it('applyImpulse adds torque that produces angular velocity', () => {
+    world.spawnShip('imp-torque', 600, 600);
+    world.applyImpulse('imp-torque', 0, 0, 0.5);
+    world.tick(1 / 60);
+    const state = world.getShipState('imp-torque');
+    // The damped ship has high angular damping (8.0) so we just check the sign survives.
+    expect(state!.angvel ?? 0).toBeGreaterThan(0);
+  });
+
+  it('applyImpulse silently no-ops on unknown ids', () => {
+    expect(() => world.applyImpulse('does-not-exist', 1, 1, 1)).not.toThrow();
+  });
+
+  it('isSleeping reports false on a freshly impulsed body', () => {
+    world.spawnShip('sleep-check', 700, 700);
+    world.applyImpulse('sleep-check', 5, 5, 0);
+    world.tick(1 / 60);
+    expect(world.isSleeping('sleep-check')).toBe(false);
+  });
+
+  it('isSleeping returns false for unknown ids', () => {
+    expect(world.isSleeping('ghost')).toBe(false);
+  });
 });

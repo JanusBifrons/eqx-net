@@ -236,19 +236,27 @@ export class PixiRenderer implements IRenderer {
       }
     }
 
-    if (mirror.obstacles) {
-      for (const [id, obs] of mirror.obstacles) {
-        seen.add(id);
-        let sprite = this.sprites.get(id);
+    // Phase 5c: swarm entities (asteroids + drones) — keyed by `swarm-${entityId}`
+    // in the sprite map so they can't collide with playerIds. Sleeping entries
+    // simply stop receiving pose updates; the sprite stays parked at the last
+    // server-shipped pose (no client-side dead reckoning).
+    if (mirror.swarm) {
+      for (const [entityId, entry] of mirror.swarm) {
+        const spriteKey = `swarm-${entityId}`;
+        seen.add(spriteKey);
+        let sprite = this.sprites.get(spriteKey);
         if (!sprite) {
-          sprite = buildAsteroidGfx(obs.radius);
+          sprite = buildAsteroidGfx(entry.radius);
           this.shipContainer.addChild(sprite);
-          this.sprites.set(id, sprite);
+          this.sprites.set(spriteKey, sprite);
         }
-        sprite.x = obs.x;
-        sprite.y = -obs.y;
-        sprite.rotation = -obs.angle;
-        sprite.tint = (mirror.liveBeam?.hitId === id || remoteHitTargets.has(id)) ? 0xff2222 : 0xffffff;
+        sprite.x = entry.x;
+        sprite.y = -entry.y;
+        sprite.rotation = -entry.angle;
+        const hit = (mirror.liveBeam?.hitId === spriteKey) || remoteHitTargets.has(spriteKey);
+        sprite.tint = hit ? 0xff2222 : 0xffffff;
+        // Sleeping entries stop interpolating; their pose is whatever the
+        // server last shipped. (Mark visually muted in 5d if needed.)
       }
     }
 
@@ -318,21 +326,34 @@ export class PixiRenderer implements IRenderer {
       this.remoteBeamGfx.clear();
       const now = performance.now();
       for (const [shooterId, laser] of mirror.remoteLasers) {
-        const shooter = mirror.ships.get(shooterId);
-        if (!shooter) continue;
         // Hold full brightness while shooter is actively firing; fade only in the
         // last 150 ms of TTL (i.e. after they stop shooting).  With WEAPON_COOLDOWN
         // = 167 ms and TTL = 400 ms, each new shot resets expiresAt well before the
         // fade window, so the beam is solid-on while space is held.
         const ttlRemaining = laser.expiresAt - now;
         const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
-        // Derive direction from shooter's current angle so it sweeps in real time.
-        const fwdX = -Math.sin(shooter.angle);
-        const fwdY =  Math.cos(shooter.angle);
-        const fromX = shooter.x + fwdX * 20;
-        const fromY = shooter.y + fwdY * 20;
-        const toX = fromX + fwdX * laser.range;
-        const toY = fromY + fwdY * laser.range;
+
+        // Player shooters track their live ship pose so the beam sweeps with
+        // rotation. Non-ship shooters (drones — not in `mirror.ships`) use the
+        // wire-shipped endpoints, which are the authoritative beam geometry.
+        const shooter = mirror.ships.get(shooterId);
+        let fromX: number;
+        let fromY: number;
+        let toX: number;
+        let toY: number;
+        if (shooter) {
+          const fwdX = -Math.sin(shooter.angle);
+          const fwdY =  Math.cos(shooter.angle);
+          fromX = shooter.x + fwdX * 20;
+          fromY = shooter.y + fwdY * 20;
+          toX = fromX + fwdX * laser.range;
+          toY = fromY + fwdY * laser.range;
+        } else {
+          fromX = laser.fromX;
+          fromY = laser.fromY;
+          toX = laser.toX;
+          toY = laser.toY;
+        }
         // Outer glow
         this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
         this.remoteBeamGfx.stroke({ color: REMOTE_LASER_COLOR, width: 3, alpha: alpha * 0.4 });

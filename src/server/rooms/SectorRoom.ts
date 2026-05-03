@@ -6,7 +6,13 @@ import { z } from 'zod';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import { SectorState, ShipState, ObstacleState, ProjectileState } from './schema/SectorState.js';
+import { SectorState, ShipState, ProjectileState } from './schema/SectorState.js';
+import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
+import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { AiController } from '../ai/AiController.js';
+import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
+import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
@@ -86,11 +92,14 @@ type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number };
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }
+  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number };
 
-/** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so both
- *  server and client-side prediction worlds stay in agreement. */
-const ASTEROIDS: ReadonlyArray<{ id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }> = [
+/** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
+ *  initial swarm population matches between sessions. Spawned via SwarmSpawner
+ *  in onCreate(), then shipped via the binary swarm broadcast — no longer on
+ *  Colyseus MapSchema. */
+const ASTEROIDS: ReadonlyArray<AsteroidSpec> = [
   { id: 'asteroid-0', x:  200, y:    0, vx: 0,   vy: 0,    radius: 32, mass: 5 },
   { id: 'asteroid-1', x: -180, y:  120, vx: 0.3, vy: -0.2, radius: 24, mass: 3 },
   { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 40, mass: 7 },
@@ -117,11 +126,16 @@ export class SectorRoom extends Room<SectorState> {
   private freeSlots: number[] = [];
   private initialSpawnPositions = new Map<string, { x: number; y: number }>();
 
-  // Obstacles live in the same SAB slot pool as ships so the worker's state-
-  // readout loop treats them uniformly; these maps let update() know which
-  // entries feed the ships schema vs. the obstacles schema.
-  private obstacleIdToSlot = new Map<string, number>();
-  private slotToObstacleId = new Map<number, string>();
+  // Phase 5c: swarm entities (asteroids, drones) live in the same SAB slot
+  // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
+  // pose, sleeping flag) is owned by the swarm registry and shipped via the
+  // binary swarm channel — never on MapSchema.
+  private readonly swarmRegistry = new SwarmEntityRegistry();
+  private readonly swarmEncoder = new BinarySwarmBroadcast();
+  private swarmSpawner!: SwarmSpawner;
+  private aiController!: AiController;
+  /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
+  private aiPlayerScratch: AiPlayerView[] = [];
 
   private bus!: Bus;
   private sessionToPlayer = new Map<string, string>();
@@ -162,40 +176,51 @@ export class SectorRoom extends Room<SectorState> {
     const roomOpts = (options ?? {}) as {
       testMode?: boolean;
       asteroidConfig?: typeof ASTEROIDS;
+      /** How many drones to seed at room start. 0 to skip. Defaults to 30 for non-test rooms. */
+      droneCount?: number;
     };
     this.testMode = roomOpts.testMode ?? false;
     const asteroidRoster = roomOpts.asteroidConfig ?? ASTEROIDS;
 
-    // Seed the room with the asteroid roster. These exist for
-    // the lifetime of the room and are never respawned.
-    for (const a of asteroidRoster) {
-      const slot = this.freeSlots.pop();
-      if (slot === undefined) {
-        logger.error({ obstacleId: a.id }, 'no free SAB slots for asteroid');
-        break;
-      }
-      this.obstacleIdToSlot.set(a.id, slot);
-      this.slotToObstacleId.set(slot, a.id);
+    // Phase 5c: seed swarm via the spawner, which owns slot allocation,
+    // SAB priming, registry registration, and the worker spawn-obstacle
+    // command. Asteroids and drones share the same physics body shape
+    // (dynamic Rapier ball with damping=0); the AI behaviour determines
+    // whether they drift passively or steer toward players.
+    this.aiController = new AiController({
+      postIntent: (slot, fx, fy, torque) => {
+        this.postToWorker({ type: 'AI_INTENT', slot, fx, fy, torque });
+      },
+    });
 
-      const base = slotBase(slot);
-      this.sabF32[base + SLOT_X_OFF]  = a.x;
-      this.sabF32[base + SLOT_Y_OFF]  = a.y;
-      this.sabF32[base + SLOT_VX_OFF] = a.vx;
-      this.sabF32[base + SLOT_VY_OFF] = a.vy;
+    this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
+      takeSlot: () => this.freeSlots.pop(),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass }),
+      sabF32: this.sabF32,
+      sabU32: this.sabU32,
+      registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
+      droneBehaviour: () => new HostileDroneBehaviour(),
+    });
+    const seeded = this.swarmSpawner.seedAsteroids(asteroidRoster);
+    if (seeded < asteroidRoster.length) {
+      logger.error({ requested: asteroidRoster.length, seeded }, 'swarm spawner: not all asteroids seeded (slot pool exhausted)');
+    }
 
-      const entry = new ObstacleState();
-      entry.obstacleId = a.id;
-      entry.x = a.x; entry.y = a.y;
-      entry.vx = a.vx; entry.vy = a.vy;
-      entry.radius = a.radius;
-      this.state.obstacles.set(a.id, entry);
-
-      this.postToWorker({
-        type: 'SPAWN_OBSTACLE', slot,
-        obstacleId: a.id,
-        x: a.x, y: a.y, vx: a.vx, vy: a.vy,
-        radius: a.radius, mass: a.mass,
+    // Seed a small drone wave for early manual testing — Phase 5e will scale
+    // this to 500 entities behind the interest grid + spawner pacing. Drones
+    // ring the spawn area at distance 350u so the player can engage them
+    // without being instantly swarmed.
+    const droneCount = roomOpts.droneCount ?? (this.testMode ? 0 : 30);
+    for (let i = 0; i < droneCount; i++) {
+      const angle = (i / droneCount) * Math.PI * 2;
+      const r = 350;
+      const ok = this.swarmSpawner.spawnDrone({
+        id: `drone-${i}`,
+        x: Math.cos(angle) * r,
+        y: Math.sin(angle) * r,
       });
+      if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
     }
 
     this.onMessage('input', (client: Client, raw: unknown) => {
@@ -305,14 +330,30 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    // Check obstacles — no lag-comp needed (asteroids move slowly).
-    for (const [obstacleId, obs] of this.state.obstacles) {
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, obs.x, obs.y, obs.radius);
+    // Check swarm entities (asteroids, drones) — no lag-comp needed in 5c
+    // (asteroids move slowly; drones contribute to SnapshotRing in 5e).
+    // Pose read direct from SAB so we always check current authoritative
+    // positions, never the last-broadcast pose stored on the registry.
+    for (const rec of this.swarmRegistry.all()) {
+      const b = slotBase(rec.slot);
+      const sx = this.sabF32[b + SLOT_X_OFF]!;
+      const sy = this.sabF32[b + SLOT_Y_OFF]!;
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, sx, sy, rec.radius);
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
-        hitId = obstacleId;
+        hitId = rec.id;
         hitIsObstacle = true;
       }
+    }
+
+    // Resolve the wire-side target id. Player hits send raw playerId; swarm
+    // hits send `swarm-${entityId}` so the client renderer can match against
+    // its `mirror.swarm` keying convention. The server still uses `hitId` (the
+    // registry's string id) internally for damage routing and lag-comp.
+    let wireTargetId: string | undefined = hitId ?? undefined;
+    if (hitId && hitIsObstacle) {
+      const rec = this.swarmRegistry.get(hitId);
+      if (rec) wireTargetId = `swarm-${rec.entityId}`;
     }
 
     if (hitId && !hitIsObstacle) {
@@ -329,6 +370,80 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     // Broadcast authoritative beam endpoint to ALL clients so they can render it.
+    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+    this.broadcast('laser_fired', {
+      type: 'laser_fired',
+      shooterId,
+      fromX: rayFromX,
+      fromY: rayFromY,
+      toX: beamEndX,
+      toY: beamEndY,
+      hit: !!hitId,
+      targetId: wireTargetId,
+    } satisfies LaserFiredEvent);
+  }
+
+  /**
+   * Build a read-only AiEntity snapshot for the given swarm id by reading SAB.
+   * Used by AiController to feed live poses to behaviours each tick.
+   */
+  private swarmEntitySnapshot(id: string): AiEntity | null {
+    const rec = this.swarmRegistry.get(id);
+    if (!rec) return null;
+    const b = slotBase(rec.slot);
+    return {
+      id,
+      x: this.sabF32[b + SLOT_X_OFF]!,
+      y: this.sabF32[b + SLOT_Y_OFF]!,
+      vx: this.sabF32[b + SLOT_VX_OFF]!,
+      vy: this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+  }
+
+  /**
+   * AI fire path. Mirrors the player hitscan logic but skips the message
+   * parser, the per-session hit_ack, and the temporal-plausibility window
+   * (AI fires at the current tick by definition). Cooldown is enforced via
+   * the same `lastFireClientTick` map keyed by AI shooter id.
+   *
+   * Phase 5e will refactor handleFire to share the hit-resolution + damage +
+   * broadcast tail with this method, eliminating the duplication. For 5c+
+   * preview the duplication is contained to this single method.
+   */
+  private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number): void {
+    const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
+    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) return;
+    this.lastFireClientTick.set(shooterId, tick);
+
+    const len = Math.hypot(dirX, dirY);
+    if (len < 0.001) return;
+    const ndx = dirX / len;
+    const ndy = dirY / len;
+
+    // Drone fires from its own pose, offset 16u along the firing direction so
+    // it doesn't self-hit on the next-tick ray.
+    const self = this.swarmEntitySnapshot(shooterId);
+    if (!self) return;
+    const rayFromX = self.x + ndx * 16;
+    const rayFromY = self.y + ndy * 16;
+
+    // Hitscan against all alive ships (no lag-comp — drones fire at current tick).
+    let hitId: string | null = null;
+    let hitDist = Infinity;
+    for (const [targetId] of this.playerToSlot) {
+      const targetShip = this.state.ships.get(targetId);
+      if (!targetShip || !targetShip.alive) continue;
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, targetShip.x, targetShip.y, SHIP_COLLISION_RADIUS);
+      if (dist !== null && dist < hitDist) { hitDist = dist; hitId = targetId; }
+    }
+
+    if (hitId) {
+      this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
+    }
+
     const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
     const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
     this.broadcast('laser_fired', {
@@ -486,10 +601,22 @@ export class SectorRoom extends Room<SectorState> {
 
       let ready = false;
 
-      this.physicsWorker.on('message', (msg: { type: string }) => {
+      this.physicsWorker.on('message', (msg: { type: string; entityId?: string; sleeping?: boolean; tick?: number }) => {
         if (!ready && msg.type === 'READY') {
           ready = true;
           resolve();
+          return;
+        }
+        if (msg.type === 'SLEEP_TRANSITION' && typeof msg.entityId === 'string' && typeof msg.sleeping === 'boolean') {
+          // Re-emit on the local bus as a discrete event. Phase 5 subscribers
+          // (binary swarm broadcast in 5c, audio/UI in later phases) consume
+          // these to freeze interpolation / play wake SFX. Pino sampling rule
+          // for high-frequency events applies — log at 1% if needed.
+          if (msg.sleeping) {
+            this.bus.emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId: msg.entityId });
+          } else {
+            this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId: msg.entityId });
+          }
         }
       });
 
@@ -619,10 +746,12 @@ export class SectorRoom extends Room<SectorState> {
 
   private update(): void {
     this.inputCountThisTick.clear();
-    if (this.playerToSlot.size === 0 && this.obstacleIdToSlot.size === 0) return;
+    if (this.playerToSlot.size === 0 && this.swarmRegistry.size() === 0) return;
 
     // Seqlock read: retry if a write is in progress or if data was torn
-    // (seqlock changed between the two loads).
+    // (seqlock changed between the two loads). Only player ships are mirrored
+    // into MapSchema; swarm poses are read directly from SAB by the binary
+    // encoder later in this tick (see swarmEncoder.encode).
     for (;;) {
       const seq1 = Atomics.load(this.sabU32, SEQLOCK_IDX);
       if (seq1 & 1) continue; // odd → write in progress, spin
@@ -641,17 +770,6 @@ export class SectorRoom extends Room<SectorState> {
         // storedValue=N+1 means client tick N was applied.
         const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
         this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
-      }
-
-      for (const [obstacleId, slot] of this.obstacleIdToSlot) {
-        const obs = this.state.obstacles.get(obstacleId);
-        if (!obs) continue;
-        const b = slotBase(slot);
-        obs.x     = this.sabF32[b + SLOT_X_OFF]!;
-        obs.y     = this.sabF32[b + SLOT_Y_OFF]!;
-        obs.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-        obs.vx    = this.sabF32[b + SLOT_VX_OFF]!;
-        obs.vy    = this.sabF32[b + SLOT_VY_OFF]!;
       }
 
       const seq2 = Atomics.load(this.sabU32, SEQLOCK_IDX);
@@ -676,6 +794,22 @@ export class SectorRoom extends Room<SectorState> {
         }),
     );
 
+    // Tick AI behaviours. They produce impulse intents (posted to the worker
+    // for the next physics step) and fire requests (drained below into the
+    // shared hitscan path). View is rebuilt in-place each tick to avoid alloc.
+    if (this.aiController.size() > 0) {
+      this.aiPlayerScratch.length = 0;
+      for (const [pid] of this.playerToSlot) {
+        const ship = this.state.ships.get(pid);
+        if (!ship?.alive) continue;
+        this.aiPlayerScratch.push({ id: pid, x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy });
+      }
+      this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
+
+      const fires = this.aiController.drainFireRequests();
+      for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
+    }
+
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
 
@@ -689,6 +823,23 @@ export class SectorRoom extends Room<SectorState> {
     // ~25% missed broadcasts when the two 60 Hz loops (worker + Colyseus) were
     // slightly out of phase. The counter fires every 3 main-thread update() calls
     // (= every 50 ms) regardless of which SAB tick value is currently visible.
+    // Phase 5c: encode the binary swarm packet every server tick (60 Hz). The
+    // encoder returns null when no pose has changed past the quantisation
+    // epsilon (or when not every-60th-tick full-snapshot), so the wire cost is
+    // dominated by the full-snapshot keyframe and the rare-but-real motion
+    // deltas. Phase 5d will replace broadcast-all with per-client filtering.
+    const swarmPacket = this.serverTick > 0
+      ? this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick)
+      : null;
+    if (swarmPacket) {
+      for (const client of this.clients) {
+        const bp = checkBackpressure(client, logger);
+        if (bp === 'close') { client.leave(4002); continue; }
+        if (bp === 'drop') continue;
+        client.send('swarm', swarmPacket);
+      }
+    }
+
     if (++this.broadcastCounter >= 3 && this.serverTick > 0) {
       this.broadcastCounter = 0;
       const states: SnapshotMessage['states'] = {};
@@ -700,12 +851,7 @@ export class SectorRoom extends Room<SectorState> {
           ackedTicks[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
         }
       }
-      const obstacles: SnapshotMessage['obstacles'] = {};
-      for (const [id] of this.obstacleIdToSlot) {
-        const o = this.state.obstacles.get(id);
-        if (o) obstacles[id] = { x: o.x, y: o.y, vx: o.vx, vy: o.vy, angle: o.angle };
-      }
-      const snap: SnapshotMessage = { type: 'snapshot', serverTick: this.serverTick, states, ackedTicks, obstacles };
+      const snap: SnapshotMessage = { type: 'snapshot', serverTick: this.serverTick, states, ackedTicks };
 
       // Per-client backpressure check before broadcast.
       for (const client of this.clients) {

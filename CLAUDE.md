@@ -101,3 +101,46 @@ timeout 8 pnpm dev:server
 A clean boot prints `INFO: EQX Peri server started port: 2567` with no uncaught exceptions. A crash (exit code non-143) means the change broke the runtime even if typecheck passes — fix it before moving on. Exit code 143 is normal (SIGTERM from `timeout`).
 
 This exists because TypeScript's type system cannot catch runtime issues like decorator transform mismatches, missing `Symbol.metadata`, or ESM resolution failures that only surface at Node.js startup.
+
+If port 2567 is already taken (a dev server is running), run on a free port with `PORT=2568 timeout 8 pnpm dev:server` rather than killing the existing process — the user may be actively using it.
+
+---
+
+## Stale dev servers cause "phantom" E2E failures
+
+`playwright.config.ts` sets `reuseExistingServer: true` for both `pnpm dev:server` (port 2567) and `pnpm dev:client` (port 5173). That's convenient when you're already running them in a separate terminal, but it has a sharp edge:
+
+- If a server from a **previous session** is still listening on either port, Playwright will reuse it instead of spawning a fresh one.
+- A stale Colyseus server is running pre-edit code, so its SAB layout, schema, and message shapes won't match the freshly-built client.
+- A stale Vite dev server may have HMR'd into an inconsistent state after files were edited externally — the client either won't render the splash or will throw on init.
+
+The classic symptom is a flood of timeouts starting from `boot.spec.ts` ("heading not found"), which is a client-only test that should be impossible to fail unless Vite is broken.
+
+**Before running E2E, check for zombie processes:**
+
+```powershell
+netstat -ano | findstr ":2567 :5173"
+```
+
+If anything is `LISTENING` and you don't have a deliberate dev server open, kill those PIDs (`Stop-Process -Id <pid> -Force`) before running `pnpm e2e`. Do not change `reuseExistingServer` to `false` casually — the convenience for the live-dev loop is worth more than the rare zombie cleanup.
+
+---
+
+## Running E2E Tests (do NOT run `pnpm e2e` from inside Claude)
+
+Playwright runs hold the harness's stdio open longer than the agent's tool timeout, so a synchronous `pnpm e2e` call appears to "stall" forever and the harness gives up partway through. The tests do not actually hang — they're producing output the harness loses sight of.
+
+**For Claude:**
+
+- Do not invoke `pnpm e2e` (or `pnpm e2e --grep ...`) directly via the Bash tool in foreground. It will time out or block visibly.
+- Either:
+  1. **Ask the user to run E2E locally** and paste the result, or
+  2. Run with `run_in_background: true` and write output to a file you can later read in chunks:
+     ```
+     pnpm e2e --reporter=line > /tmp/e2e.log 2>&1
+     ```
+     then `Read` the log file in slices, or wait for the background task's completion notification.
+- Always pass `--reporter=line` (or `--reporter=dot`) — the default `list` reporter emits ANSI cursor moves that confuse non-TTY captures.
+- When narrowing scope, prefer `--grep "test name"` and one project at a time (`--project=chromium`) over running the full suite.
+
+The full suite is the user's call. From inside Claude, treat E2E as something the user runs and reports back; treat unit tests + typecheck + lint + the 8-second server boot as the loop you can run yourself.
