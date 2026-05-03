@@ -50,6 +50,9 @@ importers:
       jose:
         specifier: ^6.2.3
         version: 6.2.3
+      nipplejs:
+        specifier: ^1.0.1
+        version: 1.0.1
       pino:
         specifier: ^9.5.0
         version: 9.14.0
@@ -2532,6 +2535,9 @@ packages:
   negotiator@0.6.3:
     resolution: {integrity: sha512-+EUsqGPLsM+j/zdChZjsnX51g4XrHFOIXwfnCVPGlQk/k5giakcKsuxCObBRu6DSm9opw/O6slWbJdghQM4bBg==}
     engines: {node: '>= 0.6'}
+
+  nipplejs@1.0.1:
+    resolution: {integrity: sha512-+GhZWy62hfGIo6qE7vkAbbSFPWDIf3KLxOXwOruryKO3e8Tm8bDMz9EyK+CUr6zqWUC2sT7jZjsQIUawndGzQA==}
 
   node-exports-info@1.6.0:
     resolution: {integrity: sha512-pyFS63ptit/P5WqUkt+UUfe+4oevH+bFeIiPPdfb0pFeYEu/1ELnJu5l+5EcTKYL5M7zaAa7S8ddywgXypqKCw==}
@@ -5715,6 +5721,8 @@ snapshots:
   natural-compare@1.4.0: {}
 
   negotiator@0.6.3: {}
+
+  nipplejs@1.0.1: {}
 
   node-exports-info@1.6.0:
     dependencies:

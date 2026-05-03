@@ -39,6 +39,7 @@
     "express": "^4.21.2",
     "howler": "^2.2.4",
     "jose": "^6.2.3",
+    "nipplejs": "^1.0.1",
     "pino": "^9.5.0",
     "pixi-viewport": "^6.0.3",
     "pixi.js": "^8.6.0",

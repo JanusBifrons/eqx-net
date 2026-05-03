@@ -56,6 +56,9 @@ export default defineConfig({
   ],
   server: {
     port: 5173,
+    // Bind to 0.0.0.0 so the dev server is reachable from phones on the LAN.
+    // Look for the printed "Network:" URL in the dev console.
+    host: true,
     hmr: { port: 24678 },
     proxy: {
       '/matchmake': {

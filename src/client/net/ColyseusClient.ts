@@ -7,6 +7,7 @@ import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '@core/combat/Weapons';
+import type { TouchInput } from '../input/TouchInput';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -77,6 +78,8 @@ function nextShotId(): string {
   return `shot-${_shotCounter++}`;
 }
 
+const IDLE_INPUT = { thrust: false, turnLeft: false, turnRight: false, fireHeld: false } as const;
+
 export class ColyseusGameClient {
   readonly mirror: RenderMirror = {
     ships: new Map(),
@@ -130,6 +133,7 @@ export class ColyseusGameClient {
 
   // Fixed-timestep accumulator for the input loop (driven by rAF in App.tsx).
   private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } } | null = null;
+  private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
   private accumulator = 0;
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
@@ -165,6 +169,7 @@ export class ColyseusGameClient {
     callbacks: ColyseusClientCallbacks,
     roomName = 'sector',
     extraJoinOptions: Record<string, unknown> = {},
+    touchInput?: TouchInput,
   ): Promise<void> {
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
@@ -267,6 +272,7 @@ export class ColyseusGameClient {
       logEvent('disconnected', { code });
       callbacks.onConnectionStatus('disconnected');
       this.keyboard = null;
+      this.touchInput = null;
     });
 
     this.room.onError((code, message) => {
@@ -278,6 +284,7 @@ export class ColyseusGameClient {
     callbacks.onConnectionStatus('connected');
     console.log('[ColyseusClient] connected — input loop driven by rAF');
     this.keyboard = keyboard;
+    this.touchInput = touchInput ?? null;
   }
 
   // ── Combat event handlers ────────────────────────────────────────────────
@@ -810,7 +817,12 @@ export class ColyseusGameClient {
     this.accumulator += Math.min(elapsedMs, FIXED_MS * 5);
     while (this.accumulator >= FIXED_MS) {
       this.accumulator -= FIXED_MS;
-      const { thrust, turnLeft, turnRight, fireHeld } = this.keyboard.read();
+      const kb = this.keyboard.read();
+      const tc = this.touchInput?.read() ?? IDLE_INPUT;
+      const thrust    = kb.thrust    || tc.thrust;
+      const turnLeft  = kb.turnLeft  || tc.turnLeft;
+      const turnRight = kb.turnRight || tc.turnRight;
+      const fireHeld  = kb.fireHeld  || tc.fireHeld;
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, sentAt: performance.now() };
@@ -879,6 +891,7 @@ export class ColyseusGameClient {
     this.localDead = false;
     useUIStore.getState().setDead(false);
     this.keyboard = null;
+    this.touchInput = null;
     this.room?.leave();
     this.room = null;
     this.predWorld?.dispose();

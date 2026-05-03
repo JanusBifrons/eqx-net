@@ -11,6 +11,7 @@ import {
 import { ColyseusGameClient } from './net/ColyseusClient';
 import { PixiRenderer } from './render/PixiRenderer';
 import { Keyboard } from './input/Keyboard';
+import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { LocalGameClient } from './local/LocalGameClient';
 import { loadStoredPlayerId, persistPlayerId } from './identity/token';
 import { useUIStore } from './state/store';
@@ -18,8 +19,14 @@ import { useAuthStore } from './auth/authStore';
 import { AppHeader } from './components/AppHeader';
 import { LoginPage } from './components/LoginPage';
 import { ProfileModal } from './components/ProfileModal';
+import { MobileControls } from './components/MobileControls';
 
-const SERVER_URL = import.meta.env['VITE_WS_URL'] ?? 'http://localhost:5173';
+// Default to the page's own origin so the same dev server is reachable from
+// phones on the LAN (e.g. http://192.168.1.5:5173 → ws://192.168.1.5:5173).
+// Override with VITE_WS_URL in .env for cross-origin setups.
+const SERVER_URL =
+  import.meta.env['VITE_WS_URL'] ??
+  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173');
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
@@ -265,6 +272,10 @@ function GameSurface(): JSX.Element {
   const rendererRef = useRef<PixiRenderer | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
   const animFrameRef = useRef<number>(0);
+  const isTouchRef = useRef<boolean>(isTouchDevice());
+  const touchInputRef = useRef<TouchInput | null>(
+    isTouchRef.current ? new TouchInput() : null,
+  );
   const { setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay } =
     useUIStore();
 
@@ -367,7 +378,7 @@ function GameSurface(): JSX.Element {
           persistPlayerId(id);
           setPlayerId(id);
         },
-      }, roomName, extraJoinOptions);
+      }, roomName, extraJoinOptions, touchInputRef.current ?? undefined);
 
       setSectorName(roomName === 'test-sector' ? 'Test Sector' : 'Sector Alpha');
     })().catch((err: unknown) => {
@@ -386,12 +397,32 @@ function GameSurface(): JSX.Element {
   }, [setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay]);
 
   return (
-    <Box sx={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: '#05070f' }}>
-      <div ref={containerRef} data-testid="game-surface" style={{ width: '100%', height: '100%' }} />
+    <Box
+      sx={{
+        position: 'fixed',
+        inset: 0,
+        width: '100vw',
+        height: '100vh',
+        // dvh: dynamic viewport height — accounts for mobile URL bar show/hide.
+        // Falls back to 100vh on older browsers (iOS < 15.4).
+        '@supports (height: 100dvh)': { height: '100dvh' },
+        overflow: 'hidden',
+        bgcolor: '#05070f',
+        touchAction: 'none',
+      }}
+    >
+      <div
+        ref={containerRef}
+        data-testid="game-surface"
+        style={{ width: '100%', height: '100%', touchAction: 'none' }}
+      />
       <HUD />
       <DevOverlay />
       <LogPanel />
       <DeathOverlay onRespawn={handleRespawn} />
+      {isTouchRef.current && touchInputRef.current && (
+        <MobileControls touchInput={touchInputRef.current} />
+      )}
     </Box>
   );
 }

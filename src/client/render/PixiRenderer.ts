@@ -134,18 +134,43 @@ export class PixiRenderer implements IRenderer {
     });
     this.app.stage.addChild(this.viewport);
 
+    // Pinch (touch) and wheel (desktop) zoom; clamped to a sensible range.
+    this.viewport
+      .pinch({ noDrag: true })
+      .wheel({ smooth: 4 })
+      .clampZoom({ minScale: 0.4, maxScale: 3 });
+
     this.viewport.addChild(buildGrid());
 
     this.shipContainer = new Container();
     this.viewport.addChild(this.shipContainer);
 
+    const measureSize = (): { w: number; h: number } => {
+      const vv = window.visualViewport;
+      const w = container.clientWidth || vv?.width || window.innerWidth;
+      const h = container.clientHeight || vv?.height || window.innerHeight;
+      return { w, h };
+    };
+
     const resize = (): void => {
-      this.app.renderer.resize(container.clientWidth, container.clientHeight);
-      this.viewport.resize(container.clientWidth, container.clientHeight);
+      const { w, h } = measureSize();
+      this.app.renderer.resize(w, h);
+      this.viewport.resize(w, h);
     };
     window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', resize);
+    window.visualViewport?.addEventListener('resize', resize);
+
+    // Container-driven resize: catches layout settling on mobile (URL bar,
+    // safe-area insets, dvh recalculation) that don't always fire window resize.
+    const ro = new ResizeObserver(resize);
+    ro.observe(container);
 
     (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
+    (this.app as unknown as Record<string, unknown>)['_resizeObserver'] = ro;
+
+    // Force one resize after the next frame to capture post-mount layout.
+    requestAnimationFrame(resize);
   }
 
   update(mirror: RenderMirror): void {
@@ -348,7 +373,13 @@ export class PixiRenderer implements IRenderer {
   dispose(): void {
     if (!this.initialized) return;
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
-    if (typeof handler === 'function') window.removeEventListener('resize', handler as EventListener);
+    if (typeof handler === 'function') {
+      window.removeEventListener('resize', handler as EventListener);
+      window.removeEventListener('orientationchange', handler as EventListener);
+      window.visualViewport?.removeEventListener('resize', handler as EventListener);
+    }
+    const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
+    if (ro instanceof ResizeObserver) ro.disconnect();
     this.app.destroy(true, { children: true });
   }
 }
