@@ -153,6 +153,20 @@ export class PhysicsWorld {
     body.wakeUp();
   }
 
+  /**
+   * Lock a body's translations and rotations. The body still participates in
+   * collision detection (other bodies bounce off it as if it had infinite
+   * mass) but `world.step()` no longer integrates it. Used by the client's
+   * swarm-mirror so reconciler replay doesn't drift swarm bodies between
+   * authoritative wire packets.
+   */
+  lockBody(id: string): void {
+    const body = this.bodies.get(id);
+    if (!body) return;
+    body.lockTranslations(true, false);
+    body.lockRotations(true, false);
+  }
+
   setShipState(id: string, state: ShipPhysicsState): void {
     const body = this.bodies.get(id);
     if (!body) return;

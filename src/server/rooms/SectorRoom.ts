@@ -156,6 +156,8 @@ export class SectorRoom extends Room<SectorState> {
   private readonly lastFireClientTick = new Map<string, number>();
   private readonly liveProjectiles = new Map<string, ProjectileRecord>();
   private projectileCounter = 0;
+  /** Per-swarm-entity health. Drones are killable; asteroids are not present in this map. */
+  private readonly swarmHealth = new Map<string, number>();
 
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
@@ -215,12 +217,12 @@ export class SectorRoom extends Room<SectorState> {
     for (let i = 0; i < droneCount; i++) {
       const angle = (i / droneCount) * Math.PI * 2;
       const r = 350;
-      const ok = this.swarmSpawner.spawnDrone({
-        id: `drone-${i}`,
-        x: Math.cos(angle) * r,
-        y: Math.sin(angle) * r,
-      });
+      const id = `drone-${i}`;
+      const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
       if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
+      // Drones take 2 hitscan hits (HITSCAN_DAMAGE=20 → 40 health gives the
+      // satisfying 2-tap kill while still being tankier than ghost projectiles.)
+      this.swarmHealth.set(id, 40);
     }
 
     this.onMessage('input', (client: Client, raw: unknown) => {
@@ -356,16 +358,20 @@ export class SectorRoom extends Room<SectorState> {
       if (rec) wireTargetId = `swarm-${rec.entityId}`;
     }
 
-    if (hitId && !hitIsObstacle) {
+    if (hitId) {
       // Sampled LASER_FIRED log at 1 %.
       if (Math.random() < 0.01) {
-        logger.info({ shooterId, hitId }, 'LASER_FIRED (1% sample)');
+        logger.info({ shooterId, hitId, hitIsObstacle }, 'LASER_FIRED (1% sample)');
       }
+      // applyDamage routes by id type: player ship → existing damage path,
+      // swarm entity (drone with health) → swarm damage path. Asteroids (no
+      // swarmHealth entry) are no-ops; the hit still rings client-side via
+      // the `laser_fired` broadcast and the wireTargetId tint.
       this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: hitId };
       client.send('hit_ack', ack);
     } else {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: !!hitId };
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
     }
 
@@ -446,9 +452,18 @@ export class SectorRoom extends Room<SectorState> {
 
     const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
     const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+
+    // Wire shooterId for AI shooters uses the swarm-${entityId} convention so
+    // the client can look the firing drone up in mirror.swarm and re-derive
+    // the beam origin from its current pose each frame (see PixiRenderer for
+    // the player-beam parallel). Bare `drone-N` would leave the client unable
+    // to map the shooter to a swarm entry.
+    const shooterRec = this.swarmRegistry.get(shooterId);
+    const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
+
     this.broadcast('laser_fired', {
       type: 'laser_fired',
-      shooterId,
+      shooterId: wireShooterId,
       fromX: rayFromX,
       fromY: rayFromY,
       toX: beamEndX,
@@ -471,25 +486,68 @@ export class SectorRoom extends Room<SectorState> {
 
   private applyDamage(targetId: string, shooterId: string, damage: number): void {
     const ship = this.state.ships.get(targetId);
-    if (!ship || !ship.alive) return;
-    ship.health = Math.max(0, ship.health - damage);
+    if (ship) {
+      if (!ship.alive) return;
+      ship.health = Math.max(0, ship.health - damage);
 
-    const dmgEvent: DamageEvent = {
+      const dmgEvent: DamageEvent = {
+        type: 'damage',
+        targetId,
+        damage,
+        newHealth: ship.health,
+        shooterId,
+      };
+      this.broadcast('damage', dmgEvent);
+      this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
+
+      if (ship.health <= 0) {
+        ship.alive = false;
+        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
+        this.broadcast('destroy', destroyEvent);
+        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
+        logger.info({ targetId, shooterId }, 'ship destroyed');
+      }
+      return;
+    }
+
+    // Swarm target. Asteroids (kind=0) have no `swarmHealth` entry and are
+    // immune; drones (kind=1) take damage and despawn at zero health.
+    const rec = this.swarmRegistry.get(targetId);
+    if (!rec) return;
+    const currentHealth = this.swarmHealth.get(targetId);
+    if (currentHealth === undefined) return; // immune (asteroid)
+
+    const newHealth = Math.max(0, currentHealth - damage);
+    this.swarmHealth.set(targetId, newHealth);
+
+    // Broadcast damage event keyed by the wire id (`swarm-${entityId}`) so the
+    // client can flash the right sprite. Damage event reuses the player shape
+    // — clients that key `mirror.damagedShips` by the same id will pick it up.
+    const wireTargetId = `swarm-${rec.entityId}`;
+    this.broadcast('damage', {
       type: 'damage',
-      targetId,
+      targetId: wireTargetId,
       damage,
-      newHealth: ship.health,
+      newHealth,
       shooterId,
-    };
-    this.broadcast('damage', dmgEvent);
-    this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
+    } satisfies DamageEvent);
 
-    if (ship.health <= 0) {
-      ship.alive = false;
-      const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-      this.broadcast('destroy', destroyEvent);
-      this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-      logger.info({ targetId, shooterId }, 'ship destroyed');
+    if (newHealth <= 0) {
+      // Tear down the drone: broadcast destruction, despawn worker body,
+      // unregister from registry / AI controller / health map, free its slot.
+      this.broadcast('destroy', {
+        type: 'destroy',
+        targetId: wireTargetId,
+        shooterId,
+      } satisfies DestroyEvent);
+      this.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: rec.id });
+
+      this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
+      this.swarmRegistry.unregister(rec.id);
+      this.aiController.unregister(rec.id);
+      this.swarmHealth.delete(rec.id);
+      this.freeSlots.push(rec.slot);
+      logger.info({ targetId: rec.id, shooterId }, 'drone destroyed');
     }
   }
 
@@ -794,22 +852,6 @@ export class SectorRoom extends Room<SectorState> {
         }),
     );
 
-    // Tick AI behaviours. They produce impulse intents (posted to the worker
-    // for the next physics step) and fire requests (drained below into the
-    // shared hitscan path). View is rebuilt in-place each tick to avoid alloc.
-    if (this.aiController.size() > 0) {
-      this.aiPlayerScratch.length = 0;
-      for (const [pid] of this.playerToSlot) {
-        const ship = this.state.ships.get(pid);
-        if (!ship?.alive) continue;
-        this.aiPlayerScratch.push({ id: pid, x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy });
-      }
-      this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
-
-      const fires = this.aiController.drainFireRequests();
-      for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
-    }
-
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
 
@@ -872,6 +914,25 @@ export class SectorRoom extends Room<SectorState> {
           Object.entries(states).map(([id, s]) => [id, { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)), vx: parseFloat(s.vx.toFixed(3)), vy: parseFloat(s.vy.toFixed(3)) }]),
         ),
       });
+    }
+
+    // Tick AI behaviours AT THE END of update() so impulses posted now reach
+    // the worker BEFORE the next SAB read. Defect 1 (5c-stabilise plan): if
+    // AI ticks before the encoder reads SAB in the same update() call, the
+    // intent is still in-flight and the encoder broadcasts a pose that
+    // doesn't include this tick's impulse — observed as drone stutter.
+    // View is rebuilt in-place each tick to avoid alloc.
+    if (this.aiController.size() > 0) {
+      this.aiPlayerScratch.length = 0;
+      for (const [pid] of this.playerToSlot) {
+        const ship = this.state.ships.get(pid);
+        if (!ship?.alive) continue;
+        this.aiPlayerScratch.push({ id: pid, x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy });
+      }
+      this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
+
+      const fires = this.aiController.drainFireRequests();
+      for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
     }
   }
 }

@@ -27,9 +27,19 @@ interface MutableMirror {
  * `ArrayBufferView`, or a `Uint8Array` because `client.send('swarm', buf)`
  * may deliver any of these shapes through ws.
  *
- * Reuses entry objects in-place to avoid per-tick allocation.
+ * Reuses entry objects in-place to avoid per-tick allocation. Records the
+ * previous packet's pose + arrival timestamp on each entry so the renderer
+ * can lerp between two consecutive packets (entity interpolation, fix for
+ * Defect 2 in the 5c-stabilise plan).
+ *
+ * `nowMs` is injected so unit tests can pass a deterministic clock; default
+ * is `performance.now()`.
  */
-export function decodeSwarmPacket(input: ArrayBuffer | ArrayBufferView, mirror: RenderMirror): void {
+export function decodeSwarmPacket(
+  input: ArrayBuffer | ArrayBufferView,
+  mirror: RenderMirror,
+  nowMs: number = performance.now(),
+): void {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
   // backed view (some ws transports deliver the latter). No copy.
@@ -82,9 +92,23 @@ export function decodeSwarmPacket(input: ArrayBuffer | ArrayBufferView, mirror: 
 
     let entry = swarm.get(entityId);
     if (!entry) {
-      entry = { x, y, vx, vy, angle, radius, kind, sleeping, lastUpdateTick: tick };
+      // First sighting: prev = latest so the renderer's lerp returns the new
+      // pose with t = 1 (no lerp window yet to interpolate over).
+      entry = {
+        x, y, vx, vy, angle, radius, kind, sleeping, lastUpdateTick: tick,
+        prevX: x, prevY: y, prevAngle: angle,
+        prevArrivalMs: nowMs, latestArrivalMs: nowMs,
+      };
       swarm.set(entityId, entry);
     } else {
+      // Snapshot the old "latest" into "prev" before stamping the new pose,
+      // so the renderer can lerp from old → new across the inter-packet gap.
+      entry.prevX = entry.x;
+      entry.prevY = entry.y;
+      entry.prevAngle = entry.angle;
+      entry.prevArrivalMs = entry.latestArrivalMs;
+      entry.latestArrivalMs = nowMs;
+
       entry.x = x;
       entry.y = y;
       entry.vx = vx;

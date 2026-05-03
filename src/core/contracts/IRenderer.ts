@@ -14,11 +14,19 @@ export interface ShipRenderState {
  * interpolation and stay parked at the last server-shipped pose.
  */
 export interface SwarmRenderState {
+  /** Latest pose received from the wire. Renderer lerps from `prev*` to this. */
   x: number;
   y: number;
   vx: number;
   vy: number;
   angle: number;
+  /** Pose from the previous packet — interpolation source. Equal to (x,y,angle) on first packet. */
+  prevX: number;
+  prevY: number;
+  prevAngle: number;
+  /** Wall-clock arrival timestamps (performance.now()) for lerp t calculation. */
+  prevArrivalMs: number;
+  latestArrivalMs: number;
   /** Collision radius. Renderer draws asteroids as circles of this size. */
   radius: number;
   /** 0 = asteroid, 1 = drone. */

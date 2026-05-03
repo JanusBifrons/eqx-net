@@ -72,8 +72,11 @@ export class BinarySwarmBroadcast {
       const flagsWord = sabU32[base + SLOT_FLAGS_OFF]!;
       const sleeping = (flagsWord & FLAG_SLEEPING) !== 0;
 
+      const vx = sabF32[base + SLOT_VX_OFF]!;
+      const vy = sabF32[base + SLOT_VY_OFF]!;
+
       const sleepChanged = sleeping !== rec.lastBroadcastSleeping;
-      const poseChanged = SwarmEntityRegistry.poseChanged(rec, x, y, angle);
+      const poseChanged = SwarmEntityRegistry.poseChanged(rec, x, y, angle, vx, vy);
 
       // Sleeping entities drop out entirely on subsequent ticks unless they
       // wake. The transition tick (sleeping became true) still ships once so
@@ -90,9 +93,6 @@ export class BinarySwarmBroadcast {
       }
 
       if (!include) continue;
-
-      const vx = sabF32[base + SLOT_VX_OFF]!;
-      const vy = sabF32[base + SLOT_VY_OFF]!;
 
       // Per-record header.
       this.view.setUint16(writeOffset + 0, rec.entityId, true);

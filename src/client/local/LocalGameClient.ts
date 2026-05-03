@@ -69,8 +69,13 @@ export class LocalGameClient {
     for (const [id, s] of states) {
       const meta = this.asteroidMeta.get(id);
       if (meta !== undefined) {
+        // Local mode has no wire packets, so prev == latest each frame and
+        // arrival timestamps tick with each render. The interpolator returns
+        // the latest pose unchanged when prev == latest.
         const entry: SwarmRenderState = {
           x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle,
+          prevX: s.x, prevY: s.y, prevAngle: s.angle,
+          prevArrivalMs: 0, latestArrivalMs: 0,
           radius: meta.radius,
           kind: SWARM_KIND_ASTEROID,
           sleeping: false,

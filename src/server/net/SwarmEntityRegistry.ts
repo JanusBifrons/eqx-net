@@ -29,6 +29,15 @@ export interface SwarmEntityRecord {
 const QUANT_POS = 0.05;   // 5 cm
 const QUANT_ANGLE = 0.005; // ~0.3°
 
+/**
+ * Speed (u/s, taxicab) above which we skip the quantisation check entirely
+ * and ship pose every tick. Below this we treat the entity as effectively
+ * stationary — pose updates are gated by quantisation. This keeps the wire
+ * idle while asteroids drift below sub-quant velocities, but a thrusting
+ * drone stays smooth (no freeze-burst chunking).
+ */
+const MOVING_SPEED_TAXI = 0.5;
+
 export class SwarmEntityRegistry {
   private readonly byId = new Map<string, SwarmEntityRecord>();
   private readonly byEntityId = new Map<number, SwarmEntityRecord>();
@@ -95,8 +104,17 @@ export class SwarmEntityRegistry {
     for (const rec of this.byId.values()) yield rec;
   }
 
-  /** Returns true if (x,y,angle) differs from `lastBroadcast` by more than the quantisation epsilons. */
-  static poseChanged(rec: SwarmEntityRecord, x: number, y: number, angle: number): boolean {
+  /**
+   * Returns true if (x,y,angle) differs from `lastBroadcast` by more than the
+   * quantisation epsilons OR if the entity is currently moving. The velocity
+   * gate is the fix for Defect 2 in the 5c-stabilise plan: when a drone is
+   * accelerating its per-tick deltas dip below the quantisation threshold for
+   * 2-3 ticks at a time, then jump above; the client saw freeze-burst-freeze.
+   * Below MOVING_SPEED_TAXI the entity is treated as stationary and the
+   * quantisation gate suppresses chatter.
+   */
+  static poseChanged(rec: SwarmEntityRecord, x: number, y: number, angle: number, vx: number, vy: number): boolean {
+    if (Math.abs(vx) + Math.abs(vy) > MOVING_SPEED_TAXI) return true;
     return (
       Math.abs(rec.lastBroadcast.x - x) >= QUANT_POS ||
       Math.abs(rec.lastBroadcast.y - y) >= QUANT_POS ||
@@ -104,3 +122,5 @@ export class SwarmEntityRegistry {
     );
   }
 }
+
+export const SWARM_MOVING_SPEED_TAXI = MOVING_SPEED_TAXI;

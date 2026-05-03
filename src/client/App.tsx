@@ -385,10 +385,21 @@ function GameSurface(): JSX.Element {
           // hand-rolled `asteroid-N` ids the legacy MapSchema used.
           if (gameClient.mirror.swarm) {
             const swarmMap: Record<string, { x: number; y: number }> = {};
+            const swarmDetail: Record<string, { x: number; y: number; angle: number; kind: number; sleeping: boolean; lastUpdateTick: number }> = {};
             for (const [entityId, entry] of gameClient.mirror.swarm.entries()) {
-              swarmMap[`swarm-${entityId}`] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
+              const key = `swarm-${entityId}`;
+              swarmMap[key] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
+              swarmDetail[key] = {
+                x: parseFloat(entry.x.toFixed(3)),
+                y: parseFloat(entry.y.toFixed(3)),
+                angle: parseFloat(entry.angle.toFixed(4)),
+                kind: entry.kind,
+                sleeping: entry.sleeping,
+                lastUpdateTick: entry.lastUpdateTick,
+              };
             }
             el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
+            el.dataset['swarmDetail'] = JSON.stringify(swarmDetail);
           }
           animFrameRef.current = requestAnimationFrame(loop);
         }

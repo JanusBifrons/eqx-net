@@ -156,4 +156,46 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(packet).not.toBeNull();
     expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + 2 * SWARM_RECORD_BYTES);
   });
+
+  // Defect 2 (5c-stabilise plan): velocity-aware suppression. Stationary entities
+  // are gated by quantisation thresholds; moving entities ship every tick.
+
+  it('moving entity (|vx|+|vy| > 0.5) ships every tick even with sub-quantum delta', () => {
+    registry.register('drone-fast', SLOT_A, 1, 14, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 0.6, 0, 0); // taxicab speed 0.6 > 0.5
+
+    // Bootstrap with a full snapshot.
+    encoder.encode(registry, f32, u32, 60);
+
+    // Advance pose by tiny amount that's BELOW quantisation epsilon (0.05u).
+    setSlotPose(f32, SLOT_A, 0.01, 0, 0.6, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 61);
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(1);
+  });
+
+  it('stationary entity below quantisation is not shipped on delta ticks', () => {
+    registry.register('rock', SLOT_A, 0, 32, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 0, 0, 0);
+
+    encoder.encode(registry, f32, u32, 60); // bootstrap
+
+    // Tiny sub-quantum drift, no velocity.
+    setSlotPose(f32, SLOT_A, 0.01, 0, 0, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 61);
+    expect(packet).toBeNull();
+  });
+
+  it('moving entity above quantisation still ships (no regression in fast path)', () => {
+    registry.register('drone-fast', SLOT_A, 1, 14, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 1.0, 0, 0);
+    encoder.encode(registry, f32, u32, 60);
+    // Above-quantum motion AND moving — two reasons to ship; we just confirm
+    // the packet still goes out (i.e. the velocity gate didn't accidentally
+    // mask normal motion).
+    setSlotPose(f32, SLOT_A, 0.5, 0, 1.0, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 61);
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(1);
+  });
 });

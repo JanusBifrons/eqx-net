@@ -273,11 +273,26 @@ export class ColyseusGameClient {
       const range = Math.hypot(dx, dy);
       // Upsert: replaces the previous beam from this shooter so there is never
       // more than one entry per shooter and the TTL resets on each shot.
+      // Player beams are HELD weapons (cooldown 167 ms at 60 Hz; TTL 400 ms
+      // keeps the visual continuous while space is held).
+      //
+      // For AI shooters (`swarm-${entityId}`) the iteration we converged on:
+      //   - First attempt 400 ms: the beam endpoints were stamped at fire time
+      //     and stayed frozen, but the drone moved underneath, so each new
+      //     fire teleported the beam origin → "jittery and laggy" (5c smoke).
+      //   - Second attempt 80 ms: gave a discrete flash, but cooldown is 167 ms,
+      //     so there's an 87 ms gap between flashes → visible flicker.
+      //   - Settled: 250 ms TTL (overlaps cooldown by ~83 ms, no gap) AND the
+      //     renderer re-derives the beam ORIGIN from `mirror.swarm[entityId]`
+      //     each frame so it tracks the moving drone smoothly. Same pattern
+      //     player beams use against `mirror.ships[localId]`.
+      const isAiShooter = evt.shooterId.startsWith('swarm-');
+      const ttlMs = isAiShooter ? 250 : 400;
       (this.mirror.remoteLasers ??= new Map()).set(evt.shooterId, {
         range,
         hit: evt.hit,
         targetId: evt.targetId,
-        expiresAt: performance.now() + 400,
+        expiresAt: performance.now() + ttlMs,
         fromX: evt.fromX,
         fromY: evt.fromY,
         toX: evt.toX,
@@ -356,7 +371,31 @@ export class ColyseusGameClient {
   }
 
   private handleDestroy(evt: DestroyEvent): void {
+    if (evt.targetId.startsWith('swarm-')) {
+      this.killSwarmEntity(evt.targetId);
+      return;
+    }
     this.killEntity(evt.targetId);
+  }
+
+  /**
+   * Remove a swarm entity (drone) immediately on a destroy event. Sweeps the
+   * mirror entry, the predWorld body, and the damage-flash tracker. The next
+   * binary swarm packet will confirm the entity is gone (delta packets won't
+   * mention it; the next 60-tick full snapshot will sweep on the server's say-so).
+   */
+  private killSwarmEntity(wireId: string): void {
+    const entityIdStr = wireId.slice('swarm-'.length);
+    const entityId = parseInt(entityIdStr, 10);
+    if (Number.isNaN(entityId)) return;
+    this.mirror.swarm?.delete(entityId);
+    if (this.predWorld?.hasShip(wireId)) this.predWorld.despawnShip(wireId);
+    this.predSwarmKeys.delete(wireId);
+    this._damageFlashFrames.delete(wireId);
+    // Reuse the explosion sprite path — the renderer keys explosions off
+    // sprite position (looked up by id), and `swarm-${entityId}` is the
+    // sprite key, so the existing explosion machinery just works.
+    this.mirror.explodingShips?.add(wireId);
   }
 
   private handleRespawnAck(msg: RespawnAckMessage): void {
@@ -591,6 +630,11 @@ export class ColyseusGameClient {
       seen.add(key);
       if (!this.predWorld.hasShip(key)) {
         this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3);
+        // 5c-stabilise bonus: swarm bodies are collision-only on the client.
+        // Locking translations/rotations means reconciler replay (which calls
+        // world.step()) won't drift them; the binary swarm packet is the
+        // single source of truth for pose.
+        this.predWorld.lockBody(key);
         this.predSwarmKeys.add(key);
       }
       this.predWorld.setShipState(key, {

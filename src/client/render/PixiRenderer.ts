@@ -1,6 +1,7 @@
 import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
+import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 
 const WORLD_W = 10000;
 const WORLD_H = 10000;
@@ -9,12 +10,18 @@ const REMOTE_SHIP_COLOR = 0x4488ff;
 const SERVER_GHOST_COLOR = 0xff4400;
 const ASTEROID_COLOR = 0x886644;
 const ASTEROID_OUTLINE = 0xbb9966;
+const DRONE_FILL_COLOR = 0xff3366;
+const DRONE_OUTLINE_COLOR = 0xffaacc;
+const DRONE_CORE_COLOR = 0xffeeaa;
 const HITBOX_COLOR = 0xff0066;
 const BACKGROUND_COLOR = 0x05070f;
 const GRID_CELL = 200;
 const GRID_COLOR = 0x1a2040;
 const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
-const DAMAGE_FLASH_COLOR = 0xff2222;
+// Soft pink tint — multiplied with each ship's base colour, this gives a
+// legible "I just got hit" flash without crushing the green/blue hull tone.
+// (0xff2222 was the original but tinted local-ship green nearly black.)
+const DAMAGE_FLASH_COLOR = 0xffaaaa;
 const PROJECTILE_COLOR = 0xffdd44;
 const GHOST_PROJECTILE_COLOR = 0xff8800;
 const LASER_BEAM_COLOR = 0x00eeff;
@@ -54,6 +61,35 @@ function buildAsteroidGfx(radius: number): Graphics {
   g.fill({ color: ASTEROID_COLOR });
   g.circle(0, 0, radius);
   g.stroke({ color: ASTEROID_OUTLINE, width: 1.5 });
+  return g;
+}
+
+/**
+ * Drone visual — angular dart pointing along the body's forward direction
+ * (`(-sin θ, cos θ)` per the World forward convention; renderer rotates by
+ * `-angle` so the dart's local +y nose maps to world forward). Distinct
+ * magenta-pink so drones never read as asteroids.
+ */
+function buildDroneGfx(radius: number): Graphics {
+  const g = new Graphics();
+  // Outer dart silhouette, nose pointing local up (-y in pixi).
+  g.poly([
+    { x: 0, y: -radius },
+    { x: radius * 0.85, y: radius * 0.7 },
+    { x: 0, y: radius * 0.35 },
+    { x: -radius * 0.85, y: radius * 0.7 },
+  ]);
+  g.fill({ color: DRONE_FILL_COLOR });
+  g.poly([
+    { x: 0, y: -radius },
+    { x: radius * 0.85, y: radius * 0.7 },
+    { x: 0, y: radius * 0.35 },
+    { x: -radius * 0.85, y: radius * 0.7 },
+  ]);
+  g.stroke({ color: DRONE_OUTLINE_COLOR, width: 1.5 });
+  // Glowing core dot so they remain visible at small radii.
+  g.circle(0, 0, Math.max(2, radius * 0.25));
+  g.fill({ color: DRONE_CORE_COLOR });
   return g;
 }
 
@@ -110,6 +146,8 @@ export class PixiRenderer implements IRenderer {
   private liveBeamGfx: Graphics | null = null;
   private remoteBeamGfx: Graphics | null = null;
   private initialized = false;
+  /** Reused per-frame so swarm interpolation doesn't allocate. */
+  private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -241,20 +279,32 @@ export class PixiRenderer implements IRenderer {
     // simply stop receiving pose updates; the sprite stays parked at the last
     // server-shipped pose (no client-side dead reckoning).
     if (mirror.swarm) {
+      const now = performance.now();
       for (const [entityId, entry] of mirror.swarm) {
         const spriteKey = `swarm-${entityId}`;
         seen.add(spriteKey);
         let sprite = this.sprites.get(spriteKey);
         if (!sprite) {
-          sprite = buildAsteroidGfx(entry.radius);
+          sprite = entry.kind === 1 ? buildDroneGfx(entry.radius) : buildAsteroidGfx(entry.radius);
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }
-        sprite.x = entry.x;
-        sprite.y = -entry.y;
-        sprite.rotation = -entry.angle;
-        const hit = (mirror.liveBeam?.hitId === spriteKey) || remoteHitTargets.has(spriteKey);
-        sprite.tint = hit ? 0xff2222 : 0xffffff;
+        // Phase 5c-stabilise: lerp between the prev and latest received pose
+        // (entity interpolation) so frame-to-frame motion is smooth even when
+        // the wire delivers packets at irregular cadence.
+        const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
+        sprite.x = lerped.x;
+        sprite.y = -lerped.y;
+        sprite.rotation = -lerped.angle;
+        // Damage flash takes priority over the active-beam hit tint so a
+        // drone clearly registers a hit even when no beam is currently on it.
+        if (mirror.damagedShips?.has(spriteKey)) {
+          sprite.tint = DAMAGE_FLASH_COLOR;
+        } else if ((mirror.liveBeam?.hitId === spriteKey) || remoteHitTargets.has(spriteKey)) {
+          sprite.tint = DAMAGE_FLASH_COLOR;
+        } else {
+          sprite.tint = 0xffffff;
+        }
         // Sleeping entries stop interpolating; their pose is whatever the
         // server last shipped. (Mark visually muted in 5d if needed.)
       }
@@ -333,10 +383,27 @@ export class PixiRenderer implements IRenderer {
         const ttlRemaining = laser.expiresAt - now;
         const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
 
-        // Player shooters track their live ship pose so the beam sweeps with
-        // rotation. Non-ship shooters (drones — not in `mirror.ships`) use the
-        // wire-shipped endpoints, which are the authoritative beam geometry.
+        // Player shooters track their live ship pose; the beam sweeps with the
+        // ship's rotation between fire events. AI shooters track their
+        // mirror.swarm pose for the same reason — drones move every tick, so
+        // a wire-frozen beam origin would re-anchor on each fire (visible
+        // jump). Falls back to the wire endpoints if the shooter isn't found
+        // (defensive — e.g. ID mapping mismatch).
         const shooter = mirror.ships.get(shooterId);
+        let swarmShooter: { x: number; y: number; angle: number; radius: number } | null = null;
+        if (!shooter && shooterId.startsWith('swarm-')) {
+          const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
+          if (!Number.isNaN(entityId)) {
+            const sw = mirror.swarm?.get(entityId);
+            if (sw) {
+              // Use the SAME interpolated pose the sprite is drawn at, so the
+              // beam origin lines up exactly with the drone's visual position.
+              const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
+              swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius };
+            }
+          }
+        }
+
         let fromX: number;
         let fromY: number;
         let toX: number;
@@ -346,6 +413,14 @@ export class PixiRenderer implements IRenderer {
           const fwdY =  Math.cos(shooter.angle);
           fromX = shooter.x + fwdX * 20;
           fromY = shooter.y + fwdY * 20;
+          toX = fromX + fwdX * laser.range;
+          toY = fromY + fwdY * laser.range;
+        } else if (swarmShooter) {
+          // Origin at the drone's nose (radius offset along its facing).
+          const fwdX = -Math.sin(swarmShooter.angle);
+          const fwdY =  Math.cos(swarmShooter.angle);
+          fromX = swarmShooter.x + fwdX * (swarmShooter.radius + 2);
+          fromY = swarmShooter.y + fwdY * (swarmShooter.radius + 2);
           toX = fromX + fwdX * laser.range;
           toY = fromY + fwdY * laser.range;
         } else {

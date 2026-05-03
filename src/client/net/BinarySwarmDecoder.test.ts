@@ -136,4 +136,56 @@ describe('decodeSwarmPacket', () => {
     expect(afterRef).toBe(beforeRef); // same object reference
     expect(afterRef.x).toBeCloseTo(5, 4);
   });
+
+  // 5c-stabilise: each decode advances `prev*` to the previous "latest", and
+  // stamps `latestArrivalMs = nowMs`. The renderer's interpolator reads these.
+
+  it('first packet sets prev == latest (no interpolation window yet)', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 100, y: 0, vx: 0, vy: 0, angle: 0.3, radius: 32 },
+    ]), mirror, 1000);
+    const e = mirror.swarm!.get(0)!;
+    expect(e.x).toBe(100);
+    expect(e.prevX).toBe(100);
+    expect(e.prevAngle).toBeCloseTo(0.3, 5);
+    expect(e.latestArrivalMs).toBe(1000);
+    expect(e.prevArrivalMs).toBe(1000);
+  });
+
+  it('second packet snapshots prev pose + arrival before stamping the latest', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror, 1000);
+    decodeSwarmPacket(buildPacket(61, false, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 100, y: 50, vx: 5, vy: 0, angle: 0.5, radius: 32 },
+    ]), mirror, 1100);
+    const e = mirror.swarm!.get(0)!;
+    expect(e.prevX).toBe(0);
+    expect(e.prevY).toBe(0);
+    expect(e.prevAngle).toBe(0);
+    expect(e.prevArrivalMs).toBe(1000);
+    expect(e.x).toBe(100);
+    expect(e.y).toBe(50);
+    expect(e.latestArrivalMs).toBe(1100);
+  });
+
+  it('three packets: prev always reflects the second-most-recent', () => {
+    const mirror = makeMirror();
+    decodeSwarmPacket(buildPacket(60, true, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror, 1000);
+    decodeSwarmPacket(buildPacket(61, false, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 50, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror, 1100);
+    decodeSwarmPacket(buildPacket(62, false, [
+      { entityId: 0, kind: 0, recFlags: 0, x: 100, y: 0, vx: 0, vy: 0, angle: 0, radius: 32 },
+    ]), mirror, 1200);
+    const e = mirror.swarm!.get(0)!;
+    expect(e.prevX).toBe(50);
+    expect(e.prevArrivalMs).toBe(1100);
+    expect(e.x).toBe(100);
+    expect(e.latestArrivalMs).toBe(1200);
+  });
 });
