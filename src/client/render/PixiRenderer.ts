@@ -55,6 +55,34 @@ function buildShipGfx(color: number): Graphics {
   return g;
 }
 
+/**
+ * Boost exhaust flame — drawn behind the ship sprite when shift-boosting. Two
+ * concentric tapered triangles (outer orange, inner yellow-white core) flicker
+ * each frame for life. Aligned to the ship's local frame; the renderer
+ * inherits the ship's rotation by adding the flame as a child of the sprite.
+ */
+const BOOST_FLAME_COLOR_OUTER = 0xff7733;
+const BOOST_FLAME_COLOR_CORE  = 0xffee99;
+function buildBoostFlameGfx(): Graphics {
+  const g = new Graphics();
+  // Outer plume — tapered triangle pointing astern (local +y in pixi).
+  // Ship body extends from y=-16 (nose) to y=10 (tail); flame starts at y=10.
+  g.poly([
+    { x: -7, y: 10 },
+    { x:  7, y: 10 },
+    { x:  0, y: 36 },
+  ]);
+  g.fill({ color: BOOST_FLAME_COLOR_OUTER, alpha: 0.85 });
+  // Inner core — brighter, narrower.
+  g.poly([
+    { x: -3, y: 10 },
+    { x:  3, y: 10 },
+    { x:  0, y: 24 },
+  ]);
+  g.fill({ color: BOOST_FLAME_COLOR_CORE, alpha: 0.95 });
+  return g;
+}
+
 function buildAsteroidGfx(radius: number): Graphics {
   const g = new Graphics();
   g.circle(0, 0, radius);
@@ -140,6 +168,10 @@ export class PixiRenderer implements IRenderer {
   private viewport!: Viewport;
   private shipContainer!: Container;
   private sprites = new Map<string, Graphics>();
+  /** Per-ship boost-exhaust flame, parented to the ship sprite. Visible only
+   *  while the ship is in `mirror.boostingShips`. Pooled — created on first
+   *  boost, hidden when not active, destroyed with the ship sprite. */
+  private boostFlames = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
   private projectileSprites = new Map<string, Graphics>();
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
@@ -191,6 +223,11 @@ export class PixiRenderer implements IRenderer {
     };
 
     const resize = (): void => {
+      // Late-fire guard: a queued `requestAnimationFrame(resize)` and the
+      // ResizeObserver can both fire AFTER dispose() has destroyed the Pixi
+      // application, leaving `this.app.renderer` null. Bailing on
+      // !this.initialized is enough — dispose() flips that flag.
+      if (!this.initialized || !this.app?.renderer) return;
       const { w, h } = measureSize();
       this.app.renderer.resize(w, h);
       this.viewport.resize(w, h);
@@ -244,6 +281,26 @@ export class PixiRenderer implements IRenderer {
         sprite.tint = 0xff2222;
       } else {
         sprite.tint = 0xffffff;
+      }
+
+      // Boost flame — child of the ship sprite so it inherits rotation. Lazily
+      // created on first boost; left as a hidden child afterwards so toggling
+      // shift doesn't churn the scene graph.
+      const isBoosting = mirror.boostingShips?.has(playerId) ?? false;
+      let flame = this.boostFlames.get(playerId);
+      if (isBoosting) {
+        if (!flame) {
+          flame = buildBoostFlameGfx();
+          sprite.addChild(flame);
+          this.boostFlames.set(playerId, flame);
+        }
+        flame.visible = true;
+        // Cheap per-frame flicker so the plume reads as fire, not a static
+        // arrow. Two ranges feed scaleY (length) and alpha (intensity).
+        flame.scale.y = 0.85 + Math.random() * 0.4;
+        flame.alpha   = 0.75 + Math.random() * 0.25;
+      } else if (flame) {
+        flame.visible = false;
       }
     }
 
@@ -313,8 +370,11 @@ export class PixiRenderer implements IRenderer {
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
         this.shipContainer.removeChild(sprite);
-        sprite.destroy();
+        // Boost flame is a child — destroy({ children: true }) frees it too,
+        // but we still drop the map entry so a respawn rebuilds cleanly.
+        sprite.destroy({ children: true });
         this.sprites.delete(id);
+        this.boostFlames.delete(id);
       }
     }
 
@@ -477,6 +537,11 @@ export class PixiRenderer implements IRenderer {
 
   dispose(): void {
     if (!this.initialized) return;
+    // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
+    // between here and the actual destroy() short-circuits cleanly. Without
+    // this, the queued requestAnimationFrame(resize) at the end of init()
+    // could land post-destroy and read a null renderer.
+    this.initialized = false;
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
     if (typeof handler === 'function') {
       window.removeEventListener('resize', handler as EventListener);

@@ -5,6 +5,7 @@ import { build } from 'esbuild';
 import { z } from 'zod';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
+import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SectorState, ShipState, ProjectileState } from './schema/SectorState.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -20,6 +21,7 @@ import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, Destr
 import {
   SEQLOCK_IDX,
   TICK_IDX,
+  WORKER_TICK_US_IDX,
   SLOT_X_OFF,
   SLOT_Y_OFF,
   SLOT_VX_OFF,
@@ -93,9 +95,10 @@ const PROJECTILE_MAX_TICKS = 180; // 3 s at 60 Hz
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
   | { type: 'DESPAWN';        slot: number; playerId: string }
-  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }
+  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }
-  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number };
+  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
+  | { type: 'CLOCK_RATE';     rate: number };
 
 /** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
  *  initial swarm population matches between sessions. Spawned via SwarmSpawner
@@ -144,14 +147,29 @@ export class SectorRoom extends Room<SectorState> {
   private aiPlayerScratch: AiPlayerView[] = [];
 
   private bus!: Bus;
+  /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
+   *  rate via SAB. Named `simClock` to avoid colliding with Colyseus `Room.clock`
+   *  (a `ClockTimer` instance for `setInterval` / `setTimeout` helpers). */
+  private simClock!: SimulationClock;
+  /** Last clockRate value pushed to the worker, used to gate CLOCK_RATE postMessages
+   *  to once per RAMP_PER_TICK step (≈ once per ~6 server ticks at most). */
+  private lastSentClockRate = 1.0;
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
+  /** PlayerIds currently holding shift-boost AND thrust. Surfaced on every
+   *  snapshot so all clients can render an exhaust trail for that ship. */
+  private readonly boostingPlayers = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB. */
   private sabAppliedTicks = new Map<string, number>();
   private serverTick = 0;
   private broadcastCounter = 0;
   private testMode = false;
+  /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
+   *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
+   *  threshold deterministically (4000 real entities only consume ~1.5 ms,
+   *  nowhere near the 14 ms `OVER_BUDGET_MS` threshold). */
+  private tickBurnMs = 0;
 
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
@@ -185,6 +203,7 @@ export class SectorRoom extends Room<SectorState> {
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
+    this.simClock = new SimulationClock(this.bus);
 
     // Fill slot pool (push in reverse so slot 0 is popped first).
     for (let i = MAX_ENTITIES - 1; i >= 0; i--) this.freeSlots.push(i);
@@ -217,8 +236,20 @@ export class SectorRoom extends Room<SectorState> {
        * transition. Suppresses every other seed path.
        */
       singleAsteroid?: boolean;
+      /**
+       * Phase 6 — synthetic per-tick CPU burn (in ms) injected into the
+       * server `update()`. Used to deterministically push the tick budget
+       * past `OVER_BUDGET_MS` so the SimulationClock ramps to its 0.7×
+       * floor without needing tens of thousands of entities (which would
+       * crash the Rapier WASM pool). 0 / undefined = disabled.
+       */
+      tickBurnMs?: number;
     };
     this.testMode = roomOpts.testMode ?? false;
+    this.tickBurnMs = Math.max(0, Math.min(50, roomOpts.tickBurnMs ?? 0));
+    if (this.tickBurnMs > 0) {
+      logger.info({ tickBurnMs: this.tickBurnMs }, 'Phase 6 synthetic tick burn enabled — TiDi will ramp to floor');
+    }
     const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
     const asteroidRoster = (useBulkSeed || useSingleAsteroid) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
@@ -299,10 +330,16 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       const { tick, thrust, turnLeft, turnRight } = result.data;
+      const boost = result.data.boost ?? false;
       const slot = this.playerToSlot.get(playerId);
       if (slot !== undefined) {
-        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight });
+        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost });
       }
+      // Track per-player boost state so the snapshot can broadcast it to all
+      // observers for the visual exhaust trail. Only "active" while boosting
+      // AND thrusting — shift alone doesn't visually do anything.
+      if (boost && thrust) this.boostingPlayers.add(playerId);
+      else this.boostingPlayers.delete(playerId);
       // Diagnostic: log every 30th input plus any input whose claimed tick is
       // far from the current server tick (indicates clock drift). The delta
       // tells us how the client's tick numbering relates to the server's.
@@ -777,13 +814,33 @@ export class SectorRoom extends Room<SectorState> {
       });
 
       this.physicsWorker.on('error', (err) => {
-        logger.error({ err }, 'physics worker error');
+        // Surface the full error — message, stack, name, code — so OOM /
+        // assertion failures from Rapier WASM are diagnostic rather than
+        // mute. Without `err.stack`, pino's serializer may drop the underlying
+        // crash site. Phase 6 risk #2 (exercising the spawner past the prior
+        // 500-entity ceiling) hits this path.
+        const errAny = err as Error & { code?: string };
+        logger.error(
+          {
+            err,
+            errMessage: errAny?.message,
+            errStack: errAny?.stack,
+            errName: errAny?.name,
+            errCode: errAny?.code,
+            playerCount: this.playerToSlot.size,
+            swarmCount: this.swarmRegistry.size(),
+          },
+          'physics worker error',
+        );
         if (!ready) reject(err);
       });
 
       this.physicsWorker.on('exit', (code) => {
         if (code !== 0) {
-          logger.error({ code }, 'physics worker exited unexpectedly');
+          logger.error(
+            { code, playerCount: this.playerToSlot.size, swarmCount: this.swarmRegistry.size() },
+            'physics worker exited unexpectedly',
+          );
           if (!ready) reject(new Error(`physics worker exited with code ${code}`));
         }
       });
@@ -873,6 +930,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
+    this.boostingPlayers.delete(playerId);
 
     const slot = this.playerToSlot.get(playerId);
     if (slot !== undefined) {
@@ -907,7 +965,18 @@ export class SectorRoom extends Room<SectorState> {
     if (this.playerToSlot.size === 0 && this.swarmRegistry.size() === 0) return;
 
     const tStart = performance.now();
-    let tPhase = tStart;
+
+    // Phase 6 synthetic load: busy-wait `tickBurnMs` so the budget tracker
+    // measures it as real work and TiDi engages. Only enabled when the
+    // `tickBurnMs` room option is set (default 0). Always before the phase
+    // timer starts so it counts in the unattributed remainder of `total`,
+    // not against any specific phase.
+    if (this.tickBurnMs > 0) {
+      const burnDeadline = tStart + this.tickBurnMs;
+      while (performance.now() < burnDeadline) { /* intentional busy-wait */ }
+    }
+
+    let tPhase = performance.now();
     const phaseTime = (key: keyof typeof this.tickBudgetSums): void => {
       const now = performance.now();
       this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + (now - tPhase);
@@ -1033,7 +1102,19 @@ export class SectorRoom extends Room<SectorState> {
           ackedTicks[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
         }
       }
-      const snap: SnapshotMessage = { type: 'snapshot', serverTick: this.serverTick, states, ackedTicks };
+      // Filter boostingPlayers to alive players included in this snapshot —
+      // a stale id from a leaver shouldn't ship.
+      const boostingIds: string[] = [];
+      for (const id of this.boostingPlayers) {
+        if (id in states) boostingIds.push(id);
+      }
+      const snap: SnapshotMessage = {
+        type: 'snapshot',
+        serverTick: this.serverTick,
+        states,
+        ackedTicks,
+        ...(boostingIds.length > 0 ? { boostingIds } : {}),
+      };
 
       // Per-client backpressure check before broadcast.
       for (const client of this.clients) {
@@ -1087,6 +1168,21 @@ export class SectorRoom extends Room<SectorState> {
     this.tickBudgetSampleCount++;
     if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
     if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
+
+    // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.
+    // The server's `update()` time covers SAB-read / encode / broadcast; the
+    // worker's most-recent step duration covers physics. The real budget
+    // overrun is whichever is longer. Without this, a worker that's grinding
+    // at 50 ms/tick goes undetected because the server thread reads the SAB
+    // in <1 ms and reports a healthy budget.
+    const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
+    this.simClock.report(Math.max(totalMs, workerTickMs));
+    const newRate = this.simClock.rate;
+    if (Math.abs(newRate - this.lastSentClockRate) >= 1e-4) {
+      this.lastSentClockRate = newRate;
+      this.state.clockRate = newRate;
+      this.postToWorker({ type: 'CLOCK_RATE', rate: newRate });
+    }
     if (this.tickBudgetSampleCount >= 60) {
       const avg: Record<string, number> = {};
       for (const k of Object.keys(this.tickBudgetSums)) {

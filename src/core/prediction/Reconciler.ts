@@ -37,6 +37,9 @@ export interface InputRecord {
   thrust: boolean;
   turnLeft: boolean;
   turnRight: boolean;
+  /** Shift-held boost. Optional for back-compat with replay buffers that
+   *  pre-date this field — replay treats `undefined` as `false`. */
+  boost?: boolean;
   /** performance.now() when the input was sent, for RTT estimation. */
   sentAt: number;
 }

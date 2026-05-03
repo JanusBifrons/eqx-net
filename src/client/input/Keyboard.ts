@@ -4,12 +4,15 @@ export interface InputState {
   turnRight: boolean;
   /** True every read() call while space is held. */
   fireHeld: boolean;
+  /** True while either Shift key is held. Multiplies thrust impulse server-side. */
+  boost: boolean;
 }
 
 export class Keyboard {
   thrust = false;
   turnLeft = false;
   turnRight = false;
+  boost = false;
   private spaceDown = false;
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -28,6 +31,10 @@ export class Keyboard {
         break;
       case 'Space':
         this.spaceDown = true;
+        break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.boost = true;
         break;
     }
   };
@@ -49,6 +56,10 @@ export class Keyboard {
       case 'Space':
         this.spaceDown = false;
         break;
+      case 'ShiftLeft':
+      case 'ShiftRight':
+        this.boost = false;
+        break;
     }
   };
 
@@ -68,6 +79,7 @@ export class Keyboard {
       turnLeft: this.turnLeft,
       turnRight: this.turnRight,
       fireHeld: this.spaceDown,
+      boost: this.boost,
     };
   }
 }

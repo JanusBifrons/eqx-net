@@ -30,7 +30,10 @@ app.use((_req, res, next) => {
 
 app.options('*', (_req, res) => { res.sendStatus(204); });
 
-app.use(express.json());
+// 2 MB body limit matches the diag/capture route's MAX_BYTES ceiling. Default
+// Express limit is 100 KB, which 413's any non-trivial diagnostic capture
+// (a 500-entry log + server events is ~150 KB+).
+app.use(express.json({ limit: '2mb' }));
 app.use('/auth', authRouter);
 
 app.get('/healthz', (_req, res) => {
@@ -83,6 +86,34 @@ gameServer.define('swarm-soak', SectorRoom, {
   swarmRatio: 0.8,
   swarmRadius: 18_000,
   maxClients: 8,
+});
+// Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
+// drones at the 0.8 ratio). Diagnostic captures show this only consumes
+// ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi
+// threshold — so TiDi will NOT engage here in steady state. Use this room
+// to verify gameplay/feel at scale; use `swarm-tidi-burn` to verify the
+// TiDi pipeline end-to-end.
+gameServer.define('swarm-tidi', SectorRoom, {
+  swarmCount: 4000,
+  swarmRatio: 0.8,
+  swarmRadius: 32_000,
+  maxClients: 4,
+});
+// Phase 6 synthetic-load room. 12 ms/tick of busy-wait CPU burn pushes the
+// server's `update()` over the 14 ms threshold (12 + ~1.5 ms real work ≈
+// 13.5–14 ms — *just* over) so TiDi engages without collapsing the server's
+// wall-clock tick rate. Higher burns (e.g. 20 ms) DO trigger TiDi but also
+// slow the server's actual tick cadence to ~19 Hz, which makes the client's
+// wall-clock-anchored input loop race ahead by ~40 ticks/sec → 90% reconciler
+// corrections. That's a separate architectural cliff: real production TiDi
+// is driven by physics-side overruns (worker step), where the server thread
+// stays at 60 Hz wall-clock and no clock skew occurs. Use sparingly.
+gameServer.define('swarm-tidi-burn', SectorRoom, {
+  swarmCount: 500, // smaller swarm so the burn dominates the budget signal
+  swarmRatio: 0.8,
+  swarmRadius: 18_000,
+  tickBurnMs: 12,
+  maxClients: 4,
 });
 
 httpServer.on('upgrade', (req) => {

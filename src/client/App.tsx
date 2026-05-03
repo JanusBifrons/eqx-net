@@ -162,7 +162,7 @@ function LogPanelGate(): JSX.Element {
 }
 
 function HUD(): JSX.Element {
-  const { connectionStatus, sectorName, hullPct, ammo, sectorAlert, playerId, shipCount, correctionRate, devData } =
+  const { connectionStatus, sectorName, hullPct, ammo, sectorAlert, playerId, shipCount, swarmCount, clockRate, serverTickHz, correctionRate, devData } =
     useUIStore();
 
   return (
@@ -202,6 +202,26 @@ function HUD(): JSX.Element {
             color: '#fff',
           }}
         />
+        <Chip
+          label={`Clock ${clockRate.toFixed(2)}×`}
+          size="small"
+          data-testid="clock-rate"
+          sx={{
+            bgcolor: clockRate >= 0.99 ? '#1a3a4a' : clockRate >= 0.85 ? '#7a5a1a' : '#7a1a1a',
+            color: '#fff',
+            fontFamily: 'monospace',
+          }}
+        />
+        <Chip
+          label={`Srv ${serverTickHz.toFixed(0)}Hz`}
+          size="small"
+          data-testid="server-tick-hz"
+          sx={{
+            bgcolor: serverTickHz >= 55 ? '#1a3a4a' : serverTickHz >= 40 ? '#7a5a1a' : '#7a1a1a',
+            color: '#fff',
+            fontFamily: 'monospace',
+          }}
+        />
       </Box>
       {sectorAlert && (
         <Alert severity="warning" sx={{ py: 0 }}>
@@ -219,6 +239,13 @@ function HUD(): JSX.Element {
         sx={{ color: '#888', fontSize: 10 }}
       >
         Ships: {shipCount}
+      </Typography>
+      <Typography
+        variant="caption"
+        data-testid="swarm-count"
+        sx={{ color: '#888', fontSize: 10 }}
+      >
+        Swarm: {swarmCount}
       </Typography>
       <Typography
         variant="caption"
@@ -438,6 +465,7 @@ function GameSurface(): JSX.Element {
       if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);
       if (urlParams.has('swarmRadius')) extraJoinOptions['swarmRadius'] = parseFloat(urlParams.get('swarmRadius')!);
       if (urlParams.has('singleAsteroid')) extraJoinOptions['singleAsteroid'] = urlParams.get('singleAsteroid') === '1';
+      if (urlParams.has('tickBurnMs')) extraJoinOptions['tickBurnMs'] = parseFloat(urlParams.get('tickBurnMs')!);
 
       await gameClient.connect(SERVER_URL, storedId, keyboard, {
         onConnectionStatus: setConnectionStatus,
@@ -447,7 +475,18 @@ function GameSurface(): JSX.Element {
         },
       }, roomName, extraJoinOptions, touchInputRef.current ?? undefined);
 
-      setSectorName(roomName === 'test-sector' ? 'Test Sector' : 'Sector Alpha');
+      // Show the actual room name in the HUD. Previously hardcoded to
+      // "Sector Alpha" for any room ≠ test-sector, which made it impossible
+      // to tell at a glance whether `?room=swarm-tidi` etc. had actually
+      // taken effect.
+      const prettyName: Record<string, string> = {
+        'sector': 'Sector Alpha',
+        'test-sector': 'Test Sector',
+        'swarm-soak': 'Swarm Soak (500)',
+        'swarm-tidi': 'Swarm TiDi (4000)',
+        'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
+      };
+      setSectorName(prettyName[roomName] ?? roomName);
     })().catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');

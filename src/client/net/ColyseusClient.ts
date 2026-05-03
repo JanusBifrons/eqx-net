@@ -113,6 +113,7 @@ export class ColyseusGameClient {
     damagedShips: new Set(),
     explodingShips: new Set(),
     remoteLasers: new Map(),
+    boostingShips: new Set(),
   };
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
@@ -178,7 +179,7 @@ export class ColyseusGameClient {
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
-  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } } | null = null;
+  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
@@ -207,7 +208,7 @@ export class ColyseusGameClient {
   async connect(
     wsUrl: string,
     storedPlayerId: string | null,
-    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean } },
+    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean } },
     callbacks: ColyseusClientCallbacks,
     roomName = 'sector',
     extraJoinOptions: Record<string, unknown> = {},
@@ -323,6 +324,10 @@ export class ColyseusGameClient {
         decodeSwarmPacket(raw, this.mirror);
       }
       this.syncSwarmIntoPredWorld();
+      // Phase 6 HUD readout. mirror.swarm is the live decoded set; .size is
+      // O(1). At decimation-only ticks the count stays steady (no entities
+      // come and go), so updating this on every packet is cheap.
+      useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
     this.room.onMessage('damage', (evt: DamageEvent) => {
@@ -472,6 +477,7 @@ export class ColyseusGameClient {
     // sprite position (looked up by id), and `swarm-${entityId}` is the
     // sprite key, so the existing explosion machinery just works.
     this.mirror.explodingShips?.add(wireId);
+    useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
   }
 
   private handleRespawnAck(msg: RespawnAckMessage): void {
@@ -540,12 +546,41 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     const now = performance.now();
 
+    // Apply the server-authoritative boost set into the render mirror so the
+    // PixiRenderer can draw an exhaust trail for whichever ships are currently
+    // boosting. Reset first so leavers / shift-released ships drop out.
+    if (this.mirror.boostingShips) {
+      this.mirror.boostingShips.clear();
+      if (snap.boostingIds) {
+        for (const id of snap.boostingIds) this.mirror.boostingShips.add(id);
+      }
+    }
+
+    // Phase 6 — surface the server's TiDi rate to the HUD via Zustand. Schema
+    // diff already updates `room.state.clockRate`; reading it on every
+    // snapshot is a cheap polling heartbeat that avoids a separate listener.
+    if (this.room) {
+      const stateAny = this.room.state as unknown as { clockRate?: number };
+      const rate = typeof stateAny.clockRate === 'number' ? stateAny.clockRate : 1.0;
+      useUIStore.getState().setClockRate(rate);
+    }
+
     // Update snapshot timing stats regardless of prediction state.
     const intervalMs = this.lastSnapshotAt > 0 ? now - this.lastSnapshotAt : 0;
     this.lastSnapshotAt = now;
     this.stats.snapshotCount++;
     this.stats.snapshotIntervalMs = intervalMs;
     this.stats.lastServerTick = snap.serverTick;
+
+    // Phase 6 — derive effective server wall-clock tick rate. Snapshot
+    // broadcasts every 3 ticks, so tickHz = 3000 / intervalMs. EWMA-smoothed
+    // so single-snapshot jitter doesn't make the chip flicker.
+    if (intervalMs > 0) {
+      const instantHz = 3000 / intervalMs;
+      const prev = useUIStore.getState().serverTickHz;
+      const smoothed = prev * 0.8 + instantHz * 0.2;
+      useUIStore.getState().setServerTickHz(smoothed);
+    }
 
     // Rolling jitter: max − min of the last 10 snapshot intervals.
     if (intervalMs > 0) {
@@ -984,17 +1019,24 @@ export class ColyseusGameClient {
       const turnLeft  = kb.turnLeft  || tcTurnLeft;
       const turnRight = kb.turnRight || tcTurnRight;
       const fireHeld  = kb.fireHeld  || tcFire;
+      const boost     = kb.boost; // shift — keyboard-only, no touch button yet
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
-        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, sentAt: performance.now() };
-        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight });
+        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, sentAt: performance.now() };
+        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost });
         this.reconciler.recordInput(rec);
-        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight });
+        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost });
+        // Show the local exhaust trail without waiting an RTT for the server
+        // to confirm — the next snapshot will overwrite from server truth.
+        if (this.mirror.boostingShips) {
+          if (boost && thrust) this.mirror.boostingShips.add(this.mirror.localPlayerId);
+          else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
+        }
         // Log only state-change-relevant inputs to avoid saturating the buffer:
         // every input where any control bit is on (carrying meaningful action),
         // plus a sparse heartbeat every 60th tick of all-idle.
-        if (thrust || turnLeft || turnRight || (tick % 60) === 0) {
-          logEvent('inputSent', { tick, thrust, turnLeft, turnRight });
+        if (thrust || turnLeft || turnRight || boost || (tick % 60) === 0) {
+          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost });
         }
       }
       // Always advance physics — remote ships and obstacles must keep moving even while dead.

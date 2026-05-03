@@ -72,6 +72,9 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  /** Ships currently holding shift-boost AND thrust. Server-authoritative —
+   *  rebuilt on every snapshot. Renderer draws an exhaust trail for each. */
+  boostingShips?: Set<string>;
   /**
    * Live hitscan beam state. Carries only the hit distance and target id; the
    * renderer derives the beam's geometry from the local ship's lerped pose in

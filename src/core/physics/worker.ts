@@ -2,7 +2,7 @@
  * Physics worker — runs Rapier at 60 Hz in a dedicated worker_threads thread.
  *
  * Communication contract with the main thread (SectorRoom):
- *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT
+ *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | CLOCK_RATE
  *   Worker → Main  postMessage events:   READY | SLEEP_TRANSITION
  *   Shared memory  SharedArrayBuffer (see sabLayout.ts) — written here under seqlock,
  *                  read by main thread between writes.
@@ -13,6 +13,13 @@
  *     suppress flap on slow-drift entities. On idle→sleep transitions the
  *     worker sets FLAG_SLEEPING in the slot AND posts a SLEEP_TRANSITION
  *     message so the main thread can fire the discrete bus event.
+ *
+ * Phase 6 additions:
+ *   - CLOCK_RATE command carries a TiDi rate (0.7..1.0). The worker writes it
+ *     to the SAB header (CLOCK_RATE_IDX) and uses it to scale the accumulator
+ *     input on each step: physics.tick(FIXED_DT * rate). Rapier's per-step dt
+ *     stays fixed — only how much wall-clock time accumulates per step is
+ *     scaled. This preserves deterministic collision behaviour at all rates.
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { PhysicsWorld } from './World.js';
@@ -20,6 +27,9 @@ import {
   SEQLOCK_IDX,
   TICK_IDX,
   COUNT_IDX,
+  CLOCK_RATE_IDX,
+  CLOCK_RATE_SCALE,
+  WORKER_TICK_US_IDX,
   SLOT_ID_OFF,
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -40,10 +50,11 @@ const SLEEP_HYSTERESIS_TICKS = 12;
 
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
-interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }
+interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
 interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd;
+interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -58,8 +69,8 @@ async function main(): Promise<void> {
   // reconciler replays the correct number of steps and achieves near-zero drift.
   // The overwrite-latest model caused ackedTick to jump 15+ ticks ahead of
   // serverTick, leaving the reconciler replaying only 1 step instead of ~16.
-  const inputQueues = new Map<number, Array<{ tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }>>();
-  const lastApplied = new Map<number, { tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean }>();
+  const inputQueues = new Map<number, Array<{ tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }>>();
+  const lastApplied = new Map<number, { tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
   const aiIntents = new Map<number, { fx: number; fy: number; torque: number }>();
   /** Per-slot consecutive-sleep counter; FLAG_SLEEPING is written when this >= hysteresis. */
@@ -97,7 +108,7 @@ async function main(): Promise<void> {
         if (!q) { q = []; inputQueues.set(cmd.slot, q); }
         // Cap queue to prevent unbounded growth if client briefly outruns physics.
         if (q.length < 20) {
-          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight });
+          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight, boost: cmd.boost });
         }
         break;
       }
@@ -115,6 +126,13 @@ async function main(): Promise<void> {
         aiIntents.set(cmd.slot, { fx: cmd.fx, fy: cmd.fy, torque: cmd.torque });
         break;
       }
+      case 'CLOCK_RATE': {
+        // TiDi rate update from the server. Single-writer for CLOCK_RATE_IDX;
+        // the read happens at the top of step() and scales the accumulator input.
+        const scaled = Math.max(0, Math.round(cmd.rate * CLOCK_RATE_SCALE)) | 0;
+        u32[CLOCK_RATE_IDX] = scaled;
+        break;
+      }
     }
   });
 
@@ -127,6 +145,7 @@ async function main(): Promise<void> {
   const TICK_MS_HR = 1000 / 60;
   let nextTickAt = performance.now();
   const step = (): void => {
+    const tStepStart = performance.now();
     // Dequeue exactly one input per slot per step. Holding the last applied input
     // when the queue runs dry keeps the ship at its most recent control state.
     const appliedTicks = new Map<number, number>(); // slot → inputTick
@@ -156,7 +175,14 @@ async function main(): Promise<void> {
     // Using actual elapsed time causes the accumulator to occasionally produce
     // 0 or 2 steps instead of 1, diverging from the client's prediction world
     // which always steps exactly once per input-loop tick.
-    physics.tick(TICK_MS / 1000);
+    //
+    // Phase 6: scale by clockRate. At rate=0.7 the accumulator gains 0.7 *
+    // (1/60) ≈ 11.67 ms per tick — below FIXED_DT — so some ticks step zero
+    // times and others step once, producing 70% net simulation progression
+    // without changing Rapier's per-step dt.
+    const rawRate = u32[CLOCK_RATE_IDX] ?? 0;
+    const clockRate = rawRate === 0 ? 1.0 : rawRate / CLOCK_RATE_SCALE;
+    physics.tick((TICK_MS / 1000) * clockRate);
     tick++;
 
     // Compute sleep transitions before SAB write so the flag word is current.
@@ -213,6 +239,13 @@ async function main(): Promise<void> {
     for (const t of transitions) {
       parentPort!.postMessage({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
     }
+
+    // Phase 6 — publish the wall-clock duration of this step (in µs) so the
+    // server's SimulationClock can drive TiDi from the real bottleneck. Single-
+    // writer u32 in the SAB header. Microsecond resolution avoids floating-
+    // point-in-u32 encoding faff for sub-millisecond ticks.
+    const stepUs = Math.max(0, Math.round((performance.now() - tStepStart) * 1000));
+    u32[WORKER_TICK_US_IDX] = stepUs > 0xffff_ffff ? 0xffff_ffff : stepUs;
   };
 
   const loop = (): void => {

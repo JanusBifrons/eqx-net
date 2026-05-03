@@ -2,6 +2,11 @@ import RAPIER from '@dimforge/rapier2d-compat';
 
 const FIXED_DT = 1 / 60;
 const THRUST_IMPULSE = 1.5;
+/** Multiplier applied to THRUST_IMPULSE while the player holds shift. Picked
+ *  to feel decisively "boosting" without launching the ship out of the sector
+ *  in a single tap — at LINEAR_DAMPING = 0.01 a 1 s burst tops out around
+ *  3.5× normal cruise speed. */
+export const BOOST_MULTIPLIER = 3.5;
 const TURN_SPEED = 2.5; // rad/s
 const LINEAR_DAMPING = 0.01;
 const ANGULAR_DAMPING = 8.0;
@@ -21,6 +26,9 @@ export interface ShipInput {
   thrust: boolean;
   turnLeft: boolean;
   turnRight: boolean;
+  /** Shift-held boost — multiplies thrust impulse by BOOST_MULTIPLIER while
+   *  thrust is also held. No-op on its own. Optional for back-compat. */
+  boost?: boolean;
 }
 
 export class PhysicsWorld {
@@ -113,7 +121,8 @@ export class PhysicsWorld {
       const angle = body.rotation();
       // Ship polygon nose points Pixi-up (local y=-16) at angle=0.
       // In Rapier (Y-up), that visual "forward" is (-sin θ, cos θ), not (cos θ, sin θ).
-      body.applyImpulse({ x: -Math.sin(angle) * THRUST_IMPULSE, y: Math.cos(angle) * THRUST_IMPULSE }, true);
+      const impulse = input.boost ? THRUST_IMPULSE * BOOST_MULTIPLIER : THRUST_IMPULSE;
+      body.applyImpulse({ x: -Math.sin(angle) * impulse, y: Math.cos(angle) * impulse }, true);
     }
 
     // sprite.rotation = -angle, so Rapier CCW (positive ω) = CCW on screen = left turn.

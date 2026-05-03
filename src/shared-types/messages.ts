@@ -7,6 +7,9 @@ export const InputMessageSchema = z
     thrust: z.boolean(),
     turnLeft: z.boolean(),
     turnRight: z.boolean(),
+    /** Shift-held boost — multiplies thrust impulse server-side. Optional for
+     *  back-compat with clients that pre-date this field. */
+    boost: z.boolean().optional(),
   })
   .strict();
 
@@ -59,6 +62,9 @@ export interface SnapshotMessage {
   states: Record<string, { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>;
   /** Last client input tick acknowledged by the server for each player. */
   ackedTicks: Record<string, number>;
+  /** Set of playerIds currently holding boost (shift). Renderer draws an
+   *  exhaust trail for each. Absent / empty when nobody is boosting. */
+  boostingIds?: string[];
 }
 
 /** Server → client (direct): result of a fire request. */

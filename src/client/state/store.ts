@@ -38,6 +38,14 @@ interface UIStore {
   showLogPanel: boolean;
   showServerGhost: boolean;
   shipCount: number;
+  /** Live count of swarm entities (asteroids + drones) in `mirror.swarm`. */
+  swarmCount: number;
+  /** Phase 6 TiDi rate broadcast by the server (1.0 = normal, 0.7 = floor). */
+  clockRate: number;
+  /** Effective server wall-clock tick rate, derived from snapshot inter-arrival
+   *  intervals. 60 Hz = healthy; <50 Hz means the server's `update()` is
+   *  running over budget, which is a different failure mode than TiDi. */
+  serverTickHz: number;
   devData: DevData;
   /** Fraction 0–1 of snapshots that triggered a significant correction. Always-visible HUD stat. */
   correctionRate: number;
@@ -55,6 +63,9 @@ interface UIStore {
   setShowServerGhost: (v: boolean) => void;
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;
+  setSwarmCount: (n: number) => void;
+  setClockRate: (n: number) => void;
+  setServerTickHz: (n: number) => void;
   setDevData: (d: DevData) => void;
   setDead: (dead: boolean) => void;
 }
@@ -86,6 +97,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   showLogPanel: initialLogPanel,
   showServerGhost: initialServerGhost,
   shipCount: 0,
+  swarmCount: 0,
+  clockRate: 1.0,
+  serverTickHz: 60,
   devData: { rtt: 0, drift: 0, angleDrift: 0, lerping: false, snapshotIntervalMs: 0, ticksAhead: 0, snapshotCount: 0, significantCorrectionCount: 0, significantAngleCorrectionCount: 0, maxDriftUnits: 0, maxAngleDriftRad: 0, ackedTick: 0, inputTick: 0, serverTick: 0, serverX: 0, serverY: 0, beforeX: 0, beforeY: 0, afterX: 0, afterY: 0 },
   correctionRate: 0,
   isDead: false,
@@ -101,6 +115,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShowServerGhost: (v) => { set({ showServerGhost: v }); persist(get()); },
   toggleDevOverlay: () => { set((s) => ({ showDevOverlay: !s.showDevOverlay })); persist(get()); },
   setShipCount: (n) => set({ shipCount: n }),
+  setSwarmCount: (n) => set({ swarmCount: n }),
+  setClockRate: (n) => set({ clockRate: n }),
+  setServerTickHz: (n) => set({ serverTickHz: n }),
   setDevData: (d) => set({
     devData: d,
     correctionRate: d.snapshotCount > 0 ? d.significantCorrectionCount / d.snapshotCount : 0,
