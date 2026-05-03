@@ -19,6 +19,7 @@ import { useAuthStore } from './auth/authStore';
 import { AppHeader } from './components/AppHeader';
 import { LoginPage } from './components/LoginPage';
 import { ProfileModal } from './components/ProfileModal';
+import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
 
 // Default to the page's own origin so the same dev server is reachable from
@@ -148,6 +149,16 @@ function DevOverlay(): JSX.Element {
       <div>After:  ({f(devData.afterX)}, {f(devData.afterY)})</div>
     </Box>
   );
+}
+
+function DevOverlayGate(): JSX.Element {
+  const show = useUIStore((s) => s.showDevOverlay);
+  return show ? <DevOverlay /> : <></>;
+}
+
+function LogPanelGate(): JSX.Element {
+  const show = useUIStore((s) => s.showLogPanel);
+  return show ? <LogPanel /> : <></>;
 }
 
 function HUD(): JSX.Element {
@@ -344,6 +355,21 @@ function GameSurface(): JSX.Element {
           el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
           el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
+          // Expose the beam's derived start-point so E2E tests can prove the
+          // local laser is glued to the ship's lerped pose (no desync during
+          // server-correction lerps). Computed identically to PixiRenderer's
+          // own derivation: from = ship + 20*forward(ship.angle).
+          if (gameClient.mirror.liveBeam && localShip) {
+            const fwdX = -Math.sin(localShip.angle);
+            const fwdY =  Math.cos(localShip.angle);
+            el.dataset['beamFromX'] = (localShip.x + fwdX * 20).toFixed(3);
+            el.dataset['beamFromY'] = (localShip.y + fwdY * 20).toFixed(3);
+            el.dataset['beamDist']  = gameClient.mirror.liveBeam.dist.toFixed(3);
+          } else {
+            delete el.dataset['beamFromX'];
+            delete el.dataset['beamFromY'];
+            delete el.dataset['beamDist'];
+          }
           el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
           const remoteHitTargetIds: string[] = [];
           if (gameClient.mirror.remoteLasers) {
@@ -417,8 +443,8 @@ function GameSurface(): JSX.Element {
         style={{ width: '100%', height: '100%', touchAction: 'none' }}
       />
       <HUD />
-      <DevOverlay />
-      <LogPanel />
+      <DevOverlayGate />
+      <LogPanelGate />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
@@ -500,6 +526,9 @@ export function App(): JSX.Element {
     autoJoin || user ? (autoJoin ? 'game' : 'splash') : 'auth',
   );
   const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   // If user logs out while on splash, go back to auth.
   useEffect(() => {
@@ -523,9 +552,14 @@ export function App(): JSX.Element {
   if (phase === 'game') {
     return (
       <>
-        <AppHeader onLoginClick={() => setPhase('auth')} onProfileClick={() => setProfileOpen(true)} />
+        <AppHeader
+          onLoginClick={() => setPhase('auth')}
+          onProfileClick={() => setProfileOpen(true)}
+          onSettingsClick={openSettings}
+        />
         <GameSurface />
         <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+        <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
     );
   }
@@ -537,16 +571,25 @@ export function App(): JSX.Element {
   if (phase === 'auth') {
     return (
       <>
-        <AppHeader onLoginClick={() => {}} onProfileClick={() => setProfileOpen(true)} />
+        <AppHeader
+          onLoginClick={() => {}}
+          onProfileClick={() => setProfileOpen(true)}
+          onSettingsClick={openSettings}
+        />
         <LoginPage onSuccess={handleAuthSuccess} onSkip={handleAuthSuccess} />
         <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+        <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
     );
   }
 
   return (
     <>
-      <AppHeader onLoginClick={() => setPhase('auth')} onProfileClick={() => setProfileOpen(true)} />
+      <AppHeader
+        onLoginClick={() => setPhase('auth')}
+        onProfileClick={() => setProfileOpen(true)}
+        onSettingsClick={openSettings}
+      />
       <Box
         sx={{
           display: 'flex',
@@ -602,6 +645,7 @@ export function App(): JSX.Element {
         )}
       </Box>
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={closeSettings} />
     </>
   );
 }

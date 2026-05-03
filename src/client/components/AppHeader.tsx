@@ -4,15 +4,19 @@ import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import Box from '@mui/material/Box';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
+import SettingsIcon from '@mui/icons-material/Settings';
 import { useAuthStore } from '../auth/authStore.js';
 import { AvatarMenu } from './AvatarMenu.js';
 
 interface Props {
   onLoginClick: () => void;
   onProfileClick: () => void;
+  onSettingsClick: () => void;
 }
 
-export function AppHeader({ onLoginClick, onProfileClick }: Props) {
+export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Props) {
   const { user } = useAuthStore();
 
   return (
@@ -33,7 +37,18 @@ export function AppHeader({ onLoginClick, onProfileClick }: Props) {
         >
           EQUINOX
         </Typography>
-        <Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <Tooltip title="Settings">
+            <IconButton
+              size="small"
+              onClick={onSettingsClick}
+              aria-label="Open settings"
+              data-testid="settings-button"
+              sx={{ color: 'rgba(255,255,255,0.7)', '&:hover': { color: '#fff' } }}
+            >
+              <SettingsIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           {user ? (
             <AvatarMenu onProfileClick={onProfileClick} />
           ) : (

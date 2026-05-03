@@ -292,7 +292,10 @@ export class PixiRenderer implements IRenderer {
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.
-    if (mirror.serverGhostPos) {
+    // `showServerGhost` defaults to true when undefined so older mirrors and
+    // the LocalGameClient diagnostic surface keep working.
+    const ghostEnabled = mirror.showServerGhost !== false;
+    if (ghostEnabled && mirror.serverGhostPos) {
       if (!this.serverGhost) {
         this.serverGhost = buildGhostGfx();
         this.shipContainer.addChild(this.serverGhost);
@@ -342,24 +345,30 @@ export class PixiRenderer implements IRenderer {
       this.remoteBeamGfx.visible = false;
     }
 
-    // Live hitscan beam — redrawn every frame so it tracks ship rotation.
-    if (mirror.liveBeam) {
+    // Live hitscan beam — derive geometry from the local ship's lerped pose in
+    // mirror.ships each frame so the beam stays glued to the ship sprite even
+    // during a server-correction lerp. (Mirrors the remote-beam pattern above —
+    // single source of truth: "where the ship is visually right now".)
+    const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
+    if (mirror.liveBeam && localShip) {
       if (!this.liveBeamGfx) {
         this.liveBeamGfx = new Graphics();
         this.shipContainer.addChild(this.liveBeamGfx);
       }
-      const b = mirror.liveBeam;
-      const dx = b.toX - b.fromX;
-      const dy = -(b.toY - b.fromY); // Y-flip for Pixi
+      const fwdX = -Math.sin(localShip.angle);
+      const fwdY =  Math.cos(localShip.angle);
+      const fromX = localShip.x + fwdX * 20;
+      const fromY = localShip.y + fwdY * 20;
+      const toX = fromX + fwdX * mirror.liveBeam.dist;
+      const toY = fromY + fwdY * mirror.liveBeam.dist;
       this.liveBeamGfx.clear();
       // Outer glow
-      this.liveBeamGfx.moveTo(b.fromX, -b.fromY).lineTo(b.toX, -b.toY);
+      this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
       this.liveBeamGfx.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
       // Bright core
-      this.liveBeamGfx.moveTo(b.fromX, -b.fromY).lineTo(b.toX, -b.toY);
+      this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
       this.liveBeamGfx.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
       this.liveBeamGfx.visible = true;
-      void dx; void dy;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
     }

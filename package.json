@@ -30,6 +30,7 @@
     "@dimforge/rapier2d-compat": "^0.14.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
+    "@mui/icons-material": "^6.5.0",
     "@mui/material": "^6.1.10",
     "bcryptjs": "^3.0.3",
     "colyseus": "^0.16.0",

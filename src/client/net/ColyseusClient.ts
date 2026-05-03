@@ -744,6 +744,10 @@ export class ColyseusGameClient {
 
     // Server ghost position — orange diamond drawn at the raw snapshot coords.
     this.mirror.serverGhostPos = this.lastSnapshotPos;
+    // Snapshot the user's debug visibility preference into the mirror once per
+    // frame so the Pixi renderer never reaches into the Zustand subscription
+    // path (per src/client/CLAUDE.md Zustand-purity rule).
+    this.mirror.showServerGhost = useUIStore.getState().showServerGhost;
 
     // Obstacles — read from prediction world at 60 Hz with decaying lerp offsets.
     if (this.predWorld && this.mirror.obstacles) {
@@ -882,7 +886,14 @@ export class ColyseusGameClient {
     }
   }
 
-  /** Recomputes mirror.liveBeam from current predWorld ship state + client-side hitscan. */
+  /**
+   * Stores the hit distance for the live hitscan beam. The renderer reads the
+   * shooter's current pose from `mirror.ships[localId]` (which already includes
+   * any active reconciler lerp offsets) and projects forward by `dist` — so the
+   * beam stays glued to the ship sprite frame-by-frame even during corrections.
+   * The hitscan query itself runs against raw predWorld state, which is what
+   * the server's lag-comp will validate against.
+   */
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
@@ -894,10 +905,7 @@ export class ColyseusGameClient {
     const fromY = state.y + fwdY * 20;
     const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
     this.mirror.liveBeam = {
-      fromX,
-      fromY,
-      toX: hit ? fromX + fwdX * hit.dist : fromX + fwdX * HITSCAN_RANGE,
-      toY: hit ? fromY + fwdY * hit.dist : fromY + fwdY * HITSCAN_RANGE,
+      dist: hit ? hit.dist : HITSCAN_RANGE,
       hitId: hit?.hitId,
     };
   }
@@ -905,17 +913,21 @@ export class ColyseusGameClient {
   private sendFire(tick: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return;
-    const beam = this.mirror.liveBeam;
-    if (!beam) return;
-    const fwdX = -Math.sin(this.predWorld.getShipState(localId)?.angle ?? 0);
-    const fwdY = Math.cos(this.predWorld.getShipState(localId)?.angle ?? 0);
+    // Always compute the fire ray from RAW prediction state — the server's
+    // lag-comp plausibility check validates against unlerped trajectories.
+    const state = this.predWorld.getShipState(localId);
+    if (!state) return;
+    const fwdX = -Math.sin(state.angle);
+    const fwdY = Math.cos(state.angle);
+    const fromX = state.x + fwdX * 20;
+    const fromY = state.y + fwdY * 20;
     this.room.send('fire', {
       type: 'fire',
       tick,
       clientShotId: nextShotId(),
       weapon: 'hitscan',
-      rayFromX: beam.fromX,
-      rayFromY: beam.fromY,
+      rayFromX: fromX,
+      rayFromY: fromY,
       rayDirX: fwdX,
       rayDirY: fwdY,
     });
