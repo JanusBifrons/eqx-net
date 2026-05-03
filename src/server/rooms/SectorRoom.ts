@@ -8,6 +8,7 @@ import { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SectorState, ShipState, ProjectileState } from './schema/SectorState.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { AiController } from '../ai/AiController.js';
@@ -133,6 +134,10 @@ export class SectorRoom extends Room<SectorState> {
   // binary swarm channel — never on MapSchema.
   private readonly swarmRegistry = new SwarmEntityRegistry();
   private readonly swarmEncoder = new BinarySwarmBroadcast();
+  /** Phase 5d: per-client interest grid. 2048-unit cells, 3×3 query window. */
+  private readonly interestGrid = new SpatialGrid();
+  /** Reused per-tick scratch sets so query9 doesn't allocate per call. */
+  private readonly interestScratch = new Map<string, Set<number>>();
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -221,6 +226,7 @@ export class SectorRoom extends Room<SectorState> {
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
       droneBehaviour: () => new HostileDroneBehaviour(),
+      interestGrid: this.interestGrid,
     });
     const seeded = this.swarmSpawner.seedAsteroids(asteroidRoster);
     if (seeded < asteroidRoster.length) {
@@ -598,6 +604,7 @@ export class SectorRoom extends Room<SectorState> {
       this.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: rec.id });
 
       this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
+      this.interestGrid.remove(rec.entityId);
       this.swarmRegistry.unregister(rec.id);
       this.aiController.unregister(rec.id);
       this.swarmHealth.delete(rec.id);
@@ -825,6 +832,7 @@ export class SectorRoom extends Room<SectorState> {
 
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
+    this.interestScratch.delete(client.sessionId);
     this.sabAppliedTicks.delete(playerId);
     this.lastFireClientTick.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
@@ -901,6 +909,17 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+
+    // Phase 5d: keep the spatial grid current. Most entities don't cross a
+    // 2048-unit cell boundary in a single tick at typical drone/asteroid
+    // speeds (~30-100 u/s), so move() returns early without touching the
+    // bucket map. Cost is one Map.get + integer compare per entity.
+    for (const rec of this.swarmRegistry.all()) {
+      const b = slotBase(rec.slot);
+      const sx = this.sabF32[b + SLOT_X_OFF]!;
+      const sy = this.sabF32[b + SLOT_Y_OFF]!;
+      this.interestGrid.move(rec.entityId, sx, sy);
+    }
     phaseTime('sabRead');
 
     // Record positions for lag compensation — alive ships only.
@@ -935,19 +954,36 @@ export class SectorRoom extends Room<SectorState> {
     // encoder returns null when no pose has changed past the quantisation
     // epsilon (or when not every-60th-tick full-snapshot), so the wire cost is
     // dominated by the full-snapshot keyframe and the rare-but-real motion
-    // deltas. Phase 5d will replace broadcast-all with per-client filtering.
-    const swarmPacket = this.serverTick > 0
-      ? this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick)
-      : null;
-    phaseTime('swarmEncode');
-    if (swarmPacket) {
+    // deltas. Phase 5d: encode per-client with the spatial grid's 9-cell
+    // interest window. Out-of-interest entities still ship at decimated
+    // cadence inside the encoder.
+    if (this.serverTick > 0 && this.clients.length > 0) {
       for (const client of this.clients) {
         const bp = checkBackpressure(client, logger);
         if (bp === 'close') { client.leave(4002); continue; }
         if (bp === 'drop') continue;
-        client.send('swarm', swarmPacket);
+
+        const playerId = this.sessionToPlayer.get(client.sessionId);
+        const slot = playerId !== undefined ? this.playerToSlot.get(playerId) : undefined;
+        let inInterest: Set<number> | undefined;
+        if (slot !== undefined) {
+          const b = slotBase(slot);
+          const sx = this.sabF32[b + SLOT_X_OFF]!;
+          const sy = this.sabF32[b + SLOT_Y_OFF]!;
+          const { cx, cy } = this.interestGrid.cellOf(sx, sy);
+          let scratch = this.interestScratch.get(client.sessionId);
+          if (!scratch) {
+            scratch = new Set<number>();
+            this.interestScratch.set(client.sessionId, scratch);
+          }
+          this.interestGrid.query9(cx, cy, scratch);
+          inInterest = scratch;
+        }
+        const swarmPacket = this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick, inInterest);
+        if (swarmPacket) client.send('swarm', swarmPacket);
       }
     }
+    phaseTime('swarmEncode');
     phaseTime('swarmBroadcast');
 
     if (++this.broadcastCounter >= 3 && this.serverTick > 0) {

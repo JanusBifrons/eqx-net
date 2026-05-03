@@ -198,4 +198,58 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(packet).not.toBeNull();
     expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(1);
   });
+
+  // Phase 5d: per-client interest filtering + 6-tick decimation.
+
+  it('inInterest filter excludes out-of-interest entities on non-decimation ticks', () => {
+    const inA = registry.register('a', SLOT_A, 0, 32, 0, 0, 0);
+    const inB = registry.register('b', SLOT_B, 0, 32, 100, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 1.0, 0, 0);
+    setSlotPose(f32, SLOT_B, 100, 0, 1.0, 0, 0);
+
+    encoder.encode(registry, f32, u32, 60);
+
+    // Tick 61 isn't a decimation tick (61 % 6 !== 0). Only "a" is in
+    // interest — "b" should be omitted.
+    setSlotPose(f32, SLOT_A, 1, 0, 1.0, 0, 0);
+    setSlotPose(f32, SLOT_B, 101, 0, 1.0, 0, 0);
+    const inInterest = new Set<number>([inA.entityId]);
+    const packet = encoder.encode(registry, f32, u32, 61, inInterest);
+
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(1);
+    expect(inB).toBeDefined(); // suppress unused-var
+  });
+
+  it('decimation tick (every 6th tick) ships out-of-interest entities unconditionally', () => {
+    const inA = registry.register('a', SLOT_A, 0, 32, 0, 0, 0);
+    registry.register('b', SLOT_B, 0, 32, 100, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 1.0, 0, 0);
+    setSlotPose(f32, SLOT_B, 100, 0, 0, 0, 0); // stationary out-of-interest
+
+    encoder.encode(registry, f32, u32, 60);
+
+    // Tick 66 IS a decimation tick (66 % 6 === 0). Both "a" (in interest)
+    // and "b" (out of interest) should ship — "b" specifically because the
+    // decimation cadence fires regardless of poseChanged.
+    const inInterest = new Set<number>([inA.entityId]);
+    const packet = encoder.encode(registry, f32, u32, 66, inInterest);
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(2);
+  });
+
+  it('inInterest=undefined preserves Phase 5c broadcast-all behaviour', () => {
+    registry.register('a', SLOT_A, 0, 32, 0, 0, 0);
+    registry.register('b', SLOT_B, 0, 32, 100, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 1.0, 0, 0);
+    setSlotPose(f32, SLOT_B, 100, 0, 1.0, 0, 0);
+
+    encoder.encode(registry, f32, u32, 60);
+
+    setSlotPose(f32, SLOT_A, 1, 0, 1.0, 0, 0);
+    setSlotPose(f32, SLOT_B, 101, 0, 1.0, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 61); // no filter
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(2);
+  });
 });

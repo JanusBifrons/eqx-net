@@ -41,6 +41,8 @@ Phase 0: placeholder. These tighten as each phase ships:
 - **Phase 4 — temporal plausibility**: hit claims older than 12 ticks (~200 ms) rejected.
 - **Phase 4 — backpressure**: `ws.bufferedAmount > 50 KB` drops oldest queued snapshot; `> 250 KB` force-closes the socket.
 - **Phase 4 — lag-comp buffer**: pre-allocated 1000 entities × 12 ticks × 16 bytes = 192 KB per sector. No per-tick allocation.
+- **Phase 5d — interest grid**: `SpatialGrid` (2048-unit cells). Each client receives entities in its 3×3 cell window at full fidelity; out-of-interest entities are still shipped every 6 ticks (decimation cadence). Cell move per entity per tick is cheap because most entities don't cross a 2048 u boundary in a single 16.67 ms step.
+- **Phase 5d — wire format**: encoder is per-client, called from `SectorRoom.update()` inside the existing per-client backpressure loop. `BinarySwarmBroadcast.encode(registry, sab, sab, tick, inInterest?)` — when `inInterest` is undefined the encoder behaves like Phase 5c (broadcast-all), so unit tests that pre-date 5d still pass unmodified.
 - **Phase 6 — TiDi**: simulation-clock rate ramps toward 0.7× when >14 ms/tick for 30 consecutive ticks. At floor, load-shedder despawns farthest-from-any-player AI.
 - **Auth (pre-Phase 5)**: `node:sqlite` introduced early for auth/stats. Currently runs on main thread (low-frequency queries). Phase 7 threading plan still applies: move DB worker to `worker_threads`.
 - **Phase 7 — SQLite**: WAL mode. Two priority queues (`CRITICAL` with coalescing write-ahead buffer, `VOLATILE` purgeable). Graceful shutdown flushes `CRITICAL`.

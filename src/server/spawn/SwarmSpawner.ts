@@ -1,6 +1,7 @@
 import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
 import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
+import type { SpatialGrid } from '../interest/SpatialGrid.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -35,6 +36,8 @@ export interface SpawnerHooks {
   /** Per-entity AI behaviour factory. The spawner does not import concrete behaviours. */
   asteroidBehaviour?: () => IAiBehaviour;
   droneBehaviour?: () => IAiBehaviour;
+  /** Optional: insert into the per-tick interest grid (Phase 5d). */
+  interestGrid?: SpatialGrid;
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
@@ -98,9 +101,14 @@ export class SwarmSpawner {
     if (kind === 1) flagsWord |= FLAG_KIND_DRONE;
     this.hooks.sabU32[base + SLOT_FLAGS_OFF] = flagsWord;
 
-    this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
+    const rec = this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
 
     this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, a.mass);
+
+    // Phase 5d: insert into the interest grid so this entity participates in
+    // per-client filtering. Indexed by the dense u16 entityId since that's
+    // what the binary broadcast writes on the wire.
+    this.hooks.interestGrid?.insert(rec.entityId, a.x, a.y);
 
     if (kind === 1 && behaviourFactory && this.hooks.registerAi) {
       this.hooks.registerAi(a.id, slot, behaviourFactory());

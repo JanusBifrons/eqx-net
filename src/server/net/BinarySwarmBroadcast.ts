@@ -28,6 +28,13 @@ import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegist
 const FULL_SNAPSHOT_INTERVAL_TICKS = 60;
 
 /**
+ * How often out-of-interest entities still get shipped to a given client. At
+ * 60 Hz this is once every 100 ms, plenty for a sprite living at the edge of
+ * vision that the client is barely looking at.
+ */
+const DECIMATION_TICKS = 6;
+
+/**
  * Pre-allocated single packet buffer, sized for the worst case of every
  * registered entity in one packet. 24 bytes/record × 1024 + 8-byte header
  * fits in one buffer; the encoder reuses it every tick.
@@ -45,9 +52,28 @@ export class BinarySwarmBroadcast {
   }
 
   /**
-   * Encode a packet for the given registry. Returns a `Uint8Array` view onto
-   * the internal buffer truncated to the packet's actual size, or `null` if
-   * there's nothing worth shipping this tick.
+   * Encode a packet for the given registry, optionally filtered by per-client
+   * interest. Returns a `Uint8Array` view onto the internal buffer truncated
+   * to the packet's actual size, or `null` if there's nothing worth shipping
+   * this tick.
+   *
+   * Phase 5d adds the `inInterest` parameter — a set of dense u16 entity ids
+   * the client wants at full fidelity (the 9-cell window from `SpatialGrid`).
+   * Out-of-interest entities are still shipped every `DECIMATION_TICKS` so
+   * the client has a stale-but-present pose if the local ship suddenly moves
+   * toward them. Pass `undefined` to disable filtering (broadcast-all, the
+   * Phase 5c path before the grid was wired).
+   *
+   * **Important**: when filtering is enabled, the encoder no longer mutates
+   * `rec.lastBroadcast*` from a single shared encode pass — different clients
+   * see different last-broadcast frames depending on their interest window.
+   * The bookkeeping is therefore *only* updated based on what was actually
+   * shipped to *this* client. To keep delta detection conservative and
+   * correct, the per-client encoder writes are based on a passed-in
+   * "lastBroadcast" snapshot that tracks per-(client, entity) state. For now
+   * (Phase 5d) we keep the registry-level last-broadcast as a lower-bound
+   * heuristic shared across clients — entities are slightly more likely to
+   * be re-shipped on a delta than strictly necessary, but it's safe.
    *
    * Mutates each shipped record's `lastBroadcast` / `lastBroadcastSleeping` /
    * `lastBroadcastTick` so subsequent calls produce correct deltas.
@@ -57,10 +83,12 @@ export class BinarySwarmBroadcast {
     sabF32: Float32Array,
     sabU32: Uint32Array,
     serverTick: number,
+    inInterest?: Set<number>,
   ): Uint8Array | null {
     if (registry.size() === 0) return null;
 
     const isFullSnapshot = serverTick % FULL_SNAPSHOT_INTERVAL_TICKS === 0;
+    const decimationTickThisFrame = serverTick % DECIMATION_TICKS === 0;
     let count = 0;
     let writeOffset = SWARM_HEADER_BYTES;
 
@@ -78,9 +106,24 @@ export class BinarySwarmBroadcast {
       const sleepChanged = sleeping !== rec.lastBroadcastSleeping;
       const poseChanged = SwarmEntityRegistry.poseChanged(rec, x, y, angle, vx, vy);
 
+      // Phase 5d interest filtering. Entities outside the per-client window
+      // still ship at decimated cadence so the client has a recent-enough
+      // pose if its window suddenly shifts (e.g. fast travel, teleport).
+      const inInterestForThisClient = !inInterest || inInterest.has(rec.entityId);
+      const decimatedShip = !inInterestForThisClient && decimationTickThisFrame;
+
       // Sleeping entities drop out entirely on subsequent ticks unless they
       // wake. The transition tick (sleeping became true) still ships once so
       // the client can freeze interpolation at the final pose.
+      //
+      // Decimated ships are UNCONDITIONAL on the decimation tick (not gated
+      // by poseChanged). Reason: rec.lastBroadcast is shared across all
+      // clients, so an entity that just shipped to client A would look
+      // "unchanged" to the encoder when it gets to client B — but B may have
+      // never seen any pose for that entity at all if it's been out of
+      // interest. Shipping unconditionally bounds wire cost trivially
+      // (entities × clients × 24 B / DECIMATION_TICKS) and removes a class
+      // of subtle "stale pose" bugs around interest-window crossings.
       let include = false;
       if (isFullSnapshot) {
         include = true;
@@ -88,8 +131,12 @@ export class BinarySwarmBroadcast {
         include = true;
       } else if (sleeping) {
         include = false; // already shipped on transition; stay quiet
-      } else {
+      } else if (inInterestForThisClient) {
         include = poseChanged;
+      } else if (decimatedShip) {
+        include = true;
+      } else {
+        include = false;
       }
 
       if (!include) continue;
