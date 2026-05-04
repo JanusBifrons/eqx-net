@@ -12,6 +12,7 @@ import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
 import { updateAnchor } from './clockAnchor';
+import { getSector } from '@core/galaxy/galaxy';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -326,8 +327,15 @@ export class ColyseusGameClient {
       this.mirror.localPlayerId = msg.playerId;
       callbacks.onPlayerId(msg.playerId);
       // Phase 8 — surface the stable galaxy sector key for HUD + galaxy-map
-      // overlay consumers. `null` for engineering rooms.
-      useUIStore.getState().setCurrentSectorKey(msg.sectorKey);
+      // overlay consumers. `null` for engineering rooms. The display name is
+      // also refreshed here so post-transit reconnects update the HUD; the
+      // initial App.tsx setSectorName covers engineering rooms (key=null).
+      const ui = useUIStore.getState();
+      ui.setCurrentSectorKey(msg.sectorKey);
+      if (msg.sectorKey) {
+        const sec = getSector(msg.sectorKey);
+        if (sec) ui.setSectorName(sec.name);
+      }
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
     });
@@ -478,6 +486,35 @@ export class ColyseusGameClient {
       } catch (err) {
         console.warn('[ColyseusClient] source room.leave during transit failed', err);
       }
+
+      // Wipe stale spatial state from the source sector. Without this, the old
+      // sector's asteroids/drones (and remote ships) linger in the mirror at
+      // their last-shipped world positions until the destination's first FULL
+      // swarm snapshot reconciles them (~1 s) — long enough for the player to
+      // see ghost entities sitting static across the new sector.
+      this.mirror.swarm?.clear();
+      this.mirror.projectiles?.clear();
+      this.mirror.damagedShips?.clear();
+      this.mirror.explodingShips?.clear();
+      this.mirror.boostingShips?.clear();
+      this.mirror.remoteLasers?.clear();
+      this.mirror.liveBeam = null;
+      this.mirror.serverGhostPos = null;
+      // Drop remote ships; the local entry is preserved so predWorld keeps
+      // simulating until the destination's state patch arrives.
+      const preservedLocal = this.mirror.localPlayerId;
+      for (const id of [...this.mirror.ships.keys()]) {
+        if (id !== preservedLocal) {
+          this.mirror.ships.delete(id);
+          this.remoteHistory.delete(id);
+          if (this.predRemoteShipIds.has(id)) {
+            this.predWorld?.despawnShip(id);
+            this.predRemoteShipIds.delete(id);
+            this._remoteShipOffsets.delete(id);
+          }
+        }
+      }
+
       try {
         const newRoom = await client.consumeSeatReservation<unknown>(msg.reservation as never);
         this.room = newRoom;

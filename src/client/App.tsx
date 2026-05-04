@@ -26,6 +26,7 @@ import { GalaxyMapScreen } from './components/GalaxyMapScreen';
 import { GalaxyMapOverlay } from './components/GalaxyMapOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
+import { ShipStatsCard } from './components/ShipStatsCard';
 import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
@@ -121,10 +122,6 @@ function DevOverlay(): JSX.Element {
   return (
     <Box
       sx={{
-        position: 'absolute',
-        top: 16,
-        right: 16,
-        zIndex: 10,
         bgcolor: 'rgba(0,0,0,0.82)',
         color: '#0f0',
         fontFamily: 'monospace',
@@ -327,11 +324,18 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
   const touchInputRef = useRef<TouchInput | null>(
     isTouchRef.current ? new TouchInput() : null,
   );
-  const { setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay } =
-    useUIStore();
+  const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
 
   const handleRespawn = useCallback(() => {
     clientRef.current?.respawnShip();
+  }, []);
+
+  const getLocalShip = useCallback(() => {
+    const c = clientRef.current;
+    if (!c) return null;
+    const id = c.mirror.localPlayerId;
+    if (!id) return null;
+    return c.mirror.ships.get(id) ?? null;
   }, []);
 
   // Phase 8 sub-phase B — galaxy-map overlay state + transit helpers.
@@ -366,7 +370,6 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
     }
 
     const onKey = (e: KeyboardEvent): void => {
-      if (e.shiftKey && e.key === 'D') toggleDevOverlay();
       // Phase 8 sub-phase B — toggle the in-game galaxy-map overlay. 'M' is
       // unmodified so it's reachable on a keyboard during play; the overlay
       // disables itself if `transitState !== 'DOCKED'`.
@@ -420,6 +423,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
           el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
           el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
+          el.dataset['haloArrowCount'] = String(renderer.getDebugHaloArrowCount());
           el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
           // Expose the beam's derived start-point so E2E tests can prove the
           // local laser is glued to the ship's lerped pose (no desync during
@@ -546,7 +550,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       gameClient.dispose();
       renderer.dispose();
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay, roomNameOverride]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride]);
 
   return (
     <Box
@@ -569,7 +573,22 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         style={{ width: '100%', height: '100%', touchAction: 'none' }}
       />
       <HUD />
-      <DevOverlayGate />
+      <Box
+        sx={{
+          position: 'absolute',
+          top: 64,
+          right: 16,
+          zIndex: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1,
+          pointerEvents: 'none',
+          alignItems: 'flex-end',
+        }}
+      >
+        <ShipStatsCard getLocalShip={getLocalShip} />
+        <DevOverlayGate />
+      </Box>
       <LogPanelGate />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (

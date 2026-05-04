@@ -2,6 +2,7 @@ import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
 import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { HaloRadar } from './HaloRadar';
 
 const WORLD_W = 10000;
 const WORLD_H = 10000;
@@ -180,6 +181,7 @@ export class PixiRenderer implements IRenderer {
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  private readonly halo = new HaloRadar();
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -214,6 +216,8 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.viewport.addChild(this.shipContainer);
+
+    this.halo.init(this.viewport);
 
     const measureSize = (): { w: number; h: number } => {
       const vv = window.visualViewport;
@@ -533,6 +537,15 @@ export class PixiRenderer implements IRenderer {
     if (local) {
       this.viewport.moveCenter(local.x, local.y);
     }
+
+    // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
+    // test uses this frame's viewport bounds, not last frame's.
+    this.halo.update(mirror);
+  }
+
+  /** Test-only — number of currently-visible halo arrows. */
+  getDebugHaloArrowCount(): number {
+    return this.halo.getDebugVisibleArrowCount();
   }
 
   dispose(): void {
@@ -550,6 +563,7 @@ export class PixiRenderer implements IRenderer {
     }
     const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
     if (ro instanceof ResizeObserver) ro.disconnect();
+    this.halo.destroy();
     this.app.destroy(true, { children: true });
   }
 }

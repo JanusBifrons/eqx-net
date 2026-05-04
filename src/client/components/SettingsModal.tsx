@@ -64,7 +64,7 @@ export function SettingsModal({ open, onClose }: Props) {
               <>
                 <Typography variant="body2">Debug overlay</Typography>
                 <Typography variant="caption" color="text.secondary">
-                  RTT, drift, prediction stats (top-right). Also toggles with Shift+D.
+                  RTT, drift, prediction stats (top-right).
                 </Typography>
               </>
             }
