@@ -44,24 +44,28 @@ interface DevStats {
 async function devStats(email: string): Promise<DevStats> {
   const url = `${SERVER_URL}/dev/stats?email=${encodeURIComponent(email)}`;
   const res = await fetch(url);
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`stats ${email} failed: ${res.status} :: ${body}`);
-  }
+  if (!res.ok) throw new Error(`stats ${email} failed: ${res.status}`);
   return (await res.json()) as DevStats;
 }
 
 async function joinClientAt(browser: Browser, token: string, spawnX: number, spawnY: number) {
-  const ctx = await browser.newContext({ storageState: undefined });
+  // CRITICAL: pass an EXPLICIT empty storageState. `undefined` falls back to
+  // the project-level default in playwright.config.ts (the globalSetup file),
+  // which would inject the e2e@test.local token instead of our per-user one.
+  const ctx = await browser.newContext({ storageState: { cookies: [], origins: [] } });
   const page = await ctx.newPage();
-  // Inject the per-user JWT BEFORE any page script runs so bootstrapAuth
-  // picks it up. Each context gets a fresh storageState so the global
-  // single-user token doesn't leak in.
   await ctx.addInitScript((t: string) => {
     localStorage.setItem('eqxAuthToken', t);
   }, token);
-  await page.goto(`${BASE_URL}?spawnX=${spawnX}&spawnY=${spawnY}`);
-  await page.getByRole('button', { name: /enter sector alpha/i }).click();
+  // Join the drone-free `test-sector` room: the default `sector` definition
+  // seeds 30 hostile drones in a 350u ring around origin, which were landing
+  // the killing blow on the victim before the human killer's beam could —
+  // producing rows with `killer_user_id` NULL and `victim_user_id` set.
+  // `test-sector` (testMode: true, asteroidConfig: []) is the deterministic
+  // alternative defined in src/server/index.ts for exactly this case.
+  // Note: `?room=` triggers `autoJoin` in App.tsx (skips the splash entirely),
+  // so we do NOT click the "Enter Sector Alpha" button — there isn't one.
+  await page.goto(`${BASE_URL}?room=test-sector&spawnX=${spawnX}&spawnY=${spawnY}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -73,6 +77,11 @@ async function joinClientAt(browser: Browser, token: string, spawnX: number, spa
 }
 
 test('kill is recorded in player_kills and queryable via /dev/stats', async ({ browser }) => {
+  // Cold server boot + 2x context create + 2 s settle + ~5 s of firing +
+  // DB flush + stats query is borderline under the 30 s default. Allow 60 s
+  // headroom for slow CI machines.
+  test.setTimeout(60_000);
+
   // Stamp emails with the worker index so parallel runs (different
   // playwright projects) don't collide on user rows.
   const stamp = `${process.env['TEST_PARALLEL_INDEX'] ?? '0'}-${Date.now().toString(36).slice(-4)}`;
@@ -84,11 +93,13 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     mintToken(victimEmail),
   ]);
 
-  // Spawn close: 60 u apart is well inside HITSCAN_RANGE and in the same
-  // interest cell, so the beam will hit on the very first sweep.
+  // Align ships on +Y so no rotation is needed: ships spawn at angle 0, and
+  // the forward direction is `(-sin(0), cos(0)) = (0, 1)`. Putting the victim
+  // 100 u directly forward of the killer means the beam holds on target from
+  // the moment Space goes down. 25 hits × 167 ms = ~4.2 s to deplete 500 HP.
   const [killer, victim] = await Promise.all([
     joinClientAt(browser, killerToken.token, 0, 0),
-    joinClientAt(browser, victimToken.token, 60, 0),
+    joinClientAt(browser, victimToken.token, 0, 100),
   ]);
 
   try {
@@ -99,16 +110,14 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
       victim.page.waitForTimeout(2000),
     ]);
 
-    // Sweep: hold Space while gently rotating the killer until the victim's
-    // hull goes to 0. Bail after 30 s — that's the test budget.
+    // Hold Space — the beam fires straight forward (+Y) and stays locked on
+    // the victim until hull reaches 0.
     const start = Date.now();
     let killed = false;
     await killer.page.keyboard.down('Space');
     try {
-      while (Date.now() - start < 30_000) {
-        // Rotate slowly so the beam crosses the victim.
-        await killer.page.keyboard.press('ArrowLeft');
-        await killer.page.waitForTimeout(150);
+      while (Date.now() - start < 15_000) {
+        await killer.page.waitForTimeout(200);
         const hullStr = await victim.page
           .locator('[data-testid="game-surface"]')
           .getAttribute('data-hull-pct');
@@ -123,8 +132,7 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     }
 
     if (!killed) {
-      console.log('Beam did not deplete victim hull within 30 s — skipping stats assertion.');
-      test.skip();
+      throw new Error('Beam did not deplete victim hull within 15 s — geometry or fire path is broken');
     }
 
     // Allow the WAB flush window (50 ms) + worker IPC + DB write to settle.

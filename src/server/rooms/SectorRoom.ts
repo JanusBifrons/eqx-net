@@ -1,7 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
-import { appendFileSync } from 'node:fs';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
 import { pino } from 'pino';
@@ -364,9 +363,6 @@ export class SectorRoom extends Room<SectorState> {
     this.bus.on('SHIP_DESTROYED', (evt) => {
       const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = this.playerToUser.get(evt.targetId) ?? null;
-      const line = `${new Date().toISOString()} shooterId=${evt.shooterId} targetId=${evt.targetId} killerUser=${killerUser} victimUser=${victimUser} mapSize=${this.playerToUser.size} keys=${JSON.stringify([...this.playerToUser.keys()])} entries=${JSON.stringify([...this.playerToUser.entries()])}\n`;
-      process.stderr.write(`[kill-diag] ${line}`);
-      try { appendFileSync('kill-diag.log', line); } catch (err) { process.stderr.write(`[kill-diag] file write failed: ${(err as Error).message}\n`); }
       recordKill(killerUser, victimUser, 'hitscan', this.roomId);
     });
 
