@@ -2,12 +2,14 @@ import 'dotenv/config';
 import { Server } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
+import path from 'node:path';
 import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter } from './routes/diagRouter.js';
+import { initWorker, persistence } from './db/PersistenceWorker.js';
 
 const logger = pino({
   name: 'server',
@@ -120,6 +122,68 @@ httpServer.on('upgrade', (req) => {
   logger.info({ url: req.url }, 'WS upgrade received');
 });
 
-httpServer.listen(PORT, () => {
-  logger.info({ port: PORT }, 'EQX Peri server started');
+async function main(): Promise<void> {
+  const dbPath = process.env['DB_PATH'] ?? path.resolve(process.cwd(), 'eqx.db');
+  await initWorker({ dbPath });
+  logger.info({ dbPath }, 'persistence worker READY');
+
+  httpServer.listen(PORT, () => {
+    logger.info({ port: PORT }, 'EQX Peri server started');
+  });
+}
+
+/**
+ * Drain the persistence worker, then shut down Colyseus, then exit.
+ *
+ * Production (Linux/Fly.io) drives this via SIGTERM. Windows dev drives it
+ * via the dev-only POST /dev/shutdown endpoint below — Windows + tsx + pnpm
+ * delivers Ctrl+C as a process-group event that tears down the JS process
+ * before any handler can complete (see docs/LESSONS.md).
+ */
+const shutdown = async (sig: string): Promise<void> => {
+  logger.info({ sig }, 'shutdown received, draining persistence');
+  const forceExit = setTimeout(() => {
+    logger.error('shutdown hard deadline reached, force-exiting');
+    process.exit(2);
+  }, 10_000);
+  forceExit.unref();
+
+  try {
+    const { drained } = await persistence.shutdown({ timeoutMs: 8000 });
+    logger.info({ drained }, 'persistence worker drained');
+  } catch (err) {
+    logger.error({ err }, 'persistence shutdown timed out');
+  }
+  try {
+    await gameServer.gracefullyShutdown();
+  } catch (err) {
+    logger.error({ err }, 'colyseus graceful shutdown failed');
+  }
+  process.exit(0);
+};
+
+let shuttingDown = false;
+const onSignal = (sig: string): void => {
+  if (shuttingDown) {
+    process.exit(130);
+  }
+  shuttingDown = true;
+  void shutdown(sig);
+};
+process.on('SIGINT', () => onSignal('SIGINT'));
+process.on('SIGTERM', () => onSignal('SIGTERM'));
+
+if (process.env['NODE_ENV'] !== 'production') {
+  // Dev-only deterministic drain trigger — POST /dev/shutdown drains
+  // persistence + colyseus + exits cleanly. Used on Windows where Ctrl+C
+  // is unreliable through the pnpm/tsx wrapper chain.
+  app.post('/dev/shutdown', (_req, res) => {
+    res.json({ ok: true, draining: true });
+    setTimeout(() => onSignal('HTTP_SHUTDOWN'), 50);
+  });
+}
+
+main().catch((err: unknown) => {
+  logger.error({ err }, 'server boot failed');
+  process.exit(1);
 });

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { db } from '../db/Database.js';
+import { persistence } from '../db/PersistenceWorker.js';
 import { signToken, verifyToken } from './jwt.js';
 import type { GoogleProfile } from './GoogleOAuth.js';
 
@@ -31,13 +32,22 @@ export async function register(
   const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const now = Date.now();
 
-  db.prepare(
-    'INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, email.toLowerCase(), hash, displayName ?? null, now, now);
+  await persistence.enqueueCriticalAwaitable({
+    type: 'USER_REGISTER',
+    userId: id,
+    email: email.toLowerCase(),
+    passwordHash: hash,
+    displayName: displayName ?? null,
+    ts: now,
+  });
 
-  db.prepare(
-    'INSERT INTO auth_providers (id, user_id, provider, provider_id) VALUES (?, ?, ?, ?)',
-  ).run(randomUUID(), id, 'local', email.toLowerCase());
+  persistence.enqueueCritical({
+    type: 'USER_PROVIDER',
+    providerRowId: randomUUID(),
+    userId: id,
+    provider: 'local',
+    providerId: email.toLowerCase(),
+  });
 
   const token = await signToken(id);
   return { token, user: { id, email: email.toLowerCase(), displayName: displayName ?? null } };
@@ -73,11 +83,12 @@ export function getUser(userId: string): AuthUser | null {
 }
 
 export function updateDisplayName(userId: string, displayName: string): AuthUser | null {
-  db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?').run(
-    displayName,
-    Date.now(),
+  persistence.enqueueCritical({
+    type: 'USER_UPDATE_DISPLAY_NAME',
     userId,
-  );
+    displayName,
+    ts: Date.now(),
+  });
   return getUser(userId);
 }
 
@@ -99,12 +110,21 @@ export async function findOrCreateTestUser(email: string): Promise<{ token: stri
 
   const id = randomUUID();
   const now = Date.now();
-  db.prepare(
-    'INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(id, email.toLowerCase(), null, 'E2E Tester', now, now);
-  db.prepare(
-    'INSERT INTO auth_providers (id, user_id, provider, provider_id) VALUES (?, ?, ?, ?)',
-  ).run(randomUUID(), id, 'e2e', email.toLowerCase());
+  await persistence.enqueueCriticalAwaitable({
+    type: 'USER_REGISTER',
+    userId: id,
+    email: email.toLowerCase(),
+    passwordHash: null,
+    displayName: 'E2E Tester',
+    ts: now,
+  });
+  persistence.enqueueCritical({
+    type: 'USER_PROVIDER',
+    providerRowId: randomUUID(),
+    userId: id,
+    provider: 'e2e',
+    providerId: email.toLowerCase(),
+  });
 
   const token = await signToken(id);
   return { token, user: { id, email: email.toLowerCase(), displayName: 'E2E Tester' } };
@@ -136,14 +156,24 @@ export async function findOrCreateGoogleUser(profile: GoogleProfile): Promise<{ 
     userId = byEmail.id;
   } else {
     userId = randomUUID();
-    db.prepare(
-      'INSERT INTO users (id, email, password_hash, display_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    ).run(userId, profile.email.toLowerCase(), null, profile.name ?? null, now, now);
+    await persistence.enqueueCriticalAwaitable({
+      type: 'USER_REGISTER',
+      userId,
+      email: profile.email.toLowerCase(),
+      passwordHash: null,
+      displayName: profile.name ?? null,
+      ts: now,
+    });
   }
 
-  db.prepare(
-    'INSERT OR IGNORE INTO auth_providers (id, user_id, provider, provider_id) VALUES (?, ?, ?, ?)',
-  ).run(randomUUID(), userId, 'google', profile.id);
+  persistence.enqueueCritical({
+    type: 'USER_PROVIDER',
+    providerRowId: randomUUID(),
+    userId,
+    provider: 'google',
+    providerId: profile.id,
+    ignoreConflict: true,
+  });
 
   const user = getUser(userId)!;
   const token = await signToken(userId);

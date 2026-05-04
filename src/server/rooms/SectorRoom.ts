@@ -1,8 +1,8 @@
 import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
-import { build } from 'esbuild';
 import { z } from 'zod';
+import { bundleWorker } from '../workers/bundleWorker.js';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
@@ -61,24 +61,6 @@ const logger = pino({
 const WORKER_TS_PATH = fileURLToPath(
   new URL('../../core/physics/worker.ts', import.meta.url),
 );
-
-// Bundle worker.ts to a self-contained JS string at startup. tsx's ESM loader
-// hook does not reliably rewrite .js/.extensionless imports inside
-// worker_threads on Node.js v22+; esbuild bundling sidesteps this entirely.
-async function bundleWorker(): Promise<string> {
-  const result = await build({
-    entryPoints: [WORKER_TS_PATH],
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    write: false,
-    // Rapier ships a pre-built WASM binary; keep it external so the worker
-    // accesses the same copy as the main thread (avoids double-init).
-    external: ['@dimforge/rapier2d-compat'],
-    sourcemap: 'inline',
-  });
-  return result.outputFiles[0]!.text;
-}
 
 const JoinOptionsSchema = z
   .object({
@@ -177,7 +159,6 @@ export class SectorRoom extends Room<SectorState> {
 
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
-  private readonly gameSessionRowIds = new Map<string, number>();
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
@@ -828,7 +809,12 @@ export class SectorRoom extends Room<SectorState> {
   // ── Worker lifecycle ────────────────────────────────────────────────────
 
   private async spawnWorker(): Promise<void> {
-    const workerCode = await bundleWorker();
+    const workerCode = await bundleWorker({
+      entryPoint: WORKER_TS_PATH,
+      // Rapier ships a pre-built WASM binary; keep it external so the worker
+      // accesses the same copy as the main thread (avoids double-init).
+      external: ['@dimforge/rapier2d-compat'],
+    });
     return new Promise<void>((resolve, reject) => {
       this.physicsWorker = new Worker(workerCode, {
         eval: true,
@@ -954,8 +940,7 @@ export class SectorRoom extends Room<SectorState> {
     client.send('welcome', welcome);
 
     this.playerToUser.set(playerId, userId);
-    const rowId = recordGameJoin(userId, playerId, this.roomId);
-    this.gameSessionRowIds.set(playerId, rowId);
+    recordGameJoin(userId, playerId, this.roomId);
 
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
@@ -984,11 +969,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.state.ships.delete(playerId);
-    const rowId = this.gameSessionRowIds.get(playerId);
-    if (rowId !== undefined) {
-      recordGameLeave(rowId);
-      this.gameSessionRowIds.delete(playerId);
-    }
+    recordGameLeave(playerId);
     this.playerToUser.delete(playerId);
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     serverLogEvent('player_leave', { playerId });

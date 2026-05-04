@@ -1,0 +1,32 @@
+/**
+ * Persistence surface (Phase 7). The core zone declares this contract; the
+ * server zone supplies the concretion. Two priority lanes:
+ *   - CRITICAL: durable, ordered, drained on graceful shutdown.
+ *   - VOLATILE: telemetry, may be dropped under memory pressure.
+ *
+ * `enqueueCriticalAwaitable` exists for the rare caller that must observe the
+ * row landing before responding (auth `register` returning a userId).
+ *
+ * Pure types only — no runtime imports — so `src/core` keeps the boundary
+ * invariant against `node:sqlite` and any persistence concretion.
+ */
+export type PersistOp =
+  | { type: 'KILL'; killerUserId: string | null; victimUserId: string | null; weapon: string; sectorId: string; ts: number }
+  | { type: 'GAME_JOIN'; userId: string | null; playId: string; sectorId: string; ts: number }
+  | { type: 'GAME_LEAVE'; playId: string; ts: number }
+  | { type: 'LOGIN_EVENT'; email: string; userId: string | null; success: boolean; provider: 'local' | 'google'; ip: string | null; ts: number }
+  | { type: 'SNAPSHOT'; sectorId: string; payloadJson: string; ts: number }
+  | { type: 'USER_REGISTER'; userId: string; email: string; passwordHash: string | null; displayName: string | null; ts: number }
+  | { type: 'USER_PROVIDER'; providerRowId: string; userId: string; provider: 'local' | 'google' | 'e2e'; providerId: string; ignoreConflict?: boolean }
+  | { type: 'USER_UPDATE_DISPLAY_NAME'; userId: string; displayName: string; ts: number }
+  | { type: 'TELEMETRY_SHED'; entityId: string; sectorId: string; ts: number }
+  | { type: 'TELEMETRY_SLEEP'; entityId: string; sleeping: boolean; sectorId: string; ts: number };
+
+export type PersistOpType = PersistOp['type'];
+
+export interface IPersistenceSink {
+  enqueueCritical(op: PersistOp): void;
+  enqueueVolatile(op: PersistOp): void;
+  enqueueCriticalAwaitable(op: PersistOp): Promise<{ rowId?: number }>;
+  shutdown(opts: { timeoutMs: number }): Promise<{ drained: number }>;
+}
