@@ -14,6 +14,16 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-04 — Phase 6 — Accumulator-scaling vs Rapier-`integration_parameters.dt`-scaling
+
+When the SimulationClock's `rate` drops to 0.7×, the worker scales the **input to the accumulator** (`physics.tick(FIXED_DT * rate)`) rather than Rapier's per-step `integration_parameters.dt`. The distinction is load-bearing: scaling Rapier's dt would change collision behaviour mid-frame (swept-AABB margins, contact persistence, friction integration), so a TiDi engagement would alter physics-correctness while it was active and a small position drift would accumulate after every recovery. Scaling the accumulator keeps every step deterministic — the `world.step()` math is identical at any clock rate; the only thing that changes is *how many* steps each wall-clock tick triggers. At 0.7× the accumulator gains 11.67 ms per 16.67 ms wall-clock tick, which is below the 16.67 ms `FIXED_DT`, so some ticks step 0× and some step 1×. Net 70 % progression with no per-tick rounding drift. This is the same pattern Source/Quake use for their slow-time effects.
+
+## 2026-05-04 — Phase 6 — Quiet-evict for the Load Shedder
+
+The Phase 6 LoadShedder despawns far drones when the budget can't recover at the floor rate. The eviction path deliberately bypasses both the `'destroy'` Colyseus broadcast and the `ENTITY_DESTROYED` bus emit (via the `evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false })` opts), so the kill-feed and explosion SFX (when Phase 4 polish lands them) don't fire on cleanup of player-invisible entities 5000+ units away. Persistence and telemetry that need to distinguish "killed in combat" from "shed for budget" subscribe to the new `ENTITY_SHED` bus variant instead of `ENTITY_DESTROYED`. Combat kills still go through the same `evictSwarmEntity` helper with `broadcast: true, emitDestroyed: true` — single teardown sequence, two call modes.
+
+---
+
 ## 2026-05-03 — Phase 6.5 — Wire-arrival-time interpolation breaks under jitter; display-delay buffer is immune
 Phase 6.5 sub-phase A.
 

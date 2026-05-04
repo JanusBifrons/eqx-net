@@ -1,5 +1,6 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState } from '@core/contracts/IRenderer';
+import type { IAudio } from '@core/contracts/IAudio';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
@@ -107,6 +108,10 @@ const TOUCH_THRUST_CONE = Math.PI / 3; // 60°
 const TOUCH_TURN_TOLERANCE = 0.08; // ~4.6°
 
 export class ColyseusGameClient {
+  /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
+   *  contexts can omit it and rate-shift becomes a no-op. */
+  private audio: IAudio | null = null;
+
   readonly mirror: RenderMirror = {
     ships: new Map(),
     swarm: new Map(),
@@ -212,6 +217,11 @@ export class ColyseusGameClient {
   private readonly _damageFlashFrames = new Map<string, number>();
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
+
+  /** Inject the audio sink before `connect()`. Wired by `App.tsx`'s bootstrap. */
+  setAudio(audio: IAudio): void {
+    this.audio = audio;
+  }
 
   async connect(
     wsUrl: string,
@@ -574,7 +584,20 @@ export class ColyseusGameClient {
     if (this.room) {
       const stateAny = this.room.state as unknown as { clockRate?: number };
       const rate = typeof stateAny.clockRate === 'number' ? stateAny.clockRate : 1.0;
-      useUIStore.getState().setClockRate(rate);
+      const ui = useUIStore.getState();
+      ui.setClockRate(rate);
+      this.audio?.setClockRate(rate);
+      // Diegetic Temporal Anomaly banner. The alert slot is shared with
+      // combat ('SHIP DESTROYED', 'shot_rejected'); read the live value so
+      // we never stomp those, and only clear our own string. Hysteresis on
+      // the *rate* edges (0.99 set / 1.00 clear) avoids flicker as the EWMA
+      // boundary is crossed during recovery.
+      const current = ui.sectorAlert;
+      if (rate < 0.99 && (current === null || current === 'Temporal Anomaly')) {
+        if (current !== 'Temporal Anomaly') ui.setSectorAlert('Temporal Anomaly');
+      } else if (rate >= 1.0 && current === 'Temporal Anomaly') {
+        ui.setSectorAlert(null);
+      }
     }
 
     // Update snapshot timing stats regardless of prediction state.

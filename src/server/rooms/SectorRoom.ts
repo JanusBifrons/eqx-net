@@ -8,7 +8,8 @@ import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SectorState, ShipState, ProjectileState } from './schema/SectorState.js';
-import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
@@ -151,6 +152,9 @@ export class SectorRoom extends Room<SectorState> {
    *  rate via SAB. Named `simClock` to avoid colliding with Colyseus `Room.clock`
    *  (a `ClockTimer` instance for `setInterval` / `setTimeout` helpers). */
   private simClock!: SimulationClock;
+  /** Phase 6 — second-lever load shedder. Drops far drones in batches when
+   *  the simClock is at its floor and the budget is still overrun. */
+  private shedder!: LoadShedder;
   /** Last clockRate value pushed to the worker, used to gate CLOCK_RATE postMessages
    *  to once per RAMP_PER_TICK step (≈ once per ~6 server ticks at most). */
   private lastSentClockRate = 1.0;
@@ -204,6 +208,16 @@ export class SectorRoom extends Room<SectorState> {
     this.setState(new SectorState());
     this.bus = new Bus();
     this.simClock = new SimulationClock(this.bus);
+    this.shedder = new LoadShedder({
+      registry: this.swarmRegistry,
+      getPlayers: () => this.alivePlayerPositions(),
+      getPosition: (rec) => {
+        const b = slotBase(rec.slot);
+        return { x: this.sabF32[b + SLOT_X_OFF]!, y: this.sabF32[b + SLOT_Y_OFF]! };
+      },
+      evict: (rec) => this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false }),
+      bus: this.bus,
+    });
 
     // Fill slot pool (push in reverse so slot 0 is popped first).
     for (let i = MAX_ENTITIES - 1; i >= 0; i--) this.freeSlots.push(i);
@@ -667,22 +681,51 @@ export class SectorRoom extends Room<SectorState> {
     } satisfies DamageEvent);
 
     if (newHealth <= 0) {
-      // Tear down the drone: broadcast destruction, despawn worker body,
-      // unregister from registry / AI controller / health map, free its slot.
+      this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: true, shooterId });
+    }
+  }
+
+  /** Iterates positions of currently-alive players, for the LoadShedder.
+   *  Skips dead ships so a corpse doesn't anchor far drones in place. */
+  private *alivePlayerPositions(): IterableIterator<{ x: number; y: number }> {
+    for (const ship of this.state.ships.values()) {
+      if (!ship.alive) continue;
+      yield { x: ship.x, y: ship.y };
+    }
+  }
+
+  /**
+   * Tear down a swarm entity. Combat kills pass `broadcast: true` so the client
+   * flashes destruction and the kill-feed/SFX path runs. Phase 6 LoadShedder
+   * passes `broadcast: false` so eviction for budget is invisible to players —
+   * an explosion on a 5000-unit-distant drone would be confusing diegetically.
+   * The `ENTITY_SHED` bus channel (separate from `ENTITY_DESTROYED`) lets
+   * persistence/telemetry distinguish the two.
+   */
+  private evictSwarmEntity(
+    rec: SwarmEntityRecord,
+    opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
+  ): void {
+    if (opts.broadcast) {
+      const wireTargetId = `swarm-${rec.entityId}`;
       this.broadcast('destroy', {
         type: 'destroy',
         targetId: wireTargetId,
-        shooterId,
+        shooterId: opts.shooterId ?? '',
       } satisfies DestroyEvent);
+    }
+    if (opts.emitDestroyed) {
       this.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: rec.id });
+    }
 
-      this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
-      this.interestGrid.remove(rec.entityId);
-      this.swarmRegistry.unregister(rec.id);
-      this.aiController.unregister(rec.id);
-      this.swarmHealth.delete(rec.id);
-      this.freeSlots.push(rec.slot);
-      logger.info({ targetId: rec.id, shooterId }, 'drone destroyed');
+    this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
+    this.interestGrid.remove(rec.entityId);
+    this.swarmRegistry.unregister(rec.id);
+    this.aiController.unregister(rec.id);
+    this.swarmHealth.delete(rec.id);
+    this.freeSlots.push(rec.slot);
+    if (opts.broadcast) {
+      logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
     }
   }
 
@@ -1176,13 +1219,17 @@ export class SectorRoom extends Room<SectorState> {
     // at 50 ms/tick goes undetected because the server thread reads the SAB
     // in <1 ms and reports a healthy budget.
     const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
-    this.simClock.report(Math.max(totalMs, workerTickMs));
+    const busiestMs = Math.max(totalMs, workerTickMs);
+    this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
     if (Math.abs(newRate - this.lastSentClockRate) >= 1e-4) {
       this.lastSentClockRate = newRate;
       this.state.clockRate = newRate;
       this.postToWorker({ type: 'CLOCK_RATE', rate: newRate });
     }
+    // Phase 6 second-lever: if rate is at floor and we're still over budget,
+    // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
+    this.shedder.consider(newRate, busiestMs);
     if (this.tickBudgetSampleCount >= 60) {
       const avg: Record<string, number> = {};
       for (const k of Object.keys(this.tickBudgetSums)) {

@@ -6,6 +6,7 @@ export interface BusEventPayloads {
   PLAYER_DAMAGED: { type: 'PLAYER_DAMAGED'; targetId: string; damage: number; newHealth: number };
   SHIP_DESTROYED: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string };
   ENTITY_DESTROYED: { type: 'ENTITY_DESTROYED'; entityId: string };
+  ENTITY_SHED: { type: 'ENTITY_SHED'; entityId: string };
   ENTITY_SLEPT: { type: 'ENTITY_SLEPT'; entityId: string };
   ENTITY_WOKE: { type: 'ENTITY_WOKE'; entityId: string };
   TIDI_RATE_CHANGED: { type: 'TIDI_RATE_CHANGED'; rate: number };

@@ -9,6 +9,7 @@ import {
   Alert,
 } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
+import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
@@ -333,6 +334,7 @@ function GameSurface(): JSX.Element {
     rendererRef.current = renderer;
 
     const gameClient = new ColyseusGameClient();
+    gameClient.setAudio(new HowlerAudioService());
     clientRef.current = gameClient;
     // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
@@ -385,6 +387,9 @@ function GameSurface(): JSX.Element {
           const uiState = useUIStore.getState();
           el.dataset['hullPct'] = String(uiState.hullPct);
           el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
+          // Phase 6 — TiDi observables for the swarm-tidi / tidi-overlay E2E specs.
+          el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
+          el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
           el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
           // Expose the beam's derived start-point so E2E tests can prove the
