@@ -182,6 +182,14 @@ export class SectorRoom extends Room<SectorState> {
   readonly playerToTransitInFlight = new Set<string>();
   /** Phase 8 sub-phase B — per-room transit driver, set in onCreate. */
   private transitOrchestrator: TransitOrchestrator | null = null;
+  /** Phase 8 sub-phase B (lingering ships) — playerIds whose owners have
+   *  disconnected from a galaxy room but whose ships remain in the live
+   *  simulation. The ship keeps its SAB slot, ShipState entry, and physics
+   *  body; the worker continues stepping it (drag decays vx/vy/angvel, so
+   *  it drifts to a stop). Reconnect within the TTL re-binds the new
+   *  session to the existing ship (live pose, not the snapshot). On TTL
+   *  expiry the ship is fully evicted. Maps to the eviction setTimeout. */
+  private readonly ownerlessShips = new Map<string, ReturnType<typeof setTimeout>>();
 
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
@@ -277,6 +285,17 @@ export class SectorRoom extends Room<SectorState> {
     this.testMode = roomOpts.testMode ?? false;
     this.sectorKey = roomOpts.sectorKey ?? null;
     this.tickBurnMs = Math.max(0, Math.min(50, roomOpts.tickBurnMs ?? 0));
+
+    // Phase 8 sub-phase B — galaxy rooms are permanent. Without this,
+    // Colyseus's default `autoDispose: true` tears the room down the moment
+    // the last client leaves: physics worker terminated, swarm registry
+    // wiped, lingering ships destroyed. The next join lazy-creates a fresh
+    // room with seed-position drones — observable as "drones reset every
+    // time I log in." Engineering rooms keep the default (auto-dispose)
+    // because their state is ephemeral by design.
+    if (this.sectorKey !== null) {
+      this.autoDispose = false;
+    }
     if (this.tickBurnMs > 0) {
       logger.info({ tickBurnMs: this.tickBurnMs }, 'Phase 6 synthetic tick burn enabled — TiDi will ramp to floor');
     }
@@ -436,6 +455,13 @@ export class SectorRoom extends Room<SectorState> {
       const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = this.playerToUser.get(evt.targetId) ?? null;
       recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
+      // Phase 8 sub-phase B (lingering ships) — if a player's ship was
+      // destroyed while they were offline, evict immediately. Skipping the
+      // 5-min wait keeps the room cleaner and lets the player fresh-spawn
+      // from the galaxy map (no stale active-Limbo gate).
+      if (this.ownerlessShips.has(evt.targetId)) {
+        this.evictOwnerlessShip(evt.targetId);
+      }
     });
 
     // Hi-res tick loop. Colyseus's `setSimulationInterval` uses `setInterval`,
@@ -973,6 +999,83 @@ export class SectorRoom extends Room<SectorState> {
       playerId = assignPlayerId(null);
     }
 
+    // ── Phase 8 sub-phase B — REBIND PATH ──────────────────────────────────
+    // If this player has an ownerless ship still drifting in the sector
+    // (disconnected within the TTL window), reattach the new session to
+    // the existing ship instead of fresh-spawning. The ship's pose / vel /
+    // angle / health reflect what happened during the offline window
+    // (drift decayed by drag, possibly damage from passing drones).
+    const ownerlessTimer = this.ownerlessShips.get(playerId);
+    if (this.sectorKey !== null && ownerlessTimer !== undefined) {
+      clearTimeout(ownerlessTimer);
+      this.ownerlessShips.delete(playerId);
+      const existingSlot = this.playerToSlot.get(playerId);
+      const existingShip = this.state.ships.get(playerId);
+      if (existingSlot !== undefined && existingShip) {
+        this.sessionToPlayer.set(client.sessionId, playerId);
+        this.playerToSession.set(playerId, client.sessionId);
+
+        // Take the Limbo entry to clear the active-Limbo UI gate. The
+        // payload is irrelevant on this path — the live ShipState/SAB is
+        // the source of truth — but the userId carried in Limbo is the
+        // anonymous-reconnect fallback for `playerToUser`.
+        const limbo = getLimboStore().take(playerId);
+        const resumedUserId = limbo?.payload.userId ?? null;
+        const effectiveUserId = userId ?? resumedUserId;
+        this.playerToUser.set(playerId, effectiveUserId);
+
+        // lastFireClientTick is already retained from the original session;
+        // do NOT reset — preserves cooldown across reconnect.
+
+        const b = slotBase(existingSlot);
+        const liveX = this.sabF32[b + SLOT_X_OFF]!;
+        const liveY = this.sabF32[b + SLOT_Y_OFF]!;
+
+        const tickAtRebind = Atomics.load(this.sabU32, TICK_IDX);
+        const welcome: WelcomeMessage = {
+          type: 'welcome',
+          playerId,
+          serverTick: tickAtRebind,
+          sectorKey: this.sectorKey,
+        };
+        client.send('welcome', welcome);
+
+        setSession(client.sessionId, {
+          roomId: this.roomId,
+          playerId,
+          sectorKey: this.sectorKey,
+        });
+
+        // Note: we do NOT call recordGameJoin again — the original
+        // session's joined_at remains canonical. From a stats perspective
+        // a disconnect+reconnect is one continuous play session.
+
+        this.bus.emit('SHIP_SPAWNED', {
+          type: 'SHIP_SPAWNED' as const,
+          playerId,
+          x: liveX,
+          y: liveY,
+        });
+        serverLogEvent('player_rebind', {
+          playerId,
+          sessionId: client.sessionId,
+          x: liveX,
+          y: liveY,
+          health: existingShip.health,
+        });
+        logger.info(
+          { playerId, sessionId: client.sessionId, x: liveX, y: liveY, health: existingShip.health, alive: existingShip.alive },
+          'player rebound to lingering ship',
+        );
+        return;
+      }
+      // Stale entry: ownerlessShips had this player but the slot/ShipState
+      // is gone (e.g. a race we didn't anticipate). Fall through to
+      // fresh-spawn — better to recover than throw.
+      logger.warn({ playerId }, 'stale ownerless entry — falling through to fresh spawn');
+    }
+
+    // ── FRESH SPAWN PATH ───────────────────────────────────────────────────
     this.sessionToPlayer.set(client.sessionId, playerId);
     this.playerToSession.set(playerId, client.sessionId);
 
@@ -1097,18 +1200,45 @@ export class SectorRoom extends Room<SectorState> {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
 
-    // Phase 8 sub-phase B — Limbo put. Galaxy rooms only; engineering rooms
-    // continue to fresh-spawn next time. Skip if the player was mid-transit
-    // (their commit-time entry — keyed to the destination sector — is
-    // already in Limbo with a 30 s TTL; clobbering it with a source-keyed
-    // 5 min entry would break the destination's onJoin restore).
+    // Always clear session-bound state. Boost is held — drop it on
+    // disconnect (no key is held during the offline window so the ship
+    // shouldn't keep boosting).
+    this.sessionToPlayer.delete(client.sessionId);
+    this.playerToSession.delete(playerId);
+    this.interestScratch.delete(client.sessionId);
+    this.sabAppliedTicks.delete(playerId);
+    this.boostingPlayers.delete(playerId);
+    clearSession(client.sessionId);
+
     const slot = this.playerToSlot.get(playerId);
-    if (
+    const ship = this.state.ships.get(playerId);
+    const transitInFlight = this.playerToTransitInFlight.has(playerId);
+    this.playerToTransitInFlight.delete(playerId);
+
+    // Cancel any in-flight orchestrator entry for this player (e.g. they
+    // disconnected during SPOOLING). Idempotent if there's no entry.
+    this.transitOrchestrator?.cancelTransit(playerId, 'manual');
+
+    // Phase 8 sub-phase B (lingering ships) — for galaxy rooms, keep an
+    // ALIVE ship in the simulation when the player disconnects (not
+    // transiting, not dead). The physics worker continues stepping it; drag
+    // decays vx/vy/angvel and the ship drifts to a stop. Other clients
+    // continue to see it via the snapshot broadcast. Reconnect within
+    // LIMBO_DISCONNECT_TTL_MS rebinds the new session to the existing
+    // ship; on TTL expiry `evictOwnerlessShip` runs full cleanup.
+    //
+    // We still write a Limbo entry — but it serves a different purpose
+    // now: (a) the active-Limbo UI gate on the landing screen reads it
+    // via `/dev/limbo`, (b) on a server crash it's the only way to know
+    // where this player's ship was (live drift state is lost on restart).
+    const shouldLinger =
       this.sectorKey !== null
       && slot !== undefined
-      && !this.playerToTransitInFlight.has(playerId)
-    ) {
-      const b = slotBase(slot);
+      && ship?.alive === true
+      && !transitInFlight;
+
+    if (shouldLinger) {
+      const b = slotBase(slot!);
       const payload: LimboPayload = {
         x:      this.sabF32[b + SLOT_X_OFF]!,
         y:      this.sabF32[b + SLOT_Y_OFF]!,
@@ -1116,34 +1246,38 @@ export class SectorRoom extends Room<SectorState> {
         vy:     this.sabF32[b + SLOT_VY_OFF]!,
         angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
         angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-        health: this.state.ships.get(playerId)?.health ?? SHIP_MAX_HEALTH,
+        health: ship!.health,
         lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
         userId: this.playerToUser.get(playerId) ?? null,
-        sectorKey: this.sectorKey,
+        sectorKey: this.sectorKey!,
       };
       try {
         getLimboStore().put(playerId, payload, LIMBO_DISCONNECT_TTL_MS);
       } catch (err) {
         logger.warn({ err, playerId }, 'Limbo put on leave failed');
       }
+
+      const evictTimer = setTimeout(() => {
+        this.evictOwnerlessShip(playerId);
+      }, LIMBO_DISCONNECT_TTL_MS);
+      if (typeof evictTimer === 'object' && evictTimer !== null && 'unref' in evictTimer) {
+        (evictTimer as { unref: () => void }).unref();
+      }
+      this.ownerlessShips.set(playerId, evictTimer);
+
+      serverLogEvent('player_lingered', { playerId });
+      logger.info(
+        { playerId, sectorKey: this.sectorKey, health: ship.health },
+        'player left, ship lingering in sector',
+      );
+      return;
     }
-    // Always clear the transit-in-flight flag, regardless of which branch
-    // ran above.
-    this.playerToTransitInFlight.delete(playerId);
 
-    // Cancel any in-flight orchestrator entry for this player (e.g. they
-    // disconnected during SPOOLING). Idempotent if there's no entry.
-    this.transitOrchestrator?.cancelTransit(playerId, 'manual');
-
-    this.sessionToPlayer.delete(client.sessionId);
-    this.playerToSession.delete(playerId);
-    this.interestScratch.delete(client.sessionId);
-    this.sabAppliedTicks.delete(playerId);
+    // Despawn path — engineering room, dead ship, or transit-in-flight
+    // (the destination's onJoin will restore from the transit Limbo entry).
     this.lastFireClientTick.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
-    this.boostingPlayers.delete(playerId);
-    clearSession(client.sessionId);
 
     if (slot !== undefined) {
       this.playerToSlot.delete(playerId);
@@ -1160,11 +1294,60 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ playerId }, 'player left');
   }
 
+  /**
+   * Phase 8 sub-phase B (lingering ships) — full despawn for an ownerless
+   * ship. Called when (a) the eviction timer fires after the disconnect
+   * TTL elapses without reconnect, (b) the ship is destroyed mid-offline,
+   * or (c) the room is disposed. Same teardown as the despawn branch of
+   * `onLeave`, plus clears the Limbo entry so the active-Limbo UI doesn't
+   * keep showing a sector the player can no longer enter.
+   */
+  private evictOwnerlessShip(playerId: string): void {
+    const timer = this.ownerlessShips.get(playerId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.ownerlessShips.delete(playerId);
+    }
+
+    this.lastFireClientTick.delete(playerId);
+    this.initialSpawnPositions.delete(playerId);
+    this.snapshotRing.unregisterEntity(playerId);
+
+    const slot = this.playerToSlot.get(playerId);
+    if (slot !== undefined) {
+      this.playerToSlot.delete(playerId);
+      this.slotToPlayer.delete(slot);
+      this.freeSlots.push(slot);
+      this.postToWorker({ type: 'DESPAWN', slot, playerId });
+    }
+
+    this.state.ships.delete(playerId);
+    this.playerToUser.delete(playerId);
+
+    // Clear the active-Limbo UI gate. Without this, the landing screen
+    // would keep pointing at a sector this player no longer has a ship in.
+    try {
+      getLimboStore().delete(playerId);
+    } catch (err) {
+      logger.warn({ err, playerId }, 'Limbo delete on eviction failed');
+    }
+
+    recordGameLeave(playerId);
+    this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
+    serverLogEvent('ownerless_evicted', { playerId });
+    logger.info({ playerId, sectorKey: this.sectorKey }, 'ownerless ship evicted');
+  }
+
   override onDispose(): void {
     this.simLoopStopped = true;
     // Phase 8 sub-phase B — abort any in-flight transits so no orphan timers
     // or seat reservations linger past room teardown.
     this.transitOrchestrator?.cancelAll('manual');
+    // Clear lingering-ship eviction timers — the room is being torn down,
+    // so the timers would fire against a dead `this`. The ships' Limbo
+    // entries stay on disk so a server-restart restore can find them.
+    for (const timer of this.ownerlessShips.values()) clearTimeout(timer);
+    this.ownerlessShips.clear();
     // Phase 8 — final snapshot before tear-down so swarm health survives
     // a graceful shutdown. `persistence.shutdown` (called from index.ts on
     // SIGINT/SIGTERM) drains the CRITICAL queue afterwards.
