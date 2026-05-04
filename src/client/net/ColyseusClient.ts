@@ -465,6 +465,19 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string }) => {
+      // CRITICAL — leave the source room BEFORE consuming the destination
+      // reservation. `client.consumeSeatReservation` opens a NEW WS without
+      // touching the existing one, so without an explicit `room.leave()` the
+      // client ends up with two simultaneous connections, both streaming
+      // `snapshot` / `swarm` / `damage` etc. into the shared `this.mirror`.
+      // The visible result is the player rendered in both sectors at once.
+      // (The source onLeave's existing `transitState` early-return correctly
+      // suppresses the disconnected-status flicker during this window.)
+      try {
+        await room.leave(true /* consented */);
+      } catch (err) {
+        console.warn('[ColyseusClient] source room.leave during transit failed', err);
+      }
       try {
         const newRoom = await client.consumeSeatReservation<unknown>(msg.reservation as never);
         this.room = newRoom;
