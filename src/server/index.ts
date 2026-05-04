@@ -8,7 +8,7 @@ import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler } from './routes/diagRouter.js';
 import { initWorker, persistence } from './db/PersistenceWorker.js';
 
 const logger = pino({
@@ -67,6 +67,9 @@ if (process.env['NODE_ENV'] !== 'production') {
   // reconciliation issues (and any other "play for a bit then capture" loop).
   // Files there are gitignored.
   app.use('/diag', diagRouter);
+
+  // GET /dev/stats?email=foo — kill/death counts for a user. Phase 7 E2E gate.
+  app.get('/dev/stats', devStatsHandler);
 }
 
 const httpServer = createServer(app);

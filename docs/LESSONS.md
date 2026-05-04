@@ -444,3 +444,68 @@ Commit: auth system.
 Commit: initial scaffolding.
 
 TypeScript already checks for undefined identifiers with full type information, including `process`, `__dirname`, `document`, etc. under the right `lib`/`types` settings. ESLint's `no-undef` was double-checking the same thing and fighting against Node-context config files (`vite.config.ts`, `vitest.config.ts`). Disabled project-wide; TS is the authority. If a genuine "undefined identifier" slips through, `tsc -b` will catch it.
+
+## 2026-05-04 — Phase 7 — 50 ms write-ahead buffer trades latency for transaction throughput
+Commit: Phase 7 SQLite persistence.
+
+Per-op `INSERT` calls into `node:sqlite` cost a non-trivial amount of CPU (statement bind + bytecode dispatch + journal sync). Issuing 1 000 individual KILL inserts on the main thread blocks for tens of ms; even off-thread in the worker, they stack up against each other.
+
+**Fix**: `WorkerBackedSink` accumulates CRITICAL ops for up to 50 ms in a write-ahead buffer, then ships them to the worker as one `BATCH` postMessage. The worker wraps the batch in `db.exec('BEGIN') / COMMIT'`, amortising the journal sync. Earns ~5–10× write throughput at the cost of 50 ms p95 latency on persistence — acceptable because no CRITICAL op has a read-after-write consumer (kills go into the journal, not into the next combat tick).
+
+**Rule**: any future CRITICAL op type that *does* need read-after-write semantics must use `enqueueCriticalAwaitable`, not `enqueueCritical`. The awaitable bypasses the WAB and round-trips through `AWAITABLE_ACK` for the rowid.
+
+## 2026-05-04 — Phase 7 — `play_id` correlation beats round-trip rowid for game_sessions
+Commit: Phase 7 SQLite persistence.
+
+Pre-Phase-7, `recordGameJoin` returned `lastInsertRowid` synchronously; `recordGameLeave` then did `UPDATE game_sessions WHERE id = ?` against that rowid. Moving writes to a worker would have forced an awaitable round-trip on every join just to learn the rowid before the player could leave.
+
+**Fix**: `playId` is already unique per game session (assigned by `assignPlayerId()`). `recordGameJoin` now stores `play_id` and `recordGameLeave` does `UPDATE WHERE play_id = ?`. Both ops are fire-and-forget through the WAB; FIFO ordering inside one batch (or across batches) guarantees the JOIN row exists by the time LEAVE's UPDATE runs. If LEAVE arrives before JOIN (impossible given the bus event ordering, but defensive), the UPDATE matches zero rows — a silent no-op rather than a crash.
+
+**Rule**: any future "create-then-update" persistence pair should prefer a stable client-side correlation key over a server rowid. Awaitable round-trips are reserved for ops where the caller genuinely cannot proceed without the row's identity (auth `register` returning a userId).
+
+## 2026-05-04 — Phase 7 — `bundleWorker` reused across all worker_threads workers
+Commit: Phase 7 SQLite persistence.
+
+The physics worker (Phase 2) bundled itself via an inline `bundleWorker()` defined inside `SectorRoom.ts`. Phase 7's DB worker needed identical esbuild config (`bundle:true, platform:'node', format:'cjs', sourcemap:'inline'`) but with different `external` (Rapier vs none).
+
+**Fix**: extract `bundleWorker({ entryPoint, external? })` into `src/server/workers/bundleWorker.ts`. Both workers call it with their own entrypoints. Rapier physics passes `external: ['@dimforge/rapier2d-compat']` so the WASM binary isn't double-loaded; DB worker passes no externals so `node:sqlite` resolves at runtime via Node's CJS loader.
+
+**Rule**: all future `worker_threads` workers must use this helper. Never re-introduce the tsx ESM loader path (broken on Node 24 inside workers — see entry above).
+
+## 2026-05-04 — Phase 7 — Sole-writer invariant per WAL DB
+Commit: Phase 7 SQLite persistence.
+
+Pre-Phase-7 considered keeping auth's `register`/`updateDisplayName` writes on the main thread as a second writer to `eqx.db`. WAL mode allows multiple writers, so it would have worked — but it splits schema migrations across two code paths and complicates the "where do writes go" mental model.
+
+**Fix**: auth keeps a `readOnly: true` connection on the main thread for `SELECT`s only. Every write — including `register` (via `enqueueCriticalAwaitable` because the HTTP handler needs the userId synchronously) — flows through the worker. One writer, one schema-creation site (`dbWorker.ts` exec's `SCHEMA_SQL` on init).
+
+**Rule**: future schema migrations (ALTER TABLE, new tables) live in `dbWorker.ts`. Main thread reads-only assumes the schema. If you find yourself opening a writable `DatabaseSync` outside the worker, stop — you are breaking the invariant.
+
+## 2026-05-04 — Phase 7 — Worker SHUTDOWN_ACK can race process.exit; use setImmediate
+Commit: Phase 7 SQLite persistence.
+
+Initial `dbWorker` shutdown handler did `post(SHUTDOWN_ACK); process.exit(0)` inline. The `parentPort.postMessage` call queues the message on the IPC channel; `process.exit(0)` immediately tears down the worker thread before the queue flushes. The main thread waits for an ack that never arrives.
+
+**Fix**: `setImmediate(() => process.exit(0))` defers the exit by one event-loop iteration, giving the IPC channel time to flush. Belt-and-braces: `WorkerBackedSink.handleExit` also resolves the pending shutdownAck with `drained: 0` if the worker exits without acking, so the main thread cannot hang regardless of message-queue race.
+
+**Rule**: in any worker_threads worker, any `postMessage` that the main thread is awaiting MUST be followed by `setImmediate` (or longer) before `process.exit`. Inline exit drops the message.
+
+## 2026-05-04 — Phase 7 — Process-level signal handlers belong in `index.ts`, not `Room.onDispose`
+Commit: Phase 7 SQLite persistence.
+
+Initial design considered draining the persistence worker from `SectorRoom.onDispose()`. Rooms are per-instance (one per active sector); the DB worker is process-global. Tying the worker's lifetime to a room would mean spawning + draining once per room create/dispose — wasteful at minimum, broken at worst (room A's dispose draining room B's in-flight writes).
+
+**Fix**: the worker is owned by the process. `src/server/index.ts:main()` calls `initWorker()` once at boot; `process.on('SIGINT'/'SIGTERM', shutdown)` drains it once at exit. `onDispose` only handles per-room cleanup (sim loop, physics worker terminate).
+
+**Rule**: any process-global resource (DB worker, shared singletons, top-level connections) gets its lifecycle wired in `index.ts`. Per-room state stays in the room.
+
+## 2026-05-04 — Phase 7 — Windows + pnpm/tsx wrapper swallows Ctrl+C; use HTTP shutdown for dev
+Commit: Phase 7 SQLite persistence.
+
+`pnpm dev:server` (and even `pnpm dev:server:nowatch`, which skips `tsx watch`) on Windows + PowerShell tears down the JS process on Ctrl+C before the SIGINT handler can complete a single async step. Confirmed by writing diagnostic lines synchronously to a file: only the first `[shutdown] received` line lands; the 10 s force-exit timer never fires; the process is gone within ~50 ms. Root cause is Windows' CTRL_C_EVENT broadcasting to the entire console process group — pnpm and/or tsx exit eagerly and abandon their child.
+
+**Fix (production)**: SIGTERM on Linux/Fly.io works correctly — the existing handler runs, drains the persistence WAB, calls `gameServer.gracefullyShutdown()`, and `process.exit(0)`s cleanly. Test-covered by `WorkerBackedSink.test.ts` (mocked) and `dbWorker.integration.test.ts` (real worker).
+
+**Fix (Windows dev)**: added `POST /dev/shutdown` (NODE_ENV-gated) that triggers the same `onSignal('HTTP_SHUTDOWN')` handler. Hit it with `Invoke-RestMethod -Method POST http://localhost:2567/dev/shutdown`. The drain runs end-to-end and the process exits cleanly.
+
+**Rule**: do not rely on Ctrl+C in PowerShell to exercise shutdown handlers. Use the HTTP endpoint or trust the test coverage. Never workaround the wrapper chain (e.g. detached console processes) — production doesn't have this problem and the test coverage is already exhaustive.

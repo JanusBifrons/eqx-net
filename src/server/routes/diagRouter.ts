@@ -14,6 +14,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
+import { db } from '../db/Database.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling — a 500-entry log is ~150 KB; this is plenty.
@@ -71,3 +72,46 @@ diagRouter.post('/capture', async (req: Request, res: Response) => {
 
 /** Mirror of CAPTURE_DIR for tests / introspection. */
 export const captureDir = CAPTURE_DIR;
+
+/**
+ * GET /dev/stats?email=foo — kills/deaths counts for a user. Mounted directly
+ * on `app` in index.ts (matches the /dev/events convention). Phase 7 E2E gate.
+ */
+export function devStatsHandler(req: Request, res: Response): void {
+  const email = String(req.query['email'] ?? '').toLowerCase();
+  if (!email) {
+    res.status(400).json({ error: 'email required' });
+    return;
+  }
+  try {
+    const row = db.prepare(`
+      SELECT
+        u.id,
+        u.email,
+        u.display_name,
+        (SELECT count(*) FROM player_kills WHERE killer_user_id = u.id) AS kills,
+        (SELECT count(*) FROM player_kills WHERE victim_user_id = u.id) AS deaths
+      FROM users u
+      WHERE u.email = ?
+    `).get(email) as {
+      id: string;
+      email: string;
+      display_name: string | null;
+      kills: number;
+      deaths: number;
+    } | undefined;
+    if (!row) {
+      res.status(404).json({ error: 'user not found', email });
+      return;
+    }
+    res.json({
+      id: row.id,
+      email: row.email,
+      displayName: row.display_name,
+      kills: Number(row.kills),
+      deaths: Number(row.deaths),
+    });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+}

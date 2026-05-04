@@ -32,6 +32,7 @@ The canary at [\_\_fixtures\_\_/leak.ts.disabled](__fixtures__/leak.ts.disabled)
 - `IRenderer` — the draw surface. Phase 1 introduces this.
 - `IAudio` — the sound surface. Phase 4/6 hydrate this.
 - `INetworkSink` — the outbound network surface. Phase 1 introduces this.
+- `IPersistenceSink` — the persistence surface. Phase 7 introduces this. Op union is closed-set; CRITICAL/VOLATILE lanes; concretion in `src/server/db/`.
 
 When a new phase needs a new concretion (e.g., persistence), add it as a new contract here — never by reaching from core into the server or client zones.
 

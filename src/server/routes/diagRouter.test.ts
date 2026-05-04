@@ -1,10 +1,18 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import express, { type Express } from 'express';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+
+// Stub the read-only Database connection — diagRouter imports it for the
+// /dev/stats endpoint. vite 5.4.21 doesn't recognise `node:sqlite` as a
+// builtin (Node 22.5+ feature) and fails to load the module transitively.
+// The capture endpoint tests don't exercise stats, so a no-op `db` is fine.
+vi.mock('../db/Database.js', () => ({
+  db: { prepare: () => ({ get: () => null, run: () => ({}), all: () => [] }), exec: () => {} },
+}));
 
 let tempDir: string;
 let originalCwd: string;

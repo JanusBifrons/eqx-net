@@ -104,9 +104,18 @@ const STATE_TTL_MS = 10 * 60 * 1000;
 // Playwright globalSetup to bypass the login UI without faking auth state.
 // Hard-gated on NODE_ENV so this can never be reached in production.
 if (process.env['NODE_ENV'] !== 'production') {
-  authRouter.post('/dev/test-token', async (_req: Request, res: Response) => {
+  authRouter.post('/dev/test-token', async (req: Request, res: Response) => {
     try {
-      const { token, user } = await findOrCreateTestUser('e2e@test.local');
+      // Optional ?email= override so multi-user E2Es (e.g. Phase 7
+      // persistence-kill) can mint distinct tokens. Default keeps the
+      // single-user globalSetup contract intact.
+      const emailRaw = (req.query['email'] as string | undefined) ?? 'e2e@test.local';
+      // Defensive: only allow simple email-shaped strings to avoid weird
+      // injection paths into the users table key.
+      const email = /^[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(emailRaw.toLowerCase())
+        ? emailRaw.toLowerCase()
+        : 'e2e@test.local';
+      const { token, user } = await findOrCreateTestUser(email);
       res.json({ token, user });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown';
