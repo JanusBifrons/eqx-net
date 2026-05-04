@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { Server } from 'colyseus';
+import { Server, matchMaker } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
 import express from 'express';
 import path from 'node:path';
@@ -9,7 +9,10 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler } from './routes/diagRouter.js';
+import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence } from './db/PersistenceWorker.js';
+import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
+import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 
 const logger = pino({
   name: 'server',
@@ -37,6 +40,9 @@ app.options('*', (_req, res) => { res.sendStatus(204); });
 // (a 500-entry log + server events is ~150 KB+).
 app.use(express.json({ limit: '2mb' }));
 app.use('/auth', authRouter);
+// Phase 8 — public route exposing the galaxy graph for the landing screen
+// and the in-game galaxy-map overlay.
+app.use('/galaxy', galaxyRouter);
 
 app.get('/healthz', (_req, res) => {
   res.json({ status: 'ok', tick: Date.now() });
@@ -78,6 +84,19 @@ const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
 });
 
+// Phase 8 — register one persistent SectorRoom per galaxy sector. These rooms
+// are eagerly instantiated in main() (see matchMaker.create loop) so they
+// hydrate from snapshots at boot, not on first traveller, and so transit
+// reservations always find a live room. They survive having zero players —
+// the simulation continues to tick (drones patrol, asteroids drift) so the
+// world feels alive even when nobody's logged in.
+for (const sector of GALAXY_SECTORS) {
+  gameServer.define(`galaxy-${sector.key}`, SectorRoom, resolveSectorConfig(sector.key));
+}
+
+// Engineering rooms — defined here, NOT pre-created. They lazy-spawn on first
+// `joinOrCreate` and have no persistent identity (sectorKey is undefined),
+// so their state is ephemeral by design.
 gameServer.define('sector', SectorRoom, { maxClients: 16 });
 gameServer.define('test-sector', SectorRoom, {
   testMode: true,
@@ -130,9 +149,25 @@ async function main(): Promise<void> {
   await initWorker({ dbPath });
   logger.info({ dbPath }, 'persistence worker READY');
 
-  httpServer.listen(PORT, () => {
-    logger.info({ port: PORT }, 'EQX Peri server started');
+  await new Promise<void>((resolve) => {
+    httpServer.listen(PORT, () => {
+      logger.info({ port: PORT }, 'EQX Peri server started');
+      resolve();
+    });
   });
+
+  // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
+  // snapshots at boot (not on first traveller) and so future transit
+  // reservations always find a live destination. Sequential await: the
+  // matchmaker doesn't love parallel `create` calls during boot.
+  for (const sector of GALAXY_SECTORS) {
+    try {
+      await matchMaker.createRoom(`galaxy-${sector.key}`, {});
+      logger.info({ sectorKey: sector.key }, 'galaxy room created');
+    } catch (err) {
+      logger.error({ err, sectorKey: sector.key }, 'failed to eagerly create galaxy room');
+    }
+  }
 }
 
 /**

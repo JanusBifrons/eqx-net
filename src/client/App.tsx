@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
 import {
   Box,
@@ -22,6 +22,8 @@ import { LoginPage } from './components/LoginPage';
 import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
+import { GalaxyMapScreen } from './components/GalaxyMapScreen';
+import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
 // phones on the LAN (e.g. http://192.168.1.5:5173 → ws://192.168.1.5:5173).
@@ -305,7 +307,14 @@ function DeathOverlay({ onRespawn }: { onRespawn: () => void }): JSX.Element {
   );
 }
 
-function GameSurface(): JSX.Element {
+interface GameSurfaceProps {
+  /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
+   *  to the URL `?room=` / `?galaxy=` params or `'sector'` when undefined,
+   *  preserving the E2E auto-join escape hatch. */
+  roomNameOverride?: string;
+}
+
+function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<PixiRenderer | null>(null);
@@ -461,7 +470,13 @@ function GameSurface(): JSX.Element {
 
       const storedId = loadStoredPlayerId();
       const urlParams = new URLSearchParams(window.location.search);
-      const roomName = urlParams.get('room') ?? 'sector';
+      // Phase 8 — precedence: lobby-chosen override → ?room= (engineering /
+      // legacy) → ?galaxy= (deep link to a galaxy sector) → default 'sector'.
+      const galaxyParam = urlParams.get('galaxy');
+      const roomName =
+        roomNameOverride
+        ?? urlParams.get('room')
+        ?? (galaxyParam ? `galaxy-${galaxyParam}` : 'sector');
       const extraJoinOptions: Record<string, unknown> = {};
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
@@ -491,6 +506,12 @@ function GameSurface(): JSX.Element {
         'swarm-tidi': 'Swarm TiDi (4000)',
         'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
       };
+      // Phase 8 — galaxy room names are `galaxy-${key}`; resolve the display
+      // name from the graph rather than maintaining a parallel map here.
+      if (!prettyName[roomName] && roomName.startsWith('galaxy-')) {
+        const sec = getSector(roomName.slice('galaxy-'.length));
+        if (sec) prettyName[roomName] = sec.name;
+      }
       setSectorName(prettyName[roomName] ?? roomName);
     })().catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
@@ -505,7 +526,7 @@ function GameSurface(): JSX.Element {
       gameClient.dispose();
       renderer.dispose();
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, toggleDevOverlay, roomNameOverride]);
 
   return (
     <Box
@@ -604,34 +625,46 @@ function LocalSurface(): JSX.Element {
 }
 
 export function App(): JSX.Element {
-  const autoJoin = new URLSearchParams(window.location.search).has('room');
+  // Phase 8 — autoJoin escape hatch: ?room= or ?galaxy= bypasses auth + landing
+  // screen so existing E2E tests and deep links keep working.
+  const initialUrlParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const autoJoinRoom = initialUrlParams.get('room');
+  const autoJoinGalaxy = initialUrlParams.get('galaxy');
+  const autoJoin = autoJoinRoom !== null || autoJoinGalaxy !== null;
+  const initialOverride = autoJoinRoom ?? (autoJoinGalaxy ? `galaxy-${autoJoinGalaxy}` : null);
+
   const { user } = useAuthStore();
-  const [phase, setPhase] = useState<'auth' | 'splash' | 'connecting' | 'game' | 'local'>(
-    // Skip auth gate for E2E test auto-join URLs (?room=...) and if already authenticated.
-    autoJoin || user ? (autoJoin ? 'game' : 'splash') : 'auth',
+  // Phase 8 phases: 'auth' (login) → 'galaxy-map' (visual hex landing screen,
+  // formerly 'splash') → 'game'. 'local' is the unchanged single-player diag.
+  const [phase, setPhase] = useState<'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local'>(
+    autoJoin || user ? (autoJoin ? 'game' : 'galaxy-map') : 'auth',
+  );
+  const [roomNameOverride, setRoomNameOverride] = useState<string | undefined>(
+    initialOverride ?? undefined,
   );
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  // If user logs out while on splash, go back to auth.
+  // If user logs out while on the galaxy-map screen, go back to auth.
   useEffect(() => {
     if (!user && phase !== 'auth' && phase !== 'game' && phase !== 'local') {
       setPhase('auth');
     }
   }, [user, phase]);
 
-  const handleJoin = useCallback(() => {
+  const handleSelectRoom = useCallback((roomName: string) => {
+    setRoomNameOverride(roomName);
     setPhase('game');
   }, []);
 
-  const handleLocal = useCallback(() => {
+  const handleSelectLocal = useCallback(() => {
     setPhase('local');
   }, []);
 
   const handleAuthSuccess = useCallback(() => {
-    setPhase('splash');
+    setPhase('galaxy-map');
   }, []);
 
   if (phase === 'game') {
@@ -642,7 +675,7 @@ export function App(): JSX.Element {
           onProfileClick={() => setProfileOpen(true)}
           onSettingsClick={openSettings}
         />
-        <GameSurface />
+        <GameSurface roomNameOverride={roomNameOverride} />
         <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
@@ -668,6 +701,7 @@ export function App(): JSX.Element {
     );
   }
 
+  // 'galaxy-map' (default) — visual hex galaxy as the user's first screen.
   return (
     <>
       <AppHeader
@@ -675,60 +709,27 @@ export function App(): JSX.Element {
         onProfileClick={() => setProfileOpen(true)}
         onSettingsClick={openSettings}
       />
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100vh',
-          pt: '48px',
-          bgcolor: '#05070f',
-          gap: 3,
-        }}
-      >
-        <Typography
-          variant="h2"
-          sx={{ color: '#00ff88', fontWeight: 700, letterSpacing: 4, textTransform: 'uppercase' }}
+      {phase === 'connecting' ? (
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            pt: '48px',
+            bgcolor: '#05070f',
+          }}
         >
-          EQX Peri
-        </Typography>
-        <Typography variant="subtitle1" sx={{ color: '#888' }}>
-          Sector Alpha · Asteroids-class engagement zone
-        </Typography>
-        {phase === 'connecting' ? (
           <CircularProgress sx={{ color: '#00ff88' }} />
-        ) : (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'center' }}>
-            <Button
-              variant="contained"
-              size="large"
-              onClick={handleJoin}
-              sx={{
-                bgcolor: '#00ff88',
-                color: '#000',
-                fontWeight: 700,
-                px: 6,
-                '&:hover': { bgcolor: '#00cc6a' },
-              }}
-            >
-              Enter Sector Alpha
-            </Button>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={handleLocal}
-              sx={{
-                color: '#ff8800',
-                borderColor: '#ff8800',
-                '&:hover': { borderColor: '#ffaa33', bgcolor: 'rgba(255,136,0,0.1)' },
-              }}
-            >
-              Single Player (Diagnostic)
-            </Button>
-          </Box>
-        )}
-      </Box>
+        </Box>
+      ) : (
+        <GalaxyMapScreen
+          activeLimboSectorKey={null /* sub-phase B will populate */}
+          onSelectRoom={handleSelectRoom}
+          onSelectLocal={handleSelectLocal}
+        />
+      )}
       <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
       <SettingsModal open={settingsOpen} onClose={closeSettings} />
     </>

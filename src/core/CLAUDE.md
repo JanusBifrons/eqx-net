@@ -34,6 +34,10 @@ The canary at [\_\_fixtures\_\_/leak.ts.disabled](__fixtures__/leak.ts.disabled)
 - `INetworkSink` — the outbound network surface. Phase 1 introduces this.
 - `IPersistenceSink` — the persistence surface. Phase 7 introduces this. Op union is closed-set; CRITICAL/VOLATILE lanes; concretion in `src/server/db/`.
 
+### Galaxy graph (Phase 8)
+
+The persistent galaxy lives at [galaxy/galaxy.ts](galaxy/galaxy.ts) — a pure module exporting `GALAXY_SECTORS` (a 7-sector hexagonal sunflower: Sol Prime centre + 6 outers). Both the server (room registration in `index.ts`, neighbour validation) and the client (visual landing screen, in-game galaxy-map overlay) consume this. Pure: no I/O, no imports outside the TS stdlib. The unit test [galaxy/galaxy.test.ts](galaxy/galaxy.test.ts) enforces structural invariants (edge symmetry, no dangling neighbours, exactly 6 ring outers at hex distance 1 from the centre); a typo in `neighbours` will fail the test before merge. To grow the galaxy, extend `GALAXY_SECTORS` with valid axial-hex coords and symmetric edges. See [docs/architecture/galaxy-graph.md](../../docs/architecture/galaxy-graph.md) for the walkthrough.
+
 When a new phase needs a new concretion (e.g., persistence), add it as a new contract here — never by reaching from core into the server or client zones.
 
 ---

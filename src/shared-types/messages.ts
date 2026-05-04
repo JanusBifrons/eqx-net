@@ -49,6 +49,10 @@ export interface WelcomeMessage {
   playerId: string;
   /** Server physics tick at the moment the player joined. Client seeds inputTick from this. */
   serverTick: number;
+  /** Phase 8 — stable galaxy sector key (e.g. 'sol-prime'), or null in
+   *  engineering rooms (test-sector, swarm-soak, etc.) which have no
+   *  persistent identity. */
+  sectorKey: string | null;
 }
 
 /** Authoritative snapshot broadcast by the server at 20 Hz for client-side

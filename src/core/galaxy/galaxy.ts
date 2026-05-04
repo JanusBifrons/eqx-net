@@ -1,0 +1,149 @@
+/**
+ * The persistent galaxy graph (Phase 8).
+ *
+ * Pure module: no I/O, no imports outside the TS stdlib. Both the server
+ * (room registration, neighbour validation) and the client (landing screen,
+ * in-game galaxy-map overlay) consume this. To grow the galaxy, add entries
+ * with valid axial-hex coords + symmetric edges and run the unit tests; the
+ * tests enforce structural invariants and will catch typos.
+ *
+ * See docs/architecture/galaxy-graph.md for the walkthrough.
+ */
+
+/** Axial hex coordinates. q runs east, r runs south-east. (0,0) = centre. */
+export interface AxialHex {
+  q: number;
+  r: number;
+}
+
+export type AsteroidConfigKey = 'sparse' | 'dense' | 'none';
+
+export interface GalaxySector {
+  /** Stable identity used as the persistence key. Slug-style, lowercase. */
+  key: string;
+  /** Display name. */
+  name: string;
+  /** One-line description shown on the landing screen. */
+  description: string;
+  /** Axial hex position used by both landing screen and in-game overlay. */
+  hex: AxialHex;
+  /** Adjacent sector keys. Edges must be symmetric (validated by tests). */
+  neighbours: string[];
+  /** Asteroid layout key — resolved server-side via asteroidConfigs.ts. */
+  asteroidConfigKey: AsteroidConfigKey;
+  /** Number of hostile drones to seed at room creation. */
+  droneCount: number;
+  /** Default ship spawn coords for fresh entry into this sector. */
+  defaultSpawn: { x: number; y: number };
+}
+
+/**
+ * 7-sector sunflower: 1 centre + 6 ring outers.
+ *   centre (sol-prime) connects to all 6 outers.
+ *   each outer connects to centre + its two ring-adjacent neighbours.
+ * Axial hex coords give the 6 outers at distance 1 from the centre.
+ */
+export const GALAXY_SECTORS: readonly GalaxySector[] = [
+  {
+    key: 'sol-prime',
+    name: 'Sol Prime',
+    description: 'The home sector. Asteroid-rich, low drone density.',
+    hex: { q: 0, r: 0 },
+    neighbours: ['orion-belt', 'vega-reach', 'cygnus-arm', 'kepler-spur', 'andromeda-rim', 'lyra-fringe'],
+    asteroidConfigKey: 'dense',
+    droneCount: 8,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'orion-belt',
+    name: 'Orion Belt',
+    description: 'Sparse rocks, moderate drone patrols.',
+    hex: { q: 0, r: -1 },
+    neighbours: ['sol-prime', 'vega-reach', 'lyra-fringe'],
+    asteroidConfigKey: 'sparse',
+    droneCount: 14,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'vega-reach',
+    name: 'Vega Reach',
+    description: 'Trade-lane edge. Sparse cover, frequent drone sweeps.',
+    hex: { q: 1, r: -1 },
+    neighbours: ['sol-prime', 'orion-belt', 'cygnus-arm'],
+    asteroidConfigKey: 'sparse',
+    droneCount: 14,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'cygnus-arm',
+    name: 'Cygnus Arm',
+    description: 'Open void. No asteroids; drones own the lane.',
+    hex: { q: 1, r: 0 },
+    neighbours: ['sol-prime', 'vega-reach', 'kepler-spur'],
+    asteroidConfigKey: 'none',
+    droneCount: 20,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'kepler-spur',
+    name: 'Kepler Spur',
+    description: 'Sparse rocks, contested drone presence.',
+    hex: { q: 0, r: 1 },
+    neighbours: ['sol-prime', 'cygnus-arm', 'andromeda-rim'],
+    asteroidConfigKey: 'sparse',
+    droneCount: 14,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'andromeda-rim',
+    name: 'Andromeda Rim',
+    description: 'Dense asteroid field. Lighter drone presence.',
+    hex: { q: -1, r: 1 },
+    neighbours: ['sol-prime', 'kepler-spur', 'lyra-fringe'],
+    asteroidConfigKey: 'dense',
+    droneCount: 8,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+  {
+    key: 'lyra-fringe',
+    name: 'Lyra Fringe',
+    description: 'Dense asteroid field. Lighter drone presence.',
+    hex: { q: -1, r: 0 },
+    neighbours: ['sol-prime', 'andromeda-rim', 'orion-belt'],
+    asteroidConfigKey: 'dense',
+    droneCount: 8,
+    defaultSpawn: { x: 0, y: 0 },
+  },
+];
+
+export const DEFAULT_SECTOR_KEY = 'sol-prime';
+
+/** Look up a sector by key; undefined if not in the graph. */
+export function getSector(key: string): GalaxySector | undefined {
+  return GALAXY_SECTORS.find((s) => s.key === key);
+}
+
+/** Resolved neighbour entries for a sector (not just keys). Empty array on unknown source. */
+export function getNeighbours(key: string): GalaxySector[] {
+  const src = getSector(key);
+  if (!src) return [];
+  const out: GalaxySector[] = [];
+  for (const n of src.neighbours) {
+    const sec = getSector(n);
+    if (sec) out.push(sec);
+  }
+  return out;
+}
+
+/** True iff `toKey` is a direct neighbour of `fromKey` in the graph. */
+export function isNeighbour(fromKey: string, toKey: string): boolean {
+  const src = getSector(fromKey);
+  return src ? src.neighbours.includes(toKey) : false;
+}
+
+/** Standard pointy-top axial→pixel projection. Used by the SVG renderer. */
+export function axialToPixel(hex: AxialHex, size: number): { x: number; y: number } {
+  const x = size * Math.sqrt(3) * (hex.q + hex.r / 2);
+  const y = size * (3 / 2) * hex.r;
+  return { x, y };
+}

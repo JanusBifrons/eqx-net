@@ -522,3 +522,29 @@ Commit: Phase 7 SQLite persistence.
 **Fix (Windows dev)**: added `POST /dev/shutdown` (NODE_ENV-gated) that triggers the same `onSignal('HTTP_SHUTDOWN')` handler. Hit it with `Invoke-RestMethod -Method POST http://localhost:2567/dev/shutdown`. The drain runs end-to-end and the process exits cleanly.
 
 **Rule**: do not rely on Ctrl+C in PowerShell to exercise shutdown handlers. Use the HTTP endpoint or trust the test coverage. Never workaround the wrapper chain (e.g. detached console processes) — production doesn't have this problem and the test coverage is already exhaustive.
+
+## 2026-05-04 — Phase 8 sub-phase A — Snapshot schema versioning is the canonical "tear down all sectors" knob
+Commit: Phase 8 sub-phase A.
+
+The `game_snapshots` row produced by `saveSnapshot(sectorKey, payload)` carries an explicit `schemaVersion` field (defined in [src/server/rooms/SectorSnapshot.ts](../src/server/rooms/SectorSnapshot.ts) as `CURRENT_SCHEMA_VERSION`). On boot, `SectorRoom.hydrateFromSnapshot` reads the most recent row, parses it via `parseSnapshot`, and:
+- discards rows whose `schemaVersion !== CURRENT_SCHEMA_VERSION` (logs a warn, falls through to fresh-spawn);
+- discards rows older than 24 h (`SNAPSHOT_STALENESS_MS`);
+- otherwise restores swarm health (positions are deterministic from config and are NOT restored — keeps the substrate simple and dodges entity-id-stability problems on shape changes).
+
+**Bumping `CURRENT_SCHEMA_VERSION` is the canonical "tear down all sectors and reseed" knob.** When introducing a breaking sector-shape change: bump the version. All persisted snapshots become unloadable on next boot and sectors fresh-spawn from config. To preserve data across a bump, register a migration in `migrateSnapshot()` (currently throws by default — Phase 8 strategy is tear-down-on-change). See [docs/architecture/persistence-and-migrations.md](architecture/persistence-and-migrations.md) for the full pipeline.
+
+## 2026-05-04 — Phase 8 sub-phase A — Galaxy graph hard-coded; bump CURRENT_SCHEMA_VERSION when re-shaping sectors
+Commit: Phase 8 sub-phase A.
+
+The galaxy graph lives at [src/core/galaxy/galaxy.ts](../src/core/galaxy/galaxy.ts) — a pure module exporting `GALAXY_SECTORS`, currently 7 sectors in a hexagonal sunflower. Both server and client consume it. The unit test enforces edge symmetry, no dangling neighbours, and that every outer is at axial-hex distance 1 from `sol-prime` — typos catch at `pnpm test`. To add or rewire sectors:
+1. Edit `GALAXY_SECTORS` (axial coords, symmetric edges, asteroid config key, drone count).
+2. If the change alters persisted swarm shape, bump `CURRENT_SCHEMA_VERSION` so old snapshots discard cleanly.
+3. Run `pnpm test src/core/galaxy/galaxy.test.ts` to check structural invariants.
+4. `pnpm dev:server` should log `galaxy room created sectorKey=...` × N for the new count.
+
+Walkthrough: [docs/architecture/galaxy-graph.md](architecture/galaxy-graph.md). Future plans (SQLite-backed runtime-mutable graph, admin tooling, per-edge arrival points) are captured there.
+
+## 2026-05-04 — Phase 8 sub-phase A — Galaxy sectors tick when empty by design
+Commit: Phase 8 sub-phase A.
+
+`SectorRoom.update()` historically had `if (this.playerToSlot.size === 0 && this.swarmRegistry.size() === 0) return;` — a dual-zero short-circuit that saved CPU on rooms with no players AND no swarm. Phase 8 keeps this for engineering rooms but removes it for galaxy rooms (`sectorKey !== null`): the simulation step always runs so drones patrol, asteroids drift, and sleep transitions fire even when no player is connected. The world should feel like time has passed. Per-client broadcast work is gated separately on `clients.length > 0`, so empty galaxy rooms still skip the encode/broadcast cost. Phase 5e bench (500 entities at 0.24 ms/tick) gives plenty of headroom for 7 idle galaxy rooms.
