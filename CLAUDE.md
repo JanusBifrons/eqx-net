@@ -126,21 +126,25 @@ If anything is `LISTENING` and you don't have a deliberate dev server open, kill
 
 ---
 
-## Running E2E Tests (do NOT run `pnpm e2e` from inside Claude)
+## Running E2E Tests
 
-Playwright runs hold the harness's stdio open longer than the agent's tool timeout, so a synchronous `pnpm e2e` call appears to "stall" forever and the harness gives up partway through. The tests do not actually hang — they're producing output the harness loses sight of.
+Playwright runs are slow (a single spec can take 30–120 s; the full suite is multi-minute). The original concern was that a synchronous `pnpm e2e` call would appear to "stall" the harness — that's still true if you run the *whole suite* in foreground, but targeted runs are fine and you have permission to do them.
 
-**For Claude:**
+**Default playbook:**
 
-- Do not invoke `pnpm e2e` (or `pnpm e2e --grep ...`) directly via the Bash tool in foreground. It will time out or block visibly.
-- Either:
-  1. **Ask the user to run E2E locally** and paste the result, or
-  2. Run with `run_in_background: true` and write output to a file you can later read in chunks:
-     ```
-     pnpm e2e --reporter=line > /tmp/e2e.log 2>&1
-     ```
-     then `Read` the log file in slices, or wait for the background task's completion notification.
-- Always pass `--reporter=line` (or `--reporter=dot`) — the default `list` reporter emits ANSI cursor moves that confuse non-TTY captures.
-- When narrowing scope, prefer `--grep "test name"` and one project at a time (`--project=chromium`) over running the full suite.
+1. **Tell the user before you start:** `> Running tests/e2e/foo.spec.ts — should take ~60 s.` Set expectations so a long-running tool call doesn't look like a hang.
+2. **Always narrow scope first.** Run only the new/changed spec, not the whole suite:
+   ```
+   pnpm e2e --project=chromium tests/e2e/foo.spec.ts --reporter=line
+   ```
+   Use `--grep "test name"` to narrow further if a spec has many cases.
+3. **Always pass `--reporter=line`** (or `--reporter=dot`). The default `list` reporter emits ANSI cursor moves that confuse non-TTY captures.
+4. **Always pass an explicit Bash `timeout` argument** — set it to ~1.5× your expected runtime, capped at 10 minutes (the Bash tool max). E.g. for a spec you expect to take 60 s, pass `timeout: 120000`. This guarantees the call returns control even if Playwright wedges, instead of burning the harness's wall-clock waiting for stdio.
+5. **For the full suite** (more than one spec, or a spec known to take > 5 minutes), prefer `run_in_background: true` so you can keep working and read the log when the completion notification fires:
+   ```
+   pnpm e2e --reporter=line > /tmp/e2e.log 2>&1
+   ```
+   Then `Read` the log file when notified.
+6. **One project at a time** (`--project=chromium`). Don't fan out to all browsers from inside Claude unless the user asks.
 
-The full suite is the user's call. From inside Claude, treat E2E as something the user runs and reports back; treat unit tests + typecheck + lint + the 8-second server boot as the loop you can run yourself.
+Treat unit tests + typecheck + lint + the 8-second server boot as the inner loop you run on every change; treat targeted E2E specs (1–2 files, narrowed by `--grep`) as the outer loop you run once the inner loop is green and you've told the user to expect a wait. The full suite is still typically the user's call, but you can run it in the background when warranted.

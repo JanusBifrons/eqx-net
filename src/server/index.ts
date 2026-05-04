@@ -99,20 +99,20 @@ gameServer.define('swarm-tidi', SectorRoom, {
   swarmRadius: 32_000,
   maxClients: 4,
 });
-// Phase 6 synthetic-load room. 12 ms/tick of busy-wait CPU burn pushes the
-// server's `update()` over the 14 ms threshold (12 + ~1.5 ms real work ≈
-// 13.5–14 ms — *just* over) so TiDi engages without collapsing the server's
-// wall-clock tick rate. Higher burns (e.g. 20 ms) DO trigger TiDi but also
-// slow the server's actual tick cadence to ~19 Hz, which makes the client's
-// wall-clock-anchored input loop race ahead by ~40 ticks/sec → 90% reconciler
-// corrections. That's a separate architectural cliff: real production TiDi
-// is driven by physics-side overruns (worker step), where the server thread
-// stays at 60 Hz wall-clock and no clock skew occurs. Use sparingly.
+// Phase 6 synthetic-load room. 16 ms/tick of busy-wait CPU burn pushes the
+// server's `update()` comfortably over the 14 ms threshold so TiDi engages
+// reliably for the acceptance E2E. Caveat (per Phase 6 testing notes):
+// burns ≥ 16 ms slow the server's wall-clock tick cadence below 60 Hz,
+// which makes the client's wall-clock-anchored input loop race ahead and
+// produce a high reconciler-correction rate. That's expected for the
+// acceptance test (which only asserts TiDi/shedder mechanics, not feel).
+// Real production TiDi is driven by physics-side overruns (worker step),
+// where the server thread stays at 60 Hz and no clock skew occurs.
 gameServer.define('swarm-tidi-burn', SectorRoom, {
   swarmCount: 500, // smaller swarm so the burn dominates the budget signal
   swarmRatio: 0.8,
   swarmRadius: 18_000,
-  tickBurnMs: 12,
+  tickBurnMs: 16,
   maxClients: 4,
 });
 

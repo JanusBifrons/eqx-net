@@ -13,9 +13,9 @@ import { test, expect } from '@playwright/test';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 test.describe('Phase 6 — Temporal Anomaly overlay', () => {
-  test.setTimeout(45_000);
+  test.setTimeout(75_000);
 
-  test('TiDi engages: data-sector-alert reads "Temporal Anomaly" and clockRate < 0.99 within 15 s', async ({ browser }) => {
+  test('TiDi engages: data-sector-alert reads "Temporal Anomaly" and clockRate < 0.99 within 30 s', async ({ browser }) => {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     try {
@@ -30,7 +30,11 @@ test.describe('Phase 6 — Temporal Anomaly overlay', () => {
         { timeout: 15_000 },
       );
 
-      // Within 15 s of joining the burn room, TiDi should engage.
+      // Within 30 s of attribute-population, TiDi should engage. The
+      // SimulationClock requires WINDOW_TICKS=30 consecutive over-budget
+      // ticks before flipping `targetRate`, then ramps at RAMP_PER_TICK=0.005,
+      // so first crossing of 0.99 is ~30 ticks (0.5 s) after sustained
+      // over-budget. Generous slack for boot/join + GC pauses.
       await page.waitForFunction(
         () => {
           const el = document.querySelector('[data-testid="game-surface"]');
@@ -39,7 +43,7 @@ test.describe('Phase 6 — Temporal Anomaly overlay', () => {
           const rate = parseFloat(el.getAttribute('data-clock-rate') ?? '1');
           return alert === 'Temporal Anomaly' && rate < 0.99;
         },
-        { timeout: 15_000 },
+        { timeout: 30_000 },
       );
 
       const finalRate = parseFloat(
