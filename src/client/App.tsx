@@ -23,6 +23,9 @@ import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
 import { GalaxyMapScreen } from './components/GalaxyMapScreen';
+import { GalaxyMapOverlay } from './components/GalaxyMapOverlay';
+import { HyperspaceOverlay } from './components/HyperspaceOverlay';
+import { engageTransit, cancelTransit } from './net/transitClient';
 import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
@@ -331,6 +334,17 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
     clientRef.current?.respawnShip();
   }, []);
 
+  // Phase 8 sub-phase B — galaxy-map overlay state + transit helpers.
+  const [galaxyMapOpen, setGalaxyMapOpen] = useState(false);
+  const handleEngageTransit = useCallback((targetSectorKey: string) => {
+    const room = clientRef.current?.getRoom();
+    if (room) engageTransit(room, targetSectorKey);
+  }, []);
+  const handleCancelTransit = useCallback(() => {
+    const room = clientRef.current?.getRoom();
+    if (room) cancelTransit(room);
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -353,6 +367,12 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
 
     const onKey = (e: KeyboardEvent): void => {
       if (e.shiftKey && e.key === 'D') toggleDevOverlay();
+      // Phase 8 sub-phase B — toggle the in-game galaxy-map overlay. 'M' is
+      // unmodified so it's reachable on a keyboard during play; the overlay
+      // disables itself if `transitState !== 'DOCKED'`.
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
+        setGalaxyMapOpen((cur) => !cur);
+      }
     };
     window.addEventListener('keydown', onKey);
 
@@ -555,6 +575,12 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
+      <HyperspaceOverlay onCancel={handleCancelTransit} />
+      <GalaxyMapOverlay
+        open={galaxyMapOpen}
+        onClose={() => setGalaxyMapOpen(false)}
+        onTransit={handleEngageTransit}
+      />
     </Box>
   );
 }
@@ -725,7 +751,8 @@ export function App(): JSX.Element {
         </Box>
       ) : (
         <GalaxyMapScreen
-          activeLimboSectorKey={null /* sub-phase B will populate */}
+          /* activeLimboSectorKey omitted on purpose so the screen runs its
+             own /dev/limbo lookup and renders the saved-ship card. */
           onSelectRoom={handleSelectRoom}
           onSelectLocal={handleSelectLocal}
         />

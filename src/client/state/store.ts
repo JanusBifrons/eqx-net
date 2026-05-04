@@ -3,6 +3,9 @@ import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+/** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
+export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
+
 interface DevData {
   rtt: number;
   drift: number;
@@ -51,6 +54,15 @@ interface UIStore {
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
   isDead: boolean;
+  /** Phase 8 — stable galaxy sector key the player is currently in (set
+   *  from the welcome message), or null in engineering rooms. */
+  currentSectorKey: string | null;
+  /** Phase 8 — current transit lifecycle state. Drives the HyperspaceOverlay. */
+  transitState: TransitState;
+  /** Phase 8 — 0..1 spool progress; only meaningful while transitState === 'SPOOLING'. */
+  transitProgress: number;
+  /** Phase 8 — destination sector key during a transit (SPOOLING/IN_TRANSIT/ARRIVED). */
+  transitTargetSectorKey: string | null;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -68,6 +80,10 @@ interface UIStore {
   setServerTickHz: (n: number) => void;
   setDevData: (d: DevData) => void;
   setDead: (dead: boolean) => void;
+  setCurrentSectorKey: (key: string | null) => void;
+  setTransitState: (s: TransitState) => void;
+  setTransitProgress: (p: number) => void;
+  setTransitTargetSectorKey: (key: string | null) => void;
 }
 
 const persisted = loadSettings();
@@ -103,6 +119,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
   devData: { rtt: 0, drift: 0, angleDrift: 0, lerping: false, snapshotIntervalMs: 0, ticksAhead: 0, snapshotCount: 0, significantCorrectionCount: 0, significantAngleCorrectionCount: 0, maxDriftUnits: 0, maxAngleDriftRad: 0, ackedTick: 0, inputTick: 0, serverTick: 0, serverX: 0, serverY: 0, beforeX: 0, beforeY: 0, afterX: 0, afterY: 0 },
   correctionRate: 0,
   isDead: false,
+  currentSectorKey: null,
+  transitState: 'DOCKED',
+  transitProgress: 0,
+  transitTargetSectorKey: null,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -123,4 +143,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
     correctionRate: d.snapshotCount > 0 ? d.significantCorrectionCount / d.snapshotCount : 0,
   }),
   setDead: (dead) => set({ isDead: dead }),
+  setCurrentSectorKey: (key) => set({ currentSectorKey: key }),
+  setTransitState: (s) => set({ transitState: s }),
+  setTransitProgress: (p) => set({ transitProgress: p }),
+  setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
 }));

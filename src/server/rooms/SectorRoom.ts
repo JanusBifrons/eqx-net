@@ -45,6 +45,11 @@ import {
   parseSnapshot,
   type SectorSnapshotPayload,
 } from './SectorSnapshot.js';
+import { getLimboStore } from '../db/PersistenceWorker.js';
+import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
+import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
+import { setSession, clearSession } from '../transit/sessionRegistry.js';
+import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
   HITSCAN_DAMAGE,
@@ -170,6 +175,13 @@ export class SectorRoom extends Room<SectorState> {
   private sectorKey: string | null = null;
   /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
   private ticksSinceSnapshot = 0;
+  /** Phase 8 sub-phase B — set when an in-flight transit has committed (Limbo
+   *  entry written with destination sectorKey, seat reserved, ship about to
+   *  leave). The subsequent `onLeave` checks this and skips its own Limbo
+   *  put so the destination-keyed entry survives intact. Cleared in onLeave. */
+  readonly playerToTransitInFlight = new Set<string>();
+  /** Phase 8 sub-phase B — per-room transit driver, set in onCreate. */
+  private transitOrchestrator: TransitOrchestrator | null = null;
 
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
@@ -340,6 +352,36 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null) {
       this.hydrateFromSnapshot();
     }
+
+    // Phase 8 sub-phase B — explicit 15s seat-reservation TTL for incoming
+    // hyperspace travellers. Default is already 15 in Colyseus 0.16; making
+    // it explicit guards against a future default change silently breaking
+    // the contract.
+    this.setSeatReservationTime(15);
+
+    // Phase 8 sub-phase B — per-room transit driver. Engineering rooms get
+    // an orchestrator too, but it'll always reject `engage_transit` because
+    // sectorKey is null (the orchestrator validates and sends back DOCKED).
+    this.transitOrchestrator = new TransitOrchestrator(this.asTransitHost(), getLimboStore());
+
+    this.onMessage('engage_transit', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId || !this.transitOrchestrator) return;
+      const parsed = EngageTransitSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed engage_transit message');
+        return;
+      }
+      this.transitOrchestrator.beginTransit(playerId, parsed.data.targetSectorKey);
+    });
+
+    this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId || !this.transitOrchestrator) return;
+      const parsed = CancelTransitSchema.safeParse(raw);
+      if (!parsed.success) return;
+      this.transitOrchestrator.cancelTransit(playerId, 'manual');
+    });
 
     this.onMessage('input', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -944,10 +986,53 @@ export class SectorRoom extends Room<SectorState> {
     this.slotToPlayer.set(slot, playerId);
     this.snapshotRing.registerEntity(playerId);
 
-    const parsedSpawnX = parsed.success ? parsed.data.spawnX : undefined;
-    const parsedSpawnY = parsed.success ? parsed.data.spawnY : undefined;
-    const spawnX = parsedSpawnX ?? (Math.random() - 0.5) * 400;
-    const spawnY = parsedSpawnY ?? (Math.random() - 0.5) * 400;
+    let spawnX = parsed.success && parsed.data.spawnX !== undefined
+      ? parsed.data.spawnX
+      : (Math.random() - 0.5) * 400;
+    let spawnY = parsed.success && parsed.data.spawnY !== undefined
+      ? parsed.data.spawnY
+      : (Math.random() - 0.5) * 400;
+    let resumedHealth: number | null = null;
+    let resumedUserId: string | null = null;
+    let resumedLastFireTick: number | null = null;
+    let resumedVx = 0;
+    let resumedVy = 0;
+    let resumedAngle = 0;
+    let resumedAngvel = 0;
+    let resumedFromLimbo = false;
+
+    // Phase 8 sub-phase B — Limbo restore. Only galaxy rooms participate
+    // in Limbo; engineering rooms continue to fresh-spawn on every join.
+    // The destination's `onJoin` consumes the entry whether it was created
+    // by a disconnect (5 min TTL) or by a transit commit (30 s TTL); the
+    // sectorKey gate ensures we only consume entries destined for THIS room.
+    if (this.sectorKey !== null) {
+      const limbo = getLimboStore().take(playerId);
+      if (limbo && limbo.payload.sectorKey === this.sectorKey) {
+        spawnX = limbo.payload.x;
+        spawnY = limbo.payload.y;
+        resumedHealth = limbo.payload.health;
+        resumedUserId = limbo.payload.userId;
+        resumedLastFireTick = limbo.payload.lastFireClientTick;
+        resumedVx = limbo.payload.vx;
+        resumedVy = limbo.payload.vy;
+        resumedAngle = limbo.payload.angle;
+        resumedAngvel = limbo.payload.angvel;
+        resumedFromLimbo = true;
+        logger.info(
+          { playerId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
+          'restored from Limbo',
+        );
+      } else if (limbo) {
+        // Entry exists but for a different sector — put it back. This is
+        // unusual (the landing screen restricts the player to the entry's
+        // sector) but defensive: if a player navigates by raw URL to a
+        // sector they don't belong in, we don't want to silently discard
+        // their existing-ship state.
+        getLimboStore().put(playerId, limbo.payload, limbo.expiresAt - Date.now());
+      }
+    }
+
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
     // Pre-populate the SAB slot so the update() loop sees a sane position
@@ -955,13 +1040,24 @@ export class SectorRoom extends Room<SectorState> {
     const base = slotBase(slot);
     this.sabF32[base + SLOT_X_OFF] = spawnX;
     this.sabF32[base + SLOT_Y_OFF] = spawnY;
+    if (resumedFromLimbo) {
+      this.sabF32[base + SLOT_VX_OFF]     = resumedVx;
+      this.sabF32[base + SLOT_VY_OFF]     = resumedVy;
+      this.sabF32[base + SLOT_ANGLE_OFF]  = resumedAngle;
+      this.sabF32[base + SLOT_ANGVEL_OFF] = resumedAngvel;
+    }
 
     // Create Colyseus schema entry.
     const ship = new ShipState();
     ship.playerId = playerId;
     ship.x = spawnX;
     ship.y = spawnY;
+    if (resumedHealth !== null) ship.health = resumedHealth;
     this.state.ships.set(playerId, ship);
+
+    if (resumedLastFireTick !== null) {
+      this.lastFireClientTick.set(playerId, resumedLastFireTick);
+    }
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
 
@@ -974,17 +1070,70 @@ export class SectorRoom extends Room<SectorState> {
     };
     client.send('welcome', welcome);
 
-    this.playerToUser.set(playerId, userId);
-    recordGameJoin(userId, playerId, this.sectorKey ?? this.roomId);
+    // Prefer the auth-validated userId from this connect; fall back to the
+    // Limbo-resumed value when this connect was anonymous (covers the
+    // "close-tab, reopen-without-relogging" path on the same browser).
+    const effectiveUserId = userId ?? resumedUserId;
+    this.playerToUser.set(playerId, effectiveUserId);
+    recordGameJoin(effectiveUserId, playerId, this.sectorKey ?? this.roomId);
+
+    // Phase 8 sub-phase B — register session for diag inspection and future
+    // multi-VM transit routing.
+    setSession(client.sessionId, {
+      roomId: this.roomId,
+      playerId,
+      sectorKey: this.sectorKey,
+    });
 
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
-    logger.info({ playerId, sessionId: client.sessionId, userId }, 'player joined');
+    logger.info(
+      { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromLimbo },
+      'player joined',
+    );
   }
 
   override onLeave(client: Client, _consented: boolean): void {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
+
+    // Phase 8 sub-phase B — Limbo put. Galaxy rooms only; engineering rooms
+    // continue to fresh-spawn next time. Skip if the player was mid-transit
+    // (their commit-time entry — keyed to the destination sector — is
+    // already in Limbo with a 30 s TTL; clobbering it with a source-keyed
+    // 5 min entry would break the destination's onJoin restore).
+    const slot = this.playerToSlot.get(playerId);
+    if (
+      this.sectorKey !== null
+      && slot !== undefined
+      && !this.playerToTransitInFlight.has(playerId)
+    ) {
+      const b = slotBase(slot);
+      const payload: LimboPayload = {
+        x:      this.sabF32[b + SLOT_X_OFF]!,
+        y:      this.sabF32[b + SLOT_Y_OFF]!,
+        vx:     this.sabF32[b + SLOT_VX_OFF]!,
+        vy:     this.sabF32[b + SLOT_VY_OFF]!,
+        angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+        angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+        health: this.state.ships.get(playerId)?.health ?? SHIP_MAX_HEALTH,
+        lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
+        userId: this.playerToUser.get(playerId) ?? null,
+        sectorKey: this.sectorKey,
+      };
+      try {
+        getLimboStore().put(playerId, payload, LIMBO_DISCONNECT_TTL_MS);
+      } catch (err) {
+        logger.warn({ err, playerId }, 'Limbo put on leave failed');
+      }
+    }
+    // Always clear the transit-in-flight flag, regardless of which branch
+    // ran above.
+    this.playerToTransitInFlight.delete(playerId);
+
+    // Cancel any in-flight orchestrator entry for this player (e.g. they
+    // disconnected during SPOOLING). Idempotent if there's no entry.
+    this.transitOrchestrator?.cancelTransit(playerId, 'manual');
 
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
@@ -994,8 +1143,8 @@ export class SectorRoom extends Room<SectorState> {
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     this.boostingPlayers.delete(playerId);
+    clearSession(client.sessionId);
 
-    const slot = this.playerToSlot.get(playerId);
     if (slot !== undefined) {
       this.playerToSlot.delete(playerId);
       this.slotToPlayer.delete(slot);
@@ -1013,6 +1162,9 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    // Phase 8 sub-phase B — abort any in-flight transits so no orphan timers
+    // or seat reservations linger past room teardown.
+    this.transitOrchestrator?.cancelAll('manual');
     // Phase 8 — final snapshot before tear-down so swarm health survives
     // a graceful shutdown. `persistence.shutdown` (called from index.ts on
     // SIGINT/SIGTERM) drains the CRITICAL queue afterwards.
@@ -1021,6 +1173,35 @@ export class SectorRoom extends Room<SectorState> {
     }
     this.physicsWorker?.terminate();
     logger.info({ sectorKey: this.sectorKey }, 'SectorRoom disposed');
+  }
+
+  // ── Phase 8 sub-phase B — TransitOrchestrator host adapter ──────────────
+
+  /**
+   * Adapts this room to the narrow `TransitHostRoom` contract the
+   * orchestrator depends on. Keeps the orchestrator decoupled from the
+   * full SectorRoom surface so its tests can mock just these members.
+   */
+  private asTransitHost(): import('../transit/TransitOrchestrator.js').TransitHostRoom {
+    return {
+      sectorKey: this.sectorKey,
+      bus: this.bus,
+      sabF32: this.sabF32,
+      playerToSlot: this.playerToSlot,
+      playerToUser: this.playerToUser,
+      lastFireClientTick: this.lastFireClientTick,
+      getShipHealth: (playerId: string): number => {
+        const ship = this.state.ships.get(playerId);
+        return ship?.health ?? SHIP_MAX_HEALTH;
+      },
+      playerToTransitInFlight: this.playerToTransitInFlight,
+      clientForPlayer: (playerId: string): Client | null => {
+        const sessionId = this.playerToSession.get(playerId);
+        if (!sessionId) return null;
+        const c = this.clients.find((x) => x.sessionId === sessionId);
+        return c ?? null;
+      },
+    };
   }
 
   // ── Phase 8 — sector snapshot persistence ───────────────────────────────

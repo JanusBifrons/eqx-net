@@ -8,9 +8,9 @@ import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initLimboStore, getLimboStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 
@@ -76,6 +76,9 @@ if (process.env['NODE_ENV'] !== 'production') {
 
   // GET /dev/stats?email=foo — kill/death counts for a user. Phase 7 E2E gate.
   app.get('/dev/stats', devStatsHandler);
+
+  // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
+  app.get('/dev/limbo', devLimboHandler);
 }
 
 const httpServer = createServer(app);
@@ -156,6 +159,13 @@ async function main(): Promise<void> {
     });
   });
 
+  // Phase 8 sub-phase B — hydrate the LimboStore from on-disk rows that
+  // survived the last shutdown, then start the prune timer. Done before
+  // the eager-create loop so any galaxy room's onJoin can `take` a fresh
+  // hydrated entry without a race.
+  const { hydrated } = initLimboStore();
+  logger.info({ hydrated }, 'Limbo hydrated from disk');
+
   // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
   // snapshots at boot (not on first traveller) and so future transit
   // reservations always find a live destination. Sequential await: the
@@ -185,6 +195,16 @@ const shutdown = async (sig: string): Promise<void> => {
     process.exit(2);
   }, 10_000);
   forceExit.unref();
+
+  // Phase 8 sub-phase B — stop the Limbo prune timer first so it doesn't
+  // race the persistence drain. The persistence shadow already mirrored
+  // every Limbo mutation through CRITICAL, so the existing drain handles
+  // them; nothing else to flush.
+  try {
+    getLimboStore().stopPruneTimer();
+  } catch (err) {
+    logger.warn({ err }, 'limboStore.stopPruneTimer threw');
+  }
 
   try {
     const { drained } = await persistence.shutdown({ timeoutMs: 8000 });

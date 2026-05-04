@@ -61,6 +61,12 @@ const stmts = {
   USER_UPDATE_DISPLAY_NAME: db.prepare(
     'UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?',
   ),
+  // Phase 8 sub-phase B — Limbo persistence shadow.
+  LIMBO_PUT: db.prepare(
+    'INSERT INTO limbo (player_id, user_id, sector_key, payload_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(player_id) DO UPDATE SET user_id=excluded.user_id, sector_key=excluded.sector_key, payload_json=excluded.payload_json, expires_at=excluded.expires_at, updated_at=excluded.updated_at',
+  ),
+  LIMBO_DELETE: db.prepare('DELETE FROM limbo WHERE player_id = ?'),
 };
 
 let drainedCount = 0;
@@ -111,6 +117,29 @@ function applyOp(op: PersistOp): { rowId?: number } {
     case 'TELEMETRY_SLEEP': {
       // No telemetry tables yet. Phase 7+ work will introduce them; for now
       // these are silent no-ops so VOLATILE flow is exercised end-to-end.
+      return {};
+    }
+    case 'LIMBO_PUT': {
+      stmts.LIMBO_PUT.run(
+        op.playerId,
+        op.userId,
+        op.sectorKey,
+        op.payloadJson,
+        op.expiresAt,
+        op.ts,
+        op.ts,
+      );
+      return {};
+    }
+    case 'LIMBO_DELETE': {
+      stmts.LIMBO_DELETE.run(op.playerId);
+      return {};
+    }
+    case 'LIMBO_GET': {
+      // LIMBO_GET is a type-completeness placeholder. Boot hydration reads
+      // via the read-only main-thread connection (see LimboStore.hydrate);
+      // it never flows through this worker. Silent no-op so a misrouted
+      // LIMBO_GET doesn't crash the BATCH transaction.
       return {};
     }
   }

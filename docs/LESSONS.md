@@ -544,6 +544,22 @@ The galaxy graph lives at [src/core/galaxy/galaxy.ts](../src/core/galaxy/galaxy.
 
 Walkthrough: [docs/architecture/galaxy-graph.md](architecture/galaxy-graph.md). Future plans (SQLite-backed runtime-mutable graph, admin tooling, per-edge arrival points) are captured there.
 
+## 2026-05-04 — Phase 8 sub-phase B — Vulnerable spool-up + two-TTL Limbo
+Commit: Phase 8 sub-phase B.
+
+The transit flow keeps the player's ship **in the source sector** during the 3-s spool. The orchestrator subscribes a one-shot `SHIP_DESTROYED` listener filtered by playerId; if it fires, transit aborts cleanly and the normal death path runs. This is intentional: it gives chasers a window to interrupt a fleeing target without inventing new gameplay. After the spool, `commitTransit` reads SAB pose (NOT Colyseus schema — schema is broadcast at 20 Hz, SAB is the 60 Hz ground truth), writes Limbo with the destination `sectorKey`, reserves a seat on the destination galaxy room, and sends `transit_state IN_TRANSIT` + `transit_ready` to the client. The client `consumeSeatReservation`s, the destination's `onJoin` consumes the Limbo entry, and the pilot reappears at the same `(x, y, vx, vy, angle, angvel, health, cooldown)`.
+
+**Two-TTL Limbo**: the same `LimboStore` holds entries with `LIMBO_DISCONNECT_TTL_MS = 5 min` (browser tab close, network drop) AND `LIMBO_TRANSIT_TTL_MS = 30 s` (in-flight cross-sector hop). Schema row is identical; only `expires_at` differs. The destination's `onJoin` can `take` either; the `payload.sectorKey === this.sectorKey` guard ensures we only consume entries destined for THIS room. The `playerToTransitInFlight` set on `SectorRoom` prevents the source-room's `onLeave` (fired on `consumeSeatReservation`) from clobbering the destination-keyed entry with a source-keyed 5-min entry.
+
+**Why pure Limbo, not Colyseus `allowReconnection`**: one path serves both same-sector reconnect and cross-sector transit. Trade-off: a same-sector tab-close-reopen does a fresh `joinOrCreate` instead of Colyseus's seat-locked reseat (slightly less ergonomic), but the simplification dominates and the design is forward-compatible with a future Redis-backed multi-VM Limbo without further refactoring.
+
+## 2026-05-04 — Phase 8 sub-phase B — bindRoomHandlers refactor for ColyseusClient
+Commit: Phase 8 sub-phase B.
+
+`ColyseusClient.connect()` historically registered all `room.onMessage` handlers inline against `this.room`. Sub-phase B's transit flow needs to swap `this.room` mid-session (after `consumeSeatReservation`), so the handlers were extracted into a closure-local `bindRoomHandlers(room: Room): void`. The closure captures `storedPlayerId` / `callbacks` / `bwStats`; the body is otherwise unchanged. The initial join calls `bindRoomHandlers(this.room)`; the post-transit `transit_ready` handler calls it again on the destination room.
+
+**Don't naively flag the room.onLeave callback as a disconnect during transit.** Mid-`consumeSeatReservation` the source room's WS is replaced and `onLeave` fires; if we set `connectionStatus = 'disconnected'` there, the HUD flickers a disconnect state for ~50 ms before the destination welcome rebinds. The handler now early-returns when `transitState === 'IN_TRANSIT' || 'SPOOLING'`, deferring connectionStatus updates to the destination's normal flow.
+
 ## 2026-05-04 — Phase 8 sub-phase A — Galaxy sectors tick when empty by design
 Commit: Phase 8 sub-phase A.
 

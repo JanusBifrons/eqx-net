@@ -50,4 +50,15 @@ CREATE TABLE IF NOT EXISTS game_snapshots (
   snapshot   TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS limbo (
+  player_id    TEXT PRIMARY KEY,
+  user_id      TEXT,
+  sector_key   TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  expires_at   INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_limbo_expires_at ON limbo(expires_at);
 `;

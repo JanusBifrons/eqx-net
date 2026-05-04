@@ -86,6 +86,10 @@ export default defineConfig({
         target: 'http://localhost:2567',
         changeOrigin: true,
       },
+      '/galaxy': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+      },
     },
   },
   build: {

@@ -44,7 +44,7 @@ Why: Zustand triggers React re-renders on subscription changes. Putting per-fram
 
 ## UI Scope
 
-- **React + MUI** is for out-of-game UI: splash, join screen, Galaxy Map (Phase 9), hyperspace spool-up (Phase 8), HUD readouts driven by Zustand.
+- **React + MUI** is for out-of-game UI and overlays. Phase 8 sub-phase A made the **Galaxy Map the user's first screen post-auth** (replacing the original "Enter Sector Alpha" splash) — see [components/GalaxyMapScreen.tsx](components/GalaxyMapScreen.tsx) and the reusable [components/HexGalaxyMap.tsx](components/HexGalaxyMap.tsx). Sub-phase B added two in-game overlays: [components/GalaxyMapOverlay.tsx](components/GalaxyMapOverlay.tsx) (opened with `M`, neighbour-only transit selection — non-adjacent sectors are dimmed) and [components/HyperspaceOverlay.tsx](components/HyperspaceOverlay.tsx) (spool progress bar + cancel button during SPOOLING; warp-streak background during IN_TRANSIT). Both overlays read from Zustand; transit messages travel over the existing Colyseus room socket via `transitClient.engageTransit(room, key)` / `cancelTransit(room)`. Active-Limbo UX on the landing screen: if the player has a held ship, the `GalaxyMapScreen` queries `/dev/limbo?playerId=` and constrains `selectableKeys` to that single sector with a banner "Resume your ship in [name]".
 - **Pixi** is the in-game surface: ships, projectiles, swarms, effects.
 - Never mix: don't put MUI inside the Pixi canvas, don't draw HUD numbers with Pixi.
 

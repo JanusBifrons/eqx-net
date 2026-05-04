@@ -15,6 +15,7 @@ import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
+import { getLimboStore } from '../db/PersistenceWorker.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling — a 500-entry log is ~150 KB; this is plenty.
@@ -114,4 +115,42 @@ export function devStatsHandler(req: Request, res: Response): void {
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
+}
+
+/**
+ * GET /dev/limbo?playerId=foo — Phase 8 sub-phase B inspection + landing-
+ * screen lookup. Returns the held-ship summary so the galaxy-map landing
+ * screen can render a "your ship is here" card. The summary deliberately
+ * omits velocity (vx/vy/angvel) and angle — those are simulation details
+ * the player doesn't care about — but does include position, health, and
+ * the metadata needed to format a "saved <duration> ago" UI string.
+ *
+ * NODE_ENV-gated mount in index.ts. The route is the single client-facing
+ * lookup for the active-Limbo UX; it's safe to expose pose because the
+ * playerId-keyed lookup requires the requester to already know the
+ * playerId (which is per-browser localStorage), and pose is broadcast
+ * unconditionally to anyone in the same sector anyway.
+ */
+export function devLimboHandler(req: Request, res: Response): void {
+  const playerId = String(req.query['playerId'] ?? '');
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId required' });
+    return;
+  }
+  const entry = getLimboStore().peek(playerId);
+  if (!entry) {
+    res.json({ exists: false });
+    return;
+  }
+  const p = entry.payload;
+  res.json({
+    exists: true,
+    sectorKey: p.sectorKey,
+    expiresAt: entry.expiresAt,
+    createdAt: entry.createdAt,
+    x: p.x,
+    y: p.y,
+    health: p.health,
+    userId: p.userId,
+  });
 }

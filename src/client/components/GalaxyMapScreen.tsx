@@ -1,15 +1,51 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Box, Button, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Alert } from '@mui/material';
+// Alert is retained for the Engineering Rooms warning dialog below; the Limbo
+// banner moved to a richer Box-based card.
 import { HexGalaxyMap } from './HexGalaxyMap';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy';
+import { loadStoredPlayerId } from '../identity/token';
 
 interface GalaxyMapScreenProps {
-  /** Sub-phase B will pass the active Limbo entry here. Sub-phase A: always null. */
+  /** Optional pre-resolved active Limbo entry. When omitted, the screen
+   *  fetches `/dev/limbo?playerId=...` itself. */
   activeLimboSectorKey?: string | null;
   /** Called with the selected room name (e.g. 'galaxy-sol-prime' or 'test-sector'). */
   onSelectRoom: (roomName: string) => void;
   /** Called when the user picks the local-only single-player diagnostic. */
   onSelectLocal: () => void;
+}
+
+/** Subset of the /dev/limbo response that drives the saved-ship card. */
+interface LimboSummary {
+  sectorKey: string;
+  expiresAt: number;
+  createdAt: number;
+  x: number;
+  y: number;
+  health: number;
+}
+
+/** Format an absolute ms timestamp as "5m 12s ago" / "just now". */
+function formatRelative(then: number, now: number): string {
+  const dt = Math.max(0, now - then);
+  if (dt < 5_000) return 'just now';
+  const totalSec = Math.floor(dt / 1000);
+  if (totalSec < 60) return `${totalSec}s ago`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec === 0 ? `${min}m ago` : `${min}m ${sec}s ago`;
+}
+
+/** Format the remaining time before a Limbo entry expires. */
+function formatRemaining(expiresAt: number, now: number): string {
+  const dt = Math.max(0, expiresAt - now);
+  if (dt < 1000) return 'expires now';
+  const totalSec = Math.floor(dt / 1000);
+  if (totalSec < 60) return `${totalSec}s left`;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return sec === 0 ? `${min}m left` : `${min}m ${sec}s left`;
 }
 
 interface EngineeringRoom {
@@ -34,12 +70,68 @@ export function GalaxyMapScreen({
   const [engineeringOpen, setEngineeringOpen] = useState(false);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
-  // If the player has an active Limbo entry, only their existing-ship sector
-  // is selectable; otherwise all 7 are. (Sub-phase A always passes null.)
-  const selectableKeys: readonly string[] = useMemo(() => {
-    if (activeLimboSectorKey) return [activeLimboSectorKey];
-    return GALAXY_SECTORS.map((s) => s.key);
+  // Phase 8 sub-phase B — fetch the full Limbo summary so we can render the
+  // "your ship is held here" card alongside the disabled-elsewhere map. The
+  // landing screen is the **single global gate** for entry: when an active
+  // Limbo entry exists, the player MUST resume into that ship (no fresh
+  // spawns elsewhere) until the entry expires or is consumed. We treat a
+  // 404 / fetch failure as "no Limbo entry" — UX is identical to no-Limbo.
+  const [limboSummary, setLimboSummary] = useState<LimboSummary | null>(null);
+  useEffect(() => {
+    if (activeLimboSectorKey !== undefined) return; // parent overrode; skip fetch
+    let cancelled = false;
+    const playerId = loadStoredPlayerId();
+    if (!playerId) return;
+    (async () => {
+      try {
+        const res = await fetch(`/dev/limbo?playerId=${encodeURIComponent(playerId)}`);
+        if (!res.ok) return;
+        const body = await res.json() as Partial<LimboSummary> & { exists: boolean };
+        if (
+          !cancelled
+          && body.exists
+          && typeof body.sectorKey === 'string'
+          && typeof body.expiresAt === 'number'
+          && typeof body.createdAt === 'number'
+          && typeof body.x === 'number'
+          && typeof body.y === 'number'
+          && typeof body.health === 'number'
+        ) {
+          setLimboSummary({
+            sectorKey: body.sectorKey,
+            expiresAt: body.expiresAt,
+            createdAt: body.createdAt,
+            x: body.x,
+            y: body.y,
+            health: body.health,
+          });
+        }
+      } catch {
+        // Treat as no Limbo — silent fall-through.
+      }
+    })();
+    return () => { cancelled = true; };
   }, [activeLimboSectorKey]);
+
+  // Live tick so the "saved Xs ago" + "Ys left" labels stay current without
+  // re-fetching. 1 Hz is plenty for the second-resolution display.
+  const [now, setNow] = useState<number>(() => Date.now());
+  useEffect(() => {
+    if (!limboSummary) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [limboSummary]);
+
+  const effectiveLimboSectorKey = activeLimboSectorKey ?? limboSummary?.sectorKey ?? null;
+
+  // If the player has an active Limbo entry, ONLY their held sector is
+  // selectable — every other tile is dimmed and non-clickable. This is the
+  // global galaxy-page gate the player asked for: you can't fresh-spawn
+  // elsewhere until the held ship is consumed (resume) or expires.
+  const selectableKeys: readonly string[] = useMemo(() => {
+    if (effectiveLimboSectorKey) return [effectiveLimboSectorKey];
+    return GALAXY_SECTORS.map((s) => s.key);
+  }, [effectiveLimboSectorKey]);
 
   const handleSelect = useCallback(
     (key: string) => {
@@ -48,7 +140,7 @@ export function GalaxyMapScreen({
     [onSelectRoom],
   );
 
-  const limboSector = activeLimboSectorKey ? getSector(activeLimboSectorKey) : null;
+  const limboSector = effectiveLimboSectorKey ? getSector(effectiveLimboSectorKey) : null;
   const hovered = hoveredKey ? getSector(hoveredKey) : null;
 
   return (
@@ -73,13 +165,87 @@ export function GalaxyMapScreen({
       </Box>
 
       {limboSector && (
-        <Alert
-          severity="info"
-          sx={{ mx: 'auto', mt: 1, mb: 0, bgcolor: 'rgba(0,255,136,0.08)', color: '#00ff88', border: '1px solid #1f7a4d' }}
+        <Box
           data-testid="limbo-resume-banner"
+          data-limbo-sector-key={limboSector.key}
+          sx={{
+            mx: 'auto',
+            mt: 1,
+            mb: 1,
+            px: 3,
+            py: 1.5,
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: 2,
+            bgcolor: 'rgba(0,255,136,0.06)',
+            border: '1px solid #1f7a4d',
+            borderRadius: 2,
+            maxWidth: 720,
+            width: 'min(95vw, 720px)',
+          }}
         >
-          Resume your ship in {limboSector.name}.
-        </Alert>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography variant="overline" sx={{ color: '#00ff88', letterSpacing: 2, lineHeight: 1.1 }}>
+              Ship in flight · {limboSector.name}
+            </Typography>
+            <Typography variant="caption" sx={{ display: 'block', color: '#9aa0b4', mt: 0.5 }}>
+              Resume to continue. You can&rsquo;t drop into another sector until this ship is consumed or its window expires.
+            </Typography>
+            {limboSummary && (
+              <Box
+                sx={{
+                  mt: 1,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+                  gap: 0.5,
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  color: '#ccc',
+                }}
+                data-testid="limbo-stats"
+              >
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#666', display: 'block' }}>SECTOR</Typography>
+                  <span data-testid="limbo-stat-sector">{limboSector.name}</span>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#666', display: 'block' }}>POSITION</Typography>
+                  <span data-testid="limbo-stat-position">
+                    ({limboSummary.x.toFixed(0)}, {limboSummary.y.toFixed(0)})
+                  </span>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#666', display: 'block' }}>HULL</Typography>
+                  <span data-testid="limbo-stat-health">{limboSummary.health.toFixed(0)}</span>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#666', display: 'block' }}>SAVED</Typography>
+                  <span data-testid="limbo-stat-saved">{formatRelative(limboSummary.createdAt, now)}</span>
+                </Box>
+                <Box>
+                  <Typography variant="caption" sx={{ color: '#666', display: 'block' }}>WINDOW</Typography>
+                  <span data-testid="limbo-stat-remaining">{formatRemaining(limboSummary.expiresAt, now)}</span>
+                </Box>
+              </Box>
+            )}
+          </Box>
+          <Button
+            variant="contained"
+            onClick={() => onSelectRoom(`galaxy-${limboSector.key}`)}
+            sx={{
+              bgcolor: '#00ff88',
+              color: '#000',
+              fontWeight: 700,
+              alignSelf: { xs: 'stretch', sm: 'center' },
+              whiteSpace: 'nowrap',
+              '&:hover': { bgcolor: '#00cc6a' },
+            }}
+            data-testid="limbo-resume-button"
+          >
+            Resume ship
+          </Button>
+        </Box>
       )}
 
       <Box
@@ -125,7 +291,10 @@ export function GalaxyMapScreen({
           </Typography>
         ) : (
           <Typography variant="caption" sx={{ color: '#555' }}>
-            Hover a sector for details. {limboSector ? '' : 'Click any sector to drop in.'}
+            Hover a sector for details.{' '}
+            {limboSector
+              ? 'Other sectors are locked while your ship is in flight.'
+              : 'Click any sector to drop in.'}
           </Typography>
         )}
       </Box>

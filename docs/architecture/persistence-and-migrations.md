@@ -154,6 +154,54 @@ covers:
 When you register a real migration, add tests covering both the migration
 path and the no-op path (current-version payload still passes through).
 
+## Limbo lane (Phase 8 sub-phase B)
+
+`LimboStore` ([src/server/limbo/LimboStore.ts](../../src/server/limbo/LimboStore.ts))
+holds a player's ship state in two distinct cases:
+
+- **Disconnect** (TTL = `LIMBO_DISCONNECT_TTL_MS = 5 min`): the WS dropped.
+  Reconnect within the window → resume ship at last-known pose with
+  cooldowns and userId binding intact. After expiry, prune evicts and the
+  player respawns fresh on next connect.
+- **Transit-in-flight** (TTL = `LIMBO_TRANSIT_TTL_MS = 30 s`): pilot just
+  spooled out of source toward destination. Destination's `onJoin` consumes
+  within hundreds of ms; the 30 s cap is just enough for seat-reservation +
+  WS handshake jitter.
+
+The schema row is identical for both — only `expires_at` differs. The store
+is **in-memory primary, persistence shadow on every mutation**: every put
+and delete calls `enqueueCritical({ type: 'LIMBO_PUT' | 'LIMBO_DELETE', ... })`.
+The hot path is zero-I/O; SQLite is the durability spine. On boot,
+`initLimboStore()` runs `SELECT player_id, ... FROM limbo WHERE expires_at > ?`
+against the read-only main-thread connection and rehydrates the in-memory
+map, then starts a 30 s prune timer (`unref`'d so it doesn't keep the
+process alive on its own).
+
+**Boot sequence** (in `src/server/index.ts:main()`): `await initWorker()` →
+`httpServer.listen` → `initLimboStore()` → eager `matchMaker.createRoom`
+per galaxy sector. The order matters: `initLimboStore` reads through the
+DB connection that `initWorker` lazy-opens, and the eager-create loop
+relies on the worker being READY for the schema-version check on first
+boot.
+
+**Shutdown drain**: SIGINT / SIGTERM / `POST /dev/shutdown` runs
+`getLimboStore().stopPruneTimer()` first, then `await persistence.shutdown({ timeoutMs: 8000 })`.
+The persistence shadow already mirrored every Limbo mutation through
+CRITICAL, so the existing drain handles them — no separate Limbo flush.
+
+**Atomic `take`**: `LimboStore.take(playerId)` is the only operation that
+needs atomic semantics (get + delete must not race). The in-memory `Map.get`
++ `Map.delete` is implicitly atomic under V8's single-threaded event loop.
+A future Redis-backed `LimboStore` will need `WATCH/MULTI/EXEC` or a Lua
+script for the same guarantee — the contract surface (`put`, `take`,
+`peek`, `delete`, `prune`, `hydrate`) is shaped for that swap.
+
+**`/dev/limbo?playerId=`** ([diagRouter.devLimboHandler](../../src/server/routes/diagRouter.ts))
+returns `{ exists, sectorKey, expiresAt }` for E2E inspection. It deliberately
+**does NOT** return the payload; the payload is consumed only by the
+destination room's `onJoin` and we don't want to leak ship pose to a side
+channel.
+
 ## Future plans
 
 - **Runtime zod validation at hydrate time.** `parseSnapshot` currently

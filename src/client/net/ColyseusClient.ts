@@ -1,7 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { useUIStore, type ConnectionStatus } from '../state/store';
@@ -153,6 +153,12 @@ export class ColyseusGameClient {
   };
 
   private room: Room | null = null;
+
+  /** Phase 8 sub-phase B — exposed for the GalaxyMapOverlay to call
+   *  `room.send('engage_transit', ...)`. Returns null until `connect()`. */
+  getRoom(): Room | null {
+    return this.room;
+  }
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
   private lastSnapshotPos: { x: number; y: number } | null = null;
@@ -294,7 +300,14 @@ export class ColyseusGameClient {
       }
     }
 
-    this.room.onMessage('welcome', (msg: WelcomeMessage) => {
+    // Phase 8 sub-phase B — extracted handler binding so the same set of
+    // listeners can be re-attached to the destination room post-transit
+    // (after `client.consumeSeatReservation`). Closure-captures
+    // `storedPlayerId` / `callbacks` / `bwStats` so the body stays identical
+    // to the pre-extraction version. Called once below for the initial
+    // room, and again from the `transit_ready` handler for the destination.
+    const bindRoomHandlers = (room: Room): void => {
+      room.onMessage('welcome', (msg: WelcomeMessage) => {
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
       console.log(
         '[ColyseusClient] welcome received, playerId:', msg.playerId,
@@ -312,11 +325,14 @@ export class ColyseusGameClient {
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
       callbacks.onPlayerId(msg.playerId);
+      // Phase 8 — surface the stable galaxy sector key for HUD + galaxy-map
+      // overlay consumers. `null` for engineering rooms.
+      useUIStore.getState().setCurrentSectorKey(msg.sectorKey);
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
     });
 
-    this.room.onMessage('snapshot', (snap: SnapshotMessage) => {
+    room.onMessage('snapshot', (snap: SnapshotMessage) => {
       const bw = bwStats();
       if (bw) {
         // Approximation — Colyseus uses msgpack on the wire, which is
@@ -335,7 +351,7 @@ export class ColyseusGameClient {
     // collide with them and the local hitscan can target them. The body is
     // keyed by `swarm-${entityId}` to avoid colliding with playerIds; the
     // server's `laser_fired` events use the same key for swarm hits.
-    this.room.onMessage('swarm', (raw: unknown) => {
+    room.onMessage('swarm', (raw: unknown) => {
       const bw = bwStats();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
@@ -351,15 +367,15 @@ export class ColyseusGameClient {
       useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
-    this.room.onMessage('damage', (evt: DamageEvent) => {
+    room.onMessage('damage', (evt: DamageEvent) => {
       this.handleDamage(evt);
     });
 
-    this.room.onMessage('destroy', (evt: DestroyEvent) => {
+    room.onMessage('destroy', (evt: DestroyEvent) => {
       this.handleDestroy(evt);
     });
 
-    this.room.onMessage('hit_ack', (ack: HitAckMessage) => {
+    room.onMessage('hit_ack', (ack: HitAckMessage) => {
       this.ghostManager.resolve(ack.clientShotId, ack.hit);
       if (ack.rejected) {
         useUIStore.getState().setSectorAlert('shot_rejected');
@@ -367,7 +383,7 @@ export class ColyseusGameClient {
       }
     });
 
-    this.room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
+    room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
       // Own shots are already shown as liveBeam — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
@@ -402,27 +418,113 @@ export class ColyseusGameClient {
       });
     });
 
-    this.room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
+    room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
       this.handleRespawnAck(msg);
     });
 
-    this.room.onStateChange((state: unknown) => {
+    // Phase 8 sub-phase B — transit lifecycle messages.
+    room.onMessage('transit_state', (msg: TransitStateMessage) => {
+      const ui = useUIStore.getState();
+      ui.setTransitState(msg.state);
+      if (msg.targetSectorKey !== undefined) ui.setTransitTargetSectorKey(msg.targetSectorKey);
+      if (msg.state === 'SPOOLING') {
+        ui.setTransitProgress(0);
+        const start = performance.now();
+        const dur = msg.spoolMs ?? 3000;
+        const ramp = (): void => {
+          const elapsed = performance.now() - start;
+          const cur = useUIStore.getState();
+          // Ramp only while still SPOOLING — bail if cancelled or committed.
+          if (cur.transitState !== 'SPOOLING') return;
+          if (elapsed >= dur) {
+            cur.setTransitProgress(1);
+            return;
+          }
+          cur.setTransitProgress(elapsed / dur);
+          requestAnimationFrame(ramp);
+        };
+        requestAnimationFrame(ramp);
+      } else if (msg.state === 'DOCKED') {
+        // Cancellation path. Surface the reason briefly.
+        ui.setTransitProgress(0);
+        ui.setTransitTargetSectorKey(null);
+        if (msg.reason) {
+          ui.setSectorAlert(`transit cancelled: ${msg.reason}`);
+          setTimeout(() => useUIStore.getState().setSectorAlert(null), 2000);
+        }
+      } else if (msg.state === 'ARRIVED') {
+        // Brief fade then back to DOCKED so the overlay clears.
+        ui.setTransitProgress(1);
+        setTimeout(() => {
+          const cur = useUIStore.getState();
+          cur.setTransitState('DOCKED');
+          cur.setTransitProgress(0);
+          cur.setTransitTargetSectorKey(null);
+        }, 500);
+      }
+    });
+
+    room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string }) => {
+      try {
+        const newRoom = await client.consumeSeatReservation<unknown>(msg.reservation as never);
+        this.room = newRoom;
+        bindRoomHandlers(newRoom);
+        // Server's onJoin will send a `welcome` setting currentSectorKey;
+        // it'll also send `transit_state ARRIVED` once the destination
+        // orchestrator marks the player landed (this path only fires on
+        // the pre-consume edge — see server commitTransit). Defensive
+        // fallback: if no ARRIVED arrives within 2 s, clear the overlay
+        // ourselves so the player isn't stuck looking at warp-streaks.
+        setTimeout(() => {
+          const cur = useUIStore.getState();
+          if (cur.transitState === 'IN_TRANSIT') {
+            cur.setTransitState('ARRIVED');
+            setTimeout(() => {
+              const c2 = useUIStore.getState();
+              c2.setTransitState('DOCKED');
+              c2.setTransitProgress(0);
+              c2.setTransitTargetSectorKey(null);
+            }, 500);
+          }
+        }, 2000);
+      } catch (err) {
+        console.error('[ColyseusClient] consumeSeatReservation failed', err);
+        const ui = useUIStore.getState();
+        ui.setTransitState('DOCKED');
+        ui.setTransitProgress(0);
+        ui.setTransitTargetSectorKey(null);
+        ui.setSectorAlert('transit failed');
+        setTimeout(() => useUIStore.getState().setSectorAlert(null), 2000);
+      }
+    });
+
+    room.onStateChange((state: unknown) => {
       this.syncMirror(state);
     });
 
-    this.room.onLeave((code) => {
+    room.onLeave((code) => {
       console.warn('[ColyseusClient] left room, code:', code);
       logEvent('disconnected', { code });
+      // During transit `consumeSeatReservation` we'll see an onLeave on the
+      // source room as the WS is replaced. Don't flip status to disconnected
+      // when a transit is mid-flight — the destination is already being
+      // bound. The post-consume rebind sets connected status implicitly via
+      // the new room's flow.
+      const cur = useUIStore.getState();
+      if (cur.transitState === 'IN_TRANSIT' || cur.transitState === 'SPOOLING') return;
       callbacks.onConnectionStatus('disconnected');
       this.keyboard = null;
       this.touchInput = null;
     });
 
-    this.room.onError((code, message) => {
+    room.onError((code, message) => {
       console.error('[ColyseusClient] room error', code, message);
       logEvent('room_error', { code, message });
       callbacks.onConnectionStatus('error');
     });
+    };
+
+    bindRoomHandlers(this.room);
 
     callbacks.onConnectionStatus('connected');
     console.log('[ColyseusClient] connected — input loop driven by rAF');

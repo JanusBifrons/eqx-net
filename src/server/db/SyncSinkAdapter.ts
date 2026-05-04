@@ -20,6 +20,8 @@ export class SyncSinkAdapter implements IPersistenceSink {
     USER_PROVIDER: ReturnType<DatabaseSync['prepare']>;
     USER_PROVIDER_IGNORE: ReturnType<DatabaseSync['prepare']>;
     USER_UPDATE_DISPLAY_NAME: ReturnType<DatabaseSync['prepare']>;
+    LIMBO_PUT: ReturnType<DatabaseSync['prepare']>;
+    LIMBO_DELETE: ReturnType<DatabaseSync['prepare']>;
   };
 
   constructor(private readonly db: DatabaseSync) {
@@ -49,6 +51,11 @@ export class SyncSinkAdapter implements IPersistenceSink {
       USER_UPDATE_DISPLAY_NAME: db.prepare(
         'UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?',
       ),
+      LIMBO_PUT: db.prepare(
+        'INSERT INTO limbo (player_id, user_id, sector_key, payload_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(player_id) DO UPDATE SET user_id=excluded.user_id, sector_key=excluded.sector_key, payload_json=excluded.payload_json, expires_at=excluded.expires_at, updated_at=excluded.updated_at',
+      ),
+      LIMBO_DELETE: db.prepare('DELETE FROM limbo WHERE player_id = ?'),
     };
   }
 
@@ -125,6 +132,26 @@ export class SyncSinkAdapter implements IPersistenceSink {
       }
       case 'TELEMETRY_SHED':
       case 'TELEMETRY_SLEEP': {
+        return {};
+      }
+      case 'LIMBO_PUT': {
+        this.stmts.LIMBO_PUT.run(
+          op.playerId,
+          op.userId,
+          op.sectorKey,
+          op.payloadJson,
+          op.expiresAt,
+          op.ts,
+          op.ts,
+        );
+        return {};
+      }
+      case 'LIMBO_DELETE': {
+        this.stmts.LIMBO_DELETE.run(op.playerId);
+        return {};
+      }
+      case 'LIMBO_GET': {
+        // Boot hydration reads via the read-only main-thread connection.
         return {};
       }
     }
