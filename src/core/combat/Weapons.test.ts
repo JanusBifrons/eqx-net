@@ -4,10 +4,12 @@ import {
   hitscanRaycast,
   spawnProjectile,
   rayHitsSphere,
+  rayHitsConvexPolygon,
   HITSCAN_RANGE,
   PROJECTILE_RADIUS,
   SHIP_COLLISION_RADIUS,
 } from './Weapons.js';
+import type { Vec2 } from '../swarm/asteroidShape.js';
 
 describe('rayHitsSphere (geometric, no Rapier)', () => {
   it('hits a sphere directly ahead', () => {
@@ -34,6 +36,85 @@ describe('rayHitsSphere (geometric, no Rapier)', () => {
   it('hits when ray origin is inside the sphere', () => {
     const dist = rayHitsSphere(0, 0, 1, 0, 500, 5, 0, 12);
     expect(dist).not.toBeNull();
+  });
+});
+
+describe('rayHitsConvexPolygon (geometric, no Rapier)', () => {
+  // Axis-aligned square centred at origin, side length 20.
+  const square: Vec2[] = [
+    { x: -10, y: -10 },
+    { x:  10, y: -10 },
+    { x:  10, y:  10 },
+    { x: -10, y:  10 },
+  ];
+
+  it('hits a centred square head-on', () => {
+    // Ray from (-100, 0) along +x at the square at origin.
+    const dist = rayHitsConvexPolygon(-100, 0, 1, 0, 500, 0, 0, 0, square);
+    expect(dist).not.toBeNull();
+    expect(dist!).toBeCloseTo(90, 5); // hits the left edge at x=-10
+  });
+
+  it('returns null when the ray misses the polygon entirely', () => {
+    const dist = rayHitsConvexPolygon(-100, 100, 1, 0, 500, 0, 0, 0, square);
+    expect(dist).toBeNull();
+  });
+
+  it('respects rotation — ray that would miss the local-space silhouette misses too', () => {
+    // Skinny "wall" rectangle: 40 wide × 4 tall, centred at origin.
+    const wall: Vec2[] = [
+      { x: -20, y: -2 },
+      { x:  20, y: -2 },
+      { x:  20, y:  2 },
+      { x: -20, y:  2 },
+    ];
+    // With angle=0, a ray along +y from (0, -100) hits the wall (it's 40 wide).
+    const hitFlat = rayHitsConvexPolygon(0, -100, 0, 1, 500, 0, 0, 0, wall);
+    expect(hitFlat).not.toBeNull();
+    // Rotate the wall 90° (so it's now 40 tall × 4 wide). Same ray now
+    // hits the narrow edge near x=0, dist ≈ 100 - 2 = 98.
+    const hitRotated = rayHitsConvexPolygon(0, -100, 0, 1, 500, 0, 0, Math.PI / 2, wall);
+    expect(hitRotated).not.toBeNull();
+    // A ray from (10, -100) along +y misses the rotated wall (now 4 wide centred at x=0).
+    const miss = rayHitsConvexPolygon(10, -100, 0, 1, 500, 0, 0, Math.PI / 2, wall);
+    expect(miss).toBeNull();
+  });
+
+  it('returns null when the polygon is behind the ray', () => {
+    const dist = rayHitsConvexPolygon(0, 0, 1, 0, 500, -100, 0, 0, square);
+    expect(dist).toBeNull();
+  });
+
+  it('returns null when hit distance exceeds maxDist', () => {
+    const dist = rayHitsConvexPolygon(-1000, 0, 1, 0, 500, 0, 0, 0, square);
+    expect(dist).toBeNull();
+  });
+
+  it('returns 0 when the ray origin is already inside the polygon', () => {
+    const dist = rayHitsConvexPolygon(0, 0, 1, 0, 500, 0, 0, 0, square);
+    expect(dist).toBe(0);
+  });
+
+  it('returns null on degenerate input (< 3 vertices)', () => {
+    expect(rayHitsConvexPolygon(0, 0, 1, 0, 500, 0, 0, 0, [])).toBeNull();
+    expect(rayHitsConvexPolygon(0, 0, 1, 0, 500, 0, 0, 0, [{ x: 0, y: 0 }, { x: 1, y: 1 }])).toBeNull();
+  });
+
+  it('grazing ray that hits the bounding circle but misses the polygon silhouette returns null', () => {
+    // Axis-aligned 20×20 square at origin. Bounding circle radius = √200 ≈ 14.14.
+    // A ray at y=13 is INSIDE the bounding circle (|y|<14.14) but ABOVE the
+    // polygon (y>10). This is exactly the case the bounding-circle hit test
+    // would false-positive on; the polygon test must reject it.
+    const grazingMiss = rayHitsConvexPolygon(-100, 13, 1, 0, 500, 0, 0, 0, square);
+    expect(grazingMiss).toBeNull();
+    // Same ray geometry but well inside the polygon (y=5) → hits.
+    const insideY = rayHitsConvexPolygon(-100, 5, 1, 0, 500, 0, 0, 0, square);
+    expect(insideY).not.toBeNull();
+    // Sanity: the bounding-circle test would have *incorrectly* hit the
+    // grazing ray, so contrasting the two sharpens the regression value.
+    const boundingCircleR = Math.sqrt(200);
+    const sphereHit = rayHitsSphere(-100, 13, 1, 0, 500, 0, 0, boundingCircleR);
+    expect(sphereHit).not.toBeNull();
   });
 });
 

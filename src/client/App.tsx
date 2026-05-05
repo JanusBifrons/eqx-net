@@ -471,7 +471,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
           // hand-rolled `asteroid-N` ids the legacy MapSchema used.
           if (gameClient.mirror.swarm) {
             const swarmMap: Record<string, { x: number; y: number }> = {};
-            const swarmDetail: Record<string, { x: number; y: number; angle: number; kind: number; sleeping: boolean; lastUpdateTick: number }> = {};
+            const swarmDetail: Record<string, { x: number; y: number; angle: number; kind: number; sleeping: boolean; lastUpdateTick: number; radius: number }> = {};
             for (const [entityId, entry] of gameClient.mirror.swarm.entries()) {
               const key = `swarm-${entityId}`;
               swarmMap[key] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
@@ -482,6 +482,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
                 kind: entry.kind,
                 sleeping: entry.sleeping,
                 lastUpdateTick: entry.lastUpdateTick,
+                radius: entry.radius,
               };
             }
             el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);

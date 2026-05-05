@@ -9,6 +9,8 @@
  * Slots are 0..MAX_ENTITIES-1, allocated by the SectorRoom slot pool.
  */
 
+import type { Vec2 } from '../../core/swarm/asteroidShape.js';
+
 export type SwarmKind = 0 /* asteroid */ | 1 /* drone */;
 
 export interface SwarmEntityRecord {
@@ -18,6 +20,11 @@ export interface SwarmEntityRecord {
   kind: SwarmKind;
   /** Collision radius — shipped on the wire and used by the server hitscan path. */
   radius: number;
+  /** Polygon vertices in entity-local space, populated for kind=0 asteroids
+   *  whose collider is a convex hull. Used by the polygon-aware hit resolver
+   *  in `SectorRoom.handleFire`. The same array is the one passed to the
+   *  physics worker at spawn time — single source of truth per asteroid. */
+  vertices?: ReadonlyArray<Vec2>;
   /** Last pose actually included in a swarm packet, for delta detection. */
   lastBroadcast: { x: number; y: number; angle: number };
   /** Last sleeping flag included in a swarm packet, for transition detection. */

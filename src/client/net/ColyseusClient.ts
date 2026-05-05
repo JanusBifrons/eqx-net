@@ -13,6 +13,7 @@ import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
+import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -970,7 +971,13 @@ export class ColyseusGameClient {
       const key = `swarm-${entityId}`;
       seen.add(key);
       if (!this.predWorld.hasShip(key)) {
-        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3);
+        // Asteroids (kind=0) get a deterministic convex-polygon collider —
+        // identical vertices to the server because both sides seed from the
+        // same entityId. Drones (kind=1) stay circular.
+        const vertices = entry.kind === 0
+          ? generateAsteroidVertices(entityId, entry.radius)
+          : undefined;
+        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3, vertices);
         // 5c-stabilise bonus: swarm bodies are collision-only on the client.
         // Locking translations/rotations means reconciler replay (which calls
         // world.step()) won't drift them; the binary swarm packet is the

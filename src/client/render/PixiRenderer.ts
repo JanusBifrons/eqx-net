@@ -3,6 +3,7 @@ import { Viewport } from 'pixi-viewport';
 import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
+import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 
 const WORLD_W = 10000;
 const WORLD_H = 10000;
@@ -84,11 +85,20 @@ function buildBoostFlameGfx(): Graphics {
   return g;
 }
 
-function buildAsteroidGfx(radius: number): Graphics {
+function buildAsteroidGfx(entityId: number, radius: number): Graphics {
   const g = new Graphics();
-  g.circle(0, 0, radius);
+  // Same generator the server uses to build the convex-hull collider — both
+  // sides seed from the same entityId, so the rendered silhouette matches the
+  // physics shape exactly. Vertices are emitted in math-space (Y-up); the
+  // sprite is rendered in Pixi screen space (Y-down) and rotated by `-angle`.
+  // For symmetric polygons (ship/drone) the y-flip is invisible, but an
+  // asymmetric polygon mismatches its collision hull as it rotates unless
+  // every vertex's y is negated for drawing only.
+  const mathVerts = generateAsteroidVertices(entityId, radius);
+  const screenVerts = mathVerts.map((v) => ({ x: v.x, y: -v.y }));
+  g.poly(screenVerts);
   g.fill({ color: ASTEROID_COLOR });
-  g.circle(0, 0, radius);
+  g.poly(screenVerts);
   g.stroke({ color: ASTEROID_OUTLINE, width: 1.5 });
   return g;
 }
@@ -346,7 +356,7 @@ export class PixiRenderer implements IRenderer {
         seen.add(spriteKey);
         let sprite = this.sprites.get(spriteKey);
         if (!sprite) {
-          sprite = entry.kind === 1 ? buildDroneGfx(entry.radius) : buildAsteroidGfx(entry.radius);
+          sprite = entry.kind === 1 ? buildDroneGfx(entry.radius) : buildAsteroidGfx(entityId, entry.radius);
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }

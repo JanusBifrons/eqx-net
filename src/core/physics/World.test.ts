@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { PhysicsWorld } from './World.js';
+import { generateAsteroidVertices } from '../swarm/asteroidShape.js';
 
 let world: PhysicsWorld;
 
@@ -83,5 +84,30 @@ describe('PhysicsWorld', () => {
 
   it('isSleeping returns false for unknown ids', () => {
     expect(world.isSleeping('ghost')).toBe(false);
+  });
+});
+
+describe('PhysicsWorld.spawnObstacle (polygon path)', () => {
+  it('builds a convex-hull collider when vertices are provided and steps without NaN', () => {
+    const verts = generateAsteroidVertices(7, 24);
+    world.spawnObstacle('poly-asteroid', 1000, 1000, 24, 500, verts);
+    world.tick(1 / 60);
+    const state = world.getShipState('poly-asteroid');
+    expect(state).not.toBeNull();
+    expect(Number.isFinite(state!.x)).toBe(true);
+    expect(Number.isFinite(state!.y)).toBe(true);
+    expect(Number.isFinite(state!.angle)).toBe(true);
+  });
+
+  it('falls back to ball collider on degenerate vertex input', () => {
+    expect(() => world.spawnObstacle('degenerate-poly', 2000, 2000, 24, 500, [])).not.toThrow();
+    world.tick(1 / 60);
+    expect(world.getShipState('degenerate-poly')).not.toBeNull();
+  });
+
+  it('preserves backward-compatible ball-collider path when vertices are omitted', () => {
+    expect(() => world.spawnObstacle('legacy-asteroid', 3000, 3000, 32, 500)).not.toThrow();
+    world.tick(1 / 60);
+    expect(world.getShipState('legacy-asteroid')).not.toBeNull();
   });
 });

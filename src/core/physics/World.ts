@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
+import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShape.js';
 
 const FIXED_DT = 1 / 60;
 const THRUST_IMPULSE = 1.5;
@@ -72,18 +73,43 @@ export class PhysicsWorld {
 
   /**
    * Spawn a passive dynamic body (asteroid-ish) for collision testing. No damping
-   * on linear or angular motion so an initial velocity / spin persists. Renders
-   * via the same ship mirror entry; the renderer draws it as a remote-coloured
-   * triangle, which is fine for diagnostics.
+   * on linear or angular motion so an initial velocity / spin persists.
+   *
+   * When `vertices` is provided, the collider is a convex hull built from those
+   * points (entity-local space). Density is scaled by the polygon area so the
+   * resulting body mass matches the requested `mass` exactly. When `vertices`
+   * is omitted, behaviour is unchanged: a `ball(radius)` collider with density
+   * derived from the disc area.
    */
-  spawnObstacle(id: string, x: number, y: number, radius = 24, mass = 3): void {
+  spawnObstacle(
+    id: string,
+    x: number,
+    y: number,
+    radius = 24,
+    mass = 3,
+    vertices?: ReadonlyArray<Vec2>,
+  ): void {
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y)
       .setLinearDamping(0)
       .setAngularDamping(0);
     const body = this.world.createRigidBody(bodyDesc);
-    const density = mass / (Math.PI * radius * radius);
-    const collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
+
+    let collider: RAPIER.ColliderDesc | null = null;
+    if (vertices && vertices.length >= 3) {
+      const flat = verticesToFloat32(vertices);
+      collider = RAPIER.ColliderDesc.convexHull(flat);
+      if (collider) {
+        const area = polygonArea(vertices);
+        // Fall back to disc-area density if the polygon is degenerate (zero area).
+        const density = area > 0 ? mass / area : mass / (Math.PI * radius * radius);
+        collider.setRestitution(0.8).setFriction(0).setDensity(density);
+      }
+    }
+    if (!collider) {
+      const density = mass / (Math.PI * radius * radius);
+      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
+    }
     this.world.createCollider(collider, body);
     this.bodies.set(id, body);
     this.handleToId.set(body.handle, id);

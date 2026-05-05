@@ -23,6 +23,7 @@
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { PhysicsWorld } from './World.js';
+import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -51,7 +52,7 @@ const SLEEP_HYSTERESIS_TICKS = 12;
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
-interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }
+interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd;
@@ -113,7 +114,7 @@ async function main(): Promise<void> {
         break;
       }
       case 'SPAWN_OBSTACLE': {
-        physics.spawnObstacle(cmd.obstacleId, cmd.x, cmd.y, cmd.radius, cmd.mass);
+        physics.spawnObstacle(cmd.obstacleId, cmd.x, cmd.y, cmd.radius, cmd.mass, cmd.vertices);
         if (cmd.vx !== 0 || cmd.vy !== 0) {
           physics.setShipState(cmd.obstacleId, { x: cmd.x, y: cmd.y, angle: 0, vx: cmd.vx, vy: cmd.vy });
         }

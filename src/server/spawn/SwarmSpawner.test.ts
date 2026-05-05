@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { SwarmSpawner, type AsteroidSpec } from './SwarmSpawner.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
+import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
+import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
   slotBase,
@@ -10,6 +12,7 @@ import {
 
 interface PostedCmd {
   slot: number; id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number;
+  vertices?: ReadonlyArray<Vec2>;
 }
 
 describe('SwarmSpawner', () => {
@@ -19,6 +22,7 @@ describe('SwarmSpawner', () => {
   let u32: Uint32Array;
   let posted: PostedCmd[];
   let availableSlots: number[];
+  let lagCompRegistered: string[];
 
   beforeEach(() => {
     registry = new SwarmEntityRegistry();
@@ -27,11 +31,14 @@ describe('SwarmSpawner', () => {
     u32 = new Uint32Array(sab);
     posted = [];
     availableSlots = [10, 11, 12]; // pre-stocked pool
+    lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass) => posted.push({ slot, id, x, y, vx, vy, radius, mass }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices }),
       sabF32: f32,
       sabU32: u32,
+      registerLagComp: (id) => lagCompRegistered.push(id),
     });
   });
 
@@ -90,5 +97,41 @@ describe('SwarmSpawner', () => {
     expect(f32[b + SLOT_VY_OFF]).toBeCloseTo(-0.7, 5);
     expect(posted[0]!.vx).toBeCloseTo(0.5, 5);
     expect(posted[0]!.vy).toBeCloseTo(-0.7, 5);
+  });
+
+  it('asteroid spawn forwards polygon vertices to the worker AND attaches them to the registry record', () => {
+    spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 32 });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.vertices).toBeDefined();
+    expect(posted[0]!.vertices!.length).toBeGreaterThanOrEqual(3);
+    const rec = registry.get('rock')!;
+    expect(rec.vertices).toBeDefined();
+    // Single source of truth: same array reference on both worker command and
+    // registry record means the polygon-aware hit resolver and the physics
+    // collider are guaranteed to agree on shape.
+    expect(rec.vertices).toBe(posted[0]!.vertices);
+  });
+
+  it('drone spawn does NOT forward vertices and does NOT attach vertices to the record', () => {
+    spawner.spawnDrone({ id: 'drone-1', x: 100, y: 100 });
+    expect(posted).toHaveLength(1);
+    expect(posted[0]!.vertices).toBeUndefined();
+    expect(registry.get('drone-1')!.vertices).toBeUndefined();
+  });
+
+  it('asteroid spec without explicit mass falls back to ASTEROID_DEFAULT_MASS', () => {
+    spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 32 });
+    expect(posted[0]!.mass).toBe(ASTEROID_DEFAULT_MASS);
+  });
+
+  it('asteroid spec WITH explicit mass overrides the default', () => {
+    spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 32, mass: 7 });
+    expect(posted[0]!.mass).toBe(7);
+  });
+
+  it('every swarm spawn registers with the lag-comp ring (mass-independent)', () => {
+    spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 32 });
+    spawner.spawnDrone({ id: 'drone-x', x: 0, y: 0 });
+    expect(lagCompRegistered).toEqual(['rock', 'drone-x']);
   });
 });

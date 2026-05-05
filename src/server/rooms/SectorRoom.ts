@@ -13,6 +13,7 @@ import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { AiController } from '../ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
@@ -52,6 +53,7 @@ import { setSession, clearSession } from '../transit/sessionRegistry.js';
 import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
+  rayHitsConvexPolygon,
   HITSCAN_DAMAGE,
   PROJECTILE_DAMAGE,
   HITSCAN_RANGE,
@@ -91,18 +93,19 @@ type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number }
+  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
   | { type: 'CLOCK_RATE';     rate: number };
 
 /** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
  *  initial swarm population matches between sessions. Spawned via SwarmSpawner
  *  in onCreate(), then shipped via the binary swarm broadcast — no longer on
- *  Colyseus MapSchema. */
+ *  Colyseus MapSchema. Mass is omitted — the spawner applies
+ *  `ASTEROID_DEFAULT_MASS`. Radii vary so silhouettes read as different. */
 const ASTEROIDS: ReadonlyArray<AsteroidSpec> = [
-  { id: 'asteroid-0', x:  200, y:    0, vx: 0,   vy: 0,    radius: 32, mass: 5 },
-  { id: 'asteroid-1', x: -180, y:  120, vx: 0.3, vy: -0.2, radius: 24, mass: 3 },
-  { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 40, mass: 7 },
+  { id: 'asteroid-0', x:  200, y:    0, vx: 0,   vy: 0,    radius: 32 },
+  { id: 'asteroid-1', x: -180, y:  120, vx: 0.3, vy: -0.2, radius: 22 },
+  { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 46 },
 ];
 
 interface ProjectileRecord {
@@ -316,13 +319,14 @@ export class SectorRoom extends Room<SectorState> {
 
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
       droneBehaviour: () => new HostileDroneBehaviour(),
       interestGrid: this.interestGrid,
+      registerLagComp: (id) => this.snapshotRing.registerEntity(id),
     });
     const seeded = this.swarmSpawner.seedAsteroids(asteroidRoster);
     if (seeded < asteroidRoster.length) {
@@ -546,8 +550,10 @@ export class SectorRoom extends Room<SectorState> {
       const targetShip = this.state.ships.get(targetId);
       if (!targetShip || !targetShip.alive) continue;
 
-      // Use rewound position if available; fall back to current position.
-      const rewound = this.snapshotRing.getAt(targetId, tick);
+      // Use rewound pose if available; fall back to current position. Ships
+      // are still circles, so angle is irrelevant for the hit-test, but the
+      // ring's API returns it uniformly for any future polygon-shaped ship.
+      const rewound = this.snapshotRing.getPoseAt(targetId, tick);
       const cx = rewound?.x ?? targetShip.x;
       const cy = rewound?.y ?? targetShip.y;
 
@@ -559,15 +565,25 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    // Check swarm entities (asteroids, drones) — no lag-comp needed in 5c
-    // (asteroids move slowly; drones contribute to SnapshotRing in 5e).
-    // Pose read direct from SAB so we always check current authoritative
-    // positions, never the last-broadcast pose stored on the registry.
+    // Check swarm entities (asteroids, drones) lag-compensated against the
+    // shooter's tick. Asteroids (kind=0) with vertices use the polygon-aware
+    // hit test so the silhouette — not the bounding circle — decides hits.
+    // Drones (kind=1) and any asteroid that somehow lacks vertices fall back
+    // to the sphere test against rec.radius. Per-entity rewound pose is the
+    // single source of truth; SAB-current is the fallback for ticks outside
+    // the ring window.
     for (const rec of this.swarmRegistry.all()) {
+      const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
       const b = slotBase(rec.slot);
-      const sx = this.sabF32[b + SLOT_X_OFF]!;
-      const sy = this.sabF32[b + SLOT_Y_OFF]!;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, sx, sy, rec.radius);
+      const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
+      const cy = rewound?.y ?? this.sabF32[b + SLOT_Y_OFF]!;
+      const ca = rewound?.angle ?? this.sabF32[b + SLOT_ANGLE_OFF]!;
+      let dist: number | null;
+      if (rec.kind === 0 && rec.vertices) {
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, ca, rec.vertices);
+      } else {
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, rec.radius);
+      }
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = rec.id;
@@ -802,6 +818,7 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmRegistry.unregister(rec.id);
     this.aiController.unregister(rec.id);
     this.swarmHealth.delete(rec.id);
+    this.snapshotRing.unregisterEntity(rec.id);
     this.freeSlots.push(rec.slot);
     if (opts.broadcast) {
       logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
@@ -1545,19 +1562,29 @@ export class SectorRoom extends Room<SectorState> {
     }
     phaseTime('sabRead');
 
-    // Record positions for lag compensation — alive ships only.
-    this.snapshotRing.record(
-      this.serverTick,
-      Array.from(this.playerToSlot.keys())
-        .filter((id) => {
-          const ship = this.state.ships.get(id);
-          return ship?.alive === true;
-        })
-        .map((id) => {
-          const s = this.state.ships.get(id)!;
-          return { id, x: s.x, y: s.y, vx: s.vx, vy: s.vy };
-        }),
-    );
+    // Record poses for lag compensation. Allocation-free: streams directly
+    // through `beginTick` + `recordEntity` instead of materializing an
+    // intermediate array. Covers every dynamic entity — ships AND swarm —
+    // so the polygon-aware hit resolver can rewind any obstacle's pose
+    // (position + angle) to the shooter's tick. Mass-independent: any
+    // moving entity benefits from accurate hit attribution.
+    this.snapshotRing.beginTick(this.serverTick);
+    for (const id of this.playerToSlot.keys()) {
+      const ship = this.state.ships.get(id);
+      if (!ship?.alive) continue;
+      this.snapshotRing.recordEntity(id, ship.x, ship.y, ship.vx, ship.vy, ship.angle);
+    }
+    for (const rec of this.swarmRegistry.all()) {
+      const b = slotBase(rec.slot);
+      this.snapshotRing.recordEntity(
+        rec.id,
+        this.sabF32[b + SLOT_X_OFF]!,
+        this.sabF32[b + SLOT_Y_OFF]!,
+        this.sabF32[b + SLOT_VX_OFF]!,
+        this.sabF32[b + SLOT_VY_OFF]!,
+        this.sabF32[b + SLOT_ANGLE_OFF]!,
+      );
+    }
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();

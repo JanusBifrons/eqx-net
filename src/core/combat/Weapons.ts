@@ -1,4 +1,5 @@
 import type { PhysicsWorld } from '../physics/World.js';
+import type { Vec2 } from '../swarm/asteroidShape.js';
 
 export const HITSCAN_DAMAGE = 20;
 export const PROJECTILE_DAMAGE = 15;
@@ -67,4 +68,68 @@ export function rayHitsSphere(
   const entry = t - Math.sqrt(radius * radius - dist2);
   if (entry > maxDist) return null;
   return entry;
+}
+
+/**
+ * Geometric ray-convex-polygon intersection. Pure: takes vertices in
+ * entity-local space (CCW) plus the entity's world-space `(cx, cy, angle)`,
+ * transforms the ray into local space, then runs the standard convex
+ * slab-clip algorithm. Returns the distance along the world-space ray to the
+ * entry point, or null on miss.
+ *
+ * Vertices must be a closed convex polygon with at least 3 points. The CCW
+ * orientation is assumed (matches `convexHullCCW` output and the asteroid
+ * shape generator).
+ */
+export function rayHitsConvexPolygon(
+  fromX: number, fromY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  cx: number, cy: number, angle: number,
+  vertices: ReadonlyArray<Vec2>,
+): number | null {
+  const n = vertices.length;
+  if (n < 3) return null;
+
+  // Transform ray into entity-local space: subtract centre, then rotate by
+  // -angle so the polygon is in its canonical orientation.
+  const cosA = Math.cos(-angle);
+  const sinA = Math.sin(-angle);
+  const localX = (fromX - cx) * cosA - (fromY - cy) * sinA;
+  const localY = (fromX - cx) * sinA + (fromY - cy) * cosA;
+  const localDx = dirX * cosA - dirY * sinA;
+  const localDy = dirX * sinA + dirY * cosA;
+
+  // Slab clip: track entering/exiting t along the ray as we test each edge.
+  let tEnter = 0;
+  let tExit = maxDist;
+
+  for (let i = 0; i < n; i++) {
+    const a = vertices[i]!;
+    const b = vertices[(i + 1) % n]!;
+    // Outward normal for CCW polygon: (edge.y, -edge.x).
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const nx = ey;
+    const ny = -ex;
+    const denom = localDx * nx + localDy * ny;
+    const numer = (localX - a.x) * nx + (localY - a.y) * ny;
+    if (denom === 0) {
+      // Ray parallel to this edge: outside the half-space → no hit.
+      if (numer > 0) return null;
+      continue;
+    }
+    const t = -numer / denom;
+    if (denom < 0) {
+      // Entering this half-space.
+      if (t > tEnter) tEnter = t;
+    } else {
+      // Exiting this half-space.
+      if (t < tExit) tExit = t;
+    }
+    if (tEnter > tExit) return null;
+  }
+
+  if (tEnter > maxDist) return null;
+  return tEnter;
 }

@@ -2,6 +2,8 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_FLAGS_OFF, FLAG_
 import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
+import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -10,7 +12,9 @@ export interface AsteroidSpec {
   vx: number;
   vy: number;
   radius: number;
-  mass: number;
+  /** Optional — defaults to `ASTEROID_DEFAULT_MASS`. Asteroids are intentionally
+   *  very heavy; per-spec overrides exist for tests and special-case rocks. */
+  mass?: number;
 }
 
 export interface DroneSpec {
@@ -26,8 +30,11 @@ export interface DroneSpec {
 export interface SpawnerHooks {
   /** Pop a free SAB slot, or return undefined when full. */
   takeSlot: () => number | undefined;
-  /** Send a SPAWN_OBSTACLE-shape command to the physics worker. */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number) => void;
+  /** Send a SPAWN_OBSTACLE-shape command to the physics worker. The optional
+   *  `vertices` array carries the asteroid polygon's local-space points so the
+   *  worker can build a `convexHull` collider. Drones (kind=1) pass `undefined`
+   *  and remain ball colliders. */
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -38,6 +45,11 @@ export interface SpawnerHooks {
   droneBehaviour?: () => IAiBehaviour;
   /** Optional: insert into the per-tick interest grid (Phase 5d). */
   interestGrid?: SpatialGrid;
+  /** Optional: register the entity with the lag-comp snapshot ring so the
+   *  hit resolver can rewind its pose to the shooter's tick. Called for every
+   *  swarm entity (asteroids + drones). Player ships register separately in
+   *  the room's onJoin path. */
+  registerLagComp?: (id: string) => void;
 }
 
 const DRONE_DEFAULT_RADIUS = 14;
@@ -102,6 +114,9 @@ export class SwarmSpawner {
       const x = Math.cos(angle) * r;
       const y = Math.sin(angle) * r;
       const isDrone = (i % droneStride) < dronesPerCycle;
+      // Vary asteroid radius along the spiral so the bulk-seeded swarm shows
+      // visible size variety without per-entry hand-tuning.
+      const asteroidRadius = 18 + ((i * 7) % 8) * 4; // 18, 22, 26, 30, 34, 38, 42, 46
       const ok = isDrone
         ? this.spawnDrone({ id: `swarm-drone-${i}`, x, y })
         : this.spawnAsteroid({
@@ -110,7 +125,13 @@ export class SwarmSpawner {
           // Tiny drift so the wire isn't entirely static at low speeds.
           vx: Math.cos(angle * 1.7) * 0.5,
           vy: Math.sin(angle * 1.7) * 0.5,
-          radius: 24,
+          radius: asteroidRadius,
+          // Stress-test rooms keep the original light asteroid mass (1) for
+          // bandwidth-budget continuity. Galaxy rooms and hand-rolled rosters
+          // get ASTEROID_DEFAULT_MASS via the spawner default. The bulk-seed
+          // mass-feel doesn't matter — there's no gameplay collision testing
+          // in `swarm-soak` / `swarm-tidi`; they exist purely as broadcast /
+          // load benchmarks.
           mass: 1,
         });
       if (!ok) break;
@@ -152,12 +173,31 @@ export class SwarmSpawner {
 
     const rec = this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
 
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, a.mass);
+    // Asteroids get a deterministic convex-polygon collider derived from
+    // their stable entityId. Drones stay circular. Vertices are attached to
+    // the registry record so the polygon-aware hit resolver can read them
+    // alongside the rewound pose at fire time.
+    let vertices: ReadonlyArray<Vec2> | undefined;
+    let mass = a.mass;
+    if (kind === 0) {
+      vertices = generateAsteroidVertices(rec.entityId, a.radius);
+      rec.vertices = vertices;
+      mass ??= ASTEROID_DEFAULT_MASS;
+    } else {
+      mass ??= DRONE_DEFAULT_MASS;
+    }
+
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's
     // what the binary broadcast writes on the wire.
     this.hooks.interestGrid?.insert(rec.entityId, a.x, a.y);
+
+    // Register every dynamic swarm entity with the lag-comp ring so the hit
+    // resolver can rewind its pose. Mass-independent: any moving obstacle
+    // benefits from accurate hit attribution.
+    this.hooks.registerLagComp?.(a.id);
 
     if (kind === 1 && behaviourFactory && this.hooks.registerAi) {
       this.hooks.registerAi(a.id, slot, behaviourFactory());
