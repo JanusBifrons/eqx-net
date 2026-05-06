@@ -15,7 +15,7 @@ import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { LocalGameClient } from './local/LocalGameClient';
 import { loadStoredPlayerId, persistPlayerId } from './identity/token';
-import { useUIStore } from './state/store';
+import { useUIStore, applyUserPrefs } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { AppHeader } from './components/AppHeader';
 import { LoginPage } from './components/LoginPage';
@@ -699,6 +699,13 @@ export function App(): JSX.Element {
       setPhase('auth');
     }
   }, [user, phase]);
+
+  // Re-hydrate per-user preferences (settings + selected ship kind) when
+  // auth resolves or the active account changes. Anonymous slot is also
+  // applied on logout so a stale account's prefs don't leak across.
+  useEffect(() => {
+    applyUserPrefs(user?.id ?? null);
+  }, [user?.id]);
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);

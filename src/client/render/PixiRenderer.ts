@@ -4,11 +4,10 @@ import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
+import { getShipKind, type ShipShape } from '../../shared-types/shipKinds';
 
 const WORLD_W = 10000;
 const WORLD_H = 10000;
-const LOCAL_SHIP_COLOR = 0x00ff88;
-const REMOTE_SHIP_COLOR = 0x4488ff;
 const SERVER_GHOST_COLOR = 0xff4400;
 const ASTEROID_COLOR = 0x886644;
 const ASTEROID_OUTLINE = 0xbb9966;
@@ -43,18 +42,31 @@ function buildGrid(): Graphics {
   return g;
 }
 
-function buildShipGfx(color: number): Graphics {
+/**
+ * Convert a `ShipShape` from the catalogue into a Pixi `Graphics`. The polygon
+ * is drawn from the shape's points (entity-local space, nose at -y, tail at
+ * +y) scaled by `shape.scale`. `tintOverride` lets the caller apply the
+ * legacy "local = green, remote = blue" colour scheme on top of the kind's
+ * native colour (the local tint is applied as a fill colour override; the
+ * kind colour is used otherwise so all three kinds remain visually distinct).
+ *
+ * The dashed hitbox circle stays kind-agnostic — it always traces the
+ * collider radius, which the catalogue keeps in sync with the polygon's
+ * visual extent so collisions feel honest.
+ */
+function buildShipGfxFromShape(shape: ShipShape, tintOverride?: number): Graphics {
   const g = new Graphics();
-  g.poly([
-    { x: 0, y: -16 },
-    { x: -10, y: 10 },
-    { x: 0, y: 5 },
-    { x: 10, y: 10 },
-  ]);
-  g.fill({ color });
+  const scale = shape.scale;
+  g.poly(shape.points.map(([x, y]) => ({ x: x * scale, y: y * scale })));
+  g.fill({ color: tintOverride ?? shape.color });
   g.circle(0, 0, SHIP_HITBOX_RADIUS);
   g.stroke({ color: HITBOX_COLOR, width: 1, alpha: 0.6 });
   return g;
+}
+
+/** Resolve `ShipRenderState.kind` to a concrete shape, with fallback. */
+function shapeForKind(kindId: string | undefined): ShipShape {
+  return getShipKind(kindId).shape;
 }
 
 /**
@@ -316,8 +328,10 @@ export class PixiRenderer implements IRenderer {
 
       let sprite = this.sprites.get(playerId);
       if (!sprite) {
-        const isLocal = playerId === mirror.localPlayerId;
-        sprite = buildShipGfx(isLocal ? LOCAL_SHIP_COLOR : REMOTE_SHIP_COLOR);
+        // Sprite is built once per ship from the catalogue's polygon + colour.
+        // Local-vs-remote is communicated by the camera-follow rather than a
+        // colour override, so all three kinds stay visually distinct.
+        sprite = buildShipGfxFromShape(shapeForKind(ship.kind));
         this.shipContainer.addChild(sprite);
         this.sprites.set(playerId, sprite);
       }

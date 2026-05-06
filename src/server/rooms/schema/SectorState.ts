@@ -1,5 +1,6 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
 import { SHIP_MAX_HEALTH } from '../../../core/combat/Weapons.js';
+import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
 
 // Wire-traffic invariant (network-discipline P1, see plan):
 // Spatial fields (x/y/vx/vy/angle/angvel) MUST NOT live on this schema.
@@ -12,6 +13,12 @@ export class ShipState extends Schema {
   @type('float32') health: number = SHIP_MAX_HEALTH;
   @type('float32') maxHealth: number = SHIP_MAX_HEALTH;
   @type('boolean') alive: boolean = true;
+  /** Ship kind id from `SHIP_KINDS` (e.g. 'scout' | 'fighter' | 'heavy').
+   *  Set on join from the client's `JoinOptions.shipKind`, validated server-side
+   *  via `isShipKindId`. Drives per-kind physics in the worker and per-kind
+   *  silhouette + colour on the client renderer. Defaults to the catalogue
+   *  default so legacy snapshots that pre-date this field remain valid. */
+  @type('string') kind: string = DEFAULT_SHIP_KIND;
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the

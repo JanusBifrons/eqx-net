@@ -1,10 +1,14 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Box, Button, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Alert } from '@mui/material';
+import { Box, Button, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Stack, Alert, Tooltip } from '@mui/material';
 // Alert is retained for the Engineering Rooms warning dialog below; the Limbo
 // banner moved to a richer Box-based card.
 import { HexGalaxyMap } from './HexGalaxyMap';
 import { GALAXY_SECTORS, getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
+import { ShipPickerModal } from './ShipPickerModal';
+import { ShipSilhouette } from '../render/shipShapeSvg';
+import { useUIStore } from '../state/store';
+import { getShipKind } from '../../shared-types/shipKinds';
 
 interface GalaxyMapScreenProps {
   /** Optional pre-resolved active Limbo entry. When omitted, the screen
@@ -68,7 +72,17 @@ export function GalaxyMapScreen({
   onSelectLocal,
 }: GalaxyMapScreenProps): JSX.Element {
   const [engineeringOpen, setEngineeringOpen] = useState(false);
+  const [shipPickerOpen, setShipPickerOpen] = useState(false);
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+
+  const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
+  const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
+  const shipCount = useUIStore((s) => s.shipCount);
+  // The picker trigger is disabled while the local player has a ship in the
+  // world. `shipCount` is updated from the Colyseus mirror after the welcome
+  // message resolves the local id (see `setShipCount` in ColyseusClient).
+  const pickerLocked = shipCount > 0;
+  const selectedShipKind = getShipKind(selectedShipKindId);
 
   // Phase 8 sub-phase B — fetch the full Limbo summary so we can render the
   // "your ship is held here" card alongside the disabled-elsewhere map. The
@@ -309,6 +323,37 @@ export function GalaxyMapScreen({
           alignItems: 'center',
         }}
       >
+        <Tooltip
+          title={pickerLocked ? 'Currently flying — return to galaxy to switch ships' : ''}
+          disableHoverListener={!pickerLocked}
+        >
+          {/* Span wrapper lets the Tooltip work on a disabled Button. */}
+          <span>
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShipPickerOpen(true)}
+              disabled={pickerLocked}
+              data-testid="ship-picker-trigger"
+              aria-disabled={pickerLocked}
+              sx={{
+                color: '#cde',
+                borderColor: '#2a2f40',
+                pl: 1,
+                pr: 1.25,
+                gap: 1,
+                textTransform: 'none',
+                '&:hover': { borderColor: '#1f7a4d', bgcolor: 'rgba(0,255,136,0.04)' },
+                '&.Mui-disabled': { color: '#556', borderColor: '#1a1d2a', opacity: 0.6 },
+              }}
+            >
+              <ShipSilhouette shape={selectedShipKind.shape} size={28} />
+              <Typography variant="caption" sx={{ color: 'inherit' }}>
+                Ship: {selectedShipKind.displayName}
+              </Typography>
+            </Button>
+          </span>
+        </Tooltip>
         <Button
           variant="text"
           size="small"
@@ -328,6 +373,13 @@ export function GalaxyMapScreen({
           Engineering rooms
         </Button>
       </Stack>
+
+      <ShipPickerModal
+        open={shipPickerOpen}
+        onClose={() => setShipPickerOpen(false)}
+        selectedKind={selectedShipKindId}
+        onSelect={setSelectedShipKind}
+      />
 
       <Dialog open={engineeringOpen} onClose={() => setEngineeringOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>Engineering rooms</DialogTitle>

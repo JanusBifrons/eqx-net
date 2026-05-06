@@ -17,6 +17,9 @@ export interface QueuedInput {
   turnLeft: boolean;
   turnRight: boolean;
   boost: boolean;
+  /** Drifty-arcade reverse — S / Down arrow held. Optional in the wire schema
+   *  for back-compat; missing = `false`. */
+  reverse: boolean;
 }
 
 export interface InputTickResult {

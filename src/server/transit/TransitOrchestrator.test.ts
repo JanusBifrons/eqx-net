@@ -59,6 +59,7 @@ function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
     playerToUser,
     lastFireClientTick,
     getShipHealth: () => health,
+    getShipKind: () => 'fighter',
     playerToTransitInFlight,
     clientForPlayer: () => fc.client as unknown as Parameters<TransitHostRoom['clientForPlayer']>[0] extends never ? never : ReturnType<TransitHostRoom['clientForPlayer']>,
   };

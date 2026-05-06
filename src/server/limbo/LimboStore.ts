@@ -63,6 +63,11 @@ export interface LimboPayload {
    *  same-sector reconnect, it's the source room's key. For transit, it's
    *  the destination key (set by `TransitOrchestrator.commitTransit`). */
   sectorKey: string;
+  /** Ship kind id from `SHIP_KINDS`. Optional for back-compat with payloads
+   *  written before the ship-kind feature landed — decoders fall back to
+   *  `DEFAULT_SHIP_KIND`. Persisted so a transit hop or disconnect/reconnect
+   *  preserves the player's chosen ship across the gap. */
+  kind?: string;
 }
 
 export interface LimboEntry {

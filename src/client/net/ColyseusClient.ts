@@ -206,7 +206,7 @@ export class ColyseusGameClient {
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
-  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean } } | null = null;
+  private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean; reverse: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
   /** Idle-suppression for the input upstream (network-discipline P4). The
@@ -217,7 +217,7 @@ export class ColyseusGameClient {
    *  missing ticks: a tick with no inbound input simply gets no impulse, and
    *  drag handles the rest. Reconciliation replays only inputs we actually
    *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
-  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean } | null = null;
+  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean } | null = null;
   private lastSentInputAtMs = 0;
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
   private lastFrameMs = 1000 / 60;
@@ -253,7 +253,7 @@ export class ColyseusGameClient {
   async connect(
     wsUrl: string,
     storedPlayerId: string | null,
-    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean } },
+    keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean; reverse: boolean } },
     callbacks: ColyseusClientCallbacks,
     roomName = 'sector',
     extraJoinOptions: Record<string, unknown> = {},
@@ -272,9 +272,15 @@ export class ColyseusGameClient {
       console.log('[ColyseusClient] calling joinOrCreate…');
       const { loadToken } = await import('../auth/tokenStorage.js');
       const authToken = loadToken();
+      // Pull the player's selected ship kind out of the UI store at the moment
+      // we open the room. Server validates and falls back to the catalogue
+      // default on any unknown id (`isShipKindId`), so a mid-build kind change
+      // can't crash the spawn path. Limbo / rebind paths ignore this.
+      const shipKind = useUIStore.getState().selectedShipKind;
       const joinPromise = client.joinOrCreate<unknown>(roomName, {
         playerId: storedPlayerId,
         ...(authToken ? { authToken } : {}),
+        shipKind,
         ...extraJoinOptions,
       });
       const timeoutPromise = new Promise<never>((_, reject) =>
@@ -730,7 +736,7 @@ export class ColyseusGameClient {
     if (!this.predWorld || this.predWorld.hasShip(playerId)) return;
     const existing = this.mirror.ships.get(playerId);
     if (!existing) return;
-    this.predWorld.spawnShip(playerId, existing.x, existing.y);
+    this.predWorld.spawnShip(playerId, existing.x, existing.y, existing.kind);
     this.predWorld.setShipState(playerId, existing);
     this.reconciler = new Reconciler(this.predWorld, playerId);
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
@@ -739,7 +745,7 @@ export class ColyseusGameClient {
     for (const [id, state] of this.mirror.ships) {
       if (id === playerId) continue;
       if (this.predWorld.hasShip(id) || this.predRemoteShipIds.has(id)) continue;
-      this.predWorld.spawnShip(id, state.x, state.y);
+      this.predWorld.spawnShip(id, state.x, state.y, state.kind);
       this.predWorld.setShipState(id, state);
       this.predRemoteShipIds.add(id);
     }
@@ -1102,6 +1108,11 @@ export class ColyseusGameClient {
         vy: Number(sh['vy'] ?? 0),
         angvel: sh['angvel'] !== undefined ? Number(sh['angvel']) : undefined,
       };
+      // Carry the ship's kind alongside the spatial state so the renderer can
+      // pick the correct silhouette / colour. Read once when the sprite is
+      // built; re-reading on every state patch is wasted work.
+      const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
+      const mirrorEntry = kind ? { ...parsed, kind } : parsed;
       seen.add(playerId);
 
       if (playerId !== localId) {
@@ -1110,16 +1121,16 @@ export class ColyseusGameClient {
         hist.push({ ts: now, state: parsed });
         if (hist.length > HISTORY_MAX) hist.shift();
         this.remoteHistory.set(playerId, hist);
-        this.mirror.ships.set(playerId, parsed);
+        this.mirror.ships.set(playerId, mirrorEntry);
 
         // Guard: only spawn if we know who the local player is.
         if (this.predWorld && !this.predWorld.hasShip(playerId) && localId !== null) {
-          this.predWorld.spawnShip(playerId, parsed.x, parsed.y);
+          this.predWorld.spawnShip(playerId, parsed.x, parsed.y, kind);
           this.predWorld.setShipState(playerId, parsed);
           this.predRemoteShipIds.add(playerId);
         }
       } else if (!this.predWorld?.hasShip(playerId)) {
-        this.mirror.ships.set(playerId, parsed);
+        this.mirror.ships.set(playerId, mirrorEntry);
         this.tryInitPredWorld(playerId);
       }
     }
@@ -1154,12 +1165,18 @@ export class ColyseusGameClient {
         const oy = this.reconciler.lerpOffset.y;
         const oa = this.reconciler.lerpAngleOffset;
         this.reconciler.advanceLerp();
+        // Preserve `kind` across per-frame rewrites so the renderer keeps
+        // drawing the correct silhouette. `kind` is set on first state-patch
+        // hydration in `syncMirror`; rewriting without it here would silently
+        // revert the sprite to the default polygon every frame.
+        const prev = this.mirror.ships.get(localId);
         this.mirror.ships.set(localId, {
           x: state.x + ox,
           y: state.y + oy,
           vx: state.vx,
           vy: state.vy,
           angle: state.angle + oa,
+          ...(prev?.kind ? { kind: prev.kind } : {}),
         });
       }
     }
@@ -1191,7 +1208,13 @@ export class ColyseusGameClient {
           off.framesLeft--;
           if (off.framesLeft === 0) this._remoteShipOffsets.delete(remoteId);
         }
-        this.mirror.ships.set(remoteId, { ...s, x: s.x + ox, y: s.y + oy });
+        const prev = this.mirror.ships.get(remoteId);
+        this.mirror.ships.set(remoteId, {
+          ...s,
+          x: s.x + ox,
+          y: s.y + oy,
+          ...(prev?.kind ? { kind: prev.kind } : {}),
+        });
       }
     }
 
@@ -1289,11 +1312,13 @@ export class ColyseusGameClient {
       const turnRight = kb.turnRight || tcTurnRight;
       const fireHeld  = kb.fireHeld  || tcFire;
       const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
+      const reverse   = kb.reverse;
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = performance.now();
-        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, sentAt: nowMs };
-        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost });
+        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
+        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost, reverse });
         this.reconciler.recordInput(rec);
         // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
         // AND last-sent state are both fully idle (all-false). Why: when ANY
@@ -1307,21 +1332,22 @@ export class ColyseusGameClient {
         // all-idle restriction keeps throttling safe because held all-idle
         // adds zero impulse, so a skipped tick is physically equivalent.
         const last = this.lastSentInputState;
-        const allIdle = !thrust && !turnLeft && !turnRight && !boost;
-        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost;
+        const allIdle = !thrust && !turnLeft && !turnRight && !boost && !reverse;
+        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
         const stateChanged = !last
           || last.thrust !== thrust
           || last.turnLeft !== turnLeft
           || last.turnRight !== turnRight
-          || last.boost !== boost;
+          || last.boost !== boost
+          || last.reverse !== reverse;
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
         if (!throttle) {
-          this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost });
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost };
+          this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
           this.lastSentInputAtMs = nowMs;
           if (stateChanged || (tick % 60) === 0) {
-            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost });
+            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
           }
         }
         // Show the local exhaust trail without waiting an RTT for the server

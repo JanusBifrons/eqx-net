@@ -6,6 +6,8 @@ export interface InputState {
   fireHeld: boolean;
   /** True while either Shift key is held. Multiplies thrust impulse server-side. */
   boost: boolean;
+  /** True while S / Down arrow is held. Drifty-arcade reverse impulse. */
+  reverse: boolean;
 }
 
 export class Keyboard {
@@ -13,6 +15,7 @@ export class Keyboard {
   turnLeft = false;
   turnRight = false;
   boost = false;
+  reverse = false;
   private spaceDown = false;
 
   private onKeyDown = (e: KeyboardEvent): void => {
@@ -20,6 +23,10 @@ export class Keyboard {
       case 'ArrowUp':
       case 'KeyW':
         this.thrust = true;
+        break;
+      case 'ArrowDown':
+      case 'KeyS':
+        this.reverse = true;
         break;
       case 'ArrowLeft':
       case 'KeyA':
@@ -44,6 +51,10 @@ export class Keyboard {
       case 'ArrowUp':
       case 'KeyW':
         this.thrust = false;
+        break;
+      case 'ArrowDown':
+      case 'KeyS':
+        this.reverse = false;
         break;
       case 'ArrowLeft':
       case 'KeyA':
@@ -80,6 +91,7 @@ export class Keyboard {
       turnRight: this.turnRight,
       fireHeld: this.spaceDown,
       boost: this.boost,
+      reverse: this.reverse,
     };
   }
 }

@@ -4,6 +4,13 @@ export interface ShipRenderState {
   angle: number;
   vx: number;
   vy: number;
+  /** Ship-kind id (`'scout' | 'fighter' | 'heavy' | …`) hydrated from the
+   *  Colyseus `ShipState.kind` field. The renderer reads this once when the
+   *  Pixi sprite is built and uses the corresponding `ShipKind.shape` to
+   *  draw the polygon silhouette + colour. Optional for back-compat with
+   *  callers / tests that pre-date the ship-kind feature; the renderer falls
+   *  back to the catalogue default when missing. */
+  kind?: string;
 }
 
 /**

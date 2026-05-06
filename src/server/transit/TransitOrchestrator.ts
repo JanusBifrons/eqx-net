@@ -53,6 +53,9 @@ export interface TransitHostRoom {
   readonly lastFireClientTick: ReadonlyMap<string, number>;
   /** Per-room schema map — used to read live health (not in SAB). */
   getShipHealth(playerId: string): number;
+  /** Per-room schema lookup — used to preserve the player's chosen ship kind
+   *  across the transit hop. */
+  getShipKind(playerId: string): string;
   /** The set of playerIds currently mid-transit; commitTransit adds, onLeave checks. */
   playerToTransitInFlight: Set<string>;
   /** Look up the live Colyseus client for a given playerId. */
@@ -199,6 +202,7 @@ export class TransitOrchestrator {
       lastFireClientTick: this.room.lastFireClientTick.get(playerId) ?? 0,
       userId: this.room.playerToUser.get(playerId) ?? null,
       sectorKey: inFlight.targetSectorKey,
+      kind: this.room.getShipKind(playerId),
     };
 
     // Reserve the seat BEFORE writing Limbo: if reservation fails, we want

@@ -22,6 +22,7 @@ import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.j
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
+import { DEFAULT_SHIP_KIND, isShipKindId } from '../../shared-types/shipKinds.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -84,6 +85,11 @@ const JoinOptionsSchema = z
     authToken: z.string().optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
+    /** Player-chosen ship kind id (e.g. 'scout' | 'fighter' | 'heavy').
+     *  Validated against `isShipKindId` in `onJoin`; unknown / missing values
+     *  fall back to `DEFAULT_SHIP_KIND`. Ignored on Limbo rebind paths so a
+     *  bad-actor client cannot mid-session swap kind. */
+    shipKind: z.string().optional(),
   })
   .passthrough();
 
@@ -92,9 +98,9 @@ const LAG_COMP_WINDOW = 12;
 const PROJECTILE_MAX_TICKS = 180; // 3 s at 60 Hz
 
 type WorkerCmd =
-  | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
+  | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
   | { type: 'DESPAWN';        slot: number; playerId: string }
-  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
+  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
   | { type: 'CLOCK_RATE';     rate: number };
@@ -436,9 +442,10 @@ export class SectorRoom extends Room<SectorState> {
       }
       const { tick, thrust, turnLeft, turnRight } = result.data;
       const boost = result.data.boost ?? false;
+      const reverse = result.data.reverse ?? false;
       const slot = this.playerToSlot.get(playerId);
       if (slot !== undefined) {
-        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost });
+        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse });
       }
       // Track per-player boost state so the snapshot can broadcast it to all
       // observers for the visual exhaust trail. Only "active" while boosting
@@ -872,9 +879,10 @@ export class SectorRoom extends Room<SectorState> {
     const spawnX = (this.testMode && storedPos) ? storedPos.x : (Math.random() - 0.5) * 400;
     const spawnY = (this.testMode && storedPos) ? storedPos.y : (Math.random() - 0.5) * 400;
 
-    // Reset physics body in worker to new spawn position.
+    // Reset physics body in worker to new spawn position. Preserve the ship's
+    // existing `kind` — respawn keeps the same vehicle the player was flying.
     this.postToWorker({ type: 'DESPAWN', slot, playerId });
-    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
+    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: ship.kind });
 
     // Pre-populate SAB so update() reads a sane position before the worker responds.
     const base = slotBase(slot);
@@ -1038,6 +1046,16 @@ export class SectorRoom extends Room<SectorState> {
     const authToken = parsed.success ? parsed.data.authToken : undefined;
     const userId = authToken ? await validateToken(authToken) : null;
 
+    // Validated ship-kind id from JoinOptions, or the catalogue default. Used
+    // by the fresh-spawn and Limbo paths below; explicitly NOT consulted on
+    // the rebind path (a bad-actor client must not be able to mid-session
+    // swap kind by reconnecting — the existing ShipState.kind is preserved).
+    const requestedKind = parsed.success
+        && typeof parsed.data.shipKind === 'string'
+        && isShipKindId(parsed.data.shipKind)
+      ? parsed.data.shipKind
+      : DEFAULT_SHIP_KIND;
+
     // If the requested ID is already held by an active session (e.g. two tabs
     // sharing the same localStorage), assign a fresh UUID.
     if (this.playerToSession.has(playerId)) {
@@ -1148,6 +1166,8 @@ export class SectorRoom extends Room<SectorState> {
     let resumedAngle = 0;
     let resumedAngvel = 0;
     let resumedFromLimbo = false;
+    /** Kind to spawn with. Defaults to the requested kind; Limbo overrides. */
+    let chosenKind: string = requestedKind;
 
     // Phase 8 sub-phase B — Limbo restore. Only galaxy rooms participate
     // in Limbo; engineering rooms continue to fresh-spawn on every join.
@@ -1167,6 +1187,12 @@ export class SectorRoom extends Room<SectorState> {
         resumedAngle = limbo.payload.angle;
         resumedAngvel = limbo.payload.angvel;
         resumedFromLimbo = true;
+        // Resumed kind dominates the requested kind on Limbo paths — a player
+        // who disconnected mid-session must come back in the same ship. Tolerant
+        // decode for Limbo entries written by older builds (no kind field).
+        if (typeof limbo.payload.kind === 'string' && isShipKindId(limbo.payload.kind)) {
+          chosenKind = limbo.payload.kind;
+        }
         logger.info(
           { playerId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
           'restored from Limbo',
@@ -1196,9 +1222,10 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     // Create Colyseus schema entry. The schema only carries identity +
-    // health/alive — pose lives in `shipPoseCache` (see field doc).
+    // health/alive + kind — pose lives in `shipPoseCache` (see field doc).
     const ship = new ShipState();
     ship.playerId = playerId;
+    ship.kind = chosenKind;
     if (resumedHealth !== null) ship.health = resumedHealth;
     this.state.ships.set(playerId, ship);
 
@@ -1213,7 +1240,7 @@ export class SectorRoom extends Room<SectorState> {
       angvel: resumedFromLimbo ? resumedAngvel : 0,
     });
 
-    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
+    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
 
@@ -1306,6 +1333,7 @@ export class SectorRoom extends Room<SectorState> {
         lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
         userId: this.playerToUser.get(playerId) ?? null,
         sectorKey: this.sectorKey!,
+        kind: ship!.kind,
       };
       try {
         getLimboStore().put(playerId, payload, LIMBO_DISCONNECT_TTL_MS);
@@ -1434,6 +1462,10 @@ export class SectorRoom extends Room<SectorState> {
       getShipHealth: (playerId: string): number => {
         const ship = this.state.ships.get(playerId);
         return ship?.health ?? SHIP_MAX_HEALTH;
+      },
+      getShipKind: (playerId: string): string => {
+        const ship = this.state.ships.get(playerId);
+        return ship?.kind ?? DEFAULT_SHIP_KIND;
       },
       playerToTransitInFlight: this.playerToTransitInFlight,
       clientForPlayer: (playerId: string): Client | null => {

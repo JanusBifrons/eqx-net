@@ -50,9 +50,9 @@ const TICK_MS = 1000 / 60;
  *  Suppresses flap on slow-drift entities under rapier2d-compat's threshold. */
 const SLEEP_HYSTERESIS_TICKS = 12;
 
-interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number }
+interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
-interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }
+interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
 interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
   parentPort!.on('message', (cmd: WorkerCommand) => {
     switch (cmd.type) {
       case 'SPAWN': {
-        physics.spawnShip(cmd.playerId, cmd.x, cmd.y);
+        physics.spawnShip(cmd.playerId, cmd.x, cmd.y, cmd.kindId);
         playerToSlot.set(cmd.playerId, cmd.slot);
         slotToPlayer.set(cmd.slot, cmd.playerId);
         break;
@@ -117,7 +117,7 @@ async function main(): Promise<void> {
         if (!q) { q = []; inputQueues.set(cmd.slot, q); }
         // Cap queue to prevent unbounded growth if client briefly outruns physics.
         if (q.length < 20) {
-          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight, boost: cmd.boost });
+          q.push({ tick: cmd.inputTick, thrust: cmd.thrust, turnLeft: cmd.turnLeft, turnRight: cmd.turnRight, boost: cmd.boost, reverse: cmd.reverse });
         }
         break;
       }

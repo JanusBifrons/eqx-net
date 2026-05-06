@@ -21,6 +21,7 @@ const idle: Omit<QueuedInput, 'tick'> = {
   turnLeft: false,
   turnRight: false,
   boost: false,
+  reverse: false,
 };
 
 describe('tickInputQueue — basic behaviour', () => {

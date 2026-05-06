@@ -43,3 +43,17 @@ export {
   SWARM_KIND_ASTEROID, SWARM_KIND_DRONE,
   swarmRecordCapacity, swarmPacketSize,
 } from './swarmWireFormat.js';
+
+export {
+  ShipShapeSchema,
+  ShipKindSchema,
+  SHIP_KINDS,
+  SHIP_KINDS_LIST,
+  DEFAULT_SHIP_KIND,
+  BOOST_MULTIPLIER,
+  getShipKind,
+  isShipKindId,
+  shipKindToIndex,
+  shipKindFromIndex,
+} from './shipKinds.js';
+export type { ShipKind, ShipKindId, ShipShape } from './shipKinds.js';

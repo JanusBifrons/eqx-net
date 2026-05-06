@@ -10,6 +10,10 @@ export const InputMessageSchema = z
     /** Shift-held boost — multiplies thrust impulse server-side. Optional for
      *  back-compat with clients that pre-date this field. */
     boost: z.boolean().optional(),
+    /** Drifty-arcade reverse — S / Down arrow held. Applies a reduced-magnitude
+     *  impulse opposite to the ship's facing. Optional for back-compat with
+     *  clients that pre-date the car-physics rework. */
+    reverse: z.boolean().optional(),
   })
   .strict();
 

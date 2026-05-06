@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
+import { loadShipKind, saveShipKind } from '../settings/shipSelectionStorage.js';
+import type { UserId } from '../settings/userPrefs.js';
+import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../shared-types/shipKinds.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -40,6 +43,10 @@ interface UIStore {
   showDevOverlay: boolean;
   showLogPanel: boolean;
   showServerGhost: boolean;
+  /** Player's chosen ship kind for the next spawn. Persisted per-user via
+   *  `shipSelectionStorage`. Defaults to `DEFAULT_SHIP_KIND` until the user
+   *  picks one or `applyUserPrefs(userId)` re-reads from storage. */
+  selectedShipKind: ShipKindId;
   shipCount: number;
   /** Live count of swarm entities (asteroids + drones) in `mirror.swarm`. */
   swarmCount: number;
@@ -73,6 +80,7 @@ interface UIStore {
   setShowDevOverlay: (v: boolean) => void;
   setShowLogPanel: (v: boolean) => void;
   setShowServerGhost: (v: boolean) => void;
+  setSelectedShipKind: (id: ShipKindId) => void;
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;
   setSwarmCount: (n: number) => void;
@@ -86,16 +94,24 @@ interface UIStore {
   setTransitTargetSectorKey: (key: string | null) => void;
 }
 
-const persisted = loadSettings();
-// Defaults preserve existing in-game appearance — every debug overlay was
-// always-on before this screen existed, so first-time visitors keep the same
-// experience until they opt out.
-const initialDevOverlay  = persisted.showDevOverlay  ?? true;
-const initialLogPanel    = persisted.showLogPanel    ?? true;
-const initialServerGhost = persisted.showServerGhost ?? true;
+// The store is constructed before auth resolves, so we hydrate from the
+// anonymous slot first. `applyUserPrefs(userId)` is called from App.tsx once
+// `useAuthStore.user` is known and re-reads from the per-user slot. If you
+// log in for the first time on a device, the legacy `eqxSettings` global key
+// migrates into the per-user slot on that re-read (see `userPrefs.ts`).
+const initialPersisted   = loadSettings(null);
+const initialShipKind    = loadShipKind(null);
+const initialDevOverlay  = initialPersisted.showDevOverlay  ?? true;
+const initialLogPanel    = initialPersisted.showLogPanel    ?? true;
+const initialServerGhost = initialPersisted.showServerGhost ?? true;
 
-function persist(state: Pick<UIStore, 'showDevOverlay' | 'showLogPanel' | 'showServerGhost'>): void {
-  saveSettings({
+/** Tracks which user the store is currently persisting under, so setters can
+ *  target the right `localStorage` slot without each setter taking a userId
+ *  argument. Updated by `applyUserPrefs`. */
+let activeUserId: UserId = null;
+
+function persistSettings(state: Pick<UIStore, 'showDevOverlay' | 'showLogPanel' | 'showServerGhost'>): void {
+  saveSettings(activeUserId, {
     showDevOverlay:  state.showDevOverlay,
     showLogPanel:    state.showLogPanel,
     showServerGhost: state.showServerGhost,
@@ -112,6 +128,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   showDevOverlay: initialDevOverlay,
   showLogPanel: initialLogPanel,
   showServerGhost: initialServerGhost,
+  selectedShipKind: initialShipKind,
   shipCount: 0,
   swarmCount: 0,
   clockRate: 1.0,
@@ -130,10 +147,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setAmmo: (ammo) => set({ ammo }),
   setSectorAlert: (msg) => set({ sectorAlert: msg }),
   setPlayerId: (id) => set({ playerId: id }),
-  setShowDevOverlay:  (v) => { set({ showDevOverlay:  v }); persist(get()); },
-  setShowLogPanel:    (v) => { set({ showLogPanel:    v }); persist(get()); },
-  setShowServerGhost: (v) => { set({ showServerGhost: v }); persist(get()); },
-  toggleDevOverlay: () => { set((s) => ({ showDevOverlay: !s.showDevOverlay })); persist(get()); },
+  setShowDevOverlay:  (v) => { set({ showDevOverlay:  v }); persistSettings(get()); },
+  setShowLogPanel:    (v) => { set({ showLogPanel:    v }); persistSettings(get()); },
+  setShowServerGhost: (v) => { set({ showServerGhost: v }); persistSettings(get()); },
+  setSelectedShipKind: (id) => { set({ selectedShipKind: id }); saveShipKind(activeUserId, id); },
+  toggleDevOverlay: () => { set((s) => ({ showDevOverlay: !s.showDevOverlay })); persistSettings(get()); },
   setShipCount: (n) => set({ shipCount: n }),
   setSwarmCount: (n) => set({ swarmCount: n }),
   setClockRate: (n) => set({ clockRate: n }),
@@ -148,3 +166,28 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
 }));
+
+/**
+ * Re-hydrate all per-user preferences (settings + selected ship) for the
+ * given authenticated user, and route subsequent setter writes to the same
+ * user's `localStorage` slot.
+ *
+ * Called from `App.tsx` whenever `useAuthStore.user.id` changes (login,
+ * logout, account switch). Pass `null` for the anonymous slot.
+ */
+export function applyUserPrefs(userId: UserId): void {
+  activeUserId = userId;
+  const persisted = loadSettings(userId);
+  const shipKind = loadShipKind(userId);
+  useUIStore.setState({
+    showDevOverlay:  persisted.showDevOverlay  ?? true,
+    showLogPanel:    persisted.showLogPanel    ?? true,
+    showServerGhost: persisted.showServerGhost ?? true,
+    selectedShipKind: shipKind,
+  });
+}
+
+// `DEFAULT_SHIP_KIND` is referenced via `selectedShipKind`'s initial value
+// already; this re-export lets callers reset to the default without a deep
+// import path.
+export { DEFAULT_SHIP_KIND };
