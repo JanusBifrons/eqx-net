@@ -7,13 +7,15 @@ import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import { SectorState, ShipState, ProjectileState } from './schema/SectorState.js';
+import { SectorState, ShipState } from './schema/SectorState.js';
+import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
-import { SpatialGrid } from '../interest/SpatialGrid.js';
+import { SpatialGrid, CELL_SIZE } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { type Vec2 } from '../../core/swarm/asteroidShape.js';
+import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
@@ -163,6 +165,15 @@ export class SectorRoom extends Room<SectorState> {
   private readonly boostingPlayers = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB. */
   private sabAppliedTicks = new Map<string, number>();
+  /** Per-tick mirror of player ship pose, sourced from SAB inside `update()`.
+   *  Replaces the previous practice of mirroring pose into `ShipState` (a
+   *  Colyseus schema) — that path was emitting a duplicate broadcast on top
+   *  of the custom `SnapshotMessage`. The cache is the single in-memory
+   *  source for snapshot construction, lag-comp recording, AI player view,
+   *  collision math, and LoadShedder anchoring. Records are mutated in-place
+   *  per tick to avoid GC churn. Entries are added on spawn/respawn and
+   *  removed on player leave. */
+  private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
   private serverTick = 0;
   private broadcastCounter = 0;
   private testMode = false;
@@ -502,7 +513,7 @@ export class SectorRoom extends Room<SectorState> {
       logger.warn({ sessionId: client.sessionId }, 'malformed fire message');
       return;
     }
-    const { tick, clientShotId, weapon, rayFromX, rayFromY, rayDirX, rayDirY } = parsed.data;
+    const { tick, clientShotId, weapon, dirAngle } = parsed.data;
 
     const shooterId = this.sessionToPlayer.get(client.sessionId);
     if (!shooterId) return;
@@ -527,11 +538,21 @@ export class SectorRoom extends Room<SectorState> {
     }
     this.lastFireClientTick.set(shooterId, tick);
 
-    // Normalize ray direction defensively.
-    const len = Math.hypot(rayDirX, rayDirY);
-    if (len < 0.001) return;
-    const ndx = rayDirX / len;
-    const ndy = rayDirY / len;
+    // Slim-fire payload (network-discipline P5): the client sends only
+    // `dirAngle`. The ray is reconstructed from the shooter's lag-compensated
+    // pose at `tick` plus the standard 20u barrel offset. SnapshotRing pose
+    // is preferred (matches what the client predicted); shipPoseCache is the
+    // fallback for ticks outside the lag-comp window (rare, since temporal
+    // plausibility above already rejects anything beyond 12 ticks).
+    const ndx = -Math.sin(dirAngle);
+    const ndy = Math.cos(dirAngle);
+    const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, tick);
+    const fallbackShooter = this.shipPoseCache.get(shooterId);
+    const sx = rewoundShooter?.x ?? fallbackShooter?.x;
+    const sy = rewoundShooter?.y ?? fallbackShooter?.y;
+    if (sx === undefined || sy === undefined) return;
+    const rayFromX = sx + ndx * 20;
+    const rayFromY = sy + ndy * 20;
 
     if (weapon === 'projectile') {
       this.spawnServerProjectile(shooterId, rayFromX, rayFromY, ndx * PROJECTILE_SPEED, ndy * PROJECTILE_SPEED);
@@ -554,8 +575,10 @@ export class SectorRoom extends Room<SectorState> {
       // are still circles, so angle is irrelevant for the hit-test, but the
       // ring's API returns it uniformly for any future polygon-shaped ship.
       const rewound = this.snapshotRing.getPoseAt(targetId, tick);
-      const cx = rewound?.x ?? targetShip.x;
-      const cy = rewound?.y ?? targetShip.y;
+      const fallback = this.shipPoseCache.get(targetId);
+      const cx = rewound?.x ?? fallback?.x;
+      const cy = rewound?.y ?? fallback?.y;
+      if (cx === undefined || cy === undefined) continue;
 
       const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, SHIP_COLLISION_RADIUS);
       if (dist !== null && dist < hitDist) {
@@ -685,7 +708,9 @@ export class SectorRoom extends Room<SectorState> {
     for (const [targetId] of this.playerToSlot) {
       const targetShip = this.state.ships.get(targetId);
       if (!targetShip || !targetShip.alive) continue;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, targetShip.x, targetShip.y, SHIP_COLLISION_RADIUS);
+      const pose = this.shipPoseCache.get(targetId);
+      if (!pose) continue;
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, SHIP_COLLISION_RADIUS);
       if (dist !== null && dist < hitDist) { hitDist = dist; hitId = targetId; }
     }
 
@@ -719,12 +744,8 @@ export class SectorRoom extends Room<SectorState> {
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number): void {
     const projId = `proj-${this.projectileCounter++}`;
     this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick });
-    const ps = new ProjectileState();
-    ps.projectileId = projId;
-    ps.ownerId = ownerId;
-    ps.x = x; ps.y = y;
-    ps.vx = vx; ps.vy = vy;
-    this.state.projectiles.set(projId, ps);
+    // Wire-discipline P3: projectiles no longer ride MapSchema. Per-recipient
+    // interest-filtered list is folded into the snapshot in the broadcast loop.
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number): void {
@@ -781,11 +802,15 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
-   *  Skips dead ships so a corpse doesn't anchor far drones in place. */
+   *  Skips dead ships so a corpse doesn't anchor far drones in place. Pose
+   *  comes from `shipPoseCache` (the SAB mirror) — the schema no longer
+   *  carries spatial fields. */
   private *alivePlayerPositions(): IterableIterator<{ x: number; y: number }> {
-    for (const ship of this.state.ships.values()) {
+    for (const [playerId, ship] of this.state.ships) {
       if (!ship.alive) continue;
-      yield { x: ship.x, y: ship.y };
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      yield { x: pose.x, y: pose.y };
     }
   }
 
@@ -853,10 +878,18 @@ export class SectorRoom extends Room<SectorState> {
     // Reset authoritative ship state.
     ship.health = SHIP_MAX_HEALTH;
     ship.alive  = true;
-    ship.x      = spawnX;
-    ship.y      = spawnY;
-    ship.vx     = 0;
-    ship.vy     = 0;
+    // Seed the pose cache so any consumer that runs before the next update()
+    // tick (e.g. an in-flight fire request resolved on this same client.send
+    // turn) sees the respawn position rather than the corpse pose.
+    const pose = this.shipPoseCache.get(playerId);
+    if (pose) {
+      pose.x = spawnX; pose.y = spawnY;
+      pose.vx = 0; pose.vy = 0;
+      // angle/angvel left as-is — the worker will overwrite both before the
+      // next SAB→cache mirror.
+    } else {
+      this.shipPoseCache.set(playerId, { x: spawnX, y: spawnY, vx: 0, vy: 0, angle: 0, angvel: 0 });
+    }
 
     // Clear fire cooldown so first shot after respawn isn't rejected.
     this.lastFireClientTick.delete(playerId);
@@ -877,7 +910,6 @@ export class SectorRoom extends Room<SectorState> {
       // Lifetime check.
       if (this.serverTick - proj.birthTick >= PROJECTILE_MAX_TICKS) {
         this.liveProjectiles.delete(projId);
-        this.state.projectiles.delete(projId);
         continue;
       }
 
@@ -887,8 +919,10 @@ export class SectorRoom extends Room<SectorState> {
         if (targetId === proj.ownerId) continue;
         const targetShip = this.state.ships.get(targetId);
         if (!targetShip || !targetShip.alive) continue;
-        const dx = proj.x - targetShip.x;
-        const dy = proj.y - targetShip.y;
+        const targetPose = this.shipPoseCache.get(targetId);
+        if (!targetPose) continue;
+        const dx = proj.x - targetPose.x;
+        const dy = proj.y - targetPose.y;
         const minDist = PROJECTILE_RADIUS + SHIP_COLLISION_RADIUS;
         if (dx * dx + dy * dy < minDist * minDist) {
           this.applyDamage(targetId, proj.ownerId, PROJECTILE_DAMAGE);
@@ -898,25 +932,11 @@ export class SectorRoom extends Room<SectorState> {
       }
 
       if (hit) {
-        const ps = this.state.projectiles.get(projId);
-        if (ps) ps.destroyed = true;
         this.liveProjectiles.delete(projId);
-        // Leave destroyed state in schema briefly so client sees it, then clean up next tick.
+        // The destroy broadcast (already emitted in applyDamage's hit path)
+        // tells the client to play the impact effect. The projectile simply
+        // disappears from the next snapshot's per-recipient projectile list.
         continue;
-      }
-
-      // Update schema position.
-      const ps = this.state.projectiles.get(projId);
-      if (ps) {
-        ps.x = proj.x;
-        ps.y = proj.y;
-      }
-    }
-
-    // Clean up destroyed entries from schema.
-    for (const [projId, ps] of this.state.projectiles) {
-      if (ps.destroyed && !this.liveProjectiles.has(projId)) {
-        this.state.projectiles.delete(projId);
       }
     }
   }
@@ -1167,21 +1187,31 @@ export class SectorRoom extends Room<SectorState> {
       this.sabF32[base + SLOT_ANGVEL_OFF] = resumedAngvel;
     }
 
-    // Create Colyseus schema entry.
+    // Create Colyseus schema entry. The schema only carries identity +
+    // health/alive — pose lives in `shipPoseCache` (see field doc).
     const ship = new ShipState();
     ship.playerId = playerId;
-    ship.x = spawnX;
-    ship.y = spawnY;
     if (resumedHealth !== null) ship.health = resumedHealth;
     this.state.ships.set(playerId, ship);
 
-    if (resumedLastFireTick !== null) {
-      this.lastFireClientTick.set(playerId, resumedLastFireTick);
-    }
+    // Seed the pose cache with the spawn pose so any pre-update read sees a
+    // sane value (e.g. a fire request resolved on this same client.send turn).
+    this.shipPoseCache.set(playerId, {
+      x: spawnX,
+      y: spawnY,
+      vx: resumedFromLimbo ? resumedVx : 0,
+      vy: resumedFromLimbo ? resumedVy : 0,
+      angle: resumedFromLimbo ? resumedAngle : 0,
+      angvel: resumedFromLimbo ? resumedAngvel : 0,
+    });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY });
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
+
+    if (resumedLastFireTick !== null && shouldHonourResumedCooldown(resumedLastFireTick, currentServerTick)) {
+      this.lastFireClientTick.set(playerId, resumedLastFireTick);
+    }
     const welcome: WelcomeMessage = {
       type: 'welcome',
       playerId,
@@ -1304,6 +1334,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.state.ships.delete(playerId);
+    this.shipPoseCache.delete(playerId);
     recordGameLeave(playerId);
     this.playerToUser.delete(playerId);
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
@@ -1339,6 +1370,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.state.ships.delete(playerId);
+    this.shipPoseCache.delete(playerId);
     this.playerToUser.delete(playerId);
 
     // Clear the active-Limbo UI gate. Without this, the landing screen
@@ -1519,23 +1551,27 @@ export class SectorRoom extends Room<SectorState> {
     };
 
     // Seqlock read: retry if a write is in progress or if data was torn
-    // (seqlock changed between the two loads). Only player ships are mirrored
-    // into MapSchema; swarm poses are read directly from SAB by the binary
-    // encoder later in this tick (see swarmEncoder.encode).
+    // (seqlock changed between the two loads). Player pose is mirrored into
+    // `shipPoseCache` (a plain Map of mutable records) — NOT into the
+    // Colyseus schema. Mirroring into the schema previously caused a
+    // duplicate broadcast of every spatial field on top of the custom
+    // SnapshotMessage; see the wire-discipline plan / SectorState.ts notes.
+    // Swarm poses are read directly from SAB by the binary encoder later in
+    // this tick (see swarmEncoder.encode).
     for (;;) {
       const seq1 = Atomics.load(this.sabU32, SEQLOCK_IDX);
       if (seq1 & 1) continue; // odd → write in progress, spin
 
       for (const [playerId, slot] of this.playerToSlot) {
-        const ship = this.state.ships.get(playerId);
-        if (!ship) continue;
+        const pose = this.shipPoseCache.get(playerId);
+        if (!pose) continue;
         const b = slotBase(slot);
-        ship.x     = this.sabF32[b + SLOT_X_OFF]!;
-        ship.y     = this.sabF32[b + SLOT_Y_OFF]!;
-        ship.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-        ship.vx    = this.sabF32[b + SLOT_VX_OFF]!;
-        ship.vy    = this.sabF32[b + SLOT_VY_OFF]!;
-        ship.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
+        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
+        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
+        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
+        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
+        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
         // Decode applied tick: storedValue=0 means no input applied yet (use 0);
         // storedValue=N+1 means client tick N was applied.
         const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
@@ -1572,7 +1608,9 @@ export class SectorRoom extends Room<SectorState> {
     for (const id of this.playerToSlot.keys()) {
       const ship = this.state.ships.get(id);
       if (!ship?.alive) continue;
-      this.snapshotRing.recordEntity(id, ship.x, ship.y, ship.vx, ship.vy, ship.angle);
+      const pose = this.shipPoseCache.get(id);
+      if (!pose) continue;
+      this.snapshotRing.recordEntity(id, pose.x, pose.y, pose.vx, pose.vy, pose.angle);
     }
     for (const rec of this.swarmRegistry.all()) {
       const b = slotBase(rec.slot);
@@ -1645,13 +1683,15 @@ export class SectorRoom extends Room<SectorState> {
     if (++this.broadcastCounter >= 3 && this.serverTick > 0) {
       this.broadcastCounter = 0;
       const states: SnapshotMessage['states'] = {};
-      const ackedTicks: SnapshotMessage['ackedTicks'] = {};
+      // Telemetry-only: full ackedTicks map for the log line. Never shipped.
+      const ackedTicksTelemetry: Record<string, number> = {};
       for (const [playerId] of this.playerToSlot) {
         const ship = this.state.ships.get(playerId);
-        if (ship && ship.alive) {
-          states[playerId] = { x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy, angle: ship.angle, angvel: ship.angvel };
-          ackedTicks[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
-        }
+        if (!ship || !ship.alive) continue;
+        const pose = this.shipPoseCache.get(playerId);
+        if (!pose) continue;
+        states[playerId] = { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 };
+        ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
       }
       // Filter boostingPlayers to alive players included in this snapshot —
       // a stale id from a leaver shouldn't ship.
@@ -1659,15 +1699,16 @@ export class SectorRoom extends Room<SectorState> {
       for (const id of this.boostingPlayers) {
         if (id in states) boostingIds.push(id);
       }
-      const snap: SnapshotMessage = {
-        type: 'snapshot',
-        serverTick: this.serverTick,
-        states,
-        ackedTicks,
-        ...(boostingIds.length > 0 ? { boostingIds } : {}),
-      };
 
-      // Per-client backpressure check before broadcast.
+      // Per-client backpressure check + per-recipient ackedTick + per-recipient
+      // interest-filtered projectiles. Earlier we built one snapshot object and
+      // broadcast it; that shipped (a) the full ackedTicks map (O(N²) on the
+      // wire) and (b) every projectile to every client. Now we mint a one-shot
+      // snapshot per recipient containing only what THIS client needs.
+      const sharedTail = boostingIds.length > 0 ? { boostingIds } : {};
+      // 3×3 cell window radius (matches BinarySwarmBroadcast / SpatialGrid):
+      // entities within 1 cell of the recipient's centre cell are in interest.
+      const interestRadius = CELL_SIZE * 1.5;
       for (const client of this.clients) {
         const bp = checkBackpressure(client, logger);
         if (bp === 'close') {
@@ -1675,13 +1716,46 @@ export class SectorRoom extends Room<SectorState> {
           continue;
         }
         if (bp === 'drop') continue;
+        const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
+        const recipientAcked = recipientPlayerId
+          ? this.sabAppliedTicks.get(recipientPlayerId) ?? 0
+          : 0;
+        const recipientPose = recipientPlayerId
+          ? this.shipPoseCache.get(recipientPlayerId)
+          : undefined;
+
+        let projectiles: SnapshotMessage['projectiles'];
+        if (recipientPose && this.liveProjectiles.size > 0) {
+          for (const [projId, proj] of this.liveProjectiles) {
+            if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
+            if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
+            if (!projectiles) projectiles = [];
+            projectiles.push({
+              id: projId,
+              x: proj.x,
+              y: proj.y,
+              vx: proj.vx,
+              vy: proj.vy,
+              ownerId: proj.ownerId,
+            });
+          }
+        }
+
+        const snap: SnapshotMessage = {
+          type: 'snapshot',
+          serverTick: this.serverTick,
+          states,
+          ackedTick: recipientAcked,
+          ...sharedTail,
+          ...(projectiles ? { projectiles } : {}),
+        };
         client.send('snapshot', snap);
       }
 
       serverLogEvent('snapshot_broadcast', {
         serverTick: this.serverTick,
         playerCount: this.playerToSlot.size,
-        ackedTicks,
+        ackedTicks: ackedTicksTelemetry,
         states: Object.fromEntries(
           Object.entries(states).map(([id, s]) => [id, { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)), vx: parseFloat(s.vx.toFixed(3)), vy: parseFloat(s.vy.toFixed(3)) }]),
         ),
@@ -1700,7 +1774,9 @@ export class SectorRoom extends Room<SectorState> {
       for (const [pid] of this.playerToSlot) {
         const ship = this.state.ships.get(pid);
         if (!ship?.alive) continue;
-        this.aiPlayerScratch.push({ id: pid, x: ship.x, y: ship.y, vx: ship.vx, vy: ship.vy });
+        const pose = this.shipPoseCache.get(pid);
+        if (!pose) continue;
+        this.aiPlayerScratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
       }
       this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
       phaseTime('aiTick');

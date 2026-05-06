@@ -147,12 +147,26 @@ export class Reconciler {
     this.lastBeforePos.x = before.x;
     this.lastBeforePos.y = before.y;
     this.world.setShipState(this.playerId, serverState);
+    // Cap the replay window to BUFFER_SIZE. Two real cases this protects:
+    //  1. **Join**: the first snapshot after `welcome` reports `ackedTick=0`
+    //     (worker has applied no inputs yet), while `currentTick` is already
+    //     several thousand (`inputTick` was seeded from `welcome.serverTick`).
+    //     Without the cap, the loop would call `world.tick(1/60)` thousands
+    //     of times — a 1–3 s mobile hang and the dominant source of "join
+    //     jitter" reported on 2026-05-06.
+    //  2. **Long stalls**: a backgrounded tab or a slow snapshot path can
+    //     leave us many ticks behind. Beyond BUFFER_SIZE the buffer doesn't
+    //     have the records anyway, so replay would just spin world.tick
+    //     without applying any input — pointless work.
+    // When the cap engages we accept a one-time visual snap to server pose;
+    // far better than a multi-second freeze.
     // Loop upper bound is EXCLUSIVE: this.inputTick (currentTick) is the NEXT
     // tick to be sent — the latest input already applied to predWorld was
     // recorded at tick (currentTick - 1). Using <= would replay one extra
     // tick and land predWorld one frame in the future, producing a per-
     // snapshot backward-lerp that manifests as visible jitter.
-    for (let t = ackedTick + 1; t < currentTick; t++) {
+    const replayStart = Math.max(ackedTick + 1, currentTick - BUFFER_SIZE);
+    for (let t = replayStart; t < currentTick; t++) {
       const rec = this.buffer[t % BUFFER_SIZE];
       if (rec && rec.tick === t) {
         this.world.applyInput(this.playerId, rec);

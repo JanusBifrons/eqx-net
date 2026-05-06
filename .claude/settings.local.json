@@ -25,7 +25,8 @@
       "Bash(node -e \"const s = require\\('@colyseus/schema'\\); console.log\\('Schema:', typeof s.Schema, 'MapSchema:', typeof s.MapSchema, 'type:', typeof s.type, 'defineTypes:', typeof s.defineTypes\\)\")",
       "Bash(node -e \"const r=require\\('@dimforge/rapier2d-compat'\\); console.log\\('Rapier exports:', Object.keys\\(r\\).slice\\(0,15\\).join\\(', '\\)\\)\")",
       "Bash(*)",
-      "PowerShell(Stop-Process -Id 14532 -Force)"
+      "PowerShell(Stop-Process -Id 14532 -Force)",
+      "PowerShell(*)"
     ]
   }
 }

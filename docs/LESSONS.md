@@ -14,6 +14,78 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-06 (final) — Limbo cooldown restore needs a tick-space plausibility gate
+
+Third diagnostic in the same session reported "most/all of my shots are being rejected." The user had transited (or been Limbo-restored) between sectors. The capture showed `welcome.serverTick = 6814` and the ship spawned at `Y ≈ 5970` (clearly a Limbo restore, not a fresh spawn).
+
+Cause: [src/server/rooms/SectorRoom.ts](../src/server/rooms/SectorRoom.ts) `onJoin` restored `lastFireClientTick` from the Limbo payload verbatim. That works for **same-room reconnect** (both sessions share the same `serverTick` counter, so the resumed value is within a handful of ticks of the new `welcome.serverTick`). It fails catastrophically for **cross-room sector transit**: room A's `serverTick` and room B's `serverTick` are independent counters. A resumed `lastFireClientTick = 200_000` from room A pinned in room B (whose `serverTick = 6_814`) makes every fire fail the cooldown check `tick - lastFireCt < WEAPON_COOLDOWN_TICKS` because `tick - lastFireCt` is hugely negative.
+
+The cooldown check is correct in isolation — the bug is in the restore policy. The Limbo serialisation always carried `lastFireClientTick`; the cross-room hazard was latent until anyone tried to fire post-transit (and apparently no E2E exercised that exact path).
+
+**Fix**: extracted [src/server/rooms/cooldownRestore.ts](../src/server/rooms/cooldownRestore.ts) — a pure helper `shouldHonourResumedCooldown(resumed, destinationServerTick)` that gates restoration on a plausibility window:
+- A resumed value > `destinationServerTick + 60` is impossible same-room (client `inputTick` leads `serverTick` by `leadTicks ~6`) → discard.
+- A resumed value > 600 ticks behind `destinationServerTick` (long-stale session) → discard for cleanliness.
+- Otherwise honour it (preserves the legitimate same-room reconnect cooldown).
+
+Regression coverage at [src/server/rooms/cooldownRestore.test.ts](../src/server/rooms/cooldownRestore.test.ts) including the exact 2026-05-06 reproduction (`destinationServerTick = 6_814`, `resumed = 200_000` → `false`).
+
+**What downstream phases need to know:**
+- Any future field carried across Limbo that's expressed in **ticks** must be evaluated for the same hazard. Tick-counters are per-room; resumed values from a different room can never be assumed compatible.
+- The reverse case (a future feature wanting to enforce "no insta-fire after transit") would need its own state — wall-clock-based cooldown, not a tick counter.
+- Diagnostic gap revealed: the client's diagnostic ring buffer doesn't log `fire` sends or `hit_ack` replies. Adding `logEvent('fireRejected', {clientShotId, ...})` inside the `hit_ack` handler when `ack.rejected === true` would have surfaced this immediately. Worth adding before the next round of diagnostics.
+
+## 2026-05-06 (follow-up) — Network-Discipline — Held-ack-advance fix wasn't enough; throttling must be all-idle-only
+
+After the previous fix, the user retested on mobile. Massive lag during steady-state was gone, but two new symptoms appeared:
+
+- **Join lag** (1–3 s freeze on first snapshot).
+- **`corr` rate stuck at 20–30 %** even when steady, with consistent ~8 unit drift per release event on a fast-moving ship.
+
+Two more bugs underneath:
+
+**Bug 1 — first-snapshot reconciler hang.** On join, the worker has applied no inputs yet, so the snapshot reports `ackedTick = 0`. The client's `inputTick` starts at `welcome.serverTick` (typically several thousand). The reconciler's replay loop runs `world.tick(1/60)` for every tick in the gap — a 2000+ step Rapier replay that froze the client. **Fix**: cap replay window at `BUFFER_SIZE` (128). Beyond that the buffer doesn't have the records anyway, so we accept a one-frame snap to server pose instead of a multi-second hang. Locked in by [src/core/prediction/Reconciler.test.ts](../src/core/prediction/Reconciler.test.ts) — the join-replay test asserts the reconcile call returns in < 50 ms even when `currentTick - ackedTick = 5000`.
+
+**Bug 2 — throttled-then-changed inputs skip a tick of physics.** Trace: client sends thrust=true at tick 100, throttles ticks 101–104 (no state change), sends thrust=false at tick 105.
+- Server worker dequeues 100, ack=100. Held-applies for ticks 101→103 (synth ack=103). Dequeues tick=105, `ack = max(105, 103) = 105` — **skipping client tick 104 entirely**.
+- Server applied 4 thrust impulses (steps 100-103) + 1 no-thrust (step 105 with new input) = **4 thrust applications**.
+- Client predicted thrust at tick 104 (kb still showed pressed) → **5 thrust applications**.
+- Difference: 1 thrust impulse. At ~480 u/s velocity, that's the ~8 unit drift per release event seen in the diagnostic.
+
+Why the held-ack fix didn't catch this: the held-ack contract works as long as the server's held state is what the client is also predicting. But when the server's `lastApplied.tick` lags the new message's tick by N (because the client throttled N ticks), the server's max-clamp on dequeue erases those N ticks of held physics from the ack timeline — even though the client did apply them locally.
+
+**Why we can't gap-fill server-side**: physics is sequential. The server applies one impulse per `world.step()`. Squashing N held re-applications into one server step would integrate the velocity wrong (same impulse but only one step of motion = different position). Filling the gap properly costs N extra worker steps before the new input reaches the player — at a 250 ms heartbeat that's up to a 250 ms input latency on every release event. Not acceptable for a fast-paced shooter.
+
+**Fix**: narrow A.2 throttling to **all-idle frames only**. When any control bit is held, the client MUST send every tick. The held branch on the worker still fires for true-idle suppression (which is harmless — held-all-idle adds zero impulse, so a skipped ack tick is physically equivalent to applying it). [src/client/net/ColyseusClient.ts](../src/client/net/ColyseusClient.ts) `tickPhysics()` now gates the throttle on `allIdle && lastAllIdle && !stateChanged && !heartbeatDue`.
+
+Bandwidth cost: instead of saving ~3–5 KB/s/client during all input states, we now save it only during truly-idle stretches (AFK players, spectators). Active players send at full 60 Hz. Estimated upstream still drops 50 %+ for typical sessions where players spend much time coasting.
+
+**What downstream phases need to know:**
+- Any new per-tick input stream (fire commands, AI intent, future weapons) must NOT be throttled if its held state has any non-zero physics effect. The "all-idle only" gate is the safe pattern.
+- The held-ack-advance contract from the previous fix still stands and is still load-bearing — without it, the all-idle synthesised acks would be stale. Both fixes together form the final correct design.
+- The reconciler's replay-window cap (`BUFFER_SIZE` ticks) is now a hard ceiling on first-snapshot work — never iterate uncapped from `ackedTick + 1` again.
+
+## 2026-05-06 — Network-Discipline — Client input throttling collided with the worker's "hold last input" branch
+
+A bandwidth-reduction PR added client-side input throttling (`INPUT_HEARTBEAT_MS = 250`): when the control state hasn't changed since the last send, the client suppresses redundant input packets and the server's per-tick input queue runs empty for stretches of 1–15 ticks. On a mobile diagnostic, this produced **massive perceived lag** — the player's ship was being yanked back ~14–70 units per snapshot at a 100 % correction rate, with `maxDriftUnits = 165`.
+
+Cause: the worker's input-queue tick had two branches —
+
+```ts
+if (q.length > 0) { ...dequeue, apply, set appliedTicks[slot] = entry.tick }
+else { const held = lastApplied.get(slot); if (held) physics.applyInput(playerId, held); /* don't advance ack */ }
+```
+
+The "don't advance ack" comment was deliberate — it dates from when the client always sent every tick, so the held branch was just a defensive fallback for one-tick network gaps. With throttling enabled, the held branch fired for ~94 % of ticks while a key was held. The worker silently re-applied the held input every tick (advancing physics) but reported a stale `ackedTick` to the client. The client's reconciler then **replayed** the same inputs the worker had just re-held — a per-tick double-application that accumulated as visible drift.
+
+**Diagnosis path that worked:** the [`/dev/capture` diagnostic](../src/server/routes/diagRouter.ts) on the mobile client surfaced `rollingCorrRate: 1` and `significantCorrectionCount: 196 / 328` immediately. 100 % corrections + huge per-snapshot drift can only be systematic divergence, not jitter — that ruled out perf and pointed straight at a prediction-model violation.
+
+**Fix:** the held branch must advance the ack by 1 each step, synthesising an "implicit re-send" matching what the throttled client would have emitted under the old send-every-tick contract. Per-slot ack now persists across steps in `lastAckTick: Map<slot, number>`. Pure logic extracted to [src/core/physics/inputQueue.ts](../src/core/physics/inputQueue.ts) so the contract is unit-testable; regression coverage at [src/core/physics/inputQueue.test.ts](../src/core/physics/inputQueue.test.ts).
+
+**What downstream phases need to know:**
+- The send-every-tick contract is *gone*. Anywhere new that consumes `appliedTick` (snapshots, lag-comp, persistence) must treat it as monotonically advancing per server tick, NOT as "the highest tick of an actual inbound message". The two are no longer equivalent.
+- Adding a NEW client-side throttle for any other per-tick stream (fire input, intent, etc.) needs the same audit: does the server have a "hold last value when missing" path? If yes, that path must advance whatever ack the client reconciles against.
+- Held-tick monotonicity is locked in by `inputQueue.test.ts` — if anyone ever reverts the held branch to "don't advance ack", the 15-held-ticks assertion fails before merge.
+
 ## 2026-05-04 — Phase 7 — Two trap-doors hiding behind one E2E failure
 
 The Phase 7 acceptance E2E (`tests/e2e/persistence-kill.spec.ts`) failed ~6 attempts in a row with a single shape: `victim_user_id` set, `killer_user_id` NULL, so `killerStats.kills >= 1` failed. Six rounds of speculative auth-path fixes did not move it. The actual cause was two unrelated issues compounding:

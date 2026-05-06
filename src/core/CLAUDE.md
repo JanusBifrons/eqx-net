@@ -59,6 +59,19 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 
 ---
 
+## Physics Worker — Input Queue Contract
+
+Per-slot input handling lives in [physics/inputQueue.ts](physics/inputQueue.ts) and is invoked once per slot per physics step from [physics/worker.ts](physics/worker.ts). The contract has two equally-load-bearing rules:
+
+1. **Queue non-empty → dequeue head, apply, advance ack to `max(message.tick, prior ack)`.** Out-of-order packets must never regress the ack — that would tell the client to replay inputs the server has already consumed.
+2. **Queue empty + held input present → re-apply held AND advance ack by 1.** The ack synthesises an "implicit re-send" matching what the throttled client (`INPUT_HEARTBEAT_MS` in `ColyseusClient.tickPhysics()`) would have sent at that tick under the old send-every-tick model.
+
+Rule #2 is what newcomers will be tempted to "fix" by leaving the ack pinned to the last received message — don't. The original code did exactly that, with the comment `// Don't update appliedTicks — ackedTick stays at last-dequeued tick.`. It worked because the client used to send every tick, so the held branch never fired in practice. Once client-side input throttling landed (network-discipline P4), the held branch fires for ~94 % of ticks while a key is held, and a stale `ackedTick` causes the client's reconciler to **double-apply** every input the worker has just silently re-held — see [docs/LESSONS.md](../../docs/LESSONS.md) (2026-05-06).
+
+Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks both rules in. If the held-ack-advance rule is reverted, the "advances ack across many held ticks" assertion fails before the test suite finishes.
+
+---
+
 ## SimulationClock (Phase 6 — TiDi)
 
 - Lives at `src/core/clock/SimulationClock.ts`. Pure: no I/O, takes only an optional `Bus` for `TIDI_RATE_CHANGED` emits.

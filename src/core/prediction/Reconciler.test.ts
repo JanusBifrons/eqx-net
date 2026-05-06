@@ -192,4 +192,26 @@ describe('Reconciler', () => {
       expect(magnitudes[i]!).toBeLessThanOrEqual(magnitudes[i - 1]!);
     }
   });
+
+  it('caps the replay window at BUFFER_SIZE so the first-snapshot-after-join does not hang (2026-05-06 regression)', async () => {
+    // First snapshot after `welcome` arrives with `ackedTick = 0` (worker has
+    // applied no inputs yet) and `currentTick` equal to whatever serverTick
+    // the welcome carried — typically several thousand. Without a cap, the
+    // replay loop would call world.tick(1/60) thousands of times and freeze
+    // the client for 1–3 seconds on mobile (the dominant "join jitter"
+    // reported in the 2026-05-06 follow-up diagnostic). The cap snaps to
+    // server pose instead — visible as a one-time correction, not a hang.
+    const world = await makeWorld(0, 0);
+    const r = new Reconciler(world, PLAYER);
+    // Record enough inputs to fill the ring buffer.
+    for (let t = 0; t < 50; t++) r.recordInput(makeInput(t));
+
+    const t0 = performance.now();
+    r.reconcile({ x: 100, y: 200, vx: 0, vy: 0, angle: 0 }, 0, 5000, 0);
+    const elapsedMs = performance.now() - t0;
+
+    // 5000-tick replay would take 100s of ms even on a workstation; capped
+    // replay is bounded by BUFFER_SIZE=128 ticks — finishes in under 50 ms.
+    expect(elapsedMs).toBeLessThan(50);
+  });
 });

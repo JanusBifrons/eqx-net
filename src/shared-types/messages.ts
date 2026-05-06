@@ -26,10 +26,13 @@ export const FireMessageSchema = z
     tick: z.number().int().nonnegative(),
     clientShotId: z.string(),
     weapon: z.enum(['hitscan', 'projectile']).default('hitscan'),
-    rayFromX: z.number(),
-    rayFromY: z.number(),
-    rayDirX: z.number(),
-    rayDirY: z.number(),
+    /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
+     *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
+     *  reconstructs the ray origin from the shooter's lag-compensated pose
+     *  at `tick` plus the standard 20u barrel offset along this direction —
+     *  same calculation the client used, but anchored to the server's
+     *  authoritative rewound pose. */
+    dirAngle: z.number(),
   })
   .strict();
 
@@ -108,11 +111,20 @@ export interface SnapshotMessage {
   serverTick: number;
   /** Authoritative ship states at the time the snapshot was taken. */
   states: Record<string, { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>;
-  /** Last client input tick acknowledged by the server for each player. */
-  ackedTicks: Record<string, number>;
+  /** Last client input tick acknowledged by the server for THIS recipient.
+   *  Per-recipient (network-discipline P3) — earlier the server broadcast a
+   *  full `Record<playerId, number>` to every client, but each client only
+   *  reads its own entry, so the rest was O(N²) waste. */
+  ackedTick: number;
   /** Set of playerIds currently holding boost (shift). Renderer draws an
    *  exhaust trail for each. Absent / empty when nobody is boosting. */
   boostingIds?: string[];
+  /** Live projectiles within the recipient's spatial-interest window. Absent
+   *  when none. Wire-discipline P3: projectiles no longer ride MapSchema —
+   *  this per-recipient list is the only path. Each entry is an authoritative
+   *  pose snapshot at `serverTick`; the client mirrors it into its local
+   *  projectile map and lets ghosts (client-side prediction) layer on top. */
+  projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string }>;
 }
 
 /** Server → client (direct): result of a fire request. */

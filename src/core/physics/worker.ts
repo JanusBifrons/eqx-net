@@ -23,6 +23,7 @@
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { PhysicsWorld } from './World.js';
+import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -70,8 +71,14 @@ async function main(): Promise<void> {
   // reconciler replays the correct number of steps and achieves near-zero drift.
   // The overwrite-latest model caused ackedTick to jump 15+ ticks ahead of
   // serverTick, leaving the reconciler replaying only 1 step instead of ~16.
-  const inputQueues = new Map<number, Array<{ tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }>>();
-  const lastApplied = new Map<number, { tick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean }>();
+  const inputQueues = new Map<number, QueuedInput[]>();
+  const lastApplied = new Map<number, QueuedInput>();
+  /** Per-slot ack tick — the highest client input tick the worker has reported
+   *  as applied via SAB. Persists across steps. The dequeue path sets it to
+   *  the message's tick; the held-input path advances it by 1 each step.
+   *  See `inputQueue.ts` for the contract and `docs/LESSONS.md` (2026-05-06)
+   *  for why this is load-bearing. */
+  const lastAckTick = new Map<number, number>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
   const aiIntents = new Map<number, { fx: number; fy: number; torque: number }>();
   /** Per-slot consecutive-sleep counter; FLAG_SLEEPING is written when this >= hysteresis. */
@@ -96,6 +103,7 @@ async function main(): Promise<void> {
         slotToPlayer.delete(cmd.slot);
         inputQueues.delete(cmd.slot);
         lastApplied.delete(cmd.slot);
+        lastAckTick.delete(cmd.slot);
         aiIntents.delete(cmd.slot);
         sleepCount.delete(cmd.slot);
         sleepState.delete(cmd.slot);
@@ -147,22 +155,15 @@ async function main(): Promise<void> {
   let nextTickAt = performance.now();
   const step = (): void => {
     const tStepStart = performance.now();
-    // Dequeue exactly one input per slot per step. Holding the last applied input
-    // when the queue runs dry keeps the ship at its most recent control state.
+    // Per-slot input dequeue + held-input synthesis. The pure logic lives in
+    // `inputQueue.ts` so the contract is unit-testable.
     const appliedTicks = new Map<number, number>(); // slot → inputTick
     for (const [slot, q] of inputQueues) {
       const playerId = slotToPlayer.get(slot);
       if (!playerId) continue;
-      if (q.length > 0) {
-        const entry = q.shift()!;
-        lastApplied.set(slot, entry);
-        appliedTicks.set(slot, entry.tick);
-        physics.applyInput(playerId, entry);
-      } else {
-        const held = lastApplied.get(slot);
-        if (held) physics.applyInput(playerId, held);
-        // Don't update appliedTicks — ackedTick stays at last-dequeued tick.
-      }
+      const result = tickInputQueue(slot, q, lastApplied, lastAckTick);
+      if (result.applied) physics.applyInput(playerId, result.applied);
+      if (result.ackTick !== null) appliedTicks.set(slot, result.ackTick);
     }
 
     // Apply pending AI intents (one per slot per step). Drained after application.

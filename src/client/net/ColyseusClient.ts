@@ -108,6 +108,14 @@ const TOUCH_THRUST_MAG = 0.4;
 const TOUCH_THRUST_CONE = Math.PI / 3; // 60°
 /** Minimum |angular delta| (radians) before turning. Prevents jitter when aligned. */
 const TOUCH_TURN_TOLERANCE = 0.08; // ~4.6°
+/** Idle-input heartbeat (network-discipline P4). When the control state has
+ *  not changed for this long, we re-send the latest state once anyway, so the
+ *  server can detect a missing client (idle != disconnected) and so a UDP
+ *  restart-style replacement of the last-applied input still happens. 250 ms
+ *  is well below `lastSentInput` perception lag for a held-key change but
+ *  well above the per-tick 16.67 ms cadence — net result is a 60 → ~4 Hz
+ *  drop on idle. */
+const INPUT_HEARTBEAT_MS = 250;
 
 export class ColyseusGameClient {
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -200,6 +208,16 @@ export class ColyseusGameClient {
   private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
+  /** Idle-suppression for the input upstream (network-discipline P4). The
+   *  client only emits an `input` message when the control state has changed
+   *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
+   *  Idle players (no keys held) drop from ~60 packets/s to ~4/s, removing
+   *  the dominant chunk of upstream chatter. The server is tolerant of
+   *  missing ticks: a tick with no inbound input simply gets no impulse, and
+   *  drag handles the rest. Reconciliation replays only inputs we actually
+   *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
+  private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean } | null = null;
+  private lastSentInputAtMs = 0;
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
   private lastFrameMs = 1000 / 60;
 
@@ -324,6 +342,10 @@ export class ColyseusGameClient {
       // snapshot drop straight into EWMA-smoothing instead of snapping.
       this._anchorInitialised = true;
       this.inputTick = msg.serverTick; // Sync to server tick space so fire messages pass temporal plausibility check.
+      // Reset idle-input throttle: the first input after a (re)connect must
+      // always reach the server so it has a baseline before tick advance.
+      this.lastSentInputState = null;
+      this.lastSentInputAtMs = 0;
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
       callbacks.onPlayerId(msg.playerId);
@@ -387,6 +409,12 @@ export class ColyseusGameClient {
     room.onMessage('hit_ack', (ack: HitAckMessage) => {
       this.ghostManager.resolve(ack.clientShotId, ack.hit);
       if (ack.rejected) {
+        // Surface rejection events in the diagnostic ring buffer. The 2026-05-06
+        // cooldown-restore bug ("most/all of my shots are rejected") was diagnosed
+        // by inference because no fire/hit_ack events were ever logged. Future
+        // captures of similar issues should now show the rejection cluster
+        // directly.
+        logEvent('fireRejected', { clientShotId: ack.clientShotId, hit: ack.hit, targetId: ack.targetId });
         useUIStore.getState().setSectorAlert('shot_rejected');
         setTimeout(() => useUIStore.getState().setSectorAlert(null), 1500);
       }
@@ -673,6 +701,9 @@ export class ColyseusGameClient {
     this.clockAnchorServerTick = msg.serverTick;
     this.clockAnchorPerfNow = this.welcomePerfNow;
     this._anchorInitialised = true;
+    // Reset the idle-input throttle so the first post-respawn input always sends.
+    this.lastSentInputState = null;
+    this.lastSentInputAtMs = 0;
 
     // Bootstrap mirror so the renderer shows the ship immediately (before next syncMirror).
     this.mirror.ships.set(playerId, { x: msg.x, y: msg.y, vx: 0, vy: 0, angle: 0 });
@@ -720,6 +751,11 @@ export class ColyseusGameClient {
   private handleSnapshot(snap: SnapshotMessage): void {
     const localId = this.mirror.localPlayerId;
     const now = performance.now();
+
+    // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
+    // per recipient. Sync into the mirror first so the rest of this handler can
+    // assume the projectile map matches the snapshot's tick.
+    this.syncProjectiles(snap.projectiles);
 
     // Apply the server-authoritative boost set into the render mirror so the
     // PixiRenderer can draw an exhaust trail for whichever ships are currently
@@ -832,7 +868,7 @@ export class ColyseusGameClient {
     }
 
     const serverState = snap.states[localId];
-    const ackedTick = snap.ackedTicks[localId];
+    const ackedTick = snap.ackedTick;
     if (serverState && ackedTick !== undefined) {
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
@@ -998,24 +1034,30 @@ export class ColyseusGameClient {
     }
   }
 
-  /** Sync authoritative projectile positions from Colyseus schema state. */
-  private syncProjectiles(projectiles: Map<string, unknown> | undefined): void {
-    if (!projectiles || !this.mirror.projectiles) return;
+  /** Sync authoritative projectile positions from the per-recipient snapshot.
+   *  Wire-discipline P3: projectiles no longer live on the Colyseus schema —
+   *  the server includes only the in-interest subset on each snapshot, so a
+   *  projectile leaving interest will simply disappear from `seen` and be
+   *  removed from the mirror. Ghost projectiles (`isGhost: true`) are
+   *  preserved; the GhostManager re-adds them per-frame anyway. */
+  private syncProjectiles(projectiles: SnapshotMessage['projectiles']): void {
+    if (!this.mirror.projectiles) return;
     const seen = new Set<string>();
-    for (const [projId, raw] of projectiles.entries()) {
-      const p = raw as Record<string, unknown>;
-      if (p['destroyed']) continue;
-      seen.add(projId);
-      this.mirror.projectiles.set(projId, {
-        x: Number(p['x'] ?? 0),
-        y: Number(p['y'] ?? 0),
-        vx: Number(p['vx'] ?? 0),
-        vy: Number(p['vy'] ?? 0),
-        ownerId: String(p['ownerId'] ?? ''),
-        isGhost: false,
-      } satisfies ProjectileRenderState);
+    if (projectiles) {
+      for (const p of projectiles) {
+        seen.add(p.id);
+        this.mirror.projectiles.set(p.id, {
+          x: p.x,
+          y: p.y,
+          vx: p.vx,
+          vy: p.vy,
+          ownerId: p.ownerId,
+          isGhost: false,
+        } satisfies ProjectileRenderState);
+      }
     }
-    for (const id of this.mirror.projectiles.keys()) {
+    for (const [id, entry] of this.mirror.projectiles) {
+      if (entry.isGhost) continue;
       if (!seen.has(id)) this.mirror.projectiles.delete(id);
     }
   }
@@ -1026,8 +1068,8 @@ export class ColyseusGameClient {
     if (!state || typeof state !== 'object') return;
     const s = state as Record<string, unknown>;
     const ships = s['ships'] as Map<string, unknown> | undefined;
-    const projectiles = s['projectiles'] as Map<string, unknown> | undefined;
-    this.syncProjectiles(projectiles);
+    // Projectiles are no longer on the Colyseus schema — see syncProjectiles
+    // call inside the snapshot handler.
     if (!ships) return;
 
     const localId = this.mirror.localPlayerId;
@@ -1239,21 +1281,44 @@ export class ColyseusGameClient {
       const boost     = kb.boost; // shift — keyboard-only, no touch button yet
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
-        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, sentAt: performance.now() };
+        const nowMs = performance.now();
+        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, sentAt: nowMs };
         this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost });
         this.reconciler.recordInput(rec);
-        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost });
+        // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
+        // AND last-sent state are both fully idle (all-false). Why: when ANY
+        // key is held, the server's worker queue stays populated and the
+        // held-input branch never fires; if we throttled in that state, the
+        // worker would synthesise an ack trail across held re-applications,
+        // and a subsequent state-change message would jump the ack past the
+        // intermediate synthesised ticks — skipping a tick of physics
+        // application that the client's prediction DID apply locally. Result:
+        // ~8 u of drift per release event on a fast-moving ship. The
+        // all-idle restriction keeps throttling safe because held all-idle
+        // adds zero impulse, so a skipped tick is physically equivalent.
+        const last = this.lastSentInputState;
+        const allIdle = !thrust && !turnLeft && !turnRight && !boost;
+        const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost;
+        const stateChanged = !last
+          || last.thrust !== thrust
+          || last.turnLeft !== turnLeft
+          || last.turnRight !== turnRight
+          || last.boost !== boost;
+        const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
+        const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
+        if (!throttle) {
+          this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost });
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost };
+          this.lastSentInputAtMs = nowMs;
+          if (stateChanged || (tick % 60) === 0) {
+            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost });
+          }
+        }
         // Show the local exhaust trail without waiting an RTT for the server
         // to confirm — the next snapshot will overwrite from server truth.
         if (this.mirror.boostingShips) {
           if (boost && thrust) this.mirror.boostingShips.add(this.mirror.localPlayerId);
           else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
-        }
-        // Log only state-change-relevant inputs to avoid saturating the buffer:
-        // every input where any control bit is on (carrying meaningful action),
-        // plus a sparse heartbeat every 60th tick of all-idle.
-        if (thrust || turnLeft || turnRight || boost || (tick % 60) === 0) {
-          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost });
         }
       }
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
@@ -1318,23 +1383,18 @@ export class ColyseusGameClient {
   private sendFire(tick: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return;
-    // Always compute the fire ray from RAW prediction state — the server's
-    // lag-comp plausibility check validates against unlerped trajectories.
+    // Always read RAW prediction state so the angle we send matches the angle
+    // the server's lag-comp will see at `tick`. The 4-number ray geometry that
+    // used to ride this message is now derived server-side from this dirAngle
+    // plus the rewound shooter pose (network-discipline P5).
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const fwdX = -Math.sin(state.angle);
-    const fwdY = Math.cos(state.angle);
-    const fromX = state.x + fwdX * 20;
-    const fromY = state.y + fwdY * 20;
     this.room.send('fire', {
       type: 'fire',
       tick,
       clientShotId: nextShotId(),
       weapon: 'hitscan',
-      rayFromX: fromX,
-      rayFromY: fromY,
-      rayDirX: fwdX,
-      rayDirY: fwdY,
+      dirAngle: state.angle,
     });
   }
 
