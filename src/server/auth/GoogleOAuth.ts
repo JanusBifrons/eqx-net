@@ -2,7 +2,16 @@ const CLIENT_ID = process.env['GOOGLE_API_CLIENT_ID'] ?? '';
 const CLIENT_SECRET = process.env['GOOGLE_API_CLIENT_SECRET'] ?? '';
 const REDIRECT_URI = process.env['GOOGLE_REDIRECT_URI'] ?? 'http://localhost:5173/auth/google/callback';
 
+function assertConfigured(): void {
+  if (!CLIENT_ID || !CLIENT_SECRET) {
+    throw new Error(
+      'Google OAuth is not configured. Set GOOGLE_API_CLIENT_ID and GOOGLE_API_CLIENT_SECRET in your .env file.',
+    );
+  }
+}
+
 export function authorizationUrl(state: string): string {
+  assertConfigured();
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
@@ -28,6 +37,7 @@ export interface GoogleProfile {
 }
 
 export async function exchangeCode(code: string): Promise<GoogleProfile> {
+  assertConfigured();
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
