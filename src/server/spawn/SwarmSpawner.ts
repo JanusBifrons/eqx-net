@@ -4,6 +4,7 @@ import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
+import { SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -42,7 +43,13 @@ export interface SpawnerHooks {
   registerAi?: (id: string, slot: number, behaviour: IAiBehaviour) => void;
   /** Per-entity AI behaviour factory. The spawner does not import concrete behaviours. */
   asteroidBehaviour?: () => IAiBehaviour;
-  droneBehaviour?: () => IAiBehaviour;
+  /** Drone AI factory. Takes the chosen `ShipKind` so per-kind tuning
+   *  (`kind.ai.thrust`, `turnKp`, `maxTorque`) flows into the behaviour
+   *  without the spawner needing to import `HostileDroneBehaviour`. */
+  droneBehaviour?: (kind: ShipKind) => IAiBehaviour;
+  /** Optional drone-kind chooser. Defaults to "uniform random across the
+   *  catalogue" — override in tests or for biased spawn distributions. */
+  pickDroneKind?: () => ShipKindId;
   /** Optional: insert into the per-tick interest grid (Phase 5d). */
   interestGrid?: SpatialGrid;
   /** Optional: register the entity with the lag-comp snapshot ring so the
@@ -145,17 +152,29 @@ export class SwarmSpawner {
     return this.spawnOne(0, a, undefined);
   }
 
-  /** Spawn one drone. Returns true on success, false if no free slot. */
+  /** Spawn one drone. Returns true on success, false if no free slot.
+   *  Picks a random ship kind from the catalogue (or uses the configured
+   *  `pickDroneKind` hook if one was provided). The chosen kind drives the
+   *  drone's collider radius and AI tuning. */
   spawnDrone(d: DroneSpec): boolean {
-    const radius = d.radius ?? DRONE_DEFAULT_RADIUS;
+    const kindId = this.hooks.pickDroneKind ? this.hooks.pickDroneKind() : pickRandomShipKind();
+    const kind = SHIP_KINDS_LIST.find((k) => k.id === kindId) ?? SHIP_KINDS_LIST[0]!;
+    // Explicit per-spawn `radius` / `mass` still wins; otherwise fall back to
+    // the kind's tuning values so each kind has its own physical footprint.
+    const radius = d.radius ?? kind.radius ?? DRONE_DEFAULT_RADIUS;
     const mass = d.mass ?? DRONE_DEFAULT_MASS;
     const spec: AsteroidSpec = {
       id: d.id, x: d.x, y: d.y, vx: d.vx ?? 0, vy: d.vy ?? 0, radius, mass,
     };
-    return this.spawnOne(1, spec, this.hooks.droneBehaviour);
+    return this.spawnOne(1, spec, this.hooks.droneBehaviour, kind);
   }
 
-  private spawnOne(kind: SwarmKind, a: AsteroidSpec, behaviourFactory: (() => IAiBehaviour) | undefined): boolean {
+  private spawnOne(
+    kind: SwarmKind,
+    a: AsteroidSpec,
+    behaviourFactory: ((shipKind: ShipKind) => IAiBehaviour) | (() => IAiBehaviour) | undefined,
+    shipKind?: ShipKind,
+  ): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
 
@@ -172,6 +191,9 @@ export class SwarmSpawner {
     this.hooks.sabU32[base + SLOT_FLAGS_OFF] = flagsWord;
 
     const rec = this.registry.register(a.id, slot, kind, a.radius, a.x, a.y, 0);
+    if (kind === 1 && shipKind) {
+      rec.shipKind = shipKind.id;
+    }
 
     // Asteroids get a deterministic convex-polygon collider derived from
     // their stable entityId. Drones stay circular. Vertices are attached to
@@ -200,7 +222,12 @@ export class SwarmSpawner {
     this.hooks.registerLagComp?.(a.id);
 
     if (kind === 1 && behaviourFactory && this.hooks.registerAi) {
-      this.hooks.registerAi(a.id, slot, behaviourFactory());
+      // Drone factory takes the chosen ShipKind; asteroid factory takes none.
+      // The conditional cast keeps both shapes compatible with the same field.
+      const behaviour = shipKind
+        ? (behaviourFactory as (k: ShipKind) => IAiBehaviour)(shipKind)
+        : (behaviourFactory as () => IAiBehaviour)();
+      this.hooks.registerAi(a.id, slot, behaviour);
     } else if (kind === 0 && this.hooks.asteroidBehaviour && this.hooks.registerAi) {
       // Asteroid behaviours are no-ops, but registering them keeps the AI
       // controller aware of the entity for future hooks (sleep accounting,
@@ -210,4 +237,11 @@ export class SwarmSpawner {
 
     return true;
   }
+}
+
+/** Default uniform-random kind picker for drones. Skews toward Fighter only
+ *  by virtue of the catalogue's order — every kind has equal probability. */
+function pickRandomShipKind(): ShipKindId {
+  const idx = Math.floor(Math.random() * SHIP_KINDS_LIST.length);
+  return SHIP_KINDS_LIST[idx]!.id;
 }

@@ -14,10 +14,13 @@ import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../core/c
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_WIRE_VERSION,
+  SWARM_KIND_DRONE,
 } from '../../shared-types/swarmWireFormat.js';
+import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -97,9 +100,12 @@ export function decodeSwarmPacket(
     const vy = view.getFloat32(off + 16, true);
     const angle = view.getFloat32(off + 20, true);
     const radius = view.getFloat32(off + 24, true);
+    // v2: trailing u8 shipKind index (only meaningful when kind === drone).
+    const shipKindByte = view.getUint8(off + SWARM_REC_SHIP_KIND_OFF);
     off += SWARM_RECORD_BYTES;
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
+    const shipKindId = kind === SWARM_KIND_DRONE ? shipKindFromIndex(shipKindByte) : undefined;
 
     let entry = swarm.get(entityId);
     if (!entry) {
@@ -114,6 +120,7 @@ export function decodeSwarmPacket(
       slot.sleeping = sleeping; slot.empty = false;
       entry = {
         x, y, vx, vy, angle, radius, kind, sleeping, lastUpdateTick: tick,
+        ...(shipKindId ? { shipKind: shipKindId } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
@@ -137,6 +144,7 @@ export function decodeSwarmPacket(
       entry.angle = angle;
       entry.radius = radius;
       entry.kind = kind;
+      if (shipKindId) entry.shipKind = shipKindId;
       entry.sleeping = sleeping;
       entry.lastUpdateTick = tick;
 

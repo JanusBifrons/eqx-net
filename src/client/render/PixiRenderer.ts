@@ -426,7 +426,17 @@ export class PixiRenderer implements IRenderer {
         seen.add(spriteKey);
         let sprite = this.sprites.get(spriteKey);
         if (!sprite) {
-          sprite = entry.kind === 1 ? buildDroneGfx(entry.radius) : buildAsteroidGfx(entityId, entry.radius);
+          if (entry.kind === 1) {
+            // Drones use the same procedural shape as player ships of that
+            // kind, so a Heavy drone visibly reads as a Heavy. Falls back to
+            // the legacy magenta dart silhouette when the wire didn't carry a
+            // kind (older snapshots / pre-v2 packets).
+            sprite = entry.shipKind
+              ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
+              : buildDroneGfx(entry.radius);
+          } else {
+            sprite = buildAsteroidGfx(entityId, entry.radius);
+          }
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }

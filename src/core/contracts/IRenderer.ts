@@ -78,6 +78,10 @@ export interface SwarmRenderState {
   radius: number;
   /** 0 = asteroid, 1 = drone. */
   kind: number;
+  /** Ship-kind id when `kind === 1` (drone). Drives the drone silhouette +
+   *  colour on the renderer; absent for asteroids. Resolved from the wire's
+   *  u8 catalogue index by the decoder. */
+  shipKind?: string;
   /** True when the server told us this entity is at rest. Renderer keeps the sprite static. */
   sleeping: boolean;
   /** Server tick of the most recent packet that included this entity. */

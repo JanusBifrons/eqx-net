@@ -17,11 +17,13 @@ import {
 } from '../../shared-types/sabLayout.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_WIRE_VERSION,
   swarmPacketSize,
 } from '../../shared-types/swarmWireFormat.js';
+import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
 
 /** Tick cadence at which a full snapshot is forced regardless of changes. */
@@ -152,6 +154,12 @@ export class BinarySwarmBroadcast {
       this.view.setFloat32(writeOffset + 16, sleeping ? 0 : vy, true);
       this.view.setFloat32(writeOffset + 20, angle, true);
       this.view.setFloat32(writeOffset + 24, rec.radius, true);
+      // v2 trailing byte: drone's ship-kind index. Asteroids write 0 (the
+      // client decoder ignores the byte for kind=0 records anyway).
+      const shipKindIdx = rec.kind === 1 && rec.shipKind && isShipKindId(rec.shipKind)
+        ? shipKindToIndex(rec.shipKind)
+        : 0;
+      this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
       writeOffset += SWARM_RECORD_BYTES;
 
       // Update bookkeeping so future deltas are computed against this pose.

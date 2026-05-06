@@ -22,7 +22,15 @@ import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.j
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, isShipKindId } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
+
+/** Resolve a (possibly missing) ship-kind id to the kind's max health, or
+ *  null when the id is unknown. Drones use this on spawn so each kind has
+ *  its own hull pool. */
+function getDroneMaxHealth(kindId: string | undefined): number | null {
+  if (!kindId) return null;
+  return getShipKind(kindId).maxHealth;
+}
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -345,7 +353,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
-      droneBehaviour: () => new HostileDroneBehaviour(),
+      droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.interestGrid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
     });
@@ -369,10 +377,14 @@ export class SectorRoom extends Room<SectorState> {
       if (bulk < requested) {
         logger.error({ requested, spawned: bulk }, 'bulk seed truncated (slot pool exhausted)');
       }
-      // Match the per-drone health bookkeeping the legacy ring did, so the
-      // seeded drones still take 2 hitscan hits to die.
+      // Per-drone health is sourced from the chosen ship-kind's `maxHealth`
+      // — Heavy drones eat more hits than Scout drones, mirroring the player
+      // matrix. Falls back to 40 for back-compat when the registry record
+      // doesn't carry a kind (very old codepaths or test stubs).
       for (const rec of this.swarmRegistry.all()) {
-        if (rec.kind === 1) this.swarmHealth.set(rec.id, 40);
+        if (rec.kind === 1) {
+          this.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
+        }
       }
       logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
     } else {
@@ -386,7 +398,10 @@ export class SectorRoom extends Room<SectorState> {
         const id = `drone-${i}`;
         const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
         if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
-        this.swarmHealth.set(id, 40);
+        // Read the kind back from the registry record after spawn — the
+        // spawner picks it randomly and stamps it onto the record.
+        const rec = this.swarmRegistry.get(id);
+        this.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
       }
     }
 

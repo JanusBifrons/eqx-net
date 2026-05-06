@@ -25,6 +25,11 @@ export interface SwarmEntityRecord {
    *  in `SectorRoom.handleFire`. The same array is the one passed to the
    *  physics worker at spawn time — single source of truth per asteroid. */
   vertices?: ReadonlyArray<Vec2>;
+  /** Ship-kind id (e.g. 'fighter' / 'scout' / 'heavy'), only meaningful when
+   *  `kind === 1` (drone). Asteroids carry no kind. Encoded on the wire as a
+   *  u8 index into `SHIP_KINDS_LIST`; client renders the matching silhouette
+   *  + colour. */
+  shipKind?: string;
   /** Last pose actually included in a swarm packet, for delta detection. */
   lastBroadcast: { x: number; y: number; angle: number };
   /** Last sleeping flag included in a swarm packet, for transition detection. */

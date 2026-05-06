@@ -636,3 +636,31 @@ Commit: Phase 8 sub-phase B.
 Commit: Phase 8 sub-phase A.
 
 `SectorRoom.update()` historically had `if (this.playerToSlot.size === 0 && this.swarmRegistry.size() === 0) return;` — a dual-zero short-circuit that saved CPU on rooms with no players AND no swarm. Phase 8 keeps this for engineering rooms but removes it for galaxy rooms (`sectorKey !== null`): the simulation step always runs so drones patrol, asteroids drift, and sleep transitions fire even when no player is connected. The world should feel like time has passed. Per-client broadcast work is gated separately on `clients.length > 0`, so empty galaxy rooms still skip the encode/broadcast cost. Phase 5e bench (500 entities at 0.24 ms/tick) gives plenty of headroom for 7 idle galaxy rooms.
+
+## 2026-05-23 — Ship-Kinds — `applyTorqueImpulse` divides by moment of inertia, not mass
+
+Ship-kinds rolled out with an "eased turn" implementation that wrote `body.applyTorqueImpulse(dω · body.mass())` per tick, capped at `turnAccel · dt`. With `turnAccel = 10` rad/s² this should produce ~0.167 rad/s of angvel change per tick. In practice the ship rotated ~4°/s — about 70× too slow.
+
+Cause: Rapier's `applyTorqueImpulse(impulse)` integrates as `Δω = impulse / I` where `I` is the **moment of inertia**, not the translational mass. For a uniform disc collider of radius `r` and mass `m=1`, `I = 0.5 · m · r² = 72` for the Fighter's `r=12`. Multiplying by `mass()` (=1 by construction of our density formula) was a no-op when the intent was to multiply by `I` to cancel Rapier's `1/I` divide.
+
+**Two fixes considered:**
+1. Use `body.massProperties().principalAngularInertia` to get the real `I`. Correct, but adds an API call per tick and ties the controller to Rapier's mass-properties path.
+2. Drop the easing entirely. Use `setAngvel(±maxAngvel)` while held and `setAngvel(0)` on release.
+
+We took option 2. Top-down arcade cars don't actually need yaw easing — when you turn the wheel they respond. The "feel" comes from `linearDamping` + `lateralGrip`, not from yaw inertia. Bonus: per-tap rotation is now exactly `maxAngvel × duration`, which is what aim needs. See [docs/architecture/ship-physics-handling.md](architecture/ship-physics-handling.md) for the model.
+
+**`angularDamping` is now 0** for player ship kinds — `applyInput` writes the angvel every tick, so Rapier's exponential decay never gets to act on it. Earlier tunings had `angularDamping = 8.0`, which was load-bearing for the eased-turn model but is dead code in the snap-turn model.
+
+**What downstream phases need to know:**
+- Any future ship-kind that needs eased turn must explicitly compute `I` and use option 1, OR introduce its own state machine for the angvel ramp. Mass-scaled torque-impulse is a trap.
+- If we ever add per-kind `angularDamping > 0`, document why — the snap-turn model treats it as decoration.
+
+## 2026-05-23 — Ship-Kinds — Swarm wire format v2 bumps record stride; old clients must hard-fail
+
+Phase 6 added a `u8 shipKind` byte to each swarm-packet record so drones can render with the correct silhouette. The record went from 28 → 29 bytes; `SWARM_WIRE_VERSION` bumped 1 → 2.
+
+A v1 client decoding a v2 packet would mis-stride every record after the first by 1 byte — entityIds would shift, poses would corrupt, asteroids would render as drones. The decoder hard-fails on `version !== SWARM_WIRE_VERSION` (drops the packet entirely) rather than guessing v1 layout from a v2 byte stream. **Never** add a fallback that tries to decode v2 with v1 strides.
+
+The catalogue order in `SHIP_KINDS_LIST` is now part of the wire format: drone kinds encode as the index into that list. Reordering or removing a kind invalidates every in-flight v2 packet. Append-only is safe; deletions require another version bump. Test [tests/unit/shipKinds.test.ts](../tests/unit/shipKinds.test.ts) `catalogue order is fighter -> scout -> heavy (wire-format-stable)` pins the current order.
+
+**Operationally**: a build with v2 server + v1 client tab silently shows nothing in the swarm channel. There's no in-band "please refresh" signaling — that would be a follow-up. For now, the decoder logging an `ignored swarm packet, version mismatch` warn is enough.

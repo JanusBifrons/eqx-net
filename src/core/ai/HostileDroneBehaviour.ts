@@ -6,28 +6,38 @@ import {
   nearestPlayer,
 } from '../contracts/IAiBehaviour.js';
 import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
+import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 
-/** Steering impulse magnitude per tick, tuned so a drone reaches ~50 u/s before drag balance. */
-const DRONE_THRUST = 0.5;
-/** Yaw P-gain applied to the bearing error (radians). */
-const DRONE_TURN_KP = 4.0;
-/** Maximum torque magnitude, in Rapier angular-impulse units. */
-const DRONE_MAX_TORQUE = 0.4;
-/** Drone fires when within this range. */
+/** Drone fires when within this fraction of full hitscan range. */
 const DRONE_FIRE_RANGE = HITSCAN_RANGE * 0.6;
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
+/** Damping coefficient on the P-controller's angvel term. Tuned so the drone
+ *  doesn't oscillate around its bearing — independent of ship kind. */
+const ANGVEL_DAMPING = 1.5;
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
  * and roughly aimed. Cooldown matches the player weapon (10 ticks @ 60 Hz).
  *
- * Per-instance state holds only the last fire tick — no allocations on the hot
- * path. The forward-vector convention matches `World.applyInput`: nose points
+ * Per-kind tuning (`thrust`, `turnKp`, `maxTorque`) is read from the
+ * `ShipKind.ai` block of the kind the drone spawned with — each drone in a
+ * sector can be a different kind and steer with that kind's character. The
+ * forward-vector convention matches `World.applyInput`: nose points
  * `(-sin θ, cos θ)` at angle θ.
  */
 export class HostileDroneBehaviour implements IAiBehaviour {
   private lastFireTick = -1_000_000;
+  private readonly kind: ShipKind;
+
+  constructor(kind?: ShipKind | string) {
+    // Accept the kind as either a `ShipKind` record or a kind id (string), so
+    // tests that don't care about kind tuning can still construct with no
+    // arg (`new HostileDroneBehaviour()` falls back to the catalogue default).
+    this.kind = typeof kind === 'object' && kind !== null
+      ? kind
+      : getShipKind(typeof kind === 'string' ? kind : null);
+  }
 
   tick(self: AiEntity, view: AiWorldView): AiIntent {
     const target = nearestPlayer(view, self.x, self.y);
@@ -51,15 +61,16 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     while (bearingError < -Math.PI) bearingError += 2 * Math.PI;
 
     // Damped P-controller: torque toward bearing, minus current angvel for damping.
-    let torque = DRONE_TURN_KP * bearingError - 1.5 * self.angvel;
-    if (torque > DRONE_MAX_TORQUE) torque = DRONE_MAX_TORQUE;
-    else if (torque < -DRONE_MAX_TORQUE) torque = -DRONE_MAX_TORQUE;
+    const maxTorque = this.kind.ai.maxTorque;
+    let torque = this.kind.ai.turnKp * bearingError - ANGVEL_DAMPING * self.angvel;
+    if (torque > maxTorque) torque = maxTorque;
+    else if (torque < -maxTorque) torque = -maxTorque;
 
     // Forward thrust along the drone's current facing.
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
-    const fx = fwdX * DRONE_THRUST;
-    const fy = fwdY * DRONE_THRUST;
+    const fx = fwdX * this.kind.ai.thrust;
+    const fy = fwdY * this.kind.ai.thrust;
 
     // Fire when in range, roughly aimed, and off cooldown.
     let fire: { dirX: number; dirY: number } | undefined;
