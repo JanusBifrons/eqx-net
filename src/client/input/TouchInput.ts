@@ -11,6 +11,7 @@
 export class TouchInput {
   private vector: { x: number; y: number } | null = null;
   private _fireHeld = false;
+  private _boostHeld = false;
 
   setJoystick(v: { x: number; y: number }): void {
     this.vector = v;
@@ -24,6 +25,10 @@ export class TouchInput {
     this._fireHeld = v;
   }
 
+  setBoostHeld(v: boolean): void {
+    this._boostHeld = v;
+  }
+
   /** Raw normalised joystick vector (each axis -1..1), or null when idle.
    *  nipplejs convention: y positive = DOWN on screen. */
   getJoystickVector(): { x: number; y: number } | null {
@@ -32,6 +37,10 @@ export class TouchInput {
 
   getFireHeld(): boolean {
     return this._fireHeld;
+  }
+
+  getBoostHeld(): boolean {
+    return this._boostHeld;
   }
 }
 

@@ -42,6 +42,7 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
       manager.destroy();
       touchInput.setJoystickIdle();
       touchInput.setFireHeld(false);
+      touchInput.setBoostHeld(false);
     };
   }, [touchInput]);
 
@@ -53,6 +54,16 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
   const onFireEnd = (e: React.TouchEvent): void => {
     e.preventDefault();
     touchInput.setFireHeld(false);
+  };
+
+  const onBoostStart = (e: React.TouchEvent): void => {
+    e.preventDefault();
+    touchInput.setBoostHeld(true);
+  };
+
+  const onBoostEnd = (e: React.TouchEvent): void => {
+    e.preventDefault();
+    touchInput.setBoostHeld(false);
   };
 
   return (
@@ -109,6 +120,45 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
         }}
       >
         FIRE
+      </Box>
+
+      <Box
+        component="button"
+        onTouchStart={onBoostStart}
+        onTouchEnd={onBoostEnd}
+        onTouchCancel={onBoostEnd}
+        sx={{
+          position: 'fixed',
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 32px)',
+          right: 'calc(env(safe-area-inset-right, 0px) + 32px + 76px + 18px)',
+          width: 76,
+          height: 76,
+          zIndex: 15,
+          touchAction: 'none',
+          borderRadius: '50%',
+          bgcolor: 'rgba(255, 140, 40, 0.12)',
+          border: '1.5px solid rgba(255, 140, 40, 0.55)',
+          color: 'rgba(255, 140, 40, 0.95)',
+          fontSize: 10,
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          cursor: 'pointer',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          '&:active': {
+            bgcolor: 'rgba(255, 140, 40, 0.22)',
+            border: '1px solid rgba(255, 165, 60, 0.85)',
+            color: '#ffaa44',
+          },
+        }}
+      >
+        BOOST
       </Box>
     </>
   );

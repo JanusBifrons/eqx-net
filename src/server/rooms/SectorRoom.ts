@@ -163,6 +163,10 @@ export class SectorRoom extends Room<SectorState> {
   /** PlayerIds currently holding shift-boost AND thrust. Surfaced on every
    *  snapshot so all clients can render an exhaust trail for that ship. */
   private readonly boostingPlayers = new Set<string>();
+  /** PlayerIds currently holding thrust (regardless of boost). Surfaced on
+   *  every snapshot so observers can see a baseline thrust flame whenever
+   *  a ship is accelerating. Strict superset of `boostingPlayers`. */
+  private readonly thrustingPlayers = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB. */
   private sabAppliedTicks = new Map<string, number>();
   /** Per-tick mirror of player ship pose, sourced from SAB inside `update()`.
@@ -441,6 +445,10 @@ export class SectorRoom extends Room<SectorState> {
       // AND thrusting — shift alone doesn't visually do anything.
       if (boost && thrust) this.boostingPlayers.add(playerId);
       else this.boostingPlayers.delete(playerId);
+      // Parallel track: any thrust at all gets a baseline flame. Superset of
+      // `boostingPlayers` (boost ⇒ thrust). Renderer layers boost on top.
+      if (thrust) this.thrustingPlayers.add(playerId);
+      else this.thrustingPlayers.delete(playerId);
       // Diagnostic: log every 30th input plus any input whose claimed tick is
       // far from the current server tick (indicates clock drift). The delta
       // tells us how the client's tick numbering relates to the server's.
@@ -1255,6 +1263,7 @@ export class SectorRoom extends Room<SectorState> {
     this.interestScratch.delete(client.sessionId);
     this.sabAppliedTicks.delete(playerId);
     this.boostingPlayers.delete(playerId);
+    this.thrustingPlayers.delete(playerId);
     clearSession(client.sessionId);
 
     const slot = this.playerToSlot.get(playerId);
@@ -1699,13 +1708,21 @@ export class SectorRoom extends Room<SectorState> {
       for (const id of this.boostingPlayers) {
         if (id in states) boostingIds.push(id);
       }
+      // Same filter for thrustingPlayers — superset of boost, but a leaver
+      // who released keys mid-tick could still linger here briefly.
+      const thrustingIds: string[] = [];
+      for (const id of this.thrustingPlayers) {
+        if (id in states) thrustingIds.push(id);
+      }
 
       // Per-client backpressure check + per-recipient ackedTick + per-recipient
       // interest-filtered projectiles. Earlier we built one snapshot object and
       // broadcast it; that shipped (a) the full ackedTicks map (O(N²) on the
       // wire) and (b) every projectile to every client. Now we mint a one-shot
       // snapshot per recipient containing only what THIS client needs.
-      const sharedTail = boostingIds.length > 0 ? { boostingIds } : {};
+      const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
+      if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
+      if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
       // 3×3 cell window radius (matches BinarySwarmBroadcast / SpatialGrid):
       // entities within 1 cell of the recipient's centre cell are in interest.
       const interestRadius = CELL_SIZE * 1.5;

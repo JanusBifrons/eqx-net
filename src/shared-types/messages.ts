@@ -119,6 +119,12 @@ export interface SnapshotMessage {
   /** Set of playerIds currently holding boost (shift). Renderer draws an
    *  exhaust trail for each. Absent / empty when nobody is boosting. */
   boostingIds?: string[];
+  /** Set of playerIds currently holding thrust (any acceleration). Strict
+   *  superset of `boostingIds` because boost requires thrust. Renderer
+   *  draws a baseline thrust flame for each; the boost flame layers on
+   *  top when the same id is also in `boostingIds`. Absent / empty when
+   *  nobody is thrusting. */
+  thrustingIds?: string[];
   /** Live projectiles within the recipient's spatial-interest window. Absent
    *  when none. Wire-discipline P3: projectiles no longer ride MapSchema —
    *  this per-recipient list is the only path. Each entry is an authoritative

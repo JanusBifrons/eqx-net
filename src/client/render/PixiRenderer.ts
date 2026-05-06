@@ -58,14 +58,14 @@ function buildShipGfx(color: number): Graphics {
 }
 
 /**
- * Boost exhaust flame — drawn behind the ship sprite when shift-boosting. Two
- * concentric tapered triangles (outer orange, inner yellow-white core) flicker
- * each frame for life. Aligned to the ship's local frame; the renderer
- * inherits the ship's rotation by adding the flame as a child of the sprite.
+ * Baseline thrust flame — shown whenever a ship is accelerating, regardless
+ * of boost. Two concentric tapered triangles (outer orange, inner yellow-white
+ * core). Aligned to the ship's local frame; the renderer inherits the ship's
+ * rotation by adding the flame as a child of the sprite.
  */
-const BOOST_FLAME_COLOR_OUTER = 0xff7733;
-const BOOST_FLAME_COLOR_CORE  = 0xffee99;
-function buildBoostFlameGfx(): Graphics {
+const THRUST_FLAME_COLOR_OUTER = 0xff7733;
+const THRUST_FLAME_COLOR_CORE  = 0xffee99;
+function buildThrustFlameGfx(): Graphics {
   const g = new Graphics();
   // Outer plume — tapered triangle pointing astern (local +y in pixi).
   // Ship body extends from y=-16 (nose) to y=10 (tail); flame starts at y=10.
@@ -74,14 +74,48 @@ function buildBoostFlameGfx(): Graphics {
     { x:  7, y: 10 },
     { x:  0, y: 36 },
   ]);
-  g.fill({ color: BOOST_FLAME_COLOR_OUTER, alpha: 0.85 });
+  g.fill({ color: THRUST_FLAME_COLOR_OUTER, alpha: 0.85 });
   // Inner core — brighter, narrower.
   g.poly([
     { x: -3, y: 10 },
     { x:  3, y: 10 },
     { x:  0, y: 24 },
   ]);
+  g.fill({ color: THRUST_FLAME_COLOR_CORE, alpha: 0.95 });
+  return g;
+}
+
+/**
+ * Boost exhaust flame — layered ON TOP of the thrust flame while a ship is
+ * boosting. Longer, wider, with a bluish-white plasma core to read as
+ * "hotter / more energetic" than the baseline thrust flame.
+ */
+const BOOST_FLAME_COLOR_OUTER  = 0xff5511;
+const BOOST_FLAME_COLOR_CORE   = 0xffee99;
+const BOOST_FLAME_COLOR_PLASMA = 0x88ccff;
+function buildBoostFlameGfx(): Graphics {
+  const g = new Graphics();
+  // Extended outer plume — wider base, longer tail.
+  g.poly([
+    { x: -10, y: 10 },
+    { x:  10, y: 10 },
+    { x:   0, y: 54 },
+  ]);
+  g.fill({ color: BOOST_FLAME_COLOR_OUTER, alpha: 0.85 });
+  // Mid yellow-white layer — bridges outer orange to plasma core.
+  g.poly([
+    { x: -5, y: 10 },
+    { x:  5, y: 10 },
+    { x:  0, y: 40 },
+  ]);
   g.fill({ color: BOOST_FLAME_COLOR_CORE, alpha: 0.95 });
+  // Plasma core — bluish-white spike to suggest extreme heat.
+  g.poly([
+    { x: -2, y: 10 },
+    { x:  2, y: 10 },
+    { x:  0, y: 28 },
+  ]);
+  g.fill({ color: BOOST_FLAME_COLOR_PLASMA, alpha: 0.9 });
   return g;
 }
 
@@ -183,6 +217,10 @@ export class PixiRenderer implements IRenderer {
    *  while the ship is in `mirror.boostingShips`. Pooled — created on first
    *  boost, hidden when not active, destroyed with the ship sprite. */
   private boostFlames = new Map<string, Graphics>();
+  /** Per-ship baseline thrust flame, parented to the ship sprite. Visible
+   *  while the ship is in `mirror.thrustingShips` (any acceleration). Boost
+   *  flame layers on top. Pooled — same lifecycle as `boostFlames`. */
+  private thrustFlames = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
   private projectileSprites = new Map<string, Graphics>();
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
@@ -297,7 +335,26 @@ export class PixiRenderer implements IRenderer {
         sprite.tint = 0xffffff;
       }
 
-      // Boost flame — child of the ship sprite so it inherits rotation. Lazily
+      // Thrust flame — baseline, shown for ANY acceleration. Child of the
+      // ship sprite so it inherits rotation. Lazy-created on first thrust.
+      // Added BEFORE the boost flame so the boost plume layers visually on top.
+      const isThrusting = mirror.thrustingShips?.has(playerId) ?? false;
+      let thrustFlame = this.thrustFlames.get(playerId);
+      if (isThrusting) {
+        if (!thrustFlame) {
+          thrustFlame = buildThrustFlameGfx();
+          sprite.addChild(thrustFlame);
+          this.thrustFlames.set(playerId, thrustFlame);
+        }
+        thrustFlame.visible = true;
+        // Per-frame flicker so the plume reads as fire, not a static arrow.
+        thrustFlame.scale.y = 0.85 + Math.random() * 0.4;
+        thrustFlame.alpha   = 0.75 + Math.random() * 0.25;
+      } else if (thrustFlame) {
+        thrustFlame.visible = false;
+      }
+
+      // Boost flame — layered ON TOP of thrust when both are active. Lazily
       // created on first boost; left as a hidden child afterwards so toggling
       // shift doesn't churn the scene graph.
       const isBoosting = mirror.boostingShips?.has(playerId) ?? false;
@@ -309,10 +366,9 @@ export class PixiRenderer implements IRenderer {
           this.boostFlames.set(playerId, flame);
         }
         flame.visible = true;
-        // Cheap per-frame flicker so the plume reads as fire, not a static
-        // arrow. Two ranges feed scaleY (length) and alpha (intensity).
-        flame.scale.y = 0.85 + Math.random() * 0.4;
-        flame.alpha   = 0.75 + Math.random() * 0.25;
+        // Slightly stronger flicker range than baseline thrust for "intensity".
+        flame.scale.y = 0.9 + Math.random() * 0.5;
+        flame.alpha   = 0.8 + Math.random() * 0.2;
       } else if (flame) {
         flame.visible = false;
       }
@@ -389,6 +445,7 @@ export class PixiRenderer implements IRenderer {
         sprite.destroy({ children: true });
         this.sprites.delete(id);
         this.boostFlames.delete(id);
+        this.thrustFlames.delete(id);
       }
     }
 

@@ -131,6 +131,7 @@ export class ColyseusGameClient {
     explodingShips: new Set(),
     remoteLasers: new Map(),
     boostingShips: new Set(),
+    thrustingShips: new Set(),
   };
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
@@ -526,6 +527,7 @@ export class ColyseusGameClient {
       this.mirror.damagedShips?.clear();
       this.mirror.explodingShips?.clear();
       this.mirror.boostingShips?.clear();
+      this.mirror.thrustingShips?.clear();
       this.mirror.remoteLasers?.clear();
       this.mirror.liveBeam = null;
       this.mirror.serverGhostPos = null;
@@ -764,6 +766,14 @@ export class ColyseusGameClient {
       this.mirror.boostingShips.clear();
       if (snap.boostingIds) {
         for (const id of snap.boostingIds) this.mirror.boostingShips.add(id);
+      }
+    }
+    // Same pattern for the baseline thrust set — every snapshot is the
+    // authoritative truth; locals are layered on top via per-tick prediction.
+    if (this.mirror.thrustingShips) {
+      this.mirror.thrustingShips.clear();
+      if (snap.thrustingIds) {
+        for (const id of snap.thrustingIds) this.mirror.thrustingShips.add(id);
       }
     }
 
@@ -1278,7 +1288,7 @@ export class ColyseusGameClient {
       const turnLeft  = kb.turnLeft  || tcTurnLeft;
       const turnRight = kb.turnRight || tcTurnRight;
       const fireHeld  = kb.fireHeld  || tcFire;
-      const boost     = kb.boost; // shift — keyboard-only, no touch button yet
+      const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
       const tick = this.inputTick++;
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = performance.now();
@@ -1319,6 +1329,10 @@ export class ColyseusGameClient {
         if (this.mirror.boostingShips) {
           if (boost && thrust) this.mirror.boostingShips.add(this.mirror.localPlayerId);
           else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
+        }
+        if (this.mirror.thrustingShips) {
+          if (thrust) this.mirror.thrustingShips.add(this.mirror.localPlayerId);
+          else this.mirror.thrustingShips.delete(this.mirror.localPlayerId);
         }
       }
       // Always advance physics — remote ships and obstacles must keep moving even while dead.

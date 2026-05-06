@@ -115,6 +115,11 @@ export interface RenderMirror {
   /** Ships currently holding shift-boost AND thrust. Server-authoritative —
    *  rebuilt on every snapshot. Renderer draws an exhaust trail for each. */
   boostingShips?: Set<string>;
+  /** Ships currently holding thrust (any acceleration, regardless of boost).
+   *  Strict superset of `boostingShips`. Server-authoritative. Renderer
+   *  draws a baseline thrust flame for each; the boost flame layers on top
+   *  for ships that are also in `boostingShips`. */
+  thrustingShips?: Set<string>;
   /**
    * Live hitscan beam state. Carries only the hit distance and target id; the
    * renderer derives the beam's geometry from the local ship's lerped pose in
