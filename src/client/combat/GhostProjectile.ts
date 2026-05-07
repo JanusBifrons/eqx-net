@@ -1,8 +1,8 @@
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
+import { getWeapon, isWeaponId } from '@core/combat/WeaponCatalogue';
 import type { ProjectileRenderState } from '@core/contracts/IRenderer';
 
 const BEAM_TTL_MS = 250;
-const PROJECTILE_GHOST_SPEED = 300;
 const PROJECTILE_GHOST_TTL_MS = 500;
 
 interface GhostEntry {
@@ -16,6 +16,7 @@ interface GhostEntry {
   ttlMs: number;
   resolved: boolean;
   beam?: { toX: number; toY: number };
+  weaponId?: string;
 }
 
 /**
@@ -36,14 +37,18 @@ export class GhostManager {
     fromY: number,
     dirX: number,
     dirY: number,
-    weapon: 'hitscan' | 'projectile',
+    weapon: string,
+    shooterVx: number = 0,
+    shooterVy: number = 0,
   ): void {
     const len = Math.hypot(dirX, dirY);
     if (len < 0.001) return;
     const nx = dirX / len;
     const ny = dirY / len;
 
-    if (weapon === 'hitscan') {
+    const weaponDef = isWeaponId(weapon) ? getWeapon(weapon) : null;
+
+    if (!weaponDef || weaponDef.mode === 'hitscan') {
       this.ghosts.set(clientShotId, {
         id: clientShotId,
         x: fromX,
@@ -55,18 +60,21 @@ export class GhostManager {
         ttlMs: BEAM_TTL_MS,
         resolved: false,
         beam: { toX: fromX + nx * HITSCAN_RANGE, toY: fromY + ny * HITSCAN_RANGE },
+        weaponId: weapon,
       });
     } else {
+      const speed = weaponDef.mode === 'projectile' ? weaponDef.speed : 300;
       this.ghosts.set(clientShotId, {
         id: clientShotId,
         x: fromX,
         y: fromY,
-        vx: nx * PROJECTILE_GHOST_SPEED,
-        vy: ny * PROJECTILE_GHOST_SPEED,
+        vx: shooterVx + nx * speed,
+        vy: shooterVy + ny * speed,
         ownerId,
         spawnedAt: performance.now(),
         ttlMs: PROJECTILE_GHOST_TTL_MS,
         resolved: false,
+        weaponId: weapon,
       });
     }
   }
@@ -92,6 +100,7 @@ export class GhostManager {
 
       if (ghost.resolved || ageMs > ghost.ttlMs) {
         this.ghosts.delete(id);
+        out.delete(id);
         continue;
       }
 
@@ -106,6 +115,7 @@ export class GhostManager {
         ownerId: ghost.ownerId,
         isGhost: true,
         beam: ghost.beam,
+        weaponId: ghost.weaponId,
       });
     }
   }

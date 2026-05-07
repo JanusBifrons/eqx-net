@@ -27,6 +27,7 @@ import { GalaxyMapOverlay } from './components/GalaxyMapOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { ShipStatsCard } from './components/ShipStatsCard';
+import { WeaponSelector } from './components/WeaponSelector';
 import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
@@ -595,6 +596,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
+      <WeaponSelector />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       <GalaxyMapOverlay
         open={galaxyMapOpen}

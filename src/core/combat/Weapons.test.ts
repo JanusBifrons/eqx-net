@@ -5,6 +5,7 @@ import {
   spawnProjectile,
   rayHitsSphere,
   rayHitsConvexPolygon,
+  projectileSweepCircle,
   HITSCAN_RANGE,
   PROJECTILE_RADIUS,
   SHIP_COLLISION_RADIUS,
@@ -36,6 +37,55 @@ describe('rayHitsSphere (geometric, no Rapier)', () => {
   it('hits when ray origin is inside the sphere', () => {
     const dist = rayHitsSphere(0, 0, 1, 0, 500, 5, 0, 12);
     expect(dist).not.toBeNull();
+  });
+});
+
+describe('projectileSweepCircle (tunnel-proof per-tick collision)', () => {
+  // 1600 u/s ÷ 60 Hz = 26.67 units per tick. Use this step in regression
+  // tests so they will fail if anyone reverts to per-tick point-sample.
+  const STEP_PER_TICK = 1600 / 60;
+
+  it('catches a target placed mid-segment that point-sample would miss', () => {
+    // Bolt at (0,0) moving +x by ~26.7. Drone at (15, 0) radius 6, projectile
+    // radius 3. Per-tick point-sample at the *new* position (26.7, 0) sees
+    // distance 11.7 > 9 (combined radius) → false miss. Sweep should hit.
+    const result = projectileSweepCircle(0, 0, STEP_PER_TICK, 0, 3, 15, 0, 6);
+    expect(result).not.toBeNull();
+    expect(result!.entry).toBeCloseTo(15 - (3 + 6), 5); // 6 units into the segment
+    expect(result!.hitX).toBeCloseTo(6, 5);
+    expect(result!.hitY).toBeCloseTo(0, 5);
+  });
+
+  it('returns null on a true miss (target offset perpendicular to segment)', () => {
+    const result = projectileSweepCircle(0, 0, STEP_PER_TICK, 0, 3, 15, 50, 6);
+    expect(result).toBeNull();
+  });
+
+  it('reports the earliest hit when caller iterates multiple targets', () => {
+    // Two targets along the path. Caller picks the smallest entry.
+    const near = projectileSweepCircle(0, 0, STEP_PER_TICK, 0, 3, 12, 0, 6);
+    const far  = projectileSweepCircle(0, 0, STEP_PER_TICK, 0, 3, 22, 0, 6);
+    expect(near).not.toBeNull();
+    expect(far).not.toBeNull();
+    expect(near!.entry).toBeLessThan(far!.entry);
+  });
+
+  it('clamps to entry=0 when the segment origin is already inside the target', () => {
+    // Origin at (-2, 0) going +x, target at (0, 0) radius 6, projectile
+    // radius 3. The segment origin sits 2 units from the target centre — well
+    // inside the Minkowski-expanded radius 9 — so the geometric entry point
+    // is *behind* the origin (negative). The helper clamps to 0 so the hit
+    // point is reported at the projectile's current position.
+    const result = projectileSweepCircle(-2, 0, STEP_PER_TICK, 0, 3, 0, 0, 6);
+    expect(result).not.toBeNull();
+    expect(result!.entry).toBe(0);
+    expect(result!.hitX).toBe(-2);
+    expect(result!.hitY).toBe(0);
+  });
+
+  it('returns null for a zero-length step (no movement, no sweep)', () => {
+    const result = projectileSweepCircle(0, 0, 0, 0, 3, 5, 0, 6);
+    expect(result).toBeNull();
   });
 });
 

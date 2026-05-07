@@ -100,6 +100,8 @@ export interface ProjectileRenderState {
   alpha?: number;
   /** When present, render as an instant beam line from (x,y) to (toX,toY) rather than a moving dot. */
   beam?: { toX: number; toY: number };
+  /** Weapon catalogue id — drives visual style (e.g. 'laser' → bolt graphic). */
+  weaponId?: string;
 }
 
 export interface RenderMirror {
@@ -113,6 +115,10 @@ export interface RenderMirror {
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   localPlayerId: string | null;
+  /** Floating damage numbers to spawn this frame. Drained + cleared each frame. */
+  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number }>;
+  /** Health bar hit events this frame. Drained + cleared each frame. */
+  pendingHealthBarHits?: Array<{ entityId: string; healthPct: number }>;
   /**
    * When present, the renderer draws a semi-transparent ghost at this position to
    * show the raw server snapshot position (before client-side prediction replay).

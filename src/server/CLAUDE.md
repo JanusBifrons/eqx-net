@@ -75,6 +75,8 @@ Update this section when a threshold is set.
 - **Backpressure** (`src/server/net/Backpressure.ts`): `checkBackpressure(client, logger)` returns `'ok' | 'drop' | 'close'`. Called in the per-client broadcast loop in `update()`.
 - **Weapon cooldown enforcement**: `lastFireTick` map, compared against `WEAPON_COOLDOWN_TICKS = 10` (167 ms at 60 Hz). Excess fire requests return `hit: false` immediately.
 - **Temporal plausibility**: fire claims with `tick < serverTick - 12` are rejected before any lag-comp lookup.
+- **Weapon catalogue (data-driven)**: `handleFire()` resolves `weaponDef = getWeapon(weaponId)` from `src/core/combat/WeaponCatalogue.ts` and branches on `weaponDef.mode`. Hitscan reads `range`/`damage` from the def; projectile passes `damage`, `radius`, `maxTicks`, `weaponId` into `spawnServerProjectile`. Each `ProjectileRecord` carries its own `damage`/`radius`/`maxTicks` — `advanceProjectiles()` reads them off the record, never off a global constant. **Adding a new weapon never requires editing `SectorRoom.ts`** — only the catalogue.
+- **Projectile vs swarm collision**: `advanceProjectiles()` runs two collision passes per projectile per tick — first against player ships (lag-comp via SnapshotRing — currently the spawn tick's SAB pose for projectiles), then against swarm entities via `swarmRegistry.all()` reading current SAB pose. The swarm pass is required: solo play has only drones/asteroids as targets, so a missing swarm loop = "lasers sail through everything." Hit position (`hitX`, `hitY`) is threaded into `applyDamage()` and broadcast in `DamageEvent` for the client damage-numbers/health-bars pipeline.
 
 ---
 

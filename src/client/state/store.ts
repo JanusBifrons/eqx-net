@@ -3,6 +3,7 @@ import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
 import { loadShipKind, saveShipKind } from '../settings/shipSelectionStorage.js';
 import type { UserId } from '../settings/userPrefs.js';
 import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { DEFAULT_WEAPON, WEAPON_IDS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -70,6 +71,8 @@ interface UIStore {
   transitProgress: number;
   /** Phase 8 — destination sector key during a transit (SPOOLING/IN_TRANSIT/ARRIVED). */
   transitTargetSectorKey: string | null;
+  /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
+  activeWeapon: WeaponId;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -92,6 +95,8 @@ interface UIStore {
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;
   setTransitTargetSectorKey: (key: string | null) => void;
+  setActiveWeapon: (id: WeaponId) => void;
+  cycleWeapon: () => void;
 }
 
 // The store is constructed before auth resolves, so we hydrate from the
@@ -140,6 +145,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitState: 'DOCKED',
   transitProgress: 0,
   transitTargetSectorKey: null,
+  activeWeapon: DEFAULT_WEAPON,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -165,6 +171,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitState: (s) => set({ transitState: s }),
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
+  setActiveWeapon: (id) => set({ activeWeapon: id }),
+  cycleWeapon: () => set((s) => {
+    const idx = WEAPON_IDS.indexOf(s.activeWeapon);
+    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]! };
+  }),
 }));
 
 /**
@@ -191,3 +202,4 @@ export function applyUserPrefs(userId: UserId): void {
 // already; this re-export lets callers reset to the default without a deep
 // import path.
 export { DEFAULT_SHIP_KIND };
+export type { WeaponId };

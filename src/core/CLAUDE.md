@@ -98,7 +98,8 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 - DI contracts.
 - Shared math utilities.
 - Deterministic state machines (e.g., Phase 8 `TransitStateMachine`).
-- Combat constants and pure geometry helpers (`src/core/combat/Weapons.ts`): `HITSCAN_DAMAGE`, `PROJECTILE_DAMAGE`, `HITSCAN_RANGE`, `PROJECTILE_SPEED`, `WEAPON_COOLDOWN_TICKS`, `rayHitsSphere()`.
+- Combat constants and pure geometry helpers (`src/core/combat/Weapons.ts`): `HITSCAN_DAMAGE`, `PROJECTILE_DAMAGE`, `HITSCAN_RANGE`, `PROJECTILE_SPEED`, `WEAPON_COOLDOWN_TICKS`, `rayHitsSphere()`. These constants are now **derived** from the data-driven catalogue — see below.
+- Weapon catalogue (`src/core/combat/WeaponCatalogue.ts`): the single source of truth for weapon definitions. Each entry is a discriminated `WeaponDef = HitscanWeaponDef | ProjectileWeaponDef` describing damage, cooldown, and mode-specific params (range for hitscan; speed/radius/maxTicks for projectile). Lookup via `getWeapon(id)`. The catalogue is **append-only and pure** — no DI, no I/O. Adding a new weapon = adding a record + listing its id in `WEAPON_IDS`. The server resolves a `WeaponDef` per fire and parameterises `spawnServerProjectile` from it; the client uses the same lookup for ghost spawn speed and the renderer-side bolt visual. **Do not branch on weapon id in `src/core` paths** — read fields off the `WeaponDef` instead. The Open/Closed boundary is the catalogue, not a switch statement.
 
 ## What does NOT belong in src/core
 

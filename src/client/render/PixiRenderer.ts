@@ -3,6 +3,8 @@ import { Viewport } from 'pixi-viewport';
 import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
+import { DamageNumberManager } from './DamageNumbers';
+import { HealthBarManager } from './HealthBars';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape } from '../../shared-types/shipKinds';
 
@@ -28,6 +30,8 @@ const GHOST_PROJECTILE_COLOR = 0xff8800;
 const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
 const REMOTE_LASER_COLOR = 0xff6600;
+const LASER_BOLT_OUTER = 0xff2244;
+const LASER_BOLT_CORE  = 0xffffff;
 
 function buildGrid(): Graphics {
   const g = new Graphics();
@@ -195,6 +199,17 @@ function buildProjectileGfx(isGhost: boolean): Graphics {
   return g;
 }
 
+function buildLaserBoltGfx(): Graphics {
+  const g = new Graphics();
+  // Outer glow — short bright line
+  g.moveTo(0, -12).lineTo(0, 12);
+  g.stroke({ color: LASER_BOLT_OUTER, width: 5, alpha: 0.5 });
+  // Inner white core
+  g.moveTo(0, -10).lineTo(0, 10);
+  g.stroke({ color: LASER_BOLT_CORE, width: 2, alpha: 1 });
+  return g;
+}
+
 function buildBeamGfx(dx: number, dy: number): Graphics {
   const g = new Graphics();
   // Outer glow
@@ -242,6 +257,8 @@ export class PixiRenderer implements IRenderer {
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
   private readonly halo = new HaloRadar();
+  private damageNumbers: DamageNumberManager | null = null;
+  private healthBars: HealthBarManager | null = null;
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -278,6 +295,8 @@ export class PixiRenderer implements IRenderer {
     this.viewport.addChild(this.shipContainer);
 
     this.halo.init(this.viewport);
+    this.damageNumbers = new DamageNumberManager(this.viewport);
+    this.healthBars = new HealthBarManager(this.viewport);
 
     const measureSize = (): { w: number; h: number } => {
       const vv = window.visualViewport;
@@ -484,6 +503,8 @@ export class PixiRenderer implements IRenderer {
             const dx = proj.beam.toX - proj.x;
             const dy = -(proj.beam.toY - proj.y); // Y-flip for Pixi
             ps = buildBeamGfx(dx, dy);
+          } else if (proj.weaponId === 'laser') {
+            ps = buildLaserBoltGfx();
           } else {
             ps = buildProjectileGfx(proj.isGhost ?? false);
           }
@@ -493,6 +514,10 @@ export class PixiRenderer implements IRenderer {
         ps.x = proj.x;
         ps.y = -proj.y;
         ps.alpha = proj.alpha ?? 1;
+        // Rotate laser bolts to face their velocity heading.
+        if (proj.weaponId === 'laser' && !proj.beam) {
+          ps.rotation = -Math.atan2(proj.vy, proj.vx) + Math.PI / 2;
+        }
       }
       for (const [projId, ps] of this.projectileSprites) {
         if (!projSeen.has(projId)) {
@@ -629,6 +654,24 @@ export class PixiRenderer implements IRenderer {
       this.viewport.moveCenter(local.x, local.y);
     }
 
+    // Drain pending damage numbers and spawn floating text.
+    if (this.damageNumbers && mirror.pendingDamageNumbers) {
+      for (const dn of mirror.pendingDamageNumbers) {
+        this.damageNumbers.spawn(dn.x, dn.y, dn.damage);
+      }
+      mirror.pendingDamageNumbers.length = 0;
+      this.damageNumbers.update();
+    }
+
+    // Drain pending health bar hits and update bars.
+    if (this.healthBars && mirror.pendingHealthBarHits) {
+      for (const hb of mirror.pendingHealthBarHits) {
+        this.healthBars.onHit(hb.entityId, hb.healthPct);
+      }
+      mirror.pendingHealthBarHits.length = 0;
+      this.healthBars.update(mirror);
+    }
+
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's.
     this.halo.update(mirror);
@@ -654,6 +697,8 @@ export class PixiRenderer implements IRenderer {
     }
     const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
     if (ro instanceof ResizeObserver) ro.disconnect();
+    this.damageNumbers?.destroy();
+    this.healthBars?.destroy();
     this.halo.destroy();
     this.app.destroy(true, { children: true });
   }

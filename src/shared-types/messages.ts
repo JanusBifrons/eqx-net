@@ -29,7 +29,7 @@ export const FireMessageSchema = z
     type: z.literal('fire'),
     tick: z.number().int().nonnegative(),
     clientShotId: z.string(),
-    weapon: z.enum(['hitscan', 'projectile']).default('hitscan'),
+    weapon: z.enum(['hitscan', 'laser']).default('hitscan'),
     /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
      *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
      *  reconstructs the ray origin from the shooter's lag-compensated pose
@@ -134,7 +134,7 @@ export interface SnapshotMessage {
    *  this per-recipient list is the only path. Each entry is an authoritative
    *  pose snapshot at `serverTick`; the client mirrors it into its local
    *  projectile map and lets ghosts (client-side prediction) layer on top. */
-  projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string }>;
+  projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string; weaponId?: string }>;
 }
 
 /** Server → client (direct): result of a fire request. */
@@ -154,6 +154,8 @@ export interface DamageEvent {
   damage: number;
   newHealth: number;
   shooterId: string;
+  hitX?: number;
+  hitY?: number;
 }
 
 /** Server → client (broadcast): a ship was destroyed. */

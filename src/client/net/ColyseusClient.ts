@@ -7,7 +7,8 @@ import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
+import { getWeapon } from '@core/combat/WeaponCatalogue';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
@@ -132,6 +133,8 @@ export class ColyseusGameClient {
     remoteLasers: new Map(),
     boostingShips: new Set(),
     thrustingShips: new Set(),
+    pendingDamageNumbers: [],
+    pendingHealthBarHits: [],
   };
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
@@ -629,6 +632,21 @@ export class ColyseusGameClient {
     }
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
+
+    // Floating damage number at hit location.
+    if (this.mirror.pendingDamageNumbers) {
+      const targetShip = this.mirror.ships.get(evt.targetId);
+      const x = evt.hitX ?? targetShip?.x ?? 0;
+      const y = evt.hitY ?? targetShip?.y ?? 0;
+      this.mirror.pendingDamageNumbers.push({ x, y, damage: evt.damage });
+    }
+
+    // Health bar on hit — only show for targets the local player is shooting.
+    if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
+      const maxHealth = SHIP_MAX_HEALTH;
+      const healthPct = Math.max(0, evt.newHealth / maxHealth);
+      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct });
+    }
   }
 
   /**
@@ -1062,13 +1080,21 @@ export class ColyseusGameClient {
     if (projectiles) {
       for (const p of projectiles) {
         seen.add(p.id);
+        // Preserve client-integrated x/y for existing entries — replacing them
+        // every snapshot would snap the bolt back ~50 ms (one broadcast period)
+        // against its travel direction, producing the visible 20 Hz stutter.
+        // We accept the small server/client position drift; vx/vy are still
+        // refreshed authoritatively each snapshot.
+        const prev = this.mirror.projectiles.get(p.id);
+        const isNew = !prev || prev.isGhost;
         this.mirror.projectiles.set(p.id, {
-          x: p.x,
-          y: p.y,
+          x: isNew ? p.x : prev.x,
+          y: isNew ? p.y : prev.y,
           vx: p.vx,
           vy: p.vy,
           ownerId: p.ownerId,
           isGhost: false,
+          weaponId: p.weaponId,
         } satisfies ProjectileRenderState);
       }
     }
@@ -1221,6 +1247,18 @@ export class ColyseusGameClient {
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
       this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
+
+      // Authoritative projectile extrapolation. Snapshots arrive at 20 Hz, but
+      // we render at RAF cadence — without per-frame integration the bolt is
+      // frozen between snapshots and visibly stutters. Server-side projectiles
+      // are constant-velocity (no forces), so straight-line extrapolation is
+      // exact between snapshots. Ghosts are advanced by GhostManager above.
+      const dtSec = this.lastFrameMs / 1000;
+      for (const entry of this.mirror.projectiles.values()) {
+        if (entry.isGhost) continue;
+        entry.x += entry.vx * dtSec;
+        entry.y += entry.vy * dtSec;
+      }
     }
 
     // Damage flash — advance counters, populate mirror.damagedShips.
@@ -1367,8 +1405,14 @@ export class ColyseusGameClient {
       }
 
       if (fireHeld && this.mirror.localPlayerId && !this.localDead) {
-        this.updateLiveBeam();
-        if (tick - this.lastFiredAtTick >= WEAPON_COOLDOWN_TICKS) {
+        const activeWeapon = useUIStore.getState().activeWeapon;
+        const activeWeaponDef = getWeapon(activeWeapon);
+        if (activeWeaponDef.mode === 'hitscan') {
+          this.updateLiveBeam();
+        } else {
+          this.mirror.liveBeam = null;
+        }
+        if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
           this.sendFire(tick);
           this.lastFiredAtTick = tick;
         }
@@ -1423,17 +1467,20 @@ export class ColyseusGameClient {
   private sendFire(tick: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return;
-    // Always read RAW prediction state so the angle we send matches the angle
-    // the server's lag-comp will see at `tick`. The 4-number ray geometry that
-    // used to ride this message is now derived server-side from this dirAngle
-    // plus the rewound shooter pose (network-discipline P5).
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
+    const activeWeapon = useUIStore.getState().activeWeapon;
+    const shotId = nextShotId();
+    const fwdX = -Math.sin(state.angle);
+    const fwdY = Math.cos(state.angle);
+    const fromX = state.x + fwdX * 20;
+    const fromY = state.y + fwdY * 20;
+    this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
     this.room.send('fire', {
       type: 'fire',
       tick,
-      clientShotId: nextShotId(),
-      weapon: 'hitscan',
+      clientShotId: shotId,
+      weapon: activeWeapon,
       dirAngle: state.angle,
     });
   }

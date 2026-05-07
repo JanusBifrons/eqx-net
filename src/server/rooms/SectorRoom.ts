@@ -65,15 +65,15 @@ import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/mes
 import {
   rayHitsSphere,
   rayHitsConvexPolygon,
+  projectileSweepCircle,
   HITSCAN_DAMAGE,
-  PROJECTILE_DAMAGE,
   HITSCAN_RANGE,
-  PROJECTILE_SPEED,
   WEAPON_COOLDOWN_TICKS,
-  PROJECTILE_RADIUS,
   SHIP_COLLISION_RADIUS,
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
+import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
+import type { WeaponId, HitscanWeaponDef, ProjectileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 
 const logger = pino({
   name: 'SectorRoom',
@@ -103,7 +103,6 @@ const JoinOptionsSchema = z
 
 const MAX_INPUTS_PER_TICK = 3;
 const LAG_COMP_WINDOW = 12;
-const PROJECTILE_MAX_TICKS = 180; // 3 s at 60 Hz
 
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
@@ -131,6 +130,10 @@ interface ProjectileRecord {
   vy: number;
   ownerId: string;
   birthTick: number;
+  damage: number;
+  radius: number;
+  maxTicks: number;
+  weaponId: WeaponId;
 }
 
 export class SectorRoom extends Room<SectorState> {
@@ -581,17 +584,24 @@ export class SectorRoom extends Room<SectorState> {
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
     const sy = rewoundShooter?.y ?? fallbackShooter?.y;
     if (sx === undefined || sy === undefined) return;
+    const shooterVx = rewoundShooter?.vx ?? fallbackShooter?.vx ?? 0;
+    const shooterVy = rewoundShooter?.vy ?? fallbackShooter?.vy ?? 0;
     const rayFromX = sx + ndx * 20;
     const rayFromY = sy + ndy * 20;
 
-    if (weapon === 'projectile') {
-      this.spawnServerProjectile(shooterId, rayFromX, rayFromY, ndx * PROJECTILE_SPEED, ndy * PROJECTILE_SPEED);
+    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
+    const weaponDef = getWeapon(weaponId);
+
+    if (weaponDef.mode === 'projectile') {
+      const projDef = weaponDef as ProjectileWeaponDef;
+      this.spawnServerProjectile(shooterId, rayFromX, rayFromY, shooterVx + ndx * projDef.speed, shooterVy + ndy * projDef.speed, projDef.damage, projDef.radius, projDef.maxTicks, weaponId);
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
       return;
     }
 
     // Hitscan: lag-comp check against rewound positions of all other ships.
+    const hitscanDef = weaponDef as HitscanWeaponDef;
     let hitId: string | null = null;
     let hitDist = Infinity;
     let hitIsObstacle = false;
@@ -610,7 +620,7 @@ export class SectorRoom extends Room<SectorState> {
       const cy = rewound?.y ?? fallback?.y;
       if (cx === undefined || cy === undefined) continue;
 
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, SHIP_COLLISION_RADIUS);
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
@@ -633,9 +643,9 @@ export class SectorRoom extends Room<SectorState> {
       const ca = rewound?.angle ?? this.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, ca, rec.vertices);
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, ca, rec.vertices);
       } else {
-        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, cx, cy, rec.radius);
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rec.radius);
       }
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
@@ -663,7 +673,9 @@ export class SectorRoom extends Room<SectorState> {
       // swarm entity (drone with health) → swarm damage path. Asteroids (no
       // swarmHealth entry) are no-ops; the hit still rings client-side via
       // the `laser_fired` broadcast and the wireTargetId tint.
-      this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
+      const hitX = rayFromX + ndx * hitDist;
+      const hitY = rayFromY + ndy * hitDist;
+      this.applyDamage(hitId, shooterId, hitscanDef.damage, hitX, hitY);
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: hitId };
       client.send('hit_ack', ack);
     } else {
@@ -672,8 +684,8 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     // Broadcast authoritative beam endpoint to ALL clients so they can render it.
-    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? hitscanDef.range : hitDist);
+    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? hitscanDef.range : hitDist);
     this.broadcast('laser_fired', {
       type: 'laser_fired',
       shooterId,
@@ -771,25 +783,28 @@ export class SectorRoom extends Room<SectorState> {
     } satisfies LaserFiredEvent);
   }
 
-  private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number): void {
+  private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
     const projId = `proj-${this.projectileCounter++}`;
-    this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick });
+    this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick, damage, radius, maxTicks, weaponId });
     // Wire-discipline P3: projectiles no longer ride MapSchema. Per-recipient
     // interest-filtered list is folded into the snapshot in the broadcast loop.
   }
 
-  private applyDamage(targetId: string, shooterId: string, damage: number): void {
+  private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
     const ship = this.state.ships.get(targetId);
     if (ship) {
       if (!ship.alive) return;
       ship.health = Math.max(0, ship.health - damage);
 
+      const pose = this.shipPoseCache.get(targetId);
       const dmgEvent: DamageEvent = {
         type: 'damage',
         targetId,
         damage,
         newHealth: ship.health,
         shooterId,
+        hitX: hitX ?? pose?.x,
+        hitY: hitY ?? pose?.y,
       };
       this.broadcast('damage', dmgEvent);
       this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
@@ -818,12 +833,17 @@ export class SectorRoom extends Room<SectorState> {
     // client can flash the right sprite. Damage event reuses the player shape
     // — clients that key `mirror.damagedShips` by the same id will pick it up.
     const wireTargetId = `swarm-${rec.entityId}`;
+    const b = slotBase(rec.slot);
+    const swarmHitX = hitX ?? this.sabF32[b + SLOT_X_OFF]!;
+    const swarmHitY = hitY ?? this.sabF32[b + SLOT_Y_OFF]!;
     this.broadcast('damage', {
       type: 'damage',
       targetId: wireTargetId,
       damage,
       newHealth,
       shooterId,
+      hitX: swarmHitX,
+      hitY: swarmHitY,
     } satisfies DamageEvent);
 
     if (newHealth <= 0) {
@@ -935,39 +955,60 @@ export class SectorRoom extends Room<SectorState> {
   private advanceProjectiles(): void {
     const DT = 1 / 60;
     for (const [projId, proj] of this.liveProjectiles) {
-      proj.x += proj.vx * DT;
-      proj.y += proj.vy * DT;
+      // Swept collision: test the segment from the current position to the
+      // would-be next position, not just the next-position point. At 1600 u/s
+      // a bolt advances ~26 units per tick, well over typical target radii;
+      // a per-tick point-sample would tunnel through targets that sit between
+      // consecutive samples. `projectileSweepCircle` returns the earliest
+      // entry distance plus the exact hit point, which lets us pick the
+      // closest target when the segment crosses multiple of them.
+      const stepX = proj.vx * DT;
+      const stepY = proj.vy * DT;
 
-      // Lifetime check.
-      if (this.serverTick - proj.birthTick >= PROJECTILE_MAX_TICKS) {
-        this.liveProjectiles.delete(projId);
-        continue;
-      }
+      let bestEntry = Infinity;
+      let bestTargetId: string | null = null;
+      let bestHitX = proj.x;
+      let bestHitY = proj.y;
 
-      // Collision check against live ships.
-      let hit = false;
       for (const [targetId] of this.playerToSlot) {
         if (targetId === proj.ownerId) continue;
         const targetShip = this.state.ships.get(targetId);
         if (!targetShip || !targetShip.alive) continue;
         const targetPose = this.shipPoseCache.get(targetId);
         if (!targetPose) continue;
-        const dx = proj.x - targetPose.x;
-        const dy = proj.y - targetPose.y;
-        const minDist = PROJECTILE_RADIUS + SHIP_COLLISION_RADIUS;
-        if (dx * dx + dy * dy < minDist * minDist) {
-          this.applyDamage(targetId, proj.ownerId, PROJECTILE_DAMAGE);
-          hit = true;
-          break;
+        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, targetPose.x, targetPose.y, SHIP_COLLISION_RADIUS);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = targetId;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
         }
       }
 
-      if (hit) {
+      for (const rec of this.swarmRegistry.all()) {
+        const b = slotBase(rec.slot);
+        const cx = this.sabF32[b + SLOT_X_OFF]!;
+        const cy = this.sabF32[b + SLOT_Y_OFF]!;
+        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = rec.id;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
+        }
+      }
+
+      if (bestTargetId !== null) {
+        this.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
         this.liveProjectiles.delete(projId);
-        // The destroy broadcast (already emitted in applyDamage's hit path)
-        // tells the client to play the impact effect. The projectile simply
-        // disappears from the next snapshot's per-recipient projectile list.
         continue;
+      }
+
+      // No hit — commit the integration and run the lifetime check.
+      proj.x += stepX;
+      proj.y += stepY;
+      if (this.serverTick - proj.birthTick >= proj.maxTicks) {
+        this.liveProjectiles.delete(projId);
       }
     }
   }
@@ -1801,6 +1842,7 @@ export class SectorRoom extends Room<SectorState> {
               vx: proj.vx,
               vy: proj.vy,
               ownerId: proj.ownerId,
+              weaponId: proj.weaponId,
             });
           }
         }

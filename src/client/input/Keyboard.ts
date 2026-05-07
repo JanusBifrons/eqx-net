@@ -1,3 +1,5 @@
+import { useUIStore } from '../state/store.js';
+
 export interface InputState {
   thrust: boolean;
   turnLeft: boolean;
@@ -42,6 +44,17 @@ export class Keyboard {
       case 'ShiftLeft':
       case 'ShiftRight':
         this.boost = true;
+        break;
+      case 'Digit1':
+      case 'Numpad1':
+        useUIStore.getState().setActiveWeapon('hitscan');
+        break;
+      case 'Digit2':
+      case 'Numpad2':
+        useUIStore.getState().setActiveWeapon('laser');
+        break;
+      case 'KeyQ':
+        useUIStore.getState().cycleWeapon();
         break;
     }
   };

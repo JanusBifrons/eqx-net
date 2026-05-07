@@ -12,8 +12,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 async function joinClient(browser: Browser) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(BASE_URL);
-  await page.getByRole('button', { name: /enter sector alpha/i }).click();
+  await page.goto(`${BASE_URL}?room=sector`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -59,8 +58,7 @@ async function getLocalPlayerId(page: Page): Promise<string> {
 async function joinClientAt(browser: Browser, spawnX: number, spawnY: number) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?spawnX=${spawnX}&spawnY=${spawnY}`);
-  await page.getByRole('button', { name: /enter sector alpha/i }).click();
+  await page.goto(`${BASE_URL}?room=sector&spawnX=${spawnX}&spawnY=${spawnY}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -179,8 +177,11 @@ test('hitscan hits target: hull decreases on target client', async ({ browser })
       target.page.waitForTimeout(2000),
     ]);
 
+    // Persistence (LimboStore) restores hull state across sessions, so the
+    // initial hull may be < 100 if the ship was damaged in a prior run. The
+    // assertion below only checks that hull *decreases* when shot.
     const initialHull = await getHullPct(target.page);
-    expect(initialHull).toBe(100);
+    expect(initialHull).toBeGreaterThan(0);
 
     // Hold space while rotating — ships are at random positions so we try 8 s.
     let hitRegistered = false;
