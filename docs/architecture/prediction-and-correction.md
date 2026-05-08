@@ -60,14 +60,40 @@ SPRING_ANGVEL_END_MS  = 0.001 rad/ms
 
 Threshold-based termination is preferred over a fixed timer because it gives the lerp a physically meaningful end condition: small initial drifts end almost immediately (the spring's residual is below the noise floor on the first frame), large initial drifts take proportionally longer. A fixed timer would either cut off large corrections too early (visible "twitch" at the cut point) or hold small corrections open after they're done.
 
-## What this does *not* fix
+## Adaptive lookahead (Stage 4)
+
+Pre-Stage-4 the prediction-window size (`leadTicks`) was an EWMA-smoothed function of RTT mean only:
+
+```
+desiredLead = max(3, min(20, round(rtt / 33)))
+leadTicks   = round(leadTicks * 0.85 + desiredLead * 0.15)
+```
+
+This works for stable links but **under-buffers** unstable ones — when jitter spikes exceed the prediction window the input loop visibly catches up in chunks. Stage 4 splits the controller into two pure modules:
+
+1. **`Welford` ([src/core/math/Welford.ts](../../src/core/math/Welford.ts))** — single-pass online mean + variance, with a 600-sample reset window so float drift is bounded over multi-hour sessions.
+2. **`lookaheadController` ([src/client/net/lookaheadController.ts](../../src/client/net/lookaheadController.ts))** — replaces the EWMA. `desiredLead = clamp(ceil((mean + 2σ) / 16.67 ms), 3, 30)`. The `2σ` band statistically covers ~97.5% of jitter spikes; the 3-tick floor ensures even a zero-RTT loopback has a prediction window.
+
+Multi-tick target jumps ramp via Stage 1's `CritDampedSpring` (100 ms half-life ≈ 200 ms total settle); ≤1-tick changes snap directly to avoid perpetual half-tick spring oscillation on per-snapshot integer noise. Frame-rate independent: the closed-form spring step gives identical results at 8 ms vs 33 ms cadence.
+
+## Snapshot drop detection + adaptive interp delay (Stage 4)
+
+The swarm-interp buffer's pre-Stage-4 floor was driven only by the EWMA of inter-arrival times. When the wire drops snapshots, that EWMA goes UP (intervals look longer) but only after a few snapshots, and the buffer can briefly run out of bracketing arrivals — visible as a sprite freeze + recovery glitch.
+
+[`snapshotDropDetector`](../../src/client/net/snapshotDropDetector.ts) tracks per-snapshot serverTick deltas in a sliding 10-snapshot window. A delta > 3 indicates dropped snapshots; the recent count is converted via `computeInterpBiasMs(droppedCount) = min(droppedCount × 16.67 ms, 200 ms)` and added to `setSwarmDisplayDelayMs`. Bias decays naturally as drops age out of the window.
+
+Out-of-order / duplicate / backwards ticks are silently ignored — they're not "drops" in any meaningful sense.
+
+## What this layer does *not* fix
 
 - **Server-side prediction errors.** If the server's authoritative state is itself wrong (bug in `applyInput` server-side, mis-applied collision, mis-counted impulse), the spring will still smoothly show whatever wrong correction the server demands. The spring is a presentation layer, not a correctness check.
-- **Network-buffering spikes.** A 500 ms inbound-snapshot gap (see `docs/LESSONS.md` Pattern A) makes the *next* correction larger because the client has predicted forward longer; the spring still settles it within ~125 ms, but the correction's amplitude is the network's fault, not the spring's.
+- **Multi-second network freezes.** Stage 4's `2σ` lookahead protects against jitter, not catastrophic stalls. A 2 s buffer expansion would feel like input lag — the cap at 30 ticks (500 ms) deliberately doesn't try.
 - **Server CPU saturation.** When the server's tick rate drops (TiDi room with 4000 entities; see `docs/LESSONS.md` Pattern B), corrections come slower because *snapshots* come slower; the spring has nothing to compensate at that layer.
 
-Stages 4 (adaptive jitter handling) and 6 (packet-loss resilience) of the network-feel roadmap address those concerns at the appropriate layers.
+Stage 6 (packet-loss resilience) of the network-feel roadmap addresses sustained-loss recovery at the appropriate layer.
 
 ## Telemetry
 
 `Reconciler.lerpHalfLifeMs` is public-readable (was `lerpTotalFrames` in Stage 0); `ColyseusClient` plumbs it into the existing `'correction'` log entry. The end-to-end spec [tests/e2e/feel-tuning.spec.ts](../../tests/e2e/feel-tuning.spec.ts) reads the log entries and asserts every queued correction's halfLife is ≤ 25 ms — verifying the production reconcile path picks half-lives within bounds.
+
+Stage 4 added three public-readable fields to `PredictionStats`: `rttMeanMs` (Welford running mean), `rttStdDevMs` (Welford σ), and `droppedSnapshotsRecent` (sliding-window drop count). The next user diagnostic capture surfaces these for inspection alongside the existing RTT/jitter metrics.

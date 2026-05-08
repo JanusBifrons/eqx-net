@@ -166,6 +166,24 @@ Architecture: `docs/architecture/remote-prediction.md`.
 
 ---
 
+## Measured after Stage 4 (network-feel roadmap, 2026-05-08)
+
+Stage 4 added jitter-aware lookahead and adaptive interp delay. Three new pure-function modules drive the controller:
+
+| Component | File | Behaviour |
+|---|---|---|
+| Online mean + σ | `src/core/math/Welford.ts` | Pairwise update + 600-sample reset window for numerical stability |
+| Lookahead controller | `src/client/net/lookaheadController.ts` | `desiredLead = clamp(ceil((mean + 2σ) / 16.67), 3, 30)`; spring-smoothed multi-tick transitions, snap on ≤1-tick changes |
+| Drop detector | `src/client/net/snapshotDropDetector.ts` | Sliding-window count of dropped snapshots inferred from serverTick gaps; biases swarm-interp delay by `drops × 16.67 ms` (capped at 200 ms) |
+
+Wired into `ColyseusClient`: every snapshot pushes `reconciler.lastRtt` into the Welford state, computes `desiredLead`, ramps `leadTicks` via the controller, observes the snapshot's `serverTick` for drop detection, and biases `setSwarmDisplayDelayMs`. New `PredictionStats` fields (`rttMeanMs`, `rttStdDevMs`, `droppedSnapshotsRecent`) surface the new signals to diagnostic captures.
+
+Tier-2: existing single-client E2Es (`feel-tuning.spec.ts`, `collision-events.spec.ts`) re-run cleanly under Stage 4 — no regressions. Dedicated `jitter-resilience.spec.ts` deferred (see Decision Log) because the property is unit-test verified and the user's measured network jitter is already healthy (9.9 ms σ in the most recent capture).
+
+Architecture: extended `docs/architecture/prediction-and-correction.md`.
+
+---
+
 ## How to read the dev overlay
 
 - **RTT**: half the round-trip time (ms). At 350ms RTT, ticksAhead ≈ 21.

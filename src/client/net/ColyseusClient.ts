@@ -17,6 +17,25 @@ import {
   shouldForwardPredict,
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
+import {
+  createWelford,
+  welfordPush,
+  welfordMean,
+  welfordStdDev,
+  type WelfordState,
+} from '@core/math/Welford';
+import {
+  createLookaheadController,
+  computeDesiredLead,
+  updateLookahead,
+  type LookaheadController,
+} from './lookaheadController';
+import {
+  createDropDetector,
+  observeSnapshotTick,
+  computeInterpBiasMs,
+  type DropDetector,
+} from './snapshotDropDetector';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -81,6 +100,12 @@ export interface PredictionStats {
   /** Stage 2 — total `collision_resolved` events that mutated predWorld this
    *  session. Excludes events dropped by the stale or rate-limit guards. */
   collisionEventsApplied: number;
+  /** Stage 4 — Welford running mean of per-snapshot RTT samples. */
+  rttMeanMs: number;
+  /** Stage 4 — Welford running standard deviation of per-snapshot RTT. */
+  rttStdDevMs: number;
+  /** Stage 4 — sliding-window count of dropped snapshots (last 10 arrivals). */
+  droppedSnapshotsRecent: number;
 }
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
@@ -228,6 +253,9 @@ export class ColyseusGameClient {
     snapshotJitterMs: 0,
     rollingCorrRate: 0,
     collisionEventsApplied: 0,
+    rttMeanMs: 0,
+    rttStdDevMs: 0,
+    droppedSnapshotsRecent: 0,
   };
 
   private room: Room | null = null;
@@ -270,6 +298,19 @@ export class ColyseusGameClient {
    * jumpy RTT causes oscillation otherwise.
    */
   private leadTicks = 6;
+
+  /** Stage 4 — Welford-based RTT mean + std-dev. Pushed each snapshot
+   *  reconcile when `reconciler.lastRtt` is valid (>0). Drives the
+   *  `mean + 2σ` lookahead formula in `lookaheadController`. */
+  private readonly _rttWelford: WelfordState = createWelford();
+  /** Stage 4 — spring-smoothed lookahead controller. Replaces the
+   *  pre-Stage-4 EWMA on `leadTicks` with a critically-damped ramp on
+   *  multi-tick changes; small changes snap directly. */
+  private readonly _lookaheadCtrl: LookaheadController = createLookaheadController(6);
+  /** Stage 4 — sliding-window count of dropped snapshots over the last
+   *  10 arrivals. Drives `computeInterpBiasMs` which biases the swarm
+   *  display-delay floor when the wire is dropping packets. */
+  private readonly _dropDetector: DropDetector = createDropDetector();
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -937,7 +978,12 @@ export class ColyseusGameClient {
       this._intervalEwma = this._intervalEwma === 0
         ? intervalMs
         : this._intervalEwma * 0.85 + intervalMs * 0.15;
-      setSwarmDisplayDelayMs(this._intervalEwma * ADAPTIVE_DELAY_FACTOR);
+      // Stage 4 — observe each snapshot's serverTick for drop detection;
+      // bias the swarm display-delay upward when the wire is dropping
+      // packets so the interp buffer doesn't run out of bracketing arrivals.
+      observeSnapshotTick(this._dropDetector, snap.serverTick);
+      const dropBias = computeInterpBiasMs(this._dropDetector.dropCount);
+      setSwarmDisplayDelayMs(this._intervalEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
     }
 
     // Rolling jitter: max − min of the last 10 snapshot intervals.
@@ -968,12 +1014,20 @@ export class ColyseusGameClient {
       this.clockAnchorPerfNow = now;
       this._anchorInitialised = true;
     }
-    // Smooth the half-RTT lead so a single jitter spike doesn't whip targetTick
-    // around. 1/60 s = 16.67 ms per tick; clamp to a sane window.
-    if (this.reconciler) {
-      const desiredLead = Math.max(3, Math.min(20, Math.round(this.reconciler.lastRtt / 33)));
-      this.leadTicks = Math.round(this.leadTicks * 0.85 + desiredLead * 0.15);
+    // Stage 4 — jitter-aware lookahead. Welford-track per-snapshot RTT
+    // (mean + σ) and size the prediction window to `mean + 2σ` rather
+    // than the pre-Stage-4 mean-only EWMA. Multi-tick target jumps ramp
+    // via the spring controller; small changes snap directly.
+    if (this.reconciler && this.reconciler.lastRtt > 0) {
+      welfordPush(this._rttWelford, this.reconciler.lastRtt);
+      const mean = welfordMean(this._rttWelford);
+      const stdDev = welfordStdDev(this._rttWelford);
+      const desiredLead = computeDesiredLead(mean, stdDev);
+      this.leadTicks = updateLookahead(this._lookaheadCtrl, desiredLead, this.lastFrameMs);
+      this.stats.rttMeanMs = mean;
+      this.stats.rttStdDevMs = stdDev;
     }
+    this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 
     if (!localId || !this.reconciler) {
       if (this.predWorld) {
