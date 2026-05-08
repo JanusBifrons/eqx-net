@@ -14,6 +14,29 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-08 — Network-Feel Stage 4 — `Reconciler.lastRtt` is *not* a clean RTT signal
+
+Stage 4's Welford-based `leadTicks = ceil((mean + 2σ) / FIXED_MS)` formula assumes the input RTT samples are clean. They aren't.
+
+`Reconciler.lastRtt = now - ackedRec.sentAt` is a "time since input was sent" measure, not the true TCP RTT. When a snapshot is delayed by a Pattern A network buffer (inbound 500 ms+ stall), the next snapshot's `lastRtt` is computed from an `ackedTick` that was sent before the gap — so the apparent RTT is the gap delay PLUS the real RTT.
+
+In a real diagnostic (`diag/captures/2026-05-08T16-00-51-212Z-k35x92.json`):
+- Live `rttMs = 37` (instantaneous, healthy)
+- `rttMeanMs = 300`, `rttStdDevMs = 249` (Welford, contaminated)
+- `mean + 2σ = 798 ms = 48 ticks` → clamped to 30
+- `ticksAhead` distribution: median 6, p95 47, max 47
+- During combat: 137 u / 115 u position corrections cascade
+
+**Mechanism**: a single 572 ms snapshot gap injected one 500+ ms RTT sample into Welford. Welford's `mean + 2σ` saturated the lookahead at the 30-tick cap. Client speculated 500 ms ahead of server. Combat predictions diverged. Reconciliation produced massive corrections.
+
+**Fix shipped**: clamp RTT samples at 250 ms before pushing to Welford (`RTT_SAMPLE_CLAMP_MS` in [src/client/net/ColyseusClient.ts](../src/client/net/ColyseusClient.ts)). Real-world high-RTT clients (international, cellular) measure 100–250 ms cleanly; outliers past 250 ms are almost certainly snapshot-delay contamination, not signal we want feeding the prediction window.
+
+**Why the clamp instead of a smarter signal**: a true ping/pong RTT measurement would be cleaner but adds round-trip messages and a separate channel. The clamp is one line and bounded — σ on a `[0, 250]` clamped stream is ≤ 125 ms by uniform-distribution bound, so `mean + 2σ ≤ 500 ms` and the lookahead can't saturate beyond ~30 ticks even under sustained outliers. If multi-second real RTTs appear, revisit.
+
+**Distinguishing future occurrences**: the symptom is `predStats.rttMeanMs >> live rttMs` AND `ticksAhead` p95 sitting at the cap. If both hold, the Welford state has been polluted; check the most recent 600 snapshots for any with `intervalMs > 200`.
+
+---
+
 ## 2026-05-08 — Network-Feel Stage 0 — Two diagnostic patterns that look identical from stats but have different root causes
 
 While verifying Stage 0 of the network-feel roadmap (`plans/network-feel-roadmap.md`) the user captured two diagnostics that both looked like "lag spike" from `stats.snapshotJitterMs` and `stats.rollingCorrRate`. They had completely different root causes; future investigations should distinguish them in this order before reaching for a fix.

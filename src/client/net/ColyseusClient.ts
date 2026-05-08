@@ -155,6 +155,17 @@ const REMOTE_SPRING_VEL_END_MS = 0.05;    // 50 u/s
  *  bounded. Reset on every snapshot. */
 const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
 
+/** Stage 4 hotfix — clamp on RTT samples fed into the Welford state
+ *  driving leadTicks. `Reconciler.lastRtt` is contaminated by snapshot-
+ *  delay (it's `now - ackedRec.sentAt`, not the true TCP RTT), so a
+ *  500 ms inbound network gap can push σ past 200 ms and saturate the
+ *  prediction window at the 30-tick cap. Clamping samples at 250 ms
+ *  bounds σ even under Pattern A spikes; real-world high-RTT clients
+ *  (international, cellular) routinely measure 100–250 ms, so the
+ *  clamp doesn't penalise them. See `docs/LESSONS.md` for the
+ *  diagnostic. */
+const RTT_SAMPLE_CLAMP_MS = 250;
+
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
 function nextShotId(): string {
@@ -1018,8 +1029,21 @@ export class ColyseusGameClient {
     // (mean + σ) and size the prediction window to `mean + 2σ` rather
     // than the pre-Stage-4 mean-only EWMA. Multi-tick target jumps ramp
     // via the spring controller; small changes snap directly.
+    //
+    // 2026-05-08 fix (Stage 4 hotfix): Reconciler.lastRtt is computed as
+    // `now - ackedRec.sentAt` — a "time since input was sent" measure
+    // contaminated by snapshot-delay. A 572 ms inbound network gap (per
+    // `docs/LESSONS.md` Pattern A) inflates lastRtt to 572 ms+ even
+    // though the underlying TCP RTT is healthy. Without a clamp, that
+    // outlier sample pushes Welford σ past 200 ms, the `mean + 2σ`
+    // formula saturates at the 30-tick cap, the client speculates 500 ms
+    // ahead, and combat predictions diverge into 100+ u corrections.
+    // The clamp converts outliers into "I have no fresh RTT info"
+    // (the cap value is folded into the running mean cleanly) instead
+    // of letting σ explode.
     if (this.reconciler && this.reconciler.lastRtt > 0) {
-      welfordPush(this._rttWelford, this.reconciler.lastRtt);
+      const rttSample = Math.min(this.reconciler.lastRtt, RTT_SAMPLE_CLAMP_MS);
+      welfordPush(this._rttWelford, rttSample);
       const mean = welfordMean(this._rttWelford);
       const stdDev = welfordStdDev(this._rttWelford);
       const desiredLead = computeDesiredLead(mean, stdDev);
