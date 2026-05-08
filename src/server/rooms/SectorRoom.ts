@@ -292,6 +292,12 @@ export class SectorRoom extends Room<SectorState> {
       asteroidConfig?: typeof ASTEROIDS;
       /** How many drones to seed at room start. 0 to skip. Defaults to 30 for non-test rooms. */
       droneCount?: number;
+      /** Spawn-ring radius for the drone wave (legacy small-seed path —
+       *  ignored when `swarmCount` is set). Defaults to 150 u so a player
+       *  spawning at origin can engage immediately. Earlier the default was
+       *  350 u, but smoke testing the network-feel roadmap repeatedly
+       *  needed enemies in range without a long drive — this is the knob. */
+      droneRadius?: number;
       /**
        * Phase 5e: bulk-seed N entities (asteroids + drones in `swarmRatio`
        * mix) instead of using `asteroidConfig` + `droneCount`. When set,
@@ -398,12 +404,14 @@ export class SectorRoom extends Room<SectorState> {
       logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
     } else {
       // Seed a small drone wave for early manual testing. Drones ring the
-      // spawn area at distance 350u so the player can engage them without
-      // being instantly swarmed.
+      // spawn area at a configurable distance (default 150u) so the player
+      // can engage them immediately for smoke testing without a long drive.
+      // Bump `droneRadius` per-room for less-frantic scenarios.
       const droneCount = roomOpts.droneCount ?? (this.testMode ? 0 : 30);
+      const droneRadius = roomOpts.droneRadius ?? 150;
       for (let i = 0; i < droneCount; i++) {
         const angle = (i / droneCount) * Math.PI * 2;
-        const r = 350;
+        const r = droneRadius;
         const id = `drone-${i}`;
         const ok = this.swarmSpawner.spawnDrone({ id, x: Math.cos(angle) * r, y: Math.sin(angle) * r });
         if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }

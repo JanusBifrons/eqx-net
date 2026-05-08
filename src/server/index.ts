@@ -8,7 +8,7 @@ import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devResetSectorHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -79,6 +79,13 @@ if (process.env['NODE_ENV'] !== 'production') {
 
   // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
   app.get('/dev/limbo', devLimboHandler);
+
+  // POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
+  // Wipes one (or all) sector's in-memory + persisted swarm state and forces
+  // a fresh re-spawn. See diagRouter.ts for the full mechanism.
+  app.post('/dev/reset-sector', (req, res) => {
+    void devResetSectorHandler(req, res);
+  });
 }
 
 const httpServer = createServer(app);

@@ -13,9 +13,11 @@ import { Router, type Request, type Response, type Router as ExpressRouter } fro
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
 import { getLimboStore } from '../db/PersistenceWorker.js';
+import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
 const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling — a 500-entry log is ~150 KB; this is plenty.
@@ -131,6 +133,108 @@ export function devStatsHandler(req: Request, res: Response): void {
  * playerId (which is per-browser localStorage), and pose is broadcast
  * unconditionally to anyone in the same sector anyway.
  */
+/**
+ * POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
+ *
+ * Wipes a sector's in-memory swarm state AND its persisted snapshot row,
+ * then re-creates the room (for galaxy sectors which are eagerly created
+ * at boot). Engineering rooms (`sector`, `test-sector`, `swarm-*`) lazy-
+ * spawn on next join, so disposal alone is enough.
+ *
+ * `key` matches the Colyseus room name:
+ *   - `sector`            — legacy engineering drone-ring room
+ *   - `galaxy-sol-prime`  — a specific galaxy sector
+ *   - `all-galaxy`        — every galaxy sector at once
+ *
+ * Returns: { ok, deletedSnapshots, disposedRooms, recreated }.
+ *
+ * Connected clients in the affected room(s) get disconnected — they'll
+ * need to rejoin to see the fresh state. NODE_ENV-gated mount in
+ * index.ts (same gate as the other /dev/* routes).
+ */
+export async function devResetSectorHandler(req: Request, res: Response): Promise<void> {
+  const key = String(req.query['key'] ?? '');
+  if (!key) {
+    res.status(400).json({
+      error: 'key required',
+      examples: ['key=sector', 'key=galaxy-sol-prime', 'key=all-galaxy'],
+    });
+    return;
+  }
+
+  // Resolve which room names we're targeting.
+  const targetRooms: string[] = [];
+  let isGalaxyReset = false;
+  if (key === 'all-galaxy') {
+    for (const s of GALAXY_SECTORS) targetRooms.push(`galaxy-${s.key}`);
+    isGalaxyReset = true;
+  } else {
+    targetRooms.push(key);
+    if (key.startsWith('galaxy-')) isGalaxyReset = true;
+  }
+
+  // Step 1: delete persisted snapshots (galaxy sectors only — engineering
+  // rooms don't persist).
+  let deletedSnapshots = 0;
+  if (isGalaxyReset) {
+    try {
+      const sectorKeys =
+        key === 'all-galaxy'
+          ? GALAXY_SECTORS.map((s) => s.key)
+          : [key.replace(/^galaxy-/, '')];
+      for (const sectorKey of sectorKeys) {
+        const result = db
+          .prepare('DELETE FROM game_snapshots WHERE sector_id = ?')
+          .run(sectorKey);
+        deletedSnapshots += Number(result.changes);
+      }
+    } catch (err) {
+      res.status(500).json({ error: 'snapshot delete failed', detail: (err as Error).message });
+      return;
+    }
+  }
+
+  // Step 2: dispose any running room instances so fresh-spawn happens next.
+  let disposedRooms = 0;
+  for (const roomName of targetRooms) {
+    try {
+      const rooms = await matchMaker.query({ name: roomName });
+      for (const room of rooms) {
+        try {
+          await matchMaker.remoteRoomCall(room.roomId, 'disconnect');
+          disposedRooms++;
+        } catch {
+          /* room may already be disposing — best effort */
+        }
+      }
+    } catch {
+      /* ignore — room name may not be registered */
+    }
+  }
+
+  // Step 3: re-create galaxy sectors so they hydrate from the now-empty DB
+  // (they're eagerly created at boot; disposing them above leaves a hole
+  // that has to be re-filled). Engineering rooms aren't pre-created, so
+  // they'll lazy-spawn on next join naturally.
+  let recreated = 0;
+  if (isGalaxyReset) {
+    const recreateKeys =
+      key === 'all-galaxy'
+        ? GALAXY_SECTORS.map((s) => s.key)
+        : [key.replace(/^galaxy-/, '')];
+    for (const sectorKey of recreateKeys) {
+      try {
+        await matchMaker.createRoom(`galaxy-${sectorKey}`, {});
+        recreated++;
+      } catch {
+        /* createRoom may race with the dispose above; ignore */
+      }
+    }
+  }
+
+  res.json({ ok: true, key, deletedSnapshots, disposedRooms, recreated });
+}
+
 export function devLimboHandler(req: Request, res: Response): void {
   const playerId = String(req.query['playerId'] ?? '');
   if (!playerId) {
