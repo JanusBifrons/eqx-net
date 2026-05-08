@@ -506,11 +506,11 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Tier-2 spec `feel-tuning.spec.ts` written and passing &nbsp; *(73 corrections observed under `?room=sector` thrust-into-drone-ring; max queued frames = 6, max drift 80 u)*
 - [x] `docs/FEEL_GOALS.md` updated with measured outcomes
 
-### Stage 1 — Spring-based smoothing  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `virtualClock` helper hardened
-- [ ] Cycle 1: spring convergence within 5×halfLife
-- [ ] Cycle 2: no overshoot under critical damping
-- [ ] Cycle 3: frame-rate independence (8 ms vs 33 ms)
+### Stage 1 — Spring-based smoothing  &nbsp; *Status: 🚧 in progress*
+- [~] Test-infra: `virtualClock` helper hardened &nbsp; *(skipped — closed-form spring takes dtMs directly; no virtual clock needed for property tests)*
+- [x] Cycle 1: spring convergence within 5×halfLife
+- [x] Cycle 2: no overshoot under critical damping
+- [x] Cycle 3: frame-rate independence (8 ms vs 33 ms)
 - [ ] Cycle 4: `Reconciler` spring shape at t=halfLife
 - [ ] Cycle 5: `ColyseusClient` remote-ship offset switched to spring
 - [ ] Cycle 6: `swarmInterpolation` re-target shim switched to spring
@@ -600,3 +600,5 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 0 — Cycles 3 and 4 bundled into one commit (`b6c5e08`-class). Both are single-line constant changes targeting the same module (`swarmInterpolation.ts`) and the same theme (tightening adaptive jitter buffer now that snapshot jitter is empirically < 20 ms). Cycle granularity preserved in the plan tracker; commit granularity collapsed for atomicity of file changes.
 - 2026-05-08 — Stage 0 Tier-2 — First spec attempt asserted "longest contiguous lerping=true span ≤ 110 ms" using `predStats.lerping`. That property is wrong: back-to-back corrections leave `lerping=true` indefinitely because each new correction queues a new lerp before the previous finishes — the spec measures the duration of *continuous correction activity*, not any single correction's lerp. Reframed: expose `lerpTotalFrames` (was private) on `Reconciler`, plumb into the existing 'correction' log entry payload in `ColyseusClient`, and assert `max(lerpTotalFrames) ≤ 6` across all observed corrections in the sample window. This directly tests the Stage-0 cap surviving through the production reconcile call path.
 - 2026-05-08 — Post-Stage-0 — User reported a 581 ms inbound-snapshot gap during a real test. Investigation (see `docs/LESSONS.md` Pattern A) confirmed mobile-network buffering, not server CPU and not Stage 0 regression. Stage 0's tighter cap actually made the spike's recovery faster (100 ms vs 300 ms pre-Stage-0). Stages 4 and 6 will absorb the spike class properly; no plan change. A separate TiDi-4000 capture (Pattern B, sustained server CPU saturation) was confirmed to be outside the roadmap's scope — surfaced as a follow-on workstream in the Cross-Machine Persistence section.
+- 2026-05-08 — Stage 1 — Skipping the `virtualClock` test-infra investment. The closed-form analytical spring takes `dtMs` as a direct parameter, so unit tests just call `springStep(s, target, halfLife, dtMs)` with arbitrary dt values. No hooked-up `requestAnimationFrame` or wall-clock simulation needed. Will revisit if Stage 4's spring-smoothed lookahead transitions need it.
+- 2026-05-08 — Stage 1 — Cycles 1, 2, 3 bundled into a single commit (`CritDampedSpring` module + 3 property tests = one atomic unit; same pattern as Stage 0 cycles 3+4). Tracker preserves cycle granularity. Implementation is the analytical closed-form `ε(t) = (ε₀ + (v₀ + ω·ε₀)·t)·exp(-ω·t)` so frame-rate independence is satisfied by construction, not by integration tricks. The user-facing `halfLifeMs` parameter uses K = 1.6783… (numerical solution to `(1+K)·exp(-K) = 0.5`) so `x(halfLife)/x(0) = 0.5` matches the colloquial meaning of half-life — saves later confusion when the Reconciler's spring-shape test asserts the same.
