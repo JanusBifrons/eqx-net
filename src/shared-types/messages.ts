@@ -113,8 +113,24 @@ export interface TransitStateMessage {
 export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
-  /** Authoritative ship states at the time the snapshot was taken. */
-  states: Record<string, { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>;
+  /** Authoritative ship states at the time the snapshot was taken.
+   *  Stage 3: each entry now carries `lastInput` — the input vector the
+   *  worker applied this tick — so remote clients can forward-predict
+   *  the body's pose using the same input intent the server is using.
+   *  Optional for back-compat with snapshots from pre-Stage-3 servers. */
+  states: Record<
+    string,
+    {
+      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      lastInput?: {
+        thrust: boolean;
+        turnLeft: boolean;
+        turnRight: boolean;
+        boost: boolean;
+        reverse: boolean;
+      };
+    }
+  >;
   /** Last client input tick acknowledged by the server for THIS recipient.
    *  Per-recipient (network-discipline P3) — earlier the server broadcast a
    *  full `Record<playerId, number>` to every client, but each client only

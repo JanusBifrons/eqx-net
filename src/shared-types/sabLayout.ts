@@ -59,6 +59,25 @@ export const FLAG_SLEEPING = 1 << 0;
 export const FLAG_IS_SWARM = 1 << 1;
 export const FLAG_KIND_DRONE = 1 << 2; // 0 = asteroid, 1 = drone (only meaningful with FLAG_IS_SWARM)
 
+/** Stage 3 (network-feel roadmap) — last-applied input flags. The worker
+ *  writes these into the slot's FLAGS u32 each tick alongside FLAG_SLEEPING;
+ *  the main thread reads them into `SnapshotMessage.states[*].lastInput` so
+ *  remote clients can forward-predict the body's pose using the same input
+ *  intent the server is applying. */
+export const FLAG_INPUT_THRUST     = 1 << 3;
+export const FLAG_INPUT_TURN_LEFT  = 1 << 4;
+export const FLAG_INPUT_TURN_RIGHT = 1 << 5;
+export const FLAG_INPUT_BOOST      = 1 << 6;
+export const FLAG_INPUT_REVERSE    = 1 << 7;
+/** Mask of all 5 input bits — convenient for clearing the input portion of
+ *  the FLAGS word before re-writing. */
+export const INPUT_FLAGS_MASK =
+  FLAG_INPUT_THRUST |
+  FLAG_INPUT_TURN_LEFT |
+  FLAG_INPUT_TURN_RIGHT |
+  FLAG_INPUT_BOOST |
+  FLAG_INPUT_REVERSE;
+
 export const MAX_ENTITIES = 5120;
 /** Total SAB size in bytes: 5-word header + 5120 slots × 36 bytes ≈ 184 KB.
  *  Sized for the Phase 6 TiDi acceptance gate (~4000 swarm + headroom for

@@ -11,6 +11,12 @@ import {
   type CollisionGuardState,
 } from './applyCollisionResolved';
 import { CollisionResolvedMessageSchema } from '@shared-types/messages';
+import {
+  createRemotePredictionGuard,
+  recordRemoteCorrection,
+  shouldForwardPredict,
+  type RemotePredictionGuard,
+} from './remotePredictionGuard';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -115,6 +121,15 @@ function remoteOffsetHalfLifeForDrift(drift: number): number {
 const REMOTE_SPRING_POS_END = 0.05;       // matches LERP_THRESHOLD
 const REMOTE_SPRING_VEL_END_MS = 0.05;    // 50 u/s
 
+/** Stage 3 — maximum forward-prediction ticks per remote, per snapshot.
+ *  At 60 Hz that's ~133 ms of speculative integration. A long network
+ *  stall can leave `inputTick - serverTick` arbitrarily large, but we
+ *  only speculate the remote's input for this many ticks beyond
+ *  serverTick — additional ticks integrate the remote with damping
+ *  only (pre-Stage-3 behaviour) so visible runaway speculation is
+ *  bounded. Reset on every snapshot. */
+const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
+
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
 function nextShotId(): string {
@@ -174,6 +189,24 @@ export class ColyseusGameClient {
    *  plus latest snapshot tick for the stale-event drop check. Updated by
    *  the collision_resolved handler and by handleSnapshot. */
   private readonly _collisionGuard: CollisionGuardState = createCollisionGuard();
+
+  /** Stage 3 — per-remote `lastInput` from the latest snapshot. Used by
+   *  applyRemoteInputs() during the replay and tickPhysics input loops to
+   *  forward-predict remote ships using the same input intent the server
+   *  is applying. */
+  private readonly _remoteLastInputs = new Map<
+    string,
+    { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
+  >();
+  /** Stage 3 — per-remote count of forward-prediction ticks applied since
+   *  the last snapshot. Reset on snapshot arrival; gated against
+   *  STAGE_3_MAX_LOOKAHEAD_TICKS so a long network stall doesn't produce
+   *  runaway speculative motion. */
+  private readonly _remoteForwardTicks = new Map<string, number>();
+  /** Stage 3 — hysteresis guard. Tracks recent correction magnitudes per
+   *  remote and disables forward-prediction for entities whose input
+   *  intent isn't tracking. */
+  private readonly _predGuard: RemotePredictionGuard = createRemotePredictionGuard();
 
   /** Publicly readable prediction/latency stats. Updated on every snapshot. */
   readonly stats: PredictionStats = {
@@ -971,10 +1004,34 @@ export class ColyseusGameClient {
         const current = this.predWorld.getShipState(remoteId);
         if (current) preResetRemotePos.set(remoteId, { x: current.x, y: current.y });
         this.predWorld.setShipState(remoteId, state);
+        // Stage 3 — capture each remote's last-applied input from the
+        // snapshot for forward-prediction during the upcoming replay
+        // and the next tickPhysics window.
+        if (state.lastInput) {
+          this._remoteLastInputs.set(remoteId, { ...state.lastInput });
+        } else {
+          this._remoteLastInputs.delete(remoteId);
+        }
+        // Reset the lookahead-cap counter for this remote — the upcoming
+        // replay starts a fresh forward-prediction window from serverTick.
+        this._remoteForwardTicks.set(remoteId, 0);
+      }
+      // Drop entries for remotes that are no longer in the snapshot.
+      for (const tracked of [...this._remoteLastInputs.keys()]) {
+        if (!(tracked in snap.states)) {
+          this._remoteLastInputs.delete(tracked);
+          this._remoteForwardTicks.delete(tracked);
+        }
       }
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
-      this.reconciler.reconcile(serverState, snap.serverTick, this.inputTick, ackedTick);
+      this.reconciler.reconcile(
+        serverState,
+        snap.serverTick,
+        this.inputTick,
+        ackedTick,
+        () => this.applyRemoteInputs(),
+      );
 
       // Compute remote ship lerp offsets.
       if (this.predWorld) {
@@ -984,6 +1041,11 @@ export class ColyseusGameClient {
           const ox = preReset.x - postReconcile.x;
           const oy = preReset.y - postReconcile.y;
           const dist = Math.hypot(ox, oy);
+          // Stage 3 — feed the per-remote correction magnitude into the
+          // hysteresis guard. 3 consecutive corrections > 5 u disable
+          // forward-prediction for this remote; 3 consecutive < 5 u
+          // re-enable it. Sticky thresholds avoid oscillation.
+          recordRemoteCorrection(this._predGuard, remoteId, dist);
           if (dist > 1) {
             const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
             // Re-anchor the spring at the new offset; velocity zeroed
@@ -1485,6 +1547,12 @@ export class ColyseusGameClient {
           else this.mirror.thrustingShips.delete(this.mirror.localPlayerId);
         }
       }
+      // Stage 3 — apply each remote ship's last-known input before advancing
+      // physics, so remote bodies forward-predict in lockstep with the local
+      // input loop. Bounded by STAGE_3_MAX_LOOKAHEAD_TICKS per snapshot;
+      // remotes whose intent isn't tracking (3 consecutive corrections > 5 u)
+      // skip this and integrate with damping only.
+      this.applyRemoteInputs();
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
         this.predWorld.tick(1 / 60);
@@ -1534,6 +1602,35 @@ export class ColyseusGameClient {
    * The hitscan query itself runs against raw predWorld state, which is what
    * the server's lag-comp will validate against.
    */
+  /**
+   * Stage 3 — apply each remote ship's last-known input intent to predWorld
+   * for one tick of forward-prediction. Called once per replay tick (from
+   * Reconciler.reconcile's perReplayTick hook) and once per tickPhysics
+   * input loop iteration.
+   *
+   * Two guards bound the speculation:
+   *
+   *   1. **Hysteresis** — `shouldForwardPredict` returns false for remotes
+   *      whose last 3 corrections exceeded 5 u. Skipped remotes integrate
+   *      with damping only (pre-Stage-3 behaviour).
+   *   2. **Lookahead cap** — per-remote `_remoteForwardTicks` counter is
+   *      reset on every snapshot. Once it hits STAGE_3_MAX_LOOKAHEAD_TICKS
+   *      we stop applying input for that remote until the next snapshot.
+   *      A long network stall otherwise would let speculation run away.
+   */
+  private applyRemoteInputs(): void {
+    if (!this.predWorld) return;
+    for (const remoteId of this.predRemoteShipIds) {
+      const lastInput = this._remoteLastInputs.get(remoteId);
+      if (!lastInput) continue;
+      if (!shouldForwardPredict(this._predGuard, remoteId)) continue;
+      const ticks = this._remoteForwardTicks.get(remoteId) ?? 0;
+      if (ticks >= STAGE_3_MAX_LOOKAHEAD_TICKS) continue;
+      this.predWorld.applyInput(remoteId, lastInput);
+      this._remoteForwardTicks.set(remoteId, ticks + 1);
+    }
+  }
+
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;

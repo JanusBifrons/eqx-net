@@ -169,12 +169,24 @@ export class Reconciler {
   /**
    * Reconcile the prediction world against an authoritative server snapshot.
    *
-   * @param serverState  Ship state the server had at `serverTick`.
-   * @param serverTick   Server's physics tick when the snapshot was taken. Replay starts here.
-   * @param currentTick  Client's current input tick counter.
-   * @param ackedTick    Last client input tick the server received (used only for RTT estimation).
+   * @param serverState     Ship state the server had at `serverTick`.
+   * @param serverTick      Server's physics tick when the snapshot was taken. Replay starts here.
+   * @param currentTick     Client's current input tick counter.
+   * @param ackedTick       Last client input tick the server received (used only for RTT estimation).
+   * @param perReplayTick   Stage 3 hook — invoked once per replay tick after
+   *                        the local input is applied and before
+   *                        `world.tick(1/60)`. The orchestrator uses this to
+   *                        apply remote-ship `lastInput` values from the
+   *                        snapshot, advancing remote bodies in lockstep with
+   *                        the local replay (forward-prediction).
    */
-  reconcile(serverState: ShipPhysicsState, serverTick: number, currentTick: number, ackedTick: number): void {
+  reconcile(
+    serverState: ShipPhysicsState,
+    serverTick: number,
+    currentTick: number,
+    ackedTick: number,
+    perReplayTick?: () => void,
+  ): void {
     const before = this.world.getShipState(this.playerId);
     if (!before) return;
 
@@ -224,6 +236,10 @@ export class Reconciler {
       if (rec && rec.tick === t) {
         this.world.applyInput(this.playerId, rec);
       }
+      // Stage 3 — orchestrator's chance to apply remote-ship `lastInput`
+      // before this tick advances. Bodies that don't receive input
+      // integrate with damping only (pre-Stage-3 behaviour).
+      if (perReplayTick) perReplayTick();
       this.world.tick(1 / 60);
     }
 

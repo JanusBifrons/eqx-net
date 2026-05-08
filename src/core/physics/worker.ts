@@ -44,6 +44,12 @@ import {
   SLOT_APPLIED_TICK_OFF,
   SLOT_FLAGS_OFF,
   FLAG_SLEEPING,
+  FLAG_INPUT_THRUST,
+  FLAG_INPUT_TURN_LEFT,
+  FLAG_INPUT_TURN_RIGHT,
+  FLAG_INPUT_BOOST,
+  FLAG_INPUT_REVERSE,
+  INPUT_FLAGS_MASK,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 
@@ -241,7 +247,22 @@ async function main(): Promise<void> {
       // are owned by the main thread and only written via SAB on spawn.
       const prevFlags = u32[base + SLOT_FLAGS_OFF] ?? 0;
       const slept = sleepState.get(slot) ?? false;
-      const nextFlags = slept ? prevFlags | FLAG_SLEEPING : prevFlags & ~FLAG_SLEEPING;
+      let nextFlags = slept ? prevFlags | FLAG_SLEEPING : prevFlags & ~FLAG_SLEEPING;
+      // Stage 3 (network-feel roadmap) — mirror the last-applied input bits
+      // into the FLAGS word so the main thread can publish them in the
+      // snapshot's per-ship `lastInput`. Clear the input region first, then
+      // OR in the active bits. Held-input branches in inputQueue.ts keep
+      // `lastApplied` populated as long as a key remains down, so this
+      // tracks the held state correctly across throttled-send windows.
+      nextFlags &= ~INPUT_FLAGS_MASK;
+      const lastInputForSlot = lastApplied.get(slot);
+      if (lastInputForSlot) {
+        if (lastInputForSlot.thrust)    nextFlags |= FLAG_INPUT_THRUST;
+        if (lastInputForSlot.turnLeft)  nextFlags |= FLAG_INPUT_TURN_LEFT;
+        if (lastInputForSlot.turnRight) nextFlags |= FLAG_INPUT_TURN_RIGHT;
+        if (lastInputForSlot.boost)     nextFlags |= FLAG_INPUT_BOOST;
+        if (lastInputForSlot.reverse)   nextFlags |= FLAG_INPUT_REVERSE;
+      }
       u32[base + SLOT_FLAGS_OFF] = nextFlags;
     }
     Atomics.store(u32, TICK_IDX, tick);

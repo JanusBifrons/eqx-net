@@ -42,6 +42,12 @@ import {
   SLOT_ANGLE_OFF,
   SLOT_ANGVEL_OFF,
   SLOT_APPLIED_TICK_OFF,
+  SLOT_FLAGS_OFF,
+  FLAG_INPUT_THRUST,
+  FLAG_INPUT_TURN_LEFT,
+  FLAG_INPUT_TURN_RIGHT,
+  FLAG_INPUT_BOOST,
+  FLAG_INPUT_REVERSE,
   slotBase,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
@@ -1822,12 +1828,29 @@ export class SectorRoom extends Room<SectorState> {
       const states: SnapshotMessage['states'] = {};
       // Telemetry-only: full ackedTicks map for the log line. Never shipped.
       const ackedTicksTelemetry: Record<string, number> = {};
-      for (const [playerId] of this.playerToSlot) {
+      for (const [playerId, slot] of this.playerToSlot) {
         const ship = this.state.ships.get(playerId);
         if (!ship || !ship.alive) continue;
         const pose = this.shipPoseCache.get(playerId);
         if (!pose) continue;
-        states[playerId] = { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle, angvel: pose.angvel ?? 0 };
+        // Stage 3 — read the worker's last-applied input bits out of SAB
+        // FLAGS so remote clients can forward-predict this ship using the
+        // same input intent the worker just applied. Bits 3–7 of the FLAGS
+        // u32 (see sabLayout.ts INPUT_FLAGS_MASK). Sleeping/swarm bits in
+        // 0–2 are masked off.
+        const flags = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
+        const lastInput = {
+          thrust:    !!(flags & FLAG_INPUT_THRUST),
+          turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
+          turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
+          boost:     !!(flags & FLAG_INPUT_BOOST),
+          reverse:   !!(flags & FLAG_INPUT_REVERSE),
+        };
+        states[playerId] = {
+          x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+          angle: pose.angle, angvel: pose.angvel ?? 0,
+          lastInput,
+        };
         ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
       }
       // Filter boostingPlayers to alive players included in this snapshot —
