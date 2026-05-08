@@ -981,6 +981,10 @@ export class ColyseusGameClient {
           driftUnits: parseFloat(drift.toFixed(6)),
           angleDriftRad: parseFloat(angleDrift.toFixed(6)),
           lerping: this.reconciler.isLerping,
+          // Stage 0: 6-frame cap on every drift above the sub-pixel tier.
+          // Surfaced here so e2e specs can verify the cap survives through
+          // the production reconcile call path.
+          lerpTotalFrames: this.reconciler.lerpTotalFrames,
           ...recPositions,
         });
       }

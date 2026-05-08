@@ -60,7 +60,10 @@ export class Reconciler {
   readonly lerpOffset = { x: 0, y: 0 };
   private lerpInitial = { x: 0, y: 0 };
   private lerpFramesLeft = 0;
-  private lerpTotalFrames = 0;
+  /** Queued lerp duration (frames). Public-readable for telemetry; e2e specs
+   *  read this off the 'correction' log entry to verify the Stage 0 6-frame
+   *  cap survives through the production call path. */
+  lerpTotalFrames = 0;
 
   /** Visual angle offset applied to rendered rotation, decaying to zero. */
   lerpAngleOffset = 0;
