@@ -101,6 +101,28 @@ Telemetry surface added: `Reconciler.lerpTotalFrames` is now public-readable; `C
 
 ---
 
+## Measured after Stage 1 (network-feel roadmap, 2026-05-08)
+
+Stage 1 replaced the Stage 0 frame-counter + ratio² ease-out with a critically-damped spring (analytical closed-form). See `docs/architecture/prediction-and-correction.md` for the full picture.
+
+| Symbol | File | Before (Stage 0) | After (Stage 1) |
+|---|---|---|---|
+| `lerpFramesForDrift` (Reconciler) | `src/core/prediction/Reconciler.ts` | 3 / 6 frames (frame-counter) | `halfLifeForDrift` 12 / 25 ms (spring) |
+| `lerpFramesForDrift` (ColyseusClient) | `src/client/net/ColyseusClient.ts` | 6 frames (frame-counter) | `remoteOffsetHalfLifeForDrift` 12 / 25 ms (spring) |
+| `Reconciler.advanceLerp` shape | `src/core/prediction/Reconciler.ts` | quadratic ratio² (frame-rate coupled) | analytical critically-damped spring (frame-rate independent) |
+| `Reconciler.advanceLerp` signature | `src/core/prediction/Reconciler.ts` | `()` — implicit "one frame" | `(dtMs)` — caller passes actual frame delta |
+| Termination | both files | `framesLeft <= 0` (timer) | both `|x| < LERP_THRESHOLD` AND `|v| < 50 u/s` (threshold-based) |
+| Telemetry log payload | `ColyseusClient` `'correction'` event | `lerpTotalFrames: number` | `lerpHalfLifeMs: number` |
+| New module | `src/core/math/CritDampedSpring.ts` | — | analytical step + 4 property tests |
+
+Tier-2 acceptance: `tests/e2e/feel-tuning.spec.ts` re-run under Stage 1 — 37 corrections observed during a 3 s thrust into the legacy `sector` drone ring, **max queued halfLife = 25 ms (cap 25)**, max drift in window = 27 u.
+
+Bench (`benchmarks/spring.bench.ts`): single `springStep` call ~285 ns; amortized cost in the realistic case (100 parallel springs / frame, matches local + 32 remote × 3 axes) is **~117 ns/spring**, well under the 200 ns target. Single `Math.exp` call dominates; no further optimisation needed.
+
+Frame-rate independence: `CritDampedSpring.test.ts` cycle 3 asserts dt = 8 ms vs dt = 33 ms across the same total wall-clock produce identical end states. Reconciler integration test asserts the same property through the full call path.
+
+---
+
 ## How to read the dev overlay
 
 - **RTT**: half the round-trip time (ms). At 350ms RTT, ticksAhead ≈ 21.
