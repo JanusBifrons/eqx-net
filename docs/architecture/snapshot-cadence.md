@@ -2,6 +2,8 @@
 
 Stage 5 of the network-feel roadmap (`plans/network-feel-roadmap.md`).
 
+> **Status: post-hotfix #4** — the initial Stage 5 design (30 Hz close-tier + 20 Hz far-tier) caused recipient-side cadence breakage and was rolled back to a single 20 Hz cadence. See "Hotfix #4 history" at the bottom of this doc for what was tried and why it failed. The text below describes the **current** post-hotfix design.
+
 ## What changed
 
 Pre-Stage-5, every Colyseus client received an identical, full-fleet snapshot every 3 server ticks (20 Hz) — the classic broadcast cadence shipped in Phase 3. That worked, but it bundled four unrelated concerns into one decision:
@@ -42,9 +44,8 @@ The pre-Stage-5 broadcast block (`if (++broadcastCounter >= 3 && serverTick > 0)
 3. Otherwise:
    a. Build "all alive ships" digest once per tick.
    b. For each client:
-      - Decide closeFires / farFires from broadcastCounter + per-client phase offset.
-      - If neither: skip this client this tick.
-      - For each ship: classify tier (with hysteresis); include if (close && (closeFires||farFires)) || (far && farFires).
+      - shouldBroadcastFar(broadcastCounter, recipientPlayerId)? If not, skip this client this tick.
+      - Build per-recipient states map: every alive ship is included.
       - For each included ship: omit lastInput if the bits match this recipient's cache.
       - Per-recipient projectile filter (3×3 cell window, unchanged).
       - Send.
@@ -61,25 +62,21 @@ The actual `snap.serverTick` field still carries the SAB tick value — clients 
 
 ## Wire impact
 
-For a sector with 4 clients and 8 ships:
+For a sector with 4 clients and 8 ships, after hotfix #4:
 
-| | pre-Stage-5 | Stage 5 (typical) |
+| | pre-Stage-5 | Stage 5 (post-hotfix #4) |
 |---|---|---|
-| client snapshots/sec | 4 × 20 = 80 | 4 × ~40 = 160 (peak; fewer for far ships) |
-| ship-state records/sec sent | 4 × 20 × 8 = 640 | varies — close ships at 30 Hz, far at 20 Hz |
-| `lastInput` bits/sec/ship | 5 × 20 = 100 | 0..100, depends on input change rate |
-| CPU peak per tick | all 4 clients on same tick | spread across LCM-of-2-and-3 = 6-tick cycle |
+| client snapshots/sec | 4 × 20 = 80 | 4 × 20 = 80 (unchanged) |
+| ship-state records/sec | 4 × 20 × 8 = 640 | 4 × 20 × 8 = 640 (unchanged) |
+| `lastInput` bits/sec/ship | 5 × 20 = 100 | 0..100, depends on input change rate (savings) |
+| CPU peak per tick | all 4 clients on same tick | spread across 3-tick cycle (per-client phase offset) |
 | empty sector | full per-tick cost | suppressed after 60 ticks idle |
 
-Total network rate is up (clients receive more frequent updates for nearby ships) but each individual snapshot is smaller (per-recipient ship filtering + lastInput omission) and the CPU cost is smoothed across ticks. Stage 7 (wire-format efficiency) makes each snapshot ~50% cheaper, so net bandwidth stays under the bench targets.
+Net bandwidth roughly equal to pre-Stage-5 (idle suppression and lastInput omission save bytes; no rate change). Net CPU smoother — phase staggering spreads serialisation across the 3-tick window instead of bunching it.
 
-## Hysteresis
+## Tier classification (currently unused in production)
 
-A ship hovering at exactly `CLOSE_TIER_RADIUS` (= one cell, 2048 u) due to drift jitter would otherwise flip tier every tick — alternating between 30 Hz and 20 Hz cadence, visible to the player as periodic stutter on that ship.
-
-The hysteresis band `[CLOSE_TIER_RADIUS - 512, CLOSE_TIER_RADIUS + 512]` (quarter-cell margin) pins the previous classification while in-band. Outside the band, the tier is recomputed unconditionally.
-
-First-time classification (no prior membership entry) uses the strict `distance < CLOSE_TIER_RADIUS` test — no hysteresis applied.
+The `classifyShipTier` / `createTierState` helpers in `snapshotScheduler.ts` exist with full hysteresis logic and unit-test coverage but are **not called from the SectorRoom hot path** after hotfix #4. They're preserved for a future Stage 5b that may revive a single-cadence-with-selective-inclusion design (e.g. 30 Hz global with far ships dropped from every other snapshot). When that lands, the recipient-side `cadence-fairness.spec.ts` E2E must land in the same PR.
 
 ## What's intentionally NOT here
 
@@ -94,6 +91,22 @@ Server logs `snapshot_broadcast` once per ~20 Hz tick (gated to `broadcastCounte
 ## Verifying it's working
 
 1. **Phase staggering**: hash a few player ids manually with `computePhaseOffset(id, 3)` and confirm distinct values across a small player population.
-2. **Tier rate**: count `snapshotIn` entries in a captured diagnostic during steady-state play. Close ships should appear in ~30 Hz of snapshots; far ships in ~20 Hz. The `intervalMs` distribution will show two distinct modes (33 ms and 50 ms).
+2. **Recipient cadence**: in a captured diagnostic during steady-state play, `snapshotIntervalMs` should sit at ~50 ms median with low jitter (< 10 ms). If you see jitter > 30 ms or median pulled below 35 ms, suspect a regression of the hotfix #4 cadence-union bug.
 3. **Idle suppression**: park a ship with no input for ≥ 1 second in an empty sector. The server's `snapshot_broadcast` log entries should stop. First key press resumes them within one tick.
 4. **`lastInput` omission**: capture two consecutive snapshots while a ship is idle. The first contains `lastInput: { thrust: false, ... }`; the second omits the field entirely.
+
+---
+
+## Hotfix #4 history (2026-05-08)
+
+The first Stage 5 implementation gated sends on `closeFires || farFires` where `closeFires = (broadcastCounter + closeOffset) % 2 === 0` and `farFires = (broadcastCounter + farOffset) % 3 === 0`. Each predicate alone produced a clean cadence; the union did **not**.
+
+Over a 6-tick LCM window, the union firing pattern is `{0, 2, 3, 4, 6, 8, 9, 10, ...}` with intervals `2, 1, 1, 2, 2, 1, 1, 2` ticks = 33, 17, 17, 33, 33, 17, 17, 33 ms. The recipient sees bursts of two snapshots 33 ms apart, then back-to-back 17 ms intervals, then 33 ms gaps. Median = 21 ms; jitter = 40 ms.
+
+This broke the reconciler's lerp (built around a steady ~50 ms cadence). Diagnostic `2026-05-08T19-30-14-034Z-zw6exn.json` captured a correction landing 17 u past the server pose in the wrong direction — the lerp blended across two too-close-together snapshots and overshot.
+
+**Why unit tests didn't catch it**: 27 tests in `snapshotScheduler.test.ts` covered each predicate in isolation. The bug lived in the **union** at the recipient — which no unit test asserted. The plan called for `cadence-fairness.spec.ts` measuring recipient-side `intervalMs` distribution; I deferred it on the (false) belief that "the math is unit-tested". The math was. The wire wasn't.
+
+**Lesson**: any future "two cadences for different priorities" design MUST land with the recipient-side cadence E2E test. Unit tests on individual predicates are insufficient.
+
+See `docs/LESSONS.md` 2026-05-08 entry for the full mechanism.

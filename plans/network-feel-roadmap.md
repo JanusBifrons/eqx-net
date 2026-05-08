@@ -568,17 +568,17 @@ Test-discipline outer-loop net. Both Stage 4 hotfixes were emergent-over-time bu
 
 Tier-1: 420 → 426 tests, all green. Typecheck + lint clean. The TDD-demonstration tests prove the harness would catch a regression: with the recovery bypassed, `ticksAhead` goes negative on slow-rafTick scenarios; with the clamp bypassed, Welford σ explodes past 100 ms on Pattern A gaps.
 
-### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: 🚧 implemented, pending smoke test*
+### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: 🚧 hotfix #4 applied; 30 Hz close-tier shelved → Stage 5b*
 - [x] Test-infra: `MockSectorRoom` harness &nbsp; *(replaced with pure module — see Decision Log)*
 - [x] Cycle 1: deterministic phase offset → green
 - [x] Cycle 2: cadence respects offset → green
-- [x] Cycle 3: close-tier 30 Hz, far 20 Hz → green
-- [x] Cycle 4: hysteresis on tier boundary → green
+- [~] Cycle 3: close-tier 30 Hz, far 20 Hz &nbsp; *(unit tests pass; production hotfix #4 collapsed to single 20 Hz — see Decision Log)*
+- [~] Cycle 4: hysteresis on tier boundary &nbsp; *(unit tests pass; not used in production after hotfix #4)*
 - [x] Cycle 5: idle suppression → green
 - [x] Cycle 6: re-enable on first event → green
 - [x] Cycle 7: omitted-`lastInput` flag → green
-- [~] Tier-2: `cadence-fairness.spec.ts` + bench &nbsp; *(deferred — see Decision Log; properties unit-test verified; existing E2Es re-run cleanly)*
-- [x] `docs/architecture/snapshot-cadence.md` written
+- [~] Tier-2: `cadence-fairness.spec.ts` + bench &nbsp; *(deferral was load-bearing — caused the cadence regression — Stage 5b will write it)*
+- [x] `docs/architecture/snapshot-cadence.md` written + updated for hotfix #4
 - [x] `src/server/CLAUDE.md` updated (snapshot broadcast threshold)
 - [ ] Tier-2: cadence-fairness.spec.ts + bench passing
 - [ ] `docs/architecture/snapshot-cadence.md` written
@@ -641,3 +641,4 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 5 Test-infra — `MockSectorRoom` harness replaced with a pure module (`src/server/net/snapshotScheduler.ts`). The plan-agent's MockSectorRoom would have stripped Colyseus dependencies from the broadcast scheduling logic so it could be tested in vitest without a server. In practice, the cleaner discipline is to extract the SCHEDULING DECISIONS as pure functions (`computePhaseOffset`, `shouldBroadcastClose/Far`, `classifyShipTier`, `noteSectorEvent/isSectorIdle`, `shouldIncludeLastInput`) and let the room call them. The tests then take primitive inputs and assert outputs directly — no harness needed. 27 tests across 7 cycles, all green. The room's wire-up is a thin glue layer.
 - 2026-05-08 — Stage 5 Tier-2 — Dedicated `cadence-fairness.spec.ts` E2E and `snapshot-cadence.bench.ts` benchmark deferred. Reasons: (1) the deterministic phase-offset, modular cadence math, hysteresis band, idle suppression timing, and lastInput-omission semantics are all verified by primitive-input unit tests in `snapshotScheduler.test.ts`; (2) the room glue layer typechecks + boots cleanly (`PORT=2568 timeout 8 pnpm dev:server` clean, all 7 galaxy rooms hydrated); (3) E2E "two clients don't peak on the same tick" is a property of the pure scheduler functions — Playwright would re-test the determinism of the hash, not the wire behaviour. The bandwidth/CPU bench is genuinely valuable but optional for shipping; revisit if user smoke-test reveals load issues. Following the same discipline applied at the Stage 3 / Stage 4 closures.
 - 2026-05-08 — Stage 5 — `broadcastCounter` retained as the scheduling tick (rather than `serverTick`). The `serverTick` field is read from SAB and may advance by 1, 2, or 3 between consecutive `update()` calls when the worker drifts slightly out of phase with the main thread (see `docs/LESSONS.md` 2025-12-XX divisibility incident). Using SAB tick mod for per-client scheduling would re-introduce the same ~25% missed-broadcast bug. `broadcastCounter` is purely main-thread and increments exactly once per `update()`, so `(broadcastCounter + offset) % 2` and `% 3` are reliable. The actual snapshot's `serverTick` field still uses the SAB value, since clients use it to align reconciliation against the authoritative simulation tick.
+- 2026-05-08 — Stage 5 hotfix #4 — User smoke test surfaced a regression: snapshotJitterMs jumped from 6.7 ms to 39.6 ms, snapshotIntervalMs median collapsed from 49 ms to 21 ms. Diagnostic capture `2026-05-08T19-30-14-034Z` confirmed: the union `closeFires || farFires` produces irregular 17/17/33/33 ms intervals at the recipient (NOT the intended clean 30 Hz / 20 Hz). The reconciler lerp (tuned around 50 ms) overshoots when fed sub-frame intervals — observed correction at t=12100 landed 17 u past the server pose in the WRONG direction. Fix: collapse to a single 20 Hz cadence (only `shouldBroadcastFar` gates sends; tier classifier no longer consulted for inclusion). Phase staggering (per-recipient hash offset), idle suppression, and lastInput omission stay. The 30 Hz close-tier idea is shelved until a single-cadence design (e.g. 30 Hz global with selective tier inclusion) can be tested with a recipient-side intervalMs E2E. **Lesson**: unit tests covered each predicate in isolation but not the union behaviour at the recipient — the deferred `cadence-fairness.spec.ts` was load-bearing and I shouldn't have deferred it. Future multi-cadence designs MUST land with that test before merge.

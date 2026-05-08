@@ -14,16 +14,12 @@ import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid, CELL_SIZE } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import {
-  shouldBroadcastClose,
   shouldBroadcastFar,
-  classifyShipTier,
-  createTierState,
   createIdleTracker,
   noteSectorEvent,
   isSectorIdle,
   createLastInputCache,
   shouldIncludeLastInput,
-  type TierStateForRecipient,
   type LastInputCache,
   type IdleTracker,
   type ShipInputBits,
@@ -124,22 +120,6 @@ const JoinOptionsSchema = z
 
 const MAX_INPUTS_PER_TICK = 3;
 const LAG_COMP_WINDOW = 12;
-
-/** Stage 5 — close-tier classification radius. Ships within this many
- *  units of the recipient are considered "close" and ship at 30 Hz
- *  instead of 20 Hz. One CELL_SIZE (= 2048 u) is roughly one screen
- *  on a 1080p viewport, which is the practical "you can see me
- *  shooting at you" range. */
-const CLOSE_TIER_RADIUS = CELL_SIZE;
-
-/** Stage 5 — hysteresis margin around CLOSE_TIER_RADIUS. A ship hovering
- *  at exactly the boundary (e.g. due to drift jitter at the edge of a
- *  fight) would otherwise flip tier every tick, alternating between 30
- *  and 20 Hz cadence — visible to the player as periodic stutter. The
- *  margin defines the dead band where the prior classification sticks.
- *  Quarter-cell (512 u) gives a comfortable 1024-unit total band against
- *  normal motion at the edge of one screen. */
-const CLOSE_TIER_HYSTERESIS = CELL_SIZE / 4;
 
 /** Stage 5 — sector idle threshold. After this many ticks without any
  *  motion-above-epsilon or projectile-in-flight event, the room
@@ -251,10 +231,6 @@ export class SectorRoom extends Room<SectorState> {
    *  swarm broadcast (binary channel) which still uses the same 60 Hz
    *  cadence with no per-client phasing. */
   private broadcastCounter = 0;
-  /** Stage 5 — per-recipient tier-membership state, threaded through
-   *  {@link classifyShipTier} so hysteresis pins close↔far transitions
-   *  across calls. Keyed by Colyseus sessionId; cleared in onLeave. */
-  private readonly tierStates = new Map<string, TierStateForRecipient>();
   /** Stage 5 — per-recipient cache of the last lastInput bits sent for
    *  each ship, used by {@link shouldIncludeLastInput} to omit the
    *  field when the bits haven't changed. Keyed by Colyseus sessionId;
@@ -1463,7 +1439,6 @@ export class SectorRoom extends Room<SectorState> {
     this.boostingPlayers.delete(playerId);
     this.thrustingPlayers.delete(playerId);
     // Stage 5 — drop per-recipient scheduler state.
-    this.tierStates.delete(client.sessionId);
     this.lastInputCaches.delete(client.sessionId);
     clearSession(client.sessionId);
 
@@ -1915,17 +1890,28 @@ export class SectorRoom extends Room<SectorState> {
     }
     const sectorIdle = isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
 
-    // Stage 5 — per-client phase-staggered, tier-priority snapshot broadcast.
+    // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
     //
     // Pre-Stage-5: every 3rd update() the room built one snapshot containing
-    // every alive ship and broadcast it to every client. Stage 5 replaces
-    // that with a per-recipient decision:
-    //   - Close-tier ships (within CLOSE_TIER_RADIUS of the recipient) ship
-    //     at 30 Hz (every 2 broadcastCounter ticks).
-    //   - Far-tier ships ship at 20 Hz (every 3 broadcastCounter ticks).
-    //   - Each recipient gets a deterministic 0..2 phase offset hashed from
-    //     its playerId, so two clients almost never broadcast on the same
-    //     tick — smoothing serialisation/CPU spikes.
+    // every alive ship and broadcast it to every client.
+    //
+    // Stage 5 (initial): introduced two cadences (close-tier 30 Hz at
+    // every 2 broadcastCounter ticks, far-tier 20 Hz at every 3) and
+    // sent on the union — `closeFires || farFires`. That produced
+    // irregular 17/17/33/33 ms intervals at the recipient, which broke
+    // the reconciler's lerp (built around a clean ~50 ms cadence) and
+    // caused visible stutter (see `docs/LESSONS.md` 2026-05-08 hotfix #4).
+    //
+    // Stage 5 (post-hotfix #4): single 20 Hz cadence — `shouldBroadcastFar`
+    // only. Tier classification is no longer used for inclusion (every
+    // alive ship is in every fired snapshot, same as pre-Stage-5). The
+    // gains kept from Stage 5: phase staggering (each recipient's
+    // farOffset hashed from playerId, smoothing server CPU spikes since
+    // recipients almost never peak on the same tick); idle suppression
+    // after 60 ticks of no sector activity; lastInput omission when the
+    // bits match the per-recipient cache. The 30 Hz close-tier idea is
+    // shelved until a single-cadence design with selective tier inclusion
+    // can be tested end-to-end.
     //
     // Scheduling tick is `broadcastCounter` (incremented once per update()),
     // NOT `serverTick` (read from SAB). The worker's SAB tick can advance
@@ -1995,47 +1981,26 @@ export class SectorRoom extends Room<SectorState> {
         const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
         if (!recipientPlayerId) continue;
 
-        // Stage 5 — per-client tier-aware send decision.
-        const closeFires = shouldBroadcastClose(this.broadcastCounter, recipientPlayerId);
-        const farFires = shouldBroadcastFar(this.broadcastCounter, recipientPlayerId);
-        if (!closeFires && !farFires) continue; // not this client's tick
+        // Stage 5 (post-hotfix #4) — single 20 Hz cadence with per-client
+        // phase offset hashed from playerId. Two recipients with different
+        // offsets almost never fire on the same tick, smoothing CPU spikes,
+        // but each individual recipient sees a clean 50 ms interval at 20 Hz.
+        if (!shouldBroadcastFar(this.broadcastCounter, recipientPlayerId)) continue;
 
         const recipientPose = this.shipPoseCache.get(recipientPlayerId);
         if (!recipientPose) continue;
 
-        let tierState = this.tierStates.get(client.sessionId);
-        if (!tierState) {
-          tierState = createTierState();
-          this.tierStates.set(client.sessionId, tierState);
-        }
         let lastInputCache = this.lastInputCaches.get(client.sessionId);
         if (!lastInputCache) {
           lastInputCache = createLastInputCache();
           this.lastInputCaches.set(client.sessionId, lastInputCache);
         }
 
-        // Build per-recipient states map. Recipient's own ship is always
-        // included (forced 'close' tier so it ships at 30 Hz); other ships
-        // are filtered by tier classification + firing schedule.
+        // Build per-recipient states map. Every alive ship is included
+        // (no tier-based filtering — single-cadence design); per-recipient
+        // lastInput omission still applies to save bytes on idle ships.
         const states: SnapshotMessage['states'] = {};
         for (const ship of allShips) {
-          const isSelf = ship.playerId === recipientPlayerId;
-          const tier: 'close' | 'far' = isSelf
-            ? 'close'
-            : classifyShipTier(
-                tierState,
-                ship.playerId,
-                ship.pose,
-                recipientPose,
-                CLOSE_TIER_RADIUS,
-                CLOSE_TIER_HYSTERESIS,
-                this.serverTick,
-              );
-          // Close ships ship on every (closeFires OR farFires) tick.
-          // Far ships ship only on farFires ticks.
-          const include = tier === 'close' ? (closeFires || farFires) : farFires;
-          if (!include) continue;
-
           const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
           states[ship.playerId] = {
             x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,

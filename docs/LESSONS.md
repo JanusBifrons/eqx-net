@@ -14,6 +14,28 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-08 — Network-Feel Stage 5 hotfix #4 — union-of-cadences breaks recipient-side intervalMs distribution
+
+Stage 5's initial design tried to deliver "30 Hz close-tier ships, 20 Hz far-tier" by gating sends on `closeFires || farFires` where `closeFires = (broadcastCounter + closeOffset) % 2 === 0` and `farFires = (broadcastCounter + farOffset) % 3 === 0`. Each predicate alone produces a clean cadence (every 2nd or every 3rd tick). The union does **not**.
+
+For any per-client offset combination, the union firing pattern over a 6-tick LCM window is `{0, 2, 3, 4, 6, 8, 9, 10, ...}` (or a phase-shifted version). The intervals between fires are `2, 1, 1, 2, 2, 1, 1, 2` ticks — i.e. **17 ms, 17 ms, 33 ms, 33 ms, 33 ms, 17 ms, 17 ms, 33 ms** at 60 Hz physics. The recipient receives bursts of two snapshots 33 ms apart, then back-to-back 17 ms intervals, then a 33 ms gap. Median = 21 ms, jitter = 40 ms.
+
+This breaks downstream code in two ways:
+
+1. **Reconciler lerp instability**. The reconciler's `lerpHalfLifeMs` is tuned around a steady ~50 ms cadence. Sub-frame intervals (17 ms) queue a new lerp before the previous one finishes, producing visible overshoot. Diagnostic capture `2026-05-08T19-30-14-034Z-zw6exn.json` showed a correction at t=12100 where the client predicted y=559, server pose was y=553, and the lerp landed at y=536 — overshot the target by 17 u in the **wrong direction**.
+
+2. **Snapshot-interval EWMA pollution**. `snapshotJitterMs` jumped from 6.7 ms (steady-state Stage 4) to 39.6 ms (Stage 5 broken cadence). The Stage 4 Welford on RTT and the swarm-interp delay EWMA both feed off intervalMs assumptions; chronic jitter pushes their outputs into degenerate ranges.
+
+**Why the unit tests didn't catch it**: 27 tests in `snapshotScheduler.test.ts` covered each predicate (`shouldBroadcastClose`, `shouldBroadcastFar`) in isolation. They all passed. The bug lives in **the union of two correctly-cadenced predicates seen at the recipient**, which no unit test asserted. The plan called for a `cadence-fairness.spec.ts` E2E test that would have measured recipient-side intervalMs distribution; I deferred it via Decision Log on the grounds that "the underlying math is unit-tested." The math was unit-tested; the union behaviour wasn't. The deferral was the bug.
+
+**Fix shipped (hotfix #4)**: collapse to a single 20 Hz cadence — only `shouldBroadcastFar` gates sends, every alive ship is in every fired snapshot. Phase staggering (per-recipient farOffset), idle suppression, and lastInput omission stay. The 30 Hz close-tier idea is shelved until a single-cadence design (e.g. 30 Hz global with selective tier inclusion controlling which ships are in each snapshot) can be tested end-to-end.
+
+**Action item**: any future "two cadences for different priority tiers" design MUST land with an E2E test asserting **recipient-side intervalMs distribution** before being merged. Unit tests on the predicates are insufficient — they prove the math, not the wire behaviour. Tracked as Stage 5b.
+
+**Distinguishing future occurrences**: the symptom is `predStats.snapshotJitterMs` 5×+ higher than steady-state baseline AND `snapshotIntervalMs` median pulled below the broadcast cadence (21 ms in this case, pre-fix 50 ms). If those two hold, suspect a multi-cadence union bug.
+
+---
+
 ## 2026-05-08 — Network-Feel Stage 4 hotfix #3 — Welford mean inflates under repeated Pattern A spikes despite the σ-clamp
 
 Hotfix #1 capped each RTT outlier at 250 ms before pushing into Welford. That bounds `σ` (uniform-bound: σ ≤ ½ × range = 125 ms) but does **not** bound the *mean*. Each clamped sample still adds 250 ms into Welford's running sum. After a session with several Pattern A spikes, the mean has drifted upward — even though every sample was individually clamped.
