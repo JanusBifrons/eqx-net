@@ -14,6 +14,46 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-08 — Network-Feel Stage 0 — Two diagnostic patterns that look identical from stats but have different root causes
+
+While verifying Stage 0 of the network-feel roadmap (`plans/network-feel-roadmap.md`) the user captured two diagnostics that both looked like "lag spike" from `stats.snapshotJitterMs` and `stats.rollingCorrRate`. They had completely different root causes; future investigations should distinguish them in this order before reaching for a fix.
+
+**Pattern A — Mobile-network buffering** (Android, regular `sector` room, sub-second event):
+
+- `stats.snapshotIntervalMs` median ~50 ms; one or two outliers in the 400–600 ms range; everything else clean.
+- `stats.rttMs` low (37 ms in the captured case).
+- `serverEvents` `tick_budget` for the user's room: `avgMs.total < 0.4 ms`, `maxTotalMs < 4 ms`, `overBudgetCount: 0`. Server **healthy**.
+- `serverEvents` `snapshot_broadcast` for the user's room: continuous ~50 ms cadence with no gap matching the client-side gap. Server **kept sending**.
+- Client `rafTick` log: continuous through the gap (max gap matches normal cadence, not the snapshot gap). Client **kept rendering**.
+- Client `inputSent` log: ticks continued during the gap. Client **kept transmitting outbound**.
+
+⇒ Diagnosis: cellular/WiFi power-save buffered inbound WebSocket frames briefly. Server sent fine, client rendered fine — only the *inbound packet delivery* stalled. The user perceived a single ~0.5 s "stutter" with a small drift correction afterward.
+
+Stages 4 and 6 of the network-feel roadmap absorb this case (Welford-based mean+2σ lookahead, drop-detection, conservative spring half-life on post-gap snapshots).
+
+**Pattern B — Server CPU-bound + mobile main-thread freeze + TiDi non-engagement** (Android, `swarm-tidi` 4000-entity room, sustained):
+
+- `stats.rttMs = 2416 ms`, `snapshotIntervalMs = 214 ms`, `ticksAhead = 46`, `rollingCorrRate = 0.9`.
+- `stats.lastServerTick` lags the *server's actual current tick* by hundreds of ticks (capture showed 222 vs server-current 475 = ~4 s of unprocessed broadcasts).
+- `serverEvents` `tick_budget` for the user's room: `avgMs.total = 11–12 ms` (under 16.67 ms ceiling) — but **`maxTotalMs = 50–94 ms`** with **`overBudgetCount = 11–14 / 60`**. SAB-read alone consumed 8.7 ms (52% of budget) for 3200 entities.
+- Server-side broadcast rate measured from `snapshot_broadcast.ts` deltas: ~42 Hz wall-clock (i.e. simulation falling behind real time at the 0.7× TiDi floor).
+- TiDi did **not** engage despite the chronic falling-behind, because the trigger watches `avgMs.total` which sits under the threshold. Spike ticks (max 94 ms) don't move the average enough.
+- Client `rafTick` log: max gap **3104 ms**, with multiple 400–700 ms gaps. The browser/OS scheduler paused the tab.
+
+⇒ Diagnosis: the laptop running the server can't sustain 3200-entity physics + SAB-read at 60 Hz on this hardware. TiDi's averaging hysteresis hides the problem from its own trigger logic. A mobile main-thread pause then compounded the perceived lag into total unplayability.
+
+This case is **outside the network-feel roadmap's scope**. Real fixes belong in three separate workstreams: TiDi tuning (engage on `p99(maxTotalMs)` or sustained `overBudgetCount`), SAB-read optimization (currently ~2.7 µs/entity), and mobile-client tab-pause resilience.
+
+**Diagnostic checklist next time someone reports "lag":**
+
+1. Read the user's-room `tick_budget`. If `maxTotalMs > 25 ms` or `overBudgetCount > 0`, suspect Pattern B. If both clean, Pattern A.
+2. Compare client `rafTick` max gap with snapshot max gap. If they match, the client paused. If `rafTick` is steady through the snapshot gap, network/server caused it.
+3. Compare server-side `snapshot_broadcast` cadence with client-side snapshot cadence over the same wall-clock window. A divergence is the smoking gun for Pattern A; a server-side slowdown is Pattern B.
+
+Captured for posterity at `diag/captures/2026-05-08T12-01-30-847Z-omekg0.json` (Pattern A) and `diag/captures/2026-05-08T12-11-42-626Z-wpb1hl.json` (Pattern B).
+
+---
+
 ## 2026-05-06 (final) — Limbo cooldown restore needs a tick-space plausibility gate
 
 Third diagnostic in the same session reported "most/all of my shots are being rejected." The user had transited (or been Limbo-restored) between sectors. The capture showed `welcome.serverTick = 6814` and the ship spawned at `Y ≈ 5970` (clearly a Limbo restore, not a fresh spawn).

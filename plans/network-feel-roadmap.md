@@ -34,6 +34,16 @@ This roadmap will be executed across multiple sessions on multiple machines. The
 
 When all 7 stages are ✅ done in the tracker and `docs/FEEL_GOALS.md` reflects the new measured ceilings, move this file to `plans/archive/network-feel-roadmap.md` and add a one-line redirect at `plans/network-feel-roadmap.md` pointing to the archive copy. Don't delete — the decision log is a permanent artefact.
 
+### Follow-on workstreams to surface at retirement
+
+When this roadmap retires, the closing summary should explicitly recommend a separate **server-perf scaling pass**, distinct from network feel. The 2026-05-08 TiDi-4000 diagnostic (`diag/captures/2026-05-08T12-11-42-626Z-wpb1hl.json`, see `docs/LESSONS.md` Pattern B) demonstrated three independent issues this roadmap **does not fix**:
+
+1. **TiDi trigger gap** — engages on `avgMs.total` only, missing chronic spike-driven slowdowns where averages stay under the threshold but `maxTotalMs` and `overBudgetCount` show the simulation falling behind real time.
+2. **SAB-read scaling** — 8.7 ms / 3200 entities on the test laptop is ~2.7 µs/entity. Already memcpy-class, but worth profiling for cache-line / interest-filtering wins under high counts.
+3. **Mobile-client tab-pause resilience** — a 3.1 s `rafTick` gap was observed; the network-feel roadmap's Stage 6 keyframe-on-resume is a partial mitigation but not a full solution.
+
+These are cleanly separable from prediction smoothness. Don't fold them into this plan — surface them at retirement.
+
 ---
 
 ## Cross-stage Invariants
@@ -589,3 +599,4 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 0 — Cycle 1 caps **both** `lerpFramesForDrift` functions: the canonical one in `src/core/prediction/Reconciler.ts` (was 3/8/12/18) AND the duplicate in `src/client/net/ColyseusClient.ts` for remote-ship offset decay (was 6/10/14). Plan only mentioned the Reconciler version explicitly, but leaving the remote-ship version at 14 frames would mean remote corrections still glide for 233 ms while local corrections land in 100 ms — visibly inconsistent. Both now cap at 6 frames for any drift ≥ 0.5u (Reconciler keeps 3 frames for sub-pixel; ColyseusClient already starts at 6).
 - 2026-05-08 — Stage 0 — Cycles 3 and 4 bundled into one commit (`b6c5e08`-class). Both are single-line constant changes targeting the same module (`swarmInterpolation.ts`) and the same theme (tightening adaptive jitter buffer now that snapshot jitter is empirically < 20 ms). Cycle granularity preserved in the plan tracker; commit granularity collapsed for atomicity of file changes.
 - 2026-05-08 — Stage 0 Tier-2 — First spec attempt asserted "longest contiguous lerping=true span ≤ 110 ms" using `predStats.lerping`. That property is wrong: back-to-back corrections leave `lerping=true` indefinitely because each new correction queues a new lerp before the previous finishes — the spec measures the duration of *continuous correction activity*, not any single correction's lerp. Reframed: expose `lerpTotalFrames` (was private) on `Reconciler`, plumb into the existing 'correction' log entry payload in `ColyseusClient`, and assert `max(lerpTotalFrames) ≤ 6` across all observed corrections in the sample window. This directly tests the Stage-0 cap surviving through the production reconcile call path.
+- 2026-05-08 — Post-Stage-0 — User reported a 581 ms inbound-snapshot gap during a real test. Investigation (see `docs/LESSONS.md` Pattern A) confirmed mobile-network buffering, not server CPU and not Stage 0 regression. Stage 0's tighter cap actually made the spike's recovery faster (100 ms vs 300 ms pre-Stage-0). Stages 4 and 6 will absorb the spike class properly; no plan change. A separate TiDi-4000 capture (Pattern B, sustained server CPU saturation) was confirmed to be outside the roadmap's scope — surfaced as a follow-on workstream in the Cross-Machine Persistence section.
