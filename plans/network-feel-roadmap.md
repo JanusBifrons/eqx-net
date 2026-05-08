@@ -484,12 +484,12 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] `plans/` folder created at repo root
 - [x] `plans/network-feel-roadmap.md` seeded
 - [x] `plans/README.md` + `plans/CLAUDE.md` written
-- [ ] Seed commit landed
+- [x] Seed commit landed (1840ed6)
 
-### Stage 0 — Tuning quick wins  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `mirrorAssertions` matchers built
-- [ ] Test-infra: `Reconciler.test.ts` time-sampling harness extended
-- [ ] Cycle 1: large-correction frame cap test → green
+### Stage 0 — Tuning quick wins  &nbsp; *Status: 🚧 in progress*
+- [~] Test-infra: `mirrorAssertions` matchers built &nbsp; *(deferred to Stage 3 — see Decision Log)*
+- [~] Test-infra: `Reconciler.test.ts` time-sampling harness extended &nbsp; *(existing tests adequate — see Decision Log)*
+- [x] Cycle 1: large-correction frame cap test → green
 - [ ] Cycle 2: ease-out shape test → green
 - [ ] Cycle 3: `INTERP_DELAY_MS` 50 ms test → green
 - [ ] Cycle 4: adaptive ceiling 200 ms test → green
@@ -584,4 +584,6 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 
 Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-DD — Stage N — what changed and why.`
 
-(empty)
+- 2026-05-08 — Stage 0 — Skipping the `mirrorAssertions` test-infra investment in this stage. None of Stage 0's cycles operate on a render mirror — they're direct property tests on `Reconciler` instances and module-level constants. Per the plan's "build them lazily" principle, mirrorAssertions move to Stage 3 where remote-prediction integration tests will actually need them.
+- 2026-05-08 — Stage 0 — Skipping the `Reconciler.test.ts` time-sampling harness extension. The existing test "lerpOffset magnitude shrinks each advanceLerp call" already iterates `advanceLerp()` and records a magnitudes array; the harness is already adequate for cycles 1 and 2.
+- 2026-05-08 — Stage 0 — Cycle 1 caps **both** `lerpFramesForDrift` functions: the canonical one in `src/core/prediction/Reconciler.ts` (was 3/8/12/18) AND the duplicate in `src/client/net/ColyseusClient.ts` for remote-ship offset decay (was 6/10/14). Plan only mentioned the Reconciler version explicitly, but leaving the remote-ship version at 14 frames would mean remote corrections still glide for 233 ms while local corrections land in 100 ms — visibly inconsistent. Both now cap at 6 frames for any drift ≥ 0.5u (Reconciler keeps 3 frames for sub-pixel; ColyseusClient already starts at 6).
