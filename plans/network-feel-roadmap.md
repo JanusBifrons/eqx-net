@@ -524,9 +524,9 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Test-infra: zod fuzz fixture built &nbsp; *(inlined into `messages.test.ts` — 10 fuzz cases against `CollisionResolvedMessageSchema` rather than a separate harness)*
 - [x] Cycle 1: `drainContacts` happy-path test → green
 - [x] Cycle 2: schema fuzz test → green
-- [ ] Cycle 3: vPost applied to predWorld immediately → green
-- [ ] Cycle 4: out-of-order guard → green
-- [ ] Cycle 5: rate-limit → green
+- [x] Cycle 3: vPost applied to predWorld immediately → green
+- [x] Cycle 4: out-of-order guard → green
+- [x] Cycle 5: rate-limit → green
 - [ ] Tier-2: `collision-events.spec.ts` passing
 - [ ] `docs/architecture/collision-events.md` + `src/core/CLAUDE.md` updated
 
@@ -607,3 +607,4 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 1 closure — Skipping the ProMotion 120→60 Hz cadence-flip e2e spec. `CritDampedSpring.test.ts` Cycle 3 already asserts dt = 8 ms vs dt = 33 ms produce identical end states (closed-form analytical solution; no integration scheme to break under cadence shifts), and the Reconciler integration test re-verifies the property through the full reconcile call path. Adding a Playwright cadence-flip would consume 60+ s of e2e runtime for no additional confidence — the underlying math is exact, not empirical.
 - 2026-05-08 — Stage 2 — Skipping the `fakeNetwork` test-infra investment. Cycle 1 (`drainContacts`) tests against a real `PhysicsWorld` with synthetic collisions — pure-function discipline doesn't require a network bus to test. Cycles 3–5 (client handler) test directly against a minimal-interface fake predWorld — no message bus simulation needed for the guard logic. The full worker → main → server → client chain is validated by Tier-2 E2E. fakeNetwork can be built lazily in Stage 4 if the jitter-injection tests genuinely need it.
 - 2026-05-08 — Stage 2 Cycle 1 — Bridging Rapier's collider-handle-keyed contact events to PhysicsWorld's body-handle-keyed `handleToId` map needed a small new public method on PhysicsWorld: `bodyHandleForCollider(colliderHandle): number | undefined`. Previous code never needed this lookup direction. Method is one line (`world.getCollider(h).parent()?.handle`); kept on PhysicsWorld rather than reaching into private state from `contactDrain.ts`.
+- 2026-05-08 — Stage 2 Cycles 3+4+5 — Bundled into one commit (single new module `applyCollisionResolved.ts` with 8 property tests covering all three cycles). Pure-function design: takes a `MinimalPredWorld` interface so tests use a plain in-memory fake (no Rapier, no Colyseus). The rate-limit window slides per-ship rather than globally, and is checked against fresh-trimmed entries before applying — a 5th event in 1 s drops, the next one outside the window applies. `lastSnapshotServerTick` is the stale-guard threshold; events at exact-equal tick still apply (boundary handled).
