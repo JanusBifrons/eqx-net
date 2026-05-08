@@ -72,6 +72,9 @@ export interface PredictionStats {
   snapshotJitterMs: number;
   /** Correction rate over the most recent 10-snapshot rolling window (0–1). */
   rollingCorrRate: number;
+  /** Stage 2 — total `collision_resolved` events that mutated predWorld this
+   *  session. Excludes events dropped by the stale or rate-limit guards. */
+  collisionEventsApplied: number;
 }
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
@@ -191,6 +194,7 @@ export class ColyseusGameClient {
     totalAngleDriftRad: 0,
     snapshotJitterMs: 0,
     rollingCorrRate: 0,
+    collisionEventsApplied: 0,
   };
 
   private room: Room | null = null;
@@ -505,7 +509,15 @@ export class ColyseusGameClient {
       const result = CollisionResolvedMessageSchema.safeParse(raw);
       if (!result.success) return;
       if (!this.predWorld) return;
-      applyCollisionResolved(result.data, this.predWorld, this._collisionGuard, performance.now());
+      const outcome = applyCollisionResolved(
+        result.data,
+        this.predWorld,
+        this._collisionGuard,
+        performance.now(),
+      );
+      if (outcome.applied.length > 0) {
+        this.stats.collisionEventsApplied++;
+      }
     });
 
     // Phase 8 sub-phase B — transit lifecycle messages.

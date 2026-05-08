@@ -527,7 +527,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 3: vPost applied to predWorld immediately → green
 - [x] Cycle 4: out-of-order guard → green
 - [x] Cycle 5: rate-limit → green
-- [ ] Tier-2: `collision-events.spec.ts` passing
+- [x] Tier-2: `collision-events.spec.ts` passing &nbsp; *(8 s drive into drone ring → 1 collision event applied; pre-Stage-2 the same physical contact would have produced 8 cascading drift corrections)*
 - [ ] `docs/architecture/collision-events.md` + `src/core/CLAUDE.md` updated
 
 ### Stage 3 — Remote entity forward-prediction  &nbsp; *Status: ⏳ pending*
