@@ -554,17 +554,19 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 6: bias decay → green
 - [~] Tier-2: `jitter-resilience.spec.ts` passing &nbsp; *(deferred — see Decision Log; unit tests verify the property mathematically; existing E2Es re-run cleanly as regression check)*
 
-### Stage 4.5 — Scenario harness (proposed; awaiting user approval)  &nbsp; *Status: ⏳ proposed*
+### Stage 4.5 — Scenario harness  &nbsp; *Status: ✅ done*
 
-Test-discipline outer-loop net. Both Stage 4 hotfixes were emergent-over-time bugs that pure-function tests can't catch. This stage builds a `tests/scenarios/` harness that runs the client logic through synthetic timelines and asserts system-level properties.
+Test-discipline outer-loop net. Both Stage 4 hotfixes were emergent-over-time bugs that pure-function tests can't catch. This stage built a `tests/scenarios/` harness that runs the client logic through synthetic timelines using the **real production pure modules** (Welford, lookaheadController, snapshotDropDetector, inputTickRecovery, clockAnchor) and asserts system-level properties.
 
-- [ ] `tests/scenarios/runner.ts` — pure-function timeline runner. Inputs: `{ rafTickHz, rttMs, jitterMs, snapshotPattern[], gapsMs[], inputPattern }`. Outputs: array of observed states per simulated frame.
-- [ ] Property assertions library: `ticksAheadNeverNegative`, `noCorrectionAbove(units)`, `welfordSigmaBoundedBy(ms)`, etc.
-- [ ] Permanent regression fixtures, one per user-reported issue:
-  - Pattern A 552 ms snapshot gap on 10 Hz rafTick (the inputTick starvation case)
-  - Welford σ explosion under RTT outliers (the hotfix-#1 case)
-  - Combat-cluster cascading corrections (the original Stage-1 motivating diagnostic)
-- [ ] CI integration: scenarios run on every PR alongside Tier-1; regressions fail the build.
+- [x] `tests/scenarios/types.ts` — Event, Observation, SimulatedClientState
+- [x] `tests/scenarios/runner.ts` — runScenario; mirrors ColyseusClient.handleSnapshot + tickPhysics control flow; bypass flags (`starvationRecoveryEnabled`, `rttClampEnabled`) for TDD demonstrations
+- [x] `tests/scenarios/scenarios.ts` — high-level Scenario → Event[] builder; models held-ack-advance and burst-recovery
+- [x] `tests/scenarios/assertions.ts` — `ticksAheadNeverBelow`, `welfordStdDevBoundedBy`, `leadTicksWithinRange`, `starvationSnapCount`, `describeWindow` (diagnostic context)
+- [x] `tests/scenarios/regressions.test.ts` — 6 fixtures: 2 user-bug regressions, 2 TDD demonstrations (bypass-fix-and-verify-bug-reproduces), 1 steady-state baseline, 1 supporting case
+- [x] vitest.config.ts include extended to cover `tests/scenarios/**/*.test.ts`
+- [x] `docs/architecture/scenario-harness.md` — adding new fixtures workflow, what's covered, what's not
+
+Tier-1: 420 → 426 tests, all green. Typecheck + lint clean. The TDD-demonstration tests prove the harness would catch a regression: with the recovery bypassed, `ticksAhead` goes negative on slow-rafTick scenarios; with the clamp bypassed, Welford σ explodes past 100 ms on Pattern A gaps.
 
 ### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: ⏳ pending*
 - [ ] Test-infra: `MockSectorRoom` harness

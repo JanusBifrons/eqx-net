@@ -16,7 +16,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'tests/unit/**/*.test.ts'],
+    include: [
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      'tests/unit/**/*.test.ts',
+      // Stage 4.5 — scenario-harness regression fixtures (network-feel roadmap).
+      'tests/scenarios/**/*.test.ts',
+    ],
     exclude: ['**/node_modules/**', 'dist/**', 'tests/e2e/**', 'benchmarks/**'],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],
