@@ -640,6 +640,28 @@ export class SectorRoom extends Room<SectorState> {
     const rayFromX = sx + ndx * 20;
     const rayFromY = sy + ndy * 20;
 
+    // Diagnostic — captures the server's view of where the shooter was
+    // when the fire happened. Cross-reference with the client-side `fire`
+    // log (in `ColyseusClient.sendFire`) to localise any divergence
+    // between (a) where the client thinks it fired (predWorld), (b)
+    // where it rendered itself firing (mirror = predWorld + lerpOffset),
+    // and (c) where the server lag-comp resolved the ray (rewoundShooter).
+    serverLogEvent('fire_received', {
+      shooterId,
+      clientTick: tick,
+      serverTick: this.serverTick,
+      tickDelta: this.serverTick - tick,
+      weapon,
+      rewoundFromRing: rewoundShooter !== undefined,
+      shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
+      ray: {
+        fromX: parseFloat(rayFromX.toFixed(3)),
+        fromY: parseFloat(rayFromY.toFixed(3)),
+        dirX: parseFloat(ndx.toFixed(4)),
+        dirY: parseFloat(ndy.toFixed(4)),
+      },
+    });
+
     const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
     const weaponDef = getWeapon(weaponId);
 

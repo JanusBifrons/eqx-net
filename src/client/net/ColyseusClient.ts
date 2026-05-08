@@ -336,6 +336,12 @@ export class ColyseusGameClient {
    *  10 arrivals. Drives `computeInterpBiasMs` which biases the swarm
    *  display-delay floor when the wire is dropping packets. */
   private readonly _dropDetector: DropDetector = createDropDetector();
+  /** Diagnostic — set of swarm entityIds currently within the overlap log
+   *  threshold of the local ship. Used to emit `swarm_near_enter` /
+   *  `swarm_near_exit` events for the "overlapping with enemy ships"
+   *  diagnostic. Entry/exit semantics avoid flooding the 500-entry
+   *  ring buffer with per-frame proximity logs. */
+  private _swarmNearbyIds: Set<number> = new Set();
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -1465,6 +1471,58 @@ export class ColyseusGameClient {
           angle: state.angle + oa,
           ...(prev?.kind ? { kind: prev.kind } : {}),
         });
+
+        // Diagnostic — track swarm entities entering/leaving overlap range.
+        // The user reported "overlapping with enemy ships" (drones, since
+        // ship-on-ship interactions wouldn't show in single-player rooms).
+        // We log entry/exit events for any swarm entity within
+        // SWARM_OVERLAP_LOG_DIST of the local ship's RENDERED position
+        // (mirror, includes lerp). Entry and exit are logged with both
+        // the rendered local position AND the predWorld position so we
+        // can tell if the overlap is real (predWorld distance also small)
+        // or render-only (predWorld distance fine, lerp pulled the sprite).
+        if (this.mirror.swarm) {
+          const renderedX = state.x + ox;
+          const renderedY = state.y + oy;
+          const SWARM_OVERLAP_LOG_DIST = 100; // ~ ship radius + drone radius + buffer
+          const nowNear = new Set<number>();
+          for (const [entityId, entry] of this.mirror.swarm) {
+            const dx = entry.x - renderedX;
+            const dy = entry.y - renderedY;
+            if (dx * dx + dy * dy < SWARM_OVERLAP_LOG_DIST * SWARM_OVERLAP_LOG_DIST) {
+              nowNear.add(entityId);
+              if (!this._swarmNearbyIds.has(entityId)) {
+                logEvent('swarm_near_enter', {
+                  entityId,
+                  kind: entry.kind,
+                  swarmPos: {
+                    x: parseFloat(entry.x.toFixed(2)),
+                    y: parseFloat(entry.y.toFixed(2)),
+                  },
+                  rendered: {
+                    x: parseFloat(renderedX.toFixed(2)),
+                    y: parseFloat(renderedY.toFixed(2)),
+                  },
+                  predWorld: {
+                    x: parseFloat(state.x.toFixed(2)),
+                    y: parseFloat(state.y.toFixed(2)),
+                  },
+                  lerpOffset: {
+                    x: parseFloat(ox.toFixed(2)),
+                    y: parseFloat(oy.toFixed(2)),
+                  },
+                  distRendered: parseFloat(Math.sqrt(dx * dx + dy * dy).toFixed(2)),
+                });
+              }
+            }
+          }
+          for (const oldId of this._swarmNearbyIds) {
+            if (!nowNear.has(oldId)) {
+              logEvent('swarm_near_exit', { entityId: oldId });
+            }
+          }
+          this._swarmNearbyIds = nowNear;
+        }
       }
     }
 
@@ -1787,6 +1845,43 @@ export class ColyseusGameClient {
       clientShotId: shotId,
       weapon: activeWeapon,
       dirAngle: state.angle,
+    });
+    // Diagnostic — captures the three reference points needed to debug
+    // "lasers firing from the wrong place". The laser ghost spawns at
+    // (fromX, fromY) = predWorld + 20 * forward, with NO lerp offset
+    // applied. The visible ship is rendered from `mirror.ships[localId]`
+    // which DOES include the reconciler's lerp offset. Whenever the
+    // reconciler is mid-lerp, those two diverge by `lerpOffset`. The
+    // server's lag-comp will validate the shot against the SnapshotRing
+    // pose at `tick`, captured in the server-side `fire_received` log.
+    // Cross-reference all three to localise the divergence.
+    const mirrorPose = this.mirror.ships.get(localId);
+    const lerpOff = this.reconciler?.lerpOffset;
+    const lerpAng = this.reconciler?.lerpAngleOffset ?? 0;
+    logEvent('fire', {
+      tick,
+      shotId,
+      weapon: activeWeapon,
+      predState: {
+        x: parseFloat(state.x.toFixed(3)),
+        y: parseFloat(state.y.toFixed(3)),
+        angle: parseFloat(state.angle.toFixed(4)),
+      },
+      mirrorPose: mirrorPose ? {
+        x: parseFloat(mirrorPose.x.toFixed(3)),
+        y: parseFloat(mirrorPose.y.toFixed(3)),
+        angle: parseFloat(mirrorPose.angle.toFixed(4)),
+      } : null,
+      lerpOffset: lerpOff ? {
+        x: parseFloat(lerpOff.x.toFixed(3)),
+        y: parseFloat(lerpOff.y.toFixed(3)),
+        angle: parseFloat(lerpAng.toFixed(4)),
+      } : null,
+      spawnPos: {
+        x: parseFloat(fromX.toFixed(3)),
+        y: parseFloat(fromY.toFixed(3)),
+      },
+      lerping: this.reconciler?.isLerping ?? false,
     });
   }
 
