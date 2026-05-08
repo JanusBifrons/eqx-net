@@ -36,6 +36,7 @@ import {
   computeInterpBiasMs,
   type DropDetector,
 } from './snapshotDropDetector';
+import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -1071,6 +1072,20 @@ export class ColyseusGameClient {
     const serverState = snap.states[localId];
     const ackedTick = snap.ackedTick;
     if (serverState && ackedTick !== undefined) {
+      // Stage 4 hotfix #2 — recover from inputTick starvation. On slow-
+      // rafTick devices under server burst-recovery the held-ack-advance
+      // contract can race ackedTick past inputTick, collapsing the
+      // prediction window and producing a cascade of position corrections.
+      // Detect and snap forward. See `inputTickRecovery.ts` for the full
+      // mechanism and the 2026-05-08 diagnostic that motivated the fix.
+      const recovered = recoverInputTickFromStarvation(this.inputTick, ackedTick, this.leadTicks);
+      if (recovered !== this.inputTick) {
+        this.inputTick = recovered;
+        // Re-anchor the wall-clock so subsequent rafTicks don't try to
+        // catch up the gap we just skipped over.
+        this.clockAnchorServerTick = snap.serverTick;
+        this.clockAnchorPerfNow = now;
+      }
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 

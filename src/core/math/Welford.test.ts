@@ -108,6 +108,39 @@ describe('Welford', () => {
     expect(welfordVariance(w)).toBeGreaterThan(0);
   });
 
+  it('Stage 4 hotfix #1 regression: Welford σ stays bounded when caller clamps outlier samples', () => {
+    // Documents the property: ColyseusClient clamps `lastRtt` at 250 ms before
+    // pushing into Welford because Reconciler.lastRtt is contaminated by
+    // snapshot-delay (a 552 ms Pattern A network gap inflates it to 552+ ms).
+    // Without the clamp, Welford σ would explode and the leadTicks formula
+    // `mean + 2σ` would saturate the prediction window. With the clamp, σ is
+    // bounded by the uniform-distribution bound on a [0, 250] ms range.
+    //
+    // The clamp itself is in ColyseusClient.handleSnapshot; this test proves
+    // Welford behaves correctly given clamped inputs (i.e. the contract is
+    // upheld at this layer).
+    const RTT_SAMPLE_CLAMP_MS = 250;
+    const w = createWelford();
+
+    // 100 healthy samples (50 ms RTT, σ near zero).
+    for (let i = 0; i < 100; i++) welfordPush(w, Math.min(50, RTT_SAMPLE_CLAMP_MS));
+    expect(welfordStdDev(w)).toBeLessThan(5); // very tight cluster
+
+    // 1 outlier sample — would be 600 ms unclamped, becomes 250 ms clamped.
+    // Without the clamp, this single sample shifts σ to ~50 ms.
+    // With the clamp, it shifts σ to a bounded value.
+    welfordPush(w, Math.min(600, RTT_SAMPLE_CLAMP_MS));
+    expect(welfordStdDev(w)).toBeLessThan(50); // bounded after the outlier
+
+    // 100 more healthy samples — σ recovers as the outlier dilutes.
+    for (let i = 0; i < 100; i++) welfordPush(w, Math.min(50, RTT_SAMPLE_CLAMP_MS));
+    expect(welfordStdDev(w)).toBeLessThan(20);
+
+    // Mean should be very close to 50 ms (the dominant value across 200 of 201 samples).
+    expect(welfordMean(w)).toBeGreaterThan(45);
+    expect(welfordMean(w)).toBeLessThan(55);
+  });
+
   it('Cycle 2: long-running stream stays accurate (1500 samples, no NaN, no drift)', () => {
     // Sanity check: after multiple reset windows, the stream still produces
     // sensible mean/variance values matching what numpy would compute on

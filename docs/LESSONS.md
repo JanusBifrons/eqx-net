@@ -14,6 +14,26 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-08 — Network-Feel Stage 4 hotfix #2 — `inputTick` starvation under server burst-recovery on slow-rafTick devices
+
+A second-order failure mode revealed by the same combat-test diagnostic that motivated hotfix #1 (`diag/captures/2026-05-08T16-12-02-930Z-z4ixt3.json`).
+
+**Setup**: mobile device, rafTick at 10–15 Hz under load (vs. 60 Hz desktop baseline). 552 ms Pattern A inbound network gap. Server burst-sends recovery snapshots at ~30 Hz to catch the client up.
+
+**The mismatch**: the client's input loop advances `inputTick` once per rafTick frame, capped at `MAX_CATCH_UP_TICKS = 4` per rafTick. Max sustained advance rate = `rafTickHz × MAX_CATCH_UP_TICKS`. The server's `inputQueue.ts` held-ack-advance contract (necessary for the Phase-3 reconciler to converge under client throttling — see 2026-05-06 entry below) advances `ackedTick` at the full server tick rate (60 Hz) regardless of how fast the client sends. On a 10 Hz rafTick × 4 catch-up = 40 Hz device, the client cannot keep up with the server during burst recovery — `ackedTick` outpaces `inputTick`.
+
+**Symptom**: `ticksAhead = inputTick - ackedTick` crosses zero and goes negative. Captured numbers: `min=-26, max=34`. The reconciler's replay range becomes empty (`replayStart = ackedTick + 1 > currentTick = inputTick`), so reconcile resets predWorld to serverState (which is "in the future" of where the client thinks the ship is) without any compensating replay. Drift = pre-reset position − server position = many units, every snapshot, for the duration of the storm. Observed: 13 corrections per 500 ms, max drift 30 u.
+
+**Fix shipped**: `recoverInputTickFromStarvation(inputTick, ackedTick, leadTicks)` in [src/client/net/inputTickRecovery.ts](../src/client/net/inputTickRecovery.ts). Called in `handleSnapshot` before reconcile. When `inputTick ≤ ackedTick`, snap forward to `ackedTick + leadTicks` (analogous to clockAnchor's > 200 ms hard-snap path). Re-anchor the wall-clock too so subsequent rafTicks don't try to catch up the gap we just skipped.
+
+**Trade-off**: the snap loses replay-buffer entries between old and new `inputTick`. The server already synthesized acks for those ticks via held-ack-advance, so the inputs were never going to be physically meaningful client-side anyway — the snap is a "cleaner" version of state that was already broken.
+
+**Why this wasn't caught earlier**: every Stage 0–4 unit test verified an *atomic operation* (Welford push, lookahead formula, drop-detection sliding window) but no test exercised the *system under stress* — slow rafTick + server burst + held-ack-advance. The class of pure-function tests cannot exercise this bug because it's an emergent property of multiple components interacting over time. **Action item**: build a scenario harness (`tests/scenarios/`) that takes a synthetic timeline (rafTickHz, RTT, gaps, snapshot patterns) and runs the client logic through it, asserting properties like "ticksAhead never goes negative" or "no correction > 50 u". Tracked as `plans/network-feel-roadmap.md` Decision Log → "Stage 4.5: scenario harness" follow-up.
+
+**Distinguishing future occurrences**: in a diagnostic, `predStats.ticksAhead p95 < 0` OR `min < 0` is the symptom. Cross-check rafTick gaps in the eqxLogs (`logs.filter(l => l.tag === 'rafTick')`); rafTick gap > 50 ms (= < 20 Hz) on the affected window confirms.
+
+---
+
 ## 2026-05-08 — Network-Feel Stage 4 — `Reconciler.lastRtt` is *not* a clean RTT signal
 
 Stage 4's Welford-based `leadTicks = ceil((mean + 2σ) / FIXED_MS)` formula assumes the input RTT samples are clean. They aren't.

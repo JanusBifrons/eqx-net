@@ -544,7 +544,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] `docs/architecture/remote-prediction.md` written
 - [~] A/B toggle wired &nbsp; *(deferred — unit-test property + production wire-up are the verification surface; revisit if subjective testing reports issues)*
 
-### Stage 4 — Adaptive jitter & smarter lookahead  &nbsp; *Status: ✅ done*
+### Stage 4 — Adaptive jitter & smarter lookahead  &nbsp; *Status: ✅ done (with two hotfixes)*
 - [~] Test-infra: `fakeNetwork` jitter + drop injection &nbsp; *(skipped — pure-function tests cover formula + sliding-window + spring-smooth without simulating a wire)*
 - [x] Cycle 1: Welford mean/variance correctness → green
 - [x] Cycle 2: long-running stability reset → green
@@ -553,6 +553,18 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 5: dropped-snapshot detection → green
 - [x] Cycle 6: bias decay → green
 - [~] Tier-2: `jitter-resilience.spec.ts` passing &nbsp; *(deferred — see Decision Log; unit tests verify the property mathematically; existing E2Es re-run cleanly as regression check)*
+
+### Stage 4.5 — Scenario harness (proposed; awaiting user approval)  &nbsp; *Status: ⏳ proposed*
+
+Test-discipline outer-loop net. Both Stage 4 hotfixes were emergent-over-time bugs that pure-function tests can't catch. This stage builds a `tests/scenarios/` harness that runs the client logic through synthetic timelines and asserts system-level properties.
+
+- [ ] `tests/scenarios/runner.ts` — pure-function timeline runner. Inputs: `{ rafTickHz, rttMs, jitterMs, snapshotPattern[], gapsMs[], inputPattern }`. Outputs: array of observed states per simulated frame.
+- [ ] Property assertions library: `ticksAheadNeverNegative`, `noCorrectionAbove(units)`, `welfordSigmaBoundedBy(ms)`, etc.
+- [ ] Permanent regression fixtures, one per user-reported issue:
+  - Pattern A 552 ms snapshot gap on 10 Hz rafTick (the inputTick starvation case)
+  - Welford σ explosion under RTT outliers (the hotfix-#1 case)
+  - Combat-cluster cascading corrections (the original Stage-1 motivating diagnostic)
+- [ ] CI integration: scenarios run on every PR alongside Tier-1; regressions fail the build.
 
 ### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: ⏳ pending*
 - [ ] Test-infra: `MockSectorRoom` harness
@@ -617,4 +629,6 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 3 Tier-2 — A/B toggle (Zustand UI flag for live prediction-on/off comparison) deferred. Plan-agent suggested it for subjective comparison; the Stage 3 wire-up is light enough that a `git revert` + dev-server reload is a fine substitute. Revisit if a multi-stage A/B is needed later.
 - 2026-05-08 — Stage 4 Test-infra — `fakeNetwork` jitter + drop injection skipped. Pure-function tests (Welford against numpy reference, lookahead formula across known RTT/σ pairs, drop detector against a synthetic serverTick stream) cover all behavioural properties without simulating a wire. The user's measured jitter is already low (9.9 ms σ) so injecting synthetic jitter wouldn't reveal anything the unit tests don't already prove.
 - 2026-05-08 — Stage 4 Tier-2 — Dedicated `jitter-resilience.spec.ts` (Playwright CDP `Network.emulateNetworkConditions` for σ=30 ms jitter) deferred. Reasons: (1) all four contributing properties (Welford correctness, lookahead formula, spring transitions, drop-detection sliding window) are unit-test verified; (2) running existing E2Es (`feel-tuning.spec.ts`, `collision-events.spec.ts`) confirms no regression; (3) Playwright CDP throttling is itself a noisy black-box and would re-test the *throttler* as much as the Stage 4 controllers. The user smoke-testing Stage 4 under real network conditions (which is what motivated the diagnostic-driven roadmap in the first place) is the meaningful verification.
-- 2026-05-08 — Stage 4 hotfix — User combat-test diagnostic revealed Stage 4's Welford-driven leadTicks saturating the 30-tick cap (~500 ms speculation window) after a single 572 ms snapshot gap. Root cause: `Reconciler.lastRtt` is contaminated by snapshot-delay, so a Pattern A spike injects a 500+ ms outlier into Welford → σ explodes → `mean + 2σ` saturates the cap → combat predictions diverge into 100+ u corrections. Fix: clamp RTT samples at 250 ms before Welford ingestion (`RTT_SAMPLE_CLAMP_MS` in `ColyseusClient.ts`). See `docs/LESSONS.md` for the full mechanism. Stage 4 is now considered closed for real; Stage 5 still on deck.
+- 2026-05-08 — Stage 4 hotfix — User combat-test diagnostic revealed Stage 4's Welford-driven leadTicks saturating the 30-tick cap (~500 ms speculation window) after a single 572 ms snapshot gap. Root cause: `Reconciler.lastRtt` is contaminated by snapshot-delay, so a Pattern A spike injects a 500+ ms outlier into Welford → σ explodes → `mean + 2σ` saturates the cap → combat predictions diverge into 100+ u corrections. Fix: clamp RTT samples at 250 ms before Welford ingestion (`RTT_SAMPLE_CLAMP_MS` in `ColyseusClient.ts`). See `docs/LESSONS.md` for the full mechanism.
+- 2026-05-08 — Stage 4 hotfix #2 — Second-order failure: even with hotfix #1 in place, a follow-up combat diagnostic showed `ticksAhead` going negative (min=-26) on slow-rafTick mobile devices during server burst-recovery. Root cause: `MAX_CATCH_UP_TICKS × rafTickHz` ceiling on client `inputTick` advance rate vs. server's full-60-Hz held-ack-advance, with `ackedTick` outpacing `inputTick` and causing reconcile to reset predWorld to server-state-that's-in-the-future. Fix: `recoverInputTickFromStarvation` in `inputTickRecovery.ts` — when `inputTick ≤ ackedTick`, snap forward to `ackedTick + leadTicks`. 6 regression-test cases. Stage 4 is now considered closed for real; Stage 5 still on deck.
+- 2026-05-08 — Test-discipline pivot — Both Stage 4 hotfixes were caught by user smoke-testing rather than by the test suite, because every Stage 0–4 unit test verified an atomic operation in isolation rather than a system-under-stress. The class of pure-function tests cannot exercise emergent-over-time behaviours like "Welford σ bound under outliers" or "inputTick starvation under burst-recovery". Action item: build a scenario harness (`tests/scenarios/`) as **Stage 4.5** — a synthetic-timeline runner that takes (rafTickHz, RTT mean, jitter σ, snapshot gaps, burst patterns, input pattern), simulates the client logic through it, and asserts properties like `ticksAhead never < 0`, `no correction > 50 u during 30 s steady-thrust`, etc. Each user-reported regression gets a permanent scenario fixture so it can never re-occur silently. Per-stage TDD remains the inner loop; the scenario harness is the outer-loop net for emergent issues.
