@@ -297,6 +297,37 @@ export class SectorRoom extends Room<SectorState> {
   private tickBudgetMaxTotalMs = 0;
   private tickBudgetOverBudgetCount = 0;
 
+  /** Per-tick phase breakdown for the CURRENT tick, written by `phaseTime`
+   *  alongside the cumulative `tickBudgetSums`. Reset to zeros at end of
+   *  each tick. Used by the hot-capture branch when `totalMs > TICK_HITCH_THRESHOLD_MS`
+   *  to emit a `tick_hitch` event with the per-phase breakdown — answers
+   *  the question `tick_budget` averages cannot: WHICH SUBSYSTEM ate the
+   *  time on this specific tick. */
+  private readonly thisTickPhases: Record<string, number> = {};
+  /** 3-tick rolling history of (tick, totalMs, phases) for context around
+   *  a hitch event. Push at end of every tick; trim to 3 entries. When a
+   *  hitch fires, the event includes these as `recentTicks` so the
+   *  consumer can see whether the hitch is isolated or part of a cluster. */
+  private readonly tickHistoryRing: Array<{
+    tick: number;
+    totalMs: number;
+    phases: Record<string, number>;
+  }> = [];
+
+  /** Hot-capture threshold for `tick_hitch` events. Any tick whose total
+   *  wall-clock exceeds this fires a hitch event with phase breakdown.
+   *  12 ms is below the 16.67 ms physics budget but well above the
+   *  observed steady-state of ~1 ms — so it captures genuine hitches
+   *  before they cascade into client-visible stutter (24+ ms ticks
+   *  cause ~13 u correction snaps in the diagnostic capture). */
+  private static readonly TICK_HITCH_THRESHOLD_MS = 12;
+  /** Rate-limit hitch events to avoid flooding the server-event buffer
+   *  during a sustained pathology. One per ~250 ms is plenty to reconstruct
+   *  the cause; cluster events still get reported via the `recentTicks`
+   *  context on the next admitted hitch. */
+  private static readonly TICK_HITCH_MIN_INTERVAL_MS = 250;
+  private lastTickHitchAtMs = 0;
+
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
     this.bus = new Bus();
@@ -1756,9 +1787,13 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     let tPhase = performance.now();
+    // Reset per-tick phase capture at the top of every update().
+    for (const k of Object.keys(this.thisTickPhases)) this.thisTickPhases[k] = 0;
     const phaseTime = (key: keyof typeof this.tickBudgetSums): void => {
       const now = performance.now();
-      this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + (now - tPhase);
+      const elapsed = now - tPhase;
+      this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + elapsed;
+      this.thisTickPhases[key] = (this.thisTickPhases[key] ?? 0) + elapsed;
       tPhase = now;
     };
 
@@ -2112,6 +2147,49 @@ export class SectorRoom extends Room<SectorState> {
     this.tickBudgetSampleCount++;
     if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
     if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
+
+    // Hot-capture per-tick hitches. The aggregated `tick_budget` log emits
+    // an AVERAGE every 60 ticks, which buries individual tick spikes inside
+    // the mean. A 26 ms spike disappears inside an `avgMs.total = 0.045`
+    // line. The user-perceived "stuttering" diagnosed in the 2026-05-08
+    // captures traced back to single ticks in the 25–30 ms range causing
+    // 13 u correction snaps and 10-snapshot cascades. This branch fires a
+    // dedicated `tick_hitch` event with per-phase breakdown PLUS context
+    // from the previous 3 ticks, so the next diagnostic identifies the
+    // culprit subsystem directly. Rate-limited to avoid flood during
+    // sustained pathology.
+    const nowMs = performance.now();
+    if (
+      totalMs > SectorRoom.TICK_HITCH_THRESHOLD_MS &&
+      nowMs - this.lastTickHitchAtMs >= SectorRoom.TICK_HITCH_MIN_INTERVAL_MS
+    ) {
+      this.lastTickHitchAtMs = nowMs;
+      const phasesSnapshot: Record<string, number> = {};
+      for (const k of Object.keys(this.thisTickPhases)) {
+        phasesSnapshot[k] = parseFloat((this.thisTickPhases[k] ?? 0).toFixed(3));
+      }
+      phasesSnapshot['total'] = parseFloat(totalMs.toFixed(3));
+      const workerTickMsForHitch = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
+      serverLogEvent('tick_hitch', {
+        serverTick: this.serverTick,
+        totalMs: parseFloat(totalMs.toFixed(3)),
+        phases: phasesSnapshot,
+        recentTicks: this.tickHistoryRing.slice(),
+        workerTickMs: parseFloat(workerTickMsForHitch.toFixed(3)),
+        playerCount: this.playerToSlot.size,
+        swarmCount: this.swarmRegistry.size(),
+        aiSize: this.aiController.size(),
+        liveProjectileCount: this.liveProjectiles.size,
+      });
+    }
+    // Maintain the rolling 3-tick history regardless of hitch — context for
+    // the next hitch event.
+    this.tickHistoryRing.push({
+      tick: this.serverTick,
+      totalMs: parseFloat(totalMs.toFixed(3)),
+      phases: { ...this.thisTickPhases },
+    });
+    if (this.tickHistoryRing.length > 3) this.tickHistoryRing.shift();
 
     // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.
     // The server's `update()` time covers SAB-read / encode / broadcast; the
