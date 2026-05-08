@@ -490,7 +490,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [~] Test-infra: `mirrorAssertions` matchers built &nbsp; *(deferred to Stage 3 — see Decision Log)*
 - [~] Test-infra: `Reconciler.test.ts` time-sampling harness extended &nbsp; *(existing tests adequate — see Decision Log)*
 - [x] Cycle 1: large-correction frame cap test → green
-- [ ] Cycle 2: ease-out shape test → green
+- [x] Cycle 2: ease-out shape test → green
 - [ ] Cycle 3: `INTERP_DELAY_MS` 50 ms test → green
 - [ ] Cycle 4: adaptive ceiling 200 ms test → green
 - [ ] Tier-2 spec `feel-tuning.spec.ts` written and passing

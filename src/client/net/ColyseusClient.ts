@@ -1230,7 +1230,11 @@ export class ColyseusGameClient {
         const off = this._remoteShipOffsets.get(remoteId);
         let ox = 0, oy = 0;
         if (off && off.framesLeft > 0) {
-          const ratio = off.framesLeft / off.totalFrames;
+          // Stage 0: ease-out quadratic — see Reconciler.advanceLerp for
+          // the full rationale. Keeps remote-ship offset decay shape in
+          // lockstep with local-ship offset decay shape.
+          const linearRatio = off.framesLeft / off.totalFrames;
+          const ratio = linearRatio * linearRatio;
           ox = off.ox * ratio;
           oy = off.oy * ratio;
           off.framesLeft--;

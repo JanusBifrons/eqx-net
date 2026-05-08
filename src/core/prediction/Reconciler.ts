@@ -112,7 +112,12 @@ export class Reconciler {
       this.lerpOffset.y = 0;
       this.lerpAngleOffset = 0;
     } else {
-      const ratio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
+      // Stage 0: ease-out quadratic shape. The pre-Stage-0 linear `framesLeft
+      // / totalFrames` shape decayed at a constant rate, which read as a
+      // slow glide. Squaring biases the curve toward decisive early motion
+      // and a graceful tail — same total duration, more responsive feel.
+      const linearRatio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
+      const ratio = linearRatio * linearRatio;
       this.lerpOffset.x = this.lerpInitial.x * ratio;
       this.lerpOffset.y = this.lerpInitial.y * ratio;
       this.lerpAngleOffset = this.lerpAngleInitial * ratio;
