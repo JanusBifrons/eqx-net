@@ -63,12 +63,40 @@ export class PhysicsWorld {
     return new PhysicsWorld(world);
   }
 
-  tick(dtSeconds: number): void {
+  /**
+   * Advance physics. If `eventQueue` is supplied, it is passed to
+   * `world.step()` and Rapier populates it with contact events from this
+   * tick's steps. Stage 2 of the network-feel roadmap uses this to surface
+   * collision events from the worker thread to the main thread.
+   *
+   * Note: bodies must have `CONTACT_FORCE_EVENTS` enabled on their colliders
+   * for events to be emitted. PhysicsWorld enables this on every dynamic
+   * body it spawns (ships, obstacles).
+   */
+  tick(dtSeconds: number, eventQueue?: RAPIER.EventQueue): void {
     this.accumulator += dtSeconds;
     while (this.accumulator >= FIXED_DT) {
-      this.world.step();
+      this.world.step(eventQueue);
       this.accumulator -= FIXED_DT;
     }
+  }
+
+  /** Resolve a Rapier rigid-body handle to the entity ID it was spawned with.
+   *  Used by Stage 2's `drainContacts` to map contact-event collider handles
+   *  back to entity IDs. Returns undefined for handles that no longer
+   *  correspond to a live body (e.g. despawned mid-step). */
+  resolveHandle(handle: number): string | undefined {
+    return this.handleToId.get(handle);
+  }
+
+  /** Bridge a collider handle (as exposed by Rapier contact events) to the
+   *  parent rigid-body handle (as registered in `handleToId`). Returns
+   *  undefined if the collider has no parent body or has been removed. */
+  bodyHandleForCollider(colliderHandle: number): number | undefined {
+    const collider = this.world.getCollider(colliderHandle);
+    if (!collider) return undefined;
+    const parent = collider.parent();
+    return parent ? parent.handle : undefined;
   }
 
   /**
@@ -91,7 +119,14 @@ export class PhysicsWorld {
     const collider = RAPIER.ColliderDesc.ball(kind.radius)
       .setRestitution(0.3)
       .setFriction(0)
-      .setDensity(density);
+      .setDensity(density)
+      // Stage 2: emit contact-force events when this collider participates in
+      // a contact above the engine-level threshold. The worker drains the
+      // event queue each tick and posts CONTACT messages to the main thread.
+      // Threshold here is intentionally low; the drainContacts function
+      // applies a tighter floor.
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(10);
     this.world.createCollider(collider, body);
     this.bodies.set(id, { body, kind });
     this.handleToId.set(body.handle, id);
@@ -139,6 +174,12 @@ export class PhysicsWorld {
       const density = mass / (Math.PI * radius * radius);
       collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
     }
+    // Stage 2: enable contact-force events on obstacles too — ship-vs-asteroid
+    // collisions are the dominant case the network-feel collision-event
+    // broadcast addresses.
+    collider
+      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+      .setContactForceEventThreshold(10);
     this.world.createCollider(collider, body);
     // Obstacles are tracked under the default kind purely so the bodies map
     // shape stays uniform; obstacle physics never reads this kind back.

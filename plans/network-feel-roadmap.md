@@ -518,11 +518,11 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Tier-2: `benchmarks/spring.bench.ts` < 200 ns &nbsp; *(117 ns/spring amortized in 100-spring batch; single-call number 285 ns is per-call setup overhead, irrelevant in production)*
 - [x] `docs/architecture/prediction-and-correction.md` written
 
-### Stage 2 — Collision event broadcasting  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `drainContacts` extracted as pure function
-- [ ] Test-infra: `fakeNetwork` in-memory loopback built
+### Stage 2 — Collision event broadcasting  &nbsp; *Status: 🚧 in progress*
+- [x] Test-infra: `drainContacts` extracted as pure function
+- [~] Test-infra: `fakeNetwork` in-memory loopback built &nbsp; *(skipped — cycles 3–5 use direct method invocation against fake predWorld; full chain validated by Tier-2 E2E)*
 - [ ] Test-infra: zod fuzz fixture built
-- [ ] Cycle 1: `drainContacts` happy-path test → green
+- [x] Cycle 1: `drainContacts` happy-path test → green
 - [ ] Cycle 2: schema fuzz test → green
 - [ ] Cycle 3: vPost applied to predWorld immediately → green
 - [ ] Cycle 4: out-of-order guard → green
@@ -605,3 +605,5 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 1 Cycle 6 (swarmInterpolation re-target shim) — N/A. The plan anticipated a "re-target shim" inside `swarmInterpolation.ts` that needed spring-smoothing on new pose arrival, but reading the actual implementation confirms there is no such shim: it's a pure display-delay buffer that linearly interpolates between two bracketing arrivals from the per-entity 3-deep poseRing. There is no offset to spring-correct — bracketing changes are smooth by virtue of the buffer's lookback-time mechanism. Swarm sprites will benefit from Stages 4 and 6 (jitter detection, drop-resilient interp delay extension); no spring is owed at this layer.
 - 2026-05-08 — Stage 1 — Half-life selection: 12 ms (sub-pixel) / 25 ms (else), giving ~75 ms / ~125 ms total wall-clock settle. The plan agent's original suggestion of 40 / 70 / 110 ms half-lives (= 200–550 ms total settle) was shown to be 2–5× slower than Stage 0's 100 ms cap by analytical comparison; preserving Stage 0's perceived snappiness means tighter half-lives. The "spring-alive" feel is still present at 25 ms (the velocity-carries-through quality), just at a faster overall pace. If a future user-test report says corrections feel too snappy, bump 25 → 35 ms first.
 - 2026-05-08 — Stage 1 closure — Skipping the ProMotion 120→60 Hz cadence-flip e2e spec. `CritDampedSpring.test.ts` Cycle 3 already asserts dt = 8 ms vs dt = 33 ms produce identical end states (closed-form analytical solution; no integration scheme to break under cadence shifts), and the Reconciler integration test re-verifies the property through the full reconcile call path. Adding a Playwright cadence-flip would consume 60+ s of e2e runtime for no additional confidence — the underlying math is exact, not empirical.
+- 2026-05-08 — Stage 2 — Skipping the `fakeNetwork` test-infra investment. Cycle 1 (`drainContacts`) tests against a real `PhysicsWorld` with synthetic collisions — pure-function discipline doesn't require a network bus to test. Cycles 3–5 (client handler) test directly against a minimal-interface fake predWorld — no message bus simulation needed for the guard logic. The full worker → main → server → client chain is validated by Tier-2 E2E. fakeNetwork can be built lazily in Stage 4 if the jitter-injection tests genuinely need it.
+- 2026-05-08 — Stage 2 Cycle 1 — Bridging Rapier's collider-handle-keyed contact events to PhysicsWorld's body-handle-keyed `handleToId` map needed a small new public method on PhysicsWorld: `bodyHandleForCollider(colliderHandle): number | undefined`. Previous code never needed this lookup direction. Method is one line (`world.getCollider(h).parent()?.handle`); kept on PhysicsWorld rather than reaching into private state from `contactDrain.ts`.
