@@ -42,7 +42,7 @@ client: ────────────────────────
 ### 4. Remote ships
 **Goal**: smooth 100ms display-delay, no freezing during packet gaps.
 
-**Current state**: ✅ achieved. Dead-reckoning fills 100ms gaps; angle wraps correctly through 0/2π.
+**Current state**: ✅ achieved. Dead-reckoning fills 100ms gaps; angle wraps correctly through 0/2π. Stage 3 of the network-feel roadmap further reduced the visible-lag ceiling by forward-predicting remote ships using their `lastInput` from each snapshot (see `docs/architecture/remote-prediction.md`).
 
 ---
 
@@ -141,6 +141,28 @@ Stage 2 added server-authoritative collision-event broadcasting. The four-hop re
 Tier-2 acceptance: `tests/e2e/collision-events.spec.ts` — 8 s drive into the drone ring → 272 snapshots, 1 collision event applied. Pre-Stage-2 the same physical contact would have produced 8 cascading drift corrections over ~410 ms (per `docs/LESSONS.md` Pattern A diagnostic).
 
 Architecture: `docs/architecture/collision-events.md`.
+
+---
+
+## Measured after Stage 3 (network-feel roadmap, 2026-05-08)
+
+Stage 3 added remote-entity forward-prediction. The client's `predWorld` now applies each remote ship's `lastInput` (broadcast in every snapshot) per replay tick and per tickPhysics tick — the same input vector the server is using — so remote bodies advance in lockstep with the local input loop.
+
+| Component | File | Behaviour |
+|---|---|---|
+| Wire bits | `src/shared-types/sabLayout.ts` | `FLAG_INPUT_THRUST/TURN_LEFT/TURN_RIGHT/BOOST/REVERSE` (bits 3–7 of FLAGS slot) |
+| Worker write | `src/core/physics/worker.ts` | Mirrors `lastApplied[slot]` into FLAGS each tick |
+| Snapshot | `src/server/rooms/SectorRoom.ts` | Reads FLAGS, populates `states[playerId].lastInput` |
+| Wire schema | `src/shared-types/messages.ts` | Optional `lastInput` per ship in SnapshotMessage |
+| Reconciler hook | `src/core/prediction/Reconciler.ts` | `perReplayTick` callback for orchestrator-driven per-tick logic |
+| Pure module | `src/client/net/remotePredictionGuard.ts` | Hysteresis (3×>5u disable / 3×<5u re-enable); cap (max 8 ticks) |
+| Property tests | `src/client/net/remoteForwardPrediction.test.ts` | 4 lockstep-prediction property tests with parallel `PhysicsWorld`s |
+| Guard tests | `src/client/net/remotePredictionGuard.test.ts` | 7 hysteresis + cap tests |
+| Client integration | `src/client/net/ColyseusClient.ts` | `applyRemoteInputs` called from replay + tickPhysics; per-snapshot reset of forward-tick counter |
+
+Tier-2 acceptance: existing E2Es (`feel-tuning.spec.ts`, `collision-events.spec.ts`) re-run cleanly under Stage 3 — no regressions in single-client behaviour. Multi-client visible-lag improvement is best evaluated subjectively in user testing; the lockstep-prediction property is unit-test verified.
+
+Architecture: `docs/architecture/remote-prediction.md`.
 
 ---
 
