@@ -486,7 +486,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] `plans/README.md` + `plans/CLAUDE.md` written
 - [x] Seed commit landed (1840ed6)
 
-### Stage 0 — Tuning quick wins  &nbsp; *Status: 🚧 in progress*
+### Stage 0 — Tuning quick wins  &nbsp; *Status: ✅ done*
 - [~] Test-infra: `mirrorAssertions` matchers built &nbsp; *(deferred to Stage 3 — see Decision Log)*
 - [~] Test-infra: `Reconciler.test.ts` time-sampling harness extended &nbsp; *(existing tests adequate — see Decision Log)*
 - [x] Cycle 1: large-correction frame cap test → green
@@ -494,7 +494,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 3: `INTERP_DELAY_MS` 50 ms test → green
 - [x] Cycle 4: adaptive ceiling 200 ms test → green
 - [x] Tier-2 spec `feel-tuning.spec.ts` written and passing &nbsp; *(73 corrections observed under `?room=sector` thrust-into-drone-ring; max queued frames = 6, max drift 80 u)*
-- [ ] `docs/FEEL_GOALS.md` updated with measured outcomes
+- [x] `docs/FEEL_GOALS.md` updated with measured outcomes
 
 ### Stage 1 — Spring-based smoothing  &nbsp; *Status: ⏳ pending*
 - [ ] Test-infra: `virtualClock` helper hardened

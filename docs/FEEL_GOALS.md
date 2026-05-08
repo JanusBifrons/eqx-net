@@ -65,19 +65,39 @@ The correct measure is:
 | Thrust correction rate | ~0% (only collision events) | ~10% ✅ |
 | Collision correction magnitude | < 2u (obstacle velocity constant) | 5–30u before fix, improving |
 | Collision correction, velocity changed by another ship | Unavoidable until next snapshot (50ms) | Accepted |
-| Remote ship display delay | INTERP_DELAY_MS = 100ms | 100ms ✅ |
+| Remote ship display delay | DISPLAY_DELAY_MS = 50ms (post Stage 0) | 50ms ✅ |
+| Lerp duration on large drift | 100ms (post Stage 0) | 100ms ✅ |
 
 ---
 
 ## What would make this feel "flawless"
 
-1. **Collision corrections consistently < 2u** — the main remaining gap. Fixed in current pass by correcting obstacle temporal frame. Residual comes from other ships changing asteroid velocities between snapshots.
+1. **Collision corrections consistently < 2u** — the main remaining gap. Partially fixed by correcting obstacle temporal frame. Residual comes from other ships changing asteroid velocities between snapshots; fully resolved by Stage 2 of the network-feel roadmap (server-broadcast collision events).
 
-2. **Server sending collision events** (Phase 4 scope) — when a collision happens server-side, broadcast a lightweight `{type:'collision', ids:[...], vPost:...}` message. Client applies the velocity change immediately rather than waiting for the next snapshot (50ms). Residual correction drops to near-zero.
+2. **Server sending collision events** — Stage 2 of the network-feel roadmap. When a collision happens server-side, broadcast a lightweight `collision_resolved { aId, bId, vA, vB, impulse, tick }` message. Client applies the velocity change immediately rather than waiting for the next snapshot (50 ms). Residual correction drops to near-zero. See `plans/network-feel-roadmap.md`.
 
-3. **Shorter adaptive lerp for large corrections** — a 40u collision correction over 300ms looks like a slow glide. Consider snapping in 100ms instead. (Currently at 18 frames = 300ms for > 20u corrections.)
+3. ✅ **Shorter adaptive lerp for large corrections** — done in Stage 0 of the network-feel roadmap (2026-05-08). The 18-frame / 300 ms tier was capped at 6 frames / 100 ms for any drift above the sub-pixel tier, and a quadratic ease-out shape replaced the linear decay. Verified end-to-end by `tests/e2e/feel-tuning.spec.ts`: 73 corrections observed under thrust-into-drone-ring, max queued lerp duration = 6 frames, max drift in window = 80 u.
 
-4. **Reduce INTERP_DELAY_MS to 50ms** — once snapshot jitter is confirmed stable at < 20ms (it is), the 100ms display buffer is twice as large as needed. Cutting to 50ms halves the visual lag of remote ships.
+4. ✅ **Reduce INTERP_DELAY_MS to 50 ms** — done in Stage 0 of the network-feel roadmap (2026-05-08). Floor halved (100 → 50 ms), adaptive ceiling tightened (350 → 200 ms) since measured snapshot jitter has been stable < 20 ms.
+
+---
+
+## Measured after Stage 0 (network-feel roadmap, 2026-05-08)
+
+Constant + shape changes:
+
+| Symbol | File | Before | After |
+|---|---|---|---|
+| `lerpFramesForDrift` largest tier (Reconciler) | `src/core/prediction/Reconciler.ts` | 18 frames (300 ms) | 6 frames (100 ms) |
+| `lerpFramesForDrift` cascade (ColyseusClient remote-ship) | `src/client/net/ColyseusClient.ts` | 6 / 10 / 14 frames | 6 frames (uniform) |
+| `Reconciler.advanceLerp` ratio | `src/core/prediction/Reconciler.ts` | linear `framesLeft / total` | ease-out quadratic `(framesLeft / total)²` |
+| `ColyseusClient` remote-ship offset ratio | `src/client/net/ColyseusClient.ts` | linear | ease-out quadratic |
+| `DISPLAY_DELAY_MS` | `src/client/net/swarmInterpolation.ts` | 100 ms | 50 ms |
+| `ADAPTIVE_DELAY_CEILING_MS` | `src/client/net/swarmInterpolation.ts` | 350 ms | 200 ms |
+
+Tier-2 acceptance: `tests/e2e/feel-tuning.spec.ts` — 73 corrections observed during a 3 s thrust into the legacy `sector` drone ring, max queued lerp = **6 frames** (cap 6), max drift in window = 80 u.
+
+Telemetry surface added: `Reconciler.lerpTotalFrames` is now public-readable; `ColyseusClient`'s 'correction' log entry carries the value.
 
 ---
 
