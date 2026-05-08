@@ -13,6 +13,21 @@ import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityR
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid, CELL_SIZE } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
+import {
+  shouldBroadcastClose,
+  shouldBroadcastFar,
+  classifyShipTier,
+  createTierState,
+  createIdleTracker,
+  noteSectorEvent,
+  isSectorIdle,
+  createLastInputCache,
+  shouldIncludeLastInput,
+  type TierStateForRecipient,
+  type LastInputCache,
+  type IdleTracker,
+  type ShipInputBits,
+} from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
@@ -110,6 +125,34 @@ const JoinOptionsSchema = z
 const MAX_INPUTS_PER_TICK = 3;
 const LAG_COMP_WINDOW = 12;
 
+/** Stage 5 — close-tier classification radius. Ships within this many
+ *  units of the recipient are considered "close" and ship at 30 Hz
+ *  instead of 20 Hz. One CELL_SIZE (= 2048 u) is roughly one screen
+ *  on a 1080p viewport, which is the practical "you can see me
+ *  shooting at you" range. */
+const CLOSE_TIER_RADIUS = CELL_SIZE;
+
+/** Stage 5 — hysteresis margin around CLOSE_TIER_RADIUS. A ship hovering
+ *  at exactly the boundary (e.g. due to drift jitter at the edge of a
+ *  fight) would otherwise flip tier every tick, alternating between 30
+ *  and 20 Hz cadence — visible to the player as periodic stutter. The
+ *  margin defines the dead band where the prior classification sticks.
+ *  Quarter-cell (512 u) gives a comfortable 1024-unit total band against
+ *  normal motion at the edge of one screen. */
+const CLOSE_TIER_HYSTERESIS = CELL_SIZE / 4;
+
+/** Stage 5 — sector idle threshold. After this many ticks without any
+ *  motion-above-epsilon or projectile-in-flight event, the room
+ *  suppresses snapshot broadcasts entirely. 60 ticks = 1 second at
+ *  60 Hz physics. */
+const IDLE_THRESHOLD_TICKS = 60;
+
+/** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
+ *  squared exceeds this. 0.05 u/s²  → ~0.22 u/s actual speed; below
+ *  that the ship is essentially drifting to a stop and idle suppression
+ *  is safe. Squared-comparison saves a sqrt per ship per tick. */
+const IDLE_MOTION_EPSILON_SQ = 0.05;
+
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
   | { type: 'DESPAWN';        slot: number; playerId: string }
@@ -202,7 +245,25 @@ export class SectorRoom extends Room<SectorState> {
    *  removed on player leave. */
   private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
   private serverTick = 0;
+  /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
+   *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
+   *  {@link shouldBroadcastClose} predicates. Field retained for the
+   *  swarm broadcast (binary channel) which still uses the same 60 Hz
+   *  cadence with no per-client phasing. */
   private broadcastCounter = 0;
+  /** Stage 5 — per-recipient tier-membership state, threaded through
+   *  {@link classifyShipTier} so hysteresis pins close↔far transitions
+   *  across calls. Keyed by Colyseus sessionId; cleared in onLeave. */
+  private readonly tierStates = new Map<string, TierStateForRecipient>();
+  /** Stage 5 — per-recipient cache of the last lastInput bits sent for
+   *  each ship, used by {@link shouldIncludeLastInput} to omit the
+   *  field when the bits haven't changed. Keyed by Colyseus sessionId;
+   *  cleared in onLeave. */
+  private readonly lastInputCaches = new Map<string, LastInputCache>();
+  /** Stage 5 — sector-wide idle tracker. Updated each update() with
+   *  motion / projectile-in-flight signals; when isSectorIdle returns
+   *  true, the snapshot broadcast block short-circuits entirely. */
+  private readonly idleTracker: IdleTracker = createIdleTracker();
   private testMode = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -1401,6 +1462,9 @@ export class SectorRoom extends Room<SectorState> {
     this.sabAppliedTicks.delete(playerId);
     this.boostingPlayers.delete(playerId);
     this.thrustingPlayers.delete(playerId);
+    // Stage 5 — drop per-recipient scheduler state.
+    this.tierStates.delete(client.sessionId);
+    this.lastInputCaches.delete(client.sessionId);
     clearSession(client.sessionId);
 
     const slot = this.playerToSlot.get(playerId);
@@ -1831,93 +1895,172 @@ export class SectorRoom extends Room<SectorState> {
     phaseTime('swarmEncode');
     phaseTime('swarmBroadcast');
 
-    if (++this.broadcastCounter >= 3 && this.serverTick > 0) {
-      this.broadcastCounter = 0;
-      const states: SnapshotMessage['states'] = {};
-      // Telemetry-only: full ackedTicks map for the log line. Never shipped.
+    // Stage 5 — sector idle tracking. Updated every tick from motion +
+    // projectile-in-flight signals; when no activity in IDLE_THRESHOLD_TICKS
+    // (= 1 s at 60 Hz), the snapshot broadcast block short-circuits.
+    if (this.liveProjectiles.size > 0) {
+      noteSectorEvent(this.idleTracker, this.serverTick);
+    } else {
+      for (const [, pose] of this.shipPoseCache) {
+        const speedSq = pose.vx * pose.vx + pose.vy * pose.vy;
+        if (speedSq > IDLE_MOTION_EPSILON_SQ) {
+          noteSectorEvent(this.idleTracker, this.serverTick);
+          break;
+        }
+        if (Math.abs(pose.angvel ?? 0) > 0.05) {
+          noteSectorEvent(this.idleTracker, this.serverTick);
+          break;
+        }
+      }
+    }
+    const sectorIdle = isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
+
+    // Stage 5 — per-client phase-staggered, tier-priority snapshot broadcast.
+    //
+    // Pre-Stage-5: every 3rd update() the room built one snapshot containing
+    // every alive ship and broadcast it to every client. Stage 5 replaces
+    // that with a per-recipient decision:
+    //   - Close-tier ships (within CLOSE_TIER_RADIUS of the recipient) ship
+    //     at 30 Hz (every 2 broadcastCounter ticks).
+    //   - Far-tier ships ship at 20 Hz (every 3 broadcastCounter ticks).
+    //   - Each recipient gets a deterministic 0..2 phase offset hashed from
+    //     its playerId, so two clients almost never broadcast on the same
+    //     tick — smoothing serialisation/CPU spikes.
+    //
+    // Scheduling tick is `broadcastCounter` (incremented once per update()),
+    // NOT `serverTick` (read from SAB). The worker's SAB tick can advance
+    // by 1, 2, or 3 between successive update() calls when the two 60 Hz
+    // loops drift; using SAB tick % 3 for scheduling caused ~25% missed
+    // broadcasts pre-Phase-3. See `docs/LESSONS.md`. broadcastCounter is
+    // purely main-thread and so is monotonic with update() calls.
+    this.broadcastCounter++;
+    if (this.serverTick > 0 && !sectorIdle) {
+      // Build the global "all alive ships" digest once — same data for every
+      // recipient, just the inclusion decision differs per (recipient, ship).
+      type AllShipEntry = {
+        playerId: string;
+        pose: ShipPhysicsState;
+        lastInput: ShipInputBits;
+      };
+      const allShips: AllShipEntry[] = [];
       const ackedTicksTelemetry: Record<string, number> = {};
+      const aliveIds = new Set<string>();
       for (const [playerId, slot] of this.playerToSlot) {
         const ship = this.state.ships.get(playerId);
         if (!ship || !ship.alive) continue;
         const pose = this.shipPoseCache.get(playerId);
         if (!pose) continue;
         // Stage 3 — read the worker's last-applied input bits out of SAB
-        // FLAGS so remote clients can forward-predict this ship using the
-        // same input intent the worker just applied. Bits 3–7 of the FLAGS
-        // u32 (see sabLayout.ts INPUT_FLAGS_MASK). Sleeping/swarm bits in
-        // 0–2 are masked off.
+        // FLAGS so remote clients can forward-predict this ship. Bits 3–7
+        // of the FLAGS u32; sleeping/swarm bits 0–2 are masked off.
         const flags = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
-        const lastInput = {
-          thrust:    !!(flags & FLAG_INPUT_THRUST),
-          turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
-          turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
-          boost:     !!(flags & FLAG_INPUT_BOOST),
-          reverse:   !!(flags & FLAG_INPUT_REVERSE),
-        };
-        states[playerId] = {
-          x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
-          angle: pose.angle, angvel: pose.angvel ?? 0,
-          lastInput,
-        };
+        allShips.push({
+          playerId,
+          pose,
+          lastInput: {
+            thrust:    !!(flags & FLAG_INPUT_THRUST),
+            turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
+            turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
+            boost:     !!(flags & FLAG_INPUT_BOOST),
+            reverse:   !!(flags & FLAG_INPUT_REVERSE),
+          },
+        });
+        aliveIds.add(playerId);
         ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
       }
-      // Filter boostingPlayers to alive players included in this snapshot —
-      // a stale id from a leaver shouldn't ship.
+
+      // Boosting/thrusting filter — small lists, sent in every snapshot.
       const boostingIds: string[] = [];
       for (const id of this.boostingPlayers) {
-        if (id in states) boostingIds.push(id);
+        if (aliveIds.has(id)) boostingIds.push(id);
       }
-      // Same filter for thrustingPlayers — superset of boost, but a leaver
-      // who released keys mid-tick could still linger here briefly.
       const thrustingIds: string[] = [];
       for (const id of this.thrustingPlayers) {
-        if (id in states) thrustingIds.push(id);
+        if (aliveIds.has(id)) thrustingIds.push(id);
       }
-
-      // Per-client backpressure check + per-recipient ackedTick + per-recipient
-      // interest-filtered projectiles. Earlier we built one snapshot object and
-      // broadcast it; that shipped (a) the full ackedTicks map (O(N²) on the
-      // wire) and (b) every projectile to every client. Now we mint a one-shot
-      // snapshot per recipient containing only what THIS client needs.
       const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
       if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
       if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
-      // 3×3 cell window radius (matches BinarySwarmBroadcast / SpatialGrid):
-      // entities within 1 cell of the recipient's centre cell are in interest.
+
+      // 3×3 cell window radius for projectile interest (unchanged from
+      // pre-Stage-5).
       const interestRadius = CELL_SIZE * 1.5;
+      let anySnapshotSent = false;
+
       for (const client of this.clients) {
         const bp = checkBackpressure(client, logger);
-        if (bp === 'close') {
-          client.leave(4002);
-          continue;
-        }
+        if (bp === 'close') { client.leave(4002); continue; }
         if (bp === 'drop') continue;
-        const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
-        const recipientAcked = recipientPlayerId
-          ? this.sabAppliedTicks.get(recipientPlayerId) ?? 0
-          : 0;
-        const recipientPose = recipientPlayerId
-          ? this.shipPoseCache.get(recipientPlayerId)
-          : undefined;
 
+        const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
+        if (!recipientPlayerId) continue;
+
+        // Stage 5 — per-client tier-aware send decision.
+        const closeFires = shouldBroadcastClose(this.broadcastCounter, recipientPlayerId);
+        const farFires = shouldBroadcastFar(this.broadcastCounter, recipientPlayerId);
+        if (!closeFires && !farFires) continue; // not this client's tick
+
+        const recipientPose = this.shipPoseCache.get(recipientPlayerId);
+        if (!recipientPose) continue;
+
+        let tierState = this.tierStates.get(client.sessionId);
+        if (!tierState) {
+          tierState = createTierState();
+          this.tierStates.set(client.sessionId, tierState);
+        }
+        let lastInputCache = this.lastInputCaches.get(client.sessionId);
+        if (!lastInputCache) {
+          lastInputCache = createLastInputCache();
+          this.lastInputCaches.set(client.sessionId, lastInputCache);
+        }
+
+        // Build per-recipient states map. Recipient's own ship is always
+        // included (forced 'close' tier so it ships at 30 Hz); other ships
+        // are filtered by tier classification + firing schedule.
+        const states: SnapshotMessage['states'] = {};
+        for (const ship of allShips) {
+          const isSelf = ship.playerId === recipientPlayerId;
+          const tier: 'close' | 'far' = isSelf
+            ? 'close'
+            : classifyShipTier(
+                tierState,
+                ship.playerId,
+                ship.pose,
+                recipientPose,
+                CLOSE_TIER_RADIUS,
+                CLOSE_TIER_HYSTERESIS,
+                this.serverTick,
+              );
+          // Close ships ship on every (closeFires OR farFires) tick.
+          // Far ships ship only on farFires ticks.
+          const include = tier === 'close' ? (closeFires || farFires) : farFires;
+          if (!include) continue;
+
+          const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
+          states[ship.playerId] = {
+            x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
+            angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
+            ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
+          };
+        }
+
+        // Per-recipient projectiles in the 3×3 cell window.
         let projectiles: SnapshotMessage['projectiles'];
-        if (recipientPose && this.liveProjectiles.size > 0) {
+        if (this.liveProjectiles.size > 0) {
           for (const [projId, proj] of this.liveProjectiles) {
             if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
             if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
             if (!projectiles) projectiles = [];
             projectiles.push({
               id: projId,
-              x: proj.x,
-              y: proj.y,
-              vx: proj.vx,
-              vy: proj.vy,
+              x: proj.x, y: proj.y, vx: proj.vx, vy: proj.vy,
               ownerId: proj.ownerId,
               weaponId: proj.weaponId,
             });
           }
         }
 
+        const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
         const snap: SnapshotMessage = {
           type: 'snapshot',
           serverTick: this.serverTick,
@@ -1927,16 +2070,26 @@ export class SectorRoom extends Room<SectorState> {
           ...(projectiles ? { projectiles } : {}),
         };
         client.send('snapshot', snap);
+        anySnapshotSent = true;
       }
 
-      serverLogEvent('snapshot_broadcast', {
-        serverTick: this.serverTick,
-        playerCount: this.playerToSlot.size,
-        ackedTicks: ackedTicksTelemetry,
-        states: Object.fromEntries(
-          Object.entries(states).map(([id, s]) => [id, { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)), vx: parseFloat(s.vx.toFixed(3)), vy: parseFloat(s.vy.toFixed(3)) }]),
-        ),
-      });
+      // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick) to preserve
+      // pre-Stage-5 log volume even though the actual broadcast is per-client.
+      if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
+        serverLogEvent('snapshot_broadcast', {
+          serverTick: this.serverTick,
+          playerCount: this.playerToSlot.size,
+          ackedTicks: ackedTicksTelemetry,
+          states: Object.fromEntries(
+            allShips.map((s) => [s.playerId, {
+              x: parseFloat(s.pose.x.toFixed(3)),
+              y: parseFloat(s.pose.y.toFixed(3)),
+              vx: parseFloat(s.pose.vx.toFixed(3)),
+              vy: parseFloat(s.pose.vy.toFixed(3)),
+            }]),
+          ),
+        });
+      }
     }
     phaseTime('snapshotBroadcast');
 

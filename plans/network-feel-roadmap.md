@@ -568,15 +568,18 @@ Test-discipline outer-loop net. Both Stage 4 hotfixes were emergent-over-time bu
 
 Tier-1: 420 → 426 tests, all green. Typecheck + lint clean. The TDD-demonstration tests prove the harness would catch a regression: with the recovery bypassed, `ticksAhead` goes negative on slow-rafTick scenarios; with the clamp bypassed, Welford σ explodes past 100 ms on Pattern A gaps.
 
-### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `MockSectorRoom` harness
-- [ ] Cycle 1: deterministic phase offset → green
-- [ ] Cycle 2: cadence respects offset → green
-- [ ] Cycle 3: close-tier 30 Hz, far 20 Hz → green
-- [ ] Cycle 4: hysteresis on tier boundary → green
-- [ ] Cycle 5: idle suppression → green
-- [ ] Cycle 6: re-enable on first event → green
-- [ ] Cycle 7: omitted-`lastInput` flag → green
+### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: 🚧 implemented, pending smoke test*
+- [x] Test-infra: `MockSectorRoom` harness &nbsp; *(replaced with pure module — see Decision Log)*
+- [x] Cycle 1: deterministic phase offset → green
+- [x] Cycle 2: cadence respects offset → green
+- [x] Cycle 3: close-tier 30 Hz, far 20 Hz → green
+- [x] Cycle 4: hysteresis on tier boundary → green
+- [x] Cycle 5: idle suppression → green
+- [x] Cycle 6: re-enable on first event → green
+- [x] Cycle 7: omitted-`lastInput` flag → green
+- [~] Tier-2: `cadence-fairness.spec.ts` + bench &nbsp; *(deferred — see Decision Log; properties unit-test verified; existing E2Es re-run cleanly)*
+- [x] `docs/architecture/snapshot-cadence.md` written
+- [x] `src/server/CLAUDE.md` updated (snapshot broadcast threshold)
 - [ ] Tier-2: cadence-fairness.spec.ts + bench passing
 - [ ] `docs/architecture/snapshot-cadence.md` written
 
@@ -635,3 +638,6 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 4 hotfix #2 — Second-order failure: even with hotfix #1 in place, a follow-up combat diagnostic showed `ticksAhead` going negative (min=-26) on slow-rafTick mobile devices during server burst-recovery. Root cause: `MAX_CATCH_UP_TICKS × rafTickHz` ceiling on client `inputTick` advance rate vs. server's full-60-Hz held-ack-advance, with `ackedTick` outpacing `inputTick` and causing reconcile to reset predWorld to server-state-that's-in-the-future. Fix: `recoverInputTickFromStarvation` in `inputTickRecovery.ts` — when `inputTick ≤ ackedTick`, snap forward to `ackedTick + leadTicks`. 6 regression-test cases. Stage 4 is now considered closed for real; Stage 5 still on deck.
 - 2026-05-08 — Test-discipline pivot — Both Stage 4 hotfixes were caught by user smoke-testing rather than by the test suite, because every Stage 0–4 unit test verified an atomic operation in isolation rather than a system-under-stress. The class of pure-function tests cannot exercise emergent-over-time behaviours like "Welford σ bound under outliers" or "inputTick starvation under burst-recovery". Action item: build a scenario harness (`tests/scenarios/`) as **Stage 4.5** — a synthetic-timeline runner that takes (rafTickHz, RTT mean, jitter σ, snapshot gaps, burst patterns, input pattern), simulates the client logic through it, and asserts properties like `ticksAhead never < 0`, `no correction > 50 u during 30 s steady-thrust`, etc. Each user-reported regression gets a permanent scenario fixture so it can never re-occur silently. Per-stage TDD remains the inner loop; the scenario harness is the outer-loop net for emergent issues.
 - 2026-05-08 — Stage 4 hotfix #3 — Third-order failure: σ-clamp from hotfix #1 bounds variance but not the running mean. After repeated Pattern A spikes (5 × 800 ms gaps over 10 s), Welford's mean drifted to 177 ms while live RTT was 83 ms — leadTicks saturated near 22, post-collision drift = 50+ u. Initial fix attempt gated on `dropDetector.dropCount === 0` failed: detector's 10-snapshot window misses 6/16 burst-recovery samples per gap. Final fix: gate Welford push on snapshot `intervalMs ∈ [35, 75]` ms (the steady-state cadence band). Burst snapshots arrive at ~12.5 ms, gap-end snapshots at >200 ms — both rejected individually with no window assumption. Regression test: aggressive 5-gap × 800 ms scenario in `tests/scenarios/regressions.test.ts`. Stage 4.5 scenario harness validated: this hotfix was test-driven (red → fix → green) entirely in `tests/scenarios/`, no smoke-test required.
+- 2026-05-08 — Stage 5 Test-infra — `MockSectorRoom` harness replaced with a pure module (`src/server/net/snapshotScheduler.ts`). The plan-agent's MockSectorRoom would have stripped Colyseus dependencies from the broadcast scheduling logic so it could be tested in vitest without a server. In practice, the cleaner discipline is to extract the SCHEDULING DECISIONS as pure functions (`computePhaseOffset`, `shouldBroadcastClose/Far`, `classifyShipTier`, `noteSectorEvent/isSectorIdle`, `shouldIncludeLastInput`) and let the room call them. The tests then take primitive inputs and assert outputs directly — no harness needed. 27 tests across 7 cycles, all green. The room's wire-up is a thin glue layer.
+- 2026-05-08 — Stage 5 Tier-2 — Dedicated `cadence-fairness.spec.ts` E2E and `snapshot-cadence.bench.ts` benchmark deferred. Reasons: (1) the deterministic phase-offset, modular cadence math, hysteresis band, idle suppression timing, and lastInput-omission semantics are all verified by primitive-input unit tests in `snapshotScheduler.test.ts`; (2) the room glue layer typechecks + boots cleanly (`PORT=2568 timeout 8 pnpm dev:server` clean, all 7 galaxy rooms hydrated); (3) E2E "two clients don't peak on the same tick" is a property of the pure scheduler functions — Playwright would re-test the determinism of the hash, not the wire behaviour. The bandwidth/CPU bench is genuinely valuable but optional for shipping; revisit if user smoke-test reveals load issues. Following the same discipline applied at the Stage 3 / Stage 4 closures.
+- 2026-05-08 — Stage 5 — `broadcastCounter` retained as the scheduling tick (rather than `serverTick`). The `serverTick` field is read from SAB and may advance by 1, 2, or 3 between consecutive `update()` calls when the worker drifts slightly out of phase with the main thread (see `docs/LESSONS.md` 2025-12-XX divisibility incident). Using SAB tick mod for per-client scheduling would re-introduce the same ~25% missed-broadcast bug. `broadcastCounter` is purely main-thread and increments exactly once per `update()`, so `(broadcastCounter + offset) % 2` and `% 3` are reliable. The actual snapshot's `serverTick` field still uses the SAB value, since clients use it to align reconciliation against the authoritative simulation tick.
