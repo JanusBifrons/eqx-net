@@ -84,4 +84,9 @@ export interface SimulatedClientState {
   dropDetector: DropDetector;
   leadTicks: number;
   lastFrameMs: number;
+  /** Track for hotfix #3 — snapshots arriving with intervalMs outside
+   *  the steady-state cadence range are gap- or burst-recovery-related
+   *  and have contaminated `lastRtt`. Skip the Welford push for those.
+   *  -1 = no prior snapshot. */
+  lastSnapshotAtMs: number;
 }

@@ -41,8 +41,19 @@ export function createInitialClientState(opts?: {
     dropDetector: createDropDetector(),
     leadTicks: initialLead,
     lastFrameMs: 16.67,
+    lastSnapshotAtMs: -1,
   };
 }
+
+/** Steady-state snapshot cadence band (ms). Server broadcasts every 3
+ *  server ticks at 60 Hz physics = 50 ms nominal. Real-world wall-clock
+ *  jitter pushes this to roughly 35–75 ms range. Outside that range,
+ *  the snapshot is part of a Pattern A gap (huge interval) or a
+ *  burst-recovery cluster (tiny interval) — its `lastRtt` is
+ *  contaminated by snapshot-delay and shouldn't be pushed into Welford.
+ *  Hotfix #3 (2026-05-08 third diagnostic). */
+const STEADY_STATE_INTERVAL_MIN_MS = 35;
+const STEADY_STATE_INTERVAL_MAX_MS = 75;
 
 /**
  * Process a single rafTick event. Mirrors `ColyseusClient.tickPhysics`'s
@@ -77,7 +88,11 @@ function applyRafTick(
 function applySnapshot(
   state: SimulatedClientState,
   ev: Extract<Event, { type: 'snapshot' }>,
-  flags: { recoveryEnabled: boolean; rttClampEnabled: boolean } = { recoveryEnabled: true, rttClampEnabled: true },
+  flags: { recoveryEnabled: boolean; rttClampEnabled: boolean; rttGapFilterEnabled: boolean } = {
+    recoveryEnabled: true,
+    rttClampEnabled: true,
+    rttGapFilterEnabled: true,
+  },
 ): { starvationSnapTriggered: boolean } {
   // ── clockAnchor update (mirrors ColyseusClient.handleSnapshot lines around 1004) ──
   if (state.anchorInitialised) {
@@ -100,8 +115,26 @@ function applySnapshot(
     state.inputTick = ev.ackedTick + state.leadTicks;
   }
 
-  // ── Stage 4 jitter-aware lookahead (with hotfix #1 RTT clamp) ──
-  if (ev.lastRtt > 0) {
+  // ── Stage 4 drop detection (independent signal, used for swarm-interp bias) ──
+  observeSnapshotTick(state.dropDetector, ev.serverTick);
+
+  // ── Stage 4 jitter-aware lookahead ──
+  // Hotfix #3: skip the Welford push if this snapshot's `intervalMs`
+  // is outside the steady-state cadence band [35, 75] ms. Snapshots
+  // outside this band are part of a Pattern A gap (intervalMs >> 50)
+  // or a burst-recovery cluster (intervalMs << 50) — their `lastRtt`
+  // is contaminated because Reconciler.lastRtt = now - ackedRec.sentAt
+  // for an input sent before the gap. Even when the σ-clamp from
+  // hotfix #1 caps the sample, it still inflates the running mean.
+  // Skipping these samples altogether keeps Welford's mean tracking
+  // the actual steady-state RTT, which keeps leadTicks sized for
+  // steady-state network — critical for combat where collision drift
+  // scales with leadTicks × velocity-change-per-tick.
+  const intervalMs = state.lastSnapshotAtMs >= 0 ? ev.atMs - state.lastSnapshotAtMs : -1;
+  const isGapRelated =
+    intervalMs > 0 &&
+    (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
+  if (ev.lastRtt > 0 && (!flags.rttGapFilterEnabled || !isGapRelated)) {
     const rttSample = flags.rttClampEnabled
       ? Math.min(ev.lastRtt, RTT_SAMPLE_CLAMP_MS)
       : ev.lastRtt;
@@ -111,6 +144,7 @@ function applySnapshot(
     const desiredLead = computeDesiredLead(mean, stdDev);
     state.leadTicks = updateLookahead(state.lookaheadCtrl, desiredLead, state.lastFrameMs);
   }
+  state.lastSnapshotAtMs = ev.atMs;
 
   // ── Stage 4 hotfix #2 — inputTick starvation recovery ──
   let starvationSnapTriggered = false;
@@ -123,9 +157,6 @@ function applySnapshot(
       starvationSnapTriggered = true;
     }
   }
-
-  // ── Stage 4 drop detection ──
-  observeSnapshotTick(state.dropDetector, ev.serverTick);
 
   return { starvationSnapTriggered };
 }
@@ -142,6 +173,12 @@ export interface RunOptions {
    *  Welford-pushed RTT samples — same TDD demonstration purpose for
    *  hotfix #1. Default true. */
   rttClampEnabled?: boolean;
+  /** When false, the runner pushes RTT samples even on snapshots that
+   *  are part of a Pattern A gap or burst-recovery (drops detected in
+   *  the recent window). Hotfix #3 demonstration flag. Default true:
+   *  production gates the Welford push on `dropDetector.dropCount === 0`
+   *  so gap-related samples never contaminate the running mean. */
+  rttGapFilterEnabled?: boolean;
 }
 
 /**
@@ -156,6 +193,7 @@ export function runScenario(
   const state = opts.initial ?? createInitialClientState();
   const recoveryEnabled = opts.starvationRecoveryEnabled !== false;
   const rttClampEnabled = opts.rttClampEnabled !== false;
+  const rttGapFilterEnabled = opts.rttGapFilterEnabled !== false;
   const observations: Observation[] = [];
 
   for (const ev of events) {
@@ -163,7 +201,7 @@ export function runScenario(
     if (ev.type === 'rafTick') {
       applyRafTick(state, ev);
     } else {
-      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled }));
+      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled, rttGapFilterEnabled }));
     }
     observations.push({
       atMs: ev.atMs,

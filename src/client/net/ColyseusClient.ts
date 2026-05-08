@@ -167,6 +167,19 @@ const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
  *  diagnostic. */
 const RTT_SAMPLE_CLAMP_MS = 250;
 
+/** Stage 4 hotfix #3 (2026-05-08 third diagnostic) — gate the Welford
+ *  RTT push on snapshot `intervalMs` being inside the steady-state
+ *  cadence band. Server broadcasts every 3 server ticks (50 ms nominal
+ *  at 60 Hz); real wall-clock jitter spreads this to roughly [35, 75] ms.
+ *  Outside that range, the snapshot is part of a Pattern A gap (huge
+ *  interval) or a burst-recovery cluster (tiny interval) — its
+ *  `Reconciler.lastRtt` is contaminated by snapshot-delay even after
+ *  the σ-clamp, so it inflates the running mean. Gating the push lets
+ *  Welford track only clean samples; mean stays near live RTT and
+ *  leadTicks stays sized for combat. See `docs/LESSONS.md`. */
+const STEADY_STATE_INTERVAL_MIN_MS = 35;
+const STEADY_STATE_INTERVAL_MAX_MS = 75;
+
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
 function nextShotId(): string {
@@ -1031,8 +1044,8 @@ export class ColyseusGameClient {
     // than the pre-Stage-4 mean-only EWMA. Multi-tick target jumps ramp
     // via the spring controller; small changes snap directly.
     //
-    // 2026-05-08 fix (Stage 4 hotfix): Reconciler.lastRtt is computed as
-    // `now - ackedRec.sentAt` — a "time since input was sent" measure
+    // 2026-05-08 fix (Stage 4 hotfix #1): Reconciler.lastRtt is computed
+    // as `now - ackedRec.sentAt` — a "time since input was sent" measure
     // contaminated by snapshot-delay. A 572 ms inbound network gap (per
     // `docs/LESSONS.md` Pattern A) inflates lastRtt to 572 ms+ even
     // though the underlying TCP RTT is healthy. Without a clamp, that
@@ -1042,7 +1055,23 @@ export class ColyseusGameClient {
     // The clamp converts outliers into "I have no fresh RTT info"
     // (the cap value is folded into the running mean cleanly) instead
     // of letting σ explode.
-    if (this.reconciler && this.reconciler.lastRtt > 0) {
+    //
+    // 2026-05-08 fix (Stage 4 hotfix #3): the σ-clamp protects against
+    // single-sample explosions but the running mean still drifts upward
+    // because clamped samples (250 ms each) accumulate in Welford's
+    // sum. Repeated Pattern A spikes inflate mean to 177 ms even when
+    // live RTT is 83 ms — leadTicks saturates at ~22 → collision drift
+    // = velocity-diff × leadTicks × dt = 50+ u. Skip the Welford push
+    // entirely when this snapshot's `intervalMs` is outside the
+    // steady-state cadence band [35, 75] ms — those snapshots are part
+    // of a Pattern A gap (intervalMs >> 50) or a burst-recovery cluster
+    // (intervalMs << 50) and their `lastRtt` is contaminated. Welford
+    // then tracks only clean steady-state samples, so the mean stays
+    // close to live RTT and leadTicks stays sized for combat.
+    const isGapRelatedRtt =
+      intervalMs > 0 &&
+      (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
+    if (this.reconciler && this.reconciler.lastRtt > 0 && !isGapRelatedRtt) {
       const rttSample = Math.min(this.reconciler.lastRtt, RTT_SAMPLE_CLAMP_MS);
       welfordPush(this._rttWelford, rttSample);
       const mean = welfordMean(this._rttWelford);

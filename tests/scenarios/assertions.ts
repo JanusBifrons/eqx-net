@@ -60,6 +60,31 @@ export function welfordStdDevBoundedBy(
 }
 
 /**
+ * Assert Welford running mean never drifts above `maxMs`. Catches the
+ * post-2026-05-08-second-diagnostic case where Pattern A spikes inflate
+ * the mean (even with the σ-clamp in place) because clamped samples are
+ * still added to the mean. The fix — gating the Welford push on
+ * `dropDetector.dropCount === 0` — is verified by this assertion.
+ */
+export function rttMeanAlwaysBelow(
+  observations: ReadonlyArray<Observation>,
+  maxMs: number,
+  ignoreFirstMs = 500,
+): AssertionResult {
+  for (const o of observations) {
+    if (o.atMs < ignoreFirstMs) continue;
+    if (o.rttMean > maxMs) {
+      return {
+        passed: false,
+        violation: o,
+        message: `rttMean = ${o.rttMean.toFixed(1)}ms at t=${o.atMs}ms (max=${maxMs}ms)`,
+      };
+    }
+  }
+  return { passed: true };
+}
+
+/**
  * Assert leadTicks stays within bounds. Useful for catching saturation at
  * the cap (= broken feel) or runaway-high values.
  */

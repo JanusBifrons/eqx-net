@@ -14,6 +14,30 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-08 — Network-Feel Stage 4 hotfix #3 — Welford mean inflates under repeated Pattern A spikes despite the σ-clamp
+
+Hotfix #1 capped each RTT outlier at 250 ms before pushing into Welford. That bounds `σ` (uniform-bound: σ ≤ ½ × range = 125 ms) but does **not** bound the *mean*. Each clamped sample still adds 250 ms into Welford's running sum. After a session with several Pattern A spikes, the mean has drifted upward — even though every sample was individually clamped.
+
+In the user's third diagnostic (`diag/captures/2026-05-08T17-51-56-297Z-71krw1.json`):
+- Live `rttMs = 83` (instantaneous, healthy)
+- `rttMeanMs = 177` (Welford, drifted)
+- `mean + 2σ ≈ 343 ms = 21 ticks` (`leadTicks` saturated near 22)
+- After a collision: 50+ u position drift before the next snapshot corrected it (drift ≈ Δv × leadTicks × dt)
+
+**Mechanism**: a Pattern A snapshot gap delivers one big-interval snapshot followed by 5–15 burst-recovery snapshots in rapid succession. The first snapshot's `lastRtt` = real-RTT + gap-duration (clamped to 250 ms by hotfix #1). Each burst-recovery snapshot's `lastRtt` is *also* contaminated — the input being acked was sent before the gap, so its `now - sentAt` reads as several hundred ms even though wall-clock RTT is now healthy again. Over 5 gaps in a 10 s session, that's ~50 contaminated samples × 250 ms each, dragging the running mean into the 150–200 ms range while live RTT was steady at 83 ms.
+
+**Why hotfix #1's drop-count gate (initial attempt) wasn't enough**: the `dropDetector` uses a 10-snapshot sliding window. An 800 ms gap queues ~16 burst snapshots; the first 10 are filtered out, but snapshots 11–16 fall outside the window and get pushed. Six samples per gap × five gaps = 30 inflators that hotfix #1's clamp was happy to accept at 250 ms each.
+
+**Fix shipped**: gate the Welford push on the snapshot's `intervalMs` being inside the steady-state cadence band `[35, 75]` ms (`STEADY_STATE_INTERVAL_MIN_MS` / `STEADY_STATE_INTERVAL_MAX_MS` in [src/client/net/ColyseusClient.ts](../src/client/net/ColyseusClient.ts)). Server broadcasts every 3 server ticks (50 ms nominal); real wall-clock jitter spreads this to roughly [35, 75] ms. Outside that range, the snapshot is part of a gap (huge interval) or burst-recovery cluster (tiny interval — burst snapshots arrive in rapid succession). Both classes have contaminated `lastRtt`. Skipping them keeps Welford tracking only clean steady-state samples.
+
+**Why intervalMs and not drop-count**: intervalMs catches *both* sides of the spike (the gap-delivery interval AND each burst-recovery's tiny interval) without any sliding-window assumption. Burst snapshots arrive at ~12.5 ms intervals — the `< 35` ms guard rejects each one individually. No need to size a window to the worst-case gap length.
+
+**Why this wasn't caught by hotfixes #1 + #2**: Stage 4.5's scenario harness only had a single-gap fixture. Hotfix #3's regression test (`tests/scenarios/regressions.test.ts → 'Hotfix #3...'`) uses an aggressive 5-gap × 800 ms scenario over 11.5 s — closer to a real combat-spanning Pattern A session. The pattern doesn't show up unless you inject several gaps and let burst-recovery samples accumulate.
+
+**Distinguishing future occurrences**: the symptom is `predStats.rttMeanMs >> live rttMs` (e.g. 2× or more) WHILE `predStats.rttStdDevMs` is bounded (≤ 125 ms — the σ-clamp is doing its job). The combination of bounded σ but inflated mean is the signature; an uncontrolled σ would mean hotfix #1 has regressed. Cross-check the snapshot intervals over the affected window — if you see clusters of `intervalMs > 200` followed by `intervalMs < 30`, hotfix #3's filter is the right tool.
+
+---
+
 ## 2026-05-08 — Network-Feel Stage 4 hotfix #2 — `inputTick` starvation under server burst-recovery on slow-rafTick devices
 
 A second-order failure mode revealed by the same combat-test diagnostic that motivated hotfix #1 (`diag/captures/2026-05-08T16-12-02-930Z-z4ixt3.json`).
