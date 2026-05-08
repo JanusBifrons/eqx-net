@@ -544,14 +544,14 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] `docs/architecture/remote-prediction.md` written
 - [~] A/B toggle wired &nbsp; *(deferred — unit-test property + production wire-up are the verification surface; revisit if subjective testing reports issues)*
 
-### Stage 4 — Adaptive jitter & smarter lookahead  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `fakeNetwork` jitter + drop injection
-- [ ] Cycle 1: Welford mean/variance correctness → green
-- [ ] Cycle 2: long-running stability reset → green
-- [ ] Cycle 3: lookahead converges to mean+2σ → green
-- [ ] Cycle 4: lookahead ramp via spring → green
-- [ ] Cycle 5: dropped-snapshot detection → green
-- [ ] Cycle 6: bias decay → green
+### Stage 4 — Adaptive jitter & smarter lookahead  &nbsp; *Status: 🚧 in progress*
+- [~] Test-infra: `fakeNetwork` jitter + drop injection &nbsp; *(skipped — pure-function tests cover formula + sliding-window + spring-smooth without simulating a wire)*
+- [x] Cycle 1: Welford mean/variance correctness → green
+- [x] Cycle 2: long-running stability reset → green
+- [x] Cycle 3: lookahead converges to mean+2σ → green
+- [x] Cycle 4: lookahead ramp via spring → green
+- [x] Cycle 5: dropped-snapshot detection → green
+- [x] Cycle 6: bias decay → green
 - [ ] Tier-2: `jitter-resilience.spec.ts` passing
 
 ### Stage 5 — Snapshot cadence & priority  &nbsp; *Status: ⏳ pending*
