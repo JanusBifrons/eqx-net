@@ -5,6 +5,7 @@ import type { TouchInput } from '../input/TouchInput';
 
 interface Props {
   touchInput: TouchInput;
+  onOpenMap: () => void;
 }
 
 /**
@@ -12,7 +13,7 @@ interface Props {
  * zIndex 15: above canvas (0) and HUD (10), below DeathOverlay (20).
  * All elements use touch-action:'none' to prevent page scroll interference.
  */
-export function MobileControls({ touchInput }: Props): JSX.Element {
+export function MobileControls({ touchInput, onOpenMap }: Props): JSX.Element {
   const joystickZoneRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,8 +67,51 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
     touchInput.setBoostHeld(false);
   };
 
+  const onMapTap = (e: React.TouchEvent): void => {
+    e.preventDefault();
+    onOpenMap();
+  };
+
   return (
     <>
+      <Box
+        component="button"
+        onTouchStart={onMapTap}
+        sx={{
+          position: 'fixed',
+          top: 'calc(env(safe-area-inset-top, 0px) + 16px)',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          width: 64,
+          height: 64,
+          zIndex: 15,
+          touchAction: 'none',
+          borderRadius: '50%',
+          bgcolor: 'rgba(0, 255, 136, 0.12)',
+          border: '1.5px solid rgba(0, 255, 136, 0.55)',
+          color: 'rgba(0, 255, 136, 0.95)',
+          fontSize: 10,
+          fontFamily: 'monospace',
+          fontWeight: 700,
+          letterSpacing: 1,
+          textTransform: 'uppercase',
+          cursor: 'pointer',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          '&:active': {
+            bgcolor: 'rgba(0, 255, 136, 0.18)',
+            border: '1px solid rgba(0, 255, 136, 0.7)',
+            color: '#00ff88',
+          },
+        }}
+      >
+        MAP
+      </Box>
+
       <Box
         ref={joystickZoneRef}
         sx={{
