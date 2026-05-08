@@ -24,12 +24,16 @@ const BUFFER_SIZE = 128; // ~2 s at 60 Hz
 const LERP_THRESHOLD = 0.05;       // world units for position
 const ANGLE_LERP_THRESHOLD = 0.001; // radians (~0.057°) for rotation
 
-/** Scale lerp duration to correction magnitude so large snaps don't look jerky. */
+/** Scale lerp duration to correction magnitude so large snaps don't look jerky.
+ *  Stage 0 (network-feel roadmap): every drift above the sub-pixel tier caps
+ *  at 6 frames / 100 ms. The previous 18-frame tier (300 ms for >20 u) was
+ *  flagged in docs/FEEL_GOALS.md as a perceptible "glide" because the
+ *  collision has already happened in the world; the slow visual settle is a
+ *  lie. The ease-out shape (Reconciler.advanceLerp) carries the visual
+ *  smoothness of the now-tighter window. */
 function lerpFramesForDrift(drift: number): number {
-  if (drift < 0.5)  return 3;   //  50 ms — sub-pixel, barely visible
-  if (drift < 5.0)  return 8;   // 133 ms — small positional nudge
-  if (drift < 20.0) return 12;  // 200 ms — medium collision correction
-  return 18;                    // 300 ms — large collision snap (> 20 u)
+  if (drift < 0.5) return 3;    //  50 ms — sub-pixel, barely visible
+  return 6;                     // 100 ms — every other correction
 }
 
 export interface InputRecord {
@@ -108,7 +112,12 @@ export class Reconciler {
       this.lerpOffset.y = 0;
       this.lerpAngleOffset = 0;
     } else {
-      const ratio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
+      // Stage 0: ease-out quadratic shape. The pre-Stage-0 linear `framesLeft
+      // / totalFrames` shape decayed at a constant rate, which read as a
+      // slow glide. Squaring biases the curve toward decisive early motion
+      // and a graceful tail — same total duration, more responsive feel.
+      const linearRatio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
+      const ratio = linearRatio * linearRatio;
       this.lerpOffset.x = this.lerpInitial.x * ratio;
       this.lerpOffset.y = this.lerpInitial.y * ratio;
       this.lerpAngleOffset = this.lerpAngleInitial * ratio;

@@ -3,6 +3,7 @@ import {
   interpolateSwarmPose,
   EXTRAPOLATION_LIMIT_MS,
   DISPLAY_DELAY_MS,
+  ADAPTIVE_DELAY_CEILING_MS,
   type InterpolatedPose,
 } from './swarmInterpolation.js';
 import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
@@ -51,6 +52,21 @@ function entryWithArrivals(arrivals: ArrivalSpec[], overrides: Partial<SwarmRend
 }
 
 const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+
+describe('Stage 0 constants', () => {
+  it('DISPLAY_DELAY_MS = 50 ms (was 100; halves perceived remote-entity lag)', () => {
+    // docs/FEEL_GOALS.md flagged 50 ms as achievable now that snapshot
+    // arrival jitter is stable < 20 ms. Cutting from 100 → 50 halves the
+    // visible lag of every interpolated swarm sprite.
+    expect(DISPLAY_DELAY_MS).toBe(50);
+  });
+
+  it('ADAPTIVE_DELAY_CEILING_MS = 200 ms (was 350; jitter is < 20 ms in practice)', () => {
+    // Ceiling drops 350 → 200 because measured snapshot jitter has been
+    // stable below 20 ms — 4× headroom is plenty; 7× was unnecessary.
+    expect(ADAPTIVE_DELAY_CEILING_MS).toBe(200);
+  });
+});
 
 describe('interpolateSwarmPose (display-delay buffer)', () => {
   it('returns oldest pose when only one arrival exists', () => {

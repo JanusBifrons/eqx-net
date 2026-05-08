@@ -18,9 +18,11 @@ import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRend
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 
 /** Default / minimum display delay, tuned to a 60 Hz server (50 ms-spaced
- *  arrivals). Matches the Phase 3 remote-ship buffer so swarm and ship
- *  visuals stay temporally aligned in the common case. */
-export const DISPLAY_DELAY_MS = 100;
+ *  arrivals). Stage 0 of the network-feel roadmap halved this from 100 ms:
+ *  measured snapshot arrival jitter is stable < 20 ms, so the 100 ms buffer
+ *  was 5× the actual need and inflated visible remote-entity lag. 50 ms is
+ *  one nominal arrival's worth of headroom — sufficient. */
+export const DISPLAY_DELAY_MS = 50;
 
 /** Maximum dead-reckoning window past the newest arrival before freezing. */
 export const EXTRAPOLATION_LIMIT_MS = 100;
@@ -32,8 +34,10 @@ export const ADAPTIVE_DELAY_FACTOR = 1.5;
 
 /** Hard ceiling on adaptive delay — past this the perceived latency starts
  *  to feel unresponsive even if motion is smooth. Reached only when the
- *  server is severely behind (e.g. ≤ 10 Hz wall-clock). */
-export const ADAPTIVE_DELAY_CEILING_MS = 350;
+ *  server is severely behind (e.g. ≤ 10 Hz wall-clock). Stage 0 dropped
+ *  this from 350 ms: jitter is stable < 20 ms in practice, so 200 ms is
+ *  10× the worst-case buffer width — plenty without being conservative. */
+export const ADAPTIVE_DELAY_CEILING_MS = 200;
 
 /** Module-level adaptive delay, updated by ColyseusClient on every snapshot
  *  via `setSwarmDisplayDelayMs()`. Default is the static 100 ms; under slow

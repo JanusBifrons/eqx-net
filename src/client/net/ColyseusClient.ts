@@ -87,12 +87,14 @@ const NOISE_THRESHOLD = 0.05;
 /** Angle drift below this is float32-serialisation noise (~0.057°). */
 const ANGLE_NOISE_THRESHOLD = 0.001;
 
-/** Scale render lerp duration to drift magnitude (used for remote ships).
- *  Larger drifts get longer lerps so post-collision corrections aren't snappy. */
-function lerpFramesForDrift(drift: number): number {
-  if (drift < 3.0)  return 6;   // 100 ms
-  if (drift < 10.0) return 10;  // 167 ms
-  return 14;                    // 233 ms — large post-collision snap
+/** Render lerp duration for remote-ship offset decay.
+ *  Stage 0 (network-feel roadmap): aligned to the Reconciler cap — every
+ *  correction lands in 100 ms / 6 frames so remote-ship visual recovery
+ *  matches local-ship visual recovery. Pre-Stage-0 had a 6/10/14 cascade,
+ *  meaning remote corrections still glided for 233 ms while local
+ *  corrections landed in 100 ms — visibly inconsistent. */
+function lerpFramesForDrift(_drift: number): number {
+  return 6;                     // 100 ms — uniform
 }
 
 /** Simple monotonically incrementing shot ID generator. */
@@ -1228,7 +1230,11 @@ export class ColyseusGameClient {
         const off = this._remoteShipOffsets.get(remoteId);
         let ox = 0, oy = 0;
         if (off && off.framesLeft > 0) {
-          const ratio = off.framesLeft / off.totalFrames;
+          // Stage 0: ease-out quadratic — see Reconciler.advanceLerp for
+          // the full rationale. Keeps remote-ship offset decay shape in
+          // lockstep with local-ship offset decay shape.
+          const linearRatio = off.framesLeft / off.totalFrames;
+          const ratio = linearRatio * linearRatio;
           ox = off.ox * ratio;
           oy = off.oy * ratio;
           off.framesLeft--;

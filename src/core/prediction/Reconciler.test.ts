@@ -59,11 +59,11 @@ describe('Reconciler', () => {
     expect(Math.abs(r.lerpOffset.y)).toBeGreaterThan(0);
   });
 
-  it('advanceLerp decays offset to zero within adaptive frame count', async () => {
+  it('advanceLerp decays offset to zero within capped frame count', async () => {
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
-    // drift = hypot(50,50) ≈ 70.7 u → adaptive tier: 18 frames (> 20 u)
+    // drift = hypot(50,50) ≈ 70.7 u — Stage 0 caps any drift ≥ 0.5u at 6 frames
     r.reconcile({ x: 50, y: 50, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
 
     expect(r.isLerping).toBe(true);
@@ -78,8 +78,57 @@ describe('Reconciler', () => {
     expect(r.isLerping).toBe(false);
     expect(r.lerpOffset.x).toBe(0);
     expect(r.lerpOffset.y).toBe(0);
-    // Adaptive: 70.7 u drift → 18 frames
-    expect(frames).toBeLessThanOrEqual(18);
+    expect(frames).toBeLessThanOrEqual(6);
+  });
+
+  it('Stage 0: lerp offset eases out (drops past 25% by midpoint, not 50%)', async () => {
+    // Pre-Stage-0 the visual offset decayed linearly: ratio = framesLeft /
+    // totalFrames, so at the midpoint of a 6-frame lerp the offset is at 50%
+    // of initial — reads as a slow glide. Stage 0 switches to ease-out
+    // quadratic (ratio²): the offset drops past 25% by midpoint, so
+    // corrections feel snappy at start and settle gracefully without
+    // changing the total duration.
+    const world = await makeWorld(0, 0);
+    const r = new Reconciler(world, PLAYER);
+    r.recordInput(makeInput(0));
+    // 30u drift → 6-frame lerp (post-cycle-1 cap)
+    r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
+
+    const initialAbsX = Math.abs(r.lerpOffset.x);
+    expect(initialAbsX).toBeGreaterThan(20); // sanity — 30u drift.
+
+    // Advance to midpoint: 3 of 6 frames consumed.
+    r.advanceLerp();
+    r.advanceLerp();
+    r.advanceLerp();
+
+    // Linear: |offset.x| = initial × (3/6) = 0.5 × initial → fails < 0.4.
+    // Squared: |offset.x| = initial × (3/6)² = 0.25 × initial → passes.
+    expect(Math.abs(r.lerpOffset.x)).toBeLessThan(initialAbsX * 0.4);
+  });
+
+  it('Stage 0: large-drift correction caps at 6 frames (100 ms)', async () => {
+    // The pre-Stage-0 Reconciler used an adaptive cascade (3/8/12/18 frames)
+    // that pushed >20u corrections to 300 ms — flagged in docs/FEEL_GOALS.md
+    // as a perceptible "glide" because the collision has already happened in
+    // the world; the slow visual settle is a lie. Stage 0 caps every drift
+    // above the sub-pixel tier at 6 frames so corrections land in 100 ms.
+    const world = await makeWorld(0, 0);
+    const r = new Reconciler(world, PLAYER);
+    r.recordInput(makeInput(0));
+
+    // 30u drift — well above any tier boundary. Pre-Stage-0 → 18 frames.
+    r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
+
+    expect(r.isLerping).toBe(true);
+
+    let frames = 0;
+    while (r.isLerping && frames < 30) {
+      r.advanceLerp();
+      frames++;
+    }
+
+    expect(frames).toBeLessThanOrEqual(6);
   });
 
   it('ring buffer wraps at 128 without corrupting adjacent ticks', async () => {
