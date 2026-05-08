@@ -74,7 +74,7 @@ The correct measure is:
 
 1. **Collision corrections consistently < 2u** — the main remaining gap. Partially fixed by correcting obstacle temporal frame. Residual comes from other ships changing asteroid velocities between snapshots; fully resolved by Stage 2 of the network-feel roadmap (server-broadcast collision events).
 
-2. **Server sending collision events** — Stage 2 of the network-feel roadmap. When a collision happens server-side, broadcast a lightweight `collision_resolved { aId, bId, vA, vB, impulse, tick }` message. Client applies the velocity change immediately rather than waiting for the next snapshot (50 ms). Residual correction drops to near-zero. See `plans/network-feel-roadmap.md`.
+2. ✅ **Server sending collision events** — done in Stage 2 of the network-feel roadmap (2026-05-08). The physics worker drains Rapier's `EventQueue` each tick, filters at a 200 N force floor, and posts `CONTACT_BATCH` to the main thread. The server broadcasts `collision_resolved { aId, bId, vA, vB, impulse, tick }` to clients, which patch predWorld immediately. Cascade reduction observed in the 2026-05-08 diagnostic was 8 corrections / 410 ms → 1 correction (Tier-2 acceptance). See `docs/architecture/collision-events.md`.
 
 3. ✅ **Shorter adaptive lerp for large corrections** — done in Stage 0 of the network-feel roadmap (2026-05-08). The 18-frame / 300 ms tier was capped at 6 frames / 100 ms for any drift above the sub-pixel tier, and a quadratic ease-out shape replaced the linear decay. Verified end-to-end by `tests/e2e/feel-tuning.spec.ts`: 73 corrections observed under thrust-into-drone-ring, max queued lerp duration = 6 frames, max drift in window = 80 u.
 
@@ -120,6 +120,27 @@ Tier-2 acceptance: `tests/e2e/feel-tuning.spec.ts` re-run under Stage 1 — 37 c
 Bench (`benchmarks/spring.bench.ts`): single `springStep` call ~285 ns; amortized cost in the realistic case (100 parallel springs / frame, matches local + 32 remote × 3 axes) is **~117 ns/spring**, well under the 200 ns target. Single `Math.exp` call dominates; no further optimisation needed.
 
 Frame-rate independence: `CritDampedSpring.test.ts` cycle 3 asserts dt = 8 ms vs dt = 33 ms across the same total wall-clock produce identical end states. Reconciler integration test asserts the same property through the full call path.
+
+---
+
+## Measured after Stage 2 (network-feel roadmap, 2026-05-08)
+
+Stage 2 added server-authoritative collision-event broadcasting. The four-hop relay (worker → main → server → client) carries post-collision velocities directly to predWorld, replacing the pre-Stage-2 pattern of re-deriving them through 6–10 successive snapshot replays.
+
+| Component | File | Behaviour |
+|---|---|---|
+| Worker drain | `src/core/physics/worker.ts` | Per-tick `EventQueue.drainContactForceEvents`, filtered at `CONTACT_FORCE_FLOOR = 200` N |
+| Pure function | `src/core/physics/contactDrain.ts` | Bridges Rapier collider handles → entity IDs; reads vPost from bodies; 3 property tests |
+| Bus variant | `src/core/events/Bus.ts` | `COLLISION_RESOLVED { aId, bId, vA, vB, impulse, tick }` |
+| Worker→main message | `src/core/physics/worker.ts` | `CONTACT_BATCH { tick, contacts: Contact[] }`, skipped when empty |
+| Server broadcast | `src/server/rooms/SectorRoom.ts` | `room.broadcast('collision_resolved', payload)` (no AOI filter — see Decision Log) |
+| Schema | `src/shared-types/messages.ts` | `CollisionResolvedMessageSchema` (zod, strict, 10 fuzz cases) |
+| Client guard module | `src/client/net/applyCollisionResolved.ts` | Stale-event drop + per-ship 4/sec rate limit; 8 property tests |
+| Telemetry | `PredictionStats.collisionEventsApplied` | Counter incremented when predWorld actually mutated |
+
+Tier-2 acceptance: `tests/e2e/collision-events.spec.ts` — 8 s drive into the drone ring → 272 snapshots, 1 collision event applied. Pre-Stage-2 the same physical contact would have produced 8 cascading drift corrections over ~410 ms (per `docs/LESSONS.md` Pattern A diagnostic).
+
+Architecture: `docs/architecture/collision-events.md`.
 
 ---
 

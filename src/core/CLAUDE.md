@@ -82,6 +82,16 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 
 ---
 
+## Physics Worker — Worker→Main Message Variants
+
+The worker posts three discrete message types to the main thread:
+
+- **`READY`** — emitted once at boot after Rapier init completes. The main-thread `SectorRoom` resolves its `start()` promise on this.
+- **`SLEEP_TRANSITION { entityId, sleeping, tick }`** — emitted whenever a body's effective sleep state crosses the `SLEEP_HYSTERESIS_TICKS` boundary (Phase 5). The main thread re-emits as `ENTITY_SLEPT` / `ENTITY_WOKE` on the local Bus.
+- **`CONTACT_BATCH { tick, contacts: Contact[] }`** — emitted per tick when Rapier's `EventQueue` produced contact-force events above `CONTACT_FORCE_FLOOR` (Stage 2 of the network-feel roadmap). Each `Contact` carries `{ aId, bId, vAxPost, vAyPost, vBxPost, vByPost, forceMagnitude }`. The main thread re-emits each as `COLLISION_RESOLVED` on the Bus and broadcasts a `collision_resolved` network message. Skipped (no message) when the tick produced no qualifying contacts.
+
+Adding a fourth variant: extend the worker's `parentPort!.postMessage` site, the SectorRoom message handler's discriminator (`msg.type`), and update this list. The main→worker direction has its own discriminated union (`WorkerCommand`); the reverse direction is informally typed because the message handler does explicit type narrowing on receive.
+
 ## Rapier `castRay` API (Phase 4 — do not look these up again)
 
 - `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.

@@ -518,7 +518,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Tier-2: `benchmarks/spring.bench.ts` < 200 ns &nbsp; *(117 ns/spring amortized in 100-spring batch; single-call number 285 ns is per-call setup overhead, irrelevant in production)*
 - [x] `docs/architecture/prediction-and-correction.md` written
 
-### Stage 2 — Collision event broadcasting  &nbsp; *Status: 🚧 in progress*
+### Stage 2 — Collision event broadcasting  &nbsp; *Status: ✅ done*
 - [x] Test-infra: `drainContacts` extracted as pure function
 - [~] Test-infra: `fakeNetwork` in-memory loopback built &nbsp; *(skipped — cycles 3–5 use direct method invocation against fake predWorld; full chain validated by Tier-2 E2E)*
 - [x] Test-infra: zod fuzz fixture built &nbsp; *(inlined into `messages.test.ts` — 10 fuzz cases against `CollisionResolvedMessageSchema` rather than a separate harness)*
@@ -528,7 +528,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 4: out-of-order guard → green
 - [x] Cycle 5: rate-limit → green
 - [x] Tier-2: `collision-events.spec.ts` passing &nbsp; *(8 s drive into drone ring → 1 collision event applied; pre-Stage-2 the same physical contact would have produced 8 cascading drift corrections)*
-- [ ] `docs/architecture/collision-events.md` + `src/core/CLAUDE.md` updated
+- [x] `docs/architecture/collision-events.md` + `src/core/CLAUDE.md` updated
 
 ### Stage 3 — Remote entity forward-prediction  &nbsp; *Status: ⏳ pending*
 - [ ] Test-infra: `recordedSession` fixtures captured
