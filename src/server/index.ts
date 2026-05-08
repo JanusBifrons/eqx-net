@@ -7,6 +7,7 @@ import { createServer } from 'node:http';
 import { pino } from 'pino';
 import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
+import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devResetSectorHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
@@ -155,6 +156,11 @@ httpServer.on('upgrade', (req) => {
 });
 
 async function main(): Promise<void> {
+  // Install the V8 GC pause observer FIRST so any GCs triggered by
+  // bootstrap (worker spawn, hydration, eager room creation) are
+  // captured. The observer is process-wide; idempotent if called twice.
+  installGcMonitor();
+
   const dbPath = process.env['DB_PATH'] ?? path.resolve(process.cwd(), 'eqx.db');
   await initWorker({ dbPath });
   logger.info({ dbPath }, 'persistence worker READY');
