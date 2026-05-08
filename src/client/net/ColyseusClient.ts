@@ -4,6 +4,7 @@ import type { IAudio } from '@core/contracts/IAudio';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
+import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -87,15 +88,23 @@ const NOISE_THRESHOLD = 0.05;
 /** Angle drift below this is float32-serialisation noise (~0.057°). */
 const ANGLE_NOISE_THRESHOLD = 0.001;
 
-/** Render lerp duration for remote-ship offset decay.
- *  Stage 0 (network-feel roadmap): aligned to the Reconciler cap — every
- *  correction lands in 100 ms / 6 frames so remote-ship visual recovery
- *  matches local-ship visual recovery. Pre-Stage-0 had a 6/10/14 cascade,
- *  meaning remote corrections still glided for 233 ms while local
- *  corrections landed in 100 ms — visibly inconsistent. */
-function lerpFramesForDrift(_drift: number): number {
-  return 6;                     // 100 ms — uniform
+/** Spring half-life for remote-ship offset decay (Stage 1).
+ *  Aligned with `Reconciler.halfLifeForDrift` so remote-ship and local-ship
+ *  visual recovery are in lockstep — sub-pixel drifts settle imperceptibly
+ *  fast (~75 ms total wall-clock); everything above the noise floor settles
+ *  in ~125 ms. Pre-Stage-1 used a frame counter; Stage 1 took dtMs and
+ *  applies a critically-damped spring so the recovery is frame-rate
+ *  independent and reads as "alive". */
+function remoteOffsetHalfLifeForDrift(drift: number): number {
+  if (drift < 0.5) return 12;
+  return 25;
 }
+
+/** Termination thresholds for remote-ship offset springs. Match the
+ *  Reconciler's SPRING_POS_END / SPRING_VEL_END_MS so visual recovery
+ *  ends consistently across local- and remote-ship offsets. */
+const REMOTE_SPRING_POS_END = 0.05;       // matches LERP_THRESHOLD
+const REMOTE_SPRING_VEL_END_MS = 0.05;    // 50 u/s
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -144,8 +153,13 @@ export class ColyseusGameClient {
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
-  /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections. */
-  private readonly _remoteShipOffsets = new Map<string, { ox: number; oy: number; framesLeft: number; totalFrames: number }>();
+  /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
+   *  Stage 1: each entry holds two critically-damped spring states (one per axis)
+   *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
+  private readonly _remoteShipOffsets = new Map<
+    string,
+    { sx: SpringState; sy: SpringState; halfLifeMs: number }
+  >();
 
   /** Publicly readable prediction/latency stats. Updated on every snapshot. */
   readonly stats: PredictionStats = {
@@ -931,8 +945,24 @@ export class ColyseusGameClient {
           const oy = preReset.y - postReconcile.y;
           const dist = Math.hypot(ox, oy);
           if (dist > 1) {
-            const frames = lerpFramesForDrift(dist);
-            this._remoteShipOffsets.set(remoteId, { ox, oy, framesLeft: frames, totalFrames: frames });
+            const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
+            // Re-anchor the spring at the new offset; velocity zeroed
+            // so the spring's first step is governed purely by the new
+            // offset. This matches Reconciler.reconcile behaviour.
+            const existing = this._remoteShipOffsets.get(remoteId);
+            if (existing) {
+              existing.sx.x = ox;
+              existing.sx.v = 0;
+              existing.sy.x = oy;
+              existing.sy.v = 0;
+              existing.halfLifeMs = halfLifeMs;
+            } else {
+              this._remoteShipOffsets.set(remoteId, {
+                sx: { x: ox, v: 0 },
+                sy: { x: oy, v: 0 },
+                halfLifeMs,
+              });
+            }
           }
         }
       }
@@ -1234,16 +1264,21 @@ export class ColyseusGameClient {
         if (!s) continue;
         const off = this._remoteShipOffsets.get(remoteId);
         let ox = 0, oy = 0;
-        if (off && off.framesLeft > 0) {
-          // Stage 0: ease-out quadratic — see Reconciler.advanceLerp for
-          // the full rationale. Keeps remote-ship offset decay shape in
-          // lockstep with local-ship offset decay shape.
-          const linearRatio = off.framesLeft / off.totalFrames;
-          const ratio = linearRatio * linearRatio;
-          ox = off.ox * ratio;
-          oy = off.oy * ratio;
-          off.framesLeft--;
-          if (off.framesLeft === 0) this._remoteShipOffsets.delete(remoteId);
+        if (off) {
+          // Stage 1: critically-damped spring. Frame-rate independent and
+          // matches Reconciler's local-ship offset shape. Threshold-based
+          // termination ends the spring once both axes are at the noise
+          // floor (position and velocity).
+          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
+          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
+          ox = off.sx.x;
+          oy = off.sy.x;
+          const stillMoving =
+            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
+            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
+          if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
         }
         const prev = this.mirror.ships.get(remoteId);
         this.mirror.ships.set(remoteId, {
