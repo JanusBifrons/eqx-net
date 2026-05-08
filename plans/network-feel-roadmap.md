@@ -521,9 +521,9 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 ### Stage 2 — Collision event broadcasting  &nbsp; *Status: 🚧 in progress*
 - [x] Test-infra: `drainContacts` extracted as pure function
 - [~] Test-infra: `fakeNetwork` in-memory loopback built &nbsp; *(skipped — cycles 3–5 use direct method invocation against fake predWorld; full chain validated by Tier-2 E2E)*
-- [ ] Test-infra: zod fuzz fixture built
+- [x] Test-infra: zod fuzz fixture built &nbsp; *(inlined into `messages.test.ts` — 10 fuzz cases against `CollisionResolvedMessageSchema` rather than a separate harness)*
 - [x] Cycle 1: `drainContacts` happy-path test → green
-- [ ] Cycle 2: schema fuzz test → green
+- [x] Cycle 2: schema fuzz test → green
 - [ ] Cycle 3: vPost applied to predWorld immediately → green
 - [ ] Cycle 4: out-of-order guard → green
 - [ ] Cycle 5: rate-limit → green

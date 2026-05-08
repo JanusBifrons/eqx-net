@@ -1,0 +1,77 @@
+/**
+ * Stage 2 cycle 2 of the network-feel roadmap. Schema fuzz tests for the
+ * server → client `collision_resolved` message.
+ *
+ * The server creates this message in its broadcast loop and serialises
+ * directly (it trusts itself), but the client validates inbound payloads
+ * defensively against future protocol skew. This test fixture asserts the
+ * schema rejects every common malformed shape and accepts a known-good
+ * payload. Pattern matches the existing `InputMessageSchema` style.
+ */
+import { describe, it, expect } from 'vitest';
+import { CollisionResolvedMessageSchema } from './messages.js';
+
+describe('CollisionResolvedMessageSchema', () => {
+  const valid = {
+    type: 'collision_resolved' as const,
+    aId: 'player-abc',
+    bId: 'asteroid-42',
+    vA: { x: 12.5, y: -7.0 },
+    vB: { x: -3.0, y: 4.5 },
+    impulse: 250,
+    tick: 100_000,
+  };
+
+  it('accepts a known-good payload', () => {
+    const result = CollisionResolvedMessageSchema.safeParse(valid);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects payloads with wrong type literal', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, type: 'collision' });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads missing aId', () => {
+    const { aId: _aId, ...rest } = valid;
+    const r = CollisionResolvedMessageSchema.safeParse(rest);
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads with non-string aId', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, aId: 123 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads with non-number velocity components', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, vA: { x: '1', y: 0 } });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads with negative tick', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, tick: -1 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads with non-integer tick', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, tick: 1.5 });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects payloads with extra unknown fields (strict mode)', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, extra: 'nope' });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts impulse = 0 (boundary value — used as a sentinel for "below floor" in some tests)', () => {
+    // The wire schema allows any non-negative impulse; the server filters by
+    // forceFloor before broadcasting, so 0 only appears in synthetic tests.
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, impulse: 0 });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects negative impulse', () => {
+    const r = CollisionResolvedMessageSchema.safeParse({ ...valid, impulse: -10 });
+    expect(r.success).toBe(false);
+  });
+});

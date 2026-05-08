@@ -185,3 +185,47 @@ export interface LaserFiredEvent {
   hit: boolean;
   targetId?: string;
 }
+
+// Stage 2 of the network-feel roadmap (collision event broadcasting).
+// The server posts this when its physics worker drains a contact-force
+// event above the impulse floor; the client mirrors the post-collision
+// velocity to its predWorld immediately, eliminating the ~50 ms wait for
+// the next snapshot to land the same correction. zod schema lives here so
+// the client can validate inbound payloads defensively against future
+// protocol skew — server creates the messages itself and trusts its own
+// shape, so it never parses through this schema.
+
+/** Server → client (AOI-filtered): a collision was resolved server-side.
+ *  Carries post-collision velocities for both bodies so the client can apply
+ *  them to its prediction world without waiting for a snapshot. */
+export const CollisionResolvedMessageSchema = z
+  .object({
+    type: z.literal('collision_resolved'),
+    /** Entity ID of the first body in the contact pair. */
+    aId: z.string(),
+    /** Entity ID of the second body. */
+    bId: z.string(),
+    /** Post-collision linear velocity of body `a`. */
+    vA: z
+      .object({
+        x: z.number(),
+        y: z.number(),
+      })
+      .strict(),
+    /** Post-collision linear velocity of body `b`. */
+    vB: z
+      .object({
+        x: z.number(),
+        y: z.number(),
+      })
+      .strict(),
+    /** Magnitude of the contact force (Newtons). Always non-negative. */
+    impulse: z.number().nonnegative(),
+    /** Server tick when the collision was resolved. Used by the client's
+     *  out-of-order guard: events with tick < lastSnapshotServerTick are
+     *  dropped (snapshot is authoritative for stale events). */
+    tick: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type CollisionResolvedMessage = z.infer<typeof CollisionResolvedMessageSchema>;
