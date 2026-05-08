@@ -9,13 +9,20 @@
  *   2. Re-applies every buffered input from ackedTick → currentTick.
  *   3. Compares the resulting "corrected" position+angle to the pre-reconciliation
  *      prediction.
- *   4. If drift ≥ threshold, sets a visual offset (lerpOffset / lerpAngleOffset)
- *      that decays to zero over an adaptive number of render frames (scaled by
- *      correction magnitude so large collisions lerp smoothly instead of snapping).
+ *   4. If drift ≥ threshold, queues a critically-damped spring whose state is
+ *      the visible offset (lerpOffset / lerpAngleOffset) decaying toward zero.
  *
  * The prediction world itself always holds the most up-to-date authoritative
  * estimate; lerpOffset is a pure render-layer shim.
+ *
+ * Stage 1 of the network-feel roadmap (2026-05-08) replaced the previous
+ * frame-counted ratio² ease-out with a critically-damped spring step. The
+ * spring is frame-rate independent (analytical closed-form), monotonic by
+ * critical damping (no overshoot), and reads as "alive" because velocity
+ * carries through rather than just decaying to zero. See
+ * src/core/math/CritDampedSpring.ts for the math.
  */
+import { springStep, type SpringState } from '../math/CritDampedSpring.js';
 import type { PhysicsWorld, ShipPhysicsState } from '../physics/World.js';
 
 const BUFFER_SIZE = 128; // ~2 s at 60 Hz
@@ -24,16 +31,26 @@ const BUFFER_SIZE = 128; // ~2 s at 60 Hz
 const LERP_THRESHOLD = 0.05;       // world units for position
 const ANGLE_LERP_THRESHOLD = 0.001; // radians (~0.057°) for rotation
 
-/** Scale lerp duration to correction magnitude so large snaps don't look jerky.
- *  Stage 0 (network-feel roadmap): every drift above the sub-pixel tier caps
- *  at 6 frames / 100 ms. The previous 18-frame tier (300 ms for >20 u) was
- *  flagged in docs/FEEL_GOALS.md as a perceptible "glide" because the
- *  collision has already happened in the world; the slow visual settle is a
- *  lie. The ease-out shape (Reconciler.advanceLerp) carries the visual
- *  smoothness of the now-tighter window. */
-function lerpFramesForDrift(drift: number): number {
-  if (drift < 0.5) return 3;    //  50 ms — sub-pixel, barely visible
-  return 6;                     // 100 ms — every other correction
+/** End-of-lerp termination thresholds. Both position/angle AND velocity must
+ *  fall below their respective bounds before the lerp is considered "done".
+ *  Setting POS_END at LERP_THRESHOLD means the spring's residual is at the
+ *  noise floor when the lerp ends — no visible "twitch" past that point. */
+const SPRING_POS_END = LERP_THRESHOLD;
+const SPRING_VEL_END_MS = 0.05;        // 0.05 u/ms = 50 u/s, below ship speeds
+const SPRING_ANGLE_END = ANGLE_LERP_THRESHOLD;
+const SPRING_ANGVEL_END_MS = 0.001;    // 0.001 rad/ms ≈ 1 rad/s
+
+/** Spring half-life (time-to-half-offset) chosen by drift magnitude.
+ *  Stage 1 replaces lerpFramesForDrift's frame counter. Sub-pixel
+ *  corrections settle almost imperceptibly fast; everything else uses a
+ *  single 25 ms half-life so the visible feel is consistent regardless of
+ *  drift magnitude — the *amplitude* of the correction varies with drift,
+ *  the *settling time* doesn't. With these half-lives, total wall-clock
+ *  settle (offset back below LERP_THRESHOLD) is ~75 ms / ~125 ms, close to
+ *  Stage 0's 100 ms cap while gaining frame-rate independence. */
+function halfLifeForDrift(drift: number): number {
+  if (drift < 0.5) return 12;   //  ~75 ms total settle — sub-pixel
+  return 25;                    // ~125 ms total settle — everything else
 }
 
 export interface InputRecord {
@@ -58,16 +75,22 @@ export class Reconciler {
 
   /** Visual position offset applied to rendered position, decaying to zero. */
   readonly lerpOffset = { x: 0, y: 0 };
-  private lerpInitial = { x: 0, y: 0 };
-  private lerpFramesLeft = 0;
-  /** Queued lerp duration (frames). Public-readable for telemetry; e2e specs
-   *  read this off the 'correction' log entry to verify the Stage 0 6-frame
-   *  cap survives through the production call path. */
-  lerpTotalFrames = 0;
+  /** Spring states for the visual position offset (one per axis). Each spring
+   *  decays its state toward zero with critical damping; the renderer reads
+   *  the resulting `lerpOffset.x/y` as a render-time correction nudge. */
+  private readonly _springX: SpringState = { x: 0, v: 0 };
+  private readonly _springY: SpringState = { x: 0, v: 0 };
+  private _lerping = false;
+
+  /** Active correction's spring half-life (ms). 0 when not lerping. Public-
+   *  readable for telemetry; e2e specs read this off the 'correction' log
+   *  entry to verify the Stage 1 half-life selection survives through the
+   *  production call path. */
+  lerpHalfLifeMs = 0;
 
   /** Visual angle offset applied to rendered rotation, decaying to zero. */
   lerpAngleOffset = 0;
-  private lerpAngleInitial = 0;
+  private readonly _springA: SpringState = { x: 0, v: 0 };
 
   /** Most recent measured position drift (world units). Exposed for dev overlay. */
   lastDrift = 0;
@@ -95,35 +118,51 @@ export class Reconciler {
 
   /** Returns true while a visual lerp correction is in progress. */
   get isLerping(): boolean {
-    return this.lerpFramesLeft > 0;
+    return this._lerping;
   }
 
   /**
-   * Advance the lerp by one render frame.
-   * Call once per requestAnimationFrame, BEFORE reading lerpOffset for rendering.
+   * Advance the spring-based correction by `dtMs` of wall-clock time.
+   * Call once per requestAnimationFrame BEFORE reading lerpOffset for
+   * rendering. Pass the actual frame delta — the spring is frame-rate
+   * independent so any cadence works.
+   *
+   * The lerp ends (sets isLerping = false) when both the position offset
+   * and velocity fall below their respective thresholds. This is a
+   * physically meaningful end condition rather than a fixed timer; on
+   * very small initial drifts the lerp ends almost immediately, on
+   * larger ones it takes proportionally longer to settle.
    */
-  advanceLerp(): void {
-    if (this.lerpFramesLeft <= 0) {
+  advanceLerp(dtMs: number): void {
+    if (!this._lerping) {
       this.lerpOffset.x = 0;
       this.lerpOffset.y = 0;
       this.lerpAngleOffset = 0;
       return;
     }
-    this.lerpFramesLeft--;
-    if (this.lerpFramesLeft === 0) {
+    if (dtMs <= 0) return;
+    springStep(this._springX, 0, this.lerpHalfLifeMs, dtMs);
+    springStep(this._springY, 0, this.lerpHalfLifeMs, dtMs);
+    springStep(this._springA, 0, this.lerpHalfLifeMs, dtMs);
+    this.lerpOffset.x = this._springX.x;
+    this.lerpOffset.y = this._springY.x;
+    this.lerpAngleOffset = this._springA.x;
+
+    const stillMoving =
+      Math.abs(this._springX.x) > SPRING_POS_END ||
+      Math.abs(this._springY.x) > SPRING_POS_END ||
+      Math.abs(this._springA.x) > SPRING_ANGLE_END ||
+      Math.abs(this._springX.v) > SPRING_VEL_END_MS ||
+      Math.abs(this._springY.v) > SPRING_VEL_END_MS ||
+      Math.abs(this._springA.v) > SPRING_ANGVEL_END_MS;
+    if (!stillMoving) {
+      this._lerping = false;
       this.lerpOffset.x = 0;
       this.lerpOffset.y = 0;
       this.lerpAngleOffset = 0;
-    } else {
-      // Stage 0: ease-out quadratic shape. The pre-Stage-0 linear `framesLeft
-      // / totalFrames` shape decayed at a constant rate, which read as a
-      // slow glide. Squaring biases the curve toward decisive early motion
-      // and a graceful tail — same total duration, more responsive feel.
-      const linearRatio = this.lerpTotalFrames > 0 ? this.lerpFramesLeft / this.lerpTotalFrames : 0;
-      const ratio = linearRatio * linearRatio;
-      this.lerpOffset.x = this.lerpInitial.x * ratio;
-      this.lerpOffset.y = this.lerpInitial.y * ratio;
-      this.lerpAngleOffset = this.lerpAngleInitial * ratio;
+      this._springX.x = 0; this._springX.v = 0;
+      this._springY.x = 0; this._springY.v = 0;
+      this._springA.x = 0; this._springA.v = 0;
     }
   }
 
@@ -198,18 +237,22 @@ export class Reconciler {
     this.lastAngleDrift = angleDrift;
 
     if (drift >= LERP_THRESHOLD || angleDrift >= ANGLE_LERP_THRESHOLD) {
-      // Apply visual offsets equal to the pre-reconciliation error, then
-      // decay them to zero over an adaptive number of frames to avoid a
-      // visible snap. Large corrections get more frames so they appear smooth.
-      this.lerpInitial.x = before.x - after.x;
-      this.lerpInitial.y = before.y - after.y;
-      this.lerpOffset.x = this.lerpInitial.x;
-      this.lerpOffset.y = this.lerpInitial.y;
-      this.lerpAngleInitial = normalizeAngle(before.angle - after.angle);
-      this.lerpAngleOffset = this.lerpAngleInitial;
-      const frames = lerpFramesForDrift(drift);
-      this.lerpTotalFrames = frames;
-      this.lerpFramesLeft = frames;
+      // Stage 1: queue spring-based correction. Initial offset is the
+      // pre-reconciliation prediction error; the critically-damped spring
+      // decays to zero with no overshoot at the half-life chosen for this
+      // drift magnitude. Velocity is zeroed at the start so the spring's
+      // first step is governed purely by the offset (no kick).
+      this._springX.x = before.x - after.x;
+      this._springX.v = 0;
+      this._springY.x = before.y - after.y;
+      this._springY.v = 0;
+      this._springA.x = normalizeAngle(before.angle - after.angle);
+      this._springA.v = 0;
+      this.lerpOffset.x = this._springX.x;
+      this.lerpOffset.y = this._springY.x;
+      this.lerpAngleOffset = this._springA.x;
+      this.lerpHalfLifeMs = halfLifeForDrift(drift);
+      this._lerping = true;
     }
     // Prediction world now holds the corrected state.
   }

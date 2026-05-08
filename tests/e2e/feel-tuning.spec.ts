@@ -1,17 +1,18 @@
 /**
- * Stage 0 closure spec for the network-feel roadmap.
+ * Stage 0/1 closure spec for the network-feel roadmap.
  *
  * Stage 0 capped the prediction-correction visual lerp at 6 frames
- * (~100 ms) for any drift above the sub-pixel tier — the previous
- * 18-frame / 300 ms cascade was flagged in `docs/FEEL_GOALS.md` as a
- * perceptible "glide". This spec drives the ship into the legacy
- * `sector` room (30 hostile drones in a ring; collisions are easy to
- * provoke) for a few seconds, then reads the eqxLogs ring buffer and
- * asserts every 'correction' log entry's `lerpTotalFrames` is ≤ 6 —
- * verifying the cap survives through the real reconcile call path.
+ * (~100 ms); Stage 1 replaced the frame counter with a critically-
+ * damped spring (analytical, frame-rate independent). This spec drives
+ * the ship into the legacy `sector` room (30 hostile drones in a ring;
+ * collisions are easy to provoke) for a few seconds, then reads the
+ * eqxLogs ring buffer and asserts every 'correction' log entry's
+ * `lerpHalfLifeMs` is ≤ 25 — verifying the Stage 1 half-life selection
+ * survives through the real reconcile call path.
  *
- * The ease-out shape (Stage 0 Cycle 2) is verified by Reconciler unit
- * tests; only the cap matters at the macro level.
+ * The spring shape and frame-rate independence are verified by
+ * Reconciler unit tests; only the half-life selection matters at the
+ * macro level.
  *
  * Uses `?room=...` autoJoin to bypass the GalaxyMapScreen splash,
  * matching the pattern in persistence-kill.spec.ts.
@@ -21,7 +22,7 @@ import { test, expect } from '@playwright/test';
 interface CorrectionLogEntry {
   ts: number;
   tag: string;
-  data: { lerpTotalFrames?: number; driftUnits?: number };
+  data: { lerpHalfLifeMs?: number; driftUnits?: number };
 }
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
@@ -31,7 +32,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 test.setTimeout(60_000);
 
-test('Stage 0: every queued correction lerp caps at 6 frames', async ({ browser }) => {
+test('Stage 1: every queued correction lerp uses halfLife ≤ 25 ms', async ({ browser }) => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
 
@@ -70,29 +71,29 @@ test('Stage 0: every queued correction lerp caps at 6 frames', async ({ browser 
   });
 
   if (corrections.length === 0) {
-    console.log('\n=== Stage 0: lerpTotalFrames cap ===');
+    console.log('\n=== Stage 1: lerpHalfLifeMs cap ===');
     console.log('No corrections logged in the sample window — the cap is trivially satisfied.');
     console.log('====================================\n');
     // Trivial pass: no observed corrections means no lerps queued.
     return;
   }
 
-  let maxFrames = 0;
+  let maxHalfLifeMs = 0;
   let maxDrift = 0;
   for (const c of corrections) {
-    const frames = c.data.lerpTotalFrames ?? 0;
-    if (frames > maxFrames) maxFrames = frames;
+    const hl = c.data.lerpHalfLifeMs ?? 0;
+    if (hl > maxHalfLifeMs) maxHalfLifeMs = hl;
     const drift = c.data.driftUnits ?? 0;
     if (drift > maxDrift) maxDrift = drift;
   }
 
-  console.log('\n=== Stage 0: lerpTotalFrames cap ===');
+  console.log('\n=== Stage 1: lerpHalfLifeMs cap ===');
   console.log(`Observed corrections: ${corrections.length}`);
-  console.log(`Max queued lerp frames: ${maxFrames} (cap 6)`);
+  console.log(`Max queued lerp halfLife: ${maxHalfLifeMs} ms (cap 25)`);
   console.log(`Max drift in sample window: ${maxDrift.toFixed(3)} u`);
   console.log('====================================\n');
 
-  expect(maxFrames).toBeLessThanOrEqual(6);
+  expect(maxHalfLifeMs).toBeLessThanOrEqual(25);
 
   await ctx.close();
 });

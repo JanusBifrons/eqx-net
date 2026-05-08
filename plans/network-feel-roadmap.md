@@ -511,7 +511,7 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Cycle 1: spring convergence within 5×halfLife
 - [x] Cycle 2: no overshoot under critical damping
 - [x] Cycle 3: frame-rate independence (8 ms vs 33 ms)
-- [ ] Cycle 4: `Reconciler` spring shape at t=halfLife
+- [x] Cycle 4: `Reconciler` spring shape at t=halfLife
 - [ ] Cycle 5: `ColyseusClient` remote-ship offset switched to spring
 - [ ] Cycle 6: `swarmInterpolation` re-target shim switched to spring
 - [ ] Tier-2: ProMotion 120→60 cadence flip spec passing

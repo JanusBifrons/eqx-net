@@ -981,10 +981,11 @@ export class ColyseusGameClient {
           driftUnits: parseFloat(drift.toFixed(6)),
           angleDriftRad: parseFloat(angleDrift.toFixed(6)),
           lerping: this.reconciler.isLerping,
-          // Stage 0: 6-frame cap on every drift above the sub-pixel tier.
-          // Surfaced here so e2e specs can verify the cap survives through
-          // the production reconcile call path.
-          lerpTotalFrames: this.reconciler.lerpTotalFrames,
+          // Stage 1: replaced Stage 0's frame counter with a critically-
+          // damped spring half-life. Surfaced here so e2e specs can verify
+          // the half-life selection survives through the production
+          // reconcile call path.
+          lerpHalfLifeMs: this.reconciler.lerpHalfLifeMs,
           ...recPositions,
         });
       }
@@ -1196,7 +1197,7 @@ export class ColyseusGameClient {
         const ox = this.reconciler.lerpOffset.x;
         const oy = this.reconciler.lerpOffset.y;
         const oa = this.reconciler.lerpAngleOffset;
-        this.reconciler.advanceLerp();
+        this.reconciler.advanceLerp(this.lastFrameMs);
         // Preserve `kind` across per-frame rewrites so the renderer keeps
         // drawing the correct silhouette. `kind` is set on first state-patch
         // hydration in `syncMirror`; rewriting without it here would silently

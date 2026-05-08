@@ -59,76 +59,81 @@ describe('Reconciler', () => {
     expect(Math.abs(r.lerpOffset.y)).toBeGreaterThan(0);
   });
 
-  it('advanceLerp decays offset to zero within capped frame count', async () => {
+  it('Stage 1: spring shape — offset is ~50% of initial at t = halfLife', async () => {
+    // Stage 1 replaced Stage 0's frame-counted ease-out with a critically-
+    // damped spring. The user-facing halfLife parameter means "time to halve
+    // the offset under v₀ = 0" — this test asserts that semantic survives
+    // through the Reconciler call path.
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
-    // drift = hypot(50,50) ≈ 70.7 u — Stage 0 caps any drift ≥ 0.5u at 6 frames
-    r.reconcile({ x: 50, y: 50, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
-
-    expect(r.isLerping).toBe(true);
-
-    // Advance until done; guard at 30 to prevent infinite loop
-    let frames = 0;
-    while (r.isLerping && frames < 30) {
-      r.advanceLerp();
-      frames++;
-    }
-
-    expect(r.isLerping).toBe(false);
-    expect(r.lerpOffset.x).toBe(0);
-    expect(r.lerpOffset.y).toBe(0);
-    expect(frames).toBeLessThanOrEqual(6);
-  });
-
-  it('Stage 0: lerp offset eases out (drops past 25% by midpoint, not 50%)', async () => {
-    // Pre-Stage-0 the visual offset decayed linearly: ratio = framesLeft /
-    // totalFrames, so at the midpoint of a 6-frame lerp the offset is at 50%
-    // of initial — reads as a slow glide. Stage 0 switches to ease-out
-    // quadratic (ratio²): the offset drops past 25% by midpoint, so
-    // corrections feel snappy at start and settle gracefully without
-    // changing the total duration.
-    const world = await makeWorld(0, 0);
-    const r = new Reconciler(world, PLAYER);
-    r.recordInput(makeInput(0));
-    // 30u drift → 6-frame lerp (post-cycle-1 cap)
     r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
 
     const initialAbsX = Math.abs(r.lerpOffset.x);
-    expect(initialAbsX).toBeGreaterThan(20); // sanity — 30u drift.
+    expect(initialAbsX).toBeGreaterThan(20);
+    expect(r.lerpHalfLifeMs).toBe(25);
 
-    // Advance to midpoint: 3 of 6 frames consumed.
-    r.advanceLerp();
-    r.advanceLerp();
-    r.advanceLerp();
-
-    // Linear: |offset.x| = initial × (3/6) = 0.5 × initial → fails < 0.4.
-    // Squared: |offset.x| = initial × (3/6)² = 0.25 × initial → passes.
-    expect(Math.abs(r.lerpOffset.x)).toBeLessThan(initialAbsX * 0.4);
+    // Step forward by exactly halfLife in 0.5 ms slices.
+    const dtMs = 0.5;
+    let elapsed = 0;
+    while (elapsed + dtMs <= r.lerpHalfLifeMs) {
+      r.advanceLerp(dtMs);
+      elapsed += dtMs;
+    }
+    // x(halfLife) ≈ 0.5 × initial (closed-form spring property).
+    expect(Math.abs(r.lerpOffset.x)).toBeCloseTo(initialAbsX * 0.5, 0);
   });
 
-  it('Stage 0: large-drift correction caps at 6 frames (100 ms)', async () => {
-    // The pre-Stage-0 Reconciler used an adaptive cascade (3/8/12/18 frames)
-    // that pushed >20u corrections to 300 ms — flagged in docs/FEEL_GOALS.md
-    // as a perceptible "glide" because the collision has already happened in
-    // the world; the slow visual settle is a lie. Stage 0 caps every drift
-    // above the sub-pixel tier at 6 frames so corrections land in 100 ms.
+  it('Stage 1: large-drift correction settles within ~5×halfLife wall-clock', async () => {
+    // Termination is threshold-based (offset < LERP_THRESHOLD AND
+    // velocity small), but for the standard 25 ms halfLife on a moderate
+    // drift the lerp lands within ~125 ms — close to Stage 0's 100 ms cap
+    // while gaining frame-rate independence.
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
-
-    // 30u drift — well above any tier boundary. Pre-Stage-0 → 18 frames.
     r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
 
     expect(r.isLerping).toBe(true);
+    expect(r.lerpHalfLifeMs).toBe(25);
 
-    let frames = 0;
-    while (r.isLerping && frames < 30) {
-      r.advanceLerp();
-      frames++;
+    // Step at 60 Hz cadence until the spring terminates; safety bound 1 s.
+    let elapsed = 0;
+    const dtMs = 16.67;
+    while (r.isLerping && elapsed < 1000) {
+      r.advanceLerp(dtMs);
+      elapsed += dtMs;
+    }
+    expect(r.isLerping).toBe(false);
+    expect(r.lerpOffset.x).toBe(0);
+    expect(r.lerpOffset.y).toBe(0);
+    // Bounded at ~6 × halfLife (giving slack for the threshold-based end
+    // condition). 6 × 25 = 150 ms.
+    expect(elapsed).toBeLessThanOrEqual(160);
+  });
+
+  it('Stage 1: spring is frame-rate independent — coarse and fine dt converge alike', async () => {
+    async function runAt(dtMs: number, totalMs: number): Promise<number> {
+      const world = await makeWorld(0, 0);
+      const r = new Reconciler(world, PLAYER);
+      r.recordInput(makeInput(0));
+      r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
+      let elapsed = 0;
+      while (elapsed + dtMs <= totalMs) {
+        r.advanceLerp(dtMs);
+        elapsed += dtMs;
+      }
+      const remainder = totalMs - elapsed;
+      if (remainder > 0) r.advanceLerp(remainder);
+      return r.lerpOffset.x;
     }
 
-    expect(frames).toBeLessThanOrEqual(6);
+    // Same total wall-clock, two different cadences. The closed-form
+    // analytical spring is exact, so end states must match within
+    // float32 noise.
+    const fast = await runAt(2, 50);
+    const slow = await runAt(33, 50);
+    expect(Math.abs(fast - slow)).toBeLessThan(0.5);
   });
 
   it('ring buffer wraps at 128 without corrupting adjacent ticks', async () => {
@@ -224,21 +229,24 @@ describe('Reconciler', () => {
     expect(r.lastDrift).toBeGreaterThan(0.05);
   });
 
-  it('lerpOffset magnitude shrinks each advanceLerp call', async () => {
+  it('lerpOffset magnitude shrinks each advanceLerp call (monotonic decay)', async () => {
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
     r.reconcile({ x: 100, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
 
     const magnitudes: number[] = [];
-    while (r.isLerping) {
+    let elapsed = 0;
+    const dtMs = 16.67;
+    while (r.isLerping && elapsed < 1000) {
       magnitudes.push(Math.abs(r.lerpOffset.x));
-      r.advanceLerp();
+      r.advanceLerp(dtMs);
+      elapsed += dtMs;
     }
 
-    // Each frame should be strictly smaller than the previous
+    // Critical damping ⟹ monotonic approach to zero, no overshoot.
     for (let i = 1; i < magnitudes.length; i++) {
-      expect(magnitudes[i]!).toBeLessThanOrEqual(magnitudes[i - 1]!);
+      expect(magnitudes[i]!).toBeLessThanOrEqual(magnitudes[i - 1]! + 1e-9);
     }
   });
 
