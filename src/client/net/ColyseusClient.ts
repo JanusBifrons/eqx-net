@@ -5,6 +5,12 @@ import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, Destr
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
+import {
+  applyCollisionResolved,
+  createCollisionGuard,
+  type CollisionGuardState,
+} from './applyCollisionResolved';
+import { CollisionResolvedMessageSchema } from '@shared-types/messages';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -160,6 +166,11 @@ export class ColyseusGameClient {
     string,
     { sx: SpringState; sy: SpringState; halfLifeMs: number }
   >();
+
+  /** Stage 2 collision-event guard — sliding rate-limit window per ship,
+   *  plus latest snapshot tick for the stale-event drop check. Updated by
+   *  the collision_resolved handler and by handleSnapshot. */
+  private readonly _collisionGuard: CollisionGuardState = createCollisionGuard();
 
   /** Publicly readable prediction/latency stats. Updated on every snapshot. */
   readonly stats: PredictionStats = {
@@ -483,6 +494,18 @@ export class ColyseusGameClient {
 
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
       this.handleRespawnAck(msg);
+    });
+
+    // Stage 2 of the network-feel roadmap — server-broadcast collision
+    // events. Apply post-collision velocities to predWorld immediately;
+    // eliminates the ~50 ms snapshot wait for the same correction.
+    // Defensive zod parse on receive: malformed payloads dropped silently
+    // (mirrors the server's invariant on inbound messages).
+    room.onMessage('collision_resolved', (raw: unknown) => {
+      const result = CollisionResolvedMessageSchema.safeParse(raw);
+      if (!result.success) return;
+      if (!this.predWorld) return;
+      applyCollisionResolved(result.data, this.predWorld, this._collisionGuard, performance.now());
     });
 
     // Phase 8 sub-phase B — transit lifecycle messages.
@@ -845,6 +868,11 @@ export class ColyseusGameClient {
     this.stats.snapshotCount++;
     this.stats.snapshotIntervalMs = intervalMs;
     this.stats.lastServerTick = snap.serverTick;
+    // Stage 2 — feed the collision-event stale-guard with the authoritative
+    // snapshot tick. Late collision events (worker → main → wire latency)
+    // arriving with tick < this value are dropped, since the snapshot has
+    // already corrected predWorld with a state that would un-correct.
+    this._collisionGuard.lastSnapshotServerTick = snap.serverTick;
 
     // Phase 6 — derive effective server wall-clock tick rate. Snapshot
     // broadcasts every 3 ticks, so tickHz = 3000 / intervalMs. EWMA-smoothed

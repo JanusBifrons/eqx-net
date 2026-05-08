@@ -1030,7 +1030,18 @@ export class SectorRoom extends Room<SectorState> {
 
       let ready = false;
 
-      this.physicsWorker.on('message', (msg: { type: string; entityId?: string; sleeping?: boolean; tick?: number }) => {
+      this.physicsWorker.on('message', (msg: {
+        type: string;
+        entityId?: string;
+        sleeping?: boolean;
+        tick?: number;
+        contacts?: Array<{
+          aId: string; bId: string;
+          vAxPost: number; vAyPost: number;
+          vBxPost: number; vByPost: number;
+          forceMagnitude: number;
+        }>;
+      }) => {
         if (!ready && msg.type === 'READY') {
           ready = true;
           resolve();
@@ -1045,6 +1056,35 @@ export class SectorRoom extends Room<SectorState> {
             this.bus.emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId: msg.entityId });
           } else {
             this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId: msg.entityId });
+          }
+        }
+        if (msg.type === 'CONTACT_BATCH' && Array.isArray(msg.contacts) && typeof msg.tick === 'number') {
+          // Stage 2 of the network-feel roadmap: each contact above the
+          // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in the
+          // room as `collision_resolved`. AOI filter is deferred — the
+          // typical 1–4 player room's per-tick contact volume is low, and
+          // the client's `applyCollisionResolved` already silently no-ops
+          // on bodies its predWorld doesn't track (drone-vs-drone events).
+          // Bus emission lets persistence/telemetry subscribe.
+          for (const c of msg.contacts) {
+            this.bus.emit('COLLISION_RESOLVED', {
+              type: 'COLLISION_RESOLVED',
+              aId: c.aId,
+              bId: c.bId,
+              vA: { x: c.vAxPost, y: c.vAyPost },
+              vB: { x: c.vBxPost, y: c.vByPost },
+              impulse: c.forceMagnitude,
+              tick: msg.tick,
+            });
+            this.broadcast('collision_resolved', {
+              type: 'collision_resolved',
+              aId: c.aId,
+              bId: c.bId,
+              vA: { x: c.vAxPost, y: c.vAyPost },
+              vB: { x: c.vBxPost, y: c.vByPost },
+              impulse: c.forceMagnitude,
+              tick: msg.tick,
+            });
           }
         }
       });

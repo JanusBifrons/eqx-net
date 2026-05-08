@@ -15,6 +15,19 @@ export interface BusEventPayloads {
     playerId: string;
     state: 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
   };
+  /** Stage 2 of the network-feel roadmap. The server's physics worker
+   *  resolved a collision above the impulse floor; subscribers (telemetry,
+   *  network broadcast) get the post-collision velocities of both bodies
+   *  for immediate downstream propagation. */
+  COLLISION_RESOLVED: {
+    type: 'COLLISION_RESOLVED';
+    aId: string;
+    bId: string;
+    vA: { x: number; y: number };
+    vB: { x: number; y: number };
+    impulse: number;
+    tick: number;
+  };
 }
 
 export type BusEventType = keyof BusEventPayloads;

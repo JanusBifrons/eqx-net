@@ -22,8 +22,10 @@
  *     scaled. This preserves deterministic collision behaviour at all rates.
  */
 import { parentPort, workerData } from 'node:worker_threads';
+import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
+import { drainContacts } from './contactDrain.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import {
   SEQLOCK_IDX,
@@ -49,6 +51,13 @@ const TICK_MS = 1000 / 60;
 /** Ticks a body must report sleeping consecutively before FLAG_SLEEPING is set.
  *  Suppresses flap on slow-drift entities under rapier2d-compat's threshold. */
 const SLEEP_HYSTERESIS_TICKS = 12;
+/** Stage 2 — minimum contact-force magnitude (N) to broadcast as a CONTACT
+ *  event. ~200 N at the 60 Hz step ≈ 3.3 N·s impulse, which catches every
+ *  meaningful ship-vs-asteroid / ship-vs-drone collision but filters out
+ *  drone-drone soft touches and minor jostling at rest. The collider's own
+ *  contactForceEventThreshold (10 N) pre-filters at the engine level; this
+ *  is the meaningful network-traffic gate. */
+const CONTACT_FORCE_FLOOR = 200;
 
 interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
@@ -64,6 +73,10 @@ async function main(): Promise<void> {
   const f32 = new Float32Array(sab);
 
   const physics = await PhysicsWorld.create();
+  // Stage 2 — Rapier event queue persists across all `world.step()` calls;
+  // drained once per tick after the SAB write window. `true` enables contact-
+  // force events alongside collision-start/stop events.
+  const eventQueue = new RAPIER.EventQueue(true);
   const playerToSlot = new Map<string, number>();
   const slotToPlayer = new Map<number, string>();
   // FIFO input queue per slot. Each client input is enqueued and dequeued exactly
@@ -184,7 +197,7 @@ async function main(): Promise<void> {
     // without changing Rapier's per-step dt.
     const rawRate = u32[CLOCK_RATE_IDX] ?? 0;
     const clockRate = rawRate === 0 ? 1.0 : rawRate / CLOCK_RATE_SCALE;
-    physics.tick((TICK_MS / 1000) * clockRate);
+    physics.tick((TICK_MS / 1000) * clockRate, eventQueue);
     tick++;
 
     // Compute sleep transitions before SAB write so the flag word is current.
@@ -240,6 +253,15 @@ async function main(): Promise<void> {
     // discrete event arrive in a consistent order on the main thread.
     for (const t of transitions) {
       parentPort!.postMessage({ type: 'SLEEP_TRANSITION', entityId: t.id, sleeping: t.sleeping, tick });
+    }
+
+    // Stage 2 — drain contact-force events and post a single batched
+    // CONTACT_BATCH per tick. drainContacts applies the production force
+    // floor and resolves collider→body→entity-id; the main thread relays
+    // each entry as a `collision_resolved` network message.
+    const contacts = drainContacts(eventQueue, physics, CONTACT_FORCE_FLOOR);
+    if (contacts.length > 0) {
+      parentPort!.postMessage({ type: 'CONTACT_BATCH', tick, contacts });
     }
 
     // Phase 6 — publish the wall-clock duration of this step (in µs) so the
