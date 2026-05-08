@@ -594,7 +594,10 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       <LogPanelGate />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (
-        <MobileControls touchInput={touchInputRef.current} />
+        <MobileControls
+          touchInput={touchInputRef.current}
+          onOpenMap={() => setGalaxyMapOpen(true)}
+        />
       )}
       <WeaponSelector />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
