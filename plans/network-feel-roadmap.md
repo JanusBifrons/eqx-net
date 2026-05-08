@@ -530,16 +530,16 @@ Tick boxes as micro-cycles complete. Update `Status` when a stage is fully ✅. 
 - [x] Tier-2: `collision-events.spec.ts` passing &nbsp; *(8 s drive into drone ring → 1 collision event applied; pre-Stage-2 the same physical contact would have produced 8 cascading drift corrections)*
 - [x] `docs/architecture/collision-events.md` + `src/core/CLAUDE.md` updated
 
-### Stage 3 — Remote entity forward-prediction  &nbsp; *Status: ⏳ pending*
-- [ ] Test-infra: `recordedSession` fixtures captured
-- [ ] Test-infra: `fakeNetwork` per-client snapshot streams
-- [ ] Cycle 1: idle remote ship drift = 0 → green
-- [ ] Cycle 2: predicted thrust within 0.1u → green
-- [ ] Cycle 3: snapshot mid-prediction spring-corrects → green
-- [ ] Cycle 4: hysteresis disable on 3×>5u → green
-- [ ] Cycle 5: hysteresis re-enable on 3×<5u → green
-- [ ] Cycle 6: lookahead cap → green
-- [ ] Cycle 7: recorded-session replay holds within 1u
+### Stage 3 — Remote entity forward-prediction  &nbsp; *Status: 🚧 in progress*
+- [~] Test-infra: `recordedSession` fixtures captured &nbsp; *(deferred — pure-function tests against parallel `PhysicsWorld` instances cover the property without a fixture; revisit if Stage 4 jitter-replay needs it)*
+- [~] Test-infra: `fakeNetwork` per-client snapshot streams &nbsp; *(skipped — same rationale as Stage 2)*
+- [x] Cycle 1: idle remote ship drift = 0 → green
+- [x] Cycle 2: predicted thrust within 0.1u → green
+- [~] Cycle 3: snapshot mid-prediction spring-corrects → green &nbsp; *(already covered by Stage 1's spring; verified in wire-up below)*
+- [x] Cycle 4: hysteresis disable on 3×>5u → green
+- [x] Cycle 5: hysteresis re-enable on 3×<5u → green
+- [x] Cycle 6: lookahead cap → green
+- [~] Cycle 7: recorded-session replay holds within 1u &nbsp; *(deferred — see Decision Log)*
 - [ ] Tier-2: `remote-prediction.spec.ts` + bench passing
 - [ ] `docs/architecture/remote-prediction.md` + A/B toggle wired
 
@@ -610,3 +610,5 @@ Append a one-line entry whenever a discovery changes the plan. Format: `YYYY-MM-
 - 2026-05-08 — Stage 2 Cycles 3+4+5 — Bundled into one commit (single new module `applyCollisionResolved.ts` with 8 property tests covering all three cycles). Pure-function design: takes a `MinimalPredWorld` interface so tests use a plain in-memory fake (no Rapier, no Colyseus). The rate-limit window slides per-ship rather than globally, and is checked against fresh-trimmed entries before applying — a 5th event in 1 s drops, the next one outside the window applies. `lastSnapshotServerTick` is the stale-guard threshold; events at exact-equal tick still apply (boundary handled).
 - 2026-05-08 — Stage 2 Wire-up — AOI filter on the server-side broadcast deferred. Plan called for filtering `collision_resolved` to only those clients with either body in their interest cell window. Implemented as a simple `room.broadcast('collision_resolved', ...)` instead, because: (1) typical sector has 1–4 players and 30–500 entities, but contact-force events above the 200 N floor fire only on meaningful collisions (a few per second at most), so per-tick traffic is bounded; (2) the client's `applyCollisionResolved` silently no-ops on bodies its predWorld doesn't track, providing a soft AOI filter at the receiving end; (3) implementing the AOI filter would require duplicating the per-client interest-cell computation from the snapshot loop. Revisit if a future profile shows collision-event bandwidth becomes meaningful in dense rooms.
 - 2026-05-08 — Stage 2 Wire-up — Production force floor in worker.ts is `CONTACT_FORCE_FLOOR = 200` N. At the 60 Hz step that's ~3.3 N·s impulse — catches every meaningful ship-vs-asteroid / ship-vs-drone collision but drops drone-drone soft touches and minor jostling at rest. The collider's engine-level `setContactForceEventThreshold(10)` is a coarser pre-filter; the production floor is the meaningful network-traffic gate. Tunable in one place if user testing reports either over- or under-reporting.
+- 2026-05-08 — Stage 3 — Architectural simplification: skipping the plan-agent's "tiny `PhysicsWorld`-of-one per remote ship" approach. The client's existing `predWorld` already contains every remote ship (per `src/client/CLAUDE.md` "Remote ships must be in predWorld"); the actual change for Stage 3 is to **apply each remote's `lastInput` during the existing replay/tickPhysics loops** — alongside the local input, not in a separate world. This avoids 32 Rapier instances on the client, dodges memory/perf concerns, and reuses the collision pipeline (Stage 2's collision_resolved already handles ship-vs-ship velocity sync). Per-remote prediction state is just two maps (lastInput, hysteresis state); no Rapier-world pools needed.
+- 2026-05-08 — Stage 3 — `recordedSession` fixtures and `fakeNetwork` per-client snapshot streams skipped. Pure-function tests against parallel `PhysicsWorld` instances (`remoteForwardPrediction.test.ts`) prove the lockstep-prediction property without serialised fixtures; the hysteresis guard (`remotePredictionGuard.test.ts`) is independently testable with synthetic correction sequences. The full chain validates via Tier-2 E2E. fakeNetwork stays available as a Stage 4 option if jitter-injection tests genuinely need it.
