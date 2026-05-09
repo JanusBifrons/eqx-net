@@ -39,6 +39,7 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
+import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
@@ -448,6 +449,12 @@ export class ColyseusGameClient {
     extraJoinOptions: Record<string, unknown> = {},
     touchInput?: TouchInput,
   ): Promise<void> {
+    // Mobile main-thread block detector — see `longtaskObserver.ts` for the
+    // motivating capture (`2026-05-09T07-23-39-893Z-651792`: two ~500–600 ms
+    // client-receive gaps with the server emitting cleanly throughout).
+    // Idempotent; safe to call again on reconnect.
+    installLongtaskObserver();
+
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
     this.predWorld = await PhysicsWorld.create();
@@ -1693,6 +1700,19 @@ export class ColyseusGameClient {
     if (!this.room || !this.keyboard) return;
     this.lastFrameMs = elapsedMs;
     if (this.welcomePerfNow === 0) return; // welcome not yet received
+    // Frame-gap detector. The mobile capture
+    // `2026-05-09T07-23-39-893Z-651792` showed two ~500–600 ms RAF stalls
+    // that bunched WebSocket arrivals into a single post-stall snapshot
+    // and saturated the prediction window for tens of seconds. Logging
+    // every RAF would saturate the 500-entry ring buffer in ~8 s; logging
+    // only the gaps gives one entry per genuine stall, paired with the
+    // `longtask` observer's attribution (when supported) to pin the cause.
+    if (elapsedMs > 100) {
+      logEvent('raf_gap', {
+        elapsedMs: Math.round(elapsedMs * 100) / 100,
+        inputTickBefore: this.inputTick,
+      });
+    }
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     const ticksSinceAnchor = Math.floor((performance.now() - this.clockAnchorPerfNow) / FIXED_MS);

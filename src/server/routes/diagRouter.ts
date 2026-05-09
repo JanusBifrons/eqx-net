@@ -38,6 +38,10 @@ const BUCKETS: Record<string, string> = {
   tick_hitch: 'perf',
   tick_budget: 'perf',
   gc_pause: 'perf',
+  // client perf — main-thread block diagnostics for the mobile-stall
+  // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
+  longtask: 'perf',
+  raf_gap: 'perf',
   // client corrections
   correction: 'corrections',
   // combat (client + server)
