@@ -45,8 +45,17 @@ interface Sim {
   renderHistory: number[];
 }
 
-function pickHalfLife(distance: number): number {
-  return distance < 0.5 ? HALF_LIFE_MS_SMALL : HALF_LIFE_MS_LARGE;
+// Mirror of `droneRenderOffsetHalfLifeForDrift` in
+// `src/client/net/ColyseusClient.ts`. See that function's comment for
+// the math derivation.
+const H_SAFETY_FACTOR = 1.5;
+const V_FLOOR = 5;
+const H_MIN_MS = 80;
+const H_MAX_MS = 800;
+function pickHalfLife(distance: number, vel: number = DRONE_VEL): number {
+  const v = Math.max(vel, V_FLOOR);
+  const required = (H_SAFETY_FACTOR * Math.LN2 * distance / v) * 1000;
+  return Math.max(H_MIN_MS, Math.min(H_MAX_MS, required));
 }
 
 /**
@@ -212,6 +221,40 @@ describe('drone render smoothness — predWorld-snap + spring offset path', () =
     console.log(`Angle backward frames: ${backwardCount} / ${renderAngles.length - 1}`);
     // eslint-disable-next-line no-console
     console.log(`Max angle backward jump: ${maxBackwardJump.toFixed(4)} rad/frame`);
+
+    expect(backwardCount).toBe(0);
+  });
+
+  it('rendered position is monotonic with LARGE snap (packet gap → ~30 u offset @ 32 Hz mobile RAF)', () => {
+    // The 2026-05-09 diagnostic `liv44l` shows snap-interval max = 1108 ms
+    // and corr rate = 22 % in a test-room scenario. A 1.1 s packet gap lets
+    // predWorld's AI integrate ~60 ticks past the last server-authoritative
+    // pose; when the next packet arrives, snap distance can be 30+ u —
+    // well past the 6.5 u ceiling at which 150 ms half-life is monotonic.
+    //
+    // Pre-fix this test fails: with O0 = 30, V = 30, H_min ≈ 690 ms — the
+    // 150 ms decay exceeds predWorld's per-frame advance.
+    const MOBILE_DT_MS = 1000 / 32; // mobile RAF throttle observed in capture
+    const FRAMES = 32;              // ~1 s of simulation
+    const startOffset = 30;
+    const offset: SpringState = { x: startOffset, v: 0 };
+    const halfLifeMs = pickHalfLife(startOffset, DRONE_VEL);
+    let predWorldX = 0;
+    const renderHistory: number[] = [];
+    for (let i = 0; i < FRAMES; i++) {
+      predWorldX += DRONE_VEL * (MOBILE_DT_MS / 1000);
+      springStep(offset, 0, halfLifeMs, MOBILE_DT_MS);
+      renderHistory.push(predWorldX + offset.x);
+    }
+    let backwardCount = 0;
+    for (let i = 1; i < renderHistory.length; i++) {
+      if (renderHistory[i]! < renderHistory[i - 1]!) backwardCount++;
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `Large-snap backward frames: ${backwardCount} / ${FRAMES - 1} ` +
+        `(half-life ${halfLifeMs.toFixed(0)} ms for O=${startOffset} u, V=${DRONE_VEL} u/s)`,
+    );
 
     expect(backwardCount).toBe(0);
   });

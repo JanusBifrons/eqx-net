@@ -147,29 +147,37 @@ function remoteOffsetHalfLifeForDrift(drift: number): number {
 }
 
 /**
- * Half-life for drone render-pose lerp offsets — much longer than the
- * remote-ship version because drone snaps are structurally bigger.
+ * Half-life for drone render-pose lerp offsets, scaled by snap-distance
+ * over drone velocity. Required for backward-motion-free render across
+ * the full range of snap sizes the wire can produce.
  *
- * Math: each binary swarm packet snaps the drone backward by `LEAD_TICKS
- * × velocity × FIXED_DT` worth of motion (the predWorld was forward-
- * predicted ~6 ticks ahead). For V=30 u/s that's ~3 u; for V=100 u/s
- * it's ~10 u. The remote-ship 25 ms half-life decays the offset faster
- * than predWorld's forward advance can replace it, producing the
- * frame-to-frame backward motion the user reported as "double vision."
+ * Per-frame monotonicity bound (re-derived 2026-05-09 after the `liv44l`
+ * mobile capture showed corr=22%, snap-interval max 1.1 s):
  *
- * Derivation in `tests/scenarios/droneRenderSmoothness.test.ts`: for
- * critically-damped spring x(t) = (x₀ + ω·x₀·t)·exp(-ω·t) starting
- * from rest, the per-frame decay rate is bounded above by predWorld's
- * forward advance rate when `H ≥ K·dt·√(LEAD_TICKS/2)` — about 48 ms
- * for `dt=16.67`, `LEAD_TICKS=6`. The threshold is V-independent.
+ *   Forward render advance per frame ≈ V·dt
+ *   Spring offset decay per frame    ≈ O · (1 - 2^(-dt/H)) ≈ O·dt·ln 2 / H
+ *   Monotonic forward render ⇔ V·dt > O·dt·ln 2 / H
+ *   ⇒  H > O · ln 2 / V          (dt-independent)
  *
- * Picking 100 ms gives ~2× margin over the math bound. Larger snaps
- * (which suggest a real desync, not just leadTicks lookahead) get a
- * 150 ms half-life so the recovery is even gentler.
+ * The earlier `H ≥ K·dt·√(LEAD_TICKS/2)` derivation only held for the
+ * "structural" snap size O = V·LEAD_TICKS·dt. When packets actually drop
+ * (a 1.1 s gap was observed in the wild) O can be many times larger and
+ * a fixed 150 ms ceiling renders 30 %+ of frames backward at 32 Hz RAF.
+ *
+ * Formula: H = clamp(80 ms, 1.5·O·ln 2 / V·1000, 800 ms). The 1.5×
+ * safety factor swallows phase noise and the discrete springStep error;
+ * V is floored at 5 u/s so a near-stationary drone with a real snap
+ * doesn't pin H to zero. The 800 ms ceiling caps how much the visual
+ * recovery is allowed to lag.
  */
-function droneRenderOffsetHalfLifeForDrift(drift: number): number {
-  if (drift < 1) return 100;
-  return 150;
+const H_SAFETY_FACTOR = 1.5;
+const V_FLOOR = 5; // u/s — prevents low-speed blow-up
+const H_MIN_MS = 80;
+const H_MAX_MS = 800;
+function droneRenderOffsetHalfLifeForDrift(drift: number, vel: number): number {
+  const v = Math.max(vel, V_FLOOR);
+  const required = (H_SAFETY_FACTOR * Math.LN2 * drift / v) * 1000;
+  return Math.max(H_MIN_MS, Math.min(H_MAX_MS, required));
 }
 
 /** Wrap angle delta to [-π, π] so the spring lerps the short way around. */
@@ -1568,7 +1576,8 @@ export class ColyseusGameClient {
         // angular threshold (~0.06 rad ≈ 3.4°) catches turn-rate-driven
         // jolts even when the drone barely moved positionally.
         if (dist > 0.05 || Math.abs(oa) > 0.06) {
-          const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist);
+          const speed = Math.hypot(entry.vx, entry.vy);
+          const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist, speed);
           const existing = this._droneRenderOffsets.get(entityId);
           if (existing) {
             existing.sx.x = ox; existing.sx.v = 0;
