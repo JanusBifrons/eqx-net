@@ -50,6 +50,10 @@ const BUCKETS: Record<string, string> = {
   fire_received: 'combat',
   swarm_near_enter: 'combat',
   swarm_near_exit: 'combat',
+  // 2026-05-09 — physics-side collisions surfaced into the diag stream
+  // so we can correlate combat-phase correction bursts with actual
+  // drone-vs-player contacts. See SectorRoom.ts CONTACT_BATCH handler.
+  collision_resolved: 'combat',
   // lifecycle
   welcome: 'lifecycle',
   disconnected: 'lifecycle',

@@ -1189,6 +1189,21 @@ export class SectorRoom extends Room<SectorState> {
               impulse: c.forceMagnitude,
               tick: msg.tick,
             });
+            // Diag-stream the contact so we can correlate combat-phase
+            // correction bursts with physics-side collisions. Added
+            // 2026-05-09 to confirm/reject the hypothesis that drone-vs-
+            // player contacts are the source of the ~10–22 u drift events
+            // seen in combat captures (e.g. cap 09-54-45-849Z-8grdi1).
+            // Logged at full fidelity — typical 1-4 player rooms produce
+            // sub-100 contacts per second so the 500-entry ring buffer
+            // is fine. Only the local player's contacts are visible
+            // post-aggregation if `aId`/`bId` filtering is needed.
+            serverLogEvent('collision_resolved', {
+              aId: c.aId,
+              bId: c.bId,
+              impulse: parseFloat(c.forceMagnitude.toFixed(3)),
+              tick: msg.tick,
+            });
           }
         }
       });
