@@ -14,6 +14,38 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-09 — Network-Feel — the paradigm gap: drone AI was server-only; client must run identical AI for collisions to align
+
+After ~15 hours and 8 commits chasing per-symptom fixes (welford reset, tick-gate, lead-subtract, drone-unlock, display-delay), the user reported the felt experience hadn't materially improved. The honest answer was that every fix was treating a symptom of one underlying paradigm gap: **the client predicts the player ship's physics 1:1 with the server, but for drones it only had a velocity vector + dead-reckoning between snapshots**. Server applies AI thrust/torque every tick; client never did. So drone position diverged from server between every snapshot, collision happened at slightly different geometry on each side, and reconciler corrections perpetually re-opened.
+
+The standard rollback-prediction paradigm is "everything you can interact with is simulated and rendered 1:1 client-side, and then if it goes out of step it corrects." For drones, only the *snap* part was happening; the *simulate* part was missing.
+
+The fix (commit 31af74c) was structural, not parametric:
+  - Moved `AiController` from `src/server/ai/` to `src/core/ai/` (it had no server-only dependencies — `AiIntentSink` was already abstracted)
+  - The client constructs an `AiController` with a sink that calls `predWorld.applyImpulse('swarm-${id}', fx, fy, torque)`
+  - On every binary-swarm packet, drones (kind=1) are registered with `HostileDroneBehaviour`; asteroids stay locked
+  - The client's AI ticks once per input-loop iteration AND once per reconciler-replay tick, mirroring the server's per-step pattern
+  - Critical determinism contract: the AI's player view must come from `predWorld.getShipState`, not `mirror.ships` — `mirror.ships` includes the reconciler's render-only lerp offset, which the server never sees. Using `predWorld` gives both sides the same authoritative-physics positions.
+
+Verified by `tests/scenarios/clientAiDeterminism.test.ts`: two `AiController`s ticked through identical synthetic timelines produce **bit-identical** (fx, fy, torque) outputs. Locks the contract that any future drift in client-vs-server AI sync fails the test before merge.
+
+User-reported result: "Best it's ever felt. Minor lag." After 15 hours of single-axis fixes, the structural fix was the one that actually delivered.
+
+**Action item for any future client-prediction work**: when adding a new entity type that the local ship can interact with, default to **simulating it client-side with the same module the server runs**. Predicting only "kinematic from velocity + position" is what brought us here; the player can interact with it physically, so it has to be in `predWorld` and driven by the same intent generator.
+
+**Distinguishing future occurrences of this anti-pattern**: any feature that
+  - has authoritative server logic (combat AI, NPC pathing, environment events)
+  - and produces forces or impulses applied to bodies the player can collide with
+  - and runs at server tick rate
+... must run client-side too, behind a contract / sink the client implements as "apply to predWorld."
+
+Test coverage:
+  - `src/core/ai/AiController.test.ts` — controller invariants (now in core)
+  - `tests/scenarios/clientAiDeterminism.test.ts` — bit-identical output across two controllers
+  - `tests/e2e/network-feel-combat.spec.ts` — end-to-end combat-feel regression lock
+
+---
+
 ## 2026-05-09 — Network-Feel — server input queue drained inputs claiming future ticks, producing ~10 u correction bursts under network jitter
 
 After the sector-handoff Welford reset shipped, the `srvTick − ackedTick = −37` saturation was gone but mobile cap `2026-05-09T08-34-31-317Z-66038n` still showed felt-jitter bursts: three episodes of 3–4 consecutive corrections each at ~10 u position drift, lerping smoothing them but the user reporting "warping, jitter, and issues at times." The data was suspicious — drift values within each burst were essentially identical (10.69 / 10.73 / 10.71 in burst 1; same shape elsewhere), zero angle drift, and `srvTick − ackedTick` would shift from the steady −2 to −6/−7 during the bursts. None of that is random noise; it pointed at a systematic mechanism.
