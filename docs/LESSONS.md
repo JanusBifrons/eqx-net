@@ -881,3 +881,25 @@ A v1 client decoding a v2 packet would mis-stride every record after the first b
 The catalogue order in `SHIP_KINDS_LIST` is now part of the wire format: drone kinds encode as the index into that list. Reordering or removing a kind invalidates every in-flight v2 packet. Append-only is safe; deletions require another version bump. Test [tests/unit/shipKinds.test.ts](../tests/unit/shipKinds.test.ts) `catalogue order is fighter -> scout -> heavy (wire-format-stable)` pins the current order.
 
 **Operationally**: a build with v2 server + v1 client tab silently shows nothing in the swarm channel. There's no in-band "please refresh" signaling — that would be a follow-up. For now, the decoder logging an `ignored swarm packet, version mismatch` warn is enough.
+
+
+## 2026-05-09 — AI lockstep — Two correction paths fighting is worse than one wrong path
+
+Chapter 2 of the network-feel work (chapter 1 was commit `31af74c`, the move of `AiController` to `src/core` so the client could run drone AI lockstep with the server). Chapter 2 closed the residual jitter the user reported as "two locations fighting over which is right and both winning."
+
+The fix shipped in three structural commits (`1707261` Phase A wire-format v3 with angvel, `0642f75` Phase B per-drone snap diagnostic, `b59b523` Phase C drone reconcile anchor) plus one **load-bearing follow-up** (`d1e7ecf`) — and the follow-up is the lesson worth recording.
+
+The initial Phase C added a snapshot-driven drone anchor: `SnapshotMessage.drones[]` slice ships in-interest drones at `snap.serverTick`, and `Reconciler.reconcile` re-anchors them before replay. That part worked structurally. **What broke it** was leaving the pre-existing binary-packet `setShipState` call in `syncSwarmIntoPredWorld` unchanged. Now there were two paths resetting drone state on the client at different cadences and to different targets:
+
+  - snapshot path (20 Hz): seeds at `snap.serverTick`, replay advances by `currentTick − ackedTick` ticks → predWorld at `currentTick` (forward-extrapolated)
+  - binary packet path (60 Hz): unconditionally `setShipState` to server pose at packet emit (≈ `serverTick`, behind `currentTick` by ~`leadTicks` worth of motion)
+
+Every binary packet pulled predWorld backward by the same amount the snapshot path had just pulled it forward. The two paths cancelled. The mobile capture `2026-05-09T17-25-27-695Z-82ncsd` showed snap distance **TRIPLED** vs the pre-Phase-C baseline (3.5 → 15 u median, 18 → 39 u p99). The spring-offset render layer fired on every snap to smooth the residual, and at mobile RAF (~22 Hz) couldn't decay between them — the user saw rendered drone position alternating between two states every frame.
+
+The fix (commit `d1e7ecf`): track which drones the snapshot anchored (`_droneSnapshotAnchored: Set<number>`, rebuilt each snapshot from `snap.drones[]`). In `syncSwarmIntoPredWorld`, for those drones, **skip both `setShipState` and the spring-offset capture**. Snapshot becomes the single source of truth; the binary packet still updates `mirror.swarm` (asteroid lerp source) but doesn't touch predWorld for in-interest drones. Out-of-interest drones fall through to the legacy path. Mobile capture `2026-05-09T17-52-07-928Z-qcub4y` after the fix: swarmSnapP99 9.92 u, swarmAngleP99 0.057 rad (~3.3°), swarmAngvelP99 0.013 rad/s. User reaction: "Holy fucking shit. Almost flawless. This is a huge milestone."
+
+**The general rule**: one correction path per state surface. When you're adding a NEW correction path (snapshot anchor, schema sync, etc.) for state that already has an EXISTING correction path (binary packet, RPC, etc.), you must REMOVE or GATE the existing path. Don't run both.
+
+**The diagnostic signature for this class of bug is distinctive**: per-event metrics get *worse* after a fix that "should help structurally," not better. If you see that pattern, look for two reset paths.
+
+The TDD harness `tests/e2e/feel-test-lockstep.spec.ts` is the regression lock — its `swarmSnapP50 < 15` assertion will fail the moment a dual-correction-path bug reappears. Architecture walkthrough: [docs/architecture/ai-lockstep.md](architecture/ai-lockstep.md).
