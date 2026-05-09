@@ -14,6 +14,33 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-09 — Network-Feel — sector-handoff inherits polluted Welford / leadTicks state, saturates lookahead at the cap
+
+After warping between sectors, every snapshot for the rest of the session reported `srvTick − ackedTick = −37` (rock steady), 60–70 % of snapshots produced a significant correction, and the local ship rendered ~600 ms ahead of the authoritative server state. The user described the symptoms as "ships miles off centre, going in circles, lost control." All of that is a single bug: the Stage 4 prediction-loop state survived the sector handoff.
+
+**Pathology**: `_rttWelford`, `_lookaheadCtrl`, `_dropDetector`, `_anchorInitialised`, `lastSnapshotAt`, `_recentIntervals`, and `_recentCorrFlags` were all `readonly` fields on `ColyseusGameClient`, initialised once at construction. The `transit_ready` handler hot-swaps the room's WebSocket via `consumeSeatReservation` but reuses the same client instance, so those fields persisted unchanged across the 5+ s warp gap. The first wave of post-arrival snapshots had `intervalMs` back in the steady-state band [35, 75] ms — bypassing Stage 4 hotfix #3's gap-detection guard — but their `lastRtt` was contaminated by the handoff (clamped to 250 ms by Stage 4 hotfix #1, but still pushed). The surviving welford mean drifted up to ~250 ms, `mean + 2σ` saturated `CEILING_TICKS = 30` in `lookaheadController`, and `leadTicks` stayed pinned at the cap for tens of seconds while the welford slowly accumulated clean samples.
+
+`leadTicks ≈ 30` + 6 ticks of natural in-flight = **client predicts ~36 ticks ahead** ≈ exactly the −37 offset every snapshot reported. With a 30-tick prediction window, the rendered ship is wherever it *will be* in 600 ms — for a turning ship that's "going in circles" (predicted position several rotations ahead) and "miles off centre" (predicted overshoot on thrust).
+
+**Diagnostic captures**:
+- `2026-05-09T07-49-57-470Z-81numi/` — 105 snapshots, `srvTick − ackedTick` distribution `{−37: 104, −38: 1}` (locked), 67 % correction rate. Captured immediately after a warp.
+- `2026-05-09T07-50-26-478Z-krns0x/` — bimodal `{−37: 52, −18: 107}`. Welford slowly settling.
+- `2026-05-09T07-51-26-622Z-wc5fm0/` — long after the same session, `{−15: 104, −16: 62, ...}`. Clean steady state.
+
+The decay from −37 → −18 → −15 over ~30 s is the welford's natural mean drift back toward live RTT. Without a reset there's no fast-path back to clean.
+
+**Fix shipped**: `ColyseusGameClient.resetPredictionState()` re-creates the welford, lookahead controller, drop detector, and rolling buffers; clears `_anchorInitialised` so the next snapshot seeds the clock anchor afresh; zeros `reconciler.lastRtt` (read by the welford push *one snapshot later* than it's computed, so a pre-transit value would otherwise re-poison the just-reset welford). Called from the `transit_ready` handler after `room.leave(true)` and before `consumeSeatReservation`. The fields had to lose `readonly` to be reassignable.
+
+**Why Stage 4 hotfixes #1 and #3 didn't cover this**: hotfix #1 clamps individual sample magnitude (caps each `lastRtt` push at 250 ms). Hotfix #3 filters whole snapshots whose `intervalMs` is outside [35, 75] ms. Both work *during* a gap. Neither resets state *across* a gap. Once the wire returns to steady cadence, the clamped/filtered samples are gone but the polluted mean isn't — and a 250 ms-clamped sample still pulls the mean up if pushed.
+
+**Action item**: any future state that contributes to the prediction window (welford, EWMA, spring controllers) MUST be either (a) explicitly reset in `resetPredictionState()` or (b) have a `// reason: this state is OK to survive a sector handoff because …` comment justifying the omission. The default for prediction state is "transient to the room."
+
+**Distinguishing future occurrences**: `predStats.ticksAhead` stuck at the saturation point (~30 + leadTicks-floor of 6 = ~36) for many seconds, large `srvTick − ackedTick` mismatch, AND no actual network jitter (intervalMs around 50 ms median, no broadcast gaps). The signature is "the client predicts hard but the wire is fine."
+
+Test coverage: `src/client/net/ColyseusClient.resetPredictionState.test.ts` locks the reset semantics. An E2E warp regression test (warp between sectors, assert `ticksAhead` settles ≤ 10 within ~1 s) is the proper invariant #9 satisfier and should be added when the warp path is wired into the e2e harness.
+
+---
+
 ## 2026-05-08 — Network-Feel Stage 5 hotfix #4 — union-of-cadences breaks recipient-side intervalMs distribution
 
 Stage 5's initial design tried to deliver "30 Hz close-tier ships, 20 Hz far-tier" by gating sends on `closeFires || farFires` where `closeFires = (broadcastCounter + closeOffset) % 2 === 0` and `farFires = (broadcastCounter + farOffset) % 3 === 0`. Each predicate alone produces a clean cadence (every 2nd or every 3rd tick). The union does **not**.

@@ -326,16 +326,24 @@ export class ColyseusGameClient {
 
   /** Stage 4 — Welford-based RTT mean + std-dev. Pushed each snapshot
    *  reconcile when `reconciler.lastRtt` is valid (>0). Drives the
-   *  `mean + 2σ` lookahead formula in `lookaheadController`. */
-  private readonly _rttWelford: WelfordState = createWelford();
+   *  `mean + 2σ` lookahead formula in `lookaheadController`.
+   *
+   *  Mutable (not `readonly`): re-created in `resetPredictionState()` on
+   *  sector handoff. The 5+ s transit gap pollutes the RTT stream, and
+   *  preserving Welford state across rooms saturates `leadTicks` at the
+   *  30-tick cap for tens of seconds post-arrival. See
+   *  `resetPredictionState()` for the full pathology. */
+  private _rttWelford: WelfordState = createWelford();
   /** Stage 4 — spring-smoothed lookahead controller. Replaces the
    *  pre-Stage-4 EWMA on `leadTicks` with a critically-damped ramp on
-   *  multi-tick changes; small changes snap directly. */
-  private readonly _lookaheadCtrl: LookaheadController = createLookaheadController(6);
+   *  multi-tick changes; small changes snap directly. Mutable for the
+   *  same reason as `_rttWelford`. */
+  private _lookaheadCtrl: LookaheadController = createLookaheadController(6);
   /** Stage 4 — sliding-window count of dropped snapshots over the last
    *  10 arrivals. Drives `computeInterpBiasMs` which biases the swarm
-   *  display-delay floor when the wire is dropping packets. */
-  private readonly _dropDetector: DropDetector = createDropDetector();
+   *  display-delay floor when the wire is dropping packets. Mutable for
+   *  the same reason as `_rttWelford`. */
+  private _dropDetector: DropDetector = createDropDetector();
   /** Diagnostic — set of swarm entityIds currently within the overlap log
    *  threshold of the local ship. Used to emit `swarm_near_enter` /
    *  `swarm_near_exit` events for the "overlapping with enemy ships"
@@ -387,6 +395,48 @@ export class ColyseusGameClient {
   /** Inject the audio sink before `connect()`. Wired by `App.tsx`'s bootstrap. */
   setAudio(audio: IAudio): void {
     this.audio = audio;
+  }
+
+  /**
+   * Wipe the Stage 4 prediction-loop state so the next snapshot from a
+   * fresh sector room behaves like a first-connect snapshot.
+   *
+   * Why this exists: the `transit_ready` handler hot-swaps the room's
+   * WebSocket via `consumeSeatReservation` but reuses the same
+   * `ColyseusClient` instance. Without an explicit reset, the welford
+   * RTT mean/σ, the spring-smoothed `leadTicks`, the snapshot-interval
+   * EWMA, the drop detector, and the clock anchor all carry across
+   * the 5+ s transit gap. The first wave of post-transit snapshots
+   * push gap-contaminated `lastRtt` samples (clamped to 250 ms by Stage 4
+   * hotfix #1, but still pushed when `intervalMs` lands back in the
+   * [35, 75] band by hotfix #3) into the surviving welford, the running
+   * mean drifts up, `mean + 2σ` saturates the 30-tick `CEILING_TICKS`
+   * cap in `lookaheadController`, and the client predicts ~600 ms
+   * ahead of authoritative state. Symptoms: `srvTick − ackedTick` locks
+   * at ~−37 for the rest of the session, the local ship renders far
+   * from where the server thinks it is, large reconcile drifts, and
+   * 60–70% of snapshots produce a correction that lerping must mask.
+   *
+   * Diagnosed from cap `2026-05-09T07-49-57-470Z-81numi` (post-warp,
+   * 67% correction rate, every snapshot at offset −37); cap
+   * `2026-05-09T07-51-26-622Z-wc5fm0` (steady-state long after the same
+   * session, offset settled to −15) is the clean baseline.
+   *
+   * Also resets `reconciler.lastRtt` so the first post-transit welford
+   * push (which reads the *previous* reconcile's lastRtt — see ordering
+   * in `handleSnapshot`) doesn't seed welford with the pre-transit value.
+   */
+  private resetPredictionState(): void {
+    this._rttWelford = createWelford();
+    this._lookaheadCtrl = createLookaheadController(6);
+    this._dropDetector = createDropDetector();
+    this.leadTicks = 6;
+    this._anchorInitialised = false;
+    this.lastSnapshotAt = 0;
+    this._recentIntervals.length = 0;
+    this._recentCorrFlags.length = 0;
+    this._intervalEwma = 0;
+    if (this.reconciler) this.reconciler.lastRtt = 0;
   }
 
   async connect(
@@ -681,6 +731,14 @@ export class ColyseusGameClient {
       } catch (err) {
         console.warn('[ColyseusClient] source room.leave during transit failed', err);
       }
+
+      // Wipe Stage 4 prediction-loop state so the destination sector's first
+      // snapshot is treated like a fresh-connect seed. Without this, the
+      // 5+ s transit gap pollutes the surviving welford RTT stream and the
+      // client over-predicts ~600 ms ahead of authoritative state for
+      // tens of seconds post-arrival. See `resetPredictionState()` for the
+      // full pathology and the diagnostic captures that motivated the fix.
+      this.resetPredictionState();
 
       // Wipe stale spatial state from the source sector. Without this, the old
       // sector's asteroids/drones (and remote ships) linger in the mirror at
