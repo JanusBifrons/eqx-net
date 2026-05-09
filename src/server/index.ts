@@ -122,6 +122,20 @@ gameServer.define('swarm-soak', SectorRoom, {
   swarmRadius: 18_000,
   maxClients: 8,
 });
+// 2026-05-09 — AI lockstep "feel" test room. Tight cluster of drones around
+// origin so the player can engage immediately and observe per-drone AI
+// behaviour without the swarm-soak server-hitch / GC-pause confounders.
+// Spawns at (0,0) by default; URL-param `spawnX`/`spawnY` still wins.
+gameServer.define('feel-test', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  swarmCount: 10,
+  swarmRatio: 0,        // 0 asteroids — 10 drones only
+  swarmRadius: 300,     // tight ring centred on origin
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

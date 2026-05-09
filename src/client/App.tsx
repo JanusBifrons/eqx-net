@@ -528,6 +528,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       const prettyName: Record<string, string> = {
         'sector': 'Sector Alpha',
         'test-sector': 'Test Sector',
+        'feel-test': 'Feel Test (10)',
         'swarm-soak': 'Swarm Soak (500)',
         'swarm-tidi': 'Swarm TiDi (4000)',
         'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
