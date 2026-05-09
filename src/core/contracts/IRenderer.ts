@@ -34,6 +34,9 @@ export interface PoseRingEntry {
   angle: number;
   vx: number;
   vy: number;
+  /** Angular velocity (rad/s). Wire-format v3 — required for client-side AI
+   *  lockstep with the server. See `swarmWireFormat.ts` v3 record. */
+  angvel: number;
   /** Wall-clock arrival timestamp (performance.now()) of the originating packet. */
   arrivalMs: number;
   /** Server tick of the originating packet — used for ordering when arrivals stack. */
@@ -61,6 +64,10 @@ export interface SwarmRenderState {
   vx: number;
   vy: number;
   angle: number;
+  /** Angular velocity (rad/s). Wire-format v3 — synced from server every
+   *  packet so the client's AI sees the same `self.angvel` the server's AI
+   *  used. Without this, the AI's `1.5·ω` damping term diverged each tick. */
+  angvel: number;
   /** Pose from the previous packet — bookkeeping shadow of `poseRing[ringHead − 2]`. */
   prevX: number;
   prevY: number;

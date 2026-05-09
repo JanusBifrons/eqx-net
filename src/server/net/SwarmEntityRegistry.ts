@@ -30,8 +30,13 @@ export interface SwarmEntityRecord {
    *  u8 index into `SHIP_KINDS_LIST`; client renders the matching silhouette
    *  + colour. */
   shipKind?: string;
-  /** Last pose actually included in a swarm packet, for delta detection. */
-  lastBroadcast: { x: number; y: number; angle: number };
+  /** Last pose actually included in a swarm packet, for delta detection.
+   *  v3 (2026-05-09 AI lockstep) adds `angvel` so the encoder ships when a
+   *  drone's spin rate changes even if its position is steady — the client AI
+   *  needs the live `self.angvel` to feed the same damping term the server's
+   *  AI uses. Pre-v3 the field was missing from the wire and from the delta
+   *  detector; the client's drone angvel free-ran and AI torque diverged. */
+  lastBroadcast: { x: number; y: number; angle: number; angvel: number };
   /** Last sleeping flag included in a swarm packet, for transition detection. */
   lastBroadcastSleeping: boolean;
   /** Tick when this entity was last shipped in a packet. Used by sweepers later. */
@@ -40,6 +45,7 @@ export interface SwarmEntityRecord {
 
 const QUANT_POS = 0.05;   // 5 cm
 const QUANT_ANGLE = 0.005; // ~0.3°
+const QUANT_ANGVEL = 0.05; // ~3°/s; below this drones spin slowly enough that one-tick lag is invisible
 
 /**
  * Speed (u/s, taxicab) above which we skip the quantisation check entirely
@@ -77,7 +83,7 @@ export class SwarmEntityRegistry {
       slot,
       kind,
       radius,
-      lastBroadcast: { x, y, angle },
+      lastBroadcast: { x, y, angle, angvel: 0 },
       lastBroadcastSleeping: false,
       lastBroadcastTick: -1,
     };
@@ -125,14 +131,24 @@ export class SwarmEntityRegistry {
    * Below MOVING_SPEED_TAXI the entity is treated as stationary and the
    * quantisation gate suppresses chatter.
    */
-  static poseChanged(rec: SwarmEntityRecord, x: number, y: number, angle: number, vx: number, vy: number): boolean {
+  static poseChanged(
+    rec: SwarmEntityRecord,
+    x: number,
+    y: number,
+    angle: number,
+    vx: number,
+    vy: number,
+    angvel: number,
+  ): boolean {
     if (Math.abs(vx) + Math.abs(vy) > MOVING_SPEED_TAXI) return true;
     return (
       Math.abs(rec.lastBroadcast.x - x) >= QUANT_POS ||
       Math.abs(rec.lastBroadcast.y - y) >= QUANT_POS ||
-      Math.abs(rec.lastBroadcast.angle - angle) >= QUANT_ANGLE
+      Math.abs(rec.lastBroadcast.angle - angle) >= QUANT_ANGLE ||
+      Math.abs(rec.lastBroadcast.angvel - angvel) >= QUANT_ANGVEL
     );
   }
 }
 
 export const SWARM_MOVING_SPEED_TAXI = MOVING_SPEED_TAXI;
+export const SWARM_QUANT_ANGVEL = QUANT_ANGVEL;

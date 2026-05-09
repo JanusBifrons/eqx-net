@@ -4,11 +4,13 @@ import { SwarmEntityRegistry } from './SwarmEntityRegistry.js';
 import {
   SAB_TOTAL_BYTES,
   slotBase,
-  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF,
+  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF, SLOT_FLAGS_OFF,
   FLAG_SLEEPING,
 } from '../../shared-types/sabLayout.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_REC_ANGVEL_OFF,
+  SWARM_REC_RADIUS_OFF,
   SWARM_FLAG_FULL, SWARM_RECORD_FLAG_SLEEPING,
   SWARM_WIRE_VERSION,
 } from '../../shared-types/swarmWireFormat.js';
@@ -21,13 +23,14 @@ function makeSab(): { f32: Float32Array; u32: Uint32Array } {
   return { f32: new Float32Array(sab), u32: new Uint32Array(sab) };
 }
 
-function setSlotPose(f32: Float32Array, slot: number, x: number, y: number, vx: number, vy: number, angle: number): void {
+function setSlotPose(f32: Float32Array, slot: number, x: number, y: number, vx: number, vy: number, angle: number, angvel: number = 0): void {
   const b = slotBase(slot);
   f32[b + SLOT_X_OFF] = x;
   f32[b + SLOT_Y_OFF] = y;
   f32[b + SLOT_VX_OFF] = vx;
   f32[b + SLOT_VY_OFF] = vy;
   f32[b + SLOT_ANGLE_OFF] = angle;
+  f32[b + SLOT_ANGVEL_OFF] = angvel;
 }
 
 function setSlotSleeping(u32: Uint32Array, slot: number, sleeping: boolean): void {
@@ -71,7 +74,43 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(view.getUint8(SWARM_HEADER_BYTES + 2)).toBe(0);        // kind=asteroid
     expect(view.getFloat32(SWARM_HEADER_BYTES + 4, true)).toBeCloseTo(100, 5);
     expect(view.getFloat32(SWARM_HEADER_BYTES + 8, true)).toBeCloseTo(200, 5);
-    expect(view.getFloat32(SWARM_HEADER_BYTES + 24, true)).toBeCloseTo(32, 5);
+    // v3: radius lives at +28 (was +24 in v2 — moved to make room for angvel).
+    expect(view.getFloat32(SWARM_HEADER_BYTES + SWARM_REC_RADIUS_OFF, true)).toBeCloseTo(32, 5);
+  });
+
+  // Phase A — wire-format v3 (2026-05-09 AI lockstep).
+  it('ships angvel from SAB at the v3 record offset', () => {
+    registry.register('drone', SLOT_A, 1, 14, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 0.6, 0, 0.5, 1.25); // taxicab speed > 0.5 forces ship
+    const packet = encoder.encode(registry, f32, u32, 60);
+    expect(packet).not.toBeNull();
+    const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
+    expect(view.getFloat32(SWARM_HEADER_BYTES + SWARM_REC_ANGVEL_OFF, true)).toBeCloseTo(1.25, 5);
+  });
+
+  it('sleeping packet zeros angvel on the wire even if SAB still has nonzero residual', () => {
+    registry.register('drone', SLOT_A, 1, 14, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 0, 0, 0, 0, 0, 0.7);
+    setSlotSleeping(u32, SLOT_A, true);
+    const packet = encoder.encode(registry, f32, u32, 60);
+    expect(packet).not.toBeNull();
+    const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
+    expect(view.getFloat32(SWARM_HEADER_BYTES + SWARM_REC_ANGVEL_OFF, true)).toBe(0);
+  });
+
+  it('angvel-only change above quantisation triggers a delta ship', () => {
+    registry.register('drone', SLOT_A, 1, 14, 0, 0, 0);
+    // Stationary, angle steady, but spinning. Bootstrap full snapshot with 0
+    // angvel; subsequent tick the SAB angvel jumps to 0.2 (above the 0.05
+    // QUANT_ANGVEL threshold).
+    setSlotPose(f32, SLOT_A, 0, 0, 0, 0, 0, 0);
+    encoder.encode(registry, f32, u32, 60);
+    expect(encoder.encode(registry, f32, u32, 61)).toBeNull();
+
+    setSlotPose(f32, SLOT_A, 0, 0, 0, 0, 0, 0.2);
+    const packet = encoder.encode(registry, f32, u32, 62);
+    expect(packet).not.toBeNull();
+    expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(1);
   });
 
   it('delta packet skips entities whose pose has not moved past the quantisation epsilon', () => {

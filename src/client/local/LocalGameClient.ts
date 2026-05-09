@@ -75,13 +75,13 @@ export class LocalGameClient {
         // entry is populated.
         const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
         for (let i = 0; i < POSE_RING_DEPTH; i++) {
-          ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+          ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
         }
         ring[0]!.x = s.x; ring[0]!.y = s.y; ring[0]!.angle = s.angle;
-        ring[0]!.vx = s.vx; ring[0]!.vy = s.vy;
+        ring[0]!.vx = s.vx; ring[0]!.vy = s.vy; ring[0]!.angvel = s.angvel ?? 0;
         ring[0]!.empty = false;
         const entry: SwarmRenderState = {
-          x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle,
+          x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angvel: s.angvel ?? 0,
           prevX: s.x, prevY: s.y, prevAngle: s.angle,
           prevArrivalMs: 0, latestArrivalMs: 0,
           poseRing: ring,

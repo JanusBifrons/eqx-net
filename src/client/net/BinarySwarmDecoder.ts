@@ -14,6 +14,8 @@ import type { RenderMirror, SwarmRenderState, PoseRingEntry } from '../../core/c
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_REC_ANGVEL_OFF,
+  SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
@@ -31,7 +33,7 @@ interface MutableMirror {
 function makeEmptyRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
   for (let i = 0; i < POSE_RING_DEPTH; i++) {
-    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
   }
   return ring;
 }
@@ -99,8 +101,10 @@ export function decodeSwarmPacket(
     const vx = view.getFloat32(off + 12, true);
     const vy = view.getFloat32(off + 16, true);
     const angle = view.getFloat32(off + 20, true);
-    const radius = view.getFloat32(off + 24, true);
-    // v2: trailing u8 shipKind index (only meaningful when kind === drone).
+    // v3: angvel at +24 (NEW), radius shifted to +28, shipKind to +32.
+    const angvel = view.getFloat32(off + SWARM_REC_ANGVEL_OFF, true);
+    const radius = view.getFloat32(off + SWARM_REC_RADIUS_OFF, true);
+    // Trailing u8 shipKind index (only meaningful when kind === drone).
     const shipKindByte = view.getUint8(off + SWARM_REC_SHIP_KIND_OFF);
     off += SWARM_RECORD_BYTES;
 
@@ -115,11 +119,11 @@ export function decodeSwarmPacket(
       const ring = makeEmptyRing();
       const slot = ring[0]!;
       slot.x = x; slot.y = y; slot.angle = angle;
-      slot.vx = vx; slot.vy = vy;
+      slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
       slot.arrivalMs = nowMs; slot.serverTick = tick;
       slot.sleeping = sleeping; slot.empty = false;
       entry = {
-        x, y, vx, vy, angle, radius, kind, sleeping, lastUpdateTick: tick,
+        x, y, vx, vy, angle, angvel, radius, kind, sleeping, lastUpdateTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
@@ -142,6 +146,7 @@ export function decodeSwarmPacket(
       entry.vx = vx;
       entry.vy = vy;
       entry.angle = angle;
+      entry.angvel = angvel;
       entry.radius = radius;
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
@@ -152,7 +157,7 @@ export function decodeSwarmPacket(
       // what `interpolateSwarmPose` reads on the hot path.
       const slot = entry.poseRing[entry.ringHead]!;
       slot.x = x; slot.y = y; slot.angle = angle;
-      slot.vx = vx; slot.vy = vy;
+      slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
       slot.arrivalMs = nowMs; slot.serverTick = tick;
       slot.sleeping = sleeping; slot.empty = false;
       entry.ringHead = (entry.ringHead + 1) % POSE_RING_DEPTH;

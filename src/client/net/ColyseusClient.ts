@@ -1551,8 +1551,13 @@ export class ColyseusGameClient {
           preSnapAngle = pre.angle;
         }
       }
+      // 2026-05-09 AI lockstep (Phase A): pass angvel through. Wire-format v3
+      // carries the field; without it the client AI's `1.5·ω` damping term
+      // ran on a free-evolving predWorld value while the server's ran on the
+      // SAB-authoritative one — drone bearing diverged every tick. World
+      // setShipState (`World.ts:359`) wakes the body via Rapier's setAngvel.
       this.predWorld.setShipState(key, {
-        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
+        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
       });
       if (
         entry.kind === 1

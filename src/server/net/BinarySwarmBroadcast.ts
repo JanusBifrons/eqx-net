@@ -12,11 +12,13 @@
  * sleeping bit) — never the live position.
  */
 import {
-  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF,
+  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF, SLOT_FLAGS_OFF,
   FLAG_SLEEPING, slotBase, MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
 import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
+  SWARM_REC_ANGVEL_OFF,
+  SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
@@ -104,9 +106,10 @@ export class BinarySwarmBroadcast {
 
       const vx = sabF32[base + SLOT_VX_OFF]!;
       const vy = sabF32[base + SLOT_VY_OFF]!;
+      const angvel = sabF32[base + SLOT_ANGVEL_OFF]!;
 
       const sleepChanged = sleeping !== rec.lastBroadcastSleeping;
-      const poseChanged = SwarmEntityRegistry.poseChanged(rec, x, y, angle, vx, vy);
+      const poseChanged = SwarmEntityRegistry.poseChanged(rec, x, y, angle, vx, vy, angvel);
 
       // Phase 5d interest filtering. Entities outside the per-client window
       // still ship at decimated cadence so the client has a recent-enough
@@ -153,8 +156,13 @@ export class BinarySwarmBroadcast {
       this.view.setFloat32(writeOffset + 12, sleeping ? 0 : vx, true);
       this.view.setFloat32(writeOffset + 16, sleeping ? 0 : vy, true);
       this.view.setFloat32(writeOffset + 20, angle, true);
-      this.view.setFloat32(writeOffset + 24, rec.radius, true);
-      // v2 trailing byte: drone's ship-kind index. Asteroids write 0 (the
+      // v3 (2026-05-09 AI lockstep): angvel is required so the client AI's
+      // damping term `1.5·ω` matches the server's. Sleeping packets zero ω
+      // alongside vx/vy so the client doesn't keep spinning a body the server
+      // says is at rest.
+      this.view.setFloat32(writeOffset + SWARM_REC_ANGVEL_OFF, sleeping ? 0 : angvel, true);
+      this.view.setFloat32(writeOffset + SWARM_REC_RADIUS_OFF, rec.radius, true);
+      // Trailing byte: drone's ship-kind index. Asteroids write 0 (the
       // client decoder ignores the byte for kind=0 records anyway).
       const shipKindIdx = rec.kind === 1 && rec.shipKind && isShipKindId(rec.shipKind)
         ? shipKindToIndex(rec.shipKind)
@@ -166,6 +174,7 @@ export class BinarySwarmBroadcast {
       rec.lastBroadcast.x = x;
       rec.lastBroadcast.y = y;
       rec.lastBroadcast.angle = angle;
+      rec.lastBroadcast.angvel = sleeping ? 0 : angvel;
       rec.lastBroadcastSleeping = sleeping;
       rec.lastBroadcastTick = serverTick;
       count++;
