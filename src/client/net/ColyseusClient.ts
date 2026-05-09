@@ -256,6 +256,29 @@ export class ColyseusGameClient {
   /** Reusable AiPlayerView buffer to avoid per-tick allocation in the AI tick. */
   private readonly _aiPlayersBuf: AiPlayerView[] = [];
 
+  /**
+   * Phase 3 follow-up (2026-05-09): per-drone render lerp offsets.
+   *
+   * Every binary swarm packet calls `setShipState` on the matching drone
+   * body in predWorld — that "rewinds" the drone by ~leadTicks worth of
+   * AI-integrated motion to the server's just-shipped pose. AI then
+   * re-extrapolates over the next few RAF frames to bring it back to
+   * "now." If we render predWorld directly, that rewind shows as a
+   * 50 ms-cadence backward snap → forward catch-up oscillation — the
+   * "double vision" the user reported after the render path was
+   * re-pointed at predWorld.
+   *
+   * Fix: same pattern player ships use (`_remoteShipOffsets`). When the
+   * snap happens, capture the pre-snap render position; the offset is
+   * `pre - post`. Each frame the offset decays via critically-damped
+   * spring; the rendered drone position is `predWorld + offset`. Visible
+   * motion stays smooth across the snap.
+   */
+  private readonly _droneRenderOffsets = new Map<
+    number,
+    { sx: SpringState; sy: SpringState; halfLifeMs: number }
+  >();
+
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
@@ -475,6 +498,7 @@ export class ColyseusGameClient {
       this._aiController.unregister(`${id}`);
     }
     this._aiRegisteredIds.clear();
+    this._droneRenderOffsets.clear();
   }
 
   async connect(
@@ -1473,22 +1497,57 @@ export class ColyseusGameClient {
         }
         this.predSwarmKeys.add(key);
       }
+      // Capture pre-snap pose for drones so we can drive the render lerp
+      // offset (see `_droneRenderOffsets`). Only meaningful when the body
+      // already exists; first-spawn case has nothing to lerp from.
+      let preSnapX: number | undefined;
+      let preSnapY: number | undefined;
+      if (entry.kind === 1) {
+        const pre = this.predWorld.getShipState(key);
+        if (pre) { preSnapX = pre.x; preSnapY = pre.y; }
+      }
       this.predWorld.setShipState(key, {
         x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
       });
+      if (entry.kind === 1 && preSnapX !== undefined && preSnapY !== undefined) {
+        const ox = preSnapX - entry.x;
+        const oy = preSnapY - entry.y;
+        const dist = Math.hypot(ox, oy);
+        // Skip the spring update if the snap is sub-pixel — saves work
+        // on every packet for drones that barely moved.
+        if (dist > 0.05) {
+          const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
+          const existing = this._droneRenderOffsets.get(entityId);
+          if (existing) {
+            existing.sx.x = ox; existing.sx.v = 0;
+            existing.sy.x = oy; existing.sy.v = 0;
+            existing.halfLifeMs = halfLifeMs;
+          } else {
+            this._droneRenderOffsets.set(entityId, {
+              sx: { x: ox, v: 0 },
+              sy: { x: oy, v: 0 },
+              halfLifeMs,
+            });
+          }
+        }
+      }
     }
     // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
     for (const key of this.predSwarmKeys) {
       if (!seen.has(key)) {
         this.predWorld.despawnShip(key);
         this.predSwarmKeys.delete(key);
-        // If the swept body was a drone, unregister from the AI controller.
-        // Numeric entityId is encoded in the key as `swarm-${id}`.
+        // If the swept body was a drone, unregister from the AI controller
+        // and drop any pending render lerp offset. Numeric entityId is
+        // encoded in the key as `swarm-${id}`.
         const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
         const id = Number(idStr);
-        if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
-          this._aiController.unregister(`${id}`);
-          this._aiRegisteredIds.delete(id);
+        if (Number.isFinite(id)) {
+          if (this._aiRegisteredIds.has(id)) {
+            this._aiController.unregister(`${id}`);
+            this._aiRegisteredIds.delete(id);
+          }
+          this._droneRenderOffsets.delete(id);
         }
       }
     }
@@ -1720,8 +1779,26 @@ export class ColyseusGameClient {
         if (entry.kind !== 1) continue;
         const pose = this.predWorld.getShipState(`swarm-${entityId}`);
         if (!pose) continue;
-        entry.x = pose.x;
-        entry.y = pose.y;
+        // Apply (and decay) the per-drone render lerp offset so the
+        // ~50 ms-cadence packet snap is invisible. Spring is shared
+        // shape with `_remoteShipOffsets`. Drop the entry once both
+        // axes settle below the noise floor.
+        let ox = 0, oy = 0;
+        const off = this._droneRenderOffsets.get(entityId);
+        if (off) {
+          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
+          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
+          ox = off.sx.x;
+          oy = off.sy.x;
+          const stillMoving =
+            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
+            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
+          if (!stillMoving) this._droneRenderOffsets.delete(entityId);
+        }
+        entry.x = pose.x + ox;
+        entry.y = pose.y + oy;
         entry.angle = pose.angle;
         entry.vx = pose.vx;
         entry.vy = pose.vy;
