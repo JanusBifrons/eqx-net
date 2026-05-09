@@ -1,11 +1,10 @@
 /**
  * Dev-only diagnostic capture endpoint.
  *
- * Lets a connected client POST a JSON blob (captured ring buffer + UA + stats)
- * to be written to `diag/captures/<timestamp>-<id>.json`. The intent is that
- * the user plays for a bit on a real device, taps a "Capture diagnostic"
- * button, and the file appears server-side where Claude can `Read` it for
- * analysis. No DB; one file per capture; directory is gitignored.
+ * Writes one capture as a DIRECTORY of sibling NDJSON files grouped by
+ * purpose, plus a small `summary.json` with tag histograms and extracted
+ * highlights. Read `summary.json` first; it tells you which sibling has
+ * the spike. See `docs/architecture/diagnostic-captures.md`.
  *
  * Disabled when `NODE_ENV === 'production'` — the index.ts mount is gated.
  */
@@ -20,25 +19,135 @@ import { getLimboStore } from '../db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
-const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling — a 500-entry log is ~150 KB; this is plenty.
+const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling.
+
+/**
+ * Tag → bucket. Anything unmapped lands in `other`. Adding a new tag means
+ * one line here; keep this list as the single source of truth.
+ *
+ * Bucket meanings:
+ *   - perf:        server-side performance signals (hitches, GC, budget)
+ *   - corrections: client reconcile drift events
+ *   - combat:      fire path + swarm proximity (laser/overlap diagnostics)
+ *   - lifecycle:   join/leave/welcome/error/disconnect (rare, structural)
+ *   - snapshots:   client snapshot + server snapshot_broadcast (high vol)
+ *   - raf:         per-frame inputs and per-RAF ticks (highest vol — read last)
+ */
+const BUCKETS: Record<string, string> = {
+  // server perf
+  tick_hitch: 'perf',
+  tick_budget: 'perf',
+  gc_pause: 'perf',
+  // client corrections
+  correction: 'corrections',
+  // combat (client + server)
+  fire: 'combat',
+  fireRejected: 'combat',
+  fire_received: 'combat',
+  swarm_near_enter: 'combat',
+  swarm_near_exit: 'combat',
+  // lifecycle
+  welcome: 'lifecycle',
+  disconnected: 'lifecycle',
+  room_error: 'lifecycle',
+  player_join: 'lifecycle',
+  player_leave: 'lifecycle',
+  player_rebind: 'lifecycle',
+  player_lingered: 'lifecycle',
+  ownerless_evicted: 'lifecycle',
+  // snapshots
+  snapshot: 'snapshots',
+  snapshot_broadcast: 'snapshots',
+  // high-volume per-frame noise
+  rafTick: 'raf',
+  inputSent: 'raf',
+  input_received: 'raf',
+};
+
+const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'snapshots', 'raf', 'other'] as const;
+type BucketName = typeof ALL_BUCKETS[number];
 
 const captureSchema = z.object({
-  /** Free-form note from the user (e.g. "corr feels bad"). */
   note: z.string().max(500).optional(),
-  /** User agent string from the client. */
   userAgent: z.string().max(500).optional(),
-  /** Viewport for spotting mobile vs desktop without parsing UA. */
   viewport: z.object({ w: z.number(), h: z.number() }).optional(),
-  /** `gameClient.stats` snapshot (PredictionStats). Free-shape — we just store it. */
   stats: z.record(z.unknown()).optional(),
+  /** Wall-clock ms epoch at client boot, so client `ts` (perf.now) and server `ts` (wall) can be aligned. */
+  clientEpochMs: z.number().optional(),
   /** Ring-buffer entries from `window.__eqxLogs`. Free-shape per entry. */
   logs: z.array(z.record(z.unknown())).max(2000),
 }).strict();
 
+interface RoutedEntry {
+  source: 'client' | 'server';
+  ts: number;
+  tag: string;
+  data: Record<string, unknown>;
+}
+
+function routeBucket(tag: string): BucketName {
+  const b = BUCKETS[tag];
+  return (b ?? 'other') as BucketName;
+}
+
+function asEntry(source: 'client' | 'server', raw: Record<string, unknown>): RoutedEntry | null {
+  const ts = typeof raw['ts'] === 'number' ? raw['ts'] : NaN;
+  const tag = typeof raw['tag'] === 'string' ? raw['tag'] : '';
+  const data = (raw['data'] && typeof raw['data'] === 'object') ? raw['data'] as Record<string, unknown> : {};
+  if (!Number.isFinite(ts) || tag.length === 0) return null;
+  return { source, ts, tag, data };
+}
+
+/**
+ * Pull out the small set of payloads that anyone reading the capture should
+ * see immediately, without skimming the bulk NDJSON files. These are the
+ * "first place to look" datapoints for the recurring questions:
+ *   - Did the server hitch?     → topTickHitches, topTickBudgets
+ *   - Did GC pause?              → gcPauses (rare; include all)
+ *   - Did the client correct hard? → topCorrections
+ *   - Did anything go wrong?     → firstError
+ */
+function extractHighlights(entries: RoutedEntry[]): Record<string, unknown> {
+  const tickHitches = entries.filter((e) => e.tag === 'tick_hitch');
+  const tickBudgets = entries.filter((e) => e.tag === 'tick_budget');
+  const gcPauses = entries.filter((e) => e.tag === 'gc_pause');
+  const corrections = entries.filter((e) => e.tag === 'correction');
+  const firstError = entries.find((e) => e.tag === 'room_error' || e.tag === 'disconnected');
+
+  const topBy = <T extends RoutedEntry>(arr: T[], key: string, n: number): T[] =>
+    [...arr]
+      .sort((a, b) => Number((b.data?.[key] ?? 0)) - Number((a.data?.[key] ?? 0)))
+      .slice(0, n);
+
+  return {
+    topTickHitches: topBy(tickHitches, 'totalMs', 5),
+    topTickBudgets: topBy(tickBudgets, 'totalMs', 3),
+    gcPauses,
+    topCorrections: topBy(corrections, 'driftUnits', 5),
+    firstError: firstError ?? null,
+  };
+}
+
+function tagHistogram(entries: RoutedEntry[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const e of entries) {
+    const k = `${e.source}/${e.tag}`;
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
+}
+
+function timeBounds(entries: RoutedEntry[], source: 'client' | 'server'): { firstTs: number | null; lastTs: number | null; durationMs: number | null } {
+  const xs = entries.filter((e) => e.source === source).map((e) => e.ts);
+  if (xs.length === 0) return { firstTs: null, lastTs: null, durationMs: null };
+  const firstTs = Math.min(...xs);
+  const lastTs = Math.max(...xs);
+  return { firstTs, lastTs, durationMs: lastTs - firstTs };
+}
+
 export const diagRouter: ExpressRouter = Router();
 
 diagRouter.post('/capture', async (req: Request, res: Response) => {
-  // Hard size cap before zod even sees it.
   const rawLength = JSON.stringify(req.body ?? {}).length;
   if (rawLength > MAX_BYTES) {
     res.status(413).json({ error: 'capture too large', bytes: rawLength });
@@ -51,26 +160,65 @@ diagRouter.post('/capture', async (req: Request, res: Response) => {
     return;
   }
 
-  await mkdir(CAPTURE_DIR, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const id = Math.random().toString(36).slice(2, 8);
-  const filename = `${ts}-${id}.json`;
-  const path = join(CAPTURE_DIR, filename);
+  const dirName = `${ts}-${id}`;
+  const dirPath = join(CAPTURE_DIR, dirName);
+  await mkdir(dirPath, { recursive: true });
 
-  // Pull the matching window of server-side events so the saved file has
-  // both perspectives in one place. 500 entries covers ~10 s at typical rates.
   const serverEvents = getRecentEvents(500);
 
-  const payload = {
+  const entries: RoutedEntry[] = [];
+  for (const raw of parsed.data.logs) {
+    const e = asEntry('client', raw);
+    if (e) entries.push(e);
+  }
+  for (const raw of serverEvents) {
+    const e = asEntry('server', raw as unknown as Record<string, unknown>);
+    if (e) entries.push(e);
+  }
+
+  // Bucket and write NDJSON siblings.
+  const buckets: Record<BucketName, RoutedEntry[]> = {
+    perf: [], corrections: [], combat: [], lifecycle: [], snapshots: [], raf: [], other: [],
+  };
+  for (const e of entries) buckets[routeBucket(e.tag)].push(e);
+
+  const bucketSizes: Record<string, number> = {};
+  await Promise.all(ALL_BUCKETS.map(async (b) => {
+    const rows = buckets[b];
+    bucketSizes[b] = rows.length;
+    if (rows.length === 0) return; // skip empty siblings to keep the dir scannable
+    const ndjson = rows.map((r) => JSON.stringify(r)).join('\n') + '\n';
+    await writeFile(join(dirPath, `${b}.ndjson`), ndjson, 'utf8');
+  }));
+
+  const summary = {
     capturedAt: ts,
+    dirName,
+    note: parsed.data.note ?? null,
+    userAgent: parsed.data.userAgent ?? null,
+    viewport: parsed.data.viewport ?? null,
+    clientEpochMs: parsed.data.clientEpochMs ?? null,
     serverReceivedAtMs: Date.now(),
-    ...parsed.data,
-    serverEvents,
+    timing: {
+      note: 'client ts is performance.now() (relative to client boot); server ts is Date.now() wall-clock ms.',
+      client: timeBounds(entries, 'client'),
+      server: timeBounds(entries, 'server'),
+    },
+    counts: {
+      total: entries.length,
+      buckets: bucketSizes,
+      tags: tagHistogram(entries),
+    },
+    highlights: extractHighlights(entries),
+    stats: parsed.data.stats ?? null,
+    files: ALL_BUCKETS.filter((b) => bucketSizes[b]! > 0).map((b) => `${b}.ndjson`),
   };
 
-  await writeFile(path, JSON.stringify(payload, null, 2), 'utf8');
+  await writeFile(join(dirPath, 'summary.json'), JSON.stringify(summary, null, 2), 'utf8');
 
-  res.json({ ok: true, filename, bytes: rawLength });
+  res.json({ ok: true, dir: dirName, filename: dirName, bytes: rawLength });
 });
 
 /** Mirror of CAPTURE_DIR for tests / introspection. */
@@ -119,20 +267,6 @@ export function devStatsHandler(req: Request, res: Response): void {
   }
 }
 
-/**
- * GET /dev/limbo?playerId=foo — Phase 8 sub-phase B inspection + landing-
- * screen lookup. Returns the held-ship summary so the galaxy-map landing
- * screen can render a "your ship is here" card. The summary deliberately
- * omits velocity (vx/vy/angvel) and angle — those are simulation details
- * the player doesn't care about — but does include position, health, and
- * the metadata needed to format a "saved <duration> ago" UI string.
- *
- * NODE_ENV-gated mount in index.ts. The route is the single client-facing
- * lookup for the active-Limbo UX; it's safe to expose pose because the
- * playerId-keyed lookup requires the requester to already know the
- * playerId (which is per-browser localStorage), and pose is broadcast
- * unconditionally to anyone in the same sector anyway.
- */
 /**
  * POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
  *

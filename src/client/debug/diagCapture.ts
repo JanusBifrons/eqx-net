@@ -1,8 +1,10 @@
 /**
  * Captures the client-side diagnostic ring buffer (`window.__eqxLogs`),
  * the latest `gameClient.stats`, and basic environment info, and POSTs it
- * to the dev-only `/diag/capture` endpoint. The server writes one JSON file
- * per capture under `diag/captures/`.
+ * to the dev-only `/diag/capture` endpoint. The server writes one DIRECTORY
+ * per capture under `diag/captures/<timestamp>-<id>/` containing a small
+ * `summary.json` plus sibling NDJSON files grouped by purpose. See
+ * `docs/architecture/diagnostic-captures.md`.
  *
  * Used to diagnose live-device issues (mobile corr rate, RAF jitter, etc.)
  * without copy-pasting from devtools.
@@ -20,7 +22,10 @@ interface CaptureInput {
 
 export interface CaptureResult {
   ok: boolean;
+  /** Directory name (e.g. `2026-05-09T08-30-00-000Z-abc123`). Same value as `dir`; preserved for older callers. */
   filename?: string;
+  /** Directory name written under `diag/captures/`. */
+  dir?: string;
   error?: string;
   bytes?: number;
 }
@@ -28,6 +33,7 @@ export interface CaptureResult {
 declare global {
   interface Window {
     __eqxLogs?: LogEntry[];
+    __eqxEpoch?: number;
   }
 }
 
@@ -43,11 +49,14 @@ export async function captureDiagnostic(input: CaptureInput = {}): Promise<Captu
     ? { w: window.innerWidth, h: window.innerHeight }
     : undefined;
 
+  const clientEpochMs = typeof window !== 'undefined' ? window.__eqxEpoch : undefined;
+
   const body: Record<string, unknown> = { logs };
   if (input.note !== undefined) body['note'] = input.note;
   if (input.stats !== undefined) body['stats'] = input.stats;
   if (userAgent !== undefined) body['userAgent'] = userAgent;
   if (viewport !== undefined) body['viewport'] = viewport;
+  if (clientEpochMs !== undefined) body['clientEpochMs'] = clientEpochMs;
 
   const url = (input.serverUrl ?? '') + '/diag/capture';
 
@@ -60,7 +69,7 @@ export async function captureDiagnostic(input: CaptureInput = {}): Promise<Captu
     if (!res.ok) {
       return { ok: false, error: `HTTP ${res.status}` };
     }
-    const json = await res.json() as { ok: boolean; filename?: string; bytes?: number };
+    const json = await res.json() as { ok: boolean; filename?: string; dir?: string; bytes?: number };
     return json;
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

@@ -52,8 +52,37 @@ beforeEach(async () => {
   await rm(captureDir, { recursive: true, force: true });
 });
 
+interface SummaryShape {
+  capturedAt: string;
+  dirName: string;
+  note: string | null;
+  userAgent: string | null;
+  viewport: { w: number; h: number } | null;
+  clientEpochMs: number | null;
+  serverReceivedAtMs: number;
+  timing: {
+    note: string;
+    client: { firstTs: number | null; lastTs: number | null; durationMs: number | null };
+    server: { firstTs: number | null; lastTs: number | null; durationMs: number | null };
+  };
+  counts: {
+    total: number;
+    buckets: Record<string, number>;
+    tags: Record<string, number>;
+  };
+  highlights: {
+    topTickHitches: unknown[];
+    topTickBudgets: unknown[];
+    gcPauses: unknown[];
+    topCorrections: unknown[];
+    firstError: unknown;
+  };
+  stats: Record<string, unknown> | null;
+  files: string[];
+}
+
 describe('diagRouter', () => {
-  it('writes a capture file from a valid POST', async () => {
+  it('writes a directory with summary + bucketed NDJSON siblings', async () => {
     const res = await fetch(`${baseUrl}/diag/capture`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -61,27 +90,59 @@ describe('diagRouter', () => {
         note: 'corr feels bad',
         userAgent: 'Mozilla/5.0 (Pixel 7) Mobile',
         viewport: { w: 412, h: 915 },
+        clientEpochMs: 1_700_000_000_000,
         stats: { rttMs: 32, rollingCorrRate: 0.45 },
         logs: [
           { ts: 1000, tag: 'snapshot', data: { serverTick: 100, ackedTick: 95 } },
           { ts: 1050, tag: 'rafTick', data: { elapsedMs: 33, deficitBefore: 2 } },
+          { ts: 1100, tag: 'correction', data: { driftUnits: 12.5, angleDriftRad: 0.01 } },
         ],
       }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json() as { ok: boolean; filename: string };
+    const body = await res.json() as { ok: boolean; dir: string; filename: string };
     expect(body.ok).toBe(true);
-    expect(typeof body.filename).toBe('string');
+    expect(typeof body.dir).toBe('string');
+    expect(body.filename).toBe(body.dir);
 
-    const files = await readdir(captureDir);
-    expect(files).toHaveLength(1);
+    const dirs = await readdir(captureDir);
+    expect(dirs).toHaveLength(1);
+    const dirPath = join(captureDir, dirs[0]!);
 
-    const json = JSON.parse(await readFile(join(captureDir, files[0]!), 'utf8'));
-    expect(json.note).toBe('corr feels bad');
-    expect(json.userAgent).toContain('Pixel 7');
-    expect(json.stats.rollingCorrRate).toBe(0.45);
-    expect(json.logs).toHaveLength(2);
-    expect(Array.isArray(json.serverEvents)).toBe(true);
+    const files = await readdir(dirPath);
+    expect(files).toContain('summary.json');
+    expect(files).toContain('snapshots.ndjson');
+    expect(files).toContain('raf.ndjson');
+    expect(files).toContain('corrections.ndjson');
+
+    // Empty buckets are skipped to keep the directory scannable.
+    expect(files).not.toContain('combat.ndjson');
+    expect(files).not.toContain('lifecycle.ndjson');
+    expect(files).not.toContain('other.ndjson');
+
+    const summary = JSON.parse(await readFile(join(dirPath, 'summary.json'), 'utf8')) as SummaryShape;
+    expect(summary.note).toBe('corr feels bad');
+    expect(summary.userAgent).toContain('Pixel 7');
+    expect(summary.clientEpochMs).toBe(1_700_000_000_000);
+    expect(summary.stats?.['rollingCorrRate']).toBe(0.45);
+    expect(summary.counts.buckets['snapshots']).toBe(1);
+    expect(summary.counts.buckets['raf']).toBe(1);
+    expect(summary.counts.buckets['corrections']).toBe(1);
+    expect(summary.counts.tags['client/snapshot']).toBe(1);
+    expect(summary.files).toEqual(expect.arrayContaining(['snapshots.ndjson', 'raf.ndjson', 'corrections.ndjson']));
+
+    // The correction we sent should be visible in the highlights since it's the only one.
+    expect(Array.isArray(summary.highlights.topCorrections)).toBe(true);
+    expect(summary.highlights.topCorrections).toHaveLength(1);
+
+    // NDJSON sibling routes the right entry.
+    const snapshotsNd = await readFile(join(dirPath, 'snapshots.ndjson'), 'utf8');
+    const lines = snapshotsNd.trim().split('\n');
+    expect(lines).toHaveLength(1);
+    const entry = JSON.parse(lines[0]!) as { source: string; tag: string; data: { serverTick: number } };
+    expect(entry.source).toBe('client');
+    expect(entry.tag).toBe('snapshot');
+    expect(entry.data.serverTick).toBe(100);
   });
 
   it('rejects malformed payloads with 400', async () => {
