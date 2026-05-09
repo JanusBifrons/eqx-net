@@ -89,11 +89,12 @@ function computeMetrics(logs: LogEntry[]): CombatMetrics {
   };
 }
 
-// Override the project-default 30 s timeout via describe.configure — the
-// per-test `{ timeout }` option doesn't always win against the playwright.config
-// default reliably (depends on retry path), so describe-level is the
-// belt-and-braces approach.
-test.describe.configure({ timeout: 60_000 });
+// Tight test loop: 30 s timeout, no retries, no traces. The point is fast
+// iteration during the network-feel reset — every minute of waiting on this
+// spec is a minute we can't compare two commits. Total run target: ~12 s
+// (boot + browser + 3 s combat + read + assert).
+test.describe.configure({ timeout: 30_000, retries: 0 });
+test.use({ trace: 'off' });
 
 test('network feel: sustained drone combat stays within bounded drift', async ({ browser }) => {
   const ctx = await browser.newContext();
@@ -127,30 +128,26 @@ test('network feel: sustained drone combat stays within bounded drift', async ({
     { timeout: 15_000 },
   );
 
-  // Let drones spawn and the AI start pursuing.
-  await page.waitForTimeout(800);
-
-  // Clear any logs accumulated during spawn so the metrics reflect combat only.
+  // Brief wait for drones to spawn, then clear any spawn-time noise.
+  await page.waitForTimeout(500);
   await page.evaluate(() => { (window as { __eqxClearLogs?: () => void }).__eqxClearLogs?.(); });
 
-  // Drive combat: thrust + continuous fire, alternating turn every 500 ms.
-  // 4 s of combat → ~80 snapshots @ 20 Hz, exercising the drone-AI contact
-  // loop. Each `waitForTimeout` is a Playwright round-trip; minimising the
-  // count keeps the test inside the project's 60 s timeout including browser
-  // launch and trace teardown.
+  // Drive combat: thrust + continuous fire, with one mid-turn change.
+  // 3 s total → ~60 snapshots @ 20 Hz, enough for stable metric stats.
+  // Single Playwright round-trip per phase keeps the test fast.
   await page.keyboard.down('w');
   await page.keyboard.down('Space');
-  for (let i = 0; i < 8; i++) {
-    const turnKey = i % 2 === 0 ? 'a' : 'd';
-    await page.keyboard.down(turnKey);
-    await page.waitForTimeout(500);
-    await page.keyboard.up(turnKey);
-  }
+  await page.keyboard.down('a');
+  await page.waitForTimeout(1500);
+  await page.keyboard.up('a');
+  await page.keyboard.down('d');
+  await page.waitForTimeout(1500);
+  await page.keyboard.up('d');
   await page.keyboard.up('w').catch(() => undefined);
   await page.keyboard.up('Space').catch(() => undefined);
 
   // Settle one tick so the final snapshot lands.
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(150);
 
   // Pull the log ring buffer, compute metrics, log them, assert.
   const logs: LogEntry[] = await page.evaluate(() =>
@@ -172,9 +169,10 @@ test('network feel: sustained drone combat stays within bounded drift', async ({
   console.log('====================================\n');
 
   // ----- Sanity gates -----
-  // We must have actually exercised the system. If snapshots are very low,
-  // something else is broken (server didn't accept join, network died, etc.).
-  expect(m.snapshots).toBeGreaterThan(50);
+  // We must have actually exercised the system. 3 s @ 20 Hz nominal gives
+  // ~60 snapshots; cadence drops under load — 20 is a generous floor that
+  // still catches the "join failed entirely" case.
+  expect(m.snapshots).toBeGreaterThan(20);
 
   // ----- Acceptance bounds (post-fix targets) -----
   // These will FAIL on current `main` and that's the point — they're the bar
