@@ -153,4 +153,66 @@ describe('drone render smoothness — predWorld-snap + spring offset path', () =
     expect(finalRender).toBeGreaterThan(25);
     expect(finalRender).toBeLessThan(35);
   });
+
+  it('rendered angle does not jolt on packet snap (rotating drone)', () => {
+    // Drones rotate under AI to track the player. Each packet snap rewinds
+    // predWorld.angle by `LEAD_TICKS × angvel × dt` worth of rotation.
+    //
+    // Pre-fix (commits ac429de and 6501add): production applied a spring
+    // offset to x/y but NOT to angle, so the sprite visibly rotated
+    // back-and-forth at 20 Hz cadence even though x/y were smooth — the
+    // user reported "still jittering" after the position-only spring
+    // landed.
+    //
+    // This test exercises the production path verbatim with the angle
+    // smoothing applied. Asserts monotonic forward angle (drone rotates
+    // one direction without backward jolts).
+    const OMEGA = 2.0; // rad/sec — typical drone turn rate under AI
+    const renderAngles: number[] = [];
+    let predAngle = 0;
+    let packetAngle = 0;
+    let serverTicks = 0;
+    const angleOffset: SpringState = { x: 0, v: 0 };
+    let halfLife = HALF_LIFE_MS_SMALL;
+    for (let frame = 0; frame < 60; frame++) {
+      predAngle += OMEGA * (FIXED_DT_MS / 1000);
+      packetAngle += OMEGA * (FIXED_DT_MS / 1000);
+      serverTicks++;
+      if (serverTicks >= TICKS_PER_PACKET) {
+        serverTicks = 0;
+        const packetAngleAtT = packetAngle - OMEGA * LEAD_TICKS * (FIXED_DT_MS / 1000);
+        const preSnap = predAngle;
+        predAngle = packetAngleAtT;
+        // Production captures angular offset (with shortest-arc wrap)
+        // and stores it in the same per-drone spring map as x/y.
+        const newOff = preSnap - packetAngleAtT;
+        if (Math.abs(newOff) > 0.06) {
+          angleOffset.x = newOff;
+          angleOffset.v = 0;
+          // Drone-specific half-life thresholds — match production's
+          // `droneRenderOffsetHalfLifeForDrift` band picker.
+          halfLife = Math.abs(newOff) < 1 ? HALF_LIFE_MS_SMALL : HALF_LIFE_MS_LARGE;
+        }
+      }
+      springStep(angleOffset, 0, halfLife, FIXED_DT_MS);
+      renderAngles.push(predAngle + angleOffset.x);
+    }
+
+    // Render angle must move forward monotonically (drone rotates one way).
+    let backwardCount = 0;
+    let maxBackwardJump = 0;
+    for (let i = 1; i < renderAngles.length; i++) {
+      const delta = renderAngles[i]! - renderAngles[i - 1]!;
+      if (delta < 0) {
+        backwardCount++;
+        maxBackwardJump = Math.max(maxBackwardJump, -delta);
+      }
+    }
+    // eslint-disable-next-line no-console
+    console.log(`Angle backward frames: ${backwardCount} / ${renderAngles.length - 1}`);
+    // eslint-disable-next-line no-console
+    console.log(`Max angle backward jump: ${maxBackwardJump.toFixed(4)} rad/frame`);
+
+    expect(backwardCount).toBe(0);
+  });
 });

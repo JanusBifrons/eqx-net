@@ -172,6 +172,15 @@ function droneRenderOffsetHalfLifeForDrift(drift: number): number {
   return 150;
 }
 
+/** Wrap angle delta to [-π, π] so the spring lerps the short way around. */
+function normalizeAngleDelta(a: number): number {
+  const TWO_PI = 2 * Math.PI;
+  let r = a % TWO_PI;
+  if (r > Math.PI) r -= TWO_PI;
+  if (r < -Math.PI) r += TWO_PI;
+  return r;
+}
+
 /** Termination thresholds for remote-ship offset springs. Match the
  *  Reconciler's SPRING_POS_END / SPRING_VEL_END_MS so visual recovery
  *  ends consistently across local- and remote-ship offsets. */
@@ -302,7 +311,7 @@ export class ColyseusGameClient {
    */
   private readonly _droneRenderOffsets = new Map<
     number,
-    { sx: SpringState; sy: SpringState; halfLifeMs: number }
+    { sx: SpringState; sy: SpringState; sa: SpringState; halfLifeMs: number }
   >();
 
   /** IDs of remote ships currently spawned in the prediction world. */
@@ -1526,32 +1535,51 @@ export class ColyseusGameClient {
       // Capture pre-snap pose for drones so we can drive the render lerp
       // offset (see `_droneRenderOffsets`). Only meaningful when the body
       // already exists; first-spawn case has nothing to lerp from.
+      // Position AND angle are captured — drones rotate under AI to track
+      // the player, and a packet snap rewinds `LEAD_TICKS × angvel × dt`
+      // worth of rotation. Without smoothing the angle the sprite visibly
+      // jolts on every packet (the user-reported "still jittering" after
+      // the position-only spring landed in commit ac429de).
       let preSnapX: number | undefined;
       let preSnapY: number | undefined;
+      let preSnapAngle: number | undefined;
       if (entry.kind === 1) {
         const pre = this.predWorld.getShipState(key);
-        if (pre) { preSnapX = pre.x; preSnapY = pre.y; }
+        if (pre) {
+          preSnapX = pre.x;
+          preSnapY = pre.y;
+          preSnapAngle = pre.angle;
+        }
       }
       this.predWorld.setShipState(key, {
         x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle,
       });
-      if (entry.kind === 1 && preSnapX !== undefined && preSnapY !== undefined) {
+      if (
+        entry.kind === 1
+        && preSnapX !== undefined
+        && preSnapY !== undefined
+        && preSnapAngle !== undefined
+      ) {
         const ox = preSnapX - entry.x;
         const oy = preSnapY - entry.y;
+        const oa = normalizeAngleDelta(preSnapAngle - entry.angle);
         const dist = Math.hypot(ox, oy);
-        // Skip the spring update if the snap is sub-pixel — saves work
-        // on every packet for drones that barely moved.
-        if (dist > 0.05) {
+        // Trigger the spring on either a positional or angular snap. The
+        // angular threshold (~0.06 rad ≈ 3.4°) catches turn-rate-driven
+        // jolts even when the drone barely moved positionally.
+        if (dist > 0.05 || Math.abs(oa) > 0.06) {
           const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist);
           const existing = this._droneRenderOffsets.get(entityId);
           if (existing) {
             existing.sx.x = ox; existing.sx.v = 0;
             existing.sy.x = oy; existing.sy.v = 0;
+            existing.sa.x = oa; existing.sa.v = 0;
             existing.halfLifeMs = halfLifeMs;
           } else {
             this._droneRenderOffsets.set(entityId, {
               sx: { x: ox, v: 0 },
               sy: { x: oy, v: 0 },
+              sa: { x: oa, v: 0 },
               halfLifeMs,
             });
           }
@@ -1807,25 +1835,29 @@ export class ColyseusGameClient {
         if (!pose) continue;
         // Apply (and decay) the per-drone render lerp offset so the
         // ~50 ms-cadence packet snap is invisible. Spring is shared
-        // shape with `_remoteShipOffsets`. Drop the entry once both
-        // axes settle below the noise floor.
-        let ox = 0, oy = 0;
+        // shape with `_remoteShipOffsets`. Drop the entry once all
+        // three axes settle below the noise floor.
+        let ox = 0, oy = 0, oa = 0;
         const off = this._droneRenderOffsets.get(entityId);
         if (off) {
           springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
           springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
+          springStep(off.sa, 0, off.halfLifeMs, this.lastFrameMs);
           ox = off.sx.x;
           oy = off.sy.x;
+          oa = off.sa.x;
           const stillMoving =
             Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
             Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sa.x) > REMOTE_SPRING_POS_END ||
             Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
+            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS ||
+            Math.abs(off.sa.v) > REMOTE_SPRING_VEL_END_MS;
           if (!stillMoving) this._droneRenderOffsets.delete(entityId);
         }
         entry.x = pose.x + ox;
         entry.y = pose.y + oy;
-        entry.angle = pose.angle;
+        entry.angle = pose.angle + oa;
         entry.vx = pose.vx;
         entry.vy = pose.vy;
       }
