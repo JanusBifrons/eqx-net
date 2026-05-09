@@ -112,6 +112,17 @@ export interface PredictionStats {
   rttStdDevMs: number;
   /** Stage 4 — sliding-window count of dropped snapshots (last 10 arrivals). */
   droppedSnapshotsRecent: number;
+  /** Phase B — sliding-window p50 of per-drone snap distance (last 240 events). */
+  swarmSnapP50: number;
+  /** Phase B — sliding-window p99 of per-drone snap distance (last 240 events). */
+  swarmSnapP99: number;
+  /** Phase B — sliding-window p99 of per-drone angle delta (last 240 events). */
+  swarmAngleP99: number;
+  /** Phase B — sliding-window p99 of per-drone angvel delta (last 240 events). */
+  swarmAngvelP99: number;
+  /** Phase B — total number of drone snaps logged since connect. Different from
+   *  `swarm_snap_diagnostics` ring length (capped) — gives total volume. */
+  swarmSnapCount: number;
 }
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
@@ -370,7 +381,26 @@ export class ColyseusGameClient {
     rttMeanMs: 0,
     rttStdDevMs: 0,
     droppedSnapshotsRecent: 0,
+    swarmSnapP50: 0,
+    swarmSnapP99: 0,
+    swarmAngleP99: 0,
+    swarmAngvelP99: 0,
+    swarmSnapCount: 0,
   };
+
+  /** Phase B (2026-05-09 AI lockstep) — per-drone snap-event ring buffers
+   *  for surfacing p50/p99 metrics on `stats.swarmSnap*`. Sliding window of
+   *  the most recent 240 snap events across all drones (~12 s at 20 Hz × 10
+   *  drones); older entries drop off the front. Three parallel arrays keep
+   *  the hot path branch-free. */
+  private readonly _swarmSnapDistBuf: number[] = [];
+  private readonly _swarmSnapAngleBuf: number[] = [];
+  private readonly _swarmSnapAngvelBuf: number[] = [];
+  /** Phase B — last server tick we emitted a `swarm_snap_diagnostics` event
+   *  for each drone. Caps log volume to one event per drone per 4 ticks
+   *  (~67 ms at 60 Hz) so the 500-entry log ring isn't dominated by snap
+   *  events when many drones are in interest. */
+  private readonly _swarmSnapLastLogTick = new Map<number, number>();
 
   private room: Room | null = null;
 
@@ -534,6 +564,18 @@ export class ColyseusGameClient {
     }
     this._aiRegisteredIds.clear();
     this._droneRenderOffsets.clear();
+    // Phase B — drop the per-drone snap-event rings + log throttle. The new
+    // sector has a fresh swarm; carrying old percentiles across the warp
+    // gap pollutes the visible p50/p99 in the dev overlay.
+    this._swarmSnapDistBuf.length = 0;
+    this._swarmSnapAngleBuf.length = 0;
+    this._swarmSnapAngvelBuf.length = 0;
+    this._swarmSnapLastLogTick.clear();
+    this.stats.swarmSnapP50 = 0;
+    this.stats.swarmSnapP99 = 0;
+    this.stats.swarmAngleP99 = 0;
+    this.stats.swarmAngvelP99 = 0;
+    this.stats.swarmSnapCount = 0;
   }
 
   async connect(
@@ -1543,12 +1585,14 @@ export class ColyseusGameClient {
       let preSnapX: number | undefined;
       let preSnapY: number | undefined;
       let preSnapAngle: number | undefined;
+      let preSnapAngvel: number | undefined;
       if (entry.kind === 1) {
         const pre = this.predWorld.getShipState(key);
         if (pre) {
           preSnapX = pre.x;
           preSnapY = pre.y;
           preSnapAngle = pre.angle;
+          preSnapAngvel = pre.angvel ?? 0;
         }
       }
       // 2026-05-09 AI lockstep (Phase A): pass angvel through. Wire-format v3
@@ -1564,10 +1608,12 @@ export class ColyseusGameClient {
         && preSnapX !== undefined
         && preSnapY !== undefined
         && preSnapAngle !== undefined
+        && preSnapAngvel !== undefined
       ) {
         const ox = preSnapX - entry.x;
         const oy = preSnapY - entry.y;
         const oa = normalizeAngleDelta(preSnapAngle - entry.angle);
+        const oavel = preSnapAngvel - entry.angvel;
         const dist = Math.hypot(ox, oy);
         // Trigger the spring on either a positional or angular snap. The
         // angular threshold (~0.06 rad ≈ 3.4°) catches turn-rate-driven
@@ -1589,6 +1635,56 @@ export class ColyseusGameClient {
             });
           }
         }
+
+        // Phase B (2026-05-09 AI lockstep) — per-drone snap diagnostic.
+        // Records pre/post pose, snap distance, angle delta, angvel delta
+        // for *every* snap on an existing entry (not first-sight). The
+        // log-emit is throttled to one event per drone per 4 server ticks
+        // so the 500-entry ring isn't dominated by snap events at 10
+        // drones × 20 Hz. The stats ring buffer is updated unthrottled —
+        // p50/p99 in `stats.swarmSnap*` reflect every snap.
+        const angleSnap = Math.abs(oa);
+        const angvelDelta = Math.abs(oavel);
+        // Sliding window of 240 events (~12 s at 20 Hz × 10 in-interest
+        // drones). Older entries drop off the front; FIFO trim keeps the
+        // arrays bounded without per-tick allocation.
+        if (this._swarmSnapDistBuf.length >= 240) this._swarmSnapDistBuf.shift();
+        if (this._swarmSnapAngleBuf.length >= 240) this._swarmSnapAngleBuf.shift();
+        if (this._swarmSnapAngvelBuf.length >= 240) this._swarmSnapAngvelBuf.shift();
+        this._swarmSnapDistBuf.push(dist);
+        this._swarmSnapAngleBuf.push(angleSnap);
+        this._swarmSnapAngvelBuf.push(angvelDelta);
+        this.stats.swarmSnapCount++;
+        // Recompute p50/p99 from the ring buffers. O(n log n) per snap; with
+        // n ≤ 240 and snap rate ≤ 200 events/s, this is < 60 K comparisons/s.
+        this._recomputeSwarmSnapStats();
+
+        const lastTick = this._swarmSnapLastLogTick.get(entityId) ?? -1000;
+        if (this.stats.lastServerTick - lastTick >= 4) {
+          this._swarmSnapLastLogTick.set(entityId, this.stats.lastServerTick);
+          logEvent('swarm_snap_diagnostics', {
+            entityId,
+            kind: entry.kind,
+            shipKind: entry.shipKind ?? null,
+            pre: {
+              x: parseFloat(preSnapX.toFixed(3)),
+              y: parseFloat(preSnapY.toFixed(3)),
+              angle: parseFloat(preSnapAngle.toFixed(4)),
+              angvel: parseFloat(preSnapAngvel.toFixed(4)),
+            },
+            post: {
+              x: parseFloat(entry.x.toFixed(3)),
+              y: parseFloat(entry.y.toFixed(3)),
+              angle: parseFloat(entry.angle.toFixed(4)),
+              angvel: parseFloat(entry.angvel.toFixed(4)),
+            },
+            snapDistance: parseFloat(dist.toFixed(3)),
+            angleSnap: parseFloat(angleSnap.toFixed(4)),
+            angvelDelta: parseFloat(angvelDelta.toFixed(4)),
+            serverTick: this.stats.lastServerTick,
+            inputTick: this.inputTick,
+          });
+        }
       }
     }
     // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
@@ -1608,8 +1704,46 @@ export class ColyseusGameClient {
           }
           this._droneRenderOffsets.delete(id);
         }
+        // Phase B — drop any per-drone log throttle so a respawned entity
+        // (same id, fresh ship) gets a snap event on its next packet.
+        this._swarmSnapLastLogTick.delete(id);
       }
     }
+  }
+
+  /** Phase B — recompute sliding-window p50/p99 across the snap-event rings.
+   *  Called once per push; the rings are bounded at 240 so cost is bounded
+   *  even when many drones are in interest. Single shared scratch array is
+   *  acceptable here because reads happen once per push, not per frame. */
+  private _statsScratch: number[] = [];
+  private _recomputeSwarmSnapStats(): void {
+    const dist = this._swarmSnapDistBuf;
+    if (dist.length === 0) {
+      this.stats.swarmSnapP50 = 0;
+      this.stats.swarmSnapP99 = 0;
+      this.stats.swarmAngleP99 = 0;
+      this.stats.swarmAngvelP99 = 0;
+      return;
+    }
+    // Reuse the scratch array to avoid per-snap allocation.
+    const scratch = this._statsScratch;
+    scratch.length = dist.length;
+    for (let i = 0; i < dist.length; i++) scratch[i] = dist[i]!;
+    scratch.sort((a, b) => a - b);
+    this.stats.swarmSnapP50 = scratch[Math.floor(scratch.length * 0.5)]!;
+    this.stats.swarmSnapP99 = scratch[Math.floor(scratch.length * 0.99)]!;
+
+    const ang = this._swarmSnapAngleBuf;
+    scratch.length = ang.length;
+    for (let i = 0; i < ang.length; i++) scratch[i] = ang[i]!;
+    scratch.sort((a, b) => a - b);
+    this.stats.swarmAngleP99 = scratch[Math.floor(scratch.length * 0.99)]!;
+
+    const av = this._swarmSnapAngvelBuf;
+    scratch.length = av.length;
+    for (let i = 0; i < av.length; i++) scratch[i] = av[i]!;
+    scratch.sort((a, b) => a - b);
+    this.stats.swarmAngvelP99 = scratch[Math.floor(scratch.length * 0.99)]!;
   }
 
   /** Sync authoritative projectile positions from the per-recipient snapshot.

@@ -54,6 +54,12 @@ const BUCKETS: Record<string, string> = {
   // so we can correlate combat-phase correction bursts with actual
   // drone-vs-player contacts. See SectorRoom.ts CONTACT_BATCH handler.
   collision_resolved: 'combat',
+  // Phase B (2026-05-09 AI lockstep) — per-drone snap distances /
+  // angle deltas / angvel deltas captured in `syncSwarmIntoPredWorld`.
+  // Buckets to `corrections` because that's structurally what these
+  // events are: a per-drone correction signal parallel to the local-
+  // ship `correction` event. See ColyseusClient.ts logEvent call.
+  swarm_snap_diagnostics: 'corrections',
   // lifecycle
   welcome: 'lifecycle',
   disconnected: 'lifecycle',
