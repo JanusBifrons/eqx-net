@@ -38,12 +38,35 @@ export interface InputTickResult {
  * allocation; matches how the worker uses these maps).
  *
  * Behaviour contract:
- * - **Queue non-empty**: dequeue head, store as held, advance ack to
- *   `max(message.tick, prior ack)` so out-of-order packets never regress ack.
+ * - **Queue non-empty AND `head.tick ≤ currentTick`**: dequeue head, store as
+ *   held, advance ack to `max(message.tick, prior ack)` so out-of-order
+ *   packets never regress ack. Stale claims (`head.tick < currentTick`,
+ *   e.g. a delayed retransmit) are still drained — the input is better
+ *   applied late than dropped.
+ * - **Queue non-empty BUT `head.tick > currentTick`**: hold. The client
+ *   sent an input claiming a future sim tick (normal under client-side
+ *   prediction with positive `leadTicks`); applying it now would change
+ *   the slot's velocity at the wrong sim tick, producing the ~10 u
+ *   reconcile drifts diagnosed on 2026-05-09. Behave as if the queue
+ *   were empty — re-apply held, ack+1 — and try again next step.
  * - **Queue empty + held input present**: re-apply held, advance ack by 1.
  *   This synthesises an "implicit re-send" matching what the throttled client
  *   would have sent at that tick under the old send-every-tick model.
  * - **Queue empty + no held**: no-op (fresh spawn, never received an input).
+ *
+ * The tick-gate (added 2026-05-09) is the structural fix for the
+ * "ack-runs-ahead-of-serverTick" pathology — see `docs/LESSONS.md`. The
+ * client locally applies input I_X at clientTick X, producing state
+ * s_(X+1). For prediction-reconciliation to converge, the server must
+ * apply I_X to state s_X (= state at simTick X), producing state s_(X+1)
+ * at simTick X+1. The pre-2026-05-09 contract drained the queue greedily
+ * regardless of `head.tick`, applying I_X at whichever sim tick the queue
+ * happened to be drained — typically `simTick = X − 2` or so, two ticks
+ * early. Reconciliation then compared server state-at-(X-2) (which had
+ * I_X already applied) against client state-at-(X-2) (which had not), so
+ * pure-position drift accumulated by ~10 u per snapshot under network
+ * jitter. The gate keeps inputs queued until sim tick reaches their
+ * claimed tick, eliminating the divergence.
  *
  * The held-ack-advance rule is essential. Without it, a client that throttles
  * redundant input sends (see `ColyseusClient.tickPhysics()` and the
@@ -59,8 +82,9 @@ export function tickInputQueue(
   queue: QueuedInput[],
   lastApplied: Map<number, QueuedInput>,
   lastAckTick: Map<number, number>,
+  currentTick: number,
 ): InputTickResult {
-  if (queue.length > 0) {
+  if (queue.length > 0 && queue[0]!.tick <= currentTick) {
     const entry = queue.shift()!;
     lastApplied.set(slot, entry);
     const baseline = lastAckTick.get(slot) ?? -1;

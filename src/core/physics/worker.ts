@@ -180,7 +180,11 @@ async function main(): Promise<void> {
     for (const [slot, q] of inputQueues) {
       const playerId = slotToPlayer.get(slot);
       if (!playerId) continue;
-      const result = tickInputQueue(slot, q, lastApplied, lastAckTick);
+      // Tick-gated: only drain inputs whose claimedTick has been reached
+      // by the sim. `tick` is the count of completed ticks at this point;
+      // the upcoming physics step processes from state s_tick to s_(tick+1).
+      // Inputs claiming tick > `tick` are for future steps and stay queued.
+      const result = tickInputQueue(slot, q, lastApplied, lastAckTick, tick);
       if (result.applied) physics.applyInput(playerId, result.applied);
       if (result.ackTick !== null) appliedTicks.set(slot, result.ackTick);
     }

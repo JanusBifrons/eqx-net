@@ -14,6 +14,35 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-09 — Network-Feel — server input queue drained inputs claiming future ticks, producing ~10 u correction bursts under network jitter
+
+After the sector-handoff Welford reset shipped, the `srvTick − ackedTick = −37` saturation was gone but mobile cap `2026-05-09T08-34-31-317Z-66038n` still showed felt-jitter bursts: three episodes of 3–4 consecutive corrections each at ~10 u position drift, lerping smoothing them but the user reporting "warping, jitter, and issues at times." The data was suspicious — drift values within each burst were essentially identical (10.69 / 10.73 / 10.71 in burst 1; same shape elsewhere), zero angle drift, and `srvTick − ackedTick` would shift from the steady −2 to −6/−7 during the bursts. None of that is random noise; it pointed at a systematic mechanism.
+
+**Root cause** in `src/core/physics/inputQueue.ts`. The pre-fix contract drained the queue greedily on every physics step:
+
+```ts
+if (queue.length > 0) {
+  const entry = queue.shift()!;        // <-- no tick gate
+  // apply, advance ack to entry.tick
+}
+```
+
+When the client sent an input claiming clientTick X (with the natural prediction lookahead, so X > current serverTick), the worker dequeued and applied that input *at the current sim tick*, then reported `ackedTick = X`. The client then received a snapshot saying `serverTick = simTick, ackedTick = X` and locally interpreted that as "my input from clientTick X has been processed" — when in fact it had been processed at simTick `X − leadTicks` or so. The two diverged by exactly one input application, which is a thrust impulse worth of velocity ≈ ~3.3 u/tick × 3 ticks = ~10 u of position drift, sustained until network jitter cleared and the queue settled into 1-input-per-tick rhythm.
+
+The signature: `ackedTick > serverTick` in the snapshot, drift values quantised to ~one-thrust-impulse worth, zero angle drift (symmetric since turn impulse is per-tick angular), bursts that resolve as the queue empties.
+
+**Fix shipped**: tick-gated dequeue. `tickInputQueue` now takes a `currentTick` parameter and only drains when `queue[0].tick ≤ currentTick`. Future-claim inputs stay queued until sim tick reaches their claimed tick; the worker treats the slot as queue-empty in the meantime (re-applies held, ack += 1). Stale claims (claim < currentTick, e.g. a delayed retransmit) are still drained immediately — the input is better applied late than dropped, and out-of-order ack regression is already prevented by the existing `max(message.tick, prior ack)` rule.
+
+**Why the held-ack-advance contract still works**: when the gate holds a future-claim input, semantically nothing has changed for the slot's physics (it's running on the held input). The synthesised ack increment by 1 is exactly the same signal the client expected from the held-empty case. When the gate finally opens and drains the future-claim, `entry.tick > prior ack` so the ack jumps to the message's claim — but at that point `currentTick = entry.tick`, so `serverTick == ackedTick` and there's no anomaly.
+
+**Steady-state behaviour change**: under healthy network with 1 input per tick at claim = currentTick, ack now equals serverTick exactly. The pre-fix `serverTick − ackedTick = −2` (typical desktop steady state in cap `07-51-26`) becomes 0 after this fix. Reconciler replay-from-`ackedTick+1` then aligns precisely with what the client locally applied.
+
+**Distinguishing future occurrences**: position-only correction bursts whose drift values are quantised in tight clusters (not random magnitudes), ack > serverTick in snapshots, drift values matching ~one input application's worth of velocity. If the bursts come back, the gate may have regressed or some other path applies inputs out-of-tick (e.g., an immediate-apply on first arrival, or a rollback-replay using wrong tick alignment).
+
+Test coverage: `src/core/physics/inputQueue.test.ts` adds a `tick-gated dequeue` describe block covering the hold case, the steady-state ack-tracks-currentTick case, the stale-claim-drain case, and a multi-step batch-arrival scenario. The pre-existing held-ack-advance and out-of-order tests are updated to pass `currentTick` and continue to lock the 2026-05-06 contract.
+
+---
+
 ## 2026-05-09 — Network-Feel — sector-handoff inherits polluted Welford / leadTicks state, saturates lookahead at the cap
 
 After warping between sectors, every snapshot for the rest of the session reported `srvTick − ackedTick = −37` (rock steady), 60–70 % of snapshots produced a significant correction, and the local ship rendered ~600 ms ahead of the authoritative server state. The user described the symptoms as "ships miles off centre, going in circles, lost control." All of that is a single bug: the Stage 4 prediction-loop state survived the sector handoff.
