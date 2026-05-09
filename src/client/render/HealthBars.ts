@@ -60,9 +60,17 @@ export class HealthBarManager {
         if (!Number.isNaN(swarmId)) {
           const sw = mirror.swarm.get(swarmId);
           if (sw) {
-            const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
-            ex = lerped.x;
-            ey = lerped.y;
+            // Track the same pose the drone sprite is drawn at: post Phase
+            // 3 reset (2026-05-09), drones (kind=1) render from
+            // `entry.x/y/angle` directly. Asteroids keep the lerp path.
+            if (sw.kind === 1) {
+              ex = sw.x;
+              ey = sw.y;
+            } else {
+              const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
+              ex = lerped.x;
+              ey = lerped.y;
+            }
           }
         }
       }

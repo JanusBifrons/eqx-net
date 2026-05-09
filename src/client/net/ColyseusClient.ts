@@ -1697,6 +1697,37 @@ export class ColyseusGameClient {
     // have no client prediction — server-authoritative @ 60 Hz lerped between
     // received frames. The renderer reads mirror.swarm directly each frame.
 
+    // Phase 3 (2026-05-09): drone visual smoothness.
+    //
+    // After the client-side AI fix, drones in predWorld have AI-integrated
+    // positions matching the server. But the renderer was still reading
+    // their pose via `interpolateSwarmPose` — a linear dead-reckoning from
+    // the latest packet's velocity that doesn't see AI impulses. Each new
+    // packet snapped the sprite to the new packet pose, producing the
+    // visible jolt the user reported ("enemy ships look jolty and jumpy").
+    //
+    // Fix: write predWorld's drone pose into the mirror entry each frame.
+    // Combined with the renderer change to use `entry.x/y/angle` directly
+    // for drones (skipping the dead-reckoning branch), the sprite tracks
+    // predWorld's smooth AI-integrated motion exactly like player ships
+    // track their predWorld pose.
+    //
+    // Asteroids (kind=0) remain locked in predWorld and continue to use
+    // `interpolateSwarmPose` against the packet ring — their pose changes
+    // discretely on collision events, where the lerp is the right choice.
+    if (this.predWorld && this.mirror.swarm) {
+      for (const [entityId, entry] of this.mirror.swarm) {
+        if (entry.kind !== 1) continue;
+        const pose = this.predWorld.getShipState(`swarm-${entityId}`);
+        if (!pose) continue;
+        entry.x = pose.x;
+        entry.y = pose.y;
+        entry.angle = pose.angle;
+        entry.vx = pose.vx;
+        entry.vy = pose.vy;
+      }
+    }
+
     // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
     if (this.predWorld) {
       for (const remoteId of this.predRemoteShipIds) {

@@ -459,13 +459,27 @@ export class PixiRenderer implements IRenderer {
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }
-        // Phase 5c-stabilise: lerp between the prev and latest received pose
-        // (entity interpolation) so frame-to-frame motion is smooth even when
-        // the wire delivers packets at irregular cadence.
-        const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
-        sprite.x = lerped.x;
-        sprite.y = -lerped.y;
-        sprite.rotation = -lerped.angle;
+        // Drones (kind=1) post Phase 3 reset (2026-05-09): rendered from
+        // `entry.x/y/angle`, which `ColyseusClient.updateMirror` rewrites
+        // each frame to the predWorld pose. predWorld has AI-integrated
+        // smooth motion matching the server; rendering at that pose
+        // eliminates the per-snapshot snap that produced visible jolt
+        // when the previous dead-reckoning path got the velocity-direction
+        // change one packet late.
+        //
+        // Asteroids (kind=0) stay on `interpolateSwarmPose` — they're
+        // locked in predWorld and only change pose on collision events,
+        // where the packet-to-packet lerp is the right thing.
+        if (entry.kind === 1) {
+          sprite.x = entry.x;
+          sprite.y = -entry.y;
+          sprite.rotation = -entry.angle;
+        } else {
+          const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
+          sprite.x = lerped.x;
+          sprite.y = -lerped.y;
+          sprite.rotation = -lerped.angle;
+        }
         // Damage flash takes priority over the active-beam hit tint so a
         // drone clearly registers a hit even when no beam is currently on it.
         if (mirror.damagedShips?.has(spriteKey)) {
@@ -576,10 +590,16 @@ export class PixiRenderer implements IRenderer {
           if (!Number.isNaN(entityId)) {
             const sw = mirror.swarm?.get(entityId);
             if (sw) {
-              // Use the SAME interpolated pose the sprite is drawn at, so the
-              // beam origin lines up exactly with the drone's visual position.
-              const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
-              swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius };
+              // Use the SAME pose the sprite is drawn at — drones (kind=1)
+              // render from `entry.x/y/angle` directly post-2026-05-09 reset
+              // (predWorld pose synced into the mirror each frame). Asteroids
+              // stay on the lerp path for parity with their sprite render.
+              if (sw.kind === 1) {
+                swarmShooter = { x: sw.x, y: sw.y, angle: sw.angle, radius: sw.radius };
+              } else {
+                const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
+                swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius };
+              }
             }
           }
         }
