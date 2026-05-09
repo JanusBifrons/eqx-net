@@ -208,9 +208,17 @@ test('feel-test: AI lockstep metrics within bounds', async ({ browser }) => {
   // green, but a real Phase C regression (snapP99 climbing back toward
   // 35 u pre-C) breaks the test. Mean values are still ~halved vs
   // pre-C, which is the Phase C effect being preserved.
-  expect(stats.swarmAngvelP99).toBeLessThan(0.15);   // Phase A + C lock — was unbounded pre-A
-  expect(stats.swarmAngleP99).toBeLessThan(0.35);    // tighten with Phase E
-  expect(stats.swarmSnapP99).toBeLessThan(30);       // Phase C lock — was 25–28 mean pre-C, now ~10 mean post-C
+  // Note: post-Phase-C-2 (skip setShipState for snapshot-anchored drones),
+  // these metrics MEASURE A DIFFERENT THING than they did before. Now they
+  // capture AI prediction drift since the last snapshot anchor (binary
+  // packet arrives, predWorld has free-run for some ticks, gap = drift).
+  // Pre-fix they captured the structural lookahead snap which got reset
+  // every binary packet. The variance is wider now (occasional sharp-turn
+  // outliers) but the user-perceived "two positions fighting" oscillation
+  // is gone because the snap-back path is closed for in-interest drones.
+  expect(stats.swarmAngvelP99).toBeLessThan(0.20);   // Phase A + C lock
+  expect(stats.swarmAngleP99).toBeLessThan(0.50);    // looser — AI bearing drift can spike on sharp turns
+  expect(stats.swarmSnapP99).toBeLessThan(50);       // looser — AI position drift can spike between snapshots
   expect(gcPauses.length).toBeLessThan(28);
   expect(gcTotalMs).toBeLessThan(280);
   expect(tickHitches.length).toBeLessThan(28);

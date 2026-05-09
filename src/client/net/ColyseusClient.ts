@@ -301,6 +301,27 @@ export class ColyseusGameClient {
   private readonly _aiRegisteredIds = new Set<number>();
   /** Reusable AiPlayerView buffer to avoid per-tick allocation in the AI tick. */
   private readonly _aiPlayersBuf: AiPlayerView[] = [];
+  /**
+   * Phase C follow-up (2026-05-09 mobile re-test): set of drone entityIds the
+   * MOST RECENT snapshot's `drones[]` slice anchored. For these drones the
+   * snapshot path (Reconciler.reconcile + replay loop running client AI) is
+   * the source of truth for predWorld pose; the binary swarm packet's
+   * `setShipState` call must be skipped or it will pull predWorld backward
+   * by `currentTick − ackedTick` ticks of motion every packet, undoing the
+   * forward-extrapolation Phase C just produced. (The mobile cap
+   * 2026-05-09 18:25 showed the two paths fighting: per-drone snap distance
+   * tripled vs pre-C because every packet snap pulled drones back to where
+   * server's pose WAS, then replay re-extrapolated forward, then next
+   * packet pulled back again.) Drones NOT in this set fall through to the
+   * legacy setShipState path — out-of-interest drones receive their pose
+   * only via the decimated binary channel, so the binary packet still
+   * needs to anchor them.
+   *
+   * Rebuilt from scratch on each snapshot so drones leaving interest drop
+   * out automatically. Cleared on sector handoff alongside the other
+   * prediction-state surfaces.
+   */
+  private readonly _droneSnapshotAnchored = new Set<number>();
 
   /**
    * Phase 3 follow-up (2026-05-09): per-drone render lerp offsets.
@@ -564,6 +585,7 @@ export class ColyseusGameClient {
     }
     this._aiRegisteredIds.clear();
     this._droneRenderOffsets.clear();
+    this._droneSnapshotAnchored.clear();
     // Phase B — drop the per-drone snap-event rings + log throttle. The new
     // sector has a fresh swarm; carrying old percentiles across the warp
     // gap pollutes the visible p50/p99 in the dev overlay.
@@ -1394,10 +1416,17 @@ export class ColyseusGameClient {
       // most recent binary swarm packet happened to drop the body". The
       // reconciler installs each pose via `world.setShipState` before
       // entering the replay loop (see Reconciler.reconcile).
+      // Rebuild the snapshot-anchor set from this snapshot's drone slice.
+      // The set tells `syncSwarmIntoPredWorld` to skip its setShipState
+      // call for these drones (the snapshot + replay path is now the
+      // source of truth for their predWorld pose; binary-packet snapping
+      // would just yank them backward by leadTicks worth of motion).
+      this._droneSnapshotAnchored.clear();
       let droneSeed: Map<string, ShipPhysicsState> | undefined;
       if (snap.drones && snap.drones.length > 0 && this.predWorld) {
         droneSeed = new Map();
         for (const d of snap.drones) {
+          this._droneSnapshotAnchored.add(d.id);
           const key = `swarm-${d.id}`;
           // Skip drones we don't have a body for yet (will be spawned by
           // the next binary packet via syncSwarmIntoPredWorld). Setting
@@ -1625,14 +1654,26 @@ export class ColyseusGameClient {
           preSnapAngvel = pre.angvel ?? 0;
         }
       }
-      // 2026-05-09 AI lockstep (Phase A): pass angvel through. Wire-format v3
-      // carries the field; without it the client AI's `1.5·ω` damping term
-      // ran on a free-evolving predWorld value while the server's ran on the
-      // SAB-authoritative one — drone bearing diverged every tick. World
-      // setShipState (`World.ts:359`) wakes the body via Rapier's setAngvel.
-      this.predWorld.setShipState(key, {
-        x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
-      });
+      // Phase C follow-up (2026-05-09 mobile re-test): for drones the most
+      // recent snapshot anchored, the snapshot+replay path owns predWorld
+      // pose. Skip the binary-packet setShipState call entirely — it would
+      // pull predWorld backward by `currentTick − ackedTick` ticks of
+      // motion, restoring exactly the divergence Phase C tries to remove.
+      // Out-of-interest drones (not in the anchor set) still need the
+      // binary path because the snapshot doesn't carry them; the spring
+      // offset capture below applies to those too. Asteroids (kind=0) are
+      // never AI-driven and use the binary-packet path unconditionally.
+      const skipSetShipState = entry.kind === 1 && this._droneSnapshotAnchored.has(entityId);
+      if (!skipSetShipState) {
+        // 2026-05-09 AI lockstep (Phase A): pass angvel through. Wire-format v3
+        // carries the field; without it the client AI's `1.5·ω` damping term
+        // ran on a free-evolving predWorld value while the server's ran on the
+        // SAB-authoritative one — drone bearing diverged every tick. World
+        // setShipState (`World.ts:359`) wakes the body via Rapier's setAngvel.
+        this.predWorld.setShipState(key, {
+          x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
+        });
+      }
       if (
         entry.kind === 1
         && preSnapX !== undefined
@@ -1645,10 +1686,14 @@ export class ColyseusGameClient {
         const oa = normalizeAngleDelta(preSnapAngle - entry.angle);
         const oavel = preSnapAngvel - entry.angvel;
         const dist = Math.hypot(ox, oy);
-        // Trigger the spring on either a positional or angular snap. The
-        // angular threshold (~0.06 rad ≈ 3.4°) catches turn-rate-driven
-        // jolts even when the drone barely moved positionally.
-        if (dist > 0.05 || Math.abs(oa) > 0.06) {
+        // Spring-offset capture is only useful when we actually snapped
+        // predWorld backward (binary-packet path). For snapshot-anchored
+        // drones we skipped the setShipState above so predWorld is
+        // unchanged → no jolt to smooth → no spring needed. Gating here
+        // keeps the diagnostic + stats capture below firing for ALL
+        // drones (so the test can observe alignment quality even when
+        // the new path produces ~0 deltas).
+        if (!skipSetShipState && (dist > 0.05 || Math.abs(oa) > 0.06)) {
           const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist);
           const existing = this._droneRenderOffsets.get(entityId);
           if (existing) {
