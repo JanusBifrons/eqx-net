@@ -1,11 +1,18 @@
 /**
  * Pre-allocated circular buffer storing per-entity poses for lag compensation.
  *
- * Layout: RING_CAPACITY entity slots × RING_DEPTH tick slots × 5 floats
- * (x, y, vx, vy, angle). Capacity bumped to 2048 to cover ships + every
- * dynamic swarm entity (asteroids + drones), so polygon-aware hit resolution
- * can rewind any obstacle's pose to the shooter's tick. 2048 × 12 × 20 bytes
- * = 480 KB per sector — no per-tick heap allocation.
+ * Layout: RING_CAPACITY entity slots × RING_DEPTH tick slots × 6 floats
+ * (x, y, vx, vy, angle, angvel). Capacity bumped to 2048 to cover ships +
+ * every dynamic swarm entity (asteroids + drones), so polygon-aware hit
+ * resolution can rewind any obstacle's pose to the shooter's tick.
+ * 2048 × 12 × 24 bytes = 576 KB per sector — no per-tick heap allocation.
+ *
+ * `angvel` was added in Phase C of the AI lockstep work (2026-05-09). The
+ * snapshot drone-slice path (`SectorRoom.update()` → `SnapshotMessage.drones`)
+ * reads `getPoseAt(id, snapshotTick)` to seed the client's reconciler replay
+ * from a temporally-aligned anchor. Without angvel in the ring the seed
+ * couldn't carry it, undoing Phase A's wire-format-v3 angvel sync inside
+ * the replay window.
  *
  * The recording API is split into `beginTick` + `recordEntity` to keep the
  * hot path allocation-free at scale (thousands of entities × 60 Hz). The
@@ -16,7 +23,7 @@
 
 const RING_CAPACITY = 2048;
 const RING_DEPTH = 12;
-const FLOATS_PER_ENTRY = 5; // x, y, vx, vy, angle
+const FLOATS_PER_ENTRY = 6; // x, y, vx, vy, angle, angvel
 
 export interface RingEntity {
   id: string;
@@ -25,6 +32,7 @@ export interface RingEntity {
   vx: number;
   vy: number;
   angle: number;
+  angvel: number;
 }
 
 export interface RingPose {
@@ -33,6 +41,7 @@ export interface RingPose {
   vx: number;
   vy: number;
   angle: number;
+  angvel: number;
 }
 
 export class SnapshotRing {
@@ -98,7 +107,7 @@ export class SnapshotRing {
    * the pre-allocated buffer. Unknown entities are silently ignored (the
    * caller hasn't registered them, so they never participate in lag-comp).
    */
-  recordEntity(id: string, x: number, y: number, vx: number, vy: number, angle: number): void {
+  recordEntity(id: string, x: number, y: number, vx: number, vy: number, angle: number, angvel: number): void {
     const entitySlot = this.entityToSlot.get(id);
     if (entitySlot === undefined) return;
     if (this.currentRingSlot < 0) return; // beginTick not yet called
@@ -108,6 +117,7 @@ export class SnapshotRing {
     this.buf[base + 2] = vx;
     this.buf[base + 3] = vy;
     this.buf[base + 4] = angle;
+    this.buf[base + 5] = angvel;
   }
 
   /**
@@ -118,7 +128,7 @@ export class SnapshotRing {
   record(tick: number, entities: Iterable<RingEntity>): void {
     this.beginTick(tick);
     for (const e of entities) {
-      this.recordEntity(e.id, e.x, e.y, e.vx, e.vy, e.angle);
+      this.recordEntity(e.id, e.x, e.y, e.vx, e.vy, e.angle, e.angvel);
     }
   }
 
@@ -138,6 +148,7 @@ export class SnapshotRing {
       vx: this.buf[base + 2]!,
       vy: this.buf[base + 3]!,
       angle: this.buf[base + 4]!,
+      angvel: this.buf[base + 5]!,
     };
   }
 }

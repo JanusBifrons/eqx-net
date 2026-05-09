@@ -10,14 +10,22 @@ describe('SnapshotRing', () => {
     ring.registerEntity('ship-b');
   });
 
-  it('allocation matches RING_CAPACITY × RING_DEPTH × 5 floats', () => {
-    // 2048 × 12 × 5 floats × 4 bytes = 491_520 bytes.
+  it('allocation matches RING_CAPACITY × RING_DEPTH × 6 floats (Phase C — angvel)', () => {
+    // 2048 × 12 × 6 floats × 4 bytes = 589_824 bytes.
+    // The 6th float is angvel, added in Phase C of the AI lockstep work
+    // so the snapshot drone-slice path can carry temporally-aligned ω.
     expect(ring.capacity).toBe(2048);
-    expect(ring.byteLength).toBe(2048 * 12 * 5 * 4);
+    expect(ring.byteLength).toBe(2048 * 12 * 6 * 4);
+  });
+
+  it('records and retrieves angvel alongside the pose', () => {
+    ring.record(7, [{ id: 'ship-a', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 1.75 }]);
+    const pose = ring.getPoseAt('ship-a', 7);
+    expect(pose!.angvel).toBeCloseTo(1.75, 5);
   });
 
   it('records and retrieves a pose at the recorded tick', () => {
-    ring.record(5, [{ id: 'ship-a', x: 10, y: 20, vx: 1, vy: 2, angle: 0.5 }]);
+    ring.record(5, [{ id: 'ship-a', x: 10, y: 20, vx: 1, vy: 2, angle: 0.5, angvel: 0 }]);
     const pose = ring.getPoseAt('ship-a', 5);
     expect(pose).not.toBeNull();
     expect(pose!.x).toBeCloseTo(10);
@@ -42,13 +50,13 @@ describe('SnapshotRing', () => {
 
   it('returns null for ticks older than 12 (overwritten by ring wrap)', () => {
     for (let tick = 0; tick < 13; tick++) {
-      ring.record(tick, [{ id: 'ship-a', x: tick, y: 0, vx: 0, vy: 0, angle: 0 }]);
+      ring.record(tick, [{ id: 'ship-a', x: tick, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }]);
     }
     expect(ring.getPoseAt('ship-a', 0)).toBeNull();
   });
 
   it('returns null for an unknown entity', () => {
-    ring.record(1, [{ id: 'ship-a', x: 0, y: 0, vx: 0, vy: 0, angle: 0 }]);
+    ring.record(1, [{ id: 'ship-a', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }]);
     expect(ring.getPoseAt('unknown', 1)).toBeNull();
   });
 
@@ -58,8 +66,8 @@ describe('SnapshotRing', () => {
 
   it('tracks multiple entities independently', () => {
     ring.record(10, [
-      { id: 'ship-a', x: 1, y: 2, vx: 0, vy: 0, angle: 0.1 },
-      { id: 'ship-b', x: 3, y: 4, vx: 0, vy: 0, angle: -0.2 },
+      { id: 'ship-a', x: 1, y: 2, vx: 0, vy: 0, angle: 0.1, angvel: 0 },
+      { id: 'ship-b', x: 3, y: 4, vx: 0, vy: 0, angle: -0.2, angvel: 0 },
     ]);
     expect(ring.getPoseAt('ship-a', 10)!.x).toBeCloseTo(1);
     expect(ring.getPoseAt('ship-a', 10)!.angle).toBeCloseTo(0.1);
@@ -68,7 +76,7 @@ describe('SnapshotRing', () => {
   });
 
   it('unregistering an entity frees the slot and makes getPoseAt return null', () => {
-    ring.record(1, [{ id: 'ship-a', x: 5, y: 5, vx: 0, vy: 0, angle: 0 }]);
+    ring.record(1, [{ id: 'ship-a', x: 5, y: 5, vx: 0, vy: 0, angle: 0, angvel: 0 }]);
     ring.unregisterEntity('ship-a');
     expect(ring.getPoseAt('ship-a', 1)).toBeNull();
   });
@@ -78,8 +86,8 @@ describe('SnapshotRing', () => {
     // an entity array per tick. Verify it produces identical results to the
     // batch `record` form.
     ring.beginTick(42);
-    ring.recordEntity('ship-a', 7, 8, 9, 10, 1.234);
-    ring.recordEntity('ship-b', -1, -2, -3, -4, -0.567);
+    ring.recordEntity('ship-a', 7, 8, 9, 10, 1.234, 0.5);
+    ring.recordEntity('ship-b', -1, -2, -3, -4, -0.567, -0.25);
     const a = ring.getPoseAt('ship-a', 42)!;
     expect(a.x).toBeCloseTo(7);
     expect(a.angle).toBeCloseTo(1.234);
@@ -94,14 +102,14 @@ describe('SnapshotRing', () => {
     const fresh = new SnapshotRing();
     for (let i = 0; i < fresh.capacity; i++) fresh.registerEntity(`e${i}`);
     fresh.registerEntity('one-too-many');
-    fresh.record(1, [{ id: 'one-too-many', x: 1, y: 2, vx: 0, vy: 0, angle: 0 }]);
+    fresh.record(1, [{ id: 'one-too-many', x: 1, y: 2, vx: 0, vy: 0, angle: 0, angvel: 0 }]);
     expect(fresh.getPoseAt('one-too-many', 1)).toBeNull();
   });
 
   it('handles negative ticks via positive-modulo ring slot calculation', () => {
     // Defensive: server tick is always positive in production, but a buggy
     // caller passing -1 must not blow up the buffer indexing.
-    ring.record(-1, [{ id: 'ship-a', x: 5, y: 6, vx: 0, vy: 0, angle: 0 }]);
+    ring.record(-1, [{ id: 'ship-a', x: 5, y: 6, vx: 0, vy: 0, angle: 0, angvel: 0 }]);
     expect(ring.getPoseAt('ship-a', -1)).not.toBeNull();
   });
 });

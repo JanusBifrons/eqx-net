@@ -1383,6 +1383,35 @@ export class ColyseusGameClient {
       }
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
+
+      // Phase C (2026-05-09 AI lockstep) — build the drone reconcile-anchor
+      // seed map from `snap.drones`. Each entry's `id` is the dense u16
+      // entityId matching the binary swarm channel; predWorld keys swarm
+      // bodies as `swarm-${entityId}`. Seeding before replay re-anchors
+      // every in-interest drone at the snapshot's `serverTick`, so the
+      // reconciler's per-replay-tick AI tick starts from a server-
+      // authoritative pose at `ackedTick` rather than from "wherever the
+      // most recent binary swarm packet happened to drop the body". The
+      // reconciler installs each pose via `world.setShipState` before
+      // entering the replay loop (see Reconciler.reconcile).
+      let droneSeed: Map<string, ShipPhysicsState> | undefined;
+      if (snap.drones && snap.drones.length > 0 && this.predWorld) {
+        droneSeed = new Map();
+        for (const d of snap.drones) {
+          const key = `swarm-${d.id}`;
+          // Skip drones we don't have a body for yet (will be spawned by
+          // the next binary packet via syncSwarmIntoPredWorld). Setting
+          // state on a non-existent body is a silent no-op in World, but
+          // building the map only for known bodies makes the test path
+          // observable.
+          if (this.predWorld.hasShip(key)) {
+            droneSeed.set(key, {
+              x: d.x, y: d.y, vx: d.vx, vy: d.vy, angle: d.angle, angvel: d.angvel,
+            });
+          }
+        }
+      }
+
       this.reconciler.reconcile(
         serverState,
         snap.serverTick,
@@ -1397,6 +1426,7 @@ export class ColyseusGameClient {
           this.applyRemoteInputs();
           this.tickClientAi();
         },
+        droneSeed ? { drones: droneSeed } : undefined,
       );
 
       // Compute remote ship lerp offsets.

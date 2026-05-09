@@ -151,6 +151,20 @@ export interface SnapshotMessage {
    *  pose snapshot at `serverTick`; the client mirrors it into its local
    *  projectile map and lets ghosts (client-side prediction) layer on top. */
   projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string; weaponId?: string }>;
+  /** Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
+   *  In-interest drones at the snapshot's `serverTick`, sourced from the
+   *  per-tick `SnapshotRing` so the pose is temporally aligned with the
+   *  player states above. The client uses these to seed predWorld drone
+   *  bodies before reconciler replay, eliminating the structural lookahead
+   *  snap-distance that previously surfaced as visible per-packet jitter
+   *  (see `swarm_snap_diagnostics` events). Absent when no drones are
+   *  in-interest, or when the recipient is in a sector that hasn't seeded
+   *  drones (e.g. a fresh test-sector join before any AI has registered).
+   *  `id` is the dense `u16 entityId` matching the binary swarm channel. */
+  drones?: Array<{
+    id: number;
+    x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+  }>;
 }
 
 /** Server → client (direct): result of a fire request. */

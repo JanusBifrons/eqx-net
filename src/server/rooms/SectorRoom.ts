@@ -1899,7 +1899,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(id);
       if (!pose) continue;
-      this.snapshotRing.recordEntity(id, pose.x, pose.y, pose.vx, pose.vy, pose.angle);
+      this.snapshotRing.recordEntity(id, pose.x, pose.y, pose.vx, pose.vy, pose.angle, pose.angvel ?? 0);
     }
     for (const rec of this.swarmRegistry.all()) {
       const b = slotBase(rec.slot);
@@ -1910,6 +1910,7 @@ export class SectorRoom extends Room<SectorState> {
         this.sabF32[b + SLOT_VX_OFF]!,
         this.sabF32[b + SLOT_VY_OFF]!,
         this.sabF32[b + SLOT_ANGLE_OFF]!,
+        this.sabF32[b + SLOT_ANGVEL_OFF]!,
       );
     }
 
@@ -2124,6 +2125,41 @@ export class SectorRoom extends Room<SectorState> {
           }
         }
 
+        // Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
+        //
+        // For every drone in this recipient's 9-cell interest window, ship
+        // its pose AT `serverTick` (read from `SnapshotRing.getPoseAt`).
+        // The client uses these to reset predWorld drone bodies before the
+        // reconciler replay loop, so AI re-tick across replay starts from a
+        // server-authoritative pose at `ackedTick`. Closes the structural
+        // lookahead-gap that surfaced as ~10–15 u per-packet snap distance
+        // (visible on mobile as "two positions fighting").
+        //
+        // Reuse the `interestScratch` Set populated by the swarm-broadcast
+        // block earlier in this `update()` — same per-(client, tick) cell
+        // window, no second `query9` call. Out-of-interest drones aren't
+        // anchored; they continue on the binary-channel cadence (acceptable
+        // since they cannot collide with the local ship within a snapshot
+        // window). Asteroids (kind === 0) are skipped — they don't run AI
+        // and don't need the anchor.
+        let drones: SnapshotMessage['drones'];
+        const interest = this.interestScratch.get(client.sessionId);
+        if (interest && interest.size > 0) {
+          for (const eid of interest) {
+            const rec = this.swarmRegistry.getByEntityId(eid);
+            if (!rec || rec.kind !== 1) continue;
+            const pose = this.snapshotRing.getPoseAt(rec.id, this.serverTick);
+            if (!pose) continue;
+            if (!drones) drones = [];
+            drones.push({
+              id: eid,
+              x: pose.x, y: pose.y,
+              vx: pose.vx, vy: pose.vy,
+              angle: pose.angle, angvel: pose.angvel,
+            });
+          }
+        }
+
         const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
         const snap: SnapshotMessage = {
           type: 'snapshot',
@@ -2132,6 +2168,7 @@ export class SectorRoom extends Room<SectorState> {
           ackedTick: recipientAcked,
           ...sharedTail,
           ...(projectiles ? { projectiles } : {}),
+          ...(drones ? { drones } : {}),
         };
         client.send('snapshot', snap);
         anySnapshotSent = true;

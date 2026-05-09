@@ -179,6 +179,21 @@ export class Reconciler {
    *                        apply remote-ship `lastInput` values from the
    *                        snapshot, advancing remote bodies in lockstep with
    *                        the local replay (forward-prediction).
+   * @param replaySeed      Phase C (2026-05-09 AI lockstep) — optional bag
+   *                        of authoritative entity poses to install BEFORE
+   *                        the replay loop starts. `drones` carries
+   *                        per-id `ShipPhysicsState` for every in-interest
+   *                        drone the snapshot included; the reconciler
+   *                        resets `world.setShipState(droneKey, pose)` for
+   *                        each so the AI re-tick during replay starts
+   *                        from a server-authoritative anchor at
+   *                        `ackedTick`. Without this seed, drones in
+   *                        predWorld are wherever the most-recent binary
+   *                        swarm packet happened to land — usually
+   *                        ~LEAD_TICKS ahead — and replay re-extrapolates
+   *                        from that already-stale anchor, surfacing as
+   *                        the per-packet ~10-15 u snap distance the
+   *                        `swarm_snap_diagnostics` event captures.
    */
   reconcile(
     serverState: ShipPhysicsState,
@@ -186,6 +201,7 @@ export class Reconciler {
     currentTick: number,
     ackedTick: number,
     perReplayTick?: () => void,
+    replaySeed?: { drones?: ReadonlyMap<string, ShipPhysicsState> },
   ): void {
     const before = this.world.getShipState(this.playerId);
     if (!before) return;
@@ -212,6 +228,19 @@ export class Reconciler {
     this.lastBeforePos.x = before.x;
     this.lastBeforePos.y = before.y;
     this.world.setShipState(this.playerId, serverState);
+
+    // Phase C — anchor every snapshot-shipped drone to its server-
+    // authoritative pose at `ackedTick` BEFORE the replay loop runs. The
+    // existing `perReplayTick` callback re-ticks the AI on each replay
+    // step (`tickClientAi` in `ColyseusClient`); seeding ensures it starts
+    // from the same state the server's AI saw. Drones not in the seed
+    // (out-of-interest, or the snapshot didn't carry a `drones` slice)
+    // retain whatever pose the most-recent binary swarm packet deposited.
+    if (replaySeed?.drones) {
+      for (const [key, dronePose] of replaySeed.drones) {
+        this.world.setShipState(key, dronePose);
+      }
+    }
     // Cap the replay window to BUFFER_SIZE. Two real cases this protects:
     //  1. **Join**: the first snapshot after `welcome` reports `ackedTick=0`
     //     (worker has applied no inputs yet), while `currentTick` is already
