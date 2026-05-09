@@ -54,11 +54,16 @@ function entryWithArrivals(arrivals: ArrivalSpec[], overrides: Partial<SwarmRend
 const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
 describe('Stage 0 constants', () => {
-  it('DISPLAY_DELAY_MS = 50 ms (was 100; halves perceived remote-entity lag)', () => {
-    // docs/FEEL_GOALS.md flagged 50 ms as achievable now that snapshot
-    // arrival jitter is stable < 20 ms. Cutting from 100 → 50 halves the
-    // visible lag of every interpolated swarm sprite.
-    expect(DISPLAY_DELAY_MS).toBe(50);
+  it('DISPLAY_DELAY_MS = 0 ms (visual swarm pose tracks predWorld collision shape)', () => {
+    // The 50 ms backward-buffered delay made rendered swarm sprites
+    // lag predWorld bodies by ~delay × velocity, producing
+    // visible-vs-collision mismatch (user could overlap a drone
+    // sprite and pass through the body). With 0 ms, the
+    // dead-reckoning branch of interpolateSwarmPose (vx*dt forward
+    // extrapolation from the latest arrival) matches what
+    // predWorld is doing for dynamic drones — render and collision
+    // shape align. See docs/LESSONS.md 2026-05-09 entry.
+    expect(DISPLAY_DELAY_MS).toBe(0);
   });
 
   it('ADAPTIVE_DELAY_CEILING_MS = 200 ms (was 350; jitter is < 20 ms in practice)', () => {
@@ -209,5 +214,65 @@ describe('interpolateSwarmPose (display-delay buffer)', () => {
     }
     expect(minDelta).toBeGreaterThan(1); // no freezes
     expect(maxDelta).toBeLessThan(14);   // bounded ripple (~2× the 6.67 ideal)
+  });
+});
+
+describe('visual-vs-physics alignment (2026-05-09 fix)', () => {
+  // The rendered swarm pose must track the predWorld swarm body's pose
+  // closely enough that "what you see is what you collide with." With
+  // DISPLAY_DELAY_MS = 0 and dynamic drones in predWorld, the renderer
+  // dead-reckons forward from the latest packet by `vx*dt`, and predWorld
+  // integrates Rapier physics from the same packet pose. In the absence
+  // of collisions the two paths agree exactly (both = pos + vel * dt).
+  //
+  // Pre-fix (DELAY=50 ms): the renderer reads at `now − 50 ms`, lagging
+  // predWorld by 50 ms × velocity. For a typical fast drone (50 u/s)
+  // that's 2.5 u of misalignment — visually overlapping the sprite while
+  // the physics body has already moved past.
+  it('rendered pose matches predWorld extrapolation for a drone moving steadily', () => {
+    // Two arrivals to satisfy the multi-arrival branch (single-arrival
+    // case pins to oldest pose without extrapolation, by design — the
+    // dead-reckoning path needs ≥ 2 arrivals to be active).
+    const e = entryWithArrivals([
+      { x:  95, y: 0, vx: 50, vy: 0, arrivalMs:  950 },
+      { x: 100, y: 0, vx: 50, vy: 0, arrivalMs: 1000 },
+    ]);
+    // Render 30 ms after the latest arrival (= 80 ms after first).
+    const nowMs = 1030;
+    interpolateSwarmPose(e, nowMs, out);
+
+    // predWorld at this point: snapped to (100, 0) on the latest packet,
+    // integrating at vx=50 for 30 ms ⇒ x = 100 + 50 × 0.030 = 101.5.
+    const predWorldX = 100 + 50 * (30 / 1000);
+    expect(out.x).toBeCloseTo(predWorldX, 3);
+    expect(out.y).toBe(0);
+  });
+
+  it('rendered pose matches predWorld extrapolation up to EXTRAPOLATION_LIMIT_MS', () => {
+    const e = entryWithArrivals([
+      { x: 0, y:  -5, vx: 0, vy: 50, arrivalMs: 1950 },
+      { x: 0, y:   0, vx: 0, vy: 50, arrivalMs: 2000 },
+    ]);
+    const nowMs = 2000 + EXTRAPOLATION_LIMIT_MS;
+    interpolateSwarmPose(e, nowMs, out);
+
+    const predWorldY = 0 + 50 * (EXTRAPOLATION_LIMIT_MS / 1000);
+    expect(out.y).toBeCloseTo(predWorldY, 3);
+  });
+
+  it('two packets bracketing render time: render uses dead-reckon from newest, matching predWorld', () => {
+    // Render time is past the newest arrival. With DELAY=0 we extrapolate
+    // forward from `newest`, which is exactly what predWorld does
+    // (predWorld snapped to newest on the latest snapshot).
+    const e = entryWithArrivals([
+      { x: 0, y: 0, vx: 100, vy: 0, arrivalMs: 1000 },
+      { x: 5, y: 0, vx: 100, vy: 0, arrivalMs: 1050 },
+    ]);
+    const nowMs = 1080; // 30 ms past newest
+    interpolateSwarmPose(e, nowMs, out);
+
+    // From newest (x=5) at vx=100: predWorld at +30 ms = 5 + 100 × 0.030 = 8.
+    const predWorldX = 5 + 100 * (30 / 1000);
+    expect(out.x).toBeCloseTo(predWorldX, 3);
   });
 });

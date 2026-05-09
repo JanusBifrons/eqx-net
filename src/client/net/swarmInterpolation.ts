@@ -17,12 +17,39 @@
 import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 
-/** Default / minimum display delay, tuned to a 60 Hz server (50 ms-spaced
- *  arrivals). Stage 0 of the network-feel roadmap halved this from 100 ms:
- *  measured snapshot arrival jitter is stable < 20 ms, so the 100 ms buffer
- *  was 5× the actual need and inflated visible remote-entity lag. 50 ms is
- *  one nominal arrival's worth of headroom — sufficient. */
-export const DISPLAY_DELAY_MS = 50;
+/** Default / minimum display delay.
+ *
+ * History:
+ *   - Original: 100 ms — generous buffer when arrival jitter measurements
+ *     were unknown.
+ *   - Stage 0 of the network-feel roadmap: 50 ms — measured jitter ≤ 20 ms
+ *     in practice, halved the visible remote-entity lag.
+ *   - 2026-05-09 fix (this commit): 0 ms.
+ *
+ * The 50 ms backward-buffered delay made the *rendered* swarm position
+ * lag the *predWorld* swarm position (which is the collision shape) by
+ * up to 50 ms × drone-velocity. For a drone moving at 30 u/sec that is
+ * ~1.5 u; a fast drone moving at 100 u/sec is 5 u. The user could
+ * visually overlap a drone (which looks like a hit) and have the ship
+ * pass through, because the collision was against the predWorld drone
+ * at a position 5 u further along. Same root cause for hitscan
+ * accuracy complaints — the ray geometry is built from rendered
+ * positions but server lag-comp uses authoritative ones.
+ *
+ * With `0 ms` and `interpolateSwarmPose` falling into the
+ * "targetMs >= newest.arrivalMs" branch, the renderer reads the
+ * latest packet pose plus forward dead-reckoning by `vx*dt` —
+ * exactly what predWorld does for dynamic drones (since the
+ * 2026-05-09 unlock fix). Render and collision shape now align.
+ *
+ * Trade-off: any wire-arrival jitter beyond the inter-arrival
+ * cadence shows as a small visual snap when the next packet finally
+ * lands and corrects the dead-reckoning. With p99 snapshot intervals
+ * of ~85 ms (vs nominal 50 ms) the snap on a worst-case packet is
+ * ~35 ms × velocity ≈ 1 u for a typical drone — visible only as
+ * mild stutter, vastly preferable to the visible-collision mismatch.
+ */
+export const DISPLAY_DELAY_MS = 0;
 
 /** Maximum dead-reckoning window past the newest arrival before freezing. */
 export const EXTRAPOLATION_LIMIT_MS = 100;
