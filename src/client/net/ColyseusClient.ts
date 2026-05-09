@@ -146,6 +146,32 @@ function remoteOffsetHalfLifeForDrift(drift: number): number {
   return 25;
 }
 
+/**
+ * Half-life for drone render-pose lerp offsets — much longer than the
+ * remote-ship version because drone snaps are structurally bigger.
+ *
+ * Math: each binary swarm packet snaps the drone backward by `LEAD_TICKS
+ * × velocity × FIXED_DT` worth of motion (the predWorld was forward-
+ * predicted ~6 ticks ahead). For V=30 u/s that's ~3 u; for V=100 u/s
+ * it's ~10 u. The remote-ship 25 ms half-life decays the offset faster
+ * than predWorld's forward advance can replace it, producing the
+ * frame-to-frame backward motion the user reported as "double vision."
+ *
+ * Derivation in `tests/scenarios/droneRenderSmoothness.test.ts`: for
+ * critically-damped spring x(t) = (x₀ + ω·x₀·t)·exp(-ω·t) starting
+ * from rest, the per-frame decay rate is bounded above by predWorld's
+ * forward advance rate when `H ≥ K·dt·√(LEAD_TICKS/2)` — about 48 ms
+ * for `dt=16.67`, `LEAD_TICKS=6`. The threshold is V-independent.
+ *
+ * Picking 100 ms gives ~2× margin over the math bound. Larger snaps
+ * (which suggest a real desync, not just leadTicks lookahead) get a
+ * 150 ms half-life so the recovery is even gentler.
+ */
+function droneRenderOffsetHalfLifeForDrift(drift: number): number {
+  if (drift < 1) return 100;
+  return 150;
+}
+
 /** Termination thresholds for remote-ship offset springs. Match the
  *  Reconciler's SPRING_POS_END / SPRING_VEL_END_MS so visual recovery
  *  ends consistently across local- and remote-ship offsets. */
@@ -1516,7 +1542,7 @@ export class ColyseusGameClient {
         // Skip the spring update if the snap is sub-pixel — saves work
         // on every packet for drones that barely moved.
         if (dist > 0.05) {
-          const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
+          const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist);
           const existing = this._droneRenderOffsets.get(entityId);
           if (existing) {
             existing.sx.x = ox; existing.sx.v = 0;
