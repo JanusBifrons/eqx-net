@@ -1407,11 +1407,23 @@ export class ColyseusGameClient {
           ? generateAsteroidVertices(entityId, entry.radius)
           : undefined;
         this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3, vertices);
-        // 5c-stabilise bonus: swarm bodies are collision-only on the client.
-        // Locking translations/rotations means reconciler replay (which calls
-        // world.step()) won't drift them; the binary swarm packet is the
-        // single source of truth for pose.
-        this.predWorld.lockBody(key);
+        // Lock asteroids (kind=0) only — they're static on the server and
+        // locking them stops the player from pushing them out of pose
+        // during reconciler replay. Drones (kind=1) carry non-zero
+        // velocity from the server's AI; locking them discards that
+        // velocity and forces collision response to treat them as
+        // infinite-mass objects, putting all collision impulse into
+        // the player and producing the saw-tooth drift seen in mobile
+        // cap 2026-05-09T09-54-45-849Z-8grdi1. Leaving drones dynamic
+        // makes the client's collision response use the same mass
+        // model as the server's, halves the synthetic-test drift
+        // (0.059 → 0.029 u in `dronePlayerCollisionDrift.test.ts`),
+        // and the snapshot-snap on each binary-swarm packet keeps
+        // any inertia-extrapolated drone position in line with the
+        // server.
+        if (entry.kind === 0) {
+          this.predWorld.lockBody(key);
+        }
         this.predSwarmKeys.add(key);
       }
       this.predWorld.setShipState(key, {

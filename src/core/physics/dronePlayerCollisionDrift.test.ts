@@ -241,17 +241,24 @@ describe('drone-vs-player collision: locked-drone-pose-mismatch drift', () => {
     }
   });
 
-  it('FIX CANDIDATE A — unlocked client drone: does it eliminate the drift?', () => {
-    // Test "option A" from the head comment: don't lock the client's
-    // drone. Let it integrate freely (with the position snapped from
-    // the server every snapshot). Both worlds run dynamic-vs-dynamic
-    // collision, mass models match.
+  it('FIX (drones unlocked in client predWorld) reduces drift below the locked baseline', () => {
+    // The shipped fix in `ColyseusClient.syncSwarmIntoPredWorld()`:
+    // drones (kind=1) are no longer `lockBody()`-locked. They stay
+    // dynamic so collision response uses the same mass model as the
+    // server's; binary-swarm-packet snaps still keep their pose in
+    // line with server authority on every snapshot.
     //
-    // This isolates the "lockBody mass mismatch" component from the
-    // "stale drone position" component. If unlocking eliminates drift,
-    // the lock is the dominant cause; if drift persists, position
-    // staleness is.
-    const samples = simulate({
+    // Asteroids (kind=0) remain locked for the original 5c-stabilise
+    // reason: they're static on the server, and locking them stops
+    // the player from pushing them out of pose during replay.
+    const lockedSamples = simulate({
+      totalTicks: 240,
+      snapshotEvery: 3,
+      dronePresent: true,
+      droneInitialY: 25,
+      clientDroneLocked: true,
+    });
+    const unlockedSamples = simulate({
       totalTicks: 240,
       snapshotEvery: 3,
       dronePresent: true,
@@ -259,13 +266,19 @@ describe('drone-vs-player collision: locked-drone-pose-mismatch drift', () => {
       clientDroneLocked: false,
     });
 
-    const maxDrift = Math.max(...samples.map((s) => s.shipDriftDist));
-    // eslint-disable-next-line no-console
-    console.log(`[unlocked-drone variant] Max ship drift: ${maxDrift.toFixed(3)}u`);
+    const lockedPeak = Math.max(...lockedSamples.map((s) => s.shipDriftDist));
+    const unlockedPeak = Math.max(...unlockedSamples.map((s) => s.shipDriftDist));
 
-    // No assertion on this test — just measurement, so we can compare
-    // numerically against the locked-drone case. We'll wire an
-    // assertion in once we know which fix candidate to pursue.
-    expect(maxDrift).toBeGreaterThanOrEqual(0); // smoke
+    // eslint-disable-next-line no-console
+    console.log(
+      `Locked drone peak drift: ${lockedPeak.toFixed(3)}u; ` +
+        `unlocked: ${unlockedPeak.toFixed(3)}u; ` +
+        `reduction: ${((1 - unlockedPeak / lockedPeak) * 100).toFixed(0)}%`,
+    );
+
+    // Lock-in: unlocked must be measurably better. ~50% reduction
+    // observed; assert at least 30% to leave headroom for floating-
+    // point noise from Rapier across versions.
+    expect(unlockedPeak).toBeLessThan(lockedPeak * 0.7);
   });
 });
