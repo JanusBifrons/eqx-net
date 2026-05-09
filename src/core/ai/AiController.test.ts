@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { AiController, type AiIntentSink } from './AiController.js';
-import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
-import { DriftingAsteroidBehaviour } from '../../core/ai/DriftingAsteroidBehaviour.js';
-import type { AiEntity, AiPlayerView } from '../../core/contracts/IAiBehaviour.js';
-import { WEAPON_COOLDOWN_TICKS } from '../../core/combat/Weapons.js';
+import { HostileDroneBehaviour } from './HostileDroneBehaviour.js';
+import { DriftingAsteroidBehaviour } from './DriftingAsteroidBehaviour.js';
+import type { AiEntity, AiPlayerView } from '../contracts/IAiBehaviour.js';
+import { WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 
 interface PostedIntent { slot: number; fx: number; fy: number; torque: number }
 

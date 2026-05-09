@@ -27,7 +27,7 @@ import {
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
-import { AiController } from '../ai/AiController.js';
+import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';

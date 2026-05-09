@@ -49,6 +49,10 @@ import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolat
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
+import { AiController, type AiIntentSink } from '@core/ai/AiController';
+import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
+import type { AiEntity, AiPlayerView } from '@core/contracts/IAiBehaviour';
+import { getShipKind } from '@shared-types/shipKinds';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -225,6 +229,32 @@ export class ColyseusGameClient {
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
   private predSwarmKeys = new Set<string>();
+
+  /**
+   * Phase 3 of the network-feel reset (2026-05-09): client-side drone AI.
+   *
+   * The same `AiController` + `HostileDroneBehaviour` modules the server runs,
+   * driving the same drone bodies (in the client's predWorld) with the same
+   * deterministic intent the server is producing on its side. This closes
+   * the "drones not predicted client-side" architectural gap that produced
+   * the 22 u correction bursts in cap `2026-05-09T09-54-45-849Z-8grdi1`
+   * and the visible clip-through the user reported.
+   *
+   * Sink: applies the AI's per-tick (fx, fy, torque) directly to the matching
+   * `swarm-${entityId}` body in `predWorld` via `applyImpulse`. The slot
+   * passed to `postIntent` is the numeric drone entityId — same key the
+   * mirror uses, so no mapping needed.
+   */
+  private readonly _aiSink: AiIntentSink = {
+    postIntent: (slot, fx, fy, torque) => {
+      this.predWorld?.applyImpulse(`swarm-${slot}`, fx, fy, torque);
+    },
+  };
+  private readonly _aiController = new AiController(this._aiSink);
+  /** Numeric entityIds currently registered with `_aiController`. */
+  private readonly _aiRegisteredIds = new Set<number>();
+  /** Reusable AiPlayerView buffer to avoid per-tick allocation in the AI tick. */
+  private readonly _aiPlayersBuf: AiPlayerView[] = [];
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -438,6 +468,13 @@ export class ColyseusGameClient {
     this._recentCorrFlags.length = 0;
     this._intervalEwma = 0;
     if (this.reconciler) this.reconciler.lastRtt = 0;
+    // Phase 3 — drop AI registrations on sector handoff. The destination
+    // sector has a different swarm; old behaviours would hold stale
+    // `lastFireTick` and target stale player IDs that may not exist there.
+    for (const id of this._aiRegisteredIds) {
+      this._aiController.unregister(`${id}`);
+    }
+    this._aiRegisteredIds.clear();
   }
 
   async connect(
@@ -1250,7 +1287,15 @@ export class ColyseusGameClient {
         snap.serverTick,
         this.inputTick,
         ackedTick,
-        () => this.applyRemoteInputs(),
+        () => {
+          // Phase 3 (2026-05-09): drones get AI impulses on every replayed
+          // tick, identical to the input replay path. Without this, the
+          // reconciler's `predWorld.tick(1/60)` calls would inertia-drift
+          // drones for `leadTicks` ticks each snapshot — exactly the drift
+          // we're trying to eliminate.
+          this.applyRemoteInputs();
+          this.tickClientAi();
+        },
       );
 
       // Compute remote ship lerp offsets.
@@ -1410,19 +1455,21 @@ export class ColyseusGameClient {
         // Lock asteroids (kind=0) only — they're static on the server and
         // locking them stops the player from pushing them out of pose
         // during reconciler replay. Drones (kind=1) carry non-zero
-        // velocity from the server's AI; locking them discards that
-        // velocity and forces collision response to treat them as
-        // infinite-mass objects, putting all collision impulse into
-        // the player and producing the saw-tooth drift seen in mobile
-        // cap 2026-05-09T09-54-45-849Z-8grdi1. Leaving drones dynamic
-        // makes the client's collision response use the same mass
-        // model as the server's, halves the synthetic-test drift
-        // (0.059 → 0.029 u in `dronePlayerCollisionDrift.test.ts`),
-        // and the snapshot-snap on each binary-swarm packet keeps
-        // any inertia-extrapolated drone position in line with the
-        // server.
+        // velocity from the server's AI and are unlocked so the client
+        // simulates the same dynamic-vs-dynamic collision response the
+        // server resolves.
         if (entry.kind === 0) {
           this.predWorld.lockBody(key);
+        } else {
+          // kind=1 (drone): register a HostileDroneBehaviour with the
+          // client's AiController. Same module the server runs, same
+          // ship-kind tuning, so given identical (self, view) inputs
+          // both sides produce identical (fx, fy, torque) intents.
+          // `slot` is the numeric entityId — the sink uses it as the
+          // predWorld key suffix (`swarm-${slot}`).
+          const kind = getShipKind(entry.shipKind ?? null);
+          this._aiController.register(`${entityId}`, entityId, new HostileDroneBehaviour(kind));
+          this._aiRegisteredIds.add(entityId);
         }
         this.predSwarmKeys.add(key);
       }
@@ -1435,6 +1482,14 @@ export class ColyseusGameClient {
       if (!seen.has(key)) {
         this.predWorld.despawnShip(key);
         this.predSwarmKeys.delete(key);
+        // If the swept body was a drone, unregister from the AI controller.
+        // Numeric entityId is encoded in the key as `swarm-${id}`.
+        const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
+        const id = Number(idStr);
+        if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
+          this._aiController.unregister(`${id}`);
+          this._aiRegisteredIds.delete(id);
+        }
       }
     }
   }
@@ -1798,6 +1853,14 @@ export class ColyseusGameClient {
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
       const reverse   = kb.reverse;
       const tick = this.inputTick++;
+      // Phase 3 (2026-05-09): tick the AI BEFORE applying this tick's input.
+      // Server's AI runs at end of `update()` post-step, using state from
+      // the just-completed tick (no current-tick input applied yet). To
+      // match, the client's AI must see the *pre-step* state too — i.e.
+      // before this tick's `applyInput` modifies the player body. Otherwise
+      // the player's velocity in the AI's view differs by one input
+      // application from what the server saw.
+      this.tickClientAi();
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = performance.now();
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
@@ -1850,6 +1913,8 @@ export class ColyseusGameClient {
       // remotes whose intent isn't tracking (3 consecutive corrections > 5 u)
       // skip this and integrate with damping only.
       this.applyRemoteInputs();
+      // (Phase 3 AI tick now runs at the TOP of this iteration, before
+      // applyInput, to match the server's "post-step state → AI" ordering.)
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
         this.predWorld.tick(1 / 60);
@@ -1942,6 +2007,65 @@ export class ColyseusGameClient {
       dist: hit ? hit.dist : HITSCAN_RANGE,
       hitId: hit?.hitId,
     };
+  }
+
+  /**
+   * Phase 3 of the network-feel reset (2026-05-09) — client-side drone AI tick.
+   *
+   * Runs the same `AiController` + `HostileDroneBehaviour` modules the server
+   * runs, so drones in the client's predWorld get the same per-tick impulses
+   * the server's drones get. With identical inputs both sides produce
+   * identical motion → drones in predWorld track the server's authoritative
+   * drone positions, collisions resolve at matching geometry, hitscan rays
+   * hit what the player aimed at.
+   *
+   * Determinism contract:
+   *   - Player view comes from `predWorld.getShipState`, NOT `mirror.ships`.
+   *     mirror.ships includes the reconciler's render-only lerp offset; the
+   *     server never sees that. Using predWorld gives the AI the same
+   *     authoritative-physics positions both sides use.
+   *   - `entitySnapshot` reads the drone's current predWorld pose.
+   *   - `view.tick` uses `inputTick` so behaviours' tick-based gates align
+   *     with the server's tick numbering.
+   *
+   * Called from two places:
+   *   1. `tickPhysics` input loop — each forward step from inputTick toward
+   *      targetTick, mirroring the server's per-tick AI advance.
+   *   2. `Reconciler.reconcile` per-replay-tick callback — each replay step
+   *      reapplies AI to keep drone trajectory aligned with what the server
+   *      simulated for that tick.
+   *
+   * Fire requests are drained and discarded — the server is still the
+   * authority for drone shots; client predicts only drone movement, not
+   * weapon resolution.
+   */
+  private tickClientAi(): void {
+    if (!this.predWorld || this._aiRegisteredIds.size === 0) return;
+    this._aiPlayersBuf.length = 0;
+    for (const [pid] of this.mirror.ships) {
+      const ps = this.predWorld.getShipState(pid);
+      if (ps) this._aiPlayersBuf.push({ id: pid, x: ps.x, y: ps.y, vx: ps.vx, vy: ps.vy });
+    }
+    if (this._aiPlayersBuf.length === 0) return;
+    this._aiController.tick(
+      this.inputTick,
+      1 / 60,
+      this._aiPlayersBuf,
+      (id): AiEntity | null => {
+        const state = this.predWorld!.getShipState(`swarm-${id}`);
+        if (!state) return null;
+        return {
+          id,
+          x: state.x,
+          y: state.y,
+          vx: state.vx,
+          vy: state.vy,
+          angle: state.angle,
+          angvel: state.angvel ?? 0,
+        };
+      },
+    );
+    this._aiController.drainFireRequests();
   }
 
   private sendFire(tick: number): void {

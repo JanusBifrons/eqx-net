@@ -1,4 +1,4 @@
-import type { IAiBehaviour, AiEntity, AiPlayerView, AiWorldView } from '../../core/contracts/IAiBehaviour.js';
+import type { IAiBehaviour, AiEntity, AiPlayerView, AiWorldView } from '../contracts/IAiBehaviour.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these

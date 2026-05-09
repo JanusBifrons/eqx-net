@@ -168,6 +168,7 @@ test('network feel: sustained drone combat stays within bounded drift', async ({
   console.log(`  stuck offsets:    ${JSON.stringify(m.stuckOffsets)}`);
   console.log('====================================\n');
 
+
   // ----- Sanity gates -----
   // We must have actually exercised the system. 3 s @ 20 Hz nominal gives
   // ~60 snapshots; cadence drops under load — 20 is a generous floor that
