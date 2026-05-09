@@ -218,7 +218,14 @@ describe('Network-feel regression fixtures', () => {
       ],
       durationMs: 11_500,
     });
-    const observations = runScenario(events, { rttGapFilterEnabled: false });
+    // Disable BOTH hotfix #3 (gap-interval filter) AND hotfix #5
+    // (LEAD-subtract). Either one alone is sufficient to keep the mean
+    // bounded under repeated Pattern A gaps; only with both bypassed
+    // does the regression manifest.
+    const observations = runScenario(events, {
+      rttGapFilterEnabled: false,
+      rttLeadSubtractEnabled: false,
+    });
     const result = rttMeanAlwaysBelow(observations, 120, 1500);
     expect(result.passed).toBe(false);
     expect(result.violation).toBeDefined();

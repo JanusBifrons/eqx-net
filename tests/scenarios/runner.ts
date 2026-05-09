@@ -88,10 +88,16 @@ function applyRafTick(
 function applySnapshot(
   state: SimulatedClientState,
   ev: Extract<Event, { type: 'snapshot' }>,
-  flags: { recoveryEnabled: boolean; rttClampEnabled: boolean; rttGapFilterEnabled: boolean } = {
+  flags: {
+    recoveryEnabled: boolean;
+    rttClampEnabled: boolean;
+    rttGapFilterEnabled: boolean;
+    rttLeadSubtractEnabled: boolean;
+  } = {
     recoveryEnabled: true,
     rttClampEnabled: true,
     rttGapFilterEnabled: true,
+    rttLeadSubtractEnabled: true,
   },
 ): { starvationSnapTriggered: boolean } {
   // ── clockAnchor update (mirrors ColyseusClient.handleSnapshot lines around 1004) ──
@@ -135,9 +141,18 @@ function applySnapshot(
     intervalMs > 0 &&
     (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
   if (ev.lastRtt > 0 && (!flags.rttGapFilterEnabled || !isGapRelated)) {
-    const rttSample = flags.rttClampEnabled
-      ? Math.min(ev.lastRtt, RTT_SAMPLE_CLAMP_MS)
+    // Stage 4 hotfix #5 — strip the gate-induced server-side hold time
+    // from the RTT sample before pushing. See ColyseusClient.handleSnapshot
+    // for the full rationale; the short version is that the input-queue
+    // gate (`tickInputQueue`) holds each input claim X for ~leadTicks
+    // ticks, which is included in `Reconciler.lastRtt` and creates a
+    // positive feedback loop on welford → leadTicks if pushed raw.
+    const rttForWelford = flags.rttLeadSubtractEnabled
+      ? Math.max(0, ev.lastRtt - state.leadTicks * FIXED_MS)
       : ev.lastRtt;
+    const rttSample = flags.rttClampEnabled
+      ? Math.min(rttForWelford, RTT_SAMPLE_CLAMP_MS)
+      : rttForWelford;
     welfordPush(state.rttWelford, rttSample);
     const mean = welfordMean(state.rttWelford);
     const stdDev = welfordStdDev(state.rttWelford);
@@ -179,6 +194,13 @@ export interface RunOptions {
    *  production gates the Welford push on `dropDetector.dropCount === 0`
    *  so gap-related samples never contaminate the running mean. */
   rttGapFilterEnabled?: boolean;
+  /** When false, the runner pushes raw `lastRtt` into Welford without
+   *  subtracting `leadTicks × FIXED_MS`. Hotfix #5 (2026-05-09)
+   *  demonstration flag. Default true: production subtracts the gate-
+   *  induced server-side hold from the sample so welford tracks
+   *  network-only RTT and the gate doesn't create a positive-feedback
+   *  loop on the lookahead controller. */
+  rttLeadSubtractEnabled?: boolean;
 }
 
 /**
@@ -194,6 +216,7 @@ export function runScenario(
   const recoveryEnabled = opts.starvationRecoveryEnabled !== false;
   const rttClampEnabled = opts.rttClampEnabled !== false;
   const rttGapFilterEnabled = opts.rttGapFilterEnabled !== false;
+  const rttLeadSubtractEnabled = opts.rttLeadSubtractEnabled !== false;
   const observations: Observation[] = [];
 
   for (const ev of events) {
@@ -201,7 +224,7 @@ export function runScenario(
     if (ev.type === 'rafTick') {
       applyRafTick(state, ev);
     } else {
-      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled, rttGapFilterEnabled }));
+      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled, rttGapFilterEnabled, rttLeadSubtractEnabled }));
     }
     observations.push({
       atMs: ev.atMs,
