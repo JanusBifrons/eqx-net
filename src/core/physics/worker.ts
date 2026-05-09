@@ -186,7 +186,22 @@ async function main(): Promise<void> {
       // Inputs claiming tick > `tick` are for future steps and stay queued.
       const result = tickInputQueue(slot, q, lastApplied, lastAckTick, tick);
       if (result.applied) physics.applyInput(playerId, result.applied);
-      if (result.ackTick !== null) appliedTicks.set(slot, result.ackTick);
+      if (result.ackTick !== null) {
+        appliedTicks.set(slot, result.ackTick);
+        // Self-detection invariant: with the gate, ackTick must never
+        // exceed the upcoming sim tick (`tick + 1`, since the snapshot
+        // emitted after this step reports serverTick = tick + 1).
+        // If this ever fires, either the gate regressed or some other
+        // path is mutating lastAckTick. Sample to 5% so a regression
+        // surfaces visibly without spamming the log under sustained
+        // failure.
+        if (result.ackTick > tick + 1 && Math.random() < 0.05) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[worker] INVARIANT: ack ${result.ackTick} ahead of simTick ${tick + 1} (slot ${slot}, excess ${result.ackTick - (tick + 1)})`,
+          );
+        }
+      }
     }
 
     // Apply pending AI intents (one per slot per step). Drained after application.
