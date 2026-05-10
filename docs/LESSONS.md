@@ -14,6 +14,36 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-10 — Galaxy Map refactor — two Pixi maps, not one
+
+Refactored both galaxy maps from SVG to Pixi. Two non-obvious findings:
+
+1. **Pixi 8 `Container` has a public `destroyed: boolean` field.** Subclassing
+   it and adding `private destroyed = false` for your own dispose-guard is a
+   TypeScript visibility error (private member shadows a public base member).
+   Use a different name (`disposed`) for the guard. Same trap will catch any
+   future Container subclass.
+
+2. **Two distinct maps, one transparent, one full-screen.** A single hex
+   renderer was tempting but the modes pull in opposite directions: the
+   in-game overlay (Map B) needs to be a screen-space layer on the **same**
+   canvas as gameplay so non-hex pixels pass through to the viewport via
+   Pixi's hit-testing (avoiding the DOM-canvas hit-test trap where a
+   transparent canvas still blocks taps on its bounding rect); the standalone
+   overview (Map A) wants its own `Application` + `pixi-viewport` for full
+   drag/pinch/wheel pan & zoom on a 7-sector graph the player can roam.
+   Trying to share a renderer between these two roles fights both. Two
+   files, both consume `src/core/galaxy/galaxy.ts`, no inheritance.
+
+The DI seam is `IRenderer.addOverlayContainer(unknown)` — typed as `unknown`
+to keep `src/core` Pixi-free; `PixiRenderer` narrows to `Container` and
+parents to `app.stage` **above** the viewport so the overlay doesn't pan/zoom
+with the world camera.
+
+Commit: pending — galaxy-map refactor branch.
+
+---
+
 ## 2026-05-09 — Network-Feel — the paradigm gap: drone AI was server-only; client must run identical AI for collisions to align
 
 After ~15 hours and 8 commits chasing per-symptom fixes (welford reset, tick-gate, lead-subtract, drone-unlock, display-delay), the user reported the felt experience hadn't materially improved. The honest answer was that every fix was treating a symptom of one underlying paradigm gap: **the client predicts the player ship's physics 1:1 with the server, but for drones it only had a velocity vector + dead-reckoning between snapshots**. Server applies AI thrust/torque every tick; client never did. So drone position diverged from server between every snapshot, collision happened at slightly different geometry on each side, and reconciler corrections perpetually re-opened.

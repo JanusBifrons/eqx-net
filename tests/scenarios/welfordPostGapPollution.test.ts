@@ -166,7 +166,6 @@ describe('Welford mean — post-gap pollution', () => {
     const cyclesEvents: Event[] = [];
     let ms = 0;
     let tick = 100;
-    const cycleDuration = (30 + 1 + 20) * 50 + 250; // approximate
 
     for (let cycle = 0; cycle < 5; cycle++) {
       // 30 clean snapshots
