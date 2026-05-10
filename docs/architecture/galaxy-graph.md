@@ -109,19 +109,39 @@ key, drone count, max clients).
   validation (sub-phase B) uses `isNeighbour` as a defence-in-depth check
   against malformed `engage_transit` requests.
 
-## Active-Limbo UX (sub-phase B preview)
+## Active-Limbo UX
 
 If the player has an active Limbo entry (their ship is held in a sector for
-the 5-min disconnect TTL), the galaxy-map landing screen renders the same
-SVG but only the entry's sector is selectable; other tiles are dimmed and a
-banner reads "Resume your ship in [sector name]". The
-[`GalaxyMapScreen` component](../../src/client/components/GalaxyMapScreen.tsx)
-already accepts an `activeLimboSectorKey` prop; sub-phase B will populate it
-from a Limbo-status fetch.
+the 5-min disconnect TTL), the spawn-select Galaxy Overview ([Map A](
+../../src/client/components/GalaxyOverviewScreen.tsx) in `mode='spawn'`)
+constrains its selectable set to that single sector; the limbo hex animates
+a "RESUME" pulse drawn into the Pixi canvas, and a React banner above the
+canvas (`data-testid="limbo-resume-banner"`) carries the stats grid + the
+"Resume ship" button for E2E parity. The wrapper queries `/dev/limbo`
+itself; an `activeLimboSectorKey` prop is available for tests that pass a
+pre-resolved value.
 
-In-game, the same `<HexGalaxyMap>` component is reused as an overlay opened
-from the AppHeader. There, `selectableKeys` is the current sector's
-neighbours only (transit topology — you can only hop one hex at a time).
+## Two in-game maps (2026-05-10 refactor)
+
+The original SVG `<HexGalaxyMap>` was retired in favour of **two distinct
+Pixi-rendered maps**, both consuming this graph:
+
+- **Map A — `GalaxyOverviewScreen` warp-mode**: full-screen Pixi canvas with
+  drag/pinch/wheel pan & zoom (own `Application` + `pixi-viewport`). Reached
+  in-game from the drawer's Galaxy tab. Only sectors adjacent to the current
+  sector are tappable; non-neighbours render as faint outlines so the
+  player keeps full spatial context for where they are in the galaxy.
+- **Map B — `GalaxyMapLayer`** ([src/client/render/galaxy/GalaxyMapLayer.ts](
+  ../../src/client/render/galaxy/GalaxyMapLayer.ts)): a screen-space Pixi
+  `Container` attached to the **gameplay canvas's `app.stage`** above the
+  viewport via the `IRenderer.addOverlayContainer` seam. Highly transparent
+  (alpha ~0.30) so gameplay continues fully visible underneath; the player
+  can keep flying while choosing a destination. Toggled by the bottom-center
+  HUD MAP button or the `M` keyboard shortcut.
+
+Both maps consume `isNeighbour(currentSectorKey, sec.key)` for selectability;
+the server's `TransitOrchestrator` re-validates server-side as defence in
+depth (rejecting non-neighbour `engage_transit` with `reason: 'not_neighbour'`).
 
 ## Why hard-coded TS, not SQLite-backed
 

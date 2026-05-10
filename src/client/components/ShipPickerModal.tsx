@@ -11,9 +11,9 @@ interface ShipPickerModalProps {
 
 /**
  * Modal that lets the player pick which ship kind to spawn with on the next
- * sector entry. The trigger button (in `GalaxyMapScreen`) is responsible for
- * being disabled while a ship is currently spawned — by the time this modal
- * opens, selection is always safe.
+ * sector entry. The trigger button (in `GalaxyOverviewScreen` spawn-mode) is
+ * responsible for being disabled while a ship is currently spawned — by the
+ * time this modal opens, selection is always safe.
  *
  * Per-card stat chips (max speed, turn agility, hull) are derived from the
  * catalogue values directly — adding a 4th kind in `shipKinds.ts` makes it

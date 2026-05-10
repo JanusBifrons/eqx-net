@@ -1,115 +1,209 @@
-import { Box, Button, LinearProgress, Typography } from '@mui/material';
+import { useEffect, useRef, useState } from 'react';
+import { Box, IconButton, Tooltip } from '@mui/material';
+import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import StopIcon from '@mui/icons-material/Stop';
 import { useUIStore } from '../state/store';
-import { getSector } from '../../core/galaxy/galaxy';
+import { Slot } from '../layout/Slot';
+import { useIsCompact } from '../layout/useIsCompact';
 
 interface HyperspaceOverlayProps {
-  /** Cancel callback, fired when the player clicks "Abort spool". Wired to
-   *  `transitClient.cancelTransit(room)` by App.tsx. */
+  /** Cancel callback, fired when the player clicks the abort button. Wired
+   *  to `transitClient.cancelTransit(room)` by App.tsx. */
   onCancel: () => void;
 }
 
 /**
- * Phase 8 sub-phase B — full-screen UI overlay during inter-sector transit.
+ * Inter-sector transit overlay.
  *
- * Renders nothing while `transitState === 'DOCKED'`. During SPOOLING shows
- * a 0..1 LinearProgress with the destination sector name and an Abort
- * button (vulnerable spool-up: the player can cancel any time before
- * commit, AND the ship can still take damage in the source room — the
- * orchestrator subscribes to SHIP_DESTROYED to abort transit cleanly on
- * death). During IN_TRANSIT shows a warp-streak fade. ARRIVED is a brief
- * green flash; the ColyseusClient's transit_state handler then transitions
- * back to DOCKED.
+ * Renders nothing while `transitState === 'DOCKED'`.
  *
- * Reads `transitState`, `transitProgress`, `transitTargetSectorKey` from
- * Zustand. No spatial state — purity invariant intact.
+ * SPOOLING (the new design): a slim vertical bar pinned to the left edge,
+ * volume-bar styled. From top to bottom:
+ *   - rocket icon (running indicator)
+ *   - countdown in `S.MMM` form, ms-precision
+ *   - bottom-up green fill that tracks `transitProgress`
+ *   - red abort button at the bottom
+ * Smaller / more transparent on desktop (wide viewport), bolder on mobile.
+ *
+ * IN_TRANSIT and ARRIVED unchanged: full-screen warp-streak / radial flash
+ * overlay using the `transit` anchor at click-through pointer-events.
  */
 export function HyperspaceOverlay({ onCancel }: HyperspaceOverlayProps): JSX.Element | null {
   const transitState     = useUIStore((s) => s.transitState);
   const transitProgress  = useUIStore((s) => s.transitProgress);
-  const targetSectorKey  = useUIStore((s) => s.transitTargetSectorKey);
 
   if (transitState === 'DOCKED') return null;
 
-  const target = targetSectorKey ? getSector(targetSectorKey) : null;
-  const targetName = target?.name ?? targetSectorKey ?? '???';
-
   if (transitState === 'SPOOLING') {
     return (
-      <Box
-        data-testid="hyperspace-overlay"
-        data-transit-state="SPOOLING"
-        sx={{
-          position: 'fixed',
-          top: 'auto',
-          bottom: 80,
-          left: 16,
-          right: 16,
-          zIndex: 100,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 1,
-          p: 2,
-          bgcolor: 'rgba(5,7,15,0.92)',
-          border: '1px solid #1f7a4d',
-          borderRadius: 2,
-          maxWidth: 480,
-          mx: 'auto',
-        }}
-      >
-        <Typography variant="overline" sx={{ color: '#00ff88', letterSpacing: 3 }}>
-          Spooling Hyperdrive · Destination {targetName}
-        </Typography>
-        <LinearProgress
-          variant="determinate"
-          value={transitProgress * 100}
-          sx={{
-            width: '100%',
-            height: 6,
-            borderRadius: 3,
-            bgcolor: '#0a3322',
-            '& .MuiLinearProgress-bar': { bgcolor: '#00ff88' },
-          }}
-        />
-        <Typography variant="caption" sx={{ color: '#9aa0b4' }}>
-          Ship remains vulnerable. Disengage with the button below or by losing health.
-        </Typography>
-        <Button
-          variant="outlined"
-          size="small"
-          onClick={onCancel}
-          sx={{
-            color: '#ff8800',
-            borderColor: '#ff8800',
-            '&:hover': { borderColor: '#ffaa33', bgcolor: 'rgba(255,136,0,0.08)' },
-          }}
-          data-testid="hyperspace-cancel"
-        >
-          Abort spool
-        </Button>
-      </Box>
+      <Slot anchor="middle-left" order={100}>
+        <SpoolingBar onCancel={onCancel} progress={transitProgress} />
+      </Slot>
     );
   }
 
   if (transitState === 'IN_TRANSIT' || transitState === 'ARRIVED') {
     return (
-      <Box
-        data-testid="hyperspace-overlay"
-        data-transit-state={transitState}
-        sx={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 200,
-          pointerEvents: 'none',
-          background: transitState === 'ARRIVED'
-            ? 'radial-gradient(ellipse at center, rgba(0,255,136,0.22), rgba(5,7,15,0))'
-            : 'repeating-linear-gradient(90deg, rgba(0,255,136,0.0) 0, rgba(0,255,136,0.0) 12px, rgba(0,255,136,0.18) 13px, rgba(0,255,136,0.0) 14px)',
-          opacity: transitState === 'ARRIVED' ? 0.65 : 0.85,
-          transition: 'opacity 400ms, background 400ms',
-        }}
-      />
+      <Slot anchor="transit">
+        <Box
+          data-testid="hyperspace-overlay"
+          data-transit-state={transitState}
+          sx={{
+            position: 'absolute',
+            inset: 0,
+            pointerEvents: 'none',
+            background: transitState === 'ARRIVED'
+              ? 'radial-gradient(ellipse at center, rgba(0,255,136,0.22), rgba(5,7,15,0))'
+              : 'repeating-linear-gradient(90deg, rgba(0,255,136,0.0) 0, rgba(0,255,136,0.0) 12px, rgba(0,255,136,0.18) 13px, rgba(0,255,136,0.0) 14px)',
+            opacity: transitState === 'ARRIVED' ? 0.65 : 0.85,
+            transition: 'opacity 400ms, background 400ms',
+          }}
+        />
+      </Slot>
     );
   }
 
   return null;
+}
+
+interface SpoolingBarProps {
+  onCancel: () => void;
+  /** 0..1 from Zustand. Drives the fill height; the countdown reads
+   *  `transitSpoolMs` directly so it updates at RAF rate even between
+   *  Zustand notifications. */
+  progress: number;
+}
+
+function SpoolingBar({ onCancel, progress }: SpoolingBarProps): JSX.Element {
+  const compact = useIsCompact();
+  const remainingText = useRemainingText();
+
+  const width = compact ? 28 : 36;
+  const bg = compact ? 'rgba(5, 7, 15, 0.75)' : 'rgba(5, 7, 15, 0.55)';
+  const abortDiameter = compact ? 28 : 24;
+
+  return (
+    <Box
+      data-testid="hyperspace-overlay"
+      data-transit-state="SPOOLING"
+      sx={{
+        width,
+        height: 'min(60vh, 360px)',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: 0.5,
+        py: 1,
+        bgcolor: bg,
+        border: '1px solid rgba(0, 255, 136, 0.35)',
+        borderRadius: 18,
+        boxShadow: compact ? '0 0 12px rgba(0, 255, 136, 0.18)' : 'none',
+        backdropFilter: 'blur(2px)',
+      }}
+    >
+      <RocketLaunchIcon sx={{ fontSize: 18, color: '#00ff88' }} />
+
+      <Box
+        component="span"
+        data-testid="hyperspace-countdown"
+        sx={{
+          fontFamily: 'ui-monospace, "Roboto Mono", monospace',
+          fontSize: 10,
+          color: '#9aa0b4',
+          letterSpacing: 0.5,
+          lineHeight: 1,
+          minHeight: 12,
+        }}
+      >
+        {remainingText}
+      </Box>
+
+      {/* Fill column — flex:1 takes the remaining vertical room between the
+          countdown above and the abort button below. The inner div grows
+          from the bottom up as `progress` advances. */}
+      <Box
+        sx={{
+          flex: 1,
+          width: '60%',
+          mt: 0.5,
+          mb: 0.5,
+          position: 'relative',
+          overflow: 'hidden',
+          borderRadius: 4,
+          bgcolor: 'rgba(0, 255, 136, 0.08)',
+        }}
+      >
+        <Box
+          data-testid="hyperspace-fill"
+          data-progress={progress.toFixed(3)}
+          sx={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            bottom: 0,
+            height: `${Math.max(0, Math.min(1, progress)) * 100}%`,
+            background: 'linear-gradient(to top, #00cc6a, #00ff88)',
+            transition: 'height 80ms linear',
+          }}
+        />
+      </Box>
+
+      <Tooltip title="Abort spool" placement="right">
+        <IconButton
+          data-testid="hyperspace-cancel"
+          onClick={onCancel}
+          size="small"
+          sx={{
+            width: abortDiameter,
+            height: abortDiameter,
+            bgcolor: '#aa1f1f',
+            color: '#fff',
+            '&:hover, &:active, &:focus': { bgcolor: '#cc2828' },
+          }}
+        >
+          <StopIcon sx={{ fontSize: compact ? 18 : 16 }} />
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+}
+
+/**
+ * Live "S.MMM" countdown that updates at RAF rate, independent of Zustand
+ * notification cadence. Reads `transitSpoolMs` and the wall-clock SPOOLING
+ * start time (captured the first time we observe a non-null `transitSpoolMs`
+ * within a SPOOLING state) to compute remaining ms with millisecond
+ * precision — a humanising touch the bare 60 Hz progress ramp can't deliver.
+ */
+function useRemainingText(): string {
+  const spoolMs = useUIStore((s) => s.transitSpoolMs);
+  const transitState = useUIStore((s) => s.transitState);
+  const startRef = useRef<number | null>(null);
+  const [text, setText] = useState<string>('');
+
+  // Anchor `start` the first frame we know the duration. Reset once
+  // SPOOLING ends so the next transit gets a fresh anchor.
+  useEffect(() => {
+    if (transitState !== 'SPOOLING' || spoolMs === null) {
+      startRef.current = null;
+      setText('');
+      return;
+    }
+    if (startRef.current === null) startRef.current = performance.now();
+
+    let raf = 0;
+    const tick = (): void => {
+      const start = startRef.current;
+      if (start === null || spoolMs === null) return;
+      const remaining = Math.max(0, spoolMs - (performance.now() - start));
+      const seconds = Math.floor(remaining / 1000);
+      const millis = Math.floor(remaining % 1000);
+      setText(`${seconds}.${millis.toString().padStart(3, '0')}`);
+      if (remaining > 0) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+  }, [transitState, spoolMs]);
+
+  return text;
 }

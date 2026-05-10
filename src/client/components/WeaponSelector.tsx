@@ -29,18 +29,14 @@ export function WeaponSelector(): JSX.Element {
     return (
       <Box
         component="button"
+        data-testid="weapon-selector"
         onTouchStart={(e) => {
           e.preventDefault();
           cycleWeapon();
         }}
         sx={{
-          position: 'fixed',
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 10,
-          width: 72,
-          height: 72,
+          width: 52,
+          height: 52,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
@@ -48,7 +44,7 @@ export function WeaponSelector(): JSX.Element {
           border: `2px solid ${color}`,
           borderRadius: 1,
           bgcolor: 'rgba(0,0,0,0.55)',
-          boxShadow: `0 0 12px ${color}`,
+          boxShadow: `0 0 8px ${color}`,
           color,
           padding: 0,
           touchAction: 'none',
@@ -61,25 +57,15 @@ export function WeaponSelector(): JSX.Element {
         <Typography
           sx={{
             color,
-            fontSize: 12,
+            fontSize: 9,
             fontWeight: 700,
-            lineHeight: 1.2,
+            lineHeight: 1.1,
             textTransform: 'uppercase',
             fontFamily: 'monospace',
-            letterSpacing: 1,
+            letterSpacing: 0.5,
           }}
         >
           {def.displayName}
-        </Typography>
-        <Typography
-          sx={{
-            color: 'rgba(255,255,255,0.55)',
-            fontSize: 10,
-            fontFamily: 'monospace',
-            mt: 0.25,
-          }}
-        >
-          ↻ NEXT
         </Typography>
       </Box>
     );
@@ -87,15 +73,10 @@ export function WeaponSelector(): JSX.Element {
 
   return (
     <Box
+      data-testid="weapon-selector"
       sx={{
-        position: 'absolute',
-        bottom: 16,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 10,
         display: 'flex',
         gap: 1,
-        pointerEvents: 'auto',
       }}
     >
       {WEAPON_IDS.map((id) => {

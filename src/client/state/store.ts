@@ -1,14 +1,23 @@
 import { create } from 'zustand';
-import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
+import { loadSettings, saveSettings, type ArrivalMode } from '../settings/settingsStorage.js';
 import { loadShipKind, saveShipKind } from '../settings/shipSelectionStorage.js';
 import type { UserId } from '../settings/userPrefs.js';
 import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { DEFAULT_WEAPON, WEAPON_IDS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 
+export type { ArrivalMode } from '../settings/settingsStorage.js';
+
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 /** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
 export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
+
+/**
+ * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
+ * Settings "Return to menu") can change it without prop-drilling through
+ * App → ... → tab.
+ */
+export type Phase = 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
 
 interface DevData {
   rtt: number;
@@ -71,8 +80,40 @@ interface UIStore {
   transitProgress: number;
   /** Phase 8 — destination sector key during a transit (SPOOLING/IN_TRANSIT/ARRIVED). */
   transitTargetSectorKey: string | null;
+  /** Total spool duration in ms reported by the server (only set while
+   *  SPOOLING). Used by `HyperspaceOverlay` to render an ms-precision
+   *  countdown alongside the progress fill. Cleared back to null on
+   *  DOCKED / ARRIVED. */
+  transitSpoolMs: number | null;
   /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
   activeWeapon: WeaponId;
+  /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
+  isDrawerOpen: boolean;
+  /** Currently active tab inside the advanced drawer (`profile` | `settings` | `galaxy` | `debug`). */
+  drawerTab: string;
+  /** Top-level UX phase. App.tsx routes screens off this value. */
+  phase: Phase;
+  /** In-game additive Pixi overlay (Map B) open state. Toggled by the new
+   *  bottom-center MAP HUD button and the keyboard `M` shortcut. Renders a
+   *  highly transparent galaxy hex layer ON the gameplay canvas — gameplay
+   *  continues underneath. */
+  isGalaxyMapOpen: boolean;
+  /** Standalone Galaxy Overview (Map A) open state in-game. Toggled by the
+   *  drawer's Galaxy tab. Replaces the gameplay canvas full-screen with a
+   *  Pixi-rendered overview that supports drag/pinch/wheel pan & zoom. The
+   *  Colyseus session stays alive in the background. */
+  isGalaxyOverviewOpen: boolean;
+  /** Hyperspace arrival mode for the next warp. UI-discrete value (3 modes),
+   *  not per-frame — purity-clean. PC has no UI for this and the value
+   *  stays at the `'same'` default. Persisted per-user. */
+  arrivalMode: ArrivalMode;
+  /** Last user-typed (or clamped) arrival x. Used when `arrivalMode==='xy'`. */
+  arrivalTargetX: number;
+  arrivalTargetY: number;
+  /** "Home" coordinate, used when `arrivalMode==='home'`. Currently the UI
+   *  pins this to 0/0; future work may let the player set it. */
+  homePosX: number;
+  homePosY: number;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -95,8 +136,19 @@ interface UIStore {
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;
   setTransitTargetSectorKey: (key: string | null) => void;
+  setTransitSpoolMs: (ms: number | null) => void;
   setActiveWeapon: (id: WeaponId) => void;
   cycleWeapon: () => void;
+  setDrawerOpen: (v: boolean) => void;
+  setDrawerTab: (id: string) => void;
+  setPhase: (p: Phase) => void;
+  setGalaxyMapOpen: (v: boolean) => void;
+  toggleGalaxyMapOpen: () => void;
+  setGalaxyOverviewOpen: (v: boolean) => void;
+  toggleGalaxyOverviewOpen: () => void;
+  setArrivalMode: (m: ArrivalMode) => void;
+  setArrivalTarget: (x: number, y: number) => void;
+  setHomePos: (x: number, y: number) => void;
 }
 
 // The store is constructed before auth resolves, so we hydrate from the
@@ -104,22 +156,44 @@ interface UIStore {
 // `useAuthStore.user` is known and re-reads from the per-user slot. If you
 // log in for the first time on a device, the legacy `eqxSettings` global key
 // migrates into the per-user slot on that re-read (see `userPrefs.ts`).
-const initialPersisted   = loadSettings(null);
-const initialShipKind    = loadShipKind(null);
-const initialDevOverlay  = initialPersisted.showDevOverlay  ?? true;
-const initialLogPanel    = initialPersisted.showLogPanel    ?? true;
-const initialServerGhost = initialPersisted.showServerGhost ?? true;
+const initialPersisted     = loadSettings(null);
+const initialShipKind      = loadShipKind(null);
+const initialDevOverlay    = initialPersisted.showDevOverlay   ?? true;
+const initialLogPanel      = initialPersisted.showLogPanel     ?? true;
+const initialServerGhost   = initialPersisted.showServerGhost  ?? true;
+const initialArrivalMode   = initialPersisted.arrivalMode      ?? 'same';
+const initialArrivalTargetX = initialPersisted.arrivalTargetX  ?? 0;
+const initialArrivalTargetY = initialPersisted.arrivalTargetY  ?? 0;
+const initialHomePosX      = initialPersisted.homePosX         ?? 0;
+const initialHomePosY      = initialPersisted.homePosY         ?? 0;
 
 /** Tracks which user the store is currently persisting under, so setters can
  *  target the right `localStorage` slot without each setter taking a userId
  *  argument. Updated by `applyUserPrefs`. */
 let activeUserId: UserId = null;
 
-function persistSettings(state: Pick<UIStore, 'showDevOverlay' | 'showLogPanel' | 'showServerGhost'>): void {
+function persistSettings(
+  state: Pick<
+    UIStore,
+    | 'showDevOverlay'
+    | 'showLogPanel'
+    | 'showServerGhost'
+    | 'arrivalMode'
+    | 'arrivalTargetX'
+    | 'arrivalTargetY'
+    | 'homePosX'
+    | 'homePosY'
+  >,
+): void {
   saveSettings(activeUserId, {
     showDevOverlay:  state.showDevOverlay,
     showLogPanel:    state.showLogPanel,
     showServerGhost: state.showServerGhost,
+    arrivalMode:     state.arrivalMode,
+    arrivalTargetX:  state.arrivalTargetX,
+    arrivalTargetY:  state.arrivalTargetY,
+    homePosX:        state.homePosX,
+    homePosY:        state.homePosY,
   });
 }
 
@@ -145,7 +219,18 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitState: 'DOCKED',
   transitProgress: 0,
   transitTargetSectorKey: null,
+  transitSpoolMs: null,
   activeWeapon: DEFAULT_WEAPON,
+  isDrawerOpen: false,
+  drawerTab: 'galaxy',
+  phase: 'meta',
+  isGalaxyMapOpen: false,
+  isGalaxyOverviewOpen: false,
+  arrivalMode: initialArrivalMode,
+  arrivalTargetX: initialArrivalTargetX,
+  arrivalTargetY: initialArrivalTargetY,
+  homePosX: initialHomePosX,
+  homePosY: initialHomePosY,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -171,11 +256,22 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitState: (s) => set({ transitState: s }),
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
+  setTransitSpoolMs: (ms) => set({ transitSpoolMs: ms }),
   setActiveWeapon: (id) => set({ activeWeapon: id }),
   cycleWeapon: () => set((s) => {
     const idx = WEAPON_IDS.indexOf(s.activeWeapon);
     return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]! };
   }),
+  setDrawerOpen: (v) => set({ isDrawerOpen: v }),
+  setDrawerTab: (id) => set({ drawerTab: id }),
+  setPhase: (p) => set({ phase: p }),
+  setGalaxyMapOpen: (v) => set({ isGalaxyMapOpen: v }),
+  toggleGalaxyMapOpen: () => set((s) => ({ isGalaxyMapOpen: !s.isGalaxyMapOpen })),
+  setGalaxyOverviewOpen: (v) => set({ isGalaxyOverviewOpen: v }),
+  toggleGalaxyOverviewOpen: () => set((s) => ({ isGalaxyOverviewOpen: !s.isGalaxyOverviewOpen })),
+  setArrivalMode:   (m) => { set({ arrivalMode: m }); persistSettings(get()); },
+  setArrivalTarget: (xv, yv) => { set({ arrivalTargetX: xv, arrivalTargetY: yv }); persistSettings(get()); },
+  setHomePos:       (xv, yv) => { set({ homePosX: xv, homePosY: yv }); persistSettings(get()); },
 }));
 
 /**
@@ -194,6 +290,11 @@ export function applyUserPrefs(userId: UserId): void {
     showDevOverlay:  persisted.showDevOverlay  ?? true,
     showLogPanel:    persisted.showLogPanel    ?? true,
     showServerGhost: persisted.showServerGhost ?? true,
+    arrivalMode:     persisted.arrivalMode     ?? 'same',
+    arrivalTargetX:  persisted.arrivalTargetX  ?? 0,
+    arrivalTargetY:  persisted.arrivalTargetY  ?? 0,
+    homePosX:        persisted.homePosX        ?? 0,
+    homePosY:        persisted.homePosY        ?? 0,
     selectedShipKind: shipKind,
   });
 }

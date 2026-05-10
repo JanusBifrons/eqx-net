@@ -5,12 +5,12 @@ import {
   Button,
   Typography,
   CircularProgress,
-  Chip,
-  Alert,
 } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
+import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
+import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { LocalGameClient } from './local/LocalGameClient';
@@ -22,12 +22,22 @@ import { LoginPage } from './components/LoginPage';
 import { ProfileModal } from './components/ProfileModal';
 import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
-import { GalaxyMapScreen } from './components/GalaxyMapScreen';
-import { GalaxyMapOverlay } from './components/GalaxyMapOverlay';
+import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
+import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { WeaponSelector } from './components/WeaponSelector';
+import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
+import { Hud } from './components/Hud';
+import { HudTestAttributes } from './components/HudTestAttributes';
+import { MetaLandingScreen } from './components/MetaLandingScreen';
+import { LayoutProvider } from './layout/LayoutProvider';
+import { Slot } from './layout/Slot';
+import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
+import { DrawerToggle } from './layout/Drawer/DrawerToggle';
+import { FullscreenToggle } from './layout/FullscreenToggle';
+import { MobileAvatarBadge } from './layout/MobileAvatarBadge';
 import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
@@ -40,271 +50,47 @@ const SERVER_URL =
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
 
-interface EqxLogEntry {
-  ts: number;
-  tag: string;
-  data: Record<string, unknown>;
-}
-
-declare global {
-  interface Window {
-    __eqxLogs?: EqxLogEntry[];
-    __eqxEpoch?: number;
-  }
-}
-
-/** Live scrolling log of the last N correction events, updating every 300 ms. */
-function LogPanel(): JSX.Element {
-  const [entries, setEntries] = useState<EqxLogEntry[]>([]);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const all: EqxLogEntry[] = window.__eqxLogs ?? [];
-      // Show last 20 correction or snapshot entries.
-      const relevant = all.filter((e) => e.tag === 'correction' || e.tag === 'snapshot').slice(-20);
-      setEntries([...relevant]);
-    }, 300);
-    return () => clearInterval(id);
-  }, []);
-
-  const epoch = typeof window.__eqxEpoch === 'number' ? window.__eqxEpoch : 0;
-  const t0 = entries[0]?.ts ?? 0;
-
-  return (
-    <Box
-      sx={{
-        position: 'absolute',
-        bottom: 16,
-        left: 16,
-        right: 16,
-        zIndex: 10,
-        bgcolor: 'rgba(0,0,0,0.82)',
-        color: '#ccc',
-        fontFamily: 'monospace',
-        fontSize: 10,
-        p: 1,
-        borderRadius: 1,
-        pointerEvents: 'none',
-        maxHeight: 180,
-        overflow: 'hidden',
-      }}
-    >
-      <div style={{ color: '#888', marginBottom: 2 }}>
-        Log (epoch+{epoch ? ((Date.now() - epoch) / 1000).toFixed(1) : '?'}s) — corrections=orange, snapshots=grey
-      </div>
-      {entries.map((e, i) => {
-        const isCorr = e.tag === 'correction';
-        const rel = (e.ts - t0).toFixed(0).padStart(5);
-        const color = isCorr ? '#ff6622' : '#667';
-        const d = (k: string): string => String(e.data[k] ?? '?');
-        if (isCorr) {
-          return (
-            <div key={i} style={{ color }}>
-              t+{rel}ms CORR  drift={d('driftUnits').slice(0, 8)}  ahead={d('ticksAhead')}  acked={d('ackedTick')}  tick={d('serverTick')}
-            </div>
-          );
-        }
-        return (
-          <div key={i} style={{ color }}>
-            t+{rel}ms snap  drift={d('driftUnits').slice(0, 8)}  ahead={d('ticksAhead')}  acked={d('ackedTick')}  tick={d('serverTick')}
-          </div>
-        );
-      })}
-    </Box>
-  );
-}
-
-function DevOverlay(): JSX.Element {
-  const { devData } = useUIStore();
-  const corrRate = devData.snapshotCount > 0
-    ? ((devData.significantCorrectionCount / devData.snapshotCount) * 100).toFixed(0)
-    : '0';
-  const f = (n: number): string => n.toFixed(2);
-  return (
-    <Box
-      sx={{
-        bgcolor: 'rgba(0,0,0,0.82)',
-        color: '#0f0',
-        fontFamily: 'monospace',
-        fontSize: 11,
-        p: 1,
-        borderRadius: 1,
-        pointerEvents: 'none',
-        lineHeight: 1.6,
-        minWidth: 260,
-      }}
-    >
-      <div style={{ color: '#0f8', fontWeight: 'bold' }}>── Sync ──</div>
-      <div>RTT: {devData.rtt} ms</div>
-      <div>Drift: {devData.drift.toFixed(4)} u  Max: {devData.maxDriftUnits.toFixed(4)} u</div>
-      <div style={{ color: devData.significantCorrectionCount / Math.max(1, devData.snapshotCount) > 0.05 ? '#f44' : '#0f0' }}>
-        Corrections: {devData.significantCorrectionCount}/{devData.snapshotCount} ({corrRate}%)
-      </div>
-      <div>Lerping: {devData.lerping ? 'yes' : 'no'}</div>
-      <div style={{ borderTop: '1px solid #0f04', marginTop: 4, paddingTop: 4, color: '#0f8', fontWeight: 'bold' }}>── Ticks ──</div>
-      <div>ackedTick: {devData.ackedTick}  inputTick: {devData.inputTick}</div>
-      <div style={{ color: devData.ticksAhead > 10 ? '#ff0' : '#0f0' }}>
-        ticksAhead: {devData.ticksAhead}  serverTick: {devData.serverTick}
-      </div>
-      <div>Snap interval: {devData.snapshotIntervalMs.toFixed(0)} ms</div>
-      <div style={{ borderTop: '1px solid #0f04', marginTop: 4, paddingTop: 4, color: '#0f8', fontWeight: 'bold' }}>── Positions ──</div>
-      <div style={{ color: '#ff6622' }}>Server(ghost): ({f(devData.serverX)}, {f(devData.serverY)})</div>
-      <div>Before: ({f(devData.beforeX)}, {f(devData.beforeY)})</div>
-      <div>After:  ({f(devData.afterX)}, {f(devData.afterY)})</div>
-    </Box>
-  );
-}
-
-function DevOverlayGate(): JSX.Element {
-  const show = useUIStore((s) => s.showDevOverlay);
-  return show ? <DevOverlay /> : <></>;
-}
-
-function LogPanelGate(): JSX.Element {
-  const show = useUIStore((s) => s.showLogPanel);
-  return show ? <LogPanel /> : <></>;
-}
-
-function HUD(): JSX.Element {
-  const { connectionStatus, sectorName, hullPct, ammo, sectorAlert, playerId, shipCount, swarmCount, clockRate, serverTickHz, correctionRate, devData } =
-    useUIStore();
-
-  return (
-    <Box
-      sx={{
-        position: 'absolute',
-        top: 16,
-        left: 16,
-        zIndex: 10,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 1,
-        pointerEvents: 'none',
-      }}
-    >
-      {sectorName && (
-        <Typography variant="overline" sx={{ color: '#fff', opacity: 0.7 }}>
-          {sectorName}
-        </Typography>
-      )}
-      <Box sx={{ display: 'flex', gap: 1 }}>
-        <Chip
-          label={`Hull ${hullPct}%`}
-          size="small"
-          sx={{ bgcolor: hullPct > 50 ? '#1a7a3f' : '#7a1a1a', color: '#fff' }}
-        />
-        <Chip
-          label={`Ammo ${ammo}`}
-          size="small"
-          sx={{ bgcolor: '#1a3a7a', color: '#fff' }}
-        />
-        <Chip
-          label={connectionStatus}
-          size="small"
-          sx={{
-            bgcolor: connectionStatus === 'connected' ? '#1a4a1a' : '#4a1a1a',
-            color: '#fff',
-          }}
-        />
-        <Chip
-          label={`Clock ${clockRate.toFixed(2)}×`}
-          size="small"
-          data-testid="clock-rate"
-          sx={{
-            bgcolor: clockRate >= 0.99 ? '#1a3a4a' : clockRate >= 0.85 ? '#7a5a1a' : '#7a1a1a',
-            color: '#fff',
-            fontFamily: 'monospace',
-          }}
-        />
-        <Chip
-          label={`Srv ${serverTickHz.toFixed(0)}Hz`}
-          size="small"
-          data-testid="server-tick-hz"
-          sx={{
-            bgcolor: serverTickHz >= 55 ? '#1a3a4a' : serverTickHz >= 40 ? '#7a5a1a' : '#7a1a1a',
-            color: '#fff',
-            fontFamily: 'monospace',
-          }}
-        />
-      </Box>
-      {sectorAlert && (
-        <Alert severity="warning" sx={{ py: 0 }}>
-          {sectorAlert}
-        </Alert>
-      )}
-      {playerId && (
-        <Typography variant="caption" sx={{ color: '#888', fontSize: 10 }}>
-          ID: {playerId.slice(0, 8)}
-        </Typography>
-      )}
-      <Typography
-        variant="caption"
-        data-testid="ship-count"
-        sx={{ color: '#888', fontSize: 10 }}
-      >
-        Ships: {shipCount}
-      </Typography>
-      <Typography
-        variant="caption"
-        data-testid="swarm-count"
-        sx={{ color: '#888', fontSize: 10 }}
-      >
-        Swarm: {swarmCount}
-      </Typography>
-      <Typography
-        variant="caption"
-        sx={{
-          fontSize: 10,
-          color: correctionRate === 0 ? '#0f0' : correctionRate < 0.2 ? '#ff0' : '#f44',
-          fontFamily: 'monospace',
-        }}
-      >
-        Corr: {devData.significantCorrectionCount}/{devData.snapshotCount} ({(correctionRate * 100).toFixed(0)}%)
-      </Typography>
-    </Box>
-  );
-}
-
-function DeathOverlay({ onRespawn }: { onRespawn: () => void }): JSX.Element {
+function DeathOverlay({ onRespawn }: { onRespawn: () => void }): JSX.Element | null {
   const isDead = useUIStore((s) => s.isDead);
-  if (!isDead) return <></>;
+  if (!isDead) return null;
   return (
-    <Box
-      sx={{
-        position: 'absolute',
-        inset: 0,
-        zIndex: 20,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        bgcolor: 'rgba(0,0,0,0.65)',
-        gap: 3,
-        pointerEvents: 'all',
-      }}
-    >
-      <Typography
-        variant="h2"
-        sx={{ color: '#ff3333', fontWeight: 700, letterSpacing: 6, textTransform: 'uppercase', textShadow: '0 0 30px #ff0000' }}
-      >
-        You Died
-      </Typography>
-      <Button
-        variant="contained"
-        size="large"
-        onClick={onRespawn}
+    <Slot anchor="fullscreen" order={10}>
+      <Box
+        data-testid="death-overlay"
         sx={{
-          bgcolor: '#00ff88',
-          color: '#000',
-          fontWeight: 700,
-          px: 6,
-          fontSize: '1.1rem',
-          '&:hover': { bgcolor: '#00cc6a' },
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: 'rgba(0,0,0,0.65)',
+          gap: 3,
         }}
       >
-        Respawn
-      </Button>
-    </Box>
+        <Typography
+          variant="h2"
+          sx={{ color: '#ff3333', fontWeight: 700, letterSpacing: 6, textTransform: 'uppercase', textShadow: '0 0 30px #ff0000' }}
+        >
+          You Died
+        </Typography>
+        <Button
+          variant="contained"
+          size="large"
+          onClick={onRespawn}
+          sx={{
+            bgcolor: '#00ff88',
+            color: '#000',
+            fontWeight: 700,
+            px: 6,
+            fontSize: '1.1rem',
+            '&:hover': { bgcolor: '#00cc6a' },
+          }}
+        >
+          Respawn
+        </Button>
+      </Box>
+    </Slot>
   );
 }
 
@@ -319,6 +105,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<PixiRenderer | null>(null);
+  const galaxyLayerRef = useRef<GalaxyMapLayer | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
   const animFrameRef = useRef<number>(0);
   const isTouchRef = useRef<boolean>(isTouchDevice());
@@ -339,11 +126,36 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
     return c.mirror.ships.get(id) ?? null;
   }, []);
 
-  // Phase 8 sub-phase B — galaxy-map overlay state + transit helpers.
-  const [galaxyMapOpen, setGalaxyMapOpen] = useState(false);
+  // Phase 2 — galaxy-map open state lives in Zustand so the drawer's Galaxy
+  // tab can open the overlay without prop drilling. The keyboard `M`
+  // shortcut continues to toggle it from this component.
+  // Galaxy-map (additive) open state lives in Zustand so the drawer's
+  // Galaxy tab can drive it. The keyboard `M` shortcut also toggles it
+  // from inside this component. The bool is read for the conditional
+  // `<GalaxyMapOverlay>` render; setGalaxyMapOpen has been moved
+  // closer to its single callsite (the Pixi layer's onSelect callback,
+  // which uses `useUIStore.getState()` to avoid a closure over a stale
+  // setter), so it isn't a hook here anymore.
+  const galaxyMapOpen        = useUIStore((s) => s.isGalaxyMapOpen);
+  const toggleGalaxyMap      = useUIStore((s) => s.toggleGalaxyMapOpen);
+  const galaxyOverviewOpen   = useUIStore((s) => s.isGalaxyOverviewOpen);
+  const setGalaxyOverviewOpen = useUIStore((s) => s.setGalaxyOverviewOpen);
+
   const handleEngageTransit = useCallback((targetSectorKey: string) => {
     const room = clientRef.current?.getRoom();
-    if (room) engageTransit(room, targetSectorKey);
+    if (!room) return;
+    // Pull the current arrival picker state (mobile-only UI; PC keeps the
+    // default `'same'` mode and sends no `arrival`, preserving legacy
+    // behaviour). The xy values were already clamped on blur in GalaxyTab,
+    // and the server clamps again as defense-in-depth.
+    const s = useUIStore.getState();
+    let arrival: { x: number; y: number } | undefined;
+    if (s.arrivalMode === 'xy') {
+      arrival = { x: s.arrivalTargetX, y: s.arrivalTargetY };
+    } else if (s.arrivalMode === 'home') {
+      arrival = { x: s.homePosX, y: s.homePosY };
+    }
+    engageTransit(room, targetSectorKey, arrival);
   }, []);
   const handleCancelTransit = useCallback(() => {
     const room = clientRef.current?.getRoom();
@@ -364,6 +176,10 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
     const gameClient = new ColyseusGameClient();
     gameClient.setAudio(new HowlerAudioService());
     clientRef.current = gameClient;
+    // Module-level singleton so low-cadence React reads (e.g. the Galaxy
+    // tab's 5 s arrival-snapshot poll) can reach `mirror` without prop
+    // drilling. See `src/client/net/clientSingleton.ts`.
+    setGameClient(gameClient);
     // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
@@ -375,7 +191,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       // unmodified so it's reachable on a keyboard during play; the overlay
       // disables itself if `transitState !== 'DOCKED'`.
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
-        setGalaxyMapOpen((cur) => !cur);
+        toggleGalaxyMap();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -390,6 +206,28 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         renderer.dispose();
         return;
       }
+
+      // Map B — additive in-game galaxy overlay. Lives as a screen-space
+      // sibling of the gameplay viewport on the same Pixi stage, so it
+      // doesn't pan/zoom with the world camera and Pixi's hit-testing
+      // routes hex taps cleanly while non-hex regions pass through to
+      // gameplay underneath.
+      const galaxyLayer = new GalaxyMapLayer({
+        onSelect: (key) => {
+          handleEngageTransit(key);
+          // Auto-close the additive overlay on warp-tap; the user explicitly
+          // asked for tap-to-warp to dismiss the map (otherwise it stays
+          // visible during SPOOLING and feels stuck).
+          useUIStore.getState().setGalaxyMapOpen(false);
+        },
+      });
+      renderer.addOverlayContainer(galaxyLayer);
+      const s0 = useUIStore.getState();
+      galaxyLayer.setCurrentSector(s0.currentSectorKey);
+      galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
+      galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
+      galaxyLayer.setVisible(s0.isGalaxyMapOpen);
+      galaxyLayerRef.current = galaxyLayer;
 
       let lastFrameTime = 0;
       const loop = (now: number): void => {
@@ -545,16 +383,46 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       setConnectionStatus('error');
     });
 
+    // Keep the in-game Pixi galaxy layer's screen-space layout in sync with
+    // the canvas container on resize / orientation change. Mirrors the
+    // PixiRenderer's own ResizeObserver but for the screen-space overlay
+    // (the renderer's observer only resizes the world viewport).
+    const layerRO = new ResizeObserver(() => {
+      const layer = galaxyLayerRef.current;
+      if (!layer) return;
+      layer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
+    });
+    layerRO.observe(el);
+
     return () => {
       disposed = true;
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener('keydown', onKey);
+      layerRO.disconnect();
       keyboard.dispose();
       gameClient.dispose();
+      setGameClient(null);
+      // Layer is a child of renderer.app.stage — the renderer's destroy({
+      // children: true }) frees it. Nulling the ref so the React-side
+      // subscriptions short-circuit on the post-unmount tail.
+      galaxyLayerRef.current = null;
       renderer.dispose();
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, toggleGalaxyMap, handleEngageTransit]);
 
+  // Reactive sync from Zustand to the Pixi galaxy layer. The layer is
+  // constructed inside the main mount effect (async after renderer.init)
+  // and these effects are no-ops until that ref populates; the initial
+  // values are also pushed in once at construction time so we never miss
+  // the first paint.
+  const galaxyLayerCurrentSectorKey = useUIStore((s) => s.currentSectorKey);
+  const galaxyLayerTransitState = useUIStore((s) => s.transitState);
+  useEffect(() => { galaxyLayerRef.current?.setVisible(galaxyMapOpen); }, [galaxyMapOpen]);
+  useEffect(() => { galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey); }, [galaxyLayerCurrentSectorKey]);
+  useEffect(() => { galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED'); }, [galaxyLayerTransitState]);
+
+  // LayoutProvider + FullscreenToggle live at the App level (not here) so the
+  // toggle persists across every phase — meta, auth, galaxy-map, game.
   return (
     <Box
       sx={{
@@ -575,38 +443,41 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         data-testid="game-surface"
         style={{ width: '100%', height: '100%', touchAction: 'none' }}
       />
-      <HUD />
-      <Box
-        sx={{
-          position: 'absolute',
-          top: 64,
-          right: 16,
-          zIndex: 10,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 1,
-          pointerEvents: 'none',
-          alignItems: 'flex-end',
-        }}
-      >
-        <ShipStatsCard getLocalShip={getLocalShip} />
-        <DevOverlayGate />
-      </Box>
-      <LogPanelGate />
+      <Slot anchor="top-left"><Hud /></Slot>
+      <Slot anchor="top-right"><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
+      <DrawerToggle />
+      <AdvancedDrawer />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (
-        <MobileControls
-          touchInput={touchInputRef.current}
-          onOpenMap={() => setGalaxyMapOpen(true)}
-        />
+        <MobileControls touchInput={touchInputRef.current} />
       )}
-      <WeaponSelector />
+      {/* WeaponSelector and the MAP toggle live in different anchors on
+       *  touch vs. desktop. On touch, MobileControls renders WeaponSelector
+       *  inline above FIRE in the bottom-right thumb cluster, and the MAP
+       *  toggle goes above the joystick in bottom-left. On desktop both
+       *  stay at bottom-center where the player is more likely looking. */}
+      {!isTouchRef.current && (
+        <Slot anchor="bottom-center" order={5}><WeaponSelector /></Slot>
+      )}
+      {isTouchRef.current ? (
+        <Slot anchor="bottom-left" order={10}><GalaxyMapToggleButton /></Slot>
+      ) : (
+        <Slot anchor="bottom-center" order={10}><GalaxyMapToggleButton /></Slot>
+      )}
       <HyperspaceOverlay onCancel={handleCancelTransit} />
-      <GalaxyMapOverlay
-        open={galaxyMapOpen}
-        onClose={() => setGalaxyMapOpen(false)}
-        onTransit={handleEngageTransit}
-      />
+      {galaxyOverviewOpen && (
+        <Slot anchor="fullscreen" order={25}>
+          <GalaxyOverviewScreen
+            mode="warp"
+            onPickNeighbour={(key) => {
+              handleEngageTransit(key);
+              setGalaxyOverviewOpen(false);
+            }}
+            onClose={() => setGalaxyOverviewOpen(false)}
+          />
+        </Slot>
+      )}
+      <HudTestAttributes />
     </Box>
   );
 }
@@ -677,8 +548,9 @@ function LocalSurface(): JSX.Element {
 }
 
 export function App(): JSX.Element {
-  // Phase 8 — autoJoin escape hatch: ?room= or ?galaxy= bypasses auth + landing
-  // screen so existing E2E tests and deep links keep working.
+  // Phase 8 — autoJoin escape hatch: ?room= or ?galaxy= bypasses meta + auth
+  // and goes straight into the game so existing E2E tests and deep links
+  // keep working.
   const initialUrlParams = useMemo(() => new URLSearchParams(window.location.search), []);
   const autoJoinRoom = initialUrlParams.get('room');
   const autoJoinGalaxy = initialUrlParams.get('galaxy');
@@ -686,11 +558,11 @@ export function App(): JSX.Element {
   const initialOverride = autoJoinRoom ?? (autoJoinGalaxy ? `galaxy-${autoJoinGalaxy}` : null);
 
   const { user } = useAuthStore();
-  // Phase 8 phases: 'auth' (login) → 'galaxy-map' (visual hex landing screen,
-  // formerly 'splash') → 'game'. 'local' is the unchanged single-player diag.
-  const [phase, setPhase] = useState<'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local'>(
-    autoJoin || user ? (autoJoin ? 'game' : 'galaxy-map') : 'auth',
-  );
+  // Phase machine lives in Zustand so drawer tabs (Settings "Return to menu",
+  // Profile Logout) can change it without prop-drilling through 4 components.
+  // Default initial value in the store is 'meta'; autoJoin overrides on mount.
+  const phase = useUIStore((s) => s.phase);
+  const setPhase = useUIStore((s) => s.setPhase);
   const [roomNameOverride, setRoomNameOverride] = useState<string | undefined>(
     initialOverride ?? undefined,
   );
@@ -699,12 +571,22 @@ export function App(): JSX.Element {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
-  // If user logs out while on the galaxy-map screen, go back to auth.
+  // Apply autoJoin once on mount — overrides the store's default 'meta'.
+  // Subsequent phase changes are user-driven (drawer buttons, login flow).
+  const autoJoinRef = useRef(autoJoin);
   useEffect(() => {
-    if (!user && phase !== 'auth' && phase !== 'game' && phase !== 'local') {
-      setPhase('auth');
+    if (autoJoinRef.current) setPhase('game');
+  }, [setPhase]);
+
+  // If the auth token expires while the user is on the galaxy-map screen
+  // (which requires a logged-in user to function), bump them back to the
+  // meta landing. Game and local are NOT auto-redirected — let the player
+  // finish their round; auth phase is unaffected (already logged out).
+  useEffect(() => {
+    if (!user && phase === 'galaxy-map') {
+      setPhase('meta');
     }
-  }, [user, phase]);
+  }, [user, phase, setPhase]);
 
   // Re-hydrate per-user preferences (settings + selected ship kind) when
   // auth resolves or the active account changes. Anonymous slot is also
@@ -716,18 +598,30 @@ export function App(): JSX.Element {
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);
     setPhase('game');
-  }, []);
+  }, [setPhase]);
 
   const handleSelectLocal = useCallback(() => {
     setPhase('local');
-  }, []);
+  }, [setPhase]);
 
   const handleAuthSuccess = useCallback(() => {
     setPhase('galaxy-map');
-  }, []);
+  }, [setPhase]);
 
+  // Meta-landing CTA: if logged in, jump to galaxy-map; else, login flow
+  // first (the post-auth handler then continues on to galaxy-map).
+  const handleJoinFromMeta = useCallback(() => {
+    setPhase(user ? 'galaxy-map' : 'auth');
+  }, [user, setPhase]);
+
+  // Compute the per-phase content as a variable so we can wrap the whole
+  // tree in a single LayoutProvider + render the FullscreenToggle once.
+  // The toggle previously only appeared during the 'game' phase, which meant
+  // mobile users couldn't enter fullscreen from the meta landing, login, or
+  // galaxy-map screens. Now it persists everywhere on touch devices.
+  let phaseContent: JSX.Element;
   if (phase === 'game') {
-    return (
+    phaseContent = (
       <>
         <AppHeader
           onLoginClick={() => setPhase('auth')}
@@ -739,14 +633,27 @@ export function App(): JSX.Element {
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
     );
-  }
-
-  if (phase === 'local') {
-    return <LocalSurface />;
-  }
-
-  if (phase === 'auth') {
-    return (
+  } else if (phase === 'local') {
+    phaseContent = <LocalSurface />;
+  } else if (phase === 'meta') {
+    phaseContent = (
+      <>
+        <AppHeader
+          onLoginClick={() => setPhase('auth')}
+          onProfileClick={() => setProfileOpen(true)}
+          onSettingsClick={openSettings}
+        />
+        <MetaLandingScreen
+          onJoin={handleJoinFromMeta}
+          onSelectLocal={user ? handleSelectLocal : undefined}
+        />
+        <MobileAvatarBadge onClick={() => setProfileOpen(true)} />
+        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+        <SettingsModal open={settingsOpen} onClose={closeSettings} />
+      </>
+    );
+  } else if (phase === 'auth') {
+    phaseContent = (
       <>
         <AppHeader
           onLoginClick={() => {}}
@@ -758,40 +665,50 @@ export function App(): JSX.Element {
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
     );
+  } else {
+    // 'galaxy-map' (or transient 'connecting') — visual hex galaxy.
+    phaseContent = (
+      <>
+        <AppHeader
+          onLoginClick={() => setPhase('auth')}
+          onProfileClick={() => setProfileOpen(true)}
+          onSettingsClick={openSettings}
+        />
+        {phase === 'connecting' ? (
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100vh',
+              pt: 'var(--app-bar-h, 48px)',
+              bgcolor: '#05070f',
+            }}
+          >
+            <CircularProgress sx={{ color: '#00ff88' }} />
+          </Box>
+        ) : (
+          <GalaxyOverviewScreen
+            mode="spawn"
+            /* activeLimboSectorKey omitted on purpose so the screen runs its
+               own /dev/limbo lookup and renders the saved-ship card. */
+            onSelectRoom={handleSelectRoom}
+            onSelectLocal={handleSelectLocal}
+          />
+        )}
+        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
+        <SettingsModal open={settingsOpen} onClose={closeSettings} />
+      </>
+    );
   }
 
-  // 'galaxy-map' (default) — visual hex galaxy as the user's first screen.
   return (
-    <>
-      <AppHeader
-        onLoginClick={() => setPhase('auth')}
-        onProfileClick={() => setProfileOpen(true)}
-        onSettingsClick={openSettings}
-      />
-      {phase === 'connecting' ? (
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100vh',
-            pt: '48px',
-            bgcolor: '#05070f',
-          }}
-        >
-          <CircularProgress sx={{ color: '#00ff88' }} />
-        </Box>
-      ) : (
-        <GalaxyMapScreen
-          /* activeLimboSectorKey omitted on purpose so the screen runs its
-             own /dev/limbo lookup and renders the saved-ship card. */
-          onSelectRoom={handleSelectRoom}
-          onSelectLocal={handleSelectLocal}
-        />
-      )}
-      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-      <SettingsModal open={settingsOpen} onClose={closeSettings} />
-    </>
+    <ErrorBoundary>
+      <LayoutProvider>
+        {phaseContent}
+        <FullscreenToggle />
+      </LayoutProvider>
+    </ErrorBoundary>
   );
 }
