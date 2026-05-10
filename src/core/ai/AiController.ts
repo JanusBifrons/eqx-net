@@ -58,6 +58,33 @@ export class AiController {
   }
 
   /**
+   * Forward a hostility-marking event to the registered behaviour, if it
+   * exposes the optional `markHostile` hook. Server calls this from
+   * `applyDamage` when a drone is hit; the client mirrors it from its
+   * `damage` event handler. Both sides receive identical events, so the
+   * per-instance hostility state stays in lockstep without a wire-format
+   * bump (same shape as the existing `lastFireTick` divergence window).
+   */
+  markHostile(entityId: string, shooterId: string, atTick: number): void {
+    if (!shooterId) return;
+    const reg = this.entities.get(entityId);
+    reg?.behaviour.markHostile?.(shooterId, atTick);
+  }
+
+  /**
+   * Purge `playerId` from every registered behaviour's hostility set.
+   * Called when a player leaves the sector (transit out, disconnect) — the
+   * threat is gone from this sector's perspective. O(N) over registered
+   * drones; cheap at the few-dozen scale we run.
+   */
+  purgeHostility(playerId: string): void {
+    if (!playerId) return;
+    for (const reg of this.entities.values()) {
+      reg.behaviour.purgeHostility?.(playerId);
+    }
+  }
+
+  /**
    * Tick every registered AI once. `entitySnapshot(id)` must return the live
    * pose (read from SAB by the caller earlier in the tick); behaviours never
    * touch the worker themselves. `players` is the up-to-date list of alive

@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ProjectileRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
@@ -425,7 +425,8 @@ export class ColyseusGameClient {
 
   private room: Room | null = null;
 
-  /** Phase 8 sub-phase B — exposed for the GalaxyMapOverlay to call
+  /** Phase 8 sub-phase B — exposed for the in-game galaxy maps (Pixi
+   *  GalaxyMapLayer + GalaxyOverviewScreen warp-mode) to call
    *  `room.send('engage_transit', ...)`. Returns null until `connect()`. */
   getRoom(): Room | null {
     return this.room;
@@ -851,6 +852,20 @@ export class ColyseusGameClient {
         ui.setTransitProgress(0);
         const start = performance.now();
         const dur = msg.spoolMs ?? 3000;
+        ui.setTransitSpoolMs(dur);
+        // Surface the destination once via the alert toast — the new
+        // left-edge hyperspace bar is too narrow to carry the sector name,
+        // and the player picked the destination on the map seconds ago, so
+        // a brief reminder beats permanent overlay text.
+        if (msg.targetSectorKey) {
+          const dest = getSector(msg.targetSectorKey);
+          ui.setSectorAlert(`Spooling to ${dest?.name ?? msg.targetSectorKey}`);
+          setTimeout(() => {
+            const cur = useUIStore.getState();
+            // Only clear if still ours — don't clobber a later cancellation toast.
+            if (cur.sectorAlert?.startsWith('Spooling to')) cur.setSectorAlert(null);
+          }, 1800);
+        }
         const ramp = (): void => {
           const elapsed = performance.now() - start;
           const cur = useUIStore.getState();
@@ -868,6 +883,7 @@ export class ColyseusGameClient {
         // Cancellation path. Surface the reason briefly.
         ui.setTransitProgress(0);
         ui.setTransitTargetSectorKey(null);
+        ui.setTransitSpoolMs(null);
         if (msg.reason) {
           ui.setSectorAlert(`transit cancelled: ${msg.reason}`);
           setTimeout(() => useUIStore.getState().setSectorAlert(null), 2000);
@@ -875,6 +891,7 @@ export class ColyseusGameClient {
       } else if (msg.state === 'ARRIVED') {
         // Brief fade then back to DOCKED so the overlay clears.
         ui.setTransitProgress(1);
+        ui.setTransitSpoolMs(null);
         setTimeout(() => {
           const cur = useUIStore.getState();
           cur.setTransitState('DOCKED');
@@ -1027,6 +1044,17 @@ export class ColyseusGameClient {
       const maxHealth = SHIP_MAX_HEALTH;
       const healthPct = Math.max(0, evt.newHealth / maxHealth);
       this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct });
+    }
+
+    // Phase 1 AI: mirror the server's hostility-marking on every damage
+    // event for swarm targets. Server fires the same call from its own
+    // `applyDamage`. Both sides receive identical events so each drone's
+    // per-instance `hostileTo` set converges without a wire-format bump.
+    // Client AI controller is keyed on the bare numeric id (see register
+    // call `\`${entityId}\``), so strip the `swarm-` prefix here.
+    if (evt.targetId.startsWith('swarm-') && evt.shooterId) {
+      const numeric = evt.targetId.slice('swarm-'.length);
+      this._aiController.markHostile(numeric, evt.shooterId, this.inputTick);
     }
   }
 
@@ -1891,7 +1919,15 @@ export class ColyseusGameClient {
       // pick the correct silhouette / colour. Read once when the sprite is
       // built; re-reading on every state patch is wasted work.
       const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
-      const mirrorEntry = kind ? { ...parsed, kind } : parsed;
+      // Phase 1 ship labels: pull the display name through to the render
+      // mirror so the LabelManager can paint it above remote ships. The
+      // server populates this in `SectorRoom.onJoin`; an empty string
+      // means anonymous and the renderer falls back to a `Pilot ${id}`
+      // label.
+      const displayName = typeof sh['displayName'] === 'string' ? (sh['displayName'] as string) : undefined;
+      const mirrorEntry: ShipRenderState = { ...parsed };
+      if (kind !== undefined) mirrorEntry.kind = kind;
+      if (displayName !== undefined) mirrorEntry.displayName = displayName;
       seen.add(playerId);
 
       if (playerId !== localId) {
@@ -1924,6 +1960,11 @@ export class ColyseusGameClient {
           this.predRemoteShipIds.delete(key);
           this._remoteShipOffsets.delete(key);
         }
+        // Phase 1 AI: a player has left the sector (transit out, disconnect,
+        // or fell out of state). Mirror the server's `purgeHostility` call
+        // so client-side drones forget them at the same Colyseus state-diff
+        // point the server forgets them at its own `onLeave`.
+        this._aiController.purgeHostility(key);
       }
     }
 

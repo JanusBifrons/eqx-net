@@ -59,6 +59,15 @@ export interface AiIntent {
 
 export interface IAiBehaviour {
   tick(self: AiEntity, view: AiWorldView): AiIntent;
+  /**
+   * Optional event-driven mutation hooks. Both must be event-symmetric:
+   * the same call is made on the server (from `applyDamage`/`onLeave`)
+   * and on the client (from the `damage` event handler / ship-departure
+   * sweep) so per-instance state stays in lockstep without a wire-format
+   * bump. Same pattern as the existing `lastFireTick` field.
+   */
+  markHostile?(shooterId: string, atTick: number): void;
+  purgeHostility?(playerId: string): void;
 }
 
 /** Returns the nearest player to (x, y), or null when no players are present. */

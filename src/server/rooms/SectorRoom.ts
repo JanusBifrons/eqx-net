@@ -65,7 +65,7 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { checkBackpressure } from '../net/Backpressure.js';
-import { validateToken } from '../auth/AuthService.js';
+import { validateToken, getUser } from '../auth/AuthService.js';
 import { recordGameJoin, recordGameLeave, recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
 import {
@@ -133,13 +133,22 @@ const IDLE_THRESHOLD_TICKS = 60;
  *  is safe. Squared-comparison saves a sqrt per ship per tick. */
 const IDLE_MOTION_EPSILON_SQ = 0.05;
 
+/** Phase 1 AI safety net: drones that drift past this distance from
+ *  origin (twice `SECTOR_PLAYABLE_HALF_EXTENT`) get teleported back
+ *  in-bounds. Patrol behaviour normally keeps them inside the playable
+ *  region — this is the "should never fire" guard for runaway pursuits
+ *  and the long-session drift bug captured 2026-05-10 (drones at ~4 M
+ *  units). Asteroids are unaffected. */
+const DRONE_MAX_BOUNDS = 10000;
+
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
-  | { type: 'CLOCK_RATE';     rate: number };
+  | { type: 'CLOCK_RATE';     rate: number }
+  | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number };
 
 /** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
  *  initial swarm population matches between sessions. Spawned via SwarmSpawner
@@ -534,7 +543,11 @@ export class SectorRoom extends Room<SectorState> {
         logger.warn({ sessionId: client.sessionId }, 'malformed engage_transit message');
         return;
       }
-      this.transitOrchestrator.beginTransit(playerId, parsed.data.targetSectorKey);
+      this.transitOrchestrator.beginTransit(
+        playerId,
+        parsed.data.targetSectorKey,
+        parsed.data.arrival,
+      );
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
@@ -967,6 +980,14 @@ export class SectorRoom extends Room<SectorState> {
       hitX: swarmHitX,
       hitY: swarmHitY,
     } satisfies DamageEvent);
+
+    // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and
+    // adds the shooter to its hostile set. Same call goes to the client
+    // from its damage-event handler — both sides converge on the same
+    // hostility state without a wire-format bump.
+    if (shooterId) {
+      this.aiController.markHostile(rec.id, shooterId, this.serverTick);
+    }
 
     if (newHealth <= 0) {
       this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: true, shooterId });
@@ -1504,6 +1525,15 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToUser.set(playerId, effectiveUserId);
     recordGameJoin(effectiveUserId, playerId, this.sectorKey ?? this.roomId);
 
+    // Phase 1 — propagate the player's display label so other clients can
+    // render a name above their ship. `displayName` is preferred; the
+    // email is the documented fallback (see plan). Anonymous players
+    // leave an empty string and the client falls back to `Pilot ${id}`.
+    if (effectiveUserId) {
+      const user = getUser(effectiveUserId);
+      if (user) ship.displayName = user.displayName ?? user.email ?? '';
+    }
+
     // Phase 8 sub-phase B — register session for diag inspection and future
     // multi-VM transit routing.
     setSession(client.sessionId, {
@@ -1523,6 +1553,11 @@ export class SectorRoom extends Room<SectorState> {
   override onLeave(client: Client, _consented: boolean): void {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
+
+    // Phase 1 AI: drop this player from every drone's hostile set so that
+    // when (or if) they return to the sector — or another player engages —
+    // the drones aren't still gunning for someone who's no longer here.
+    this.aiController.purgeHostility(playerId);
 
     // Always clear session-bound state. Boost is held — drop it on
     // disconnect (no key is held during the offline window so the ship
@@ -1879,11 +1914,30 @@ export class SectorRoom extends Room<SectorState> {
     // 2048-unit cell boundary in a single tick at typical drone/asteroid
     // speeds (~30-100 u/s), so move() returns early without touching the
     // bucket map. Cost is one Map.get + integer compare per entity.
+    //
+    // Phase 1 AI backstop: while we iterate, also catch any drone that
+    // has drifted past `DRONE_MAX_BOUNDS` and post a SET_POSITION worker
+    // command to teleport it back. Patrol behaviour pulls drones home in
+    // normal play; this is a "should never fire" guard against runaway
+    // pursuits and the long-session drift bug (real diag: drones at
+    // (4 133 782, -1 093 669) on 2026-05-10). Asteroids unaffected.
     for (const rec of this.swarmRegistry.all()) {
       const b = slotBase(rec.slot);
       const sx = this.sabF32[b + SLOT_X_OFF]!;
       const sy = this.sabF32[b + SLOT_Y_OFF]!;
       this.interestGrid.move(rec.entityId, sx, sy);
+      if (rec.kind === 1 && (Math.abs(sx) > DRONE_MAX_BOUNDS || Math.abs(sy) > DRONE_MAX_BOUNDS)) {
+        const clampedX = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sx));
+        const clampedY = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sy));
+        this.postToWorker({
+          type: 'SET_POSITION',
+          entityId: rec.id,
+          x: clampedX, y: clampedY,
+          angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+          vx: 0, vy: 0, angvel: 0,
+        });
+        logger.warn({ entityId: rec.id, sx, sy }, 'drone position clamped to bounds');
+      }
     }
     phaseTime('sabRead');
 

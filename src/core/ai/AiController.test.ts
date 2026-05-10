@@ -72,6 +72,9 @@ describe('AiController', () => {
 
   it('drainFireRequests returns and clears queued fires; cooldown enforced', () => {
     ctrl.register('drone-1', 4, new HostileDroneBehaviour());
+    // Phase 1: drones default to IDLE patrol and only fire at hostile
+    // players. Mark p1 as the attacker to put the drone into COMBAT.
+    ctrl.markHostile('drone-1', 'p1', 99);
     // Aimed, in range: drone fires.
     ctrl.tick(100, 1 / 60, [playerAt('p1', 0, 100)], () => entityAt('drone-1', 0, 0, 0, 0));
     let fires = ctrl.drainFireRequests();

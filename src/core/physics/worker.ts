@@ -71,7 +71,14 @@ interface InputCmd         { type: 'INPUT';          slot: number; inputTick: nu
 interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
 interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd;
+/** Authoritatively reposition a body in the physics world. Used by the
+ *  Phase-1 drone position-clamp backstop in `SectorRoom`: when a drone
+ *  drifts past `MAX_BOUNDS` (well outside the playable region), the room
+ *  posts this command to teleport the body back in-bounds and zero its
+ *  velocity. Single-writer rule: only the worker mutates SAB pose; this
+ *  command is the only path the main thread has to override it. */
+interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -159,6 +166,16 @@ async function main(): Promise<void> {
         // the read happens at the top of step() and scales the accumulator input.
         const scaled = Math.max(0, Math.round(cmd.rate * CLOCK_RATE_SCALE)) | 0;
         u32[CLOCK_RATE_IDX] = scaled;
+        break;
+      }
+      case 'SET_POSITION': {
+        // Authoritative teleport — used by SectorRoom's drone position-clamp
+        // backstop to pull runaway drones back inside `MAX_BOUNDS`. Same path
+        // SPAWN_OBSTACLE uses for non-zero spawn velocity.
+        physics.setShipState(cmd.entityId, {
+          x: cmd.x, y: cmd.y, angle: cmd.angle,
+          vx: cmd.vx, vy: cmd.vy, angvel: cmd.angvel,
+        });
         break;
       }
     }

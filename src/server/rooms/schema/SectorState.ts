@@ -19,6 +19,12 @@ export class ShipState extends Schema {
    *  silhouette + colour on the client renderer. Defaults to the catalogue
    *  default so legacy snapshots that pre-date this field remain valid. */
   @type('string') kind: string = DEFAULT_SHIP_KIND;
+  /** Player display name shown above remote ships in the renderer. Populated
+   *  in `SectorRoom.onJoin` from the auth profile (`displayName ?? email`).
+   *  Empty string when anonymous; client falls back to a `Pilot ${id}` label.
+   *  Discrete UI string — broadcast through Colyseus MapSchema diff and read
+   *  by the client's `LabelManager` once per state patch. */
+  @type('string') displayName: string = '';
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the

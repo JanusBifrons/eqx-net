@@ -11,6 +11,11 @@ export interface ShipRenderState {
    *  callers / tests that pre-date the ship-kind feature; the renderer falls
    *  back to the catalogue default when missing. */
   kind?: string;
+  /** Player display name (or email fallback). Empty string for anonymous
+   *  players; absent for sources that don't carry it. The renderer's
+   *  `LabelManager` uses this to render a small text label above remote
+   *  ships. The local player's own ship intentionally has no label. */
+  displayName?: string;
 }
 
 /**
@@ -178,5 +183,16 @@ export interface IRenderer {
   // Client implementations narrow it to HTMLElement.
   init(container: unknown): Promise<void>;
   update(mirror: RenderMirror): void;
+  /**
+   * Attach a screen-space overlay layer to the renderer's stage, above the
+   * world viewport. Used by the in-game galaxy-map overlay (Map B) — a
+   * Pixi `Container` of hex graphics that the consumer constructs and hands
+   * to the renderer at bootstrap. The renderer simply parents the container;
+   * it never imports galaxy code, preserving the DI seam.
+   *
+   * `overlay` is typed as `unknown` so this contract stays Pixi-free; the
+   * concrete `PixiRenderer` narrows it to `Container`.
+   */
+  addOverlayContainer(overlay: unknown): void;
   dispose(): void;
 }

@@ -5,6 +5,7 @@ import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpo
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
+import { LabelManager } from './Labels';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape } from '../../shared-types/shipKinds';
 
@@ -259,6 +260,7 @@ export class PixiRenderer implements IRenderer {
   private readonly halo = new HaloRadar();
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
+  private labels: LabelManager | null = null;
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -297,6 +299,7 @@ export class PixiRenderer implements IRenderer {
     this.halo.init(this.viewport);
     this.damageNumbers = new DamageNumberManager(this.viewport);
     this.healthBars = new HealthBarManager(this.viewport);
+    this.labels = new LabelManager(this.viewport);
 
     const measureSize = (): { w: number; h: number } => {
       const vv = window.visualViewport;
@@ -692,9 +695,23 @@ export class PixiRenderer implements IRenderer {
       this.healthBars.update(mirror);
     }
 
+    // Phase 1 — name labels above remote ships and drones (skip self).
+    this.labels?.update(mirror);
+
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's.
     this.halo.update(mirror);
+  }
+
+  /**
+   * Attach a screen-space overlay container to the stage, **above** the
+   * viewport. Used by the in-game galaxy-map overlay (Map B): the consumer
+   * constructs a `GalaxyMapLayer` (a Pixi `Container`) and hands it here.
+   * Layered above `viewport` so it doesn't pan/zoom with the world camera.
+   */
+  addOverlayContainer(overlay: unknown): void {
+    if (!this.initialized) return;
+    this.app.stage.addChild(overlay as Container);
   }
 
   /** Test-only — number of currently-visible halo arrows. */
@@ -719,6 +736,7 @@ export class PixiRenderer implements IRenderer {
     if (ro instanceof ResizeObserver) ro.disconnect();
     this.damageNumbers?.destroy();
     this.healthBars?.destroy();
+    this.labels?.destroy();
     this.halo.destroy();
     this.app.destroy(true, { children: true });
   }
