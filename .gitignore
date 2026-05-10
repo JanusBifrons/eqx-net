@@ -36,3 +36,13 @@ data/
 
 # dev-only diagnostic captures (POST /diag/capture)
 diag/
+
+# session log scratch (e2e capture, debug, regression runs, etc) —
+# written from inside the repo by Bash/PowerShell calls during dev
+# sessions. Never belong in commits.
+*.log
+*.stackdump
+
+# Claude Code session-local state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
