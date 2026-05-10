@@ -32,9 +32,17 @@ const ENGAGE_BOOST = 1.6;
  *  to aim per unit of distance" — picking a finite speed works for both
  *  hitscan (small `t`) and the slower projectile fallback. */
 const LEAD_AIM_MUZZLE_SPEED = 800;
-/** Damping coefficient on the P-controller's angvel term. Tuned so the drone
- *  doesn't oscillate around its bearing — independent of ship kind. */
-const ANGVEL_DAMPING = 1.5;
+/** Bearing-error magnitude (radians) below which the drone snaps to
+ *  zero angular velocity instead of pegging at `±maxAngvel`. ~3° dead
+ *  zone — wide enough that a finished turn doesn't oscillate around
+ *  zero, narrow enough that fine aim corrections still land. */
+const TURN_DEADZONE = 0.05;
+/** Window (radians) over which the AI ramps its target angvel from 0 to
+ *  `maxAngvel` linearly. Outside this window the drone turns at full
+ *  speed; inside, it slows in so it doesn't blow through the bearing
+ *  and immediately reverse. Wider = smoother, narrower = sharper.
+ *  ~0.25 rad ≈ 14° feels both decisive and clean. */
+const TURN_RAMP_WINDOW = 0.25;
 /** Forget a hostile player after this many ticks of no fresh damage from
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
@@ -182,22 +190,15 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (len > 1e-6) { dirX /= len; dirY /= len; }
     }
 
-    // Desired facing: forward = (-sin θ, cos θ), so the angle whose forward
-    // points at (dirX, dirY) is atan2(-dirX, dirY).
     const desiredAngle = Math.atan2(-dirX, dirY);
-    const bearingError = wrapPi(desiredAngle - self.angle);
-
-    const maxTorque = this.kind.ai.maxTorque;
-    let torque = this.kind.ai.turnKp * bearingError - ANGVEL_DAMPING * self.angvel;
-    if (torque > maxTorque) torque = maxTorque;
-    else if (torque < -maxTorque) torque = -maxTorque;
+    const setAngvel = this.angvelTarget(desiredAngle - self.angle);
 
     // Gentle forward thrust along current facing — once the heading has
     // settled, this drives the orbital motion.
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
     const thrustMag = this.kind.ai.thrust * PATROL_THRUST_SCALE;
-    return { fx: fwdX * thrustMag, fy: fwdY * thrustMag, torque };
+    return { fx: fwdX * thrustMag, fy: fwdY * thrustMag, torque: 0, setAngvel };
   }
 
   // ── Combat ──────────────────────────────────────────────────────────
@@ -231,10 +232,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const desiredAngle = Math.atan2(-aimDx, aimDy);
     const bearingError = wrapPi(desiredAngle - self.angle);
 
-    const maxTorque = this.kind.ai.maxTorque;
-    let torque = this.kind.ai.turnKp * bearingError - ANGVEL_DAMPING * self.angvel;
-    if (torque > maxTorque) torque = maxTorque;
-    else if (torque < -maxTorque) torque = -maxTorque;
+    // Player-equivalent snap turn: target angvel = ±maxAngvel (or zero
+    // inside the dead zone), to be applied via `body.setAngvel` rather
+    // than fought with damping. See `angvelTarget` for the ramp.
+    const setAngvel = this.angvelTarget(bearingError);
 
     // Distance-based boost: when the target is far the drone gets a kick
     // to close engagement; per-kind `maxSpeed` (enforced by physics drag)
@@ -265,7 +266,24 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this.lastFireTick = view.tick;
     }
 
-    return fire ? { fx, fy, torque, fire } : { fx, fy, torque };
+    const intent: AiIntent = { fx, fy, torque: 0, setAngvel };
+    if (fire) intent.fire = fire;
+    return intent;
+  }
+
+  /**
+   * Map a (wrapped) bearing-error to the angular velocity the drone
+   * wants this tick. Mirrors the player's input behaviour: snap to
+   * `±kind.maxAngvel` while turning, snap to zero when aimed.
+   * Linear ramp inside `±TURN_RAMP_WINDOW` so the drone slows into
+   * the bearing instead of overshooting.
+   */
+  private angvelTarget(rawError: number): number {
+    const err = wrapPi(rawError);
+    if (Math.abs(err) <= TURN_DEADZONE) return 0;
+    const sign = err > 0 ? 1 : -1;
+    const ramp = Math.min(1, Math.abs(err) / TURN_RAMP_WINDOW);
+    return sign * ramp * this.kind.maxAngvel;
   }
 
   /** Nearest player from `view.players` that's in the hostile set. */

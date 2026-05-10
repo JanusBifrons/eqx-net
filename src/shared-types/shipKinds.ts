@@ -171,7 +171,12 @@ const SCOUT: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.05,     // half-life ≈ 230 ms — quickest to bite, still drifts.
   radius: 10,
   maxHealth: 60,
-  ai: { thrust: 0.7, turnKp: 5.0, maxTorque: 0.4 },
+  // Phase-1 agility uplift (2026-05-10): drone terminal angvel
+  // = maxTorque / ANGVEL_DAMPING (1.5). To match the player's
+  // `maxAngvel = 3.0` we need `maxTorque ≈ 4.5`. `turnKp` bumped from
+  // 5.0 → 8.0 so the P-controller actually asks for the new headroom
+  // at modest bearing errors instead of saturating only when way off.
+  ai: { thrust: 0.7, turnKp: 8.0, maxTorque: 4.5 },
   shape: {
     kind: 'polygon',
     color: 0x00d4ff,
@@ -203,7 +208,9 @@ const FIGHTER: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.025,    // half-life ≈ 460 ms — clear drift on hard turns.
   radius: 12,
   maxHealth: 100,
-  ai: { thrust: 0.5, turnKp: 4.0, maxTorque: 0.4 },
+  // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 2.0`
+  // — terminal angvel = maxTorque / 1.5, so maxTorque = 3.0.
+  ai: { thrust: 0.5, turnKp: 6.0, maxTorque: 3.0 },
   shape: {
     kind: 'polygon',
     color: 0x00ff88,
@@ -236,7 +243,8 @@ const HEAVY: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.012,    // half-life ≈ 960 ms — slides like a tank around corners.
   radius: 16,
   maxHealth: 180,
-  ai: { thrust: 0.35, turnKp: 2.6, maxTorque: 0.5 },
+  // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 1.4`.
+  ai: { thrust: 0.35, turnKp: 4.0, maxTorque: 2.1 },
   shape: {
     kind: 'polygon',
     color: 0xff7733,

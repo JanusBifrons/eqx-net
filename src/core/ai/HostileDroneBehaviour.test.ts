@@ -73,7 +73,6 @@ describe('HostileDroneBehaviour — IDLE patrol', () => {
     let x = 5000, y = 0, angle = 0, angvel = 0;
     let vx = 0, vy = 0;
     const drag = 0.97; // approximation of Rapier linear damping per tick
-    const angDrag = 0.85;
     for (let t = 0; t < 1200; t++) {
       const intent = b.tick({ id: 'd', x, y, vx, vy, angle, angvel }, viewWith([], t));
       // Linear: velocity Verlet–ish. Mass=1 for simplicity.
@@ -81,7 +80,15 @@ describe('HostileDroneBehaviour — IDLE patrol', () => {
       vy = vy * drag + intent.fy;
       x += vx * (1 / 60);
       y += vy * (1 / 60);
-      angvel = angvel * angDrag + intent.torque;
+      // Angular: drones now use the player snap-set path
+      // (`setAngvel` rather than torque), so the integrator just adopts
+      // the requested angvel directly. Falls back to a damped-residual
+      // step when the intent didn't request a setAngvel (defensive).
+      if (intent.setAngvel !== undefined) {
+        angvel = intent.setAngvel;
+      } else {
+        angvel = angvel * 0.85 + intent.torque;
+      }
       angle += angvel * (1 / 60);
     }
     const finalR = Math.hypot(x, y);
@@ -152,7 +159,9 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
       droneAt(0, 0, 0, 0),
       viewWith([{ id: 'far', x: 200, y: 0 }, { id: 'near', x: 0, y: 50 }]),
     );
-    expect(Math.abs(intent.torque)).toBeLessThan(0.1);
+    // Already aimed at near → bearing error ≈ 0 → setAngvel drops into
+    // the dead zone and is 0 (or undefined).
+    expect(Math.abs(intent.setAngvel ?? 0)).toBeLessThan(0.1);
     expect(intent.fy).toBeGreaterThan(0);
   });
 
@@ -170,11 +179,13 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(intent.fire).toBeUndefined();
   });
 
-  it('produces nonzero torque when hostile target is off-bearing', () => {
+  it('produces nonzero turn intent when hostile target is off-bearing', () => {
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
     const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 100, y: 0 }]));
-    expect(intent.torque).not.toBe(0);
+    // Drones now snap-set angvel (player parity); off-bearing should
+    // produce a non-zero target angvel rather than a torque.
+    expect(intent.setAngvel ?? 0).not.toBe(0);
   });
 
   it('thrust is along the drone\'s current forward, not toward the target', () => {
@@ -239,7 +250,7 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
       dtSec: 1 / 60,
     };
     const intent = b.tick(droneAt(0, 0, 0, 0), moving);
-    expect(intent.torque).not.toBe(0);
+    expect(intent.setAngvel ?? 0).not.toBe(0);
   });
 
   it('boosts forward thrust when the hostile target is far', () => {

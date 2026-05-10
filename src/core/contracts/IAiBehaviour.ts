@@ -43,8 +43,16 @@ export interface AiEntity {
 }
 
 /**
- * The intent a behaviour produces each tick. Linear impulse and torque are
- * applied to the rigid body in the worker (same path as player INPUT).
+ * The intent a behaviour produces each tick. Linear impulse is applied to
+ * the rigid body in the worker. Angular control is one of:
+ *  - `torque` — applied via `applyTorqueImpulse` (legacy P-controller path,
+ *    fights `1.5 × angvel` damping).
+ *  - `setAngvel` — applied via `body.setAngvel(value, true)` (matches the
+ *    player input path, snap-set with no damping fight). Behaviours that
+ *    want player-equivalent agility set this and leave `torque = 0`.
+ *
+ * If both are set, the worker applies `setAngvel` first then adds the
+ * torque impulse on top — but in practice you should pick one.
  *
  * `fire`, when present, asks the server to fire a hitscan in `(dirX, dirY)`
  * direction on this entity's behalf. The server resolves it through the
@@ -54,6 +62,12 @@ export interface AiIntent {
   fx: number;
   fy: number;
   torque: number;
+  /** Optional snap-set angular velocity (rad/s). When present, the worker
+   *  calls `body.setAngvel(setAngvel, true)` instead of/before adding any
+   *  torque impulse. Mirrors the player's `setAngvel(target * maxAngvel)`
+   *  input path so a drone can match a player's turn rate without fighting
+   *  damping. */
+  setAngvel?: number;
   fire?: { dirX: number; dirY: number };
 }
 

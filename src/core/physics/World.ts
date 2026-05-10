@@ -359,6 +359,19 @@ export class PhysicsWorld {
     if (state.angvel !== undefined) body.setAngvel(state.angvel, true);
   }
 
+  /**
+   * Snap-set angular velocity. Mirrors the player's input path
+   * (`applyInput` calls `body.setAngvel(target * kind.maxAngvel)`) so
+   * an AI behaviour can match a player's instantaneous turn-rate
+   * without having to fight `1.5 × angvel` damping with a
+   * `applyTorqueImpulse` ramp.
+   */
+  setShipAngvel(id: string, angvel: number): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    rec.body.setAngvel(angvel, true);
+  }
+
   getShipState(id: string): ShipPhysicsState | null {
     const rec = this.bodies.get(id);
     if (!rec) return null;

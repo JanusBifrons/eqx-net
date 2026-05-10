@@ -146,7 +146,7 @@ type WorkerCmd =
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
-  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
+  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number };
 
@@ -451,8 +451,12 @@ export class SectorRoom extends Room<SectorState> {
     // (dynamic Rapier ball with damping=0); the AI behaviour determines
     // whether they drift passively or steer toward players.
     this.aiController = new AiController({
-      postIntent: (slot, fx, fy, torque) => {
-        this.postToWorker({ type: 'AI_INTENT', slot, fx, fy, torque });
+      postIntent: (slot, fx, fy, torque, setAngvel) => {
+        this.postToWorker({
+          type: 'AI_INTENT',
+          slot, fx, fy, torque,
+          ...(setAngvel !== undefined ? { setAngvel } : {}),
+        });
       },
     });
 

@@ -69,7 +69,7 @@ interface SpawnCmd         { type: 'SPAWN';          slot: number; playerId: str
 interface DespawnCmd       { type: 'DESPAWN';        slot: number; playerId: string }
 interface InputCmd         { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
 interface SpawnObstacleCmd { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
-interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number }
+interface AiIntentCmd      { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
 interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
 /** Authoritatively reposition a body in the physics world. Used by the
  *  Phase-1 drone position-clamp backstop in `SectorRoom`: when a drone
@@ -106,7 +106,7 @@ async function main(): Promise<void> {
    *  for why this is load-bearing. */
   const lastAckTick = new Map<number, number>();
   /** Pending AI intents per slot, applied once on the next physics step then cleared. */
-  const aiIntents = new Map<number, { fx: number; fy: number; torque: number }>();
+  const aiIntents = new Map<number, { fx: number; fy: number; torque: number; setAngvel?: number }>();
   /** Per-slot consecutive-sleep counter; FLAG_SLEEPING is written when this >= hysteresis. */
   const sleepCount = new Map<number, number>();
   /** Per-slot last-broadcast sleep flag, used to detect transitions for SLEEP_TRANSITION. */
@@ -158,7 +158,12 @@ async function main(): Promise<void> {
       }
       case 'AI_INTENT': {
         // Coalesce: latest intent wins for this slot; one impulse per step.
-        aiIntents.set(cmd.slot, { fx: cmd.fx, fy: cmd.fy, torque: cmd.torque });
+        aiIntents.set(cmd.slot, {
+          fx: cmd.fx,
+          fy: cmd.fy,
+          torque: cmd.torque,
+          setAngvel: cmd.setAngvel,
+        });
         break;
       }
       case 'CLOCK_RATE': {
@@ -222,9 +227,14 @@ async function main(): Promise<void> {
     }
 
     // Apply pending AI intents (one per slot per step). Drained after application.
+    // `setAngvel` runs BEFORE `applyImpulse`'s torque term so a behaviour
+    // that wants player-equivalent snap-turn just sets the target angvel
+    // and leaves `torque = 0`. (Setting both is allowed but redundant.)
     for (const [slot, intent] of aiIntents) {
       const id = slotToPlayer.get(slot);
-      if (id !== undefined) physics.applyImpulse(id, intent.fx, intent.fy, intent.torque);
+      if (id === undefined) continue;
+      if (intent.setAngvel !== undefined) physics.setShipAngvel(id, intent.setAngvel);
+      physics.applyImpulse(id, intent.fx, intent.fy, intent.torque);
     }
     aiIntents.clear();
 

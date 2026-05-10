@@ -16,8 +16,13 @@ export interface AiFireRequest {
 }
 
 export interface AiIntentSink {
-  /** Posts an AI_INTENT command to the physics worker for the given slot. */
-  postIntent(slot: number, fx: number, fy: number, torque: number): void;
+  /** Posts an AI_INTENT command to the physics worker for the given slot.
+   *  `setAngvel`, when provided, snap-sets the body's angular velocity
+   *  (matches the player's input path) — overriding the torque-based
+   *  control. The sink is responsible for routing this through whatever
+   *  physics layer it owns (server: worker postMessage; client:
+   *  `predWorld.setShipAngvel`). */
+  postIntent(slot: number, fx: number, fy: number, torque: number, setAngvel?: number): void;
 }
 
 interface AiRegistration {
@@ -107,8 +112,13 @@ export class AiController {
       if (!self) continue;
       const intent = reg.behaviour.tick(self, view);
 
-      if (intent.fx !== 0 || intent.fy !== 0 || intent.torque !== 0) {
-        this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque);
+      if (
+        intent.fx !== 0 ||
+        intent.fy !== 0 ||
+        intent.torque !== 0 ||
+        intent.setAngvel !== undefined
+      ) {
+        this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
       }
 
       if (intent.fire) {

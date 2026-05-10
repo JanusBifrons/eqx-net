@@ -292,8 +292,13 @@ export class ColyseusGameClient {
    * mirror uses, so no mapping needed.
    */
   private readonly _aiSink: AiIntentSink = {
-    postIntent: (slot, fx, fy, torque) => {
-      this.predWorld?.applyImpulse(`swarm-${slot}`, fx, fy, torque);
+    postIntent: (slot, fx, fy, torque, setAngvel) => {
+      const id = `swarm-${slot}`;
+      // Mirror the server-worker order: snap-set angvel first, then layer
+      // any linear/torque impulse on top. Behaviours wanting player-
+      // equivalent turn rate set `setAngvel` and leave `torque = 0`.
+      if (setAngvel !== undefined) this.predWorld?.setShipAngvel(id, setAngvel);
+      this.predWorld?.applyImpulse(id, fx, fy, torque);
     },
   };
   private readonly _aiController = new AiController(this._aiSink);
