@@ -6,8 +6,28 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.json" />
     <title>EQX Peri</title>
     <style>
+      :root {
+        /* Fixed AppHeader height. Slot anchors padded with this so HUD widgets
+           never paint underneath the header. The header is hidden on touch
+           devices (`pointer: coarse`) regardless of viewport width — phones
+           in landscape are 667+ px wide so a width-based breakpoint would
+           leave the AppBar visible there. */
+        --app-bar-h: 48px;
+        /* Edge inset applied by the bottom-left/bottom-right anchor hosts
+           (joystick + fire/boost). 16 px is the comfortable default; on a
+           phone in landscape the user's grip naturally curls inward, so the
+           media query below kicks the controls further from the bezel. */
+        --mobile-edge-inset: 16px;
+      }
+      @media (pointer: coarse) {
+        :root { --app-bar-h: 0px; }
+      }
+      @media (orientation: landscape) and (pointer: coarse) {
+        :root { --mobile-edge-inset: 40px; }
+      }
       html, body, #root {
         margin: 0;
         padding: 0;

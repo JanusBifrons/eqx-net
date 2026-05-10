@@ -23,7 +23,14 @@ export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Pro
     <AppBar
       position="fixed"
       elevation={0}
+      data-testid="app-header"
       sx={{
+        // Hidden on touch devices (`pointer: coarse`). Phones in landscape
+        // are 667+ px wide — too wide for a `max-width` breakpoint to catch
+        // — so we use the input-mode media query instead. Settings, profile,
+        // galaxy actions all live in the AdvancedDrawer on touch.
+        display: 'flex',
+        '@media (pointer: coarse)': { display: 'none' },
         background: 'rgba(5, 7, 15, 0.85)',
         backdropFilter: 'blur(4px)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',

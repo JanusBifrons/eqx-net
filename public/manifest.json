@@ -1,0 +1,10 @@
+{
+  "name": "EQX Peri",
+  "short_name": "EQX Peri",
+  "description": "Multiplayer space combat in a hex galaxy.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#05070f",
+  "theme_color": "#05070f"
+}
