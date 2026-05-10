@@ -246,6 +246,51 @@ describe('TransitOrchestrator', () => {
       expect((last!.msg as { reason?: string }).reason).toBe('destination_unavailable');
     });
 
+    it('uses client-requested arrival x/y when provided (override SAB pose)', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, limbo } = withFakeReserve(reserve);
+      // Departure pose was 100/200 (set by makeRoom). Request arrival at 500/-300.
+      orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      const entry = limbo.peek('p1');
+      expect(entry).not.toBeNull();
+      expect(entry!.payload.x).toBe(500);
+      expect(entry!.payload.y).toBe(-300);
+      // Velocity / angle / angvel are NEVER overridden — only landing position.
+      // SAB is Float32Array, so use toBeCloseTo for non-integer round-trips.
+      expect(entry!.payload.vx).toBe(1);
+      expect(entry!.payload.vy).toBe(-2);
+      expect(entry!.payload.angle).toBe(0.5);
+      expect(entry!.payload.angvel).toBeCloseTo(0.1, 5);
+    });
+
+    it('clamps out-of-bounds arrival to sector half-extent', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, limbo } = withFakeReserve(reserve);
+      orch.beginTransit('p1', 'orion-belt', { x: 999_999, y: -50_000 });
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      const entry = limbo.peek('p1');
+      expect(entry).not.toBeNull();
+      expect(entry!.payload.x).toBe(5000);   // SECTOR_PLAYABLE_HALF_EXTENT
+      expect(entry!.payload.y).toBe(-5000);
+    });
+
+    it('falls back to SAB pose when no arrival is provided (regression lock)', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, limbo } = withFakeReserve(reserve);
+      // No third arg — legacy PC behaviour.
+      orch.beginTransit('p1', 'orion-belt');
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      const entry = limbo.peek('p1');
+      expect(entry).not.toBeNull();
+      // Departure pose from makeRoom: x=100, y=200.
+      expect(entry!.payload.x).toBe(100);
+      expect(entry!.payload.y).toBe(200);
+    });
+
     it('player vanishing mid-spool (no slot) skips reservation cleanly', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, room, limbo } = withFakeReserve(reserve);

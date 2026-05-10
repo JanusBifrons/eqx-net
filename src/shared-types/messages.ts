@@ -44,11 +44,24 @@ export const FireMessageSchema = z
 
 /** Client → server: "engage hyperspace to <targetSectorKey>". The server
  *  validates that the target is a direct neighbour and starts the
- *  spool-up; the ship stays in the source room and remains damageable. */
+ *  spool-up; the ship stays in the source room and remains damageable.
+ *
+ *  Optional `arrival` lets the client specify where in the destination
+ *  sector the ship should land. Absent ⇒ server uses the departure pose
+ *  (current default). Present ⇒ server clamps to playable bounds and
+ *  uses the result. PC has no UI for this and never sends it; mobile
+ *  may send it via the Galaxy drawer arrival picker. */
 export const EngageTransitSchema = z
   .object({
     type: z.literal('engage_transit'),
     targetSectorKey: z.string(),
+    arrival: z
+      .object({
+        x: z.number().finite(),
+        y: z.number().finite(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 

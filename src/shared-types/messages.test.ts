@@ -9,7 +9,7 @@
  * payload. Pattern matches the existing `InputMessageSchema` style.
  */
 import { describe, it, expect } from 'vitest';
-import { CollisionResolvedMessageSchema } from './messages.js';
+import { CollisionResolvedMessageSchema, EngageTransitSchema } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -72,6 +72,40 @@ describe('CollisionResolvedMessageSchema', () => {
 
   it('rejects negative impulse', () => {
     const r = CollisionResolvedMessageSchema.safeParse({ ...valid, impulse: -10 });
+    expect(r.success).toBe(false);
+  });
+});
+
+describe('EngageTransitSchema', () => {
+  it('accepts a payload without arrival (legacy PC behaviour)', () => {
+    const r = EngageTransitSchema.safeParse({ type: 'engage_transit', targetSectorKey: 'orion-belt' });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a payload with finite arrival x/y', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      arrival: { x: 100, y: -200 },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects a payload with non-finite arrival values', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      arrival: { x: Number.NaN, y: 0 },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects extra unknown fields on the arrival object (strict)', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      arrival: { x: 0, y: 0, z: 0 },
+    });
     expect(r.success).toBe(false);
   });
 });

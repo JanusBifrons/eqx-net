@@ -36,6 +36,7 @@ import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
+import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import { SHIP_MAX_HEALTH } from '../../core/combat/Weapons.js';
 
 /**
@@ -66,6 +67,11 @@ interface InFlight {
   machine: TransitStateMachine;
   targetSectorKey: string;
   transitToken: string;
+  /** Optional client-requested arrival pose. Absent ⇒ commitTransit reads
+   *  the SAB pose at commit time (default behaviour). Present ⇒ commit
+   *  uses these (server-clamped to playable bounds) for x/y. vx/vy/angle
+   *  always come from the SAB. */
+  arrival: { x: number; y: number } | null;
   /** Timer that fires the commit unless aborted earlier. */
   commitTimer: ReturnType<typeof setTimeout>;
   /** One-shot bus listener — must be unsubscribed on cancel + commit. */
@@ -113,8 +119,16 @@ export class TransitOrchestrator {
    * Begin a transit. Validates that the source has a `sectorKey` and that
    * the target is a direct neighbour. On reject, sends a `transit_state`
    * back to DOCKED with the appropriate reason and returns false.
+   *
+   * `arrival` (optional): client-requested arrival x/y. Stored on the
+   * in-flight record and consumed by `commitTransit`. If absent, the
+   * server falls back to the SAB pose at commit time (legacy behaviour).
    */
-  beginTransit(playerId: string, targetSectorKey: string): boolean {
+  beginTransit(
+    playerId: string,
+    targetSectorKey: string,
+    arrival?: { x: number; y: number },
+  ): boolean {
     const src = this.room.sectorKey;
     if (src === null) {
       // Engineering room — transit is a galaxy-only feature.
@@ -143,7 +157,14 @@ export class TransitOrchestrator {
       void this.commitTransit(playerId);
     }, this.spoolMs);
 
-    this.inFlight.set(playerId, { machine, targetSectorKey, transitToken, commitTimer, onShipDestroyed });
+    this.inFlight.set(playerId, {
+      machine,
+      targetSectorKey,
+      transitToken,
+      arrival: arrival ? { x: arrival.x, y: arrival.y } : null,
+      commitTimer,
+      onShipDestroyed,
+    });
 
     this.sendState(playerId, {
       type: 'transit_state',
@@ -191,9 +212,17 @@ export class TransitOrchestrator {
     }
 
     const b = slotBase(slot);
+    // Position: prefer the client-requested arrival (clamped) when set,
+    // otherwise fall through to the SAB pose. Velocity / angle / angvel
+    // are always SAB — only the landing point is overridable.
+    const sabX = this.room.sabF32[b + SLOT_X_OFF]!;
+    const sabY = this.room.sabF32[b + SLOT_Y_OFF]!;
+    const arrivalPos = inFlight.arrival
+      ? clampToSectorBounds(inFlight.arrival.x, inFlight.arrival.y)
+      : null;
     const payload: LimboPayload = {
-      x:      this.room.sabF32[b + SLOT_X_OFF]!,
-      y:      this.room.sabF32[b + SLOT_Y_OFF]!,
+      x:      arrivalPos ? arrivalPos.x : sabX,
+      y:      arrivalPos ? arrivalPos.y : sabY,
       vx:     this.room.sabF32[b + SLOT_VX_OFF]!,
       vy:     this.room.sabF32[b + SLOT_VY_OFF]!,
       angle:  this.room.sabF32[b + SLOT_ANGLE_OFF]!,

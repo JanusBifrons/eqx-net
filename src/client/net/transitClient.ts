@@ -9,8 +9,17 @@
  */
 import type { Room } from 'colyseus.js';
 
-export function engageTransit(room: Room, targetSectorKey: string): void {
-  room.send('engage_transit', { type: 'engage_transit', targetSectorKey });
+export function engageTransit(
+  room: Room,
+  targetSectorKey: string,
+  arrival?: { x: number; y: number },
+): void {
+  const msg: { type: 'engage_transit'; targetSectorKey: string; arrival?: { x: number; y: number } } = {
+    type: 'engage_transit',
+    targetSectorKey,
+  };
+  if (arrival) msg.arrival = { x: arrival.x, y: arrival.y };
+  room.send('engage_transit', msg);
 }
 
 export function cancelTransit(room: Room): void {
