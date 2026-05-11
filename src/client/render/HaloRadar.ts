@@ -8,16 +8,14 @@ const ASTEROID_COLOR = 0x886644;
 const DRONE_HOSTILE_COLOR = 0xff3344;
 const DRONE_IDLE_COLOR = 0xf0c040;
 const REMOTE_SHIP_COLOR = 0x00aaff;
-// Phase G — glow tokens. All arrows now get a soft glow under the
-// triangle (was hostile-only); hostile drones still get a brighter,
-// larger menace ring tinted toward red.
+// Glow tokens. All arrows get a soft glow under the triangle; hostile
+// drones get a brighter, larger menace ring tinted toward red. Phase H —
+// glow radii shrunk to match the smaller polygon.
 const GLOW_COLOR_HOSTILE = 0xff5566;
-const GLOW_RADIUS_HOSTILE = 11;
-const GLOW_ALPHA_HOSTILE = 0.40;
-const GLOW_RADIUS_DEFAULT = 7;
-const GLOW_ALPHA_DEFAULT = 0.18;
-// Phase G — arrow fill transparency. Lower than the 0.95 pre-G default so
-// arrows read as overlay markers, not solid sprites.
+const GLOW_RADIUS_HOSTILE = 8;
+const GLOW_ALPHA_HOSTILE = 0.35;
+const GLOW_RADIUS_DEFAULT = 5;
+const GLOW_ALPHA_DEFAULT = 0.15;
 const ARROW_FILL_ALPHA = 0.70;
 // Halo radii are specified as a fraction of the viewport's shorter screen
 // dimension and converted to world units each frame using the viewport's
@@ -37,13 +35,16 @@ const OUTER_RADIUS_MAX_PX = 280;
 // scaleNear.
 const ARROW_SCALE_NEAR = 1.15;
 const ARROW_SCALE_FAR = 0.65;
-// World-unit distance band used to lerp arrow radius and scale. Phase G:
-// tightened to 300–4500 u — the useful "where is this entity" range —
-// instead of spreading thinly across 200–5000. Each ring-pixel of travel
-// now carries more world distance, so the position-on-ring reads more
-// meaningfully.
-const DIST_MIN = 300;
-const DIST_MAX = 4500;
+// World-unit distance band. Phase H:
+//   - DIST_MIN doubles as the near-cutoff: entities closer than this
+//     get no arrow at all. Off-screen-and-very-close entities don't
+//     need an indicator (the player already knows they're nearby), and
+//     suppressing them makes room for the "come in from off-screen"
+//     feel — the arrow appears once the entity has moved meaningfully
+//     away and springs in from beyond the screen edge.
+//   - Both endpoints widened so the lerp covers a more meaningful range.
+const DIST_MIN = 900;
+const DIST_MAX = 7000;
 // Padded so arrows don't flicker when a POI sits exactly on a viewport edge.
 const VISIBILITY_PADDING_WORLD = 16;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
@@ -61,16 +62,13 @@ const ARROW_EXTRAP_CAP_MS = 400;
 // packet, and the "fly-in" feel when a wedge's representative changes.
 const ARROW_SMOOTH_HALF_LIFE_MS = 130;
 // Beyond this distance, entities collapse into angular-wedge
-// representatives instead of each getting their own arrow. Phase G
-// dropped this from 2500 → 1500 to reduce the visual clutter that
-// landed phone-side: too many singleton arrows competed for screen
-// space and made it hard to read individual positions.
-const RADAR_GROUPING_DISTANCE = 1500;
-// Phase D: beyond this distance, no arrow at all (distinct from `DIST_MAX`,
+// representatives instead of each getting their own arrow.
+const RADAR_GROUPING_DISTANCE = 2000;
+// Beyond this distance, no arrow at all (distinct from `DIST_MAX`,
 // which is just the lerp-finish point for radius/scale). Between
 // `DIST_MAX` and `RADAR_MAX_DISTANCE` the arrow sits at the outer ring at
 // the far scale, then disappears past the cutoff.
-const RADAR_MAX_DISTANCE = 8000;
+const RADAR_MAX_DISTANCE = 10000;
 // Phase D: angular bucket size for wedge grouping. 24 wedges around the
 // full ring at 15° each.
 const RADAR_WEDGE_DEG = 15;
@@ -151,6 +149,14 @@ export function projectArrow(
   const dist = Math.hypot(dx, dy);
   if (dist < 1e-6) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
 
+  // Phase H — near-cutoff. Off-screen-but-close entities get no arrow:
+  // the player already knows roughly where they are, and skipping them
+  // makes the radar's "ring of distant threats" feel more meaningful.
+  // This is the threshold the user wanted when they asked for arrows to
+  // "come in from off-screen" — pair it with the spring snap to the
+  // screen-edge in the renderer's first-visible branch.
+  if (dist < params.distMin) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
+
   const theta = Math.atan2(dy, dx);
   const t = clamp((dist - params.distMin) / (params.distMax - params.distMin), 0, 1);
   const radiusPx = lerp(params.innerRadiusPx, params.outerRadiusPx, t);
@@ -159,19 +165,21 @@ export function projectArrow(
   return { hidden: false, theta, radiusPx, scale };
 }
 
-// Two arrow silhouettes — pointier for singleton entities (precise
+// Two arrow silhouettes — needle-thin for singleton entities (precise
 // direction signal), wider/blunter for wedge representatives (aggregated-
-// area signal). After `rotation = -theta` the nose points along the
-// world bearing to the POI.
+// area signal). Phase H — pushed the singleton further toward "needle"
+// because motion + bearing already carry direction, the shape can be
+// minimal. After `rotation = -theta` the nose points along the world
+// bearing to the POI.
 const ARROW_POLY_SINGLETON = [
-  { x: 8, y: 0 },
-  { x: -4, y: -3 },
-  { x: -4, y: 3 },
+  { x: 7, y: 0 },
+  { x: -3, y: -1.5 },
+  { x: -3, y: 1.5 },
 ];
 const ARROW_POLY_GROUPED = [
-  { x: 6, y: 0 },
-  { x: -3, y: -6 },
-  { x: -3, y: 6 },
+  { x: 5, y: 0 },
+  { x: -3, y: -4 },
+  { x: -3, y: 4 },
 ];
 
 function paintArrowGfx(g: Graphics, color: number, hostile: boolean, grouped: boolean): void {
@@ -391,6 +399,14 @@ export class HaloRadar {
     // a fixed pixel offset, so they always sit at the right place on the
     // halo regardless of camera state (follow lag, zoom, etc.).
     const playerScreen = viewport.toScreen(local.x, -local.y);
+    // Phase H — radius for the "come in from off-screen" spawn point. A
+    // circle of `screenCornerRadius + 30` px from playerScreen sits just
+    // outside any corner of the visible viewport at any bearing, so a
+    // fresh arrow's spring starts genuinely off-screen and flies inward
+    // to its halo ring target instead of popping into existence on the
+    // ring.
+    const screenCornerRadius = Math.hypot(viewport.screenWidth, viewport.screenHeight) / 2;
+    const offScreenSpawnPx = screenCornerRadius + 30;
 
     const rawCandidates: Candidate[] = [];
 
@@ -503,15 +519,17 @@ export class HaloRadar {
       }
       renderedKeys.add(c.key);
 
-      // Hidden → visible: snap the springs so the arrow appears at-target
-      // instead of springing in from a stale hidden position. Within the
-      // same wedge representative changing membership, `lastVisible` stays
-      // true and the spring smoothly "flies in" toward the new target —
-      // that's the cosmetic effect we want to preserve.
+      // Phase H — first-visible: snap the spring to a point just outside
+      // the screen edge along the arrow's bearing, then let the spring
+      // carry it to the halo ring target. Produces the "come in from
+      // off-screen" feel the user asked for. Within the same arrow,
+      // `lastVisible` stays true and the spring smoothly "flies" between
+      // successive targets — that's the wedge-handoff cosmetic kept from
+      // Phase D.
       if (!entry.lastVisible) {
-        entry.sx.x = targetX;
+        entry.sx.x = playerScreen.x + Math.cos(proj.theta) * offScreenSpawnPx;
         entry.sx.v = 0;
-        entry.sy.x = targetY;
+        entry.sy.x = playerScreen.y - Math.sin(proj.theta) * offScreenSpawnPx;
         entry.sy.v = 0;
       } else {
         springStep(entry.sx, targetX, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);

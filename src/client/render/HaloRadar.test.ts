@@ -85,23 +85,34 @@ describe('HaloRadar projectArrow', () => {
   });
 
   it('respects visibility padding', () => {
-    // POI at world (60, 0) — Pixi (60, 0). Outside visibleRight = 50.
-    // Without padding it's off-screen. With padding 20 it's inside (50+20=70 > 60).
-    const offScreen = projectArrow({ x: 0, y: 0 }, { x: 60, y: 0 }, baseParams);
+    // POI at world (210, 0) — Pixi (210, 0). Outside visibleRight = 50.
+    // dist = 210 ≥ distMin = 200 so the near-cutoff doesn't fire and the
+    // padded vs unpadded behaviour isolates to the visibility test.
+    const offScreen = projectArrow({ x: 0, y: 0 }, { x: 210, y: 0 }, baseParams);
     expect(offScreen.hidden).toBe(false);
 
     const padded = projectArrow(
       { x: 0, y: 0 },
-      { x: 60, y: 0 },
-      { ...baseParams, visiblePadding: 20 },
+      { x: 210, y: 0 },
+      { ...baseParams, visiblePadding: 200 },
     );
     expect(padded.hidden).toBe(true);
   });
 
-  it('clamps t below distMin to 0 (innerRadiusPx)', () => {
-    // POI at world (60, 0) — only just off-screen (visible square ±50, padding 0).
-    // dist = 60, below distMin = 200, so t clamps to 0 → radiusPx = innerRadiusPx.
+  it('hides when POI is closer than distMin (near cutoff)', () => {
+    // POI at world (60, 0) — only just off-screen (visible square ±50,
+    // padding 0). dist = 60, below distMin = 200. Phase H reads this as
+    // "off-screen but too close to bother indicating" and hides the
+    // arrow rather than pinning it at innerRadius.
     const proj = projectArrow({ x: 0, y: 0 }, { x: 60, y: 0 }, baseParams);
+    expect(proj.hidden).toBe(true);
+  });
+
+  it('starts the lerp exactly at distMin (innerRadiusPx + scaleNear)', () => {
+    // POI exactly at distMin world units east — bearing 0, radius at
+    // innerRadiusPx, scale at scaleNear. Same case as the near-distance
+    // test above but stated as a lerp-boundary invariant.
+    const proj = projectArrow({ x: 0, y: 0 }, { x: 200, y: 0 }, baseParams);
     expect(proj.hidden).toBe(false);
     expect(proj.radiusPx).toBeCloseTo(100);
     expect(proj.scale).toBeCloseTo(1.5);
