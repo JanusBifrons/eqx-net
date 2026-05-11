@@ -103,6 +103,13 @@ export interface SwarmRenderState {
    *  colour on the renderer; absent for asteroids. Resolved from the wire's
    *  u8 catalogue index by the decoder. */
   shipKind?: string;
+  /** Per-mount rotation angle, ship-relative AND already biased past
+   *  `mount.baseAngle`. Indexed by catalogue mount-order. Multi-mount/
+   *  turret refactor Phase 4c (2026-05-11): authoritative angles arrive in
+   *  the snapshot's `drones[]` slice for in-interest drones with rotating
+   *  mounts. Out-of-interest drones leave it undefined (renderer falls
+   *  back to baseAngle). Same field shape as `ShipRenderState.mountAngles`. */
+  mountAngles?: number[];
   /** True when the server told us this entity is at rest. Renderer keeps the sprite static. */
   sleeping: boolean;
   /** Server tick of the most recent packet that included this entity. */

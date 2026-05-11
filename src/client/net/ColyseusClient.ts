@@ -1520,6 +1520,21 @@ export class ColyseusGameClient {
               x: d.x, y: d.y, vx: d.vx, vy: d.vy, angle: d.angle, angvel: d.angvel,
             });
           }
+          // Phase 4c — push the authoritative drone mount angles into
+          // the swarm mirror so MountVisualManager rotates the drone's
+          // turret sprites to match what the server is computing (and
+          // so handleAiFire's lag-comp matches what the player saw).
+          // Out-of-interest drones never appear in `snap.drones`, so
+          // their mirror entry's mountAngles stays undefined and the
+          // renderer falls back to baseAngle (static barrels).
+          const sw = this.mirror.swarm?.get(d.id);
+          if (sw) {
+            if (d.mountAngles && d.mountAngles.length > 0) {
+              sw.mountAngles = d.mountAngles.slice();
+            } else if (sw.mountAngles) {
+              sw.mountAngles = undefined;
+            }
+          }
         }
       }
 

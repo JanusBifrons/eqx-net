@@ -62,6 +62,16 @@ export class AiController {
     return this.entities.size;
   }
 
+  /** Phase 4c (2026-05-11) — read access to the registered behaviour for
+   *  a given entity. Used by the server's per-tick drone turret AI so it
+   *  can query the drone's hostility set via the shared
+   *  `HostileDroneBehaviour` instance, keeping the body AI's "who is
+   *  hostile" view and the turret AI's "who do I aim at" view in lockstep
+   *  on the same per-instance state. Returns `null` for unregistered ids. */
+  getBehaviour(entityId: string): IAiBehaviour | null {
+    return this.entities.get(entityId)?.behaviour ?? null;
+  }
+
   /**
    * Forward a hostility-marking event to the registered behaviour, if it
    * exposes the optional `markHostile` hook. Server calls this from

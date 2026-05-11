@@ -98,6 +98,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  reset purely by `markHostile`/`purgeHostility`/time-decay, both of
    *  which fire symmetrically on server and client. */
   private prevTargetId: string | null = null;
+  /** Phase 4c (2026-05-11) — half-arc of the widest rotating mount in
+   *  this kind's primary slot, used to widen the body-aim fire gate so
+   *  drones with turrets fire even when the body is off-aim by less than
+   *  the mount's reach. For single-mount legacy kinds (zero arc) this is
+   *  0 and the gate collapses to the pre-4c body-only tolerance. */
+  private readonly maxTurretHalfArc: number;
 
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -106,6 +112,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.kind = typeof kind === 'object' && kind !== null
       ? kind
       : getShipKind(typeof kind === 'string' ? kind : null);
+    // Compute the half-arc of the widest rotating mount across the kind's
+    // mounts. `arcMax - arcMin` is the FULL arc; halving it gives the
+    // distance the mount can swing from `baseAngle` in either direction.
+    // For interceptor wings (±π/6), this is π/6 ≈ 30°. For gunship rear
+    // (±π/2), this is π/2 ≈ 90°. Multi-mount kinds use the maximum across
+    // their mounts (e.g. gunship's rear dominates over the forward's ±π/4).
+    let maxHalf = 0;
+    for (const m of this.kind.mounts ?? []) {
+      if (m.rotationSpeed <= 0) continue;
+      const half = (m.arcMax - m.arcMin) / 2;
+      if (half > maxHalf) maxHalf = half;
+    }
+    this.maxTurretHalfArc = maxHalf;
   }
 
   /** Test-visible peek at the current state. */
@@ -273,9 +292,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Fire gating: standard 14° cone at normal distance widens to 26° at
     // point-blank so brawls actually trade fire instead of dancing
     // around each other waiting for a perfect line-up.
-    const aimTolerance = dist < DRONE_FIRE_RANGE * POINT_BLANK_RATIO
+    //
+    // Phase 4c (2026-05-11): kinds with rotating mounts add the widest
+    // mount's half-arc to the body-aim tolerance, so a drone fires when
+    // a turret can reach the target even when the body itself is off.
+    // Interceptor wings (±π/6 = ±30°) → tolerance ~44°. Gunship rear
+    // (±π/2 = ±90°) → tolerance ~104° (drone fires even when target is
+    // almost directly behind). Without this, the drone's body-aim gate
+    // suppressed fires that the turret AI would otherwise resolve as
+    // hits — the "AI doesn't shoot sometimes when I'm in range" symptom.
+    const baseTolerance = dist < DRONE_FIRE_RANGE * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
+    const aimTolerance = baseTolerance + this.maxTurretHalfArc;
 
     let fire: { dirX: number; dirY: number } | undefined;
     const aimed = Math.abs(bearingError) <= aimTolerance;

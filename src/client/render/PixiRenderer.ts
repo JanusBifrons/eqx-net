@@ -532,6 +532,22 @@ export class PixiRenderer implements IRenderer {
           sprite.x = entry.x;
           sprite.y = -entry.y;
           sprite.rotation = -entry.angle;
+          // Phase 4c (2026-05-11) — drones get the same mount cluster
+          // treatment as player ships: turret sprites parented to the
+          // drone body, rotated per-mount via the snapshot-anchored
+          // `entry.mountAngles`. Legacy single-mount drone kinds have
+          // zero-arc mounts so applyMountAngles is essentially a no-op
+          // (sets rotation to -baseAngle, same as the static Phase-3
+          // path); multi-mount kinds (interceptor / gunship drones)
+          // now visibly slew their wing/rear turrets to track players.
+          if (entry.shipKind) {
+            this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
+            const swarmKind = getShipKind(entry.shipKind);
+            const swarmMounts = swarmKind.mounts ?? [];
+            if (swarmMounts.length > 0) {
+              this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
+            }
+          }
         } else {
           const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
           sprite.x = lerped.x;
@@ -681,13 +697,24 @@ export class PixiRenderer implements IRenderer {
           // back to a zero-offset zero-baseAngle stub for unknown mount ids
           // so a pre-2c server (no mountId in the wire) still renders.
           // Phase 4b.2: pick up the shooter's per-mount slewed angle from
-          // `mirror.ships.get(id).mountAngles` (local player only today;
-          // 4b.3 fills it for all ships from the snapshot anchor).
+          // `mirror.ships.get(id).mountAngles` (player shooters); Phase 4c
+          // adds the same for drone shooters via `mirror.swarm.get(id).
+          // mountAngles` (snapshot-anchored, in-interest drones only).
           const mount = shooterKind.mounts?.find((m) => m.id === mountId);
+          const mountIdx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
           let currentMountAngle = 0;
-          if (shooter && mount) {
-            const idx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
-            if (idx >= 0) currentMountAngle = shooter.mountAngles?.[idx] ?? 0;
+          if (shooter && mount && mountIdx >= 0) {
+            currentMountAngle = shooter.mountAngles?.[mountIdx] ?? 0;
+          } else if (swarmShooter && mount && mountIdx >= 0) {
+            // Pull the drone's per-mount angle out of the swarm mirror —
+            // ColyseusClient writes it from `snap.drones[].mountAngles`
+            // when the drone is in-interest. Out-of-interest → undefined
+            // → currentMountAngle stays 0 (barrel at baseAngle, no rotation).
+            const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
+            if (!Number.isNaN(entityId)) {
+              const sw = mirror.swarm?.get(entityId);
+              currentMountAngle = sw?.mountAngles?.[mountIdx] ?? 0;
+            }
           }
 
           let fromX: number;
@@ -705,7 +732,7 @@ export class PixiRenderer implements IRenderer {
             toY = fromY + fwdY * laser.range;
           } else if (swarmShooter) {
             const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
-            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0);
+            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             // Drone barrel offset is `radius + 2` along the mount's fire

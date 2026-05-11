@@ -136,6 +136,26 @@ gameServer.define('feel-test', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-05-11 — Phase 4c (multi-mount / turret refactor) engineering room.
+// Deterministic spawn of 6 multi-mount drones (alternating interceptor +
+// gunship) in a tight ring 250 u from origin, so the player spawns into
+// immediate view of every rotating-turret kind. Use `?room=mount-test`
+// from the URL to join. Drones spawn IDLE (orbiting origin); fire any
+// weapon at one to mark it hostile and trigger COMBAT so its turrets
+// start tracking you. The `droneKinds` round-robin ensures exactly
+// 3 interceptors + 3 gunships every time, no asteroid clutter, no
+// random fighter/scout/heavy filler. Spawn at origin.
+gameServer.define('mount-test', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  swarmCount: 6,
+  swarmRatio: 0,
+  swarmRadius: 250,
+  droneKinds: ['interceptor', 'gunship', 'interceptor', 'gunship', 'interceptor', 'gunship'],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

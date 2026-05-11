@@ -39,7 +39,7 @@ import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.j
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 
 /** Resolve a (possibly missing) ship-kind id to the kind's max health, or
  *  null when the id is unknown. Drones use this on spawn so each kind has
@@ -222,6 +222,20 @@ export class SectorRoom extends Room<SectorState> {
   /** Reused per-tick drone candidate list passed to `pickTarget` for each
    *  player slot — avoids per-tick allocation. */
   private readonly mountTargetsScratch: MountTargetView[] = [];
+
+  // ── Phase 4c (drone turret rotation, 2026-05-11) ────────────────────────
+  /** Per-drone authoritative mount rotation angles. Indexed by drone id
+   *  (`swarm-*`). Only drones whose ship-kind has rotating mounts get an
+   *  entry; legacy single-mount drones (zero-arc 'forward' mount) skip
+   *  the controller call entirely. Mirrors the player-side
+   *  `playerMountAngles` map. Per-recipient snapshot emits these in the
+   *  `drones[]` slice for in-interest drones so the client renders the
+   *  same rotation the server is computing. */
+  private readonly droneMountAngles = new Map<string, Float32Array>();
+  /** Sticky target id per drone slot. Cleared on despawn. */
+  private readonly droneSlotTargets = new Map<string, string | null>();
+  /** Reused per-tick player candidate list for drone turret target picks. */
+  private readonly droneMountTargetsScratch: MountTargetView[] = [];
 
   private bus!: Bus;
   /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
@@ -411,6 +425,13 @@ export class SectorRoom extends Room<SectorState> {
       swarmCount?: number;
       swarmRatio?: number; // asteroid fraction; default 0.8
       swarmRadius?: number; // spawn disc radius; default 18 000
+      /** Deterministic ship-kind sequence for drone spawns. When set, each
+       *  successive drone takes the next kind in this array (round-robin
+       *  past the end). Used by engineering rooms (`mount-test`) that need
+       *  a known mix of multi-mount drones for Phase 4c smoke testing.
+       *  When undefined, the spawner falls back to uniform-random
+       *  `pickRandomShipKind`. */
+      droneKinds?: ShipKindId[];
       /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
@@ -482,6 +503,20 @@ export class SectorRoom extends Room<SectorState> {
       },
     });
 
+    // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
+    // is set, the spawner advances through this array round-robin instead
+    // of pickRandomShipKind, so the `mount-test` engineering room can
+    // guarantee a known mix of interceptor + gunship drones for Phase 4c
+    // smoke testing.
+    const kindSeq = roomOpts.droneKinds;
+    let kindCursor = 0;
+    const pickDroneKind = kindSeq && kindSeq.length > 0
+      ? (): ShipKindId => {
+          const k = kindSeq[kindCursor % kindSeq.length]!;
+          kindCursor++;
+          return k;
+        }
+      : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
@@ -492,6 +527,7 @@ export class SectorRoom extends Room<SectorState> {
       droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.interestGrid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
+      ...(pickDroneKind ? { pickDroneKind } : {}),
     });
     const seeded = this.swarmSpawner.seedAsteroids(asteroidRoster);
     if (seeded < asteroidRoster.length) {
@@ -808,6 +844,115 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /**
+   * Phase 4c (2026-05-11) — drone turret rotation. Mirrors `tickPlayerMounts`
+   * but iterates the swarm registry: each drone whose ship-kind has at
+   * least one rotating mount runs `pickTarget` (with player ships as
+   * candidates, filtered through the drone's `hostileTo` set), then slews
+   * each mount toward the picked bearing via `rotateMountToward`. The
+   * result is stored in `droneMountAngles` for `handleAiFire` to read and
+   * for the snapshot serialisation to ship to clients.
+   *
+   * Drones whose kind has no rotating mounts (legacy fighter/scout/heavy
+   * — single 'forward' mount with zero arc) are skipped entirely; their
+   * `droneMountAngles` map entry is never allocated, saving both compute
+   * and snapshot bytes (the wire field is omitted for empty arrays).
+   *
+   * Hostility model: same as the existing `HostileDroneBehaviour` — only
+   * players the drone has been damaged by are in view. A drone with no
+   * hostile players slews its mounts back toward 0 (forward).
+   */
+  private tickDroneMounts(): void {
+    if (this.swarmRegistry.size() === 0) return;
+    const dtSec = 1 / 60;
+
+    // Build the player candidate list once per tick (shared across all
+    // drones). Players are `shipPoseCache` rows for alive players.
+    const targets = this.droneMountTargetsScratch;
+    targets.length = 0;
+    for (const [pid] of this.playerToSlot) {
+      const ship = this.state.ships.get(pid);
+      if (!ship?.alive) continue;
+      const pose = this.shipPoseCache.get(pid);
+      if (!pose) continue;
+      targets.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
+    }
+
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue; // asteroids: no turrets
+      const kindId = rec.shipKind ?? DEFAULT_SHIP_KIND;
+      const kind = getShipKind(kindId);
+      const mounts = this.resolveSlotMounts(kind);
+      // Skip drones whose mounts are all static — they have nothing to
+      // slew. This is the common case (fighter/scout/heavy drones), so
+      // the early bail is the hot path.
+      let hasRotatingMount = false;
+      for (const m of mounts) {
+        if (m.rotationSpeed > 0 && m.arcMax > m.arcMin) {
+          hasRotatingMount = true;
+          break;
+        }
+      }
+      if (!hasRotatingMount) {
+        // Defensive cleanup if a drone's kind ever loses its rotation
+        // (e.g. catalogue change mid-life — currently impossible).
+        if (this.droneMountAngles.has(rec.id)) this.droneMountAngles.delete(rec.id);
+        if (this.droneSlotTargets.has(rec.id)) this.droneSlotTargets.delete(rec.id);
+        continue;
+      }
+
+      const b = slotBase(rec.slot);
+      const droneX = this.sabF32[b + SLOT_X_OFF]!;
+      const droneY = this.sabF32[b + SLOT_Y_OFF]!;
+      const droneAngle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+
+      // Hostility filter — same source of truth as HostileDroneBehaviour.
+      // The behaviour instance lives inside `AiController`; we query it
+      // via the controller's accessor.
+      const behaviour = this.aiController.getBehaviour(rec.id);
+      const isHostile = (playerId: string): boolean => {
+        if (!behaviour) return false;
+        // `markHostile`/`purgeHostility` mutate the same set the drone
+        // behaviour uses for combat targeting; mirror that here so the
+        // turret AI and the body AI agree on who's a threat.
+        const ho = (behaviour as unknown as { hostileTo?: Set<string> }).hostileTo;
+        return ho ? ho.has(playerId) : false;
+      };
+
+      const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
+      const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
+        maxDistance: HITSCAN_RANGE,
+      });
+      this.droneSlotTargets.set(rec.id, target?.id ?? null);
+
+      let angles = this.droneMountAngles.get(rec.id);
+      if (!angles || angles.length !== mounts.length) {
+        angles = new Float32Array(mounts.length);
+        this.droneMountAngles.set(rec.id, angles);
+      }
+
+      if (target === null) {
+        for (let i = 0; i < mounts.length; i++) {
+          angles[i] = rotateMountToward(angles[i]!, 0, mounts[i]!, dtSec);
+        }
+        continue;
+      }
+
+      const cosA = Math.cos(droneAngle);
+      const sinA = Math.sin(droneAngle);
+      for (let i = 0; i < mounts.length; i++) {
+        const mount = mounts[i]!;
+        const mountWorldX = droneX + (mount.localX * cosA - mount.localY * sinA);
+        const mountWorldY = droneY + (mount.localX * sinA + mount.localY * cosA);
+        const dx = target.x - mountWorldX;
+        const dy = target.y - mountWorldY;
+        const worldBearing = Math.atan2(-dx, dy);
+        const mountLocalBearing = wrapPi(worldBearing - droneAngle - mount.baseAngle);
+        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, dtSec);
+      }
+    }
+  }
+
   private handleFire(client: Client, raw: unknown): void {
     const parsed = FireMessageSchema.safeParse(raw);
     if (!parsed.success) {
@@ -1114,12 +1259,21 @@ export class SectorRoom extends Room<SectorState> {
     // The fire direction the AI computed (`dirX, dirY`) is the drone's body
     // intent. Re-express as an angle so mount.baseAngle can be added per
     // mount (mirroring the player path's `dirAngle + mount.baseAngle`).
+    // Phase 4c: for drones with rotating mounts, also add the per-mount
+    // slewed angle from `droneMountAngles` so hits land where the visible
+    // barrel points (and so the broadcast `laser_fired` carries the same
+    // direction observers see the turret aimed at). Legacy single-mount
+    // drones have `droneMountAngles` un-entry → currentMountAngle = 0,
+    // preserving the pre-4c behaviour bit-for-bit.
     const fireAngle = Math.atan2(-dirNdx, dirNdy);
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
+    const droneAngles = this.droneMountAngles.get(shooterId);
 
-    for (const mount of slotMounts) {
+    for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
+      const mount = slotMounts[mIdx]!;
       const mountWorld = this.mountWorldOrigin(self.x, self.y, self.angle, mount);
-      const mountFireAngle = fireAngle + mount.baseAngle;
+      const currentMountAngle = droneAngles?.[mIdx] ?? 0;
+      const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
       const rayFromX = mountWorld.x + ndx * 16;
@@ -1279,6 +1433,9 @@ export class SectorRoom extends Room<SectorState> {
     this.aiController.unregister(rec.id);
     this.swarmHealth.delete(rec.id);
     this.snapshotRing.unregisterEntity(rec.id);
+    // Phase 4c — clean up drone turret state alongside the body.
+    this.droneMountAngles.delete(rec.id);
+    this.droneSlotTargets.delete(rec.id);
     this.freeSlots.push(rec.slot);
     if (opts.broadcast) {
       logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
@@ -2479,11 +2636,33 @@ export class SectorRoom extends Room<SectorState> {
             const pose = this.snapshotRing.getPoseAt(rec.id, this.serverTick);
             if (!pose) continue;
             if (!drones) drones = [];
+            // Phase 4c — per-drone mount angles for in-interest drones
+            // whose ship-kind has rotating mounts. Only emitted when at
+            // least one angle is non-zero (quantised to dedupe trailing
+            // noise), same gate as the player snapshot path. Out-of-
+            // interest drones never reach this branch, so their mounts
+            // freeze at baseAngle on the client until they re-enter
+            // interest and the next snapshot anchors them.
+            const droneAngles = this.droneMountAngles.get(rec.id);
+            let droneMountAnglesArr: number[] | undefined;
+            if (droneAngles && droneAngles.length > 0) {
+              let anyNonZero = false;
+              for (let i = 0; i < droneAngles.length; i++) {
+                if (droneAngles[i] !== 0) { anyNonZero = true; break; }
+              }
+              if (anyNonZero) {
+                droneMountAnglesArr = new Array<number>(droneAngles.length);
+                for (let i = 0; i < droneAngles.length; i++) {
+                  droneMountAnglesArr[i] = Math.round(droneAngles[i]! * 10_000) / 10_000;
+                }
+              }
+            }
             drones.push({
               id: eid,
               x: pose.x, y: pose.y,
               vx: pose.vx, vy: pose.vy,
               angle: pose.angle, angvel: pose.angvel,
+              ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
             });
           }
         }
@@ -2549,11 +2728,18 @@ export class SectorRoom extends Room<SectorState> {
     // Mirrors the client's `tickLocalMountAim` so the server's hit-test
     // geometry uses the same rotated mount angles the client renders, and
     // so remote observers receive each ship's authoritative mount angles
-    // through the snapshot extension below. Drone turrets stay at
-    // baseAngle in this phase (drone-side rotation lands in Phase 4c
-    // alongside the swarm anchor).
+    // through the snapshot extension below.
     this.tickPlayerMounts();
     phaseTime('playerMounts');
+
+    // Phase 4c (2026-05-11) — server-authoritative turret rotation for
+    // drones with rotating mounts. Same lockstep model as players: server
+    // computes the per-mount slewed angle each tick; the snapshot's
+    // `drones[]` slice ships authoritative angles to in-interest clients;
+    // `handleAiFire` uses the current mount angles for ray geometry, so a
+    // drone's tracked beam actually lands where the visible barrel points.
+    this.tickDroneMounts();
+    phaseTime('droneMounts');
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us

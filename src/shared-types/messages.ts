@@ -199,6 +199,15 @@ export interface SnapshotMessage {
   drones?: Array<{
     id: number;
     x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+    /** Multi-mount/turret refactor (Phase 4c, 2026-05-11). Per-mount slewed
+     *  angle in arc-local frame for this drone, indexed by mount-order in
+     *  the ship-kind catalogue. Emitted only for in-interest drones whose
+     *  kind has at least one rotating mount (legacy fighter/scout/heavy
+     *  drones omit the field — their single 'forward' mount has zero arc
+     *  so the angle is always 0 and would only add bytes). Out-of-interest
+     *  drones never carry mountAngles; their turrets freeze at baseAngle
+     *  until they re-enter interest and the next snapshot anchors them. */
+    mountAngles?: number[];
   }>;
 }
 
