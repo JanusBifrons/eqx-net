@@ -16,17 +16,26 @@ const GLOW_RADIUS_HOSTILE = 8;
 const GLOW_ALPHA_HOSTILE = 0.35;
 const GLOW_RADIUS_DEFAULT = 5;
 const GLOW_ALPHA_DEFAULT = 0.15;
-const ARROW_FILL_ALPHA = 0.70;
+// Phase I — arrow fill is genuinely transparent now. 0.70 (Phase G) was
+// still close to opaque; 0.50 reads as a translucent overlay marker,
+// which was the original brief.
+const ARROW_FILL_ALPHA = 0.50;
+// Stroke alphas dropped in lockstep so the white border doesn't make
+// the (now-transparent) fill look stamped onto a solid card.
+const STROKE_ALPHA_DEFAULT = 0.25;
+const STROKE_ALPHA_HOSTILE = 0.65;
 // Halo radii are specified as a fraction of the viewport's shorter screen
-// dimension and converted to world units each frame using the viewport's
-// current zoom. Phase G — widened spread (inner closer to player, outer
-// closer to the screen edge) so distance reads more dynamically.
-const INNER_RADIUS_FRAC = 0.14;
-const OUTER_RADIUS_FRAC = 0.42;
-const INNER_RADIUS_MIN_PX = 50;
-const INNER_RADIUS_MAX_PX = 140;
-const OUTER_RADIUS_MIN_PX = 90;
-const OUTER_RADIUS_MAX_PX = 280;
+// dimension. Phase I — pushed the whole ring much further toward the
+// screen edge after phone-smoke flagged the stop-point as way too close
+// to the player. The inner ring (where the nearest off-screen entities
+// settle) now sits at ~30 % of the shorter screen dimension, putting it
+// well clear of the ship sprite at the centre.
+const INNER_RADIUS_FRAC = 0.30;
+const OUTER_RADIUS_FRAC = 0.46;
+const INNER_RADIUS_MIN_PX = 80;
+const INNER_RADIUS_MAX_PX = 200;
+const OUTER_RADIUS_MIN_PX = 130;
+const OUTER_RADIUS_MAX_PX = 320;
 // Arrow scale at the near/far ends. Reverted in Phase G to big-near /
 // small-far (the original pre-F.1 sense) — closer entities deserve the
 // more attention-grabbing icon, while distant ones at the outer ring
@@ -200,7 +209,7 @@ function paintArrowGfx(g: Graphics, color: number, hostile: boolean, grouped: bo
   g.stroke({
     color: 0xffffff,
     width: hostile ? 1.4 : 1,
-    alpha: hostile ? 0.75 : 0.35,
+    alpha: hostile ? STROKE_ALPHA_HOSTILE : STROKE_ALPHA_DEFAULT,
   });
 }
 
