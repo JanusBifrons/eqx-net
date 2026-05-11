@@ -226,12 +226,59 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
     expect(shipKindFromIndex(-1)).toBe(DEFAULT_SHIP_KIND);
   });
 
-  it('catalogue order is fighter -> scout -> heavy (wire-format-stable)', () => {
+  it('catalogue order is fighter -> scout -> heavy -> interceptor -> gunship (wire-format-stable)', () => {
     // Wire format encodes drone kinds as a u8 index into SHIP_KINDS_LIST.
-    // Reordering this list breaks decode for any in-flight v2 packet, so the
-    // expected order is locked in by this test. Append-only is safe.
+    // Reordering this list breaks decode for any in-flight swarm packet, so
+    // the expected order is locked in by this test. Append-only is safe.
     expect(shipKindToIndex('fighter')).toBe(0);
     expect(shipKindToIndex('scout')).toBe(1);
     expect(shipKindToIndex('heavy')).toBe(2);
+    expect(shipKindToIndex('interceptor')).toBe(3);
+    expect(shipKindToIndex('gunship')).toBe(4);
+  });
+});
+
+describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
+  it('interceptor has two wing mounts in a single primary slot', () => {
+    const k = SHIP_KINDS.interceptor;
+    expect(k.mounts).toHaveLength(2);
+    const wingL = k.mounts!.find((m) => m.id === 'wing-l')!;
+    const wingR = k.mounts!.find((m) => m.id === 'wing-r')!;
+    // Mirrored offsets across the centreline (port and starboard).
+    expect(wingL.localX).toBe(-wingR.localX);
+    expect(wingL.localY).toBe(wingR.localY);
+    // Both fire forward (baseAngle 0) with zero arc until Phase 4b lands rotation.
+    for (const m of [wingL, wingR]) {
+      expect(m.baseAngle).toBe(0);
+      expect(m.arcMin).toBe(0);
+      expect(m.arcMax).toBe(0);
+      expect(m.rotationSpeed).toBe(0);
+      expect(m.weaponId).toBe('hitscan');
+    }
+    expect(k.slots).toHaveLength(1);
+    expect(k.slots![0]!.id).toBe('primary');
+    expect(k.slots![0]!.mountIds).toEqual(['wing-l', 'wing-r']);
+  });
+
+  it('gunship has a forward and a rear mount; rear fires backward', () => {
+    const k = SHIP_KINDS.gunship;
+    expect(k.mounts).toHaveLength(2);
+    const forward = k.mounts!.find((m) => m.id === 'forward')!;
+    const rear = k.mounts!.find((m) => m.id === 'rear')!;
+    expect(forward.baseAngle).toBe(0);
+    expect(rear.baseAngle).toBeCloseTo(Math.PI, 6);
+    // Rear sits behind the forward mount (Pixi-up: tail is +y).
+    expect(rear.localY).toBeGreaterThan(forward.localY);
+    expect(k.slots).toHaveLength(1);
+    expect(k.slots![0]!.mountIds).toEqual(['forward', 'rear']);
+  });
+
+  it('Heavy is still the deepest hull (multi-mount kinds slot between)', () => {
+    // Lock the relative ordering so a future tuning pass doesn't accidentally
+    // make gunship beefier than heavy or interceptor frailer than scout.
+    expect(SHIP_KINDS.heavy.maxHealth).toBeGreaterThan(SHIP_KINDS.gunship.maxHealth);
+    expect(SHIP_KINDS.gunship.maxHealth).toBeGreaterThan(SHIP_KINDS.fighter.maxHealth);
+    expect(SHIP_KINDS.fighter.maxHealth).toBeGreaterThan(SHIP_KINDS.interceptor.maxHealth);
+    expect(SHIP_KINDS.interceptor.maxHealth).toBeGreaterThan(SHIP_KINDS.scout.maxHealth);
   });
 });

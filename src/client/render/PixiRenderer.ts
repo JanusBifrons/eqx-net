@@ -6,6 +6,7 @@ import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
+import { MountVisualManager } from './MountVisualManager';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../shared-types/shipKinds';
 
@@ -266,6 +267,11 @@ export class PixiRenderer implements IRenderer {
    *  while the ship is in `mirror.boostingShips`. Pooled — created on first
    *  boost, hidden when not active, destroyed with the ship sprite. */
   private boostFlames = new Map<string, Graphics>();
+  /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
+   *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
+   *  the ship's world transform; the cluster's own children sit at their
+   *  mount-local offset and baseAngle rotation. */
+  private mountVisuals = new MountVisualManager();
   /** Per-ship baseline thrust flame, parented to the ship sprite. Visible
    *  while the ship is in `mirror.thrustingShips` (any acceleration). Boost
    *  flame layers on top. Pooled — same lifecycle as `boostFlames`. */
@@ -390,6 +396,12 @@ export class PixiRenderer implements IRenderer {
         this.shipContainer.addChild(sprite);
         this.sprites.set(playerId, sprite);
       }
+      // Multi-mount/turret refactor (Phase 3): attach turret sprites + aim
+      // lines per mount in this ship's catalogue entry. Idempotent — re-uses
+      // the existing cluster if `ship.kind` hasn't changed. Legacy single-
+      // mount ships render an invisible 0-offset 0-baseAngle stub that sits
+      // beneath the body silhouette.
+      this.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
 
       sprite.x = ship.x;
       sprite.y = -ship.y;
@@ -533,8 +545,10 @@ export class PixiRenderer implements IRenderer {
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
         this.shipContainer.removeChild(sprite);
-        // Boost flame is a child — destroy({ children: true }) frees it too,
-        // but we still drop the map entry so a respawn rebuilds cleanly.
+        // Boost flame and mount-visual cluster are children — destroy({
+        // children: true }) frees them too, but we still drop the map
+        // entries so a respawn rebuilds cleanly.
+        this.mountVisuals.removeShip(id);
         sprite.destroy({ children: true });
         this.sprites.delete(id);
         this.boostFlames.delete(id);
@@ -790,6 +804,14 @@ export class PixiRenderer implements IRenderer {
     return this.halo.getDebugVisibleArrowCount();
   }
 
+  /** Multi-mount/turret refactor (Phase 3) — number of mount sprites
+   *  currently parented to the given ship's main Pixi sprite. Test-only;
+   *  exposed via the `data-mount-count` attribute in App.tsx so E2E specs
+   *  can assert that multi-mount ship kinds wire visible turrets. */
+  mountCountForShip(shipId: string): number {
+    return this.mountVisuals.mountCountForShip(shipId);
+  }
+
   dispose(): void {
     if (!this.initialized) return;
     // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
@@ -808,6 +830,7 @@ export class PixiRenderer implements IRenderer {
     this.damageNumbers?.destroy();
     this.healthBars?.destroy();
     this.labels?.destroy();
+    this.mountVisuals.disposeAll();
     this.halo.destroy();
     this.app.destroy(true, { children: true });
   }

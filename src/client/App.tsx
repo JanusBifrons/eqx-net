@@ -245,6 +245,11 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
             el.dataset['shipX'] = localShip.x.toFixed(3);
             el.dataset['shipY'] = localShip.y.toFixed(3);
             el.dataset['shipAngle'] = localShip.angle.toFixed(4);
+            // Multi-mount/turret refactor (Phase 3): expose the local ship's
+            // mount count so E2E specs can assert the new interceptor /
+            // gunship kinds wire visible turret sprites. Legacy single-mount
+            // fighter/scout/heavy report 1.
+            el.dataset['mountCount'] = String(renderer.mountCountForShip(localId!));
           }
           // Expose all ship positions for E2E cross-client position assertions.
           const posMap: Record<string, { x: number; y: number }> = {};

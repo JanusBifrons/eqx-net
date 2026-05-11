@@ -457,6 +457,145 @@ const HEAVY: ShipKind = ShipKindSchema.parse({
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Multi-mount kinds (Phase 3, 2026-05-11). These are the first ship-kinds
+// that exercise the mount/slot plumbing introduced in Phases 1–2c.
+//
+// `interceptor` — twin wing-mounted lasers. Faster than a fighter, less hull
+// than a scout, but fires two beams per cooldown so it has a higher DPS
+// ceiling. The wing mounts sit at (±8, 2), which puts them at the rear of
+// the wings on the polygon below. Both mounts are in one `primary` slot, so
+// pressing fire emits two beams in one frame.
+//
+// `gunship` — fore-and-aft hitscan platform. Sluggish hull with a brutal
+// rear arc: the rear mount has `baseAngle = π`, so it fires backward
+// regardless of which way the ship is moving. Pilots can run from a pursuer
+// while still landing hits. Both mounts share the `primary` slot so the fire
+// trigger fans out to both — the player decides which to USE by orienting
+// the ship.
+//
+// Phase 3 ships static mounts (`arcMin === arcMax === 0`, `rotationSpeed === 0`).
+// Phase 4b adds rotation via WeaponMountController + MountAngleRing.
+// ─────────────────────────────────────────────────────────────────────────
+
+const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
+  id: 'interceptor',
+  displayName: 'Interceptor',
+  description: 'Twin-cannon light. Two forward beams per cooldown — high DPS, low hull.',
+  // d=0.4 → 45% retained after 2 s (between fighter 0.3 and scout 0.5).
+  // F=5.0, boost=2 → v_boosted = 5*2 / (1-e^(-0.4/60)) = 10 / 0.00664 ≈ 1506 u/s.
+  thrustImpulse: 5.0,
+  reverseFactor: 0.5,
+  boostMultiplier: 2.0,
+  maxAngvel: 2.5,        // 143°/s — quicker than fighter, less twitchy than scout.
+  maxSpeed: 1600,
+  linearDamping: 0.4,
+  angularDamping: 0,
+  lateralGrip: 0.04,     // half-life ≈ 280 ms — clear drift but bites.
+  radius: 11,
+  maxHealth: 80,
+  // AI tuning sized to the new maxAngvel: maxTorque = maxAngvel * 1.5 = 3.75.
+  ai: { thrust: 0.6, turnKp: 7.0, maxTorque: 3.75 },
+  shape: {
+    kind: 'polygon',
+    color: 0xb066ff,
+    scale: 1,
+    // Long nose, broad swept wings, narrow tail.
+    points: [
+      [0, -15],
+      [-4, -3],
+      [-12, 8],
+      [-3, 10],
+      [3, 10],
+      [12, 8],
+      [4, -3],
+    ],
+  },
+  mounts: [
+    {
+      id: 'wing-l',
+      localX: -8,
+      localY: 2,
+      baseAngle: 0,
+      arcMin: 0,
+      arcMax: 0,
+      rotationSpeed: 0,
+      weaponId: 'hitscan',
+    },
+    {
+      id: 'wing-r',
+      localX: 8,
+      localY: 2,
+      baseAngle: 0,
+      arcMin: 0,
+      arcMax: 0,
+      rotationSpeed: 0,
+      weaponId: 'hitscan',
+    },
+  ],
+  slots: [
+    { id: 'primary', displayName: 'Primary', mountIds: ['wing-l', 'wing-r'] },
+  ],
+});
+
+const GUNSHIP: ShipKind = ShipKindSchema.parse({
+  id: 'gunship',
+  displayName: 'Gunship',
+  description: 'Fore-and-aft platform. Forward laser plus a backward rear gun — fire while you flee.',
+  // d=0.25 → 60% retained after 2 s (between fighter 0.3 and heavy 0.2).
+  // F=3.5, boost=2 → v_boosted = 3.5*2 / (1-e^(-0.25/60)) = 7 / 0.00415 ≈ 1685 u/s.
+  thrustImpulse: 3.5,
+  reverseFactor: 0.4,
+  boostMultiplier: 2.0,
+  maxAngvel: 1.6,        // 92°/s — between fighter 2.0 and heavy 1.4.
+  maxSpeed: 1500,
+  linearDamping: 0.25,
+  angularDamping: 0,
+  lateralGrip: 0.018,    // half-life ≈ 640 ms — slidy.
+  radius: 14,
+  maxHealth: 140,
+  ai: { thrust: 0.4, turnKp: 5.0, maxTorque: 2.4 },
+  shape: {
+    kind: 'polygon',
+    color: 0xff7722,
+    scale: 1,
+    // Elongated brick — long fuselage, modest wings.
+    points: [
+      [-3, -16],
+      [3, -16],
+      [10, -4],
+      [10, 12],
+      [-10, 12],
+      [-10, -4],
+    ],
+  },
+  mounts: [
+    {
+      id: 'forward',
+      localX: 0,
+      localY: -12,        // pivot near the nose
+      baseAngle: 0,       // fires forward (−y)
+      arcMin: 0,
+      arcMax: 0,
+      rotationSpeed: 0,
+      weaponId: 'hitscan',
+    },
+    {
+      id: 'rear',
+      localX: 0,
+      localY: 10,         // pivot near the tail
+      baseAngle: Math.PI, // fires backward (+y)
+      arcMin: 0,
+      arcMax: 0,
+      rotationSpeed: 0,
+      weaponId: 'hitscan',
+    },
+  ],
+  slots: [
+    { id: 'primary', displayName: 'Primary', mountIds: ['forward', 'rear'] },
+  ],
+});
+
 /**
  * The catalogue, frozen so a typo can't mutate it at runtime. Insertion order
  * is the canonical order — the swarm wire format encodes drone kinds as a
@@ -473,6 +612,8 @@ export const SHIP_KINDS = Object.freeze({
   fighter: FIGHTER,
   scout: SCOUT,
   heavy: HEAVY,
+  interceptor: INTERCEPTOR,
+  gunship: GUNSHIP,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(Object.values(SHIP_KINDS));
