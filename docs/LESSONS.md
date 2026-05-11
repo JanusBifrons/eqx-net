@@ -14,6 +14,162 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-11 — Multi-mount refactor — six lessons in one session
+
+Commits: `47ff0be`..`a73a2a9` (multi-mount/turret refactor Phases 0–4c).
+
+Six gotchas surfaced while shipping ~20 commits on this branch. Future
+sessions extending the combat surface will hit these unless they're
+documented here.
+
+### 1. Physics-worker `setImmediate(loop)` busy-poll pegs one core per worker
+
+The 60 Hz tick loop in [src/core/physics/worker.ts](../src/core/physics/worker.ts)
+originally re-scheduled via unconditional `setImmediate(loop)`. That
+fires the callback as soon as the event loop is idle — between the
+actual 16.67 ms physics steps it spins **millions of times per second**
+checking `now >= nextTickAt`. **One core per worker × 7 galaxy sectors
+= ~700 % parent-process CPU** at idle, which starves the main-thread
+Colyseus event loop and inflates WebSocket send latency.
+
+The pre-existing comment warned about `setInterval(16.67)` quantising to
+~15.6 ms on Windows. That made the original author choose `setImmediate`
+for precision — but the same author didn't realise `setTimeout(loop, 1)`
+on Node-Windows doesn't have the quantisation problem: Node's libuv
+calls `timeBeginPeriod(1)` whenever timers are pending, so the
+multimedia clock runs at 1 ms resolution and `setTimeout(1)` fires
+within ~1 ms.
+
+**Fix:** `setImmediate(loop)` ONLY after stepping (so a post-GC backlog
+drains in one event-loop turn); when `nextTickAt` is still in the
+future, `setTimeout(loop, 1)`. Empirically: 700 % → 122 % parent
+CPU, per-sector tick rate 60.08 Hz (target 60, measured via
+`/dev/events?tag=tick_budget` cadence over 71 s, 500-event window).
+
+Forbidden alternatives: `setInterval(16.67)` (quantises);
+`setImmediate(loop)` unconditional (busy-poll). See the block comment
+above `TICK_MS_HR` in worker.ts for the full incident write-up.
+
+### 2. Stale browser tabs masquerade as server lag
+
+Mid-session, the phone's mobile-Chrome tab had been through hours of
+Vite HMR cycles + multiple WebSocket reconnects (the server got
+rebooted ~8 times). The TAB itself was degraded — zombie listeners,
+leaked Pixi state, queued frames. Symptoms looked like server lag:
+
+- `rttMs: 3717` (sustained for minutes)
+- `snapshotIntervalMs: 105.9 ≈ snapshotJitterMs: 105.8` — the matching
+  numbers mean snapshots aren't arriving at a steady cadence but in
+  **bursts** with the largest gap = whole interval. Receiver-side
+  stalls, not sender-side cadence problems.
+- `client/raf_gap: 23 events in a 3.6 s capture window` — the
+  smoking gun. The browser's `requestAnimationFrame` is repeatedly
+  stalling. Server can be perfect; if the tab can't process frames,
+  RTT goes through the roof.
+- Server-side `tick_budget`: ~0.1 ms total per tick, zero hitches,
+  zero GC pauses. The server was healthy throughout.
+
+**Force-closing the tab + reopening on the SAME server code dropped
+RTT instantly from 3717 ms → 190 ms.** It was never a server bug.
+
+**The misdiagnosis cost:** I'd committed a CPU fix mid-window, watched
+RTT climb (798 → 934 ms), reverted the fix — but the tab kept
+degrading and RTT continued climbing to 3717 ms on the reverted code.
+I'd attributed worsening lag to my fix; in fact the fix was correct
+and the tab was the variable.
+
+**Rule:** before attributing lag to a recent commit, rule out
+client-side state. Check for `raf_gap` events in the diag's
+`raf.ndjson`. If present + tick_budget healthy, force a fresh tab.
+
+### 3. Don't attribute lag to your recent commit without isolating the variable
+
+Corollary of #2. I reverted commit `1d5fa7d` (CPU fix) at `088cd2b`
+based on diag readings that correlated with the fix's timeline. They
+didn't actually correlate causally — the tab was degrading
+monotonically. The revert just put 700 % CPU back, which was an
+orthogonal regression on top of the still-degrading tab.
+
+When debugging a moving baseline, the only valid signal is
+**A→B→A→B alternation**: apply, measure, revert, measure, apply,
+measure. A single A→B → "broke" → revert is unfalsifiable.
+
+### 4. Per-frame `mirror.ships.set()` rebuild wipes preserved fields silently
+
+`ColyseusClient.updateMirror()` runs every render frame and **rebuilds
+each ship's `mirror.ships` entry from scratch** from `predWorld` +
+reconciler lerp offset. Non-spatial fields (`kind`, `displayName`,
+`mountAngles`) have to be explicitly preserved via
+`...(prev?.X ? { X: prev.X } : {})` or they get wiped.
+
+**Symptom:** the local player's interceptor had two correctly-rotated
+wing beams from the ghost projectiles (which carry their own pre-
+computed endpoints) but the continuous `liveBeam` rendered straight
+forward — because the renderer re-derives beam direction from
+`mirror.ships.get(localId).mountAngles` each frame, and that field
+was being wiped between `tickLocalMountAim`'s write and the
+renderer's read.
+
+**Fix:** the per-frame rebuild now spreads `prev?.mountAngles`
+alongside `prev?.kind` and `prev?.displayName`. **Future Claudes
+adding any new non-spatial field to `ShipRenderState` must add it to
+both rebuild sites** (`updateMirror` local-ship path AND remote-ship
+path) or it'll silently disappear at 60 Hz.
+
+### 5. AI fire gate must widen to cover turret arc
+
+`HostileDroneBehaviour.tickCombat`'s body-aim fire gate was a flat
+14 ° / 26 ° point-blank, regardless of how far the turrets could
+swing. For multi-mount drones this suppressed fires the turret AI
+would have resolved as hits — surfaced as the user-reported "AI
+doesn't shoot sometimes when I'm in range" symptom on Phase 4c.
+
+The gate now widens by the kind's widest rotating mount's half-arc:
+
+- Interceptor wings ± π/6 → tolerance 14 ° + 30 ° = 44 °.
+- Gunship rear ± π/2 → tolerance 14 ° + 90 ° = **104 °** (drone fires
+  even when target is almost directly behind it — its rear turret
+  can swing that far around).
+- Legacy single-mount kinds (zero arc) → unchanged.
+
+Computed once at behaviour construction (from `kind.mounts`), so the
+tick path stays allocation-free.
+
+### 6. Sector boundary clamp + accumulated state = visible drone thrash
+
+The pre-existing position-clamp backstop (commit `6953984`) teleports
+any drone that drifts past `±10 000 u` back inside the playable bound.
+With drone density accumulated across many sessions, ~20 drones per
+sector ended up clustered against the wall, each clamping at ~5 Hz —
+visible to the client as a 1737-unit median snap-per-frame on every
+drone.
+
+**Diagnostic signature:** `swarmSnapP50` in the tens of thousands of
+units (vs ~5–20 in steady state) + `636 "drone position clamped to
+bounds" warnings` in 4 s of server log.
+
+**Cheap recovery:** `node scripts/reset-sectors.mjs` — wipes
+`game_snapshots` so each sector re-seeds at its sunflower-spiral
+defaults on next room creation. Keeps auth intact.
+
+**Proper fix (deferred):** soften the clamp to reflect velocity
+inward instead of pure teleport, OR harden the AI's patrol inward-
+bias to be more aggressive near the bound. Either is a contained
+edit to `HostileDroneBehaviour.tickPatrol` / the clamp invocation
+site, but both can wait — the reset script unblocks testing.
+
+### Bonus: Windows `Get-Process.CPU` aggregates across all threads
+
+PowerShell's `.CPU` property is total CPU-seconds across **every
+thread in the process**, including Node `worker_threads`. With the
+physics worker spawned per sector × 7 sectors, a single PID can
+show >700 % CPU on a multi-core machine without doing anything
+genuinely wrong. Per-thread breakdown isn't available from
+PowerShell — must instrument inside Node (`process.cpuUsage()`)
+or use Windows perf counters.
+
+---
+
 ## 2026-05-10 — Galaxy Map refactor — two Pixi maps, not one
 
 Refactored both galaxy maps from SVG to Pixi. Two non-obvious findings:

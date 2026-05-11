@@ -109,6 +109,26 @@ Why narrowed to all-idle: when a held input has been throttled, the server's wor
 
 `activeWeapon: WeaponId` is in Zustand — it is a discrete UI selection (not a per-frame field), so the purity rule allows it. `Keyboard.ts` binds `1` → hitscan, `2` → laser, `Q` → cycle. `WeaponSelector.tsx` renders the bottom-centre picker boxes. `ColyseusClient.tickPhysics()` reads the active weapon from Zustand each tick to pick the cooldown (`weaponDef.cooldownTicks`) and to clear `liveBeam` when the active mode is `projectile`. `sendFire()` sends `weapon: activeWeapon` to the server and spawns the ghost with the same id so the renderer can pick the right sprite (`buildLaserBoltGfx` for `laser`, beam for `hitscan`). Weapon-id strings are validated server-side via `isWeaponId()` from the catalogue — never trust the client's string blind. Switching mid-fire must clear the hitscan beam: regression covered in [tests/e2e/weapon-switching.spec.ts](../../tests/e2e/weapon-switching.spec.ts).
 
+## Multi-mount mirror surfaces (Phase 2c–4c, 2026-05-11)
+
+The renderer mirror exposes per-mount data on three surfaces, all keyed by mount id (from the ship-kind catalogue):
+
+- `ShipRenderState.mountAngles?: number[]` — per-mount slewed angle in arc-local frame, indexed by catalogue mount-order. For the **local player**, populated each tick by `ColyseusClient.tickLocalMountAim` (predicted). For **remote players**, populated by the snapshot handler from `snap.states[id].mountAngles` (authoritative). Undefined ⇒ renderer falls back to `baseAngle`.
+- `SwarmRenderState.mountAngles?: number[]` — same field on drones. Populated only for **in-interest drones** from `snap.drones[].mountAngles`. Out-of-interest drones leave it undefined and their barrels render at `baseAngle` until they re-enter interest.
+- `RenderMirror.liveBeams: Map<mountId, BeamData>` and `RenderMirror.remoteLasers: Map<shooterId, Map<mountId, BeamData>>` — per-mount beam state. The pre-2c single `liveBeam` and flat `remoteLasers` shapes are gone.
+
+**Per-frame `mirror.ships.set()` rebuild MUST preserve `mountAngles`.** The local-ship update in `ColyseusClient.updateMirror()` and the remote-ship update in `syncMirror()` both reconstruct each ship's mirror entry from scratch (predWorld pose + lerp offset). Non-spatial fields need explicit `...(prev?.X ? { X: prev.X } : {})` preservation or they wipe at 60 Hz. The fields currently in this category: `kind`, `displayName`, `mountAngles`. Adding any new non-spatial field to `ShipRenderState`? Add it to BOTH rebuild sites or it disappears silently.
+
+The visible bug when this rule was broken: the local player's interceptor showed two correctly-rotated wing beams via the one-shot ghost projectile path (which carries pre-computed endpoints) but the continuous `liveBeam` rendered straight forward — because the renderer re-derives beam direction from `mirror.ships.get(localId).mountAngles` each frame, and that field was being wiped between `tickLocalMountAim`'s write and the renderer's read.
+
+`MountVisualManager` ([src/client/render/MountVisualManager.ts](render/MountVisualManager.ts)) owns per-mount Pixi `Graphics` (turret sprite + dotted aim line). One cluster per ship sprite (player AND drone), pooled across the ship's lifetime. The `applyMountAngles(shipId, mounts, angles?)` method updates rotations each frame; undefined `angles` snaps every mount to baseAngle. Renderer despawn path calls `removeShip(shipId)` to free the cluster.
+
+`BARREL_LENGTH = 20` deliberately matches the 20 u server-side self-hit clearance in `SectorRoom.handleFire`/`handleAiFire` so beams emerge from the *visible* barrel tip. Don't change one without the other.
+
+The aim-line preview is drawn as a dotted chain (Pixi v8 `Graphics` has no native dashed stroke — we draw short segments manually). 500 u long, `6 u on / 4 u off`, alpha 0.25. The dash chain rotates with the parent mount container; no per-frame redraw.
+
+See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.md) for the call-graph and the "do not add a second correction path" rule.
+
 ## Damage numbers and health bars
 
 - `mirror.pendingDamageNumbers` and `mirror.pendingHealthBarHits` are per-frame **drain queues** populated by `ColyseusClient.handleDamage()` and consumed by `PixiRenderer.update()`. They are arrays, not maps — every entry is consumed once per frame.
