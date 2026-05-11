@@ -59,19 +59,38 @@ describe('HaloRadar projectArrow', () => {
     expect(proj.scale).toBeCloseTo(0.5);
   });
 
-  it('lerps radius and scale linearly between distMin and distMax', () => {
-    // dist = 600, t = (600-200)/(1000-200) = 0.5
-    // radiusPx = lerp(100, 300, 0.5) = 200; scale = lerp(1.5, 0.5, 0.5) = 1.0.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 600, y: 0 }, baseParams);
+  it('lerps radius and scale logarithmically between distMin and distMax', () => {
+    // Phase K — log curve. The t=0.5 point is the *geometric* mean of
+    // distMin and distMax (sqrt(200 * 1000) ≈ 447.2), not the arithmetic
+    // mean. At that distance the arrow sits at the midpoint of the ring
+    // band and the midpoint of the scale range.
+    const distHalf = Math.sqrt(200 * 1000);
+    const proj = projectArrow({ x: 0, y: 0 }, { x: distHalf, y: 0 }, baseParams);
     expect(proj.hidden).toBe(false);
     expect(proj.radiusPx).toBeCloseTo(200);
     expect(proj.scale).toBeCloseTo(1.0);
   });
 
+  it('puts entities just past distMin near the inner ring (log curve)', () => {
+    // Pre-Phase-K linear lerp would have placed dist=300 (50 u past
+    // distMin=200) at t=(300-200)/(1000-200)=0.125, i.e. 12.5 % of the
+    // band — already meaningfully out toward the outer ring. With the
+    // log curve, t = log(300/200)/log(1000/200) ≈ 0.252 — still close
+    // to inner. Crucially anything at dist=distMin sits at radius=inner
+    // exactly (t=0).
+    const proj = projectArrow({ x: 0, y: 0 }, { x: 250, y: 0 }, baseParams);
+    expect(proj.hidden).toBe(false);
+    // dist 250 < arithmetic mean (600), log t ≈ 0.139 → still close to inner.
+    expect(proj.radiusPx).toBeLessThan(150); // inner=100, outer=300; half=200
+  });
+
   it('produces +π/2 bearing for a north-bearing POI (world y up)', () => {
     // World north = +y → theta = +π/2. The y-flip to screen space is the
-    // renderer's job; this function returns world bearing.
-    const proj = projectArrow({ x: 0, y: 0 }, { x: 0, y: 600 }, baseParams);
+    // renderer's job; this function returns world bearing. Use the
+    // geometric-mean distance so the log curve lands radius at the
+    // midpoint of the band cleanly.
+    const distHalf = Math.sqrt(200 * 1000);
+    const proj = projectArrow({ x: 0, y: 0 }, { x: 0, y: distHalf }, baseParams);
     expect(proj.hidden).toBe(false);
     expect(proj.theta).toBeCloseTo(Math.PI / 2);
     expect(proj.radiusPx).toBeCloseTo(200);
@@ -119,8 +138,10 @@ describe('HaloRadar projectArrow', () => {
   });
 
   it('returns bearing relative to the player, not the world origin', () => {
-    // Player at (1000, 500); POI 600 east of player.
-    const proj = projectArrow({ x: 1000, y: 500 }, { x: 1600, y: 500 }, {
+    // Player at (1000, 500); POI at geometric-mean distance east of
+    // player so the log curve lands radius at the band midpoint cleanly.
+    const distHalf = Math.sqrt(200 * 1000);
+    const proj = projectArrow({ x: 1000, y: 500 }, { x: 1000 + distHalf, y: 500 }, {
       ...baseParams,
       visibleLeft: 950,
       visibleRight: 1050,
@@ -129,7 +150,7 @@ describe('HaloRadar projectArrow', () => {
     });
     expect(proj.hidden).toBe(false);
     expect(proj.theta).toBeCloseTo(0); // east bearing in world space
-    expect(proj.radiusPx).toBeCloseTo(200); // mid-distance, lerped
+    expect(proj.radiusPx).toBeCloseTo(200); // midpoint of band via log curve
   });
 });
 
