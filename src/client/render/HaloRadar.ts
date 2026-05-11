@@ -26,6 +26,18 @@ const MAX_ARROWS = 64;
 // (out-of-interest drones ship pose at 6 Hz instead of 20 Hz) without
 // making arrows feel laggy when the underlying entity is moving fast.
 const ARROW_SMOOTH_HALF_LIFE_MS = 100;
+// Phase D: beyond this distance, entities collapse into angular-wedge
+// representatives instead of each getting their own arrow.
+const RADAR_GROUPING_DISTANCE = 2500;
+// Phase D: beyond this distance, no arrow at all (distinct from `DIST_MAX`,
+// which is just the lerp-finish point for radius/scale). Between
+// `DIST_MAX` and `RADAR_MAX_DISTANCE` the arrow sits at the outer ring at
+// the far scale, then disappears past the cutoff.
+const RADAR_MAX_DISTANCE = 8000;
+// Phase D: angular bucket size for wedge grouping. 24 wedges around the
+// full ring at 15° each.
+const RADAR_WEDGE_DEG = 15;
+const RADAR_WEDGE_COUNT = Math.round(360 / RADAR_WEDGE_DEG);
 
 export interface HaloProjectionParams {
   innerRadius: number;
@@ -102,28 +114,36 @@ export function projectArrow(
   };
 }
 
+// Phase C/D — triangle nose along local +x. After `rotation = -theta` it
+// points along the world bearing to the POI. Defined once so the build +
+// repaint paths stay in sync (wedge representatives can change colour
+// frame-to-frame and need to redraw).
+const ARROW_POLY = [
+  { x: 8, y: 0 },
+  { x: -5, y: -5 },
+  { x: -5, y: 5 },
+];
+
+function paintArrowGfx(g: Graphics, color: number): void {
+  g.clear();
+  g.poly(ARROW_POLY);
+  g.fill({ color, alpha: 0.95 });
+  g.poly(ARROW_POLY);
+  g.stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
+}
+
 function buildArrowGfx(color: number): Graphics {
   const g = new Graphics();
-  // Smaller arrow per Phase C — 8 × 10 unit triangle (was 14 × 16). Triangle
-  // nose along local +x. After `rotation = -theta` it points along the world
-  // bearing to the POI.
-  g.poly([
-    { x: 8, y: 0 },
-    { x: -5, y: -5 },
-    { x: -5, y: 5 },
-  ]);
-  g.fill({ color, alpha: 0.95 });
-  g.poly([
-    { x: 8, y: 0 },
-    { x: -5, y: -5 },
-    { x: -5, y: 5 },
-  ]);
-  g.stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
+  paintArrowGfx(g, color);
   return g;
 }
 
 interface ArrowEntry {
   gfx: Graphics;
+  /** Current fill colour. Tracked so wedge representatives that change
+   *  type (drone → asteroid → ship) can detect mismatch and repaint
+   *  geometry instead of leaving stale colour on the pooled graphic. */
+  color: number;
   /** Critically-damped spring state for x (Pixi-space). */
   sx: SpringState;
   /** Critically-damped spring state for y (Pixi-space). */
@@ -134,12 +154,69 @@ interface ArrowEntry {
   lastVisible: boolean;
 }
 
-interface Candidate {
+export interface Candidate {
   key: string;
   x: number;
   y: number;
   color: number;
   dist: number;
+}
+
+/**
+ * Pure helper. Maps a world-space offset `(dx, dy)` to a wedge index in
+ * `[0, wedgeCount)`. Wedge 0 starts at theta = -π (due west) and increases
+ * counter-clockwise. atan2's east-zero / +π-edge convention is handled by
+ * clamping the maximum index, so theta = π lands in the last wedge instead
+ * of wrapping to 0.
+ */
+export function wedgeIndex(dx: number, dy: number, wedgeCount: number = RADAR_WEDGE_COUNT): number {
+  const theta = Math.atan2(dy, dx);
+  const t = (theta + Math.PI) / (2 * Math.PI);
+  const raw = Math.floor(t * wedgeCount);
+  if (raw < 0) return 0;
+  if (raw >= wedgeCount) return wedgeCount - 1;
+  return raw;
+}
+
+/**
+ * Pure helper. Drops candidates past `maxDistance`, keeps every candidate
+ * within `groupingDistance` as-is, and collapses the rest into angular
+ * wedge representatives — the closest entity per wedge wins. The
+ * representative inherits all member fields except `key`, which becomes
+ * `wedge:${idx}` so the renderer can pool a single Graphics across whatever
+ * entity currently leads that wedge.
+ */
+export function partitionAndGroupCandidates(
+  local: { x: number; y: number },
+  candidates: ReadonlyArray<Candidate>,
+  groupingDistance: number = RADAR_GROUPING_DISTANCE,
+  maxDistance: number = RADAR_MAX_DISTANCE,
+  wedgeCount: number = RADAR_WEDGE_COUNT,
+): Candidate[] {
+  const result: Candidate[] = [];
+  const wedges = new Map<number, Candidate>();
+  for (const c of candidates) {
+    if (c.dist > maxDistance) continue;
+    if (c.dist <= groupingDistance) {
+      result.push(c);
+      continue;
+    }
+    const idx = wedgeIndex(c.x - local.x, c.y - local.y, wedgeCount);
+    const existing = wedges.get(idx);
+    if (!existing || c.dist < existing.dist) {
+      wedges.set(idx, c);
+    }
+  }
+  for (const [idx, c] of wedges) {
+    result.push({
+      key: `wedge:${idx}`,
+      x: c.x,
+      y: c.y,
+      color: c.color,
+      dist: c.dist,
+    });
+  }
+  return result;
 }
 
 export class HaloRadar {
@@ -206,16 +283,13 @@ export class HaloRadar {
       visibleBottom: bounds.bottom,
     };
 
-    const candidates: Candidate[] = [];
-    const presentKeys = new Set<string>();
+    const rawCandidates: Candidate[] = [];
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
-        const key = `swarm:${id}`;
-        presentKeys.add(key);
         const dist = Math.hypot(e.x - local.x, e.y - local.y);
-        candidates.push({
-          key,
+        rawCandidates.push({
+          key: `swarm:${id}`,
           x: e.x,
           y: e.y,
           color: e.kind === 1 ? DRONE_COLOR : ASTEROID_COLOR,
@@ -225,16 +299,31 @@ export class HaloRadar {
     }
     for (const [id, s] of mirror.ships) {
       if (id === localId) continue;
-      const key = `ship:${id}`;
-      presentKeys.add(key);
       const dist = Math.hypot(s.x - local.x, s.y - local.y);
-      candidates.push({ key, x: s.x, y: s.y, color: REMOTE_SHIP_COLOR, dist });
+      rawCandidates.push({ key: `ship:${id}`, x: s.x, y: s.y, color: REMOTE_SHIP_COLOR, dist });
     }
 
-    if (candidates.length > MAX_ARROWS) {
-      candidates.sort((a, b) => a.dist - b.dist);
-      candidates.length = MAX_ARROWS;
+    // Closest-first so MAX_ARROWS truncation drops the farthest entities and
+    // wedge-grouping receives a deterministic input order.
+    rawCandidates.sort((a, b) => a.dist - b.dist);
+    if (rawCandidates.length > MAX_ARROWS) {
+      rawCandidates.length = MAX_ARROWS;
     }
+
+    const candidates = partitionAndGroupCandidates(
+      { x: local.x, y: local.y },
+      rawCandidates,
+      RADAR_GROUPING_DISTANCE,
+      RADAR_MAX_DISTANCE,
+      RADAR_WEDGE_COUNT,
+    );
+
+    // After partitioning, `presentKeys` is derived from the post-grouping
+    // candidate set: each near-band entity keeps its own key; each wedge
+    // representative carries `wedge:N`. Pool entries not in this set are
+    // destroyed at the tail of the loop.
+    const presentKeys = new Set<string>();
+    for (const c of candidates) presentKeys.add(c.key);
 
     const renderedKeys = new Set<string>();
     for (const c of candidates) {
@@ -252,11 +341,18 @@ export class HaloRadar {
         this.container.addChild(gfx);
         entry = {
           gfx,
+          color: c.color,
           sx: { x: proj.x, v: 0 },
           sy: { x: proj.y, v: 0 },
           lastVisible: false,
         };
         this.arrows.set(c.key, entry);
+      } else if (entry.color !== c.color) {
+        // Wedge representative changed type — repaint geometry with the new
+        // colour. Cost is bounded by RADAR_WEDGE_COUNT per frame and only
+        // fires on type-flip frames.
+        paintArrowGfx(entry.gfx, c.color);
+        entry.color = c.color;
       }
       renderedKeys.add(c.key);
 
