@@ -25,16 +25,18 @@ const ARROW_FILL_ALPHA = 0.50;
 const STROKE_ALPHA_DEFAULT = 0.25;
 const STROKE_ALPHA_HOSTILE = 0.65;
 // Halo radii are specified as a fraction of the viewport's shorter screen
-// dimension. Phase K — band tightened further (inner 0.36 → 0.40) since
-// the new log curve below means most of the meaningful distance signal
-// lives in the band itself, not in band-width. On a 375 px phone the
-// inner ring sits at 150 px and the outer at 180 px — a 30 px band right
-// at the screen edge. Only entities very close to distMin actually
-// reach the inner ring.
-const INNER_RADIUS_FRAC = 0.40;
+// dimension. Phase L — DRAMATIC band spread. With the exp-saturation
+// curve below pulling most entities to the outer ring, the inner ring
+// needs to live close to the player so the rare drop-to-inner is
+// visibly striking. On a 375 px phone the outer ring sits ~7 px inside
+// the screen edge (0.48 × 375 ≈ 180) and the inner ring is right next
+// to the ship sprite (0.14 × 375 ≈ 52 px from centre) — a ~128 px
+// band, dominated by "at the edge" for almost every entity except the
+// few that are just-barely-off-screen.
+const INNER_RADIUS_FRAC = 0.14;
 const OUTER_RADIUS_FRAC = 0.48;
-const INNER_RADIUS_MIN_PX = 120;
-const INNER_RADIUS_MAX_PX = 320;
+const INNER_RADIUS_MIN_PX = 40;
+const INNER_RADIUS_MAX_PX = 180;
 const OUTER_RADIUS_MIN_PX = 160;
 const OUTER_RADIUS_MAX_PX = 400;
 // Arrow scale at the near/far ends. Reverted in Phase G to big-near /
@@ -45,6 +47,13 @@ const OUTER_RADIUS_MAX_PX = 400;
 // scaleNear.
 const ARROW_SCALE_NEAR = 1.15;
 const ARROW_SCALE_FAR = 0.65;
+// Phase L — exponent for the exp-saturation distance curve in
+// `projectArrow`. Higher = more aggressive push toward the outer ring
+// (most distances saturate at t≈1, only entities near distMin drop
+// toward t=0). 5 is a strong but not pathological compression — small
+// enough that 1500-2500 u still spreads across the lower half of the
+// band, large enough that 3000+ u all visually cluster at outer.
+const EXP_CURVE_K = 5;
 // World-unit distance band. Phase H:
 //   - DIST_MIN doubles as the near-cutoff: entities closer than this
 //     get no arrow at all. Off-screen-and-very-close entities don't
@@ -168,17 +177,23 @@ export function projectArrow(
   if (dist < params.distMin) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
 
   const theta = Math.atan2(dy, dx);
-  // Phase K — logarithmic distance curve. With a linear lerp, an entity at
-  // 2× the close range was already 14 % of the way down the ring band on
-  // a 900–7000 u band; with the log curve below it's at ~50 %, so only
-  // entities very close to distMin actually reach the inner ring. That
-  // lets the ring band be tight (Phase K shrunk it to ~30 px on a phone)
-  // without sacrificing distance resolution in the meaningful middle.
-  const t = clamp(
-    Math.log(dist / params.distMin) / Math.log(params.distMax / params.distMin),
-    0,
-    1,
-  );
+  // Phase L — exponential-saturation distance curve. The OUTER ring (screen
+  // edge) is the default: a 1 - exp(-k·normalized) curve pulls most
+  // distances close to t=1 (outer) and only entities very close to
+  // distMin drop toward t=0 (inner). Concretely with k=5 and the
+  // production 900–7000 u band:
+  //   - dist =  900 u  → t = 0.00 (inner — only "just outside screen")
+  //   - dist = 1500 u  → t = 0.39
+  //   - dist = 2000 u  → t = 0.59
+  //   - dist = 3000 u  → t = 0.82
+  //   - dist = 5000 u  → t = 0.97 (outer — saturates)
+  //   - dist = 7000 u  → t = 1.00
+  // Pre-L the log curve did the opposite — pulled most distances to the
+  // middle of the band; that's not what the user wanted on phone smoke.
+  const normalized = (dist - params.distMin) / (params.distMax - params.distMin);
+  const k = EXP_CURVE_K;
+  const tRaw = (1 - Math.exp(-k * normalized)) / (1 - Math.exp(-k));
+  const t = clamp(tRaw, 0, 1);
   const radiusPx = lerp(params.innerRadiusPx, params.outerRadiusPx, t);
   const scale = lerp(params.scaleNear, params.scaleFar, t);
 
