@@ -148,6 +148,40 @@ export class MountVisualManager {
     return this.clusters.get(shipId)?.perMount.size ?? 0;
   }
 
+  /**
+   * Multi-mount/turret refactor (Phase 4b.2): apply per-mount rotation
+   * angles for a tracked ship. `mountAngles[i]` is the slewed angle in
+   * the mount's ARC-LOCAL frame (0 = barrel at rest, ±arcMin/arcMax
+   * range) — we add `mount.baseAngle` back in to recover the ship-
+   * relative orientation, then flip for Pixi's y-down convention.
+   *
+   * Callers (PixiRenderer.update) pass in the catalogue's ordered mount
+   * list so we apply angles to mounts in matching order. A `mountAngles`
+   * of `undefined` (remote player whose authoritative angles haven't
+   * landed yet) restores every mount to its base angle — no rotation
+   * preview leaks to ships we don't have data for.
+   */
+  applyMountAngles(
+    shipId: string,
+    mounts: ReadonlyArray<WeaponMount>,
+    mountAngles: ReadonlyArray<number> | undefined,
+  ): void {
+    const cluster = this.clusters.get(shipId);
+    if (!cluster) return;
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
+      const gfx = cluster.perMount.get(mount.id);
+      if (!gfx) continue;
+      const current = mountAngles?.[i] ?? 0;
+      // Pixi y-flip: positive ship-relative rotation is "to the left" in
+      // world view (because Pixi's +y is screen-down). We negate to get
+      // the screen-correct sprite rotation.
+      const spriteRotation = -(mount.baseAngle + current);
+      gfx.turret.rotation = spriteRotation;
+      gfx.aimLine.rotation = spriteRotation;
+    }
+  }
+
   /** Tear down every cluster. Call from PixiRenderer.dispose. */
   disposeAll(): void {
     for (const cluster of this.clusters.values()) {

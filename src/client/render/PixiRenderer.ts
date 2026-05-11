@@ -402,6 +402,16 @@ export class PixiRenderer implements IRenderer {
       // mount ships render an invisible 0-offset 0-baseAngle stub that sits
       // beneath the body silhouette.
       this.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
+      // Phase 4b.2: apply this ship's current mount-rotation angles. The
+      // local player's `tickLocalMountAim` populated `mirror.ships
+      // .get(localId).mountAngles` last tick; remote players leave it
+      // undefined (until Phase 4b.3 ships the snapshot anchor) and the
+      // helper falls back to baseAngle, i.e. static barrels.
+      const shipKind = getShipKind(ship.kind ?? null);
+      const shipMounts = shipKind.mounts ?? [];
+      if (shipMounts.length > 0) {
+        this.mountVisuals.applyMountAngles(playerId, shipMounts, ship.mountAngles);
+      }
 
       sprite.x = ship.x;
       sprite.y = -ship.y;
@@ -670,7 +680,15 @@ export class PixiRenderer implements IRenderer {
           // Resolve the mount's ship-local offset from the catalogue. Falls
           // back to a zero-offset zero-baseAngle stub for unknown mount ids
           // so a pre-2c server (no mountId in the wire) still renders.
+          // Phase 4b.2: pick up the shooter's per-mount slewed angle from
+          // `mirror.ships.get(id).mountAngles` (local player only today;
+          // 4b.3 fills it for all ships from the snapshot anchor).
           const mount = shooterKind.mounts?.find((m) => m.id === mountId);
+          let currentMountAngle = 0;
+          if (shooter && mount) {
+            const idx = shooterKind.mounts?.findIndex((m) => m.id === mountId) ?? -1;
+            if (idx >= 0) currentMountAngle = shooter.mountAngles?.[idx] ?? 0;
+          }
 
           let fromX: number;
           let fromY: number;
@@ -678,7 +696,7 @@ export class PixiRenderer implements IRenderer {
           let toY: number;
           if (shooter) {
             const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
-            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0);
+            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
             const fwdX = -Math.sin(fireAngle);
             const fwdY =  Math.cos(fireAngle);
             fromX = origin.x + fwdX * 20;
@@ -735,10 +753,15 @@ export class PixiRenderer implements IRenderer {
       }
       this.liveBeamGfx.clear();
       const localKind = getShipKind(localShip.kind ?? null);
+      const localMounts = localKind.mounts ?? [];
       for (const [mountId, beam] of mirror.liveBeams) {
-        const mount = localKind.mounts?.find((m) => m.id === mountId);
+        const mountIdx = localMounts.findIndex((m) => m.id === mountId);
+        const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
+        // Phase 4b.2: add the per-mount slewed angle so the beam emerges
+        // in the same direction as the visibly-rotated barrel sprite.
+        const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
         const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
-        const fireAngle = localShip.angle + (mount?.baseAngle ?? 0);
+        const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
         const fwdX = -Math.sin(fireAngle);
         const fwdY =  Math.cos(fireAngle);
         const fromX = origin.x + fwdX * 20;

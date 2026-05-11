@@ -16,6 +16,15 @@ export interface ShipRenderState {
    *  `LabelManager` uses this to render a small text label above remote
    *  ships. The local player's own ship intentionally has no label. */
   displayName?: string;
+  /** Per-mount current rotation angle, ship-relative AND already biased
+   *  past `mount.baseAngle` (so 0 = barrel at rest, +π/6 = barrel slewed
+   *  to +π/6 above its base angle). Indexed by mount-order in the
+   *  ship-kind catalogue. Multi-mount/turret refactor (Phase 4b.2):
+   *  client-side rotation preview populates this for the local player
+   *  only; remote players leave it undefined and the renderer falls
+   *  back to baseAngle (static barrels). Phase 4b.3 will populate it
+   *  for every ship from server-authoritative snapshot data. */
+  mountAngles?: number[];
 }
 
 /**

@@ -53,6 +53,12 @@ import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
 import type { AiEntity, AiPlayerView } from '@core/contracts/IAiBehaviour';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
+import {
+  pickTarget,
+  rotateMountToward,
+  wrapPi,
+  type MountTargetView,
+} from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -503,6 +509,17 @@ export class ColyseusGameClient {
   private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean; reverse: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
+
+  /** Multi-mount/turret refactor (Phase 4b.2): sticky target id chosen by
+   *  the local ship's turret AI last tick. Reset to null on death, sector
+   *  handoff, and respawn so a new spawn starts with no pin. Per-instance
+   *  rather than per-mount because all mounts in a slot share one target
+   *  (user-clarified design rule). */
+  private _localSlotTarget: string | null = null;
+  /** Scratch buffer reused across ticks — fed to `pickTarget` as the
+   *  candidate list. Cleared and refilled each call; never escapes the
+   *  ColyseusClient so concurrent reuse is fine. */
+  private _droneTargetsScratch: MountTargetView[] = [];
   /** Idle-suppression for the input upstream (network-discipline P4). The
    *  client only emits an `input` message when the control state has changed
    *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
@@ -593,6 +610,11 @@ export class ColyseusGameClient {
     this._aiRegisteredIds.clear();
     this._droneRenderOffsets.clear();
     this._droneSnapshotAnchored.clear();
+    // Multi-mount/turret refactor (Phase 4b.2): drop the local ship's
+    // sticky turret target on sector handoff — the destination sector has
+    // a fresh swarm with different ids, so holding the previous pin would
+    // mean "no target in view" until the controller times out and re-picks.
+    this._localSlotTarget = null;
     // Phase B — drop the per-drone snap-event rings + log throttle. The new
     // sector has a fresh swarm; carrying old percentiles across the warp
     // gap pollutes the visible p50/p99 in the dev overlay.
@@ -1093,6 +1115,7 @@ export class ColyseusGameClient {
     if (id === this.mirror.localPlayerId) {
       this.localDead = true;
       this.mirror.liveBeams?.clear();
+      this._localSlotTarget = null;
       this.ghostManager.clearForShip(id);
       useUIStore.getState().setHullPct(0);
       useUIStore.getState().setDead(true);
@@ -2362,6 +2385,13 @@ export class ColyseusGameClient {
         this.predWorld.tick(1 / 60);
       }
 
+      // Multi-mount/turret refactor (Phase 4b.2): client-side turret aim
+      // update for the local ship. Runs every physics tick so the
+      // rotation stays continuous and the beams emerge from the slewed
+      // mount direction. Skipped while dead (no aim to compute) and when
+      // the player has no predWorld state yet.
+      this.tickLocalMountAim(1 / 60);
+
       if (fireHeld && this.mirror.localPlayerId && !this.localDead) {
         const activeWeapon = useUIStore.getState().activeWeapon;
         const activeWeaponDef = getWeapon(activeWeapon);
@@ -2435,6 +2465,105 @@ export class ColyseusGameClient {
     }
   }
 
+  /**
+   * Multi-mount/turret refactor (Phase 4b.2): client-side rotation preview
+   * for the local player's mounts.
+   *
+   * Each tick (called from `tickPhysics` after `applyInput` but before the
+   * fire dispatch), this:
+   *
+   *   1. Filters the swarm mirror down to drone targets (kind === 1).
+   *   2. Calls `WeaponMountController.pickTarget` with `_localSlotTarget`
+   *      as the sticky pin — same module the drone AI uses, same sticky
+   *      hysteresis policy.
+   *   3. For each mount in the local ship's active slot, computes the
+   *      desired bearing (target-relative to ship-forward, minus
+   *      `mount.baseAngle` so the bearing is expressed in the mount's
+   *      arc-local frame) and slews the cached angle via
+   *      `rotateMountToward`.
+   *   4. Writes the new angles back to `mirror.ships.get(localId)
+   *      .mountAngles`.
+   *
+   * 4b.2 is **client-only** — the server doesn't yet compute or anchor
+   * mount angles, so the visible rotation is presentation. Other clients
+   * see this player's barrels at `baseAngle` until 4b.3 ships the
+   * snapshot extension that broadcasts the authoritative angles.
+   *
+   * Hostility: every drone in the mirror is a candidate (the player has
+   * no individualised hostility set). Future PvP would require a richer
+   * filter; for solo combat "any drone, nearest one" is the right model.
+   */
+  private tickLocalMountAim(dtSec: number): void {
+    const localId = this.mirror.localPlayerId;
+    if (!localId || !this.predWorld) return;
+    const ship = this.mirror.ships.get(localId);
+    if (!ship) return;
+    const state = this.predWorld.getShipState(localId);
+    if (!state) return;
+    const mounts = this.localShipMounts();
+    if (mounts.length === 0) {
+      if (ship.mountAngles) ship.mountAngles = undefined;
+      return;
+    }
+
+    // Gather drone targets from the swarm mirror. We use the swarm
+    // sprite's current rendered pose (post-interpolation) because the
+    // turret should aim at where the player visually sees the drone, not
+    // at the raw network pose 100 ms in the past.
+    const targets = this._droneTargetsScratch;
+    targets.length = 0;
+    if (this.mirror.swarm) {
+      for (const [entityId, sw] of this.mirror.swarm) {
+        if (sw.kind !== 1) continue; // asteroids aren't valid targets
+        targets.push({
+          id: `swarm-${entityId}`,
+          x: sw.x,
+          y: sw.y,
+          vx: sw.vx,
+          vy: sw.vy,
+        });
+      }
+    }
+
+    const target = pickTarget(state.x, state.y, targets, this._localSlotTarget, () => true);
+    this._localSlotTarget = target?.id ?? null;
+
+    // Allocate / resize the per-ship mountAngles array. number[] is fine
+    // here — N is small (1–3) and the array survives multiple frames.
+    let angles = ship.mountAngles;
+    if (!angles || angles.length !== mounts.length) {
+      angles = new Array<number>(mounts.length).fill(0);
+      ship.mountAngles = angles;
+    }
+
+    if (target === null) {
+      // No target — slew every mount back to its base (0 in mount-local frame).
+      for (let i = 0; i < mounts.length; i++) {
+        angles[i] = rotateMountToward(angles[i] ?? 0, 0, mounts[i]!, dtSec);
+      }
+      return;
+    }
+
+    // For each mount: compute the world-bearing from the mount's pivot to
+    // the target, subtract ship.angle (rotate into ship-local frame) and
+    // mount.baseAngle (rotate into mount-local frame), then slew toward
+    // that bearing within the mount's arc and speed limits.
+    const cosA = Math.cos(state.angle);
+    const sinA = Math.sin(state.angle);
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
+      const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
+      const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
+      const dx = target.x - mountWorldX;
+      const dy = target.y - mountWorldY;
+      // World bearing — same convention as ship.angle: `atan2(-dx, dy)`
+      // (forward = -y, right = +x).
+      const worldBearing = Math.atan2(-dx, dy);
+      const mountLocalBearing = wrapPi(worldBearing - state.angle - mount.baseAngle);
+      angles[i] = rotateMountToward(angles[i] ?? 0, mountLocalBearing, mount, dtSec);
+    }
+  }
+
   /** Compute (and cache in `mirror.liveBeams`) the local player's hitscan
    *  beam state — one entry per mount in the firing slot. Multi-mount/turret
    *  refactor (Phase 2c): replaces the pre-2c single `liveBeam` write. For
@@ -2443,14 +2572,15 @@ export class ColyseusGameClient {
    *  entry per barrel so each renders independently.
    *
    *  Mount origin = `ship.pos + rotate(mount.local, ship.angle)`. Mount fire
-   *  direction = `ship.angle + mount.baseAngle` (mount rotation lands in
-   *  Phase 4b — for now `currentMountAngle` is 0). The 20 u barrel offset is
-   *  applied along the mount's world fire direction. */
+   *  direction = `ship.angle + mount.baseAngle + currentMountAngle` (4b.2
+   *  adds rotation; pre-4b.2 the current angle was always 0). The 20 u
+   *  barrel offset is applied along the mount's world fire direction. */
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
+    const ship = this.mirror.ships.get(localId);
 
     const liveBeams = (this.mirror.liveBeams ??= new Map());
     const mounts = this.localShipMounts();
@@ -2468,10 +2598,13 @@ export class ColyseusGameClient {
 
     const cosA = Math.cos(state.angle);
     const sinA = Math.sin(state.angle);
-    for (const mount of mounts) {
+    const mountAngles = ship?.mountAngles;
+    for (let i = 0; i < mounts.length; i++) {
+      const mount = mounts[i]!;
       const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
       const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
-      const mountAngle = state.angle + mount.baseAngle;
+      const currentMountAngle = mountAngles?.[i] ?? 0;
+      const mountAngle = state.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
@@ -2584,6 +2717,8 @@ export class ColyseusGameClient {
     const mounts = this.localShipMounts();
     const cosA = Math.cos(state.angle);
     const sinA = Math.sin(state.angle);
+    const localShip = this.mirror.ships.get(localId);
+    const mountAngles = localShip?.mountAngles;
     if (mounts.length === 0) {
       // Defensive fallback: no mounts → spawn the legacy single ghost at
       // ship centre. Should not happen for any shipped kind today.
@@ -2593,10 +2728,15 @@ export class ColyseusGameClient {
       const fromY = state.y + fwdY * 20;
       this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
     } else {
-      for (const mount of mounts) {
+      for (let i = 0; i < mounts.length; i++) {
+        const mount = mounts[i]!;
         const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
         const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
-        const mountFireAngle = state.angle + mount.baseAngle;
+        // Phase 4b.2: include the per-mount slewed angle in the fire
+        // direction so the ghost emerges in the same direction the
+        // visible barrel is aimed.
+        const currentMountAngle = mountAngles?.[i] ?? 0;
+        const mountFireAngle = state.angle + mount.baseAngle + currentMountAngle;
         const fwdX = -Math.sin(mountFireAngle);
         const fwdY = Math.cos(mountFireAngle);
         const fromX = mountWorldX + fwdX * 20;
