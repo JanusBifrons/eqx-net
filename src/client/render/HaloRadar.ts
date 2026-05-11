@@ -5,36 +5,45 @@ import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore } from '../state/store';
 
 const ASTEROID_COLOR = 0x886644;
-// Phase F — split the drone colour by hostility state so the player can
-// tell at a glance which off-screen drones are currently targeting them.
-// Hostile drones get the saturated red + a soft glow; idle drones get a
-// muted amber and no glow.
 const DRONE_HOSTILE_COLOR = 0xff3344;
 const DRONE_IDLE_COLOR = 0xf0c040;
 const REMOTE_SHIP_COLOR = 0x00aaff;
-const GLOW_COLOR = 0xff5566;
-const GLOW_RADIUS = 9;
+// Phase G — glow tokens. All arrows now get a soft glow under the
+// triangle (was hostile-only); hostile drones still get a brighter,
+// larger menace ring tinted toward red.
+const GLOW_COLOR_HOSTILE = 0xff5566;
+const GLOW_RADIUS_HOSTILE = 11;
+const GLOW_ALPHA_HOSTILE = 0.40;
+const GLOW_RADIUS_DEFAULT = 7;
+const GLOW_ALPHA_DEFAULT = 0.18;
+// Phase G — arrow fill transparency. Lower than the 0.95 pre-G default so
+// arrows read as overlay markers, not solid sprites.
+const ARROW_FILL_ALPHA = 0.70;
 // Halo radii are specified as a fraction of the viewport's shorter screen
 // dimension and converted to world units each frame using the viewport's
-// current zoom. The fixed-pixel constants used pre-Phase E (90/220) clipped
-// outside the viewport in landscape on a typical phone (812×375), so the
-// outer ring would render off-screen — visible to the user as arrows that
-// "don't follow proper bounds".
-const INNER_RADIUS_FRAC = 0.20;
-const OUTER_RADIUS_FRAC = 0.36;
+// current zoom. Phase G — widened spread (inner closer to player, outer
+// closer to the screen edge) so distance reads more dynamically.
+const INNER_RADIUS_FRAC = 0.14;
+const OUTER_RADIUS_FRAC = 0.42;
 const INNER_RADIUS_MIN_PX = 50;
 const INNER_RADIUS_MAX_PX = 140;
 const OUTER_RADIUS_MIN_PX = 90;
 const OUTER_RADIUS_MAX_PX = 280;
-// Arrow scale at the near/far ends of the distance band. Inverted from the
-// pre-2026-05-11 default: distant entities deserve the prominent indicator
-// (they're the ones the player can't see otherwise) while close-but-off-
-// screen ones are about to re-enter view and stay small + understated.
-const ARROW_SCALE_NEAR = 0.7;
-const ARROW_SCALE_FAR = 1.5;
-// World-unit distance band used to lerp arrow radius and scale.
-const DIST_MIN = 200;
-const DIST_MAX = 5000;
+// Arrow scale at the near/far ends. Reverted in Phase G to big-near /
+// small-far (the original pre-F.1 sense) — closer entities deserve the
+// more attention-grabbing icon, while distant ones at the outer ring
+// stay quieter dots. Polygons + transparency were shrunk independently,
+// so the absolute sizes feel quite a bit subtler than pre-F.1 even at
+// scaleNear.
+const ARROW_SCALE_NEAR = 1.15;
+const ARROW_SCALE_FAR = 0.65;
+// World-unit distance band used to lerp arrow radius and scale. Phase G:
+// tightened to 300–4500 u — the useful "where is this entity" range —
+// instead of spreading thinly across 200–5000. Each ring-pixel of travel
+// now carries more world distance, so the position-on-ring reads more
+// meaningfully.
+const DIST_MIN = 300;
+const DIST_MAX = 4500;
 // Padded so arrows don't flicker when a POI sits exactly on a viewport edge.
 const VISIBILITY_PADDING_WORLD = 16;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
@@ -51,9 +60,12 @@ const ARROW_EXTRAP_CAP_MS = 400;
 // purely cosmetic: smooth corrections when extrapolation snaps to a fresh
 // packet, and the "fly-in" feel when a wedge's representative changes.
 const ARROW_SMOOTH_HALF_LIFE_MS = 130;
-// Phase D: beyond this distance, entities collapse into angular-wedge
-// representatives instead of each getting their own arrow.
-const RADAR_GROUPING_DISTANCE = 2500;
+// Beyond this distance, entities collapse into angular-wedge
+// representatives instead of each getting their own arrow. Phase G
+// dropped this from 2500 → 1500 to reduce the visual clutter that
+// landed phone-side: too many singleton arrows competed for screen
+// space and made it hard to read individual positions.
+const RADAR_GROUPING_DISTANCE = 1500;
 // Phase D: beyond this distance, no arrow at all (distinct from `DIST_MAX`,
 // which is just the lerp-finish point for radius/scale). Between
 // `DIST_MAX` and `RADAR_MAX_DISTANCE` the arrow sits at the outer ring at
@@ -147,42 +159,46 @@ export function projectArrow(
   return { hidden: false, theta, radiusPx, scale };
 }
 
-// Phase C/D — triangle nose along local +x. After `rotation = -theta` it
-// points along the world bearing to the POI. Defined once so the build +
-// repaint paths stay in sync (wedge representatives can change colour
-// frame-to-frame and need to redraw).
-const ARROW_POLY = [
+// Two arrow silhouettes — pointier for singleton entities (precise
+// direction signal), wider/blunter for wedge representatives (aggregated-
+// area signal). After `rotation = -theta` the nose points along the
+// world bearing to the POI.
+const ARROW_POLY_SINGLETON = [
   { x: 8, y: 0 },
-  { x: -5, y: -5 },
-  { x: -5, y: 5 },
+  { x: -4, y: -3 },
+  { x: -4, y: 3 },
+];
+const ARROW_POLY_GROUPED = [
+  { x: 6, y: 0 },
+  { x: -3, y: -6 },
+  { x: -3, y: 6 },
 ];
 
-function paintArrowGfx(g: Graphics, color: number, showGlow: boolean): void {
+function paintArrowGfx(g: Graphics, color: number, hostile: boolean, grouped: boolean): void {
   g.clear();
-  // Phase F — soft glow behind the arrow, painted in the same Graphics so
-  // its rotation/scale follow the arrow. Drawn first (under the triangle)
-  // and only when the entry is hostile, which the radar pre-classifies.
-  if (showGlow) {
-    g.circle(0, 0, GLOW_RADIUS);
-    g.fill({ color: GLOW_COLOR, alpha: 0.25 });
-    g.circle(0, 0, GLOW_RADIUS * 0.6);
-    g.fill({ color: GLOW_COLOR, alpha: 0.35 });
-  }
-  g.poly(ARROW_POLY);
-  g.fill({ color, alpha: 0.95 });
-  g.poly(ARROW_POLY);
-  // Hostile arrows take a brighter white border to amplify the menace
-  // signal; everything else keeps the soft default.
+  // Phase G — every arrow gets a soft glow under the triangle. Hostile
+  // entries take a larger menace ring tinted red; everything else gets a
+  // subtle ring tinted by the arrow's own colour.
+  const glowColor = hostile ? GLOW_COLOR_HOSTILE : color;
+  const glowRadius = hostile ? GLOW_RADIUS_HOSTILE : GLOW_RADIUS_DEFAULT;
+  const glowAlpha = hostile ? GLOW_ALPHA_HOSTILE : GLOW_ALPHA_DEFAULT;
+  g.circle(0, 0, glowRadius);
+  g.fill({ color: glowColor, alpha: glowAlpha });
+
+  const poly = grouped ? ARROW_POLY_GROUPED : ARROW_POLY_SINGLETON;
+  g.poly(poly);
+  g.fill({ color, alpha: ARROW_FILL_ALPHA });
+  g.poly(poly);
   g.stroke({
     color: 0xffffff,
-    width: showGlow ? 1.4 : 1,
-    alpha: showGlow ? 0.85 : 0.5,
+    width: hostile ? 1.4 : 1,
+    alpha: hostile ? 0.75 : 0.35,
   });
 }
 
-function buildArrowGfx(color: number, showGlow: boolean): Graphics {
+function buildArrowGfx(color: number, hostile: boolean, grouped: boolean): Graphics {
   const g = new Graphics();
-  paintArrowGfx(g, color, showGlow);
+  paintArrowGfx(g, color, hostile, grouped);
   return g;
 }
 
@@ -195,7 +211,11 @@ interface ArrowEntry {
   /** Whether the entry currently renders the hostile glow + bright stroke.
    *  Tracked alongside `color` so a hostility flip also triggers a
    *  geometry repaint. */
-  glow: boolean;
+  hostile: boolean;
+  /** Whether the entry uses the wider "grouped" arrow silhouette. Tracked
+   *  alongside `color`/`hostile` so a near→far transition (singleton to
+   *  wedge rep, or vice-versa) triggers a polygon repaint. */
+  grouped: boolean;
   /** Critically-damped spring state for the arrow's screen-pixel x. */
   sx: SpringState;
   /** Critically-damped spring state for the arrow's screen-pixel y. */
@@ -216,6 +236,11 @@ export interface Candidate {
    *  stroke. Defaults to false; set true by the radar for drones the
    *  client AI currently treats as hostile to the local player. */
   hostile?: boolean;
+  /** Whether this entry represents a wedge (one arrow standing in for
+   *  N grouped entities at the same bearing). Drives the wider/blunter
+   *  silhouette so the player can distinguish a single off-screen target
+   *  from an aggregated group at a glance. */
+  grouped?: boolean;
 }
 
 /**
@@ -270,6 +295,8 @@ export function partitionAndGroupCandidates(
       y: c.y,
       color: c.color,
       dist: c.dist,
+      hostile: c.hostile,
+      grouped: true,
     });
   }
   return result;
@@ -446,26 +473,33 @@ export class HaloRadar {
       const targetX = playerScreen.x + Math.cos(proj.theta) * proj.radiusPx;
       const targetY = playerScreen.y - Math.sin(proj.theta) * proj.radiusPx;
 
-      const wantGlow = c.hostile === true;
+      const wantHostile = c.hostile === true;
+      const wantGrouped = c.grouped === true;
       if (!entry) {
-        const gfx = buildArrowGfx(c.color, wantGlow);
+        const gfx = buildArrowGfx(c.color, wantHostile, wantGrouped);
         this.container.addChild(gfx);
         entry = {
           gfx,
           color: c.color,
-          glow: wantGlow,
+          hostile: wantHostile,
+          grouped: wantGrouped,
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
           lastVisible: false,
         };
         this.arrows.set(c.key, entry);
-      } else if (entry.color !== c.color || entry.glow !== wantGlow) {
-        // Wedge representative or hostility state flipped — repaint geometry
-        // with the new colour/glow. Cost is bounded by RADAR_WEDGE_COUNT +
-        // active hostile drones per frame, only on flip frames.
-        paintArrowGfx(entry.gfx, c.color, wantGlow);
+      } else if (
+        entry.color !== c.color
+        || entry.hostile !== wantHostile
+        || entry.grouped !== wantGrouped
+      ) {
+        // Wedge representative type / hostility / group-state flipped — repaint
+        // geometry with the new colour, glow, and silhouette. Bounded cost: at
+        // most RADAR_WEDGE_COUNT + active hostile-flip count per frame.
+        paintArrowGfx(entry.gfx, c.color, wantHostile, wantGrouped);
         entry.color = c.color;
-        entry.glow = wantGlow;
+        entry.hostile = wantHostile;
+        entry.grouped = wantGrouped;
       }
       renderedKeys.add(c.key);
 
