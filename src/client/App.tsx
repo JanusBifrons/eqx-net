@@ -30,6 +30,7 @@ import { ShipStatsCard } from './components/ShipStatsCard';
 import { WeaponSelector } from './components/WeaponSelector';
 import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
 import { Hud } from './components/Hud';
+import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { MetaLandingScreen } from './components/MetaLandingScreen';
 import { LayoutProvider } from './layout/LayoutProvider';
@@ -473,7 +474,8 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         data-testid="game-surface"
         style={{ width: '100%', height: '100%', touchAction: 'none' }}
       />
-      <Slot anchor="top-left"><Hud /></Slot>
+      <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
+      <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
       <DeathOverlay onRespawn={handleRespawn} />

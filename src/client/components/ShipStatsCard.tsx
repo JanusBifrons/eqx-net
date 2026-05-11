@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from 'react';
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
 import type { ShipRenderState } from '../../core/index.js';
 import { useUIStore } from '../state/store.js';
 
@@ -31,8 +31,6 @@ function angleToHeading(angleRad: number): number {
 }
 
 export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element {
-  const sectorName = useUIStore((s) => s.sectorName);
-  const currentSectorKey = useUIStore((s) => s.currentSectorKey);
   const hullPct = useUIStore((s) => s.hullPct);
   const ammo = useUIStore((s) => s.ammo);
 
@@ -69,8 +67,6 @@ export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element
     return () => window.clearInterval(id);
   }, [getLocalShip]);
 
-  const sectorLabel = sectorName ?? (currentSectorKey === null ? 'Test arena' : '—');
-
   return (
     <Box
       data-testid="ship-stats-card"
@@ -87,15 +83,6 @@ export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element
         border: '1px solid rgba(255,255,255,0.08)',
       }}
     >
-      <Typography
-        variant="caption"
-        sx={{ color: '#8af', fontWeight: 'bold', display: 'block', fontSize: 10, letterSpacing: 0.5 }}
-      >
-        SECTOR
-      </Typography>
-      <Box sx={{ color: '#fff', fontSize: 13, mb: 0.5 }} data-testid="ship-stats-sector">
-        {sectorLabel}
-      </Box>
       <Row label="Hull" value={`${hullPct}%`} valueColor={hullColor(hullPct)} testid="ship-stats-hull" />
       <Row label="Ammo" value={String(ammo)} testid="ship-stats-ammo" />
       <Row
