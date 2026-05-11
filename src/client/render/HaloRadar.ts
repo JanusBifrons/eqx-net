@@ -19,8 +19,12 @@ const INNER_RADIUS_MIN_PX = 50;
 const INNER_RADIUS_MAX_PX = 140;
 const OUTER_RADIUS_MIN_PX = 90;
 const OUTER_RADIUS_MAX_PX = 280;
-const ARROW_SCALE_NEAR = 1.4;
-const ARROW_SCALE_FAR = 0.6;
+// Arrow scale at the near/far ends of the distance band. Inverted from the
+// pre-2026-05-11 default: distant entities deserve the prominent indicator
+// (they're the ones the player can't see otherwise) while close-but-off-
+// screen ones are about to re-enter view and stay small + understated.
+const ARROW_SCALE_NEAR = 0.7;
+const ARROW_SCALE_FAR = 1.5;
 // World-unit distance band used to lerp arrow radius and scale.
 const DIST_MIN = 200;
 const DIST_MAX = 5000;
