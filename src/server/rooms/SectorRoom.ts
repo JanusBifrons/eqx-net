@@ -33,7 +33,7 @@ import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.j
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 
 /** Resolve a (possibly missing) ship-kind id to the kind's max health, or
  *  null when the id is unknown. Drones use this on spawn so each kind has
@@ -657,6 +657,51 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── Combat ──────────────────────────────────────────────────────────────
 
+  /**
+   * Resolve the firing slot's mount list for a given ship-kind.
+   *
+   * Phase 2a (mount-iteration refactor): every catalogue ship-kind now carries
+   * `mounts` + `slots`. The fire path resolves the named slot (or the first
+   * slot when no name is given — today's only path, since FireMessage doesn't
+   * yet carry `slotId`) and returns its mount records in the slot's declared
+   * order. Returns an empty array when the ship-kind has no mounts/slots
+   * (defensive — every shipped kind has them, but a malformed catalogue
+   * shouldn't crash the room).
+   */
+  private resolveSlotMounts(kind: ShipKind, slotId?: string): ReadonlyArray<WeaponMount> {
+    const mounts = kind.mounts;
+    const slots = kind.slots;
+    if (!mounts || !slots || slots.length === 0) return [];
+    const slot = slotId ? slots.find((s) => s.id === slotId) ?? slots[0]! : slots[0]!;
+    const out: WeaponMount[] = [];
+    for (const mid of slot.mountIds) {
+      const m = mounts.find((mm) => mm.id === mid);
+      if (m) out.push(m);
+    }
+    return out;
+  }
+
+  /**
+   * Compute the per-mount world origin given a ship's pose and the mount's
+   * ship-local offset. The ship's `angle` rotates the mount's local coords
+   * into world space; the result is the world position of the mount's pivot
+   * (before the 20 u / 16 u barrel offset applied by callers along the
+   * mount's fire direction).
+   */
+  private mountWorldOrigin(
+    shipX: number,
+    shipY: number,
+    shipAngle: number,
+    mount: WeaponMount,
+  ): { x: number; y: number } {
+    const cosA = Math.cos(shipAngle);
+    const sinA = Math.sin(shipAngle);
+    return {
+      x: shipX + (mount.localX * cosA - mount.localY * sinA),
+      y: shipY + (mount.localX * sinA + mount.localY * cosA),
+    };
+  }
+
   private handleFire(client: Client, raw: unknown): void {
     const parsed = FireMessageSchema.safeParse(raw);
     if (!parsed.success) {
@@ -689,13 +734,13 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.set(shooterId, tick);
 
     // Slim-fire payload (network-discipline P5): the client sends only
-    // `dirAngle`. The ray is reconstructed from the shooter's lag-compensated
-    // pose at `tick` plus the standard 20u barrel offset. SnapshotRing pose
+    // `dirAngle`. The ray origin is reconstructed from the shooter's
+    // lag-compensated pose at `tick` plus the per-mount local offset (rotated
+    // by the ship's authoritative angle at the fire tick) plus the standard
+    // 20 u barrel offset along the mount's fire direction. SnapshotRing pose
     // is preferred (matches what the client predicted); shipPoseCache is the
     // fallback for ticks outside the lag-comp window (rare, since temporal
     // plausibility above already rejects anything beyond 12 ticks).
-    const ndx = -Math.sin(dirAngle);
-    const ndy = Math.cos(dirAngle);
     const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, tick);
     const fallbackShooter = this.shipPoseCache.get(shooterId);
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
@@ -703,138 +748,188 @@ export class SectorRoom extends Room<SectorState> {
     if (sx === undefined || sy === undefined) return;
     const shooterVx = rewoundShooter?.vx ?? fallbackShooter?.vx ?? 0;
     const shooterVy = rewoundShooter?.vy ?? fallbackShooter?.vy ?? 0;
-    const rayFromX = sx + ndx * 20;
-    const rayFromY = sy + ndy * 20;
+    // Ship orientation at fire-tick. Used to rotate each mount's ship-local
+    // offset into world space. For legacy single-mount ships the offset is
+    // (0, 0) so this value never matters; for Phase-3+ multi-mount ships it
+    // determines wing/rear-turret world positions.
+    const shipAngleAtFireTick = rewoundShooter?.angle ?? fallbackShooter?.angle ?? dirAngle;
 
-    // Diagnostic — captures the server's view of where the shooter was
-    // when the fire happened. Cross-reference with the client-side `fire`
-    // log (in `ColyseusClient.sendFire`) to localise any divergence
-    // between (a) where the client thinks it fired (predWorld), (b)
-    // where it rendered itself firing (mirror = predWorld + lerpOffset),
-    // and (c) where the server lag-comp resolved the ray (rewoundShooter).
-    serverLogEvent('fire_received', {
-      shooterId,
-      clientTick: tick,
-      serverTick: this.serverTick,
-      tickDelta: this.serverTick - tick,
-      weapon,
-      rewoundFromRing: rewoundShooter !== undefined,
-      shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
-      ray: {
-        fromX: parseFloat(rayFromX.toFixed(3)),
-        fromY: parseFloat(rayFromY.toFixed(3)),
-        dirX: parseFloat(ndx.toFixed(4)),
-        dirY: parseFloat(ndy.toFixed(4)),
-      },
-    });
-
-    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
-    const weaponDef = getWeapon(weaponId);
-
-    if (weaponDef.mode === 'projectile') {
-      const projDef = weaponDef as ProjectileWeaponDef;
-      this.spawnServerProjectile(shooterId, rayFromX, rayFromY, shooterVx + ndx * projDef.speed, shooterVy + ndy * projDef.speed, projDef.damage, projDef.radius, projDef.maxTicks, weaponId);
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
-      client.send('hit_ack', ack);
+    // Phase 2a: resolve the firing ship's mount list. Today every shipped
+    // kind has exactly one mount in one slot — the loop below iterates once
+    // and behaves identically to the pre-refactor single-fire path. The
+    // structural plumbing is the deliverable.
+    const shipKind = getShipKind(ship.kind);
+    const slotMounts = this.resolveSlotMounts(shipKind);
+    if (slotMounts.length === 0) {
+      // Defensive: no mounts configured. Bail without hit_ack to mirror the
+      // current behaviour of "shooter has no ship/kind" — the client's ghost
+      // projectile will time out on its own.
       return;
     }
 
-    // Hitscan: lag-comp check against rewound positions of all other ships.
-    const hitscanDef = weaponDef as HitscanWeaponDef;
-    let hitId: string | null = null;
-    let hitDist = Infinity;
-    let hitIsObstacle = false;
+    // FireMessage.weapon is still authoritative in Phase 2a (legacy
+    // 1/2/Q-driven weapon-select UI). Phase 2b drops the field and uses
+    // each `mount.weaponId` instead. Until then, every mount in the slot
+    // resolves to the same weapon — a no-op for legacy single-mount ships,
+    // and the multi-mount kinds that land in Phase 3 still all use
+    // 'hitscan' so the iteration is observably equivalent.
+    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
+    const weaponDef = getWeapon(weaponId);
 
-    for (const [targetId] of this.playerToSlot) {
-      if (targetId === shooterId) continue;
-      const targetShip = this.state.ships.get(targetId);
-      if (!targetShip || !targetShip.alive) continue;
+    // Per-mount fire result accumulator. The closest hit across all mounts
+    // is what hit_ack reports (mirroring the legacy "one fire = one hit_ack"
+    // contract); each mount's beam is broadcast independently so the client
+    // can render every barrel's flash.
+    let bestHitId: string | null = null;
+    let bestHitDist = Infinity;
+    let bestHitIsObstacle = false;
+    let bestHitX = 0;
+    let bestHitY = 0;
 
-      // Use rewound pose if available; fall back to current position. Ships
-      // are still circles, so angle is irrelevant for the hit-test, but the
-      // ring's API returns it uniformly for any future polygon-shaped ship.
-      const rewound = this.snapshotRing.getPoseAt(targetId, tick);
-      const fallback = this.shipPoseCache.get(targetId);
-      const cx = rewound?.x ?? fallback?.x;
-      const cy = rewound?.y ?? fallback?.y;
-      if (cx === undefined || cy === undefined) continue;
+    for (const mount of slotMounts) {
+      const mountWorld = this.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
+      // Per-mount fire direction. Phase 2a still trusts the client's
+      // `dirAngle` (legacy single-mount semantic — Phase 2b reconstructs
+      // from server-authoritative mount angle in the lag-comp ring). The
+      // mount's `baseAngle` is added so a hypothetical rear-mount fires
+      // backwards even with the same `dirAngle`; for legacy mounts at
+      // baseAngle=0 this collapses to identity.
+      const mountFireAngle = dirAngle + mount.baseAngle;
+      const ndx = -Math.sin(mountFireAngle);
+      const ndy = Math.cos(mountFireAngle);
+      const rayFromX = mountWorld.x + ndx * 20;
+      const rayFromY = mountWorld.y + ndy * 20;
 
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
-      if (dist !== null && dist < hitDist) {
-        hitDist = dist;
-        hitId = targetId;
-        hitIsObstacle = false;
+      serverLogEvent('fire_received', {
+        shooterId,
+        mountId: mount.id,
+        clientTick: tick,
+        serverTick: this.serverTick,
+        tickDelta: this.serverTick - tick,
+        weapon,
+        rewoundFromRing: rewoundShooter !== undefined,
+        shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
+        ray: {
+          fromX: parseFloat(rayFromX.toFixed(3)),
+          fromY: parseFloat(rayFromY.toFixed(3)),
+          dirX: parseFloat(ndx.toFixed(4)),
+          dirY: parseFloat(ndy.toFixed(4)),
+        },
+      });
+
+      if (weaponDef.mode === 'projectile') {
+        const projDef = weaponDef as ProjectileWeaponDef;
+        this.spawnServerProjectile(
+          shooterId,
+          rayFromX,
+          rayFromY,
+          shooterVx + ndx * projDef.speed,
+          shooterVy + ndy * projDef.speed,
+          projDef.damage,
+          projDef.radius,
+          projDef.maxTicks,
+          weaponId,
+        );
+        // No laser_fired broadcast for projectiles; the projectile is shipped
+        // on the next snapshot's `projectiles[]` slice. Continue to next mount.
+        continue;
       }
+
+      // Hitscan: lag-comp check against rewound positions of all other ships
+      // and swarm entities for this mount's ray.
+      const hitscanDef = weaponDef as HitscanWeaponDef;
+      let mountHitId: string | null = null;
+      let mountHitDist = Infinity;
+      let mountHitIsObstacle = false;
+
+      for (const [targetId] of this.playerToSlot) {
+        if (targetId === shooterId) continue;
+        const targetShip = this.state.ships.get(targetId);
+        if (!targetShip || !targetShip.alive) continue;
+        const rewound = this.snapshotRing.getPoseAt(targetId, tick);
+        const fallback = this.shipPoseCache.get(targetId);
+        const cx = rewound?.x ?? fallback?.x;
+        const cy = rewound?.y ?? fallback?.y;
+        if (cx === undefined || cy === undefined) continue;
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
+        if (dist !== null && dist < mountHitDist) {
+          mountHitDist = dist;
+          mountHitId = targetId;
+          mountHitIsObstacle = false;
+        }
+      }
+
+      for (const rec of this.swarmRegistry.all()) {
+        const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
+        const b = slotBase(rec.slot);
+        const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
+        const cy = rewound?.y ?? this.sabF32[b + SLOT_Y_OFF]!;
+        const ca = rewound?.angle ?? this.sabF32[b + SLOT_ANGLE_OFF]!;
+        let dist: number | null;
+        if (rec.kind === 0 && rec.vertices) {
+          dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, ca, rec.vertices);
+        } else {
+          dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rec.radius);
+        }
+        if (dist !== null && dist < mountHitDist) {
+          mountHitDist = dist;
+          mountHitId = rec.id;
+          mountHitIsObstacle = true;
+        }
+      }
+
+      // Resolve wire target id for the laser_fired broadcast (swarm hits use
+      // the 'swarm-${entityId}' wire convention).
+      let wireTargetId: string | undefined = mountHitId ?? undefined;
+      if (mountHitId && mountHitIsObstacle) {
+        const rec = this.swarmRegistry.get(mountHitId);
+        if (rec) wireTargetId = `swarm-${rec.entityId}`;
+      }
+
+      if (mountHitId) {
+        if (Math.random() < 0.01) {
+          logger.info({ shooterId, mountId: mount.id, hitId: mountHitId, hitIsObstacle: mountHitIsObstacle }, 'LASER_FIRED (1% sample)');
+        }
+        const hitX = rayFromX + ndx * mountHitDist;
+        const hitY = rayFromY + ndy * mountHitDist;
+        this.applyDamage(mountHitId, shooterId, hitscanDef.damage, hitX, hitY);
+        // Track best (closest) hit across mounts for the aggregate hit_ack.
+        if (mountHitDist < bestHitDist) {
+          bestHitDist = mountHitDist;
+          bestHitId = mountHitId;
+          bestHitIsObstacle = mountHitIsObstacle;
+          bestHitX = hitX;
+          bestHitY = hitY;
+        }
+      }
+
+      const beamEndX = rayFromX + ndx * (mountHitDist === Infinity ? hitscanDef.range : mountHitDist);
+      const beamEndY = rayFromY + ndy * (mountHitDist === Infinity ? hitscanDef.range : mountHitDist);
+      this.broadcast('laser_fired', {
+        type: 'laser_fired',
+        shooterId,
+        fromX: rayFromX,
+        fromY: rayFromY,
+        toX: beamEndX,
+        toY: beamEndY,
+        hit: !!mountHitId,
+        targetId: wireTargetId,
+      } satisfies LaserFiredEvent);
     }
 
-    // Check swarm entities (asteroids, drones) lag-compensated against the
-    // shooter's tick. Asteroids (kind=0) with vertices use the polygon-aware
-    // hit test so the silhouette — not the bounding circle — decides hits.
-    // Drones (kind=1) and any asteroid that somehow lacks vertices fall back
-    // to the sphere test against rec.radius. Per-entity rewound pose is the
-    // single source of truth; SAB-current is the fallback for ticks outside
-    // the ring window.
-    for (const rec of this.swarmRegistry.all()) {
-      const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
-      const b = slotBase(rec.slot);
-      const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
-      const cy = rewound?.y ?? this.sabF32[b + SLOT_Y_OFF]!;
-      const ca = rewound?.angle ?? this.sabF32[b + SLOT_ANGLE_OFF]!;
-      let dist: number | null;
-      if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, ca, rec.vertices);
-      } else {
-        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rec.radius);
-      }
-      if (dist !== null && dist < hitDist) {
-        hitDist = dist;
-        hitId = rec.id;
-        hitIsObstacle = true;
-      }
-    }
-
-    // Resolve the wire-side target id. Player hits send raw playerId; swarm
-    // hits send `swarm-${entityId}` so the client renderer can match against
-    // its `mirror.swarm` keying convention. The server still uses `hitId` (the
-    // registry's string id) internally for damage routing and lag-comp.
-    let wireTargetId: string | undefined = hitId ?? undefined;
-    if (hitId && hitIsObstacle) {
-      const rec = this.swarmRegistry.get(hitId);
-      if (rec) wireTargetId = `swarm-${rec.entityId}`;
-    }
-
-    if (hitId) {
-      // Sampled LASER_FIRED log at 1 %.
-      if (Math.random() < 0.01) {
-        logger.info({ shooterId, hitId, hitIsObstacle }, 'LASER_FIRED (1% sample)');
-      }
-      // applyDamage routes by id type: player ship → existing damage path,
-      // swarm entity (drone with health) → swarm damage path. Asteroids (no
-      // swarmHealth entry) are no-ops; the hit still rings client-side via
-      // the `laser_fired` broadcast and the wireTargetId tint.
-      const hitX = rayFromX + ndx * hitDist;
-      const hitY = rayFromY + ndy * hitDist;
-      this.applyDamage(hitId, shooterId, hitscanDef.damage, hitX, hitY);
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: hitId };
+    // Aggregate hit_ack: any mount hit → hit:true with the closest target.
+    // For projectile fires no mount produces a synchronous hit, so the
+    // ack is always { hit:false } in that case — matching the pre-refactor
+    // contract where projectile fires acked false and the client's ghost
+    // resolved later via the snapshot's `projectiles[]` slice.
+    void bestHitX; void bestHitY; void bestHitIsObstacle; // reserved for future hit-pos in hit_ack
+    if (bestHitId) {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitId };
       client.send('hit_ack', ack);
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
     }
-
-    // Broadcast authoritative beam endpoint to ALL clients so they can render it.
-    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? hitscanDef.range : hitDist);
-    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? hitscanDef.range : hitDist);
-    this.broadcast('laser_fired', {
-      type: 'laser_fired',
-      shooterId,
-      fromX: rayFromX,
-      fromY: rayFromY,
-      toX: beamEndX,
-      toY: beamEndY,
-      hit: !!hitId,
-      targetId: wireTargetId,
-    } satisfies LaserFiredEvent);
   }
 
   /**
@@ -873,53 +968,67 @@ export class SectorRoom extends Room<SectorState> {
 
     const len = Math.hypot(dirX, dirY);
     if (len < 0.001) return;
-    const ndx = dirX / len;
-    const ndy = dirY / len;
+    const dirNdx = dirX / len;
+    const dirNdy = dirY / len;
 
     // Drone fires from its own pose, offset 16u along the firing direction so
-    // it doesn't self-hit on the next-tick ray.
+    // it doesn't self-hit on the next-tick ray. Phase 2a: iterate mounts in
+    // the drone's primary slot — for legacy single-mount drones this loops
+    // once and produces identical behaviour to the pre-refactor path.
     const self = this.swarmEntitySnapshot(shooterId);
     if (!self) return;
-    const rayFromX = self.x + ndx * 16;
-    const rayFromY = self.y + ndy * 16;
-
-    // Hitscan against all alive ships (no lag-comp — drones fire at current tick).
-    let hitId: string | null = null;
-    let hitDist = Infinity;
-    for (const [targetId] of this.playerToSlot) {
-      const targetShip = this.state.ships.get(targetId);
-      if (!targetShip || !targetShip.alive) continue;
-      const pose = this.shipPoseCache.get(targetId);
-      if (!pose) continue;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, SHIP_COLLISION_RADIUS);
-      if (dist !== null && dist < hitDist) { hitDist = dist; hitId = targetId; }
-    }
-
-    if (hitId) {
-      this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
-    }
-
-    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-
-    // Wire shooterId for AI shooters uses the swarm-${entityId} convention so
-    // the client can look the firing drone up in mirror.swarm and re-derive
-    // the beam origin from its current pose each frame (see PixiRenderer for
-    // the player-beam parallel). Bare `drone-N` would leave the client unable
-    // to map the shooter to a swarm entry.
     const shooterRec = this.swarmRegistry.get(shooterId);
+    const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
+    const droneKind = getShipKind(droneKindId);
+    const slotMounts = this.resolveSlotMounts(droneKind);
+    if (slotMounts.length === 0) return;
+
+    // The fire direction the AI computed (`dirX, dirY`) is the drone's body
+    // intent. Re-express as an angle so mount.baseAngle can be added per
+    // mount (mirroring the player path's `dirAngle + mount.baseAngle`).
+    const fireAngle = Math.atan2(-dirNdx, dirNdy);
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
 
-    this.broadcast('laser_fired', {
-      type: 'laser_fired',
-      shooterId: wireShooterId,
-      fromX: rayFromX,
-      fromY: rayFromY,
-      toX: beamEndX,
-      toY: beamEndY,
-      hit: !!hitId,
-      targetId: hitId ?? undefined,
-    } satisfies LaserFiredEvent);
+    for (const mount of slotMounts) {
+      const mountWorld = this.mountWorldOrigin(self.x, self.y, self.angle, mount);
+      const mountFireAngle = fireAngle + mount.baseAngle;
+      const ndx = -Math.sin(mountFireAngle);
+      const ndy = Math.cos(mountFireAngle);
+      const rayFromX = mountWorld.x + ndx * 16;
+      const rayFromY = mountWorld.y + ndy * 16;
+
+      let hitId: string | null = null;
+      let hitDist = Infinity;
+      for (const [targetId] of this.playerToSlot) {
+        const targetShip = this.state.ships.get(targetId);
+        if (!targetShip || !targetShip.alive) continue;
+        const pose = this.shipPoseCache.get(targetId);
+        if (!pose) continue;
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, SHIP_COLLISION_RADIUS);
+        if (dist !== null && dist < hitDist) {
+          hitDist = dist;
+          hitId = targetId;
+        }
+      }
+
+      if (hitId) {
+        this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
+      }
+
+      const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+      const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+
+      this.broadcast('laser_fired', {
+        type: 'laser_fired',
+        shooterId: wireShooterId,
+        fromX: rayFromX,
+        fromY: rayFromY,
+        toX: beamEndX,
+        toY: beamEndY,
+        hit: !!hitId,
+        targetId: hitId ?? undefined,
+      } satisfies LaserFiredEvent);
+    }
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
