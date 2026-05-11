@@ -4,47 +4,30 @@ import FullscreenIcon from '@mui/icons-material/Fullscreen';
 import FullscreenExitIcon from '@mui/icons-material/FullscreenExit';
 import IosShareIcon from '@mui/icons-material/IosShare';
 import AddToHomeScreenIcon from '@mui/icons-material/AddToHomeScreen';
-import { Slot } from './Slot';
 import { useFullscreen } from './useFullscreen';
 import { isIOS, useStandalone } from './useStandalone';
 import { isTouchDevice } from '../input/TouchInput';
 
-interface Props {
-  /** When true, the toggle is rendered as a discreet 50%-opacity icon
-   *  inside the `top-right` slot. When false, render nothing. */
-  inSlot?: boolean;
-  /** Custom "compact" class for non-slot embedding (galaxy-map CTA wraps
-   *  this in its own surface). When omitted, an `IconButton` is returned. */
-  asButton?: boolean;
-}
-
 /**
- * Persistent fullscreen control.
+ * Persistent fullscreen control. Hidden on desktop (where there's no
+ * browser chrome to toggle) and inside an installed PWA.
  *
- * Visible on every touch-device screen (meta landing, login, galaxy-map,
- * in-game) AND while in fullscreen — the same icon flips to "exit" so
- * users can leave fullscreen with one tap. Hidden only on desktop pointer
- * devices and inside an installed PWA (where browser chrome is already
- * gone and there's nothing to toggle).
+ * - On Android-class browsers: tap → `requestFullscreen()` + landscape lock
+ *   when entering; `exitFullscreen()` + orientation unlock when leaving.
+ * - On iOS Safari: tap opens an "Add to Home Screen" dialog (the only way
+ *   to remove iOS chrome is via PWA install).
  *
- * - On Android-class browsers: tap → `requestFullscreen()` + landscape
- *   lock when entering; `exitFullscreen()` + orientation unlock when
- *   leaving.
- * - On iOS Safari: tap opens an "Add to Home Screen" dialog because the
- *   only way to remove iOS chrome is via PWA install.
- *
- * Renders into the `top-right` slot at order=2 (just below the
- * `DrawerToggle` at order=1) when `inSlot` is true.
+ * Slotting (anchor + ordering) is owned by `TopRightToolbar`; this
+ * component returns the presentational chip + its install dialog fragment.
+ * Returns `null` when not applicable so the toolbar lays out cleanly.
  */
-export function FullscreenToggle({ inSlot = true }: Props): JSX.Element | null {
+export function FullscreenToggle(): JSX.Element | null {
   const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen();
   const standalone = useStandalone();
   const [installOpen, setInstallOpen] = useState(false);
 
-  // Hide on desktop / inside a PWA — there's no browser chrome to toggle
-  // away from. Stays visible while in fullscreen so users can exit.
   const visible = !standalone && isTouchDevice();
-  if (!visible || !inSlot) return null;
+  if (!visible) return null;
 
   const onClick = async (): Promise<void> => {
     if (isFullscreen) {
@@ -60,28 +43,30 @@ export function FullscreenToggle({ inSlot = true }: Props): JSX.Element | null {
 
   return (
     <>
-      <Slot anchor="top-right" order={2}>
-        <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
-          <IconButton
-            data-testid="fullscreen-toggle"
-            data-fullscreen={isFullscreen ? '1' : '0'}
-            onClick={onClick}
-            size="small"
-            sx={{
-              opacity: 0.5,
-              bgcolor: 'rgba(255,255,255,0.18)',
-              color: '#fff',
-              backdropFilter: 'blur(4px)',
-              '&:hover, &:focus, &:active': {
-                opacity: 1,
-                bgcolor: 'rgba(255,255,255,0.25)',
-              },
-            }}
-          >
-            {isFullscreen ? <FullscreenExitIcon fontSize="small" /> : <FullscreenIcon fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-      </Slot>
+      <Tooltip title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}>
+        <IconButton
+          data-testid="fullscreen-toggle"
+          data-fullscreen={isFullscreen ? '1' : '0'}
+          onClick={onClick}
+          sx={{
+            p: 0.5,
+            opacity: 0.55,
+            bgcolor: 'rgba(5,7,15,0.45)',
+            backdropFilter: 'blur(4px)',
+            border: '1px solid rgba(255,255,255,0.10)',
+            color: '#dde',
+            transition: 'opacity 120ms, background 120ms',
+            '&:hover, &:focus, &:active': {
+              opacity: 1,
+              bgcolor: 'rgba(5,7,15,0.65)',
+            },
+          }}
+        >
+          {isFullscreen
+            ? <FullscreenExitIcon sx={{ fontSize: 16 }} />
+            : <FullscreenIcon sx={{ fontSize: 16 }} />}
+        </IconButton>
+      </Tooltip>
 
       <InstallDialog open={installOpen} onClose={() => setInstallOpen(false)} />
     </>

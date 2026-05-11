@@ -35,8 +35,7 @@ import { MetaLandingScreen } from './components/MetaLandingScreen';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
-import { DrawerToggle } from './layout/Drawer/DrawerToggle';
-import { FullscreenToggle } from './layout/FullscreenToggle';
+import { TopRightToolbar } from './layout/TopRightToolbar';
 import { MobileAvatarBadge } from './layout/MobileAvatarBadge';
 import { getSector } from '../core/galaxy/galaxy';
 
@@ -475,8 +474,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         style={{ width: '100%', height: '100%', touchAction: 'none' }}
       />
       <Slot anchor="top-left"><Hud /></Slot>
-      <Slot anchor="top-right"><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
-      <DrawerToggle />
+      <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (
@@ -738,7 +736,7 @@ export function App(): JSX.Element {
     <ErrorBoundary>
       <LayoutProvider>
         {phaseContent}
-        <FullscreenToggle />
+        <TopRightToolbar />
       </LayoutProvider>
     </ErrorBoundary>
   );
