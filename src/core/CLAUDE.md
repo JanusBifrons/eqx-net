@@ -85,6 +85,14 @@ Test coverage at [physics/inputQueue.test.ts](physics/inputQueue.test.ts) locks 
 
 ---
 
+## Physics Worker — Tick-Loop Pacing (2026-05-11)
+
+The worker's 60 Hz step loop in [physics/worker.ts](physics/worker.ts) uses **`setTimeout(loop, 1)` to yield the CPU between ticks**, then `setImmediate(loop)` *only* after stepping (to drain any backlog in one event-loop turn). **Do not revert to unconditional `setImmediate(loop)`** — that pattern busy-polls the event loop millions of times per tick window, pegging one CPU core per worker. With 7 galaxy-sector worker threads it adds up to ~700 % parent-process CPU at idle, which starves the main-thread event loop and shows up as 500 ms+ snapshot RTT on mobile clients (the 2026-05-11 incident).
+
+If you ever find the worker logging hitches with `workerTickMs` consistently >5 ms, suspect timer quantisation first (Windows multimedia clock fallback) — the fix there is to engage `timers/promises` `setTimeout` or shorten the sleep to 0 ms only on tick-due frames, not to revert to busy-polling.
+
+`setInterval(fn, 16.67)` is still forbidden for the tick driver: on Windows it quantises to ~15.6 ms and fires every ~31 ms, regressing the simulation to ~32 Hz.
+
 ## Physics Worker — Worker→Main Message Variants
 
 The worker posts three discrete message types to the main thread:
