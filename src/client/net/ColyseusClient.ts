@@ -2572,11 +2572,50 @@ export class ColyseusGameClient {
     if (!state) return;
     const activeWeapon = useUIStore.getState().activeWeapon;
     const shotId = nextShotId();
-    const fwdX = -Math.sin(state.angle);
-    const fwdY = Math.cos(state.angle);
-    const fromX = state.x + fwdX * 20;
-    const fromY = state.y + fwdY * 20;
-    this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+
+    // Multi-mount/turret refactor (Phase 3 fix-up): spawn one ghost per mount
+    // in the active slot, at each mount's world origin. Pre-fix the single
+    // ghost spawned at `state.x/y + 20 u forward` rendered a third visual
+    // between the two wing beams on the interceptor (and similarly between
+    // the gunship's fore/aft mounts) because the ghost sat at the ship
+    // centre rather than at the firing barrel. All N ghosts share one wire
+    // `clientShotId` (shotGroup) so the single `hit_ack` fades the whole
+    // salvo together.
+    const mounts = this.localShipMounts();
+    const cosA = Math.cos(state.angle);
+    const sinA = Math.sin(state.angle);
+    if (mounts.length === 0) {
+      // Defensive fallback: no mounts → spawn the legacy single ghost at
+      // ship centre. Should not happen for any shipped kind today.
+      const fwdX = -Math.sin(state.angle);
+      const fwdY = Math.cos(state.angle);
+      const fromX = state.x + fwdX * 20;
+      const fromY = state.y + fwdY * 20;
+      this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+    } else {
+      for (const mount of mounts) {
+        const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
+        const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
+        const mountFireAngle = state.angle + mount.baseAngle;
+        const fwdX = -Math.sin(mountFireAngle);
+        const fwdY = Math.cos(mountFireAngle);
+        const fromX = mountWorldX + fwdX * 20;
+        const fromY = mountWorldY + fwdY * 20;
+        this.ghostManager.spawn(
+          shotId,
+          localId,
+          fromX,
+          fromY,
+          fwdX,
+          fwdY,
+          activeWeapon,
+          state.vx,
+          state.vy,
+          mount.id,
+        );
+      }
+    }
+
     this.room.send('fire', {
       type: 'fire',
       tick,
@@ -2585,21 +2624,25 @@ export class ColyseusGameClient {
       dirAngle: state.angle,
     });
     // Diagnostic — captures the three reference points needed to debug
-    // "lasers firing from the wrong place". The laser ghost spawns at
-    // (fromX, fromY) = predWorld + 20 * forward, with NO lerp offset
-    // applied. The visible ship is rendered from `mirror.ships[localId]`
-    // which DOES include the reconciler's lerp offset. Whenever the
-    // reconciler is mid-lerp, those two diverge by `lerpOffset`. The
-    // server's lag-comp will validate the shot against the SnapshotRing
-    // pose at `tick`, captured in the server-side `fire_received` log.
-    // Cross-reference all three to localise the divergence.
+    // "lasers firing from the wrong place". `spawnPos` is the legacy
+    // ship-centre+20-u-forward reference (NOT per-mount post-Phase-3, so
+    // the diagnostic stays comparable across single-mount and multi-mount
+    // ships); per-mount geometry is reconstructable from `predState` + the
+    // ship-kind catalogue if a capture needs it. The visible ship is
+    // rendered from `mirror.ships[localId]` which DOES include the
+    // reconciler's lerp offset, so `predState` vs `mirrorPose` shows the
+    // current divergence. The server's lag-comp validates the shot against
+    // the SnapshotRing pose at `tick`, captured in `fire_received`.
     const mirrorPose = this.mirror.ships.get(localId);
     const lerpOff = this.reconciler?.lerpOffset;
     const lerpAng = this.reconciler?.lerpAngleOffset ?? 0;
+    const legacyFwdX = -Math.sin(state.angle);
+    const legacyFwdY = Math.cos(state.angle);
     logEvent('fire', {
       tick,
       shotId,
       weapon: activeWeapon,
+      mountCount: mounts.length,
       predState: {
         x: parseFloat(state.x.toFixed(3)),
         y: parseFloat(state.y.toFixed(3)),
@@ -2616,8 +2659,8 @@ export class ColyseusGameClient {
         angle: parseFloat(lerpAng.toFixed(4)),
       } : null,
       spawnPos: {
-        x: parseFloat(fromX.toFixed(3)),
-        y: parseFloat(fromY.toFixed(3)),
+        x: parseFloat((state.x + legacyFwdX * 20).toFixed(3)),
+        y: parseFloat((state.y + legacyFwdY * 20).toFixed(3)),
       },
       lerping: this.reconciler?.isLerping ?? false,
     });

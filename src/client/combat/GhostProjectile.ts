@@ -6,7 +6,14 @@ const BEAM_TTL_MS = 250;
 const PROJECTILE_GHOST_TTL_MS = 500;
 
 interface GhostEntry {
+  /** Map key — unique per ghost. For multi-mount ships this is
+   *  `${clientShotId}:${mountId}`; for legacy single-mount ships this is the
+   *  bare `clientShotId` (back-compat with pre-2c spawn callers). */
   id: string;
+  /** The wire-level FireMessage `clientShotId` this ghost belongs to. All
+   *  N ghosts spawned for one fire share the same `shotGroup`, so a single
+   *  `resolve(clientShotId)` fades the whole salvo on hit_ack arrival. */
+  shotGroup: string;
   x: number;
   y: number;
   vx: number;
@@ -29,7 +36,15 @@ interface GhostEntry {
 export class GhostManager {
   private readonly ghosts = new Map<string, GhostEntry>();
 
-  /** Spawn a ghost on the same frame the FIRE message is sent. */
+  /** Spawn a ghost on the same frame the FIRE message is sent.
+   *
+   *  Multi-mount/turret refactor (Phase 3 fix-up): an optional `mountId`
+   *  param disambiguates ghosts from the same fire request when a ship has
+   *  multiple mounts in its active slot. Pre-2c callers pass no `mountId`
+   *  and the ghost is keyed by `clientShotId` directly (unchanged behaviour).
+   *  When passed, the ghost is keyed by `${clientShotId}:${mountId}` so
+   *  multiple ghosts can coexist for one wire fire, and `resolve` fades
+   *  every ghost in the group on a single `hit_ack`. */
   spawn(
     clientShotId: string,
     ownerId: string,
@@ -40,6 +55,7 @@ export class GhostManager {
     weapon: string,
     shooterVx: number = 0,
     shooterVy: number = 0,
+    mountId?: string,
   ): void {
     const len = Math.hypot(dirX, dirY);
     if (len < 0.001) return;
@@ -47,10 +63,12 @@ export class GhostManager {
     const ny = dirY / len;
 
     const weaponDef = isWeaponId(weapon) ? getWeapon(weapon) : null;
+    const id = mountId ? `${clientShotId}:${mountId}` : clientShotId;
 
     if (!weaponDef || weaponDef.mode === 'hitscan') {
-      this.ghosts.set(clientShotId, {
-        id: clientShotId,
+      this.ghosts.set(id, {
+        id,
+        shotGroup: clientShotId,
         x: fromX,
         y: fromY,
         vx: 0,
@@ -64,8 +82,9 @@ export class GhostManager {
       });
     } else {
       const speed = weaponDef.mode === 'projectile' ? weaponDef.speed : 300;
-      this.ghosts.set(clientShotId, {
-        id: clientShotId,
+      this.ghosts.set(id, {
+        id,
+        shotGroup: clientShotId,
         x: fromX,
         y: fromY,
         vx: shooterVx + nx * speed,
@@ -79,11 +98,16 @@ export class GhostManager {
     }
   }
 
-  /** Called when hit_ack arrives. */
+  /** Called when hit_ack arrives. Fades every ghost that was spawned for
+   *  the given `clientShotId`, even when the salvo wrote N entries under
+   *  per-mount keys (multi-mount/turret refactor). Single-mount fires
+   *  still fade exactly the one ghost they spawned. */
   resolve(clientShotId: string, hit: boolean): void {
-    const ghost = this.ghosts.get(clientShotId);
-    if (!ghost) return;
-    ghost.resolved = true;
+    for (const ghost of this.ghosts.values()) {
+      if (ghost.shotGroup === clientShotId) {
+        ghost.resolved = true;
+      }
+    }
     void hit;
   }
 
