@@ -48,6 +48,79 @@ export const ShipShapeSchema = z
 export type ShipShape = z.infer<typeof ShipShapeSchema>;
 
 // ---------------------------------------------------------------------------
+// Weapon mounts + slots — multi-mount/turret refactor (Phase 1, 2026-05-11).
+//
+// A `WeaponMount` is a physical hardpoint on the ship: local offset from the
+// ship's centre, a resting (base) angle, an arc of permissible rotation, a
+// rotation speed (zero = fixed mount), and a weapon (catalogue id).
+//
+// A `WeaponSlot` is a logical grouping of mounts. The pilot selects an
+// "active slot"; only mounts in the active slot run target-pick AI, rotate
+// to aim, and fire. Slots are how a ship with both a forward cannon and a
+// rear turret lets the pilot choose which set is hot. The fire trigger fans
+// out to every mount in the active slot in one frame (intentional misses
+// included for arc-limited mounts).
+//
+// `WeaponId` is duplicated as a local zod enum to keep `src/shared-types/`
+// self-contained. Parity with the runtime catalogue at
+// `src/core/combat/WeaponCatalogue.ts` is asserted in
+// `tests/unit/shipKinds.test.ts` — adding a weapon means extending both
+// places, and the test fails until they agree.
+// ---------------------------------------------------------------------------
+
+/** Catalogue-id of the weapon installed in a mount. Must match a
+ *  `WeaponId` from `src/core/combat/WeaponCatalogue.ts`. */
+export const MountWeaponIdSchema = z.enum(['hitscan', 'laser']);
+
+export const WeaponMountSchema = z
+  .object({
+    /** Unique within the ship-kind, e.g. 'forward', 'wing-l', 'rear'. */
+    id: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+    /** Ship-relative offset of the mount, in entity-local units (Pixi-up:
+     *  forward = -y, right = +x). The visual turret sprite is drawn here. */
+    localX: z.number().finite(),
+    localY: z.number().finite(),
+    /** Resting angle of the barrel, ship-relative, in radians. 0 = barrel
+     *  points down-+y axis (i.e. forward) by Pixi convention; π for a
+     *  rear-facing mount. Final world fire direction is
+     *  `ship.angle + baseAngle + currentMountAngle`. */
+    baseAngle: z.number().finite(),
+    /** Lower bound on rotation from `baseAngle`, radians. Equal min=max ⇒
+     *  fixed mount. The legacy single-forward-mount ships set both to 0. */
+    arcMin: z.number().finite(),
+    /** Upper bound on rotation from `baseAngle`, radians. Must be ≥ arcMin. */
+    arcMax: z.number().finite(),
+    /** Maximum rotation rate, rad/s. 0 ⇒ no rotation (fixed). The TurretAi
+     *  uses this to limit per-tick angle delta when slewing toward target. */
+    rotationSpeed: z.number().min(0),
+    /** Catalogue id of the weapon in this mount. Data-driven so a future
+     *  loadout UI can swap weapons without touching ship-kind definitions. */
+    weaponId: MountWeaponIdSchema,
+  })
+  .strict()
+  .refine((m) => m.arcMax >= m.arcMin, {
+    message: 'arcMax must be ≥ arcMin',
+    path: ['arcMax'],
+  });
+export type WeaponMount = z.infer<typeof WeaponMountSchema>;
+
+export const WeaponSlotSchema = z
+  .object({
+    /** Unique within the ship-kind, e.g. 'primary', 'secondary'. */
+    id: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+    displayName: z.string().min(1),
+    /** Ordered list of mount ids that belong to this slot. Each mount must
+     *  exist on the same ship-kind, and each mount can belong to at most one
+     *  slot — both invariants are enforced by `ShipKindSchema`'s top-level
+     *  refinement. The ordering is the canonical fire-order (mount 0 fires
+     *  first, etc.) for any future serial-fire effects; today all mounts in
+     *  a slot fire on the same tick so the order is presentation-only. */
+    mountIds: z.array(z.string()).min(1),
+  })
+  .strict();
+export type WeaponSlot = z.infer<typeof WeaponSlotSchema>;
+
+// ---------------------------------------------------------------------------
 // ShipKind — the absolute (not multiplicative) tuning record. Adding a new
 // kind never requires diffing against a base — every value is final.
 // ---------------------------------------------------------------------------
@@ -110,8 +183,100 @@ export const ShipKindSchema = z
       .strict(),
 
     shape: ShipShapeSchema,
+
+    // -- Multi-mount/turret catalogue (Phase 1, 2026-05-11) -----------------
+    /** Physical weapon mounts (hardpoints) on the ship. Optional in the
+     *  schema for backward compat with any external snapshot that pre-dates
+     *  the multi-mount refactor, but every kind shipped in
+     *  `SHIP_KINDS` carries this field — the legacy fighter/scout/heavy
+     *  define a single `'forward'` mount at the origin with zero arc and
+     *  zero rotation speed (behaviour-equivalent to pre-refactor combat). */
+    mounts: z.array(WeaponMountSchema).optional(),
+    /** Logical groupings of mounts the pilot selects between. Every mount
+     *  must belong to exactly one slot. Legacy ships have a single
+     *  `'primary'` slot containing their single forward mount. */
+    slots: z.array(WeaponSlotSchema).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((kind, ctx) => {
+    // Mount + slot structural integrity. Optional-but-correlated: either
+    // both fields present or both absent.
+    const mounts = kind.mounts;
+    const slots = kind.slots;
+    if ((mounts === undefined) !== (slots === undefined)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [mounts === undefined ? 'mounts' : 'slots'],
+        message: 'mounts and slots must both be present or both absent',
+      });
+      return;
+    }
+    if (mounts === undefined || slots === undefined) return;
+
+    // Mount ids are unique within the ship-kind.
+    const mountIds = new Set<string>();
+    for (const m of mounts) {
+      if (mountIds.has(m.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['mounts'],
+          message: `duplicate mount id: '${m.id}'`,
+        });
+        return;
+      }
+      mountIds.add(m.id);
+    }
+
+    // Slot ids are unique within the ship-kind.
+    const slotIds = new Set<string>();
+    for (const s of slots) {
+      if (slotIds.has(s.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['slots'],
+          message: `duplicate slot id: '${s.id}'`,
+        });
+        return;
+      }
+      slotIds.add(s.id);
+    }
+
+    // Every slot.mountIds entry references a known mount; every mount
+    // belongs to exactly one slot.
+    const mountSlotOwner = new Map<string, string>();
+    for (const s of slots) {
+      for (const mid of s.mountIds) {
+        if (!mountIds.has(mid)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['slots'],
+            message: `slot '${s.id}' references unknown mount '${mid}'`,
+          });
+          return;
+        }
+        const prior = mountSlotOwner.get(mid);
+        if (prior !== undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['slots'],
+            message: `mount '${mid}' belongs to both '${prior}' and '${s.id}'`,
+          });
+          return;
+        }
+        mountSlotOwner.set(mid, s.id);
+      }
+    }
+    for (const m of mounts) {
+      if (!mountSlotOwner.has(m.id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['slots'],
+          message: `mount '${m.id}' is not assigned to any slot`,
+        });
+        return;
+      }
+    }
+  });
 export type ShipKind = z.infer<typeof ShipKindSchema>;
 export type ShipKindId = ShipKind['id'];
 
@@ -123,6 +288,32 @@ export type ShipKindId = ShipKind['id'];
 // Per-kind axes: scout = nimble & fragile, fighter = balanced, heavy =
 // punishing top-end at the cost of agility.
 // ---------------------------------------------------------------------------
+
+/** Legacy single-mount/single-slot template — behaviour-equivalent to the
+ *  pre-multi-mount-refactor combat (one fixed forward weapon firing from the
+ *  ship centre). Fighter, scout, and heavy all use this shape; new
+ *  multi-mount kinds (Phase 3) supply their own.
+ *
+ *  Each ship-kind clones this so the consumer reads a per-kind catalogue
+ *  entry rather than a shared singleton — `World.spawnShip`, `MountAngleRing`,
+ *  etc. allocate per-ship state by mount index, so sharing the array literal
+ *  is fine, but cloning keeps the option open. */
+const LEGACY_FORWARD_MOUNT: WeaponMount = Object.freeze({
+  id: 'forward',
+  localX: 0,
+  localY: 0,
+  baseAngle: 0,
+  arcMin: 0,
+  arcMax: 0,
+  rotationSpeed: 0,
+  weaponId: 'hitscan',
+}) as WeaponMount;
+
+const LEGACY_PRIMARY_SLOT: WeaponSlot = Object.freeze({
+  id: 'primary',
+  displayName: 'Primary',
+  mountIds: Object.freeze(['forward']) as unknown as ReadonlyArray<string>,
+}) as WeaponSlot;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Tuning derivation (top-down arcade — between space-feel and full-car).
@@ -189,6 +380,8 @@ const SCOUT: ShipKind = ShipKindSchema.parse({
       [-6, 8],
     ],
   },
+  mounts: [LEGACY_FORWARD_MOUNT],
+  slots: [LEGACY_PRIMARY_SLOT],
 });
 
 const FIGHTER: ShipKind = ShipKindSchema.parse({
@@ -224,6 +417,8 @@ const FIGHTER: ShipKind = ShipKindSchema.parse({
       [10, 10],
     ],
   },
+  mounts: [LEGACY_FORWARD_MOUNT],
+  slots: [LEGACY_PRIMARY_SLOT],
 });
 
 const HEAVY: ShipKind = ShipKindSchema.parse({
@@ -258,6 +453,8 @@ const HEAVY: ShipKind = ShipKindSchema.parse({
       [-12, -2],
     ],
   },
+  mounts: [LEGACY_FORWARD_MOUNT],
+  slots: [LEGACY_PRIMARY_SLOT],
 });
 
 /**

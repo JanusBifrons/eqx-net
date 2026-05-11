@@ -4,11 +4,15 @@ import {
   SHIP_KINDS_LIST,
   DEFAULT_SHIP_KIND,
   ShipKindSchema,
+  WeaponMountSchema,
+  WeaponSlotSchema,
+  MountWeaponIdSchema,
   getShipKind,
   isShipKindId,
   shipKindFromIndex,
   shipKindToIndex,
 } from '../../src/shared-types/shipKinds.js';
+import { WEAPON_IDS } from '../../src/core/combat/WeaponCatalogue.js';
 
 describe('shipKinds catalogue', () => {
   it('has at least three kinds with stable ids', () => {
@@ -81,6 +85,132 @@ describe('getShipKind / isShipKindId', () => {
   it('getShipKind returns the exact catalogue record for a known id', () => {
     expect(getShipKind('scout')).toBe(SHIP_KINDS.scout);
     expect(getShipKind('heavy')).toBe(SHIP_KINDS.heavy);
+  });
+});
+
+describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
+  it('every catalogue kind defines at least one mount and one slot', () => {
+    for (const kind of SHIP_KINDS_LIST) {
+      expect(kind.mounts, `${kind.id} mounts`).toBeDefined();
+      expect(kind.slots, `${kind.id} slots`).toBeDefined();
+      expect(kind.mounts!.length).toBeGreaterThanOrEqual(1);
+      expect(kind.slots!.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('legacy kinds (fighter/scout/heavy) carry the canonical forward mount + primary slot', () => {
+    for (const id of ['fighter', 'scout', 'heavy'] as const) {
+      const kind = SHIP_KINDS[id];
+      expect(kind.mounts).toHaveLength(1);
+      const mount = kind.mounts![0]!;
+      expect(mount).toMatchObject({
+        id: 'forward',
+        localX: 0,
+        localY: 0,
+        baseAngle: 0,
+        arcMin: 0,
+        arcMax: 0,
+        rotationSpeed: 0,
+        weaponId: 'hitscan',
+      });
+      expect(kind.slots).toHaveLength(1);
+      const slot = kind.slots![0]!;
+      expect(slot.id).toBe('primary');
+      expect(slot.mountIds).toEqual(['forward']);
+    }
+  });
+
+  it('MountWeaponIdSchema accepts exactly the ids in WEAPON_IDS (parity with WeaponCatalogue)', () => {
+    for (const id of WEAPON_IDS) {
+      expect(MountWeaponIdSchema.safeParse(id).success).toBe(true);
+    }
+    // Anything not in WEAPON_IDS should be rejected — this assertion will
+    // catch a new weapon added to the catalogue that wasn't mirrored into
+    // the mount schema.
+    const accepted = MountWeaponIdSchema.options;
+    expect([...accepted].sort()).toEqual([...WEAPON_IDS].sort());
+  });
+
+  it('WeaponMountSchema rejects arcMax < arcMin', () => {
+    const result = WeaponMountSchema.safeParse({
+      id: 'bad',
+      localX: 0,
+      localY: 0,
+      baseAngle: 0,
+      arcMin: 0.5,
+      arcMax: -0.5,
+      rotationSpeed: 0,
+      weaponId: 'hitscan',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('WeaponSlotSchema requires at least one mount id', () => {
+    expect(
+      WeaponSlotSchema.safeParse({ id: 'primary', displayName: 'Primary', mountIds: [] }).success,
+    ).toBe(false);
+  });
+
+  it('ShipKindSchema rejects duplicate mount ids', () => {
+    const result = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: [
+        { id: 'forward', localX: 0, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' },
+        { id: 'forward', localX: 2, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' },
+      ],
+      slots: [{ id: 'primary', displayName: 'Primary', mountIds: ['forward'] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('ShipKindSchema rejects a slot referencing an unknown mount', () => {
+    const result = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: [{ id: 'forward', localX: 0, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' }],
+      slots: [{ id: 'primary', displayName: 'Primary', mountIds: ['ghost'] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('ShipKindSchema rejects a mount that is in two slots', () => {
+    const result = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: [{ id: 'forward', localX: 0, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' }],
+      slots: [
+        { id: 'primary', displayName: 'Primary', mountIds: ['forward'] },
+        { id: 'secondary', displayName: 'Secondary', mountIds: ['forward'] },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('ShipKindSchema rejects a mount with no owning slot', () => {
+    const result = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: [
+        { id: 'forward', localX: 0, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' },
+        { id: 'orphan',  localX: 2, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' },
+      ],
+      slots: [{ id: 'primary', displayName: 'Primary', mountIds: ['forward'] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('ShipKindSchema rejects mounts present without slots (or vice versa)', () => {
+    // mounts without slots
+    const noSlots = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: [{ id: 'forward', localX: 0, localY: 0, baseAngle: 0, arcMin: 0, arcMax: 0, rotationSpeed: 0, weaponId: 'hitscan' }],
+      slots: undefined,
+    });
+    expect(noSlots.success).toBe(false);
+    // slots without mounts
+    const noMounts = ShipKindSchema.safeParse({
+      ...SHIP_KINDS.fighter,
+      mounts: undefined,
+      slots: [{ id: 'primary', displayName: 'Primary', mountIds: ['forward'] }],
+    });
+    expect(noMounts.success).toBe(false);
   });
 });
 
