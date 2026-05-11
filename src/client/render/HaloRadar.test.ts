@@ -19,20 +19,16 @@ const baseParams: HaloProjectionParams = {
   distMax: 1000,
   scaleNear: 1.5,
   scaleFar: 0.5,
-  visiblePadding: 0,
-  // Bounds expressed in Pixi space (y-flipped). The local ship is at world
-  // origin so its Pixi position is (0, 0); the visible square spans ±50 on
-  // both axes — POIs further than 50 from origin are off-screen.
-  visibleLeft: -50,
-  visibleRight: 50,
-  visibleTop: -50,
-  visibleBottom: 50,
 };
 
 describe('HaloRadar projectArrow', () => {
-  it('hides arrow when POI is on-screen', () => {
+  it('renders arrows for entities regardless of on-screen status (Phase O)', () => {
+    // Pre-Phase-O the projection hid arrows for on-screen POIs; the user
+    // explicitly wanted continuous tracking during fast flybys so the
+    // on-screen hide was removed. Any non-degenerate POI produces a
+    // visible arrow.
     const proj = projectArrow({ x: 0, y: 0 }, { x: 10, y: 10 }, baseParams);
-    expect(proj.hidden).toBe(true);
+    expect(proj.hidden).toBe(false);
   });
 
   it('hides arrow when POI sits exactly on the player (degenerate)', () => {
@@ -96,28 +92,15 @@ describe('HaloRadar projectArrow', () => {
     expect(south.theta).toBeCloseTo(-Math.PI / 2);
   });
 
-  it('respects visibility padding', () => {
-    // POI at world (210, 0) — Pixi (210, 0). Outside visibleRight = 50.
-    // dist = 210 ≥ distMin = 200 so the near-cutoff doesn't fire and the
-    // padded vs unpadded behaviour isolates to the visibility test.
-    const offScreen = projectArrow({ x: 0, y: 0 }, { x: 210, y: 0 }, baseParams);
-    expect(offScreen.hidden).toBe(false);
-
-    const padded = projectArrow(
-      { x: 0, y: 0 },
-      { x: 210, y: 0 },
-      { ...baseParams, visiblePadding: 200 },
-    );
-    expect(padded.hidden).toBe(true);
-  });
-
-  it('hides when POI is closer than distMin (near cutoff)', () => {
-    // POI at world (60, 0) — only just off-screen (visible square ±50,
-    // padding 0). dist = 60, below distMin = 200. Phase H reads this as
-    // "off-screen but too close to bother indicating" and hides the
-    // arrow rather than pinning it at innerRadius.
+  it('clamps below-distMin distances to the inner ring (Phase O)', () => {
+    // POI at world (60, 0) — dist = 60, below distMin = 200. Phase O
+    // dropped the hide-below-distMin contract: the arrow now clamps to
+    // the inner ring instead of disappearing, so close-range entities
+    // are tracked continuously through the on-screen transition.
     const proj = projectArrow({ x: 0, y: 0 }, { x: 60, y: 0 }, baseParams);
-    expect(proj.hidden).toBe(true);
+    expect(proj.hidden).toBe(false);
+    expect(proj.radiusPx).toBeCloseTo(100); // innerRadiusPx
+    expect(proj.scale).toBeCloseTo(1.5);    // scaleNear
   });
 
   it('starts the lerp exactly at distMin (innerRadiusPx + scaleNear)', () => {
@@ -132,15 +115,8 @@ describe('HaloRadar projectArrow', () => {
 
   it('returns bearing relative to the player, not the world origin', () => {
     // Player at (1000, 500); POI 600 east of player. Asserts the
-    // bearing math is player-relative (not world-relative). Radius is
-    // covered by curve-specific tests.
-    const proj = projectArrow({ x: 1000, y: 500 }, { x: 1600, y: 500 }, {
-      ...baseParams,
-      visibleLeft: 950,
-      visibleRight: 1050,
-      visibleTop: -550,
-      visibleBottom: -450,
-    });
+    // bearing math is player-relative (not world-relative).
+    const proj = projectArrow({ x: 1000, y: 500 }, { x: 1600, y: 500 }, baseParams);
     expect(proj.hidden).toBe(false);
     expect(proj.theta).toBeCloseTo(0); // east bearing in world space
   });

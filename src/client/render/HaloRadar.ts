@@ -64,8 +64,6 @@ const EXP_CURVE_K = 12;
 //     get no arrow at all (after the Phase N grace fade plays out).
 const DIST_MIN = 1200;
 const DIST_MAX = 7500;
-// Padded so arrows don't flicker when a POI sits exactly on a viewport edge.
-const VISIBILITY_PADDING_WORLD = 16;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
 const MAX_ARROWS = 64;
 // Cap on dead-reckoning extrapolation window. If a swarm entry hasn't
@@ -73,11 +71,6 @@ const MAX_ARROWS = 64;
 // of letting the arrow fly off — a stale entity is more likely dead /
 // out-of-bounds than continuing at constant velocity forever.
 const ARROW_EXTRAP_CAP_MS = 400;
-// Phase N — grace duration. When the underlying entity goes on-screen
-// (or drops below the near-cutoff distMin), the arrow lingers visibly
-// for this many millis with a linear alpha fade instead of vanishing
-// abruptly. Smooths the "zoom-to-inner-then-pop" feel the user flagged.
-const ARROW_GRACE_MS = 500;
 // Spring half-life for arrow screen-pixel position smoothing. Operates on
 // the screen-space target (not world-space) so player movement no longer
 // translates into apparent arrow lag — overtake is solved by the screen-
@@ -108,17 +101,14 @@ export interface HaloProjectionParams {
   distMax: number;
   scaleNear: number;
   scaleFar: number;
-  visiblePadding: number;
-  /** Visible bounds in Pixi space (y-flipped from world) — same shape
-   *  `viewport.getVisibleBounds()` returns. The visibility test still runs
-   *  in world coordinates; only the arrow's final placement is screen-space. */
-  visibleLeft: number;
-  visibleRight: number;
-  visibleTop: number;
-  visibleBottom: number;
 }
 
 export interface HaloProjection {
+  /** True only for the degenerate case where the POI overlaps the player
+   *  position exactly (no defined bearing). The radar no longer hides
+   *  arrows based on viewport visibility or near-cutoff — every in-range
+   *  entity gets a continuously-tracked arrow regardless of on-screen
+   *  status, so the only "hide me" case is the divide-by-zero one. */
   hidden: boolean;
   /** Bearing from the player to the POI in **world space** (atan2
    *  convention: 0 = east, +π/2 = north, −π/2 = south). Caller composes the
@@ -143,14 +133,15 @@ export function lerp(a: number, b: number, t: number): number {
 /**
  * Pure helper. Computes the bearing, screen-pixel ring radius, and arrow
  * scale for a POI relative to the player. Both positions are in world
- * coordinates; visibility bounds are in Pixi space because that's what
- * `viewport.getVisibleBounds()` returns. Returns `hidden: true` if the POI
- * is on-screen and no arrow is needed.
+ * coordinates. The arrow is rendered for EVERY in-range entity regardless
+ * of on-screen status — the user explicitly wanted continuous tracking
+ * during high-speed flybys, so there's no visibility hide and no
+ * near-cutoff. The only "hidden" case is the degenerate zero-distance one.
  *
  * Pre-Phase E the function returned a Pixi-coord arrow position (world
  * coords with y flipped). The radar drew into the viewport, so the arrow
  * went through the viewport's camera-follow transform each frame — making
- * arrows drift behind the player during fast motion. Now the function
+ * arrows drift behind the player during fast motion. The current shape
  * returns only the bearing + radius; the caller composes a screen-space
  * position using the player's current screen-pixel coordinates.
  */
@@ -159,42 +150,18 @@ export function projectArrow(
   poi: { x: number; y: number },
   params: HaloProjectionParams,
 ): HaloProjection {
-  const poiPixiY = -poi.y;
-  const inside =
-    poi.x >= params.visibleLeft - params.visiblePadding &&
-    poi.x <= params.visibleRight + params.visiblePadding &&
-    poiPixiY >= params.visibleTop - params.visiblePadding &&
-    poiPixiY <= params.visibleBottom + params.visiblePadding;
-
-  if (inside) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
-
   const dx = poi.x - local.x;
   const dy = poi.y - local.y;
   const dist = Math.hypot(dx, dy);
   if (dist < 1e-6) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
 
-  // Phase H — near-cutoff. Off-screen-but-close entities get no arrow:
-  // the player already knows roughly where they are, and skipping them
-  // makes the radar's "ring of distant threats" feel more meaningful.
-  // This is the threshold the user wanted when they asked for arrows to
-  // "come in from off-screen" — pair it with the spring snap to the
-  // screen-edge in the renderer's first-visible branch.
-  if (dist < params.distMin) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
-
   const theta = Math.atan2(dy, dx);
   // Phase L — exponential-saturation distance curve. The OUTER ring (screen
   // edge) is the default: a 1 - exp(-k·normalized) curve pulls most
   // distances close to t=1 (outer) and only entities very close to
-  // distMin drop toward t=0 (inner). Concretely with k=5 and the
-  // production 900–7000 u band:
-  //   - dist =  900 u  → t = 0.00 (inner — only "just outside screen")
-  //   - dist = 1500 u  → t = 0.39
-  //   - dist = 2000 u  → t = 0.59
-  //   - dist = 3000 u  → t = 0.82
-  //   - dist = 5000 u  → t = 0.97 (outer — saturates)
-  //   - dist = 7000 u  → t = 1.00
-  // Pre-L the log curve did the opposite — pulled most distances to the
-  // middle of the band; that's not what the user wanted on phone smoke.
+  // distMin drop toward t=0 (inner). normalized < 0 (dist < distMin)
+  // clamps to t=0, so very-close entities sit at the inner ring instead
+  // of disappearing — Phase O kept the curve but dropped the hard hide.
   const normalized = (dist - params.distMin) / (params.distMax - params.distMin);
   const k = EXP_CURVE_K;
   const tRaw = (1 - Math.exp(-k * normalized)) / (1 - Math.exp(-k));
@@ -272,12 +239,6 @@ interface ArrowEntry {
    *  springs to-target on a hidden → visible transition instead of letting
    *  them spring in from the previous hidden position. */
   lastVisible: boolean;
-  /** Phase N — wall-clock millis at which the arrow should actually
-   *  disappear after the underlying entity went on-screen / below
-   *  distMin. While non-null and in the future, the arrow stays visible
-   *  at its last-known position with a linear alpha fade. Reset to null
-   *  when the entity becomes visible-worthy again. */
-  hideAtMs: number | null;
 }
 
 export interface Candidate {
@@ -411,8 +372,6 @@ export class HaloRadar {
       return;
     }
 
-    const bounds = viewport.getVisibleBounds();
-
     // Phase E — adaptive screen-space radii. Compute against the shorter
     // viewport dimension so the ring stays comfortably inside the screen in
     // any orientation, then clamp to a sane min/max so arrows aren't tiny
@@ -434,11 +393,6 @@ export class HaloRadar {
       distMax: DIST_MAX,
       scaleNear: ARROW_SCALE_NEAR,
       scaleFar: ARROW_SCALE_FAR,
-      visiblePadding: VISIBILITY_PADDING_WORLD,
-      visibleLeft: bounds.left,
-      visibleRight: bounds.right,
-      visibleTop: bounds.top,
-      visibleBottom: bounds.bottom,
     };
 
     // Phase E — player's actual SCREEN position. Arrows orbit this point at
@@ -520,41 +474,14 @@ export class HaloRadar {
       const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
       let entry = this.arrows.get(c.key);
       if (proj.hidden) {
-        if (!entry || !entry.lastVisible) {
-          // No arrow to grace-fade — either never rendered, or already
-          // finished its grace window. Leave it hidden.
-          if (entry) {
-            entry.gfx.visible = false;
-            entry.lastVisible = false;
-            entry.hideAtMs = null;
-            entry.gfx.alpha = 1;
-          }
-          continue;
-        }
-        // Phase N — entity is now on-screen or below near-cutoff, but
-        // the arrow was visible last frame. Start a grace fade so the
-        // disappearance reads as "settled out of view" instead of "popped".
-        if (entry.hideAtMs === null) {
-          entry.hideAtMs = now + ARROW_GRACE_MS;
-        }
-        if (now >= entry.hideAtMs) {
+        // Degenerate POI-overlaps-player case only. Phase O removed the
+        // on-screen visibility hide and the near-cutoff: every in-range
+        // entity tracks continuously, including on-screen flybys.
+        if (entry) {
           entry.gfx.visible = false;
           entry.lastVisible = false;
-          entry.hideAtMs = null;
-          entry.gfx.alpha = 1;
-        } else {
-          // Still in grace — fade alpha, freeze position. Keep the entry
-          // in renderedKeys so the cleanup loop below doesn't force-hide it.
-          const remaining = (entry.hideAtMs - now) / ARROW_GRACE_MS;
-          entry.gfx.alpha = Math.max(0, Math.min(1, remaining));
-          renderedKeys.add(c.key);
         }
         continue;
-      }
-      // Visible — clear any in-progress grace fade.
-      if (entry) {
-        entry.hideAtMs = null;
-        if (entry.gfx.alpha !== 1) entry.gfx.alpha = 1;
       }
       // Compose the target screen position from the player's screen pos +
       // the bearing/radius the projection returned. Screen y points down,
@@ -578,7 +505,6 @@ export class HaloRadar {
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
           lastVisible: false,
-          hideAtMs: null,
         };
         this.arrows.set(c.key, entry);
       } else if (
@@ -623,18 +549,10 @@ export class HaloRadar {
 
     for (const [key, entry] of this.arrows) {
       if (!renderedKeys.has(key)) {
-        // The grace path explicitly adds to renderedKeys, so reaching
-        // this branch means there's no in-progress fade to protect.
         entry.gfx.visible = false;
         entry.lastVisible = false;
       }
       if (!presentKeys.has(key)) {
-        // Phase N — don't destroy while a grace fade is still playing
-        // out, even if the underlying entity disappeared from the
-        // partition. Let the fade finish, then the next frame's
-        // "renderedKeys doesn't include this" branch will hide it and
-        // the destroy below will collect on the frame after that.
-        if (entry.hideAtMs !== null) continue;
         this.container.removeChild(entry.gfx);
         entry.gfx.destroy();
         this.arrows.delete(key);
