@@ -1,6 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import type { Viewport } from 'pixi-viewport';
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore } from '../state/store';
 
 const ASTEROID_COLOR = 0x886644;
@@ -20,6 +21,11 @@ const DIST_MAX = 5000;
 const VISIBILITY_PADDING_WORLD = 16;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
 const MAX_ARROWS = 64;
+// Critically-damped spring half-life for arrow position smoothing. Tuned to
+// dampen the ~100 ms position-update gap from interest-grid edge entities
+// (out-of-interest drones ship pose at 6 Hz instead of 20 Hz) without
+// making arrows feel laggy when the underlying entity is moving fast.
+const ARROW_SMOOTH_HALF_LIFE_MS = 100;
 
 export interface HaloProjectionParams {
   innerRadius: number;
@@ -98,21 +104,34 @@ export function projectArrow(
 
 function buildArrowGfx(color: number): Graphics {
   const g = new Graphics();
-  // Triangle nose along local +x. After `rotation = -theta` it points along
-  // the world bearing to the POI.
+  // Smaller arrow per Phase C — 8 × 10 unit triangle (was 14 × 16). Triangle
+  // nose along local +x. After `rotation = -theta` it points along the world
+  // bearing to the POI.
   g.poly([
-    { x: 14, y: 0 },
-    { x: -8, y: -8 },
-    { x: -8, y: 8 },
+    { x: 8, y: 0 },
+    { x: -5, y: -5 },
+    { x: -5, y: 5 },
   ]);
   g.fill({ color, alpha: 0.95 });
   g.poly([
-    { x: 14, y: 0 },
-    { x: -8, y: -8 },
-    { x: -8, y: 8 },
+    { x: 8, y: 0 },
+    { x: -5, y: -5 },
+    { x: -5, y: 5 },
   ]);
   g.stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
   return g;
+}
+
+interface ArrowEntry {
+  gfx: Graphics;
+  /** Critically-damped spring state for x (Pixi-space). */
+  sx: SpringState;
+  /** Critically-damped spring state for y (Pixi-space). */
+  sy: SpringState;
+  /** True iff this arrow rendered on the previous frame. Used to snap the
+   *  springs to-target on a hidden → visible transition instead of letting
+   *  them spring in from the last position. */
+  lastVisible: boolean;
 }
 
 interface Candidate {
@@ -126,7 +145,10 @@ interface Candidate {
 export class HaloRadar {
   private readonly container = new Container();
   private viewport: Viewport | null = null;
-  private readonly arrows = new Map<string, Graphics>();
+  private readonly arrows = new Map<string, ArrowEntry>();
+  /** Wall-clock anchor for spring dt. Reset on first update + on transit
+   *  cleanup so dt across a warp gap doesn't blow up the spring. */
+  private lastUpdateMs: number | null = null;
 
   init(viewport: Viewport): void {
     this.viewport = viewport;
@@ -144,18 +166,26 @@ export class HaloRadar {
     // any pooled arrows so a fresh sector starts clean.
     const transitState = useUIStore.getState().transitState;
     if (transitState !== 'DOCKED') {
-      for (const arrow of this.arrows.values()) {
-        this.container.removeChild(arrow);
-        arrow.destroy();
+      for (const entry of this.arrows.values()) {
+        this.container.removeChild(entry.gfx);
+        entry.gfx.destroy();
       }
       this.arrows.clear();
+      this.lastUpdateMs = null;
       return;
     }
+
+    const now = performance.now();
+    const dtMs = this.lastUpdateMs === null ? 0 : Math.max(0, Math.min(100, now - this.lastUpdateMs));
+    this.lastUpdateMs = now;
 
     const localId = mirror.localPlayerId;
     const local = localId ? mirror.ships.get(localId) : null;
     if (!local) {
-      for (const g of this.arrows.values()) g.visible = false;
+      for (const entry of this.arrows.values()) {
+        entry.gfx.visible = false;
+        entry.lastVisible = false;
+      }
       return;
     }
 
@@ -209,29 +239,56 @@ export class HaloRadar {
     const renderedKeys = new Set<string>();
     for (const c of candidates) {
       const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
-      let arrow = this.arrows.get(c.key);
+      let entry = this.arrows.get(c.key);
       if (proj.hidden) {
-        if (arrow) arrow.visible = false;
+        if (entry) {
+          entry.gfx.visible = false;
+          entry.lastVisible = false;
+        }
         continue;
       }
-      if (!arrow) {
-        arrow = buildArrowGfx(c.color);
-        this.container.addChild(arrow);
-        this.arrows.set(c.key, arrow);
+      if (!entry) {
+        const gfx = buildArrowGfx(c.color);
+        this.container.addChild(gfx);
+        entry = {
+          gfx,
+          sx: { x: proj.x, v: 0 },
+          sy: { x: proj.y, v: 0 },
+          lastVisible: false,
+        };
+        this.arrows.set(c.key, entry);
       }
       renderedKeys.add(c.key);
-      arrow.visible = true;
-      arrow.x = proj.x;
-      arrow.y = proj.y;
-      arrow.rotation = proj.rotation;
-      arrow.scale.set(proj.scale);
+
+      // Hidden → visible: snap the springs to-target so the arrow appears
+      // at its projected position instead of springing in from the last
+      // hidden state. Otherwise step both springs toward the new target.
+      if (!entry.lastVisible) {
+        entry.sx.x = proj.x;
+        entry.sx.v = 0;
+        entry.sy.x = proj.y;
+        entry.sy.v = 0;
+      } else {
+        springStep(entry.sx, proj.x, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);
+        springStep(entry.sy, proj.y, ARROW_SMOOTH_HALF_LIFE_MS, dtMs);
+      }
+
+      entry.gfx.visible = true;
+      entry.gfx.x = entry.sx.x;
+      entry.gfx.y = entry.sy.x;
+      entry.gfx.rotation = proj.rotation;
+      entry.gfx.scale.set(proj.scale);
+      entry.lastVisible = true;
     }
 
-    for (const [key, arrow] of this.arrows) {
-      if (!renderedKeys.has(key)) arrow.visible = false;
+    for (const [key, entry] of this.arrows) {
+      if (!renderedKeys.has(key)) {
+        entry.gfx.visible = false;
+        entry.lastVisible = false;
+      }
       if (!presentKeys.has(key)) {
-        this.container.removeChild(arrow);
-        arrow.destroy();
+        this.container.removeChild(entry.gfx);
+        entry.gfx.destroy();
         this.arrows.delete(key);
       }
     }
@@ -240,14 +297,15 @@ export class HaloRadar {
   /** Test-only — number of currently-visible arrows in the scene graph. */
   getDebugVisibleArrowCount(): number {
     let n = 0;
-    for (const a of this.arrows.values()) if (a.visible) n++;
+    for (const entry of this.arrows.values()) if (entry.gfx.visible) n++;
     return n;
   }
 
   destroy(): void {
-    for (const g of this.arrows.values()) g.destroy();
+    for (const entry of this.arrows.values()) entry.gfx.destroy();
     this.arrows.clear();
     this.container.destroy({ children: true });
     this.viewport = null;
+    this.lastUpdateMs = null;
   }
 }
