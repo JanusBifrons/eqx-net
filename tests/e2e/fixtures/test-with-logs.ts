@@ -52,8 +52,13 @@ export const test = base.extend<EqxFixtures>({
       if (text.startsWith('[ColyseusClient]')) console.log(`    ${text}`);
     });
 
-    await page.goto(BASE_URL);
-    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    // The pre-2026-05-10 meta landing was a single "Enter Sector Alpha"
+    // button; the current landing screen has a "Join the fight!" CTA that
+    // routes through the Galaxy Overview before reaching the game. The
+    // `?room=` URL param is the auto-join escape hatch used by every other
+    // spec — bypass meta + auth and land directly in the game phase.
+    await page.goto(`${BASE_URL}/?room=sector`);
+    await page.waitForSelector('[data-testid="game-surface"]', { timeout: 10000 });
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
