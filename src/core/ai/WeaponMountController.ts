@@ -68,6 +68,14 @@ export const STICKY_HYSTERESIS_FACTOR = 1.1;
 export interface PickTargetOptions {
   /** Override the default hysteresis factor for tests / future tuning. */
   stickyHysteresisFactor?: number;
+  /** Maximum acquisition distance, in world units. Candidates outside this
+   *  radius are treated as "not in view" — they're skipped during the
+   *  nearest-hostile scan and also evict the sticky pin (so a target that
+   *  drifts past `maxDistance` is dropped on the next tick, not held).
+   *  Caller-driven so the same module covers different engagement ranges
+   *  (e.g. hitscan vs longer-range projectile). Omit (or pass `Infinity`)
+   *  to disable the range gate. */
+  maxDistance?: number;
 }
 
 /**
@@ -99,6 +107,9 @@ export function pickTarget(
   options?: PickTargetOptions,
 ): MountTargetView | null {
   const factor = options?.stickyHysteresisFactor ?? STICKY_HYSTERESIS_FACTOR;
+  const maxDistance = options?.maxDistance ?? Infinity;
+  // Pre-square the gate so the hot loop stays sqrt-free.
+  const maxD2 = maxDistance === Infinity ? Infinity : maxDistance * maxDistance;
   let nearest: MountTargetView | null = null;
   let nearestD2 = Infinity;
   let prev: MountTargetView | null = null;
@@ -109,6 +120,11 @@ export function pickTarget(
     const dx = t.x - shipX;
     const dy = t.y - shipY;
     const d2 = dx * dx + dy * dy;
+    // Out-of-range candidates don't count — neither as the nearest, nor as
+    // the sticky pin's renewal. A target that drifts past `maxDistance` is
+    // dropped from `prev` as well, so the next call returns the nearest
+    // in-range candidate (or null, slewing mounts back to forward).
+    if (d2 > maxD2) continue;
     if (d2 < nearestD2) {
       nearestD2 = d2;
       nearest = t;

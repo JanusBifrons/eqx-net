@@ -156,6 +156,14 @@ export interface SnapshotMessage {
         boost: boolean;
         reverse: boolean;
       };
+      /** Multi-mount/turret refactor (Phase 4b.3, 2026-05-11). Per-mount
+       *  rotation angle in arc-local frame, indexed by mount-order in the
+       *  ship-kind catalogue. Authoritative — the server's
+       *  WeaponMountController tick computes these and they drive both the
+       *  server's hit-test geometry and remote observers' rendered turret
+       *  rotation. Absent for ship-kinds with no rotating mounts (the
+       *  legacy single-mount fighter/scout/heavy emit nothing). */
+      mountAngles?: number[];
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

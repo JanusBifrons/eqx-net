@@ -84,6 +84,28 @@ describe('WeaponMountController.pickTarget', () => {
     expect(STICKY_HYSTERESIS_FACTOR).toBeLessThan(2);
   });
 
+  it('filters candidates beyond maxDistance', () => {
+    // 'near' is at d=50, 'far' is at d=600. With maxDistance=500, only
+    // 'near' is in view.
+    const targets = [t('far', 600, 0), t('near', 50, 0)];
+    expect(pickTarget(0, 0, targets, null, all(), { maxDistance: 500 })?.id).toBe('near');
+    // With no max, the nearest is still 'near' anyway.
+    expect(pickTarget(0, 0, targets, null, all())?.id).toBe('near');
+  });
+
+  it('drops a sticky pin when the target drifts past maxDistance', () => {
+    // Previous target 'prev' has drifted out to d=600; current candidate
+    // 'alt' sits comfortably at d=200. With max=500, 'prev' is out and we
+    // pick 'alt'.
+    const targets = [t('prev', 600, 0), t('alt', 200, 0)];
+    expect(pickTarget(0, 0, targets, 'prev', all(), { maxDistance: 500 })?.id).toBe('alt');
+  });
+
+  it('returns null when every candidate is out of maxDistance', () => {
+    const targets = [t('a', 600, 0), t('b', 700, 0)];
+    expect(pickTarget(0, 0, targets, null, all(), { maxDistance: 500 })).toBeNull();
+  });
+
   it('breaks exact-distance ties deterministically by iteration order', () => {
     // Two targets at exactly d=100. The one that appears first wins because
     // the `<` comparison rejects ties — server and client iterate the same

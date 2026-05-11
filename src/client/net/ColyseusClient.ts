@@ -1463,6 +1463,20 @@ export class ColyseusGameClient {
         // Reset the lookahead-cap counter for this remote — the upcoming
         // replay starts a fresh forward-prediction window from serverTick.
         this._remoteForwardTicks.set(remoteId, 0);
+        // Phase 4b.3 — push the server's authoritative mount angles into
+        // the mirror so the renderer paints the remote ship's turrets at
+        // the same rotation the server is computing. Local player is
+        // skipped here — `tickLocalMountAim` runs the prediction each
+        // tick and the per-frame `updateMirror` rebuild already
+        // preserves the predicted angles.
+        const mirrorShip = this.mirror.ships.get(remoteId);
+        if (mirrorShip) {
+          if (state.mountAngles && state.mountAngles.length > 0) {
+            mirrorShip.mountAngles = state.mountAngles.slice();
+          } else if (mirrorShip.mountAngles) {
+            mirrorShip.mountAngles = undefined;
+          }
+        }
       }
       // Drop entries for remotes that are no longer in the snapshot.
       for (const tracked of [...this._remoteLastInputs.keys()]) {
@@ -2195,6 +2209,12 @@ export class ColyseusGameClient {
           x: s.x + ox,
           y: s.y + oy,
           ...(prev?.kind ? { kind: prev.kind } : {}),
+          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
+          // Phase 4b.3: preserve mount angles across per-frame rebuilds
+          // so the snapshot-anchored values from `handleSnapshot` survive
+          // until the next snapshot lands. Same pattern as the local
+          // ship's preserve path.
+          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
         });
       }
     }
@@ -2532,7 +2552,14 @@ export class ColyseusGameClient {
       }
     }
 
-    const target = pickTarget(state.x, state.y, targets, this._localSlotTarget, () => true);
+    // Range gate: only acquire targets within hitscan reach. Out-of-range
+    // drones don't peg the turret — when no candidate is in view, the
+    // mounts slew back to forward (the `if (target === null)` branch
+    // below). User-requested feedback (2026-05-11): "return the weapons
+    // to aiming forwards when an enemy ship is out of range".
+    const target = pickTarget(state.x, state.y, targets, this._localSlotTarget, () => true, {
+      maxDistance: HITSCAN_RANGE,
+    });
     this._localSlotTarget = target?.id ?? null;
 
     // Allocate / resize the per-ship mountAngles array. number[] is fine

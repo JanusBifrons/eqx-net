@@ -29,6 +29,12 @@ import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
+import {
+  pickTarget,
+  rotateMountToward,
+  wrapPi,
+  type MountTargetView,
+} from '../../core/ai/WeaponMountController.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
@@ -200,6 +206,22 @@ export class SectorRoom extends Room<SectorState> {
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
+
+  // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
+  /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
+   *  each alive player ship's active slot. Indexed by mount-order in the
+   *  ship-kind catalogue. Computed each `update()` by the server-side
+   *  WeaponMountController tick; consumed by `handleFire` for ray geometry
+   *  and shipped per-recipient in `SnapshotMessage.states[id].mountAngles`
+   *  so remote observers see the same turret rotation the firer's screen
+   *  is drawing. */
+  private readonly playerMountAngles = new Map<string, Float32Array>();
+  /** Sticky target id per player slot, used by `pickTarget` to suppress
+   *  oscillation. Cleared on `onLeave` and on death. */
+  private readonly playerSlotTargets = new Map<string, string | null>();
+  /** Reused per-tick drone candidate list passed to `pickTarget` for each
+   *  player slot — avoids per-tick allocation. */
+  private readonly mountTargetsScratch: MountTargetView[] = [];
 
   private bus!: Bus;
   /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
@@ -702,6 +724,90 @@ export class SectorRoom extends Room<SectorState> {
     };
   }
 
+  /**
+   * Phase 4b.3 — compute each alive player ship's per-mount rotation
+   * angles for this tick and store them in `playerMountAngles`. Mirrors
+   * the client's `ColyseusClient.tickLocalMountAim` so both sides
+   * produce identical (lockstep) angles when given the same poses;
+   * the server's output is authoritative, shipped through
+   * `SnapshotMessage.states[id].mountAngles`, and used in
+   * `handleFire` for ray geometry.
+   *
+   * Out-of-range drones (beyond `HITSCAN_RANGE`) are filtered by
+   * `pickTarget`'s `maxDistance` option, so a ship with no target in
+   * reach slews its mounts back to forward (the `target === null`
+   * branch below).
+   *
+   * Drones don't run this path in 4b.3 — their mounts stay at
+   * `baseAngle`. Phase 4c adds the same compute for drones with the
+   * matching `SnapshotMessage.drones[].mountAngles` anchor.
+   */
+  private tickPlayerMounts(): void {
+    if (this.playerToSlot.size === 0) return;
+    const dtSec = 1 / 60;
+
+    // Build the drone candidate list once per tick — same list re-used for
+    // every player's pickTarget call.
+    const targets = this.mountTargetsScratch;
+    targets.length = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 1) continue;
+      const b = slotBase(rec.slot);
+      targets.push({
+        id: rec.id,
+        x: this.sabF32[b + SLOT_X_OFF]!,
+        y: this.sabF32[b + SLOT_Y_OFF]!,
+        vx: this.sabF32[b + SLOT_VX_OFF]!,
+        vy: this.sabF32[b + SLOT_VY_OFF]!,
+      });
+    }
+
+    for (const [playerId] of this.playerToSlot) {
+      const ship = this.state.ships.get(playerId);
+      if (!ship?.alive) continue;
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      const kind = getShipKind(ship.kind);
+      const mounts = this.resolveSlotMounts(kind);
+      if (mounts.length === 0) continue;
+
+      const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
+      const target = pickTarget(pose.x, pose.y, targets, prevTargetId, () => true, {
+        maxDistance: HITSCAN_RANGE,
+      });
+      this.playerSlotTargets.set(playerId, target?.id ?? null);
+
+      let angles = this.playerMountAngles.get(playerId);
+      if (!angles || angles.length !== mounts.length) {
+        angles = new Float32Array(mounts.length);
+        this.playerMountAngles.set(playerId, angles);
+      }
+
+      if (target === null) {
+        // No target in range — slew every mount back to forward (0 in
+        // arc-local frame). Matches user-requested behaviour: "return the
+        // weapons to aiming forwards when an enemy ship is out of range".
+        for (let i = 0; i < mounts.length; i++) {
+          angles[i] = rotateMountToward(angles[i]!, 0, mounts[i]!, dtSec);
+        }
+        continue;
+      }
+
+      const cosA = Math.cos(pose.angle);
+      const sinA = Math.sin(pose.angle);
+      for (let i = 0; i < mounts.length; i++) {
+        const mount = mounts[i]!;
+        const mountWorldX = pose.x + (mount.localX * cosA - mount.localY * sinA);
+        const mountWorldY = pose.y + (mount.localX * sinA + mount.localY * cosA);
+        const dx = target.x - mountWorldX;
+        const dy = target.y - mountWorldY;
+        const worldBearing = Math.atan2(-dx, dy);
+        const mountLocalBearing = wrapPi(worldBearing - pose.angle - mount.baseAngle);
+        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, dtSec);
+      }
+    }
+  }
+
   private handleFire(client: Client, raw: unknown): void {
     const parsed = FireMessageSchema.safeParse(raw);
     if (!parsed.success) {
@@ -791,15 +897,31 @@ export class SectorRoom extends Room<SectorState> {
     let bestHitX = 0;
     let bestHitY = 0;
 
-    for (const mount of slotMounts) {
+    const playerAngles = this.playerMountAngles.get(shooterId);
+    for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
+      const mount = slotMounts[mIdx]!;
       const mountWorld = this.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
-      // Per-mount fire direction. Phase 2a still trusts the client's
-      // `dirAngle` (legacy single-mount semantic — Phase 2b reconstructs
-      // from server-authoritative mount angle in the lag-comp ring). The
-      // mount's `baseAngle` is added so a hypothetical rear-mount fires
-      // backwards even with the same `dirAngle`; for legacy mounts at
-      // baseAngle=0 this collapses to identity.
-      const mountFireAngle = dirAngle + mount.baseAngle;
+      // Per-mount fire direction. Phase 4b.3 (2026-05-11): the server now
+      // computes per-mount rotation each tick (`tickPlayerMounts`) and
+      // uses the authoritative angle here instead of trusting the
+      // client's legacy `dirAngle`. Legacy single-mount ships have
+      // mountAngles[i] = 0 (their mount has zero arc) so the fire
+      // direction collapses to `dirAngle + mount.baseAngle = dirAngle`,
+      // identical to the pre-rotation path. Multi-mount ships fire each
+      // barrel along its server-authoritative slewed direction, so
+      // lag-comp hit-tests and the laser_fired broadcast both reflect
+      // the visible rotation.
+      //
+      // Note we still anchor the fire to `ship.angle@tickN` (read from
+      // SnapshotRing) for the BODY orientation, then add the mount's
+      // current angle on top — small mismatch under heavy lag since the
+      // mountAngles snapshot we use is the CURRENT one, not the
+      // tick-N one. A future MountAngleRing would close that gap; for
+      // now the precision is bounded by RTT × rotationSpeed (50 ms × 4
+      // rad/s ≈ 0.2 rad of rotation, well inside the aim tolerance for
+      // anything not pixel-perfect).
+      const currentMountAngle = playerAngles?.[mIdx] ?? 0;
+      const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
       const rayFromX = mountWorld.x + ndx * 20;
@@ -1214,6 +1336,8 @@ export class SectorRoom extends Room<SectorState> {
 
     // Clear fire cooldown so first shot after respawn isn't rejected.
     this.lastFireClientTick.delete(playerId);
+    this.playerMountAngles.delete(playerId);
+    this.playerSlotTargets.delete(playerId);
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
     const ack: RespawnAckMessage = { type: 'respawn_ack', x: spawnX, y: spawnY, serverTick: currentServerTick };
@@ -1759,6 +1883,8 @@ export class SectorRoom extends Room<SectorState> {
     // Despawn path — engineering room, dead ship, or transit-in-flight
     // (the destination's onJoin will restore from the transit Limbo entry).
     this.lastFireClientTick.delete(playerId);
+    this.playerMountAngles.delete(playerId);
+    this.playerSlotTargets.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
 
@@ -1794,6 +1920,8 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.lastFireClientTick.delete(playerId);
+    this.playerMountAngles.delete(playerId);
+    this.playerSlotTargets.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
 
@@ -2276,10 +2404,36 @@ export class SectorRoom extends Room<SectorState> {
         const states: SnapshotMessage['states'] = {};
         for (const ship of allShips) {
           const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
+          // Phase 4b.3 — per-mount rotation angles, included only when the
+          // ship has rotating mounts (legacy fighter/scout/heavy stays
+          // null and the field is omitted from the wire, no byte cost).
+          // Each entry is the arc-local slewed angle for the mount at
+          // that index in the ship-kind's catalogue. The client renders
+          // every observer's turrets at these angles and reseeds its
+          // own predicted angles when a snapshot lands.
+          const angles = this.playerMountAngles.get(ship.playerId);
+          let mountAnglesArr: number[] | undefined;
+          if (angles && angles.length > 0) {
+            let anyNonZero = false;
+            for (let i = 0; i < angles.length; i++) {
+              if (angles[i] !== 0) { anyNonZero = true; break; }
+            }
+            if (anyNonZero) {
+              mountAnglesArr = new Array<number>(angles.length);
+              for (let i = 0; i < angles.length; i++) {
+                // Quantise to 4 decimal places (~0.006° resolution) to
+                // dedupe trailing-noise drift across the wire — the JSON
+                // serialiser compresses repeats of the same number better
+                // and the visible quality is identical at typical zoom.
+                mountAnglesArr[i] = Math.round(angles[i]! * 10_000) / 10_000;
+              }
+            }
+          }
           states[ship.playerId] = {
             x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
             angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
             ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
+            ...(mountAnglesArr ? { mountAngles: mountAnglesArr } : {}),
           };
         }
 
@@ -2390,6 +2544,16 @@ export class SectorRoom extends Room<SectorState> {
       for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
       phaseTime('aiFire');
     }
+
+    // Phase 4b.3 — server-authoritative turret rotation for player ships.
+    // Mirrors the client's `tickLocalMountAim` so the server's hit-test
+    // geometry uses the same rotated mount angles the client renders, and
+    // so remote observers receive each ship's authoritative mount angles
+    // through the snapshot extension below. Drone turrets stay at
+    // baseAngle in this phase (drone-side rotation lands in Phase 4c
+    // alongside the swarm anchor).
+    this.tickPlayerMounts();
+    phaseTime('playerMounts');
 
     // Tick-budget telemetry. Cumulative phase totals across the last ~60 ticks
     // are emitted as one server event per second. The first capture told us
