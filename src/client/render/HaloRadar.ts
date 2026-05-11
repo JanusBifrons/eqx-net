@@ -25,17 +25,18 @@ const ARROW_FILL_ALPHA = 0.50;
 const STROKE_ALPHA_DEFAULT = 0.25;
 const STROKE_ALPHA_HOSTILE = 0.65;
 // Halo radii are specified as a fraction of the viewport's shorter screen
-// dimension. Phase I — pushed the whole ring much further toward the
-// screen edge after phone-smoke flagged the stop-point as way too close
-// to the player. The inner ring (where the nearest off-screen entities
-// settle) now sits at ~30 % of the shorter screen dimension, putting it
-// well clear of the ship sprite at the centre.
-const INNER_RADIUS_FRAC = 0.30;
-const OUTER_RADIUS_FRAC = 0.46;
-const INNER_RADIUS_MIN_PX = 80;
-const INNER_RADIUS_MAX_PX = 200;
-const OUTER_RADIUS_MIN_PX = 130;
-const OUTER_RADIUS_MAX_PX = 320;
+// dimension. Phase J — both rings hug the screen edge, with a narrow band
+// between them. On a 375 px phone half-screen the outer ring sits ~7 px
+// inside the edge (0.48 × 375 ≈ 180) and the inner ring ~52 px inside
+// (0.36 × 375 ≈ 135) — a ~45 px band of arrow-landing positions right
+// at the screen periphery. Pre-J the ring was spread across the middle
+// of the screen, which made distant arrows feel "close to the ship".
+const INNER_RADIUS_FRAC = 0.36;
+const OUTER_RADIUS_FRAC = 0.48;
+const INNER_RADIUS_MIN_PX = 100;
+const INNER_RADIUS_MAX_PX = 280;
+const OUTER_RADIUS_MIN_PX = 160;
+const OUTER_RADIUS_MAX_PX = 400;
 // Arrow scale at the near/far ends. Reverted in Phase G to big-near /
 // small-far (the original pre-F.1 sense) — closer entities deserve the
 // more attention-grabbing icon, while distant ones at the outer ring
