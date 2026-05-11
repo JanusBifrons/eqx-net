@@ -25,18 +25,15 @@ const ARROW_FILL_ALPHA = 0.50;
 const STROKE_ALPHA_DEFAULT = 0.25;
 const STROKE_ALPHA_HOSTILE = 0.65;
 // Halo radii are specified as a fraction of the viewport's shorter screen
-// dimension. Phase L — DRAMATIC band spread. With the exp-saturation
-// curve below pulling most entities to the outer ring, the inner ring
-// needs to live close to the player so the rare drop-to-inner is
-// visibly striking. On a 375 px phone the outer ring sits ~7 px inside
-// the screen edge (0.48 × 375 ≈ 180) and the inner ring is right next
-// to the ship sprite (0.14 × 375 ≈ 52 px from centre) — a ~128 px
-// band, dominated by "at the edge" for almost every entity except the
-// few that are just-barely-off-screen.
-const INNER_RADIUS_FRAC = 0.14;
+// dimension. Phase P — inner ring pushed out so it's no longer right next
+// to the ship sprite. On a 375 px phone the inner ring now lands at
+// 0.24 × 375 ≈ 90 px from centre (was ~52 px) and the outer ring stays
+// ~7 px inside the screen edge — a ~90 px band still dominated by "at
+// the edge" thanks to the exp-saturation curve.
+const INNER_RADIUS_FRAC = 0.24;
 const OUTER_RADIUS_FRAC = 0.48;
-const INNER_RADIUS_MIN_PX = 40;
-const INNER_RADIUS_MAX_PX = 180;
+const INNER_RADIUS_MIN_PX = 70;
+const INNER_RADIUS_MAX_PX = 240;
 const OUTER_RADIUS_MIN_PX = 160;
 const OUTER_RADIUS_MAX_PX = 400;
 // Arrow scale at the near/far ends. Reverted in Phase G to big-near /
@@ -71,6 +68,11 @@ const MAX_ARROWS = 64;
 // of letting the arrow fly off — a stale entity is more likely dead /
 // out-of-bounds than continuing at constant velocity forever.
 const ARROW_EXTRAP_CAP_MS = 400;
+// Phase P — once the underlying entity has been continuously on-screen
+// for this many millis, the arrow hides. A flyby that crosses the
+// screen faster than this stays tracked the whole way (no vanish/
+// reappear flicker). Resets the moment the entity goes back off-screen.
+const ON_SCREEN_HIDE_MS = 500;
 // Spring half-life for arrow screen-pixel position smoothing. Operates on
 // the screen-space target (not world-space) so player movement no longer
 // translates into apparent arrow lag — overtake is solved by the screen-
@@ -239,6 +241,12 @@ interface ArrowEntry {
    *  springs to-target on a hidden → visible transition instead of letting
    *  them spring in from the previous hidden position. */
   lastVisible: boolean;
+  /** Phase P — wall-clock millis when the underlying entity first entered
+   *  the viewport in an unbroken on-screen run. null while the entity is
+   *  off-screen. The render loop hides the arrow once `now - onScreenSinceMs`
+   *  exceeds ON_SCREEN_HIDE_MS, but keeps tracking bearing/position right
+   *  up to that point so a high-speed flyby doesn't flicker. */
+  onScreenSinceMs: number | null;
 }
 
 export interface Candidate {
@@ -395,6 +403,12 @@ export class HaloRadar {
       scaleFar: ARROW_SCALE_FAR,
     };
 
+    // Phase P — viewport bounds for the on-screen hide timer. The hide is
+    // renderer-side (not in projectArrow) so the bearing/scale/radius
+    // continue updating right up to the 500 ms cutoff — no bearing freeze
+    // like Phase N's grace fade.
+    const bounds = viewport.getVisibleBounds();
+
     // Phase E — player's actual SCREEN position. Arrows orbit this point at
     // a fixed pixel offset, so they always sit at the right place on the
     // halo regardless of camera state (follow lag, zoom, etc.).
@@ -480,9 +494,39 @@ export class HaloRadar {
         if (entry) {
           entry.gfx.visible = false;
           entry.lastVisible = false;
+          entry.onScreenSinceMs = null;
         }
         continue;
       }
+
+      // Phase P — on-screen hide timer. While the entity is on-screen we
+      // keep updating the arrow's bearing/position so a flyby tracks
+      // smoothly; once it's been continuously on-screen for
+      // ON_SCREEN_HIDE_MS the arrow hides. Coming back off-screen resets
+      // the timer (the entry will re-spring from off-screen on the next
+      // visible frame because `lastVisible` is reset on hide).
+      const poiPixiY = -c.y;
+      const isInside =
+        c.x >= bounds.left
+        && c.x <= bounds.right
+        && poiPixiY >= bounds.top
+        && poiPixiY <= bounds.bottom;
+      if (entry) {
+        if (isInside) {
+          if (entry.onScreenSinceMs === null) entry.onScreenSinceMs = now;
+          if (now - entry.onScreenSinceMs >= ON_SCREEN_HIDE_MS) {
+            entry.gfx.visible = false;
+            entry.lastVisible = false;
+            // keep onScreenSinceMs set — entity has to fully leave the
+            // viewport before the next visible frame is allowed to spring
+            // in from off-screen.
+            continue;
+          }
+        } else {
+          entry.onScreenSinceMs = null;
+        }
+      }
+
       // Compose the target screen position from the player's screen pos +
       // the bearing/radius the projection returned. Screen y points down,
       // so the world-bearing's sin component is negated. The arrow's
@@ -505,6 +549,7 @@ export class HaloRadar {
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
           lastVisible: false,
+          onScreenSinceMs: isInside ? now : null,
         };
         this.arrows.set(c.key, entry);
       } else if (
