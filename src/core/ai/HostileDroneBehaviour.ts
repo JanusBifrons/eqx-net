@@ -7,6 +7,7 @@ import {
 } from '../contracts/IAiBehaviour.js';
 import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
+import { pickTarget } from './WeaponMountController.js';
 
 /** Drone fires when within this fraction of full hitscan range. */
 const DRONE_FIRE_RANGE = HITSCAN_RANGE * 0.6;
@@ -90,6 +91,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  Used to time-decay hostility when a player has been clean for
    *  `FORGET_TICKS` ticks. */
   private readonly lastHitByPlayer = new Map<string, number>();
+  /** Previously-picked target id, used by `pickTarget` to apply sticky
+   *  hysteresis (Phase 4a). Pre-refactor the drone re-picked nearest hostile
+   *  every tick, which oscillated between two near-equidistant players. Per-
+   *  instance so it's lockstep-safe in the same way `lastFireTick` is —
+   *  reset purely by `markHostile`/`purgeHostility`/time-decay, both of
+   *  which fire symmetrically on server and client. */
+  private prevTargetId: string | null = null;
 
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
@@ -128,6 +136,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     if (!playerId) return;
     this.hostileTo.delete(playerId);
     this.lastHitByPlayer.delete(playerId);
+    // If the purged player was the sticky target, drop the sticky pin so
+    // the next `pickTarget` call doesn't try to keep them.
+    if (this.prevTargetId === playerId) this.prevTargetId = null;
     if (this.hostileTo.size === 0) this.state = 'IDLE';
   }
 
@@ -140,6 +151,8 @@ export class HostileDroneBehaviour implements IAiBehaviour {
         if (view.tick - lastHit > FORGET_TICKS) {
           this.lastHitByPlayer.delete(pid);
           this.hostileTo.delete(pid);
+          // Drop the sticky pin if the decayed player was our target.
+          if (this.prevTargetId === pid) this.prevTargetId = null;
         }
       }
       if (this.hostileTo.size === 0) this.state = 'IDLE';
@@ -150,12 +163,19 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    outputs when given the same drone pose (lockstep-safe).
     if (this.state === 'IDLE') return this.tickPatrol(self);
 
-    // 3) COMBAT — pick the nearest *hostile* player. Non-hostile players
+    // 3) COMBAT — pick the *hostile* player to engage. Non-hostile players
     //    are invisible to a drone in combat (so a bystander flying through
-    //    a fight isn't suddenly targeted). When no hostile is in view this
-    //    frame, fall back to patrol motion but stay in COMBAT state until
-    //    the time-decay above clears the set.
-    const target = this.nearestHostile(view, self.x, self.y);
+    //    a fight isn't suddenly targeted). Phase 4a (2026-05-11): delegate
+    //    to the shared `WeaponMountController.pickTarget`, which adds sticky
+    //    hysteresis so the drone doesn't flap between two near-equidistant
+    //    targets every tick. The same module powers the player-turret AI
+    //    coming in Phase 4b — single ownership site for the targeting
+    //    policy. When no hostile is in view this frame, fall back to patrol
+    //    motion but stay in COMBAT state until the time-decay clears the set.
+    const target = pickTarget(self.x, self.y, view.players, this.prevTargetId, (id) =>
+      this.hostileTo.has(id),
+    );
+    this.prevTargetId = target?.id ?? null;
     if (target === null) return this.tickPatrol(self);
 
     return this.tickCombat(self, view, target);
@@ -286,23 +306,6 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     return sign * ramp * this.kind.maxAngvel;
   }
 
-  /** Nearest player from `view.players` that's in the hostile set. */
-  private nearestHostile(view: AiWorldView, x: number, y: number): AiPlayerView | null {
-    if (this.hostileTo.size === 0) return null;
-    let best: AiPlayerView | null = null;
-    let bestD2 = Infinity;
-    for (const p of view.players) {
-      if (!this.hostileTo.has(p.id)) continue;
-      const dpx = p.x - x;
-      const dpy = p.y - y;
-      const d2 = dpx * dpx + dpy * dpy;
-      if (d2 < bestD2) {
-        bestD2 = d2;
-        best = p;
-      }
-    }
-    return best;
-  }
 }
 
 /** Wrap an angle into [-π, π]. Standalone so both `tickPatrol` and
