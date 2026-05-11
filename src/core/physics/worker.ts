@@ -191,25 +191,7 @@ async function main(): Promise<void> {
   // Hi-res tick loop. `setInterval(fn, 16.67)` on Windows quantises to the
   // ~15.6 ms multimedia-clock granularity and fires every ~31 ms (≈ 32 Hz),
   // which is what made the May 2026 capture show 37–46 Hz instead of 60.
-  //
-  // Pre-2026-05-11 fix: the loop unconditionally re-scheduled via
-  // `setImmediate(loop)`. That fires the callback as soon as the event
-  // loop is idle, so between actual 60 Hz steps (~16.67 ms apart) it
-  // spun millions of times per second polling `now >= nextTickAt`. One
-  // physics worker per sector × 7 galaxy sectors = ~7 cores pegged at
-  // idle, observable as ~700 % parent-process CPU and noticeable lag in
-  // long-running sessions (the server's event loop competed with the
-  // worker threads for CPU, so WebSocket sends got delayed → RTT 558 ms
-  // on the user's mobile capture).
-  //
-  // Fix: `setImmediate(loop)` ONLY when we're catching up after stepping
-  // (so any backlog drains without artificial delay); when the next tick
-  // is in the future, `setTimeout(loop, 1)` yields the CPU. Node's
-  // libuv timer wakes every ~1 ms — enough granularity to land within
-  // a fraction of TICK_MS_HR of `nextTickAt`, and the existing
-  // catch-up branch handles any drift. Net cost at idle: ~16 wakes per
-  // tick instead of millions, dropping physics-worker CPU from ~100 %
-  // of one core to <1 %.
+  // setImmediate has ~1 ms granularity and lets us hit 60 Hz reliably.
   const TICK_MS_HR = 1000 / 60;
   let nextTickAt = performance.now();
   const step = (): void => {
@@ -366,18 +348,8 @@ async function main(): Promise<void> {
       // pause), jump forward to "now" so we don't spiral. The simulation
       // re-syncs to wall-clock instead of trying to replay a backlog.
       if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
-      // After stepping, drain any backlog immediately so a series of
-      // missed ticks (e.g. post-GC) gets caught up in one event-loop
-      // turn rather than across 16 ms of timer waits.
-      setImmediate(loop);
-    } else {
-      // Sleep ~1 ms before re-checking. Node's libuv timers land within
-      // a fraction of a tick of TICK_MS_HR (= 16.67 ms), so we trade
-      // ~16 cheap wakes per tick window for a 100× drop in CPU vs the
-      // setImmediate busy-poll path above. See the block comment above
-      // TICK_MS_HR for the full incident write-up.
-      setTimeout(loop, 1);
     }
+    setImmediate(loop);
   };
   loop();
 }
