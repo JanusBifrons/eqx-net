@@ -70,9 +70,17 @@ interface MountGraphics {
 const AIM_LINE_LENGTH = 40;
 
 /** Half-width of the barrel rectangle (mount sprite is `2 * BARREL_HALF_WIDTH`
- *  wide and `BARREL_LENGTH` long). */
-const BARREL_HALF_WIDTH = 1.5;
-const BARREL_LENGTH = 8;
+ *  wide and `BARREL_LENGTH` long).
+ *
+ *  `BARREL_LENGTH` deliberately matches the 20 u server-side self-hit
+ *  clearance offset used in `SectorRoom.handleFire` and the client's
+ *  `updateLiveBeam` — so the beam emerges from the *visible* barrel tip
+ *  rather than a point in space 12 u beyond it. Earlier the barrel was
+ *  drawn 8 u long and beams emerged 20 u from the mount pivot, leaving a
+ *  visible 12 u gap that user-test feedback flagged as "lasers don't
+ *  come out of the exact tip of the barrel". */
+const BARREL_HALF_WIDTH = 1.2;
+const BARREL_LENGTH = 20;
 
 export class MountVisualManager {
   private readonly clusters = new Map<string, MountCluster>();
