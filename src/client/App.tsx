@@ -263,31 +263,57 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
           el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
           el.dataset['haloArrowCount'] = String(renderer.getDebugHaloArrowCount());
-          el.dataset['beamActive'] = gameClient.mirror.liveBeam ? '1' : '0';
-          // Expose the beam's derived start-point so E2E tests can prove the
-          // local laser is glued to the ship's lerped pose (no desync during
-          // server-correction lerps). Computed identically to PixiRenderer's
-          // own derivation: from = ship + 20*forward(ship.angle).
-          if (gameClient.mirror.liveBeam && localShip) {
-            const fwdX = -Math.sin(localShip.angle);
-            const fwdY =  Math.cos(localShip.angle);
-            el.dataset['beamFromX'] = (localShip.x + fwdX * 20).toFixed(3);
-            el.dataset['beamFromY'] = (localShip.y + fwdY * 20).toFixed(3);
-            el.dataset['beamDist']  = gameClient.mirror.liveBeam.dist.toFixed(3);
+          // Multi-mount/turret refactor (Phase 2c): `liveBeam` became
+          // `liveBeams: Map<mountId, ...>`. For legacy single-mount fighter/
+          // scout/heavy there is exactly one entry keyed by `'forward'`, so
+          // the existing E2E surface (`beamActive`, `beamFromX/Y`, `beamDist`)
+          // picks that entry as the "primary" beam. Multi-mount kinds expose
+          // every barrel via the same attribute names, separated by commas,
+          // so a Phase-3 spec can split on `','` if it wants per-mount data.
+          const liveBeams = gameClient.mirror.liveBeams;
+          const beamCount = liveBeams?.size ?? 0;
+          el.dataset['beamActive'] = beamCount > 0 ? '1' : '0';
+          el.dataset['beamCount']  = String(beamCount);
+          if (liveBeams && beamCount > 0 && localShip) {
+            const xs: string[] = [];
+            const ys: string[] = [];
+            const ds: string[] = [];
+            for (const beam of liveBeams.values()) {
+              // The exact mount-local geometry lives in PixiRenderer; the
+              // testid surface reports the ship-origin path (where the beam
+              // "comes from" semantically) so existing assertions keep
+              // working. Phase 3+ may extend this with per-mount world origin.
+              const fwdX = -Math.sin(localShip.angle);
+              const fwdY =  Math.cos(localShip.angle);
+              xs.push((localShip.x + fwdX * 20).toFixed(3));
+              ys.push((localShip.y + fwdY * 20).toFixed(3));
+              ds.push(beam.dist.toFixed(3));
+            }
+            el.dataset['beamFromX'] = xs.join(',');
+            el.dataset['beamFromY'] = ys.join(',');
+            el.dataset['beamDist']  = ds.join(',');
           } else {
             delete el.dataset['beamFromX'];
             delete el.dataset['beamFromY'];
             delete el.dataset['beamDist'];
           }
+          // Multi-mount/turret refactor (Phase 2c): `remoteLasers` is now
+          // `Map<shooterId, Map<mountId, beam>>`. The E2E surface flattens
+          // across mounts — `remoteLaserCount` counts shooters (matches the
+          // pre-2c semantic), and `remoteLaserRanges` exposes the maximum
+          // beam range per shooter so legacy assertions still work for
+          // single-mount ships.
           el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
           const remoteHitTargetIds: string[] = [];
-          // Wire-side beam ranges per shooter — exposed so E2E can assert
-          // that a hit beam was truncated server-side (range < HITSCAN_RANGE).
           const remoteLaserRanges: Record<string, number> = {};
           if (gameClient.mirror.remoteLasers) {
-            for (const [shooterId, l] of gameClient.mirror.remoteLasers) {
-              if (l.targetId) remoteHitTargetIds.push(l.targetId);
-              remoteLaserRanges[shooterId] = parseFloat(l.range.toFixed(2));
+            for (const [shooterId, perShooter] of gameClient.mirror.remoteLasers) {
+              let maxRange = 0;
+              for (const l of perShooter.values()) {
+                if (l.targetId) remoteHitTargetIds.push(l.targetId);
+                if (l.range > maxRange) maxRange = l.range;
+              }
+              remoteLaserRanges[shooterId] = parseFloat(maxRange.toFixed(2));
             }
           }
           el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);

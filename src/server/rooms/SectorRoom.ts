@@ -913,6 +913,7 @@ export class SectorRoom extends Room<SectorState> {
       this.broadcast('laser_fired', {
         type: 'laser_fired',
         shooterId,
+        mountId: mount.id,
         fromX: rayFromX,
         fromY: rayFromY,
         toX: beamEndX,
@@ -1026,6 +1027,7 @@ export class SectorRoom extends Room<SectorState> {
       this.broadcast('laser_fired', {
         type: 'laser_fired',
         shooterId: wireShooterId,
+        mountId: mount.id,
         fromX: rayFromX,
         fromY: rayFromY,
         toX: beamEndX,

@@ -150,23 +150,37 @@ export interface RenderMirror {
    *  for ships that are also in `boostingShips`. */
   thrustingShips?: Set<string>;
   /**
-   * Live hitscan beam state. Carries only the hit distance and target id; the
-   * renderer derives the beam's geometry from the local ship's lerped pose in
-   * `ships[localPlayerId]` each frame so the beam visually stays glued to the
-   * ship sprite during prediction-correction lerps. Null when not firing.
+   * Live hitscan beam state, **per mount**. Carries only the hit distance and
+   * target id for each beam; the renderer derives the beam's geometry from
+   * the local ship's lerped pose in `ships[localPlayerId]` plus each mount's
+   * local offset each frame so beams stay glued to the ship during
+   * prediction-correction lerps. Empty (not present in the map) when a mount
+   * is not firing this frame. Cleared wholesale when the player releases the
+   * fire trigger or switches to a projectile weapon.
+   *
+   * Multi-mount/turret refactor (Phase 2c, 2026-05-11): replaces the single
+   * `liveBeam` field. For legacy single-mount fighter/scout/heavy the map
+   * has exactly one entry keyed by `'forward'`.
    */
-  liveBeam?: { dist: number; hitId?: string } | null;
+  liveBeams?: Map<string, { dist: number; hitId?: string }>;
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**
-   * Server-authoritative beams from remote shooters (players and drones). Keyed
-   * by shooterId; a new shot replaces the previous entry so there's no flicker.
-   * For player shooters, the renderer derives geometry from the shooter's live
-   * pose in `mirror.ships` so the beam sweeps with rotation. For non-ship
-   * shooters (drones — not in `mirror.ships`), the renderer falls back to the
-   * server-shipped `fromX/fromY/toX/toY` endpoints.
+   * Server-authoritative beams from remote shooters (players and drones).
+   * Keyed by `shooterId`, with a nested map keyed by `mountId` so multi-mount
+   * shooters can carry one entry per barrel simultaneously without each new
+   * mount's beam clobbering the previous one (the pre-2c structure was a
+   * single beam per shooter, which dropped all-but-the-last on multi-mount
+   * fires). For player shooters, the renderer derives geometry from the
+   * shooter's live pose in `mirror.ships` plus the firing mount's local
+   * offset each frame, so the beam sweeps with rotation; for non-ship
+   * shooters (drones — not in `mirror.ships`), the renderer falls back to
+   * the server-shipped `fromX/fromY/toX/toY` endpoints.
+   *
+   * Legacy single-mount ships emit one event with `mountId === 'forward'`
+   * (or absent — pre-2c clients accept either and synthesise the same key).
    */
-  remoteLasers?: Map<string, {
+  remoteLasers?: Map<string, Map<string, {
     range: number;
     hit: boolean;
     targetId?: string;
@@ -175,7 +189,7 @@ export interface RenderMirror {
     fromY: number;
     toX: number;
     toY: number;
-  }>;
+  }>>;
 }
 
 export interface IRenderer {

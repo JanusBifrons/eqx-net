@@ -7,7 +7,7 @@ import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
-import { getShipKind, type ShipShape } from '../../shared-types/shipKinds';
+import { getShipKind, type ShipShape, type WeaponMount } from '../../shared-types/shipKinds';
 
 const WORLD_W = 10000;
 const WORLD_H = 10000;
@@ -222,6 +222,27 @@ function buildBeamGfx(dx: number, dy: number): Graphics {
   return g;
 }
 
+/** Compute the world position of a mount's pivot given the host ship's pose.
+ *  Multi-mount/turret refactor (Phase 2c). For legacy single-mount ships
+ *  mount.localX/Y = (0, 0), so the result is just (shipX, shipY) — same as
+ *  the pre-refactor "fire from ship centre" path. `mount` may be undefined
+ *  when a pre-2c server omits `mountId` from a `laser_fired` event; in that
+ *  case we fall back to ship centre (no offset). */
+function applyMountOffset(
+  shipX: number,
+  shipY: number,
+  shipAngle: number,
+  mount: WeaponMount | undefined,
+): { x: number; y: number } {
+  if (!mount) return { x: shipX, y: shipY };
+  const cosA = Math.cos(shipAngle);
+  const sinA = Math.sin(shipAngle);
+  return {
+    x: shipX + (mount.localX * cosA - mount.localY * sinA),
+    y: shipY + (mount.localX * sinA + mount.localY * cosA),
+  };
+}
+
 function buildExplosionGfx(): Graphics {
   const g = new Graphics();
   // Simple starburst: 8 lines radiating from center.
@@ -337,11 +358,23 @@ export class PixiRenderer implements IRenderer {
   update(mirror: RenderMirror): void {
     const seen = new Set<string>();
 
-    // Precompute the set of entities hit by any active remote beam this frame.
+    // Precompute the sets of entities hit by any active beam this frame —
+    // remote (other shooters' beams) and local (any mount on the local
+    // player's ship). Multi-mount/turret refactor (Phase 2c): both
+    // `mirror.remoteLasers` and `mirror.liveBeams` are now per-mount, so we
+    // flatten across all mounts to drive the damage-flash tint logic.
     const remoteHitTargets = new Set<string>();
     if (mirror.remoteLasers) {
-      for (const laser of mirror.remoteLasers.values()) {
-        if (laser.targetId) remoteHitTargets.add(laser.targetId);
+      for (const perShooter of mirror.remoteLasers.values()) {
+        for (const laser of perShooter.values()) {
+          if (laser.targetId) remoteHitTargets.add(laser.targetId);
+        }
+      }
+    }
+    const localHitTargets = new Set<string>();
+    if (mirror.liveBeams) {
+      for (const beam of mirror.liveBeams.values()) {
+        if (beam.hitId) localHitTargets.add(beam.hitId);
       }
     }
 
@@ -365,7 +398,7 @@ export class PixiRenderer implements IRenderer {
       // Damage flash takes priority; beam hit tint is secondary.
       if (mirror.damagedShips?.has(playerId)) {
         sprite.tint = DAMAGE_FLASH_COLOR;
-      } else if (mirror.liveBeam?.hitId === playerId || remoteHitTargets.has(playerId)) {
+      } else if (localHitTargets.has(playerId) || remoteHitTargets.has(playerId)) {
         sprite.tint = 0xff2222;
       } else {
         sprite.tint = 0xffffff;
@@ -487,7 +520,7 @@ export class PixiRenderer implements IRenderer {
         // drone clearly registers a hit even when no beam is currently on it.
         if (mirror.damagedShips?.has(spriteKey)) {
           sprite.tint = DAMAGE_FLASH_COLOR;
-        } else if ((mirror.liveBeam?.hitId === spriteKey) || remoteHitTargets.has(spriteKey)) {
+        } else if (localHitTargets.has(spriteKey) || remoteHitTargets.has(spriteKey)) {
           sprite.tint = DAMAGE_FLASH_COLOR;
         } else {
           sprite.tint = 0xffffff;
@@ -564,7 +597,15 @@ export class PixiRenderer implements IRenderer {
 
     // Remote beams from other players — orange, continuously tracking shooter rotation.
     // Uses shooter's current angle from mirror.ships so the beam sweeps smoothly between
-    // server-acked shot events (every ~167ms). One Map entry per shooter — no flicker.
+    // server-acked shot events (every ~167ms).
+    //
+    // Multi-mount/turret refactor (Phase 2c): `mirror.remoteLasers` is now
+    // `Map<shooterId, Map<mountId, laser>>`. We iterate the nested map and
+    // resolve each mount's local offset from the shooter's ship-kind catalogue
+    // entry, so multi-mount ships emit beams from the correct barrel positions
+    // (not all stacked at the ship centre). Legacy single-mount ships have
+    // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
+    // the pre-refactor "ship.pos + 20 u forward" path.
     if (mirror.remoteLasers && mirror.remoteLasers.size > 0) {
       if (!this.remoteBeamGfx) {
         this.remoteBeamGfx = new Graphics();
@@ -572,14 +613,7 @@ export class PixiRenderer implements IRenderer {
       }
       this.remoteBeamGfx.clear();
       const now = performance.now();
-      for (const [shooterId, laser] of mirror.remoteLasers) {
-        // Hold full brightness while shooter is actively firing; fade only in the
-        // last 150 ms of TTL (i.e. after they stop shooting).  With WEAPON_COOLDOWN
-        // = 167 ms and TTL = 400 ms, each new shot resets expiresAt well before the
-        // fade window, so the beam is solid-on while space is held.
-        const ttlRemaining = laser.expiresAt - now;
-        const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
-
+      for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
         // ship's rotation between fire events. AI shooters track their
         // mirror.swarm pose for the same reason — drones move every tick, so
@@ -587,7 +621,7 @@ export class PixiRenderer implements IRenderer {
         // jump). Falls back to the wire endpoints if the shooter isn't found
         // (defensive — e.g. ID mapping mismatch).
         const shooter = mirror.ships.get(shooterId);
-        let swarmShooter: { x: number; y: number; angle: number; radius: number } | null = null;
+        let swarmShooter: { x: number; y: number; angle: number; radius: number; shipKind?: string } | null = null;
         if (!shooter && shooterId.startsWith('swarm-')) {
           const entityId = parseInt(shooterId.slice('swarm-'.length), 10);
           if (!Number.isNaN(entityId)) {
@@ -598,75 +632,112 @@ export class PixiRenderer implements IRenderer {
               // (predWorld pose synced into the mirror each frame). Asteroids
               // stay on the lerp path for parity with their sprite render.
               if (sw.kind === 1) {
-                swarmShooter = { x: sw.x, y: sw.y, angle: sw.angle, radius: sw.radius };
+                swarmShooter = { x: sw.x, y: sw.y, angle: sw.angle, radius: sw.radius, shipKind: sw.shipKind };
               } else {
                 const lerped = interpolateSwarmPose(sw, now, this.swarmPoseScratch);
-                swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius };
+                swarmShooter = { x: lerped.x, y: lerped.y, angle: lerped.angle, radius: sw.radius, shipKind: sw.shipKind };
               }
             }
           }
         }
 
-        let fromX: number;
-        let fromY: number;
-        let toX: number;
-        let toY: number;
-        if (shooter) {
-          const fwdX = -Math.sin(shooter.angle);
-          const fwdY =  Math.cos(shooter.angle);
-          fromX = shooter.x + fwdX * 20;
-          fromY = shooter.y + fwdY * 20;
-          toX = fromX + fwdX * laser.range;
-          toY = fromY + fwdY * laser.range;
-        } else if (swarmShooter) {
-          // Origin at the drone's nose (radius offset along its facing).
-          const fwdX = -Math.sin(swarmShooter.angle);
-          const fwdY =  Math.cos(swarmShooter.angle);
-          fromX = swarmShooter.x + fwdX * (swarmShooter.radius + 2);
-          fromY = swarmShooter.y + fwdY * (swarmShooter.radius + 2);
-          toX = fromX + fwdX * laser.range;
-          toY = fromY + fwdY * laser.range;
-        } else {
-          fromX = laser.fromX;
-          fromY = laser.fromY;
-          toX = laser.toX;
-          toY = laser.toY;
+        const shooterKindId = shooter?.kind ?? swarmShooter?.shipKind ?? null;
+        const shooterKind = getShipKind(shooterKindId);
+
+        for (const [mountId, laser] of perShooter) {
+          // Hold full brightness while shooter is actively firing; fade only
+          // in the last 150 ms of TTL (i.e. after they stop shooting). With
+          // WEAPON_COOLDOWN = 167 ms and TTL = 400 ms, each new shot resets
+          // expiresAt well before the fade window, so the beam is solid-on
+          // while space is held.
+          const ttlRemaining = laser.expiresAt - now;
+          const alpha = ttlRemaining > 150 ? 1.0 : Math.max(0, ttlRemaining / 150);
+
+          // Resolve the mount's ship-local offset from the catalogue. Falls
+          // back to a zero-offset zero-baseAngle stub for unknown mount ids
+          // so a pre-2c server (no mountId in the wire) still renders.
+          const mount = shooterKind.mounts?.find((m) => m.id === mountId);
+
+          let fromX: number;
+          let fromY: number;
+          let toX: number;
+          let toY: number;
+          if (shooter) {
+            const origin = applyMountOffset(shooter.x, shooter.y, shooter.angle, mount);
+            const fireAngle = shooter.angle + (mount?.baseAngle ?? 0);
+            const fwdX = -Math.sin(fireAngle);
+            const fwdY =  Math.cos(fireAngle);
+            fromX = origin.x + fwdX * 20;
+            fromY = origin.y + fwdY * 20;
+            toX = fromX + fwdX * laser.range;
+            toY = fromY + fwdY * laser.range;
+          } else if (swarmShooter) {
+            const origin = applyMountOffset(swarmShooter.x, swarmShooter.y, swarmShooter.angle, mount);
+            const fireAngle = swarmShooter.angle + (mount?.baseAngle ?? 0);
+            const fwdX = -Math.sin(fireAngle);
+            const fwdY =  Math.cos(fireAngle);
+            // Drone barrel offset is `radius + 2` along the mount's fire
+            // direction (no mount → centre of drone). Matches the
+            // pre-refactor visual where the beam clears the drone hull.
+            const barrelOffset = mount ? 20 : swarmShooter.radius + 2;
+            fromX = origin.x + fwdX * barrelOffset;
+            fromY = origin.y + fwdY * barrelOffset;
+            toX = fromX + fwdX * laser.range;
+            toY = fromY + fwdY * laser.range;
+          } else {
+            fromX = laser.fromX;
+            fromY = laser.fromY;
+            toX = laser.toX;
+            toY = laser.toY;
+          }
+          // Outer glow
+          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+          this.remoteBeamGfx.stroke({ color: REMOTE_LASER_COLOR, width: 3, alpha: alpha * 0.4 });
+          // Bright core
+          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+          this.remoteBeamGfx.stroke({ color: 0xffaa44, width: 1, alpha });
         }
-        // Outer glow
-        this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.remoteBeamGfx.stroke({ color: REMOTE_LASER_COLOR, width: 3, alpha: alpha * 0.4 });
-        // Bright core
-        this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.remoteBeamGfx.stroke({ color: 0xffaa44, width: 1, alpha });
       }
       this.remoteBeamGfx.visible = true;
     } else if (this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
     }
 
-    // Live hitscan beam — derive geometry from the local ship's lerped pose in
-    // mirror.ships each frame so the beam stays glued to the ship sprite even
-    // during a server-correction lerp. (Mirrors the remote-beam pattern above —
-    // single source of truth: "where the ship is visually right now".)
+    // Live hitscan beams — one per mount in the local ship's active slot.
+    // Derive geometry from the local ship's lerped pose in mirror.ships each
+    // frame so beams stay glued to the ship sprite even during a server-
+    // correction lerp. (Mirrors the remote-beam pattern above — single source
+    // of truth: "where the ship is visually right now".)
+    //
+    // Multi-mount/turret refactor (Phase 2c): `mirror.liveBeams` is now a
+    // per-mount map. Legacy single-mount fighter/scout/heavy has exactly one
+    // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
+    // per barrel and each draws independently.
     const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (mirror.liveBeam && localShip) {
+    if (mirror.liveBeams && mirror.liveBeams.size > 0 && localShip) {
       if (!this.liveBeamGfx) {
         this.liveBeamGfx = new Graphics();
         this.shipContainer.addChild(this.liveBeamGfx);
       }
-      const fwdX = -Math.sin(localShip.angle);
-      const fwdY =  Math.cos(localShip.angle);
-      const fromX = localShip.x + fwdX * 20;
-      const fromY = localShip.y + fwdY * 20;
-      const toX = fromX + fwdX * mirror.liveBeam.dist;
-      const toY = fromY + fwdY * mirror.liveBeam.dist;
       this.liveBeamGfx.clear();
-      // Outer glow
-      this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-      this.liveBeamGfx.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
-      // Bright core
-      this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-      this.liveBeamGfx.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
+      const localKind = getShipKind(localShip.kind ?? null);
+      for (const [mountId, beam] of mirror.liveBeams) {
+        const mount = localKind.mounts?.find((m) => m.id === mountId);
+        const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
+        const fireAngle = localShip.angle + (mount?.baseAngle ?? 0);
+        const fwdX = -Math.sin(fireAngle);
+        const fwdY =  Math.cos(fireAngle);
+        const fromX = origin.x + fwdX * 20;
+        const fromY = origin.y + fwdY * 20;
+        const toX = fromX + fwdX * beam.dist;
+        const toY = fromY + fwdY * beam.dist;
+        // Outer glow
+        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+        this.liveBeamGfx.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
+        // Bright core
+        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+        this.liveBeamGfx.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
+      }
       this.liveBeamGfx.visible = true;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;

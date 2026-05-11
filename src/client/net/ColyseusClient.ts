@@ -52,7 +52,7 @@ import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
 import type { AiEntity, AiPlayerView } from '@core/contracts/IAiBehaviour';
-import { getShipKind } from '@shared-types/shipKinds';
+import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -266,6 +266,7 @@ export class ColyseusGameClient {
     localPlayerId: null,
     damagedShips: new Set(),
     explodingShips: new Set(),
+    liveBeams: new Map(),
     remoteLasers: new Map(),
     boostingShips: new Set(),
     thrustingShips: new Set(),
@@ -790,15 +791,15 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('laser_fired', (evt: LaserFiredEvent) => {
-      // Own shots are already shown as liveBeam — only store remote ones.
+      // Own shots are already shown as liveBeams — only store remote ones.
       if (evt.shooterId === this.mirror.localPlayerId) return;
       const dx = evt.toX - evt.fromX;
       const dy = evt.toY - evt.fromY;
       const range = Math.hypot(dx, dy);
-      // Upsert: replaces the previous beam from this shooter so there is never
-      // more than one entry per shooter and the TTL resets on each shot.
-      // Player beams are HELD weapons (cooldown 167 ms at 60 Hz; TTL 400 ms
-      // keeps the visual continuous while space is held).
+      // Upsert: replaces the previous beam from this (shooter, mount) so
+      // there is never more than one entry per mount and the TTL resets on
+      // each shot. Player beams are HELD weapons (cooldown 167 ms at 60 Hz;
+      // TTL 400 ms keeps the visual continuous while space is held).
       //
       // For AI shooters (`swarm-${entityId}`) the iteration we converged on:
       //   - First attempt 400 ms: the beam endpoints were stamped at fire time
@@ -810,9 +811,20 @@ export class ColyseusGameClient {
       //     renderer re-derives the beam ORIGIN from `mirror.swarm[entityId]`
       //     each frame so it tracks the moving drone smoothly. Same pattern
       //     player beams use against `mirror.ships[localId]`.
+      //
+      // Multi-mount/turret refactor (Phase 2c): keyed by (shooterId, mountId).
+      // Pre-2c servers omit `mountId`; we synthesise `'forward'` so the entry
+      // still has a stable key and legacy single-mount rendering is unchanged.
       const isAiShooter = evt.shooterId.startsWith('swarm-');
       const ttlMs = isAiShooter ? 250 : 400;
-      (this.mirror.remoteLasers ??= new Map()).set(evt.shooterId, {
+      const mountKey = evt.mountId ?? 'forward';
+      const lasers = (this.mirror.remoteLasers ??= new Map());
+      let perShooter = lasers.get(evt.shooterId);
+      if (!perShooter) {
+        perShooter = new Map();
+        lasers.set(evt.shooterId, perShooter);
+      }
+      perShooter.set(mountKey, {
         range,
         hit: evt.hit,
         targetId: evt.targetId,
@@ -941,7 +953,7 @@ export class ColyseusGameClient {
       this.mirror.boostingShips?.clear();
       this.mirror.thrustingShips?.clear();
       this.mirror.remoteLasers?.clear();
-      this.mirror.liveBeam = null;
+      this.mirror.liveBeams?.clear();
       this.mirror.serverGhostPos = null;
       // Drop remote ships; the local entry is preserved so predWorld keeps
       // simulating until the destination's state patch arrives.
@@ -1080,7 +1092,7 @@ export class ColyseusGameClient {
 
     if (id === this.mirror.localPlayerId) {
       this.localDead = true;
-      this.mirror.liveBeam = null;
+      this.mirror.liveBeams?.clear();
       this.ghostManager.clearForShip(id);
       useUIStore.getState().setHullPct(0);
       useUIStore.getState().setDead(true);
@@ -2188,11 +2200,15 @@ export class ColyseusGameClient {
     // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
     // actually sees the set on the frame it was populated.
 
-    // Expire remote lasers past their TTL.
+    // Expire remote lasers past their TTL. Per-mount, so different mounts on
+    // the same shooter independently fade out as their cooldown windows end.
     if (this.mirror.remoteLasers && this.mirror.remoteLasers.size > 0) {
       const now = performance.now();
-      for (const [id, laser] of this.mirror.remoteLasers) {
-        if (laser.expiresAt <= now) this.mirror.remoteLasers.delete(id);
+      for (const [shooterId, perShooter] of this.mirror.remoteLasers) {
+        for (const [mountId, laser] of perShooter) {
+          if (laser.expiresAt <= now) perShooter.delete(mountId);
+        }
+        if (perShooter.size === 0) this.mirror.remoteLasers.delete(shooterId);
       }
     }
   }
@@ -2352,14 +2368,14 @@ export class ColyseusGameClient {
         if (activeWeaponDef.mode === 'hitscan') {
           this.updateLiveBeam();
         } else {
-          this.mirror.liveBeam = null;
+          this.mirror.liveBeams?.clear();
         }
         if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
           this.sendFire(tick);
           this.lastFiredAtTick = tick;
         }
       } else {
-        this.mirror.liveBeam = null;
+        this.mirror.liveBeams?.clear();
       }
     }
 
@@ -2419,20 +2435,75 @@ export class ColyseusGameClient {
     }
   }
 
+  /** Compute (and cache in `mirror.liveBeams`) the local player's hitscan
+   *  beam state — one entry per mount in the firing slot. Multi-mount/turret
+   *  refactor (Phase 2c): replaces the pre-2c single `liveBeam` write. For
+   *  legacy single-mount ships the map has exactly one entry keyed by
+   *  `'forward'`; multi-mount kinds (interceptor / gunship, Phase 3) get one
+   *  entry per barrel so each renders independently.
+   *
+   *  Mount origin = `ship.pos + rotate(mount.local, ship.angle)`. Mount fire
+   *  direction = `ship.angle + mount.baseAngle` (mount rotation lands in
+   *  Phase 4b — for now `currentMountAngle` is 0). The 20 u barrel offset is
+   *  applied along the mount's world fire direction. */
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const fwdX = -Math.sin(state.angle);
-    const fwdY = Math.cos(state.angle);
-    const fromX = state.x + fwdX * 20;
-    const fromY = state.y + fwdY * 20;
-    const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
-    this.mirror.liveBeam = {
-      dist: hit ? hit.dist : HITSCAN_RANGE,
-      hitId: hit?.hitId,
-    };
+
+    const liveBeams = (this.mirror.liveBeams ??= new Map());
+    const mounts = this.localShipMounts();
+    if (mounts.length === 0) {
+      // Defensive: ship-kind has no mounts. Clear any stale beams.
+      liveBeams.clear();
+      return;
+    }
+
+    // Drop entries for mounts no longer present (e.g. ship-kind changed
+    // mid-life — currently impossible but cheap to guard).
+    const mountIds = new Set<string>();
+    for (const m of mounts) mountIds.add(m.id);
+    for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
+
+    const cosA = Math.cos(state.angle);
+    const sinA = Math.sin(state.angle);
+    for (const mount of mounts) {
+      const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
+      const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
+      const mountAngle = state.angle + mount.baseAngle;
+      const fwdX = -Math.sin(mountAngle);
+      const fwdY = Math.cos(mountAngle);
+      const fromX = mountWorldX + fwdX * 20;
+      const fromY = mountWorldY + fwdY * 20;
+      const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      liveBeams.set(mount.id, {
+        dist: hit ? hit.dist : HITSCAN_RANGE,
+        hitId: hit?.hitId,
+      });
+    }
+  }
+
+  /** Resolve the local player's currently-active slot's mount list. Returns
+   *  the first slot's mounts when no `slotId` is in play (today's only path;
+   *  multi-slot UI lands in a future phase). Empty array if the ship-kind
+   *  has no mounts/slots or the local player hasn't joined yet. */
+  private localShipMounts(): ReadonlyArray<WeaponMount> {
+    const localId = this.mirror.localPlayerId;
+    if (!localId) return [];
+    const shipRender = this.mirror.ships.get(localId);
+    const kindId = shipRender?.kind ?? null;
+    const kind = getShipKind(kindId);
+    const mounts = kind.mounts;
+    const slots = kind.slots;
+    if (!mounts || !slots || slots.length === 0) return [];
+    const slot = slots[0]!;
+    const out: WeaponMount[] = [];
+    for (const mid of slot.mountIds) {
+      const m = mounts.find((mm) => mm.id === mid);
+      if (m) out.push(m);
+    }
+    return out;
   }
 
   /**

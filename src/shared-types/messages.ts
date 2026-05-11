@@ -231,10 +231,18 @@ export interface RespawnAckMessage {
 }
 
 /** Server → client (broadcast): a hitscan shot was fired. Sent to ALL clients so
- *  they can render the beam. The endpoint is server-authoritative (lag-comp result). */
+ *  they can render the beam. The endpoint is server-authoritative (lag-comp result).
+ *
+ *  Multi-mount/turret refactor (Phase 2c, 2026-05-11): `mountId` identifies
+ *  which mount on the firing ship produced this beam. Server iterates the
+ *  firing ship's slot mounts and broadcasts one event per mount (introduced
+ *  in Phase 2a). Optional for pre-2c clients: when absent the client falls
+ *  back to a synthetic `'forward'` mount id so legacy single-mount renders
+ *  the same beam as before. */
 export interface LaserFiredEvent {
   type: 'laser_fired';
   shooterId: string;
+  mountId?: string;
   fromX: number;
   fromY: number;
   toX: number;
