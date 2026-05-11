@@ -100,6 +100,19 @@ export class AiController {
   }
 
   /**
+   * Render-side query: is the given entity's behaviour currently treating
+   * `playerId` as a hostile target? Returns false if the entity isn't
+   * registered or its behaviour doesn't implement the optional query (e.g.
+   * asteroid drift behaviour, which has no notion of hostility). Pure /
+   * side-effect-free; safe to call every frame.
+   */
+  isEntityHostileToPlayer(entityId: string, playerId: string): boolean {
+    if (!playerId) return false;
+    const reg = this.entities.get(entityId);
+    return reg?.behaviour.isHostileToPlayer?.(playerId) ?? false;
+  }
+
+  /**
    * Tick every registered AI once. `entitySnapshot(id)` must return the live
    * pose (read from SAB by the caller earlier in the tick); behaviours never
    * touch the worker themselves. `players` is the up-to-date list of alive

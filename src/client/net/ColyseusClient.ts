@@ -2276,6 +2276,20 @@ export class ColyseusGameClient {
         if (perShooter.size === 0) this.mirror.remoteLasers.delete(shooterId);
       }
     }
+
+    // Phase F — drone hostility flag, driven by the per-drone AI behaviour's
+    // `hostileTo` set. The radar (and any future hostility-aware surface)
+    // reads `entry.isHostileToLocal` to colour entities. O(N) per frame
+    // over registered drones; the underlying lookup is a Set.has().
+    if (this.mirror.swarm && localId) {
+      for (const [entityId, entry] of this.mirror.swarm) {
+        if (entry.kind !== 1) continue; // asteroid — no hostility concept
+        entry.isHostileToLocal = this._aiController.isEntityHostileToPlayer(
+          `${entityId}`,
+          localId,
+        );
+      }
+    }
   }
 
   // ── Input loop (server-tick-anchored, driven by rAF in App.tsx) ───────

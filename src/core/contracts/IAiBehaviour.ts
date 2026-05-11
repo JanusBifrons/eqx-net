@@ -82,6 +82,13 @@ export interface IAiBehaviour {
    */
   markHostile?(shooterId: string, atTick: number): void;
   purgeHostility?(playerId: string): void;
+  /**
+   * Optional read-only query: is the behaviour currently hostile to the
+   * given player? Used by render-side surfaces (e.g. the halo radar) that
+   * want to colour entities differently based on their threat state.
+   * Pure / side-effect-free; safe to call every frame.
+   */
+  isHostileToPlayer?(playerId: string): boolean;
 }
 
 /** Returns the nearest player to (x, y), or null when no players are present. */

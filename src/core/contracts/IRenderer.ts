@@ -103,6 +103,12 @@ export interface SwarmRenderState {
    *  colour on the renderer; absent for asteroids. Resolved from the wire's
    *  u8 catalogue index by the decoder. */
   shipKind?: string;
+  /** True when this drone's AI behaviour currently treats the local player
+   *  as a hostile target. Populated each frame by the consumer (e.g.
+   *  `ColyseusGameClient.updateMirror` via `AiController.isEntityHostileToPlayer`)
+   *  — drives the radar's hostile-vs-idle colouring + glow. Absent on
+   *  asteroids and on drones whose AI hasn't been hit yet. */
+  isHostileToLocal?: boolean;
   /** Per-mount rotation angle, ship-relative AND already biased past
    *  `mount.baseAngle`. Indexed by catalogue mount-order. Multi-mount/
    *  turret refactor Phase 4c (2026-05-11): authoritative angles arrive in

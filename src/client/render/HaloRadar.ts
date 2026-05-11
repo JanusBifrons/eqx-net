@@ -5,8 +5,15 @@ import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore } from '../state/store';
 
 const ASTEROID_COLOR = 0x886644;
-const DRONE_COLOR = 0xff3366;
+// Phase F — split the drone colour by hostility state so the player can
+// tell at a glance which off-screen drones are currently targeting them.
+// Hostile drones get the saturated red + a soft glow; idle drones get a
+// muted amber and no glow.
+const DRONE_HOSTILE_COLOR = 0xff3344;
+const DRONE_IDLE_COLOR = 0xf0c040;
 const REMOTE_SHIP_COLOR = 0x00aaff;
+const GLOW_COLOR = 0xff5566;
+const GLOW_RADIUS = 9;
 // Halo radii are specified as a fraction of the viewport's shorter screen
 // dimension and converted to world units each frame using the viewport's
 // current zoom. The fixed-pixel constants used pre-Phase E (90/220) clipped
@@ -150,17 +157,32 @@ const ARROW_POLY = [
   { x: -5, y: 5 },
 ];
 
-function paintArrowGfx(g: Graphics, color: number): void {
+function paintArrowGfx(g: Graphics, color: number, showGlow: boolean): void {
   g.clear();
+  // Phase F — soft glow behind the arrow, painted in the same Graphics so
+  // its rotation/scale follow the arrow. Drawn first (under the triangle)
+  // and only when the entry is hostile, which the radar pre-classifies.
+  if (showGlow) {
+    g.circle(0, 0, GLOW_RADIUS);
+    g.fill({ color: GLOW_COLOR, alpha: 0.25 });
+    g.circle(0, 0, GLOW_RADIUS * 0.6);
+    g.fill({ color: GLOW_COLOR, alpha: 0.35 });
+  }
   g.poly(ARROW_POLY);
   g.fill({ color, alpha: 0.95 });
   g.poly(ARROW_POLY);
-  g.stroke({ color: 0xffffff, width: 1, alpha: 0.5 });
+  // Hostile arrows take a brighter white border to amplify the menace
+  // signal; everything else keeps the soft default.
+  g.stroke({
+    color: 0xffffff,
+    width: showGlow ? 1.4 : 1,
+    alpha: showGlow ? 0.85 : 0.5,
+  });
 }
 
-function buildArrowGfx(color: number): Graphics {
+function buildArrowGfx(color: number, showGlow: boolean): Graphics {
   const g = new Graphics();
-  paintArrowGfx(g, color);
+  paintArrowGfx(g, color, showGlow);
   return g;
 }
 
@@ -170,6 +192,10 @@ interface ArrowEntry {
    *  type (drone → asteroid → ship) can detect mismatch and repaint
    *  geometry instead of leaving stale colour on the pooled graphic. */
   color: number;
+  /** Whether the entry currently renders the hostile glow + bright stroke.
+   *  Tracked alongside `color` so a hostility flip also triggers a
+   *  geometry repaint. */
+  glow: boolean;
   /** Critically-damped spring state for the arrow's screen-pixel x. */
   sx: SpringState;
   /** Critically-damped spring state for the arrow's screen-pixel y. */
@@ -186,6 +212,10 @@ export interface Candidate {
   y: number;
   color: number;
   dist: number;
+  /** Whether this entry should render with the hostile glow + bright
+   *  stroke. Defaults to false; set true by the radar for drones the
+   *  client AI currently treats as hostile to the local player. */
+  hostile?: boolean;
 }
 
 /**
@@ -353,12 +383,18 @@ export class HaloRadar {
         const xExtrap = e.x + e.vx * dtSec;
         const yExtrap = e.y + e.vy * dtSec;
         const dist = Math.hypot(xExtrap - local.x, yExtrap - local.y);
+        const isDrone = e.kind === 1;
+        const hostile = isDrone && (e.isHostileToLocal ?? false);
+        const color = isDrone
+          ? (hostile ? DRONE_HOSTILE_COLOR : DRONE_IDLE_COLOR)
+          : ASTEROID_COLOR;
         rawCandidates.push({
           key: `swarm:${id}`,
           x: xExtrap,
           y: yExtrap,
-          color: e.kind === 1 ? DRONE_COLOR : ASTEROID_COLOR,
+          color,
           dist,
+          hostile,
         });
       }
     }
@@ -410,23 +446,26 @@ export class HaloRadar {
       const targetX = playerScreen.x + Math.cos(proj.theta) * proj.radiusPx;
       const targetY = playerScreen.y - Math.sin(proj.theta) * proj.radiusPx;
 
+      const wantGlow = c.hostile === true;
       if (!entry) {
-        const gfx = buildArrowGfx(c.color);
+        const gfx = buildArrowGfx(c.color, wantGlow);
         this.container.addChild(gfx);
         entry = {
           gfx,
           color: c.color,
+          glow: wantGlow,
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
           lastVisible: false,
         };
         this.arrows.set(c.key, entry);
-      } else if (entry.color !== c.color) {
-        // Wedge representative changed type — repaint geometry with the new
-        // colour. Cost is bounded by RADAR_WEDGE_COUNT per frame and only
-        // fires on type-flip frames.
-        paintArrowGfx(entry.gfx, c.color);
+      } else if (entry.color !== c.color || entry.glow !== wantGlow) {
+        // Wedge representative or hostility state flipped — repaint geometry
+        // with the new colour/glow. Cost is bounded by RADAR_WEDGE_COUNT +
+        // active hostile drones per frame, only on flip frames.
+        paintArrowGfx(entry.gfx, c.color, wantGlow);
         entry.color = c.color;
+        entry.glow = wantGlow;
       }
       renderedKeys.add(c.key);
 

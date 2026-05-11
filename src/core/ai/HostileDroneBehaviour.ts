@@ -146,6 +146,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     this.state = 'COMBAT';
   }
 
+  /** Render-side query: is this drone currently treating `playerId` as
+   *  a hostile target? Pure, side-effect-free — safe to poll every frame. */
+  isHostileToPlayer(playerId: string): boolean {
+    return this.hostileTo.has(playerId);
+  }
+
   /**
    * External event: a player left the sector (transit out, disconnect).
    * Drops them from the hostile set; if no hostile remain, return to
