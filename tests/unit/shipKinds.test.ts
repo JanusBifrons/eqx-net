@@ -239,7 +239,7 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
 });
 
 describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
-  it('interceptor has two wing mounts in a single primary slot', () => {
+  it('interceptor has two wing mounts in a single primary slot, both arc-rotating', () => {
     const k = SHIP_KINDS.interceptor;
     expect(k.mounts).toHaveLength(2);
     const wingL = k.mounts!.find((m) => m.id === 'wing-l')!;
@@ -247,12 +247,15 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     // Mirrored offsets across the centreline (port and starboard).
     expect(wingL.localX).toBe(-wingR.localX);
     expect(wingL.localY).toBe(wingR.localY);
-    // Both fire forward (baseAngle 0) with zero arc until Phase 4b lands rotation.
+    // Both fire forward (baseAngle 0) with symmetric arc and matching slew
+    // speeds — same hardpoint type, just mirrored. Phase 4b.1 (2026-05-11)
+    // promoted the arcs from zero to ±30° once the rotation runtime spec
+    // landed in WeaponMountController.
     for (const m of [wingL, wingR]) {
       expect(m.baseAngle).toBe(0);
-      expect(m.arcMin).toBe(0);
-      expect(m.arcMax).toBe(0);
-      expect(m.rotationSpeed).toBe(0);
+      expect(m.arcMin).toBeCloseTo(-Math.PI / 6, 9);
+      expect(m.arcMax).toBeCloseTo(Math.PI / 6, 9);
+      expect(m.rotationSpeed).toBeGreaterThan(0);
       expect(m.weaponId).toBe('hitscan');
     }
     expect(k.slots).toHaveLength(1);
@@ -260,7 +263,7 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     expect(k.slots![0]!.mountIds).toEqual(['wing-l', 'wing-r']);
   });
 
-  it('gunship has a forward and a rear mount; rear fires backward', () => {
+  it('gunship has a forward and a rear mount; rear fires backward with a wider arc', () => {
     const k = SHIP_KINDS.gunship;
     expect(k.mounts).toHaveLength(2);
     const forward = k.mounts!.find((m) => m.id === 'forward')!;
@@ -269,6 +272,12 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     expect(rear.baseAngle).toBeCloseTo(Math.PI, 6);
     // Rear sits behind the forward mount (Pixi-up: tail is +y).
     expect(rear.localY).toBeGreaterThan(forward.localY);
+    // Forward mount has a smaller arc than the rear (the rear is the wide
+    // sweep that covers the gunship's blind sides while the body cruises).
+    expect(rear.arcMax - rear.arcMin).toBeGreaterThan(forward.arcMax - forward.arcMin);
+    // Both mounts rotate at the same speed (single chassis hardware).
+    expect(forward.rotationSpeed).toBe(rear.rotationSpeed);
+    expect(forward.rotationSpeed).toBeGreaterThan(0);
     expect(k.slots).toHaveLength(1);
     expect(k.slots![0]!.mountIds).toEqual(['forward', 'rear']);
   });

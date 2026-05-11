@@ -512,14 +512,17 @@ const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
     ],
   },
   mounts: [
+    // Wing mounts: ±30° forward arc, 4 rad/s slew. Phase 4b.1 (2026-05-11)
+    // — arc and rotation declared in the catalogue; client-side tracking
+    // animation lands in 4b.2, server-authoritative compute in 4b.3.
     {
       id: 'wing-l',
       localX: -8,
       localY: 2,
       baseAngle: 0,
-      arcMin: 0,
-      arcMax: 0,
-      rotationSpeed: 0,
+      arcMin: -Math.PI / 6,
+      arcMax: Math.PI / 6,
+      rotationSpeed: 4,
       weaponId: 'hitscan',
     },
     {
@@ -527,9 +530,9 @@ const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
       localX: 8,
       localY: 2,
       baseAngle: 0,
-      arcMin: 0,
-      arcMax: 0,
-      rotationSpeed: 0,
+      arcMin: -Math.PI / 6,
+      arcMax: Math.PI / 6,
+      rotationSpeed: 4,
       weaponId: 'hitscan',
     },
   ],
@@ -570,24 +573,28 @@ const GUNSHIP: ShipKind = ShipKindSchema.parse({
     ],
   },
   mounts: [
+    // Forward mount: ±45° arc, 3 rad/s slew. Slower than the interceptor's
+    // dedicated wings because the gunship is the heavy chassis.
     {
       id: 'forward',
       localX: 0,
       localY: -12,        // pivot near the nose
       baseAngle: 0,       // fires forward (−y)
-      arcMin: 0,
-      arcMax: 0,
-      rotationSpeed: 0,
+      arcMin: -Math.PI / 4,
+      arcMax: Math.PI / 4,
+      rotationSpeed: 3,
       weaponId: 'hitscan',
     },
+    // Rear mount: ±90° arc, 3 rad/s. Wider sweep so the rear turret can
+    // cover the gunship's blind sides while the body keeps moving forward.
     {
       id: 'rear',
       localX: 0,
       localY: 10,         // pivot near the tail
       baseAngle: Math.PI, // fires backward (+y)
-      arcMin: 0,
-      arcMax: 0,
-      rotationSpeed: 0,
+      arcMin: -Math.PI / 2,
+      arcMax: Math.PI / 2,
+      rotationSpeed: 3,
       weaponId: 'hitscan',
     },
   ],

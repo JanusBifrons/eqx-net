@@ -42,6 +42,18 @@ export interface MountTargetView {
   readonly vy: number;
 }
 
+/** A single mount's static configuration — the subset of `WeaponMount` the
+ *  rotation maths cares about. Pulled into a narrow interface so test
+ *  fixtures can construct them without going through `ShipKindSchema`. */
+export interface MountConfig {
+  readonly localX: number;
+  readonly localY: number;
+  readonly baseAngle: number;
+  readonly arcMin: number;
+  readonly arcMax: number;
+  readonly rotationSpeed: number;
+}
+
 /** Distance hysteresis factor for sticky target switching. The previously-
  *  picked target is kept as long as
  *
@@ -122,4 +134,64 @@ export function pickTarget(
   const threshold = nearestD2 * factor * factor;
   if (prevD2 <= threshold) return prev;
   return nearest;
+}
+
+/** Wrap an angle into the [-π, π] range. Centralised so every rotation
+ *  callsite uses the same wrap, avoiding the `0 vs 2π` ambiguity. */
+export function wrapPi(rad: number): number {
+  let r = rad;
+  while (r > Math.PI) r -= 2 * Math.PI;
+  while (r < -Math.PI) r += 2 * Math.PI;
+  return r;
+}
+
+/**
+ * Slew a mount's current angle (ship-relative, RELATIVE to `mount.baseAngle`)
+ * toward `desiredBearing` (also ship-relative, also relative to baseAngle),
+ * clamped by:
+ *
+ *   - `[mount.arcMin, mount.arcMax]` — the mount's mechanical rotation arc.
+ *     A mount with `arcMin === arcMax === 0` is fixed and the result is 0.
+ *   - `mount.rotationSpeed * dtSec` — the per-tick angular travel limit.
+ *
+ * Returns the new mount angle for this tick. Pure, deterministic — same
+ * inputs on server and client produce the same output, so the lockstep
+ * "both sides agree on mount angle" property is structurally guaranteed
+ * once both sides receive the same `desiredBearing` (which is itself
+ * derived from the same target via `pickTarget`).
+ *
+ * `desiredBearing` is the angle FROM ship-forward TO the target bearing,
+ * with the mount's `baseAngle` already subtracted out. The caller computes
+ * it as `wrapPi(targetBearingRelativeToShip - mount.baseAngle)`. We accept
+ * it pre-subtracted so this function doesn't need to know about baseAngle
+ * conventions, only about the arc-and-speed limits.
+ */
+export function rotateMountToward(
+  currentMountAngle: number,
+  desiredBearing: number,
+  mount: MountConfig,
+  dtSec: number,
+): number {
+  // Degenerate mount — fixed in place. Skip the slew entirely.
+  if (mount.rotationSpeed <= 0 || mount.arcMax <= mount.arcMin) {
+    return clampToArc(0, mount);
+  }
+  // Clamp the request into the arc; the mount can't rotate past its
+  // mechanical limit even if the target is further round.
+  const clampedTarget = clampToArc(wrapPi(desiredBearing), mount);
+  // Limit per-tick travel by the rotation speed.
+  const maxStep = mount.rotationSpeed * dtSec;
+  const delta = wrapPi(clampedTarget - currentMountAngle);
+  if (Math.abs(delta) <= maxStep) return clampedTarget;
+  // Sign of `delta` is the rotation direction (positive = counter-clockwise
+  // in the ship-relative frame). Inch toward target by `maxStep`.
+  return clampToArc(currentMountAngle + Math.sign(delta) * maxStep, mount);
+}
+
+/** Clamp a ship-relative mount angle into `[arcMin, arcMax]`. Internal —
+ *  exported only so test fixtures can poke at the boundary explicitly. */
+export function clampToArc(angle: number, mount: MountConfig): number {
+  if (angle < mount.arcMin) return mount.arcMin;
+  if (angle > mount.arcMax) return mount.arcMax;
+  return angle;
 }
