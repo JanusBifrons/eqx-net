@@ -339,6 +339,14 @@ async function main(): Promise<void> {
     u32[WORKER_TICK_US_IDX] = stepUs > 0xffff_ffff ? 0xffff_ffff : stepUs;
   };
 
+  // The schedule pattern uses `setImmediate` only on tick-due frames so a
+  // backlog (post-GC pause) drains in one event-loop turn; otherwise yields
+  // via `setTimeout(loop, 1)`. Node's libuv calls `timeBeginPeriod(1)` on
+  // Windows when timers are pending, putting the multimedia clock at 1 ms
+  // resolution — so `setTimeout(1)` lands within a millisecond of
+  // `nextTickAt` rather than the legacy 15.6 ms quantisation that doomed
+  // the original `setInterval(16.67)` approach. The catch-up cap below
+  // absorbs any single-iteration slip so cumulative drift cannot grow.
   const loop = (): void => {
     const now = performance.now();
     if (now >= nextTickAt) {
@@ -348,8 +356,15 @@ async function main(): Promise<void> {
       // pause), jump forward to "now" so we don't spiral. The simulation
       // re-syncs to wall-clock instead of trying to replay a backlog.
       if (now > nextTickAt + 5 * TICK_MS_HR) nextTickAt = now + TICK_MS_HR;
+      // After stepping, drain any further backlog in the same event-loop
+      // turn before yielding.
+      setImmediate(loop);
+    } else {
+      // Not yet at next tick — yield the CPU. Replaces the unconditional
+      // `setImmediate(loop)` busy-poll that was burning ~100 % of one core
+      // per worker (×7 sectors = ~700 % parent-process CPU at idle).
+      setTimeout(loop, 1);
     }
-    setImmediate(loop);
   };
   loop();
 }
