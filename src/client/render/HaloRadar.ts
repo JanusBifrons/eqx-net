@@ -56,16 +56,14 @@ const ARROW_SCALE_FAR = 0.65;
 // fly in to the edge at max radar range, sit there, then become
 // reactive when entities get within realistic close range.
 const EXP_CURVE_K = 12;
-// World-unit distance band. Phase H:
+// World-unit distance band. Phase N — endpoints expanded so the curve has
+// more breathing room. The reactive zone (close-end portion of the band
+// where the arrow visibly moves with distance) now spans ~300 u of world
+// distance instead of feeling like a hard jump from outer to inner.
 //   - DIST_MIN doubles as the near-cutoff: entities closer than this
-//     get no arrow at all. Off-screen-and-very-close entities don't
-//     need an indicator (the player already knows they're nearby), and
-//     suppressing them makes room for the "come in from off-screen"
-//     feel — the arrow appears once the entity has moved meaningfully
-//     away and springs in from beyond the screen edge.
-//   - Both endpoints widened so the lerp covers a more meaningful range.
-const DIST_MIN = 900;
-const DIST_MAX = 7000;
+//     get no arrow at all (after the Phase N grace fade plays out).
+const DIST_MIN = 1200;
+const DIST_MAX = 7500;
 // Padded so arrows don't flicker when a POI sits exactly on a viewport edge.
 const VISIBILITY_PADDING_WORLD = 16;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
@@ -75,6 +73,11 @@ const MAX_ARROWS = 64;
 // of letting the arrow fly off — a stale entity is more likely dead /
 // out-of-bounds than continuing at constant velocity forever.
 const ARROW_EXTRAP_CAP_MS = 400;
+// Phase N — grace duration. When the underlying entity goes on-screen
+// (or drops below the near-cutoff distMin), the arrow lingers visibly
+// for this many millis with a linear alpha fade instead of vanishing
+// abruptly. Smooths the "zoom-to-inner-then-pop" feel the user flagged.
+const ARROW_GRACE_MS = 500;
 // Spring half-life for arrow screen-pixel position smoothing. Operates on
 // the screen-space target (not world-space) so player movement no longer
 // translates into apparent arrow lag — overtake is solved by the screen-
@@ -269,6 +272,12 @@ interface ArrowEntry {
    *  springs to-target on a hidden → visible transition instead of letting
    *  them spring in from the previous hidden position. */
   lastVisible: boolean;
+  /** Phase N — wall-clock millis at which the arrow should actually
+   *  disappear after the underlying entity went on-screen / below
+   *  distMin. While non-null and in the future, the arrow stays visible
+   *  at its last-known position with a linear alpha fade. Reset to null
+   *  when the entity becomes visible-worthy again. */
+  hideAtMs: number | null;
 }
 
 export interface Candidate {
@@ -511,11 +520,41 @@ export class HaloRadar {
       const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
       let entry = this.arrows.get(c.key);
       if (proj.hidden) {
-        if (entry) {
+        if (!entry || !entry.lastVisible) {
+          // No arrow to grace-fade — either never rendered, or already
+          // finished its grace window. Leave it hidden.
+          if (entry) {
+            entry.gfx.visible = false;
+            entry.lastVisible = false;
+            entry.hideAtMs = null;
+            entry.gfx.alpha = 1;
+          }
+          continue;
+        }
+        // Phase N — entity is now on-screen or below near-cutoff, but
+        // the arrow was visible last frame. Start a grace fade so the
+        // disappearance reads as "settled out of view" instead of "popped".
+        if (entry.hideAtMs === null) {
+          entry.hideAtMs = now + ARROW_GRACE_MS;
+        }
+        if (now >= entry.hideAtMs) {
           entry.gfx.visible = false;
           entry.lastVisible = false;
+          entry.hideAtMs = null;
+          entry.gfx.alpha = 1;
+        } else {
+          // Still in grace — fade alpha, freeze position. Keep the entry
+          // in renderedKeys so the cleanup loop below doesn't force-hide it.
+          const remaining = (entry.hideAtMs - now) / ARROW_GRACE_MS;
+          entry.gfx.alpha = Math.max(0, Math.min(1, remaining));
+          renderedKeys.add(c.key);
         }
         continue;
+      }
+      // Visible — clear any in-progress grace fade.
+      if (entry) {
+        entry.hideAtMs = null;
+        if (entry.gfx.alpha !== 1) entry.gfx.alpha = 1;
       }
       // Compose the target screen position from the player's screen pos +
       // the bearing/radius the projection returned. Screen y points down,
@@ -539,6 +578,7 @@ export class HaloRadar {
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
           lastVisible: false,
+          hideAtMs: null,
         };
         this.arrows.set(c.key, entry);
       } else if (
@@ -583,10 +623,18 @@ export class HaloRadar {
 
     for (const [key, entry] of this.arrows) {
       if (!renderedKeys.has(key)) {
+        // The grace path explicitly adds to renderedKeys, so reaching
+        // this branch means there's no in-progress fade to protect.
         entry.gfx.visible = false;
         entry.lastVisible = false;
       }
       if (!presentKeys.has(key)) {
+        // Phase N — don't destroy while a grace fade is still playing
+        // out, even if the underlying entity disappeared from the
+        // partition. Let the fade finish, then the next frame's
+        // "renderedKeys doesn't include this" branch will hide it and
+        // the destroy below will collect on the frame after that.
+        if (entry.hideAtMs !== null) continue;
         this.container.removeChild(entry.gfx);
         entry.gfx.destroy();
         this.arrows.delete(key);
