@@ -2025,10 +2025,15 @@ export class ColyseusGameClient {
         const oy = this.reconciler.lerpOffset.y;
         const oa = this.reconciler.lerpAngleOffset;
         this.reconciler.advanceLerp(this.lastFrameMs);
-        // Preserve `kind` across per-frame rewrites so the renderer keeps
-        // drawing the correct silhouette. `kind` is set on first state-patch
-        // hydration in `syncMirror`; rewriting without it here would silently
-        // revert the sprite to the default polygon every frame.
+        // Preserve non-spatial fields across per-frame rewrites so the
+        // renderer keeps drawing the correct silhouette and the local-
+        // turret rotation state survives the per-frame mirror rebuild.
+        // `kind` was the first such field; `displayName` follows the same
+        // pattern; `mountAngles` (Phase 4b.2) is critical — `tickLocalMountAim`
+        // writes it on the same frame and `updateLiveBeam` re-derives the
+        // beam geometry from it, so wiping it here makes the visible beam
+        // flip back to baseAngle every render frame (visible bug: a solid
+        // unrotated beam under the flickering correctly-rotated ghost).
         const prev = this.mirror.ships.get(localId);
         this.mirror.ships.set(localId, {
           x: state.x + ox,
@@ -2037,6 +2042,8 @@ export class ColyseusGameClient {
           vy: state.vy,
           angle: state.angle + oa,
           ...(prev?.kind ? { kind: prev.kind } : {}),
+          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
+          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
         });
 
         // Diagnostic — track swarm entities entering/leaving overlap range.

@@ -64,10 +64,16 @@ interface MountGraphics {
 }
 
 /** Length (in world units) of the aim-line preview drawn from a mount's
- *  barrel tip. Short enough to not dominate the screen at typical zoom but
- *  long enough to make the mount's fire direction unambiguous. Phase 4b
- *  may scale this with the mount's weapon range. */
-const AIM_LINE_LENGTH = 40;
+ *  barrel tip. Sized to the hitscan range so it traces the entire path a
+ *  beam would travel — the user explicitly asked for this as a permanent
+ *  "where will this weapon fire" indicator. The dotted style (see
+ *  buildAimLineGfx) plus low alpha keeps it visible without dominating. */
+const AIM_LINE_LENGTH = 500;
+/** Dotted-line dash and gap lengths (world units). 6 u on / 4 u off reads
+ *  as a clear dotted preview at typical zoom levels without becoming a
+ *  visual centipede on long runs. */
+const AIM_LINE_DASH_ON = 6;
+const AIM_LINE_DASH_OFF = 4;
 
 /** Half-width of the barrel rectangle (mount sprite is `2 * BARREL_HALF_WIDTH`
  *  wide and `BARREL_LENGTH` long).
@@ -208,16 +214,30 @@ function buildTurretGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
 }
 
 /**
- * Aim-line preview — a thin solid line from the barrel tip extending forward
- * by `AIM_LINE_LENGTH` world units. Faint by default so it doesn't dominate
- * the screen on a busy gameplay frame. Phase 4b modulates this line's
- * colour/alpha by whether the slot has an acquired target.
+ * Aim-line preview — a permanent **dotted** guide line from the barrel tip
+ * along the mount's current fire direction, extending out to weapon range.
+ * User-requested feedback (2026-05-11 smoke test) so the player can see
+ * exactly where each active mount will fire without having to fire to
+ * find out.
+ *
+ * Pixi v8's `Graphics` doesn't have native dashed strokes, so we draw the
+ * dashes as a chain of short segments. The whole chain lives in
+ * mount-local space pointing -y (forward), and `applyMountAngles`
+ * rotates the parent Graphics so the dotted line sweeps with the slewing
+ * barrel automatically.
+ *
+ * Phase 4b colours this constant; Phase 4b.3 will modulate the alpha or
+ * colour by whether the slot's `pickTarget` has acquired something.
  */
 function buildAimLineGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
   const g = new Graphics();
-  // From barrel tip (BARREL_LENGTH units forward of pivot) outward by
-  // AIM_LINE_LENGTH along the mount's local forward axis.
-  g.moveTo(0, -BARREL_LENGTH).lineTo(0, -(BARREL_LENGTH + AIM_LINE_LENGTH));
-  g.stroke({ color: kind.shape.color, width: 1, alpha: 0.35 });
+  const start = BARREL_LENGTH;
+  const end = BARREL_LENGTH + AIM_LINE_LENGTH;
+  const step = AIM_LINE_DASH_ON + AIM_LINE_DASH_OFF;
+  for (let s = start; s < end; s += step) {
+    const dashEnd = Math.min(s + AIM_LINE_DASH_ON, end);
+    g.moveTo(0, -s).lineTo(0, -dashEnd);
+  }
+  g.stroke({ color: kind.shape.color, width: 1, alpha: 0.25 });
   return g;
 }
