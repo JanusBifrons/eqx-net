@@ -59,27 +59,25 @@ describe('HaloRadar projectArrow', () => {
     expect(proj.scale).toBeCloseTo(0.5);
   });
 
-  it('exponential curve compresses mid-band distance toward outer ring', () => {
-    // Phase L — exp-saturation curve. The linear midpoint of the band
-    // (arithmetic mean = 600 u for distMin=200/distMax=1000) is already
-    // ~92 % of the way to outer. inner=100, outer=300 → radius lands
-    // around 285. The user explicitly wanted this: most entities should
-    // sit near the outer ring, only the very-close-to-distMin ones drop
-    // toward inner.
+  it('exponential curve saturates mid-band distance at outer ring', () => {
+    // Phase M — exp-saturation curve with k=12. The arithmetic mid-band
+    // (600 u for distMin=200/distMax=1000) is now essentially at outer
+    // (t > 0.99). Pre-M k=5 had this at 92 % of band, which still showed
+    // some visible "approaching outer" motion; the user's brief was that
+    // mid-range entities should be glued to the edge instead.
     const proj = projectArrow({ x: 0, y: 0 }, { x: 600, y: 0 }, baseParams);
     expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeGreaterThan(275);
-    expect(proj.radiusPx).toBeLessThan(295);
+    expect(proj.radiusPx).toBeGreaterThan(295); // outerRadiusPx = 300
   });
 
   it('only entities very close to distMin land near the inner ring', () => {
     // dist = 205 (just 5 u past distMin=200) — normalized ≈ 0.006 of the
-    // band. With the exp-saturation curve and k=5, t ≈ 0.030 and the
-    // arrow sits at radius ≈ 106 (innerRadiusPx = 100). This is the
+    // band. With the exp-saturation curve and k=12, t ≈ 0.072 and the
+    // arrow sits at radius ≈ 114 (innerRadiusPx = 100). This is the
     // "inner is reserved for super-close" contract the user asked for.
     const proj = projectArrow({ x: 0, y: 0 }, { x: 205, y: 0 }, baseParams);
     expect(proj.hidden).toBe(false);
-    expect(proj.radiusPx).toBeLessThan(115);
+    expect(proj.radiusPx).toBeLessThan(120);
   });
 
   it('produces +π/2 bearing for a north-bearing POI (world y up)', () => {

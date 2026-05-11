@@ -47,13 +47,15 @@ const OUTER_RADIUS_MAX_PX = 400;
 // scaleNear.
 const ARROW_SCALE_NEAR = 1.15;
 const ARROW_SCALE_FAR = 0.65;
-// Phase L — exponent for the exp-saturation distance curve in
-// `projectArrow`. Higher = more aggressive push toward the outer ring
-// (most distances saturate at t≈1, only entities near distMin drop
-// toward t=0). 5 is a strong but not pathological compression — small
-// enough that 1500-2500 u still spreads across the lower half of the
-// band, large enough that 3000+ u all visually cluster at outer.
-const EXP_CURVE_K = 5;
+// Phase M — exponent for the exp-saturation distance curve in
+// `projectArrow`. Higher = more aggressive push toward the outer ring.
+// 12 is intentionally steep: entities past the interest-shedding
+// boundary (~2000 u) are essentially glued to the outer ring (t > 0.95),
+// and only entities within close-engagement range (900–~1500 u)
+// actually traverse the band. Matches the user's mental model: arrows
+// fly in to the edge at max radar range, sit there, then become
+// reactive when entities get within realistic close range.
+const EXP_CURVE_K = 12;
 // World-unit distance band. Phase H:
 //   - DIST_MIN doubles as the near-cutoff: entities closer than this
 //     get no arrow at all. Off-screen-and-very-close entities don't
