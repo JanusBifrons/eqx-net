@@ -708,7 +708,7 @@ export class SectorRoom extends Room<SectorState> {
       logger.warn({ sessionId: client.sessionId }, 'malformed fire message');
       return;
     }
-    const { tick, clientShotId, weapon, dirAngle } = parsed.data;
+    const { tick, clientShotId, weapon, dirAngle, slotId } = parsed.data;
 
     const shooterId = this.sessionToPlayer.get(client.sessionId);
     if (!shooterId) return;
@@ -758,8 +758,13 @@ export class SectorRoom extends Room<SectorState> {
     // kind has exactly one mount in one slot — the loop below iterates once
     // and behaves identically to the pre-refactor single-fire path. The
     // structural plumbing is the deliverable.
+    //
+    // Phase 2b.1: `slotId` from FireMessage (optional) selects which slot's
+    // mounts fire. `resolveSlotMounts` silently falls back to the first slot
+    // when `slotId` is absent or doesn't resolve, so a pre-2b client (no
+    // slotId field) is still served correctly.
     const shipKind = getShipKind(ship.kind);
-    const slotMounts = this.resolveSlotMounts(shipKind);
+    const slotMounts = this.resolveSlotMounts(shipKind, slotId);
     if (slotMounts.length === 0) {
       // Defensive: no mounts configured. Bail without hit_ack to mirror the
       // current behaviour of "shooter has no ship/kind" — the client's ghost

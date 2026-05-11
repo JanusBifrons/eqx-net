@@ -35,8 +35,22 @@ export const FireMessageSchema = z
      *  reconstructs the ray origin from the shooter's lag-compensated pose
      *  at `tick` plus the standard 20u barrel offset along this direction —
      *  same calculation the client used, but anchored to the server's
-     *  authoritative rewound pose. */
+     *  authoritative rewound pose.
+     *
+     *  Deprecated by the multi-mount/turret refactor: Phase 2b.2 drops
+     *  this field, leaving the server to reconstruct each mount's fire
+     *  direction from authoritative ship.angle + mount.baseAngle + the
+     *  mount-angle ring (Phase 4b). Still accepted today; pre-2b clients
+     *  remain compatible. */
     dirAngle: z.number(),
+    /** Active slot id the pilot fired from. Multi-mount/turret refactor
+     *  (Phase 2b.1, 2026-05-11). Optional — when absent the server uses
+     *  the firing ship-kind's first slot, which is the legacy single-mount
+     *  `'primary'` slot for fighter/scout/heavy. The server validates the
+     *  id against the ship's kind catalogue and silently falls back to
+     *  the first slot if it doesn't resolve, so a misbehaving client can't
+     *  pin its fire on a non-existent slot. */
+    slotId: z.string().optional(),
   })
   .strict();
 

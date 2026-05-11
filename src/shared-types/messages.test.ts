@@ -9,7 +9,7 @@
  * payload. Pattern matches the existing `InputMessageSchema` style.
  */
 import { describe, it, expect } from 'vitest';
-import { CollisionResolvedMessageSchema, EngageTransitSchema } from './messages.js';
+import { CollisionResolvedMessageSchema, EngageTransitSchema, FireMessageSchema } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -107,5 +107,31 @@ describe('EngageTransitSchema', () => {
       arrival: { x: 0, y: 0, z: 0 },
     });
     expect(r.success).toBe(false);
+  });
+});
+
+describe('FireMessageSchema (multi-mount refactor, Phase 2b.1)', () => {
+  const legacy = {
+    type: 'fire' as const,
+    tick: 100,
+    clientShotId: 'shot-abc',
+    weapon: 'hitscan' as const,
+    dirAngle: 0.5,
+  };
+
+  it('accepts a pre-2b client payload (no slotId)', () => {
+    expect(FireMessageSchema.safeParse(legacy).success).toBe(true);
+  });
+
+  it('accepts a 2b+ client payload with slotId', () => {
+    expect(FireMessageSchema.safeParse({ ...legacy, slotId: 'primary' }).success).toBe(true);
+  });
+
+  it('rejects non-string slotId', () => {
+    expect(FireMessageSchema.safeParse({ ...legacy, slotId: 42 }).success).toBe(false);
+  });
+
+  it('rejects unknown fields (strict)', () => {
+    expect(FireMessageSchema.safeParse({ ...legacy, mystery: 1 }).success).toBe(false);
   });
 });
