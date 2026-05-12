@@ -7,6 +7,8 @@ import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { MountVisualManager } from './MountVisualManager';
+import { BackgroundGrid } from './BackgroundGrid';
+import { StarfieldBackground } from './StarfieldBackground';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../shared-types/shipKinds';
 
@@ -20,8 +22,6 @@ const DRONE_OUTLINE_COLOR = 0xffaacc;
 const DRONE_CORE_COLOR = 0xffeeaa;
 const HITBOX_COLOR = 0xff0066;
 const BACKGROUND_COLOR = 0x05070f;
-const GRID_CELL = 200;
-const GRID_COLOR = 0x1a2040;
 const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 // Soft pink tint — multiplied with each ship's base colour, this gives a
 // legible "I just got hit" flash without crushing the green/blue hull tone.
@@ -34,19 +34,6 @@ const LASER_CORE_COLOR = 0xffffff;
 const REMOTE_LASER_COLOR = 0xff6600;
 const LASER_BOLT_OUTER = 0xff2244;
 const LASER_BOLT_CORE  = 0xffffff;
-
-function buildGrid(): Graphics {
-  const g = new Graphics();
-  const half = WORLD_W / 2;
-  for (let x = -half; x <= half; x += GRID_CELL) {
-    g.moveTo(x, -half).lineTo(x, half);
-  }
-  for (let y = -half; y <= half; y += GRID_CELL) {
-    g.moveTo(-half, y).lineTo(half, y);
-  }
-  g.stroke({ color: GRID_COLOR, width: 1 });
-  return g;
-}
 
 /**
  * Convert a `ShipShape` from the catalogue into a Pixi `Graphics`. The polygon
@@ -288,6 +275,8 @@ export class PixiRenderer implements IRenderer {
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
+  private backgroundGrid: BackgroundGrid | null = null;
+  private starfield: StarfieldBackground | null = null;
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -302,6 +291,12 @@ export class PixiRenderer implements IRenderer {
     });
     container.appendChild(this.app.canvas);
     this.initialized = true;
+
+    // Starfield is attached to app.stage BEFORE the viewport so the
+    // parallax layers render under all gameplay content (insertion
+    // order = z-order in Pixi).
+    this.starfield = new StarfieldBackground();
+    this.starfield.attach(this.app);
 
     this.viewport = new Viewport({
       screenWidth: container.clientWidth || window.innerWidth,
@@ -318,7 +313,8 @@ export class PixiRenderer implements IRenderer {
       .wheel({ smooth: 4 })
       .clampZoom({ minScale: 0.4, maxScale: 3 });
 
-    this.viewport.addChild(buildGrid());
+    this.backgroundGrid = new BackgroundGrid();
+    this.backgroundGrid.attach(this.viewport);
 
     this.shipContainer = new Container();
     this.viewport.addChild(this.shipContainer);
@@ -344,6 +340,7 @@ export class PixiRenderer implements IRenderer {
       const { w, h } = measureSize();
       this.app.renderer.resize(w, h);
       this.viewport.resize(w, h);
+      this.starfield?.resize(w, h);
     };
     window.addEventListener('resize', resize);
     window.addEventListener('orientationchange', resize);
@@ -812,6 +809,11 @@ export class PixiRenderer implements IRenderer {
       this.viewport.moveCenter(local.x, local.y);
     }
 
+    // Background layers — run AFTER moveCenter so they use this frame's
+    // camera position (otherwise stars and grid lag by one frame).
+    this.starfield?.update(this.viewport);
+    this.backgroundGrid?.update(this.viewport);
+
     // Drain pending damage numbers and spawn floating text.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
@@ -882,6 +884,8 @@ export class PixiRenderer implements IRenderer {
     this.labels?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
+    this.backgroundGrid?.destroy();
+    this.starfield?.destroy();
     this.app.destroy(true, { children: true });
   }
 }
