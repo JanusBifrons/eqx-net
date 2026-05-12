@@ -649,6 +649,17 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
+  const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
+    // ShipKind already lives in Zustand `selectedShipKind` (the picker
+    // modal's onSelect sets it before invoking this callback). The server
+    // reads shipKind from JoinOptions via ColyseusClient.connect, which
+    // pulls it from Zustand. We only need to add `isNewShip: true` to
+    // force a fresh roster row instead of resuming the most-recent.
+    setRoomNameOverride(`galaxy-${sectorKey}`);
+    setJoinOptionsOverride({ isNewShip: true });
+    setPhase('game');
+  }, [setPhase]);
+
   const handleSelectLocal = useCallback(() => {
     setPhase('local');
   }, [setPhase]);
@@ -744,6 +755,7 @@ export function App(): JSX.Element {
                own /dev/limbo lookup and renders the saved-ship card. */
             onSelectRoom={handleSelectRoom}
             onSpawnExistingShip={handleSpawnExistingShip}
+            onSpawnNewShip={handleSpawnNewShip}
             onSelectLocal={handleSelectLocal}
           />
         )}

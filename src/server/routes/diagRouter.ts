@@ -409,15 +409,15 @@ export function devLimboHandler(req: Request, res: Response): void {
 
 /**
  * POST /dev/player-ships/:shipId/abandon — Phase 3 multi-ship roster.
- * Drop a stored or lingering ship from the player's roster. Requires
- * `playerId` in the JSON body (the dev endpoint trusts the caller — the
- * client sends its own playerId; a malicious client could only abandon
- * its own ships). 409 if the ship is currently bound to an active sector
- * room (the player must disconnect first); 404 if no such ship; 403 if
- * the ship is not owned by the supplied playerId.
- *
- * Phase 4 will replace the row-delete with a "leave a wreck behind"
- * flow; for now abandon just removes from the roster.
+ * Drop a ship from the player's roster. Requires `playerId` in the JSON
+ * body (the dev endpoint trusts the caller — the client sends its own
+ * playerId; a malicious client could only abandon its own ships). 404
+ * if no such ship; 403 if the ship is not owned by the supplied
+ * playerId. Active and lingering ships are both abandonable — the
+ * roster row vanishes immediately; if the ship is still in a sector
+ * room, the room will continue to host it until the standard
+ * disconnect/eviction path runs, but it will not be remembered after.
+ * Phase 4 replaces this with a wreck-spawn flow.
  */
 export function devPlayerShipsAbandonHandler(req: Request, res: Response): void {
   const shipId = String(req.params['shipId'] ?? '');
@@ -435,10 +435,6 @@ export function devPlayerShipsAbandonHandler(req: Request, res: Response): void 
   }
   if (ship.playerId !== playerId) {
     res.status(403).json({ error: 'ship not owned by caller' });
-    return;
-  }
-  if (ship.isActive && ship.activeRoomId !== null) {
-    res.status(409).json({ error: 'cannot abandon your active ship', activeRoomId: ship.activeRoomId });
     return;
   }
   const removed = store.delete(shipId);

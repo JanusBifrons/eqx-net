@@ -1,4 +1,4 @@
-import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Stack, Tooltip, Typography } from '@mui/material';
+import { Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, Stack, Typography } from '@mui/material';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { getShipKind } from '../../shared-types/shipKinds';
@@ -8,10 +8,9 @@ import type { RosterShipEntry } from './ShipRosterCard';
 
 /**
  * Detail modal for one roster ship. Full silhouette + full stats + a
- * Spawn primary action and an Abandon destructive action. Abandon on
- * the player's currently-active ship is blocked at the server (409); we
- * surface that here by disabling the button + tooltip while
- * `ship.isActive && ship.activeRoomId` is truthy.
+ * Spawn primary action and an Abandon destructive action. Abandon
+ * always works for the caller's own ships — including active ones —
+ * since the server-side endpoint no longer 409's on active state.
  *
  * Phase 4 will replace the simple delete-from-roster Abandon with a
  * "leave a wreck behind" flow (ownerless hull stays in the sector).
@@ -74,24 +73,18 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
         </Box>
       </DialogContent>
       <DialogActions sx={{ bgcolor: '#0c1020', justifyContent: 'space-between', px: 2.5, pb: 2 }}>
-        <Tooltip title={isActive ? 'You can only abandon stored ships. Disconnect to abandon this one.' : 'Abandon — drops the ship from your roster.'}>
-          <span>
-            <Button
-              onClick={() => onAbandon(ship)}
-              disabled={isActive}
-              startIcon={<DeleteForeverIcon />}
-              data-testid="ship-detail-abandon"
-              sx={{
-                color: isActive ? '#5b6072' : '#ff5566',
-                border: '1px solid',
-                borderColor: isActive ? '#2a2f40' : '#5a2030',
-                '&:hover': { bgcolor: 'rgba(255,85,102,0.08)' },
-              }}
-            >
-              Abandon
-            </Button>
-          </span>
-        </Tooltip>
+        <Button
+          onClick={() => onAbandon(ship)}
+          startIcon={<DeleteForeverIcon />}
+          data-testid="ship-detail-abandon"
+          sx={{
+            color: '#ff5566',
+            border: '1px solid #5a2030',
+            '&:hover': { bgcolor: 'rgba(255,85,102,0.08)' },
+          }}
+        >
+          Abandon
+        </Button>
         <Box sx={{ display: 'flex', gap: 1 }}>
           <Button onClick={onClose} sx={{ color: '#9aa0b4' }} data-testid="ship-detail-close">Close</Button>
           <Button

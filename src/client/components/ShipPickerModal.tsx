@@ -7,19 +7,26 @@ interface ShipPickerModalProps {
   onClose: () => void;
   selectedKind: ShipKindId;
   onSelect: (id: ShipKindId) => void;
+  /** Optional title override. When unset, displays "Select your ship".
+   *  The Phase 3 galaxy-map sector-click flow passes "Spawn in
+   *  {sectorName}" so the modal reads as the spawn confirmation step. */
+  title?: string;
+  /** Optional one-line subtitle under the title. Phase 3 uses this for
+   *  "Pick a ship kind for this sector" or a roster-cap warning. */
+  subtitle?: string;
 }
 
 /**
- * Modal that lets the player pick which ship kind to spawn with on the next
- * sector entry. The trigger button (in `GalaxyOverviewScreen` spawn-mode) is
- * responsible for being disabled while a ship is currently spawned — by the
- * time this modal opens, selection is always safe.
+ * Modal that lets the player pick which ship kind to spawn with on the
+ * next sector entry. In Phase 3 this is the post-sector-click
+ * confirmation step on the galaxy map: clicking a sector summons this
+ * modal with a contextual title.
  *
- * Per-card stat chips (max speed, turn agility, hull) are derived from the
- * catalogue values directly — adding a 4th kind in `shipKinds.ts` makes it
- * appear here automatically with no edit to this file.
+ * Per-card stat chips (max speed, turn agility, hull) are derived from
+ * the catalogue values directly — adding a 4th kind in `shipKinds.ts`
+ * makes it appear here automatically with no edit to this file.
  */
-export function ShipPickerModal({ open, onClose, selectedKind, onSelect }: ShipPickerModalProps): JSX.Element {
+export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, subtitle }: ShipPickerModalProps): JSX.Element {
   return (
     <Dialog
       open={open}
@@ -29,7 +36,14 @@ export function ShipPickerModal({ open, onClose, selectedKind, onSelect }: ShipP
       data-testid="ship-picker-modal"
       PaperProps={{ sx: { bgcolor: '#0c1020', border: '1px solid #2a2f40' } }}
     >
-      <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>Select your ship</DialogTitle>
+      <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>
+        {title ?? 'Select your ship'}
+        {subtitle !== undefined && (
+          <Typography variant="caption" sx={{ display: 'block', color: '#888', mt: 0.25, fontWeight: 400 }}>
+            {subtitle}
+          </Typography>
+        )}
+      </DialogTitle>
       <DialogContent sx={{ bgcolor: '#0c1020', color: '#ccc' }}>
         <Stack spacing={1.5}>
           {SHIP_KINDS_LIST.map((kind) => (

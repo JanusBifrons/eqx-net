@@ -67,21 +67,11 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
 
   const handleAbandon = useCallback(async (shipId: string): Promise<void> => {
     try {
-      const res = await fetch(ENDPOINT_ABANDON(shipId), {
+      await fetch(ENDPOINT_ABANDON(shipId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerId }),
       });
-      if (!res.ok && res.status === 409) {
-        // Player tried to abandon their active ship. Surface a soft
-        // warning; the modal stays open so the user sees their click
-        // didn't take effect.
-        // Phase 4 will allow active-ship abandon (becomes a wreck).
-        // For now leave a console hint; UI affordance is the modal's
-        // disabled-while-active state added below.
-        console.warn('Cannot abandon your active ship — disconnect first.');
-        return;
-      }
       setOpenShipId(null);
       await refresh();
     } catch {
@@ -105,38 +95,39 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
       sx={{
         display: 'flex',
         flexDirection: compact ? 'row' : 'column',
-        gap: 1,
-        p: 1,
+        gap: 0.5,
+        p: 0.5,
         overflowX: compact ? 'auto' : 'hidden',
         overflowY: compact ? 'hidden' : 'auto',
-        bgcolor: 'rgba(8, 12, 24, 0.85)',
-        border: '1px solid #1f2440',
+        bgcolor: 'rgba(8, 12, 24, 0.55)',
+        backdropFilter: 'blur(2px)',
+        border: '1px solid rgba(31, 36, 64, 0.7)',
         borderRadius: 1,
-        ...(compact
-          ? { width: '100%', height: '100%' }
-          : { width: '100%', height: '100%', minWidth: 240 }),
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'auto',
       }}
     >
       <Box
         sx={{
           display: 'flex',
           alignItems: 'baseline',
-          gap: 1,
-          px: 0.5,
-          minHeight: 22,
+          gap: 0.5,
+          px: 0.25,
           flexShrink: 0,
+          ...(compact ? { writingMode: 'horizontal-tb' } : {}),
         }}
       >
-        <Typography variant="caption" sx={{ color: '#00ff88', letterSpacing: 1, textTransform: 'uppercase' }}>
-          Your ships
+        <Typography sx={{ color: '#00ff88', letterSpacing: 0.5, textTransform: 'uppercase', fontSize: 8 }}>
+          Ships
         </Typography>
-        <Typography variant="caption" sx={{ color: '#888' }}>
+        <Typography sx={{ color: '#888', fontSize: 8 }}>
           {ships.length}/{ROSTER_CAP}
         </Typography>
       </Box>
       {ships.length === 0 ? (
-        <Box sx={{ p: compact ? 1 : 2, color: '#666', fontSize: 11 }}>
-          {compact ? 'No ships yet.' : 'No ships in your roster yet. Pick a sector on the map to spawn your first.'}
+        <Box sx={{ p: 0.5, color: '#666', fontSize: 9 }}>
+          {compact ? 'None yet' : 'None yet — pick a sector to spawn.'}
         </Box>
       ) : (
         ships.map((ship) => (

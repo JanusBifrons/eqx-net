@@ -128,6 +128,13 @@ const JoinOptionsSchema = z
      *  Limbo-restore-or-fresh-spawn path. Present ⇒ hydrate from the named
      *  roster row's stored pose / kind / health; ignore Limbo for this join. */
     shipId: z.string().optional(),
+    /** Phase 3 multi-ship roster — force fresh creation even when the
+     *  player already has entries in their roster. Sent by the galaxy
+     *  map's "spawn a new ship in this sector" flow (sector click →
+     *  kind picker). Without this flag, the dual-write defaults to
+     *  reusing the most-recent roster row, which would mean clicking a
+     *  fresh sector silently resumed the player's old ship. */
+    isNewShip: z.boolean().optional(),
   })
   .passthrough();
 
@@ -1954,8 +1961,10 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 3 dual-write — pick or create a `player_ships` row for this
     // ship and stamp its UUID onto the schema. Engineering rooms skip
     // persistence and leave shipInstanceId empty. When the client supplied
-    // a valid `shipId`, that row is the one we bind; otherwise we pick the
-    // most-recently-updated row (or create a fresh one).
+    // a valid `shipId`, that row is the one we bind; when `isNewShip`
+    // is set, we force a fresh row (subject to 10-cap); otherwise we
+    // pick the most-recently-updated row (or create a fresh one).
+    const forceFreshCreate = parsed.success && parsed.data.isNewShip === true;
     ship.shipInstanceId = this.bindRosterEntry(playerId, userId ?? resumedUserId, chosenKind, {
       x: spawnX,
       y: spawnY,
@@ -1965,7 +1974,7 @@ export class SectorRoom extends Room<SectorState> {
       angvel: resumedFromLimbo ? resumedAngvel : 0,
       health: resumedHealth ?? ship.health,
       lastFireClientTick: resumedLastFireTick ?? 0,
-    }, preferredShipId);
+    }, preferredShipId, forceFreshCreate);
     this.state.ships.set(playerId, ship);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
@@ -2252,6 +2261,13 @@ export class SectorRoom extends Room<SectorState> {
      *  most-recent. Caller is responsible for verifying ownership; here
      *  we only mark-active. Falls back to the most-recent path on miss. */
     preferredShipId: string = '',
+    /** Phase 3 — when true, skip the most-recent-row fallback and
+     *  always create a fresh roster entry. Used by the galaxy-map
+     *  sector-click → kind-picker flow so clicking a sector spawns a
+     *  *new* ship rather than silently resuming the player's last
+     *  ride. Subject to 10-cap; on RosterFullError the ship still
+     *  spawns but without a roster row (logged warning). */
+    forceFreshCreate: boolean = false,
   ): string {
     if (this.sectorKey === null) return '';
     const store = getPlayerShipStore();
@@ -2263,7 +2279,7 @@ export class SectorRoom extends Room<SectorState> {
       // something rather than getting a roster-less ship.
     }
     const existing = store.listByPlayer(playerId);
-    if (existing.length > 0) {
+    if (existing.length > 0 && !forceFreshCreate) {
       // Most-recently-updated first. Pre-Phase-4 multi-ship UX uses the
       // most recent entry as the implicit "current" ship.
       existing.sort((a, b) => b.updatedAt - a.updatedAt);

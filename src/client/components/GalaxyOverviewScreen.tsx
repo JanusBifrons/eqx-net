@@ -18,9 +18,11 @@ import {
 } from '../render/galaxy/GalaxyOverviewRenderer';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
+import { ShipPickerModal } from './ShipPickerModal';
 import { ShipRosterPanel } from './ShipRosterPanel';
 import { useUIStore } from '../state/store';
 import { useIsCompact } from '../layout/useIsCompact';
+import type { ShipKindId } from '../../shared-types/shipKinds';
 
 interface LimboSummary {
   sectorKey: string;
@@ -60,6 +62,13 @@ interface GalaxyOverviewScreenProps {
    * exact roster row instead of the default most-recent.
    */
   onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
+  /**
+   * Phase 3 multi-ship — called when the player picks a sector on the
+   * map and then picks a kind in the post-click ShipPickerModal. Parent
+   * routes to `joinOrCreate('sector', { shipKind, isNewShip: true })`
+   * so the server creates a fresh roster entry instead of resuming.
+   */
+  onSpawnNewShip?: (kind: ShipKindId, sectorKey: string) => void;
   /** Spawn-mode local-diagnostic entry. */
   onSelectLocal?: () => void;
   /** Warp-mode tap handler — receives the chosen neighbour key. */
@@ -87,6 +96,7 @@ export function GalaxyOverviewScreen({
   mode,
   onSelectRoom,
   onSpawnExistingShip,
+  onSpawnNewShip,
   onSelectLocal,
   onPickNeighbour,
   onClose,
@@ -96,15 +106,22 @@ export function GalaxyOverviewScreen({
   const rendererRef = useRef<GalaxyOverviewRenderer | null>(null);
 
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
+  const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
+  const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
   const isCompact = useIsCompact();
   const storedPlayerId = loadStoredPlayerId() ?? '';
 
   const [engineeringOpen, setEngineeringOpen] = useState(false);
-  // Phase 3 note: the legacy bottom-right ship-kind picker trigger is gone.
-  // Fresh-sector spawns still use Zustand `selectedShipKind`; a future phase
-  // can re-introduce `ShipPickerModal` as the sector-click confirmation
-  // step. For now the user picks from their roster panel for resumes; new
-  // spawns use whatever kind was last selected in their store.
+  // Phase 3 — sector-click → kind-picker → spawn confirmation flow.
+  // When the player taps a sector on the map (renderer onPick) we stash
+  // the sectorKey here and open the picker. Picking a kind fires
+  // onSpawnNewShip(kind, sectorKey) with the captured sector.
+  const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
+  // Capture into a ref so the renderer's mount-once onPick callback
+  // sees the latest setter (the setter from useState is stable, but
+  // we route through a ref for parity with onSelectRoomRef below).
+  const setPendingSpawnSectorRef = useRef(setPendingSpawnSector);
+  useEffect(() => { setPendingSpawnSectorRef.current = setPendingSpawnSector; }, []);
 
   // --- Limbo lookup (spawn-mode only) ---
   const [limboSummary, setLimboSummary] = useState<LimboSummary | null>(null);
@@ -154,7 +171,11 @@ export function GalaxyOverviewScreen({
     const renderer = new GalaxyOverviewRenderer({
       onPick: (key) => {
         if (mode === 'spawn') {
-          onSelectRoomRef.current?.(`galaxy-${key}`);
+          // Phase 3 — intercept the sector tap. Instead of joining
+          // immediately, open the ShipPickerModal so the player picks
+          // which kind of ship to spawn in this sector. The picker's
+          // onSelect handler routes to onSpawnNewShip.
+          setPendingSpawnSectorRef.current(key);
         } else {
           onPickNeighbourRef.current?.(key);
         }
@@ -307,37 +328,28 @@ export function GalaxyOverviewScreen({
         )}
       </Box>
 
-      {/* Phase 3 responsive split: canvas + roster panel.
-       *  - Landscape / desktop (>=600 px): row — canvas grows, panel on the right.
-       *  - Portrait phone (<600 px): column — canvas on top, panel below.
-       *  The roster panel is hidden for engineering rooms (no playerId =>
-       *  the panel renders null anyway). */}
+      {/* Phase 3: canvas is full-width; roster panel floats over it as a
+       *  small transparent overlay so the galaxy map breathes underneath.
+       *  Position differs by orientation (right edge on landscape, bottom
+       *  strip on portrait phone). */}
       <Box
+        ref={mountRef}
         sx={{
           flex: 1,
           minHeight: 0,
           mx: 'auto',
           width: 'min(1280px, 98vw)',
-          display: 'flex',
-          flexDirection: isCompact ? 'column' : 'row',
-          gap: 1,
+          position: 'relative',
+          touchAction: 'none',
         }}
       >
         <Box
-          ref={mountRef}
           sx={{
-            flex: 1,
-            minHeight: 0,
-            position: 'relative',
-            touchAction: 'none',
-          }}
-        />
-        <Box
-          sx={{
-            flexShrink: 0,
+            position: 'absolute',
+            pointerEvents: 'none',
             ...(isCompact
-              ? { width: '100%', height: 160 }
-              : { width: 'min(320px, 30vw)', height: '100%' }),
+              ? { left: 8, right: 8, bottom: 8, height: 60 }
+              : { right: 8, top: 8, bottom: 8, width: 156 }),
           }}
         >
           <ShipRosterPanel
@@ -350,11 +362,11 @@ export function GalaxyOverviewScreen({
         </Box>
       </Box>
 
-      <Box sx={{ minHeight: 36, px: 3, pb: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography variant="caption" sx={{ color: '#555', textAlign: 'center' }}>
+      <Box sx={{ minHeight: 24, px: 3, pb: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Typography variant="caption" sx={{ color: '#555', textAlign: 'center', fontSize: 10 }}>
           {limboSector
-            ? 'Other sectors are locked while your ship is in flight. Pick a ship from your roster to spawn elsewhere.'
-            : 'Pick a sector on the map to spawn a new ship, or pick one from your roster on the right.'}
+            ? 'Other sectors are locked while your ship is in flight.'
+            : 'Tap a sector to spawn a new ship · tap a card to resume an existing one.'}
         </Typography>
       </Box>
 
@@ -389,6 +401,26 @@ export function GalaxyOverviewScreen({
           Engineering rooms
         </Button>
       </Stack>
+
+      {/* Phase 3 — sector-click confirmation. Picker opens when the user
+       *  taps a galaxy sector hex; picking a kind fires onSpawnNewShip
+       *  with the captured sector and clears the pending state. */}
+      <ShipPickerModal
+        open={pendingSpawnSector !== null}
+        onClose={() => setPendingSpawnSector(null)}
+        selectedKind={selectedShipKindId}
+        title={pendingSpawnSector !== null
+          ? `Spawn in ${getSector(pendingSpawnSector)?.name ?? pendingSpawnSector}`
+          : undefined}
+        subtitle={pendingSpawnSector !== null ? 'Pick a ship kind for this sector.' : undefined}
+        onSelect={(kind) => {
+          setSelectedShipKind(kind);
+          if (pendingSpawnSector !== null) {
+            onSpawnNewShip?.(kind, pendingSpawnSector);
+            setPendingSpawnSector(null);
+          }
+        }}
+      />
 
       <Dialog open={engineeringOpen} onClose={() => setEngineeringOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>Engineering rooms</DialogTitle>
