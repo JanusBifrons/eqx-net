@@ -55,6 +55,22 @@ Why: Zustand triggers React re-renders on subscription changes. Putting per-fram
 
 ---
 
+## Sizing default: start tiny, grow on request
+
+When you build any new UI element — modal, panel, card, button, chip — **default to as small as humanly possible**. Especially on mobile. We will iterate it bigger when the user reports it's hard to hit or read; the reverse direction (shipping huge and shrinking back down) wastes review cycles and feels worse.
+
+Concretely:
+- Card silhouettes / icons: start ~24–36 px. Don't reach for 64 px without a reason.
+- Body text in HUD / overlays / cards: 9–11 px. Captions 8–9 px. Reserve 12+ px for primary CTAs.
+- Dialog `maxWidth`: prefer `xs`; only step up to `sm` if content genuinely needs it.
+- Padding inside cards / dialogs: `p: 0.5`–`0.75` (4–6 px). Avoid MUI defaults (which are 16–24 px).
+- Touch targets that absolutely must be 44 px (iOS HIG) — only fight for that on PRIMARY confirm actions, not every chip.
+- Buttons: `size="small"` by default, with `fontSize: 11`.
+
+The bias: it's easier to hear "this is too small, bump it 10 %" than to undo the visual heaviness of a default-sized MUI component cluster. The 2026-05-12 ship-picker rebuild is the canonical example — `maxWidth="sm"` + full kind descriptions + 64 px silhouettes + 22 px stat chips read as "absolutely huge" in playtest; the rebuild dropped to `xs`, 36 px silhouettes, a one-line stat readout, and 11 px buttons.
+
+---
+
 ## Layout Slot System (2026-05-10)
 
 In-game React overlays are positioned via **named slot anchors**, never hand-placed. The system lives in [layout/](layout/) — see [docs/features/mobile-layout.md](../../docs/features/mobile-layout.md) for the full story.
