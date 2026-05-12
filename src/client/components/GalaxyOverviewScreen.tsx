@@ -367,6 +367,14 @@ export function GalaxyOverviewScreen({
         <Box
           sx={{
             position: 'absolute',
+            // The Pixi canvas inside mountRef is appended via
+            // container.appendChild AFTER React renders this wrapper, so
+            // by DOM order it paints on top. Bump z-index so the panel
+            // sits visibly above the canvas. pointerEvents on the
+            // wrapper stays 'none' so drag-to-pan on the canvas still
+            // works under the panel; the inner ShipRosterPanel sets its
+            // own pointerEvents:'auto' to capture taps on cards.
+            zIndex: 2,
             pointerEvents: 'none',
             // Portrait phone: anchor to the TOP edge so the panel doesn't
             // fight for space with the bottom-right Engineering /
