@@ -25,6 +25,12 @@ import { useIsCompact } from '../layout/useIsCompact';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 
+/** Delay between sector tap and picker mount, in milliseconds. Long
+ *  enough to drain the originating touchend (~50 ms on slow phones is
+ *  the empirical ceiling), short enough that the UI still feels
+ *  responsive. 200 ms is comfortably above both. */
+const PICKER_OPEN_DELAY_MS = 200;
+
 interface LimboSummary {
   sectorKey: string;
 }
@@ -117,6 +123,15 @@ export function GalaxyOverviewScreen({
   // When the player taps a sector on the map (renderer onPick) we stash
   // the sectorKey here and open the picker. Picking a kind fires
   // onSpawnNewShip(kind, sectorKey) with the captured sector.
+  //
+  // Tap-shield: the diagnostic capture (2026-05-12T19-50) showed only
+  // 72 ms between `galaxy_sector_click` and `ship_picker_select` — far
+  // too fast for a deliberate human click. What was happening: the same
+  // touch that selected the sector hex bled through onto the picker
+  // modal mounted under the player's finger, auto-resolving whichever
+  // card landed at that screen position. We defer the modal mount by
+  // PICKER_OPEN_DELAY_MS so the rogue touchend has fully drained before
+  // the modal becomes interactive.
   const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
   // Capture into a ref so the renderer's mount-once onPick callback
   // sees the latest setter (the setter from useState is stable, but
@@ -218,9 +233,17 @@ export function GalaxyOverviewScreen({
   // sector clicks behave according to the current source code even
   // when Vite Fast Refresh has preserved the renderer instance.
   onPickBodyRef.current = (key: string): void => {
-    logEvent('galaxy_sector_click', { key, mode });
+    const t0 = performance.now();
+    logEvent('galaxy_sector_click', { key, mode, ts: t0 });
     if (mode === 'spawn') {
-      setPendingSpawnSectorRef.current(key);
+      // Defer the picker open so the originating touchend finishes
+      // bubbling before the modal mounts. Otherwise the same touch
+      // auto-resolves whichever card lands under the user's finger.
+      window.setTimeout(() => {
+        const t1 = performance.now();
+        logEvent('picker_open_scheduled', { key, dispatchLatencyMs: t1 - t0 });
+        setPendingSpawnSectorRef.current(key);
+      }, PICKER_OPEN_DELAY_MS);
     } else {
       onPickNeighbourRef.current?.(key);
     }
@@ -345,8 +368,12 @@ export function GalaxyOverviewScreen({
           sx={{
             position: 'absolute',
             pointerEvents: 'none',
+            // Portrait phone: anchor to the TOP edge so the panel doesn't
+            // fight for space with the bottom-right Engineering /
+            // Single-Player Diagnostic buttons. Landscape / desktop: keep
+            // it on the right edge as a slim column.
             ...(isCompact
-              ? { left: 8, right: 8, bottom: 8, height: 60 }
+              ? { left: 8, right: 8, top: 8, height: 60 }
               : { right: 8, top: 8, bottom: 8, width: 156 }),
           }}
         >
@@ -406,7 +433,7 @@ export function GalaxyOverviewScreen({
       <ShipPickerModal
         open={pendingSpawnSector !== null}
         onClose={() => {
-          logEvent('ship_picker_close', { pendingSpawnSector });
+          logEvent('ship_picker_close', { pendingSpawnSector, ts: performance.now() });
           setPendingSpawnSector(null);
         }}
         selectedKind={selectedShipKindId}
@@ -415,7 +442,7 @@ export function GalaxyOverviewScreen({
           : undefined}
         subtitle={pendingSpawnSector !== null ? 'Pick a ship kind for this sector.' : undefined}
         onSelect={(kind) => {
-          logEvent('ship_picker_select', { kind, pendingSpawnSector });
+          logEvent('ship_picker_select', { kind, pendingSpawnSector, ts: performance.now() });
           setSelectedShipKind(kind);
           if (pendingSpawnSector !== null) {
             onSpawnNewShip?.(kind, pendingSpawnSector);
