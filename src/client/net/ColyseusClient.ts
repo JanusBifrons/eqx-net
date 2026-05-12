@@ -360,6 +360,11 @@ export class ColyseusGameClient {
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
+  /** Phase 4 — wrecks currently spawned in predWorld for client-side
+   *  collision. Stored with the `wreck-` prefix so they can't collide
+   *  with the playerId namespace. Despawned when removed from the
+   *  schema's `state.wrecks` map. */
+  private predWreckIds = new Set<string>();
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
@@ -1961,8 +1966,12 @@ export class ColyseusGameClient {
 
   /**
    * Phase 4 — refresh wreck poses from the snapshot. Identity flows
-   * over Colyseus schema diff (see syncMirror); this just keeps x/y/vx/vy/angle
-   * fresh per frame so the renderer can draw the drifting hull.
+   * over Colyseus schema diff (see syncMirror); this keeps x/y/vx/vy/angle
+   * fresh per frame so the renderer can draw the drifting hull, AND
+   * mirrors that pose into a predWorld body so the local player's
+   * predicted ship collides with the wreck instead of passing through
+   * it. The wreck body uses `wreck-${shipInstanceId}` as its predWorld
+   * id (disambiguates from the playerId namespace).
    */
   private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
     if (!this.mirror.wrecks) return;
@@ -1976,6 +1985,25 @@ export class ColyseusGameClient {
       entry.vy = w.vy;
       entry.angle = w.angle;
       entry.angvel = w.angvel;
+
+      // Spawn or update the predWorld body. Spawn lazily here because
+      // the schema diff lands first (with x/y=0); we need real pose
+      // before we can place the body sensibly. setShipState pushes the
+      // latest snapshot pose in every tick — same pattern remote ships
+      // use, so the local player's predicted collisions see a fresh
+      // wreck position once per snapshot (~20 Hz).
+      if (this.predWorld) {
+        const bodyId = `wreck-${w.id}`;
+        if (!this.predWorld.hasShip(bodyId)) {
+          this.predWorld.spawnShip(bodyId, w.x, w.y, entry.kind);
+          this.predWreckIds.add(bodyId);
+        }
+        this.predWorld.setShipState(bodyId, {
+          x: w.x, y: w.y, angle: w.angle,
+          vx: w.vx, vy: w.vy,
+          angvel: w.angvel,
+        });
+      }
     }
   }
 
@@ -2014,10 +2042,24 @@ export class ColyseusGameClient {
         });
       }
       for (const id of this.mirror.wrecks.keys()) {
-        if (!seenWrecks.has(id)) this.mirror.wrecks.delete(id);
+        if (!seenWrecks.has(id)) {
+          this.mirror.wrecks.delete(id);
+          // Despawn the predWorld body so local collision stops resolving
+          // against a wreck that's no longer in the sector.
+          const bodyId = `wreck-${id}`;
+          if (this.predWreckIds.has(bodyId)) {
+            this.predWorld?.despawnShip(bodyId);
+            this.predWreckIds.delete(bodyId);
+          }
+        }
       }
     } else if (this.mirror.wrecks.size > 0) {
       this.mirror.wrecks.clear();
+      // Mirror cleared entirely (e.g. left the room) — drop every wreck body.
+      for (const bodyId of this.predWreckIds) {
+        this.predWorld?.despawnShip(bodyId);
+      }
+      this.predWreckIds.clear();
     }
 
     const localId = this.mirror.localPlayerId;
