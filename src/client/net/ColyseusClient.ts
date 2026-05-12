@@ -1232,6 +1232,11 @@ export class ColyseusGameClient {
     // assume the projectile map matches the snapshot's tick.
     this.syncProjectiles(snap.projectiles);
 
+    // Phase 4 — sync wreck poses into the mirror. Identity (kind, health,
+    // maxHealth) flows via the Colyseus schema diff on `state.wrecks`
+    // (see syncMirror); this just refreshes per-frame pose.
+    this.syncWreckPoses(snap.wrecks);
+
     // Apply the server-authoritative boost set into the render mirror so the
     // PixiRenderer can draw an exhaust trail for whichever ships are currently
     // boosting. Reset first so leavers / shift-released ships drop out.
@@ -1954,6 +1959,26 @@ export class ColyseusGameClient {
     }
   }
 
+  /**
+   * Phase 4 — refresh wreck poses from the snapshot. Identity flows
+   * over Colyseus schema diff (see syncMirror); this just keeps x/y/vx/vy/angle
+   * fresh per frame so the renderer can draw the drifting hull.
+   */
+  private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
+    if (!this.mirror.wrecks) return;
+    if (!wrecks) return;
+    for (const w of wrecks) {
+      const entry = this.mirror.wrecks.get(w.id);
+      if (!entry) continue;
+      entry.x = w.x;
+      entry.y = w.y;
+      entry.vx = w.vx;
+      entry.vy = w.vy;
+      entry.angle = w.angle;
+      entry.angvel = w.angvel;
+    }
+  }
+
   // ── State mirror ────────────────────────────────────────────────────────
 
   private syncMirror(state: unknown): void {
@@ -1963,6 +1988,37 @@ export class ColyseusGameClient {
     // Projectiles are no longer on the Colyseus schema — see syncProjectiles
     // call inside the snapshot handler.
     if (!ships) return;
+
+    // Phase 4 — sync wreck identity (kind, health, maxHealth). Pose
+    // arrives separately in the snapshot's `wrecks` slice. Entries here
+    // are seeded with x:0, y:0 etc. until the next snapshot fills them.
+    const wreckMap = s['wrecks'] as Map<string, unknown> | undefined;
+    if (!this.mirror.wrecks) this.mirror.wrecks = new Map();
+    if (wreckMap) {
+      const seenWrecks = new Set<string>();
+      for (const [shipInstanceId, w] of wreckMap.entries()) {
+        const wr = w as Record<string, unknown>;
+        seenWrecks.add(shipInstanceId);
+        const prev = this.mirror.wrecks.get(shipInstanceId);
+        this.mirror.wrecks.set(shipInstanceId, {
+          shipInstanceId,
+          x: prev?.x ?? 0,
+          y: prev?.y ?? 0,
+          vx: prev?.vx ?? 0,
+          vy: prev?.vy ?? 0,
+          angle: prev?.angle ?? 0,
+          angvel: prev?.angvel ?? 0,
+          kind: typeof wr['kind'] === 'string' ? (wr['kind'] as string) : 'fighter',
+          health: Number(wr['health'] ?? 0),
+          maxHealth: Number(wr['maxHealth'] ?? 100),
+        });
+      }
+      for (const id of this.mirror.wrecks.keys()) {
+        if (!seenWrecks.has(id)) this.mirror.wrecks.delete(id);
+      }
+    } else if (this.mirror.wrecks.size > 0) {
+      this.mirror.wrecks.clear();
+    }
 
     const localId = this.mirror.localPlayerId;
     const now = performance.now();

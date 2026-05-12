@@ -41,9 +41,7 @@ vi.mock('../db/Database.js', () => ({ db: { prepare: () => ({ all: () => [] }) }
 
 vi.mock('colyseus', () => ({ matchMaker: {} }));
 
-// eslint-disable-next-line import/first
 import { devPlayerShipsHandler, devPlayerShipsAbandonHandler } from './diagRouter.js';
-// eslint-disable-next-line import/first
 import { setPlayerShipStore } from '../db/PersistenceWorker.js';
 
 function makeReq(opts: { query?: Record<string, unknown>; params?: Record<string, string>; body?: unknown }): Request {

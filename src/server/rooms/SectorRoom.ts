@@ -7,7 +7,7 @@ import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
-import { SectorState, ShipState } from './schema/SectorState.js';
+import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
@@ -205,6 +205,22 @@ export class SectorRoom extends Room<SectorState> {
   private slotToPlayer = new Map<number, string>();
   private freeSlots: number[] = [];
   private initialSpawnPositions = new Map<string, { x: number; y: number }>();
+
+  // Phase 4 — abandoned-ship hulls. When a player abandons their ship via
+  // the roster panel, the SAB slot is repurposed (slot stays allocated,
+  // ownership transfers from a player to a wreck). The physics worker
+  // continues to step the slot, so wrecks drift on their final-frame
+  // velocity, drag-decay over time, and collide with everything. Damage
+  // resolves through the standard `applyDamage` path; health 0 frees the
+  // slot back into `freeSlots` and removes the wreck.
+  private wreckToSlot = new Map<string, number>();
+  private slotToWreck = new Map<number, string>();
+  /** Pose mirror for wrecks, parallel to `shipPoseCache`. Updated once
+   *  per `update()` from the SAB. Keyed by shipInstanceId. */
+  private wreckPoseCache = new Map<string, ShipPhysicsState>();
+  /** Counter — increments on every poll-driven conversion so we know
+   *  the abandon→wreck rail is firing. */
+  private wreckConversions = 0;
 
   // Phase 5c: swarm entities (asteroids, drones) live in the same SAB slot
   // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
@@ -1171,6 +1187,22 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
 
+      // Phase 4 — wrecks are sphere-shootable. Same SHIP_COLLISION_RADIUS
+      // as live ships since their hull occupies the same shape. Targeted
+      // via `wreck-<shipInstanceId>` on the wire so `applyDamage` can
+      // route to `state.wrecks`.
+      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+        const b = slotBase(slot);
+        const cx = this.sabF32[b + SLOT_X_OFF]!;
+        const cy = this.sabF32[b + SLOT_Y_OFF]!;
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
+        if (dist !== null && dist < mountHitDist) {
+          mountHitDist = dist;
+          mountHitId = `wreck-${shipInstanceId}`;
+          mountHitIsObstacle = false;
+        }
+      }
+
       // Resolve wire target id for the laser_fired broadcast (swarm hits use
       // the 'swarm-${entityId}' wire convention).
       let wireTargetId: string | undefined = mountHitId ?? undefined;
@@ -1343,6 +1375,34 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    // Phase 4 — wreck damage. Wire id has the `wreck-` prefix; the rest
+    // is the shipInstanceId UUID. Route to `state.wrecks` and tear down
+    // on health 0.
+    if (targetId.startsWith('wreck-')) {
+      const shipInstanceId = targetId.slice('wreck-'.length);
+      const wreck = this.state.wrecks.get(shipInstanceId);
+      if (!wreck) return;
+      wreck.health = Math.max(0, wreck.health - damage);
+      const pose = this.wreckPoseCache.get(shipInstanceId);
+      this.broadcast('damage', {
+        type: 'damage',
+        targetId,
+        damage,
+        newHealth: wreck.health,
+        shooterId,
+        hitX: hitX ?? pose?.x,
+        hitY: hitY ?? pose?.y,
+      } satisfies DamageEvent);
+      if (wreck.health <= 0) {
+        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
+        this.broadcast('destroy', destroyEvent);
+        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
+        this.destroyWreck(shipInstanceId);
+        logger.info({ shipInstanceId, shooterId }, 'wreck destroyed');
+      }
+      return;
+    }
+
     const ship = this.state.ships.get(targetId);
     if (ship) {
       if (!ship.alive) return;
@@ -2338,6 +2398,105 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
+   * Phase 4 — promote a player's ship to an ownerless wreck in this
+   * sector. Called by the abandon-detection poll in `update()` when a
+   * ship's roster row has been deleted while still alive in the room.
+   *
+   * Critical invariants:
+   *  - The SAB slot is RETAINED (the worker keeps stepping the body).
+   *    We re-key it under `slotToWreck` and pull it out of
+   *    `slotToPlayer`. `freeSlots` only ever takes the slot back when
+   *    the wreck is destroyed by damage.
+   *  - All player-keyed maps for this slot are torn down so no stray
+   *    snapshot path serialises the ship after conversion.
+   *  - The player's session is force-leave'd. Their next galaxy-map
+   *    visit shows their (now smaller) roster minus the abandoned row.
+   */
+  private convertShipToWreck(playerId: string): void {
+    const ship = this.state.ships.get(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) {
+      // Already destroyed — the standard despawn path handles cleanup.
+      // Don't leave a destroyed-but-orphaned wreck.
+      return;
+    }
+    const shipInstanceId = ship.shipInstanceId;
+    const b = slotBase(slot);
+    const pose = this.shipPoseCache.get(playerId) ?? {
+      x:      this.sabF32[b + SLOT_X_OFF]!,
+      y:      this.sabF32[b + SLOT_Y_OFF]!,
+      vx:     this.sabF32[b + SLOT_VX_OFF]!,
+      vy:     this.sabF32[b + SLOT_VY_OFF]!,
+      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+
+    // 1) Build the wreck schema entry.
+    const wreck = new WreckState();
+    wreck.shipInstanceId = shipInstanceId;
+    wreck.kind = ship.kind;
+    wreck.health = ship.health;
+    wreck.maxHealth = ship.maxHealth;
+    this.state.wrecks.set(shipInstanceId, wreck);
+    this.wreckPoseCache.set(shipInstanceId, pose);
+
+    // 2) Transfer SAB slot ownership.
+    this.slotToWreck.set(slot, shipInstanceId);
+    this.wreckToSlot.set(shipInstanceId, slot);
+
+    // 3) Tear down player-keyed bookkeeping. Slot is NOT pushed onto
+    //    freeSlots — the wreck still owns it.
+    this.playerToSlot.delete(playerId);
+    this.slotToPlayer.delete(slot);
+    this.lastFireClientTick.delete(playerId);
+    this.playerMountAngles.delete(playerId);
+    this.playerSlotTargets.delete(playerId);
+    this.initialSpawnPositions.delete(playerId);
+    this.shipPoseCache.delete(playerId);
+    this.snapshotRing.unregisterEntity(playerId);
+    this.state.ships.delete(playerId);
+
+    // 4) Force the owning session to leave (if connected). The player
+    //    sees their roster missing this ship on the next galaxy-map
+    //    visit. The Limbo path is bypassed — the row is already gone.
+    const sessionId = this.playerToSession.get(playerId);
+    if (sessionId !== undefined) {
+      const client = this.clients.find((c) => c.sessionId === sessionId);
+      if (client !== undefined) {
+        try { client.send('ship_abandoned', { shipInstanceId }); } catch { /* socket already closed */ }
+        try { client.leave(1000); } catch { /* already gone */ }
+      }
+      this.playerToSession.delete(playerId);
+    }
+    this.sessionToPlayer.forEach((pid, sid) => {
+      if (pid === playerId) this.sessionToPlayer.delete(sid);
+    });
+    this.playerToUser.delete(playerId);
+
+    this.wreckConversions++;
+    serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+    logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → wreck');
+  }
+
+  /**
+   * Phase 4 — drop a wreck and release its SAB slot. Called from
+   * `applyDamage` when a wreck's health reaches 0, and from
+   * `onDispose` so we don't leak slots on room teardown.
+   */
+  private destroyWreck(shipInstanceId: string): void {
+    const slot = this.wreckToSlot.get(shipInstanceId);
+    if (slot !== undefined) {
+      this.wreckToSlot.delete(shipInstanceId);
+      this.slotToWreck.delete(slot);
+      this.freeSlots.push(slot);
+      this.postToWorker({ type: 'DESPAWN', slot, playerId: `wreck-${shipInstanceId}` });
+    }
+    this.state.wrecks.delete(shipInstanceId);
+    this.wreckPoseCache.delete(shipInstanceId);
+  }
+
+  /**
    * Mirror an eviction into the roster — the ship transitions from
    * `is_active=true` to `is_active=false` with frozen pose. The row
    * stays in the table (forever, modulo the 10-cap) so the player can
@@ -2561,6 +2720,26 @@ export class SectorRoom extends Room<SectorState> {
         pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
         // Decode applied tick: storedValue=0 means no input applied yet (use 0);
         // storedValue=N+1 means client tick N was applied.
+        // (handled below)
+      }
+      // Phase 4 — wreck pose mirror. Wrecks live in SAB slots like
+      // player ships; the worker steps them every physics tick. We
+      // mirror their pose here for the snapshot path.
+      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+        const pose = this.wreckPoseCache.get(shipInstanceId);
+        if (!pose) continue;
+        const b = slotBase(slot);
+        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
+        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
+        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
+        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
+        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
+        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+      }
+      // (player-loop continuation just below for the appliedTicks
+      //  decode — kept inside the seqlock window for consistency.)
+      for (const [playerId, slot] of this.playerToSlot) {
+        const b = slotBase(slot);
         const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
         this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
       }
@@ -2572,6 +2751,21 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+
+    // Phase 4 — abandon detection. Every 30 ticks (~500ms) we check
+    // whether any ship currently in this room has had its roster row
+    // deleted (via /dev/player-ships/:shipId/abandon). When that
+    // happens, convert the ship to an ownerless wreck and kick the
+    // player. Galaxy rooms only — engineering rooms have no roster.
+    if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
+      const store = getPlayerShipStore();
+      const abandoned: string[] = [];
+      for (const [playerId, ship] of this.state.ships) {
+        if (ship.shipInstanceId === '' || !ship.alive) continue;
+        if (store.get(ship.shipInstanceId) === null) abandoned.push(playerId);
+      }
+      for (const playerId of abandoned) this.convertShipToWreck(playerId);
+    }
 
     // Phase 5d: keep the spatial grid current. Most entities don't cross a
     // 2048-unit cell boundary in a single tick at typical drone/asteroid
@@ -2926,6 +3120,22 @@ export class SectorRoom extends Room<SectorState> {
         }
 
         const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
+        // Phase 4 — wreck poses for every wreck in the sector. No
+        // interest filtering: the wreck count per sector is bounded
+        // (one per abandoned ship; players are 10-capped) and Phase 5
+        // can add interest culling if rosters grow.
+        let wrecks: SnapshotMessage['wrecks'];
+        if (this.wreckPoseCache.size > 0) {
+          wrecks = [];
+          for (const [shipInstanceId, pose] of this.wreckPoseCache) {
+            wrecks.push({
+              id: shipInstanceId,
+              x: pose.x, y: pose.y,
+              vx: pose.vx, vy: pose.vy,
+              angle: pose.angle, angvel: pose.angvel ?? 0,
+            });
+          }
+        }
         const snap: SnapshotMessage = {
           type: 'snapshot',
           serverTick: this.serverTick,
@@ -2934,6 +3144,7 @@ export class SectorRoom extends Room<SectorState> {
           ...sharedTail,
           ...(projectiles ? { projectiles } : {}),
           ...(drones ? { drones } : {}),
+          ...(wrecks ? { wrecks } : {}),
         };
         client.send('snapshot', snap);
         anySnapshotSent = true;

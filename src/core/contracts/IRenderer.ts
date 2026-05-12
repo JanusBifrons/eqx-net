@@ -138,8 +138,29 @@ export interface ProjectileRenderState {
   weaponId?: string;
 }
 
+/**
+ * Phase 4 — abandoned-ship wreck. Ownerless hull drifting in a sector;
+ * destructible, no AI, no player. Identity (kind, health, maxHealth)
+ * arrives via the Colyseus schema diff on `state.wrecks`; per-frame
+ * pose arrives in `SnapshotMessage.wrecks` and is mirrored here.
+ */
+export interface WreckRenderState {
+  shipInstanceId: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
+  kind: string;
+  health: number;
+  maxHealth: number;
+}
+
 export interface RenderMirror {
   ships: Map<string, ShipRenderState>;
+  /** Phase 4 — abandoned ship wrecks. Keyed by shipInstanceId UUID. */
+  wrecks?: Map<string, WreckRenderState>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the

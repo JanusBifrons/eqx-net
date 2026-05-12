@@ -62,6 +62,20 @@ function shapeForKind(kindId: string | undefined): ShipShape {
   return getShipKind(kindId).shape;
 }
 
+/** Drain colour and tilt it grey for the Phase 4 wreck silhouette. Take
+ *  ~30 % of the original RGB and mix in a desaturated grey so the wreck
+ *  reads as "broken ship of that kind" without screaming the kind's
+ *  brand colour. */
+function desaturate(color: number): number {
+  const r = (color >> 16) & 0xff;
+  const g = (color >> 8)  & 0xff;
+  const b =  color        & 0xff;
+  const grey = Math.round((r + g + b) / 3);
+  // 30% original, 70% grey — gives a smoky, drained tone.
+  const mix = (c: number) => Math.round(c * 0.30 + grey * 0.70);
+  return (mix(r) << 16) | (mix(g) << 8) | mix(b);
+}
+
 /**
  * Baseline thrust flame — shown whenever a ship is accelerating, regardless
  * of boost. Two concentric tapered triangles (outer orange, inner yellow-white
@@ -250,6 +264,10 @@ export class PixiRenderer implements IRenderer {
   private viewport!: Viewport;
   private shipContainer!: Container;
   private sprites = new Map<string, Graphics>();
+  /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
+   *  Drawn with a desaturated kind colour; updated each frame from
+   *  `mirror.wrecks`. Removed when the wreck disappears from the mirror. */
+  private wreckSprites = new Map<string, Graphics>();
   /** Per-ship boost-exhaust flame, parented to the ship sprite. Visible only
    *  while the ship is in `mirror.boostingShips`. Pooled — created on first
    *  boost, hidden when not active, destroyed with the ship sprite. */
@@ -835,9 +853,45 @@ export class PixiRenderer implements IRenderer {
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
 
+    // Phase 4 — render / update / sweep wrecks. Wrecks are drawn with
+    // the ship-kind silhouette desaturated and slightly transparent to
+    // sell "broken hull, no pilot". No mount aim lines, no name label,
+    // no exhaust. Y-flip matches the rest of the renderer.
+    this.updateWrecks(mirror);
+
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's.
     this.halo.update(mirror);
+  }
+
+  private updateWrecks(mirror: RenderMirror): void {
+    if (!mirror.wrecks) {
+      // Mirror cleared (e.g. left the room) — sweep any leftover sprites.
+      for (const g of this.wreckSprites.values()) g.destroy();
+      this.wreckSprites.clear();
+      return;
+    }
+    const seen = new Set<string>();
+    for (const [shipInstanceId, w] of mirror.wrecks) {
+      seen.add(shipInstanceId);
+      let sprite = this.wreckSprites.get(shipInstanceId);
+      if (!sprite) {
+        const shape = shapeForKind(w.kind);
+        sprite = buildShipGfxFromShape(shape, desaturate(shape.color));
+        sprite.alpha = 0.55;
+        this.shipContainer.addChild(sprite);
+        this.wreckSprites.set(shipInstanceId, sprite);
+      }
+      sprite.x = w.x;
+      sprite.y = -w.y;
+      sprite.rotation = -w.angle;
+    }
+    for (const [id, sprite] of this.wreckSprites) {
+      if (!seen.has(id)) {
+        sprite.destroy();
+        this.wreckSprites.delete(id);
+      }
+    }
   }
 
   /**

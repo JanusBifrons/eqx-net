@@ -242,6 +242,17 @@ export interface SnapshotMessage {
      *  until they re-enter interest and the next snapshot anchors them. */
     mountAngles?: number[];
   }>;
+  /** Phase 4 — abandoned-ship wrecks in this sector. Each entry is the
+   *  per-tick pose for a wreck currently owning a SAB slot (the worker
+   *  continues to step it; wrecks have inertia and drift). Identity
+   *  (kind, current health, maxHealth) is broadcast via the Colyseus
+   *  schema diff on `state.wrecks` and correlated by shipInstanceId.
+   *  Absent when no wrecks exist in the sector. */
+  wrecks?: Array<{
+    /** shipInstanceId UUID — matches the key in `SectorState.wrecks`. */
+    id: string;
+    x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+  }>;
 }
 
 /** Server → client (direct): result of a fire request. */
