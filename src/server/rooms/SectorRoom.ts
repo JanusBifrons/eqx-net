@@ -164,6 +164,7 @@ const DRONE_MAX_BOUNDS = 10000;
 type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
   | { type: 'DESPAWN';        slot: number; playerId: string }
+  | { type: 'REKEY_SHIP';     oldId: string; newId: string }
   | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
@@ -2457,9 +2458,19 @@ export class SectorRoom extends Room<SectorState> {
     this.state.wrecks.set(shipInstanceId, wreck);
     this.wreckPoseCache.set(shipInstanceId, pose);
 
-    // 2) Transfer SAB slot ownership.
+    // 2) Transfer SAB slot ownership AND re-key the underlying Rapier
+    //    body in the worker. Without the REKEY_SHIP command, the next
+    //    SPAWN for this playerId (same browser → same eqxPlayerId on
+    //    reconnect) would overwrite `physics.bodies[playerId]` and
+    //    orphan the wreck body — still alive in Rapier, still
+    //    collidable, but invisible to the SAB writer because
+    //    `getAllShipStates()` no longer iterates it. The client would
+    //    render the wreck at a stale frozen pose while the real
+    //    physics body drifts somewhere else and collisions land in
+    //    empty space.
     this.slotToWreck.set(slot, shipInstanceId);
     this.wreckToSlot.set(shipInstanceId, slot);
+    this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `wreck-${shipInstanceId}` });
 
     // 3) Tear down player-keyed bookkeeping. Slot is NOT pushed onto
     //    freeSlots — the wreck still owns it.

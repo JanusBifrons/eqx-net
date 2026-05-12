@@ -78,7 +78,11 @@ interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
  *  velocity. Single-writer rule: only the worker mutates SAB pose; this
  *  command is the only path the main thread has to override it. */
 interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd;
+/** Phase 4 — rename a ship body's lookup key without destroying it.
+ *  Used by the abandon flow so the wreck's body outlives its original
+ *  playerId on subsequent rejoins. See SectorRoom.convertShipToWreck. */
+interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: string }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -136,6 +140,31 @@ async function main(): Promise<void> {
         // Mark slot empty in SAB.
         u32[slotBase(cmd.slot) + SLOT_ID_OFF] = 0;
         u32[slotBase(cmd.slot) + SLOT_FLAGS_OFF] = 0;
+        break;
+      }
+      case 'REKEY_SHIP': {
+        // Phase 4 — abandon flow. Move a ship's lookup key from
+        // `oldId` (playerId) to `newId` (wreck-${shipInstanceId})
+        // without destroying the underlying Rapier body. Without this,
+        // when the same player rejoins, `spawnShip(playerId, ...)`
+        // would overwrite `physics.bodies[playerId]` and orphan the
+        // wreck body (still in Rapier but invisible to the SAB writer,
+        // so its pose stops being broadcast and the client renders it
+        // at a stale position while server-side collisions still hit
+        // an invisible body at the real position).
+        physics.rekeyShip(cmd.oldId, cmd.newId);
+        // Re-key the per-slot maps too. The slot stays the same; only
+        // the identity changes. inputQueues / lastApplied / lastAckTick
+        // / aiIntents are slot-keyed so they're unaffected. The slot's
+        // `lastApplied` is cleared so a stale held-input doesn't keep
+        // applying impulses to the now-ownerless body.
+        const slot = playerToSlot.get(cmd.oldId);
+        if (slot !== undefined) {
+          playerToSlot.delete(cmd.oldId);
+          playerToSlot.set(cmd.newId, slot);
+          slotToPlayer.set(slot, cmd.newId);
+          lastApplied.delete(slot);
+        }
         break;
       }
       case 'INPUT': {
