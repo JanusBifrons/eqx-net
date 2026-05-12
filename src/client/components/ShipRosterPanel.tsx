@@ -45,16 +45,19 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
   const [ships, setShips] = useState<RosterShipEntry[]>([]);
   const [openShipId, setOpenShipId] = useState<string | null>(null);
 
+  const [debugStatus, setDebugStatus] = useState<string>('init');
   const refresh = useCallback(async (): Promise<void> => {
-    if (playerId === '') return;
+    if (playerId === '') { setDebugStatus('no-pid'); return; }
     try {
       const url = `${ENDPOINT_LIST}?playerId=${encodeURIComponent(playerId)}`;
       const res = await fetch(url);
-      if (!res.ok) return;
+      if (!res.ok) { setDebugStatus(`http-${res.status}`); return; }
       const body = (await res.json()) as { ships?: RosterShipEntry[] };
-      setShips(Array.isArray(body.ships) ? body.ships : []);
-    } catch {
-      // Network blip or server bouncing. Next poll will retry.
+      const out = Array.isArray(body.ships) ? body.ships : [];
+      setShips(out);
+      setDebugStatus(`ok n=${out.length}`);
+    } catch (err) {
+      setDebugStatus(`err: ${(err as Error).message ?? 'unknown'}`);
     }
   }, [playerId]);
 
@@ -84,8 +87,9 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
     onSpawn(shipId, sectorKey);
   }, [onSpawn]);
 
-  if (playerId === '') return null;
-
+  // Render the shell even when there's no playerId — the debug line will
+  // surface "no-pid" so we can tell from the rendered UI whether the
+  // panel mounted at all.
   const openShip = openShipId !== null ? ships.find((s) => s.shipId === openShipId) ?? null : null;
 
   return (
@@ -125,6 +129,15 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
           {ships.length}/{ROSTER_CAP}
         </Typography>
       </Box>
+      {/* TEMP debug — remove once Phase 3 lands cleanly. Shows fetch state +
+       *  the playerId the panel is using so we can see at a glance why the
+       *  panel is empty (no pid in localStorage / endpoint 404 / etc.). */}
+      <Typography
+        data-testid="ship-roster-debug"
+        sx={{ color: '#ffaa44', fontSize: 7, lineHeight: 1, px: 0.25, wordBreak: 'break-all' }}
+      >
+        pid:{playerId === '' ? '∅' : playerId.slice(0, 8)} · {debugStatus}
+      </Typography>
       {ships.length === 0 ? (
         <Box sx={{ p: 0.5, color: '#666', fontSize: 9 }}>
           {compact ? 'None yet' : 'None yet — pick a sector to spawn.'}

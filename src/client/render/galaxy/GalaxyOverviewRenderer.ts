@@ -59,12 +59,22 @@ export class GalaxyOverviewRenderer {
   private mode: GalaxyOverviewMode = 'spawn';
   private currentSectorKey: string | null = null;
   private limbo: LimboInfo | null = null;
-  private readonly onPick: (sectorKey: string) => void;
+  /** Late-bound — settable via {@link setOnPick} so Vite Fast Refresh can
+   *  swap the callback when the wrapping React component is rebuilt
+   *  without destroying the renderer instance. */
+  private onPick: (sectorKey: string) => void;
   private resumePulsePhase = 0;
   private initialized = false;
 
   constructor(opts: { onPick: (sectorKey: string) => void }) {
     this.onPick = opts.onPick;
+  }
+
+  /** Replace the click callback in place. Called on every render of the
+   *  wrapping React component so even a Fast-Refresh-preserved renderer
+   *  always fires the latest closure. */
+  setOnPick(cb: (sectorKey: string) => void): void {
+    this.onPick = cb;
   }
 
   async init(rawContainer: unknown, opts: GalaxyOverviewInitOptions): Promise<void> {

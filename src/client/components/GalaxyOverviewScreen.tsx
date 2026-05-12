@@ -223,6 +223,14 @@ export function GalaxyOverviewScreen({
       onPickNeighbourRef.current?.(key);
     }
   };
+  // Belt-and-braces against Fast Refresh: also push the latest callback
+  // into the renderer instance directly on every render. The mount-once
+  // useEffect wires the initial onPick; this re-wires it whenever the
+  // surrounding component re-renders, so a preserved renderer always
+  // ends up calling the freshest closure.
+  if (rendererRef.current !== null) {
+    rendererRef.current.setOnPick((key) => onPickBodyRef.current(key));
+  }
 
   // Reflect prop / store changes onto the live renderer.
   useEffect(() => {

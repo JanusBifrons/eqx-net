@@ -2278,7 +2278,10 @@ export class SectorRoom extends Room<SectorState> {
     const store = getPlayerShipStore();
     if (preferredShipId !== '') {
       const next = store.markActive(preferredShipId, this.roomId, pose);
-      if (next !== null) return next.shipId;
+      if (next !== null) {
+        logger.info({ playerId, shipId: next.shipId, path: 'preferred' }, 'roster bind');
+        return next.shipId;
+      }
       // Fell through — caller's preferred id didn't exist. Continue with
       // the legacy most-recent path so the player still spawns into
       // something rather than getting a roster-less ship.
@@ -2290,6 +2293,7 @@ export class SectorRoom extends Room<SectorState> {
       existing.sort((a, b) => b.updatedAt - a.updatedAt);
       const chosen = existing[0]!;
       const next = store.markActive(chosen.shipId, this.roomId, pose);
+      logger.info({ playerId, shipId: next?.shipId, path: 'reuse-recent', existingCount: existing.length }, 'roster bind');
       return next?.shipId ?? '';
     }
     try {
@@ -2303,6 +2307,7 @@ export class SectorRoom extends Room<SectorState> {
         health: pose.health,
       });
       store.markActive(rec.shipId, this.roomId, pose);
+      logger.info({ playerId, shipId: rec.shipId, path: 'fresh-create', forceFresh: forceFreshCreate }, 'roster bind');
       return rec.shipId;
     } catch (err) {
       if (err instanceof RosterFullError) {
