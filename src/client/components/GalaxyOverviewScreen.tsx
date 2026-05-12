@@ -23,7 +23,6 @@ import { ShipPickerModal } from './ShipPickerModal';
 import { ShipSilhouette } from '../render/shipShapeSvg';
 import { useUIStore } from '../state/store';
 import { getShipKind } from '../../shared-types/shipKinds';
-import { FullscreenCTA } from '../layout/FullscreenToggle';
 
 interface LimboSummary {
   sectorKey: string;
@@ -261,16 +260,6 @@ export function GalaxyOverviewScreen({
         flexDirection: 'column',
       }}
     >
-      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', pt: 2, pb: 1, gap: 0.5 }}>
-        <Typography variant="h3" sx={{ color: '#00ff88', fontWeight: 700, letterSpacing: 4, textTransform: 'uppercase' }}>
-          EQX Peri
-        </Typography>
-        <Typography variant="caption" sx={{ color: '#888', letterSpacing: 2, textTransform: 'uppercase' }}>
-          Galaxy Map · Select a sector to enter
-        </Typography>
-        <FullscreenCTA />
-      </Box>
-
       {/* The slot is ALWAYS rendered (just empty when no limbo) so adding
        *  the pill doesn't shift sibling positions in the column flex.
        *  Without this, React's reconciler reused the Box DOM node for the

@@ -130,7 +130,7 @@ describe('LimboStore', () => {
 
     it('disconnect TTL is much longer than transit TTL', () => {
       expect(LIMBO_DISCONNECT_TTL_MS).toBeGreaterThan(LIMBO_TRANSIT_TTL_MS);
-      expect(LIMBO_DISCONNECT_TTL_MS).toBe(300_000);
+      expect(LIMBO_DISCONNECT_TTL_MS).toBe(900_000);
       expect(LIMBO_TRANSIT_TTL_MS).toBe(30_000);
     });
   });

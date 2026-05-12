@@ -167,6 +167,7 @@ export class GalaxyOverviewRenderer {
     } else {
       this.viewport.moveCenter((minX + maxX) / 2, (minY + maxY) / 2);
     }
+    this.viewport.setZoom(0.7);
 
     this.app.ticker.add(this.tickPulse);
 

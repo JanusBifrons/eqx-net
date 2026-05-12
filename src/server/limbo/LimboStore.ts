@@ -36,7 +36,7 @@
 import type { IPersistenceSink } from '../../core/contracts/IPersistenceSink.js';
 
 /** Time the player's ship state is held after a disconnect. */
-export const LIMBO_DISCONNECT_TTL_MS = 300_000; // 5 min
+export const LIMBO_DISCONNECT_TTL_MS = 900_000; // 15 min
 /** Time a transit-in-flight entry is held while the destination consumes it. */
 export const LIMBO_TRANSIT_TTL_MS = 30_000;
 /** How often the prune timer evicts expired entries. */
