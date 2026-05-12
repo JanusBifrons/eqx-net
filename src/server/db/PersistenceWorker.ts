@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
-import { LimboStore, type LimboEntry, type LimboPayload } from '../limbo/LimboStore.js';
+import { LimboStore, LIMBO_DISCONNECT_TTL_MS, type LimboEntry, type LimboPayload } from '../limbo/LimboStore.js';
 import { PlayerShipStore, type PlayerShipRecord } from '../playerShips/PlayerShipStore.js';
+import { SHIP_KIND_CATALOGUE_VERSION } from '../../shared-types/shipKinds.js';
 import { db } from './Database.js';
 
 /**
@@ -225,5 +226,83 @@ export function initPlayerShipStore(): { hydrated: number } {
     updatedAt: row.updated_at,
   }));
   store.hydrate(records);
-  return { hydrated: records.length };
+
+  // Phase 3 backfill — for any player_id that has a Limbo entry but no
+  // player_ships rows, synthesize a single roster row from the Limbo
+  // payload. This is what lets users who played BEFORE the Phase 3
+  // dual-write landed still see their lingering ship in the roster
+  // panel without having to reconnect first.
+  //
+  // Skipped when the player already has at least one roster row — they
+  // either played under Phase 3 already (so the dual-write created
+  // their row) or the Limbo entry is a transit-in-flight artefact that
+  // shouldn't seed a duplicate.
+  let backfilled = 0;
+  try {
+    type LimboRow = {
+      player_id: string;
+      user_id: string | null;
+      sector_key: string;
+      payload_json: string;
+      expires_at: number;
+      created_at: number;
+    };
+    const limboRows = db.prepare(
+      'SELECT player_id, user_id, sector_key, payload_json, expires_at, created_at FROM limbo WHERE expires_at > ?',
+    ).all(Date.now()) as LimboRow[];
+    for (const row of limboRows) {
+      if (store.listByPlayer(row.player_id).length > 0) continue;
+      let payload: LimboPayload;
+      try {
+        payload = JSON.parse(row.payload_json) as LimboPayload;
+      } catch {
+        continue;
+      }
+      const now = Date.now();
+      const shipId = randomShipId();
+      const record: PlayerShipRecord = {
+        shipId,
+        playerId: row.player_id,
+        userId: row.user_id,
+        kind: typeof payload.kind === 'string' ? payload.kind : 'fighter',
+        kindVersion: SHIP_KIND_CATALOGUE_VERSION,
+        health: payload.health,
+        lastSectorKey: payload.sectorKey,
+        lastX: payload.x,
+        lastY: payload.y,
+        lastVx: payload.vx,
+        lastVy: payload.vy,
+        lastAngle: payload.angle,
+        lastAngvel: payload.angvel,
+        lastFireClientTick: payload.lastFireClientTick,
+        isActive: true,
+        activeRoomId: null,
+        expiresAt: now + LIMBO_DISCONNECT_TTL_MS,
+        createdAt: row.created_at,
+        updatedAt: now,
+      };
+      // `put` shadows through the persistence sink so the row lands in
+      // SQLite via the worker's WAB. In-memory state is also updated so
+      // the panel sees it on the very next /dev/player-ships fetch.
+      store.put(record, now);
+      backfilled++;
+    }
+  } catch {
+    // First boot or schema-still-creating; skip silently.
+  }
+
+  return { hydrated: records.length + backfilled };
+}
+
+/** crypto.randomUUID is available on Node 19+ (we target Node 20+). */
+function randomShipId(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return (
+    Math.random().toString(16).slice(2, 10) + '-' +
+    Math.random().toString(16).slice(2, 6) + '-' +
+    Math.random().toString(16).slice(2, 6) + '-' +
+    Math.random().toString(16).slice(2, 6) + '-' +
+    Math.random().toString(16).slice(2, 14)
+  );
 }

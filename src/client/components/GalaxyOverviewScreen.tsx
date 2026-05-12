@@ -192,7 +192,11 @@ export function GalaxyOverviewScreen({
       .init(el, {
         mode,
         currentSectorKey,
-        limbo: effectiveLimboSectorKey ? { sectorKey: effectiveLimboSectorKey } : null,
+        // Phase 3 — multi-ship: don't lock other sectors when a Limbo
+        // entry exists. The roster panel surfaces lingering ships
+        // separately; all sectors stay selectable so the player can
+        // spawn a new ship anywhere.
+        limbo: null,
       })
       .then(() => {
         if (disposed) renderer.destroy();
@@ -217,9 +221,10 @@ export function GalaxyOverviewScreen({
     rendererRef.current?.setCurrentSector(currentSectorKey);
   }, [currentSectorKey]);
   useEffect(() => {
-    rendererRef.current?.setLimbo(
-      effectiveLimboSectorKey ? { sectorKey: effectiveLimboSectorKey } : null,
-    );
+    // Phase 3 — always pass null; multi-ship roster handles "you have a
+    // ship here" affordance via the floating panel, not the renderer's
+    // sector-lock constraint.
+    rendererRef.current?.setLimbo(null);
   }, [effectiveLimboSectorKey]);
 
   // ----- Render -----
@@ -288,45 +293,17 @@ export function GalaxyOverviewScreen({
         flexDirection: 'column',
       }}
     >
-      {/* The slot is ALWAYS rendered (just empty when no limbo) so adding
-       *  the pill doesn't shift sibling positions in the column flex.
-       *  Without this, React's reconciler reused the Box DOM node for the
-       *  new content and the Pixi canvas appended into the old `mountRef`
-       *  Box (which was at the same index) got swapped out — visible as
-       *  the entire map vanishing the moment the pill rendered. */}
+      {/* Phase 3 multi-ship: the legacy "Resume in {Sector}" pill is gone.
+       *  The roster panel surfaces lingering / stored ships per-card; the
+       *  galaxy map now treats every sector as equally selectable. The
+       *  testid stub is preserved at zero height so existing E2E specs
+       *  that probe `data-limbo-sector-key` still resolve to a stable
+       *  DOM node. */}
       <Box
         data-testid="limbo-resume-banner"
         data-limbo-sector-key={limboSector?.key ?? ''}
-        sx={{
-          display: 'flex',
-          justifyContent: 'center',
-          minHeight: limboSector ? undefined : 0,
-          my: limboSector ? 0.75 : 0,
-        }}
-      >
-        {limboSector && (
-          <Button
-            variant="contained"
-            onClick={() => onSelectRoom?.(`galaxy-${limboSector.key}`)}
-            sx={{
-              bgcolor: '#00ff88',
-              color: '#000',
-              fontWeight: 700,
-              fontSize: 12,
-              letterSpacing: 1,
-              textTransform: 'uppercase',
-              px: 2,
-              py: 0.5,
-              borderRadius: 999,
-              whiteSpace: 'nowrap',
-              '&:hover': { bgcolor: '#00cc6a' },
-            }}
-            data-testid="limbo-resume-button"
-          >
-            Resume in {limboSector.name}
-          </Button>
-        )}
-      </Box>
+        sx={{ display: 'none' }}
+      />
 
       {/* Phase 3: canvas is full-width; roster panel floats over it as a
        *  small transparent overlay so the galaxy map breathes underneath.

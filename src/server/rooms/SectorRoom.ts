@@ -1904,8 +1904,13 @@ export class SectorRoom extends Room<SectorState> {
     // The destination's `onJoin` consumes the entry whether it was created
     // by a disconnect (5 min TTL) or by a transit commit (30 s TTL); the
     // sectorKey gate ensures we only consume entries destined for THIS room.
-    // Skipped when a valid shipId already hydrated above.
-    if (this.sectorKey !== null && !resumedFromLimbo) {
+    // Skipped when a valid shipId already hydrated above. Also skipped when
+    // `isNewShip` is set — Phase 3 multi-ship: clicking a sector on the
+    // galaxy map to spawn a *fresh* ship must NOT silently restore a
+    // lingering ship from Limbo; the player can resume that one via the
+    // roster panel separately.
+    const isNewShipRequest = parsed.success && parsed.data.isNewShip === true;
+    if (this.sectorKey !== null && !resumedFromLimbo && !isNewShipRequest) {
       const limbo = getLimboStore().take(playerId);
       if (limbo && limbo.payload.sectorKey === this.sectorKey) {
         spawnX = limbo.payload.x;
