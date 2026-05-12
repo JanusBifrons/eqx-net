@@ -866,7 +866,6 @@ export class PixiRenderer implements IRenderer {
 
   private updateWrecks(mirror: RenderMirror): void {
     if (!mirror.wrecks) {
-      // Mirror cleared (e.g. left the room) — sweep any leftover sprites.
       for (const g of this.wreckSprites.values()) g.destroy();
       this.wreckSprites.clear();
       return;
@@ -885,6 +884,14 @@ export class PixiRenderer implements IRenderer {
       sprite.x = w.x;
       sprite.y = -w.y;
       sprite.rotation = -w.angle;
+
+      // Phase 4 — wreck visual feedback when taking damage. The
+      // damage-flash machinery is keyed by the wire targetId (which is
+      // `wreck-${shipInstanceId}` for wrecks); `mirror.damagedShips`
+      // gets that id from handleDamage so we can flash here too.
+      const wreckEntityId = `wreck-${shipInstanceId}`;
+      const flashing = mirror.damagedShips?.has(wreckEntityId) ?? false;
+      sprite.tint = flashing ? DAMAGE_FLASH_COLOR : 0xffffff;
     }
     for (const [id, sprite] of this.wreckSprites) {
       if (!seen.has(id)) {

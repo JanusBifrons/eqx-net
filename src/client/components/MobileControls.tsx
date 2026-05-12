@@ -34,6 +34,14 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
   useEffect(() => {
     if (!zone) return;
 
+    // Defensive: nipplejs renders the joystick handle as children of the
+    // zone element. If a previous mount's cleanup raced a Fast Refresh
+    // remount (the partner's 2026-05-12 capture surfaced two stacked
+    // joysticks), stale handle DOM survives and we end up with one
+    // joystick per past mount. Wipe the zone first so each `create`
+    // starts from an empty container.
+    while (zone.firstChild) zone.removeChild(zone.firstChild);
+
     const manager = nipplejs.create({
       zone,
       mode: 'static',

@@ -1630,6 +1630,22 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
 
+      // Phase 4 — projectile sweep against wrecks. Same sphere geometry
+      // as live ships; targetId carries the `wreck-` prefix so
+      // applyDamage routes to state.wrecks.
+      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+        const b = slotBase(slot);
+        const cx = this.sabF32[b + SLOT_X_OFF]!;
+        const cy = this.sabF32[b + SLOT_Y_OFF]!;
+        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = `wreck-${shipInstanceId}`;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
+        }
+      }
+
       if (bestTargetId !== null) {
         this.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
         this.liveProjectiles.delete(projId);
