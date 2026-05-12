@@ -80,8 +80,9 @@ import {
   parseSnapshot,
   type SectorSnapshotPayload,
 } from './SectorSnapshot.js';
-import { getLimboStore } from '../db/PersistenceWorker.js';
+import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
+import { RosterFullError } from '../playerShips/PlayerShipStore.js';
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession, clearSession } from '../transit/sessionRegistry.js';
 import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
@@ -121,6 +122,12 @@ const JoinOptionsSchema = z
      *  fall back to `DEFAULT_SHIP_KIND`. Ignored on Limbo rebind paths so a
      *  bad-actor client cannot mid-session swap kind. */
     shipKind: z.string().optional(),
+    /** Phase 3 multi-ship roster — the specific roster entry to spawn into.
+     *  Validated against `getPlayerShipStore().get(shipId).playerId === playerId`
+     *  in `onJoin`; unowned / missing ids fall through to the legacy
+     *  Limbo-restore-or-fresh-spawn path. Present ⇒ hydrate from the named
+     *  roster row's stored pose / kind / health; ignore Limbo for this join. */
+    shipId: z.string().optional(),
   })
   .passthrough();
 
@@ -678,6 +685,13 @@ export class SectorRoom extends Room<SectorState> {
       const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = this.playerToUser.get(evt.targetId) ?? null;
       recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
+      // Phase 3 dual-write — drop the destroyed ship from the roster. The
+      // Phase 4 wreck flow will replace this with "leave a wreck behind"
+      // semantics, but for Phase 3 destruction just removes the row.
+      const destroyedShip = this.state.ships.get(evt.targetId);
+      if (destroyedShip !== undefined) {
+        this.deleteRosterRow(destroyedShip.shipInstanceId);
+      }
       // Phase 8 sub-phase B (lingering ships) — if a player's ship was
       // destroyed while they were offline, evict immediately. Skipping the
       // 5-min wait keeps the room cleaner and lets the player fresh-spawn
@@ -1830,15 +1844,61 @@ export class SectorRoom extends Room<SectorState> {
     let resumedAngle = 0;
     let resumedAngvel = 0;
     let resumedFromLimbo = false;
-    /** Kind to spawn with. Defaults to the requested kind; Limbo overrides. */
+    /** Phase 3 — when the client supplied a valid `shipId` in JoinOptions,
+     *  the bindRosterEntry call resolves to this exact row instead of the
+     *  most-recent-updated default. Empty string means "no preference". */
+    let preferredShipId = '';
+    /** Kind to spawn with. Defaults to the requested kind; Limbo or
+     *  shipId-restore override. */
     let chosenKind: string = requestedKind;
+
+    // Phase 3 multi-ship roster — shipId-based restore. The client picked a
+    // specific roster entry from the galaxy-map panel; hydrate from that row
+    // and skip the Limbo path entirely. Owned-by-this-player check guards
+    // against a malicious client claiming someone else's roster row.
+    const requestedShipId = parsed.success && typeof parsed.data.shipId === 'string'
+      ? parsed.data.shipId
+      : '';
+    if (this.sectorKey !== null && requestedShipId !== '') {
+      const rec = getPlayerShipStore().get(requestedShipId);
+      if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
+        spawnX = rec.lastX;
+        spawnY = rec.lastY;
+        resumedHealth = rec.health;
+        resumedUserId = rec.userId;
+        resumedLastFireTick = rec.lastFireClientTick;
+        resumedVx = rec.lastVx;
+        resumedVy = rec.lastVy;
+        resumedAngle = rec.lastAngle;
+        resumedAngvel = rec.lastAngvel;
+        resumedFromLimbo = true;
+        chosenKind = rec.kind;
+        preferredShipId = rec.shipId;
+        // Drop any stale Limbo entry (we're binding by shipId, not by limbo).
+        try { getLimboStore().take(playerId); } catch { /* best-effort */ }
+        logger.info(
+          { playerId, shipId: rec.shipId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
+          'restored from roster shipId',
+        );
+      } else if (rec === null) {
+        logger.warn({ playerId, shipId: requestedShipId }, 'JoinOptions.shipId not found; falling back to limbo');
+      } else if (rec.playerId !== playerId) {
+        logger.warn({ playerId, shipOwner: rec.playerId }, 'JoinOptions.shipId not owned by caller; falling back');
+      } else {
+        logger.warn(
+          { playerId, shipId: requestedShipId, shipSector: rec.lastSectorKey, joinSector: this.sectorKey },
+          'JoinOptions.shipId is in a different sector; falling back',
+        );
+      }
+    }
 
     // Phase 8 sub-phase B — Limbo restore. Only galaxy rooms participate
     // in Limbo; engineering rooms continue to fresh-spawn on every join.
     // The destination's `onJoin` consumes the entry whether it was created
     // by a disconnect (5 min TTL) or by a transit commit (30 s TTL); the
     // sectorKey gate ensures we only consume entries destined for THIS room.
-    if (this.sectorKey !== null) {
+    // Skipped when a valid shipId already hydrated above.
+    if (this.sectorKey !== null && !resumedFromLimbo) {
       const limbo = getLimboStore().take(playerId);
       if (limbo && limbo.payload.sectorKey === this.sectorKey) {
         spawnX = limbo.payload.x;
@@ -1891,6 +1951,21 @@ export class SectorRoom extends Room<SectorState> {
     ship.playerId = playerId;
     ship.kind = chosenKind;
     if (resumedHealth !== null) ship.health = resumedHealth;
+    // Phase 3 dual-write — pick or create a `player_ships` row for this
+    // ship and stamp its UUID onto the schema. Engineering rooms skip
+    // persistence and leave shipInstanceId empty. When the client supplied
+    // a valid `shipId`, that row is the one we bind; otherwise we pick the
+    // most-recently-updated row (or create a fresh one).
+    ship.shipInstanceId = this.bindRosterEntry(playerId, userId ?? resumedUserId, chosenKind, {
+      x: spawnX,
+      y: spawnY,
+      vx: resumedFromLimbo ? resumedVx : 0,
+      vy: resumedFromLimbo ? resumedVy : 0,
+      angle: resumedFromLimbo ? resumedAngle : 0,
+      angvel: resumedFromLimbo ? resumedAngvel : 0,
+      health: resumedHealth ?? ship.health,
+      lastFireClientTick: resumedLastFireTick ?? 0,
+    }, preferredShipId);
     this.state.ships.set(playerId, ship);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
@@ -2021,6 +2096,15 @@ export class SectorRoom extends Room<SectorState> {
         logger.warn({ err, playerId }, 'Limbo put on leave failed');
       }
 
+      // Phase 3 dual-write — mirror linger pose into the roster row so the
+      // /dev/player-ships endpoint shows the player's ship at its current
+      // resting place after disconnect.
+      this.markRosterLinger(ship!.shipInstanceId, {
+        x: payload.x, y: payload.y, vx: payload.vx, vy: payload.vy,
+        angle: payload.angle, angvel: payload.angvel,
+        health: payload.health, lastFireClientTick: payload.lastFireClientTick,
+      });
+
       const evictTimer = setTimeout(() => {
         this.evictOwnerlessShip(playerId);
       }, LIMBO_DISCONNECT_TTL_MS);
@@ -2076,13 +2160,34 @@ export class SectorRoom extends Room<SectorState> {
       this.ownerlessShips.delete(playerId);
     }
 
+    // Capture the ship's final pose + shipInstanceId BEFORE clearing the
+    // schema entry — needed for the roster mirror below.
+    const ship = this.state.ships.get(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    let rosterPose: {
+      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      health: number; lastFireClientTick: number;
+    } | null = null;
+    if (ship !== undefined && slot !== undefined) {
+      const b = slotBase(slot);
+      rosterPose = {
+        x:      this.sabF32[b + SLOT_X_OFF]!,
+        y:      this.sabF32[b + SLOT_Y_OFF]!,
+        vx:     this.sabF32[b + SLOT_VX_OFF]!,
+        vy:     this.sabF32[b + SLOT_VY_OFF]!,
+        angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+        angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+        health: ship.health,
+        lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
+      };
+    }
+
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
 
-    const slot = this.playerToSlot.get(playerId);
     if (slot !== undefined) {
       this.playerToSlot.delete(playerId);
       this.slotToPlayer.delete(slot);
@@ -2093,6 +2198,13 @@ export class SectorRoom extends Room<SectorState> {
     this.state.ships.delete(playerId);
     this.shipPoseCache.delete(playerId);
     this.playerToUser.delete(playerId);
+
+    // Phase 3 dual-write — flip the roster row to stored state with the
+    // ship's last pose frozen in place. The row persists indefinitely so
+    // the player can pick it back up on a future visit.
+    if (ship !== undefined && rosterPose !== null) {
+      this.markRosterStored(ship.shipInstanceId, rosterPose);
+    }
 
     // Clear the active-Limbo UI gate. Without this, the landing screen
     // would keep pointing at a sector this player no longer has a ship in.
@@ -2106,6 +2218,126 @@ export class SectorRoom extends Room<SectorState> {
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     serverLogEvent('ownerless_evicted', { playerId });
     logger.info({ playerId, sectorKey: this.sectorKey }, 'ownerless ship evicted');
+  }
+
+  // ── Phase 3 multi-ship roster (dual-write) ─────────────────────────────
+  //
+  // The room mirrors every spawn / linger / evict / destroy into
+  // `PlayerShipStore`. LimboStore continues to drive the spawn-restore
+  // logic; PlayerShipStore is the source of truth for the per-player
+  // roster card list shown by the galaxy-map UI. Phase 4 plans to fold
+  // these into one path with shipId-based join binding.
+  //
+  // Galaxy rooms only (sectorKey !== null). Engineering rooms have no
+  // persistent identity and skip the dual-write entirely.
+
+  /**
+   * Upsert a `player_ships` row for the newly-bound ship. Looks up
+   * existing roster entries for the player and reuses the most-recent;
+   * creates a fresh row if none exists. Returns the row's `shipId` so
+   * the caller can stamp it onto `ShipState.shipInstanceId`. Returns
+   * empty string for engineering rooms or when the operation fails
+   * (e.g. roster cap on a fresh-spawn fallback — caller continues; the
+   * ship still spawns, just without a roster row).
+   */
+  private bindRosterEntry(
+    playerId: string,
+    userId: string | null,
+    kind: string,
+    pose: {
+      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      health: number; lastFireClientTick: number;
+    },
+    /** When set, bind this specific roster row rather than picking the
+     *  most-recent. Caller is responsible for verifying ownership; here
+     *  we only mark-active. Falls back to the most-recent path on miss. */
+    preferredShipId: string = '',
+  ): string {
+    if (this.sectorKey === null) return '';
+    const store = getPlayerShipStore();
+    if (preferredShipId !== '') {
+      const next = store.markActive(preferredShipId, this.roomId, pose);
+      if (next !== null) return next.shipId;
+      // Fell through — caller's preferred id didn't exist. Continue with
+      // the legacy most-recent path so the player still spawns into
+      // something rather than getting a roster-less ship.
+    }
+    const existing = store.listByPlayer(playerId);
+    if (existing.length > 0) {
+      // Most-recently-updated first. Pre-Phase-4 multi-ship UX uses the
+      // most recent entry as the implicit "current" ship.
+      existing.sort((a, b) => b.updatedAt - a.updatedAt);
+      const chosen = existing[0]!;
+      const next = store.markActive(chosen.shipId, this.roomId, pose);
+      return next?.shipId ?? '';
+    }
+    try {
+      const rec = store.create({
+        playerId,
+        userId,
+        kind,
+        sectorKey: this.sectorKey,
+        x: pose.x,
+        y: pose.y,
+        health: pose.health,
+      });
+      store.markActive(rec.shipId, this.roomId, pose);
+      return rec.shipId;
+    } catch (err) {
+      if (err instanceof RosterFullError) {
+        logger.warn({ playerId }, 'Roster full — ship spawned without a roster row');
+      } else {
+        logger.warn({ err, playerId }, 'Failed to create roster row');
+      }
+      return '';
+    }
+  }
+
+  /**
+   * Mirror the linger state into the roster row — pose freeze at
+   * disconnect, expiresAt = now + 15 min. The room schedules the eviction
+   * timer separately (see onLeave); this is the persistence side.
+   */
+  private markRosterLinger(
+    shipInstanceId: string,
+    pose: {
+      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      health: number; lastFireClientTick: number;
+    },
+  ): void {
+    if (this.sectorKey === null || shipInstanceId === '') return;
+    const store = getPlayerShipStore();
+    if (store.get(shipInstanceId) === null) return;
+    store.markActive(shipInstanceId, this.roomId, pose, Date.now() + LIMBO_DISCONNECT_TTL_MS);
+  }
+
+  /**
+   * Mirror an eviction into the roster — the ship transitions from
+   * `is_active=true` to `is_active=false` with frozen pose. The row
+   * stays in the table (forever, modulo the 10-cap) so the player can
+   * pick it on a future visit.
+   */
+  private markRosterStored(
+    shipInstanceId: string,
+    pose: {
+      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      health: number; lastFireClientTick: number;
+    },
+  ): void {
+    if (this.sectorKey === null || shipInstanceId === '') return;
+    const store = getPlayerShipStore();
+    if (store.get(shipInstanceId) === null) return;
+    store.markStored(shipInstanceId, { ...pose, sectorKey: this.sectorKey });
+  }
+
+  /**
+   * Mirror a destruction into the roster — the row is deleted. The
+   * Phase 4 wreck flow will replace this with "leave a wreck behind"
+   * semantics, but for Phase 3 we just remove from the roster.
+   */
+  private deleteRosterRow(shipInstanceId: string): void {
+    if (this.sectorKey === null || shipInstanceId === '') return;
+    getPlayerShipStore().delete(shipInstanceId);
   }
 
   override onDispose(): void {

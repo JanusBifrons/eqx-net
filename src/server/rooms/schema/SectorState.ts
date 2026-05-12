@@ -25,6 +25,14 @@ export class ShipState extends Schema {
    *  Discrete UI string — broadcast through Colyseus MapSchema diff and read
    *  by the client's `LabelManager` once per state patch. */
   @type('string') displayName: string = '';
+  /** Phase 3 multi-ship roster — the `player_ships.ship_id` UUID this ship
+   *  was hydrated from (or freshly created with on first spawn). Empty
+   *  string in engineering rooms (no persistence) and during the brief
+   *  pre-Phase-3 transition window for galaxy rooms whose Limbo entry
+   *  hasn't been backfilled yet. Lets the client roster panel mark the
+   *  player's currently-bound ship and the abandon endpoint reject the
+   *  active ship. */
+  @type('string') shipInstanceId: string = '';
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the

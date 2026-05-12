@@ -99,9 +99,13 @@ interface GameSurfaceProps {
    *  to the URL `?room=` / `?galaxy=` params or `'sector'` when undefined,
    *  preserving the E2E auto-join escape hatch. */
   roomNameOverride?: string;
+  /** Phase 3 multi-ship roster — extra join options forwarded to the
+   *  Colyseus `joinOrCreate` call. Used by the roster-panel Spawn flow
+   *  to thread the chosen `shipId` to the server's `onJoin`. */
+  joinOptionsOverride?: Record<string, unknown>;
 }
 
-function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
+function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<PixiRenderer | null>(null);
@@ -372,7 +376,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
         roomNameOverride
         ?? urlParams.get('room')
         ?? (galaxyParam ? `galaxy-${galaxyParam}` : 'sector');
-      const extraJoinOptions: Record<string, unknown> = {};
+      const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
       // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
@@ -439,7 +443,7 @@ function GameSurface({ roomNameOverride }: GameSurfaceProps): JSX.Element {
       galaxyLayerRef.current = null;
       renderer.dispose();
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, toggleGalaxyMap, handleEngageTransit]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit]);
 
   // Reactive sync from Zustand to the Pixi galaxy layer. The layer is
   // constructed inside the main mount effect (async after renderer.init)
@@ -597,6 +601,11 @@ export function App(): JSX.Element {
   const [roomNameOverride, setRoomNameOverride] = useState<string | undefined>(
     initialOverride ?? undefined,
   );
+  /** Phase 3 multi-ship roster — extra join options threaded through to
+   *  Colyseus when the player spawns into a specific roster ship. Cleared
+   *  on every legacy sector-click so the override only applies for the
+   *  roster-card flow. */
+  const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(undefined);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
@@ -628,6 +637,15 @@ export function App(): JSX.Element {
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);
+    // Clear roster shipId override — legacy sector-click is a fresh spawn
+    // (or implicit limbo-resume), not a specific-ship resume.
+    setJoinOptionsOverride(undefined);
+    setPhase('game');
+  }, [setPhase]);
+
+  const handleSpawnExistingShip = useCallback((shipId: string, sectorKey: string) => {
+    setRoomNameOverride(`galaxy-${sectorKey}`);
+    setJoinOptionsOverride({ shipId });
     setPhase('game');
   }, [setPhase]);
 
@@ -659,7 +677,7 @@ export function App(): JSX.Element {
           onProfileClick={() => setProfileOpen(true)}
           onSettingsClick={openSettings}
         />
-        <GameSurface roomNameOverride={roomNameOverride} />
+        <GameSurface roomNameOverride={roomNameOverride} joinOptionsOverride={joinOptionsOverride} />
         <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
         <SettingsModal open={settingsOpen} onClose={closeSettings} />
       </>
@@ -725,6 +743,7 @@ export function App(): JSX.Element {
             /* activeLimboSectorKey omitted on purpose so the screen runs its
                own /dev/limbo lookup and renders the saved-ship card. */
             onSelectRoom={handleSelectRoom}
+            onSpawnExistingShip={handleSpawnExistingShip}
             onSelectLocal={handleSelectLocal}
           />
         )}

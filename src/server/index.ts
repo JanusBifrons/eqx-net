@@ -9,7 +9,7 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devResetSectorHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -84,6 +84,11 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster
   // inspection. Returns the player's full roster (up to 10 entries).
   app.get('/dev/player-ships', devPlayerShipsHandler);
+
+  // POST /dev/player-ships/:shipId/abandon — Phase 3 roster abandonment.
+  // Body: { playerId: string }. Drops a stored / lingering ship from the
+  // roster. Returns 409 when the ship is currently active.
+  app.post('/dev/player-ships/:shipId/abandon', devPlayerShipsAbandonHandler);
 
   // POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
   // Wipes one (or all) sector's in-memory + persisted swarm state and forces

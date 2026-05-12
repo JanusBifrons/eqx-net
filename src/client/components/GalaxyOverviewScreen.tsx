@@ -9,7 +9,6 @@ import {
   DialogActions,
   Stack,
   Alert,
-  Tooltip,
   IconButton,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
@@ -19,10 +18,9 @@ import {
 } from '../render/galaxy/GalaxyOverviewRenderer';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
-import { ShipPickerModal } from './ShipPickerModal';
-import { ShipSilhouette } from '../render/shipShapeSvg';
+import { ShipRosterPanel } from './ShipRosterPanel';
 import { useUIStore } from '../state/store';
-import { getShipKind } from '../../shared-types/shipKinds';
+import { useIsCompact } from '../layout/useIsCompact';
 
 interface LimboSummary {
   sectorKey: string;
@@ -55,6 +53,13 @@ interface GalaxyOverviewScreenProps {
    * engineering room) when the player picks. Must be provided in spawn mode.
    */
   onSelectRoom?: (roomName: string) => void;
+  /**
+   * Phase 3 multi-ship — called when the player picks a specific ship
+   * from the roster panel's detail modal. Parent routes to a Colyseus
+   * `joinOrCreate('sector', { shipId, ... })` so the server binds that
+   * exact roster row instead of the default most-recent.
+   */
+  onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
   /** Spawn-mode local-diagnostic entry. */
   onSelectLocal?: () => void;
   /** Warp-mode tap handler — receives the chosen neighbour key. */
@@ -81,6 +86,7 @@ interface GalaxyOverviewScreenProps {
 export function GalaxyOverviewScreen({
   mode,
   onSelectRoom,
+  onSpawnExistingShip,
   onSelectLocal,
   onPickNeighbour,
   onClose,
@@ -90,14 +96,15 @@ export function GalaxyOverviewScreen({
   const rendererRef = useRef<GalaxyOverviewRenderer | null>(null);
 
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
-  const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
-  const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
-  const shipCount = useUIStore((s) => s.shipCount);
-  const pickerLocked = shipCount > 0;
-  const selectedShipKind = getShipKind(selectedShipKindId);
+  const isCompact = useIsCompact();
+  const storedPlayerId = loadStoredPlayerId() ?? '';
 
   const [engineeringOpen, setEngineeringOpen] = useState(false);
-  const [shipPickerOpen, setShipPickerOpen] = useState(false);
+  // Phase 3 note: the legacy bottom-right ship-kind picker trigger is gone.
+  // Fresh-sector spawns still use Zustand `selectedShipKind`; a future phase
+  // can re-introduce `ShipPickerModal` as the sector-click confirmation
+  // step. For now the user picks from their roster panel for resumes; new
+  // spawns use whatever kind was last selected in their store.
 
   // --- Limbo lookup (spawn-mode only) ---
   const [limboSummary, setLimboSummary] = useState<LimboSummary | null>(null);
@@ -300,23 +307,54 @@ export function GalaxyOverviewScreen({
         )}
       </Box>
 
+      {/* Phase 3 responsive split: canvas + roster panel.
+       *  - Landscape / desktop (>=600 px): row — canvas grows, panel on the right.
+       *  - Portrait phone (<600 px): column — canvas on top, panel below.
+       *  The roster panel is hidden for engineering rooms (no playerId =>
+       *  the panel renders null anyway). */}
       <Box
-        ref={mountRef}
         sx={{
           flex: 1,
           minHeight: 0,
           mx: 'auto',
-          width: 'min(900px, 95vw)',
-          position: 'relative',
-          touchAction: 'none',
+          width: 'min(1280px, 98vw)',
+          display: 'flex',
+          flexDirection: isCompact ? 'column' : 'row',
+          gap: 1,
         }}
-      />
+      >
+        <Box
+          ref={mountRef}
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            position: 'relative',
+            touchAction: 'none',
+          }}
+        />
+        <Box
+          sx={{
+            flexShrink: 0,
+            ...(isCompact
+              ? { width: '100%', height: 160 }
+              : { width: 'min(320px, 30vw)', height: '100%' }),
+          }}
+        >
+          <ShipRosterPanel
+            playerId={storedPlayerId}
+            compact={isCompact}
+            onSpawn={(shipId, sectorKey) => {
+              onSpawnExistingShip?.(shipId, sectorKey);
+            }}
+          />
+        </Box>
+      </Box>
 
       <Box sx={{ minHeight: 36, px: 3, pb: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <Typography variant="caption" sx={{ color: '#555' }}>
+        <Typography variant="caption" sx={{ color: '#555', textAlign: 'center' }}>
           {limboSector
-            ? 'Other sectors are locked while your ship is in flight.'
-            : 'Drag to pan · pinch / scroll to zoom · tap a sector to drop in.'}
+            ? 'Other sectors are locked while your ship is in flight. Pick a ship from your roster to spawn elsewhere.'
+            : 'Pick a sector on the map to spawn a new ship, or pick one from your roster on the right.'}
         </Typography>
       </Box>
 
@@ -330,36 +368,6 @@ export function GalaxyOverviewScreen({
           alignItems: 'center',
         }}
       >
-        <Tooltip
-          title={pickerLocked ? 'Currently flying — return to galaxy to switch ships' : ''}
-          disableHoverListener={!pickerLocked}
-        >
-          <span>
-            <Button
-              variant="outlined"
-              size="small"
-              onClick={() => setShipPickerOpen(true)}
-              disabled={pickerLocked}
-              data-testid="ship-picker-trigger"
-              aria-disabled={pickerLocked}
-              sx={{
-                color: '#cde',
-                borderColor: '#2a2f40',
-                pl: 1,
-                pr: 1.25,
-                gap: 1,
-                textTransform: 'none',
-                '&:hover': { borderColor: '#1f7a4d', bgcolor: 'rgba(0,255,136,0.04)' },
-                '&.Mui-disabled': { color: '#556', borderColor: '#1a1d2a', opacity: 0.6 },
-              }}
-            >
-              <ShipSilhouette shape={selectedShipKind.shape} size={28} />
-              <Typography variant="caption" sx={{ color: 'inherit' }}>
-                Ship: {selectedShipKind.displayName}
-              </Typography>
-            </Button>
-          </span>
-        </Tooltip>
         {onSelectLocal && (
           <Button
             variant="text"
@@ -381,13 +389,6 @@ export function GalaxyOverviewScreen({
           Engineering rooms
         </Button>
       </Stack>
-
-      <ShipPickerModal
-        open={shipPickerOpen}
-        onClose={() => setShipPickerOpen(false)}
-        selectedKind={selectedShipKindId}
-        onSelect={setSelectedShipKind}
-      />
 
       <Dialog open={engineeringOpen} onClose={() => setEngineeringOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88' }}>Engineering rooms</DialogTitle>
