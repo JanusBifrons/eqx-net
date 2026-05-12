@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
-import { getLimboStore } from '../db/PersistenceWorker.js';
+import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
@@ -405,4 +405,33 @@ export function devLimboHandler(req: Request, res: Response): void {
     health: p.health,
     userId: p.userId,
   });
+}
+
+/**
+ * GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster.
+ * Returns the player's full roster (up to 10 entries). Empty array if the
+ * player has never spawned. Read-only; mutations flow through gameplay
+ * paths (sector-room onJoin/onLeave/transit) which are wired in Phase 3.
+ */
+export function devPlayerShipsHandler(req: Request, res: Response): void {
+  const playerId = String(req.query['playerId'] ?? '');
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId required' });
+    return;
+  }
+  const ships = getPlayerShipStore().listByPlayer(playerId).map((rec) => ({
+    shipId: rec.shipId,
+    kind: rec.kind,
+    kindVersion: rec.kindVersion,
+    health: rec.health,
+    sectorKey: rec.lastSectorKey,
+    x: rec.lastX,
+    y: rec.lastY,
+    isActive: rec.isActive,
+    activeRoomId: rec.activeRoomId,
+    expiresAt: rec.expiresAt,
+    createdAt: rec.createdAt,
+    updatedAt: rec.updatedAt,
+  }));
+  res.json({ playerId, ships });
 }

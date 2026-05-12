@@ -9,9 +9,9 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler, devResetSectorHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devResetSectorHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence, initLimboStore, getLimboStore } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 
@@ -80,6 +80,10 @@ if (process.env['NODE_ENV'] !== 'production') {
 
   // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
   app.get('/dev/limbo', devLimboHandler);
+
+  // GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster
+  // inspection. Returns the player's full roster (up to 10 entries).
+  app.get('/dev/player-ships', devPlayerShipsHandler);
 
   // POST /dev/reset-sector?key=<roomName> — surgical reset for smoke testing.
   // Wipes one (or all) sector's in-memory + persisted swarm state and forces
@@ -212,6 +216,12 @@ async function main(): Promise<void> {
   // hydrated entry without a race.
   const { hydrated } = initLimboStore();
   logger.info({ hydrated }, 'Limbo hydrated from disk');
+
+  // Phase 2 multi-ship roster — same boot ordering. Reads the
+  // `player_ships` rows and seeds the in-memory PlayerShipStore so any
+  // galaxy room's onJoin can resolve a shipId without a race.
+  const { hydrated: rosterHydrated } = initPlayerShipStore();
+  logger.info({ hydrated: rosterHydrated }, 'Player-ship roster hydrated from disk');
 
   // Phase 8 — eagerly instantiate each galaxy room so they hydrate from
   // snapshots at boot (not on first traveller) and so future transit

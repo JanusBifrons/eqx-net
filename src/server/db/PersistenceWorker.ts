@@ -4,6 +4,7 @@ import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersiste
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
 import { LimboStore, type LimboEntry, type LimboPayload } from '../limbo/LimboStore.js';
+import { PlayerShipStore, type PlayerShipRecord } from '../playerShips/PlayerShipStore.js';
 import { db } from './Database.js';
 
 /**
@@ -145,4 +146,84 @@ export function initLimboStore(now: number = Date.now()): { hydrated: number } {
   store.hydrate(entries);
   store.startPruneTimer();
   return { hydrated: entries.length };
+}
+
+// ── Phase 2 — PlayerShipStore singleton ────────────────────────────────
+
+let _playerShipStore: PlayerShipStore | null = null;
+
+export function getPlayerShipStore(): PlayerShipStore {
+  if (_playerShipStore === null) {
+    _playerShipStore = new PlayerShipStore({ persistence });
+  }
+  return _playerShipStore;
+}
+
+/** Test seam — replace the store with an injected one. */
+export function setPlayerShipStore(store: PlayerShipStore): void {
+  _playerShipStore = store;
+}
+
+/**
+ * Boot hydrate. Reads `player_ships` rows from the read-only main-thread
+ * connection. Unlike Limbo, this table is NOT pruned by TTL — entries
+ * live indefinitely until the 10-cap evicts or the player abandons.
+ */
+export function initPlayerShipStore(): { hydrated: number } {
+  const store = getPlayerShipStore();
+  let rows: Array<{
+    ship_id: string;
+    player_id: string;
+    user_id: string | null;
+    kind: string;
+    kind_version: number;
+    health: number;
+    last_sector_key: string;
+    last_x: number;
+    last_y: number;
+    last_vx: number;
+    last_vy: number;
+    last_angle: number;
+    last_angvel: number;
+    last_fire_client_tick: number;
+    is_active: number;
+    active_room_id: string | null;
+    expires_at: number;
+    created_at: number;
+    updated_at: number;
+  }> = [];
+  try {
+    rows = db.prepare(
+      'SELECT ship_id, player_id, user_id, kind, kind_version, health, ' +
+      'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
+      'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at ' +
+      'FROM player_ships',
+    ).all() as typeof rows;
+  } catch {
+    // First-ever boot may race the worker's schema creation; treat as zero.
+    rows = [];
+  }
+  const records: PlayerShipRecord[] = rows.map((row) => ({
+    shipId: row.ship_id,
+    playerId: row.player_id,
+    userId: row.user_id,
+    kind: row.kind,
+    kindVersion: row.kind_version,
+    health: row.health,
+    lastSectorKey: row.last_sector_key,
+    lastX: row.last_x,
+    lastY: row.last_y,
+    lastVx: row.last_vx,
+    lastVy: row.last_vy,
+    lastAngle: row.last_angle,
+    lastAngvel: row.last_angvel,
+    lastFireClientTick: row.last_fire_client_tick,
+    isActive: row.is_active === 1,
+    activeRoomId: row.active_room_id,
+    expiresAt: row.expires_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }));
+  store.hydrate(records);
+  return { hydrated: records.length };
 }

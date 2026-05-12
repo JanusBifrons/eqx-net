@@ -28,7 +28,33 @@ export type PersistOp =
   // reads via the read-only main-thread connection, never through the worker.
   | { type: 'LIMBO_PUT'; playerId: string; userId: string | null; sectorKey: string; payloadJson: string; expiresAt: number; ts: number }
   | { type: 'LIMBO_DELETE'; playerId: string; ts: number }
-  | { type: 'LIMBO_GET'; playerId: string };
+  | { type: 'LIMBO_GET'; playerId: string }
+  // Phase 2 multi-ship roster. Hot path is the in-memory `PlayerShipStore`;
+  // every mutation also enqueues here so a server crash doesn't lose the
+  // roster. `PLAYER_SHIP_PUT` is an UPSERT keyed on `shipId` — fields cover
+  // the full `player_ships` row so the worker doesn't need to read-modify.
+  | {
+      type: 'PLAYER_SHIP_PUT';
+      shipId: string;
+      playerId: string;
+      userId: string | null;
+      kind: string;
+      kindVersion: number;
+      health: number;
+      lastSectorKey: string;
+      lastX: number;
+      lastY: number;
+      lastVx: number;
+      lastVy: number;
+      lastAngle: number;
+      lastAngvel: number;
+      lastFireClientTick: number;
+      isActive: boolean;
+      activeRoomId: string | null;
+      expiresAt: number;
+      ts: number;
+    }
+  | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number };
 
 export type PersistOpType = PersistOp['type'];
 

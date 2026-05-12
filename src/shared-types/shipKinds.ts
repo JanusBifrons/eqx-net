@@ -625,6 +625,27 @@ export const SHIP_KINDS = Object.freeze({
 
 export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(Object.values(SHIP_KINDS));
 
+/**
+ * Catalogue stat-version. Bumped by hand whenever a kind's numerical stats
+ * change (maxSpeed, maxHealth, maxAngvel, damping, grip, thrust, mount
+ * positions, etc.) — anything that affects gameplay feel for a stored ship
+ * picked up after a long absence.
+ *
+ * The kind *id* set is append-only (invariant #11), but the numbers attached
+ * to each id can drift across releases. Stored `player_ships` rows record
+ * the catalogue version they were saved at; on hydrate, if the version is
+ * older than this constant, the per-ship `health` is clamped down to the
+ * current `maxHealth` (so we never strip earned damage but never gift hull
+ * above the new cap either) and other stats are read live from the
+ * catalogue. See `src/server/playerShips/PlayerShipStore.ts` for the
+ * hydrate path.
+ *
+ * Bumping rule: any PR that edits a numeric field inside `SHIP_KINDS`
+ * MUST bump this value by 1 in the same PR. Mount-layout changes are not
+ * auto-handled — they require a separate migration story.
+ */
+export const SHIP_KIND_CATALOGUE_VERSION = 1;
+
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 
 /**

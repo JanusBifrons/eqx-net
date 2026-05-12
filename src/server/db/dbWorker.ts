@@ -67,6 +67,22 @@ const stmts = {
     'ON CONFLICT(player_id) DO UPDATE SET user_id=excluded.user_id, sector_key=excluded.sector_key, payload_json=excluded.payload_json, expires_at=excluded.expires_at, updated_at=excluded.updated_at',
   ),
   LIMBO_DELETE: db.prepare('DELETE FROM limbo WHERE player_id = ?'),
+  // Phase 2 multi-ship roster persistence shadow.
+  PLAYER_SHIP_PUT: db.prepare(
+    'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
+    'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
+    'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(ship_id) DO UPDATE SET ' +
+    'player_id=excluded.player_id, user_id=excluded.user_id, kind=excluded.kind, ' +
+    'kind_version=excluded.kind_version, health=excluded.health, ' +
+    'last_sector_key=excluded.last_sector_key, last_x=excluded.last_x, last_y=excluded.last_y, ' +
+    'last_vx=excluded.last_vx, last_vy=excluded.last_vy, last_angle=excluded.last_angle, ' +
+    'last_angvel=excluded.last_angvel, last_fire_client_tick=excluded.last_fire_client_tick, ' +
+    'is_active=excluded.is_active, active_room_id=excluded.active_room_id, ' +
+    'expires_at=excluded.expires_at, updated_at=excluded.updated_at',
+  ),
+  PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
 };
 
 let drainedCount = 0;
@@ -140,6 +156,34 @@ function applyOp(op: PersistOp): { rowId?: number } {
       // via the read-only main-thread connection (see LimboStore.hydrate);
       // it never flows through this worker. Silent no-op so a misrouted
       // LIMBO_GET doesn't crash the BATCH transaction.
+      return {};
+    }
+    case 'PLAYER_SHIP_PUT': {
+      stmts.PLAYER_SHIP_PUT.run(
+        op.shipId,
+        op.playerId,
+        op.userId,
+        op.kind,
+        op.kindVersion,
+        op.health,
+        op.lastSectorKey,
+        op.lastX,
+        op.lastY,
+        op.lastVx,
+        op.lastVy,
+        op.lastAngle,
+        op.lastAngvel,
+        op.lastFireClientTick,
+        op.isActive ? 1 : 0,
+        op.activeRoomId,
+        op.expiresAt,
+        op.ts,
+        op.ts,
+      );
+      return {};
+    }
+    case 'PLAYER_SHIP_DELETE': {
+      stmts.PLAYER_SHIP_DELETE.run(op.shipId);
       return {};
     }
   }
