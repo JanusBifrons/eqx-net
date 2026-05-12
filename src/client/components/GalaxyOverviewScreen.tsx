@@ -23,6 +23,7 @@ import { ShipRosterPanel } from './ShipRosterPanel';
 import { useUIStore } from '../state/store';
 import { useIsCompact } from '../layout/useIsCompact';
 import type { ShipKindId } from '../../shared-types/shipKinds';
+import { logEvent } from '../debug/ClientLogger';
 
 interface LimboSummary {
   sectorKey: string;
@@ -217,6 +218,7 @@ export function GalaxyOverviewScreen({
   // sector clicks behave according to the current source code even
   // when Vite Fast Refresh has preserved the renderer instance.
   onPickBodyRef.current = (key: string): void => {
+    logEvent('galaxy_sector_click', { key, mode });
     if (mode === 'spawn') {
       setPendingSpawnSectorRef.current(key);
     } else {
@@ -403,13 +405,17 @@ export function GalaxyOverviewScreen({
        *  with the captured sector and clears the pending state. */}
       <ShipPickerModal
         open={pendingSpawnSector !== null}
-        onClose={() => setPendingSpawnSector(null)}
+        onClose={() => {
+          logEvent('ship_picker_close', { pendingSpawnSector });
+          setPendingSpawnSector(null);
+        }}
         selectedKind={selectedShipKindId}
         title={pendingSpawnSector !== null
           ? `Spawn in ${getSector(pendingSpawnSector)?.name ?? pendingSpawnSector}`
           : undefined}
         subtitle={pendingSpawnSector !== null ? 'Pick a ship kind for this sector.' : undefined}
         onSelect={(kind) => {
+          logEvent('ship_picker_select', { kind, pendingSpawnSector });
           setSelectedShipKind(kind);
           if (pendingSpawnSector !== null) {
             onSpawnNewShip?.(kind, pendingSpawnSector);

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ShipRosterCard, type RosterShipEntry } from './ShipRosterCard';
 import { ShipDetailModal } from './ShipDetailModal';
 import { ROSTER_CAP } from './rosterConstants';
+import { logEvent } from '../debug/ClientLogger';
 
 /**
  * Galaxy-map ship roster panel. Fetches the player's roster from
@@ -47,26 +48,45 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
 
   const [debugStatus, setDebugStatus] = useState<string>('init');
   const refresh = useCallback(async (): Promise<void> => {
-    if (playerId === '') { setDebugStatus('no-pid'); return; }
+    if (playerId === '') {
+      setDebugStatus('no-pid');
+      logEvent('roster_fetch', { stage: 'skip', reason: 'no-pid' });
+      return;
+    }
     try {
       const url = `${ENDPOINT_LIST}?playerId=${encodeURIComponent(playerId)}`;
+      logEvent('roster_fetch', { stage: 'start', url, playerId });
       const res = await fetch(url);
-      if (!res.ok) { setDebugStatus(`http-${res.status}`); return; }
+      if (!res.ok) {
+        setDebugStatus(`http-${res.status}`);
+        logEvent('roster_fetch', { stage: 'http-error', status: res.status });
+        return;
+      }
       const body = (await res.json()) as { ships?: RosterShipEntry[] };
       const out = Array.isArray(body.ships) ? body.ships : [];
       setShips(out);
       setDebugStatus(`ok n=${out.length}`);
+      logEvent('roster_fetch', { stage: 'ok', count: out.length, kinds: out.map((s) => s.kind) });
     } catch (err) {
-      setDebugStatus(`err: ${(err as Error).message ?? 'unknown'}`);
+      const msg = (err as Error).message ?? 'unknown';
+      setDebugStatus(`err: ${msg}`);
+      logEvent('roster_fetch', { stage: 'exception', message: msg });
     }
   }, [playerId]);
 
   useEffect(() => {
-    if (playerId === '') return;
+    logEvent('roster_panel_mount', { playerId, compact });
+    if (playerId === '') {
+      logEvent('roster_panel_mount', { stage: 'no-pid' });
+      return;
+    }
     void refresh();
     const handle = window.setInterval(() => { void refresh(); }, POLL_MS);
-    return () => window.clearInterval(handle);
-  }, [playerId, refresh]);
+    return () => {
+      logEvent('roster_panel_unmount', { playerId });
+      window.clearInterval(handle);
+    };
+  }, [playerId, refresh, compact]);
 
   const handleAbandon = useCallback(async (shipId: string): Promise<void> => {
     try {
