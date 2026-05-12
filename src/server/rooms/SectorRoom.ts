@@ -1828,13 +1828,40 @@ export class SectorRoom extends Room<SectorState> {
     // the existing ship instead of fresh-spawning. The ship's pose / vel /
     // angle / health reflect what happened during the offline window
     // (drift decayed by drag, possibly damage from passing drones).
+    //
+    // Phase 3 multi-ship: the player can intentionally bypass rebind by
+    // (a) sending `isNewShip:true` (sector-click → kind picker → fresh
+    // spawn), or (b) sending a `shipId` that doesn't match the lingering
+    // ship's `shipInstanceId` (roster card → resume a DIFFERENT stored
+    // ship). When either is set, evict the lingering ship to stored
+    // state (it stays in the roster, the slot is freed) and fall
+    // through to the fresh-spawn path below.
     const ownerlessTimer = this.ownerlessShips.get(playerId);
     if (this.sectorKey !== null && ownerlessTimer !== undefined) {
-      clearTimeout(ownerlessTimer);
-      this.ownerlessShips.delete(playerId);
-      const existingSlot = this.playerToSlot.get(playerId);
       const existingShip = this.state.ships.get(playerId);
-      if (existingSlot !== undefined && existingShip) {
+      const wantsNewShip = parsed.success && parsed.data.isNewShip === true;
+      const requestedShipIdForRebindCheck = parsed.success && typeof parsed.data.shipId === 'string'
+        ? parsed.data.shipId
+        : '';
+      const wantsDifferentShip = requestedShipIdForRebindCheck !== ''
+        && existingShip !== undefined
+        && existingShip.shipInstanceId !== ''
+        && existingShip.shipInstanceId !== requestedShipIdForRebindCheck;
+      if (wantsNewShip || wantsDifferentShip) {
+        logger.info(
+          { playerId, wantsNewShip, wantsDifferentShip, existingShipId: existingShip?.shipInstanceId, requestedShipId: requestedShipIdForRebindCheck },
+          'rebind skipped — player picked a different / new ship; evicting lingering hull',
+        );
+        // Evict the lingering ship cleanly: clears timer, frees slot,
+        // marks the roster row stored with the ship's final pose.
+        this.evictOwnerlessShip(playerId);
+        // Fall through to the fresh-spawn / shipId-restore path below.
+      } else {
+        // Original rebind behaviour: reattach to the existing slot.
+        clearTimeout(ownerlessTimer);
+        this.ownerlessShips.delete(playerId);
+        const existingSlot = this.playerToSlot.get(playerId);
+        if (existingSlot !== undefined && existingShip) {
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
@@ -1892,10 +1919,11 @@ export class SectorRoom extends Room<SectorState> {
         );
         return;
       }
-      // Stale entry: ownerlessShips had this player but the slot/ShipState
-      // is gone (e.g. a race we didn't anticipate). Fall through to
-      // fresh-spawn — better to recover than throw.
-      logger.warn({ playerId }, 'stale ownerless entry — falling through to fresh spawn');
+        // Stale entry: ownerlessShips had this player but the slot/ShipState
+        // is gone (e.g. a race we didn't anticipate). Fall through to
+        // fresh-spawn — better to recover than throw.
+        logger.warn({ playerId }, 'stale ownerless entry — falling through to fresh spawn');
+      }
     }
 
     // ── FRESH SPAWN PATH ───────────────────────────────────────────────────
