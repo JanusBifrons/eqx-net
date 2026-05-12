@@ -153,12 +153,16 @@ export function GalaxyOverviewScreen({
   const limboSector = effectiveLimboSectorKey ? getSector(effectiveLimboSectorKey) : null;
 
   // --- Pick handler — bridges the renderer's onPick callback into the
-  //     prop-driven mode behaviour. Captured in a ref so we can hand a
-  //     stable reference to the Pixi renderer constructor. ---
+  //     prop-driven mode behaviour. The renderer itself is mount-once
+  //     (creating a Pixi Application is expensive), so we route the
+  //     onPick body through a ref that's updated on every render. That
+  //     way Vite Fast Refresh updates to this file flow through the
+  //     existing renderer instance without needing to recreate it. ---
   const onSelectRoomRef = useRef(onSelectRoom);
   const onPickNeighbourRef = useRef(onPickNeighbour);
   useEffect(() => { onSelectRoomRef.current = onSelectRoom; }, [onSelectRoom]);
   useEffect(() => { onPickNeighbourRef.current = onPickNeighbour; }, [onPickNeighbour]);
+  const onPickBodyRef = useRef<(key: string) => void>(() => { /* set on mount */ });
 
   // --- Mount the Pixi renderer once. Mode is captured at mount time and
   //     propagated via setMode() / setLimbo() / setCurrentSector() on prop
@@ -168,18 +172,12 @@ export function GalaxyOverviewScreen({
     if (!el) return;
     let disposed = false;
 
+    // Mount-once: the renderer reads the up-to-date onPick body from a
+    // ref every click. That keeps Fast Refresh updates to the
+    // sector-click flow (e.g. swapping in / out the kind-picker
+    // intercept) live without recreating the Pixi Application.
     const renderer = new GalaxyOverviewRenderer({
-      onPick: (key) => {
-        if (mode === 'spawn') {
-          // Phase 3 — intercept the sector tap. Instead of joining
-          // immediately, open the ShipPickerModal so the player picks
-          // which kind of ship to spawn in this sector. The picker's
-          // onSelect handler routes to onSpawnNewShip.
-          setPendingSpawnSectorRef.current(key);
-        } else {
-          onPickNeighbourRef.current?.(key);
-        }
-      },
+      onPick: (key) => { onPickBodyRef.current(key); },
     });
     rendererRef.current = renderer;
 
@@ -212,6 +210,19 @@ export function GalaxyOverviewScreen({
     };
     // Mount-once: subsequent prop changes flow through dedicated effects.
   }, []);
+
+  // Keep the renderer's onPick body in sync with the latest mode +
+  // callback wiring. Runs on every render — the ref read inside the
+  // mount-once renderer always picks up the freshest closure, so
+  // sector clicks behave according to the current source code even
+  // when Vite Fast Refresh has preserved the renderer instance.
+  onPickBodyRef.current = (key: string): void => {
+    if (mode === 'spawn') {
+      setPendingSpawnSectorRef.current(key);
+    } else {
+      onPickNeighbourRef.current?.(key);
+    }
+  };
 
   // Reflect prop / store changes onto the live renderer.
   useEffect(() => {
