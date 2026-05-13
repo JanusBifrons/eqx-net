@@ -887,26 +887,26 @@ export class PixiRenderer implements IRenderer {
     const seen = new Set<string>();
     for (const [shipInstanceId, ship] of mirror.lingeringShips) {
       seen.add(shipInstanceId);
-      // Defer sprite creation until kind is known so we don't bake in
-      // the wrong silhouette. Subsequent snapshots will retry.
-      if (!ship.kind) continue;
+      // Build immediately even if kind isn't yet known — we used to
+      // defer here but that left lingering hulls invisible when the
+      // schema diff arrived late. Instead, use a default kind for the
+      // initial sprite and REBUILD if the real kind arrives later.
+      // This means there's a brief 1-frame window where the wrong
+      // silhouette shows, but the alternative ("not visible at all")
+      // was worse.
+      const targetKind = ship.kind ?? 'fighter';
       let entry = this.lingeringSprites.get(shipInstanceId);
-      // If the kind changed since the sprite was built, rebuild it —
-      // this can happen if the schema diff with kind arrives after the
-      // first snapshot wrote a no-kind entry that we previously had to
-      // skip, then on the next frame we'd build with the right kind.
-      // Still defensive in case the catalogue ever gets remapped.
-      if (entry && entry.kind !== ship.kind) {
+      if (entry && entry.kind !== targetKind) {
         entry.sprite.destroy();
         entry = undefined;
         this.lingeringSprites.delete(shipInstanceId);
       }
       if (!entry) {
-        const shape = shapeForKind(ship.kind);
+        const shape = shapeForKind(targetKind);
         const sprite = buildShipGfxFromShape(shape, shape.color);
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
-        entry = { sprite, kind: ship.kind };
+        entry = { sprite, kind: targetKind };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
       entry.sprite.x = ship.x;
