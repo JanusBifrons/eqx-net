@@ -311,6 +311,22 @@ export class PixiRenderer implements IRenderer {
     container.appendChild(this.app.canvas);
     this.initialized = true;
 
+    // Disable Pixi v8's expensive global pointer-move tracking
+    // (`EventSystem.features.globalMove` — see pixijs/pixijs#6515 and
+    // the v8 events guide). With many sprites in scene, every native
+    // pointer/touchmove fires a per-sprite hit-test traversal that
+    // queues macro tasks (~12 ms each) behind any DOM click handler.
+    // Symptom: 9 s lag between tapping the drawer toggle and the MUI
+    // Drawer mounting. We don't use globalpointermove / move-based
+    // logic anywhere in gameplay; the only Pixi taps we need are
+    // click / pointertap on the galaxy-map hexes (preserved). Pinch /
+    // wheel listen on the renderer-level event stream and are
+    // unaffected. The `move` feature stays on so pixi-viewport's
+    // pinch plugin can track the second-finger delta.
+    Object.assign(this.app.renderer.events.features, {
+      globalMove: false,
+    });
+
     // Starfield is attached to app.stage BEFORE the viewport so the
     // parallax layers render under all gameplay content (insertion
     // order = z-order in Pixi).
@@ -324,6 +340,18 @@ export class PixiRenderer implements IRenderer {
       worldHeight: WORLD_H,
       events: this.app.renderer.events,
     });
+    // Skip the gameplay subtree from Pixi's event-system traversal
+    // (Pixi v8 `eventMode='none'` — pixijs/pixijs#6515). With hundreds
+    // of ship / drone / asteroid / projectile sprites in this viewport,
+    // every native pointer event would otherwise trigger a per-sprite
+    // hit-test pass (~12 ms each) and queue macro tasks like the
+    // drawer-toggle click handler behind ~9 s of interaction work.
+    // pixi-viewport's pinch / wheel / drag plugins listen on
+    // `app.renderer.events` directly (not on the viewport container),
+    // so panning/zooming still works after this opt-out. The galaxy-map
+    // overlay (`GalaxyMapLayer`) is attached to `app.stage` separately
+    // and keeps its own interactive hex hit-tests.
+    this.viewport.eventMode = 'none';
     this.app.stage.addChild(this.viewport);
 
     // Pinch (touch) and wheel (desktop) zoom; clamped to a sensible range.
