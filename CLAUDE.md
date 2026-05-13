@@ -26,6 +26,20 @@ The Master Architecture Blueprint is the authoritative design document; the appr
 10. **Documentation as a shipped artefact.** Every major feature ships with at least one prose guide under `docs/features/` (player-facing behaviour) or `docs/architecture/` (system internals). [`docs/LESSONS.md`](docs/LESSONS.md) captures gotchas; CLAUDE.md captures rules; `docs/` captures the *story* — the why, the migration path, the future plans. See `docs/architecture/galaxy-graph.md`, `docs/architecture/persistence-and-migrations.md`, and `docs/architecture/ship-physics-handling.md` for examples.
 11. **Ship-kind catalogue is append-only.** The single source of truth for ship types is [src/shared-types/shipKinds.ts](src/shared-types/shipKinds.ts). The catalogue's `SHIP_KINDS_LIST` order is part of the swarm wire format (drone kinds encode as a `u8` index). Adding a new kind: append a record. Removing or reordering kinds: bump `SWARM_WIRE_VERSION` and verify decoder hard-fails on the old version. See [docs/features/ship-kinds.md](docs/features/ship-kinds.md).
 12. **Mount-angle state has exactly one ownership site.** `WeaponMountController.tickSlot` (and the `pickTarget` + `rotateMountToward` primitives it composes) is the only path that may write per-mount rotation angles. The drone AI calls it. The server's player update (`SectorRoom.tickPlayerMounts` / `tickDroneMounts`) calls it. The client's prediction (`tickLocalMountAim`) calls it. **Do not add a second correction path** — the "chapter 2 lockstep" lesson (two paths fighting each other on the same surface) applies identically here. The binary swarm wire stays at v3; mount angles flow through the JSON `SnapshotMessage.states[].mountAngles` + `SnapshotMessage.drones[].mountAngles` only. See [docs/architecture/weapon-mounts.md](docs/architecture/weapon-mounts.md).
+13. **Smoke-test bug reports require a failing test BEFORE the fix.** When the user (or anyone) reports a bug from manual play / smoke testing, the response order is **non-negotiable**:
+    1. **Reproduce in a test first.** Write an E2E spec in `tests/e2e/` (or an integration test in `tests/integration/`) that drives the same flow the user described and ASSERTS the broken behaviour. The test must FAIL on the current code — if it passes, the test doesn't match the bug and the test itself is wrong.
+    2. **Then fix.** With the failing test as a regression lock, ship the fix and confirm the test now passes.
+    3. **Commit the test + fix together.** Reverting the fix should re-fail the test. Future contributors get the bug + the lock in one history-readable unit.
+
+    Why: the user's bandwidth for smoke-testing is finite and the burden compounds. Every bug found via manual play that we patch *without* a test means the same bug will resurface in a different smoke-test cycle. Tests are how the burden goes back down. "I manually verified" is not sufficient (already enforced by Invariant #9); this invariant is the smoke-test-specific corollary that says **the test must come first, not as a follow-up**.
+
+    Practical workflow for a smoke-test bug:
+    - Get the user's diagnostic capture (`diag/captures/<timestamp>-<id>/`); reconstruct exact steps from `lifecycle.ndjson` + `combat.ndjson` so the test mirrors the real flow.
+    - Pick the test layer that's *minimal* for the bug: unit/integration tests are faster to write and faster to run than E2E; reach for E2E only when the bug is a UI flow that crosses Pixi / MUI / Colyseus boundaries simultaneously.
+    - State the reproduction recipe in the test docstring with the diagnostic dir-id and the exact symptom the user reported, in their own words where possible.
+    - Use `harness.events.waitFor(...)` (integration) or `data-testid`-driven Playwright actions (E2E) so the test fails LOUDLY with a specific assertion, not a generic timeout.
+
+    See `tests/integration/sectorRoom/DETERMINISM.md` for the integration-test recipe and `tests/e2e/drawer-galaxy-map-open-close.spec.ts` for the canonical "user reported, repro'd in test" pattern.
 
 ---
 

@@ -2477,6 +2477,37 @@ export class ColyseusGameClient {
       }
     }
 
+    // Phase 6b (2026-05-13) — lingering hull sprite/body sync.
+    //
+    // `mirror.lingeringShips[id].x, y` is initialised from snapshot
+    // pose in `handleSnapshot` / `syncMirror` (~20 Hz). The matching
+    // predWorld body (`linger-${id}`) is a dynamic Rapier rigid
+    // body — it integrates physics every frame (60 Hz). Between
+    // snapshots, the body's position can diverge from the mirror
+    // entry: collision response pushes it, drag decays its velocity,
+    // etc. Without this sync, the SPRITE is drawn at the stale
+    // snapshot pose while the COLLISION body lives at the integrated
+    // position; the player navigates toward the visible sprite and
+    // misses the actual collidable body — the "I fly through the
+    // lingering hull" symptom.
+    //
+    // Pattern mirrors the active-ship + remote-ship loops above:
+    // read predWorld, write mirror. Regression-locked in
+    // `ColyseusClient.lingeringRender.test.ts`.
+    if (this.predWorld && this.mirror.lingeringShips) {
+      for (const [shipInstanceId, entry] of this.mirror.lingeringShips) {
+        const bodyId = `linger-${shipInstanceId}`;
+        if (!this.predWorld.hasShip(bodyId)) continue;
+        const pose = this.predWorld.getShipState(bodyId);
+        if (!pose) continue;
+        entry.x = pose.x;
+        entry.y = pose.y;
+        entry.vx = pose.vx;
+        entry.vy = pose.vy;
+        entry.angle = pose.angle;
+      }
+    }
+
     // Ghost projectiles — advance and write to mirror.projectiles.
     if (this.mirror.projectiles) {
       this.ghostManager.update(this.lastFrameMs, this.mirror.projectiles);
