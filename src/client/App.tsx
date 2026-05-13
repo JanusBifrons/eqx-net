@@ -26,6 +26,7 @@ import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
+import { createServerHealthPoller } from './net/serverHealthPoller';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { WeaponSelector } from './components/WeaponSelector';
 import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
@@ -661,6 +662,26 @@ export function App(): JSX.Element {
   useEffect(() => {
     applyUserPrefs(user?.id ?? null);
   }, [user?.id]);
+
+  // Server-health poll loop. Runs for the whole app lifetime — the
+  // landing-screen banner + Join-button gate are the primary consumers,
+  // but the value also drives the hype-number on `MetaLandingScreen`,
+  // so keep polling even after the player joins. The poller is cheap
+  // (one HTTP GET every ~8 s in steady state).
+  useEffect(() => {
+    const setServerHealth = useUIStore.getState().setServerHealth;
+    const poller = createServerHealthPoller({
+      url: `${SERVER_URL}/healthz`,
+      onChange: (snapshot) => {
+        const next = snapshot.state === 'healthy'
+          ? (snapshot.data?.ready ? 'healthy' : 'warming')
+          : snapshot.state; // 'unreachable' | 'unknown'
+        setServerHealth(next, snapshot.data?.playersOnline ?? null);
+      },
+    });
+    poller.start();
+    return () => poller.stop();
+  }, []);
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);

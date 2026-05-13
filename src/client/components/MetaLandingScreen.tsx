@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Box, Button, Typography } from '@mui/material';
+import { Alert, Box, Button, Typography } from '@mui/material';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import { useUIStore } from '../state/store.js';
 
 interface Props {
   onJoin: () => void;
@@ -10,21 +10,25 @@ interface Props {
 /**
  * Pre-game "main menu" landing screen.
  *
- * Shown to everyone (logged-in or not) as the first screen after page load.
- * Single primary CTA `Join the fight!` — `App.tsx` decides whether that
- * routes to LoginPage (logged-out) or galaxy-map (logged-in).
+ * Shown to everyone (logged-in or not) as the first screen after page
+ * load. Single primary CTA `Join the fight!` — `App.tsx` decides whether
+ * that routes to LoginPage (logged-out) or galaxy-map (logged-in).
  *
- * The "X players fighting" hype number is **fake** but deterministic per
- * minute — same value across all clients hitting at the same minute, ticks
- * over each minute. Re-renders once a minute via a setInterval.
+ * The "X players fighting" hype number is served by the **server**
+ * (`/healthz` response) so all concurrent visitors see the same value;
+ * we read it from Zustand where the poller in `App.tsx` writes the
+ * latest poll result. Falls back to a placeholder dash when the
+ * server hasn't replied yet or is unreachable — at which point the
+ * banner is the load-bearing UI surface, not the hype number.
+ *
+ * The Join CTA is disabled when the server isn't `healthy` — clicking
+ * a button that would immediately fail is worse UX than seeing a
+ * banner that explains why we're waiting.
  */
 export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element {
-  const [count, setCount] = useState<number>(() => fakePlayerCount());
-
-  useEffect(() => {
-    const id = window.setInterval(() => setCount(fakePlayerCount()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
+  const serverHealth = useUIStore((s) => s.serverHealth);
+  const playersOnline = useUIStore((s) => s.playersOnline);
+  const canJoin = serverHealth === 'healthy';
 
   return (
     <Box
@@ -61,6 +65,8 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
         </Typography>
       </Box>
 
+      <ServerHealthBanner health={serverHealth} />
+
       <Box
         data-testid="meta-player-count"
         sx={{
@@ -70,6 +76,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
           borderRadius: 2,
           bgcolor: 'rgba(0, 255, 136, 0.06)',
           maxWidth: 420,
+          opacity: canJoin ? 1 : 0.5,
         }}
       >
         <Typography
@@ -77,7 +84,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
           sx={{ color: '#dde', fontWeight: 600, lineHeight: 1.4 }}
         >
           <span style={{ color: '#00ff88' }} data-testid="meta-player-count-number">
-            {count.toLocaleString()}
+            {playersOnline !== null ? playersOnline.toLocaleString() : '—'}
           </span>{' '}
           players fighting for domination right now
         </Typography>
@@ -89,6 +96,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
         size="large"
         startIcon={<RocketLaunchIcon />}
         onClick={onJoin}
+        disabled={!canJoin}
         sx={{
           bgcolor: '#00ff88',
           color: '#000',
@@ -102,6 +110,11 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
           '&:hover': {
             bgcolor: '#00cc6a',
             boxShadow: '0 0 30px rgba(0, 255, 136, 0.65)',
+          },
+          '&.Mui-disabled': {
+            bgcolor: 'rgba(0, 255, 136, 0.15)',
+            color: 'rgba(255, 255, 255, 0.4)',
+            boxShadow: 'none',
           },
         }}
       >
@@ -123,15 +136,36 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
   );
 }
 
+interface BannerProps {
+  health: 'unknown' | 'healthy' | 'warming' | 'unreachable';
+}
+
 /**
- * Deterministic fake player count, stable per minute, range 600–900.
- *
- * Same value across all clients hitting at the same minute. Cheap hash of
- * the floor-minute timestamp — no server call, no entropy source needed.
+ * Pre-game server-health banner. Renders nothing while healthy or
+ * during the very first probe (`unknown`) so the landing screen looks
+ * normal in the steady state. Surfaces both flavours of "not ready":
+ * `warming` (server is up but mid-boot) and `unreachable` (no reply).
  */
-export function fakePlayerCount(now = Date.now()): number {
-  const minute = Math.floor(now / 60_000);
-  let h = (minute * 2654435761) >>> 0;
-  h = (h ^ (h >>> 16)) >>> 0;
-  return 600 + (h % 300);
+function ServerHealthBanner({ health }: BannerProps): JSX.Element | null {
+  if (health === 'healthy' || health === 'unknown') return null;
+
+  const isWarming = health === 'warming';
+  return (
+    <Alert
+      severity={isWarming ? 'info' : 'error'}
+      variant="outlined"
+      data-testid="server-health-banner"
+      data-state={health}
+      sx={{
+        maxWidth: 420,
+        bgcolor: isWarming ? 'rgba(2, 136, 209, 0.08)' : 'rgba(211, 47, 47, 0.08)',
+        color: isWarming ? '#90caf9' : '#ef9a9a',
+        '& .MuiAlert-icon': { color: isWarming ? '#90caf9' : '#ef9a9a' },
+      }}
+    >
+      {isWarming
+        ? 'Server is starting up — Join will be enabled in a moment.'
+        : 'Server unavailable. Reconnecting…'}
+    </Alert>
+  );
 }

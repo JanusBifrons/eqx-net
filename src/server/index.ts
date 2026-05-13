@@ -45,9 +45,44 @@ app.use('/auth', authRouter);
 // and the in-game galaxy-map overlay.
 app.use('/galaxy', galaxyRouter);
 
+/**
+ * Server health probe. The client polls this to gate the pre-game UI
+ * (landing screen "Join the fight" button + banner) and to render the
+ * hype-number above the CTA. Returns 200 with `{ status, ready, tick,
+ * playersOnline }` whenever the HTTP layer is up — `ready` is `true`
+ * only after `main()` has finished hydrating Limbo, the roster, and the
+ * eager galaxy rooms. Until then the client knows the process is alive
+ * but joining would likely fail, so the join button stays disabled with
+ * a "warming up" banner instead of an error.
+ *
+ * Keep this endpoint cheap: no DB queries, no schema instances. It's
+ * the highest-frequency endpoint in the app and runs on the main
+ * event loop.
+ */
+let serverReady = false;
 app.get('/healthz', (_req, res) => {
-  res.json({ status: 'ok', tick: Date.now() });
+  res.json({
+    status: 'ok',
+    ready: serverReady,
+    tick: Date.now(),
+    playersOnline: fakePlayerCount(),
+  });
 });
+
+/**
+ * Deterministic-per-minute "X players fighting" hype number. Returns
+ * 600–900, the same value across all clients hitting the server in the
+ * same minute, rotating once per minute. Pre-moved-server: lived in
+ * `MetaLandingScreen.tsx` and ran on the client's clock — moved here so
+ * (a) every concurrent visitor sees the same number, (b) when we swap
+ * this for a real `matchMaker`-summed count later the client doesn't
+ * change. */
+function fakePlayerCount(now: number = Date.now()): number {
+  const minute = Math.floor(now / 60_000);
+  let h = (minute * 2654435761) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return 600 + (h % 300);
+}
 
 // Dev-only endpoints for E2E test inspection and debugging.
 if (process.env['NODE_ENV'] !== 'production') {
@@ -240,6 +275,12 @@ async function main(): Promise<void> {
       logger.error({ err, sectorKey: sector.key }, 'failed to eagerly create galaxy room');
     }
   }
+
+  // All boot work is done — joining a galaxy room will now succeed.
+  // Flip the /healthz `ready` flag so the client landing screen enables
+  // the Join CTA.
+  serverReady = true;
+  logger.info('server ready — /healthz now reports ready:true');
 }
 
 /**

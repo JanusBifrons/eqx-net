@@ -10,6 +10,27 @@ export type { ArrivalMode } from '../settings/settingsStorage.js';
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 /**
+ * Server-health gate state for the pre-game UI (2026-05-13).
+ *
+ * Distinct from `ConnectionStatus` (which tracks the Colyseus WebSocket
+ * lifecycle once a join is in flight). `serverHealth` is the HTTP-level
+ * "is the server process even up?" probe that runs while the player is
+ * on the landing / auth / galaxy-map screens, polled by
+ * `serverHealthPoller`. Two distinct surfaces avoid the temptation to
+ * conflate "WS dropped mid-game" with "server never came up to begin
+ * with" — they need different UX (in-game vs landing banner).
+ *
+ * - `unknown` — initial state, no poll has completed yet.
+ * - `healthy` — last poll returned a valid response AND `ready === true`.
+ * - `warming` — last poll returned a valid response but `ready === false`
+ *               (server is up, mid-boot). Join CTA disabled with a
+ *               softer "Starting up..." banner.
+ * - `unreachable` — last poll failed (network error, non-2xx, malformed
+ *                   response, timeout). Join CTA disabled, error banner.
+ */
+export type ServerHealth = 'unknown' | 'healthy' | 'warming' | 'unreachable';
+
+/**
  * Phase 5 — singleton roster cache. Holds the player's ship roster as
  * delivered by `/dev/player-ships` (initial fetch) and refreshed by the
  * `SHIP_ROSTER` Colyseus push. Replaces the per-`ShipRosterPanel` local
@@ -145,6 +166,13 @@ interface UIStore {
    *  transit broadcast). Consumers: `ShipRosterPanel`, `RosterCountBadge`,
    *  `GalaxyTab`. Empty array when the player has no ships. */
   shipRoster: RosterEntry[];
+  /** HTTP-level `/healthz` probe state for the pre-game UI gate. Drives
+   *  the landing-screen banner + join-button disabled state. */
+  serverHealth: ServerHealth;
+  /** Latest `playersOnline` value from `/healthz`. Null when the server
+   *  hasn't replied yet or the last reply was malformed. Drives the
+   *  hype-number above the Join CTA. */
+  playersOnline: number | null;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -201,6 +229,10 @@ interface UIStore {
    *  the spawn-on-self button. */
   localShipInstanceId: string | null;
   setLocalShipInstanceId: (id: string | null) => void;
+  /** Apply the latest `/healthz` poll result. Updates both the gate
+   *  state and the cached `playersOnline` in one set so subscribers see
+   *  a consistent pair. */
+  setServerHealth: (health: ServerHealth, playersOnline?: number | null) => void;
 }
 
 // The store is constructed before auth resolves, so we hydrate from the
@@ -286,6 +318,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   shipRoster: [],
   pendingShipSwap: null,
   localShipInstanceId: null,
+  serverHealth: 'unknown',
+  playersOnline: null,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -330,6 +364,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShipRoster:    (ships) => set({ shipRoster: ships }),
   setPendingShipSwap: (req) => set({ pendingShipSwap: req }),
   setLocalShipInstanceId: (id) => set({ localShipInstanceId: id }),
+  setServerHealth:  (health, playersOnline) => set((prev) => ({
+    serverHealth: health,
+    // Preserve the previous count when the caller didn't pass one
+    // (e.g. an `unreachable` transition where we still want to show
+    // the last-known number is gated behind `serverHealth` anyway).
+    // Pass `null` explicitly to clear.
+    playersOnline: playersOnline === undefined ? prev.playersOnline : playersOnline,
+  })),
 }));
 
 /**

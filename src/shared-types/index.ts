@@ -61,3 +61,6 @@ export type { ShipKind, ShipKindId, ShipShape } from './shipKinds.js';
 
 export { SECTOR_PLAYABLE_HALF_EXTENT, clampToSectorBounds } from './sectorBounds.js';
 export type { ClampResult } from './sectorBounds.js';
+
+export { HealthResponseSchema } from './serverHealth.js';
+export type { HealthResponse } from './serverHealth.js';
