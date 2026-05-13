@@ -1,4 +1,4 @@
-import { type ReactNode } from 'react';
+import { memo, useCallback, useMemo, type ReactNode } from 'react';
 import { Box, Drawer, IconButton, Tooltip, Typography } from '@mui/material';
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
@@ -37,6 +37,67 @@ const TABS: readonly TabSpec[] = [
 
 const RAIL_WIDTH = 56;
 
+// --------------------------------------------------------------------------
+// HOISTED STATIC `sx` / props objects.
+//
+// Paradigm: every inline `sx={{...}}` in JSX allocates a fresh object on
+// each render. MUI's emotion engine then has to hash it (murmur2),
+// deep-merge it, run `styleFunctionSx2` against the theme — all per
+// allocation. The CPU profile of a single drawer-open showed ~6 s of
+// emotion + sx-prop work (commit `9c04bbf`).
+//
+// Hoisting static sx objects out of the render function gives emotion a
+// STABLE reference: same `===` identity across renders, cached hash,
+// cached output. Cost drops from per-render to per-page-load.
+//
+// Rule: if an `sx` object has NO inputs from props/state, hoist it. If
+// it has dependencies, wrap in `useMemo`. Only inline `sx` for one-off,
+// truly-dynamic styles (and even then prefer `useMemo`).
+// --------------------------------------------------------------------------
+const DRAWER_SX = {
+  '& .MuiDrawer-paper': {
+    width: 'min(360px, 90vw)',
+    bgcolor: '#0d1117',
+    borderLeft: '1px solid rgba(0, 255, 136, 0.18)',
+    color: '#dde',
+    // Clear the fixed AppHeader so its avatar/buttons don't intercept
+    // clicks on the drawer's own header on desktop.
+    pt: 'var(--app-bar-h, 48px)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+} as const;
+
+const MODAL_PROPS = { keepMounted: true } as const;
+
+const HEADER_SX = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  px: 1.5,
+  py: 1,
+  borderBottom: '1px solid rgba(255,255,255,0.08)',
+  minHeight: 44,
+} as const;
+
+const HEADER_LABEL_SX = { color: '#00ff88', letterSpacing: 2, pl: 1 } as const;
+const CLOSE_BTN_SX = { color: '#9aa0b4' } as const;
+const BODY_SX = { display: 'flex', flex: 1, minHeight: 0 } as const;
+
+const TAB_RAIL_SX = {
+  width: RAIL_WIDTH,
+  flexShrink: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  borderRight: '1px solid rgba(255,255,255,0.08)',
+  py: 1,
+  gap: 0.5,
+} as const;
+
+const RAIL_SPACER_SX = { flex: 1, minHeight: 8 } as const;
+const ACTIVE_PANEL_SX = { flex: 1, minWidth: 0, overflow: 'auto' } as const;
+
 /**
  * Right-edge advanced drawer.
  *
@@ -51,115 +112,90 @@ const RAIL_WIDTH = 56;
  * Pixi keeps running underneath — the drawer paints on a higher z-index
  * tier (`Z.drawer = 1200`) but doesn't resize or remount the canvas.
  */
+// Hoist the topTabs / bottomTabs split out of the render — TABS is a
+// module-level const so its filtered subsets are stable too.
+const TOP_TABS = TABS.filter((t) => !t.bottom);
+const BOTTOM_TABS = TABS.filter((t) => t.bottom);
+
 export function AdvancedDrawer(): JSX.Element {
   const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
   const drawerTab = useUIStore((s) => s.drawerTab);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   const setDrawerTab = useUIStore((s) => s.setDrawerTab);
 
-  const activeId = TABS.some((t) => t.id === drawerTab) ? drawerTab : TABS[0]!.id;
-  const active = TABS.find((t) => t.id === activeId)!;
+  // `useMemo` here, not because the computation is expensive, but
+  // because `active.node` is a JSX element. If `active` changes identity
+  // on every render then so does `active.node`, and React's reconciler
+  // would consider the tabpanel's child a "different" element and
+  // unmount/remount it (turning every drawer-open into a fresh GalaxyTab
+  // mount — the cost we just eliminated with keepMounted).
+  const { activeId, active } = useMemo(() => {
+    const id = TABS.some((t) => t.id === drawerTab) ? drawerTab : TABS[0]!.id;
+    return { activeId: id, active: TABS.find((t) => t.id === id)! };
+  }, [drawerTab]);
 
-  const topTabs = TABS.filter((t) => !t.bottom);
-  const bottomTabs = TABS.filter((t) => t.bottom);
+  // Stable handler identity so child IconButton / RailButton don't
+  // see new props on every parent render and skip their React.memo
+  // (once memoised — see the wrappers below).
+  const handleClose = useCallback(() => setDrawerOpen(false), [setDrawerOpen]);
+
+  // Active-panel sx depends on activeId only via the `data-testid`,
+  // not via styling, so it stays in the static block above. The
+  // `data-testid` does change with the active tab — that's a plain
+  // attribute change, no emotion work.
 
   return (
     <Drawer
       anchor="right"
       open={isDrawerOpen}
-      onClose={() => setDrawerOpen(false)}
+      onClose={handleClose}
       data-testid="advanced-drawer"
-      // Pre-mount the Modal/Slide infrastructure so opening the drawer is
-      // a CSS transition, not a fresh React mount. The CPU profile of
-      // a drawer-toggle click showed ~5 s of MUI emotion + sx-prop
-      // processing on the cold-mount path (commit `9c04bbf`). With
-      // `keepMounted`, the Drawer DOM stays in the tree under
-      // `visibility: hidden` and `open` flips a CSS class. MUI #17196
-      // documents this as the canonical fix for slow modal mounts.
-      //
-      // The historic objection to `keepMounted` in this repo (see
-      // `src/client/CLAUDE.md`) was that tab content (Debug tab's
-      // ConnectionDiagnostics / DevOverlay / LogPanel) re-renders at
-      // ~17 Hz when subscribed to per-snapshot Zustand fields, even
-      // while invisible. That's still true for the Debug tab — but it
-      // isn't the default tab, isn't on the drawer-mount hot path, and
-      // a re-mount-on-every-open cost (5 s of MUI sx processing) is far
-      // worse than a steady-state re-render of one tab's invisible DOM.
-      ModalProps={{ keepMounted: true }}
-      sx={{
-        '& .MuiDrawer-paper': {
-          width: 'min(360px, 90vw)',
-          bgcolor: '#0d1117',
-          borderLeft: '1px solid rgba(0, 255, 136, 0.18)',
-          color: '#dde',
-          // Clear the fixed AppHeader so its avatar/buttons don't intercept
-          // clicks on the drawer's own header on desktop.
-          pt: 'var(--app-bar-h, 48px)',
-          display: 'flex',
-          flexDirection: 'column',
-        },
-      }}
+      // Pre-mount the Modal infrastructure so opening the drawer is a
+      // CSS class flip, not a cold React mount. CLICK→VISIBLE drops
+      // from 26 s → ~1.2 s (drawer-lag-trace.spec.ts).
+      // The historic objection — Debug tab subscribers re-rendering
+      // at 17 Hz when hidden — only matters for the Debug tab, which
+      // isn't the default and isn't on the drawer-open hot path.
+      ModalProps={MODAL_PROPS}
+      sx={DRAWER_SX}
     >
       {/* Drawer header — close button + active tab label */}
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          px: 1.5,
-          py: 1,
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          minHeight: 44,
-        }}
-      >
-        <Typography variant="overline" sx={{ color: '#00ff88', letterSpacing: 2, pl: 1 }}>
+      <Box sx={HEADER_SX}>
+        <Typography variant="overline" sx={HEADER_LABEL_SX}>
           {active.label}
         </Typography>
         <IconButton
           aria-label="Close drawer"
           data-testid="drawer-close"
-          onClick={() => setDrawerOpen(false)}
+          onClick={handleClose}
           size="small"
-          sx={{ color: '#9aa0b4' }}
+          sx={CLOSE_BTN_SX}
         >
           <CloseIcon fontSize="small" />
         </IconButton>
       </Box>
 
       {/* Body: vertical tab rail (left) + active panel (right) */}
-      <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <Box
-          role="tablist"
-          aria-orientation="vertical"
-          sx={{
-            width: RAIL_WIDTH,
-            flexShrink: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            borderRight: '1px solid rgba(255,255,255,0.08)',
-            py: 1,
-            gap: 0.5,
-          }}
-        >
-          {topTabs.map((t) => (
+      <Box sx={BODY_SX}>
+        <Box role="tablist" aria-orientation="vertical" sx={TAB_RAIL_SX}>
+          {TOP_TABS.map((t) => (
             <RailButton
               key={t.id}
               tab={t}
               active={t.id === activeId}
-              onClick={() => setDrawerTab(t.id)}
+              setDrawerTab={setDrawerTab}
             />
           ))}
 
           {/* Spacer pushes bottomTabs to the bottom of the rail */}
-          <Box sx={{ flex: 1, minHeight: 8 }} />
+          <Box sx={RAIL_SPACER_SX} />
 
-          {bottomTabs.map((t) => (
+          {BOTTOM_TABS.map((t) => (
             <RailButton
               key={t.id}
               tab={t}
               active={t.id === activeId}
-              onClick={() => setDrawerTab(t.id)}
+              setDrawerTab={setDrawerTab}
             />
           ))}
         </Box>
@@ -168,7 +204,7 @@ export function AdvancedDrawer(): JSX.Element {
         <Box
           role="tabpanel"
           data-testid={`drawer-panel-${activeId}`}
-          sx={{ flex: 1, minWidth: 0, overflow: 'auto' }}
+          sx={ACTIVE_PANEL_SX}
         >
           {active.node}
         </Box>
@@ -180,10 +216,50 @@ export function AdvancedDrawer(): JSX.Element {
 interface RailButtonProps {
   tab: TabSpec;
   active: boolean;
-  onClick: () => void;
+  // Pass the setter, not a closed-over onClick — keeps the prop
+  // identity stable across parent re-renders so React.memo holds.
+  setDrawerTab: (id: string) => void;
 }
 
-function RailButton({ tab, active, onClick }: RailButtonProps): JSX.Element {
+// Pre-computed sx for the two visual states. Stable identity across
+// renders → emotion cache hit, no per-render `styleFunctionSx2`.
+const RAIL_BTN_BASE = {
+  width: RAIL_WIDTH - 12,
+  height: RAIL_WIDTH - 12,
+  borderRadius: 1,
+} as const;
+
+const RAIL_BTN_ACTIVE_SX = {
+  ...RAIL_BTN_BASE,
+  color: '#00ff88',
+  bgcolor: 'rgba(0, 255, 136, 0.10)',
+  borderLeft: '2px solid #00ff88',
+  '&:hover': {
+    bgcolor: 'rgba(0, 255, 136, 0.16)',
+    color: '#00ff88',
+  },
+} as const;
+
+const RAIL_BTN_INACTIVE_SX = {
+  ...RAIL_BTN_BASE,
+  color: '#9aa0b4',
+  bgcolor: 'transparent',
+  borderLeft: '2px solid transparent',
+  '&:hover': {
+    bgcolor: 'rgba(255, 255, 255, 0.06)',
+    color: '#dde',
+  },
+} as const;
+
+const RailButton = memo(function RailButton({
+  tab,
+  active,
+  setDrawerTab,
+}: RailButtonProps): JSX.Element {
+  // Per-button onClick wrapper. Stable as long as `setDrawerTab` and
+  // `tab.id` are stable (both are — setDrawerTab is the Zustand setter
+  // identity, tab is module-level).
+  const handleClick = useCallback(() => setDrawerTab(tab.id), [setDrawerTab, tab.id]);
   return (
     <Tooltip title={tab.label} placement="left">
       <IconButton
@@ -191,22 +267,11 @@ function RailButton({ tab, active, onClick }: RailButtonProps): JSX.Element {
         aria-selected={active}
         aria-label={tab.label}
         data-testid={`drawer-tab-${tab.id}`}
-        onClick={onClick}
-        sx={{
-          width: RAIL_WIDTH - 12,
-          height: RAIL_WIDTH - 12,
-          borderRadius: 1,
-          color: active ? '#00ff88' : '#9aa0b4',
-          bgcolor: active ? 'rgba(0, 255, 136, 0.10)' : 'transparent',
-          borderLeft: active ? '2px solid #00ff88' : '2px solid transparent',
-          '&:hover': {
-            bgcolor: active ? 'rgba(0, 255, 136, 0.16)' : 'rgba(255, 255, 255, 0.06)',
-            color: active ? '#00ff88' : '#dde',
-          },
-        }}
+        onClick={handleClick}
+        sx={active ? RAIL_BTN_ACTIVE_SX : RAIL_BTN_INACTIVE_SX}
       >
         {tab.icon}
       </IconButton>
     </Tooltip>
   );
-}
+});

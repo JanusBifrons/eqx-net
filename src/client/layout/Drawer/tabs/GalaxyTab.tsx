@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
   Alert,
   Box,
@@ -42,6 +42,51 @@ import {
  */
 
 const POLL_INTERVAL_MS = 5_000;
+
+// --- Hoisted static sx objects ---
+// Every inline `sx={{...}}` allocates a fresh object that MUI's emotion
+// engine must hash + deep-merge + style-resolve per render. Module-level
+// consts give a stable identity for emotion's cache. See the
+// AdvancedDrawer module-level block for the paradigm.
+const ROOT_SX = { p: 2, display: 'flex', flexDirection: 'column', gap: 2 } as const;
+const LABEL_OVERLINE_SX = { color: '#9aa0b4', display: 'block', mb: 0.5 } as const;
+const VALUE_SX = { color: '#dde', fontWeight: 600 } as const;
+const TRANSIT_HINT_SX = { color: '#ff8800', display: 'block', mt: 0.5 } as const;
+const SHOW_MAP_BTN_SX = {
+  bgcolor: '#00ff88',
+  color: '#000',
+  fontWeight: 700,
+  '&:hover': { bgcolor: '#00cc6a' },
+} as const;
+const CAPTION_MUTED_SX = { color: '#9aa0b4' } as const;
+const ROSTER_BLOCK_SX = {
+  mt: 1.5,
+  pt: 1.5,
+  borderTop: '1px solid rgba(255,255,255,0.08)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 0.5,
+  maxHeight: 240,
+} as const;
+const ROSTER_LABEL_SX = { color: '#9aa0b4', display: 'block', pl: 0.25 } as const;
+const ARRIVAL_BLOCK_SX = {
+  mt: 2,
+  pt: 2,
+  borderTop: '1px solid rgba(255,255,255,0.08)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 1.5,
+} as const;
+const ARRIVAL_LABEL_SX = { color: '#9aa0b4', display: 'block' } as const;
+const ARRIVAL_MODE_SX = {
+  '& .MuiToggleButton-root': { color: '#9aa0b4', borderColor: 'rgba(255,255,255,0.15)' },
+  '& .Mui-selected': { color: '#00ff88 !important' },
+} as const;
+const ARRIVAL_INPUTS_ROW_SX = { display: 'flex', gap: 1 } as const;
+const ARRIVAL_INPUT_SX = { flex: 1 } as const;
+const ARRIVAL_HINT_SX = { color: '#666' } as const;
+const ALERT_SX = { width: '100%' } as const;
+const SNACKBAR_ANCHOR = { vertical: 'bottom' as const, horizontal: 'center' as const };
 
 export function GalaxyTab(): JSX.Element {
   const transitState   = useUIStore((s) => s.transitState);
@@ -148,23 +193,41 @@ export function GalaxyTab(): JSX.Element {
 
   const xyEditable = arrivalMode === 'xy' && !inTransit;
 
-  // Memoised so prop identity doesn't churn on every render.
-  const inputProps = useMemo(
-    () => ({ inputMode: 'decimal' as const, 'data-testid': '' }),
+  // Hoist stable prop objects + handlers so MUI/emotion + React.memo
+  // see referential stability across re-renders. The TextField
+  // `inputProps` was previously shared between X and Y inputs which
+  // gave them the same `data-testid` (empty string). Split into two
+  // stable objects so each carries its own testid (matching the E2E
+  // assertions further down).
+  const xInputProps = useMemo(
+    () => ({ inputMode: 'decimal' as const, 'data-testid': 'arrival-x-input' }),
     [],
   );
+  const yInputProps = useMemo(
+    () => ({ inputMode: 'decimal' as const, 'data-testid': 'arrival-y-input' }),
+    [],
+  );
+  const onXChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => setXInput(e.target.value),
+    [],
+  );
+  const onYChange = useCallback(
+    (e: ChangeEvent<HTMLInputElement>) => setYInput(e.target.value),
+    [],
+  );
+  const onToastClose = useCallback(() => setToastOpen(false), []);
 
   return (
-    <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <Box sx={ROOT_SX}>
       <Box>
-        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 0.5 }}>
+        <Typography variant="overline" sx={LABEL_OVERLINE_SX}>
           Sector
         </Typography>
-        <Typography variant="subtitle1" sx={{ color: '#dde', fontWeight: 600 }}>
+        <Typography variant="subtitle1" sx={VALUE_SX}>
           {sector?.name ?? (currentSectorKey ? currentSectorKey : 'Engineering room')}
         </Typography>
         {inTransit && (
-          <Typography variant="caption" sx={{ color: '#ff8800', display: 'block', mt: 0.5 }}>
+          <Typography variant="caption" sx={TRANSIT_HINT_SX}>
             Transit in progress — map is read-only.
           </Typography>
         )}
@@ -177,37 +240,17 @@ export function GalaxyTab(): JSX.Element {
         onClick={onShowMap}
         disabled={inTransit}
         data-testid="galaxy-tab-show-map"
-        sx={{
-          bgcolor: '#00ff88',
-          color: '#000',
-          fontWeight: 700,
-          '&:hover': { bgcolor: '#00cc6a' },
-        }}
+        sx={SHOW_MAP_BTN_SX}
       >
         Show galaxy map
       </Button>
-      <Typography variant="caption" sx={{ color: '#9aa0b4' }}>
+      <Typography variant="caption" sx={CAPTION_MUTED_SX}>
         Galaxy overview + roster picker. Use the bottom-center MAP button (or M key) to warp.
       </Typography>
 
-      {/* Phase 5 — in-game roster access. Cards click to open the detail
-          modal whose Spawn routes through `engageTransit(shipId)` to the
-          chosen ship's last sector. Abandon-active is gated by a second
-          confirm inside the modal. The panel reads roster from a shared
-          singleton; multiple mounts (galaxy-map landing + drawer) don't
-          duplicate fetches. */}
-      <Box
-        sx={{
-          mt: 1.5,
-          pt: 1.5,
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 0.5,
-          maxHeight: 240,
-        }}
-      >
-        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', pl: 0.25 }}>
+      {/* Phase 5 — in-game roster access. */}
+      <Box sx={ROSTER_BLOCK_SX}>
+        <Typography variant="overline" sx={ROSTER_LABEL_SX}>
           Roster
         </Typography>
         <ShipRosterPanel
@@ -217,8 +260,8 @@ export function GalaxyTab(): JSX.Element {
         />
       </Box>
 
-      <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block' }}>
+      <Box sx={ARRIVAL_BLOCK_SX}>
+        <Typography variant="overline" sx={ARRIVAL_LABEL_SX}>
           Arrival
         </Typography>
         <ToggleButtonGroup
@@ -230,27 +273,24 @@ export function GalaxyTab(): JSX.Element {
           onChange={onModeChange}
           disabled={inTransit}
           data-testid="arrival-mode-toggle"
-          sx={{
-            '& .MuiToggleButton-root': { color: '#9aa0b4', borderColor: 'rgba(255,255,255,0.15)' },
-            '& .Mui-selected': { color: '#00ff88 !important' },
-          }}
+          sx={ARRIVAL_MODE_SX}
         >
           <ToggleButton value="xy"   data-testid="arrival-mode-xy">X/Y</ToggleButton>
           <ToggleButton value="same" data-testid="arrival-mode-same">Same</ToggleButton>
           <ToggleButton value="home" data-testid="arrival-mode-home">Home</ToggleButton>
         </ToggleButtonGroup>
 
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={ARRIVAL_INPUTS_ROW_SX}>
           <TextField
             size="small"
             label="Arrival X"
             type="number"
             value={xInput}
             disabled={!xyEditable}
-            onChange={(e) => setXInput(e.target.value)}
+            onChange={onXChange}
             onBlur={commitXY}
-            inputProps={{ ...inputProps, 'data-testid': 'arrival-x-input' }}
-            sx={{ flex: 1 }}
+            inputProps={xInputProps}
+            sx={ARRIVAL_INPUT_SX}
           />
           <TextField
             size="small"
@@ -258,13 +298,13 @@ export function GalaxyTab(): JSX.Element {
             type="number"
             value={yInput}
             disabled={!xyEditable}
-            onChange={(e) => setYInput(e.target.value)}
+            onChange={onYChange}
             onBlur={commitXY}
-            inputProps={{ ...inputProps, 'data-testid': 'arrival-y-input' }}
-            sx={{ flex: 1 }}
+            inputProps={yInputProps}
+            sx={ARRIVAL_INPUT_SX}
           />
         </Box>
-        <Typography variant="caption" sx={{ color: '#666' }}>
+        <Typography variant="caption" sx={ARRIVAL_HINT_SX}>
           {arrivalMode === 'xy'   && `Type a target. Clamped to ±${SECTOR_PLAYABLE_HALF_EXTENT} on blur.`}
           {arrivalMode === 'same' && 'Lands at your current position when you warp. Updated every 5 s.'}
           {arrivalMode === 'home' && 'Lands at your home coord on every warp.'}
@@ -274,14 +314,14 @@ export function GalaxyTab(): JSX.Element {
       <Snackbar
         open={toastOpen}
         autoHideDuration={3500}
-        onClose={() => setToastOpen(false)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        onClose={onToastClose}
+        anchorOrigin={SNACKBAR_ANCHOR}
       >
         <Alert
           severity="warning"
-          onClose={() => setToastOpen(false)}
+          onClose={onToastClose}
           data-testid="arrival-clamp-toast"
-          sx={{ width: '100%' }}
+          sx={ALERT_SX}
         >
           {lastToastRef.current}
         </Alert>
