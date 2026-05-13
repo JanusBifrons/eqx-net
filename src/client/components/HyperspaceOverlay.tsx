@@ -98,7 +98,7 @@ function SpoolingBar({ onCancel, progress }: SpoolingBarProps): JSX.Element {
         border: '1px solid rgba(0, 255, 136, 0.35)',
         borderRadius: 18,
         boxShadow: compact ? '0 0 12px rgba(0, 255, 136, 0.18)' : 'none',
-        backdropFilter: 'blur(2px)',
+        // backdropFilter removed 2026-05-13 — GPU readPixels stall.
       }}
     >
       <RocketLaunchIcon sx={{ fontSize: 18, color: '#00ff88' }} />

@@ -26,8 +26,9 @@ export function DrawerToggle(): JSX.Element {
           sx={{
             p: 0.5,
             opacity: 0.55,
-            bgcolor: 'rgba(5,7,15,0.45)',
-            backdropFilter: 'blur(4px)',
+            // backdropFilter removed 2026-05-13 — GPU readPixels stall
+            // over the Pixi canvas. See drawer-galaxy-map-open-close.spec.ts.
+            bgcolor: 'rgba(5,7,15,0.75)',
             border: '1px solid rgba(255,255,255,0.10)',
             color: '#dde',
             transition: 'opacity 120ms, background 120ms',

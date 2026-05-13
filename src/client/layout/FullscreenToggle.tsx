@@ -51,8 +51,8 @@ export function FullscreenToggle(): JSX.Element | null {
           sx={{
             p: 0.5,
             opacity: 0.55,
-            bgcolor: 'rgba(5,7,15,0.45)',
-            backdropFilter: 'blur(4px)',
+            // backdropFilter removed 2026-05-13 — GPU readPixels stall.
+            bgcolor: 'rgba(5,7,15,0.75)',
             border: '1px solid rgba(255,255,255,0.10)',
             color: '#dde',
             transition: 'opacity 120ms, background 120ms',

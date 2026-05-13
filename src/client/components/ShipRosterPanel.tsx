@@ -142,8 +142,8 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
         p: 0.5,
         overflowX: compact ? 'auto' : 'hidden',
         overflowY: compact ? 'hidden' : 'auto',
-        bgcolor: 'rgba(8, 12, 24, 0.55)',
-        backdropFilter: 'blur(2px)',
+        // backdropFilter removed 2026-05-13 — GPU readPixels stall.
+        bgcolor: 'rgba(8, 12, 24, 0.85)',
         border: '1px solid rgba(31, 36, 64, 0.7)',
         borderRadius: 1,
         width: '100%',

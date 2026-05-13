@@ -265,6 +265,15 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       galaxyLayerRef.current = galaxyLayer;
 
       let lastFrameTime = 0;
+      // E2E-inspection dataset writes are throttled to every 5th frame
+      // (12 Hz) — at 60 Hz they were producing 21+ DOM mutations per
+      // frame including multiple `JSON.stringify(...)` calls, which
+      // measurably blocked the main thread and broke Playwright's
+      // "stable click target" detection (drawer-toggle clicks took
+      // 2.8–4 s instead of <100 ms). 12 Hz is still plenty for any
+      // poll-based E2E spec; specs that need higher cadence can
+      // override via the existing `__eqxClient.stats` path.
+      let frameCounter = 0;
       const loop = (now: number): void => {
         if (!disposed) {
           const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
@@ -276,7 +285,8 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           gameClient.mirror.explodingShips?.clear();
           const localId = gameClient.mirror.localPlayerId;
           const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
-          if (localShip) {
+          const writeDataset = (++frameCounter % 5) === 0;
+          if (localShip && writeDataset) {
             el.dataset['shipX'] = localShip.x.toFixed(3);
             el.dataset['shipY'] = localShip.y.toFixed(3);
             el.dataset['shipAngle'] = localShip.angle.toFixed(4);
@@ -286,6 +296,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             // fighter/scout/heavy report 1.
             el.dataset['mountCount'] = String(renderer.mountCountForShip(localId!));
           }
+          if (writeDataset) {
           // Expose all ship positions for E2E cross-client position assertions.
           const posMap: Record<string, { x: number; y: number }> = {};
           for (const [id, s] of gameClient.mirror.ships) {
@@ -393,6 +404,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
             el.dataset['swarmDetail'] = JSON.stringify(swarmDetail);
           }
+          } // end if (writeDataset)
           animFrameRef.current = requestAnimationFrame(loop);
         }
       };
@@ -507,7 +519,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       <div
         ref={containerRef}
         data-testid="game-surface"
-        style={{ width: '100%', height: '100%', touchAction: 'none' }}
+        style={{
+          width: '100%',
+          height: '100%',
+          touchAction: 'none',
+          // GPU layer promotion 2026-05-13. Without this hint, Chromium
+          // composites the Pixi WebGL canvas every frame against the
+          // overlaid HTML/MUI elements, triggering readPixels stalls
+          // visible as "GPU stall due to ReadPixels (High)" warnings.
+          // `transform: translateZ(0)` (or `will-change: transform`)
+          // promotes the canvas to its own compositor layer so the
+          // upper HTML elements composite over it without a readback.
+          transform: 'translateZ(0)',
+          willChange: 'transform',
+        }}
       />
       <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>

@@ -31,8 +31,14 @@ export function AppHeader({ onLoginClick, onProfileClick, onSettingsClick }: Pro
         // galaxy actions all live in the AdvancedDrawer on touch.
         display: 'flex',
         '@media (pointer: coarse)': { display: 'none' },
-        background: 'rgba(5, 7, 15, 0.85)',
-        backdropFilter: 'blur(4px)',
+        // NOTE: backdropFilter REMOVED 2026-05-13. Stacked over the
+        // Pixi WebGL canvas it forced the GPU compositor to readPixels
+        // the underlying frame every paint, producing the "GPU stall
+        // due to ReadPixels" warnings + the 3–14 s per-click lag the
+        // user reported. The 0.85 alpha gives enough background
+        // separation without the filter. See
+        // tests/e2e/drawer-galaxy-map-open-close.spec.ts.
+        background: 'rgba(5, 7, 15, 0.92)',
         borderBottom: '1px solid rgba(255,255,255,0.06)',
         zIndex: (theme) => theme.zIndex.drawer + 1,
       }}

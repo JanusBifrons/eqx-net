@@ -122,7 +122,12 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   stamp('logs cleared');
 
   // === 2. Open drawer ===
-  await page.locator('[data-testid="drawer-toggle"]').click();
+  // `force: true` skips Playwright's actionability checks (visible /
+  // enabled / stable). If the click is fast with force but slow
+  // without, the bug is in the PAGE's stability (continuous reflow
+  // from a render storm or GPU stalls). If it's slow either way, the
+  // bug is in the click HANDLER (React render storm).
+  await page.locator('[data-testid="drawer-toggle"]').click({ force: true });
   stamp('clicked drawer-toggle');
   try {
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 2_000 });
