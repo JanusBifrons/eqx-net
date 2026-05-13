@@ -623,6 +623,15 @@ export function App(): JSX.Element {
   const autoJoinGalaxy = initialUrlParams.get('galaxy');
   const autoJoin = autoJoinRoom !== null || autoJoinGalaxy !== null;
   const initialOverride = autoJoinRoom ?? (autoJoinGalaxy ? `galaxy-${autoJoinGalaxy}` : null);
+  // E2E escape hatch (2026-05-13): force the auto-join to fresh-spawn a
+  // NEW ship rather than rebinding/reusing the player's most-recent
+  // roster row. Production UI uses `GalaxyOverviewScreen.handleSpawnNewShip`
+  // for the same intent; this URL flag lets multi-ship-roster tests
+  // build their fixture state without going through the spawn-select UI.
+  const autoJoinNewShip = initialUrlParams.get('newShip') === '1';
+  const initialJoinOpts: Record<string, unknown> | undefined = autoJoinNewShip
+    ? { isNewShip: true }
+    : undefined;
 
   const { user } = useAuthStore();
   // Phase machine lives in Zustand so drawer tabs (Settings "Return to menu",
@@ -637,7 +646,7 @@ export function App(): JSX.Element {
    *  Colyseus when the player spawns into a specific roster ship. Cleared
    *  on every legacy sector-click so the override only applies for the
    *  roster-card flow. */
-  const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(undefined);
+  const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(initialJoinOpts);
   const [profileOpen, setProfileOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const openSettings = useCallback(() => setSettingsOpen(true), []);
