@@ -219,6 +219,19 @@ export class SectorRoom extends Room<SectorState> {
    *  multiple entries per player. */
   private readonly playerToActiveShipInstance = new Map<string, string>();
 
+  /** Phase 6b — lingering hulls' SAB slots. When a player fresh-spawns
+   *  while their previous ship is still in the linger window, that
+   *  previous ship's slot moves here so the snapshot loop and physics
+   *  bookkeeping continue to iterate it. The fresh ship occupies
+   *  `playerToSlot[playerId]` while the lingering ship sits in this
+   *  parallel map. Cleaned up by `evictOwnerlessShip` (15-min TTL)
+   *  and by `convertShipToWreck` if a lingering hull is destroyed. */
+  private readonly lingeringSlots = new Map<string, number>();
+  /** Phase 6b — pose mirror for lingering hulls. Mirrors `shipPoseCache`
+   *  but keyed by shipInstanceId. Updated once per `update()` from
+   *  the SAB so the snapshot can include them. */
+  private readonly lingeringPoseCache = new Map<string, ShipPhysicsState>();
+
   // Phase 4 — abandoned-ship hulls. When a player abandons their ship via
   // the roster panel, the SAB slot is repurposed (slot stays allocated,
   // ownership transfers from a player to a wreck). The physics worker
@@ -1907,12 +1920,39 @@ export class SectorRoom extends Room<SectorState> {
       if (wantsNewShip || wantsDifferentShip) {
         logger.info(
           { playerId, wantsNewShip, wantsDifferentShip, existingShipId: existingShip?.shipInstanceId, requestedShipId: requestedShipIdForRebindCheck },
-          'rebind skipped — player picked a different / new ship; evicting lingering hull',
+          'rebind skipped — player picked a different / new ship; keeping lingering hull in sector',
         );
-        // Evict the lingering ship cleanly: clears timer, frees slot,
-        // marks the roster row stored with the ship's final pose.
-        this.evictOwnerlessShip(playerId);
+        // Phase 6b — DON'T evict the lingering hull. Promote it to the
+        // lingeringSlots map so the snapshot loop continues to broadcast
+        // it; clear the active indirection so the fresh ship can take
+        // playerToActiveShipInstance[playerId] in its onJoin path.
+        //
+        // CRITICAL — also cancel the playerId-keyed ownerlessShips
+        // timer. That timer was set up at original disconnect time and
+        // would call `evictOwnerlessShip(playerId)` at the 15-min mark;
+        // by then `getActiveShip(playerId)` would return the FRESH
+        // (active) ship and the timer would mistakenly evict it. The
+        // lingering hull no longer has an auto-evict in this commit
+        // — it sits in `lingeringSlots` until the player explicitly
+        // abandons it via the roster panel or the room disposes. A
+        // future commit can rekey ownerlessShips to shipInstanceId
+        // to restore the 15-min auto-evict for displaced hulls.
+        clearTimeout(ownerlessTimer);
+        this.ownerlessShips.delete(playerId);
+        const lingeringSlot = this.playerToSlot.get(playerId);
+        if (lingeringSlot !== undefined && existingShip && existingShip.shipInstanceId !== '') {
+          this.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
+          // The hull is no longer "the player's active hull"; the fresh
+          // spawn will overwrite playerToActiveShipInstance below.
+          this.playerToActiveShipInstance.delete(playerId);
+          // existingShip.isActive was already false from the original
+          // onLeave linger branch — leave it false so the client
+          // continues to render with the lingering tint.
+        }
         // Fall through to the fresh-spawn / shipId-restore path below.
+        // The fresh spawn will allocate a NEW slot from freeSlots
+        // (the lingering slot stays allocated, tracked by lingeringSlots).
+        // playerToSlot[playerId] gets overwritten with the new slot.
       } else {
         // Original rebind behaviour: reattach to the existing slot.
         clearTimeout(ownerlessTimer);
@@ -2349,6 +2389,12 @@ export class SectorRoom extends Room<SectorState> {
       // INTENTIONALLY KEPT — on rebind we look it up to find the
       // shipInstanceId to flip back to active.
       ship.isActive = false;
+      // NOTE: We do NOT add to lingeringSlots here. The ship's slot
+      // stays in playerToSlot[playerId] — that's the canonical place
+      // for "this player's hull in this room" while the player might
+      // still reconnect. lingeringSlots only fills when a DIFFERENT
+      // ship (fresh-spawn / different shipId) displaces this one from
+      // playerToSlot — see the rebind branch in onJoin.
 
       serverLogEvent('player_lingered', { playerId });
       logger.info(
@@ -2921,6 +2967,26 @@ export class SectorRoom extends Room<SectorState> {
         // storedValue=N+1 means client tick N was applied.
         // (handled below)
       }
+      // Phase 6b — lingering hulls' pose mirror. Same SAB → cache update
+      // pattern as the active-ship loop above. The worker continues to
+      // step these bodies (drag decays vx/vy/angvel; positions drift on
+      // their final velocity vector). lingeringPoseCache is allocated
+      // lazily here so we don't carry an empty object for the common
+      // case (no lingering hulls).
+      for (const [shipInstanceId, slot] of this.lingeringSlots) {
+        let pose = this.lingeringPoseCache.get(shipInstanceId);
+        if (!pose) {
+          pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+          this.lingeringPoseCache.set(shipInstanceId, pose);
+        }
+        const b = slotBase(slot);
+        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
+        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
+        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
+        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
+        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
+        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+      }
       // Phase 4 — wreck pose mirror. Wrecks live in SAB slots like
       // player ships; the worker steps them every physics tick. We
       // mirror their pose here for the snapshot path.
@@ -3177,6 +3243,29 @@ export class SectorRoom extends Room<SectorState> {
         });
         aliveIds.add(playerId);
         ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
+      }
+      // Phase 6b — append lingering hulls to allShips. These have no
+      // active player driving them; their pose comes from
+      // lingeringPoseCache, their owner from state.ships entry's
+      // playerId field, and isActive=false. lastInput is all-false
+      // (the worker doesn't apply input to lingering hulls). They get
+      // included in every recipient's snapshot the same way active
+      // hulls do, so clients see them drifting in the sector.
+      for (const [shipInstanceId, _slot] of this.lingeringSlots) {
+        const ship = this.state.ships.get(shipInstanceId);
+        if (!ship || !ship.alive) continue;
+        const pose = this.lingeringPoseCache.get(shipInstanceId);
+        if (!pose) continue;
+        allShips.push({
+          playerId: ship.playerId,
+          shipInstanceId,
+          isActive: false,
+          pose,
+          lastInput: {
+            thrust: false, turnLeft: false, turnRight: false,
+            boost: false, reverse: false,
+          },
+        });
       }
 
       // Boosting/thrusting filter — small lists, sent in every snapshot.

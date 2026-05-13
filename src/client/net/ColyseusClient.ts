@@ -1239,16 +1239,39 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     const now = performance.now();
 
-    // Phase 6a — translate the shipInstanceId-keyed wire format to a
-    // playerId-keyed local view. C-ii strategy: predWorld + mirror +
-    // reconciler all use playerId internally; the wire change is
-    // invisible downstream. Inactive hulls (Phase 6b lingering, not in
-    // 6a) are skipped at this boundary so they're invisible to the
-    // existing snapshot-apply logic.
+    // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
+    // to a playerId-keyed local view. C-ii strategy: predWorld + mirror
+    // + reconciler all use playerId internally for active hulls.
+    // Phase 6b: inactive hulls (lingering) DO show up — they get
+    // routed to `mirror.lingeringShips` (a separate shipInstanceId-
+    // keyed map) so they don't collide with the active hull on the
+    // same playerId. Pose flows from the snapshot directly; identity
+    // (kind, displayName) flows from the Colyseus schema diff via
+    // `syncMirror`.
     const statesByPlayerId: SnapshotMessage['states'] = {};
-    for (const entry of Object.values(snap.states)) {
-      if (entry.isActive === false) continue;
+    if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
+    const lingeringSeen = new Set<string>();
+    for (const [shipInstanceId, entry] of Object.entries(snap.states)) {
+      if (entry.isActive === false) {
+        // Route to the lingering map. We update pose every snapshot;
+        // identity fields come from the schema diff and are preserved.
+        const prev = this.mirror.lingeringShips.get(shipInstanceId);
+        this.mirror.lingeringShips.set(shipInstanceId, {
+          x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
+          angle: entry.angle,
+          ownerPlayerId: entry.playerId,
+          ...(prev?.kind ? { kind: prev.kind } : {}),
+          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
+        });
+        lingeringSeen.add(shipInstanceId);
+        continue;
+      }
       statesByPlayerId[entry.playerId] = entry;
+    }
+    // Remove lingering hulls that didn't appear in this snapshot (evicted
+    // by the 15-min timer, or destroyed).
+    for (const id of [...this.mirror.lingeringShips.keys()]) {
+      if (!lingeringSeen.has(id)) this.mirror.lingeringShips.delete(id);
     }
     snap = { ...snap, states: statesByPlayerId };
 
@@ -2086,13 +2109,46 @@ export class ColyseusGameClient {
     const now = performance.now();
     const seen = new Set<string>();
 
-    for (const [playerId, ship] of ships.entries()) {
+    // Phase 6b — state.ships is now shipInstanceId-keyed on the wire.
+    // The iteration variable would be misnamed if we still called it
+    // `playerId`; rename and resolve the owner via the `playerId` field
+    // on the schema entry. Mirror / predWorld / remoteHistory remain
+    // playerId-keyed internally (C-ii strategy), matching the snapshot
+    // ingest translation in handleSnapshot. Lingering hulls (isActive
+    // === false) get routed into `mirror.lingeringShips` (shipInstanceId-
+    // keyed) so they don't collide with the active hull's playerId in
+    // `mirror.ships`.
+    if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
+    for (const [shipInstanceId, ship] of ships.entries()) {
       const sh = ship as Record<string, unknown>;
       // Skip all dead ships — killEntity handles immediate cleanup when the destroy
       // event arrives; this guard is a defensive fallback for the case where the
       // state patch arrives before the destroy message.
       const alive = (sh['alive'] as boolean | undefined) !== false;
       if (!alive) continue;
+      const playerId = sh['playerId'] as string | undefined;
+      if (!playerId) continue;
+      const isActive = (sh['isActive'] as boolean | undefined) !== false;
+      if (!isActive) {
+        // Phase 6b — populate identity for the lingering hull. Pose
+        // arrives separately in the snapshot's `states` slice and is
+        // mirrored in handleSnapshot. We only set kind / displayName /
+        // ownerPlayerId here from the schema diff (low-frequency).
+        const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
+        const displayName = typeof sh['displayName'] === 'string' ? (sh['displayName'] as string) : undefined;
+        const prev = this.mirror.lingeringShips.get(shipInstanceId);
+        this.mirror.lingeringShips.set(shipInstanceId, {
+          x: prev?.x ?? 0,
+          y: prev?.y ?? 0,
+          vx: prev?.vx ?? 0,
+          vy: prev?.vy ?? 0,
+          angle: prev?.angle ?? 0,
+          ownerPlayerId: playerId,
+          ...(kind !== undefined ? { kind } : {}),
+          ...(displayName !== undefined ? { displayName } : {}),
+        });
+        continue;
+      }
 
       const parsed: ShipPhysicsState = {
         x: Number(sh['x'] ?? 0),

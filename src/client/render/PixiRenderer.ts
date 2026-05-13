@@ -858,10 +858,48 @@ export class PixiRenderer implements IRenderer {
     // sell "broken hull, no pilot". No mount aim lines, no name label,
     // no exhaust. Y-flip matches the rest of the renderer.
     this.updateWrecks(mirror);
+    this.updateLingeringShips(mirror);
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's.
     this.halo.update(mirror);
+  }
+
+  /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
+   *  disconnected within the 15-min linger window OR whose ships have
+   *  been displaced from `playerToSlot` by a fresh spawn) are drawn with
+   *  the same grey-ish desaturated tint as wrecks — visual cue for
+   *  "this hull is parked but still belongs to a real player". */
+  private readonly lingeringSprites = new Map<string, Container>();
+  private updateLingeringShips(mirror: RenderMirror): void {
+    if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
+      if (this.lingeringSprites.size > 0) {
+        for (const g of this.lingeringSprites.values()) g.destroy();
+        this.lingeringSprites.clear();
+      }
+      return;
+    }
+    const seen = new Set<string>();
+    for (const [shipInstanceId, ship] of mirror.lingeringShips) {
+      seen.add(shipInstanceId);
+      let sprite = this.lingeringSprites.get(shipInstanceId);
+      if (!sprite) {
+        const shape = shapeForKind(ship.kind);
+        sprite = buildShipGfxFromShape(shape, desaturate(shape.color));
+        sprite.alpha = 0.55;
+        this.shipContainer.addChild(sprite);
+        this.lingeringSprites.set(shipInstanceId, sprite);
+      }
+      sprite.x = ship.x;
+      sprite.y = -ship.y;
+      sprite.rotation = -ship.angle;
+    }
+    for (const [id, sprite] of this.lingeringSprites) {
+      if (!seen.has(id)) {
+        sprite.destroy();
+        this.lingeringSprites.delete(id);
+      }
+    }
   }
 
   private updateWrecks(mirror: RenderMirror): void {

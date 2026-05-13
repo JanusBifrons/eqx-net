@@ -161,6 +161,14 @@ export interface RenderMirror {
   ships: Map<string, ShipRenderState>;
   /** Phase 4 — abandoned ship wrecks. Keyed by shipInstanceId UUID. */
   wrecks?: Map<string, WreckRenderState>;
+  /** Phase 6b — lingering player hulls (isActive=false on the wire).
+   *  These are NOT in `mirror.ships` (which is playerId-keyed and would
+   *  collide with a player's currently-piloted hull). The renderer iterates
+   *  this map separately and draws with the same grey-ish tint as wrecks
+   *  to signal "this hull is parked but still belongs to a real player".
+   *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
+   *  `isActive === false`; identity (kind, displayName) carried alongside. */
+  lingeringShips?: Map<string, ShipRenderState & { ownerPlayerId: string }>;
   /**
    * Swarm entities (asteroids + drones) shipped via the binary swarm channel.
    * Keyed by the server's dense u16 entityId. Sleeping entries remain in the
