@@ -6,7 +6,7 @@ import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
-import { decideLingeringSpriteAction } from './spriteUpdateDecisions';
+import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -482,14 +482,32 @@ export class PixiRenderer implements IRenderer {
     }
 
     // Explosion sprites spawned this frame for destroyed ships.
+    // 2026-05-13 — look up the targetId across ALL three sprite maps
+    // (active ships by playerId, lingering hulls + wrecks by
+    // shipInstanceId). Previously this only checked `this.sprites`
+    // (active-only) and defaulted to (0,0) when a lingering hull or
+    // wreck was destroyed — the user's "explosion appeared at zero
+    // zero" bug. Helper is in `spriteUpdateDecisions.ts` and is
+    // unit-tested there.
     if (mirror.explodingShips) {
+      // Wrap the lingering-sprite cache to expose just the {x, y}
+      // pose the helper expects. The cache value also carries `kind`
+      // which the helper doesn't need.
+      const lingeringPosesView = new Map<string, { x: number; y: number }>();
+      for (const [id, entry] of this.lingeringSprites) {
+        lingeringPosesView.set(id, { x: entry.sprite.x, y: entry.sprite.y });
+      }
       for (const targetId of mirror.explodingShips) {
-        const shipSprite = this.sprites.get(targetId);
-        const x = shipSprite?.x ?? 0;
-        const y = shipSprite?.y ?? 0;
+        const pose = decideExplosionPosition({
+          targetId,
+          activeShipsByPlayerId: this.sprites,
+          lingeringShipsByShipInstanceId: lingeringPosesView,
+          wrecksByShipInstanceId: this.wreckSprites,
+        });
+        if (!pose) continue; // ship not in any map — skip the VFX
         const expl = buildExplosionGfx();
-        expl.x = x;
-        expl.y = y;
+        expl.x = pose.x;
+        expl.y = pose.y;
         this.shipContainer.addChild(expl);
         this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
       }

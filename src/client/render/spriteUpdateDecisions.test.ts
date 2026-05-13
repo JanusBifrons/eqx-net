@@ -167,3 +167,77 @@ describe('decideLingeringSpriteAction — property tests', () => {
     );
   });
 });
+
+/**
+ * 2026-05-13 user report: when a lingering hull was destroyed, the
+ * explosion VFX spawned at (0,0) instead of the hull's actual
+ * position. Root cause: the renderer's explosion handler only checked
+ * the `sprites` map (active ships, keyed by playerId), but lingering
+ * hulls live in `lingeringSprites` (keyed by shipInstanceId) and
+ * wrecks in `wreckSprites`. Lookup miss → defaulted to (0,0) silently.
+ *
+ * The `decideExplosionPosition` helper consolidates the lookup across
+ * all three sprite maps so the explosion fires at the visible
+ * silhouette's position. Per Invariant #13, the failing test below
+ * went in BEFORE the fix in `PixiRenderer.ts`.
+ */
+import { decideExplosionPosition } from './spriteUpdateDecisions.js';
+
+describe('decideExplosionPosition', () => {
+  const empty = new Map<string, { x: number; y: number }>();
+
+  it('returns the active ship\'s pose when the target is a playerId', () => {
+    const pos = decideExplosionPosition({
+      targetId: 'player-1',
+      activeShipsByPlayerId: new Map([['player-1', { x: 100, y: 200 }]]),
+      lingeringShipsByShipInstanceId: empty,
+      wrecksByShipInstanceId: empty,
+    });
+    expect(pos).toEqual({ x: 100, y: 200 });
+  });
+
+  it('falls back to the lingering-hull pose when the target is a shipInstanceId in the lingering map', () => {
+    // The 2026-05-13 bug — this used to return (0,0). Now must return
+    // the lingering hull's real pose.
+    const pos = decideExplosionPosition({
+      targetId: 'ship-instance-A',
+      activeShipsByPlayerId: empty,
+      lingeringShipsByShipInstanceId: new Map([['ship-instance-A', { x: 50, y: -75 }]]),
+      wrecksByShipInstanceId: empty,
+    });
+    expect(pos).toEqual({ x: 50, y: -75 });
+  });
+
+  it('falls back to the wreck pose when the target is a shipInstanceId in the wreck map', () => {
+    const pos = decideExplosionPosition({
+      targetId: 'wreck-shipId',
+      activeShipsByPlayerId: empty,
+      lingeringShipsByShipInstanceId: empty,
+      wrecksByShipInstanceId: new Map([['wreck-shipId', { x: -200, y: 30 }]]),
+    });
+    expect(pos).toEqual({ x: -200, y: 30 });
+  });
+
+  it('returns null when the target is in no map (caller can decide on fallback)', () => {
+    const pos = decideExplosionPosition({
+      targetId: 'unknown-id',
+      activeShipsByPlayerId: empty,
+      lingeringShipsByShipInstanceId: empty,
+      wrecksByShipInstanceId: empty,
+    });
+    expect(pos).toBeNull();
+  });
+
+  it('prefers active ships when the same id appears in multiple maps (collision safety)', () => {
+    // Defence-in-depth: shipInstanceId and playerId namespaces are
+    // distinct in practice, but if they ever collide we want active
+    // to win because that's the still-piloted hull.
+    const pos = decideExplosionPosition({
+      targetId: 'X',
+      activeShipsByPlayerId: new Map([['X', { x: 1, y: 1 }]]),
+      lingeringShipsByShipInstanceId: new Map([['X', { x: 2, y: 2 }]]),
+      wrecksByShipInstanceId: new Map([['X', { x: 3, y: 3 }]]),
+    });
+    expect(pos).toEqual({ x: 1, y: 1 });
+  });
+});

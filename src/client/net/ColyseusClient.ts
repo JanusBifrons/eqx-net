@@ -394,20 +394,66 @@ export class ColyseusGameClient {
     const entry = this.mirror.lingeringShips?.get(shipInstanceId);
     if (!entry || !entry.kind) return;
     const bodyId = `linger-${shipInstanceId}`;
-    if (!this.predWorld.hasShip(bodyId)) {
+    const isFresh = !this.predWorld.hasShip(bodyId);
+    if (isFresh) {
       this.predWorld.spawnShip(bodyId, entry.x, entry.y, entry.kind);
       this.predLingeringIds.add(bodyId);
     }
-    this.predWorld.setShipState(bodyId, {
-      x: entry.x, y: entry.y, angle: entry.angle,
-      vx: entry.vx, vy: entry.vy,
-      angvel: 0,
-    });
+    // Phase 6b reconciliation (2026-05-13): capture the body's
+    // current predicted pose BEFORE we teleport it to the
+    // server-authoritative snapshot pose, so we can store the diff
+    // as a spring-decayed sprite offset and avoid a visible
+    // teleport. Same pattern as the remote-ship reconciler at line
+    // ~1676. On the body's first spawn there's no prior pose to
+    // diff against — skip the offset capture.
+    if (!isFresh) {
+      const before = this.predWorld.getShipState(bodyId);
+      this.predWorld.setShipState(bodyId, {
+        x: entry.x, y: entry.y, angle: entry.angle,
+        vx: entry.vx, vy: entry.vy,
+        angvel: 0,
+      });
+      if (before) {
+        const ox = before.x - entry.x;
+        const oy = before.y - entry.y;
+        const dist = Math.hypot(ox, oy);
+        if (dist > 1) {
+          const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
+          const existing = this._lingeringShipOffsets.get(shipInstanceId);
+          if (existing) {
+            existing.sx.x = ox; existing.sx.v = 0;
+            existing.sy.x = oy; existing.sy.v = 0;
+            existing.halfLifeMs = halfLifeMs;
+          } else {
+            this._lingeringShipOffsets.set(shipInstanceId, {
+              sx: { x: ox, v: 0 },
+              sy: { x: oy, v: 0 },
+              halfLifeMs,
+            });
+          }
+        }
+      }
+    } else {
+      this.predWorld.setShipState(bodyId, {
+        x: entry.x, y: entry.y, angle: entry.angle,
+        vx: entry.vx, vy: entry.vy,
+        angvel: 0,
+      });
+    }
   }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
   private readonly _remoteShipOffsets = new Map<
+    string,
+    { sx: SpringState; sy: SpringState; halfLifeMs: number }
+  >();
+  /** Phase 6b (2026-05-13) — per-lingering-hull render lerp offsets.
+   *  Same shape as `_remoteShipOffsets`. Set in `tryEnsureLingerPredBody`
+   *  when the snapshot's setShipState would otherwise teleport the body;
+   *  decayed in `updateMirror`. Keyed by `shipInstanceId` (matches the
+   *  mirror.lingeringShips key). */
+  private readonly _lingeringShipOffsets = new Map<
     string,
     { sx: SpringState; sy: SpringState; halfLifeMs: number }
   >();
@@ -2477,34 +2523,49 @@ export class ColyseusGameClient {
       }
     }
 
-    // Phase 6b (2026-05-13) — lingering hull sprite/body sync.
+    // Phase 6b (2026-05-13, third iteration) — lingering hull
+    // visualised with the same predict-and-reconcile pattern as
+    // remote player ships. Body integrates physics locally between
+    // snapshots; snapshot arrival reconciles the body to the
+    // server-authoritative pose and registers a spring-decayed lerp
+    // offset on the sprite. Sprite = body pose + decaying offset,
+    // smoothly converging to the body's true position over ~200 ms.
     //
-    // `mirror.lingeringShips[id].x, y` is initialised from snapshot
-    // pose in `handleSnapshot` / `syncMirror` (~20 Hz). The matching
-    // predWorld body (`linger-${id}`) is a dynamic Rapier rigid
-    // body — it integrates physics every frame (60 Hz). Between
-    // snapshots, the body's position can diverge from the mirror
-    // entry: collision response pushes it, drag decays its velocity,
-    // etc. Without this sync, the SPRITE is drawn at the stale
-    // snapshot pose while the COLLISION body lives at the integrated
-    // position; the player navigates toward the visible sprite and
-    // misses the actual collidable body — the "I fly through the
-    // lingering hull" symptom.
-    //
-    // Pattern mirrors the active-ship + remote-ship loops above:
-    // read predWorld, write mirror. Regression-locked in
-    // `ColyseusClient.lingeringRender.test.ts`.
+    // Why not just teleport the body and snap the sprite?
+    //   First iteration: sprite at snapshot pose, body integrating
+    //     → fly-through (sprite static, body collision elsewhere).
+    //   Second iteration: sprite tracking body → snap-back (body
+    //     drifts forward of snapshot, every snapshot teleports both
+    //     backwards).
+    //   This iteration: sprite = body + offset → body always tracks
+    //     server reality; offset smooths the visual after each
+    //     reconcile so the user doesn't see the teleport directly.
+    //     Exactly how remote ships have always worked.
     if (this.predWorld && this.mirror.lingeringShips) {
       for (const [shipInstanceId, entry] of this.mirror.lingeringShips) {
         const bodyId = `linger-${shipInstanceId}`;
         if (!this.predWorld.hasShip(bodyId)) continue;
         const pose = this.predWorld.getShipState(bodyId);
         if (!pose) continue;
-        entry.x = pose.x;
-        entry.y = pose.y;
+        const off = this._lingeringShipOffsets.get(shipInstanceId);
+        let ox = 0, oy = 0;
+        if (off) {
+          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
+          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
+          ox = off.sx.x;
+          oy = off.sy.x;
+          const stillMoving =
+            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
+            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
+            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
+          if (!stillMoving) this._lingeringShipOffsets.delete(shipInstanceId);
+        }
+        entry.x = pose.x + ox;
+        entry.y = pose.y + oy;
+        entry.angle = pose.angle;
         entry.vx = pose.vx;
         entry.vy = pose.vy;
-        entry.angle = pose.angle;
       }
     }
 

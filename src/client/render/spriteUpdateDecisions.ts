@@ -93,3 +93,48 @@ export function decideWreckSpriteAction(args: {
   }
   return { action: 'reposition' };
 }
+
+/**
+ * Position lookup for an explosion VFX spawn.
+ *
+ * Bug repro (2026-05-13 user smoke-test): when a lingering hull was
+ * shot down, the explosion VFX rendered at (0, 0) instead of the
+ * hull's actual position. Root cause: the renderer only checked the
+ * **active-ships** sprite map (keyed by playerId), but lingering
+ * hulls live in `lingeringSprites` (keyed by shipInstanceId) and
+ * wrecks live in `wreckSprites`. Lookup failed → defaulted to
+ * `(0, 0)`.
+ *
+ * This helper looks up the targetId across ALL three sprite maps
+ * (active ships, lingering hulls, wrecks) so the explosion spawns
+ * over whichever silhouette was visible to the player at the moment
+ * of destruction.
+ *
+ * Returns `null` if no sprite is found in any map — the caller can
+ * decide whether to skip the VFX entirely or fall back somewhere
+ * sensible (rather than the silent (0, 0) of the previous
+ * implementation).
+ */
+export interface SpritePoseRef {
+  /** World-space (or Pixi container-space) x. */
+  x: number;
+  /** Pixi container-space y. The renderer uses negative-world-y for Pixi-y
+   *  flip; callers should keep whatever convention their sprite maps use. */
+  y: number;
+}
+
+export function decideExplosionPosition(args: {
+  targetId: string;
+  activeShipsByPlayerId: ReadonlyMap<string, SpritePoseRef>;
+  lingeringShipsByShipInstanceId: ReadonlyMap<string, SpritePoseRef>;
+  wrecksByShipInstanceId: ReadonlyMap<string, SpritePoseRef>;
+}): SpritePoseRef | null {
+  const { targetId, activeShipsByPlayerId, lingeringShipsByShipInstanceId, wrecksByShipInstanceId } = args;
+  const active = activeShipsByPlayerId.get(targetId);
+  if (active) return { x: active.x, y: active.y };
+  const lingering = lingeringShipsByShipInstanceId.get(targetId);
+  if (lingering) return { x: lingering.x, y: lingering.y };
+  const wreck = wrecksByShipInstanceId.get(targetId);
+  if (wreck) return { x: wreck.x, y: wreck.y };
+  return null;
+}

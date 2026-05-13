@@ -1,40 +1,23 @@
 /**
- * User report 2026-05-13 (diagnostic 18-43-02-926Z-ktiqcd, refined
- * by chat clarification):
- *   "I still don't collide with the lingering ships."
- *   "It's rendered wrong then obviously."
- *   "The entire bug was that the ship didn't move, and it should. I
- *    could just fly through it."
+ * Lingering-hull sprite/body sync contract (2026-05-13, third
+ * iteration — predict-and-reconcile with spring-decayed lerp,
+ * same pattern as remote player ships).
  *
- * Root cause (Invariant #13 — repro test goes in BEFORE the fix):
+ * Bug history:
+ *   - Iter 1: sprite at snapshot pose, body integrated freely
+ *     → user "flew through" the hull.
+ *   - Iter 2: synced sprite TO body each frame → fixed fly-through
+ *     but introduced snap-back (body drifted forward of snapshot;
+ *     snapshot teleport pulled sprite back every ~50 ms).
+ *   - Iter 3 (current): body integrates locally between snapshots
+ *     (so the hull responds to collisions and looks alive); snapshot
+ *     reconciliation teleports the body to the server-authoritative
+ *     pose AND captures the (predicted - snapshot) diff as a
+ *     spring-decayed sprite offset. Sprite = body + offset. Offset
+ *     decays to zero over ~200 ms, so the visual smoothly converges
+ *     to the server-true position instead of snapping.
  *
- * `mirror.lingeringShips[id].x, y` is only ever written from
- * `handleSnapshot` / `syncMirror` — snapshot pose, ~20 Hz. The
- * predWorld body for `linger-${id}` integrates physics at the 60 Hz
- * frame rate (it's a dynamic body — and lingering hulls SHOULD be
- * pushable like any other ship; that's how players interact with
- * abandoned hulls in space). Between snapshots, the body's position
- * diverges from the mirror entry: the sprite stays at the last
- * snapshot pose while the body moves under physics. Collision
- * detection uses the BODY position; the player visually navigates
- * toward the SPRITE position. They diverge → the player flies
- * "through" where the sprite is and the body is somewhere else.
- *
- * Contrast: ACTIVE ships' mirror entries ARE rewritten from
- * predWorld every frame (see `ColyseusClient.updateMirror`'s
- * `this.mirror.ships.set(localId, { x: state.x + ox, ... })` block
- * around line 2310). Lingering hulls need the same pattern — their
- * mirror entry must reflect the body's CURRENT physics-integrated
- * position, not the stale snapshot pose.
- *
- * This test asserts the contract:
- *
- *   After `updateMirror()` runs, `mirror.lingeringShips[id].x, y`
- *   must equal `predWorld.getShipState(\`linger-${id}\`).x, y`.
- *
- * The test FAILS on current code (no such sync happens) and PASSES
- * once `updateMirror` is taught to read predWorld positions for
- * lingering hulls.
+ * Same code shape as the remote-ship reconciler.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
@@ -63,7 +46,7 @@ function lingeringEntry(playerId: string, x: number, y: number): SnapshotMessage
   };
 }
 
-describe('lingering hull render-vs-body sync (Invariant #13 repro)', () => {
+describe('lingering hull predict-and-reconcile with sprite lerp offset', () => {
   let client: ColyseusGameClient;
   let internals: Internals;
 
@@ -86,50 +69,52 @@ describe('lingering hull render-vs-body sync (Invariant #13 repro)', () => {
     });
   });
 
-  it('FAILS today: lingering hull body drifts but mirror entry stays put after physics step', () => {
-    // Seed the snapshot path so the body gets spawned.
+  it('on reconcile, sprite starts at predicted pose; body teleports to snapshot pose; offset decays', () => {
+    // First snapshot — body spawns at (100, 100). No prior pose, no offset.
     internals.handleSnapshot(makeSnapshot({
       'SHIP_A': lingeringEntry('player-A', 100, 100),
     }));
     expect(internals.predWorld!.hasShip('linger-SHIP_A')).toBe(true);
 
-    // Apply a velocity to the lingering body (simulating having been
-    // pushed by a collision in a previous tick).
+    // Simulate prediction integrating the body forward (e.g. after a
+    // collision push). Body now at ~130, ahead of where the next
+    // snapshot will say.
     internals.predWorld!.setShipState('linger-SHIP_A', {
-      x: 100, y: 100, vx: 50, vy: 0, angle: 0, angvel: 0,
+      x: 130, y: 100, vx: 0, vy: 0, angle: 0, angvel: 0,
     });
 
-    // Integrate physics for ~500 ms (30 frames at 60 Hz). The body
-    // moves under its own velocity; with default damping it should
-    // travel many units.
-    for (let i = 0; i < 30; i++) internals.predWorld!.tick(1 / 60);
+    // Second snapshot arrives saying the server's hull is at (110,
+    // 100) — closer to the original than the client predicted.
+    internals.handleSnapshot(makeSnapshot({
+      'SHIP_A': lingeringEntry('player-A', 110, 100),
+    }));
 
-    // Where the BODY ended up (collision-relevant position).
-    const bodyState = internals.predWorld!.getShipState('linger-SHIP_A')!;
-    expect(bodyState.x).toBeGreaterThan(101); // sanity: body actually moved
+    // Body teleports to server-authoritative pose.
+    const bodyAfter = internals.predWorld!.getShipState('linger-SHIP_A')!;
+    expect(bodyAfter.x).toBeCloseTo(110, 1);
 
-    // Where the MIRROR entry is — drives the sprite.
-    // BEFORE updateMirror sync: still at snapshot pose (100, 100).
-    const mirrorEntryBefore = internals.mirror.lingeringShips!.get('SHIP_A')!;
-    expect(mirrorEntryBefore.x).toBeCloseTo(100, 1);
-
-    // Run the per-frame mirror update. ACTIVE-ship loops read predWorld
-    // and write back to the mirror — lingering hulls should follow the
-    // same pattern, otherwise the renderer draws the sprite at a stale
-    // position and players can't collide with what they see.
+    // updateMirror computes sprite position = body + offset. On the
+    // reconcile frame, offset starts at preReset(130) - postReset(110) = +20.
+    // Sprite should be WELL ABOVE the snapshot pose (110) so the user
+    // doesn't see a teleport — and well BELOW the predicted pose (130)
+    // only after the spring has had a chance to decay.
+    (internals as unknown as { lastFrameMs: number }).lastFrameMs = 16; // simulate 60Hz
     internals.updateMirror();
-
-    const mirrorEntryAfter = internals.mirror.lingeringShips!.get('SHIP_A')!;
-
-    // THE LOAD-BEARING ASSERTION: sprite position must equal body
-    // position so the visible silhouette is the same thing collision
-    // touches.
+    const mirrorEntry = internals.mirror.lingeringShips!.get('SHIP_A')!;
     expect(
-      Math.abs(mirrorEntryAfter.x - bodyState.x),
-      `Sprite-body desync: mirror.x=${mirrorEntryAfter.x.toFixed(2)} but body.x=${bodyState.x.toFixed(2)}. ` +
-        `Lingering hull sprite is drawn at the stale snapshot pose while the body has integrated physics. ` +
-        `Player navigates toward the visible sprite but collision body is elsewhere → fly-through.`,
-    ).toBeLessThan(0.5);
-    expect(Math.abs(mirrorEntryAfter.y - bodyState.y)).toBeLessThan(0.5);
+      mirrorEntry.x,
+      `Sprite should be near the predicted pose (130), well above the snapshot pose (110). ` +
+        `Got ${mirrorEntry.x.toFixed(2)}. If this is ~110 the spring isn't being applied — user sees the teleport directly.`,
+    ).toBeGreaterThan(120); // halfway between snapshot (110) and predicted (130) is the no-snap floor
+
+    // Advance ~500 ms (30 frames at 60Hz) and call updateMirror
+    // repeatedly to let the spring decay. Sprite should converge to
+    // the server-authoritative body pose.
+    for (let i = 0; i < 30; i++) internals.updateMirror();
+    const mirrorEntryConverged = internals.mirror.lingeringShips!.get('SHIP_A')!;
+    expect(
+      Math.abs(mirrorEntryConverged.x - 110),
+      `After ~500 ms of decay, sprite should converge to the server pose (110), got ${mirrorEntryConverged.x.toFixed(2)}.`,
+    ).toBeLessThan(2);
   });
 });
