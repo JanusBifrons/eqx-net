@@ -114,6 +114,54 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     await harness.disconnectClient(client);
   });
 
+  it('disconnect schedules a shipInstanceId-keyed auto-evict timer', async () => {
+    const client = await harness.connectAs(PID_A, { shipKind: 'fighter' });
+    await harness.advance(150);
+    const room = harness.getServerRoom()!;
+    const state = room.state as SectorState;
+    const [originalShipId] = [...state.ships.entries()][0]!;
+
+    // Phase 6b cleanup contract: the ownerlessShips map is keyed by the
+    // hull's shipInstanceId (not playerId). Reach into the private field
+    // to lock the keying — the rest of the suite covers the side-effects.
+    const ownerless = (room as unknown as { ownerlessShips: Map<string, unknown> }).ownerlessShips;
+    expect(ownerless.has(originalShipId)).toBe(false); // no timer pre-disconnect
+
+    await harness.disconnectClient(client);
+    await harness.advance(300);
+
+    expect(ownerless.has(originalShipId)).toBe(true);
+    expect(ownerless.has(PID_A)).toBe(false); // NOT keyed by playerId
+  });
+
+  it('fresh-spawn-displaces preserves the original hull\'s evict timer', async () => {
+    // Phase 6b cleanup regression lock — the pre-cleanup code cancelled
+    // the ownerlessShips timer at the fresh-spawn-displace point to avoid
+    // it firing against the player's NEW active hull. That fix worked but
+    // leaked displaced hulls forever. The cleanup rekeys the map to
+    // shipInstanceId so the timer can keep pointing at the displaced hull;
+    // this test fails if a future change re-introduces the cancel.
+    const client1 = await harness.connectAs(PID_B, { shipKind: 'fighter' });
+    await harness.advance(150);
+    const room = harness.getServerRoom()!;
+    const state = room.state as SectorState;
+    const [originalShipId] = [...state.ships.entries()][0]!;
+    const ownerless = (room as unknown as { ownerlessShips: Map<string, unknown> }).ownerlessShips;
+
+    await harness.disconnectClient(client1);
+    await harness.advance(300);
+    expect(ownerless.has(originalShipId)).toBe(true);
+
+    // Fresh-spawn displaces the lingering hull into lingeringSlots. The
+    // timer for the ORIGINAL ship must survive this transition.
+    const client2 = await harness.connectAs(PID_B, { isNewShip: true, shipKind: 'scout' });
+    await harness.advance(200);
+
+    expect(state.ships.size).toBe(2);
+    expect(ownerless.has(originalShipId)).toBe(true); // timer still alive
+    await harness.disconnectClient(client2);
+  });
+
   it('after fresh-spawn (isNewShip), original ship lingers + new ship is active', async () => {
     // Step 1: spawn the original ship.
     const client1 = await harness.connectAs(PID_E, { shipKind: 'fighter' });
