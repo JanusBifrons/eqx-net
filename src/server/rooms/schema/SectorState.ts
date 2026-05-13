@@ -33,6 +33,12 @@ export class ShipState extends Schema {
    *  player's currently-bound ship and the abandon endpoint reject the
    *  active ship. */
   @type('string') shipInstanceId: string = '';
+  /** Phase 6a — true while a session is actively piloting this hull;
+   *  false for lingering hulls (Phase 6b reserved — invariant in 6a is
+   *  "every entry has isActive === true"). Drives the client's
+   *  snapshot-filter (skip lingering hulls until Phase 6b enables them)
+   *  and the eventual Phase 6c drone-retargeting filter. */
+  @type('boolean') isActive: boolean = true;
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the

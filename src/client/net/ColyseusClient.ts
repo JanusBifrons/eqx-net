@@ -1239,6 +1239,19 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     const now = performance.now();
 
+    // Phase 6a — translate the shipInstanceId-keyed wire format to a
+    // playerId-keyed local view. C-ii strategy: predWorld + mirror +
+    // reconciler all use playerId internally; the wire change is
+    // invisible downstream. Inactive hulls (Phase 6b lingering, not in
+    // 6a) are skipped at this boundary so they're invisible to the
+    // existing snapshot-apply logic.
+    const statesByPlayerId: SnapshotMessage['states'] = {};
+    for (const entry of Object.values(snap.states)) {
+      if (entry.isActive === false) continue;
+      statesByPlayerId[entry.playerId] = entry;
+    }
+    snap = { ...snap, states: statesByPlayerId };
+
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
     // assume the projectile map matches the snapshot's tick.

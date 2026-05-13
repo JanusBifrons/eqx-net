@@ -10,7 +10,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
-import { CollisionResolvedMessageSchema, EngageTransitSchema, FireMessageSchema } from './messages.js';
+import {
+  CollisionResolvedMessageSchema,
+  EngageTransitSchema,
+  FireMessageSchema,
+} from './messages.js';
+import type { SnapshotMessage, WelcomeMessage } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -202,5 +207,71 @@ describe('FireMessageSchema (multi-mount refactor, Phase 2b.1)', () => {
 
   it('rejects unknown fields (strict)', () => {
     expect(FireMessageSchema.safeParse({ ...legacy, mystery: 1 }).success).toBe(false);
+  });
+});
+
+// ── Phase 6a wire contract ─────────────────────────────────────────────────
+//
+// `SnapshotMessage.states` is re-keyed to shipInstanceId (was playerId in
+// pre-6a wire). Each entry now carries `playerId` + `isActive` so the
+// client can identify "self" + skip lingering hulls until Phase 6b is
+// ready to surface them. WelcomeMessage already carries `shipInstanceId`
+// from Phase 5. These tests are pure type-shape locks — runtime parse
+// isn't applicable (SnapshotMessage is an interface, not a zod schema).
+describe('Phase 6a wire shape — SnapshotMessage + WelcomeMessage', () => {
+  it('SnapshotMessage.states entries carry playerId and isActive', () => {
+    // If the interface drops the new fields, this won't compile.
+    const snap: SnapshotMessage = {
+      type: 'snapshot',
+      serverTick: 1,
+      states: {
+        'ship-uuid-1': {
+          x: 100, y: 200, vx: 0, vy: 0, angle: 0, angvel: 0,
+          playerId: 'player-1',
+          isActive: true,
+        },
+      },
+      ackedTick: 0,
+    };
+    expect(snap.states['ship-uuid-1']!.playerId).toBe('player-1');
+    expect(snap.states['ship-uuid-1']!.isActive).toBe(true);
+  });
+
+  it('SnapshotMessage.states tolerates a false isActive (lingering hull, Phase 6b)', () => {
+    const snap: SnapshotMessage = {
+      type: 'snapshot',
+      serverTick: 1,
+      states: {
+        'lingering-ship': {
+          x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+          playerId: 'player-1',
+          isActive: false,
+        },
+      },
+      ackedTick: 0,
+    };
+    expect(snap.states['lingering-ship']!.isActive).toBe(false);
+  });
+
+  it('WelcomeMessage.shipInstanceId is required (Phase 5 + 6a foundation)', () => {
+    const welcome: WelcomeMessage = {
+      type: 'welcome',
+      playerId: 'p1',
+      serverTick: 0,
+      sectorKey: 'sol-prime',
+      shipInstanceId: 'ship-uuid-1',
+    };
+    expect(welcome.shipInstanceId).toBe('ship-uuid-1');
+  });
+
+  it('WelcomeMessage.shipInstanceId can be empty for engineering rooms with no roster row', () => {
+    const welcome: WelcomeMessage = {
+      type: 'welcome',
+      playerId: 'p1',
+      serverTick: 0,
+      sectorKey: null,
+      shipInstanceId: '',
+    };
+    expect(welcome.shipInstanceId).toBe('');
   });
 });

@@ -189,7 +189,15 @@ export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
   /** Authoritative ship states at the time the snapshot was taken.
-   *  Stage 3: each entry now carries `lastInput` — the input vector the
+   *
+   *  **Phase 6a: outer key is `shipInstanceId`** (was `playerId` pre-6a).
+   *  Each entry carries `playerId` (owner identity) and `isActive`
+   *  (true while a session is driving the hull; false for lingering
+   *  hulls in Phase 6b+). The client's snapshot translator picks `self`
+   *  via `WelcomeMessage.shipInstanceId` and skips `isActive=false`
+   *  entries until Phase 6b drops the visibility gate.
+   *
+   *  Stage 3: each entry carries `lastInput` — the input vector the
    *  worker applied this tick — so remote clients can forward-predict
    *  the body's pose using the same input intent the server is using.
    *  Optional for back-compat with snapshots from pre-Stage-3 servers. */
@@ -197,6 +205,15 @@ export interface SnapshotMessage {
     string,
     {
       x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+      /** Phase 6a — owner playerId for this hull. The map key is now
+       *  shipInstanceId, so this is how the client recovers "who owns
+       *  this ship" for display labels + damage-event correlation. */
+      playerId: string;
+      /** Phase 6a — true while a session is actively piloting this hull.
+       *  Always true in 6a (one active ship per player per sector still
+       *  invariant). Phase 6b introduces `isActive=false` for lingering
+       *  hulls; client uses this to gate visibility / interaction. */
+      isActive: boolean;
       lastInput?: {
         thrust: boolean;
         turnLeft: boolean;

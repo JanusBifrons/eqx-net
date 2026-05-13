@@ -1,5 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -206,6 +207,17 @@ export class SectorRoom extends Room<SectorState> {
   private slotToPlayer = new Map<number, string>();
   private freeSlots: number[] = [];
   private initialSpawnPositions = new Map<string, { x: number; y: number }>();
+
+  /** Phase 6a — `playerId → shipInstanceId` indirection. The schema map
+   *  (`state.ships`) and the snapshot wire keys both use shipInstanceId
+   *  in 6a. Inbound `input` / `fire` / `engage_transit` handlers receive
+   *  a playerId (via `sessionToPlayer`) and translate through this map
+   *  before looking up the per-ship surface. Internal slot / pose maps
+   *  stay playerId-keyed in 6a (Option A) — the one-active-ship-per-
+   *  player invariant still holds, so the 1:1 mapping is preserved.
+   *  Phase 6b will rekey the slot maps when lingering hulls need
+   *  multiple entries per player. */
+  private readonly playerToActiveShipInstance = new Map<string, string>();
 
   // Phase 4 — abandoned-ship hulls. When a player abandons their ship via
   // the roster panel, the SAB slot is repurposed (slot stays allocated,
@@ -760,6 +772,24 @@ export class SectorRoom extends Room<SectorState> {
 
   /** Set in onDispose() so the setImmediate loop exits cleanly. */
   private simLoopStopped = false;
+
+  // ── Phase 6a — playerId → shipInstanceId indirection ──────────────────────
+
+  /**
+   * Translate a player id to the shipInstanceId of the hull THAT PLAYER
+   * is currently piloting in THIS room. Returns `undefined` when the
+   * player isn't bound (engineering room with no roster, fresh spawn
+   * mid-flight, post-leave). Callers that hit this should treat undefined
+   * as "no active ship" and bail out cleanly.
+   *
+   * NO `?? playerId` fallback — engineering rooms now generate a synthetic
+   * shipInstanceId at join time, so a non-empty entry exists for every
+   * bound player. Falling back to playerId would mask a real wiring bug
+   * elsewhere.
+   */
+  private resolveActiveShipKey(playerId: string): string | undefined {
+    return this.playerToActiveShipInstance.get(playerId);
+  }
 
   // ── Combat ──────────────────────────────────────────────────────────────
 
@@ -2113,6 +2143,26 @@ export class SectorRoom extends Room<SectorState> {
       health: resumedHealth ?? ship.health,
       lastFireClientTick: resumedLastFireTick ?? 0,
     }, preferredShipId, forceFreshCreate);
+    // Phase 6a — engineering rooms (`sectorKey === null`) bypass the
+    // roster entirely, so `bindRosterEntry` returns ''. Generate a
+    // synthetic UUID so the snapshot wire key + downstream lookups
+    // (PlayerShipStore.get etc.) never see an empty id. Two players in
+    // the same engineering room each get a unique synthetic id, so
+    // there's no collision.
+    if (ship.shipInstanceId === '') {
+      ship.shipInstanceId = randomUUID();
+    }
+    ship.isActive = true;
+    // Populate the indirection map BEFORE setting the schema entry so
+    // any synchronous observer (e.g. a re-entrant fire-handler) can
+    // already resolve the player's active hull.
+    this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
+    // NOTE: in Phase 6a Option A the schema map stays playerId-keyed
+    // internally — the wire-level keying (SnapshotMessage.states) is
+    // shipInstanceId, but the Colyseus MapSchema key remains playerId
+    // so the ~25 `state.ships.get(playerId)` callsites in this file
+    // don't need a mechanical rekey yet. Phase 6b will flip the schema
+    // key when lingering hulls actually need >1 entry per player.
     this.state.ships.set(playerId, ship);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
@@ -2276,6 +2326,10 @@ export class SectorRoom extends Room<SectorState> {
     this.playerSlotTargets.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
+    // Phase 6a — drop the playerId → shipInstanceId indirection. The
+    // schema entry is being deleted below; resolveActiveShipKey would
+    // return a stale id otherwise.
+    this.playerToActiveShipInstance.delete(playerId);
 
     if (slot !== undefined) {
       this.playerToSlot.delete(playerId);
@@ -2347,6 +2401,8 @@ export class SectorRoom extends Room<SectorState> {
     this.playerSlotTargets.delete(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
+    // Phase 6a — eviction is final; clear the indirection map.
+    this.playerToActiveShipInstance.delete(playerId);
 
     if (slot !== undefined) {
       this.playerToSlot.delete(playerId);
@@ -2552,6 +2608,10 @@ export class SectorRoom extends Room<SectorState> {
     this.shipPoseCache.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     this.state.ships.delete(playerId);
+    // Phase 6a — drop the playerId → shipInstanceId indirection. The
+    // hull is now a wreck (keyed by shipInstanceId in `state.wrecks`);
+    // the player no longer has an active ship in this room.
+    this.playerToActiveShipInstance.delete(playerId);
 
     // 4) Force the owning session to leave (if connected). The player
     //    sees their roster missing this ship on the next galaxy-map
@@ -3032,6 +3092,13 @@ export class SectorRoom extends Room<SectorState> {
       // recipient, just the inclusion decision differs per (recipient, ship).
       type AllShipEntry = {
         playerId: string;
+        // Phase 6a — outer wire key. Falls back to playerId for any ship
+        // missing a shipInstanceId (shouldn't happen post-synthetic-UUID
+        // step, but defensive).
+        shipInstanceId: string;
+        // Phase 6a — true for any ship in 6a (one active hull per player
+        // is invariant). Phase 6b will surface lingering hulls with false.
+        isActive: boolean;
         pose: ShipPhysicsState;
         lastInput: ShipInputBits;
       };
@@ -3049,6 +3116,8 @@ export class SectorRoom extends Room<SectorState> {
         const flags = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
         allShips.push({
           playerId,
+          shipInstanceId: ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId,
+          isActive: ship.isActive,
           pose,
           lastInput: {
             thrust:    !!(flags & FLAG_INPUT_THRUST),
@@ -3134,9 +3203,15 @@ export class SectorRoom extends Room<SectorState> {
               }
             }
           }
-          states[ship.playerId] = {
+          // Phase 6a wire key: shipInstanceId. Each entry carries
+          // playerId (for owner identity) and isActive (for the
+          // client's visibility / piloting gate). Other entry fields
+          // unchanged from pre-6a snapshots.
+          states[ship.shipInstanceId] = {
             x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
             angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
+            playerId: ship.playerId,
+            isActive: ship.isActive,
             ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
             ...(mountAnglesArr ? { mountAngles: mountAnglesArr } : {}),
           };

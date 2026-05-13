@@ -175,3 +175,9 @@ The drawer's Galaxy tab ([layout/Drawer/tabs/GalaxyTab.tsx](layout/Drawer/tabs/G
 - `fast-check` is installed for property-based testing of pure functions (use when the surface naturally benefits — Phase 6 has more candidates than Phase 5).
 - `@colyseus/testing` is installed for in-process room integration tests; the version pinned in `package.json` reports a peer-dep mismatch (0.17.x vs colyseus 0.16) — re-pin to 0.16-compat when Phase 6b lands and actually exercises it.
 - `@stryker-mutator/core` + `@stryker-mutator/vitest-runner` are installed for mutation testing; configuration deferred until Phase 6 ships (the suite needs stable tests to mutate).
+
+---
+
+## Phase 6a foundation (2026-05-13)
+
+`SnapshotMessage.states` is now keyed by `shipInstanceId` on the wire (was `playerId` pre-6a) and each entry carries `playerId` + `isActive` so the client can recover owner identity + skip lingering hulls. **The mirror, predWorld, and reconciler remain playerId-keyed internally** — `ColyseusClient.handleSnapshot` translates the wire format to a playerId-keyed local view at the top of the function (C-ii strategy). Render / HUD / radar code is unchanged. `isActive === false` entries (Phase 6b lingering hulls — not yet emitted by the server) are filtered out at the translation boundary so they're invisible to existing snapshot-apply logic until 6b chooses to surface them. The server's `state.ships` MapSchema also stays keyed by playerId in 6a; only `SnapshotMessage` and the future Phase 6b schema-rekey use shipInstanceId as the key.
