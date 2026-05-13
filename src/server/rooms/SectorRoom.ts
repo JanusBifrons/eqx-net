@@ -1,6 +1,7 @@
 import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
+import { shouldBroadcastContact } from './contactFilter.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -1877,6 +1878,8 @@ export class SectorRoom extends Room<SectorState> {
             this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId: msg.entityId });
           }
         }
+        // Filter exposed for unit testing (see filterSelfCollisions.test.ts).
+        // Inline here for clarity in the original handler.
         if (msg.type === 'CONTACT_BATCH' && Array.isArray(msg.contacts) && typeof msg.tick === 'number') {
           // Stage 2 of the network-feel roadmap: each contact above the
           // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in the
@@ -1886,19 +1889,9 @@ export class SectorRoom extends Room<SectorState> {
           // on bodies its predWorld doesn't track (drone-vs-drone events).
           // Bus emission lets persistence/telemetry subscribe.
           for (const c of msg.contacts) {
-            // Phase 6b self-collision filter (2026-05-13): when a player
-            // has both an active ship AND a lingering hull in the same
-            // sector, the physics worker has TWO bodies whose `playerId`
-            // identity is the same — Rapier reports the contact with
-            // `aId === bId === playerId`. Broadcasting this confuses the
-            // client's `applyCollisionResolved` (it applies vA then vB
-            // to the same body, overwriting). Drop these — the server's
-            // physics still applies the impulse on the two bodies, so
-            // the next snapshot delivers the correct position to the
-            // client. Symptom this fixes: the player's active hull
-            // bouncing around its lingering parked hull with no
-            // visible cause.
-            if (c.aId === c.bId) {
+            // Phase 6b self-collision filter (2026-05-13). See
+            // ./contactFilter.ts for the full rationale + unit test.
+            if (!shouldBroadcastContact(c)) {
               serverLogEvent('collision_self_filtered', {
                 aId: c.aId,
                 tick: msg.tick,
