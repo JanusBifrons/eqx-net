@@ -6,6 +6,7 @@ import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
+import { decideLingeringSpriteAction } from './spriteUpdateDecisions';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -871,10 +872,14 @@ export class PixiRenderer implements IRenderer {
    *  the SAME silhouette + colour as the live ship (NOT the desaturated
    *  wreck tint — they still belong to a real player), with a slight
    *  alpha drop (0.75) as a visual cue for "this hull is parked, the
-   *  pilot isn't currently flying it". A sprite cache miss can occur
-   *  before the schema diff with `kind` has arrived; we defer creation
-   *  until kind is known so we don't lock in the default-fighter shape
-   *  for what's actually an interceptor / scout / heavy. */
+   *  pilot isn't currently flying it".
+   *
+   *  Phase A3: the create-vs-rebuild-vs-reposition decision is delegated
+   *  to `decideLingeringSpriteAction` (pure, unit-tested). The previous
+   *  inline version's `if (!ship.kind) continue` skip left lingering
+   *  hulls permanently invisible when the schema diff was late; the
+   *  extracted helper makes the fallback-kind behaviour an explicit
+   *  contract and prevents regression. */
   private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string }>();
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
@@ -887,28 +892,28 @@ export class PixiRenderer implements IRenderer {
     const seen = new Set<string>();
     for (const [shipInstanceId, ship] of mirror.lingeringShips) {
       seen.add(shipInstanceId);
-      // Build immediately even if kind isn't yet known — we used to
-      // defer here but that left lingering hulls invisible when the
-      // schema diff arrived late. Instead, use a default kind for the
-      // initial sprite and REBUILD if the real kind arrives later.
-      // This means there's a brief 1-frame window where the wrong
-      // silhouette shows, but the alternative ("not visible at all")
-      // was worse.
-      const targetKind = ship.kind ?? 'fighter';
+      const decision = decideLingeringSpriteAction({
+        cached: this.lingeringSprites.get(shipInstanceId),
+        currentKind: ship.kind,
+        fallbackKind: 'fighter',
+      });
       let entry = this.lingeringSprites.get(shipInstanceId);
-      if (entry && entry.kind !== targetKind) {
-        entry.sprite.destroy();
-        entry = undefined;
+      if (decision.action === 'rebuild') {
+        entry!.sprite.destroy();
         this.lingeringSprites.delete(shipInstanceId);
+        entry = undefined;
       }
-      if (!entry) {
-        const shape = shapeForKind(targetKind);
+      if (decision.action === 'create' || decision.action === 'rebuild') {
+        const shape = shapeForKind(decision.kind);
         const sprite = buildShipGfxFromShape(shape, shape.color);
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
-        entry = { sprite, kind: targetKind };
+        entry = { sprite, kind: decision.kind };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
+      // 'skip' is reserved for wreck-kind-missing diagnostics; not
+      // produced by the lingering decision today. Be defensive anyway.
+      if (decision.action === 'skip' || !entry) continue;
       entry.sprite.x = ship.x;
       entry.sprite.y = -ship.y;
       entry.sprite.rotation = -ship.angle;

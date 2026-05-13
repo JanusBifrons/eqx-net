@@ -39,7 +39,7 @@ export default defineConfig({
       // Stage 4.5 — scenario-harness regression fixtures (network-feel roadmap).
       'tests/scenarios/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', 'dist/**', 'tests/e2e/**', 'benchmarks/**'],
+    exclude: ['**/node_modules/**', 'dist/**', 'tests/e2e/**', 'benchmarks/**', 'tests/integration/**'],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],
     },

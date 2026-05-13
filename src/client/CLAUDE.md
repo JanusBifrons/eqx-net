@@ -178,6 +178,22 @@ The drawer's Galaxy tab ([layout/Drawer/tabs/GalaxyTab.tsx](layout/Drawer/tabs/G
 
 ---
 
+## Phase A3 — Renderer decision logic extraction (2026-05-13)
+
+Per-entity sprite-update decisions (create / rebuild / reposition / skip) live in `src/client/render/spriteUpdateDecisions.ts` as pure functions, NOT inlined inside `PixiRenderer.ts`. The Pixi calls (Graphics instantiation, `addChild`, `tint`, `alpha`, `destroy`) stay in the renderer; only the branching lives in the pure module.
+
+**Why**: the Phase 6b "lingering hull permanently invisible" bug was a too-aggressive `if (!ship.kind) continue;` skip in the renderer that left the sprite uncreated forever when the schema diff with `kind` arrived late. A unit test on a pure decision helper would have failed loudly: "no cache + unknown kind should `create` with the fallback kind, not `skip`." The extraction makes that contract explicit and testable.
+
+**The rule**: when you add a new entity-update method on the renderer (`updateXxx` taking `RenderMirror`), the per-entity decision logic MUST live in `spriteUpdateDecisions.ts` with unit tests covering every branch + a property-based test (fast-check, already installed). Don't inline new decision branches in `PixiRenderer.ts`.
+
+Current functions:
+- `decideLingeringSpriteAction({ cached, currentKind, fallbackKind })` — Phase 6b lingering hulls. Falls back to `fallbackKind` when `currentKind` is undefined and there's no cache hit (don't lock in the wrong silhouette but also don't go invisible).
+- `decideWreckSpriteAction({ cached, currentKind })` — Phase 4 wrecks. Surfaces a `skip` with a `reason` when `currentKind` is unexpectedly missing (server wire-format break diagnostic).
+
+Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-check properties).
+
+---
+
 ## Phase 6a foundation (2026-05-13)
 
 `SnapshotMessage.states` is now keyed by `shipInstanceId` on the wire (was `playerId` pre-6a) and each entry carries `playerId` + `isActive` so the client can recover owner identity + skip lingering hulls. **The mirror, predWorld, and reconciler remain playerId-keyed internally** — `ColyseusClient.handleSnapshot` translates the wire format to a playerId-keyed local view at the top of the function (C-ii strategy). Render / HUD / radar code is unchanged. `isActive === false` entries (Phase 6b lingering hulls — not yet emitted by the server) are filtered out at the translation boundary so they're invisible to existing snapshot-apply logic until 6b chooses to surface them. The server's `state.ships` MapSchema also stays keyed by playerId in 6a; only `SnapshotMessage` and the future Phase 6b schema-rekey use shipInstanceId as the key.

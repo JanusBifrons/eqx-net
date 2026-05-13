@@ -24,7 +24,8 @@
     "dev:server:nowatch": "cross-env NODE_OPTIONS=--max-semi-space-size=128 tsx --tsconfig tsconfig.server.json src/server/index.ts",
     "dev:server:gctrace": "cross-env NODE_OPTIONS=\"--max-semi-space-size=128 --trace-gc-verbose\" tsx --tsconfig tsconfig.server.json src/server/index.ts",
     "dev:client": "vite",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "mutation": "stryker run"
   },
   "dependencies": {
     "@colyseus/schema": "^3.0.0",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@colyseus/testing": "^0.16.3",
+    "@colyseus/tools": "^0.16.0",
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.49.0",
     "@stryker-mutator/core": "^9.6.1",

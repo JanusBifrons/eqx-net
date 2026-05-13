@@ -1138,3 +1138,34 @@ When you add a new collidable entity type, you naturally think about (a) the ser
 If any answer is no, the local player will fly through and the server may miss hits.
 
 `src/client/CLAUDE.md` carries the rule in shorter form under the "Renderer Rules" section ("Every collidable entity must be in predWorld"). This was reworded from "Remote ships must be in predWorld" after this lesson — the old phrasing only covered the original case and didn't dissuade Phase 4 + Phase 6b from re-hitting it.
+
+**Follow-up (Phase A3, 2026-05-13)**: the renderer-side half of this trap (lingering hull invisible because `if (!ship.kind) continue` skipped forever) is now covered by automated tests. The per-entity sprite-update decisions live in a pure module `src/client/render/spriteUpdateDecisions.ts` with unit-test + fast-check coverage of every branch. Adding a new entity type that surfaces in `RenderMirror` requires adding a corresponding `decideXxxSpriteAction` function with branch tests — the type-system contract makes the decision module the only path. The server-side half (snapshot routing) is harder to test in isolation; see the Phase A1 blocker note below.
+
+---
+
+## 2026-05-13 — Phase A1 — `@colyseus/testing` integration test harness blocked at multiple layers
+
+Attempted to set up an end-to-end SectorRoom integration test using `@colyseus/testing@0.16.3` (installed but never used in this codebase). The goal was the regression lock that would have caught the Phase 6b "lingering hull invisible" bug class in CI rather than via player smoke-test.
+
+**Blockers encountered** (each surfaced after fixing the previous):
+
+1. **Transitive `@colyseus/tools@0.17.19` mismatch**. A previous install of `@colyseus/testing@0.17` left tools 0.17 in the lock file. `@colyseus/testing@0.16.3`'s entry point imports tools, which imports `defineServer` from `@colyseus/core@0.17` — but we have 0.16.24. Fixed by `pnpm add -D @colyseus/tools@^0.16.0`.
+
+2. **`node:sqlite` import via the transitive chain**. `Database.ts` (read-only main-thread connection) is imported by `PersistenceWorker.ts` which is imported by `SectorRoom.ts`. Vite's resolver strips the `node:` prefix and fails to load `sqlite` as a bare module. Worked around with a `resolve.alias` to a no-op `sqliteStub.ts`.
+
+3. **Legacy `experimentalDecorators` not applied by esbuild**. Vitest's default esbuild transform emits TC39 stage-3 decorators with `Symbol.metadata`, incompatible with `@colyseus/schema@3.x`'s annotations. Fixed by configuring `esbuild.tsconfigRaw` in vitest.config.
+
+4. **tinypool worker-IPC serialization crash**. After all the above, the Colyseus Server boots successfully (banner prints) but vitest's reporter crashes with `TypeError: ERR_INVALID_ARG_TYPE` in `deserialize` — Schema instances aren't structuredClone-able through tinypool's child-process or worker-thread IPC. Tried both `forks` and `threads` pool modes; same failure mode either way. **This is the unresolved blocker.**
+
+**Status**: harness files (`tests/integration/sectorRoom/harness.ts`, `lingering.test.ts`, `sqliteStub.ts`) are kept in-tree, excluded from the test run via `vitest.config.ts` excludes. Vitest config reverted to its pre-A1 shape — no integration tests run.
+
+**The pivot**: Phase A3 (pure-helper extraction for renderer decisions) was completed instead. That catches the highest-value bug class — rendering of lingering hulls — directly. The server-side snapshot routing is covered by the existing `src/client/net/ColyseusClient.lingeringRouting.test.ts` unit test, which mocks the snapshot input rather than running it through Colyseus end-to-end.
+
+**Next attempt options** (for a future session):
+- **Option A**: Run integration tests in a separate Node process outside vitest (via a `node` script that imports the harness, runs the assertions, exits with status). Vitest wraps it as a single "integration suite" test that just checks the exit code. No tinypool involvement.
+- **Option B**: Write a manual SectorRoom test (no Colyseus server) that directly instantiates the room class and calls `onCreate` / `onJoin` / `onLeave` / `update` with mocked clients. Heavier mocking but no IPC serialization. The existing `src/server/transit/TransitOrchestrator.test.ts` is the gold standard scaled down; scale up to room level is a few hundred lines of mock plumbing.
+- **Option C**: Pin vitest + tinypool to versions that handle Schema serialization (research needed; may require contributions upstream).
+
+The harness's stub-injection pattern (CaptureSink + setLimboStore + setPlayerShipStore at module-level) is sound and can be reused under any of these approaches.
+
+**Cost-of-not-having-it**: Phase 6b cleanup, Phase 6c (drone retargeting), Phase 6d (slot cap) all benefit from a SectorRoom integration test. Each can ship without one — via manual room test + smoke verification — but the recurring "ship invisible" / "client routes wrong" bug class will keep re-appearing until this gap closes.

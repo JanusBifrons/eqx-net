@@ -80,7 +80,10 @@ importers:
     devDependencies:
       '@colyseus/testing':
         specifier: ^0.16.3
-        version: 0.16.3(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/tools@0.17.19(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))))(colyseus.js@0.16.22)
+        version: 0.16.3(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/tools@0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))))(colyseus.js@0.16.22)
+      '@colyseus/tools':
+        specifier: ^0.16.0
+        version: 0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))
       '@eslint/js':
         specifier: ^9.17.0
         version: 9.39.4
@@ -410,12 +413,12 @@ packages:
   '@colyseus/timer@1.0.3':
     resolution: {integrity: sha512-Vy8FGTt2vbmkXn2RzMkCGphcDIdCeYeZx2CADdQM/0EWEBrFM67FTcSJATB2q/lm2vlZfvkBjEDtJHePSePB1A==}
 
-  '@colyseus/tools@0.17.19':
-    resolution: {integrity: sha512-2vPso8O6GsIiQqrvPzRIsXth2inET0hrN/geZSB65/I0XbB3pN4EGRU/gD/9NnQSuV6D6suPIQhhjzHCACDKRw==}
+  '@colyseus/tools@0.16.20':
+    resolution: {integrity: sha512-tfWF7/c1nbjV+y8IKw382QnzHnyB9mmolMxeykFZ5HA4bjCVRk3RS39wyrpNd1gzp7JnZ0iQf7546eJ1hlegYA==}
     hasBin: true
     peerDependencies:
-      '@colyseus/core': 0.17.x
-      '@colyseus/ws-transport': 0.17.x
+      '@colyseus/core': 0.16.x
+      '@colyseus/ws-transport': 0.16.x
 
   '@colyseus/uwebsockets-transport@0.16.10':
     resolution: {integrity: sha512-AgAcMNWaguN7QjTENZm0e604sjpXa6By17MYGDMrqlYKkVtKKHCx8rIPfB7WPWXRmEZbgPQP3Z6rte+dgjtBgw==}
@@ -2143,6 +2146,10 @@ packages:
   cookie@0.7.2:
     resolution: {integrity: sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==}
     engines: {node: '>= 0.6'}
+
+  cors@2.8.6:
+    resolution: {integrity: sha512-tJtZBBHA6vjIAaF6EnIaq6laBBP9aq/Y3ouVJjEfoHbRBcHBAHYcMh/w8LDrk2PvIMMq8gmopa5D4V8RmbrxGw==}
+    engines: {node: '>= 0.10'}
 
   cosmiconfig@7.1.0:
     resolution: {integrity: sha512-AdmX6xUzdNASswsFtmwSt7Vj8po9IuqXm0UXz7QKPuEUmPB4XyjGfaAr2PSuELMwkRMVH1EpIkX5bTZGRB3eCA==}
@@ -4358,10 +4365,10 @@ snapshots:
 
   '@colyseus/schema@3.0.76': {}
 
-  '@colyseus/testing@0.16.3(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/tools@0.17.19(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))))(colyseus.js@0.16.22)':
+  '@colyseus/testing@0.16.3(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/tools@0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))))(colyseus.js@0.16.22)':
     dependencies:
       '@colyseus/core': 0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)
-      '@colyseus/tools': 0.17.19(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))
+      '@colyseus/tools': 0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))
       colyseus.js: 0.16.22
       httpie: 2.0.0-next.13
 
@@ -4369,12 +4376,14 @@ snapshots:
     dependencies:
       '@colyseus/clock': 1.0.1
 
-  '@colyseus/tools@0.17.19(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))':
+  '@colyseus/tools@0.16.20(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))(@colyseus/ws-transport@0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)))':
     dependencies:
       '@colyseus/core': 0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0)
       '@colyseus/ws-transport': 0.16.5(@colyseus/core@0.16.24(@colyseus/schema@3.0.76)(@pm2/io@6.1.0))
       '@pm2/io': 6.1.0
+      cors: 2.8.6
       dotenv: 17.4.2
+      express: 4.22.1
     transitivePeerDependencies:
       - supports-color
 
@@ -5869,6 +5878,11 @@ snapshots:
     optional: true
 
   cookie@0.7.2: {}
+
+  cors@2.8.6:
+    dependencies:
+      object-assign: 4.1.1
+      vary: 1.1.2
 
   cosmiconfig@7.1.0:
     dependencies:
