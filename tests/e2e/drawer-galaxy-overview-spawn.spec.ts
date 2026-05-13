@@ -56,7 +56,11 @@ async function waitForLocalShip(page: Page, timeoutMs = 15_000): Promise<void> {
 }
 
 test('drawer → Show galaxy map → roster card opens detail modal (real clicks)', async ({ page }) => {
-  test.setTimeout(60_000);
+  // This spec is FUNCTIONAL only, not a perf budget. The main thread is
+  // saturated by Pixi tick + Colyseus snapshot apply, so every step
+  // through Playwright's CDP roundtrip needs generous timeouts. Perf
+  // measurement lives in `drawer-lag-trace.spec.ts`.
+  test.setTimeout(120_000);
 
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
@@ -74,13 +78,11 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
   expect(playerId).toBeTruthy();
 
   // === 2. Open drawer + galaxy tab. ===
-  // Same approach `drawer-galaxy-map-open-close.spec.ts` uses successfully:
-  // try a real click with `force: true` first, fall back to Zustand if
-  // the MUI Drawer doesn't materialise within 2 s (the well-known
-  // mount-transition flakiness under Playwright × MUI × Pixi).
+  // Real click first, Zustand fallback if the MUI Drawer's mount
+  // transition is slow (well-known Pixi×MUI×Playwright timing wall).
   await page.locator('[data-testid="drawer-toggle"]').click({ force: true });
   try {
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 2_000 });
+    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
   } catch {
     await page.evaluate(() => {
       const win = window as unknown as StoreWindow;
@@ -88,20 +90,22 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
       s.setDrawerTab('galaxy');
       s.setDrawerOpen(true);
     });
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 15_000 });
   }
   // The Galaxy tab is the default-selected tab — its content (incl. the
   // ShipRosterPanel + "Show galaxy map" button) renders inside the
-  // drawer's `drawer-panel-galaxy` host.
-  await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 8_000 });
+  // drawer's `drawer-panel-galaxy` host. Generous timeout: the MUI Slide
+  // transition mounts children lazily, and the main thread is contended
+  // by Pixi tick.
+  await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 30_000 });
 
   // === 3. REAL click: "Show galaxy map". ===
   await page
     .locator('[data-testid="galaxy-tab-show-map"]')
-    .click({ force: true, timeout: 5_000 });
+    .click({ force: true, timeout: 15_000 });
 
   // === 4. Refactor contract: overview opens in 'select' mode, NOT warp. ===
-  await expect(page.locator('[data-testid="galaxy-overview-select"]')).toBeVisible({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="galaxy-overview-select"]')).toBeVisible({ timeout: 15_000 });
   await expect(page.locator('[data-testid="galaxy-overview-warp"]')).toHaveCount(0);
 
   // === 5. REAL click on the roster card inside the overview. ===

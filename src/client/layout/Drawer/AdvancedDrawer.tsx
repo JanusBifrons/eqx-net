@@ -69,6 +69,12 @@ const DRAWER_SX = {
 } as const;
 
 const MODAL_PROPS = { keepMounted: true } as const;
+// Slide's `mountOnEnter` defaults to `true` — children only mount when
+// the enter transition fires. With `keepMounted` on the Modal that
+// would defer GalaxyTab + ShipRosterPanel mount to first-open
+// (~1.5 s tail). Pre-mount the children too so the drawer-open
+// transition is purely visual / no React work.
+const SLIDE_PROPS = { mountOnEnter: false, unmountOnExit: false } as const;
 
 const HEADER_SX = {
   display: 'flex',
@@ -157,6 +163,7 @@ export function AdvancedDrawer(): JSX.Element {
       // at 17 Hz when hidden — only matters for the Debug tab, which
       // isn't the default and isn't on the drawer-open hot path.
       ModalProps={MODAL_PROPS}
+      SlideProps={SLIDE_PROPS}
       sx={DRAWER_SX}
     >
       {/* Drawer header — close button + active tab label */}
