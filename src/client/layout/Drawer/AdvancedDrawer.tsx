@@ -69,6 +69,23 @@ export function AdvancedDrawer(): JSX.Element {
       open={isDrawerOpen}
       onClose={() => setDrawerOpen(false)}
       data-testid="advanced-drawer"
+      // Pre-mount the Modal/Slide infrastructure so opening the drawer is
+      // a CSS transition, not a fresh React mount. The CPU profile of
+      // a drawer-toggle click showed ~5 s of MUI emotion + sx-prop
+      // processing on the cold-mount path (commit `9c04bbf`). With
+      // `keepMounted`, the Drawer DOM stays in the tree under
+      // `visibility: hidden` and `open` flips a CSS class. MUI #17196
+      // documents this as the canonical fix for slow modal mounts.
+      //
+      // The historic objection to `keepMounted` in this repo (see
+      // `src/client/CLAUDE.md`) was that tab content (Debug tab's
+      // ConnectionDiagnostics / DevOverlay / LogPanel) re-renders at
+      // ~17 Hz when subscribed to per-snapshot Zustand fields, even
+      // while invisible. That's still true for the Debug tab — but it
+      // isn't the default tab, isn't on the drawer-mount hot path, and
+      // a re-mount-on-every-open cost (5 s of MUI sx processing) is far
+      // worse than a steady-state re-render of one tab's invisible DOM.
+      ModalProps={{ keepMounted: true }}
       sx={{
         '& .MuiDrawer-paper': {
           width: 'min(360px, 90vw)',
