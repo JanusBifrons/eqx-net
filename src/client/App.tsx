@@ -559,12 +559,11 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (
         <Slot anchor="fullscreen" order={25}>
+          {/* In-game overview is roster-pick only. Warp is reserved for
+              the bottom-center MAP button / M-key overlay
+              (`GalaxyMapLayer`). Refactor 2026-05-13. */}
           <GalaxyOverviewScreen
-            mode="warp"
-            onPickNeighbour={(key) => {
-              handleEngageTransit(key);
-              setGalaxyOverviewOpen(false);
-            }}
+            mode="select"
             onClose={() => setGalaxyOverviewOpen(false)}
           />
         </Slot>

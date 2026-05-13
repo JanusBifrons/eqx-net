@@ -187,7 +187,7 @@ export function GalaxyTab(): JSX.Element {
         Show galaxy map
       </Button>
       <Typography variant="caption" sx={{ color: '#9aa0b4' }}>
-        Drag / pinch / scroll to navigate. Tap a neighbouring sector to engage hyperspace.
+        Galaxy overview + roster picker. Use the bottom-center MAP button (or M key) to warp.
       </Typography>
 
       {/* Phase 5 — in-game roster access. Cards click to open the detail

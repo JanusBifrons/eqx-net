@@ -20,7 +20,22 @@ const COLOR_LABEL_ACTIVE = 0x00ff88;
 const COLOR_LABEL_LOCKED = 0x9aa0b4;
 const COLOR_RESUME = 0xffaa33;
 
-export type GalaxyOverviewMode = 'spawn' | 'warp';
+/**
+ * Overview screen modes:
+ *  - 'spawn'  — post-auth landing. Every sector tappable; tapping fires
+ *    the kind picker for a new ship. Drives `onSpawnNewShip`.
+ *  - 'warp'   — (legacy / unused at the screen level after 2026-05-13
+ *    refactor) lightweight in-game warp picker. Neighbours tappable, fires
+ *    `onPickNeighbour`. Warp clicks now live on `GalaxyMapLayer` (the MAP
+ *    button overlay / M key), NOT on this full-screen view. Kept for the
+ *    type union in case the warp-full-screen surface is revived; the
+ *    component branch is gone.
+ *  - 'select' — in-game overview opened from the drawer's Galaxy tab.
+ *    Galaxy hexes are visual context only (no tap-to-warp). The roster
+ *    panel overlay is the only interactive surface — pick a ship to spawn
+ *    into it (`pendingShipSwap`).
+ */
+export type GalaxyOverviewMode = 'spawn' | 'warp' | 'select';
 
 export interface LimboInfo {
   sectorKey: string;
@@ -256,6 +271,10 @@ export class GalaxyOverviewRenderer {
   }
 
   private isSelectable(sec: GalaxySector): boolean {
+    // 'select' mode is non-interactive — the galaxy is overview-only
+    // and the roster panel is the only tap surface. Warp lives on
+    // `GalaxyMapLayer` (the MAP button / M key overlay), not here.
+    if (this.mode === 'select') return false;
     if (this.limbo) return sec.key === this.limbo.sectorKey;
     if (this.mode === 'spawn') return true;
     if (!this.currentSectorKey) return false;
@@ -322,9 +341,13 @@ export class GalaxyOverviewRenderer {
     if (!this.edgeLayer || !this.hexLayer || this.entries.length === 0) return;
     for (const entry of this.entries) {
       const { sector, hex, label, resumeLabel } = entry;
-      const highlighted = sector.key === this.currentSectorKey;
+      // 'select' mode is purely neutral overview — no "you are here"
+      // marker, no limbo pulse, no special state rendering for the
+      // player's ship. The drawer's galaxy map is just context.
+      const isNeutralOverview = this.mode === 'select';
+      const highlighted = !isNeutralOverview && sector.key === this.currentSectorKey;
       const selectable = this.isSelectable(sector);
-      const isLimbo = this.limbo?.sectorKey === sector.key;
+      const isLimbo = !isNeutralOverview && this.limbo?.sectorKey === sector.key;
 
       // Three visual tiers, with mode awareness:
       //  - highlighted: the current sector (pulsing green highlight).
@@ -336,7 +359,10 @@ export class GalaxyOverviewRenderer {
       //    fully visible (not greyed) so the overview stays "global".
       //  - locked: stroke-only faint outline. Reserved for spawn-mode
       //    when limbo restricts selection; non-limbo sectors are locked.
-      const informational = !selectable && this.mode === 'warp';
+      // 'select' mode renders every hex as informational — visible but
+      // inert. Same shape as warp's non-neighbour rendering, applied to
+      // every sector uniformly (no "current sector" highlight).
+      const informational = !selectable && (this.mode === 'warp' || this.mode === 'select');
 
       let fillColor: number;
       let fillAlpha: number;
@@ -399,6 +425,7 @@ export class GalaxyOverviewRenderer {
     const edges = new Graphics();
     const seen = new Set<string>();
     const isWarp = this.mode === 'warp';
+    const isSelect = this.mode === 'select';
     for (const entry of this.entries) {
       for (const nKey of entry.sector.neighbours) {
         const a = entry.sector.key;
@@ -412,7 +439,13 @@ export class GalaxyOverviewRenderer {
 
         let strokeColor: number;
         let strokeAlpha: number;
-        if (isWarp) {
+        if (isSelect) {
+          // Select-mode: every edge equally muted — no "you are here"
+          // emphasis on routes from the current sector. The drawer's
+          // galaxy map is overview-only.
+          strokeColor = COLOR_SELECTABLE_STROKE;
+          strokeAlpha = 0.4;
+        } else if (isWarp) {
           // Warp-mode: every edge visible, just emphasised on routes the
           // player can actually take from where they are now.
           strokeColor = COLOR_SELECTABLE_STROKE;

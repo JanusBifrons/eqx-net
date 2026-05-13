@@ -275,10 +275,22 @@ export function GalaxyOverviewScreen({
 
   // ----- Render -----
 
-  if (mode === 'warp') {
+  if (mode === 'warp' || mode === 'select') {
+    // Both modes share the same DOM shape (Pixi galaxy + roster overlay +
+    // close + label). The differences live in the renderer (mode-aware
+    // selectability + edge styling) and the header label.
+    //
+    // 'select' is the in-game overview opened from the drawer's Galaxy
+    // tab. Warp lives on `GalaxyMapLayer` (the MAP button / M key
+    // overlay), NOT here. The 'warp' branch is retained for prop
+    // compatibility but the production drawer wires 'select'.
+    const isSelectMode = mode === 'select';
+    const headerLabel = isSelectMode
+      ? 'Galaxy · tap a roster card to spawn into a ship'
+      : 'Galaxy · tap a neighbour to warp or a card to switch ship';
     return (
       <Box
-        data-testid="galaxy-overview-warp"
+        data-testid={isSelectMode ? 'galaxy-overview-select' : 'galaxy-overview-warp'}
         sx={{
           position: 'absolute',
           inset: 0,
@@ -291,18 +303,9 @@ export function GalaxyOverviewScreen({
           ref={mountRef}
           sx={{ flex: 1, minHeight: 0, position: 'relative', touchAction: 'none' }}
         >
-          {/* Phase 5 — surface the same ship-roster panel here as on the
-              post-auth landing screen. The user expects "the same Pixi map"
-              when they open the in-game galaxy overview, not a stripped-down
-              variant. Click-to-spawn routes through `pendingShipSwap` (a
-              direct room swap with the loading-spinner phase) rather than
-              the legacy `onSpawnExistingShip` prop, because in-game we have
-              an existing session to tear down — different from the
-              post-auth first-spawn path. */}
           {/* Panel pushed down 56px from the top so the close button (X)
-              at top: 12, right: 12 stays uncovered. The label
-              "Galaxy · tap a neighbour to warp..." at top: 12, left: 16
-              also sits in this cleared strip. */}
+              at top: 12, right: 12 stays uncovered, and the header label
+              sits in the cleared strip. */}
           <Box
             sx={{
               position: 'absolute',
@@ -353,7 +356,7 @@ export function GalaxyOverviewScreen({
             pointerEvents: 'none',
           }}
         >
-          Galaxy · tap a neighbour to warp or a card to switch ship
+          {headerLabel}
         </Box>
       </Box>
     );
