@@ -1542,7 +1542,11 @@ export class SectorRoom extends Room<SectorState> {
           this.lingeringSlots.delete(targetId);
           this.lingeringPoseCache.delete(targetId);
           this.freeSlots.push(slot);
-          this.postToWorker({ type: 'DESPAWN', slot, playerId: directLingering.playerId });
+          // After the fresh-spawn-displaces rekey, the worker's body
+          // for this hull is keyed by `linger-${shipInstanceId}`,
+          // NOT by playerId (which now points at the player's active
+          // ship). Despawn the correct body.
+          this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${targetId}` });
         }
         this.state.ships.delete(targetId);
         this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
@@ -2063,6 +2067,34 @@ export class SectorRoom extends Room<SectorState> {
           // existingShip.isActive was already false from the original
           // onLeave linger branch — leave it false so the client
           // continues to render with the lingering tint.
+
+          // Phase 6b push-fix (2026-05-13, diag
+          // 2026-05-13T19-33-59-440Z-04j2mm — the "fly into the
+          // abandoned ship, moves then snaps back" smoke-test bug).
+          //
+          // Rekey the worker's Rapier body identity from `playerId` to
+          // a unique `linger-${shipInstanceId}`. Without this, the
+          // imminent fresh-spawn `SPAWN { playerId, slot: newSlot }`
+          // calls `World.spawnShip(playerId, ...)` which does
+          // `bodies.set(playerId, newBody)` and ORPHANS the old body —
+          // it remains alive in Rapier (still collidable, still
+          // pushable) but its pose is no longer iterated by
+          // `getAllShipStates()`, so the worker stops writing its
+          // updated pose to SAB. The main thread reads the lingering
+          // slot's SAB cells (stale forever) and broadcasts the
+          // original abandon-point pose to clients every snapshot.
+          // Visible bug: client predicts the hull moving on collision
+          // → snapshot pulls it back to the stale pose → repeat.
+          //
+          // Same shape as the Phase 4 wreck rekey at line ~2840.
+          // playerToSlot in the worker also gets remapped to the new
+          // key, so SAB writes continue to land in the correct (now-
+          // lingering) slot.
+          this.postToWorker({
+            type: 'REKEY_SHIP',
+            oldId: playerId,
+            newId: `linger-${existingShip.shipInstanceId}`,
+          });
         }
         // Fall through to the fresh-spawn / shipId-restore path below.
         // The fresh spawn will allocate a NEW slot from freeSlots
@@ -2630,7 +2662,10 @@ export class SectorRoom extends Room<SectorState> {
       this.lingeringPoseCache.delete(shipInstanceId);
       if (slot !== undefined) {
         this.freeSlots.push(slot);
-        this.postToWorker({ type: 'DESPAWN', slot, playerId });
+        // The worker rekeyed this body to `linger-${shipInstanceId}` at
+        // the fresh-spawn-displaces point; DESPAWN must use the same key
+        // or it'd despawn the player's active ship.
+        this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${shipInstanceId}` });
       }
     } else {
       // Active-hull eviction — full player-scope teardown.
