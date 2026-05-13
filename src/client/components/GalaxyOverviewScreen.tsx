@@ -24,6 +24,7 @@ import { useUIStore } from '../state/store';
 import { useIsCompact } from '../layout/useIsCompact';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
+import { useMountLog } from '../debug/useMountLog';
 
 /** Delay between sector tap and picker mount, in milliseconds. Long
  *  enough to drain the originating touchend (~50 ms on slow phones is
@@ -109,6 +110,7 @@ export function GalaxyOverviewScreen({
   onClose,
   activeLimboSectorKey,
 }: GalaxyOverviewScreenProps): JSX.Element {
+  useMountLog('GalaxyOverviewScreen', { mode });
   const mountRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<GalaxyOverviewRenderer | null>(null);
 

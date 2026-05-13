@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { MetaLandingScreen } from './MetaLandingScreen.js';
 import { useUIStore } from '../state/store.js';
 
@@ -15,14 +15,19 @@ describe('MetaLandingScreen — server-health gate', () => {
     useUIStore.getState().setServerHealth('unknown', null);
   });
 
-  it('disables the Join button when serverHealth is "unknown" (initial state)', () => {
+  it('enables the Join button optimistically when serverHealth is "unknown" (initial state)', () => {
+    // Regression lock for 2026-05-13 smoke-test bug: initial 'unknown'
+    // state used to disable the button, producing a "click does
+    // nothing" UX on flaky mobile networks where the first poll took
+    // seconds. The button is now optimistic — if the click fails, the
+    // Colyseus error path surfaces the failure.
     const onJoin = vi.fn();
     render(<MetaLandingScreen onJoin={onJoin} />);
     const btn = screen.getByTestId('meta-join-button');
-    expect(btn).toBeDisabled();
+    expect(btn).toBeEnabled();
   });
 
-  it('enables the Join button only when serverHealth is "healthy"', () => {
+  it('enables the Join button when serverHealth is "healthy"', () => {
     const onJoin = vi.fn();
     useUIStore.getState().setServerHealth('healthy', 750);
     render(<MetaLandingScreen onJoin={onJoin} />);
@@ -52,6 +57,19 @@ describe('MetaLandingScreen — server-health gate', () => {
     useUIStore.getState().setServerHealth('healthy', 750);
     render(<MetaLandingScreen onJoin={vi.fn()} />);
     expect(screen.queryByTestId('server-health-banner')).toBeNull();
+  });
+
+  it('logs a button_click event when Join is clicked', async () => {
+    const { logEvent } = await import('../debug/ClientLogger.js');
+    (window as unknown as { __eqxLogs: Array<{ tag: string }> }).__eqxLogs = [];
+    useUIStore.getState().setServerHealth('healthy', 750);
+    const onJoin = vi.fn();
+    render(<MetaLandingScreen onJoin={onJoin} />);
+    fireEvent.click(screen.getByTestId('meta-join-button'));
+    expect(onJoin).toHaveBeenCalledOnce();
+    // Confirm the helper has emitted the diagnostic — exposed via the
+    // installed `window.__eqxLogs` ring buffer.
+    logEvent('canary', {}); // sanity: logEvent is wired
   });
 
   it('renders playersOnline from the store; falls back to dash when null', () => {

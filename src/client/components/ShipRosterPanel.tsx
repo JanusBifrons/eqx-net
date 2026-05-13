@@ -4,6 +4,7 @@ import { ShipRosterCard, type RosterShipEntry } from './ShipRosterCard';
 import { ShipDetailModal } from './ShipDetailModal';
 import { ROSTER_CAP } from './rosterConstants';
 import { logEvent } from '../debug/ClientLogger';
+import { useMountLog } from '../debug/useMountLog';
 import { useUIStore } from '../state/store';
 
 /**
@@ -49,6 +50,7 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
   // in lockstep. This panel still owns the fetch polling, but writes
   // results into the shared store. `RosterCountBadge` and any future
   // consumer read from the same store.
+  useMountLog('ShipRosterPanel', { compact, hasPlayerId: playerId !== '' });
   const ships = useUIStore((s) => s.shipRoster) as RosterShipEntry[];
   const setShipRoster = useUIStore((s) => s.setShipRoster);
   const [openShipId, setOpenShipId] = useState<string | null>(null);

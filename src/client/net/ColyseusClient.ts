@@ -373,6 +373,37 @@ export class ColyseusGameClient {
    *  `linger-` prefix so they can't collide with the playerId or
    *  wreck namespaces. Despawned when removed from mirror.lingeringShips. */
   private predLingeringIds = new Set<string>();
+
+  /**
+   * Spawn / update the predWorld body for a lingering hull, given that
+   * both `kind` and pose have been populated in the mirror. Called from
+   * two sites:
+   *
+   *  1. `handleSnapshot` after writing pose from the snapshot.
+   *  2. `syncMirror` after writing `kind` from the Colyseus schema diff.
+   *
+   * Either site can race ahead of the other on a flaky network. The
+   * helper handles both orderings by being a no-op when the mirror
+   * entry isn't fully populated — and the OTHER site re-fires it
+   * once its piece arrives. Closes the "colliding through my hulk"
+   * regression where the predWorld body was deferred a full snapshot
+   * tick after the schema diff (2026-05-13 smoke-test feedback).
+   */
+  private tryEnsureLingerPredBody(shipInstanceId: string): void {
+    if (!this.predWorld) return;
+    const entry = this.mirror.lingeringShips?.get(shipInstanceId);
+    if (!entry || !entry.kind) return;
+    const bodyId = `linger-${shipInstanceId}`;
+    if (!this.predWorld.hasShip(bodyId)) {
+      this.predWorld.spawnShip(bodyId, entry.x, entry.y, entry.kind);
+      this.predLingeringIds.add(bodyId);
+    }
+    this.predWorld.setShipState(bodyId, {
+      x: entry.x, y: entry.y, angle: entry.angle,
+      vx: entry.vx, vy: entry.vy,
+      angvel: 0,
+    });
+  }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
@@ -1274,23 +1305,10 @@ export class ColyseusGameClient {
         lingeringSeen.add(shipInstanceId);
         // Phase 6b — spawn / refresh the predWorld body so the local
         // player can collide with the parked hull (mirrors the wreck
-        // pattern in syncWreckPoses). Body id prefixed with `linger-`
-        // to keep namespaces separate from playerId / wreck. Spawn
-        // lazily: requires `kind` so the body has the right shape;
-        // the next snapshot retries when kind is known.
-        const kind = prev?.kind;
-        if (this.predWorld && kind) {
-          const bodyId = `linger-${shipInstanceId}`;
-          if (!this.predWorld.hasShip(bodyId)) {
-            this.predWorld.spawnShip(bodyId, entry.x, entry.y, kind);
-            this.predLingeringIds.add(bodyId);
-          }
-          this.predWorld.setShipState(bodyId, {
-            x: entry.x, y: entry.y, angle: entry.angle,
-            vx: entry.vx, vy: entry.vy,
-            angvel: entry.angvel,
-          });
-        }
+        // pattern in syncWreckPoses). The helper handles the race
+        // between this site (pose) and syncMirror (kind) — see its
+        // doc comment.
+        this.tryEnsureLingerPredBody(shipInstanceId);
         continue;
       }
       statesByPlayerId[entry.playerId] = entry;
@@ -2182,6 +2200,12 @@ export class ColyseusGameClient {
           ...(kind !== undefined ? { kind } : {}),
           ...(displayName !== undefined ? { displayName } : {}),
         });
+        // Phase 6b cleanup (2026-05-13) — spawn the predWorld body
+        // here too, in case the schema diff arrived AFTER the first
+        // snapshot. Without this, the predWorld body was deferred a
+        // full snapshot tick, letting the local player fly through
+        // their own freshly-displaced hulk on flaky networks.
+        this.tryEnsureLingerPredBody(shipInstanceId);
         continue;
       }
 

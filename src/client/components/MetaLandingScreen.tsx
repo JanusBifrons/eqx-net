@@ -1,6 +1,8 @@
 import { Alert, Box, Button, Typography } from '@mui/material';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { useUIStore } from '../state/store.js';
+import { logEvent } from '../debug/ClientLogger.js';
+import { useMountLog } from '../debug/useMountLog.js';
 
 interface Props {
   onJoin: () => void;
@@ -21,14 +23,37 @@ interface Props {
  * server hasn't replied yet or is unreachable — at which point the
  * banner is the load-bearing UI surface, not the hype number.
  *
- * The Join CTA is disabled when the server isn't `healthy` — clicking
- * a button that would immediately fail is worse UX than seeing a
- * banner that explains why we're waiting.
+ * The Join CTA is disabled ONLY when the server is `warming` or
+ * `unreachable` — `unknown` (the initial state before the first poll
+ * completes) is treated optimistically as enabled. If the click then
+ * fails, the Colyseus connection-error path surfaces an error to the
+ * user. Disabling the button during `unknown` produced a "click does
+ * nothing" UX on flaky networks where the first poll takes seconds
+ * (2026-05-13 smoke-test feedback).
  */
 export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element {
   const serverHealth = useUIStore((s) => s.serverHealth);
   const playersOnline = useUIStore((s) => s.playersOnline);
-  const canJoin = serverHealth === 'healthy';
+  // Optimistic gate: unknown ⇒ enabled. Only the two explicit
+  // not-ready states block the click.
+  const canJoin = serverHealth !== 'warming' && serverHealth !== 'unreachable';
+
+  useMountLog('MetaLandingScreen');
+
+  const handleJoinClick = (): void => {
+    logEvent('button_click', {
+      name: 'meta-join-button',
+      serverHealth,
+      playersOnline,
+      canJoin,
+    });
+    onJoin();
+  };
+
+  const handleLocalClick = (): void => {
+    logEvent('button_click', { name: 'meta-local-button' });
+    if (onSelectLocal) onSelectLocal();
+  };
 
   return (
     <Box
@@ -95,7 +120,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
         variant="contained"
         size="large"
         startIcon={<RocketLaunchIcon />}
-        onClick={onJoin}
+        onClick={handleJoinClick}
         disabled={!canJoin}
         sx={{
           bgcolor: '#00ff88',
@@ -126,7 +151,7 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
           data-testid="meta-local-button"
           variant="text"
           size="small"
-          onClick={onSelectLocal}
+          onClick={handleLocalClick}
           sx={{ color: '#ff8800', '&:hover': { bgcolor: 'rgba(255, 136, 0, 0.08)' } }}
         >
           Single-player diagnostic

@@ -69,6 +69,14 @@ const BUCKETS: Record<string, string> = {
   player_rebind: 'lifecycle',
   player_lingered: 'lifecycle',
   ownerless_evicted: 'lifecycle',
+  // Phase 6b smoke-test fallout (2026-05-13) — UI diagnostics for
+  // "mounted twice / never appeared / Join button did nothing" failure
+  // modes. Bucket to lifecycle: low-frequency, structural events.
+  component_mount: 'lifecycle',
+  component_unmount: 'lifecycle',
+  phase_change: 'lifecycle',
+  server_health_change: 'lifecycle',
+  button_click: 'lifecycle',
   // snapshots
   snapshot: 'snapshots',
   snapshot_broadcast: 'snapshots',

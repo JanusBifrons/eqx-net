@@ -25,8 +25,11 @@ import { MobileControls } from './components/MobileControls';
 import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
+import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
+import { logEvent } from './debug/ClientLogger';
+import { useMountLog } from './debug/useMountLog';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { WeaponSelector } from './components/WeaponSelector';
 import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
@@ -528,6 +531,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         <Slot anchor="bottom-center" order={10}><GalaxyMapToggleButton /></Slot>
       )}
       <HyperspaceOverlay onCancel={handleCancelTransit} />
+      <LostConnectionOverlay />
       {galaxyOverviewOpen && (
         <Slot anchor="fullscreen" order={25}>
           <GalaxyOverviewScreen
@@ -663,6 +667,17 @@ export function App(): JSX.Element {
     applyUserPrefs(user?.id ?? null);
   }, [user?.id]);
 
+  // App-level diagnostic logging (2026-05-13). Mount lifecycle + phase
+  // transitions + serverHealth transitions go into the same ring buffer
+  // the diag capture exports. Logs are cheap (~80 bytes each) and
+  // fire at most a handful of times per session, so the perf impact
+  // is well below the noise floor.
+  useMountLog('App');
+
+  useEffect(() => {
+    logEvent('phase_change', { phase });
+  }, [phase]);
+
   // Server-health poll loop. Runs for the whole app lifetime — the
   // landing-screen banner + Join-button gate are the primary consumers,
   // but the value also drives the hype-number on `MetaLandingScreen`,
@@ -670,12 +685,23 @@ export function App(): JSX.Element {
   // (one HTTP GET every ~8 s in steady state).
   useEffect(() => {
     const setServerHealth = useUIStore.getState().setServerHealth;
+    let lastState: string = useUIStore.getState().serverHealth;
     const poller = createServerHealthPoller({
       url: `${SERVER_URL}/healthz`,
       onChange: (snapshot) => {
         const next = snapshot.state === 'healthy'
           ? (snapshot.data?.ready ? 'healthy' : 'warming')
           : snapshot.state; // 'unreachable' | 'unknown'
+        // Log only on transitions so we don't fill the ring buffer
+        // with steady-state healthy polls (1 every 8s = 7.5/min).
+        if (next !== lastState) {
+          logEvent('server_health_change', {
+            from: lastState,
+            to: next,
+            playersOnline: snapshot.data?.playersOnline ?? null,
+          });
+          lastState = next;
+        }
         setServerHealth(next, snapshot.data?.playersOnline ?? null);
       },
     });
