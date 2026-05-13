@@ -54,6 +54,9 @@ const BUCKETS: Record<string, string> = {
   // so we can correlate combat-phase correction bursts with actual
   // drone-vs-player contacts. See SectorRoom.ts CONTACT_BATCH handler.
   collision_resolved: 'combat',
+  // Phase 6b — diagnostic for the same-playerId active+lingering hull
+  // self-collisions that we drop at the broadcast site.
+  collision_self_filtered: 'combat',
   // Phase B (2026-05-09 AI lockstep) — per-drone snap distances /
   // angle deltas / angvel deltas captured in `syncSwarmIntoPredWorld`.
   // Buckets to `corrections` because that's structurally what these
