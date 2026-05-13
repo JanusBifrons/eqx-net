@@ -2327,7 +2327,17 @@ export class SectorRoom extends Room<SectorState> {
     // (PlayerShipStore.get etc.) never see an empty id. Two players in
     // the same engineering room each get a unique synthetic id, so
     // there's no collision.
-    if (ship.shipInstanceId === '') {
+    //
+    // 2026-05-13 fix: scope to engineering rooms ONLY. A previous
+    // version of this fallback fired unconditionally when
+    // shipInstanceId was '', which also caught the GALAXY-room
+    // roster-full case (bindRosterEntry returns '' on RosterFullError).
+    // The synthetic UUID then had no roster row, so the 30-tick
+    // abandon-detection sweep saw `store.get(syntheticUUID) === null`
+    // and immediately reaped the ship as a wreck — 18 ms after spawn.
+    // Regression test:
+    // `tests/integration/sectorRoom/rosterFullWreck.test.ts`.
+    if (ship.shipInstanceId === '' && this.sectorKey === null) {
       ship.shipInstanceId = randomUUID();
     }
     ship.isActive = true;
