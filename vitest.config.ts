@@ -3,19 +3,20 @@ import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
 /**
- * Vitest config.
+ * Vitest config — main (unit + component + scenario) suite.
  *
- * - `pnpm test`  -> unit + component tests (.test.ts / .test.tsx)
- * - `pnpm bench` -> benchmarks (.bench.ts)
+ * - `pnpm test`              -> this config (default `vitest.config.ts`)
+ * - `pnpm test:integration`  -> `vitest.integration.config.ts` (Phase A1+)
+ * - `pnpm bench`             -> benchmarks (.bench.ts)
+ *
+ * Integration tests live under `tests/integration/` and run in a separate
+ * vitest invocation because they need a different pool configuration
+ * (Colyseus's process-level handlers fight with isolated fork workers —
+ * see vitest.integration.config.ts for the full incident report).
  *
  * Per-file environment selection via `environmentMatchGlobs`:
  *   - `*.test.tsx` ⇒ jsdom (component tests need a DOM)
  *   - everything else ⇒ node (server logic, schemas, helpers — fastest)
- *
- * The `@vitejs/plugin-react` plugin is loaded so JSX in `.test.tsx`
- * is transformed correctly. Setup file registers `@testing-library/
- * jest-dom` matchers + the per-test cleanup, both gated to the jsdom
- * environment.
  */
 export default defineConfig({
   plugins: [react()],
@@ -39,7 +40,14 @@ export default defineConfig({
       // Stage 4.5 — scenario-harness regression fixtures (network-feel roadmap).
       'tests/scenarios/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', 'dist/**', 'tests/e2e/**', 'benchmarks/**', 'tests/integration/**'],
+    exclude: [
+      '**/node_modules/**',
+      'dist/**',
+      'tests/e2e/**',
+      'benchmarks/**',
+      // Phase A1 — integration tests run via `pnpm test:integration`.
+      'tests/integration/**',
+    ],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],
     },

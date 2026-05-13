@@ -1143,29 +1143,46 @@ If any answer is no, the local player will fly through and the server may miss h
 
 ---
 
-## 2026-05-13 — Phase A1 — `@colyseus/testing` integration test harness blocked at multiple layers
+## 2026-05-13 — Phase A1 — SectorRoom integration test harness (shipped after 5 layers of resolution)
 
-Attempted to set up an end-to-end SectorRoom integration test using `@colyseus/testing@0.16.3` (installed but never used in this codebase). The goal was the regression lock that would have caught the Phase 6b "lingering hull invisible" bug class in CI rather than via player smoke-test.
+Set up an end-to-end SectorRoom integration test that the Phase 6b "lingering hull invisible" bug class would have failed. The original goal — using `@colyseus/testing@0.16.3` — was abandoned partway through; the harness now bypasses `@colyseus/testing` entirely and drives the production stack directly via `new Server()` + raw `colyseus.js` client. Files:
 
-**Blockers encountered** (each surfaced after fixing the previous):
+- `tests/integration/sectorRoom/harness.ts` — boot-a-real-server factory
+- `tests/integration/sectorRoom/lingering.test.ts` — Phase 6b regression locks (5 tests)
+- `tests/integration/sectorRoom/sqliteStub.ts` — no-op `DatabaseSync`
+- `vitest.integration.config.ts` — separate config (see #5 below)
 
-1. **Transitive `@colyseus/tools@0.17.19` mismatch**. A previous install of `@colyseus/testing@0.17` left tools 0.17 in the lock file. `@colyseus/testing@0.16.3`'s entry point imports tools, which imports `defineServer` from `@colyseus/core@0.17` — but we have 0.16.24. Fixed by `pnpm add -D @colyseus/tools@^0.16.0`.
+**Blockers encountered, in order resolved:**
 
-2. **`node:sqlite` import via the transitive chain**. `Database.ts` (read-only main-thread connection) is imported by `PersistenceWorker.ts` which is imported by `SectorRoom.ts`. Vite's resolver strips the `node:` prefix and fails to load `sqlite` as a bare module. Worked around with a `resolve.alias` to a no-op `sqliteStub.ts`.
+1. **Transitive `@colyseus/tools@0.17.19` mismatch**. A previous install of `@colyseus/testing@0.17` left tools 0.17 in the lock file. `@colyseus/testing@0.16.3`'s entry point imports tools, which imports `defineServer` from `@colyseus/core@0.17` — but we have 0.16.24. **Fix**: `pnpm add -D @colyseus/tools@^0.16.0`.
 
-3. **Legacy `experimentalDecorators` not applied by esbuild**. Vitest's default esbuild transform emits TC39 stage-3 decorators with `Symbol.metadata`, incompatible with `@colyseus/schema@3.x`'s annotations. Fixed by configuring `esbuild.tsconfigRaw` in vitest.config.
+2. **`node:sqlite` import via the transitive chain**. `Database.ts` → `PersistenceWorker.ts` → `SectorRoom.ts`. Vite's resolver strips the `node:` prefix and fails to load `sqlite` as a bare module. **Fix**: `resolve.alias` `node:sqlite` to a no-op `sqliteStub.ts`. Integration tests stub the persistence layer at the `setPersistence` / `setLimboStore` / `setPlayerShipStore` seams anyway, so SQLite is never touched.
 
-4. **tinypool worker-IPC serialization crash**. After all the above, the Colyseus Server boots successfully (banner prints) but vitest's reporter crashes with `TypeError: ERR_INVALID_ARG_TYPE` in `deserialize` — Schema instances aren't structuredClone-able through tinypool's child-process or worker-thread IPC. Tried both `forks` and `threads` pool modes; same failure mode either way. **This is the unresolved blocker.**
+3. **Legacy `experimentalDecorators` not applied by esbuild**. Vitest's default esbuild transform emits TC39 stage-3 decorators with `Symbol.metadata`, incompatible with `@colyseus/schema@3.x`'s annotations. **Fix**: `esbuild.tsconfigRaw` in vitest.config with `experimentalDecorators: true, useDefineForClassFields: false`.
 
-**Status**: harness files (`tests/integration/sectorRoom/harness.ts`, `lingering.test.ts`, `sqliteStub.ts`) are kept in-tree, excluded from the test run via `vitest.config.ts` excludes. Vitest config reverted to its pre-A1 shape — no integration tests run.
+4. **tinypool worker-IPC serialization crash**. After all the above, `@colyseus/testing`'s `boot()` succeeded but vitest's reporter crashed with `TypeError: ERR_INVALID_ARG_TYPE` in `deserialize` — Colyseus's `registerGracefulShutdown` installs `process.on('uncaughtException')` which poisons tinypool's IPC during teardown. Tried `forks` and `threads` both — same failure mode. **Fix**: bypass `@colyseus/testing` entirely. Drive raw `new Server({ transport: new WebSocketTransport({...}) })` + `gameServer.listen(randomPort)` + `new Client('ws://localhost:port')` from `colyseus.js`. Nothing crosses the worker IPC boundary because server + client both live in the same node process as the test. Then pin `pool: 'threads'` with `singleThread: true, isolate: false` to keep Colyseus's global handlers out of the IPC path entirely.
 
-**The pivot**: Phase A3 (pure-helper extraction for renderer decisions) was completed instead. That catches the highest-value bug class — rendering of lingering hulls — directly. The server-side snapshot routing is covered by the existing `src/client/net/ColyseusClient.lingeringRouting.test.ts` unit test, which mocks the snapshot input rather than running it through Colyseus end-to-end.
+5. **`pool: 'threads'` breaks `process.chdir()`-using tests**. Worker threads don't support `process.chdir()`. `src/server/routes/diagRouter.test.ts` does `process.chdir(tempDir)` in `beforeAll` to redirect a capture-dir module-load constant. Tried `poolMatchGlobs` to apply the threads pool only to integration tests, but the resulting cross-pool serialization triggers a separate `ERR_INVALID_ARG_TYPE` rejection in tinypool's child-process IPC even when the failing test is in the threads-only glob. **Fix**: split into two configs (`vitest.config.ts` and `vitest.integration.config.ts`) invoked by separate scripts. The main suite runs in default forks; the integration suite runs in single-thread threads. No cross-pool mixing.
 
-**Next attempt options** (for a future session):
-- **Option A**: Run integration tests in a separate Node process outside vitest (via a `node` script that imports the harness, runs the assertions, exits with status). Vitest wraps it as a single "integration suite" test that just checks the exit code. No tinypool involvement.
-- **Option B**: Write a manual SectorRoom test (no Colyseus server) that directly instantiates the room class and calls `onCreate` / `onJoin` / `onLeave` / `update` with mocked clients. Heavier mocking but no IPC serialization. The existing `src/server/transit/TransitOrchestrator.test.ts` is the gold standard scaled down; scale up to room level is a few hundred lines of mock plumbing.
-- **Option C**: Pin vitest + tinypool to versions that handle Schema serialization (research needed; may require contributions upstream).
+**Additional discoveries (production-code semantics that bit the test):**
 
-The harness's stub-injection pattern (CaptureSink + setLimboStore + setPlayerShipStore at module-level) is sound and can be reused under any of these approaches.
+- **`assignPlayerId` rejects non-UUID join options**. `src/server/identity/PlayerIdentity.ts` validates the requested playerId against a UUID regex and returns a fresh `randomUUID()` on mismatch. Test playerIds like `'player-A'` are silently replaced. **Fix**: integration tests pre-generate `randomUUID()` values and assert against the same UUID end-to-end.
 
-**Cost-of-not-having-it**: Phase 6b cleanup, Phase 6c (drone retargeting), Phase 6d (slot cap) all benefit from a SectorRoom integration test. Each can ship without one — via manual room test + smoke verification — but the recurring "ship invisible" / "client routes wrong" bug class will keep re-appearing until this gap closes.
+- **Sectors are "idle from birth"** — `IdleTracker.lastEventTick` defaults to `-Infinity`, so the first call to `isSectorIdle` returns true under any positive threshold. Snapshot broadcasts are gated on `!sectorIdle`, so a freshly-spawned stationary ship NEVER receives a snapshot until something moves. **Fix in tests**: send an `input` message with `thrust: true` to apply an impulse — the worker's pose update propagates back to `shipPoseCache`, the idle check sees motion, `noteSectorEvent` fires, `sectorIdle` flips false, broadcasts resume. The harness exposes `sendThrust(room)` as the canonical wake-up.
+
+- **Galaxy rooms (`sectorKey` set) are `autoDispose: false`** so they persist across disconnect/reconnect. Tests use `beforeEach` (not `beforeAll`) to isolate per-test state — without isolation, lingering hulls from prior tests pollute later assertions.
+
+**Harness API** (see `tests/integration/sectorRoom/harness.ts` for the canonical interface):
+```ts
+const harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true });
+const client = await harness.connectAs(uuid, { shipKind: 'fighter' });
+harness.sendThrust(client);                       // unidle the sector
+const snap = await harness.waitForSnapshot(client, 3000);
+const state = harness.getServerRoom()!.state;     // direct schema access
+await harness.disconnectClient(client);
+await harness.cleanup();
+```
+
+**Result**: 5/5 integration tests pass in ~2.5s wall-clock; the regression that took 4 smoke-test cycles to surface in Phase 6b would have failed test 5 ("after fresh-spawn, original ship lingers + new ship is active") in CI.
+
+**For future entity types** (drones-as-targets / Phase 6c, slot-cap eviction / Phase 6d): add a `describe` block in `lingering.test.ts` per scenario. Avoid the temptation to create a generic "sector harness" with too-many parameters — copy-paste a tight `beforeEach + connectAs + assert + disconnect` block instead. Integration tests trade isolation for speed; per-test boot is acceptable.

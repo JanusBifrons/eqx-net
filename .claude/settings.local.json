@@ -27,7 +27,9 @@
       "Bash(*)",
       "PowerShell(Stop-Process -Id 14532 -Force)",
       "PowerShell(*)",
-      "Bash(echo \"EXIT=$?\")"
+      "Bash(echo \"EXIT=$?\")",
+      "PowerShell(pnpm lint *)",
+      "Bash(git add *)"
     ]
   }
 }

@@ -100,3 +100,11 @@ Update this section when a threshold is set.
 - Phase 2 evicts Rapier to a `worker_threads` worker; the main Colyseus thread reads SAB directly.
 - Phase 7 (shipped) moves `node:sqlite` writes to a dedicated `worker_threads` worker via the same `bundleWorker` esbuild helper used by the physics worker. The main thread holds only a **read-only** `DatabaseSync` for auth `SELECT`s.
 - If you are adding a new CPU-heavy subsystem, default to spawning a worker rather than running on the main thread.
+
+---
+
+## Testing patterns
+
+- **Hand-rolled mocks for orchestrator-shaped logic**: `src/server/transit/TransitOrchestrator.test.ts` is the gold standard. `makeRoom()`, `makePlayerShipStore()`, `makeFakeClient()` factories let a test set up a Sector-room-shaped harness in ~50 lines of mock plumbing. Fast (~10 ms per case), no I/O, no IPC. Use this for any test that exercises decision logic over state — the messages-to-state-to-broadcasts pipeline doesn't need a real server.
+- **Integration tests for end-to-end snapshot routing** (Phase A1, 2026-05-13): `tests/integration/sectorRoom/harness.ts` boots a real `Server` + `SectorRoom` + `WebSocketTransport` + `colyseus.js` client in the same node process. Run via `pnpm test:integration` (separate vitest config — `vitest.integration.config.ts`). Use this whenever a behaviour spans the snapshot wire format, the broadcast gates (idle suppression, backpressure), or the schema-diff serialisation. The Phase 6b "lingering hull invisible" bug class is the canonical reason: the bug was in the broadcast loop's iteration, not in the room's state-mutation code. A hand-rolled mock couldn't catch it. The integration test would have.
+- **When introducing a new visible entity type** (wreck, lingering hull, future X), add an integration test in `tests/integration/sectorRoom/` that drives the full snapshot path. Don't rely on smoke tests — they are not repeatable and don't protect future PRs.

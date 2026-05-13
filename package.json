@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "bench": "vitest bench --run",
     "e2e": "playwright test",
     "e2e:headed": "cross-env PWHEADED=1 playwright test",
