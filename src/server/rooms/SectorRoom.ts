@@ -734,7 +734,7 @@ export class SectorRoom extends Room<SectorState> {
       // Phase 3 dual-write — drop the destroyed ship from the roster. The
       // Phase 4 wreck flow will replace this with "leave a wreck behind"
       // semantics, but for Phase 3 destruction just removes the row.
-      const destroyedShip = this.state.ships.get(evt.targetId);
+      const destroyedShip = this.getActiveShip(evt.targetId);
       if (destroyedShip !== undefined) {
         this.deleteRosterRow(destroyedShip.shipInstanceId);
       }
@@ -789,6 +789,20 @@ export class SectorRoom extends Room<SectorState> {
    */
   private resolveActiveShipKey(playerId: string): string | undefined {
     return this.playerToActiveShipInstance.get(playerId);
+  }
+
+  /**
+   * Phase 6b — convenience reader. Look up the active ShipState for a
+   * given playerId. Internally translates playerId → shipInstanceId
+   * via the indirection map and reads the schema. Returns `undefined`
+   * for unknown players or players whose only hulls are lingering
+   * (isActive=false). Use this everywhere a Phase 6a callsite did
+   * `state.ships.get(playerId)`.
+   */
+  private getActiveShip(playerId: string): ShipState | undefined {
+    const shipKey = this.resolveActiveShipKey(playerId);
+    if (shipKey === undefined) return undefined;
+    return this.state.ships.get(shipKey);
   }
 
   // ── Combat ──────────────────────────────────────────────────────────────
@@ -877,7 +891,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     for (const [playerId] of this.playerToSlot) {
-      const ship = this.state.ships.get(playerId);
+      const ship = this.getActiveShip(playerId);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(playerId);
       if (!pose) continue;
@@ -949,7 +963,7 @@ export class SectorRoom extends Room<SectorState> {
     const targets = this.droneMountTargetsScratch;
     targets.length = 0;
     for (const [pid] of this.playerToSlot) {
-      const ship = this.state.ships.get(pid);
+      const ship = this.getActiveShip(pid);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(pid);
       if (!pose) continue;
@@ -1042,7 +1056,7 @@ export class SectorRoom extends Room<SectorState> {
     const shooterId = this.sessionToPlayer.get(client.sessionId);
     if (!shooterId) return;
 
-    const ship = this.state.ships.get(shooterId);
+    const ship = this.getActiveShip(shooterId);
     if (!ship || !ship.alive) return;
 
     // Temporal plausibility: reject claims older than LAG_COMP_WINDOW ticks (~200 ms).
@@ -1194,7 +1208,7 @@ export class SectorRoom extends Room<SectorState> {
 
       for (const [targetId] of this.playerToSlot) {
         if (targetId === shooterId) continue;
-        const targetShip = this.state.ships.get(targetId);
+        const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
         const rewound = this.snapshotRing.getPoseAt(targetId, tick);
         const fallback = this.shipPoseCache.get(targetId);
@@ -1376,7 +1390,7 @@ export class SectorRoom extends Room<SectorState> {
       let hitId: string | null = null;
       let hitDist = Infinity;
       for (const [targetId] of this.playerToSlot) {
-        const targetShip = this.state.ships.get(targetId);
+        const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
         const pose = this.shipPoseCache.get(targetId);
         if (!pose) continue;
@@ -1444,7 +1458,7 @@ export class SectorRoom extends Room<SectorState> {
       return;
     }
 
-    const ship = this.state.ships.get(targetId);
+    const ship = this.getActiveShip(targetId);
     if (ship) {
       if (!ship.alive) return;
       ship.health = Math.max(0, ship.health - damage);
@@ -1517,9 +1531,12 @@ export class SectorRoom extends Room<SectorState> {
    *  comes from `shipPoseCache` (the SAB mirror) — the schema no longer
    *  carries spatial fields. */
   private *alivePlayerPositions(): IterableIterator<{ x: number; y: number }> {
-    for (const [playerId, ship] of this.state.ships) {
+    // Phase 6b — schema key is shipInstanceId, but shipPoseCache is still
+    // playerId-keyed (Option A residual), so we read pose via ship.playerId.
+    for (const [, ship] of this.state.ships) {
       if (!ship.alive) continue;
-      const pose = this.shipPoseCache.get(playerId);
+      if (!ship.isActive) continue;
+      const pose = this.shipPoseCache.get(ship.playerId);
       if (!pose) continue;
       yield { x: pose.x, y: pose.y };
     }
@@ -1568,7 +1585,7 @@ export class SectorRoom extends Room<SectorState> {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
 
-    const ship = this.state.ships.get(playerId);
+    const ship = this.getActiveShip(playerId);
     if (!ship || ship.alive) return; // only dead ships may respawn
 
     const slot = this.playerToSlot.get(playerId);
@@ -1645,7 +1662,7 @@ export class SectorRoom extends Room<SectorState> {
 
       for (const [targetId] of this.playerToSlot) {
         if (targetId === proj.ownerId) continue;
-        const targetShip = this.state.ships.get(targetId);
+        const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
         const targetPose = this.shipPoseCache.get(targetId);
         if (!targetPose) continue;
@@ -1878,7 +1895,7 @@ export class SectorRoom extends Room<SectorState> {
     // through to the fresh-spawn path below.
     const ownerlessTimer = this.ownerlessShips.get(playerId);
     if (this.sectorKey !== null && ownerlessTimer !== undefined) {
-      const existingShip = this.state.ships.get(playerId);
+      const existingShip = this.getActiveShip(playerId);
       const wantsNewShip = parsed.success && parsed.data.isNewShip === true;
       const requestedShipIdForRebindCheck = parsed.success && typeof parsed.data.shipId === 'string'
         ? parsed.data.shipId
@@ -1902,6 +1919,11 @@ export class SectorRoom extends Room<SectorState> {
         this.ownerlessShips.delete(playerId);
         const existingSlot = this.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
+        // Phase 6b — flip the lingering flag back. The hull is being
+        // re-bound to a live session; isActive=true means the snapshot
+        // anchor + render tint + (Phase 6c) drone targeting all treat
+        // it as fully alive again.
+        existingShip.isActive = true;
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
@@ -2157,13 +2179,14 @@ export class SectorRoom extends Room<SectorState> {
     // any synchronous observer (e.g. a re-entrant fire-handler) can
     // already resolve the player's active hull.
     this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
-    // NOTE: in Phase 6a Option A the schema map stays playerId-keyed
-    // internally — the wire-level keying (SnapshotMessage.states) is
-    // shipInstanceId, but the Colyseus MapSchema key remains playerId
-    // so the ~25 `state.ships.get(playerId)` callsites in this file
-    // don't need a mechanical rekey yet. Phase 6b will flip the schema
-    // key when lingering hulls actually need >1 entry per player.
-    this.state.ships.set(playerId, ship);
+    // Phase 6b — schema map is keyed by shipInstanceId. This supports
+    // multiple entries per player (active + lingering hulls). All the
+    // `state.ships.get(playerId)` callsites have been migrated to the
+    // `getActiveShip(playerId)` helper which translates via
+    // resolveActiveShipKey. The Colyseus diff broadcast now carries
+    // ship records keyed by shipInstanceId; the snapshot wire format
+    // already matched this since Phase 6a.
+    this.state.ships.set(ship.shipInstanceId, ship);
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -2228,6 +2251,13 @@ export class SectorRoom extends Room<SectorState> {
     const playerId = this.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
 
+    // Phase 6b — capture the active ship's shipInstanceId now, before
+    // any cleanup clears the indirection map. We need it to delete from
+    // the schema (which is now shipInstanceId-keyed) at the end of the
+    // despawn path. May be undefined if the player never finished
+    // joining; downstream guards handle that case.
+    const onLeaveShipKey = this.resolveActiveShipKey(playerId);
+
     // Phase 1 AI: drop this player from every drone's hostile set so that
     // when (or if) they return to the sector — or another player engages —
     // the drones aren't still gunning for someone who's no longer here.
@@ -2247,7 +2277,7 @@ export class SectorRoom extends Room<SectorState> {
     clearSession(client.sessionId);
 
     const slot = this.playerToSlot.get(playerId);
-    const ship = this.state.ships.get(playerId);
+    const ship = this.getActiveShip(playerId);
     const transitInFlight = this.playerToTransitInFlight.has(playerId);
     this.playerToTransitInFlight.delete(playerId);
 
@@ -2311,6 +2341,15 @@ export class SectorRoom extends Room<SectorState> {
       }
       this.ownerlessShips.set(playerId, evictTimer);
 
+      // Phase 6b — flip the schema's `isActive` flag to false so the
+      // client renderer can tint lingering hulls (grey-ish, no thrust
+      // flame) and Phase 6c's drone retargeting can ignore them. The
+      // schema field mutation propagates via the Colyseus diff broadcast
+      // automatically. Indirection map (playerToActiveShipInstance)
+      // INTENTIONALLY KEPT — on rebind we look it up to find the
+      // shipInstanceId to flip back to active.
+      ship.isActive = false;
+
       serverLogEvent('player_lingered', { playerId });
       logger.info(
         { playerId, sectorKey: this.sectorKey, health: ship.health },
@@ -2338,7 +2377,7 @@ export class SectorRoom extends Room<SectorState> {
       this.postToWorker({ type: 'DESPAWN', slot, playerId });
     }
 
-    this.state.ships.delete(playerId);
+    if (onLeaveShipKey !== undefined) this.state.ships.delete(onLeaveShipKey);
     this.shipPoseCache.delete(playerId);
     recordGameLeave(playerId);
     this.playerToUser.delete(playerId);
@@ -2364,7 +2403,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Capture the ship's final pose + shipInstanceId BEFORE clearing the
     // schema entry — needed for the roster mirror below.
-    const ship = this.state.ships.get(playerId);
+    const ship = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
     let rosterPose: {
       x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -2411,7 +2450,9 @@ export class SectorRoom extends Room<SectorState> {
       this.postToWorker({ type: 'DESPAWN', slot, playerId });
     }
 
-    this.state.ships.delete(playerId);
+    // Phase 6b — schema is shipInstanceId-keyed; pull the key off the
+    // captured `ship` reference above.
+    if (ship !== undefined) this.state.ships.delete(ship.shipInstanceId);
     this.shipPoseCache.delete(playerId);
     this.playerToUser.delete(playerId);
 
@@ -2555,7 +2596,7 @@ export class SectorRoom extends Room<SectorState> {
    *    visit shows their (now smaller) roster minus the abandoned row.
    */
   private convertShipToWreck(playerId: string): void {
-    const ship = this.state.ships.get(playerId);
+    const ship = this.getActiveShip(playerId);
     const slot = this.playerToSlot.get(playerId);
     if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
     if (!ship.alive) {
@@ -2607,7 +2648,9 @@ export class SectorRoom extends Room<SectorState> {
     this.initialSpawnPositions.delete(playerId);
     this.shipPoseCache.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
-    this.state.ships.delete(playerId);
+    // Phase 6b — schema is shipInstanceId-keyed; the local already
+    // captured `shipInstanceId` from the ship reference earlier.
+    this.state.ships.delete(shipInstanceId);
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
     // hull is now a wreck (keyed by shipInstanceId in `state.wrecks`);
     // the player no longer has an active ship in this room.
@@ -2717,11 +2760,11 @@ export class SectorRoom extends Room<SectorState> {
       playerToUser: this.playerToUser,
       lastFireClientTick: this.lastFireClientTick,
       getShipHealth: (playerId: string): number => {
-        const ship = this.state.ships.get(playerId);
+        const ship = this.getActiveShip(playerId);
         return ship?.health ?? SHIP_MAX_HEALTH;
       },
       getShipKind: (playerId: string): string => {
-        const ship = this.state.ships.get(playerId);
+        const ship = this.getActiveShip(playerId);
         return ship?.kind ?? DEFAULT_SHIP_KIND;
       },
       playerToTransitInFlight: this.playerToTransitInFlight,
@@ -2916,9 +2959,14 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
       const store = getPlayerShipStore();
       const abandoned: string[] = [];
-      for (const [playerId, ship] of this.state.ships) {
-        if (ship.shipInstanceId === '' || !ship.alive) continue;
-        if (store.get(ship.shipInstanceId) === null) abandoned.push(playerId);
+      // Phase 6b — schema key is shipInstanceId; convertShipToWreck still
+      // takes playerId (internal slot maps haven't been rekeyed), so read
+      // ship.playerId from the schema field. Inactive (lingering) hulls
+      // are skipped: a player can abandon a lingering hull from the
+      // roster panel, but that path goes through a different code branch.
+      for (const [, ship] of this.state.ships) {
+        if (ship.shipInstanceId === '' || !ship.alive || !ship.isActive) continue;
+        if (store.get(ship.shipInstanceId) === null) abandoned.push(ship.playerId);
       }
       for (const playerId of abandoned) this.convertShipToWreck(playerId);
     }
@@ -2962,7 +3010,7 @@ export class SectorRoom extends Room<SectorState> {
     // moving entity benefits from accurate hit attribution.
     this.snapshotRing.beginTick(this.serverTick);
     for (const id of this.playerToSlot.keys()) {
-      const ship = this.state.ships.get(id);
+      const ship = this.getActiveShip(id);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(id);
       if (!pose) continue;
@@ -3106,7 +3154,7 @@ export class SectorRoom extends Room<SectorState> {
       const ackedTicksTelemetry: Record<string, number> = {};
       const aliveIds = new Set<string>();
       for (const [playerId, slot] of this.playerToSlot) {
-        const ship = this.state.ships.get(playerId);
+        const ship = this.getActiveShip(playerId);
         if (!ship || !ship.alive) continue;
         const pose = this.shipPoseCache.get(playerId);
         if (!pose) continue;
@@ -3350,7 +3398,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.aiController.size() > 0) {
       this.aiPlayerScratch.length = 0;
       for (const [pid] of this.playerToSlot) {
-        const ship = this.state.ships.get(pid);
+        const ship = this.getActiveShip(pid);
         if (!ship?.alive) continue;
         const pose = this.shipPoseCache.get(pid);
         if (!pose) continue;

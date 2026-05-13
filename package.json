@@ -52,7 +52,7 @@
     "zustand": "^5.0.2"
   },
   "devDependencies": {
-    "@colyseus/testing": "^0.17.11",
+    "@colyseus/testing": "^0.16.3",
     "@eslint/js": "^9.17.0",
     "@playwright/test": "^1.49.0",
     "@stryker-mutator/core": "^9.6.1",
