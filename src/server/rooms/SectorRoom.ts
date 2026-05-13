@@ -626,7 +626,16 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 8 sub-phase B — per-room transit driver. Engineering rooms get
     // an orchestrator too, but it'll always reject `engage_transit` because
     // sectorKey is null (the orchestrator validates and sends back DOCKED).
-    this.transitOrchestrator = new TransitOrchestrator(this.asTransitHost(), getLimboStore());
+    //
+    // Phase 5 — the orchestrator gets `PlayerShipStore` so it can validate
+    // ownership when `engage_transit` carries a `shipId`. Without the store
+    // a shipId-carrying request rejects as unknown, which is safe-by-default.
+    this.transitOrchestrator = new TransitOrchestrator(
+      this.asTransitHost(),
+      getLimboStore(),
+      undefined,
+      getPlayerShipStore(),
+    );
 
     this.onMessage('engage_transit', (client: Client, raw: unknown) => {
       const playerId = this.sessionToPlayer.get(client.sessionId);
@@ -640,6 +649,7 @@ export class SectorRoom extends Room<SectorState> {
         playerId,
         parsed.data.targetSectorKey,
         parsed.data.arrival,
+        parsed.data.shipId,
       );
     });
 
@@ -1887,6 +1897,7 @@ export class SectorRoom extends Room<SectorState> {
           playerId,
           serverTick: tickAtRebind,
           sectorKey: this.sectorKey,
+          shipInstanceId: existingShip?.shipInstanceId ?? '',
         };
         client.send('welcome', welcome);
 
@@ -1976,7 +1987,24 @@ export class SectorRoom extends Room<SectorState> {
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
         spawnX = rec.lastX;
         spawnY = rec.lastY;
-        resumedHealth = rec.health;
+        // Defensive: a stored health <= 0 should be impossible (the
+        // ship would have been destroyed and the roster row deleted),
+        // but we observed it 2026-05-13 after a 15-min lingering ship
+        // was spawned back as 0/maxHealth. Most likely a race in the
+        // linger-eviction path where ship.health was driven to 0 by
+        // drones but SHIP_DESTROYED didn't propagate before the
+        // evictOwnerlessShip call. Treat 0 as "give the user a fresh
+        // hull" and log so we can find the underlying gap.
+        const kind = getShipKind(rec.kind);
+        if (rec.health <= 0) {
+          logger.warn(
+            { playerId, shipId: rec.shipId, storedHealth: rec.health, kind: rec.kind },
+            'roster row has non-positive health on spawn — issuing fresh hull (root-cause TBD)',
+          );
+          resumedHealth = kind.maxHealth;
+        } else {
+          resumedHealth = rec.health;
+        }
         resumedUserId = rec.userId;
         resumedLastFireTick = rec.lastFireClientTick;
         resumedVx = rec.lastVx;
@@ -2110,6 +2138,7 @@ export class SectorRoom extends Room<SectorState> {
       playerId,
       serverTick: currentServerTick,
       sectorKey: this.sectorKey,
+      shipInstanceId: ship.shipInstanceId,
     };
     client.send('welcome', welcome);
 
@@ -2289,6 +2318,18 @@ export class SectorRoom extends Room<SectorState> {
     } | null = null;
     if (ship !== undefined && slot !== undefined) {
       const b = slotBase(slot);
+      // Defense-in-depth: storing a non-positive health would corrupt
+      // the roster row (player respawns with 0/maxHealth, can't play).
+      // The applyDamage path should have destroyed the ship before we
+      // get here, but if there's a race we clamp to 1 and warn — the
+      // on-spawn path then promotes 0 → maxHealth for full recovery.
+      // See logger.warn in the shipId-restore branch above.
+      if (ship.alive && ship.health <= 0) {
+        logger.warn(
+          { playerId, shipId: ship.shipInstanceId, shipHealth: ship.health, sectorKey: this.sectorKey },
+          'evicting lingering ship with non-positive health — applyDamage race?',
+        );
+      }
       rosterPose = {
         x:      this.sabF32[b + SLOT_X_OFF]!,
         y:      this.sabF32[b + SLOT_Y_OFF]!,
@@ -2296,7 +2337,7 @@ export class SectorRoom extends Room<SectorState> {
         vy:     this.sabF32[b + SLOT_VY_OFF]!,
         angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
         angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-        health: ship.health,
+        health: Math.max(1, ship.health),
         lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
       };
     }

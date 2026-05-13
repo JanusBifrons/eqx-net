@@ -4,6 +4,7 @@ import { ShipRosterCard, type RosterShipEntry } from './ShipRosterCard';
 import { ShipDetailModal } from './ShipDetailModal';
 import { ROSTER_CAP } from './rosterConstants';
 import { logEvent } from '../debug/ClientLogger';
+import { useUIStore } from '../state/store';
 
 /**
  * Galaxy-map ship roster panel. Fetches the player's roster from
@@ -43,7 +44,13 @@ const ENDPOINT_LIST = '/dev/player-ships';
 const ENDPOINT_ABANDON = (shipId: string): string => `/dev/player-ships/${encodeURIComponent(shipId)}/abandon`;
 
 export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRosterPanelProps): JSX.Element | null {
-  const [ships, setShips] = useState<RosterShipEntry[]>([]);
+  // Phase 5 — roster source-of-truth lives in Zustand (singleton) so
+  // multiple panel mounts (galaxy-map landing + drawer Galaxy tab) stay
+  // in lockstep. This panel still owns the fetch polling, but writes
+  // results into the shared store. `RosterCountBadge` and any future
+  // consumer read from the same store.
+  const ships = useUIStore((s) => s.shipRoster) as RosterShipEntry[];
+  const setShipRoster = useUIStore((s) => s.setShipRoster);
   const [openShipId, setOpenShipId] = useState<string | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -61,12 +68,12 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
       }
       const body = (await res.json()) as { ships?: RosterShipEntry[] };
       const out = Array.isArray(body.ships) ? body.ships : [];
-      setShips(out);
+      setShipRoster(out);
       logEvent('roster_fetch', { stage: 'ok', count: out.length, kinds: out.map((s) => s.kind) });
     } catch (err) {
       logEvent('roster_fetch', { stage: 'exception', message: (err as Error).message ?? 'unknown' });
     }
-  }, [playerId]);
+  }, [playerId, setShipRoster]);
 
   useEffect(() => {
     logEvent('roster_panel_mount', { playerId, compact });
@@ -82,19 +89,35 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
     };
   }, [playerId, refresh, compact]);
 
-  const handleAbandon = useCallback(async (shipId: string): Promise<void> => {
+  // Phase 5 — Abandon path. When the user abandons the hull THIS browser
+  // session is currently piloting, eject them back to the galaxy map.
+  // The detection is keyed on `localShipInstanceId` (set from welcome) —
+  // NOT the server-side `ship.isActive`, which stays true for the 15-min
+  // reconnect-linger window even after disconnect.
+  const setPhase = useUIStore((s) => s.setPhase);
+  const setCurrentSectorKey = useUIStore((s) => s.setCurrentSectorKey);
+  const localShipInstanceId = useUIStore((s) => s.localShipInstanceId);
+  const handleAbandon = useCallback(async (ship: RosterShipEntry): Promise<void> => {
+    const wasMyPilotedShip = ship.shipId === localShipInstanceId;
     try {
-      await fetch(ENDPOINT_ABANDON(shipId), {
+      await fetch(ENDPOINT_ABANDON(ship.shipId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ playerId }),
       });
       setOpenShipId(null);
       await refresh();
+      if (wasMyPilotedShip) {
+        // The hull I was flying is now a wreck — eject to the galaxy
+        // map. Clear currentSectorKey so the map renders neutral instead
+        // of pinning the sector I just lost.
+        setCurrentSectorKey(null);
+        setPhase('galaxy-map');
+      }
     } catch {
       // Best-effort; user can retry.
     }
-  }, [playerId, refresh]);
+  }, [playerId, refresh, setPhase, setCurrentSectorKey, localShipInstanceId]);
 
   const handleSpawn = useCallback((shipId: string, sectorKey: string): void => {
     setOpenShipId(null);
@@ -163,7 +186,7 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
           open={openShipId !== null}
           onClose={() => setOpenShipId(null)}
           onSpawn={(s) => handleSpawn(s.shipId, s.sectorKey)}
-          onAbandon={(s) => { void handleAbandon(s.shipId); }}
+          onAbandon={(s) => { void handleAbandon(s); }}
         />
       )}
     </Box>

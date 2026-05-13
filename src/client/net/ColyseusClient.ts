@@ -756,6 +756,13 @@ export class ColyseusGameClient {
         const sec = getSector(msg.sectorKey);
         if (sec) ui.setSectorName(sec.name);
       }
+      // Phase 5 — identify the ship the LOCAL browser session is bound to.
+      // Distinct from any `ship.isActive` flag on the roster (which stays
+      // true through the 15-min reconnect linger window even when no
+      // session is driving it). The roster panel + detail modal use this
+      // to drive the "Piloting" disabled state and the switch-confirm.
+      // Empty string from engineering rooms or pre-Phase-5 servers ⇒ null.
+      ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
     });

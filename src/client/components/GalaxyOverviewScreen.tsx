@@ -288,7 +288,40 @@ export function GalaxyOverviewScreen({
         <Box
           ref={mountRef}
           sx={{ flex: 1, minHeight: 0, position: 'relative', touchAction: 'none' }}
-        />
+        >
+          {/* Phase 5 — surface the same ship-roster panel here as on the
+              post-auth landing screen. The user expects "the same Pixi map"
+              when they open the in-game galaxy overview, not a stripped-down
+              variant. Click-to-spawn routes through `pendingShipSwap` (a
+              direct room swap with the loading-spinner phase) rather than
+              the legacy `onSpawnExistingShip` prop, because in-game we have
+              an existing session to tear down — different from the
+              post-auth first-spawn path. */}
+          {/* Panel pushed down 56px from the top so the close button (X)
+              at top: 12, right: 12 stays uncovered. The label
+              "Galaxy · tap a neighbour to warp..." at top: 12, left: 16
+              also sits in this cleared strip. */}
+          <Box
+            sx={{
+              position: 'absolute',
+              zIndex: 2,
+              pointerEvents: 'none',
+              ...(isCompact
+                ? { left: 8, right: 8, top: 56, height: 60 }
+                : { right: 8, top: 56, bottom: 8, width: 156 }),
+            }}
+          >
+            <ShipRosterPanel
+              playerId={storedPlayerId}
+              compact={isCompact}
+              onSpawn={(shipId, sectorKey) => {
+                // Direct in-game swap — no spool-up, just a loading screen.
+                useUIStore.getState().setPendingShipSwap({ shipId, sectorKey });
+                onClose?.();
+              }}
+            />
+          </Box>
+        </Box>
         <IconButton
           onClick={onClose}
           data-testid="galaxy-overview-close"
@@ -318,7 +351,7 @@ export function GalaxyOverviewScreen({
             pointerEvents: 'none',
           }}
         >
-          Galaxy · tap a neighbour to warp
+          Galaxy · tap a neighbour to warp or a card to switch ship
         </Box>
       </Box>
     );

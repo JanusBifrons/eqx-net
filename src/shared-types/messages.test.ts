@@ -9,6 +9,7 @@
  * payload. Pattern matches the existing `InputMessageSchema` style.
  */
 import { describe, it, expect } from 'vitest';
+import * as fc from 'fast-check';
 import { CollisionResolvedMessageSchema, EngageTransitSchema, FireMessageSchema } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
@@ -105,6 +106,74 @@ describe('EngageTransitSchema', () => {
       type: 'engage_transit',
       targetSectorKey: 'orion-belt',
       arrival: { x: 0, y: 0, z: 0 },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  // Phase 5 — `shipId` extension for in-game roster switching. When present
+  // it routes the transit to bind the named roster entry at the destination
+  // instead of letting the current ship continue. Absent ⇒ legacy behaviour.
+  it('accepts a payload with shipId for in-game roster switching', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      shipId: 'ship-uuid-abc',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts a payload with both arrival and shipId', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      arrival: { x: 100, y: -200 },
+      shipId: 'ship-uuid-abc',
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an empty-string shipId (catalogue-id discipline)', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      shipId: '',
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('rejects a non-string shipId', () => {
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      shipId: 42,
+    });
+    expect(r.success).toBe(false);
+  });
+
+  // Property test (fast-check): any non-empty string is a valid shipId.
+  // Covers the long-tail of UUID forms, with-special-chars, max-length, etc.
+  // — much wider than the hand-rolled cases above. 200 runs ≈ <100ms.
+  it('property: any non-empty string with length >= 1 parses as a valid shipId', () => {
+    fc.assert(
+      fc.property(fc.string({ minLength: 1, maxLength: 200 }), (shipId) => {
+        const r = EngageTransitSchema.safeParse({
+          type: 'engage_transit',
+          targetSectorKey: 'orion-belt',
+          shipId,
+        });
+        return r.success === true;
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it('property: the empty string is always rejected as shipId', () => {
+    // Sanity-check the boundary case — zod min(1) rejects ''. fast-check
+    // here is overkill (single value) but documents the contract.
+    const r = EngageTransitSchema.safeParse({
+      type: 'engage_transit',
+      targetSectorKey: 'orion-belt',
+      shipId: '',
     });
     expect(r.success).toBe(false);
   });

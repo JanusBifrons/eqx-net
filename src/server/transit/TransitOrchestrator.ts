@@ -29,6 +29,7 @@ import { matchMaker, type Client } from 'colyseus';
 import { TransitStateMachine, SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import type { Bus } from '../../core/events/Bus.js';
 import { LimboStore, LIMBO_TRANSIT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
+import type { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { TransitStateMessage, TransitCancelReason } from '../../shared-types/messages.js';
 import { randomUUID } from 'node:crypto';
@@ -72,6 +73,11 @@ interface InFlight {
    *  uses these (server-clamped to playable bounds) for x/y. vx/vy/angle
    *  always come from the SAB. */
   arrival: { x: number; y: number } | null;
+  /** Phase 5 — when set, the destination room binds this roster entry
+   *  instead of letting the source ship continue. Already validated for
+   *  ownership at `beginTransit` time. Threaded through `reserveSeatFor`'s
+   *  options bag so the destination's `onJoin` can pick it up. */
+  shipId: string | null;
   /** Timer that fires the commit unless aborted earlier. */
   commitTimer: ReturnType<typeof setTimeout>;
   /** One-shot bus listener — must be unsubscribed on cancel + commit. */
@@ -82,10 +88,14 @@ interface InFlight {
  * Reserve a seat on a destination room by name. Default implementation
  * queries the matchmaker, picks the live room, and calls `reserveSeatFor`.
  * Test seam — `setReserveByNameOverride` replaces this entirely.
+ *
+ * Phase 5 — `options.shipId` (optional) tells the destination room to
+ * bind a specific roster entry on arrival; absent ⇒ destination uses the
+ * Limbo entry's source-ship pose (today's behaviour).
  */
 export type ReserveByName = (
   roomName: string,
-  options: { playerId: string; transitToken: string },
+  options: { playerId: string; transitToken: string; shipId?: string },
 ) => Promise<unknown>;
 
 const defaultReserveByName: ReserveByName = async (roomName, options) => {
@@ -103,6 +113,12 @@ export class TransitOrchestrator {
     private readonly room: TransitHostRoom,
     private readonly limboStore: LimboStore,
     private readonly spoolMs: number = SPOOL_DURATION_MS,
+    /** Phase 5 — optional PlayerShipStore used to validate roster
+     *  ownership when `beginTransit` is called with a `shipId`. When
+     *  omitted (test fixtures that don't exercise the shipId path), any
+     *  `shipId` argument is rejected as unknown — same outcome as a
+     *  foreign id. */
+    private readonly playerShipStore?: PlayerShipStore,
   ) {}
 
   /** Test seam — replace the matchMaker query+reserve pair with a stub. */
@@ -123,11 +139,18 @@ export class TransitOrchestrator {
    * `arrival` (optional): client-requested arrival x/y. Stored on the
    * in-flight record and consumed by `commitTransit`. If absent, the
    * server falls back to the SAB pose at commit time (legacy behaviour).
+   *
+   * `shipId` (optional, Phase 5): when set, the destination room will
+   * bind this roster entry instead of letting the source ship continue.
+   * Validated for ownership against `PlayerShipStore`; foreign or
+   * unknown ids reject with `destination_unavailable`. Threaded through
+   * `reserveSeatFor` options so the destination's `onJoin` can read it.
    */
   beginTransit(
     playerId: string,
     targetSectorKey: string,
     arrival?: { x: number; y: number },
+    shipId?: string,
   ): boolean {
     const src = this.room.sectorKey;
     if (src === null) {
@@ -142,6 +165,23 @@ export class TransitOrchestrator {
     if (this.inFlight.has(playerId)) {
       // Already spooling — second request is a no-op.
       return false;
+    }
+
+    // Phase 5 — ownership validation. A client can pass any roster shipId
+    // they like; we reject foreign / unknown ids before spinning up the
+    // machine. This is the single load-bearing check that prevents ship
+    // hijacking via `engage_transit`.
+    if (shipId !== undefined) {
+      const rec = this.playerShipStore?.get(shipId);
+      if (!rec || rec.playerId !== playerId) {
+        this.sendState(playerId, {
+          type: 'transit_state',
+          state: 'DOCKED',
+          targetSectorKey,
+          reason: 'destination_unavailable',
+        });
+        return false;
+      }
     }
 
     const machine = new TransitStateMachine(playerId, this.room.bus, this.spoolMs);
@@ -162,6 +202,7 @@ export class TransitOrchestrator {
       targetSectorKey,
       transitToken,
       arrival: arrival ? { x: arrival.x, y: arrival.y } : null,
+      shipId: shipId ?? null,
       commitTimer,
       onShipDestroyed,
     });
@@ -240,9 +281,18 @@ export class TransitOrchestrator {
     // operator-facing log noise is worth avoiding.)
     let reservation: unknown = null;
     try {
+      // Phase 5 — when an in-flight transit carries a `shipId`, thread it
+      // through reserveSeatFor options so the destination's `onJoin` can
+      // bind the named roster entry instead of the source ship. Absent ⇒
+      // legacy options shape (regression locked by the test suite).
+      const reserveOpts: { playerId: string; transitToken: string; shipId?: string } = {
+        playerId,
+        transitToken: inFlight.transitToken,
+      };
+      if (inFlight.shipId !== null) reserveOpts.shipId = inFlight.shipId;
       reservation = await this.reserveByNameFn(
         `galaxy-${inFlight.targetSectorKey}`,
-        { playerId, transitToken: inFlight.transitToken },
+        reserveOpts,
       );
     } catch {
       this.inFlight.delete(playerId);

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TransitOrchestrator, type TransitHostRoom } from './TransitOrchestrator.js';
 import { LimboStore } from '../limbo/LimboStore.js';
+import { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { Bus } from '../../core/events/Bus.js';
 import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF,
@@ -322,6 +323,111 @@ describe('TransitOrchestrator', () => {
         .filter((s) => (s.msg as { state: string }).state === 'DOCKED')
         .map((s) => (s.msg as { reason?: string }).reason);
       expect(reasons).toEqual(['manual', 'manual']);
+    });
+  });
+
+  // ── Phase 5: shipId routing ─────────────────────────────────────────────
+  //
+  // beginTransit(playerId, target, arrival?, shipId?) — when shipId is set,
+  // the orchestrator validates that the named roster entry is owned by
+  // `playerId` (rejects foreign or unknown ids). On commit it parks the
+  // current source ship's pose via PlayerShipStore.markStored and routes
+  // the shipId through the destination room's reserveSeatFor join options
+  // so the destination can hydrate the named roster row instead of the
+  // source ship.
+  describe('Phase 5 — shipId routing for in-game roster switch', () => {
+    function makePlayerShipStore(playerId: string, shipId: string, sectorKey: string): PlayerShipStore {
+      const store = new PlayerShipStore({});
+      store.create({
+        playerId,
+        userId: null,
+        kind: 'fighter',
+        sectorKey,
+        x: 0,
+        y: 0,
+        health: 100,
+      });
+      // PlayerShipStore.create generates its own shipId via the
+      // injected generator. Override by re-creating with a deterministic
+      // generator so the test owns the id.
+      const ownStore = new PlayerShipStore({ generateShipId: () => shipId });
+      ownStore.create({
+        playerId,
+        userId: null,
+        kind: 'fighter',
+        sectorKey,
+        x: 0,
+        y: 0,
+        health: 100,
+      });
+      return ownStore;
+    }
+
+    it('rejects beginTransit when shipId is unknown to the store', () => {
+      const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
+      const playerShipStore = new PlayerShipStore({});
+      const orch = new TransitOrchestrator(room, new LimboStore({}), undefined, playerShipStore);
+      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'unknown-ship');
+      expect(ok).toBe(false);
+      const msg = sent[0]!.msg as { state: string; reason?: string };
+      expect(msg.state).toBe('DOCKED');
+      expect(msg.reason).toBe('destination_unavailable');
+    });
+
+    it('rejects beginTransit when shipId is owned by a different player', () => {
+      const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
+      const playerShipStore = makePlayerShipStore('OTHER-PLAYER', 'foreign-ship', 'orion-belt');
+      const orch = new TransitOrchestrator(room, new LimboStore({}), undefined, playerShipStore);
+      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'foreign-ship');
+      expect(ok).toBe(false);
+      const msg = sent[0]!.msg as { state: string; reason?: string };
+      expect(msg.state).toBe('DOCKED');
+      expect(msg.reason).toBe('destination_unavailable');
+      // Critical: the store must NOT have been mutated (no transit machine
+      // spun up).
+      expect(orch.isInFlight('p1')).toBe(false);
+    });
+
+    it('accepts beginTransit when shipId is owned by the requesting player', () => {
+      const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
+      const playerShipStore = makePlayerShipStore('p1', 'own-ship', 'orion-belt');
+      const orch = new TransitOrchestrator(room, new LimboStore({}), undefined, playerShipStore);
+      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'own-ship');
+      expect(ok).toBe(true);
+      expect(orch.isInFlight('p1')).toBe(true);
+      const msg = sent[0]!.msg as { state: string; targetSectorKey?: string };
+      expect(msg.state).toBe('SPOOLING');
+      expect(msg.targetSectorKey).toBe('orion-belt');
+    });
+
+    it('commit passes shipId through to reserveSeatFor options', async () => {
+      const { room } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
+      const playerShipStore = makePlayerShipStore('p1', 'own-ship', 'orion-belt');
+      const orch = new TransitOrchestrator(room, new LimboStore({}), undefined, playerShipStore);
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
+      orch.beginTransit('p1', 'orion-belt', undefined, 'own-ship');
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      expect(reserve).toHaveBeenCalledTimes(1);
+      const args = reserve.mock.calls[0]!;
+      expect(args[0]).toBe('galaxy-orion-belt');
+      // The reservation options carry the shipId so the destination room's
+      // onJoin can bind the named roster entry instead of the source ship.
+      expect(args[1]).toEqual(expect.objectContaining({ playerId: 'p1', shipId: 'own-ship' }));
+    });
+
+    it('regression: absent shipId omits it from reserveSeatFor options (legacy callers stay clean)', async () => {
+      const { room } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
+      const playerShipStore = new PlayerShipStore({});
+      const orch = new TransitOrchestrator(room, new LimboStore({}), undefined, playerShipStore);
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
+      orch.beginTransit('p1', 'orion-belt');
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      const opts = reserve.mock.calls[0]![1] as Record<string, unknown>;
+      expect(opts).not.toHaveProperty('shipId');
     });
   });
 });

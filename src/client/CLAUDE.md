@@ -155,3 +155,23 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 - `playerId` is persisted in `localStorage` as `eqxPlayerId`. Read at bootstrap, sent in the `identify` handshake.
 - Never reuse Colyseus `sessionId` as a durable identifier — it rotates on every reconnect. `playerId` is what lets Phase 8 Limbo reconciliation work.
+
+---
+
+## Phase 5 — In-game roster access (2026-05-13)
+
+The drawer's Galaxy tab ([layout/Drawer/tabs/GalaxyTab.tsx](layout/Drawer/tabs/GalaxyTab.tsx)) mounts `<ShipRosterPanel>` above the existing configurable-arrival picker, so players can switch ships **mid-game** without disconnecting to the post-auth galaxy map. Spawn-from-card routes through `engageTransit(room, sectorKey, arrival?, shipId)` — the new optional `shipId` arg is on the wire schema and the destination room's existing Phase 3 `JoinOptionsSchema.shipId` path hydrates the named roster entry on arrival. The drawer closes on submit so the `HyperspaceOverlay` is visible.
+
+`ShipDetailModal` ([components/ShipDetailModal.tsx](components/ShipDetailModal.tsx)) gates abandon-on-active-ship behind a **second-tier confirm** dialog with copy "This is your active ship — abandoning will eject you to the galaxy map. Continue?" The non-active path is unchanged (single confirm). The confirm dialog is conditionally rendered (not just `open={false}`) so its `data-testid` disappears from the DOM on Cancel — important for E2E and component-test assertions.
+
+`RosterCountBadge` ([components/RosterCountBadge.tsx](components/RosterCountBadge.tsx)) lives next to `DrawerToggle` and reads the roster count from a Zustand singleton. Visual states via `data-state` attribute: `empty` (muted grey), `normal` (default green), `full` (red at 10/10) — surface the affordance without loud UI clutter at 0/10. Test lock: [components/RosterCountBadge.test.tsx](components/RosterCountBadge.test.tsx).
+
+**Roster source-of-truth is the Zustand singleton** (`shipRoster: RosterEntry[]` in `state/store.ts`). `ShipRosterPanel` owns the `/dev/player-ships` poll loop but writes results into `setShipRoster`, so multiple panel mounts (galaxy-map landing + drawer Galaxy tab) keep `RosterCountBadge` and any other consumer in lockstep without each mount running its own consumer-local state. The roster-fetch dedupe (single-fetch-on-player-id-known) is a follow-up; today each panel polls every 3 s independently — wasted bandwidth at worst, never inconsistent.
+
+**Test layers** (introduced for Phase 5):
+- `vitest` `*.test.tsx` files run under `jsdom` (per-file env via `vitest.config.ts` `environmentMatchGlobs`); `*.test.ts` continues to run under `node` (server logic, schemas, helpers).
+- `@testing-library/react` + `@testing-library/jest-dom` for component assertions. Matchers registered in `vitest.setup.ts` (dynamic-imported only when `typeof document !== 'undefined'` so node-env tests don't pay the cost).
+- `@testing-library/user-event` available for keyboard/text-input flows when needed; the existing Phase 5 tests use `fireEvent.click` for button activations.
+- `fast-check` is installed for property-based testing of pure functions (use when the surface naturally benefits — Phase 6 has more candidates than Phase 5).
+- `@colyseus/testing` is installed for in-process room integration tests; the version pinned in `package.json` reports a peer-dep mismatch (0.17.x vs colyseus 0.16) — re-pin to 0.16-compat when Phase 6b lands and actually exercises it.
+- `@stryker-mutator/core` + `@stryker-mutator/vitest-runner` are installed for mutation testing; configuration deferred until Phase 6 ships (the suite needs stable tests to mutate).

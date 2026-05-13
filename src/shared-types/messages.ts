@@ -76,6 +76,14 @@ export const EngageTransitSchema = z
       })
       .strict()
       .optional(),
+    /** Phase 5 multi-ship roster — when present, the destination room binds
+     *  the named roster entry instead of letting the current ship continue.
+     *  Validated server-side via `PlayerShipStore.get(shipId).playerId ===
+     *  <requesting player>` (rejects foreign / unknown ids with
+     *  `destination_unavailable`). Absent ⇒ legacy behaviour: the source
+     *  ship's pose hydrates into the destination room. Min-length 1 so an
+     *  empty string can't sneak past validation as "absent". */
+    shipId: z.string().min(1).optional(),
   })
   .strict();
 
@@ -111,6 +119,13 @@ export interface WelcomeMessage {
    *  engineering rooms (test-sector, swarm-soak, etc.) which have no
    *  persistent identity. */
   sectorKey: string | null;
+  /** Phase 5 (and Phase 6a foundation) — the `player_ships.ship_id` UUID
+   *  this connection is bound to. Lets the client identify "the ship I'm
+   *  currently piloting" without confusing it with other entries the
+   *  server still marks `isActive=true` during the 15-min reconnect
+   *  linger window. Empty string in engineering rooms that don't have
+   *  a roster row. */
+  shipInstanceId: string;
 }
 
 /**

@@ -9,6 +9,31 @@ export type { ArrivalMode } from '../settings/settingsStorage.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+/**
+ * Phase 5 — singleton roster cache. Holds the player's ship roster as
+ * delivered by `/dev/player-ships` (initial fetch) and refreshed by the
+ * `SHIP_ROSTER` Colyseus push. Replaces the per-`ShipRosterPanel` local
+ * state so multiple panels (galaxy-map landing, drawer galaxy tab) do
+ * not each fire their own fetch (Risk 0b in the Phase 5 plan).
+ *
+ * The shape mirrors `RosterShipEntry` in `components/ShipRosterCard.tsx`,
+ * which is the JSON returned by the diag endpoint.
+ */
+export interface RosterEntry {
+  shipId: string;
+  kind: string;
+  kindVersion: number;
+  health: number;
+  sectorKey: string;
+  x: number;
+  y: number;
+  isActive: boolean;
+  activeRoomId?: string | null;
+  expiresAt?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 /** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
 export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 
@@ -114,6 +139,12 @@ interface UIStore {
    *  pins this to 0/0; future work may let the player set it. */
   homePosX: number;
   homePosY: number;
+  /** Phase 5 — singleton roster cache for the local player's ships.
+   *  Populated by the diag-endpoint fetcher (one-shot at login) and
+   *  refreshed by the `SHIP_ROSTER` Colyseus push (server-side abandon /
+   *  transit broadcast). Consumers: `ShipRosterPanel`, `RosterCountBadge`,
+   *  `GalaxyTab`. Empty array when the player has no ships. */
+  shipRoster: RosterEntry[];
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -149,6 +180,27 @@ interface UIStore {
   setArrivalMode: (m: ArrivalMode) => void;
   setArrivalTarget: (x: number, y: number) => void;
   setHomePos: (x: number, y: number) => void;
+  /** Phase 5 — overwrite the roster cache (server push or fetch result). */
+  setShipRoster: (ships: RosterEntry[]) => void;
+  /** Phase 5 — pending in-game roster swap request. GalaxyTab sets this
+   *  when the user clicks Spawn on a roster card; App.tsx watches it
+   *  and runs the direct-room-swap flow (NOT engageTransit). Cleared
+   *  by App after dispatching. The swap is a leave-current + join-new
+   *  with a brief 'connecting' phase for the loading spinner — far
+   *  simpler than the transit machine and not bound by neighbour-only
+   *  rules. */
+  pendingShipSwap: { shipId: string; sectorKey: string } | null;
+  setPendingShipSwap: (req: { shipId: string; sectorKey: string } | null) => void;
+  /** Phase 5 — `player_ships.ship_id` of the hull the local browser
+   *  session is currently piloting. Sourced from `WelcomeMessage.
+   *  shipInstanceId` on every successful room join; cleared when the
+   *  player leaves a room (phase != 'game'). Distinct from the
+   *  server-side `ship.isActive` flag (which stays true throughout the
+   *  15-min reconnect-linger window) — `localShipInstanceId` is the
+   *  THIS-session identifier the UI uses to mark "Piloting" / disable
+   *  the spawn-on-self button. */
+  localShipInstanceId: string | null;
+  setLocalShipInstanceId: (id: string | null) => void;
 }
 
 // The store is constructed before auth resolves, so we hydrate from the
@@ -231,6 +283,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   arrivalTargetY: initialArrivalTargetY,
   homePosX: initialHomePosX,
   homePosY: initialHomePosY,
+  shipRoster: [],
+  pendingShipSwap: null,
+  localShipInstanceId: null,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -272,6 +327,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setArrivalMode:   (m) => { set({ arrivalMode: m }); persistSettings(get()); },
   setArrivalTarget: (xv, yv) => { set({ arrivalTargetX: xv, arrivalTargetY: yv }); persistSettings(get()); },
   setHomePos:       (xv, yv) => { set({ homePosX: xv, homePosY: yv }); persistSettings(get()); },
+  setShipRoster:    (ships) => set({ shipRoster: ships }),
+  setPendingShipSwap: (req) => set({ pendingShipSwap: req }),
+  setLocalShipInstanceId: (id) => set({ localShipInstanceId: id }),
 }));
 
 /**

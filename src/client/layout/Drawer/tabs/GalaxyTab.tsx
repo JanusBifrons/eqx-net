@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -13,6 +13,7 @@ import HexagonOutlinedIcon from '@mui/icons-material/HexagonOutlined';
 import { useUIStore, type ArrivalMode } from '../../../state/store';
 import { getSector } from '../../../../core/galaxy/galaxy';
 import { getGameClient } from '../../../net/clientSingleton';
+import { ShipRosterPanel } from '../../../components/ShipRosterPanel';
 import {
   SECTOR_PLAYABLE_HALF_EXTENT,
   clampToSectorBounds,
@@ -56,6 +57,21 @@ export function GalaxyTab(): JSX.Element {
   const setArrivalTarget = useUIStore((s) => s.setArrivalTarget);
   const isDrawerOpen     = useUIStore((s) => s.isDrawerOpen);
   const drawerTab        = useUIStore((s) => s.drawerTab);
+  const localPlayerId    = useUIStore((s) => s.playerId) ?? '';
+
+  // Phase 5 — spawn-from-roster is a DIRECT room swap, not a transit.
+  // The player picked a different hull they own; the only thing to show
+  // is a loading screen while the client disconnects from the current
+  // sector and joins the target sector with the named roster entry. No
+  // spool-up, no neighbour-only check — the user already authored the
+  // intent by clicking the card. Implementation lives in `App.tsx`'s
+  // pendingShipSwap useEffect; we dispatch the intent through Zustand
+  // so this deeply-nested component doesn't need a room reference.
+  const setPendingShipSwap = useUIStore((s) => s.setPendingShipSwap);
+  const handleSpawnFromRoster = useCallback((shipId: string, sectorKey: string): void => {
+    setPendingShipSwap({ shipId, sectorKey });
+    setDrawerOpen(false);
+  }, [setDrawerOpen, setPendingShipSwap]);
 
   const sector = currentSectorKey ? getSector(currentSectorKey) : null;
   const inTransit = transitState !== 'DOCKED';
@@ -173,6 +189,33 @@ export function GalaxyTab(): JSX.Element {
       <Typography variant="caption" sx={{ color: '#9aa0b4' }}>
         Drag / pinch / scroll to navigate. Tap a neighbouring sector to engage hyperspace.
       </Typography>
+
+      {/* Phase 5 — in-game roster access. Cards click to open the detail
+          modal whose Spawn routes through `engageTransit(shipId)` to the
+          chosen ship's last sector. Abandon-active is gated by a second
+          confirm inside the modal. The panel reads roster from a shared
+          singleton; multiple mounts (galaxy-map landing + drawer) don't
+          duplicate fetches. */}
+      <Box
+        sx={{
+          mt: 1.5,
+          pt: 1.5,
+          borderTop: '1px solid rgba(255,255,255,0.08)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 0.5,
+          maxHeight: 240,
+        }}
+      >
+        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', pl: 0.25 }}>
+          Roster
+        </Typography>
+        <ShipRosterPanel
+          playerId={localPlayerId}
+          compact={false}
+          onSpawn={handleSpawnFromRoster}
+        />
+      </Box>
 
       <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', gap: 1.5 }}>
         <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block' }}>

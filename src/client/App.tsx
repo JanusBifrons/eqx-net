@@ -118,8 +118,35 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   );
   const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
 
+  // Phase 5 scope change — when the player dies and clicks Respawn, send
+  // them BACK TO THE GALAXY MAP rather than respawning in-place. The
+  // post-auth landing screen is now the canonical "pick where to spawn"
+  // surface (it shows roster + sector picker), so re-using it for
+  // post-death respawn is consistent UX. The in-place `respawnShip` RPC
+  // is preserved on `ColyseusGameClient` for tests / engineering rooms
+  // but the user-facing UI no longer calls it.
+  //
+  // Phase changes from 'game' → 'galaxy-map' unmount `GameSurface`,
+  // which cleans up the room. The roster panel on the landing screen
+  // will reflect the wreck (Phase 4 already destroys the dead ship's
+  // roster row, so it disappears).
+  //
+  // We also clear every transient in-game overlay flag (galaxy map open,
+  // overview open, drawer open, pending swap) so a player who died with
+  // any of those mounted doesn't see them re-appear on their next spawn.
+  // This is the edge case captured 2026-05-13: die-while-galaxy-overview-
+  // open left `isGalaxyOverviewOpen=true` in the store; the next spawn
+  // saw the overview pop back open immediately on top of the fresh game.
   const handleRespawn = useCallback(() => {
-    clientRef.current?.respawnShip();
+    const ui = useUIStore.getState();
+    ui.setLocalShipInstanceId(null);
+    ui.setCurrentSectorKey(null);
+    ui.setDead(false);
+    ui.setGalaxyOverviewOpen(false);
+    ui.setGalaxyMapOpen(false);
+    ui.setDrawerOpen(false);
+    ui.setPendingShipSwap(null);
+    ui.setPhase('galaxy-map');
   }, []);
 
   const getLocalShip = useCallback(() => {
@@ -648,6 +675,38 @@ export function App(): JSX.Element {
     setJoinOptionsOverride({ shipId });
     setPhase('game');
   }, [setPhase]);
+
+  // Phase 5 — in-game roster swap. Dispatched by `GalaxyTab` via the
+  // Zustand `pendingShipSwap` field; we run a `game → connecting → game`
+  // phase cycle so GameSurface unmounts (closing the current room) and
+  // remounts cleanly with the new `roomNameOverride` + `joinOptionsOverride`.
+  // The 'connecting' beat is what the player sees as the loading spinner.
+  // NO transit machinery: no spool-up, no neighbour-only check — the
+  // player explicitly picked a hull they own and wants to fly it.
+  const pendingShipSwap = useUIStore((s) => s.pendingShipSwap);
+  const setPendingShipSwap = useUIStore((s) => s.setPendingShipSwap);
+  const setCurrentSectorKey = useUIStore((s) => s.setCurrentSectorKey);
+  useEffect(() => {
+    if (!pendingShipSwap) return;
+    const { shipId, sectorKey } = pendingShipSwap;
+    // Update room overrides before the phase flip so when GameSurface
+    // remounts it sees the new values immediately.
+    setRoomNameOverride(`galaxy-${sectorKey}`);
+    setJoinOptionsOverride({ shipId });
+    // Clear the current-sector chrome so the brief galaxy-map glimpse
+    // (if any) and post-arrival HUD start from the new sector identity.
+    setCurrentSectorKey(null);
+    // game → connecting unmounts GameSurface (which cleans up the old
+    // Colyseus room). After a microtask the connecting → game flip
+    // remounts GameSurface, triggering a fresh joinOrCreate with the
+    // shipId override.
+    setPhase('connecting');
+    const timer = setTimeout(() => {
+      setPhase('game');
+      setPendingShipSwap(null);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [pendingShipSwap, setPhase, setPendingShipSwap, setCurrentSectorKey]);
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
     // ShipKind already lives in Zustand `selectedShipKind` (the picker
