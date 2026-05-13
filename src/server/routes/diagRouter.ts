@@ -450,6 +450,32 @@ export function devPlayerShipsAbandonHandler(req: Request, res: Response): void 
 }
 
 /**
+ * POST /dev/reset-roster — wipe every roster row for the caller's
+ * playerId. Test-only fixture-prep helper (added 2026-05-13 for the
+ * UI happy-path E2E so multi-spawn tests start from a known-empty
+ * roster). Requires `playerId` in the JSON body. Returns the number
+ * of rows deleted.
+ *
+ * This does NOT touch the in-room ShipState — only the persistent
+ * roster table. Use alongside `/dev/reset-sector` if you also need
+ * the in-room state cleared.
+ */
+export function devResetRosterHandler(req: Request, res: Response): void {
+  const body = (req.body ?? {}) as { playerId?: unknown };
+  const playerId = typeof body.playerId === 'string' ? body.playerId : '';
+  if (!playerId) {
+    res.status(400).json({ error: 'playerId required' });
+    return;
+  }
+  const store = getPlayerShipStore();
+  const rows = store.listByPlayer(playerId);
+  for (const row of rows) {
+    store.delete(row.shipId);
+  }
+  res.json({ ok: true, deleted: rows.length });
+}
+
+/**
  * GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster.
  * Returns the player's full roster (up to 10 entries). Empty array if the
  * player has never spawned. Read-only; mutations flow through gameplay

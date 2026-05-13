@@ -25,7 +25,10 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 interface StoreState {
   playerId: string | null;
   phase: string;
+  isDrawerOpen: boolean;
   setShipRoster: (ships: { shipId: string; sectorKey: string }[]) => void;
+  setDrawerOpen: (v: boolean) => void;
+  setDrawerTab: (id: string) => void;
 }
 interface StoreWindow extends Window {
   __eqxStore?: { getState: () => StoreState };
@@ -74,28 +77,22 @@ async function fetchRoster(
 }
 
 /**
- * Marked `fixme` 2026-05-13 — the test runs the right surface but is
- * currently flaky:
- *   - Passes solo on a fresh DB: full path runs in ~58 s.
- *   - On repeat runs (test DB accumulating roster rows) sometimes
- *     hits "Target page, context or browser has been closed" mid-
- *     swap, or fails to open the drawer after the toggle click.
+ * Re-marked `fixme` 2026-05-13. Tried several stabilization passes —
+ * fresh-playerId via addInitScript, /dev/reset-roster wipe + dual-write
+ * wait, Zustand-direct drawer open, real toggle click + DOM state
+ * dumps. All hit the same wall: under the dual-page Colyseus
+ * disconnect/reconnect pattern, ~25 % of runs hit "Target page,
+ * context or browser has been closed" mid-test, OR the drawer panel
+ * children never mount within 5 s of the toggle click. The pre-toggle
+ * state dump confirms `phase: "game"`, `isDrawerOpen: false`,
+ * `drawer-toggle` in DOM — so the prerequisites are right. The
+ * fragility is somewhere in the Playwright × MUI Drawer × Colyseus
+ * teardown timing.
  *
- * Both modes look like state pollution + timing races between the
- * two simulated browser pages. Fix candidates (not yet attempted):
- *   - Reset the player's roster via a new `/dev/reset-roster` endpoint
- *     before each run.
- *   - Replace the two-page sequence with a single-page navigation +
- *     `?newShip=1` so the Colyseus disconnect is exactly one
- *     close-and-reopen cycle instead of a page close racing a page
- *     spawn.
- *   - Add explicit waits on `player_lingered` server event before
- *     the second spawn so we know the first ship is fully durable
- *     before the roster query.
- *
- * The companion `happy-path-switch-ship.spec.ts` exercises the same
- * room-swap CYCLE programmatically (rebind path) and is stable, so
- * the regression-lock value isn't lost while this UI test settles.
+ * The companion programmatic test (`happy-path-switch-ship.spec.ts`)
+ * exercises the same room-swap CYCLE reliably; we keep that as the
+ * regression lock and treat this UI-driven spec as a known-flaky to
+ * fix when we have more time to instrument the failure path.
  */
 test.fixme('UI happy-path: drawer → Galaxy tab → roster card → Spawn renders the new ship', async ({
   browser,
@@ -113,11 +110,14 @@ test.fixme('UI happy-path: drawer → Galaxy tab → roster card → Spawn rende
   const ctx: BrowserContext = await browser.newContext();
 
   // === Page 1: spawn ship A in sol-prime, then close. ===
+  // First page generates a random UUID server-side which is persisted
+  // to localStorage as `eqxPlayerId`. Page 2 (same context) reads it
+  // back, so both pages share the same playerId and contribute to the
+  // same roster.
   const page1 = await ctx.newPage();
   page1.on('pageerror', (err) => errors.push(`page1 PAGEERROR: ${err.message}`));
   const playerId = await spawnInSector(page1, 'sol-prime');
-  // Confirm the roster has ship A BEFORE closing — sanity check for
-  // the spawn → dual-write → /dev/player-ships read path.
+  // Confirm ship A made it into the roster table before we move on.
   const rosterAfterFirstSpawn = await fetchRoster(page1, playerId);
   expect(rosterAfterFirstSpawn.length, 'roster should contain ship A').toBeGreaterThanOrEqual(1);
   const shipAId = rosterAfterFirstSpawn[0]!.shipId;
@@ -162,7 +162,25 @@ test.fixme('UI happy-path: drawer → Galaxy tab → roster card → Spawn rende
     win.__eqxStore!.getState().setShipRoster(ships);
   }, roster);
 
-  // Open the drawer.
+  // Sanity dump: log the actual DOM state and Zustand state so we can
+  // diagnose what's happening on test failure.
+  const preToggle = await page2.evaluate(() => {
+    const win = window as unknown as StoreWindow;
+    const s = win.__eqxStore?.getState();
+    return {
+      phase: s?.phase,
+      isDrawerOpen: s?.isDrawerOpen,
+      drawerTab: (s as unknown as { drawerTab?: string })?.drawerTab,
+      hasDrawerToggle: !!document.querySelector('[data-testid="drawer-toggle"]'),
+      hasAdvancedDrawer: !!document.querySelector('[data-testid="advanced-drawer"]'),
+      visibleTestIds: Array.from(document.querySelectorAll('[data-testid]')).map((el) =>
+        el.getAttribute('data-testid'),
+      ).filter((id): id is string => id !== null).slice(0, 30),
+    };
+  });
+  console.log('[test] pre-toggle state:', JSON.stringify(preToggle, null, 2));
+
+  // Open the drawer via the toggle button — exactly what the user does.
   await page2.locator('[data-testid="drawer-toggle"]').click();
   await expect(page2.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
 

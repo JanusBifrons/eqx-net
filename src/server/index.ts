@@ -9,7 +9,7 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -131,6 +131,10 @@ if (process.env['NODE_ENV'] !== 'production') {
   app.post('/dev/reset-sector', (req, res) => {
     void devResetSectorHandler(req, res);
   });
+
+  // POST /dev/reset-roster — wipe a player's roster rows. Used by the
+  // happy-path UI E2E to ensure a known-empty starting roster.
+  app.post('/dev/reset-roster', devResetRosterHandler);
 }
 
 const httpServer = createServer(app);
