@@ -45,6 +45,7 @@ import { WebSocketTransport } from '@colyseus/ws-transport';
 import { Client, type Room as ClientRoom } from 'colyseus.js';
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { Room as ServerRoom } from 'colyseus';
+import { createServerEventsApi, type ServerEventsApi } from './serverEvents.js';
 
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
@@ -101,8 +102,16 @@ export interface SectorTestHarness {
    *  happens after the physics worker applies an INPUT impulse. */
   sendThrust(room: ClientRoom<SectorState>): void;
   /** Sleep real wall-clock (physics worker uses setImmediate scheduling
-   *  in the worker thread; fake timers wouldn't reach it). */
+   *  in the worker thread; fake timers wouldn't reach it). PREFER
+   *  `events.waitFor(...)` over blind `advance(N)` when waiting for a
+   *  specific server-side event — it's faster (polls at 25 ms vs the
+   *  blind 100+ ms sleep) and self-documents what the test is waiting
+   *  on. */
   advance(ms: number): Promise<void>;
+  /** Server-events assertion API. Reads from `ServerEventLog`'s
+   *  module-level ring buffer; the buffer is auto-cleared on harness
+   *  boot so each test starts with a clean slate. */
+  events: ServerEventsApi;
   /** Tear down: clients, server, restore singletons. */
   cleanup(): Promise<void>;
 }
@@ -130,6 +139,15 @@ export async function bootSectorTestServer(opts: {
       return () => `test-ship-${++n}`;
     })(),
   }));
+
+  // 2026-05-13 — clear the ServerEventLog ring buffer so each test
+  // starts with no leaked events from the prior run. The buffer is
+  // module-level and we run integration tests with pool: threads +
+  // singleThread + isolate:false, so the module state persists
+  // across tests in the same file. Without this, `events.count(...)`
+  // could see counts from earlier tests and break assertions.
+  const events = createServerEventsApi();
+  events.clear();
 
   // 2. Construct a Colyseus Server + transport + listen on a random
   //    port. This is the exact production wiring; no test wrapper.
@@ -208,6 +226,7 @@ export async function bootSectorTestServer(opts: {
     async advance(ms) {
       await new Promise((r) => setTimeout(r, ms));
     },
+    events,
     async cleanup() {
       for (const r of [...connectedRooms]) {
         try { await r.leave(); } catch { /* ignore */ }

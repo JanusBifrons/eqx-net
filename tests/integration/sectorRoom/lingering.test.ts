@@ -77,13 +77,20 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
 
   it('after disconnect from galaxy room, ship lingers with isActive=false', async () => {
     const client = await harness.connectAs(PID_C, { shipKind: 'scout' });
-    await harness.advance(150);
+    // Event-driven wait: `player_join` is logged synchronously inside
+    // onJoin, so by the time `connectAs` resolves it's already in the
+    // buffer. No blind `advance(N)` needed.
+    expect(harness.events.count({ tag: 'player_join', where: (d) => d['playerId'] === PID_C })).toBe(1);
     const state = harness.getServerRoom()!.state as SectorState;
     expect(state.ships.size).toBe(1);
     const [originalShipId] = [...state.ships.entries()][0]!;
 
     await harness.disconnectClient(client);
-    await harness.advance(300);
+    // Replaces the blind `advance(300)` with a targeted wait — the
+    // linger flow fires inside onLeave and typically completes in
+    // ~50 ms. Failing here would mean the disconnect → linger pipeline
+    // is broken, which is a real regression worth catching.
+    await harness.events.waitFor({ tag: 'player_lingered', where: (d) => d['playerId'] === PID_C });
 
     expect(state.ships.size).toBe(1);
     const lingeringShip = state.ships.get(originalShipId);
