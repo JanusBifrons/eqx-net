@@ -1253,10 +1253,20 @@ export class ColyseusGameClient {
   private tryInitPredWorld(playerId: string): void {
     if (!this.predWorld || this.predWorld.hasShip(playerId)) return;
     const existing = this.mirror.ships.get(playerId);
-    if (!existing) return;
+    if (!existing) {
+      // Telemetry: tryInitPredWorld was called but the local ship's
+      // mirror entry isn't ready yet. Common during the 1-tick window
+      // between welcome and the first state-diff for the local ship.
+      logEvent('predworld_init_deferred', { playerId, reason: 'no-mirror-entry' });
+      return;
+    }
     this.predWorld.spawnShip(playerId, existing.x, existing.y, existing.kind);
     this.predWorld.setShipState(playerId, existing);
     this.reconciler = new Reconciler(this.predWorld, playerId);
+    logEvent('predworld_init', {
+      playerId,
+      x: existing.x, y: existing.y, kind: existing.kind ?? null,
+    });
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
     // Retrospectively spawn any remote ships that arrived in the initial Colyseus
     // state patch (before localId was set, so syncMirror skipped predWorld spawn).

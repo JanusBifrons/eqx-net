@@ -736,6 +736,7 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (!pendingShipSwap) return;
     const { shipId, sectorKey } = pendingShipSwap;
+    logEvent('ship_swap_dispatch', { shipId, sectorKey, fromPhase: phase });
     // Update room overrides before the phase flip so when GameSurface
     // remounts it sees the new values immediately.
     setRoomNameOverride(`galaxy-${sectorKey}`);
@@ -751,8 +752,12 @@ export function App(): JSX.Element {
     const timer = setTimeout(() => {
       setPhase('game');
       setPendingShipSwap(null);
+      logEvent('ship_swap_completed', { shipId, sectorKey });
     }, 200);
     return () => clearTimeout(timer);
+    // Note: `phase` is intentionally omitted from the deps list — it
+    // changes inside this effect (setPhase('connecting' then 'game'))
+    // which would re-trigger; the value at dispatch time is sufficient.
   }, [pendingShipSwap, setPhase, setPendingShipSwap, setCurrentSectorKey]);
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {

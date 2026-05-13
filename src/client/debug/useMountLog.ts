@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { logEvent } from './ClientLogger.js';
 
 /**
@@ -16,14 +16,17 @@ import { logEvent } from './ClientLogger.js';
  * remount cycle on the same component during a single session IS a
  * signal.
  *
- * The hook is a single `useEffect` with an empty dep array — same
- * cost shape as the existing `installWindowLogger` call. Per-event
- * payload is tiny (~80 bytes). Suitable to drop into any top-level
- * screen component without measurable perf impact.
+ * `extra` is captured by **ref** (not by value as an effect dep) so
+ * passing a fresh object literal every render doesn't trigger a fake
+ * remount cycle each render. The effect runs exactly once per real
+ * mount (twice in StrictMode dev), and `extra` reflects the value at
+ * the moment the effect fires.
  */
 export function useMountLog(name: string, extra?: Record<string, unknown>): void {
+  const extraRef = useRef(extra);
+  extraRef.current = extra;
   useEffect(() => {
-    logEvent('component_mount', { name, ...(extra ?? {}) });
+    logEvent('component_mount', { name, ...(extraRef.current ?? {}) });
     return () => logEvent('component_unmount', { name });
-  }, [name, extra]);
+  }, [name]);
 }

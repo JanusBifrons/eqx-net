@@ -3,8 +3,16 @@ import { createRoot } from 'react-dom/client';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 import { App } from './App';
 import { useAuthStore } from './auth/authStore';
+import { useUIStore } from './state/store';
 import { loadToken, saveToken } from './auth/tokenStorage';
 import { apiGetMe } from './auth/authApi';
+
+// Expose the Zustand store on window for E2E tests + interactive
+// debugging. Read-only by convention (tests use `getState()` to read +
+// the explicit setters to write); not used by production code.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __eqxStore?: typeof useUIStore }).__eqxStore = useUIStore;
+}
 
 const theme = createTheme({
   palette: {
