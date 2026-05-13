@@ -1236,6 +1236,23 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
 
+      // Phase 6b — hitscan against lingering hulls. Targets the
+      // shipInstanceId; applyDamage routes to the schema directly.
+      // No lag-comp rewind (SnapshotRing isn't keyed by shipInstanceId);
+      // we use the live pose mirror. Acceptable because lingering
+      // hulls drift slowly (drag-decay), so the few-ms rewind delta
+      // wouldn't change the hit decision meaningfully.
+      for (const [shipInstanceId] of this.lingeringSlots) {
+        const lingeringPose = this.lingeringPoseCache.get(shipInstanceId);
+        if (!lingeringPose) continue;
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
+        if (dist !== null && dist < mountHitDist) {
+          mountHitDist = dist;
+          mountHitId = shipInstanceId;
+          mountHitIsObstacle = false;
+        }
+      }
+
       for (const rec of this.swarmRegistry.all()) {
         const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
         const b = slotBase(rec.slot);
@@ -1467,6 +1484,46 @@ export class SectorRoom extends Room<SectorState> {
         this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
         this.destroyWreck(shipInstanceId);
         logger.info({ shipInstanceId, shooterId }, 'wreck destroyed');
+      }
+      return;
+    }
+
+    // Phase 6b — when targetId is a shipInstanceId (a lingering hull, hit
+    // by a projectile sweep that iterates lingeringSlots), route through
+    // the schema directly. Otherwise fall back to the active-ship path
+    // (targetId is a playerId, resolved via the indirection map).
+    const directLingering = this.state.ships.get(targetId);
+    if (directLingering && !directLingering.isActive) {
+      if (!directLingering.alive) return;
+      directLingering.health = Math.max(0, directLingering.health - damage);
+      const pose = this.lingeringPoseCache.get(targetId);
+      const dmgEvent: DamageEvent = {
+        type: 'damage',
+        targetId,
+        damage,
+        newHealth: directLingering.health,
+        shooterId,
+        hitX: hitX ?? pose?.x,
+        hitY: hitY ?? pose?.y,
+      };
+      this.broadcast('damage', dmgEvent);
+      if (directLingering.health <= 0) {
+        directLingering.alive = false;
+        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
+        this.broadcast('destroy', destroyEvent);
+        // Free the lingering slot and clear schema bookkeeping. The
+        // roster row deletion happens via the SHIP_DESTROYED bus
+        // handler's deleteRosterRow call below.
+        const slot = this.lingeringSlots.get(targetId);
+        if (slot !== undefined) {
+          this.lingeringSlots.delete(targetId);
+          this.lingeringPoseCache.delete(targetId);
+          this.freeSlots.push(slot);
+          this.postToWorker({ type: 'DESPAWN', slot, playerId: directLingering.playerId });
+        }
+        this.state.ships.delete(targetId);
+        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
+        logger.info({ shipInstanceId: targetId, shooterId }, 'lingering hull destroyed');
       }
       return;
     }
@@ -1712,6 +1769,27 @@ export class SectorRoom extends Room<SectorState> {
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = `wreck-${shipInstanceId}`;
+          bestHitX = sweep.hitX;
+          bestHitY = sweep.hitY;
+        }
+      }
+
+      // Phase 6b — projectile sweep against lingering hulls. The schema
+      // `state.ships` entry stays live with `isActive=false`; we want
+      // shots to land like they would on an active ship (damage applies
+      // through the standard player-ship branch in `applyDamage`). The
+      // targetId we surface is the shipInstanceId so `applyDamage` can
+      // route through the schema map. We pull pose from `lingeringSlots`
+      // (parallel to `playerToSlot` for active ships).
+      for (const [shipInstanceId, slot] of this.lingeringSlots) {
+        if (shipInstanceId === proj.ownerId) continue;
+        const b = slotBase(slot);
+        const cx = this.sabF32[b + SLOT_X_OFF]!;
+        const cy = this.sabF32[b + SLOT_Y_OFF]!;
+        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
+        if (sweep && sweep.entry < bestEntry) {
+          bestEntry = sweep.entry;
+          bestTargetId = shipInstanceId;
           bestHitX = sweep.hitX;
           bestHitY = sweep.hitY;
         }

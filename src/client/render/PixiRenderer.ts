@@ -868,13 +868,18 @@ export class PixiRenderer implements IRenderer {
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
    *  disconnected within the 15-min linger window OR whose ships have
    *  been displaced from `playerToSlot` by a fresh spawn) are drawn with
-   *  the same grey-ish desaturated tint as wrecks — visual cue for
-   *  "this hull is parked but still belongs to a real player". */
-  private readonly lingeringSprites = new Map<string, Container>();
+   *  the SAME silhouette + colour as the live ship (NOT the desaturated
+   *  wreck tint — they still belong to a real player), with a slight
+   *  alpha drop (0.75) as a visual cue for "this hull is parked, the
+   *  pilot isn't currently flying it". A sprite cache miss can occur
+   *  before the schema diff with `kind` has arrived; we defer creation
+   *  until kind is known so we don't lock in the default-fighter shape
+   *  for what's actually an interceptor / scout / heavy. */
+  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string }>();
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
-        for (const g of this.lingeringSprites.values()) g.destroy();
+        for (const entry of this.lingeringSprites.values()) entry.sprite.destroy();
         this.lingeringSprites.clear();
       }
       return;
@@ -882,21 +887,35 @@ export class PixiRenderer implements IRenderer {
     const seen = new Set<string>();
     for (const [shipInstanceId, ship] of mirror.lingeringShips) {
       seen.add(shipInstanceId);
-      let sprite = this.lingeringSprites.get(shipInstanceId);
-      if (!sprite) {
-        const shape = shapeForKind(ship.kind);
-        sprite = buildShipGfxFromShape(shape, desaturate(shape.color));
-        sprite.alpha = 0.55;
-        this.shipContainer.addChild(sprite);
-        this.lingeringSprites.set(shipInstanceId, sprite);
+      // Defer sprite creation until kind is known so we don't bake in
+      // the wrong silhouette. Subsequent snapshots will retry.
+      if (!ship.kind) continue;
+      let entry = this.lingeringSprites.get(shipInstanceId);
+      // If the kind changed since the sprite was built, rebuild it —
+      // this can happen if the schema diff with kind arrives after the
+      // first snapshot wrote a no-kind entry that we previously had to
+      // skip, then on the next frame we'd build with the right kind.
+      // Still defensive in case the catalogue ever gets remapped.
+      if (entry && entry.kind !== ship.kind) {
+        entry.sprite.destroy();
+        entry = undefined;
+        this.lingeringSprites.delete(shipInstanceId);
       }
-      sprite.x = ship.x;
-      sprite.y = -ship.y;
-      sprite.rotation = -ship.angle;
+      if (!entry) {
+        const shape = shapeForKind(ship.kind);
+        const sprite = buildShipGfxFromShape(shape, shape.color);
+        sprite.alpha = 0.75;
+        this.shipContainer.addChild(sprite);
+        entry = { sprite, kind: ship.kind };
+        this.lingeringSprites.set(shipInstanceId, entry);
+      }
+      entry.sprite.x = ship.x;
+      entry.sprite.y = -ship.y;
+      entry.sprite.rotation = -ship.angle;
     }
-    for (const [id, sprite] of this.lingeringSprites) {
+    for (const [id, entry] of this.lingeringSprites) {
       if (!seen.has(id)) {
-        sprite.destroy();
+        entry.sprite.destroy();
         this.lingeringSprites.delete(id);
       }
     }

@@ -1089,3 +1089,52 @@ The fix (commit `d1e7ecf`): track which drones the snapshot anchored (`_droneSna
 **The diagnostic signature for this class of bug is distinctive**: per-event metrics get *worse* after a fix that "should help structurally," not better. If you see that pattern, look for two reset paths.
 
 The TDD harness `tests/e2e/feel-test-lockstep.spec.ts` is the regression lock — its `swarmSnapP50 < 15` assertion will fail the moment a dual-correction-path bug reappears. Architecture walkthrough: [docs/architecture/ai-lockstep.md](architecture/ai-lockstep.md).
+
+---
+
+## 2026-05-13 — Phase 6b — Every collidable entity MUST be in predWorld (SECOND TIME this trap was hit)
+
+Commit: `2c4aa5c` (Phase 6b lingering hulls). The user reported: "I cannot collide with them, or shoot them, I just fly through" — about lingering player hulls displayed in their sector.
+
+**This is the same class of bug** Phase 4 hit with wrecks (commit `ca9c6df` "spawn wreck bodies in client predWorld for collision"). Two phases, same trap, same fix pattern. Time to capture the rule so it doesn't happen a third time.
+
+### The contract
+
+**Every entity the local ship can physically collide with — OR shoot via the local hitscan ray-test — must have a rigid body in the client's `predWorld` (the prediction physics world).** The render mirror (`mirror.ships`, `mirror.wrecks`, `mirror.lingeringShips`) is what the **renderer** reads. The render mirror is **NOT** what the prediction physics reads. The physics world is its own thing. Both must be populated for an entity to be both visible AND interactive.
+
+If a new entity type only lives in the render mirror, then:
+
+- The local ship passes straight through it (no `predWorld` body during `world.step()`).
+- The local hitscan ray-test (which runs against `predWorld` bodies) finds nothing.
+- Local projectile ghosts can't preview hits against it.
+
+### The fix pattern (every time, same recipe)
+
+1. Allocate a body-id namespace with a prefix that can't collide with playerId / wreck / etc. Phase 4 used `wreck-${id}`. Phase 6b used `linger-${id}`. Future: pick a unique prefix.
+2. In the snapshot-pose handler for that entity type, lazily spawn the body the first time you see a pose: `predWorld.spawnShip(bodyId, x, y, kind)`. NB: **requires `kind` to be known** — defer spawn until kind arrives via the schema diff, or you build a default-fighter body with the wrong collision radius.
+3. Every snapshot tick after spawn, `predWorld.setShipState(bodyId, { x, y, angle, vx, vy, angvel })` so the body tracks the authoritative pose.
+4. On entity removal (cleared from `mirror.X`), `predWorld.despawnShip(bodyId)` to free the rigid body.
+5. Track the spawned bodies in a `predXxxIds: Set<string>` so cleanup on room teardown / sector change can despawn them all.
+
+### Server-side counterpart — projectile-sweep + hitscan iteration
+
+When a new entity type can take damage, the server also needs to teach its hit-test loops to iterate it. Phase 6b had to add `lingeringSlots` iteration to both `advanceProjectiles` (the projectile sphere-sweep) and `handleFire` (the hitscan ray-test). The wreck flow has the same pattern via `wreckToSlot` iteration. **Adding a new collidable entity = three integration points server-side**: schema map, projectile sweep, hitscan ray.
+
+Plus `applyDamage` must know how to route the targetId — Phase 6b added a direct `state.ships.get(targetId)` check before the playerId-based `getActiveShip` lookup, so a shipInstanceId-based targetId (used for lingering hulls) routes correctly.
+
+### Why this is a recurring trap
+
+When you add a new collidable entity type, you naturally think about (a) the server-side schema, (b) the wire format, (c) the render mirror. The predWorld registration is a **fourth thing** that's easy to forget because it's spatially in a different subsystem from the mirror. The renderer and predWorld both subscribe to per-frame updates, but the predWorld is the one that drives collision and local hit-testing.
+
+### Look-here-first checklist for "I fly through this thing"
+
+1. Is there a `mirror.X` for this entity? Good. Now is there a corresponding `predXIds: Set<string>` of spawned predWorld bodies?
+2. Does the snapshot-pose handler call `predWorld.spawnShip(bodyId, ...)` lazily on first pose (with `kind` known)?
+3. Does it call `predWorld.setShipState(bodyId, ...)` on every snapshot to keep the body in sync?
+4. Does the cleanup branch call `predWorld.despawnShip(bodyId)` when the entity is removed?
+5. Server-side: do `advanceProjectiles` and `handleFire` iterate the new entity's slot map?
+6. Server-side: does `applyDamage` know how to route the new targetId form?
+
+If any answer is no, the local player will fly through and the server may miss hits.
+
+`src/client/CLAUDE.md` carries the rule in shorter form under the "Renderer Rules" section ("Every collidable entity must be in predWorld"). This was reworded from "Remote ships must be in predWorld" after this lesson — the old phrasing only covered the original case and didn't dissuade Phase 4 + Phase 6b from re-hitting it.

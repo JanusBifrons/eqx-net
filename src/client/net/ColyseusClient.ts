@@ -365,6 +365,14 @@ export class ColyseusGameClient {
    *  with the playerId namespace. Despawned when removed from the
    *  schema's `state.wrecks` map. */
   private predWreckIds = new Set<string>();
+  /** Phase 6b — lingering hulls currently spawned in predWorld so the
+   *  local player ship can collide with parked hulls (and so the local
+   *  projectile sweep registers hits on them — server-side projectile
+   *  sweep handles authoritative damage, but the predicted ghost
+   *  projectiles need a body to test against). Stored with the
+   *  `linger-` prefix so they can't collide with the playerId or
+   *  wreck namespaces. Despawned when removed from mirror.lingeringShips. */
+  private predLingeringIds = new Set<string>();
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
@@ -1264,14 +1272,41 @@ export class ColyseusGameClient {
           ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
         });
         lingeringSeen.add(shipInstanceId);
+        // Phase 6b — spawn / refresh the predWorld body so the local
+        // player can collide with the parked hull (mirrors the wreck
+        // pattern in syncWreckPoses). Body id prefixed with `linger-`
+        // to keep namespaces separate from playerId / wreck. Spawn
+        // lazily: requires `kind` so the body has the right shape;
+        // the next snapshot retries when kind is known.
+        const kind = prev?.kind;
+        if (this.predWorld && kind) {
+          const bodyId = `linger-${shipInstanceId}`;
+          if (!this.predWorld.hasShip(bodyId)) {
+            this.predWorld.spawnShip(bodyId, entry.x, entry.y, kind);
+            this.predLingeringIds.add(bodyId);
+          }
+          this.predWorld.setShipState(bodyId, {
+            x: entry.x, y: entry.y, angle: entry.angle,
+            vx: entry.vx, vy: entry.vy,
+            angvel: entry.angvel,
+          });
+        }
         continue;
       }
       statesByPlayerId[entry.playerId] = entry;
     }
     // Remove lingering hulls that didn't appear in this snapshot (evicted
-    // by the 15-min timer, or destroyed).
+    // by the 15-min timer, or destroyed) — plus despawn their predWorld
+    // bodies so the local player stops colliding with ghosts.
     for (const id of [...this.mirror.lingeringShips.keys()]) {
-      if (!lingeringSeen.has(id)) this.mirror.lingeringShips.delete(id);
+      if (!lingeringSeen.has(id)) {
+        this.mirror.lingeringShips.delete(id);
+        const bodyId = `linger-${id}`;
+        if (this.predLingeringIds.has(bodyId)) {
+          this.predWorld?.despawnShip(bodyId);
+          this.predLingeringIds.delete(bodyId);
+        }
+      }
     }
     snap = { ...snap, states: statesByPlayerId };
 
