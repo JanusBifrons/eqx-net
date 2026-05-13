@@ -2257,11 +2257,24 @@ export class ColyseusGameClient {
           ...(displayName !== undefined ? { displayName } : {}),
         });
         // Phase 6b cleanup (2026-05-13) — spawn the predWorld body
-        // here too, in case the schema diff arrived AFTER the first
+        // here too, in case the schema diff arrived BEFORE the first
         // snapshot. Without this, the predWorld body was deferred a
         // full snapshot tick, letting the local player fly through
         // their own freshly-displaced hulk on flaky networks.
-        this.tryEnsureLingerPredBody(shipInstanceId);
+        //
+        // Jitter-fix (2026-05-13) — but ONLY spawn on first observation.
+        // `onStateChange` fires on every schema mutation (~60 Hz when
+        // `state.tick` updates), so an unconditional call would teleport
+        // the body back to the last-snapshot pose every tick — the
+        // dual-correction-path jitter bug, same shape as the AI lockstep
+        // chapter-2 dual-path fight. The snapshot path
+        // (`handleSnapshot`) is the canonical correction path for
+        // lingering hull poses; this path is identity-only (kind,
+        // displayName, ownerPlayerId).
+        const bodyId = `linger-${shipInstanceId}`;
+        if (this.predWorld && !this.predWorld.hasShip(bodyId)) {
+          this.tryEnsureLingerPredBody(shipInstanceId);
+        }
         continue;
       }
 
