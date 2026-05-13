@@ -1989,9 +1989,18 @@ export class ColyseusGameClient {
         this._swarmSnapAngleBuf.push(angleSnap);
         this._swarmSnapAngvelBuf.push(angvelDelta);
         this.stats.swarmSnapCount++;
-        // Recompute p50/p99 from the ring buffers. O(n log n) per snap; with
-        // n ≤ 240 and snap rate ≤ 200 events/s, this is < 60 K comparisons/s.
-        this._recomputeSwarmSnapStats();
+        // Throttle p50/p99 recompute to once per second. The stats are
+        // diagnostic-only (read by the Capture button in SettingsModal),
+        // so refreshing at 1 Hz is more than adequate. Unthrottled, this
+        // function was the #1 non-MUI hit in the drawer-lag CPU profile
+        // (2.3 s of self-time during a 13.7 s drawer-mount window) —
+        // 3 array sorts × 200 swarm-snap events/s = 600 sorts/s on the
+        // main thread, blocking the React render of the MUI Drawer.
+        const nowMs = performance.now();
+        if (nowMs - this._swarmSnapStatsLastMs >= 1000) {
+          this._swarmSnapStatsLastMs = nowMs;
+          this._recomputeSwarmSnapStats();
+        }
 
         const lastTick = this._swarmSnapLastLogTick.get(entityId) ?? -1000;
         if (this.stats.lastServerTick - lastTick >= 4) {
@@ -2050,6 +2059,12 @@ export class ColyseusGameClient {
    *  even when many drones are in interest. Single shared scratch array is
    *  acceptable here because reads happen once per push, not per frame. */
   private _statsScratch: number[] = [];
+  /** Wall-clock ms of the last `_recomputeSwarmSnapStats` call. Used to
+   *  throttle the O(n log n) percentile sort to ~1 Hz (it was running
+   *  ~200×/s pre-throttle, costing 2.3 s of CPU during the drawer-mount
+   *  window — see the drawer-lag CPU profile). */
+  private _swarmSnapStatsLastMs = 0;
+
   private _recomputeSwarmSnapStats(): void {
     const dist = this._swarmSnapDistBuf;
     if (dist.length === 0) {
