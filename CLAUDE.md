@@ -59,6 +59,18 @@ Rules:
 
 ---
 
+## Performance Budgets
+
+| Surface | Budget | Notes |
+|---|---|---|
+| Physics tick (server + client `predWorld`) | 16.67 ms (60 Hz) | Fixed timestep (invariant #4); variable-dt is forbidden |
+| Drawer click → visible | ≤ 500 ms | Current floor 1.22 s; see `docs/LESSONS.md` 2026-05-13 "Drawer perf paradigm + MUI sx-hoist rules" |
+| Inline `sx={{...}}` allocation | Avoid per-render | Hoist static sx to module-level const; `useMemo` for dynamic; see [src/client/layout/Drawer/AdvancedDrawer.tsx](src/client/layout/Drawer/AdvancedDrawer.tsx) |
+| GC pauses | < 2 ms | Captured via `diag/drawer-lag-trace/cdp-perf.json` + `scripts/analyze-cdp-profile.mjs` |
+| SectorRoom `update()` per-tick | Per the budgets in [src/server/CLAUDE.md](src/server/CLAUDE.md) (interest grid, lag-comp buffer, backpressure) | |
+
+---
+
 ## Technology Stack Matrix
 
 | Zone | Allowed runtime libs | Purpose |

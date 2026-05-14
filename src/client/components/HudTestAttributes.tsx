@@ -3,11 +3,14 @@ import { useUIStore } from '../state/store';
 /**
  * Hidden, plain-DOM mirror of the always-required HUD `data-testid`s.
  *
- * The real diagnostics now live inside the AdvancedDrawer's Dev tab, which
- * unmounts when the drawer is closed (keepMounted is intentionally OFF for
- * mobile-perf reasons — see `AdvancedDrawer.tsx`). But several existing E2E
- * specs (`feel-test-lockstep`, `swarm-tidi`, `tidi-overlay`, etc.) read
- * these values via `textContent` and assume they're always queryable.
+ * The real diagnostics live inside the AdvancedDrawer's Dev tab. Even though
+ * `keepMounted` is now ON (2026-05-13, commit `2aa7d4f` — see
+ * `AdvancedDrawer.tsx`), Dev-tab content only renders when `drawerTab === 'debug' && isDrawerOpen`
+ * to avoid the 17 Hz snapshot-rate cost while invisible. So the diagnostics
+ * are NOT queryable from arbitrary E2E specs. Several existing specs
+ * (`feel-test-lockstep`, `swarm-tidi`, `tidi-overlay`, etc.) read these
+ * values via `textContent` and assume they're always queryable — this
+ * component provides that always-mounted contract surface.
  *
  * This component renders the bare minimum — plain `<div>`s, no MUI, no
  * emotion CSS-in-JS, `display: none` so nothing paints. Each value is a

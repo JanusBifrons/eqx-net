@@ -1,5 +1,10 @@
 # Drawer perf + happy-path test — handoff notes
 
+> **Promoted to `docs/LESSONS.md` on 2026-05-14.** The paradigm rules
+> (sx-hoist, keepMounted flip, abandoned approaches) now live in the
+> 2026-05-13 LESSONS entry. This file is preserved as the
+> as-of-end-of-session record with measurements and process notes.
+
 Session ended 2026-05-13 with the happy-path test still failing.
 The user wants this picked up tomorrow.
 

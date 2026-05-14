@@ -110,10 +110,15 @@ const ACTIVE_PANEL_SX = { flex: 1, minWidth: 0, overflow: 'auto' } as const;
  * **Performance contract**: this is a plain `Drawer`, NOT `SwipeableDrawer`.
  * SwipeableDrawer attaches global touchstart/touchmove listeners that fire
  * on every joystick movement and tank prediction RTT (~50 ms → ~2 s on
- * Android). Likewise `keepMounted` is intentionally OFF so tab content
- * (`ConnectionDiagnostics`, `DevOverlay`, etc.) only mounts when the drawer
- * is open — otherwise they re-render at the snapshot rate (~17 Hz) and
- * starve the Pixi RAF loop on mobile.
+ * Android). `keepMounted` is now ON (2026-05-13, commit `2aa7d4f`) because
+ * Modal cold-mount was the dominant first-open cost — pre-mounting drops
+ * CLICK→VISIBLE from ~13.7 s to ~1.22 s. See `docs/LESSONS.md` 2026-05-13
+ * "Drawer perf paradigm + MUI sx-hoist rules". The historic 17 Hz
+ * background-render objection now applies only to snapshot-rate subscribers
+ * in hidden tabs (`tabs/DebugTab.tsx`, `components/ConnectionDiagnostics.tsx`,
+ * `components/DevOverlay.tsx`, `components/LogPanel.tsx`) — each MUST gate
+ * on `drawerTab === '<id>' && isDrawerOpen` so they pay zero cost when
+ * their tab isn't on screen.
  *
  * Pixi keeps running underneath — the drawer paints on a higher z-index
  * tier (`Z.drawer = 1200`) but doesn't resize or remount the canvas.

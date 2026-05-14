@@ -1186,3 +1186,58 @@ await harness.cleanup();
 **Result**: 5/5 integration tests pass in ~2.5s wall-clock; the regression that took 4 smoke-test cycles to surface in Phase 6b would have failed test 5 ("after fresh-spawn, original ship lingers + new ship is active") in CI.
 
 **For future entity types** (drones-as-targets / Phase 6c, slot-cap eviction / Phase 6d): add a `describe` block in `lingering.test.ts` per scenario. Avoid the temptation to create a generic "sector harness" with too-many parameters — copy-paste a tight `beforeEach + connectAs + assert + disconnect` block instead. Integration tests trade isolation for speed; per-test boot is acceptable.
+
+---
+
+## 2026-05-13 — Drawer perf paradigm + MUI sx-hoist rules
+
+Commits: `9c04bbf`, `f7386a9`, `2aa7d4f`, `55ff74f`, `f81e129`
+
+Drawer first-open dropped from **13.7 s → 1.22 s** across five fixes shipped during the 2026-05-13 marathon. Target was sub-500 ms; we haven't hit it (the 1.22 s floor is dominated by React reconciler + emotion `sx`-prop work on the first cold mount of GalaxyTab + ShipRosterPanel, plus main-thread contention from the Pixi tick). The work surfaces a UI perf paradigm worth recording.
+
+### 1. Measurement-first ordering — pick the largest slice first
+
+The CPU profile (`diag/drawer-lag-trace/cdp-perf.json`) showed `_recomputeSwarmSnapStats` was 2.3 s self-time, dominating every other cost in the lag window. Throttling that to 1 Hz (commit `9c04bbf`) was a one-line change that delivered the largest single-step win (13.7 → 3.07 s). The emotion/sx-prop slice was second-largest. The Modal cold-mount was third-largest. *In that order.* Don't optimise without measurement.
+
+### 2. The MUI sx + emotion paradigm — hoist, memoise, memo()
+
+Every inline `sx={{...}}` allocates a fresh object on every render. MUI's emotion engine then has to hash it (murmur2), deep-merge it, and run `styleFunctionSx2` against the theme — per allocation. A single drawer-open showed ~6 s of emotion + sx work across all the chip/button/box renders in profile.
+
+Rules (commit `55ff74f`, see [src/client/layout/Drawer/AdvancedDrawer.tsx](../src/client/layout/Drawer/AdvancedDrawer.tsx) lines 40–105 for the canonical example):
+
+- **Hoist static `sx` to module-level consts.** Name them by purpose: `HEADER_SX`, `CARD_SX`, `RAIL_BTN_ACTIVE_SX`. Stable identity across renders → emotion cache hit, no per-render restyling.
+- **Use `useMemo` for sx that depends on props/state.** Same caching benefit; just gated by deps.
+- **`useCallback` for handlers** that get passed to memoised children. Stable prop identity is what keeps `React.memo` alive.
+- **`React.memo` on per-item components** in lists (e.g. tab buttons in a rail). Without it, parent re-renders cascade. With it, the children render only when their own props change.
+- **`useMemo` for derived JSX elements** (e.g. `active.node` in AdvancedDrawer). If the parent re-renders and the JSX element is rebuilt, React's reconciler treats it as a new element and unmounts/remounts the subtree — wiping the perf wins.
+
+The pattern compounds: a single button in a 4-item rail unrolls to ~20 emotion hashes per render in the naive form. With the paradigm applied, those hashes happen once at module load.
+
+### 3. `keepMounted` policy flip — the historic objection is now narrow
+
+Pre-2026-05-13 the Drawer was `keepMounted: false` because the historic concern was: tab content (`ConnectionDiagnostics`, `DevOverlay`, `LogPanel`) subscribes to snapshot-rate state and would re-render at ~17 Hz if mounted-but-invisible, starving the Pixi RAF loop.
+
+The 2026-05-13 measurement showed Modal **cold-mount** was the dominant first-open cost (commit `2aa7d4f`): pre-mounting drops CLICK→VISIBLE from ~13.7 s to ~1.22 s. We flipped `keepMounted: true` and narrowed the historic objection to its actual surface: snapshot-rate subscribers in hidden tabs MUST gate on `drawerTab === '<id>' && isDrawerOpen`. The cost is paid once at page-load; the hidden-tab cost is zero by gate.
+
+`SlideProps.mountOnEnter: false` is also set (commit `f81e129`) so MUI's Slide doesn't defer child mount on first open. With `keepMounted` on the Modal AND `mountOnEnter: false` on the Slide, the children render at page-load.
+
+### 4. Pixi viewport `eventMode` + `features.globalMove` — known fix per pixijs/pixijs#6515
+
+Commit `f7386a9`: in `PixiRenderer.ts`, set `viewport.eventMode = 'none'` and `features.globalMove = false`. The viewport tree is gameplay-only — no per-sprite hit-test needed on every native pointer event. globalMove dispatches the move event to every interactive child each native frame; switching it off skips the traversal. Pixi v8 ships globalMove on by default for completeness, but for our gameplay subtree it's pure overhead.
+
+### 5. Abandoned approaches — do not retry
+
+The following were explored on 2026-05-13 and ruled out:
+
+- **MutationObserver-wrapped visibility waits.** Obscured the actual signal; Playwright's `expect(locator).toBeVisible()` is the contract. If it can't find the element, the element isn't there — wrap doesn't fix that.
+- **Custom `page.evaluate`-based clicks for UX steps.** Dodges the perf wall but breaks the user-experience contract the test is meant to verify. Setup steps (auth, drawer-open) MAY use Zustand setters; UX steps (the actual flow under test) MUST be real clicks.
+- **Generous timeouts to "make the test pass".** Timeouts are signals, not solutions. A 30 s wait for a 16.67 ms target frame means something is fundamentally wrong; bumping to 60 s doesn't fix it.
+- **`keepMounted: false` + `mountOnEnter: true`.** This WAS the slow path. Don't re-evaluate it — the win is measured and reproducible.
+
+### 6. What's still unsolved (carry forward)
+
+- **<500 ms drawer click→visible target.** Floor is 1.22 s. Open hypotheses (handoff doc priority order): Pixi tick starves Playwright's CDP; MUI internal `<Transition appear>` defers mount; pre-mount GalaxyTab outside the Drawer entirely.
+- **`tests/e2e/drawer-galaxy-overview-spawn.spec.ts` still failing.** Times out at `[data-testid="galaxy-tab-show-map"]` not visible within 30 s. Next evidence-led step: verify `drawer-panel-galaxy` is in DOM at page-load BEFORE the drawer click (proves whether keepMounted is doing what we think).
+- **`tabVisible` gate audit needed.** `DebugTab.tsx`, `ConnectionDiagnostics.tsx`, `DevOverlay.tsx`, `LogPanel.tsx` — each should be gated. Patch any unconditional snapshot-rate subscription before further perf measurement.
+
+See `docs/HANDOFF-drawer-perf-2026-05-13.md` for the as-of-end-of-session record, including measurement table and hypothesis ordering.
