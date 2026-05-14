@@ -286,7 +286,13 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           const localId = gameClient.mirror.localPlayerId;
           const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
           const writeDataset = (++frameCounter % 5) === 0;
-          if (localShip && writeDataset) {
+          // Phase 2 of OffscreenCanvas migration: single batched
+          // renderer-feedback read per frame. Replaces per-attribute
+          // `renderer.mountCountForShip()` / `renderer.getDebugHaloArrowCount()`
+          // calls so the future worker-renderer (where each read is a
+          // postMessage) lands at a single cached-snapshot lookup site.
+          const feedback = writeDataset ? renderer.getFeedback() : null;
+          if (localShip && writeDataset && feedback) {
             el.dataset['shipX'] = localShip.x.toFixed(3);
             el.dataset['shipY'] = localShip.y.toFixed(3);
             el.dataset['shipAngle'] = localShip.angle.toFixed(4);
@@ -294,9 +300,9 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             // mount count so E2E specs can assert the new interceptor /
             // gunship kinds wire visible turret sprites. Legacy single-mount
             // fighter/scout/heavy report 1.
-            el.dataset['mountCount'] = String(renderer.mountCountForShip(localId!));
+            el.dataset['mountCount'] = String(feedback.mountCounts.get(localId!) ?? 0);
           }
-          if (writeDataset) {
+          if (writeDataset && feedback) {
           // Expose all ship positions for E2E cross-client position assertions.
           const posMap: Record<string, { x: number; y: number }> = {};
           for (const [id, s] of gameClient.mirror.ships) {
@@ -313,7 +319,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
           el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
           el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
-          el.dataset['haloArrowCount'] = String(renderer.getDebugHaloArrowCount());
+          el.dataset['haloArrowCount'] = String(feedback.haloArrowCount);
           // Multi-mount/turret refactor (Phase 2c): `liveBeam` became
           // `liveBeams: Map<mountId, ...>`. For legacy single-mount fighter/
           // scout/heavy there is exactly one entry keyed by `'forward'`, so

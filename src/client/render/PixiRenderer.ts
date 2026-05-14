@@ -1,6 +1,6 @@
 import { Application, Graphics, Container } from 'pixi.js';
 import { Viewport } from 'pixi-viewport';
-import type { IRenderer, RenderMirror } from '@core/contracts/IRenderer';
+import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
@@ -296,6 +296,19 @@ export class PixiRenderer implements IRenderer {
   private labels: LabelManager | null = null;
   private backgroundGrid: BackgroundGrid | null = null;
   private starfield: StarfieldBackground | null = null;
+  /**
+   * Renderer → main-thread feedback (see `RendererFeedback`). Populated
+   * at the tail of every `update()` call; consumers read via
+   * `getFeedback()` after `update()` returns.
+   *
+   * Mutated in place each frame rather than reallocated — avoids
+   * per-frame GC pressure. The Map is cleared + repopulated; the outer
+   * object identity is stable.
+   */
+  private readonly feedback: RendererFeedback = {
+    mountCounts: new Map<string, number>(),
+    haloArrowCount: 0,
+  };
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
@@ -910,6 +923,19 @@ export class PixiRenderer implements IRenderer {
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
     // test uses this frame's viewport bounds, not last frame's.
     this.halo.update(mirror);
+
+    // ---------- RendererFeedback (end-of-frame, main-thread readable) ----------
+    // Populate the feedback struct that main reads after update() returns.
+    // Today this is sync-mutate (renderer and main share a process).
+    // Phase 4 of the worker migration will replace this with a FEEDBACK
+    // postMessage from the renderer worker; the contract surface stays
+    // the same (caller does `renderer.getFeedback()`).
+    this.feedback.mountCounts.clear();
+    for (const shipId of mirror.ships.keys()) {
+      const count = this.mountVisuals.mountCountForShip(shipId);
+      if (count > 0) this.feedback.mountCounts.set(shipId, count);
+    }
+    this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
   }
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
@@ -1053,17 +1079,35 @@ export class PixiRenderer implements IRenderer {
     this.app.ticker.maxFPS = fps ?? 0;
   }
 
-  /** Test-only — number of currently-visible halo arrows. */
-  getDebugHaloArrowCount(): number {
-    return this.halo.getDebugVisibleArrowCount();
+  /**
+   * Read the most recent feedback the renderer wrote at the tail of its
+   * last `update()` call. See `IRenderer.getFeedback` / `RendererFeedback`
+   * — the contract surface for both today (sync mutate) and the future
+   * worker-renderer path (postMessage cache).
+   */
+  getFeedback(): RendererFeedback {
+    return this.feedback;
   }
 
-  /** Multi-mount/turret refactor (Phase 3) — number of mount sprites
-   *  currently parented to the given ship's main Pixi sprite. Test-only;
-   *  exposed via the `data-mount-count` attribute in App.tsx so E2E specs
-   *  can assert that multi-mount ship kinds wire visible turrets. */
+  /**
+   * Test-only — number of currently-visible halo arrows.
+   * @deprecated Read `getFeedback().haloArrowCount` instead. Kept for
+   * backward-compat with any external consumer; the production read
+   * site (`App.tsx`) uses `getFeedback()`.
+   */
+  getDebugHaloArrowCount(): number {
+    return this.feedback.haloArrowCount;
+  }
+
+  /**
+   * Multi-mount/turret refactor (Phase 3) — number of mount sprites
+   * currently parented to the given ship's main Pixi sprite. Test-only;
+   * exposed via the `data-mount-count` attribute in `App.tsx` so E2E
+   * specs can assert that multi-mount ship kinds wire visible turrets.
+   * @deprecated Read `getFeedback().mountCounts.get(shipId) ?? 0` instead.
+   */
   mountCountForShip(shipId: string): number {
-    return this.mountVisuals.mountCountForShip(shipId);
+    return this.feedback.mountCounts.get(shipId) ?? 0;
   }
 
   dispose(): void {

@@ -243,6 +243,38 @@ export interface RenderMirror {
   }>>;
 }
 
+/**
+ * Renderer → main-thread feedback channel.
+ *
+ * The renderer writes this once per frame at the end of `update()`. The
+ * caller reads it synchronously after each `update()` returns. This is
+ * a closed-set of fields — adding a new one requires a phase-gate
+ * review because every entry expands the worker → main per-frame
+ * postMessage payload once the renderer moves off the main thread.
+ *
+ * **In the worker future** (see plan
+ * `~/.claude/plans/humble-strolling-coral.md` Phase 2 / Phase 4):
+ * the renderer lives in a Web Worker; this struct travels back to the
+ * main thread via a FEEDBACK postMessage each frame and the main-thread
+ * proxy caches it. Sync `getFeedback()` reads from the cache.
+ *
+ * Fields are kept primitive / structured-cloneable so the future
+ * postMessage hop costs nothing.
+ */
+export interface RendererFeedback {
+  /**
+   * Per-ship mount-sprite count. E2E test attribute `data-mount-count`
+   * reads this (looks up the local ship by id). Test-only surface —
+   * not consumed by gameplay logic.
+   */
+  mountCounts: Map<string, number>;
+  /**
+   * Count of currently-visible off-screen halo arrows (HaloRadar).
+   * E2E test attribute `data-haloArrowCount` reads this.
+   */
+  haloArrowCount: number;
+}
+
 export interface IRenderer {
   // Container is typed as unknown here so core stays DOM-free.
   // Client implementations narrow it to HTMLElement.
@@ -259,5 +291,14 @@ export interface IRenderer {
    * concrete `PixiRenderer` narrows it to `Container`.
    */
   addOverlayContainer(overlay: unknown): void;
+  /**
+   * Read the most recent feedback the renderer wrote at the end of its
+   * last `update()` call. See `RendererFeedback`.
+   *
+   * Today: backed by an in-renderer field (sync update). Future
+   * (worker migration): backed by a main-thread cache populated by
+   * FEEDBACK postMessage from the renderer worker.
+   */
+  getFeedback(): RendererFeedback;
   dispose(): void;
 }
