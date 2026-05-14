@@ -4,6 +4,8 @@ import nipplejs from 'nipplejs';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { WeaponSelector } from './WeaponSelector';
+import { useMountLog } from '../debug/useMountLog';
+import { logEvent } from '../debug/ClientLogger';
 
 interface Props {
   touchInput: TouchInput;
@@ -25,6 +27,7 @@ interface Props {
  * rework. The `M` keyboard shortcut still toggles the map.
  */
 export function MobileControls({ touchInput }: Props): JSX.Element {
+  useMountLog('MobileControls');
   // The joystick zone lives inside a `<Slot>` portal whose host doesn't
   // exist on the first render — `useRef` would observe `null` at the time
   // the effect first runs and skip nipplejs setup forever. A state-backed
@@ -40,7 +43,36 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
     // joysticks), stale handle DOM survives and we end up with one
     // joystick per past mount. Wipe the zone first so each `create`
     // starts from an empty container.
+    //
+    // Root cause documented 2026-05-14: nipplejs's `Joystick.removeFromDom`
+    // (Joystick.ts:207) has the guard
+    //   `if (!document.body.contains(this.ui.el)) return;`
+    // — so if the zone (or its Slot portal wrapper) is detached from
+    // document.body BEFORE `manager.destroy()` runs, the joystick
+    // handle DOM is never removed from its parent zone. React 18
+    // commits DOM removal BEFORE running useEffect cleanups, which is
+    // exactly the order that triggers this race during the in-game
+    // ship-swap flow (game → connecting → game phase cycle).
+    //
+    // Belt-and-braces: also walk `zone.parentElement.children` and
+    // strip any stale `.joystick` siblings the wrapper might be
+    // hosting. This catches the case where React reused the same
+    // Slot wrapper div across MobileControls instances (theoretical,
+    // not directly observed, but cheap insurance).
     while (zone.firstChild) zone.removeChild(zone.firstChild);
+    const hostBefore = zone.parentElement;
+    let staleSiblings = 0;
+    if (hostBefore) {
+      const stale: Element[] = [];
+      for (const child of hostBefore.children) {
+        if (child !== zone && child.querySelector?.('.joystick')) {
+          stale.push(child);
+        }
+      }
+      staleSiblings = stale.length;
+      for (const el of stale) hostBefore.removeChild(el);
+    }
+    if (staleSiblings > 0) logEvent('joystick_stale_dom_swept', { staleSiblings });
 
     const manager = nipplejs.create({
       zone,
@@ -51,6 +83,7 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
       restOpacity: 1,
       fadeTime: 150,
     });
+    logEvent('joystick_created', { zoneChildCount: zone.children.length });
 
     manager.on('move', (evt) => {
       touchInput.setJoystick(evt.data.vector);
@@ -62,6 +95,29 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
 
     return () => {
       manager.destroy();
+      // Belt-and-braces — nipplejs's `Joystick.removeFromDom` returns
+      // early when the joystick element is not in `document.body`,
+      // which is exactly the case React 18 hands it (DOM detached
+      // BEFORE useEffect cleanup). Wipe the zone explicitly so the
+      // orphaned `.joystick` handle is gone before any subsequent
+      // React commit can adopt or re-host the parent slot wrapper.
+      // Diagnostic counters surface the bug class — non-zero
+      // `leftoverInZone` is the smoking gun.
+      const leftoverInZone = zone.children.length;
+      while (zone.firstChild) zone.removeChild(zone.firstChild);
+      const parentHost = zone.parentElement;
+      let leftoverSiblings = 0;
+      if (parentHost) {
+        const toRemove: Element[] = [];
+        for (const child of parentHost.children) {
+          if (child !== zone && child.querySelector?.('.joystick')) {
+            toRemove.push(child);
+          }
+        }
+        leftoverSiblings = toRemove.length;
+        for (const el of toRemove) parentHost.removeChild(el);
+      }
+      logEvent('joystick_destroyed', { leftoverInZone, leftoverSiblings });
       touchInput.setJoystickIdle();
       touchInput.setFireHeld(false);
       touchInput.setBoostHeld(false);
