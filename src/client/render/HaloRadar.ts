@@ -506,11 +506,13 @@ export class HaloRadar {
       // the timer (the entry will re-spring from off-screen on the next
       // visible frame because `lastVisible` is reset on hide).
       const poiPixiY = -c.y;
+      // Camera.getVisibleBounds() returns `{ x, y, width, height }` —
+      // derive left/right/top/bottom from that shape.
       const isInside =
-        c.x >= bounds.left
-        && c.x <= bounds.right
-        && poiPixiY >= bounds.top
-        && poiPixiY <= bounds.bottom;
+        c.x >= bounds.x
+        && c.x <= bounds.x + bounds.width
+        && poiPixiY >= bounds.y
+        && poiPixiY <= bounds.y + bounds.height;
       if (entry) {
         if (isInside) {
           if (entry.onScreenSinceMs === null) entry.onScreenSinceMs = now;

@@ -55,7 +55,7 @@ describe('SectorRoom integration — lingering hull near origin keeps its pose',
     await harness.advance(200);
 
     const state = harness.getServerRoom()!.state as SectorState;
-    const [originalShipId] = [...state.ships.entries()][0]!;
+    const [_originalShipId] = [...state.ships.entries()][0]!;
 
     // Disconnect, like a "return to menu" — the connection drops, the
     // ship enters the linger branch.

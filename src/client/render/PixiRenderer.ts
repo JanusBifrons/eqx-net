@@ -13,8 +13,6 @@ import { StarfieldBackground } from './StarfieldBackground';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../shared-types/shipKinds';
 
-const WORLD_W = 10000;
-const WORLD_H = 10000;
 const SERVER_GHOST_COLOR = 0xff4400;
 const ASTEROID_COLOR = 0x886644;
 const ASTEROID_OUTLINE = 0xbb9966;

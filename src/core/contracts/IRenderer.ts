@@ -308,5 +308,15 @@ export interface IRenderer {
    * FEEDBACK postMessage from the renderer worker.
    */
   getFeedback(): RendererFeedback;
+  /**
+   * Pixi ticker FPS cap.
+   *  - `undefined` ⇒ uncapped (production default).
+   *  - finite number ⇒ throttle to that FPS.
+   *  - `null` ⇒ pause the ticker entirely. Used by `App.tsx` under
+   *    Playwright (`navigator.webdriver`) when a UI overlay covers the
+   *    game surface, so the renderer stops competing with the CDP loop
+   *    for the main thread.
+   */
+  setTickerMaxFPS(fps: number | null | undefined): void;
   dispose(): void;
 }

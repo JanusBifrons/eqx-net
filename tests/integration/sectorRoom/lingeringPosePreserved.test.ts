@@ -56,7 +56,7 @@ describe('SectorRoom integration — lingering hull pose preserved across fresh-
     await harness.advance(200);
 
     const state = harness.getServerRoom()!.state as SectorState;
-    const [originalShipId] = [...state.ships.entries()][0]!;
+    const [_originalShipId] = [...state.ships.entries()][0]!;
 
     // Disconnect (linger). The body in the worker stays alive at the
     // abandon pose; it should not teleport.
