@@ -43,6 +43,7 @@ function emptyFeedback(): RendererFeedback {
     mountCounts: new Map<string, number>(),
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
+    wreckSpriteCount: 0,
   };
 }
 
@@ -321,6 +322,7 @@ export class WorkerRendererClient implements IRenderer {
         // Mutate in place to preserve reference identity.
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
+        this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

@@ -315,6 +315,7 @@ export class PixiRenderer implements IRenderer {
     mountCounts: new Map<string, number>(),
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
+    wreckSpriteCount: 0,
   };
 
   async init(rawContainer: unknown): Promise<void> {
@@ -1075,6 +1076,7 @@ export class PixiRenderer implements IRenderer {
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
+    this.feedback.wreckSpriteCount = this.wreckSprites.size;
   }
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who

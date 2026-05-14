@@ -281,6 +281,14 @@ export interface RendererFeedback {
    * cadence that's 2 s of wall-clock.
    */
   damageNumberActiveCount: number;
+  /**
+   * Number of currently-mounted wreck sprites. Lets integration tests
+   * observe wreck rendering lifecycle (mount when entering mirror.wrecks,
+   * unmount when leaving) without needing pixel-level rendering
+   * assertions. Mirrors `damageNumberActiveCount` for the wreck
+   * sprite path.
+   */
+  wreckSpriteCount: number;
 }
 
 export interface IRenderer {
