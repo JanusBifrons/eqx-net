@@ -49,6 +49,13 @@ export class WorkerRendererClient implements IRenderer {
   private onOverlayTap: OverlayTapHandler | null = null;
   private initResolve: (() => void) | null = null;
 
+  // Event listener handles, kept so `dispose()` removes them cleanly.
+  // The canvas survives transferControlToOffscreen — only the rendering
+  // context moves to the worker, so DOM event listeners on the canvas
+  // still fire on the main thread (this is the whole point of the
+  // forwarding pattern).
+  private readonly listeners: Array<{ event: string; handler: EventListener; options?: AddEventListenerOptions }> = [];
+
   /** Subscribe to OVERLAY_TAPPED messages. Called by `App.tsx`. */
   setOverlayTapHandler(handler: OverlayTapHandler | null): void {
     this.onOverlayTap = handler;
@@ -93,7 +100,98 @@ export class WorkerRendererClient implements IRenderer {
       dpr,
     }, [offscreen]);
 
+    this.installEventListeners(this.canvas);
+
     await ready;
+  }
+
+  // ---------- Event forwarding ----------
+  //
+  // The canvas's DOM element (with rendering context transferred) still
+  // receives native pointer/wheel/touch events on the main thread. We
+  // serialise + forward them to the worker, where `Camera` consumes the
+  // synthesised events via its state machine. This is the workaround
+  // for pixijs/pixijs#9132 (Pixi events don't work natively in
+  // OffscreenCanvas runtime) — confirmed by the Phase 1 spike.
+
+  private installEventListeners(canvas: HTMLCanvasElement): void {
+    const onPointer = (e: PointerEvent): void => {
+      this.postPointerEvent(this.serialisePointer(e));
+    };
+    const onWheel = (e: WheelEvent): void => {
+      // Non-passive so we can preventDefault to stop page scroll/zoom.
+      e.preventDefault();
+      this.postWheelEvent(this.serialiseWheel(e));
+    };
+    const onTouchMove = (e: TouchEvent): void => {
+      // Stops iOS page-pinch hijacking when the gesture starts on the
+      // canvas. Touch coords aren't forwarded directly — pixi-viewport's
+      // pinch (and ours) is reconstructed from `pointer*` events with
+      // pointerType === 'touch'.
+      e.preventDefault();
+    };
+
+    this.addListener(canvas, 'pointerdown', onPointer as EventListener);
+    this.addListener(canvas, 'pointermove', onPointer as EventListener);
+    this.addListener(canvas, 'pointerup', onPointer as EventListener);
+    this.addListener(canvas, 'pointercancel', onPointer as EventListener);
+    this.addListener(canvas, 'pointerleave', onPointer as EventListener);
+    this.addListener(canvas, 'wheel', onWheel as EventListener, { passive: false });
+    this.addListener(canvas, 'touchmove', onTouchMove as EventListener, { passive: false });
+  }
+
+  private addListener(
+    canvas: HTMLCanvasElement,
+    event: string,
+    handler: EventListener,
+    options?: AddEventListenerOptions,
+  ): void {
+    canvas.addEventListener(event, handler, options);
+    this.listeners.push({ event, handler, options });
+  }
+
+  private serialisePointer(e: PointerEvent): SerialisedPointerEvent {
+    return {
+      type: e.type,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      button: e.button,
+      buttons: e.buttons,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      offsetX: e.offsetX,
+      offsetY: e.offsetY,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      isPrimary: e.isPrimary,
+      pressure: e.pressure,
+      width: e.width,
+      height: e.height,
+      twist: e.twist,
+      tiltX: e.tiltX,
+      tiltY: e.tiltY,
+      stamp: Date.now(),
+    };
+  }
+
+  private serialiseWheel(e: WheelEvent): SerialisedWheelEvent {
+    return {
+      deltaX: e.deltaX,
+      deltaY: e.deltaY,
+      deltaZ: e.deltaZ,
+      deltaMode: e.deltaMode,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      offsetX: e.offsetX,
+      offsetY: e.offsetY,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      metaKey: e.metaKey,
+      stamp: Date.now(),
+    };
   }
 
   update(mirror: RenderMirror): void {
@@ -161,6 +259,14 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   dispose(): void {
+    // Remove event listeners FIRST so any in-flight pointer event
+    // doesn't fire postMessage after the worker is terminated.
+    if (this.canvas) {
+      for (const { event, handler, options } of this.listeners) {
+        this.canvas.removeEventListener(event, handler, options);
+      }
+      this.listeners.length = 0;
+    }
     if (this.worker) {
       this.post({ type: 'DISPOSE' });
       // Give the worker a tick to `self.close()` cleanly; if it
