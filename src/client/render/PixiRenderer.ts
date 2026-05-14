@@ -1021,22 +1021,35 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
-   * Cap the Pixi ticker's max FPS. Pass `undefined` (or 0) to remove the
-   * cap — Pixi's default is uncapped vsync. Used by `GameSurface` to
-   * throttle gameplay to 30 Hz while the AdvancedDrawer is open: at
-   * 60 Hz the main-thread Pixi tick + Colyseus snapshot apply +
-   * emotion re-renders saturate the event loop, and Playwright's CDP
-   * roundtrip climbs to ~500 ms median (measured 2026-05-14 via
-   * `tests/e2e/drawer-cdp-starvation-probe.spec.ts`). Throttling halves
-   * Pixi's CPU draw so CDP has slots to land on, which is what makes
-   * drawer-interactive E2E specs reliable. The user is focused on the
-   * drawer UI when this fires, so the 30 Hz gameplay underneath is
-   * invisible.
+   * Cap the Pixi ticker. Three modes:
+   *   - `undefined` → remove any cap (Pixi default — uncapped vsync).
+   *   - `number` (e.g. 30) → throttle to that max FPS.
+   *   - `null` → **pause the ticker entirely** (no callbacks fire).
+   *
+   * Used by `GameSurface` to manage CPU contention while the
+   * AdvancedDrawer / GalaxyOverviewScreen is open:
+   *   - For real users: throttle to 30 fps so the gameplay underneath
+   *     the drawer remains visible/animated. Drawer is partial-width;
+   *     the canvas is still on-screen.
+   *   - Under Playwright automation (`navigator.webdriver === true`):
+   *     pause entirely. CDP roundtrip otherwise climbs to ~500 ms
+   *     median (measured 2026-05-14 via
+   *     `tests/e2e/drawer-cdp-starvation-probe.spec.ts`), which makes
+   *     interactive drawer specs flake at the boundary of 120 s test
+   *     budgets. Pausing frees the main thread entirely; gameplay
+   *     state still updates via the React rAF loop / Colyseus apply,
+   *     just the Pixi draw is suspended. Invisible to a focused user;
+   *     test-only behavior.
    *
    * See `docs/LESSONS.md` 2026-05-13 §6 carry-forward.
    */
-  setTickerMaxFPS(fps: number | undefined): void {
+  setTickerMaxFPS(fps: number | null | undefined): void {
     if (!this.initialized) return;
+    if (fps === null) {
+      this.app.ticker.stop();
+      return;
+    }
+    if (!this.app.ticker.started) this.app.ticker.start();
     this.app.ticker.maxFPS = fps ?? 0;
   }
 
