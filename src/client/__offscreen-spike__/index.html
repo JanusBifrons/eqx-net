@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Spike — Pixi-viewport in OffscreenCanvas worker</title>
+  <style>
+    html, body { margin: 0; height: 100%; font-family: monospace; background: #05070f; color: #ccc; overflow: hidden; }
+    #instructions { padding: 8px 12px; background: rgba(0, 255, 136, 0.10); color: #00ff88; font-size: 12px; }
+    #canvas { display: block; width: 100vw; height: calc(100vh - 230px); touch-action: none; }
+    #log {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: 180px; padding: 8px 12px; overflow: auto;
+      background: rgba(0, 0, 0, 0.85); white-space: pre-wrap; font-size: 11px;
+      border-top: 1px solid rgba(0, 255, 136, 0.18);
+    }
+    .pass { color: #00ff88; }
+    .fail { color: #ff5566; }
+    .info { color: #9aa0b4; }
+  </style>
+</head>
+<body>
+  <div id="instructions">
+    Pixi-viewport in OffscreenCanvas worker spike.
+    <strong>Drag</strong> to pan · <strong>Wheel/pinch</strong> to zoom · <strong>Tap a hex</strong> to fire callback.
+    Pass = all three work. Fail = any doesn't (NO-GO triggers fallback in the migration plan).
+  </div>
+  <canvas id="canvas"></canvas>
+  <pre id="log"></pre>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
