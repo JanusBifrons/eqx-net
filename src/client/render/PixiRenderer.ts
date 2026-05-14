@@ -409,9 +409,11 @@ export class PixiRenderer implements IRenderer {
     this.camera.addChild(this.shipContainer);
 
     this.halo.init(this.camera);
-    // Damage numbers attach to app.stage (screen-space) so they don't
-    // scale with zoom; the manager converts world→screen on spawn.
-    this.damageNumbers = new DamageNumberManager(this.app.stage, this.camera);
+    // Damage numbers attach to the world (pan with camera, anchored at
+    // impact world coord) but counter-scale per frame so they stay
+    // legible at any zoom — Camera ref needed for the per-frame
+    // counter-scale.
+    this.damageNumbers = new DamageNumberManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
 

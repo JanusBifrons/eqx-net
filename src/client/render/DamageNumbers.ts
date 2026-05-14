@@ -23,20 +23,22 @@ const STYLE = new TextStyle({
 });
 
 /**
- * Floating damage-number manager. 2026-05-14: attached to `app.stage`
- * (screen-space) instead of the world container, so numbers no longer
- * scale with zoom and stay readable. Per-spawn we convert the entity's
- * world coord → screen coord via `camera.toScreen`; the number then
- * drifts upward in screen pixels for its lifetime.
+ * Floating damage-number manager.
+ *
+ * Numbers are children of the **world container** (pan with the camera,
+ * anchored at the impact world coord) but counter-scaled per frame so
+ * their visual size is constant regardless of camera zoom. Drift is in
+ * world units per frame, scaled by `1 / camera.scale` so the
+ * screen-space drift speed feels consistent at any zoom level.
  */
 export class DamageNumberManager {
   private readonly container: Container;
   private readonly camera: Camera;
   private readonly active: DamageNumberEntry[] = [];
 
-  constructor(stageParent: Container, camera: Camera) {
+  constructor(worldParent: Container, camera: Camera) {
     this.container = new Container();
-    stageParent.addChild(this.container);
+    worldParent.addChild(this.container);
     this.camera = camera;
   }
 
@@ -51,19 +53,23 @@ export class DamageNumberManager {
 
     const text = new Text({ text: `-${damage}`, style: STYLE });
     text.anchor.set(0.5, 0.5);
-    // World coord → Pixi-space (Y-flip) → screen coord.
-    const screen = this.camera.toScreen(x, -y);
-    text.x = screen.x;
-    text.y = screen.y;
+    text.x = x;
+    text.y = -y; // Y-flip: world +Y (up) → Pixi -Y
     this.container.addChild(text);
     this.active.push({ text, framesLeft: LIFETIME_FRAMES });
   }
 
   update(): void {
+    // Counter-scale to neutralise the world container's zoom — the
+    // text reads constant-size on screen regardless of camera zoom.
+    // The drift rate also gets scaled so 1 visual pixel per frame
+    // holds at any zoom level.
+    const invScale = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
     for (let i = this.active.length - 1; i >= 0; i--) {
       const entry = this.active[i]!;
       entry.framesLeft--;
-      entry.text.y -= 1; // drift upward in Pixi coords
+      entry.text.y -= invScale; // drift upward in world units (= 1 screen px)
+      entry.text.scale.set(invScale);
       entry.text.alpha = entry.framesLeft / LIFETIME_FRAMES;
 
       if (entry.framesLeft <= 0) {
