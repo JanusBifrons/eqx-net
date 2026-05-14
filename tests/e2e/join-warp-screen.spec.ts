@@ -145,6 +145,69 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
+test('viewport rotation forwards a resize to the worker (no stretched aspect)', async ({ page }) => {
+  // Regression: WorkerRendererClient only installed pointer/wheel/touch
+  // listeners — no window resize, no orientationchange, no ResizeObserver.
+  // The OffscreenCanvas's drawing buffer never got resized when the
+  // viewport changed (rotation, URL bar showing/hiding on mobile, etc.),
+  // so the rendered content got stretched to whatever the new CSS size
+  // was. User reported 2026-05-14: "when I rotated the phone, the
+  // canvas didn't even update, so it got all stretched and thin".
+  //
+  // We can't read OffscreenCanvas drawing-buffer dims from the main
+  // thread (canvas.width is unset after transferControlToOffscreen).
+  // Instead we assert on the `worker_resize` logEvent that fires from
+  // `WorkerRendererClient.dispatchResize` — its existence proves the
+  // resize listener picked up the rotation and posted a RESIZE
+  // message to the worker.
+  test.setTimeout(45_000);
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  });
+  await expect(page.locator('[data-testid="warp-screen"]'))
+    .toHaveAttribute('data-warp-visible', '0', { timeout: 15_000 });
+  await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({
+    timeout: 5_000,
+  });
+
+  // Clear logs so we only see events fired AFTER the rotation. The
+  // initial post-mount resize fires one `worker_resize` immediately
+  // which we don't want to count.
+  await page.evaluate(() => {
+    const w = window as unknown as { __eqxClearLogs?: () => void };
+    w.__eqxClearLogs?.();
+  });
+
+  // Rotate: simulate portrait orientation. 411 × 914 = swapped dims.
+  await page.setViewportSize({ width: 411, height: 914 });
+  await page.waitForTimeout(500); // let resize listeners + RAF settle.
+
+  // Look for a `worker_resize` event with the NEW dims. If the
+  // WorkerRendererClient's resize listeners aren't installed, no event
+  // appears — that's the smoking gun.
+  const resizeEvents = await page.evaluate(() => {
+    const w = window as unknown as { __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }> };
+    return (w.__eqxLogs ?? []).filter((e) => e.tag === 'worker_resize');
+  });
+  expect(
+    resizeEvents.length,
+    `Expected at least one worker_resize event after rotation; got ${resizeEvents.length}. ` +
+      'If zero: WorkerRendererClient missed the rotation event entirely (no resize/orientationchange/ResizeObserver listener).',
+  ).toBeGreaterThan(0);
+
+  // The latest resize should reflect portrait dims (~411 wide).
+  const latest = resizeEvents[resizeEvents.length - 1]!.data;
+  expect(
+    latest['w'] as number,
+    `Latest worker_resize w should be ≈411 (portrait). Got ${String(latest['w'])}.`,
+  ).toBeLessThan(500);
+  expect(
+    latest['h'] as number,
+    `Latest worker_resize h should be ≈914 (portrait). Got ${String(latest['h'])}.`,
+  ).toBeGreaterThan(800);
+});
+
 test('after warp hides, UI is interactive — taps reach the drawer-toggle', async ({ page }) => {
   // Regression: the WarpScreen Slot wrapper for the `fullscreen`
   // anchor has `pointer-events: auto` baked in by Slot.tsx, so even

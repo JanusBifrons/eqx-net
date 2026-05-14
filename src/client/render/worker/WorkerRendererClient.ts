@@ -28,6 +28,7 @@ import type {
   SerialisedPointerEvent,
   SerialisedWheelEvent,
 } from './protocol';
+import { logEvent } from '../../debug/ClientLogger';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
@@ -61,6 +62,12 @@ export class WorkerRendererClient implements IRenderer {
   // still fire on the main thread (this is the whole point of the
   // forwarding pattern).
   private readonly listeners: Array<{ event: string; handler: EventListener; options?: AddEventListenerOptions }> = [];
+  // Window/visualViewport-level listeners for viewport rotation +
+  // browser-chrome resize. Tracked separately because they live on
+  // `window`/`visualViewport`, not the canvas.
+  private windowListeners: Array<{ target: Window | VisualViewport | null; event: string; handler: EventListener }> = [];
+  private resizeObserver: ResizeObserver | null = null;
+  private canvasHost: HTMLElement | null = null;
 
   /** Subscribe to OVERLAY_TAPPED messages. Called by `App.tsx`. */
   setOverlayTapHandler(handler: OverlayTapHandler | null): void {
@@ -107,6 +114,17 @@ export class WorkerRendererClient implements IRenderer {
     }, [offscreen]);
 
     this.installEventListeners(this.canvas);
+    // Resize listeners — without these, OffscreenCanvas's drawing
+    // buffer never updates on rotation / URL-bar hide-show / DPR
+    // change. The DOM-mode PixiRenderer has the same listeners
+    // (see PixiRenderer.init); the worker path needed them too.
+    // User-reported 2026-05-14: rotating the phone left the canvas
+    // stretched and thin because the buffer stayed at the original
+    // dims while CSS scaled the element. Lock test:
+    // tests/e2e/join-warp-screen.spec.ts "viewport rotation resizes
+    // the gameplay canvas".
+    this.canvasHost = container;
+    this.installResizeListeners(container);
 
     await ready;
   }
@@ -144,6 +162,54 @@ export class WorkerRendererClient implements IRenderer {
     this.addListener(canvas, 'pointerleave', onPointer as EventListener);
     this.addListener(canvas, 'wheel', onWheel as EventListener, { passive: false });
     this.addListener(canvas, 'touchmove', onTouchMove as EventListener, { passive: false });
+  }
+
+  /** Window-level + container-level resize listeners. Mirrors the
+   *  DOM-mode `PixiRenderer.init` resize wiring. Each event reads the
+   *  canvas host's `clientWidth`/`clientHeight` and posts a RESIZE
+   *  message to the worker so the OffscreenCanvas drawing buffer
+   *  stays sized to the visible viewport. */
+  private installResizeListeners(host: HTMLElement): void {
+    const handler = (): void => this.dispatchResize();
+    // `window.resize` covers most viewport changes (including rotation
+    // on Android Chrome). `orientationchange` catches iOS Safari edge
+    // cases where window.resize fires before the geometry actually
+    // settles. `visualViewport.resize` catches URL-bar show/hide on
+    // mobile that doesn't trigger window.resize.
+    window.addEventListener('resize', handler);
+    window.addEventListener('orientationchange', handler);
+    this.windowListeners.push({ target: window, event: 'resize', handler });
+    this.windowListeners.push({ target: window, event: 'orientationchange', handler });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handler);
+      this.windowListeners.push({ target: window.visualViewport, event: 'resize', handler });
+    }
+    // ResizeObserver on the host catches CSS-driven layout changes
+    // (drawer opening, slot anchor reflow, dvh recalc on mobile) that
+    // don't fire window resize.
+    this.resizeObserver = new ResizeObserver(handler);
+    this.resizeObserver.observe(host);
+    // One-shot rAF resize so post-mount layout settling is captured.
+    requestAnimationFrame(handler);
+  }
+
+  /** Read current host dimensions and forward to the worker.
+   *  Idempotent — skip the postMessage when dims haven't actually
+   *  changed, since `ResizeObserver` fires on EVERY layout pass
+   *  (including stable ones during the first paint cycle). */
+  private lastResizeW = 0;
+  private lastResizeH = 0;
+  private dispatchResize(): void {
+    if (!this.canvasHost || !this.worker) return;
+    const w = this.canvasHost.clientWidth || window.innerWidth;
+    const h = this.canvasHost.clientHeight || window.innerHeight;
+    if (w <= 0 || h <= 0) return;
+    if (w === this.lastResizeW && h === this.lastResizeH) return;
+    this.lastResizeW = w;
+    this.lastResizeH = h;
+    const dpr = window.devicePixelRatio ?? 1;
+    logEvent('worker_resize', { w, h, dpr });
+    this.resize(w, h, dpr);
   }
 
   private addListener(
@@ -293,6 +359,13 @@ export class WorkerRendererClient implements IRenderer {
       }
       this.listeners.length = 0;
     }
+    for (const { target, event, handler } of this.windowListeners) {
+      target?.removeEventListener(event, handler);
+    }
+    this.windowListeners.length = 0;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.canvasHost = null;
     if (this.worker) {
       this.post({ type: 'DISPOSE' });
       // Give the worker a tick to `self.close()` cleanly; if it
