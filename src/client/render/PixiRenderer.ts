@@ -319,25 +319,60 @@ export class PixiRenderer implements IRenderer {
   };
 
   async init(rawContainer: unknown): Promise<void> {
-    const container = rawContainer as HTMLElement;
-    const initialW = container.clientWidth || window.innerWidth;
-    const initialH = container.clientHeight || window.innerHeight;
+    // Two init modes:
+    //   - DOM context (main thread): rawContainer is an HTMLElement —
+    //     we create a <canvas>, append it, size from clientWidth/Height.
+    //     Install window resize + canvas event listeners.
+    //   - Worker context (OffscreenCanvas): rawContainer is a
+    //     `{ canvas: OffscreenCanvas; width; height; dpr }` bag — use
+    //     the transferred canvas, size from the bag, no DOM listeners.
+    //
+    // The selector below is structural — checks for `transferControlToOffscreen`
+    // on the host (DOM canvas has it; OffscreenCanvas itself does not).
+    const isDom = typeof window !== 'undefined' && rawContainer instanceof HTMLElement;
+    let initialW: number;
+    let initialH: number;
+    let initialDpr: number;
+    let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
+    let domContainer: HTMLElement | null = null;
+
+    if (isDom) {
+      domContainer = rawContainer as HTMLElement;
+      initialW = domContainer.clientWidth || window.innerWidth;
+      initialH = domContainer.clientHeight || window.innerHeight;
+      initialDpr = window.devicePixelRatio ?? 1;
+      // No `canvas:` option — Pixi creates one and we append it.
+    } else {
+      const bag = rawContainer as { canvas: OffscreenCanvas; width: number; height: number; dpr: number };
+      canvas = bag.canvas;
+      initialW = bag.width;
+      initialH = bag.height;
+      initialDpr = bag.dpr;
+    }
+
     this.app = new Application();
     await this.app.init({
+      ...(canvas ? { canvas: canvas as unknown as HTMLCanvasElement } : {}),
       width: initialW,
       height: initialH,
       background: BACKGROUND_COLOR,
       antialias: true,
-      resolution: window.devicePixelRatio ?? 1,
-      autoDensity: true,
+      resolution: initialDpr,
+      autoDensity: isDom,
     });
-    container.appendChild(this.app.canvas);
+    if (domContainer) {
+      domContainer.appendChild(this.app.canvas);
+    }
     this.initialized = true;
 
     // Pixi v8 perf: disable per-sprite hit-test traversal on every
     // native pointer move (pixijs/pixijs#6515). Pre-refactor with
-    // pixi-viewport, this was a major contention source.
-    Object.assign(this.app.renderer.events.features, { globalMove: false });
+    // pixi-viewport, this was a major contention source. Skip in worker
+    // context — `events.features` isn't initialised without a DOM event
+    // source and the call would throw.
+    if (isDom && this.app.renderer.events) {
+      Object.assign(this.app.renderer.events.features, { globalMove: false });
+    }
 
     // Starfield attached to app.stage BEFORE the world so it z-orders
     // below all gameplay (Pixi insertion-order z).
@@ -367,47 +402,91 @@ export class PixiRenderer implements IRenderer {
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
 
-    // Install canvas pointer/wheel listeners → camera state machine.
-    // Camera replaces pixi-viewport's automatic event subscription.
-    this.installCanvasEventListeners(this.app.canvas);
-
-    const measureSize = (): { w: number; h: number } => {
-      const vv = window.visualViewport;
-      const w = container.clientWidth || vv?.width || window.innerWidth;
-      const h = container.clientHeight || vv?.height || window.innerHeight;
-      return { w, h };
-    };
-
-    const resize = (): void => {
-      // Late-fire guard: a queued `requestAnimationFrame(resize)` and the
-      // ResizeObserver can both fire AFTER dispose() has destroyed the Pixi
-      // application, leaving `this.app.renderer` null. Bailing on
-      // !this.initialized is enough — dispose() flips that flag.
-      if (!this.initialized || !this.app?.renderer) return;
-      const { w, h } = measureSize();
-      this.app.renderer.resize(w, h);
-      this.camera.setScreenSize(w, h);
-      this.starfield?.resize(w, h);
-    };
-    window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', resize);
-    window.visualViewport?.addEventListener('resize', resize);
-
-    // Container-driven resize: catches layout settling on mobile (URL bar,
-    // safe-area insets, dvh recalculation) that don't always fire window resize.
-    const ro = new ResizeObserver(resize);
-    ro.observe(container);
-
-    (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
-    (this.app as unknown as Record<string, unknown>)['_resizeObserver'] = ro;
-
-    // Drive Camera momentum + follow each frame.
+    // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
       this.camera.tick();
     });
 
-    // Force one resize after the next frame to capture post-mount layout.
-    requestAnimationFrame(resize);
+    if (isDom && domContainer) {
+      // Install canvas pointer/wheel listeners → camera state machine.
+      // Camera replaces pixi-viewport's automatic event subscription.
+      // Worker context: events arrive via postMessage and the worker
+      // scaffolding (renderer.worker.ts) calls forwardPointerEvent /
+      // forwardWheelEvent directly — no DOM listener path.
+      this.installCanvasEventListeners(this.app.canvas);
+
+      const measureSize = (): { w: number; h: number } => {
+        const vv = window.visualViewport;
+        const w = domContainer.clientWidth || vv?.width || window.innerWidth;
+        const h = domContainer.clientHeight || vv?.height || window.innerHeight;
+        return { w, h };
+      };
+
+      const resize = (): void => {
+        // Late-fire guard: a queued `requestAnimationFrame(resize)` and the
+        // ResizeObserver can both fire AFTER dispose() has destroyed the Pixi
+        // application, leaving `this.app.renderer` null. Bailing on
+        // !this.initialized is enough — dispose() flips that flag.
+        if (!this.initialized || !this.app?.renderer) return;
+        const { w, h } = measureSize();
+        this.app.renderer.resize(w, h);
+        this.camera.setScreenSize(w, h);
+        this.starfield?.resize(w, h);
+      };
+      window.addEventListener('resize', resize);
+      window.addEventListener('orientationchange', resize);
+      window.visualViewport?.addEventListener('resize', resize);
+
+      // Container-driven resize: catches layout settling on mobile (URL bar,
+      // safe-area insets, dvh recalculation) that don't always fire window resize.
+      const ro = new ResizeObserver(resize);
+      ro.observe(domContainer);
+
+      (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
+      (this.app as unknown as Record<string, unknown>)['_resizeObserver'] = ro;
+
+      // Force one resize after the next frame to capture post-mount layout.
+      requestAnimationFrame(resize);
+    }
+  }
+
+  /**
+   * Worker-context entry point. The renderer worker calls this when it
+   * receives a RESIZE message — replicates the DOM resize() handler for
+   * the OffscreenCanvas path.
+   */
+  resize(width: number, height: number): void {
+    if (!this.initialized || !this.app?.renderer) return;
+    this.app.renderer.resize(width, height);
+    this.camera.setScreenSize(width, height);
+    this.starfield?.resize(width, height);
+  }
+
+  /**
+   * Worker-context entry point for synthesised pointer events forwarded
+   * from the main thread. The Camera consumes via its state machine.
+   */
+  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number }): void {
+    switch (e.type) {
+      case 'pointerdown':
+        this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
+        break;
+      case 'pointermove':
+        this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+        break;
+      case 'pointerup':
+        this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp);
+        break;
+      case 'pointercancel':
+      case 'pointerleave':
+        this.camera.onPointerCancel(e.pointerId);
+        break;
+    }
+  }
+
+  /** Worker-context wheel forwarding. */
+  forwardWheelEvent(deltaY: number, offsetX: number, offsetY: number): void {
+    this.camera.onWheel(deltaY, offsetX, offsetY);
   }
 
   /**
