@@ -242,6 +242,15 @@ interface UIStore {
    *  on phase change into `'game'`. */
   rendererFirstFrameRendered: boolean;
   setRendererFirstFrameRendered: (v: boolean) => void;
+  /** Minimum-display-time floor for the WarpScreen. Set true 5 s
+   *  after GameSurface mount by a setTimeout. Required by
+   *  `useGameReady` so the warp visual shows for at least this long
+   *  even when the rest of the gates fire faster — gives the
+   *  reconciler enough wall-clock to apply its first correction
+   *  beneath the visual, absorbing the first-move teleport user
+   *  symptom. Reset on phase change. */
+  joinMinimumElapsed: boolean;
+  setJoinMinimumElapsed: (v: boolean) => void;
   /** Apply the latest `/healthz` poll result. Updates both the gate
    *  state and the cached `playersOnline` in one set so subscribers see
    *  a consistent pair. */
@@ -333,6 +342,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   localShipInstanceId: null,
   firstSnapshotApplied: false,
   rendererFirstFrameRendered: false,
+  joinMinimumElapsed: false,
   serverHealth: 'unknown',
   playersOnline: null,
 
@@ -375,10 +385,20 @@ export const useUIStore = create<UIStore>((set, get) => ({
     // also clears them so a subsequent re-entry doesn't see stale
     // post-arrival flags carried over.
     if (p === 'game' && prev.phase !== 'game') {
-      return { phase: p, firstSnapshotApplied: false, rendererFirstFrameRendered: false };
+      return {
+        phase: p,
+        firstSnapshotApplied: false,
+        rendererFirstFrameRendered: false,
+        joinMinimumElapsed: false,
+      };
     }
     if (p !== 'game' && prev.phase === 'game') {
-      return { phase: p, firstSnapshotApplied: false, rendererFirstFrameRendered: false };
+      return {
+        phase: p,
+        firstSnapshotApplied: false,
+        rendererFirstFrameRendered: false,
+        joinMinimumElapsed: false,
+      };
     }
     return { phase: p };
   }),
@@ -394,6 +414,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setLocalShipInstanceId: (id) => set({ localShipInstanceId: id }),
   setFirstSnapshotApplied: (v) => set({ firstSnapshotApplied: v }),
   setRendererFirstFrameRendered: (v) => set({ rendererFirstFrameRendered: v }),
+  setJoinMinimumElapsed: (v) => set({ joinMinimumElapsed: v }),
   setServerHealth:  (health, playersOnline) => set((prev) => ({
     serverHealth: health,
     // Preserve the previous count when the caller didn't pass one
@@ -410,34 +431,29 @@ export const useUIStore = create<UIStore>((set, get) => ({
  * WarpScreen overlay is visible exactly when this is `false` (in game
  * phase) and hides when it flips `true`.
  *
- * Composed from three sub-flags:
+ * Composed from four sub-flags — ALL must be true:
  *   - `connectionStatus === 'connected'` — WebSocket up.
  *   - `localShipInstanceId !== null` — server welcomed us; we have an
  *     identity to render.
  *   - `rendererFirstFrameRendered` — Pixi has painted a frame with the
- *     LOCAL player's mirror entry visible (PixiRenderer asserts
- *     `mirror.ships.has(localPlayerId)`, so this is strictly stronger
- *     than "any ship rendered").
+ *     LOCAL player's mirror entry visible.
+ *   - `joinMinimumElapsed` — the 5-second minimum-display floor (set
+ *     by GameSurface's mount-time setTimeout) has elapsed. Reconciler
+ *     has had time to apply its first correction before the player
+ *     sees the canvas, so the first-move teleport (user-reported
+ *     2026-05-14: "the first time you move. It teleports you to where
+ *     you actually are") is absorbed under the warp visual.
  *
- * Note: `firstSnapshotApplied` exists as a separate sub-flag (and as
- * the `local_pose_resolved` diagnostic event) but is intentionally NOT
- * in this gate. Idle sectors (no motion / no projectiles) don't
- * broadcast snapshots — the server's idle-suppression path — so
- * waiting on `firstSnapshotApplied` would leave the WarpScreen up
- * forever on a stationary spawn. The renderer's first-frame latch
- * already covers the "I can see myself" condition without depending
- * on the snapshot cadence.
- *
- * `setPhase` resets `firstSnapshotApplied` + `rendererFirstFrameRendered`
- * on every entry into game phase so subsequent room transitions
- * retrigger the overlay.
+ * `setPhase` resets the readiness flags on every entry into game
+ * phase so subsequent room transitions retrigger the overlay.
  */
 export function useGameReady(): boolean {
   return useUIStore(
     (s) =>
       s.connectionStatus === 'connected'
       && s.localShipInstanceId !== null
-      && s.rendererFirstFrameRendered,
+      && s.rendererFirstFrameRendered
+      && s.joinMinimumElapsed,
   );
 }
 

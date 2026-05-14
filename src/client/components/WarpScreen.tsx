@@ -37,14 +37,21 @@ export function WarpScreen(): JSX.Element | null {
   const firstSnapshotApplied = useUIStore((s) => s.firstSnapshotApplied);
   const rendererFirstFrameRendered = useUIStore((s) => s.rendererFirstFrameRendered);
 
+  const joinMinimumElapsed = useUIStore((s) => s.joinMinimumElapsed);
   const isConnecting = phase === 'connecting';
+  // Mirrors `useGameReady` — all four gates must be true.
   const ready =
     connectionStatus === 'connected'
     && localShipInstanceId !== null
-    && rendererFirstFrameRendered;
+    && rendererFirstFrameRendered
+    && joinMinimumElapsed;
   const inGameNotReady = phase === 'game' && !ready;
   const visible = isConnecting || inGameNotReady;
 
+  // Status text follows the ordered readiness chain — first NOT-ready
+  // sub-flag wins. The 5 s minimum-display floor surfaces as
+  // "STABILISING TRAJECTORY" while the reconciler settles below the
+  // warp visual.
   let statusText: string;
   if (connectionStatus !== 'connected') {
     statusText = 'ESTABLISHING SUBSPACE LINK';
@@ -52,13 +59,13 @@ export function WarpScreen(): JSX.Element | null {
     statusText = 'AWAITING NAVIGATION FIX';
   } else if (!rendererFirstFrameRendered) {
     statusText = 'INITIALISING DISPLAY';
+  } else if (!joinMinimumElapsed) {
+    statusText = firstSnapshotApplied
+      ? 'STABILISING TRAJECTORY'
+      : 'SYNCING SECTOR TELEMETRY';
   } else {
     statusText = 'WARP COMPLETE';
   }
-  // Keep `firstSnapshotApplied` referenced so the subscription stays
-  // live (potential future use in a richer caption); not in the gate
-  // because idle sectors don't broadcast snapshots.
-  void firstSnapshotApplied;
 
   const timerRef = useRef<HTMLSpanElement | null>(null);
   const mountedAtRef = useRef<number>(performance.now());

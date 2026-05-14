@@ -131,10 +131,11 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
 
   // Fire `join_chain_complete` exactly once per GameSurface mount, when
-  // all four readiness gates (connected + welcomed + first-snapshot +
-  // first-frame-rendered) have flipped true. Pairs with `pixi_first_frame`
-  // and `local_pose_resolved` so the diagnostic capture has both the
-  // per-gate events AND a single summary event with total elapsed time.
+  // all four readiness gates (connected + welcomed + first-snapshot OR
+  // timeout + first-frame-rendered) have flipped true. Pairs with
+  // `pixi_first_frame` and `local_pose_resolved` so the diagnostic
+  // capture has both the per-gate events AND a single summary event
+  // with total elapsed time.
   useEffect(() => {
     if (gameReady && !joinChainCompleteLoggedRef.current) {
       joinChainCompleteLoggedRef.current = true;
@@ -143,6 +144,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       });
     }
   }, [gameReady]);
+
+  // Minimum-display-time floor for the WarpScreen. 5 s gives the
+  // reconciler enough wall-clock to receive its first snapshot, apply
+  // its first server→client correction, and settle BEFORE the user
+  // sees the canvas. Without this floor, the warp hides at the spawn
+  // pose and the first-move-teleport user symptom resurfaces
+  // (2026-05-14 capture `2026-05-14T21-39-07-346Z-tkc6ad` showed a
+  // 311-unit drift correction landing pre-capture-window).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      useUIStore.getState().setJoinMinimumElapsed(true);
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Warp-mode off-switch + transit-warp on-switch. The renderer's
   // `setWarpMode(true)` fires synchronously after `renderer.init`
