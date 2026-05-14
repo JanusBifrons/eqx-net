@@ -12,6 +12,20 @@ interface Props {
    * fighting each other. Ignored for fullscreen-style anchors.
    */
   order?: number;
+  /**
+   * Override the wrapper's `pointer-events`. Defaults to `'auto'` (the
+   * historical Slot behaviour: anchor hosts default to `pointer-events:
+   * none` so empty regions pass through, and Slot re-enables auto on
+   * its own wrapper for its children).
+   *
+   * Set to `'none'` on full-screen overlays that need to be transparent
+   * to taps (e.g. `<WarpScreen>` when its visual is faded out — the
+   * Slot's `fullscreen` host covers the entire viewport, so a stale
+   * `pointer-events: auto` wrapper intercepts every tap before it
+   * reaches the gameplay canvas or HUD beneath). Lock test:
+   * `tests/e2e/join-warp-screen.spec.ts` "UI is interactive after warp hides".
+   */
+  pointerEvents?: 'auto' | 'none';
   children: ReactNode;
 }
 
@@ -31,13 +45,13 @@ const FILL_ANCHORS = new Set<AnchorName>(['fullscreen', 'transit']);
  * If the anchor host hasn't mounted yet (first paint, StrictMode) the slot
  * renders nothing.
  */
-export function Slot({ anchor, order = 10, children }: Props): JSX.Element | null {
+export function Slot({ anchor, order = 10, pointerEvents = 'auto', children }: Props): JSX.Element | null {
   const elements = useLayout();
   const host = elements[anchor];
   if (!host) return null;
   const fill = FILL_ANCHORS.has(anchor);
   const style: CSSProperties = fill
-    ? { position: 'absolute', inset: 0, pointerEvents: 'auto' }
-    : { pointerEvents: 'auto', order };
+    ? { position: 'absolute', inset: 0, pointerEvents }
+    : { pointerEvents, order };
   return createPortal(<div style={style}>{children}</div>, host);
 }

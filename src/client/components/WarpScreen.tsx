@@ -102,7 +102,7 @@ export function WarpScreen(): JSX.Element | null {
   if (phase !== 'game' && phase !== 'connecting') return null;
 
   return (
-    <Slot anchor="fullscreen">
+    <Slot anchor="fullscreen" pointerEvents={visible ? 'auto' : 'none'}>
       <Box
         data-testid="warp-screen"
         data-warp-visible={visible ? '1' : '0'}
@@ -110,8 +110,12 @@ export function WarpScreen(): JSX.Element | null {
           position: 'absolute',
           inset: 0,
           bgcolor: '#05070f',
-          // Pointer events disabled when invisible so the hidden overlay
-          // doesn't capture taps during the fade-out animation.
+          // When hidden, both this Box AND the Slot wrapper above
+          // (passed via the Slot's `pointerEvents` prop) must let
+          // taps fall through — the Slot wrapper covers the entire
+          // viewport for full-screen anchors and would otherwise
+          // intercept every click before it reaches the gameplay
+          // canvas / HUD beneath.
           pointerEvents: visible ? 'auto' : 'none',
           opacity: visible ? 1 : 0,
           transition: 'opacity 200ms ease-out',

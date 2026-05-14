@@ -144,3 +144,32 @@ test('join → WarpScreen visible immediately, hides when ready, ship not at (0,
 
   expect(errors, errors.join('\n')).toEqual([]);
 });
+
+test('after warp hides, UI is interactive — taps reach the drawer-toggle', async ({ page }) => {
+  // Regression: the WarpScreen Slot wrapper for the `fullscreen`
+  // anchor has `pointer-events: auto` baked in by Slot.tsx, so even
+  // when the overlay's inner Box flips to `pointer-events: none`
+  // (visible=false / fading), the wrapper still intercepts every tap.
+  // Symptom (user reported 2026-05-14): "the entire UI was dead. I
+  // couldn't touch or click anything."
+  test.setTimeout(45_000);
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60_000,
+  });
+  const warp = page.locator('[data-testid="warp-screen"]');
+  await expect(warp).toBeAttached({ timeout: 10_000 });
+  await expect(warp).toHaveAttribute('data-warp-visible', '0', { timeout: 15_000 });
+
+  // Step 1 — drawer-toggle is the canonical "did my tap reach the
+  // HUD?" check. It lives under the WarpScreen's slot wrapper in z
+  // terms but should receive taps after warp hides.
+  await page.locator('[data-testid="drawer-toggle"]').click({ timeout: 5_000 });
+
+  // Step 2 — verify the drawer actually opened. If the tap was
+  // intercepted by the WarpScreen slot wrapper, the drawer stays
+  // closed and this times out.
+  await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({
+    timeout: 3_000,
+  });
+});
