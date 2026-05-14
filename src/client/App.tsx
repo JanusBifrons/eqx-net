@@ -499,6 +499,17 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   useEffect(() => { galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey); }, [galaxyLayerCurrentSectorKey]);
   useEffect(() => { galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED'); }, [galaxyLayerTransitState]);
 
+  // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the
+  // main thread is saturated enough that Playwright's CDP roundtrip
+  // climbs to ~500 ms median (measured 2026-05-14 via
+  // `tests/e2e/drawer-cdp-starvation-probe.spec.ts`), which makes
+  // drawer-interactive E2E specs time out at 30 s on what should be
+  // sub-second waits. While the drawer is open the user is focused on
+  // UI not the game, so the gameplay frame-rate drop is invisible.
+  // See `docs/LESSONS.md` 2026-05-13 §6.
+  const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
+  useEffect(() => { rendererRef.current?.setTickerMaxFPS(isDrawerOpen ? 30 : undefined); }, [isDrawerOpen]);
+
   // LayoutProvider + FullscreenToggle live at the App level (not here) so the
   // toggle persists across every phase — meta, auth, galaxy-map, game.
   return (

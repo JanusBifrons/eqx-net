@@ -107,6 +107,13 @@ export class GalaxyOverviewRenderer {
       resolution: window.devicePixelRatio ?? 1,
       autoDensity: true,
     });
+    // Cap to 30 Hz: this is a mostly-static hex map (drag/pinch panning,
+    // not action gameplay). Pairing with the gameplay-Pixi 30 Hz throttle
+    // from `GameSurface`'s isDrawerOpen useEffect keeps total Pixi work
+    // low enough for Playwright's CDP loop to land roundtrips (~500 ms at
+    // 60 Hz combined, dropping into the healthy range here). See
+    // `docs/LESSONS.md` 2026-05-13 §6.
+    this.app.ticker.maxFPS = 30;
     // Ensure the canvas always fills its parent regardless of what Pixi's
     // `autoDensity` does to CSS sizing — that path can race with a parent
     // layout shift (e.g. the limbo pill appearing) and end up sizing the

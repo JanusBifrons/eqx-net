@@ -1020,6 +1020,26 @@ export class PixiRenderer implements IRenderer {
     this.app.stage.addChild(overlay as Container);
   }
 
+  /**
+   * Cap the Pixi ticker's max FPS. Pass `undefined` (or 0) to remove the
+   * cap — Pixi's default is uncapped vsync. Used by `GameSurface` to
+   * throttle gameplay to 30 Hz while the AdvancedDrawer is open: at
+   * 60 Hz the main-thread Pixi tick + Colyseus snapshot apply +
+   * emotion re-renders saturate the event loop, and Playwright's CDP
+   * roundtrip climbs to ~500 ms median (measured 2026-05-14 via
+   * `tests/e2e/drawer-cdp-starvation-probe.spec.ts`). Throttling halves
+   * Pixi's CPU draw so CDP has slots to land on, which is what makes
+   * drawer-interactive E2E specs reliable. The user is focused on the
+   * drawer UI when this fires, so the 30 Hz gameplay underneath is
+   * invisible.
+   *
+   * See `docs/LESSONS.md` 2026-05-13 §6 carry-forward.
+   */
+  setTickerMaxFPS(fps: number | undefined): void {
+    if (!this.initialized) return;
+    this.app.ticker.maxFPS = fps ?? 0;
+  }
+
   /** Test-only — number of currently-visible halo arrows. */
   getDebugHaloArrowCount(): number {
     return this.halo.getDebugVisibleArrowCount();
