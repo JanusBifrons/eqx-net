@@ -410,25 +410,33 @@ export const useUIStore = create<UIStore>((set, get) => ({
  * WarpScreen overlay is visible exactly when this is `false` (in game
  * phase) and hides when it flips `true`.
  *
- * Composed from four sub-flags so each readiness gate is observable
- * independently in tests + diagnostic captures:
+ * Composed from three sub-flags:
  *   - `connectionStatus === 'connected'` — WebSocket up.
  *   - `localShipInstanceId !== null` — server welcomed us; we have an
  *     identity to render.
- *   - `firstSnapshotApplied` — at least one snapshot tick has reached
- *     `handleSnapshot`, so the reconciler/predWorld are warmed.
  *   - `rendererFirstFrameRendered` — Pixi has painted a frame with the
- *     local player in `mirror.ships`.
+ *     LOCAL player's mirror entry visible (PixiRenderer asserts
+ *     `mirror.ships.has(localPlayerId)`, so this is strictly stronger
+ *     than "any ship rendered").
  *
- * `setPhase` resets the last two flags on every entry into game phase
- * so subsequent room transitions retrigger the overlay.
+ * Note: `firstSnapshotApplied` exists as a separate sub-flag (and as
+ * the `local_pose_resolved` diagnostic event) but is intentionally NOT
+ * in this gate. Idle sectors (no motion / no projectiles) don't
+ * broadcast snapshots — the server's idle-suppression path — so
+ * waiting on `firstSnapshotApplied` would leave the WarpScreen up
+ * forever on a stationary spawn. The renderer's first-frame latch
+ * already covers the "I can see myself" condition without depending
+ * on the snapshot cadence.
+ *
+ * `setPhase` resets `firstSnapshotApplied` + `rendererFirstFrameRendered`
+ * on every entry into game phase so subsequent room transitions
+ * retrigger the overlay.
  */
 export function useGameReady(): boolean {
   return useUIStore(
     (s) =>
       s.connectionStatus === 'connected'
       && s.localShipInstanceId !== null
-      && s.firstSnapshotApplied
       && s.rendererFirstFrameRendered,
   );
 }

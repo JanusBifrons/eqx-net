@@ -40,30 +40,40 @@ export function WarpScreen(): JSX.Element | null {
   const rendererFirstFrameRendered = useUIStore((s) => s.rendererFirstFrameRendered);
 
   const isConnecting = phase === 'connecting';
+  // Mirrors `useGameReady` in state/store.ts — kept inline so the
+  // status caption below can drive off the SAME sub-flag chain that
+  // determines visibility. `firstSnapshotApplied` is part of the
+  // status-caption progression but NOT part of the visibility gate
+  // (see useGameReady doc — idle sectors don't broadcast snapshots).
   const ready =
     connectionStatus === 'connected'
     && localShipInstanceId !== null
-    && firstSnapshotApplied
     && rendererFirstFrameRendered;
   const inGameNotReady = phase === 'game' && !ready;
   const visible = isConnecting || inGameNotReady;
 
   // Status text driven off the first NOT-ready sub-flag (top to bottom
-  // chain). When the overlay is mounted during the brief auto-fade
-  // after `ready` flips true, status text stays at the final state so
-  // we don't jitter it to undefined.
+  // chain). Mirrors the `useGameReady` gate — we deliberately do NOT
+  // include `firstSnapshotApplied` here because idle sectors don't
+  // broadcast snapshots on a freshly-spawned stationary ship; the
+  // gate would never advance past "SYNCING SECTOR TELEMETRY" until
+  // the player touched the joystick. The three gates that DO advance
+  // deterministically are: connection, welcome, first paint.
   let statusText: string;
   if (connectionStatus !== 'connected') {
     statusText = 'ESTABLISHING SUBSPACE LINK';
   } else if (localShipInstanceId === null) {
     statusText = 'AWAITING NAVIGATION FIX';
-  } else if (!firstSnapshotApplied) {
-    statusText = 'SYNCING SECTOR TELEMETRY';
   } else if (!rendererFirstFrameRendered) {
     statusText = 'INITIALISING DISPLAY';
   } else {
     statusText = 'WARP COMPLETE';
   }
+  // `firstSnapshotApplied` is still read so the linter doesn't complain
+  // about the unused subscription; the flag is kept around as a
+  // separate sub-flag for diagnostic captures (`local_pose_resolved`
+  // event correlates with it) but doesn't affect the rendered status.
+  void firstSnapshotApplied;
 
   // Elapsed timer. Reset on every mount (every entry into the
   // overlay-visible window). Updates the `<span>` textContent directly

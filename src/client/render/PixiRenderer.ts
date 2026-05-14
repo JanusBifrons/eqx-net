@@ -1079,12 +1079,17 @@ export class PixiRenderer implements IRenderer {
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
     this.feedback.wreckSpriteCount = this.wreckSprites.size;
     // Join-render readiness signal: latch true once we've painted at
-    // least one frame that includes the local player. The main thread
-    // reads this via `getFeedback()`, fires the `pixi_first_frame`
-    // diagnostic, and drives `gameReady`/`<WarpScreen>` off it.
+    // least one frame that includes the LOCAL player's mirror entry
+    // (not just any ship). The main thread reads this via
+    // `getFeedback()`, fires the `pixi_first_frame` diagnostic, and
+    // drives `gameReady`/`<WarpScreen>` off it. Requiring `mirror.
+    // ships.has(localPlayerId)` (not just `size > 0`) is what makes
+    // this a true "the player can see themselves" signal — strict
+    // enough that idle sectors with only remote ships visible don't
+    // flip the gate early.
     if (!this.feedback.firstFrameRendered
         && mirror.localPlayerId !== null
-        && mirror.ships.size > 0) {
+        && mirror.ships.has(mirror.localPlayerId)) {
       this.feedback.firstFrameRendered = true;
     }
   }

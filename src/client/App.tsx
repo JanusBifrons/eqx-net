@@ -355,10 +355,14 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             const fb = renderer.getFeedback();
             if (fb.firstFrameRendered) {
               firstFramePixiLogged = true;
+              const lid = gameClient.mirror.localPlayerId;
+              const localEntry = lid ? gameClient.mirror.ships.get(lid) : null;
               logEvent('pixi_first_frame', {
                 msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
                 shipsInMirror: gameClient.mirror.ships.size,
-                hasLocal: gameClient.mirror.localPlayerId !== null,
+                hasLocal: lid !== null,
+                localX: localEntry?.x ?? null,
+                localY: localEntry?.y ?? null,
               });
               useUIStore.getState().setRendererFirstFrameRendered(true);
             }
