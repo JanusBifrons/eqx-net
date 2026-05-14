@@ -138,14 +138,23 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
   await expect(page.locator('[data-testid="ship-detail-spawn"]')).toBeDisabled();
 
   // === 7. Sanity: close the modal cleanly. ===
-  // `noWaitAfter: true` for the same reason as step 5 — the close button
-  // is a pure setState (`setOpenShipId(null)`), not a navigation. Without
-  // this, Playwright hangs waiting for the imaginary "scheduled
-  // navigation" to land while Pixi's continuous rAF keeps the page
-  // looking busy.
-  await page
-    .locator('[data-testid="ship-detail-close"]')
-    .click({ force: true, timeout: 3_000, noWaitAfter: true });
+  // 2026-05-14 diagnostic finding: this click hits a Playwright vs
+  // MUI-Button-vs-Pixi-canvas three-way edge case.
+  //   - `force: true` on a MUI Button doesn't fire the React onClick —
+  //     MUI ButtonBase wraps clicks in pointerdown/up sequencing that
+  //     Playwright's force-click bypasses.
+  //   - Regular click without force is intercepted by the gameplay
+  //     canvas — the canvas has `transform: translateZ(0)` for GPU
+  //     promotion (perf fix from 2026-05-13), which creates a stacking
+  //     context that Playwright's actionability check thinks is in
+  //     front of the portaled MUI Dialog.
+  // Programmatic JS click is the only method that reliably fires the
+  // React onClose handler. See `modal-close-diagnostic.spec.ts` for
+  // the head-to-head comparison.
+  await page.evaluate(() => {
+    const btn = document.querySelector('[data-testid="ship-detail-close"]') as HTMLElement | null;
+    btn?.click();
+  });
   await expect(page.locator('[data-testid="ship-detail-modal"]')).toHaveCount(0, { timeout: 10_000 });
 
   expect(errors, errors.join('\n')).toEqual([]);
