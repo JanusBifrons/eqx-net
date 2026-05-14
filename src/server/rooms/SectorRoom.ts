@@ -3679,6 +3679,14 @@ export class SectorRoom extends Room<SectorState> {
       for (const [pid] of this.playerToSlot) {
         const ship = this.getActiveShip(pid);
         if (!ship?.alive) continue;
+        // Phase 6c — drones only see active hulls. Lingering hulls
+        // (isActive === false during the 15-min disconnect linger
+        // window) are skipped here so the AI never targets them.
+        // The matching gate on the client side is in
+        // `ColyseusClient.ts`'s AI view construction (Input Symmetry
+        // Rule, `src/core/CLAUDE.md`). Lock test:
+        // `tests/integration/sectorRoom/droneTargetActiveOnly.test.ts`.
+        if (!ship.isActive) continue;
         const pose = this.shipPoseCache.get(pid);
         if (!pose) continue;
         this.aiPlayerScratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
