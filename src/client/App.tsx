@@ -290,13 +290,25 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       // poll-based E2E spec; specs that need higher cadence can
       // override via the existing `__eqxClient.stats` path.
       let frameCounter = 0;
+      // MIRROR_UPDATE throttle for the worker-renderer path. The
+      // structured-clone cost of `mirror` (containing Maps of ships +
+      // swarm + projectiles + beams) is paid by the main thread on
+      // every postMessage. At 60 Hz with ~hundreds of drones this
+      // measurably eats CDP roundtrip budget (drawer-cdp-starvation
+      // probe p95 climbed to 2.5 s under the worker after the
+      // architecture flip — main thread fine, marshaling costly).
+      // 30 Hz is well above visual flicker threshold and halves the
+      // marshaling cost. Skipped when useWorker is false — the
+      // main-thread renderer is a direct call, no postMessage.
+      let workerUpdateCounter = 0;
       const loop = (now: number): void => {
         if (!disposed) {
           const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
           lastFrameTime = now;
           gameClient.tickPhysics(deltaMs);
           gameClient.updateMirror();
-          renderer.update(gameClient.mirror);
+          const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
+          if (shouldRender) renderer.update(gameClient.mirror);
           // Clear one-frame triggers after the renderer has consumed them.
           gameClient.mirror.explodingShips?.clear();
           const localId = gameClient.mirror.localPlayerId;
