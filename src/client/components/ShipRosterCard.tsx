@@ -144,6 +144,7 @@ function HealthBar({ pct, thickness }: { pct: number; thickness: number }): JSX.
     >
       <Box
         data-testid="ship-roster-health-fill"
+        data-pct={pct}
         sx={{
           width: `${pct}%`,
           height: '100%',
