@@ -1,5 +1,5 @@
 import { Application, Graphics, Container } from 'pixi.js';
-import { Viewport } from 'pixi-viewport';
+import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
@@ -262,7 +262,15 @@ function buildExplosionGfx(): Graphics {
 
 export class PixiRenderer implements IRenderer {
   private app!: Application;
-  private viewport!: Viewport;
+  /**
+   * World Container — replaces `pixi-viewport`'s `Viewport`. Holds all
+   * gameplay sprites (ships, swarm, projectiles, beams, wrecks,
+   * lingering hulls, background grid, etc.). Pan / zoom / momentum are
+   * driven by the `Camera` controller below.
+   */
+  private world!: Container;
+  /** Camera controller — owns world's transform via pointer/wheel events. */
+  private camera!: Camera;
   private shipContainer!: Container;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
@@ -312,10 +320,12 @@ export class PixiRenderer implements IRenderer {
 
   async init(rawContainer: unknown): Promise<void> {
     const container = rawContainer as HTMLElement;
+    const initialW = container.clientWidth || window.innerWidth;
+    const initialH = container.clientHeight || window.innerHeight;
     this.app = new Application();
     await this.app.init({
-      width: container.clientWidth || window.innerWidth,
-      height: container.clientHeight || window.innerHeight,
+      width: initialW,
+      height: initialH,
       background: BACKGROUND_COLOR,
       antialias: true,
       resolution: window.devicePixelRatio ?? 1,
@@ -324,65 +334,42 @@ export class PixiRenderer implements IRenderer {
     container.appendChild(this.app.canvas);
     this.initialized = true;
 
-    // Disable Pixi v8's expensive global pointer-move tracking
-    // (`EventSystem.features.globalMove` — see pixijs/pixijs#6515 and
-    // the v8 events guide). With many sprites in scene, every native
-    // pointer/touchmove fires a per-sprite hit-test traversal that
-    // queues macro tasks (~12 ms each) behind any DOM click handler.
-    // Symptom: 9 s lag between tapping the drawer toggle and the MUI
-    // Drawer mounting. We don't use globalpointermove / move-based
-    // logic anywhere in gameplay; the only Pixi taps we need are
-    // click / pointertap on the galaxy-map hexes (preserved). Pinch /
-    // wheel listen on the renderer-level event stream and are
-    // unaffected. The `move` feature stays on so pixi-viewport's
-    // pinch plugin can track the second-finger delta.
-    Object.assign(this.app.renderer.events.features, {
-      globalMove: false,
-    });
+    // Pixi v8 perf: disable per-sprite hit-test traversal on every
+    // native pointer move (pixijs/pixijs#6515). Pre-refactor with
+    // pixi-viewport, this was a major contention source.
+    Object.assign(this.app.renderer.events.features, { globalMove: false });
 
-    // Starfield is attached to app.stage BEFORE the viewport so the
-    // parallax layers render under all gameplay content (insertion
-    // order = z-order in Pixi).
+    // Starfield attached to app.stage BEFORE the world so it z-orders
+    // below all gameplay (Pixi insertion-order z).
     this.starfield = new StarfieldBackground();
     this.starfield.attach(this.app);
 
-    this.viewport = new Viewport({
-      screenWidth: container.clientWidth || window.innerWidth,
-      screenHeight: container.clientHeight || window.innerHeight,
-      worldWidth: WORLD_W,
-      worldHeight: WORLD_H,
-      events: this.app.renderer.events,
-    });
-    // Skip the gameplay subtree from Pixi's event-system traversal
-    // (Pixi v8 `eventMode='none'` — pixijs/pixijs#6515). With hundreds
-    // of ship / drone / asteroid / projectile sprites in this viewport,
-    // every native pointer event would otherwise trigger a per-sprite
-    // hit-test pass (~12 ms each) and queue macro tasks like the
-    // drawer-toggle click handler behind ~9 s of interaction work.
-    // pixi-viewport's pinch / wheel / drag plugins listen on
-    // `app.renderer.events` directly (not on the viewport container),
-    // so panning/zooming still works after this opt-out. The galaxy-map
-    // overlay (`GalaxyMapLayer`) is attached to `app.stage` separately
-    // and keeps its own interactive hex hit-tests.
-    this.viewport.eventMode = 'none';
-    this.app.stage.addChild(this.viewport);
+    // World container hosts all camera-tracked gameplay. Pixi's
+    // event-system traversal is opt-out (`eventMode='none'`) for the
+    // gameplay subtree — see pixijs/pixijs#6515. Game-side taps are
+    // routed via the Camera (which the App.tsx forwards canvas events
+    // into), not Pixi's event system.
+    this.world = new Container();
+    this.world.eventMode = 'none';
+    this.app.stage.addChild(this.world);
 
-    // Pinch (touch) and wheel (desktop) zoom; clamped to a sensible range.
-    this.viewport
-      .pinch({ noDrag: true })
-      .wheel({ smooth: 4 })
-      .clampZoom({ minScale: 0.4, maxScale: 3 });
+    this.camera = new Camera(this.world, { minScale: 0.4, maxScale: 3 });
+    this.camera.setScreenSize(initialW, initialH);
 
     this.backgroundGrid = new BackgroundGrid();
-    this.backgroundGrid.attach(this.viewport);
+    this.backgroundGrid.attach(this.camera);
 
     this.shipContainer = new Container();
-    this.viewport.addChild(this.shipContainer);
+    this.camera.addChild(this.shipContainer);
 
-    this.halo.init(this.viewport);
-    this.damageNumbers = new DamageNumberManager(this.viewport);
-    this.healthBars = new HealthBarManager(this.viewport);
-    this.labels = new LabelManager(this.viewport);
+    this.halo.init(this.camera);
+    this.damageNumbers = new DamageNumberManager(this.world);
+    this.healthBars = new HealthBarManager(this.world);
+    this.labels = new LabelManager(this.world);
+
+    // Install canvas pointer/wheel listeners → camera state machine.
+    // Camera replaces pixi-viewport's automatic event subscription.
+    this.installCanvasEventListeners(this.app.canvas);
 
     const measureSize = (): { w: number; h: number } => {
       const vv = window.visualViewport;
@@ -399,7 +386,7 @@ export class PixiRenderer implements IRenderer {
       if (!this.initialized || !this.app?.renderer) return;
       const { w, h } = measureSize();
       this.app.renderer.resize(w, h);
-      this.viewport.resize(w, h);
+      this.camera.setScreenSize(w, h);
       this.starfield?.resize(w, h);
     };
     window.addEventListener('resize', resize);
@@ -414,8 +401,59 @@ export class PixiRenderer implements IRenderer {
     (this.app as unknown as Record<string, unknown>)['_resizeHandler'] = resize;
     (this.app as unknown as Record<string, unknown>)['_resizeObserver'] = ro;
 
+    // Drive Camera momentum + follow each frame.
+    this.app.ticker.add(() => {
+      this.camera.tick();
+    });
+
     // Force one resize after the next frame to capture post-mount layout.
     requestAnimationFrame(resize);
+  }
+
+  /**
+   * Install pointer/wheel/touch listeners on the canvas and forward
+   * them into the Camera. Replaces pixi-viewport's automatic
+   * `events: app.renderer.events` subscription. Touch hijacking is
+   * suppressed via `{ passive: false }` + `preventDefault`.
+   */
+  private readonly canvasListeners: Array<{ type: string; handler: EventListener; options?: AddEventListenerOptions }> = [];
+  private installCanvasEventListeners(canvas: HTMLCanvasElement): void {
+    const onPointer = (e: PointerEvent): void => {
+      const stamp = Date.now();
+      switch (e.type) {
+        case 'pointerdown':
+          this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
+          break;
+        case 'pointermove':
+          this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+          break;
+        case 'pointerup':
+          this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
+          break;
+        case 'pointercancel':
+        case 'pointerleave':
+          this.camera.onPointerCancel(e.pointerId);
+          break;
+      }
+    };
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault();
+      this.camera.onWheel(e.deltaY, e.offsetX, e.offsetY);
+    };
+    const onTouchMove = (e: TouchEvent): void => {
+      e.preventDefault();
+    };
+    const add = (type: string, handler: EventListener, options?: AddEventListenerOptions): void => {
+      canvas.addEventListener(type, handler, options);
+      this.canvasListeners.push({ type, handler, options });
+    };
+    add('pointerdown', onPointer as EventListener);
+    add('pointermove', onPointer as EventListener);
+    add('pointerup', onPointer as EventListener);
+    add('pointercancel', onPointer as EventListener);
+    add('pointerleave', onPointer as EventListener);
+    add('wheel', onWheel as EventListener, { passive: false });
+    add('touchmove', onTouchMove as EventListener, { passive: false });
   }
 
   update(mirror: RenderMirror): void {
@@ -884,13 +922,13 @@ export class PixiRenderer implements IRenderer {
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
     if (local) {
-      this.viewport.moveCenter(local.x, local.y);
+      this.camera.moveCenter(local.x, local.y);
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's
     // camera position (otherwise stars and grid lag by one frame).
-    this.starfield?.update(this.viewport);
-    this.backgroundGrid?.update(this.viewport);
+    this.starfield?.update(this.camera);
+    this.backgroundGrid?.update(this.camera);
 
     // Drain pending damage numbers and spawn floating text.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
@@ -1117,6 +1155,15 @@ export class PixiRenderer implements IRenderer {
     // this, the queued requestAnimationFrame(resize) at the end of init()
     // could land post-destroy and read a null renderer.
     this.initialized = false;
+    // Remove canvas pointer / wheel / touch listeners so an in-flight
+    // event doesn't reach a destroyed Camera.
+    const canvas = this.app?.canvas;
+    if (canvas) {
+      for (const { type, handler, options } of this.canvasListeners) {
+        canvas.removeEventListener(type, handler, options);
+      }
+    }
+    this.canvasListeners.length = 0;
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
     if (typeof handler === 'function') {
       window.removeEventListener('resize', handler as EventListener);

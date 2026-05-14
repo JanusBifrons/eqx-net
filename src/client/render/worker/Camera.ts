@@ -1,9 +1,13 @@
+import type { Container } from 'pixi.js';
+
 /**
- * Pure camera math for the OffscreenCanvas renderer worker. Replaces
- * `pixi-viewport`, which doesn't work inside an OffscreenCanvas-hosted
- * Pixi runtime because its `Drag` plugin calls `addEventListener` on
- * `events.domElement` — undefined in worker context. Spike-verified
- * 2026-05-14 (commit `2dd11d3`).
+ * Pure camera math, designed to be a drop-in replacement for the
+ * `pixi-viewport` `Viewport` we previously used. The migration was
+ * triggered by OffscreenCanvas-worker context: `pixi-viewport`'s
+ * `Drag` plugin calls `addEventListener` on `events.domElement` —
+ * undefined in worker context. Spike-verified 2026-05-14 (commit
+ * `2dd11d3`). Replacing it everywhere — main-thread legacy AND
+ * worker — gives us one camera implementation to maintain.
  *
  * Operates on a Pixi-like target with `{ x, y, scale: { x, y, set } }`
  * — typically a `pixi.js` `Container`, but the interface is local so
@@ -48,6 +52,15 @@ export interface CameraTarget {
     set(s: number): void;
   };
 }
+
+/**
+ * Camera provides a pixi-viewport-compatible surface (center,
+ * worldScreenWidth/Height, screenWidth/Height, scale, getVisibleBounds,
+ * toScreen, addChild, parent) so renderer sub-managers can be ported
+ * one-to-one — `pixi-viewport`'s `Viewport` is replaced by `Camera`,
+ * not abstracted behind an interface. This is the single camera
+ * implementation across both main-thread and worker contexts.
+ */
 
 export interface CameraOptions {
   /** Minimum scale (zoom-out limit). Default 0.4. */
@@ -304,6 +317,83 @@ export class Camera {
       x: (screenX - this.target.x) / this.target.scale.x,
       y: (screenY - this.target.y) / this.target.scale.y,
     };
+  }
+
+  // ---------- IWorldView surface (viewport-API parity) ----------
+  //
+  // Sub-managers (HaloRadar, BackgroundGrid, StarfieldBackground) read
+  // these properties to compute screen-relative positions, visible
+  // bounds, and parallax offsets. The Camera derives them all from the
+  // target Container's transform + the screen size.
+
+  /** World coord currently at screen-centre. */
+  get center(): { x: number; y: number } {
+    return this.screenToWorld(this.screenW / 2, this.screenH / 2);
+  }
+
+  /** Visible-world width in world units. */
+  get worldScreenWidth(): number {
+    return this.target.scale.x > 0 ? this.screenW / this.target.scale.x : this.screenW;
+  }
+
+  /** Visible-world height in world units. */
+  get worldScreenHeight(): number {
+    return this.target.scale.y > 0 ? this.screenH / this.target.scale.y : this.screenH;
+  }
+
+  get screenWidth(): number {
+    return this.screenW;
+  }
+
+  get screenHeight(): number {
+    return this.screenH;
+  }
+
+  /**
+   * Read-only proxy of the target's scale. The Camera mutates the
+   * target's scale internally (zoom); external readers see the live
+   * value here.
+   */
+  get scale(): { readonly x: number; readonly y: number } {
+    return this.target.scale;
+  }
+
+  getVisibleBounds(): { x: number; y: number; width: number; height: number } {
+    const halfW = this.worldScreenWidth * 0.5;
+    const halfH = this.worldScreenHeight * 0.5;
+    const c = this.center;
+    return {
+      x: c.x - halfW,
+      y: c.y - halfH,
+      width: this.worldScreenWidth,
+      height: this.worldScreenHeight,
+    };
+  }
+
+  toScreen(worldX: number, worldY: number): { x: number; y: number } {
+    return {
+      x: this.target.x + worldX * this.target.scale.x,
+      y: this.target.y + worldY * this.target.scale.y,
+    };
+  }
+
+  /**
+   * Pixi parent of the camera's world container — typically `app.stage`.
+   * `HaloRadar` etc. attach screen-space children here so they sit
+   * above the world without inheriting the camera's pan/zoom transform.
+   */
+  get parent(): Container | null {
+    return (this.target as unknown as { parent: Container | null }).parent;
+  }
+
+  /**
+   * Add a child into the camera's world container (world-space). Sub-
+   * managers that draw in world coords (`BackgroundGrid`,
+   * `DamageNumberManager`, `HealthBarManager`, `LabelManager`,
+   * `MountVisualManager`) use this exactly as they would `viewport.addChild`.
+   */
+  addChild<T extends Container>(child: T): T {
+    return (this.target as unknown as { addChild<U extends Container>(c: U): U }).addChild(child);
   }
 
   // ---------- Test / debug accessors ----------

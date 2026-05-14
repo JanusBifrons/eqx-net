@@ -1,5 +1,5 @@
 import { Container, Graphics } from 'pixi.js';
-import type { Viewport } from 'pixi-viewport';
+import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore } from '../state/store';
@@ -327,28 +327,28 @@ export function partitionAndGroupCandidates(
 
 export class HaloRadar {
   private readonly container = new Container();
-  private viewport: Viewport | null = null;
+  private camera: Camera | null = null;
   private readonly arrows = new Map<string, ArrowEntry>();
   /** Wall-clock anchor for spring dt. Reset on transit cleanup so dt
    *  across a warp gap doesn't blow up the spring's first post-arrival
    *  step. */
   private lastUpdateMs: number | null = null;
 
-  init(viewport: Viewport): void {
-    this.viewport = viewport;
-    // Phase E — attach to the viewport's PARENT (the renderer's app.stage)
+  init(camera: Camera): void {
+    this.camera = camera;
+    // Phase E — attach to the camera's PARENT (the renderer's app.stage)
     // so the container lives in screen-pixel space rather than world space.
     // This is what makes the arrows orbit the player's screen position
     // exactly, with no camera-follow transform pipeline in between.
-    const stage = viewport.parent;
+    const stage = camera.parent;
     if (stage) {
       stage.addChild(this.container);
     }
   }
 
   update(mirror: RenderMirror): void {
-    const viewport = this.viewport;
-    if (!viewport) return;
+    const camera = this.camera;
+    if (!camera) return;
 
     // During SPOOLING / IN_TRANSIT / ARRIVED the player is between rooms; the
     // mirror may still hold the old sector's swarm/ships while the local ship
@@ -384,7 +384,7 @@ export class HaloRadar {
     // viewport dimension so the ring stays comfortably inside the screen in
     // any orientation, then clamp to a sane min/max so arrows aren't tiny
     // on a phone or absurdly far out on a 4K monitor.
-    const screenMin = Math.min(viewport.screenWidth, viewport.screenHeight);
+    const screenMin = Math.min(camera.screenWidth, camera.screenHeight);
     const innerRadiusPx = Math.max(
       INNER_RADIUS_MIN_PX,
       Math.min(INNER_RADIUS_MAX_PX, INNER_RADIUS_FRAC * screenMin),
@@ -407,19 +407,19 @@ export class HaloRadar {
     // renderer-side (not in projectArrow) so the bearing/scale/radius
     // continue updating right up to the 500 ms cutoff — no bearing freeze
     // like Phase N's grace fade.
-    const bounds = viewport.getVisibleBounds();
+    const bounds = camera.getVisibleBounds();
 
     // Phase E — player's actual SCREEN position. Arrows orbit this point at
     // a fixed pixel offset, so they always sit at the right place on the
     // halo regardless of camera state (follow lag, zoom, etc.).
-    const playerScreen = viewport.toScreen(local.x, -local.y);
+    const playerScreen = camera.toScreen(local.x, -local.y);
     // Phase H — radius for the "come in from off-screen" spawn point. A
     // circle of `screenCornerRadius + 30` px from playerScreen sits just
     // outside any corner of the visible viewport at any bearing, so a
     // fresh arrow's spring starts genuinely off-screen and flies inward
     // to its halo ring target instead of popping into existence on the
     // ring.
-    const screenCornerRadius = Math.hypot(viewport.screenWidth, viewport.screenHeight) / 2;
+    const screenCornerRadius = Math.hypot(camera.screenWidth, camera.screenHeight) / 2;
     const offScreenSpawnPx = screenCornerRadius + 30;
 
     const rawCandidates: Candidate[] = [];
@@ -617,7 +617,7 @@ export class HaloRadar {
     this.arrows.clear();
     if (this.container.parent) this.container.parent.removeChild(this.container);
     this.container.destroy({ children: true });
-    this.viewport = null;
+    this.camera = null;
     this.lastUpdateMs = null;
   }
 }

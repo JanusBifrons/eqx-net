@@ -1,5 +1,5 @@
 import { Application, Graphics, TilingSprite } from 'pixi.js';
-import type { Viewport } from 'pixi-viewport';
+import type { Camera } from './worker/Camera';
 
 /**
  * Three-layer parallax starfield rendered behind the gameplay viewport.
@@ -74,12 +74,12 @@ export class StarfieldBackground {
   }
 
   /** Per-frame update. Stars slide opposite to the camera at the layer's
-   *  parallax factor; same sign on both axes since `viewport.center` is
+   *  parallax factor; same sign on both axes since `camera.center` is
    *  already in Pixi screen-space (the Y-flip happens at the entity
    *  level, not at the camera level). */
-  update(viewport: Viewport): void {
-    const cx = viewport.center.x;
-    const cy = viewport.center.y;
+  update(camera: Camera): void {
+    const cx = camera.center.x;
+    const cy = camera.center.y;
     for (const layer of this.layers) {
       layer.sprite.tilePosition.x = -cx * layer.spec.factor;
       layer.sprite.tilePosition.y = -cy * layer.spec.factor;

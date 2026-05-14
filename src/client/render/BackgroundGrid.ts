@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import type { Viewport } from 'pixi-viewport';
+import type { Camera } from './worker/Camera';
 
 /**
  * Two-tier dynamic background grid. Each frame redraws only the lines
@@ -55,19 +55,19 @@ export class BackgroundGrid {
   private readonly labels = new Map<string, Text>();
   private readonly seen = new Set<string>();
 
-  attach(viewport: Viewport): void {
-    viewport.addChild(this.microLines);
-    viewport.addChild(this.macroLines);
-    viewport.addChild(this.labelContainer);
+  attach(camera: Camera): void {
+    camera.addChild(this.microLines);
+    camera.addChild(this.macroLines);
+    camera.addChild(this.labelContainer);
   }
 
-  update(viewport: Viewport): void {
-    const cx = viewport.center.x;
-    const cy = viewport.center.y;
+  update(camera: Camera): void {
+    const cx = camera.center.x;
+    const cy = camera.center.y;
     // Pad by MACRO_SIZE so the visible window includes any line one macro
     // cell beyond the screen edge — prevents edges popping in at the seam.
-    const halfW = viewport.worldScreenWidth  * 0.5 + MACRO_SIZE;
-    const halfH = viewport.worldScreenHeight * 0.5 + MACRO_SIZE;
+    const halfW = camera.worldScreenWidth  * 0.5 + MACRO_SIZE;
+    const halfH = camera.worldScreenHeight * 0.5 + MACRO_SIZE;
 
     const xMinMicro = Math.floor((cx - halfW) / CELL_SIZE) * CELL_SIZE;
     const xMaxMicro = Math.ceil ((cx + halfW) / CELL_SIZE) * CELL_SIZE;
@@ -99,7 +99,7 @@ export class BackgroundGrid {
 
     // Labels: only when zoomed in enough that 11px text is legible.
     this.seen.clear();
-    if (viewport.scale.x >= LABEL_HIDE_ZOOM) {
+    if (camera.scale.x >= LABEL_HIDE_ZOOM) {
       for (let mx = xMinMacro; mx <= xMaxMacro; mx += MACRO_SIZE) {
         for (let my = yMinMacro; my <= yMaxMacro; my += MACRO_SIZE) {
           const key = `${mx},${my}`;
