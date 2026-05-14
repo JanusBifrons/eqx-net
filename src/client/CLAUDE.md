@@ -42,6 +42,28 @@ Why: Zustand triggers React re-renders on subscription changes. Putting per-fram
 
 ---
 
+## Renderer worker boundary (2026-05-14, Phase 3 of OffscreenCanvas migration)
+
+The renderer is migrating off the main thread onto a dedicated Web Worker via `OffscreenCanvas`. Phase 3 has landed the scaffolding; Phases 4 + 5 host the actual Pixi `Application`s in the worker. See [plan](../../../.claude/plans/humble-strolling-coral.md) for the full multi-phase roadmap.
+
+- **`IRenderer.getFeedback(): RendererFeedback`** is the closed-set channel for renderer → main-thread data each frame. Today: in-renderer field, populated at the tail of `update()`. Future (Phase 4): main-thread cache, populated by `FEEDBACK` postMessages from the worker. **Adding a new field requires a phase-gate review** — every entry expands the per-frame postMessage payload.
+
+- **The wire format is [`render/worker/protocol.ts`](render/worker/protocol.ts).** Discriminated unions in both directions; structured-cloneable variants only. No DOM handles, no Pixi handles, no functions. Locked by `render/worker/protocol.test.ts` (structuredClone roundtrip + compile-time exhaustiveness).
+
+- **Forbidden imports inside `src/client/render/worker/**`** (CI-enforced): `react`, `react-dom`, `@mui/*`, `@emotion/*`, `zustand` — the worker has no DOM. State crosses the boundary via the protocol; main thread reads Zustand and posts the resulting messages.
+
+- **`RenderMirror` is the per-frame wire payload** — already plain data (no Pixi handles, no functions). Any new field on `RenderMirror` must remain structured-cloneable.
+
+- **pixi-viewport does NOT work inside an OffscreenCanvas-hosted runtime** — its Drag plugin calls `addEventListener` on `events.domElement`, which is undefined in a worker. Spike-verified 2026-05-14 (commit `2dd11d3`). Replacement: hand-rolled `Camera` class in the worker, prototype at [render/__offscreen-spike__/spike-worker.ts](__offscreen-spike__/spike-worker.ts).
+
+- **Pointer / wheel / touch events are forwarded from the main thread.** The main thread installs DOM listeners on the gameplay canvas, serialises each event via the `SerialisedPointerEvent` / `SerialisedWheelEvent` shapes, and posts as `POINTER_EVENT` / `WHEEL_EVENT`. The worker's `Camera` consumes via a `onPointerDown / Move / Up` state machine.
+
+- **`GalaxyMapLayer` lives worker-side** (Phase 4). Its state is driven by `SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / RESIZE` messages from the main thread's existing Zustand `useEffect`s. Hex taps fire `OVERLAY_TAPPED { sectorKey }` back to main.
+
+- **Fallback for browsers without OffscreenCanvas** (Safari < 17): `WorkerRendererClient` constructor branches on `supportsOffscreenRenderer()` and returns `PixiRenderer` (still alive in [render/PixiRenderer.ts](render/PixiRenderer.ts)) on `false`. Production code never assumes worker rendering is available.
+
+---
+
 ## UI Scope
 
 - **React + MUI** is for out-of-game UI and overlays. Phase 8 sub-phase A made the **Galaxy Map the user's first screen post-auth** (replacing the original "Enter Sector Alpha" splash); the SVG `HexGalaxyMap` was retired in 2026-05-10 in favour of two distinct **Pixi-rendered** maps:

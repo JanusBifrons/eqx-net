@@ -167,6 +167,44 @@ export default [
     },
   },
   {
+    // Renderer worker boundary (Phase 3 of the OffscreenCanvas migration).
+    // The worker has no DOM, no React, no MUI, no Zustand. Importing any
+    // of these would either fail at runtime or smuggle DOM dependencies
+    // into the worker bundle. The protocol in `protocol.ts` is the only
+    // sanctioned communication channel. See
+    // `~/.claude/plans/humble-strolling-coral.md` Phase 3.
+    files: ['src/client/render/worker/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            ...clientForbidden.map((p) => ({
+              group: [p],
+              message: `Renderer worker must not import server-only libraries or Node-only APIs. Forbidden: ${p}.`,
+            })),
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message: 'Renderer worker has no DOM — React is not available. Render via Pixi only. Communicate with main thread via the protocol in protocol.ts.',
+            },
+            {
+              group: ['@mui/*', '@emotion/*'],
+              message: 'Renderer worker has no DOM — MUI/emotion are not usable. Move UI to main-thread React or expose a state field via the protocol.',
+            },
+            {
+              group: ['zustand', 'zustand/*'],
+              message: 'Renderer worker must not subscribe to Zustand directly — state crosses the boundary via the protocol. Main thread reads Zustand and posts the resulting messages.',
+            },
+            {
+              group: ['**/src/server/**', '../server/**', '../../server/**'],
+              message: 'Renderer worker must not import from src/server.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Zustand store purity: no spatial fields in the UI state.
     // See root CLAUDE.md cross-phase invariant #2.
     files: ['src/client/state/store.ts', 'src/client/state/store.tsx'],
