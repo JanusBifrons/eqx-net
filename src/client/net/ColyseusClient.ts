@@ -559,6 +559,12 @@ export class ColyseusGameClient {
   /** True after the first snapshot has anchored the clock. Subsequent
    *  snapshots EWMA-smooth the anchor PerfNow instead of snapping it. */
   private _anchorInitialised = false;
+  /** Join-render diagnostic latch. Fires `local_pose_resolved` exactly
+   *  once per (re)connect — when `tryInitPredWorld` succeeds and the
+   *  local ship's pose is observable in the mirror at server-authoritative
+   *  coords. Reset by `resetPredictionState` so transit + ship-swap
+   *  arrivals re-fire. */
+  private _localPoseResolvedLogged = false;
   /**
    * Estimated half-RTT in ticks. The client should aim to be this many ticks
    * AHEAD of the latest known server tick so its inputs arrive at the server
@@ -712,6 +718,9 @@ export class ColyseusGameClient {
     this._swarmSnapAngleBuf.length = 0;
     this._swarmSnapAngvelBuf.length = 0;
     this._swarmSnapLastLogTick.clear();
+    // Join-render diagnostic latch — re-arm so the destination room's
+    // `tryInitPredWorld` success fires a fresh `local_pose_resolved`.
+    this._localPoseResolvedLogged = false;
     this.stats.swarmSnapP50 = 0;
     this.stats.swarmSnapP99 = 0;
     this.stats.swarmAngleP99 = 0;
@@ -1313,6 +1322,22 @@ export class ColyseusGameClient {
       playerId,
       x: existing.x, y: existing.y, kind: existing.kind ?? null,
     });
+    // Join-render diagnostic: this is the moment the local ship's
+    // pose is observable in the mirror at server-authoritative coords.
+    // Fire ONCE per (re)connect — `resetPredictionState` resets the latch.
+    if (!this._localPoseResolvedLogged) {
+      this._localPoseResolvedLogged = true;
+      const msSinceWelcome = this.welcomePerfNow > 0
+        ? Math.round(performance.now() - this.welcomePerfNow)
+        : -1;
+      logEvent('local_pose_resolved', {
+        playerId,
+        x: existing.x,
+        y: existing.y,
+        kind: existing.kind ?? null,
+        msSinceWelcome,
+      });
+    }
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
     // Retrospectively spawn any remote ships that arrived in the initial Colyseus
     // state patch (before localId was set, so syncMirror skipped predWorld spawn).

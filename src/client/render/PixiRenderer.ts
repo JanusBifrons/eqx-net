@@ -316,6 +316,7 @@ export class PixiRenderer implements IRenderer {
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
+    firstFrameRendered: false,
   };
 
   async init(rawContainer: unknown): Promise<void> {
@@ -1077,6 +1078,15 @@ export class PixiRenderer implements IRenderer {
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
     this.feedback.wreckSpriteCount = this.wreckSprites.size;
+    // Join-render readiness signal: latch true once we've painted at
+    // least one frame that includes the local player. The main thread
+    // reads this via `getFeedback()`, fires the `pixi_first_frame`
+    // diagnostic, and drives `gameReady`/`<WarpScreen>` off it.
+    if (!this.feedback.firstFrameRendered
+        && mirror.localPlayerId !== null
+        && mirror.ships.size > 0) {
+      this.feedback.firstFrameRendered = true;
+    }
   }
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who

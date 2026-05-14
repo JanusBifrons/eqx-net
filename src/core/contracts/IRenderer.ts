@@ -289,6 +289,18 @@ export interface RendererFeedback {
    * sprite path.
    */
   wreckSpriteCount: number;
+  /**
+   * Latches `true` the first time the renderer's `update()` runs with a
+   * non-null `mirror.localPlayerId` AND `mirror.ships.size > 0`. Stays
+   * true for the lifetime of the renderer instance.
+   *
+   * Drives the join-render readiness gate (`useGameReady` + WarpScreen
+   * overlay) so the player never sees the partial-mount state between
+   * MUI HUD render and the first frame with the local ship at its
+   * correct pose. The main thread also observes the false→true
+   * transition to fire the `pixi_first_frame` diagnostic event.
+   */
+  firstFrameRendered: boolean;
 }
 
 export interface IRenderer {

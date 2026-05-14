@@ -240,8 +240,17 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     };
     window.addEventListener('keydown', onKey);
 
+    // Anchor for the join-render diagnostics (see `pixi_first_frame` /
+    // `local_pose_resolved` / `join_chain_complete` events). The
+    // `phaseEnterPerfNow` is captured BEFORE the async `renderer.init`
+    // so the delta covers GPU init + WS handshake + first paint.
+    const phaseEnterPerfNow = performance.now();
+    let firstFramePixiLogged = false;
+
     (async () => {
+      const rendererInitStartedAt = performance.now();
       await renderer.init(el);
+      const rendererInitMs = performance.now() - rendererInitStartedAt;
 
       // StrictMode fires cleanup before the async init resolves. If disposal
       // happened while we were awaiting, tear down the just-initialised renderer
@@ -250,6 +259,10 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         renderer.dispose();
         return;
       }
+      logEvent('renderer_init_complete', {
+        rendererInitMs: Math.round(rendererInitMs),
+        msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
+      });
 
       // Map B — additive in-game galaxy overlay. Lives as a screen-space
       // sibling of the gameplay viewport on the same Pixi stage, so it
@@ -311,6 +324,24 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           if (shouldRender) renderer.update(gameClient.mirror);
           // Clear one-frame triggers after the renderer has consumed them.
           gameClient.mirror.explodingShips?.clear();
+
+          // Join-render diagnostic: latch the moment the renderer first
+          // paints a frame with the local player visible. Drives the
+          // future `gameReady` selector + WarpScreen fade-out. Read on
+          // EVERY frame (not gated to writeDataset) because the
+          // transition we care about happens once per session and we
+          // mustn't miss it.
+          if (!firstFramePixiLogged) {
+            const fb = renderer.getFeedback();
+            if (fb.firstFrameRendered) {
+              firstFramePixiLogged = true;
+              logEvent('pixi_first_frame', {
+                msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
+                shipsInMirror: gameClient.mirror.ships.size,
+                hasLocal: gameClient.mirror.localPlayerId !== null,
+              });
+            }
+          }
           const localId = gameClient.mirror.localPlayerId;
           const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
           const writeDataset = (++frameCounter % 5) === 0;

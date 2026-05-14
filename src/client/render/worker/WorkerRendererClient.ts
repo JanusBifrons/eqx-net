@@ -44,6 +44,7 @@ function emptyFeedback(): RendererFeedback {
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
+    firstFrameRendered: false,
   };
 }
 
@@ -323,6 +324,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
+        this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

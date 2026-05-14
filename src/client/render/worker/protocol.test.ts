@@ -138,6 +138,7 @@ describe('renderer-worker protocol', () => {
             haloArrowCount: 7,
             damageNumberActiveCount: 2,
             wreckSpriteCount: 4,
+            firstFrameRendered: true,
           },
         },
       },
