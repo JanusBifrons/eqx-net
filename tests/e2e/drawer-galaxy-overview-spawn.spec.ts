@@ -120,10 +120,16 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
   });
   expect(localShipInstanceId).toBeTruthy();
 
+  // `noWaitAfter: true` is essential here. Roster-card onClick is a pure
+  // Zustand setState (no history.pushState, no location change, no
+  // navigation). Playwright's default `waitForScheduledNavigations` then
+  // hangs the full 5 s on Pixi's continuous rAF, which it misreads as
+  // "navigation pending". The next assertion (`ship-detail-modal`
+  // toBeVisible) is the correct synchronisation point.
   await page
     .locator(`[data-testid="ship-roster-card-${localShipInstanceId}"]`)
     .first()
-    .click({ force: true, timeout: 5_000 });
+    .click({ force: true, timeout: 5_000, noWaitAfter: true });
 
   // === 6. ShipDetailModal mounts. ===
   await expect(page.locator('[data-testid="ship-detail-modal"]')).toBeVisible({ timeout: 5_000 });
@@ -132,10 +138,15 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
   await expect(page.locator('[data-testid="ship-detail-spawn"]')).toBeDisabled();
 
   // === 7. Sanity: close the modal cleanly. ===
+  // `noWaitAfter: true` for the same reason as step 5 — the close button
+  // is a pure setState (`setOpenShipId(null)`), not a navigation. Without
+  // this, Playwright hangs waiting for the imaginary "scheduled
+  // navigation" to land while Pixi's continuous rAF keeps the page
+  // looking busy.
   await page
     .locator('[data-testid="ship-detail-close"]')
-    .click({ force: true, timeout: 3_000 });
-  await expect(page.locator('[data-testid="ship-detail-modal"]')).toHaveCount(0, { timeout: 3_000 });
+    .click({ force: true, timeout: 3_000, noWaitAfter: true });
+  await expect(page.locator('[data-testid="ship-detail-modal"]')).toHaveCount(0, { timeout: 10_000 });
 
   expect(errors, errors.join('\n')).toEqual([]);
 });
