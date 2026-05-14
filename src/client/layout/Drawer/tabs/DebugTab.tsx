@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Button, Stack, TextField, Typography } from '@mui/material';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
+import { useUIStore } from '../../../state/store';
 import { ConnectionDiagnostics } from '../../../components/ConnectionDiagnostics';
 import { DevOverlay } from '../../../components/DevOverlay';
 import { LogPanel } from '../../../components/LogPanel';
@@ -14,16 +15,32 @@ import { captureDiagnostic } from '../../../debug/diagCapture';
  * gated by their existing Zustand toggles (`showDevOverlay`, `showLogPanel`)
  * so the user can declutter without leaving the tab.
  *
+ * **Snapshot-rate gate** (2026-05-14): returns `null` when the drawer is
+ * closed. With `ModalProps.keepMounted: true` on AdvancedDrawer
+ * (2026-05-13, commit `2aa7d4f`), drawer-tab content stays in DOM even
+ * when the drawer is closed — without this gate, the snapshot-rate
+ * Zustand subscriptions inside `ConnectionDiagnostics`, `DevOverlay`,
+ * and `LogPanel` would fire 17×/s for any user who has switched to the
+ * Debug tab once during a session (`drawerTab` persists in Zustand).
+ * See `docs/LESSONS.md` 2026-05-13 §3.
+ *
  * The Capture Diagnostic block (formerly inside `SettingsModal`) lives at
  * the top — it's the most action-oriented thing in this tab.
  *
  * Sticky-bottom positioning of the Debug tab in the rail is handled by
  * `AdvancedDrawer`, not here.
  */
-export function DebugTab(): JSX.Element {
+export function DebugTab(): JSX.Element | null {
+  // Hooks must be called unconditionally (React rules of hooks); the
+  // `useState` slots below are preserved across drawer-close/open cycles,
+  // so a user typing a diagnostic note doesn't lose it if they
+  // accidentally close the drawer.
+  const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
   const [note, setNote] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
+
+  if (!isDrawerOpen) return null;
 
   const onCapture = async (): Promise<void> => {
     setCapturing(true);
