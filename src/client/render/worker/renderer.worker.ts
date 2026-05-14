@@ -89,10 +89,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           autoDensity: false,
         });
 
-        // Disable per-sprite hit-testing on every pointer move — see
-        // PixiRenderer.ts:339 for the original rationale. Worker has no
-        // DOM event system so this is mostly belt-and-braces.
-        Object.assign(app.renderer.events.features, { globalMove: false });
+        // (PixiRenderer disables `events.features.globalMove` here as a
+        // perf hint. In worker context Pixi's EventSystem isn't set up
+        // with a `features` map — there's no DOM event source — so the
+        // call would throw. Skipped: worker can't generate native pointer
+        // events anyway; all events arrive synthesised via postMessage
+        // and are consumed by the Camera state machine, not Pixi events.)
 
         world = new Container();
         app.stage.addChild(world);
