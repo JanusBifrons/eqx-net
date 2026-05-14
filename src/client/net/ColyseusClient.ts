@@ -1359,6 +1359,16 @@ export class ColyseusGameClient {
     const localId = this.mirror.localPlayerId;
     const now = performance.now();
 
+    // Join-render readiness signal: the FIRST snapshot tick after a
+    // (re)connect is when the reconciler/predWorld pipeline is fully
+    // primed and the renderer can start drawing authoritative state.
+    // Flag is reset by `setPhase('game')` for the next room. Only
+    // flips when we know who we are (skip the initial state patch that
+    // arrives before welcome).
+    if (localId !== null && !useUIStore.getState().firstSnapshotApplied) {
+      useUIStore.getState().setFirstSnapshotApplied(true);
+    }
+
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
     // to a playerId-keyed local view. C-ii strategy: predWorld + mirror
     // + reconciler all use playerId internally for active hulls.

@@ -17,7 +17,7 @@ import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { LocalGameClient } from './local/LocalGameClient';
 import { loadStoredPlayerId, persistPlayerId } from './identity/token';
-import { useUIStore, applyUserPrefs } from './state/store';
+import { useUIStore, applyUserPrefs, useGameReady } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { AppHeader } from './components/AppHeader';
 import { LoginPage } from './components/LoginPage';
@@ -122,7 +122,27 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   const touchInputRef = useRef<TouchInput | null>(
     isTouchRef.current ? new TouchInput() : null,
   );
+  // Join-render diagnostic anchor — captured once per GameSurface mount.
+  // Used by the `join_chain_complete` event below + by the rAF loop's
+  // `pixi_first_frame` payload.
+  const gameSurfaceMountedAtRef = useRef<number>(performance.now());
+  const joinChainCompleteLoggedRef = useRef<boolean>(false);
+  const gameReady = useGameReady();
   const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
+
+  // Fire `join_chain_complete` exactly once per GameSurface mount, when
+  // all four readiness gates (connected + welcomed + first-snapshot +
+  // first-frame-rendered) have flipped true. Pairs with `pixi_first_frame`
+  // and `local_pose_resolved` so the diagnostic capture has both the
+  // per-gate events AND a single summary event with total elapsed time.
+  useEffect(() => {
+    if (gameReady && !joinChainCompleteLoggedRef.current) {
+      joinChainCompleteLoggedRef.current = true;
+      logEvent('join_chain_complete', {
+        msFromPhaseEnter: Math.round(performance.now() - gameSurfaceMountedAtRef.current),
+      });
+    }
+  }, [gameReady]);
 
   // Phase 5 scope change — when the player dies and clicks Respawn, send
   // them BACK TO THE GALAXY MAP rather than respawning in-place. The
@@ -325,9 +345,9 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           // Clear one-frame triggers after the renderer has consumed them.
           gameClient.mirror.explodingShips?.clear();
 
-          // Join-render diagnostic: latch the moment the renderer first
+          // Join-render readiness: latch the moment the renderer first
           // paints a frame with the local player visible. Drives the
-          // future `gameReady` selector + WarpScreen fade-out. Read on
+          // `gameReady` Zustand selector + WarpScreen fade-out. Read on
           // EVERY frame (not gated to writeDataset) because the
           // transition we care about happens once per session and we
           // mustn't miss it.
@@ -340,6 +360,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
                 shipsInMirror: gameClient.mirror.ships.size,
                 hasLocal: gameClient.mirror.localPlayerId !== null,
               });
+              useUIStore.getState().setRendererFirstFrameRendered(true);
             }
           }
           const localId = gameClient.mirror.localPlayerId;

@@ -229,6 +229,19 @@ interface UIStore {
    *  the spawn-on-self button. */
   localShipInstanceId: string | null;
   setLocalShipInstanceId: (id: string | null) => void;
+  /** Join-render readiness sub-flag. Set true the first time
+   *  `ColyseusClient.handleSnapshot()` runs with a non-null
+   *  `mirror.localPlayerId` after (re)connect. Reset to false whenever
+   *  `setPhase` puts the app into `'game'` (initial join, ship-swap
+   *  arrival, transit arrival). Discrete UI flag — purity-clean. */
+  firstSnapshotApplied: boolean;
+  setFirstSnapshotApplied: (v: boolean) => void;
+  /** Join-render readiness sub-flag. Set true when the renderer first
+   *  paints a frame with the local player visible (observed via
+   *  `RendererFeedback.firstFrameRendered` from main-thread rAF). Reset
+   *  on phase change into `'game'`. */
+  rendererFirstFrameRendered: boolean;
+  setRendererFirstFrameRendered: (v: boolean) => void;
   /** Apply the latest `/healthz` poll result. Updates both the gate
    *  state and the cached `playersOnline` in one set so subscribers see
    *  a consistent pair. */
@@ -318,6 +331,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   shipRoster: [],
   pendingShipSwap: null,
   localShipInstanceId: null,
+  firstSnapshotApplied: false,
+  rendererFirstFrameRendered: false,
   serverHealth: 'unknown',
   playersOnline: null,
 
@@ -353,7 +368,20 @@ export const useUIStore = create<UIStore>((set, get) => ({
   }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
   setDrawerTab: (id) => set({ drawerTab: id }),
-  setPhase: (p) => set({ phase: p }),
+  setPhase: (p) => set((prev) => {
+    // Join-render readiness reset: every entry into 'game' (initial
+    // join, ship-swap arrival, transit arrival) re-arms the WarpScreen
+    // overlay by clearing both readiness sub-flags. Leaving 'game'
+    // also clears them so a subsequent re-entry doesn't see stale
+    // post-arrival flags carried over.
+    if (p === 'game' && prev.phase !== 'game') {
+      return { phase: p, firstSnapshotApplied: false, rendererFirstFrameRendered: false };
+    }
+    if (p !== 'game' && prev.phase === 'game') {
+      return { phase: p, firstSnapshotApplied: false, rendererFirstFrameRendered: false };
+    }
+    return { phase: p };
+  }),
   setGalaxyMapOpen: (v) => set({ isGalaxyMapOpen: v }),
   toggleGalaxyMapOpen: () => set((s) => ({ isGalaxyMapOpen: !s.isGalaxyMapOpen })),
   setGalaxyOverviewOpen: (v) => set({ isGalaxyOverviewOpen: v }),
@@ -364,6 +392,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShipRoster:    (ships) => set({ shipRoster: ships }),
   setPendingShipSwap: (req) => set({ pendingShipSwap: req }),
   setLocalShipInstanceId: (id) => set({ localShipInstanceId: id }),
+  setFirstSnapshotApplied: (v) => set({ firstSnapshotApplied: v }),
+  setRendererFirstFrameRendered: (v) => set({ rendererFirstFrameRendered: v }),
   setServerHealth:  (health, playersOnline) => set((prev) => ({
     serverHealth: health,
     // Preserve the previous count when the caller didn't pass one
@@ -373,6 +403,35 @@ export const useUIStore = create<UIStore>((set, get) => ({
     playersOnline: playersOnline === undefined ? prev.playersOnline : playersOnline,
   })),
 }));
+
+/**
+ * Join-render readiness selector — true when the player can safely see
+ * the game canvas without the partial-mount intermediate states. The
+ * WarpScreen overlay is visible exactly when this is `false` (in game
+ * phase) and hides when it flips `true`.
+ *
+ * Composed from four sub-flags so each readiness gate is observable
+ * independently in tests + diagnostic captures:
+ *   - `connectionStatus === 'connected'` — WebSocket up.
+ *   - `localShipInstanceId !== null` — server welcomed us; we have an
+ *     identity to render.
+ *   - `firstSnapshotApplied` — at least one snapshot tick has reached
+ *     `handleSnapshot`, so the reconciler/predWorld are warmed.
+ *   - `rendererFirstFrameRendered` — Pixi has painted a frame with the
+ *     local player in `mirror.ships`.
+ *
+ * `setPhase` resets the last two flags on every entry into game phase
+ * so subsequent room transitions retrigger the overlay.
+ */
+export function useGameReady(): boolean {
+  return useUIStore(
+    (s) =>
+      s.connectionStatus === 'connected'
+      && s.localShipInstanceId !== null
+      && s.firstSnapshotApplied
+      && s.rendererFirstFrameRendered,
+  );
+}
 
 /**
  * Re-hydrate all per-user preferences (settings + selected ship) for the
