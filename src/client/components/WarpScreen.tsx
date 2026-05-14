@@ -67,16 +67,21 @@ export function WarpScreen(): JSX.Element | null {
     statusText = 'WARP COMPLETE';
   }
 
-  const timerRef = useRef<HTMLSpanElement | null>(null);
+  // Progress percentage tied to the 5 s minimum-display floor. Counts
+  // 0% → 100% over the warp window; once at 100% the other readiness
+  // gates take over for the actual fade-out. Updated at rAF via direct
+  // textContent write — no React state churn for the digit ticks.
+  const progressRef = useRef<HTMLSpanElement | null>(null);
   const mountedAtRef = useRef<number>(performance.now());
   useEffect(() => {
     mountedAtRef.current = performance.now();
     let raf = 0;
     const tick = (): void => {
-      const el = timerRef.current;
+      const el = progressRef.current;
       if (el !== null) {
         const ms = performance.now() - mountedAtRef.current;
-        el.textContent = `T+${(ms / 1000).toFixed(1)}s`;
+        const pct = Math.min(100, Math.round((ms / 5000) * 100));
+        el.textContent = `WARP STABILISATION ${pct}%`;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -121,17 +126,17 @@ export function WarpScreen(): JSX.Element | null {
         <Typography
           component="span"
           data-testid="warp-screen-timer"
-          ref={timerRef}
+          ref={progressRef}
           sx={{
             color: '#9aa0b4',
             fontFamily: 'ui-monospace, "Roboto Mono", monospace',
             fontSize: 11,
-            letterSpacing: 1,
+            letterSpacing: 2,
             minHeight: 12,
             textShadow: '0 0 8px rgba(0, 0, 0, 0.6)',
           }}
         >
-          T+0.0s
+          WARP STABILISATION 0%
         </Typography>
       </Box>
     </Slot>

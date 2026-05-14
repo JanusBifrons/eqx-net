@@ -1,4 +1,5 @@
-import { Application, Graphics, Container, BlurFilter, ColorMatrixFilter } from 'pixi.js';
+import { Application, Graphics, Container } from 'pixi.js';
+import { OldFilmFilter, ShockwaveFilter, RGBSplitFilter } from 'pixi-filters';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -273,23 +274,34 @@ export class PixiRenderer implements IRenderer {
   /**
    * Warp-mode render state — the "loading screen" rendered ON the same
    * canvas as gameplay (no separate Pixi Application). When `warpActive`
-   * is true:
-   *   - `world` is wrapped in a `BlurFilter` + `ColorMatrixFilter`
-   *     chain that smears the gameplay sprites and tints everything
-   *     warp-green.
-   *   - `warpStage` (sibling of `world` on `app.stage`) shows animated
-   *     radial streaks emitted from screen centre.
-   *   - `warpFade` ∈ [0, 1] controls intensity; the renderer tweens
-   *     it from 1→0 over `WARP_FADE_OUT_MS` after `setWarpMode(false)`,
-   *     and snaps to 1 on `setWarpMode(true)`.
-   * Initialized lazily on first `setWarpMode(true)` call so renderers
-   * that never enter warp mode don't pay the construction cost.
+   * is true the renderer applies a pixi-filters chain to `app.stage`:
+   *
+   *   - `OldFilmFilter` — sepia tint + film grain + vignette + scratches
+   *   - `ShockwaveFilter` — animated radial wave from screen centre
+   *   - `RGBSplitFilter` — chromatic-aberration "glitch" flicker
+   *
+   * `warpIntensity` ∈ [0, 1] controls strength; the renderer tweens
+   * it from 1→0 over 500 ms after `setWarpMode(false)`, and snaps to
+   * 1 on `setWarpMode(true)`. Filters built lazily on first
+   * `setWarpMode(true)` call so renderers that never enter warp mode
+   * don't pay the construction cost.
+   *
+   * `warpStage` is a thin Container reserved for future Graphics
+   * overlays (radial streaks etc.). Currently empty — the filter
+   * chain carries the entire visual, and per-frame Graphics + transform
+   * cost on top of the filter passes pushed mobile main-thread budget
+   * out of the frame window.
    */
   private warpActive = false;
   private warpStage: Container | null = null;
-  private warpBlur: BlurFilter | null = null;
-  private warpTint: ColorMatrixFilter | null = null;
-  private warpStreaks: Array<{ gfx: Graphics; baseAngle: number; baseRadius: number; phase: number }> = [];
+  private warpOldFilm: OldFilmFilter | null = null;
+  private warpShockwave: ShockwaveFilter | null = null;
+  /** RGBSplitFilter substitute for GlitchFilter — the official Glitch
+   *  filter uses `document.createElement('canvas')` for its displacement
+   *  map, which throws "document is not defined" in the OffscreenCanvas
+   *  worker context. RGBSplit produces a similar chromatic-aberration /
+   *  "glitchy" look using a pure fragment shader (no DOM). */
+  private warpGlitch: RGBSplitFilter | null = null;
   /** Intensity 0..1 — 1 = full warp visual, 0 = filters cleared. */
   private warpIntensity = 0;
   /** Wall-clock ms when fade-out started, or 0 if not fading. */
@@ -1305,45 +1317,59 @@ export class PixiRenderer implements IRenderer {
     this.warpStage = new Container();
     this.warpStage.eventMode = 'none';
     this.app.stage.addChild(this.warpStage);
-    this.warpBlur = new BlurFilter({ strength: 18, quality: 2 });
-    this.warpTint = new ColorMatrixFilter();
-    // Tint the world heavy green by zeroing red, boosting green, and
-    // dampening blue. Plus a slight luminance lift so the world isn't
-    // pitch black during pre-spawn.
-    this.warpTint.matrix = [
-      0.15, 0,    0,    0, 0.05,
-      0.2,  1.4,  0.2,  0, 0.10,
-      0,    0,    0.40, 0, 0.05,
-      0,    0,    0,    1, 0,
-    ];
 
-    // Build ~36 radial streaks emitting from centre. Streak phases
-    // staggered so the animation looks like a continuous emission.
-    const STREAK_COUNT = 36;
-    for (let i = 0; i < STREAK_COUNT; i++) {
-      const length = 220 + Math.random() * 240;
-      const thickness = 2 + Math.random() * 3;
-      const gfx = new Graphics();
-      // A horizontal bar that we rotate into position. Pivot at
-      // (0, 0) so the bar emanates outward from the streak's origin.
-      gfx
-        .rect(0, -thickness / 2, length, thickness)
-        .fill({ color: 0x00ff88, alpha: 0.85 });
-      this.warpStage.addChild(gfx);
-      this.warpStreaks.push({
-        gfx,
-        baseAngle: (i / STREAK_COUNT) * Math.PI * 2,
-        baseRadius: 30 + Math.random() * 80,
-        phase: Math.random(),
-      });
-    }
+    // pixi-filters chain: OldFilm (sepia grain + vignette) ×
+    // Shockwave (animated radial wave) × Glitch (chromatic-aberration
+    // slice offset). Applied to `app.stage` so EVERYTHING — starfield,
+    // world, warpStage — passes through the chain. Even with an empty
+    // `world` (pre-spawn) the starfield provides material for the
+    // filters to chew on, so the warp visual works from the very first
+    // frame post-renderer-init.
+    // OldFilm: lighter intensity than the initial pass — heavy noise +
+    // scratch generation per-frame was starving the mobile main thread
+    // (E2E timing-out at 1.6 min total). Keep the aesthetic, drop the
+    // per-frame regen cost.
+    this.warpOldFilm = new OldFilmFilter({
+      sepia: 0.35,
+      noise: 0.22,
+      noiseSize: 1.5,
+      vignetting: 0.55,
+      vignettingAlpha: 0.65,
+      vignettingBlur: 0.4,
+      scratch: 0.18,
+      scratchDensity: 0.25,
+      scratchWidth: 1.0,
+    });
+    const sw = this.camera.screenWidth * 0.5;
+    const sh = this.camera.screenHeight * 0.5;
+    this.warpShockwave = new ShockwaveFilter({
+      center: { x: sw, y: sh },
+      speed: 600,
+      amplitude: 60,
+      wavelength: 220,
+      brightness: 1.25,
+      radius: -1,
+      time: 0,
+    });
+    this.warpGlitch = new RGBSplitFilter({
+      red: [6, 0],
+      green: [0, 0],
+      blue: [-6, 0],
+    });
 
-    // Drive the streak animation off the main ticker. Tween-ramp
-    // controlled by `warpIntensity` so fade-out animates smoothly.
+    // Streaks dropped: the pixi-filters chain carries the visual.
+    // Initial pass had 16 rotating Graphics adding per-frame transform
+    // cost on top of the filter passes; mobile E2E showed combined cost
+    // pushing the renderer past frame budget. Filter chain alone is
+    // dramatic enough.
+
+    // Drive animations off the main ticker. Each frame advances
+    // filter uniforms (shockwave time, glitch seed, old-film seed)
+    // and the streak orbits/expansion. Tween-ramp via warpIntensity.
     this.app.ticker.add(this.tickWarpStreaks);
   }
 
-  /** Per-frame warp-streak animation + fade-out tween. */
+  /** Per-frame warp-streak animation + filter uniform tick + fade-out tween. */
   private tickWarpStreaks = (): void => {
     if (!this.warpStage) return;
 
@@ -1353,59 +1379,62 @@ export class PixiRenderer implements IRenderer {
       const FADE_MS = 500;
       this.warpIntensity = Math.max(0, 1 - elapsed / FADE_MS);
       if (this.warpIntensity <= 0) {
-        // Fully faded out — clear filters + hide stage.
         this.warpStage.visible = false;
         this.warpFadeStartedAt = 0;
-        if (this.world.filters) this.world.filters = [];
+        // Clear filters on the stage so non-warp gameplay paints clean.
+        this.app.stage.filters = [];
       }
     }
 
     if (this.warpIntensity <= 0) return;
 
-    // Re-apply filters at the current intensity. Strength scales with
-    // intensity so the world un-blurs as the warp fades.
+    // Re-apply the filter chain at the current intensity. Each filter's
+    // strength scales with intensity so the world un-glitches as warp fades.
     this.applyWarpFilters(this.warpIntensity);
 
-    // Animate streaks. Each streak orbits the centre at a velocity
-    // that scales with the warp intensity (so streaks slow + retreat
-    // as the warp fades). Also expand outward to create the
-    // "streaking past at FTL" feel.
-    const cx = this.camera.screenWidth * 0.5;
-    const cy = this.camera.screenHeight * 0.5;
-    const t = performance.now() / 1000;
-    for (const s of this.warpStreaks) {
-      // Phase animates 0..1 → loops. Higher intensity = faster phase.
-      s.phase = (s.phase + 0.06 * this.warpIntensity) % 1;
-      const radius = s.baseRadius + s.phase * 600;
-      const angle = s.baseAngle + t * 0.3 * this.warpIntensity;
-      s.gfx.x = cx + Math.cos(angle) * radius;
-      s.gfx.y = cy + Math.sin(angle) * radius;
-      s.gfx.rotation = angle;
-      // Fade individual streaks based on their phase + global intensity.
-      s.gfx.alpha = this.warpIntensity * (1 - s.phase * 0.5);
+    // Advance filter uniforms. Shockwave time loops continuously to
+    // produce a recurring radial wave. OldFilm + RGBSplit seeds /
+    // offsets update every Nth frame (not every frame) — animation
+    // still reads as live but the per-frame procedural regen cost
+    // drops by ~75%, which the mobile main thread badly needs.
+    if (this.warpShockwave) {
+      this.warpShockwave.time = (this.warpShockwave.time + 0.016) % 1.3;
     }
-    this.warpStage.alpha = Math.min(1, this.warpIntensity * 1.2);
+    this.warpUniformsFrameCounter = (this.warpUniformsFrameCounter + 1) % 4;
+    if (this.warpUniformsFrameCounter === 0) {
+      if (this.warpGlitch) {
+        const jitter = (Math.random() - 0.5) * 3 * this.warpIntensity;
+        this.warpGlitch.red = [6 * this.warpIntensity + jitter, 0];
+        this.warpGlitch.blue = [-6 * this.warpIntensity + jitter, 0];
+      }
+      if (this.warpOldFilm) this.warpOldFilm.seed = Math.random();
+    }
   };
+  private warpUniformsFrameCounter = 0;
 
-  /** Set the warp filter chain on `world` with strength scaled by
+  /** Set the warp filter chain on `app.stage` with strength scaled by
    *  `intensity`. Empty filter array means filters disabled. */
   private applyWarpFilters(intensity: number): void {
-    if (!this.warpBlur || !this.warpTint) return;
+    if (!this.warpOldFilm || !this.warpShockwave || !this.warpGlitch) return;
     if (intensity <= 0) {
-      this.world.filters = [];
+      this.app.stage.filters = [];
       return;
     }
-    this.warpBlur.strength = 18 * intensity;
-    // Re-set the matrix on the tint filter to scale the green push by
-    // intensity so the colour shift fades alongside the blur.
     const k = intensity;
-    this.warpTint.matrix = [
-      1 - 0.85 * k, 0,                0,                0, 0.05 * k,
-      0.2 * k,      1 + 0.4 * k,      0.2 * k,          0, 0.10 * k,
-      0,            0,                1 - 0.60 * k,     0, 0.05 * k,
-      0,            0,                0,                1, 0,
-    ];
-    this.world.filters = [this.warpBlur, this.warpTint];
+    // OldFilm: scale grain + sepia + vignette with intensity.
+    this.warpOldFilm.sepia = 0.35 * k;
+    this.warpOldFilm.noise = 0.22 * k;
+    this.warpOldFilm.vignetting = 0.55 + 0.15 * (1 - k);
+    this.warpOldFilm.vignettingAlpha = 0.65 * k;
+    this.warpOldFilm.scratch = 0.18 * k;
+    // Shockwave: amplitude + brightness scale; time advances in tick.
+    this.warpShockwave.amplitude = 60 * k;
+    this.warpShockwave.brightness = 1 + 0.25 * k;
+    // RGB split: scale red/blue X offsets with intensity (the tick
+    // handler adds per-frame jitter on top for the glitch flicker).
+    this.warpGlitch.red = [6 * k, 0];
+    this.warpGlitch.blue = [-6 * k, 0];
+    this.app.stage.filters = [this.warpOldFilm, this.warpShockwave, this.warpGlitch];
   }
 
   /**
@@ -1474,10 +1503,10 @@ export class PixiRenderer implements IRenderer {
     // tears them down. Just drop our references so a stale rAF callback
     // post-destroy can't reach into the freed Graphics.
     this.app.ticker.remove(this.tickWarpStreaks);
-    this.warpStreaks.length = 0;
     this.warpStage = null;
-    this.warpBlur = null;
-    this.warpTint = null;
+    this.warpOldFilm = null;
+    this.warpShockwave = null;
+    this.warpGlitch = null;
     this.app.destroy(true, { children: true });
   }
 }
