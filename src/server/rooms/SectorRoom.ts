@@ -109,6 +109,14 @@ const logger = pino({
       : undefined,
 });
 
+/**
+ * Phase 6d — maximum lingering hulls a single player can have in one
+ * sector. When a fresh-spawn-displaces pushes the player past this,
+ * `enforceLingerCap` evicts the oldest. Prevents unbounded
+ * accumulation across long sessions / repeated fresh-spawns.
+ */
+const LINGER_CAP_PER_PLAYER_PER_SECTOR = 3;
+
 const WORKER_TS_PATH = fileURLToPath(
   new URL('../../core/physics/worker.ts', import.meta.url),
 );
@@ -2095,6 +2103,12 @@ export class SectorRoom extends Room<SectorState> {
             oldId: playerId,
             newId: `linger-${existingShip.shipInstanceId}`,
           });
+          // Phase 6d — enforce per-player-per-sector lingering-hull cap.
+          // The just-displaced hull was the newest entry; if the
+          // player's total in this sector now exceeds the cap, evict
+          // the OLDEST (earliest insertion in the Map) so the recent
+          // one survives.
+          this.enforceLingerCap(playerId);
         }
         // Fall through to the fresh-spawn / shipId-restore path below.
         // The fresh spawn will allocate a NEW slot from freeSlots
@@ -2591,6 +2605,44 @@ export class SectorRoom extends Room<SectorState> {
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     serverLogEvent('player_leave', { playerId });
     logger.info({ playerId }, 'player left');
+  }
+
+  /**
+   * Phase 6d — enforce the per-player per-sector lingering-hull cap.
+   *
+   * Called from the fresh-spawn-displaces site in `onJoin` AFTER the
+   * just-displaced lingering hull has been added to `lingeringSlots`.
+   * If the player now has MORE than `LINGER_CAP_PER_PLAYER_PER_SECTOR`
+   * lingering hulls in this room, evicts the OLDEST one (the
+   * earliest entry in the Map's insertion order — `Map.prototype.keys`
+   * yields keys in insertion order, so the first match for this
+   * player is the oldest).
+   *
+   * The just-displaced hull is the NEWEST and is therefore safe: the
+   * oldest gets evicted, not the new one. This matches the design
+   * decision in the plan ("protect the just-displaced from being
+   * evicted in the same tick").
+   *
+   * Eviction reuses `evictOwnerlessShip` for the full teardown
+   * (cancel timer, mark stored in PlayerShipStore, free slot, drop
+   * caches, emit ENTITY_SHED). Lock test:
+   * `tests/integration/sectorRoom/lingeringHullCap.test.ts`.
+   */
+  private enforceLingerCap(playerId: string): void {
+    if (this.sectorKey === null) return;
+    const owned: string[] = [];
+    for (const [shipInstanceId] of this.lingeringSlots) {
+      const ship = this.state.ships.get(shipInstanceId);
+      if (ship !== undefined && ship.playerId === playerId) owned.push(shipInstanceId);
+    }
+    while (owned.length > LINGER_CAP_PER_PLAYER_PER_SECTOR) {
+      const oldest = owned.shift()!;
+      logger.info(
+        { playerId, shipId: oldest, sectorKey: this.sectorKey, capRemaining: LINGER_CAP_PER_PLAYER_PER_SECTOR },
+        'lingering-hull cap exceeded — evicting oldest',
+      );
+      this.evictOwnerlessShip(oldest);
+    }
   }
 
   /**
