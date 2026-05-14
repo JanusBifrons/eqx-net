@@ -39,7 +39,11 @@ export type OverlayTapHandler = (sectorKey: string) => void;
  * pointers.
  */
 function emptyFeedback(): RendererFeedback {
-  return { mountCounts: new Map<string, number>(), haloArrowCount: 0 };
+  return {
+    mountCounts: new Map<string, number>(),
+    haloArrowCount: 0,
+    damageNumberActiveCount: 0,
+  };
 }
 
 export class WorkerRendererClient implements IRenderer {
@@ -196,6 +200,18 @@ export class WorkerRendererClient implements IRenderer {
 
   update(mirror: RenderMirror): void {
     this.post({ type: 'MIRROR_UPDATE', mirror });
+    // Per-frame drain queues: `pendingDamageNumbers` and
+    // `pendingHealthBarHits` are mutated in place by the consumer
+    // (`PixiRenderer.update`) in the main-thread path. In the worker
+    // path, `PixiRenderer` drains a STRUCTURED-CLONE on the worker
+    // side, leaving the main-thread mirror's arrays untouched — if we
+    // didn't clear them here, ColyseusClient's events would be
+    // re-posted every frame and the worker would re-spawn duplicates
+    // until garbage collection. Drain locally to match the
+    // main-thread contract. Regression-locked by
+    // `tests/e2e/damage-number-lifetime.spec.ts`.
+    if (mirror.pendingDamageNumbers) mirror.pendingDamageNumbers.length = 0;
+    if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
   }
 
   /**
@@ -304,6 +320,7 @@ export class WorkerRendererClient implements IRenderer {
       case 'FEEDBACK': {
         // Mutate in place to preserve reference identity.
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
+        this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

@@ -80,6 +80,16 @@ export class DamageNumberManager {
     }
   }
 
+  /**
+   * Number of damage-number entries currently alive. Surface for tests
+   * + the renderer's feedback channel — `PixiRenderer` exposes this
+   * via `RendererFeedback.damageNumberActiveCount` each frame so
+   * integration tests can observe spawn/tick/expiry without rendering.
+   */
+  getActiveCount(): number {
+    return this.active.length;
+  }
+
   destroy(): void {
     for (const entry of this.active) {
       entry.text.destroy();

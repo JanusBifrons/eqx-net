@@ -316,6 +316,7 @@ export class PixiRenderer implements IRenderer {
   private readonly feedback: RendererFeedback = {
     mountCounts: new Map<string, number>(),
     haloArrowCount: 0,
+    damageNumberActiveCount: 0,
   };
 
   async init(rawContainer: unknown): Promise<void> {
@@ -1030,14 +1031,9 @@ export class PixiRenderer implements IRenderer {
     this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
 
-    // Drain pending damage numbers and spawn floating text. Note the
-    // `update()` call is OUTSIDE the drain — sub-managers must tick
-    // every frame to advance lifetime + apply counter-scale, not only
-    // on frames with new damage events. Pre-2026-05-14 this was inside
-    // the if-block, which masked itself when world+sprite scale was 1
-    // (text appeared static but readable); after the OffscreenCanvas
-    // migration + zoom-counter-scale logic the bug surfaced — numbers
-    // froze in place at their spawn scale.
+    // Drain pending damage numbers and spawn floating text. update()
+    // must be OUTSIDE the spawn-drain block — sub-managers need to
+    // tick every frame to advance lifetime + counter-scale.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
         this.damageNumbers.spawn(dn.x, dn.y, dn.damage);
@@ -1046,8 +1042,6 @@ export class PixiRenderer implements IRenderer {
     }
     this.damageNumbers?.update();
 
-    // Drain pending health bar hits and update bars. Same per-frame
-    // discipline as damage numbers.
     if (this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
         this.healthBars.onHit(hb.entityId, hb.healthPct);
@@ -1082,6 +1076,7 @@ export class PixiRenderer implements IRenderer {
       if (count > 0) this.feedback.mountCounts.set(shipId, count);
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
+    this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
   }
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who

@@ -64,6 +64,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           feedback: {
             mountCounts: new Map(fb.mountCounts),
             haloArrowCount: fb.haloArrowCount,
+            damageNumberActiveCount: fb.damageNumberActiveCount,
           },
         });
         break;

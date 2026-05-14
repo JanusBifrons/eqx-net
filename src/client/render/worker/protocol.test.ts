@@ -136,6 +136,7 @@ describe('renderer-worker protocol', () => {
           feedback: {
             mountCounts: new Map([['ship-1', 3], ['ship-2', 1]]),
             haloArrowCount: 7,
+            damageNumberActiveCount: 2,
           },
         },
       },

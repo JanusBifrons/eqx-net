@@ -273,6 +273,14 @@ export interface RendererFeedback {
    * E2E test attribute `data-haloArrowCount` reads this.
    */
   haloArrowCount: number;
+  /**
+   * Number of floating damage-number texts currently alive (spawned
+   * but lifetime not yet expired). Lets integration tests observe
+   * spawn → tick → expiry without needing pixel-level rendering
+   * assertions. Lifetime = 60 frames; at the worker's 30 Hz mirror
+   * cadence that's 2 s of wall-clock.
+   */
+  damageNumberActiveCount: number;
 }
 
 export interface IRenderer {

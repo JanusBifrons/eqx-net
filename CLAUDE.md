@@ -35,11 +35,12 @@ The Master Architecture Blueprint is the authoritative design document; the appr
 
     Practical workflow for a smoke-test bug:
     - Get the user's diagnostic capture (`diag/captures/<timestamp>-<id>/`); reconstruct exact steps from `lifecycle.ndjson` + `combat.ndjson` so the test mirrors the real flow.
-    - Pick the test layer that's *minimal* for the bug: unit/integration tests are faster to write and faster to run than E2E; reach for E2E only when the bug is a UI flow that crosses Pixi / MUI / Colyseus boundaries simultaneously.
+    - Pick the test layer that's *minimal* for the bug — but **the level where the bug LIVES, not the level that's easiest to write**. If the bug is at a postMessage / structured-clone / worker boundary, the test MUST cross that boundary (Playwright + a probe page is the canonical pattern — see `src/client/__offscreen-spike__/damage-number-probe-main.ts` + `tests/e2e/damage-number-lifetime.spec.ts`). Unit-testing the inner class in isolation when the bug lives at an integration seam is the anti-pattern this invariant exists to prevent. If the failing test against the existing bug **passes** the first time you run it, the test is in the wrong place — pick a different level.
+    - When unsure where the bug lives, write BOTH a unit test (for the class behaviour) AND an integration test (for the boundary). The unit test is fast insurance; the integration test is the regression lock for the actual failure mode. The 2026-05-14 damage-number incident is the canonical "got the level wrong on the first try" example: a unit test on `DamageNumberManager` passed easily, the user smoke-tested again, the bug was still there because it lived at `WorkerRendererClient ↔ worker` structured-clone, not in the manager.
     - State the reproduction recipe in the test docstring with the diagnostic dir-id and the exact symptom the user reported, in their own words where possible.
     - Use `harness.events.waitFor(...)` (integration) or `data-testid`-driven Playwright actions (E2E) so the test fails LOUDLY with a specific assertion, not a generic timeout.
 
-    See `tests/integration/sectorRoom/DETERMINISM.md` for the integration-test recipe and `tests/e2e/drawer-galaxy-map-open-close.spec.ts` for the canonical "user reported, repro'd in test" pattern.
+    See `tests/integration/sectorRoom/DETERMINISM.md` for the integration-test recipe, `tests/e2e/drawer-galaxy-map-open-close.spec.ts` for the canonical "user reported, repro'd in test" pattern, and `tests/e2e/damage-number-lifetime.spec.ts` for the "boundary-crossing integration test via probe page" pattern.
 
 ---
 
