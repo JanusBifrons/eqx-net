@@ -10,6 +10,8 @@ import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
+import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
@@ -112,7 +114,7 @@ interface GameSurfaceProps {
 function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
-  const rendererRef = useRef<PixiRenderer | null>(null);
+  const rendererRef = useRef<IRenderer | null>(null);
   const galaxyLayerRef = useRef<GalaxyMapLayer | null>(null);
   const keyboardRef = useRef<Keyboard | null>(null);
   const animFrameRef = useRef<number>(0);
@@ -205,7 +207,14 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    const renderer = new PixiRenderer();
+    // OffscreenCanvas migration: when the browser supports
+    // `OffscreenCanvas.transferControlToOffscreen()` (Chrome, Firefox,
+    // Safari 17+), construct the worker-backed renderer so Pixi runs
+    // off the main thread. Otherwise fall back to the main-thread
+    // PixiRenderer — same class, same render code-path, same Camera.
+    // See ~/.claude/plans/humble-strolling-coral.md.
+    const useWorker = supportsOffscreenRenderer();
+    const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
     rendererRef.current = renderer;
 
     const gameClient = new ColyseusGameClient();
@@ -247,22 +256,29 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       // doesn't pan/zoom with the world camera and Pixi's hit-testing
       // routes hex taps cleanly while non-hex regions pass through to
       // gameplay underneath.
-      const galaxyLayer = new GalaxyMapLayer({
-        onSelect: (key) => {
-          handleEngageTransit(key);
-          // Auto-close the additive overlay on warp-tap; the user explicitly
-          // asked for tap-to-warp to dismiss the map (otherwise it stays
-          // visible during SPOOLING and feels stuck).
-          useUIStore.getState().setGalaxyMapOpen(false);
-        },
-      });
-      renderer.addOverlayContainer(galaxyLayer);
-      const s0 = useUIStore.getState();
-      galaxyLayer.setCurrentSector(s0.currentSectorKey);
-      galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
-      galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
-      galaxyLayer.setVisible(s0.isGalaxyMapOpen);
-      galaxyLayerRef.current = galaxyLayer;
+      //
+      // Worker-renderer path: GalaxyMapLayer's Pixi handle can't cross
+      // the worker boundary. Skip its construction; the M-key overlay
+      // is temporarily unavailable in worker context. Follow-up commit
+      // will move the layer worker-side with state-driven postMessages.
+      if (!useWorker) {
+        const galaxyLayer = new GalaxyMapLayer({
+          onSelect: (key) => {
+            handleEngageTransit(key);
+            // Auto-close the additive overlay on warp-tap; the user explicitly
+            // asked for tap-to-warp to dismiss the map (otherwise it stays
+            // visible during SPOOLING and feels stuck).
+            useUIStore.getState().setGalaxyMapOpen(false);
+          },
+        });
+        renderer.addOverlayContainer(galaxyLayer);
+        const s0 = useUIStore.getState();
+        galaxyLayer.setCurrentSector(s0.currentSectorKey);
+        galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
+        galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
+        galaxyLayer.setVisible(s0.isGalaxyMapOpen);
+        galaxyLayerRef.current = galaxyLayer;
+      }
 
       let lastFrameTime = 0;
       // E2E-inspection dataset writes are throttled to every 5th frame
