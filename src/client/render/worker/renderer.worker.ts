@@ -96,6 +96,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_WARP_MODE': {
+        if (!renderer) return;
+        renderer.setWarpMode(msg.active);
+        break;
+      }
+
       case 'SET_VISIBLE':
       case 'SET_CURRENT_SECTOR':
       case 'SET_TRANSIT_DOCKED': {

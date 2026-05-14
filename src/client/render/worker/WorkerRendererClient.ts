@@ -250,6 +250,14 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_TICKER_FPS', fps });
   }
 
+  /**
+   * Warp-mode render state. See `IRenderer.setWarpMode`. Posts to the
+   * worker which forwards to its `PixiRenderer.setWarpMode`.
+   */
+  setWarpMode(active: boolean): void {
+    this.post({ type: 'SET_WARP_MODE', active });
+  }
+
   /** Forward a native pointer event into the worker camera state machine. */
   postPointerEvent(native: SerialisedPointerEvent): void {
     this.post({ type: 'POINTER_EVENT', native });

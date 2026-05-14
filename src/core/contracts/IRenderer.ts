@@ -338,5 +338,20 @@ export interface IRenderer {
    *    for the main thread.
    */
   setTickerMaxFPS(fps: number | null | undefined): void;
+  /**
+   * Toggle the "warp mode" render state. While `active === true`, the
+   * renderer paints an over-the-top FTL-warp visual ON THE SAME canvas
+   * as gameplay — heavy blur + green color shift on the world
+   * container plus animated radial streaks drawn directly on stage.
+   *
+   * Driven by `useGameReady`: enabled the moment `renderer.init()`
+   * resolves; disabled when the player can see themselves
+   * (`rendererFirstFrameRendered` latches). The renderer animates a
+   * 500 ms fade-out internally — callers just flip the bool.
+   *
+   * Single canvas, single Pixi `Application` — no separate overlay
+   * surface. This is the "render state, not a screen" model.
+   */
+  setWarpMode(active: boolean): void;
   dispose(): void;
 }

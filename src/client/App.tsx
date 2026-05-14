@@ -144,6 +144,24 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     }
   }, [gameReady]);
 
+  // Warp-mode off-switch + transit-warp on-switch. The renderer's
+  // `setWarpMode(true)` fires synchronously after `renderer.init`
+  // resolves (inside the async effect above). This effect:
+  //   - Flips warp OFF when the player can see themselves (gameReady).
+  //   - Flips warp ON when transit enters IN_TRANSIT or ARRIVED so the
+  //     same FTL filter chain doubles as the actual transit visual.
+  // The renderer animates the 500ms fade internally — no React state
+  // churn for the tween.
+  const transitState = useUIStore((s) => s.transitState);
+  useEffect(() => {
+    const r = rendererRef.current;
+    if (!r) return;
+    const warping = !gameReady
+      || transitState === 'IN_TRANSIT'
+      || transitState === 'ARRIVED';
+    r.setWarpMode(warping);
+  }, [gameReady, transitState]);
+
   // Phase 5 scope change — when the player dies and clicks Respawn, send
   // them BACK TO THE GALAXY MAP rather than respawning in-place. The
   // post-auth landing screen is now the canonical "pick where to spawn"
@@ -278,6 +296,15 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       if (disposed) {
         renderer.dispose();
         return;
+      }
+      // Warp render state ON immediately — the canvas now paints the
+      // FTL-warp filter chain (BlurFilter + ColorMatrixFilter on the
+      // world container) plus radial streaks. Stays on until the
+      // first frame with the local player in the mirror, at which
+      // point a useEffect below toggles it off + the renderer
+      // animates a 500 ms fade-out.
+      if (!useUIStore.getState().rendererFirstFrameRendered) {
+        renderer.setWarpMode(true);
       }
       logEvent('renderer_init_complete', {
         rendererInitMs: Math.round(rendererInitMs),

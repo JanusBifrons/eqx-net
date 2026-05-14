@@ -74,6 +74,17 @@ export interface SetTickerFpsMsg {
 }
 
 /**
+ * Warp-mode render state toggle. See `IRenderer.setWarpMode`. The
+ * worker forwards to its `PixiRenderer.setWarpMode(active)` which
+ * applies the filter chain + animates streaks on the same Pixi stage
+ * as gameplay — no second canvas.
+ */
+export interface SetWarpModeMsg {
+  type: 'SET_WARP_MODE';
+  active: boolean;
+}
+
+/**
  * Native pointer event, forwarded from the main thread because
  * `OffscreenCanvas` has no DOM event source in the worker (per
  * pixijs/pixijs#9132). The worker hand-rolled camera consumes these
@@ -99,6 +110,7 @@ export type MainToWorkerMsg =
   | SetTransitDockedMsg
   | ResizeMsg
   | SetTickerFpsMsg
+  | SetWarpModeMsg
   | PointerEventMsg
   | WheelEventMsg
   | DisposeMsg;

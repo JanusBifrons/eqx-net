@@ -117,6 +117,8 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },
       { name: 'SET_TICKER_FPS undefined', msg: { type: 'SET_TICKER_FPS', fps: undefined } },
+      { name: 'SET_WARP_MODE on', msg: { type: 'SET_WARP_MODE', active: true } },
+      { name: 'SET_WARP_MODE off', msg: { type: 'SET_WARP_MODE', active: false } },
       { name: 'POINTER_EVENT', msg: { type: 'POINTER_EVENT', native: pointerSample } },
       { name: 'WHEEL_EVENT', msg: { type: 'WHEEL_EVENT', native: wheelSample } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
@@ -168,6 +170,7 @@ describe('renderer-worker protocol', () => {
           case 'SET_TRANSIT_DOCKED':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
+          case 'SET_WARP_MODE':
           case 'POINTER_EVENT':
           case 'WHEEL_EVENT':
           case 'DISPOSE':

@@ -1,4 +1,4 @@
-import { Application, Graphics, Container } from 'pixi.js';
+import { Application, Graphics, Container, BlurFilter, ColorMatrixFilter } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -270,6 +270,30 @@ export class PixiRenderer implements IRenderer {
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
+  /**
+   * Warp-mode render state — the "loading screen" rendered ON the same
+   * canvas as gameplay (no separate Pixi Application). When `warpActive`
+   * is true:
+   *   - `world` is wrapped in a `BlurFilter` + `ColorMatrixFilter`
+   *     chain that smears the gameplay sprites and tints everything
+   *     warp-green.
+   *   - `warpStage` (sibling of `world` on `app.stage`) shows animated
+   *     radial streaks emitted from screen centre.
+   *   - `warpFade` ∈ [0, 1] controls intensity; the renderer tweens
+   *     it from 1→0 over `WARP_FADE_OUT_MS` after `setWarpMode(false)`,
+   *     and snaps to 1 on `setWarpMode(true)`.
+   * Initialized lazily on first `setWarpMode(true)` call so renderers
+   * that never enter warp mode don't pay the construction cost.
+   */
+  private warpActive = false;
+  private warpStage: Container | null = null;
+  private warpBlur: BlurFilter | null = null;
+  private warpTint: ColorMatrixFilter | null = null;
+  private warpStreaks: Array<{ gfx: Graphics; baseAngle: number; baseRadius: number; phase: number }> = [];
+  /** Intensity 0..1 — 1 = full warp visual, 0 = filters cleared. */
+  private warpIntensity = 0;
+  /** Wall-clock ms when fade-out started, or 0 if not fading. */
+  private warpFadeStartedAt = 0;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -1236,6 +1260,155 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
+   * Toggle warp-mode render state. See `IRenderer.setWarpMode` for the
+   * contract. Implementation:
+   *
+   * On `active === true`:
+   *   - Lazily build the warp visual surface: a sibling `Container`
+   *     on `app.stage` (above `world` z-order) populated with ~36
+   *     radial streak `Graphics`. Streaks emit from screen centre at
+   *     varying initial radii and angles; the ticker animates them
+   *     outward + spins them.
+   *   - Apply a `BlurFilter` + `ColorMatrixFilter` chain to `world`
+   *     so any gameplay sprites already in the mirror smear
+   *     dramatically and tint warp-green.
+   *   - Snap `warpIntensity` to 1.0.
+   *
+   * On `active === false`:
+   *   - Start a 500 ms fade-out. The ticker tweens `warpIntensity`
+   *     1→0 and re-applies the same filter chain with scaled
+   *     parameters. When intensity hits 0, the filters are cleared
+   *     and the warp stage is hidden (kept around for re-entry).
+   *
+   * Cheap re-entry: subsequent `setWarpMode(true)` calls reuse the
+   * same Graphics + filter instances.
+   */
+  setWarpMode(active: boolean): void {
+    if (!this.initialized) return;
+    this.warpActive = active;
+    if (active) {
+      this.ensureWarpStage();
+      this.warpIntensity = 1;
+      this.warpFadeStartedAt = 0;
+      if (this.warpStage) this.warpStage.visible = true;
+      this.applyWarpFilters(1);
+    } else if (this.warpFadeStartedAt === 0 && this.warpStage) {
+      this.warpFadeStartedAt = performance.now();
+    }
+  }
+
+  /** Lazy-construct the warp surface. Idempotent — subsequent calls
+   *  return immediately if already built. Built lazily so renderers
+   *  that never enter warp mode don't pay the construction cost. */
+  private ensureWarpStage(): void {
+    if (this.warpStage) return;
+    this.warpStage = new Container();
+    this.warpStage.eventMode = 'none';
+    this.app.stage.addChild(this.warpStage);
+    this.warpBlur = new BlurFilter({ strength: 18, quality: 2 });
+    this.warpTint = new ColorMatrixFilter();
+    // Tint the world heavy green by zeroing red, boosting green, and
+    // dampening blue. Plus a slight luminance lift so the world isn't
+    // pitch black during pre-spawn.
+    this.warpTint.matrix = [
+      0.15, 0,    0,    0, 0.05,
+      0.2,  1.4,  0.2,  0, 0.10,
+      0,    0,    0.40, 0, 0.05,
+      0,    0,    0,    1, 0,
+    ];
+
+    // Build ~36 radial streaks emitting from centre. Streak phases
+    // staggered so the animation looks like a continuous emission.
+    const STREAK_COUNT = 36;
+    for (let i = 0; i < STREAK_COUNT; i++) {
+      const length = 220 + Math.random() * 240;
+      const thickness = 2 + Math.random() * 3;
+      const gfx = new Graphics();
+      // A horizontal bar that we rotate into position. Pivot at
+      // (0, 0) so the bar emanates outward from the streak's origin.
+      gfx
+        .rect(0, -thickness / 2, length, thickness)
+        .fill({ color: 0x00ff88, alpha: 0.85 });
+      this.warpStage.addChild(gfx);
+      this.warpStreaks.push({
+        gfx,
+        baseAngle: (i / STREAK_COUNT) * Math.PI * 2,
+        baseRadius: 30 + Math.random() * 80,
+        phase: Math.random(),
+      });
+    }
+
+    // Drive the streak animation off the main ticker. Tween-ramp
+    // controlled by `warpIntensity` so fade-out animates smoothly.
+    this.app.ticker.add(this.tickWarpStreaks);
+  }
+
+  /** Per-frame warp-streak animation + fade-out tween. */
+  private tickWarpStreaks = (): void => {
+    if (!this.warpStage) return;
+
+    // Fade-out tween. Linear interp from intensity 1 → 0 over 500 ms.
+    if (this.warpFadeStartedAt > 0) {
+      const elapsed = performance.now() - this.warpFadeStartedAt;
+      const FADE_MS = 500;
+      this.warpIntensity = Math.max(0, 1 - elapsed / FADE_MS);
+      if (this.warpIntensity <= 0) {
+        // Fully faded out — clear filters + hide stage.
+        this.warpStage.visible = false;
+        this.warpFadeStartedAt = 0;
+        if (this.world.filters) this.world.filters = [];
+      }
+    }
+
+    if (this.warpIntensity <= 0) return;
+
+    // Re-apply filters at the current intensity. Strength scales with
+    // intensity so the world un-blurs as the warp fades.
+    this.applyWarpFilters(this.warpIntensity);
+
+    // Animate streaks. Each streak orbits the centre at a velocity
+    // that scales with the warp intensity (so streaks slow + retreat
+    // as the warp fades). Also expand outward to create the
+    // "streaking past at FTL" feel.
+    const cx = this.camera.screenWidth * 0.5;
+    const cy = this.camera.screenHeight * 0.5;
+    const t = performance.now() / 1000;
+    for (const s of this.warpStreaks) {
+      // Phase animates 0..1 → loops. Higher intensity = faster phase.
+      s.phase = (s.phase + 0.06 * this.warpIntensity) % 1;
+      const radius = s.baseRadius + s.phase * 600;
+      const angle = s.baseAngle + t * 0.3 * this.warpIntensity;
+      s.gfx.x = cx + Math.cos(angle) * radius;
+      s.gfx.y = cy + Math.sin(angle) * radius;
+      s.gfx.rotation = angle;
+      // Fade individual streaks based on their phase + global intensity.
+      s.gfx.alpha = this.warpIntensity * (1 - s.phase * 0.5);
+    }
+    this.warpStage.alpha = Math.min(1, this.warpIntensity * 1.2);
+  };
+
+  /** Set the warp filter chain on `world` with strength scaled by
+   *  `intensity`. Empty filter array means filters disabled. */
+  private applyWarpFilters(intensity: number): void {
+    if (!this.warpBlur || !this.warpTint) return;
+    if (intensity <= 0) {
+      this.world.filters = [];
+      return;
+    }
+    this.warpBlur.strength = 18 * intensity;
+    // Re-set the matrix on the tint filter to scale the green push by
+    // intensity so the colour shift fades alongside the blur.
+    const k = intensity;
+    this.warpTint.matrix = [
+      1 - 0.85 * k, 0,                0,                0, 0.05 * k,
+      0.2 * k,      1 + 0.4 * k,      0.2 * k,          0, 0.10 * k,
+      0,            0,                1 - 0.60 * k,     0, 0.05 * k,
+      0,            0,                0,                1, 0,
+    ];
+    this.world.filters = [this.warpBlur, this.warpTint];
+  }
+
+  /**
    * Read the most recent feedback the renderer wrote at the tail of its
    * last `update()` call. See `IRenderer.getFeedback` / `RendererFeedback`
    * — the contract surface for both today (sync mutate) and the future
@@ -1297,6 +1470,14 @@ export class PixiRenderer implements IRenderer {
     this.halo.destroy();
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
+    // Warp stage + streaks live on app.stage so `app.destroy({ children: true })`
+    // tears them down. Just drop our references so a stale rAF callback
+    // post-destroy can't reach into the freed Graphics.
+    this.app.ticker.remove(this.tickWarpStreaks);
+    this.warpStreaks.length = 0;
+    this.warpStage = null;
+    this.warpBlur = null;
+    this.warpTint = null;
     this.app.destroy(true, { children: true });
   }
 }
