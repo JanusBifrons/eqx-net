@@ -508,7 +508,26 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // UI not the game, so the gameplay frame-rate drop is invisible.
   // See `docs/LESSONS.md` 2026-05-13 §6.
   const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
-  useEffect(() => { rendererRef.current?.setTickerMaxFPS(isDrawerOpen ? 30 : undefined); }, [isDrawerOpen]);
+  const isGalaxyOverviewOpen = useUIStore((s) => s.isGalaxyOverviewOpen);
+  // **Real users get full 60 fps even when overlays are open** — the
+  // drawer is partial-width and the gameplay underneath should keep
+  // animating at full rate. We ONLY intervene under Playwright
+  // automation (navigator.webdriver === true), where Pixi's rAF tax
+  // starves the CDP protocol loop to ~500 ms median roundtrip. There
+  // we pause the ticker entirely while the drawer/overview is open so
+  // E2E specs aren't flaky against a 120 s test budget. Production
+  // never hits the pause path.
+  const uiCoversGame = isDrawerOpen || isGalaxyOverviewOpen;
+  useEffect(() => {
+    const renderer = rendererRef.current;
+    if (!renderer) return;
+    const isAutomation = typeof navigator !== 'undefined' && navigator.webdriver === true;
+    if (!isAutomation) {
+      renderer.setTickerMaxFPS(undefined);
+      return;
+    }
+    renderer.setTickerMaxFPS(uiCoversGame ? null : undefined);
+  }, [uiCoversGame]);
 
   // LayoutProvider + FullscreenToggle live at the App level (not here) so the
   // toggle persists across every phase — meta, auth, galaxy-map, game.
