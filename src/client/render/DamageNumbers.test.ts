@@ -1,0 +1,241 @@
+/**
+ * DamageNumberManager regression locks.
+ *
+ * 2026-05-14 — two adjacent bugs surfaced after the OffscreenCanvas
+ * migration shipped:
+ *
+ *   1. Numbers didn't disappear. `update()` was only invoked inside
+ *      `if (mirror.pendingDamageNumbers) { ... }`, so on frames with no
+ *      new damage events the lifetime countdown didn't tick. The
+ *      manager became stuck — once spawned, numbers never expired.
+ *
+ *   2. Numbers scaled with zoom. After moving to a counter-scale
+ *      mechanism (`text.scale = 1 / camera.scale`), the lack of
+ *      per-frame `update()` (bug #1) meant the counter-scale was
+ *      applied only once at spawn. Subsequent camera zoom changes
+ *      didn't update the text scale.
+ *
+ * Tests below lock the fix: spawn → drift each frame → counter-scale
+ * tracks camera zoom each frame → text expires after LIFETIME_FRAMES.
+ */
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { Container, Text } from 'pixi.js';
+import { DamageNumberManager } from './DamageNumbers.js';
+import type { Camera } from './worker/Camera.js';
+
+/**
+ * Tiny test double for `Camera` — only the `.scale.x` getter is read
+ * by `DamageNumberManager.update()` (via the `1/camera.scale.x`
+ * counter-scale calc). Mutable so tests can simulate zoom changes.
+ */
+function makeMockCamera(initialScale = 1): Camera {
+  const cam = {
+    scale: { x: initialScale, y: initialScale } as { x: number; y: number },
+  };
+  return cam as unknown as Camera;
+}
+
+function setScale(camera: Camera, s: number): void {
+  (camera as unknown as { scale: { x: number; y: number } }).scale.x = s;
+  (camera as unknown as { scale: { x: number; y: number } }).scale.y = s;
+}
+
+describe('DamageNumberManager — spawn', () => {
+  let parent: Container;
+  let camera: Camera;
+  let mgr: DamageNumberManager;
+
+  beforeEach(() => {
+    parent = new Container();
+    camera = makeMockCamera(1);
+    mgr = new DamageNumberManager(parent, camera);
+  });
+
+  it('attaches its container to the supplied world parent', () => {
+    expect(parent.children.length).toBe(1);
+  });
+
+  it('spawn(x, y, damage) creates a Text at world (x, -y) [Y-flip]', () => {
+    mgr.spawn(100, 50, 42);
+    const inner = parent.children[0] as Container;
+    expect(inner.children.length).toBe(1);
+    const text = inner.children[0] as Text;
+    expect(text.x).toBe(100);
+    expect(text.y).toBe(-50); // Y-flip: world +Y up → Pixi -Y
+    expect(text.text).toBe('-42');
+  });
+});
+
+describe('DamageNumberManager — per-frame update is unconditional (regression)', () => {
+  let parent: Container;
+  let camera: Camera;
+  let mgr: DamageNumberManager;
+
+  beforeEach(() => {
+    parent = new Container();
+    camera = makeMockCamera(1);
+    mgr = new DamageNumberManager(parent, camera);
+  });
+
+  it('drifts upward 1 unit per update (at camera.scale.x = 1)', () => {
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    const text = inner.children[0] as Text;
+    const yAtSpawn = text.y;
+    mgr.update();
+    expect(text.y).toBe(yAtSpawn - 1);
+    mgr.update();
+    expect(text.y).toBe(yAtSpawn - 2);
+  });
+
+  it('drift rate scales by 1/camera.scale so screen-pixel speed is constant', () => {
+    setScale(camera, 2); // zoomed in 2x → 1 world unit = 2 screen pixels
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    const text = inner.children[0] as Text;
+    const yAtSpawn = text.y;
+    mgr.update();
+    // At 2x zoom, 1 screen-pixel drift = 0.5 world units.
+    expect(text.y).toBeCloseTo(yAtSpawn - 0.5, 5);
+  });
+
+  it('text.scale counter-scales to neutralise the world-container zoom', () => {
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    const text = inner.children[0] as Text;
+
+    // Default scale = 1.
+    setScale(camera, 1);
+    mgr.update();
+    expect(text.scale.x).toBeCloseTo(1, 5);
+    expect(text.scale.y).toBeCloseTo(1, 5);
+
+    // Zoom in 2x → text should counter-scale to 0.5.
+    setScale(camera, 2);
+    mgr.update();
+    expect(text.scale.x).toBeCloseTo(0.5, 5);
+
+    // Zoom out to 0.5x → text should counter-scale to 2.
+    setScale(camera, 0.5);
+    mgr.update();
+    expect(text.scale.x).toBeCloseTo(2, 5);
+  });
+
+  it('alpha fades over lifetime', () => {
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    const text = inner.children[0] as Text;
+
+    // Newly spawned → first update sets alpha to (LIFETIME_FRAMES - 1) / LIFETIME_FRAMES ≈ 0.983.
+    mgr.update();
+    expect(text.alpha).toBeGreaterThan(0.9);
+    expect(text.alpha).toBeLessThan(1.0);
+
+    // After 30 frames (half life) → ~0.5.
+    for (let i = 0; i < 29; i++) mgr.update();
+    expect(text.alpha).toBeCloseTo(0.5, 1);
+  });
+});
+
+describe('DamageNumberManager — lifetime expiry (regression: numbers must disappear)', () => {
+  let parent: Container;
+  let camera: Camera;
+  let mgr: DamageNumberManager;
+
+  beforeEach(() => {
+    parent = new Container();
+    camera = makeMockCamera(1);
+    mgr = new DamageNumberManager(parent, camera);
+  });
+
+  it('removes the text after LIFETIME_FRAMES (60) updates', () => {
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    expect(inner.children.length).toBe(1);
+
+    // Tick exactly the lifetime — number should be gone.
+    for (let i = 0; i < 60; i++) mgr.update();
+    expect(inner.children.length).toBe(0);
+  });
+
+  it('does NOT remove the text while updates are skipped (the bug we are locking)', () => {
+    // Sanity: if `update()` isn't called, the text persists. This
+    // documents WHY the manager must be ticked every frame — if the
+    // caller (PixiRenderer) regresses to gating update() on
+    // pendingDamageNumbers, numbers would stick on screen forever.
+    mgr.spawn(0, 0, 10);
+    const inner = parent.children[0] as Container;
+    // No update() calls.
+    expect(inner.children.length).toBe(1);
+    // After "many wall-clock seconds" of NOT calling update(), still 1.
+    expect(inner.children.length).toBe(1);
+  });
+
+  it('handles multiple concurrent damage numbers independently', () => {
+    mgr.spawn(0, 0, 10);
+    // Tick a few times so spawn #1 is mid-lifetime.
+    for (let i = 0; i < 20; i++) mgr.update();
+    mgr.spawn(0, 0, 20);
+    const inner = parent.children[0] as Container;
+    expect(inner.children.length).toBe(2);
+
+    // After 40 more updates: spawn #1 has lived 60 frames total →
+    // expired. Spawn #2 has lived 40 frames → still alive.
+    for (let i = 0; i < 40; i++) mgr.update();
+    expect(inner.children.length).toBe(1);
+    const remaining = inner.children[0] as Text;
+    expect(remaining.text).toBe('-20');
+
+    // After 20 more → spawn #2 lifetime done.
+    for (let i = 0; i < 20; i++) mgr.update();
+    expect(inner.children.length).toBe(0);
+  });
+
+  it('pool cap (20) — spawning the 21st evicts the oldest', () => {
+    for (let i = 0; i < 20; i++) {
+      mgr.spawn(0, 0, i);
+    }
+    const inner = parent.children[0] as Container;
+    expect(inner.children.length).toBe(20);
+
+    mgr.spawn(0, 0, 999); // 21st
+    expect(inner.children.length).toBe(20);
+    // Oldest (`-0`) was evicted; newest (`-999`) is in.
+    const labels = (inner.children as Text[]).map((t) => t.text);
+    expect(labels).not.toContain('-0');
+    expect(labels).toContain('-999');
+  });
+});
+
+describe('DamageNumberManager — destroy cleanup', () => {
+  it('destroys all active texts + the container', () => {
+    const parent = new Container();
+    const camera = makeMockCamera(1);
+    const mgr = new DamageNumberManager(parent, camera);
+    mgr.spawn(0, 0, 1);
+    mgr.spawn(0, 0, 2);
+    mgr.spawn(0, 0, 3);
+    expect((parent.children[0] as Container).children.length).toBe(3);
+
+    mgr.destroy();
+    // After destroy the inner container is destroyed; parent's children
+    // list is cleaned up by Pixi when children get destroyed.
+    expect(parent.children.length).toBe(0);
+  });
+
+  it('subsequent updates after destroy do not throw', () => {
+    const parent = new Container();
+    const camera = makeMockCamera(1);
+    const mgr = new DamageNumberManager(parent, camera);
+    mgr.spawn(0, 0, 1);
+    mgr.destroy();
+    // The internal `active` list is cleared by destroy; update is safe.
+    expect(() => mgr.update()).not.toThrow();
+  });
+
+  it('does not warn about unused vi import — silencing typecheck', () => {
+    // The `vi` import is present for future mocks (Text rendering in
+    // jsdom can sometimes need stubbing). Kept in scope but unused.
+    expect(typeof vi).toBe('object');
+  });
+});

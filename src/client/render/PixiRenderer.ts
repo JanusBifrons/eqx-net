@@ -1030,23 +1030,31 @@ export class PixiRenderer implements IRenderer {
     this.starfield?.update(this.camera);
     this.backgroundGrid?.update(this.camera);
 
-    // Drain pending damage numbers and spawn floating text.
+    // Drain pending damage numbers and spawn floating text. Note the
+    // `update()` call is OUTSIDE the drain — sub-managers must tick
+    // every frame to advance lifetime + apply counter-scale, not only
+    // on frames with new damage events. Pre-2026-05-14 this was inside
+    // the if-block, which masked itself when world+sprite scale was 1
+    // (text appeared static but readable); after the OffscreenCanvas
+    // migration + zoom-counter-scale logic the bug surfaced — numbers
+    // froze in place at their spawn scale.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
         this.damageNumbers.spawn(dn.x, dn.y, dn.damage);
       }
       mirror.pendingDamageNumbers.length = 0;
-      this.damageNumbers.update();
     }
+    this.damageNumbers?.update();
 
-    // Drain pending health bar hits and update bars.
+    // Drain pending health bar hits and update bars. Same per-frame
+    // discipline as damage numbers.
     if (this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
         this.healthBars.onHit(hb.entityId, hb.healthPct);
       }
       mirror.pendingHealthBarHits.length = 0;
-      this.healthBars.update(mirror);
     }
+    this.healthBars?.update(mirror);
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
