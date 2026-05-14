@@ -74,14 +74,25 @@ export class BackgroundGrid {
     const yMinMicro = Math.floor((cy - halfH) / CELL_SIZE) * CELL_SIZE;
     const yMaxMicro = Math.ceil ((cy + halfH) / CELL_SIZE) * CELL_SIZE;
 
+    // Pixi v8 Graphics: stroke per segment, NOT once at end. A trailing
+    // single `stroke()` after many chained moveTo+lineTo strokes only
+    // the most-recently-built subpath — earlier subpaths get pushed to
+    // history but the trailing stroke applies only to current. Visible
+    // on the micro grid (400 lines, only the last rendered → looked
+    // empty); less visible on the macro grid (16 lines). 2026-05-14.
     this.microLines.clear();
     for (let x = xMinMicro; x <= xMaxMicro; x += CELL_SIZE) {
-      this.microLines.moveTo(x, yMinMicro).lineTo(x, yMaxMicro);
+      this.microLines
+        .moveTo(x, yMinMicro)
+        .lineTo(x, yMaxMicro)
+        .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
     }
     for (let y = yMinMicro; y <= yMaxMicro; y += CELL_SIZE) {
-      this.microLines.moveTo(xMinMicro, y).lineTo(xMaxMicro, y);
+      this.microLines
+        .moveTo(xMinMicro, y)
+        .lineTo(xMaxMicro, y)
+        .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
     }
-    this.microLines.stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
 
     const xMinMacro = Math.floor((cx - halfW) / MACRO_SIZE) * MACRO_SIZE;
     const xMaxMacro = Math.ceil ((cx + halfW) / MACRO_SIZE) * MACRO_SIZE;
@@ -90,12 +101,17 @@ export class BackgroundGrid {
 
     this.macroLines.clear();
     for (let x = xMinMacro; x <= xMaxMacro; x += MACRO_SIZE) {
-      this.macroLines.moveTo(x, yMinMacro).lineTo(x, yMaxMacro);
+      this.macroLines
+        .moveTo(x, yMinMacro)
+        .lineTo(x, yMaxMacro)
+        .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
     }
     for (let y = yMinMacro; y <= yMaxMacro; y += MACRO_SIZE) {
-      this.macroLines.moveTo(xMinMacro, y).lineTo(xMaxMacro, y);
+      this.macroLines
+        .moveTo(xMinMacro, y)
+        .lineTo(xMaxMacro, y)
+        .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
     }
-    this.macroLines.stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
 
     // Labels: only when zoomed in enough that 11px text is legible.
     this.seen.clear();

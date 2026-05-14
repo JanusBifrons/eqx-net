@@ -267,15 +267,24 @@ export class Camera {
   }
 
   /**
-   * Wheel scroll → zoom around the pointer position. `deltaY > 0`
-   * (wheel down) = zoom out; `deltaY < 0` = zoom in. The 0.9 / 1.1
-   * step factor matches pixi-viewport's default `wheel({ smooth: 4 })`
-   * roughly — each event is one stop.
+   * Wheel scroll → zoom. `deltaY > 0` (wheel down) = zoom out;
+   * `deltaY < 0` = zoom in. The 0.9 / 1.1 step factor matches
+   * pixi-viewport's default `wheel({ smooth: 4 })` roughly.
+   *
+   * Anchor behaviour: if a follow target is set (gameplay camera
+   * tracking the ship), zoom around screen-centre — the ship stays
+   * centered and the world scales around it. Otherwise (free camera,
+   * e.g. galaxy overview) zoom around the cursor position so the world
+   * point under the cursor stays fixed.
    */
   onWheel(deltaY: number, screenX: number, screenY: number): void {
     const factor = deltaY > 0 ? 0.9 : 1.1;
     const newScale = this.clampScale(this.target.scale.x * factor);
-    this.zoomAround(screenX, screenY, newScale);
+    if (this.followTarget) {
+      this.zoomAround(this.screenW / 2, this.screenH / 2, newScale);
+    } else {
+      this.zoomAround(screenX, screenY, newScale);
+    }
   }
 
   // ---------- Per-tick update ----------

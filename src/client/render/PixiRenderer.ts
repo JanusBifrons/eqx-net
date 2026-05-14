@@ -388,7 +388,18 @@ export class PixiRenderer implements IRenderer {
     this.world.eventMode = 'none';
     this.app.stage.addChild(this.world);
 
-    this.camera = new Camera(this.world, { minScale: 0.4, maxScale: 3 });
+    // followLerpFactor=1 → instant follow each Pixi tick (60 Hz). This
+    // matches pre-migration pixi-viewport's `viewport.moveCenter(x, y)`
+    // every frame, but driven by the Pixi ticker rather than the per-
+    // `update(mirror)` cadence. Decoupling from MIRROR_UPDATE eliminates
+    // the wheel-zoom vibration that throttled mirror updates introduced
+    // (camera was snapping between zoom-target and centered position
+    // every other frame).
+    this.camera = new Camera(this.world, {
+      minScale: 0.4,
+      maxScale: 3,
+      followLerpFactor: 1,
+    });
     this.camera.setScreenSize(initialW, initialH);
 
     this.backgroundGrid = new BackgroundGrid();
@@ -398,7 +409,9 @@ export class PixiRenderer implements IRenderer {
     this.camera.addChild(this.shipContainer);
 
     this.halo.init(this.camera);
-    this.damageNumbers = new DamageNumberManager(this.world);
+    // Damage numbers attach to app.stage (screen-space) so they don't
+    // scale with zoom; the manager converts world→screen on spawn.
+    this.damageNumbers = new DamageNumberManager(this.app.stage, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
 
@@ -1001,7 +1014,13 @@ export class PixiRenderer implements IRenderer {
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
     if (local) {
-      this.camera.moveCenter(local.x, local.y);
+      // `follow` (not `moveCenter`) — the camera's per-tick interpolator
+      // applies this target every Pixi frame (60 Hz), independent of
+      // `update()` cadence. With `followLerpFactor: 1` the follow is
+      // instant — matches the original every-frame `moveCenter` feel
+      // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
+      // construction in init() for the rationale.
+      this.camera.follow({ x: local.x, y: local.y });
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's

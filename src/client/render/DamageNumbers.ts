@@ -1,4 +1,5 @@
 import { Container, Text, TextStyle } from 'pixi.js';
+import type { Camera } from './worker/Camera';
 
 const POOL_CAP = 20;
 const LIFETIME_FRAMES = 60;
@@ -21,13 +22,22 @@ const STYLE = new TextStyle({
   },
 });
 
+/**
+ * Floating damage-number manager. 2026-05-14: attached to `app.stage`
+ * (screen-space) instead of the world container, so numbers no longer
+ * scale with zoom and stay readable. Per-spawn we convert the entity's
+ * world coord → screen coord via `camera.toScreen`; the number then
+ * drifts upward in screen pixels for its lifetime.
+ */
 export class DamageNumberManager {
   private readonly container: Container;
+  private readonly camera: Camera;
   private readonly active: DamageNumberEntry[] = [];
 
-  constructor(parent: Container) {
+  constructor(stageParent: Container, camera: Camera) {
     this.container = new Container();
-    parent.addChild(this.container);
+    stageParent.addChild(this.container);
+    this.camera = camera;
   }
 
   spawn(x: number, y: number, damage: number): void {
@@ -41,8 +51,10 @@ export class DamageNumberManager {
 
     const text = new Text({ text: `-${damage}`, style: STYLE });
     text.anchor.set(0.5, 0.5);
-    text.x = x;
-    text.y = -y; // Y-flip: world +Y → Pixi -Y
+    // World coord → Pixi-space (Y-flip) → screen coord.
+    const screen = this.camera.toScreen(x, -y);
+    text.x = screen.x;
+    text.y = screen.y;
     this.container.addChild(text);
     this.active.push({ text, framesLeft: LIFETIME_FRAMES });
   }
