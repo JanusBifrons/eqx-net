@@ -5,6 +5,7 @@ import StopIcon from '@mui/icons-material/Stop';
 import { useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 import { useIsCompact } from '../layout/useIsCompact';
+import { WarpStreaks } from './WarpStreaks';
 
 interface HyperspaceOverlayProps {
   /** Cancel callback, fired when the player clicks the abort button. Wired
@@ -43,22 +44,19 @@ export function HyperspaceOverlay({ onCancel }: HyperspaceOverlayProps): JSX.Ele
   }
 
   if (transitState === 'IN_TRANSIT' || transitState === 'ARRIVED') {
+    // Share the warp visual with WarpScreen so the player gets the
+    // same aesthetic across initial join, ship-swap, and transit.
+    // Spool bar / abort button continue to live in the SPOOLING branch
+    // above — transit-specific UX is separate from the streak visual.
     return (
       <Slot anchor="transit">
         <Box
           data-testid="hyperspace-overlay"
           data-transit-state={transitState}
-          sx={{
-            position: 'absolute',
-            inset: 0,
-            pointerEvents: 'none',
-            background: transitState === 'ARRIVED'
-              ? 'radial-gradient(ellipse at center, rgba(0,255,136,0.22), rgba(5,7,15,0))'
-              : 'repeating-linear-gradient(90deg, rgba(0,255,136,0.0) 0, rgba(0,255,136,0.0) 12px, rgba(0,255,136,0.18) 13px, rgba(0,255,136,0.0) 14px)',
-            opacity: transitState === 'ARRIVED' ? 0.65 : 0.85,
-            transition: 'opacity 400ms, background 400ms',
-          }}
-        />
+          sx={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
+        >
+          <WarpStreaks intensity={transitState === 'ARRIVED' ? 'arrived' : 'transit'} />
+        </Box>
       </Slot>
     );
   }

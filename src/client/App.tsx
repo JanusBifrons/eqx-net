@@ -4,7 +4,6 @@ import {
   Box,
   Button,
   Typography,
-  CircularProgress,
 } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient } from './net/clientSingleton';
@@ -27,6 +26,7 @@ import { MobileControls } from './components/MobileControls';
 import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
+import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
@@ -995,19 +995,18 @@ export function App(): JSX.Element {
           onSettingsClick={openSettings}
         />
         {phase === 'connecting' ? (
+          // Phase === 'connecting' is the brief 200 ms ship-swap window.
+          // The visible content is the `<WarpScreen>` mounted globally
+          // below (in LayoutProvider) — this branch just renders a
+          // black background underneath so the warp streaks have a
+          // contrast surface to paint on.
           <Box
             sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
               height: '100vh',
               pt: 'var(--app-bar-h, 48px)',
               bgcolor: '#05070f',
             }}
-          >
-            <CircularProgress sx={{ color: '#00ff88' }} />
-          </Box>
+          />
         ) : (
           <GalaxyOverviewScreen
             mode="spawn"
@@ -1030,6 +1029,11 @@ export function App(): JSX.Element {
       <LayoutProvider>
         {phaseContent}
         <TopRightToolbar />
+        {/* Unified warp-screen overlay. Internally null when phase !==
+            'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted
+            at the layout root so phase transitions (e.g. connecting →
+            game) don't unmount/remount it and lose the fade animation. */}
+        <WarpScreen />
       </LayoutProvider>
     </ErrorBoundary>
   );
