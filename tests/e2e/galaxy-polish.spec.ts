@@ -1,0 +1,99 @@
+import { test, expect, type Page } from '@playwright/test';
+
+/**
+ * Regression lock for the Phase 1 (2026-05-12) galaxy polish.
+ *
+ * SHIPPED BEHAVIOUR THIS SPEC LOCKS:
+ *  1. The post-auth Galaxy Map screen (`galaxy-map-screen`) is NOT the
+ *     marketing landing — no "EQX Peri" banner / hero copy. That belongs
+ *     to `MetaLandingScreen`, which is unmounted by phase='galaxy-map'.
+ *  2. `FullscreenCTA` is NOT rendered inside the galaxy map. Today the
+ *     component exists but has zero JSX call-sites; this lock catches a
+ *     well-meaning future re-introduction inside the spawn picker.
+ *  3. Default galaxy-overview zoom is 0.7 (`GalaxyOverviewRenderer.init`
+ *     line `viewport.setZoom(0.7)`). The renderer publishes the live
+ *     scale into `data-galaxy-zoom` on the mount container — change the
+ *     zoom literal in one place and the assertion shifts; change one
+ *     without the other and CI fails loudly.
+ *
+ * WHAT CHANGING WOULD RE-FAIL THIS:
+ *  - Putting the marketing banner back on the post-auth landing.
+ *  - Adding `<FullscreenCTA />` JSX inside the spawn-mode branch.
+ *  - Changing `setZoom(0.7)` to a different default in the renderer.
+ *
+ * This is a UNCOVERED→COVERED test: there is no user bug report behind
+ * it. Smoke-testing the marketing-text-on-spawn case would feel obvious
+ * to a human; this lock keeps it that way.
+ */
+const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
+
+async function goToGalaxyMap(page: Page): Promise<void> {
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  // Pre-auth storageState (see tests/e2e/global-setup.ts) lets the
+  // "Join the fight!" CTA jump straight to phase='galaxy-map'.
+  await page.locator('text=Join the fight').first().click();
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
+test('galaxy-map-screen: no EQX Peri banner inside the spawn-mode landing', async ({ page }) => {
+  test.setTimeout(25_000);
+  await goToGalaxyMap(page);
+
+  const screen = page.locator('[data-testid="galaxy-map-screen"]');
+  // The banner lives in `MetaLandingScreen` (h2 with the "EQX Peri" text).
+  // After phase advances to 'galaxy-map' the meta screen is unmounted, so
+  // the heading must not be present in the DOM at all.
+  await expect(
+    screen.locator('h2', { hasText: 'EQX Peri' }),
+    'EQX Peri marketing banner must not appear on the galaxy-map screen. ' +
+      'If you see this fail, the meta-landing hero copy has leaked into the ' +
+      'post-auth landing — check `MetaLandingScreen` mount conditions or ' +
+      'any new <Typography variant="h2"> added under `GalaxyOverviewScreen` (spawn mode).',
+  ).toHaveCount(0);
+
+  // The body text inside index.html `<title>EQX Peri</title>` is fine —
+  // we only assert there's no rendered marketing heading in the map screen.
+  const innerText = await screen.innerText();
+  expect(
+    innerText.toLowerCase(),
+    'Galaxy-map-screen body must not contain "multiplayer space combat" tagline. ' +
+      'Source of regression: meta-landing tagline copied into spawn mode.',
+  ).not.toContain('multiplayer space combat');
+});
+
+test('galaxy-map-screen: FullscreenCTA is not rendered in the spawn-mode landing', async ({ page }) => {
+  test.setTimeout(20_000);
+  await goToGalaxyMap(page);
+
+  const screen = page.locator('[data-testid="galaxy-map-screen"]');
+  await expect(
+    screen.locator('[data-testid="fullscreen-cta"]'),
+    'FullscreenCTA must not be rendered inside the galaxy-map screen. ' +
+      'If this fails, someone has reintroduced <FullscreenCTA /> JSX — ' +
+      'fullscreen is owned by the FullscreenToggle in the layout slot ' +
+      'system, not a standalone CTA in the spawn landing.',
+  ).toHaveCount(0);
+});
+
+test('galaxy-map-screen: default zoom is 0.7', async ({ page }) => {
+  test.setTimeout(25_000);
+  await goToGalaxyMap(page);
+
+  const screen = page.locator('[data-testid="galaxy-map-screen"]');
+  // The renderer publishes its current zoom to `data-galaxy-zoom` on the
+  // mount container after `setZoom(0.7)`. Allow up to 5 s for the Pixi
+  // init promise to resolve and publish the attribute.
+  const mount = screen.locator('[data-galaxy-zoom]').first();
+  await expect(mount).toBeAttached({ timeout: 5_000 });
+
+  // Spec value is exactly 0.7. The renderer publishes with `toFixed(3)`,
+  // so we expect the string "0.700".
+  await expect(
+    mount,
+    'Default galaxy-overview zoom must be 0.7 (published as "0.700" via ' +
+      '`data-galaxy-zoom` by GalaxyOverviewRenderer.init). Change this and ' +
+      'the perceived map size changes — keep the test and the literal in lockstep.',
+  ).toHaveAttribute('data-galaxy-zoom', '0.700', { timeout: 5_000 });
+});

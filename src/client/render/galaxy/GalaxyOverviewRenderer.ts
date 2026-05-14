@@ -206,6 +206,15 @@ export class GalaxyOverviewRenderer {
       this.viewport.moveCenter((minX + maxX) / 2, (minY + maxY) / 2);
     }
     this.viewport.setZoom(0.7);
+    // Regression-lock affordance — `tests/e2e/galaxy-polish.spec.ts` asserts
+    // the post-mount zoom matches the spec. Mirrors the `data-ship-positions`
+    // pattern: a stable read-only attribute on the mount node. Update on
+    // every `zoomed` event so the value tracks runtime pinch/wheel changes.
+    const publishZoom = (): void => {
+      container.setAttribute('data-galaxy-zoom', this.viewport.scale.x.toFixed(3));
+    };
+    publishZoom();
+    this.viewport.on('zoomed', publishZoom);
 
     this.app.ticker.add(this.tickPulse);
 
