@@ -157,6 +157,26 @@ export function MetaLandingScreen({ onJoin, onSelectLocal }: Props): JSX.Element
           Single-player diagnostic
         </Button>
       )}
+
+      {import.meta.env.DEV && (
+        <Box
+          component="a"
+          href="/__offscreen-spike__/visual-effects-sandbox.html"
+          data-testid="meta-sandbox-link"
+          sx={{
+            color: '#88ddff',
+            fontSize: 11,
+            mt: 0.5,
+            textDecoration: 'none',
+            letterSpacing: 1.5,
+            textTransform: 'uppercase',
+            opacity: 0.65,
+            '&:hover': { opacity: 1, textDecoration: 'underline' },
+          }}
+        >
+          Visual FX Sandbox →
+        </Box>
+      )}
     </Box>
   );
 }

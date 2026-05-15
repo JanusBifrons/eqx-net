@@ -17,10 +17,15 @@ import { getGameClient } from '../net/clientSingleton';
  * `getGameClient()` polled at 10 Hz. This is the sanctioned low-cadence
  * mirror read path (`src/client/net/clientSingleton.ts`); per-frame
  * spatial state must NOT flow through Zustand (invariant #2). The
- * displayed unit is one micro grid cell (200u) so the readout matches
- * the on-grid coordinate labels at every macro intersection.
+ * displayed unit is one micro grid cell (500u — matches
+ * `BackgroundGrid.GRID_CELL_SIZE`), and `BackgroundGrid` now draws a
+ * coordinate label at EVERY micro intersection, so this readout always
+ * lands on a visible labelled grid line (2026-05-15 fix).
  */
 
+// Keep in sync with `BackgroundGrid.GRID_CELL_SIZE` (same 500u micro
+// cell). Not imported to keep this React component off the Pixi module
+// graph; the value is locked by `BackgroundGrid.labels.test.ts`.
 const GRID_CELL = 500;
 const POLL_MS = 100;
 

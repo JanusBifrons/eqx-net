@@ -29,18 +29,82 @@ import type { Camera } from './worker/Camera';
  * Pixi-Y = -1000 reads `gy = +5` (matching game-space Y up).
  */
 
-const CELL_SIZE  = 500;
+/**
+ * Micro cell size in world units. This is also the unit the HUD "Grid
+ * x,y" readout counts (`SectorInfoPanel`, `round(pos / 500)`) and the
+ * spacing at which coordinate labels are drawn — so every visible
+ * micro line carries its own number and the readout always lands on a
+ * labelled line. Exported + locked by `BackgroundGrid.labels.test.ts`.
+ */
+export const GRID_CELL_SIZE = 500;
+/**
+ * Label spacing. MUST equal `GRID_CELL_SIZE` — labelling at the macro
+ * size (the old behaviour) made labels jump 0,5,10 with nothing on the
+ * visible grid for the ÷500 readout to correspond to (2026-05-15
+ * smoke-test). Do not set this to `MACRO_SIZE`.
+ */
+export const GRID_LABEL_STEP = GRID_CELL_SIZE;
+
+const CELL_SIZE  = GRID_CELL_SIZE;
 const MACRO_SIZE = 2500;
 
 const MICRO_COLOR = 0x1a2040;
-const MICRO_ALPHA = 0.18;
+// Raised from 0.18 → 0.34: the micro grid is now the primary
+// coordinate reference (every line is labelled), so it has to be
+// clearly visible, not a near-invisible texture. Still subordinate to
+// the macro grid (0.55) which stays the bold orientation lattice.
+const MICRO_ALPHA = 0.34;
 const MACRO_COLOR = 0x3a4a80;
 const MACRO_ALPHA = 0.55;
 
-const LABEL_ALPHA = 0.22;
+const LABEL_ALPHA = 0.30;
 const LABEL_HIDE_ZOOM = 0.5;
 const LABEL_OFFSET_X = 4;
 const LABEL_OFFSET_Y = 2;
+
+/** One coordinate label: where to draw it (Pixi space) + the
+ *  game-space grid numbers to show. */
+export interface GridLabelSpec {
+  key: string;
+  x: number;
+  y: number;
+  gx: number;
+  gy: number;
+}
+
+/**
+ * Pure: enumerate the coordinate labels for a (already padded,
+ * snapped) Pixi-space view window. One label per `step` intersection.
+ * `gx = x / cell`; `gy = -y / cell` flips Pixi-Y-down back to
+ * game-Y-up so the printed number matches the HUD readout. Pixi-free
+ * so the label density/format is unit-testable (mirrors the
+ * `spriteUpdateDecisions` extraction pattern); `BackgroundGrid` only
+ * turns these specs into `Text` nodes.
+ */
+export function computeGridLabels(args: {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  step: number;
+  cell: number;
+}): GridLabelSpec[] {
+  const { xMin, xMax, yMin, yMax, step, cell } = args;
+  const out: GridLabelSpec[] = [];
+  if (step <= 0 || cell <= 0) return out;
+  for (let x = xMin; x <= xMax; x += step) {
+    for (let y = yMin; y <= yMax; y += step) {
+      out.push({
+        key: `${x},${y}`,
+        x,
+        y,
+        gx: x / cell,
+        gy: -y / cell,
+      });
+    }
+  }
+  return out;
+}
 
 const LABEL_STYLE = new TextStyle({
   fontFamily: 'system-ui, sans-serif',
@@ -113,22 +177,28 @@ export class BackgroundGrid {
         .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
     }
 
-    // Labels: only when zoomed in enough that 11px text is legible.
+    // Labels at EVERY micro intersection (500u) so each visible micro
+    // line carries its number and the HUD's ÷500 readout always lands
+    // on a labelled line. Still gated by zoom so 11px text stays
+    // legible (and the label count stays bounded when zoomed out).
     this.seen.clear();
     if (camera.scale.x >= LABEL_HIDE_ZOOM) {
-      for (let mx = xMinMacro; mx <= xMaxMacro; mx += MACRO_SIZE) {
-        for (let my = yMinMacro; my <= yMaxMacro; my += MACRO_SIZE) {
-          const key = `${mx},${my}`;
-          this.seen.add(key);
-          if (!this.labels.has(key)) {
-            const gx = mx / CELL_SIZE;
-            const gy = -my / CELL_SIZE;
-            const text = new Text({ text: `${gx},${gy}`, style: LABEL_STYLE });
-            text.alpha = LABEL_ALPHA;
-            text.position.set(mx + LABEL_OFFSET_X, my + LABEL_OFFSET_Y);
-            this.labelContainer.addChild(text);
-            this.labels.set(key, text);
-          }
+      const specs = computeGridLabels({
+        xMin: xMinMicro,
+        xMax: xMaxMicro,
+        yMin: yMinMicro,
+        yMax: yMaxMicro,
+        step: GRID_LABEL_STEP,
+        cell: GRID_CELL_SIZE,
+      });
+      for (const spec of specs) {
+        this.seen.add(spec.key);
+        if (!this.labels.has(spec.key)) {
+          const text = new Text({ text: `${spec.gx},${spec.gy}`, style: LABEL_STYLE });
+          text.alpha = LABEL_ALPHA;
+          text.position.set(spec.x + LABEL_OFFSET_X, spec.y + LABEL_OFFSET_Y);
+          this.labelContainer.addChild(text);
+          this.labels.set(spec.key, text);
         }
       }
     }

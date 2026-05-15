@@ -96,6 +96,34 @@ export class GalaxyMapLayer extends Container {
     this.repaint();
   }
 
+  /**
+   * Custom hit-test for the worker-renderer path — Pixi's `events`
+   * subsystem isn't initialised in worker context (no DOM event source),
+   * so the `pointertap` listeners attached to each hex Graphics don't
+   * fire. The worker forwards raw pointer events to the renderer; on
+   * a confirmed tap the worker calls this method with the pointer's
+   * screen-pixel position and the layer reports which (selectable)
+   * sector was hit, or null. Distance check against each hex's centre
+   * within `HEX_SIZE_BASE * scale` — close enough; the hexes don't
+   * overlap in screen space.
+   */
+  hitTest(screenX: number, screenY: number): string | null {
+    if (!this.visible) return null;
+    const scale = this.clusterRoot.scale.x;
+    if (scale === 0) return null;
+    const relX = (screenX - this.clusterRoot.x) / scale;
+    const relY = (screenY - this.clusterRoot.y) / scale;
+    for (const entry of this.entries) {
+      if (!this.isSelectable(entry.sector)) continue;
+      const dx = relX - entry.x;
+      const dy = relY - entry.y;
+      if (Math.hypot(dx, dy) <= HEX_SIZE_BASE) {
+        return entry.sector.key;
+      }
+    }
+    return null;
+  }
+
   resize(screenW: number, screenH: number): void {
     this.screenW = screenW;
     this.screenH = screenH;

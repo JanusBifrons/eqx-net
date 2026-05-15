@@ -6,7 +6,7 @@ import {
   Typography,
 } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
-import { setGameClient } from './net/clientSingleton';
+import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
@@ -159,23 +159,87 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     return () => clearTimeout(timer);
   }, []);
 
-  // Warp-mode off-switch + transit-warp on-switch. The renderer's
-  // `setWarpMode(true)` fires synchronously after `renderer.init`
-  // resolves (inside the async effect above). This effect:
-  //   - Flips warp OFF when the player can see themselves (gameReady).
-  //   - Flips warp ON when transit enters IN_TRANSIT or ARRIVED so the
-  //     same FTL filter chain doubles as the actual transit visual.
-  // The renderer animates the 500ms fade internally — no React state
-  // churn for the tween.
+  // ── Warp visual orchestration ─────────────────────────────────────
+  //
+  // Three orthogonal effects, each owning one decision:
+  //
+  //   1. `loadCurtain` — opaque overlay hiding the canvas during the
+  //      join + transit load periods. The "loading screen" itself.
+  //   2. `setWarpMode` — the spool→climax→burst+flash envelope. Fires
+  //      only during the source-side SPOOLING phase of inter-sector
+  //      transit; never on initial join.
+  //   3. `triggerWarpIn` — the arrival flash. Fires once at the
+  //      moment the curtain transitions from loading → ready.
+  //
+  // The fourth piece (remote-player warp visuals via `pendingWarpEvents`)
+  // is driven by `ColyseusClient` directly — see the per-frame mirror
+  // drain in `PixiRenderer.update`.
+  //
+  // Helper: are we in a load period? Used by both the curtain and the
+  // arrival-flash edge detector below so they stay in lockstep.
+  // `GameSurface` only mounts when `phase === 'game'`, so the
+  // pre-`game` connecting period is covered by the App-level
+  // `<WarpScreen>` overlay, not by the renderer's curtain (the
+  // renderer doesn't exist yet at that point).
   const transitState = useUIStore((s) => s.transitState);
+  const loading = !gameReady
+    || transitState === 'IN_TRANSIT'
+    || transitState === 'ARRIVED';
+
+  // 1 + 3. Curtain + arrival-flash combined effect. They share the
+  // `loading` derived value, so co-locating avoids drift.
+  // `prevLoadingRef` starts false so the first run (loading=true on
+  // initial mount) detects a transition and logs the curtain rise —
+  // otherwise the log only captures the fall, and E2E coverage of
+  // the orchestration is half-blind.
+  const prevLoadingRef = useRef(false);
   useEffect(() => {
     const r = rendererRef.current;
     if (!r) return;
-    const warping = !gameReady
-      || transitState === 'IN_TRANSIT'
-      || transitState === 'ARRIVED';
-    r.setWarpMode(warping);
-  }, [gameReady, transitState]);
+    if (prevLoadingRef.current !== loading) {
+      logEvent('load_curtain_change', { active: loading });
+    }
+    if (prevLoadingRef.current && !loading) {
+      // Transition from loading → ready — arrival reveal. Anchor to the
+      // local ship ENTITY: the renderer tracks that sprite live every
+      // frame, so the flash+ripple stays on the ship as it starts
+      // moving post-arrival (and never anchors to a stale pre-reconcile
+      // pose). `null` → screen-centre fallback if the id isn't known
+      // yet (renderer also falls back if the sprite isn't up).
+      const localId = getGameClient()?.mirror.localPlayerId ?? null;
+      r.triggerWarpIn(localId ? { kind: 'entity', entityId: localId } : null);
+    }
+    prevLoadingRef.current = loading;
+    r.setLoadCurtain(loading);
+  }, [loading]);
+
+  // 2. Warp-mode envelope — spool→climax+burst+flash. Fires only
+  // during transit SPOOLING (the source-sector build-up). When
+  // SPOOLING ends — either commit (IN_TRANSIT) or cancel back to
+  // DOCKED — `setWarpMode(false)` runs the renderer's internal
+  // fade-out + burst. The curtain effect above is already rising at
+  // that moment because the IN_TRANSIT state flips `loading` to
+  // true, so the burst+flash and curtain rise are perceived as a
+  // single hand-off.
+  useEffect(() => {
+    const r = rendererRef.current;
+    if (!r) return;
+    if (transitState === 'SPOOLING') {
+      // Anchor to the local ship ENTITY: the renderer re-resolves that
+      // sprite's position EVERY frame. The player keeps flying through
+      // the ~3.6s spool; a one-shot capture froze the ripple where
+      // charging began (2026-05-15 diagnostic: ship moved ~539u away
+      // during the spool — "did the effect where I started charging,
+      // not where I was"). The same entity mechanism works for remote/
+      // bot warps too — no local special-case.
+      const localId = getGameClient()?.mirror.localPlayerId ?? null;
+      r.setWarpCenter(localId ? { kind: 'entity', entityId: localId } : null);
+      logEvent('warp_mode_change', { active: true, trigger: 'transit_spooling' });
+      r.setWarpMode(true);
+    } else {
+      r.setWarpMode(false);
+    }
+  }, [transitState]);
 
   // Phase 5 scope change — when the player dies and clicks Respawn, send
   // them BACK TO THE GALAXY MAP rather than respawning in-place. The
@@ -312,14 +376,16 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         renderer.dispose();
         return;
       }
-      // Warp render state ON immediately — the canvas now paints the
-      // FTL-warp filter chain (BlurFilter + ColorMatrixFilter on the
-      // world container) plus radial streaks. Stays on until the
-      // first frame with the local player in the mirror, at which
-      // point a useEffect below toggles it off + the renderer
-      // animates a 500 ms fade-out.
+      // Load curtain ON immediately — hides the canvas during the
+      // join load period so the player doesn't see ship-at-(0,0)
+      // ghost frames, partial mirror state, or rippled asteroid
+      // bleed-through. The curtain is independent of the warp filter
+      // chain (no spool/climax/burst on initial join — that envelope
+      // is for inter-sector transit only, and is driven by the
+      // transitState effect below). The curtain fades AND the
+      // arrival flash fires when `gameReady` flips true.
       if (!useUIStore.getState().rendererFirstFrameRendered) {
-        renderer.setWarpMode(true);
+        renderer.setLoadCurtain(true);
       }
       logEvent('renderer_init_complete', {
         rendererInitMs: Math.round(rendererInitMs),
@@ -328,15 +394,30 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
 
       // Map B — additive in-game galaxy overlay. Lives as a screen-space
       // sibling of the gameplay viewport on the same Pixi stage, so it
-      // doesn't pan/zoom with the world camera and Pixi's hit-testing
-      // routes hex taps cleanly while non-hex regions pass through to
-      // gameplay underneath.
+      // doesn't pan/zoom with the world camera. Two construction paths:
       //
-      // Worker-renderer path: GalaxyMapLayer's Pixi handle can't cross
-      // the worker boundary. Skip its construction; the M-key overlay
-      // is temporarily unavailable in worker context. Follow-up commit
-      // will move the layer worker-side with state-driven postMessages.
-      if (!useWorker) {
+      //   - Worker mode: `renderer.worker.ts` constructs the layer
+      //     inside the worker (it's pure Pixi v8, no DOM access) and
+      //     uses a custom hit-test for taps (Pixi's event subsystem
+      //     isn't initialised in worker context). Selection is routed
+      //     back to the main thread via `OVERLAY_TAPPED` messages and
+      //     consumed by `setOverlayTapHandler`.
+      //   - DOM mode: construct the layer here and attach via
+      //     `addOverlayContainer`. The native Pixi event system on the
+      //     DOM-mode renderer handles `pointertap` on each hex.
+      if (useWorker) {
+        // The worker already owns its layer; just route taps + push
+        // initial state so the overlay knows which sector is "you are
+        // here" and whether it's selectable.
+        (renderer as WorkerRendererClient).setOverlayTapHandler((key) => {
+          handleEngageTransit(key);
+          useUIStore.getState().setGalaxyMapOpen(false);
+        });
+        const s0 = useUIStore.getState();
+        (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
+        (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
+        (renderer as WorkerRendererClient).setLayerVisible(s0.isGalaxyMapOpen);
+      } else {
         const galaxyLayer = new GalaxyMapLayer({
           onSelect: (key) => {
             handleEngageTransit(key);
@@ -627,9 +708,36 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // the first paint.
   const galaxyLayerCurrentSectorKey = useUIStore((s) => s.currentSectorKey);
   const galaxyLayerTransitState = useUIStore((s) => s.transitState);
-  useEffect(() => { galaxyLayerRef.current?.setVisible(galaxyMapOpen); }, [galaxyMapOpen]);
-  useEffect(() => { galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey); }, [galaxyLayerCurrentSectorKey]);
-  useEffect(() => { galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED'); }, [galaxyLayerTransitState]);
+  // Each effect routes BOTH paths: `galaxyLayerRef.current` is set
+  // only in DOM-renderer mode (Safari fallback). In worker-renderer
+  // mode the layer lives inside the worker; state crosses via the
+  // `WorkerRendererClient.setLayer*` postMessages.
+  useEffect(() => {
+    galaxyLayerRef.current?.setVisible(galaxyMapOpen);
+    if (rendererRef.current instanceof WorkerRendererClient) {
+      rendererRef.current.setLayerVisible(galaxyMapOpen);
+    }
+    // Diagnostic + E2E hook: proves the MAP-button tap reached the
+    // renderer (worker-hosted layer or DOM layer). Regression-locked
+    // by tests/e2e/galaxy-map-toggle.spec.ts — the worker-hosting fix
+    // is exactly "this message now reaches the worker".
+    logEvent('galaxy_map_toggle', {
+      open: galaxyMapOpen,
+      worker: rendererRef.current instanceof WorkerRendererClient,
+    });
+  }, [galaxyMapOpen]);
+  useEffect(() => {
+    galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey);
+    if (rendererRef.current instanceof WorkerRendererClient) {
+      rendererRef.current.setLayerCurrentSector(galaxyLayerCurrentSectorKey);
+    }
+  }, [galaxyLayerCurrentSectorKey]);
+  useEffect(() => {
+    galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED');
+    if (rendererRef.current instanceof WorkerRendererClient) {
+      rendererRef.current.setLayerTransitDocked(galaxyLayerTransitState === 'DOCKED');
+    }
+  }, [galaxyLayerTransitState]);
 
   // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the
   // main thread is saturated enough that Playwright's CDP roundtrip

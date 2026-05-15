@@ -453,6 +453,7 @@ export function useGameReady(): boolean {
       s.connectionStatus === 'connected'
       && s.localShipInstanceId !== null
       && s.rendererFirstFrameRendered
+      && s.firstSnapshotApplied
       && s.joinMinimumElapsed,
   );
 }

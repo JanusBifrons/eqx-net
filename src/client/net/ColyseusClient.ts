@@ -1,7 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -278,6 +278,7 @@ export class ColyseusGameClient {
     thrustingShips: new Set(),
     pendingDamageNumbers: [],
     pendingHealthBarHits: [],
+    pendingWarpEvents: [],
   };
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
@@ -987,6 +988,20 @@ export class ColyseusGameClient {
         this.stats.collisionEventsApplied++;
       }
     });
+
+    // Remote-warp visual broadcasts. Both `warp_in` (a ship just arrived
+    // at this sector) and `warp_out` (a ship just left) push a single
+    // entry onto `mirror.pendingWarpEvents` with the world position; the
+    // renderer drains the array each frame and fires `triggerWarpIn`
+    // (the same direction-agnostic flash + burst ripple) at each one.
+    // Local-player events are never reflected here — the server's
+    // `except: client` filter excludes the originating connection.
+    const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent): void => {
+      if (!this.mirror.pendingWarpEvents) return;
+      this.mirror.pendingWarpEvents.push({ x: msg.x, y: msg.y });
+    };
+    room.onMessage('warp_in', handleWarpEvent);
+    room.onMessage('warp_out', handleWarpEvent);
 
     // Phase 8 sub-phase B — transit lifecycle messages.
     room.onMessage('transit_state', (msg: TransitStateMessage) => {

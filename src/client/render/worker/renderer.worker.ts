@@ -27,6 +27,7 @@ DOMAdapter.set(WebWorkerAdapter);
 // Import PixiRenderer AFTER DOMAdapter.set so Pixi v8 picks the
 // worker adapter at module-load.
 import { PixiRenderer } from '../PixiRenderer';
+import { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import type { MainToWorkerMsg, WorkerToMainMsg } from './protocol';
 
 function post(msg: WorkerToMainMsg): void {
@@ -34,6 +35,7 @@ function post(msg: WorkerToMainMsg): void {
 }
 
 let renderer: PixiRenderer | null = null;
+let galaxyLayer: GalaxyMapLayer | null = null;
 
 self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   const msg = e.data;
@@ -46,6 +48,19 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           width: msg.width,
           height: msg.height,
           dpr: msg.dpr,
+        });
+        // Construct the in-game galaxy-map overlay worker-side. Its
+        // hex `pointertap` listeners don't fire here (no Pixi event
+        // system in worker context), so we drive selection via a
+        // custom hit-test wired through `renderer.setOnTap`.
+        galaxyLayer = new GalaxyMapLayer({ onSelect: () => { /* unused — see hitTest path */ } });
+        galaxyLayer.resize(msg.width, msg.height);
+        renderer.addGalaxyOverlay(galaxyLayer, (sx, sy) => {
+          if (!galaxyLayer) return;
+          const sectorKey = galaxyLayer.hitTest(sx, sy);
+          if (sectorKey !== null) {
+            post({ type: 'OVERLAY_TAPPED', sectorKey });
+          }
         });
         post({ type: 'READY' });
         break;
@@ -87,6 +102,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       case 'RESIZE': {
         if (!renderer) return;
         renderer.resize(msg.width, msg.height);
+        galaxyLayer?.resize(msg.width, msg.height);
         break;
       }
 
@@ -102,15 +118,46 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
-      case 'SET_VISIBLE':
-      case 'SET_CURRENT_SECTOR':
+      case 'SET_WARP_PARAMS': {
+        if (!renderer) return;
+        renderer.setWarpParams(msg.params);
+        break;
+      }
+
+      case 'SET_WARP_CENTER': {
+        if (!renderer) return;
+        renderer.setWarpCenter(msg.center);
+        break;
+      }
+
+      case 'SET_CAMERA_CENTER': {
+        if (!renderer) return;
+        renderer.setCameraCenter(msg.worldX, msg.worldY);
+        break;
+      }
+
+      case 'TRIGGER_WARP_IN': {
+        if (!renderer) return;
+        renderer.triggerWarpIn(msg.center);
+        break;
+      }
+
+      case 'SET_LOAD_CURTAIN': {
+        if (!renderer) return;
+        renderer.setLoadCurtain(msg.active);
+        break;
+      }
+
+      case 'SET_VISIBLE': {
+        galaxyLayer?.setVisible(msg.visible);
+        break;
+      }
+      case 'SET_CURRENT_SECTOR': {
+        galaxyLayer?.setCurrentSector(msg.sectorKey);
+        break;
+      }
       case 'SET_TRANSIT_DOCKED': {
-        // GalaxyMapLayer overlay state — the overlay itself isn't yet
-        // hosted worker-side. PixiRenderer's `addOverlayContainer` was
-        // the original wire; revisiting in a follow-up commit once
-        // App.tsx's overlay-construction is decoupled. Messages
-        // accepted and discarded so the main thread can post without
-        // error.
+        galaxyLayer?.setTransitDocked(msg.docked);
         break;
       }
 
