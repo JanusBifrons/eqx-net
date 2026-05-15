@@ -21,9 +21,12 @@ function makeFakeClient(): { client: { send: (channel: string, msg: unknown) => 
   };
 }
 
+interface BroadcastCall { type: string; message: unknown; except: unknown }
+
 function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
   room: TransitHostRoom;
   sent: FakeClientSent[];
+  broadcasts: BroadcastCall[];
   setHealth: (h: number) => void;
   setSlotPose: (slot: number, pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel: number }) => void;
 } {
@@ -52,6 +55,7 @@ function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
 
   const fc = makeFakeClient();
   const playerToTransitInFlight = new Set<string>();
+  const broadcasts: BroadcastCall[] = [];
   const room: TransitHostRoom = {
     sectorKey: opts.sectorKey,
     bus: new Bus(),
@@ -63,11 +67,15 @@ function makeRoom(opts: { sectorKey: string | null; playerId: string }): {
     getShipKind: () => 'fighter',
     playerToTransitInFlight,
     clientForPlayer: () => fc.client as unknown as Parameters<TransitHostRoom['clientForPlayer']>[0] extends never ? never : ReturnType<TransitHostRoom['clientForPlayer']>,
+    broadcast: (type, message, options) => {
+      broadcasts.push({ type, message, except: options?.except });
+    },
   };
 
   return {
     room,
     sent: fc.sent,
+    broadcasts,
     setHealth: (h) => { health = h; },
     setSlotPose,
   };
@@ -167,12 +175,19 @@ describe('TransitOrchestrator', () => {
   });
 
   describe('commit', () => {
-    function withFakeReserve(fn: ReturnType<typeof vi.fn>): { orch: TransitOrchestrator; room: ReturnType<typeof makeRoom>['room']; limbo: LimboStore; sent: FakeClientSent[]; setHealth: (h: number) => void } {
+    function withFakeReserve(fn: ReturnType<typeof vi.fn>): {
+      orch: TransitOrchestrator;
+      room: ReturnType<typeof makeRoom>['room'];
+      limbo: LimboStore;
+      sent: FakeClientSent[];
+      broadcasts: BroadcastCall[];
+      setHealth: (h: number) => void;
+    } {
       const r = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const limbo = new LimboStore({});
       const orch = new TransitOrchestrator(r.room, limbo);
       orch.setReserveByNameOverride(fn as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
-      return { orch, room: r.room, limbo, sent: r.sent, setHealth: r.setHealth };
+      return { orch, room: r.room, limbo, sent: r.sent, broadcasts: r.broadcasts, setHealth: r.setHealth };
     }
 
     it('writes Limbo with the destination sectorKey, transit-in-flight TTL, and current pose', async () => {
@@ -303,6 +318,53 @@ describe('TransitOrchestrator', () => {
       expect(reserve).not.toHaveBeenCalled();
       expect(limbo.peek('p1')).toBeNull();
       expect(orch.isInFlight('p1')).toBe(false);
+    });
+
+    // Warp visual broadcast — when a player commits transit OUT of this
+    // sector, the source room must broadcast `warp_out` to every OTHER
+    // client in the room so their renderer fires a one-shot flash +
+    // burst ripple at the leaver's last world position.
+    it('broadcasts warp_out at the leaver\'s SAB pose, excluding the leaver', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, broadcasts } = withFakeReserve(reserve);
+      orch.beginTransit('p1', 'orion-belt');
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+
+      const warpOut = broadcasts.find((b) => b.type === 'warp_out');
+      expect(warpOut).toBeDefined();
+      const payload = warpOut!.message as { type: string; playerId: string; x: number; y: number };
+      expect(payload.type).toBe('warp_out');
+      expect(payload.playerId).toBe('p1');
+      // SAB pose from setSlotPose default in makeRoom — x:100, y:200.
+      expect(payload.x).toBe(100);
+      expect(payload.y).toBe(200);
+      // Excludes the leaver — `except` is the leaver's client.
+      expect(warpOut!.except).toBeDefined();
+    });
+
+    it('warp_out broadcast uses the SAB pose at commit moment, not the arrival override', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, broadcasts } = withFakeReserve(reserve);
+      // Client requests an arrival at (500, -300) but observers should
+      // see the burst at the leaver's CURRENT position (100, 200), not
+      // at the destination arrival point.
+      orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      const warpOut = broadcasts.find((b) => b.type === 'warp_out');
+      const payload = warpOut!.message as { x: number; y: number };
+      expect(payload.x).toBe(100);
+      expect(payload.y).toBe(200);
+    });
+
+    it('does NOT broadcast warp_out when reservation fails (no transit committed)', async () => {
+      const reserve = vi.fn().mockRejectedValue(new Error('destination unavailable'));
+      const { orch, broadcasts } = withFakeReserve(reserve);
+      orch.beginTransit('p1', 'orion-belt');
+      vi.advanceTimersByTime(3000);
+      await vi.runAllTimersAsync();
+      expect(broadcasts.find((b) => b.type === 'warp_out')).toBeUndefined();
     });
   });
 

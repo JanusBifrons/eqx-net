@@ -62,6 +62,11 @@ export interface TransitHostRoom {
   playerToTransitInFlight: Set<string>;
   /** Look up the live Colyseus client for a given playerId. */
   clientForPlayer(playerId: string): Client | null;
+  /** Colyseus room-broadcast. `except` excludes the named client(s) —
+   *  used to emit warp_out to everyone in the source sector except the
+   *  player who's leaving (the leaver gets their own local-warp visual
+   *  from the `transit_state` machinery). */
+  broadcast(type: string, message: unknown, options?: { except?: Client | Client[] }): void;
 }
 
 interface InFlight {
@@ -331,6 +336,20 @@ export class TransitOrchestrator {
         targetSectorKey: inFlight.targetSectorKey,
       });
     }
+
+    // Broadcast the departure to everyone else in this sector so their
+    // renderer fires a one-shot flash + burst ripple at the leaver's
+    // world position. The leaver themselves are excluded — their own
+    // warp visual is driven by the `transit_state` SPOOLING/IN_TRANSIT
+    // sequence which produces the full spool → climax → burst envelope.
+    // Use the SAB pose (sabX/sabY captured above) — this is where the
+    // ship was at commit, which is what observers' snapshots will show
+    // up to the moment the leave fires.
+    this.room.broadcast(
+      'warp_out',
+      { type: 'warp_out', playerId, x: sabX, y: sabY },
+      client ? { except: client } : undefined,
+    );
 
     inFlight.machine.arrive();
     inFlight.machine.reset();
