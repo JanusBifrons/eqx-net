@@ -323,6 +323,39 @@ export interface RespawnAckMessage {
   serverTick: number;
 }
 
+/**
+ * Server → client (broadcast): a remote ship just warped OUT of this sector.
+ * Sent to every occupant of the source sector EXCEPT the leaving player
+ * themselves (the local player gets their own warp visual from the
+ * `transit_state` SPOOLING/IN_TRANSIT machinery). The client fires a
+ * one-shot `triggerWarpIn` (flash + burst ripple) at `(x, y)` so observers
+ * see where the ship vanished from.
+ *
+ * NOTE: the message name is `warp_out` but the client uses the same
+ * `triggerWarpIn` API for both directions — the renderer's "burst+flash
+ * at a world point" pulse is direction-agnostic.
+ */
+export interface WarpOutEvent {
+  type: 'warp_out';
+  playerId: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * Server → client (broadcast): a ship just warped INTO this sector.
+ * Sent to every existing occupant EXCEPT the joining player themselves
+ * (the joiner gets their own arrival visual from the welcome /
+ * snapshot flow). The client fires `triggerWarpIn` at the spawn world
+ * point so observers see the arrival pulse.
+ */
+export interface WarpInEvent {
+  type: 'warp_in';
+  playerId: string;
+  x: number;
+  y: number;
+}
+
 /** Server → client (broadcast): a hitscan shot was fired. Sent to ALL clients so
  *  they can render the beam. The endpoint is server-authoritative (lag-comp result).
  *

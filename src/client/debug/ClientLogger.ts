@@ -10,7 +10,13 @@
  *   window.__eqxClearLogs()   // reset
  */
 
-const MAX_ENTRIES = 500;
+// 2000-entry ring keeps ~20 s of per-frame events at the steady-state
+// rate of `rafTick` + `snapshot` + `correction` + `swarm_snap_diagnostics`
+// (~100 events/sec). Anything older gets rotated out, but join-time
+// one-shots (`welcome`, `pixi_first_frame`, `join_chain_complete`)
+// survive until the E2E reads the log. Previously 500 — too tight on
+// CI where the test sometimes ran to ~10 s and lost the early events.
+const MAX_ENTRIES = 2000;
 
 export interface LogEntry {
   ts: number;

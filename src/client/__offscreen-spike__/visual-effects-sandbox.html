@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Visual effects sandbox — EQX Peri</title>
+  <style>
+    html, body {
+      margin: 0; height: 100%; overflow: hidden;
+      background: #05070f; color: #e0e6f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    #canvas-host { position: fixed; inset: 0; touch-action: none; }
+
+    /* Floating utility buttons — always visible, sit above the canvas. */
+    .float-btn {
+      position: fixed; z-index: 20;
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(5, 7, 15, 0.78);
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      color: #00ff88; font-size: 20px; line-height: 1;
+      border-radius: 6px; cursor: pointer;
+      transition: background 0.12s, opacity 0.12s;
+      user-select: none; -webkit-tap-highlight-color: transparent;
+    }
+    .float-btn:hover, .float-btn:active { background: rgba(0, 255, 136, 0.20); }
+    #fullscreen-toggle { top: 8px; left: 8px; }
+    #open-panel       { top: 8px; right: 8px; display: none; }
+    body.panel-collapsed #open-panel { display: flex; }
+
+    #controls {
+      position: fixed; top: 8px; right: 8px;
+      width: 320px; max-width: calc(100vw - 16px);
+      max-height: calc(100vh - 16px);
+      overflow-y: auto;
+      background: rgba(8, 12, 20, 0.92);
+      border: 1px solid rgba(0, 255, 136, 0.35);
+      padding: 10px 12px;
+      font-size: 11px;
+      z-index: 10;
+      border-radius: 6px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+    }
+    body.panel-collapsed #controls { display: none; }
+
+    #panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-bottom: 4px;
+    }
+    #close-panel {
+      width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      background: transparent; color: #9aa0b4;
+      border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 4px;
+      font-size: 18px; line-height: 1; cursor: pointer;
+      padding: 0;
+    }
+    #close-panel:hover { color: #fff; border-color: rgba(255, 255, 255, 0.4); }
+    #controls h1 {
+      font-size: 12px; margin: 0;
+      color: #00ff88; letter-spacing: 0.08em; font-weight: 600;
+    }
+    #controls h2 {
+      font-size: 10px; margin: 12px 0 4px 0;
+      color: #88ddff; text-transform: uppercase; letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    #effect-picker { display: flex; gap: 6px; }
+    #effect-picker label {
+      flex: 1; cursor: pointer; padding: 5px 6px;
+      border: 1px solid rgba(255,255,255,0.18); border-radius: 4px;
+      text-align: center; color: #9aa0b4;
+    }
+    #effect-picker input[type="radio"] { display: none; }
+    #effect-picker input[type="radio"]:checked + label {
+      background: rgba(0, 255, 136, 0.18); border-color: #00ff88; color: #00ff88;
+    }
+    #effect-picker input[type="radio"]:disabled + label {
+      opacity: 0.4; cursor: not-allowed;
+    }
+    .effect-panel { display: none; }
+    .effect-panel.active { display: block; }
+    .button-row { display: flex; flex-wrap: wrap; gap: 6px; }
+    button {
+      background: rgba(0, 255, 136, 0.10); color: #e0e6f0;
+      border: 1px solid rgba(0, 255, 136, 0.35); border-radius: 4px;
+      padding: 5px 9px; font-family: inherit; font-size: 11px; cursor: pointer;
+      transition: background 0.1s ease;
+    }
+    button:hover { background: rgba(0, 255, 136, 0.18); }
+    button:active { background: rgba(0, 255, 136, 0.30); }
+    button.danger { border-color: rgba(255, 100, 100, 0.45); color: #ffaaaa; }
+    button.danger:hover { background: rgba(255, 100, 100, 0.18); }
+    .slider-row {
+      display: grid; grid-template-columns: 110px 1fr 60px;
+      gap: 8px; align-items: center; margin: 3px 0;
+    }
+    .slider-row label { color: #9aa0b4; font-size: 10px; }
+    .slider-row input[type="range"] { width: 100%; accent-color: #00ff88; }
+    .slider-row .value { text-align: right; color: #00ff88; font-size: 11px; }
+    #status {
+      color: #9aa0b4; font-size: 10px; margin-top: 12px;
+      padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);
+      min-height: 1.4em;
+    }
+    #status.error { color: #ff6677; }
+
+  </style>
+</head>
+<body>
+  <div id="canvas-host"></div>
+
+  <button id="fullscreen-toggle" class="float-btn" title="Toggle fullscreen" aria-label="Toggle fullscreen">⛶</button>
+  <button id="open-panel" class="float-btn" title="Show controls" aria-label="Show controls">≡</button>
+
+  <aside id="controls">
+    <div id="panel-header">
+      <h1>VISUAL FX SANDBOX</h1>
+      <button id="close-panel" title="Hide controls" aria-label="Hide controls">−</button>
+    </div>
+    <h2>Effect</h2>
+    <div id="effect-picker">
+      <input type="radio" id="effect-warp" name="effect" value="warp" checked>
+      <label for="effect-warp">Warp</label>
+      <input type="radio" id="effect-explosion" name="effect" value="explosion" disabled>
+      <label for="effect-explosion">Explosion</label>
+      <input type="radio" id="effect-beam" name="effect" value="beam" disabled>
+      <label for="effect-beam">Beam</label>
+      <input type="radio" id="effect-thruster" name="effect" value="thruster" disabled>
+      <label for="effect-thruster">Thruster</label>
+    </div>
+
+    <div id="warp-panel" class="effect-panel active">
+      <h2>Scenario</h2>
+      <div class="button-row">
+        <button id="scenario-restart">Restart loop</button>
+        <button id="recentre">Recentre view</button>
+      </div>
+      <label style="display:flex; align-items:center; gap:6px; margin-top:6px; color:#dde; font-size:11px; cursor:pointer;">
+        <input type="checkbox" id="follow-ship" style="accent-color:#00ff88;">
+        Follow ship (camera POV)
+      </label>
+      <div id="scenario-status" style="color:#9aa0b4; font-size:10px; margin-top:4px;">
+        Looping: warp-out → travel → warp-in (round trip). Pinch / wheel to zoom.
+      </div>
+      <h2>Manual override</h2>
+      <div class="button-row">
+        <button id="warp-on">Warp ON</button>
+        <button id="warp-off">Warp OFF</button>
+        <button id="warp-in-trigger">Warp IN</button>
+      </div>
+      <h2>Parameters</h2>
+      <div id="warp-sliders"></div>
+      <div class="button-row" style="margin-top: 10px;">
+        <button id="warp-reset" class="danger">Reset defaults</button>
+        <button id="warp-copy">Copy params JSON</button>
+      </div>
+    </div>
+
+    <div id="status">Booting…</div>
+  </aside>
+  <script type="module" src="./visual-effects-sandbox-main.ts"></script>
+</body>
+</html>

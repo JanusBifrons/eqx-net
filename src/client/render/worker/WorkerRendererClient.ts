@@ -27,6 +27,8 @@ import type {
   WorkerToMainMsg,
   SerialisedPointerEvent,
   SerialisedWheelEvent,
+  WarpParams,
+  WarpCenter,
 } from './protocol';
 import { logEvent } from '../../debug/ClientLogger';
 
@@ -223,16 +225,24 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   private serialisePointer(e: PointerEvent): SerialisedPointerEvent {
+    // The worker-side Camera operates in the renderer's internal pixel
+    // frame, which in worker mode is PHYSICAL pixels (BOOT.width is the
+    // OffscreenCanvas drawing-buffer width). DOM-mode pointer events
+    // arrive in CSS pixels — scale by DPR so a pinch midpoint reported
+    // as CSS-px 200 lines up with the Camera's internal "200 * DPR"
+    // expectation. Otherwise pinch zoom pivots toward the top-left
+    // (the Camera thinks the user is in the left quarter of the canvas).
+    const dpr = window.devicePixelRatio ?? 1;
     return {
       type: e.type,
       pointerId: e.pointerId,
       pointerType: e.pointerType,
       button: e.button,
       buttons: e.buttons,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      offsetX: e.offsetX,
-      offsetY: e.offsetY,
+      clientX: e.clientX * dpr,
+      clientY: e.clientY * dpr,
+      offsetX: e.offsetX * dpr,
+      offsetY: e.offsetY * dpr,
       ctrlKey: e.ctrlKey,
       shiftKey: e.shiftKey,
       altKey: e.altKey,
@@ -249,15 +259,18 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   private serialiseWheel(e: WheelEvent): SerialisedWheelEvent {
+    // Same DPR scaling as `serialisePointer` — wheel zoom pivots on
+    // (offsetX, offsetY) so the coord frame must match the Camera's.
+    const dpr = window.devicePixelRatio ?? 1;
     return {
       deltaX: e.deltaX,
       deltaY: e.deltaY,
       deltaZ: e.deltaZ,
       deltaMode: e.deltaMode,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      offsetX: e.offsetX,
-      offsetY: e.offsetY,
+      clientX: e.clientX * dpr,
+      clientY: e.clientY * dpr,
+      offsetX: e.offsetX * dpr,
+      offsetY: e.offsetY * dpr,
       ctrlKey: e.ctrlKey,
       shiftKey: e.shiftKey,
       altKey: e.altKey,
@@ -280,6 +293,7 @@ export class WorkerRendererClient implements IRenderer {
     // `tests/e2e/damage-number-lifetime.spec.ts`.
     if (mirror.pendingDamageNumbers) mirror.pendingDamageNumbers.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
+    if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
   }
 
   /**
@@ -322,6 +336,53 @@ export class WorkerRendererClient implements IRenderer {
    */
   setWarpMode(active: boolean): void {
     this.post({ type: 'SET_WARP_MODE', active });
+  }
+
+  /**
+   * Live-tune warp visual params. Sandbox-only — production code never
+   * calls this; defaults live in `PixiRenderer.DEFAULT_WARP_PARAMS`.
+   * Posts to the worker which forwards to `PixiRenderer.setWarpParams`.
+   */
+  setWarpParams(params: Partial<WarpParams>): void {
+    this.post({ type: 'SET_WARP_PARAMS', params });
+  }
+
+  /**
+   * Anchor the warp centre. World-space anchors track a world point
+   * as the camera pans; screen-space anchors are used raw (sandbox
+   * click-to-place). `null` reverts to screen centre. In production,
+   * each per-ship warp event sets its own world anchor before
+   * `setWarpMode(true)`.
+   */
+  setWarpCenter(center: WarpCenter | null): void {
+    this.post({ type: 'SET_WARP_CENTER', center });
+  }
+
+  /**
+   * Sandbox-only: position the camera so a world point sits at screen
+   * centre. Production code follows the local ship via the renderer's
+   * built-in `Camera.follow`, not this message.
+   */
+  setCameraCenter(worldX: number, worldY: number): void {
+    this.post({ type: 'SET_CAMERA_CENTER', worldX, worldY });
+  }
+
+  /**
+   * Fire the warp-in (arrival) companion effect at the supplied
+   * centre. Flash + single big ripple, no preceding spool/climax.
+   */
+  triggerWarpIn(center: WarpCenter | null): void {
+    this.post({ type: 'TRIGGER_WARP_IN', center });
+  }
+
+  /**
+   * Show or hide the load curtain — an opaque overlay that hides the
+   * canvas during the join + transit load periods. Production
+   * orchestration in `App.tsx` drives this; the renderer animates the
+   * alpha-tween internally.
+   */
+  setLoadCurtain(active: boolean): void {
+    this.post({ type: 'SET_LOAD_CURTAIN', active });
   }
 
   /** Forward a native pointer event into the worker camera state machine. */

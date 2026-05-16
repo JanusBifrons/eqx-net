@@ -149,6 +149,28 @@ const LAG_COMP_WINDOW = 12;
  *  60 Hz physics. */
 const IDLE_THRESHOLD_TICKS = 60;
 
+/** Ticks after ANY player join/spawn during which snapshot broadcasts
+ *  are forced ON regardless of sector idle state. 300 ticks = 5 s at
+ *  60 Hz.
+ *
+ *  Why: a player who joins a quiet sector (initial join, sector
+ *  transit, reconnect) spawns stationary. With no motion the idle
+ *  tracker never fires, so after `IDLE_THRESHOLD_TICKS` the broadcast
+ *  loop short-circuits — and the freshly-joined client NEVER receives
+ *  a snapshot to reconcile its prediction world against the real
+ *  spawn pose. It free-runs its (stale, post-transit) prediction,
+ *  renders the ship at the wrong place, and the moment the player
+ *  moves the sector un-idles, the first snapshot lands, and the
+ *  reconciler snaps the ship hundreds of units (the user-reported
+ *  "warp in → stay still → move → teleport" bug, capture
+ *  2026-05-15T20-35-04-862Z-0ibj77 showed an 803-unit correction
+ *  after a 5.25 s snapshot blackout). The grace window guarantees the
+ *  new client gets a steady snapshot stream long enough to reconcile;
+ *  once reconciled a stationary ship's prediction matches the server
+ *  so subsequent idle-suppression is harmless. 5 s also matches the
+ *  client's `joinMinimumElapsed` curtain floor. */
+const JOIN_BROADCAST_GRACE_TICKS = 300;
+
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
  *  squared exceeds this. 0.05 u/s²  → ~0.22 u/s actual speed; below
  *  that the ship is essentially drifting to a stop and idle suppression
@@ -342,6 +364,10 @@ export class SectorRoom extends Room<SectorState> {
    *  motion / projectile-in-flight signals; when isSectorIdle returns
    *  true, the snapshot broadcast block short-circuits entirely. */
   private readonly idleTracker: IdleTracker = createIdleTracker();
+  /** Server tick until which snapshot broadcasts are forced ON,
+   *  bypassing idle-suppression. Set on every player join/spawn — see
+   *  `JOIN_BROADCAST_GRACE_TICKS`. */
+  private forceBroadcastUntilTick = 0;
   private testMode = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -2157,6 +2183,11 @@ export class SectorRoom extends Room<SectorState> {
           x: liveX,
           y: liveY,
         });
+        // Reconnect-restore path: force snapshot broadcasts so the
+        // returning client reconciles its prediction before
+        // idle-suppression can kick in. See JOIN_BROADCAST_GRACE_TICKS.
+        this.forceBroadcastUntilTick =
+          Atomics.load(this.sabU32, TICK_IDX) + JOIN_BROADCAST_GRACE_TICKS;
         serverLogEvent('player_rebind', {
           playerId,
           sessionId: client.sessionId,
@@ -2438,10 +2469,29 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: spawnX, y: spawnY });
+    // Fresh-spawn path: force snapshot broadcasts for a grace window so
+    // the new client receives a steady stream to reconcile its
+    // prediction world against the spawn pose BEFORE idle-suppression
+    // short-circuits the broadcast loop. Without this, a stationary
+    // freshly-spawned ship in an otherwise-quiet sector gets zero
+    // snapshots until the player moves — then the first snapshot snaps
+    // the (stale, free-run) prediction hundreds of units. See
+    // JOIN_BROADCAST_GRACE_TICKS.
+    this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
     logger.info(
       { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromLimbo },
       'player joined',
+    );
+
+    // Broadcast the arrival to existing room occupants so their renderer
+    // fires a one-shot flash + burst ripple at the spawn point. The
+    // joiner is excluded — their own welcome / first-snapshot flow drives
+    // their local-arrival visual through different machinery.
+    this.broadcast(
+      'warp_in',
+      { type: 'warp_in', playerId, x: spawnX, y: spawnY },
+      { except: client },
     );
   }
 
@@ -3010,6 +3060,9 @@ export class SectorRoom extends Room<SectorState> {
         const c = this.clients.find((x) => x.sessionId === sessionId);
         return c ?? null;
       },
+      broadcast: (type: string, message: unknown, options?: { except?: Client | Client[] }): void => {
+        this.broadcast(type, message, options);
+      },
     };
   }
 
@@ -3359,7 +3412,16 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
     }
-    const sectorIdle = isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
+    // A freshly-joined client needs a steady snapshot stream to
+    // reconcile its prediction before idle-suppression can quiet the
+    // sector. `forceBroadcastUntilTick` is set on every join/spawn;
+    // while the current tick is inside that window the sector is
+    // treated as non-idle regardless of motion. See
+    // JOIN_BROADCAST_GRACE_TICKS for the full rationale.
+    const inJoinGrace = this.serverTick < this.forceBroadcastUntilTick;
+    const sectorIdle =
+      !inJoinGrace &&
+      isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
 
     // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
     //

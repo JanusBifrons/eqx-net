@@ -94,7 +94,7 @@ async function fetchRoster(
  * regression lock and treat this UI-driven spec as a known-flaky to
  * fix when we have more time to instrument the failure path.
  */
-test.fixme('UI happy-path: drawer → Galaxy tab → roster card → Spawn renders the new ship', async ({
+test('UI happy-path: drawer → Galaxy tab → roster card → Spawn renders the new ship', async ({
   browser,
 }) => {
   // Two spawns + drawer flow + post-swap render is two real Colyseus

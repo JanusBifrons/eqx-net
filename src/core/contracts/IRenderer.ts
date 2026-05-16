@@ -182,6 +182,11 @@ export interface RenderMirror {
   pendingDamageNumbers?: Array<{ x: number; y: number; damage: number }>;
   /** Health bar hit events this frame. Drained + cleared each frame. */
   pendingHealthBarHits?: Array<{ entityId: string; healthPct: number }>;
+  /** Remote warp events (`warp_in` / `warp_out` broadcasts from the
+   *  server) to play this frame. The renderer drains the array and
+   *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +
+   *  burst ripple for both directions. Cleared + drained each frame. */
+  pendingWarpEvents?: Array<{ x: number; y: number }>;
   /**
    * When present, the renderer draws a semi-transparent ghost at this position to
    * show the raw server snapshot position (before client-side prediction replay).
@@ -353,5 +358,61 @@ export interface IRenderer {
    * surface. This is the "render state, not a screen" model.
    */
   setWarpMode(active: boolean): void;
+  /**
+   * Anchor the warp centre to a specific point so the burst + ripple
+   * + flash emanate from there instead of screen centre. World-space
+   * anchors are re-projected each frame so the centre stays glued to
+   * the world point as the camera moves; screen-space anchors are
+   * used raw. `null` reverts to screen centre.
+   *
+   * Per-event in production: the local player's own warp anchor is
+   * set to their ship's world pose; remote-warp broadcasts (other
+   * ships leaving / arriving) carry the world coord directly.
+   */
+  setWarpCenter(center: WarpCenter | null): void;
+  /**
+   * Fire the "warp-in" companion effect — a single flash + big ripple
+   * at the supplied centre, no preceding spool/climax. Used when a
+   * remote ship arrives at OR leaves the local sector (both directions
+   * use this same direction-agnostic one-shot pulse).
+   */
+  triggerWarpIn(center: WarpCenter | null): void;
+  /**
+   * Show or hide the load curtain — an opaque overlay above the world
+   * but below the React HUD. Hides the canvas during the join +
+   * transit load periods so the player doesn't see ship-at-(0,0)
+   * ghost frames or partial mirror state. The renderer alpha-tweens
+   * between target states internally; callers just flip the bool.
+   */
+  setLoadCurtain(active: boolean): void;
   dispose(): void;
 }
+
+/**
+ * Anchor for warp filters.
+ *
+ * - `entity` — the renderer re-resolves the centre to the ship with
+ *   `entityId`'s live sprite position EVERY FRAME. The correct anchor
+ *   for ANY ship's own warp (local, remote, or bot): the effect stays
+ *   glued to the ship while it keeps moving through the multi-second
+ *   spool→climax→burst. A frozen `world` snapshot taken at spool-start
+ *   drifts away (2026-05-15 diagnostic: ~539u over a 3.6s spool — the
+ *   "did the effect where I started charging, not where I was" bug).
+ *   Not local-specific — that was the architectural smell the user
+ *   flagged. Sidesteps the game→Pixi Y flip too (the live sprite is
+ *   already correctly placed). Falls back to screen centre if the
+ *   entity has no live sprite (not spawned / despawned mid-warp).
+ * - `world` — a fixed game-space point with NO live entity to track.
+ *   Currently only remote warp-OUT broadcasts (`pendingWarpEvents`):
+ *   the ship has already despawned, so a fixed "where it left from"
+ *   point is the correct anchor. Projected each frame (camera pans).
+ * - `screen` — raw screen px, used as-is (sandbox click-to-place).
+ *
+ * Mirrored from `src/client/render/worker/protocol.ts` so the
+ * contract is self-contained and doesn't reach into a zone-specific
+ * module.
+ */
+export type WarpCenter =
+  | { kind: 'entity'; entityId: string }
+  | { kind: 'world'; worldX: number; worldY: number }
+  | { kind: 'screen'; screenX: number; screenY: number };
