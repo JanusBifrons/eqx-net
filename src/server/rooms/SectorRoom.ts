@@ -43,6 +43,7 @@ import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messag
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, ShieldEventMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { applyLayeredDamage, regenStep, type ShieldHullState } from '../../core/combat/ShieldHull.js';
+import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
 
 /** Resolve a (possibly missing) ship-kind id to the kind's max health, or
  *  null when the id is unknown. Drones use this on spawn so each kind has
@@ -99,6 +100,8 @@ import {
   rayHitsSphere,
   rayHitsConvexPolygon,
   projectileSweepCircle,
+  rayHitsShipPolygon,
+  sweptSegmentHitsShipPolygon,
   HITSCAN_DAMAGE,
   HITSCAN_RANGE,
   WEAPON_COOLDOWN_TICKS,
@@ -1294,7 +1297,7 @@ export class SectorRoom extends Room<SectorState> {
         const cx = rewound?.x ?? fallback?.x;
         const cy = rewound?.y ?? fallback?.y;
         if (cx === undefined || cy === undefined) continue;
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
+        const dist = this.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
         if (dist !== null && dist < mountHitDist) {
           mountHitDist = dist;
           mountHitId = targetId;
@@ -1490,7 +1493,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!targetShip || !targetShip.alive) continue;
         const pose = this.shipPoseCache.get(targetId);
         if (!pose) continue;
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, SHIP_COLLISION_RADIUS);
+        const dist = this.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, pose.angle);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;
           hitId = targetId;
@@ -1927,6 +1930,37 @@ export class SectorRoom extends Room<SectorState> {
     logger.info({ playerId, spawnX, spawnY }, 'player respawned');
   }
 
+  /**
+   * Player hitscan distance with the PERF GUARANTEE: the cheap
+   * bounding-circle test runs FIRST. If it misses, return null (the
+   * hull polygon is strictly inside the circle, so a circle miss is a
+   * polygon miss). If the shield is up, return the circle distance —
+   * byte-identical to the legacy single rayHitsSphere call. Only when
+   * the circle WOULD hit AND the shield is down (=== 0) do we pay for
+   * the exact hull-polygon refinement.
+   */
+  private playerHitscanDist(
+    ship: ShipState,
+    fx: number, fy: number, dx: number, dy: number, maxDist: number,
+    cx: number, cy: number, angle: number,
+  ): number | null {
+    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, SHIP_COLLISION_RADIUS);
+    if (circle === null || ship.shield > 0) return circle;
+    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionTriangles(ship.kind));
+  }
+
+  /** Projectile sweep counterpart of playerHitscanDist — same cheap-
+   *  circle-first / shield-down-refine perf profile. */
+  private playerProjectileSweep(
+    ship: ShipState,
+    fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
+    cx: number, cy: number, angle: number,
+  ): { entry: number; hitX: number; hitY: number } | null {
+    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, SHIP_COLLISION_RADIUS);
+    if (circle === null || ship.shield > 0) return circle;
+    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionTriangles(ship.kind));
+  }
+
   private advanceProjectiles(): void {
     const DT = 1 / 60;
     for (const [projId, proj] of this.liveProjectiles) {
@@ -1951,7 +1985,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!targetShip || !targetShip.alive) continue;
         const targetPose = this.shipPoseCache.get(targetId);
         if (!targetPose) continue;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, targetPose.x, targetPose.y, SHIP_COLLISION_RADIUS);
+        const sweep = this.playerProjectileSweep(targetShip, proj.x, proj.y, stepX, stepY, proj.radius, targetPose.x, targetPose.y, targetPose.angle);
         if (sweep && sweep.entry < bestEntry) {
           bestEntry = sweep.entry;
           bestTargetId = targetId;
