@@ -15,6 +15,35 @@ export interface BusEventPayloads {
     playerId: string;
     state: 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
   };
+  /** Living World — a director-owned bot was spawned into a sector
+   *  (initial placement, inter-sector arrival, or no-origin respawn).
+   *  Discrete + low-frequency; subscribers are telemetry/logging only. */
+  BOT_SPAWNED: {
+    type: 'BOT_SPAWNED';
+    botId: string;
+    sectorKey: string | null;
+    x: number;
+    y: number;
+  };
+  /** Living World — a director-owned bot left a sector via the quiet
+   *  inter-sector handoff. NOT a combat kill (that flows through
+   *  `ENTITY_DESTROYED`) nor a load-shed (`ENTITY_SHED`). */
+  BOT_DESPAWNED: {
+    type: 'BOT_DESPAWNED';
+    botId: string;
+    sectorKey: string | null;
+    reason: 'transit';
+  };
+  /** Living World — a bot began an inter-sector warp (spool start). The
+   *  spool/commit lifecycle itself rides the existing
+   *  `TRANSIT_STATE_CHANGED` (botId in the `playerId` field); this variant
+   *  additionally carries the route for population telemetry. */
+  BOT_TRANSIT_STARTED: {
+    type: 'BOT_TRANSIT_STARTED';
+    botId: string;
+    from: string;
+    to: string;
+  };
   /** Stage 2 of the network-feel roadmap. The server's physics worker
    *  resolved a collision above the impulse floor; subscribers (telemetry,
    *  network broadcast) get the post-collision velocities of both bodies

@@ -55,5 +55,22 @@ export default defineConfig({
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],
     },
+    // Coverage: dev-only v8 instrumentation over the UNIT suite (integration
+    // and e2e are excluded by `exclude` above and run separately). Added for
+    // the Architect's Master Directive — makes "coverage >= baseline" an
+    // objective, falsifiable Phase-2 gate. See MANIFEST_APPARATUS.md §3.
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      reportsDirectory: './coverage',
+      include: ['src/**/*.ts', 'src/**/*.tsx'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/*.test.tsx',
+        'src/**/*.spec.ts',
+        'src/**/*.d.ts',
+        'src/**/__fixtures__/**',
+      ],
+    },
   },
 });
