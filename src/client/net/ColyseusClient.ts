@@ -1,7 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -42,7 +42,7 @@ import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
+import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
@@ -947,6 +947,9 @@ export class ColyseusGameClient {
       this.handleDamage(evt);
     });
 
+    room.onMessage('shield', (evt: ShieldEventMessage) => {
+      this.handleShield(evt);
+    });
     room.onMessage('destroy', (evt: DestroyEvent) => {
       this.handleDestroy(evt);
     });
@@ -1292,11 +1295,38 @@ export class ColyseusGameClient {
 
   // ── Combat event handlers ────────────────────────────────────────────────
 
+  /**
+   * Discrete shield-state transition (Phase 3b). Sets the local
+   * shieldPct anchor; the HUD bar tweens between anchors via CSS. On
+   * 'restored' the local predWorld collider swaps back to the cheap
+   * circle (authoritative; client never computes the 0-cross).
+   */
+  private handleShield(evt: ShieldEventMessage): void {
+    if (evt.targetId !== this.mirror.localPlayerId) return;
+    const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
+    useUIStore.getState().setShieldPct(pct);
+    if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
+      this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
+    }
+  }
+
   private handleDamage(evt: DamageEvent): void {
     const localId = this.mirror.localPlayerId;
     if (evt.targetId === localId) {
-      const pct = Math.round((evt.newHealth / SHIP_MAX_HEALTH) * 100);
-      useUIStore.getState().setHullPct(pct);
+      // Phase 7 — use the event-provided PER-KIND maxes, not the global
+      // SHIP_MAX_HEALTH constant (the latent bug: a kind whose maxHealth
+      // != 500 rendered a wrong %). newHealth is the HULL value.
+      const hullPct = evt.hullMax > 0 ? Math.round((evt.newHealth / evt.hullMax) * 100) : 0;
+      const shPct = evt.shieldMax > 0 ? Math.round((evt.newShield / evt.shieldMax) * 100) : 0;
+      useUIStore.getState().setHullPct(hullPct);
+      useUIStore.getState().setShieldPct(shPct);
+      // Authoritative shield break -> mirror the collider swap into the
+      // local predWorld so client hit/ramming prediction matches the
+      // server. The client NEVER computes the 0-cross (reacts to the
+      // authoritative event only — no predict-flap).
+      if (evt.newShield === 0 && this.predWorld?.hasShip(localId)) {
+        this.predWorld.setHullExposed(localId, true, getShipKind(this.mirror.ships.get(localId)?.kind ?? null));
+      }
     }
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
@@ -1311,8 +1341,7 @@ export class ColyseusGameClient {
 
     // Health bar on hit — only show for targets the local player is shooting.
     if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
-      const maxHealth = SHIP_MAX_HEALTH;
-      const healthPct = Math.max(0, evt.newHealth / maxHealth);
+      const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct });
     }
 
@@ -1856,6 +1885,7 @@ export class ColyseusGameClient {
             } else if (sw.mountAngles) {
               sw.mountAngles = undefined;
             }
+            if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
           }
         }
       }
@@ -2062,6 +2092,14 @@ export class ColyseusGameClient {
           this._aiRegisteredIds.add(entityId);
         }
         this.predSwarmKeys.add(key);
+      }
+      // Phase 6 — drive the drone hull collider swap from the SINGLE
+      // authoritative shield-down field (binary packet bit; the snapshot
+      // loop keeps it consistent for in-interest drones). setHullExposed
+      // is idempotent so calling it every sync is cheap. One ownership
+      // site — no second correction path (chapter-2 rule).
+      if (entry.kind === 1) {
+        this.predWorld.setHullExposed(key, entry.shieldDown ?? false, getShipKind(entry.shipKind ?? null));
       }
       // Capture pre-snap pose for drones so we can drive the render lerp
       // offset (see `_droneRenderOffsets`). Only meaningful when the body

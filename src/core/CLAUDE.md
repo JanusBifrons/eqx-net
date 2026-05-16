@@ -95,6 +95,8 @@ The worker posts three discrete message types to the main thread:
 
 Adding a fourth variant: extend the worker's `parentPort!.postMessage` site, the SectorRoom message handler's discriminator (`msg.type`), and update this list. The main→worker direction has its own discriminated union (`WorkerCommand`); the reverse direction is informally typed because the message handler does explicit type narrowing on receive.
 
+**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE`, `AI_INTENT`, `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`. `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
+
 ## WeaponMountController contract (Phase 4, 2026-05-11)
 
 Pure module at [src/core/ai/WeaponMountController.ts](ai/WeaponMountController.ts) — zero zone awareness, zero I/O, zero allocation in the hot path. Same inputs ⇒ same outputs on server and client (the foundation of mount-angle lockstep).
@@ -185,3 +187,23 @@ flag — is recorded in [docs/architecture/living-world.md](../../docs/architect
 - Anything that draws pixels or plays sound.
 - Anything that calls React or MUI.
 - Anything that depends on `performance.now()` vs `process.hrtime()` — abstract time via an injected clock.
+
+## Shield/Hull collider model (2026-05-16)
+
+- `src/core/combat/ShieldHull.ts` is **SERVER-AUTHORITY-ONLY** — unlike
+  the shared `HostileDroneBehaviour` brain, the client must NEVER run
+  its damage/regen functions (predicting the 0-cross flaps the collider
+  every RTT). It lives in core only for testability; a banner says so.
+- `src/core/geometry/triangulate.ts` ear-clips ship polygons
+  deterministically (`+ - * /` + cross-sign only, fixed ear order →
+  bit-identical Node↔Chromium). Per-kind triangles precomputed once at
+  module load — never per-tick/per-break.
+- `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
+  is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
+  FromColliders()` IS called after every collider change and is
+  REQUIRED + safe (it folds in the additional props; "FromColliders" is
+  a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
+  geometry lags one `world.step()` for queries — never `updateScene-
+  Queries()` (diverges from client predWorld).
+- Full internals + the feel-test-lockstep env-noise caveat:
+  [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).

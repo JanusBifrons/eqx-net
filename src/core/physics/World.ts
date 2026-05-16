@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
+import { shipCollisionTriangles } from '../geometry/triangulate.js';
 import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShape.js';
 import {
   DEFAULT_SHIP_KIND,
@@ -8,6 +9,27 @@ import {
 } from '../../shared-types/shipKinds.js';
 
 const FIXED_DT = 1 / 60;
+
+/**
+ * Shared config for EVERY ship/drone collider (the cheap ball OR each hull
+ * polygon triangle). Density is 0 on all of them: the body's mass + inertia
+ * come entirely from setAdditionalMassProperties (pinned once in spawnShip
+ * to the legacy disc-equivalent), which is what makes the shield 0-cross
+ * collider swap dynamically transparent. Contact-force events stay enabled
+ * on every piece so ramming + the contact drain still fire with N colliders.
+ */
+function configureShipCollider(desc: RAPIER.ColliderDesc): RAPIER.ColliderDesc {
+  return desc
+    .setDensity(0)
+    .setRestitution(0.3)
+    .setFriction(0)
+    .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+    .setContactForceEventThreshold(10);
+}
+
+function shipBallColliderDesc(radius: number): RAPIER.ColliderDesc {
+  return configureShipCollider(RAPIER.ColliderDesc.ball(radius));
+}
 
 /**
  * Re-export of the legacy `BOOST_MULTIPLIER` constant. The authoritative value
@@ -44,6 +66,9 @@ export interface ShipInput {
 interface ShipBody {
   body: RAPIER.RigidBody;
   kind: ShipKind;
+  /** Current collider geometry: false = cheap CIRCLE (shield up), true =
+   *  exact HULL polygon compound (shield down). Owned by setHullExposed. */
+  exposed: boolean;
 }
 
 export class PhysicsWorld {
@@ -113,22 +138,25 @@ export class PhysicsWorld {
       .setLinearDamping(kind.linearDamping)
       .setAngularDamping(kind.angularDamping);
     const body = this.world.createRigidBody(bodyDesc);
-    // Density set so mass ≈ 1 unit regardless of radius — keeps thrustImpulse
-    // tunings comparable across kinds.
-    const density = 1 / (Math.PI * kind.radius * kind.radius);
-    const collider = RAPIER.ColliderDesc.ball(kind.radius)
-      .setRestitution(0.3)
-      .setFriction(0)
-      .setDensity(density)
-      // Stage 2: emit contact-force events when this collider participates in
-      // a contact above the engine-level threshold. The worker drains the
-      // event queue each tick and posts CONTACT messages to the main thread.
-      // Threshold here is intentionally low; the drainContacts function
-      // applies a tighter floor.
-      .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-      .setContactForceEventThreshold(10);
-    this.world.createCollider(collider, body);
-    this.bodies.set(id, { body, kind });
+    // Mass + inertia are pinned ONCE to the legacy disc-equivalent so the
+    // shield 0-cross collider swap (setHullExposed) is DYNAMICALLY
+    // TRANSPARENT: a uniform ball(r) at density 1/(pi r^2) has mass 1 and
+    // angular inertia 0.5*m*r^2. Every ship collider is ZERO-density, so the
+    // body's mass/inertia are exactly these additional mass-props no matter
+    // which collider shape is mounted.
+    //
+    // Rapier folds total mass = collider-contributions + additional-props
+    // only at the next world.step() (per @dimforge/rapier2d-compat
+    // rigid_body.d.ts:377/395). We MUST recompute right here so the pinned
+    // mass is live before the first step (otherwise a pre-step applyImpulse
+    // sees inverse-mass 0 and is silently dropped). recomputeMassProperties-
+    // FromColliders is SAFE and REQUIRED here precisely because it recomputes
+    // the TOTAL (zero colliders + the stored additional = mass 1, I = 0.5 r^2)
+    // -- "FromColliders" is a misnomer; it includes the additional props.
+    this.world.createCollider(shipBallColliderDesc(kind.radius), body);
+    body.setAdditionalMassProperties(1, { x: 0, y: 0 }, 0.5 * kind.radius * kind.radius, true);
+    body.recomputeMassPropertiesFromColliders();
+    this.bodies.set(id, { body, kind, exposed: false });
     this.handleToId.set(body.handle, id);
   }
 
@@ -170,9 +198,15 @@ export class PhysicsWorld {
         collider.setRestitution(0.8).setFriction(0).setDensity(density);
       }
     }
+    const isBall = !(vertices && vertices.length >= 3);
     if (!collider) {
-      const density = mass / (Math.PI * radius * radius);
-      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
+      // Drone / plain-obstacle ball: ZERO density + a pinned additional
+      // mass (set after createCollider below) so setHullExposed\u2019s
+      // circle<->hull swap is dynamically transparent for drones, exactly
+      // like spawnShip. Mathematically identical to the legacy
+      // mass/(pi r^2) ball for any body that never swaps. Asteroids
+      // (convexHull branch) keep real area-density — they never swap.
+      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(0);
     }
     // Stage 2: enable contact-force events on obstacles too — ship-vs-asteroid
     // collisions are the dominant case the network-feel collision-event
@@ -181,9 +215,15 @@ export class PhysicsWorld {
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(10);
     this.world.createCollider(collider, body);
+    if (isBall) {
+      // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
+      // identical to what the legacy density ball produced. See spawnShip.
+      body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
+      body.recomputeMassPropertiesFromColliders();
+    }
     // Obstacles are tracked under the default kind purely so the bodies map
     // shape stays uniform; obstacle physics never reads this kind back.
-    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND) });
+    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
     this.handleToId.set(body.handle, id);
   }
 
@@ -199,7 +239,7 @@ export class PhysicsWorld {
       .setSensor(true)
       .setDensity(0.001);
     this.world.createCollider(collider, body);
-    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND) });
+    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
     this.handleToId.set(body.handle, id);
   }
 
@@ -209,6 +249,53 @@ export class PhysicsWorld {
     this.handleToId.delete(rec.body.handle);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
+  }
+
+  /**
+   * Swap a ship/drone body between its cheap CIRCLE collider (shield up)
+   * and its exact-silhouette HULL POLYGON -- a compound of zero-density
+   * triangle colliders (shield down). The body and body.handle are
+   * preserved (handleToId + the SAB slot stay valid); pose/velocity are
+   * untouched; mass/inertia are untouched (all colliders zero-density --
+   * the body's additional mass props own the dynamics). Idempotent.
+   *
+   * Discrete event (shield 0-cross), NOT per-tick, so allocating the new
+   * colliders here is fine. QUERY-PIPELINE LAG: the new geometry is only
+   * visible to castRay / contact generation on the NEXT world.step()
+   * (Rapier refreshes queries inside step() only). The <=1-tick window
+   * where a query still sees the old (larger) circle after the shield
+   * dropped is acceptable + intentional -- never paper over it with
+   * updateSceneQueries() (the client predWorld won't, so that would
+   * desync lockstep).
+   *
+   * `kind` is passed explicitly because drone body records store the
+   * DEFAULT kind (see spawnObstacle) -- the caller knows the real kind.
+   */
+  setHullExposed(id: string, exposed: boolean, kind: ShipKind): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    if (rec.exposed === exposed) return; // idempotent -- no redundant churn
+    const body = rec.body;
+    // Collect-then-remove: removeCollider mutates the body's collider list,
+    // so iterating by live index while removing would skip colliders.
+    const cols: RAPIER.Collider[] = [];
+    for (let i = 0; i < body.numColliders(); i++) cols.push(body.collider(i));
+    for (const c of cols) this.world.removeCollider(c, true);
+    if (exposed) {
+      for (const t of shipCollisionTriangles(kind.id)) {
+        this.world.createCollider(
+          configureShipCollider(RAPIER.ColliderDesc.triangle(t[0], t[1], t[2])),
+          body,
+        );
+      }
+    } else {
+      this.world.createCollider(shipBallColliderDesc(kind.radius), body);
+    }
+    // Re-fold the pinned additional mass-props now (Rapier otherwise defers
+    // to the next step). Total stays mass 1 / I 0.5r^2 -- the new colliders
+    // are zero-density and the additional props were never cleared.
+    body.recomputeMassPropertiesFromColliders();
+    rec.exposed = exposed;
   }
 
   /**

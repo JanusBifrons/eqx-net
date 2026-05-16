@@ -169,3 +169,50 @@ export function rayHitsConvexPolygon(
   if (tEnter > maxDist) return null;
   return tEnter;
 }
+
+/**
+ * Nearest ray-vs-ship-polygon entry: min over the precomputed hull
+ * triangles of `rayHitsConvexPolygon`. Each triangle is a CCW convex
+ * polygon (>=3 verts) so the existing slab-clip applies unchanged. Used
+ * by the server hitscan path ONLY when the target shield is down — the
+ * cheap bounding-circle reject runs first (see SectorRoom).
+ */
+export function rayHitsShipPolygon(
+  fromX: number, fromY: number,
+  dirX: number, dirY: number,
+  maxDist: number,
+  cx: number, cy: number, angle: number,
+  triangles: ReadonlyArray<ReadonlyArray<Vec2>>,
+): number | null {
+  let best: number | null = null;
+  for (const tri of triangles) {
+    const d = rayHitsConvexPolygon(fromX, fromY, dirX, dirY, maxDist, cx, cy, angle, tri);
+    if (d !== null && (best === null || d < best)) best = d;
+  }
+  return best;
+}
+
+/**
+ * Swept one-tick projectile step vs the ship hull polygon. Mirrors
+ * `projectileSweepCircle`\u2019s return shape (entry distance + hit point,
+ * negative entry clamped to 0) so the caller\u2019s best-entry logic is
+ * unchanged. The projectile RADIUS is intentionally ignored (the cheap
+ * circle broadphase already used projRadius+shipRadius; refining to the
+ * tighter bare-hull polygon is the intended shield-down behaviour — the
+ * rim band between hull and circle is a deliberate miss).
+ */
+export function sweptSegmentHitsShipPolygon(
+  fromX: number, fromY: number,
+  stepX: number, stepY: number,
+  cx: number, cy: number, angle: number,
+  triangles: ReadonlyArray<ReadonlyArray<Vec2>>,
+): { entry: number; hitX: number; hitY: number } | null {
+  const segLen = Math.hypot(stepX, stepY);
+  if (segLen < 1e-6) return null;
+  const dirX = stepX / segLen;
+  const dirY = stepY / segLen;
+  const d = rayHitsShipPolygon(fromX, fromY, dirX, dirY, segLen, cx, cy, angle, triangles);
+  if (d === null) return null;
+  const t = d > 0 ? d : 0;
+  return { entry: t, hitX: fromX + dirX * t, hitY: fromY + dirY * t };
+}

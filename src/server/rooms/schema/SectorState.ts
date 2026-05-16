@@ -39,6 +39,17 @@ export class ShipState extends Schema {
    *  snapshot-filter (skip lingering hulls until Phase 6b enables them)
    *  and the eventual Phase 6c drone-retargeting filter. */
   @type('boolean') isActive: boolean = true;
+
+  // -- Shield (2026-05-16, plan: clever-wombat) --------------------------
+  // PLAIN instance fields, intentionally NOT @type-decorated: the
+  // authoritative shield value reaches clients via discrete DamageEvent /
+  // SHIELD_* bus broadcasts, NEVER the Colyseus diff (locked design
+  // decision — Halo regen would otherwise stream a per-tick float on
+  // every ship). Living on ShipState means they die with the ship, so no
+  // separate map + cleanup path is needed. shield === 0 <=> hull exposed
+  // (polygon collision). Seeded to kind.shieldMax on spawn/respawn.
+  shield = 0;
+  shieldLastDamageTick = 0;
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the

@@ -12,7 +12,7 @@
  * Per-entity record (33 bytes — v3):
  *   [+0]  u16  entityId      (dense 0..65535)
  *   [+2]  u8   kind          (0=asteroid, 1=drone)
- *   [+3]  u8   recordFlags   (bit 0 = SLEEPING)
+ *   [+3]  u8   recordFlags   (bit 0 = SLEEPING, bit 1 = SHIELD_DOWN)
  *   [+4]  f32  x
  *   [+8]  f32  y
  *   [+12] f32  vx
@@ -53,6 +53,10 @@ export const SWARM_FLAG_FULL = 1 << 0;
 export const SWARM_FLAG_DECIMATED = 1 << 1;
 
 export const SWARM_RECORD_FLAG_SLEEPING = 1 << 0;
+/** Phase: shield — set while a drone's shield is at 0 (hull exposed).
+ *  Spare bit in the existing recordFlags byte: NO stride change, NO
+ *  SWARM_WIRE_VERSION bump. */
+export const SWARM_RECORD_FLAG_SHIELD_DOWN = 1 << 1;
 
 export const SWARM_KIND_ASTEROID = 0;
 export const SWARM_KIND_DRONE = 1;

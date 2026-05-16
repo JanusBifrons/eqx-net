@@ -39,6 +39,7 @@ import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
+import { ShieldHullBar } from './components/ShieldHullBar';
 import { MetaLandingScreen } from './components/MetaLandingScreen';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
@@ -486,6 +487,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           // Expose combat state for E2E assertions.
           const uiState = useUIStore.getState();
           el.dataset['hullPct'] = String(uiState.hullPct);
+          el.dataset['shieldPct'] = String(uiState.shieldPct);
           el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
           // Phase 6 — TiDi observables for the swarm-tidi / tidi-overlay E2E specs.
           el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
@@ -770,6 +772,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         }}
       />
       <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
+      <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />

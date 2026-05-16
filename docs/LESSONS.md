@@ -1304,6 +1304,60 @@ Fix (G3, Option A): the burst now fires from exactly ONE site — the arrival re
 2. **A design decision taken via a question is still a hypothesis until the device confirms it.** Option B was an explicit user choice — but made from a verbal description, not the running build. Treat pre-implementation design picks the same as code-read hypotheses: not done until on-device. Re-surfacing the choice with the on-device evidence (B falsified → A) was correct, not churn.
 3. **"No code change needed" is a claim that needs a test too.** The G1/G2 locks asserted call *ordering*; none asserted "exactly one burst per transit", which is why the wrong-but-passing state shipped — the classic Invariant-#13 "locked the wrong assertion / level" trap. The new policy lock closes it.
 
+---
+
+## 2026-05-16 - Shield/Hull (Phases 1-9) - five lessons
+
+Commits: the `feat(shield)` Phase 1-9 series (plan
+`.claude/plans/i-want-you-to-clever-wombat.md`).
+
+1. **A 6 s real-time AI-sim E2E is a host-load sensor, not just a code
+   sensor.** `feel-test-lockstep.spec.ts` swung `swarmSnapP50` <15 -> 47.8
+   on IDENTICAL code across runs in a long heavily-loaded session. The
+   move that broke the hypothesis loop: stash the WIP, run the canary on
+   the committed PRE-feature HEAD in the SAME environment. Baseline failed
+   it WORSE (`swarmAngvelP99` 1.54 vs the feature's 0.62) -> the failure
+   was GC/scheduling noise, not the feature. Before chasing a timing-E2E
+   "regression": measure the baseline in the same env. Read these specs on
+   a quiet host/CI. Position-`p50` is the load-bearing lockstep signal;
+   the angvel/angle `p99` TAIL legitimately rises during the bounded ~RTT
+   shield-break transient (authoritative discrete collider state + client
+   prediction is corrected by the existing collision_resolved/snapshot
+   channels - "measure it", not "must stay under the pre-feature bound").
+
+2. **Rapier mass is ADDITIVE and `recomputeMassPropertiesFromColliders`
+   is a misnomer.** Total = sum(collider density contributions) +
+   additional-mass-props. For a dynamically-transparent collider swap:
+   ALL colliders density 0 + `setAdditionalMassProperties` once. The
+   pre-implementation caution "never call recompute (zero-density => zero
+   mass)" was INVERTED by `@dimforge/rapier2d-compat` rigid_body.d.ts
+   377/395: recompute folds in the stored additional props and is
+   REQUIRED (Rapier otherwise defers the total to the next step, so a
+   pre-step applyImpulse sees inverse-mass 0). The d.ts is authoritative
+   over a name-based hypothesis.
+
+3. **A compound (N-collider) body multiplies contact-force events.** One
+   ram of a shield-down hull = up to N sub-events sharing {aId,bId}. Sum
+   per unordered pair per tick BEFORE floor/damage/broadcast or damage
+   N-multiplies (orientation-dependent) AND a hard ram can fall under the
+   force floor split across triangles. Aggregate-then-decide.
+
+4. **`src/core` location does not imply symmetric (client+server) use.**
+   `ShieldHull.ts` lives in core for testability but is
+   SERVER-AUTHORITY-ONLY (unlike the shared AI brain): the client
+   predicting the shield 0-cross would flap the collider every RTT. Code
+   a banner + CLAUDE.md note when an in-core module is intentionally
+   asymmetric, or a future contributor "shares it like the AI".
+
+5. **One ownership site per predicted state surface (chapter-2 again).**
+   The drone collider swap: a snapshot-anchored-channel variant was
+   prototyped to "align with the pose anchor" and REVERTED - it created a
+   spawn-gap (body spawned by the binary path, gated out of both
+   channels) that regressed position p50. The correct design is the
+   single idempotent binary-driven site; the snapshot only keeps the
+   mirror field consistent. Don't add a second correction path even to
+   "fix" alignment - make the one path correct.
+
 ## 2026-05-16 — Living World — "make the bots hunt" was a lockstep trap; the fix was to add NO behaviour
 
 The natural implementation of "25 bots proactively chase players" is a new `HostileDroneBehaviour` mode (a `proactive` branch that seeks the nearest player without being shot). That is **wrong**, and the reason is the single most load-bearing fact about this codebase's drones: **the client constructs and ticks its own `AiController` + `HostileDroneBehaviour` for every in-interest drone** (`ColyseusClient.ts`; `src/client/CLAUDE.md` "Drone prediction is reconciled") — exactly so its prediction matches the server between snapshots. A server-only behaviour change is therefore the chapter-2 dual-path divergence by construction: the client predicts "patrol", the server does "pursue", and `feel-test-lockstep.spec.ts` (`swarmSnapP50<15`) fails. The user's instinct ("I've not had issues with the bots, is that right?") was the tell — bots have *never* diverged precisely because server and client build the *identical* behaviour; the moment a feature makes them differ, the guarantee breaks.

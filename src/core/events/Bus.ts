@@ -57,6 +57,12 @@ export interface BusEventPayloads {
     impulse: number;
     tick: number;
   };
+  /** Shield 0-cross: shield was >0 and is now exactly 0 (Phase: shield).
+   *  Drives the collider->polygon swap audit + shield-shatter SFX. */
+  SHIELD_BROKEN: { type: 'SHIELD_BROKEN'; entityId: string };
+  /** Shield regenerated back above 0 after the Halo delay (Phase: shield).
+   *  Drives the collider->circle swap + shield-up SFX. */
+  SHIELD_RESTORED: { type: 'SHIELD_RESTORED'; entityId: string };
 }
 
 export type BusEventType = keyof BusEventPayloads;

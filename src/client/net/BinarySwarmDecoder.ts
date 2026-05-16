@@ -19,6 +19,7 @@ import {
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
+  SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
   SWARM_KIND_DRONE,
 } from '../../shared-types/swarmWireFormat.js';
@@ -109,6 +110,7 @@ export function decodeSwarmPacket(
     off += SWARM_RECORD_BYTES;
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
+    const shieldDown = (recFlags & SWARM_RECORD_FLAG_SHIELD_DOWN) !== 0;
     const shipKindId = kind === SWARM_KIND_DRONE ? shipKindFromIndex(shipKindByte) : undefined;
 
     let entry = swarm.get(entityId);
@@ -123,7 +125,7 @@ export function decodeSwarmPacket(
       slot.arrivalMs = nowMs; slot.serverTick = tick;
       slot.sleeping = sleeping; slot.empty = false;
       entry = {
-        x, y, vx, vy, angle, angvel, radius, kind, sleeping, lastUpdateTick: tick,
+        x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
@@ -151,6 +153,7 @@ export function decodeSwarmPacket(
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
       entry.sleeping = sleeping;
+      entry.shieldDown = shieldDown;
       entry.lastUpdateTick = tick;
 
       // Push the new pose into the ring at ringHead, then advance. This is

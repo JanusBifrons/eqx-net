@@ -221,3 +221,21 @@ Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-ch
 ## Phase 6a foundation (2026-05-13)
 
 `SnapshotMessage.states` is now keyed by `shipInstanceId` on the wire (was `playerId` pre-6a) and each entry carries `playerId` + `isActive` so the client can recover owner identity + skip lingering hulls. **The mirror, predWorld, and reconciler remain playerId-keyed internally** — `ColyseusClient.handleSnapshot` translates the wire format to a playerId-keyed local view at the top of the function (C-ii strategy). Render / HUD / radar code is unchanged. `isActive === false` entries (Phase 6b lingering hulls — not yet emitted by the server) are filtered out at the translation boundary so they're invisible to existing snapshot-apply logic until 6b chooses to surface them. The server's `state.ships` MapSchema also stays keyed by playerId in 6a; only `SnapshotMessage` and the future Phase 6b schema-rekey use shipInstanceId as the key.
+
+## Shield/Hull client (2026-05-16)
+
+- `shieldPct` is a discrete, purity-clean Zustand scalar (sibling of
+  `hullPct`). `ShieldHullBar` (top-left Slot order 2) is the tiny HUD;
+  the bar's CSS width-transition IS the locked "client tweens the
+  shield bar" — Halo regen arrives as discrete anchors (DamageEvent /
+  ShieldEventMessage), NEVER a continuous stream. No JS animation loop.
+- `handleDamage` uses the event-provided per-kind `hullMax/shieldMax`
+  — NOT the global `SHIP_MAX_HEALTH` (fixing a latent %-base bug for
+  any kind whose maxHealth ≠ 500).
+- predWorld collider swap mirrors the AUTHORITATIVE shield-down only;
+  the client never computes the 0-cross. Drones: ONE ownership site
+  (`syncSwarmIntoPredWorld`, idempotent `setHullExposed`); the snapshot
+  loop only keeps `sw.shieldDown` consistent — do NOT add a second
+  swap site (chapter-2; a snapshot-channel variant was tried + reverted
+  for a spawn-gap p50 regression — docs/LESSONS.md 2026-05-16).
+- Internals: [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).

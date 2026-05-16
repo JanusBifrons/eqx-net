@@ -103,6 +103,10 @@ export interface SwarmRenderState {
    *  colour on the renderer; absent for asteroids. Resolved from the wire's
    *  u8 catalogue index by the decoder. */
   shipKind?: string;
+  /** Phase: shield — true while this drone's shield is down (hull
+   *  exposed). Decoded from swarm recordFlags bit 1 and kept consistent
+   *  for in-interest drones by the snapshot drones[] loop. */
+  shieldDown?: boolean;
   /** True when this drone's AI behaviour currently treats the local player
    *  as a hostile target. Populated each frame by the consumer (e.g.
    *  `ColyseusGameClient.updateMirror` via `AiController.isEntityHostileToPlayer`)

@@ -2,7 +2,7 @@
  * Physics worker — runs Rapier at 60 Hz in a dedicated worker_threads thread.
  *
  * Communication contract with the main thread (SectorRoom):
- *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | CLOCK_RATE
+ *   Main → Worker  postMessage commands: SPAWN | DESPAWN | INPUT | SPAWN_OBSTACLE | AI_INTENT | CLOCK_RATE | SET_POSITION | REKEY_SHIP | SET_HULL_EXPOSED
  *   Worker → Main  postMessage events:   READY | SLEEP_TRANSITION
  *   Shared memory  SharedArrayBuffer (see sabLayout.ts) — written here under seqlock,
  *                  read by main thread between writes.
@@ -24,6 +24,7 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { PhysicsWorld } from './World.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tickInputQueue, type QueuedInput } from './inputQueue.js';
 import { drainContacts } from './contactDrain.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
@@ -82,7 +83,11 @@ interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number
  *  Used by the abandon flow so the wreck's body outlives its original
  *  playerId on subsequent rejoins. See SectorRoom.convertShipToWreck. */
 interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd;
+/** Shield 0-cross collider swap (shield/hull refactor). `kindId` is carried
+ *  in the command (server-authoritative) so the worker needs no per-id kind
+ *  map; `getShipKind` is forgiving on unknown ids. See World.setHullExposed. */
+interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -210,6 +215,12 @@ async function main(): Promise<void> {
           x: cmd.x, y: cmd.y, angle: cmd.angle,
           vx: cmd.vx, vy: cmd.vy, angvel: cmd.angvel,
         });
+        break;
+      }
+      case 'SET_HULL_EXPOSED': {
+        // Shield 0-cross collider swap. kindId is server-authoritative
+        // (carried in the command) so no per-id kind map is needed here.
+        physics.setHullExposed(cmd.id, cmd.exposed, getShipKind(cmd.kindId));
         break;
       }
     }

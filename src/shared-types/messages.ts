@@ -264,6 +264,10 @@ export interface SnapshotMessage {
   drones?: Array<{
     id: number;
     x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+    /** Phase: shield — true while this drone's shield is down. Single
+     *  channel with the binary recordFlags bit; the client applies the
+     *  collider swap from ONE site (syncSwarmIntoPredWorld). */
+    shieldDown?: boolean;
     /** Multi-mount/turret refactor (Phase 4c, 2026-05-11). Per-mount slewed
      *  angle in arc-local frame for this drone, indexed by mount-order in
      *  the ship-kind catalogue. Emitted only for in-interest drones whose
@@ -306,6 +310,14 @@ export interface DamageEvent {
   shooterId: string;
   hitX?: number;
   hitY?: number;
+  /** Shield/hull layered model (Phase: shield, plan clever-wombat). The
+   *  client uses these instead of a global SHIP_MAX_HEALTH constant.
+   *  `newHealth` remains the HULL value (hull == today's health). */
+  newShield: number;
+  shieldMax: number;
+  hullMax: number;
+  /** Which layer this hit landed on. */
+  hitLayer: 'shield' | 'hull';
 }
 
 /** Server → client (broadcast): a ship was destroyed. */
@@ -313,6 +325,24 @@ export interface DestroyEvent {
   type: 'destroy';
   targetId: string;
   shooterId: string;
+}
+
+/** Server -> client (broadcast): a DISCRETE shield-state transition NOT
+ *  carried by a `damage` event. Shield value on every hit rides
+ *  DamageEvent.newShield; the regen ramp is NEVER streamed — the client
+ *  tweens the bar between these anchors using the deterministic per-kind
+ *  regen curve (locked design: no continuous shield traffic on the wire).
+ *  phase 'restored' = shield crossed 0 -> >0 (regen began; server swapped
+ *  the collider back to the cheap circle). phase 'regen_complete' = shield
+ *  reached shieldMax (tween end-anchor). `broke` is intentionally absent:
+ *  the damage event that dropped the shield already carries newShield:0. */
+export interface ShieldEventMessage {
+  type: 'shield';
+  targetId: string;
+  shield: number;
+  shieldMax: number;
+  phase: 'restored' | 'regen_complete';
+  tick: number;
 }
 
 /** Server → client (direct): respawn confirmed — new position and server tick to reseed input clock. */

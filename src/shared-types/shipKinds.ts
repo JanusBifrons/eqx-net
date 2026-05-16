@@ -168,6 +168,22 @@ export const ShipKindSchema = z
     /** Initial (and `ShipState.maxHealth`) health value. */
     maxHealth: z.number().positive(),
 
+    // -- Shield (Halo-style outer layer, 2026-05-16) -----------------------
+    /** Full shield pool. Covers the whole hull and absorbs damage; the
+     *  final hit before it drops is FULLY absorbed (no spillover -- a 1 HP
+     *  shield eats an arbitrarily large single hit, then is 0). Shield > 0
+     *  => cheap circle collision; shield 0 => exact rendered polygon.
+     *  Transient: always (re)spawns full, never persisted (only hull
+     *  persists), so it is exempt from the catalogue-version hull-drift
+     *  clamp despite being a numeric stat. */
+    shieldMax: z.number().positive(),
+    /** Ticks of zero damage (shield OR hull) before regen begins. 60 Hz,
+     *  so 300 ~= 5 s (Halo-classic). Any hit resets the timer. */
+    shieldRegenDelayTicks: z.number().int().positive(),
+    /** Shield HP restored per tick once regen is active. Authored as
+     *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz. */
+    shieldRegenRate: z.number().positive(),
+
     // -- AI tuning (for drones spawning AS this kind) -----------------------
     ai: z
       .object({
@@ -362,6 +378,10 @@ const SCOUT: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.05,     // half-life ≈ 230 ms — quickest to bite, still drifts.
   radius: 10,
   maxHealth: 60,
+  // Glass cannon: shield equals hull, standard Halo regen.
+  shieldMax: 60,
+  shieldRegenDelayTicks: 300,
+  shieldRegenRate: 60 / 120,
   // Phase-1 agility uplift (2026-05-10): drone terminal angvel
   // = maxTorque / ANGVEL_DAMPING (1.5). To match the player's
   // `maxAngvel = 3.0` we need `maxTorque ≈ 4.5`. `turnKp` bumped from
@@ -401,6 +421,10 @@ const FIGHTER: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.025,    // half-life ≈ 460 ms — clear drift on hard turns.
   radius: 12,
   maxHealth: 100,
+  // Balanced: shield equals hull, standard Halo regen.
+  shieldMax: 100,
+  shieldRegenDelayTicks: 300,
+  shieldRegenRate: 100 / 120,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 2.0`
   // — terminal angvel = maxTorque / 1.5, so maxTorque = 3.0.
   ai: { thrust: 0.5, turnKp: 6.0, maxTorque: 3.0 },
@@ -438,6 +462,10 @@ const HEAVY: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.012,    // half-life ≈ 960 ms — slides like a tank around corners.
   radius: 16,
   maxHealth: 180,
+  // Tank: deepest shield mirrors deepest hull, standard Halo regen.
+  shieldMax: 180,
+  shieldRegenDelayTicks: 300,
+  shieldRegenRate: 180 / 120,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 1.4`.
   ai: { thrust: 0.35, turnKp: 4.0, maxTorque: 2.1 },
   shape: {
@@ -494,6 +522,10 @@ const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.04,     // half-life ≈ 280 ms — clear drift but bites.
   radius: 11,
   maxHealth: 80,
+  // Twin-cannon light: shield equals hull, standard Halo regen.
+  shieldMax: 80,
+  shieldRegenDelayTicks: 300,
+  shieldRegenRate: 80 / 120,
   // AI tuning sized to the new maxAngvel: maxTorque = maxAngvel * 1.5 = 3.75.
   ai: { thrust: 0.6, turnKp: 7.0, maxTorque: 3.75 },
   shape: {
@@ -557,6 +589,10 @@ const GUNSHIP: ShipKind = ShipKindSchema.parse({
   lateralGrip: 0.018,    // half-life ≈ 640 ms — slidy.
   radius: 14,
   maxHealth: 140,
+  // Fore-and-aft platform: shield equals hull, standard Halo regen.
+  shieldMax: 140,
+  shieldRegenDelayTicks: 300,
+  shieldRegenRate: 140 / 120,
   ai: { thrust: 0.4, turnKp: 5.0, maxTorque: 2.4 },
   shape: {
     kind: 'polygon',
@@ -644,7 +680,7 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(Object.values(
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 1;
+export const SHIP_KIND_CATALOGUE_VERSION = 2;
 
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 

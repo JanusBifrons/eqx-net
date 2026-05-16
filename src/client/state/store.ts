@@ -93,6 +93,10 @@ interface UIStore {
   connectionStatus: ConnectionStatus;
   sectorName: string;
   hullPct: number;
+  /** Local ship shield 0-100. Discrete UI scalar (purity-clean), set
+   *  from DamageEvent / ShieldEventMessage anchors; the HUD bar CSS-tweens
+   *  between anchors (locked: no continuous shield wire traffic). */
+  shieldPct: number;
   ammo: number;
   sectorAlert: string | null;
   playerId: string | null;
@@ -177,6 +181,7 @@ interface UIStore {
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
   setHullPct: (pct: number) => void;
+  setShieldPct: (pct: number) => void;
   setAmmo: (ammo: number) => void;
   setSectorAlert: (msg: string | null) => void;
   setPlayerId: (id: string) => void;
@@ -352,6 +357,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   connectionStatus: 'disconnected',
   sectorName: '',
   hullPct: 100,
+  shieldPct: 100,
   ammo: 20,
   sectorAlert: null,
   playerId: null,
@@ -395,6 +401,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
   setHullPct: (pct) => set({ hullPct: pct }),
+  setShieldPct: (pct) => set({ shieldPct: pct }),
   setAmmo: (ammo) => set({ ammo }),
   setSectorAlert: (msg) => set({ sectorAlert: msg }),
   setPlayerId: (id) => set({ playerId: id }),
