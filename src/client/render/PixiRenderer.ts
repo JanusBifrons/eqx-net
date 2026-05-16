@@ -74,6 +74,35 @@ export function shouldDetachWarpVisual(state: {
 }
 
 /**
+ * Single source of truth for WHEN the warp burst+flash fires.
+ *
+ * Post Phase-G the load curtain rises at `transit_ready` (the
+ * join-readiness re-arm flips `!gameReady` → loading=true) — BEFORE
+ * the SPOOLING→IN_TRANSIT transition. So a burst fired from
+ * `setWarpMode(false)` (the old spool-exit "climax") now ALWAYS fires
+ * under the already-raised curtain: never a visible climax, and the
+ * ~200 ms curtain-rise tween vs the fast room-swap lets it BLEED
+ * through as a leaky flash, then the 5 s minimum-display floor, then
+ * `triggerWarpIn`'s real arrival flash — a reordered double-flash with
+ * a blackout between (on-device 2026-05-16, user smoke test). The
+ * earlier theoretical "keep the climax, mask it" (Phase-G Option B)
+ * was falsified on-device: a climax that is *always* occluded is pure
+ * downside. Policy (Option A): exactly ONE warp flash per inter-sector
+ * transit — the arrival reveal (`triggerWarpIn`, `'warp-in'`). The
+ * warp-OUT (`setWarpMode(false)`, `'warp-mode-off'`) only fades the
+ * filter chain out; the spool start (`setWarpMode(true)`,
+ * `'warp-mode-on'`) ramps amplitude, no pulse.
+ *
+ * Both `PixiRenderer` `fireBurst()` call-sites defer to this (mirrors
+ * `shouldDetachWarpVisual` — the extracted, unit-tested tear-down
+ * decision). Regression-locked by `PixiRenderer.warpBurst.test.ts`.
+ */
+export type WarpBurstEvent = 'warp-in' | 'warp-mode-on' | 'warp-mode-off';
+export function warpEventFiresBurst(event: WarpBurstEvent): boolean {
+  return event === 'warp-in';
+}
+
+/**
  * Resolve the warp filter centre, in the renderer's screen-pixel
  * frame (the same frame `world.toGlobal` / `camera.screenWidth`
  * report — NO resolution rescale; see history note below).
@@ -1590,9 +1619,16 @@ export class PixiRenderer implements IRenderer {
       this.attachWarpFilters();
     } else if (this.warpFadeStartedAt === 0 && this.warpStage) {
       this.warpFadeStartedAt = performance.now();
-      // The exit moment — fire the burst+flash so the ship's despawn is
-      // hidden under a bright pulse.
-      this.fireBurst();
+      // Spool-exit: fade the filter chain out ONLY — no burst here.
+      // Post Phase-G the load curtain is already raised by this point
+      // (re-arm at `transit_ready` → !gameReady → loading=true before
+      // SPOOLING→IN_TRANSIT), so the old "climax" burst was an
+      // occluded, curtain-bleeding second flash on every inter-sector
+      // transit (on-device 2026-05-16, user smoke test). The single
+      // warp flash is the arrival reveal in `triggerWarpIn`. Gated via
+      // the `warpEventFiresBurst` policy so a future re-introduction
+      // trips `PixiRenderer.warpBurst.test.ts`.
+      if (warpEventFiresBurst('warp-mode-off')) this.fireBurst();
     }
   }
 
@@ -1617,7 +1653,10 @@ export class PixiRenderer implements IRenderer {
       this.warpStandaloneBurst = true;
       this.attachWarpFilters();
     }
-    this.fireBurst();
+    // The single visible warp flash per inter-sector transit — the
+    // arrival reveal. Always fires; routed through the policy so the
+    // burst's one legitimate trigger is the documented, locked path.
+    if (warpEventFiresBurst('warp-in')) this.fireBurst();
   }
 
   /** Internal: trigger the burst ShockwaveFilter pulse + flash overlay.

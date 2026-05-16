@@ -139,17 +139,34 @@ deliberately NOT re-armed on transit — the renderer stays live
 (GPU-init lag is an initial-join concern; `setPhase` resets 3 flags,
 `rearmJoinReadiness` resets 2). `WarpScreen` now reads `useGameReady()`
 directly (a prior local copy had drifted to 4 gates vs the canonical
-5). **This also collapses the "double arrival flash":** with
-`gameReady` re-armed false at `transit_ready`, `!gameReady` raises the
-load curtain *before* the IN_TRANSIT spool-exit `setWarpMode(false)`
-burst, masking it — so the player sees only the single arrival-reveal
-flash (the author's intended "single hand-off"). Bug A ("double flash")
-was a consequence of Bug B ("WarpScreen never re-showed on consecutive
-warps"); one root, fixed at one ownership site. See `docs/LESSONS.md`
-2026-05-16 Phase-G entry. The three warp effects + the `loading`
-derivation now live in `src/client/useWarpOrchestration.ts` (a
-behaviour-preserving extraction from `App.tsx`'s `GameSurface`, done so
-this curtain-vs-burst call-ordering invariant is unit-lockable —
+5). **Bug A ("double arrival flash") was a consequence of Bug B**, and
+its fix came in two on-device-corrected steps:
+
+- **G1/G2 (Option B — "keep the climax, mask it") — falsified
+  on-device.** Re-arming `gameReady→false` at `transit_ready` raises
+  the curtain *before* the IN_TRANSIT spool-exit `setWarpMode(false)`
+  burst, intending to hide it. On-device (2026-05-16 user smoke test)
+  this was pure downside: the climax is now *always* occluded, and the
+  ~200 ms curtain-rise tween vs the fast room-swap let it BLEED
+  through — a leaky flash "while the cover is on", then the 5 s floor,
+  then the real arrival flash: a reordered double-flash with a
+  blackout between. A theoretical "mask it" choice falsified by the
+  device.
+- **G3 (Option A — single flash, the shipped design).** The burst now
+  fires from exactly ONE site: the arrival reveal (`triggerWarpIn`).
+  `setWarpMode(false)` only fades the filter chain out — no burst.
+  Both `fireBurst()` call-sites defer to the pure `warpEventFiresBurst`
+  policy (beside `shouldDetachWarpVisual`), so `'warp-mode-off'` /
+  `'warp-mode-on'` never burst and a future re-introduction trips
+  `PixiRenderer.warpBurst.test.ts`. Net warp-out: source-side spool
+  visual → curtain up → 5 s floor hold → curtain drop + ONE arrival
+  flash.
+
+One root (the Bug-B re-arm gap), fixed at one ownership site; the
+flash policy then centralised. See `docs/LESSONS.md` 2026-05-16
+Phase-G entries. The three warp effects + the `loading` derivation
+live in `src/client/useWarpOrchestration.ts` (a behaviour-preserving
+extraction from `App.tsx`'s `GameSurface`,
 `App.warpOrchestration.test.tsx`).
 
 ## 6. GalaxyMapLayer is worker-hosted
@@ -200,6 +217,7 @@ the markers to confirm, not a license to lighten the chain blind.
 | WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
 | Single arrival flash / orchestration call-ordering (Phase G) | `src/client/App.warpOrchestration.test.tsx` |
+| Warp burst policy — only the arrival reveal bursts (Phase G3) | `src/client/render/PixiRenderer.warpBurst.test.ts` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
 ## 10. See also
