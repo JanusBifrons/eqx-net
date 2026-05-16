@@ -92,6 +92,71 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(s.respawning).toBe(0);
   }, 20_000);
 
+  // Regression lock for the warp-churn the user reported from phone
+  // smoke-testing: "it gets worse the more ships in the sector … fine
+  // until more warp in … it's pretty consistent." Diagnostic capture
+  // diag/captures/2026-05-16T19-31-00-012Z-q272do: a clean-network
+  // session (rtt 0, drift 0) whose population.ndjson showed the SAME bot
+  // IDs cycling out of and back into the player's sector on a rigid
+  // ~1.5 s cadence, with a `disconnected {code:4000}` + rejoin mid-
+  // capture. Root cause: `computeDesiredDistribution` flips from "all
+  // bots to the player's sector" to "even 7-way spread" the instant
+  // `playerCount()` reads 0, and a mobile connection flap drops it to 0
+  // for a few seconds — so the whole pack evacuates then re-funnels,
+  // each leg a periodic warp burst. The fix is `playerStickyMs`
+  // occupancy hysteresis in the director. The bug LIVES in the
+  // director's stateful tick loop reacting to a transient `playerCount`,
+  // crossing the real onLeave→playerCount→director seam — hence an
+  // integration test at this level, not a pure-math unit test (the pure
+  // `computeDesiredDistribution` is stateless and correct per-call).
+  it('does NOT evacuate the pack when the player connection briefly flaps', async () => {
+    h = await bootLivingWorldTestServer({
+      sectors: ['sol-prime', 'orion-belt'], // direct neighbours (1-hop)
+      botCount: 4,
+      seed: 3,
+    });
+    // Settle the empty-galaxy spread, then funnel everything to the
+    // player's sector and let every in-flight hop land.
+    await h.waitUntil(() => h!.director.snapshot().active === 4, 6000, 'all 4 active');
+    const room = await h.connectAs(randomUUID(), 'sol-prime', { shipKind: KIND });
+    await h.waitUntil(() => {
+      const s = h!.director.snapshot();
+      return (
+        s.perSector['sol-prime']!.bots === 4 &&
+        s.perSector['orion-belt']!.bots === 0 &&
+        s.inTransit === 0
+      );
+    }, 10_000, 'pack fully funnelled + settled in the player sector');
+
+    // Scope the assertion window to AFTER the funnel: any sol-prime
+    // departure from here on is pure churn.
+    h.events.clear();
+
+    // The mobile flap: client drops (onLeave → lingering hull,
+    // isActive=false → playerCount()===0), a few control ticks pass with
+    // the sector reading empty, then the same player reconnects. 300 ms
+    // ≈ 5 control ticks (controlIntervalMs 60) — well inside the 2000 ms
+    // harness playerStickyMs, so the fix must absorb it completely.
+    await h.disconnectClient(room);
+    await h.advance(300);
+    await h.connectAs(randomUUID(), 'sol-prime', { shipKind: KIND });
+    await h.advance(300);
+
+    // The pack must have stayed put. On pre-fix code the disconnect
+    // flips the desired distribution to an even spread and the planner
+    // streams bots sol-prime→orion-belt at maxMigrationsPerTick — so
+    // this count is ≥1 and the snapshot shows a drained sol-prime.
+    expect(
+      h.events.count({
+        tag: 'bot_transit_start',
+        where: (d) => d['from'] === 'sol-prime',
+      }),
+    ).toBe(0);
+    const s = h.director.snapshot();
+    expect(s.active).toBe(4); // no bot lost or duplicated by the flap
+    expect(s.perSector['sol-prime']!.bots).toBe(4); // pack never evacuated
+  }, 30_000);
+
   it('shed-and-pauses under load, refilling only once sheds stop', async () => {
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime'],

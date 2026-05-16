@@ -65,6 +65,17 @@ export interface LivingWorldOptions {
   respawnDelayMs: number;
   /** A just-arrived bot is not re-tasked for this long (anti-flap). */
   arrivalCooldownMs: number;
+  /** Player-occupancy hysteresis: a sector that had a player within this
+   *  window keeps attracting bots even if `playerCount()` momentarily
+   *  reads 0. A mobile client's connection flap (disconnect → reconnect)
+   *  drops the count to 0 for a few seconds; without this the desired
+   *  distribution whipsaws ("all bots to the player" ⇄ "even 7-way
+   *  spread") every control tick, mass-evacuating then mass-re-funnelling
+   *  the whole pack through the player's sector — the warp-churn the
+   *  player feels as periodic "bumps". Mirrors the `arrivalCooldownMs` /
+   *  `shedRecoveryMs` anti-flap philosophy, applied to the occupancy
+   *  axis. (diag 2026-05-16 q272do) */
+  playerStickyMs: number;
   /** Max transits started per control tick (legible warp traffic). */
   maxMigrationsPerTick: number;
   /** Once no bot has been load-shed for this long, the paused population
@@ -82,6 +93,11 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   controlIntervalMs: 1500,
   respawnDelayMs: 12_000,
   arrivalCooldownMs: 5_000,
+  // 30 s comfortably absorbs a mobile reconnect flap (the diag gap was
+  // ~5 s) with margin; a player who genuinely leaves releases the pack
+  // 30 s later, which reads as a natural "the hunters disperse" beat
+  // rather than an instant teleport-everyone scatter.
+  playerStickyMs: 30_000,
   maxMigrationsPerTick: 4,
   shedRecoveryMs: 10_000,
   initialStaggerMs: 200,
@@ -122,6 +138,10 @@ export class LivingWorldDirector {
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
+  /** sectorKey → wall-clock the director last observed a live player
+   *  there. Drives the `playerStickyMs` occupancy hysteresis. Bounded by
+   *  the fixed sector set (≤7 keys); never leaks. */
+  private readonly sectorPlayerSeenAtMs = new Map<string, number>();
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -254,8 +274,23 @@ export class LivingWorldDirector {
     }
 
     // ── 2. distribution + migrations ─────────────────────────────────────
+    // Player-occupancy hysteresis (see `playerStickyMs`): record when a
+    // sector last had a live player and treat it as occupied for the
+    // distribution while still inside the sticky window. This is what
+    // stops a mobile connection flap (playerCount → 0 for a few seconds)
+    // from whipsawing the desired distribution between "all to the
+    // player" and "even 7-way spread" — the warp-churn the player feels
+    // as periodic bumps. Step 3's hostility check still reads the LIVE
+    // count, so bots correctly stand down the moment a player truly
+    // leaves; only bot *placement* is dampened.
     const playerCounts = new Map<string, number>();
-    for (const [key, room] of this.rooms) playerCounts.set(key, room.playerCount());
+    for (const [key, room] of this.rooms) {
+      const live = room.playerCount();
+      if (live > 0) this.sectorPlayerSeenAtMs.set(key, now);
+      const lastSeen = this.sectorPlayerSeenAtMs.get(key) ?? -Infinity;
+      const sticky = now - lastSeen < this.opts.playerStickyMs;
+      playerCounts.set(key, live > 0 ? live : sticky ? 1 : 0);
+    }
 
     const current = new Map<string, string[]>();
     for (const k of this.sectorKeys) current.set(k, []);

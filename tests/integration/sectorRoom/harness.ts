@@ -329,6 +329,11 @@ export async function bootLivingWorldTestServer(opts: {
     spoolMs: 40,
     respawnDelayMs: 150,
     arrivalCooldownMs: 80,
+    // Long vs the test's deliberate connection-blip (≤ a few hundred ms)
+    // so the occupancy-hysteresis path is exercised without slowing the
+    // suite. Existing tests don't disconnect mid-funnel, so this is inert
+    // for them.
+    playerStickyMs: 2000,
     shedRecoveryMs: 200,
     initialStaggerMs: 5,
     maxMigrationsPerTick: 4,
