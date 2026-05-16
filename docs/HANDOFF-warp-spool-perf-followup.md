@@ -123,11 +123,43 @@ bandwidth is finite — Invariant #13). Also analyze the existing
 `…s3b9l8` capture. Output: a ranked attribution table. This table — not
 the hypotheses above — gates F3.
 
-**F3 — Fix only the data-indicted dominant cost** (ONE principled
-change): grid-label pool/suppress-during-spool *or* mirror-clone
-trim/delta/transferable *or* in-place mirror rebuild *or* (separately)
-the transit room-swap stall. Touch the filter chain *only* if the data
-indicts the filter GPU pass, with before/after proof.
+### F2 RESULT — 2026-05-16 — DECISIVE (CPU hypotheses refuted)
+
+Automated capture `tests/e2e/warp-spool-perf-capture.spec.ts` →
+`diag/captures/2026-05-16T09-52-00-799Z-cmilox`, F1 markers active,
+~100 frames. Analyzer (`scripts/analyze-frame-markers.mjs`) per-marker
+mean (ms): `renderer_update` 0.54 · `warp_tick` **0.04** · `grid_update`
+**0.12** · `mirror_rebuild` **0.05** · `mirror_clone` **0.15**.
+**Σ all instrumented CPU = 0.89 ms.** FRAME mean ≈ 69 ms ⇒ **residual
+(frame − Σ) ≈ 68.7 ms (98.7 %) = GPU / compositor / pipeline.**
+
+VERDICT: every CPU hypothesis is **refuted with data** — grid-label
+`Text` churn (the prior *leading* suspect) 0.12 ms; mirror
+structured-clone 0.15 ms; mirror rebuild 0.05 ms; warp filter CPU tick
+0.04 ms. The cost is **NOT CPU**; it is the GPU/compositor/pipeline
+residual. The grid/mirror theories are dead. The original "is it the
+filters?" instinct was directionally right but specifically the
+**GPU shader-fill of the fullscreen chain**, whose CPU tick we measured
+at ≈0 and whose fill cost lands in no CPU bracket.
+
+CAVEAT: headless-desktop Playwright capture — the ~69 ms ABSOLUTE is
+CDP/headless-GPU inflated, **not** the mobile number. The robust,
+portable result is the **relative** one (CPU sub-costs <1 ms vs ~70 ms
+frame ⇒ CPU exonerated on any device; DPR≈2.6 mobile = ≈7× the filter
+fill pixels). Open isolation, still automated-first: (a) on-device
+`?diag=1` + Settings→Capture Diagnostic capture (real mobile GPU —
+confirms/quantifies; the now-legitimate user-device step); (b)
+in-Playwright A/B filter-chain on vs off to prove the residual *is* the
+filter shader-fill (vs pipeline/CDP).
+
+**F3 — Fix the data-indicted cost (GPU fill, NOT CPU).** The CPU-path
+options are CLOSED by F2. Direction: reduce the fullscreen warp filter
+chain's GPU fill on high-DPR / coarse-pointer — cap the filter
+render-target `resolution` / tighten `filterArea`, fewer `ShockwaveFilter`
+layers, lower `BloomFilter` quality/kernelSize, and/or shorter spool on
+coarse-pointer — gated so desktop is unchanged. Confirm the residual IS
+the filter pass (on-device + filter-on/off A/B) BEFORE the fix. ONE
+principled change, before/after capture proof, no blind stacking.
 
 **F4 — Re-measure** (same markers/scenario). If flat, REVERT and
 re-attribute — never stack a second guess.
