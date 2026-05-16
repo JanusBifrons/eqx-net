@@ -110,6 +110,30 @@ BFS), `|Δ|≥1` hysteresis, and a `frozen` set so arrival-cooldown bots
 count toward occupancy but are never re-tasked (kills the over-migration
 flap). RNG is an injected seam (`Math.random` in prod, seeded in tests).
 
+**Occupancy hysteresis — the director damps the *input*, not the math.**
+`computeDesiredDistribution` is stateless and correct per call, but its
+players-present⇒funnel / zero-players⇒even-spread switch is a *cliff*:
+one control tick reading `playerCount()===0` flips the whole desired map
+and `planMigrations` immediately streams `maxMigrationsPerTick` bots out
+of the (now "empty") player sector. A mobile client's connection flap
+drops the count to 0 for several seconds (`onLeave` → lingering hull,
+`isActive=false`), so the pack mass-evacuates then mass-re-funnels on
+reconnect — each leg a periodic warp burst the player feels as
+consistent "bumps" that worsen with bot count. The director therefore
+records, per sector, the wall-clock it last saw a live player and feeds
+`computeDesiredDistribution` a *sticky* count: occupied if a player is
+there now **or** was within `playerStickyMs` (default 30 s). The pure
+math is unchanged; only the signal into it is debounced — the same
+anti-flap philosophy as `arrivalCooldownMs`/`shedRecoveryMs`, on the
+occupancy axis. Hostility (`markBotHostile`) still keys off the **live**
+count, so hunters stand down the moment a player genuinely leaves; only
+placement is held. Diagnosed from `diag/captures/2026-05-16…q272do`
+(clean network, rtt 0 — the churn was *not* the mobile link the first
+capture implied; the population timeline showed the same bot IDs
+cycling sol-prime↔neighbours on the rigid control cadence). Regression
+lock: `livingWorldDirector.test.ts` → "does NOT evacuate the pack when
+the player connection briefly flaps".
+
 ## Instrumentation & observability
 
 - `GET /dev/population` (NODE_ENV-gated, mirrors `/dev/limbo`): live
