@@ -1,7 +1,7 @@
 import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
-import { shouldBroadcastContact } from './contactFilter.js';
+import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -2080,50 +2080,65 @@ export class SectorRoom extends Room<SectorState> {
           // the client's `applyCollisionResolved` already silently no-ops
           // on bodies its predWorld doesn't track (drone-vs-drone events).
           // Bus emission lets persistence/telemetry subscribe.
-          for (const c of msg.contacts) {
-            // Phase 6b self-collision filter (2026-05-13). See
-            // ./contactFilter.ts for the full rationale + unit test.
-            if (!shouldBroadcastContact(c)) {
+          // Aggregate per unordered {aId,bId} pair FIRST. A hull-polygon
+          // body is a compound of N triangle colliders, so one physical
+          // ram emits up to N contact-force sub-events sharing aId/bId.
+          // Summing before floor/damage/broadcast prevents N-multiplied
+          // damage, sub-floor splitting, and one broadcast per triangle.
+          // See src/core/combat/Ramming.ts.
+          for (const p of aggregateRamming(msg.contacts)) {
+            // Phase 6b self-collision filter (aId === bId): the active +
+            // lingering hulls of one player share the playerId identity.
+            // See ./contactFilter.ts for the rationale + its unit test.
+            if (p.aId === p.bId) {
               serverLogEvent('collision_self_filtered', {
-                aId: c.aId,
+                aId: p.aId,
                 tick: msg.tick,
-                impulse: parseFloat(c.forceMagnitude.toFixed(3)),
+                impulse: parseFloat(p.force.toFixed(3)),
               });
               continue;
             }
             this.bus.emit('COLLISION_RESOLVED', {
               type: 'COLLISION_RESOLVED',
-              aId: c.aId,
-              bId: c.bId,
-              vA: { x: c.vAxPost, y: c.vAyPost },
-              vB: { x: c.vBxPost, y: c.vByPost },
-              impulse: c.forceMagnitude,
+              aId: p.aId,
+              bId: p.bId,
+              vA: p.vA,
+              vB: p.vB,
+              impulse: p.force,
               tick: msg.tick,
             });
             this.broadcast('collision_resolved', {
               type: 'collision_resolved',
-              aId: c.aId,
-              bId: c.bId,
-              vA: { x: c.vAxPost, y: c.vAyPost },
-              vB: { x: c.vBxPost, y: c.vByPost },
-              impulse: c.forceMagnitude,
+              aId: p.aId,
+              bId: p.bId,
+              vA: p.vA,
+              vB: p.vB,
+              impulse: p.force,
               tick: msg.tick,
             });
-            // Diag-stream the contact so we can correlate combat-phase
-            // correction bursts with physics-side collisions. Added
-            // 2026-05-09 to confirm/reject the hypothesis that drone-vs-
-            // player contacts are the source of the ~10–22 u drift events
-            // seen in combat captures (e.g. cap 09-54-45-849Z-8grdi1).
-            // Logged at full fidelity — typical 1-4 player rooms produce
-            // sub-100 contacts per second so the 500-entry ring buffer
-            // is fine. Only the local player's contacts are visible
-            // post-aggregation if `aId`/`bId` filtering is needed.
             serverLogEvent('collision_resolved', {
-              aId: c.aId,
-              bId: c.bId,
-              impulse: parseFloat(c.forceMagnitude.toFixed(3)),
+              aId: p.aId,
+              bId: p.bId,
+              impulse: parseFloat(p.force.toFixed(3)),
               tick: msg.tick,
             });
+            // Ramming damage (Phase 4). Symmetric: each side takes the
+            // damage; the OTHER id is the "shooter" (kill-feed +
+            // hostility attribution). applyDamage already no-ops on
+            // asteroids (immune - no swarmHealth entry) while still
+            // damaging the ship they hit, so "asteroids deal but do not
+            // take" falls out for free. Applied once per pair per tick.
+            if (p.damage > 0) {
+              serverLogEvent('ram_damage', {
+                aId: p.aId,
+                bId: p.bId,
+                force: parseFloat(p.force.toFixed(1)),
+                damage: parseFloat(p.damage.toFixed(2)),
+                tick: msg.tick,
+              });
+              this.applyDamage(p.aId, p.bId, p.damage);
+              this.applyDamage(p.bId, p.aId, p.damage);
+            }
           }
         }
       });
