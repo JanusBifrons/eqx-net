@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { SwarmSpawner, type AsteroidSpec } from './SwarmSpawner.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
+import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
@@ -133,5 +134,35 @@ describe('SwarmSpawner', () => {
     spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 32 });
     spawner.spawnDrone({ id: 'drone-x', x: 0, y: 0 });
     expect(lagCompRegistered).toEqual(['rock', 'drone-x']);
+  });
+
+  it('explicit DroneSpec.kind wins over the pickDroneKind hook (Living World carry)', () => {
+    const hookKind = SHIP_KINDS_LIST[0]!.id;
+    const forcedKind = SHIP_KINDS_LIST[1]!.id;
+    expect(forcedKind).not.toBe(hookKind); // catalogue has ≥2 distinct kinds
+    spawner = new SwarmSpawner(registry, {
+      takeSlot: () => availableSlots.pop(),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices }),
+      sabF32: f32,
+      sabU32: u32,
+      pickDroneKind: () => hookKind,
+    });
+    expect(spawner.spawnDrone({ id: 'lwbot-0', x: 0, y: 0, kind: forcedKind })).toBe(true);
+    expect(registry.get('lwbot-0')!.shipKind).toBe(forcedKind);
+  });
+
+  it('absent DroneSpec.kind falls back to the pickDroneKind hook (back-compat)', () => {
+    const hookKind = SHIP_KINDS_LIST[1]!.id;
+    spawner = new SwarmSpawner(registry, {
+      takeSlot: () => availableSlots.pop(),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices }),
+      sabF32: f32,
+      sabU32: u32,
+      pickDroneKind: () => hookKind,
+    });
+    expect(spawner.spawnDrone({ id: 'drone-legacy', x: 0, y: 0 })).toBe(true);
+    expect(registry.get('drone-legacy')!.shipKind).toBe(hookKind);
   });
 });

@@ -26,6 +26,12 @@ export interface DroneSpec {
   vy?: number;
   radius?: number;
   mass?: number;
+  /** Force a specific ship kind for this drone. Wins over the
+   *  `pickDroneKind` hook and the random fallback — used by the Living
+   *  World Director to carry a bot's kind across an inter-sector warp /
+   *  preserve it on respawn. Absent ⇒ legacy hook/random path (no
+   *  behavioural change for existing seed callers). */
+  kind?: ShipKindId;
 }
 
 export interface SpawnerHooks {
@@ -153,11 +159,12 @@ export class SwarmSpawner {
   }
 
   /** Spawn one drone. Returns true on success, false if no free slot.
-   *  Picks a random ship kind from the catalogue (or uses the configured
-   *  `pickDroneKind` hook if one was provided). The chosen kind drives the
-   *  drone's collider radius and AI tuning. */
+   *  Kind precedence: explicit `d.kind` (Living World Director) > the
+   *  configured `pickDroneKind` hook (deterministic test sequences) >
+   *  random from the catalogue. The chosen kind drives the drone's
+   *  collider radius and AI tuning. */
   spawnDrone(d: DroneSpec): boolean {
-    const kindId = this.hooks.pickDroneKind ? this.hooks.pickDroneKind() : pickRandomShipKind();
+    const kindId = d.kind ?? (this.hooks.pickDroneKind ? this.hooks.pickDroneKind() : pickRandomShipKind());
     const kind = SHIP_KINDS_LIST.find((k) => k.id === kindId) ?? SHIP_KINDS_LIST[0]!;
     // Explicit per-spawn `radius` / `mass` still wins; otherwise fall back to
     // the kind's tuning values so each kind has its own physical footprint.
