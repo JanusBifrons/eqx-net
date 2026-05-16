@@ -38,7 +38,7 @@ import {
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
@@ -2411,6 +2411,14 @@ export class ColyseusGameClient {
    * Called once per render frame by App.tsx before renderer.update().
    */
   updateMirror(): void {
+    // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
+    // Per-frame mirror rebuild + snapshot-apply is a candidate for the
+    // in-game-vs-sandbox differential (sandbox has 1 ship). Single exit
+    // point (no early `return` in this method), so a start-stamp +
+    // tail-emit is exact. GATED behind `isDiagEnabled()` so a normal
+    // session pays nothing — when off, `mirrorRebuildStart` stays -1 and
+    // the tail `logEvent` is skipped.
+    const mirrorRebuildStart = isDiagEnabled() ? performance.now() : -1;
     const localId = this.mirror.localPlayerId;
 
     // Local ship — prediction + lerp correction.
@@ -2702,6 +2710,12 @@ export class ColyseusGameClient {
           localId,
         );
       }
+    }
+
+    // F1 — close the mirror-rebuild bracket opened at method entry.
+    // Only emitted when diagnostics are enabled (see note at the top).
+    if (mirrorRebuildStart >= 0) {
+      logEvent('mirror_rebuild', { totalMs: performance.now() - mirrorRebuildStart });
     }
   }
 

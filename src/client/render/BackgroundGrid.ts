@@ -112,12 +112,50 @@ const LABEL_STYLE = new TextStyle({
   fill: 0xffffff,
 });
 
+/**
+ * Per-frame label-churn sub-costs (F1 of the warp-spool perf
+ * investigation — `docs/HANDOFF-warp-spool-perf-followup.md`). Written
+ * by `update()` every frame; `PixiRenderer` reads `lastFrameMarkers`
+ * right after calling `backgroundGrid.update()` and folds these into
+ * the `FrameMarkers` it ships to the main thread. The
+ * handoff's leading hypothesis is that this label churn (O(n²) over
+ * the padded window, create/destroy every frame while the camera pans
+ * fast during spool) is the in-game-vs-sandbox differential — but the
+ * markers, not the hypothesis, decide (Invariant #13). The
+ * `performance.now()` brackets here are sub-µs and unconditional
+ * (negligible + uniform, so the markers-off baseline is the production
+ * cost).
+ */
+export interface GridFrameMarkers {
+  /** `computeGridLabels` enumeration cost (ms). */
+  labelSpecMs: number;
+  /** New-`Text` instantiation + `addChild` loop cost (ms). */
+  textCreateMs: number;
+  /** Off-screen label `destroy()` + `labels.delete` sweep cost (ms). */
+  cleanupMs: number;
+  /** Live label `Text` count after this frame's add/sweep. */
+  labelCount: number;
+}
+
 export class BackgroundGrid {
   private readonly microLines = new Graphics();
   private readonly macroLines = new Graphics();
   private readonly labelContainer = new Container();
   private readonly labels = new Map<string, Text>();
   private readonly seen = new Set<string>();
+
+  /**
+   * F1 instrumentation — last frame's label-churn sub-costs. Mutated in
+   * place by `update()` (no per-frame allocation); read by
+   * `PixiRenderer.update()` immediately after `backgroundGrid.update()`.
+   * See `GridFrameMarkers`.
+   */
+  readonly lastFrameMarkers: GridFrameMarkers = {
+    labelSpecMs: 0,
+    textCreateMs: 0,
+    cleanupMs: 0,
+    labelCount: 0,
+  };
 
   attach(camera: Camera): void {
     camera.addChild(this.microLines);
@@ -182,7 +220,14 @@ export class BackgroundGrid {
     // on a labelled line. Still gated by zoom so 11px text stays
     // legible (and the label count stays bounded when zoomed out).
     this.seen.clear();
+    // F1 brackets — split label-spec enumeration vs Text-create vs the
+    // off-screen cleanup sweep so the analyzer can attribute the
+    // sandbox-vs-game differential. performance.now() is sub-µs +
+    // uniform; unconditional is fine (markers-off baseline = prod cost).
+    let labelSpecMs = 0;
+    let textCreateMs = 0;
     if (camera.scale.x >= LABEL_HIDE_ZOOM) {
+      const specStart = performance.now();
       const specs = computeGridLabels({
         xMin: xMinMicro,
         xMax: xMaxMicro,
@@ -191,6 +236,9 @@ export class BackgroundGrid {
         step: GRID_LABEL_STEP,
         cell: GRID_CELL_SIZE,
       });
+      labelSpecMs = performance.now() - specStart;
+
+      const createStart = performance.now();
       for (const spec of specs) {
         this.seen.add(spec.key);
         if (!this.labels.has(spec.key)) {
@@ -201,14 +249,22 @@ export class BackgroundGrid {
           this.labels.set(spec.key, text);
         }
       }
+      textCreateMs = performance.now() - createStart;
     }
 
+    const cleanupStart = performance.now();
     for (const [key, text] of this.labels) {
       if (!this.seen.has(key)) {
         text.destroy();
         this.labels.delete(key);
       }
     }
+    const cleanupMs = performance.now() - cleanupStart;
+
+    this.lastFrameMarkers.labelSpecMs = labelSpecMs;
+    this.lastFrameMarkers.textCreateMs = textCreateMs;
+    this.lastFrameMarkers.cleanupMs = cleanupMs;
+    this.lastFrameMarkers.labelCount = this.labels.size;
   }
 
   destroy(): void {

@@ -42,6 +42,15 @@ const BUCKETS: Record<string, string> = {
   // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
   longtask: 'perf',
   raf_gap: 'perf',
+  // client perf — F1 per-frame sub-cost markers for the warp-spool
+  // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
+  // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-
+  // markers.mjs` reads these from `perf.ndjson`.
+  renderer_update: 'perf',
+  warp_tick: 'perf',
+  grid_update: 'perf',
+  mirror_rebuild: 'perf',
+  mirror_clone: 'perf',
   // client corrections
   correction: 'corrections',
   // combat (client + server)

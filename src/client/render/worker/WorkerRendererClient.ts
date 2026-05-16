@@ -30,7 +30,7 @@ import type {
   WarpParams,
   WarpCenter,
 } from './protocol';
-import { logEvent } from '../../debug/ClientLogger';
+import { logEvent, isDiagEnabled } from '../../debug/ClientLogger';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
@@ -114,6 +114,13 @@ export class WorkerRendererClient implements IRenderer {
       height: this.canvas.height,
       dpr,
     }, [offscreen]);
+
+    // F1 — tell the worker once whether to emit per-frame markers.
+    // Ordered after BOOT (messages are processed FIFO) and before the
+    // first MIRROR_UPDATE, so the gate is set before any frame. Default
+    // is off; only `?diag=1` / WebDriver sessions opt in (zero cost on
+    // normal player sessions). See `docs/HANDOFF-warp-spool-perf-followup.md`.
+    this.post({ type: 'SET_DIAG_MARKERS', enabled: isDiagEnabled() });
 
     this.installEventListeners(this.canvas);
     // Resize listeners — without these, OffscreenCanvas's drawing
@@ -280,7 +287,22 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   update(mirror: RenderMirror): void {
-    this.post({ type: 'MIRROR_UPDATE', mirror });
+    // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
+    // `this.post` → `worker.postMessage` runs the structured-clone of
+    // the (KB-scale, entity-count-dependent) RenderMirror SYNCHRONOUSLY
+    // on the main thread — a candidate for the in-game-vs-sandbox
+    // differential. Bracket it + a size proxy. GATED behind
+    // `isDiagEnabled()`: `JSON.stringify(mirror)` every frame is NOT
+    // free, so it must be off in production. When off, this is a single
+    // `this.post(...)` call exactly as before — zero added cost.
+    if (isDiagEnabled()) {
+      const cloneStart = performance.now();
+      this.post({ type: 'MIRROR_UPDATE', mirror });
+      const costMs = performance.now() - cloneStart;
+      logEvent('mirror_clone', { costMs, approxBytes: JSON.stringify(mirror).length });
+    } else {
+      this.post({ type: 'MIRROR_UPDATE', mirror });
+    }
     // Per-frame drain queues: `pendingDamageNumbers` and
     // `pendingHealthBarHits` are mutated in place by the consumer
     // (`PixiRenderer.update`) in the main-thread path. In the worker
@@ -471,6 +493,23 @@ export class WorkerRendererClient implements IRenderer {
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);
         }
+        break;
+      }
+      case 'FRAME_MARKERS': {
+        // F1 — re-emit the worker's per-frame sub-costs onto the
+        // main-thread log ring (the worker has no `window.__eqxLogs`).
+        // Three tags so the analyzer + capture buckets keep them
+        // distinct. Only arrives while diagnostics are enabled (the
+        // worker gates the post), so no production-path cost here.
+        const m = msg.markers;
+        logEvent('renderer_update', { totalMs: m.rendererUpdateMs, spriteCount: m.spriteCount });
+        logEvent('warp_tick', { totalMs: m.warpTickMs, filterCount: m.filterCount });
+        logEvent('grid_update', {
+          labelSpecMs: m.gridLabelSpecMs,
+          textCreateMs: m.gridTextCreateMs,
+          cleanupMs: m.gridCleanupMs,
+          labelCount: m.gridLabelCount,
+        });
         break;
       }
       case 'OVERLAY_TAPPED': {
