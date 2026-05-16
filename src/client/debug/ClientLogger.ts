@@ -16,7 +16,19 @@
 // one-shots (`welcome`, `pixi_first_frame`, `join_chain_complete`)
 // survive until the E2E reads the log. Previously 500 — too tight on
 // CI where the test sometimes ran to ~10 s and lost the early events.
-const MAX_ENTRIES = 2000;
+const PROD_MAX_ENTRIES = 2000;
+// Diagnostic sessions (`?diag=1` / WebDriver — see `isDiagEnabled`) add
+// the F1 per-frame sub-cost markers + the F-transit `transit_mark` /
+// `transit_frame` rows on top of the steady spam (~300–600 ev/s). The
+// sparse, high-value discrete `transit_mark` rows (≈12 per warp) then
+// get evicted by the per-frame flood before the user can Capture a few
+// seconds after a warp-out — observed 2026-05-16 capture `…juj8j7`:
+// only `curtain_down` + `settled` survived; `engage` / `leave_room` /
+// `pred_reset` / `join_room` / `first_snapshot` had rotated out. A
+// larger diag-only ring retains the full engage→curtain timeline.
+// ZERO production cost: `isDiagEnabled()` is false for normal players,
+// so the cap stays 2000 and the FIFO behaviour is byte-identical.
+const DIAG_MAX_ENTRIES = 30000;
 
 export interface LogEntry {
   ts: number;
@@ -26,9 +38,18 @@ export interface LogEntry {
 
 const entries: LogEntry[] = [];
 
+// Resolved once on first `logEvent`. `isDiagEnabled()` is cached and the
+// URL/WebDriver state is fixed for the document's lifetime, so the cap
+// cannot change mid-session. Lazy (not module-init) so it is robust to
+// `logEvent` firing before `installWindowLogger()`. `isDiagEnabled` is a
+// hoisted function declaration below — safe to call from here at runtime.
+let _maxEntries = -1;
 export function logEvent(tag: string, data: Record<string, unknown>): void {
+  if (_maxEntries < 0) {
+    _maxEntries = isDiagEnabled() ? DIAG_MAX_ENTRIES : PROD_MAX_ENTRIES;
+  }
   entries.push({ ts: performance.now(), tag, data });
-  if (entries.length > MAX_ENTRIES) entries.shift();
+  if (entries.length > _maxEntries) entries.shift();
 }
 
 /**
