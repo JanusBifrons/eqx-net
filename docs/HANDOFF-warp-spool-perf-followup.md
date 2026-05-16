@@ -1,0 +1,125 @@
+# HANDOFF — warp-spool frame cost (OPEN, headline next work)
+
+Live worklog for the deferred warp performance item. Supersedes the
+"OPEN" section of `docs/HANDOFF-warp-perf-2026-05-15.md` (which is
+preserved as the as-of-end-of-session record). Branch for the work:
+**`perf/warp-spool-frame-cost`** (cut from `main` after the
+`wip/pixi-filters-warp` merge so it carries the merged warp code).
+
+> User priority: this is the **headline** post-merge defect — "works in
+> the sandbox, lags badly in game." It MUST be done **data-driven**:
+> instrument → measure → attribute → fix only what the data indicts.
+> Estimated-ms hypotheses below are to be *tested*, never acted on blind
+> (Invariant #13 + the "on-device-evidence over theory" lesson).
+
+## Symptom & evidence (verbatim)
+
+The warp filter chain is **smooth in the visual-effects sandbox** but
+**lags badly in the actual game**. Diagnostic
+`diag/captures/2026-05-15T22-08-40-272Z-s3b9l8`:
+
+- ~29 ms mean frame confined to the spool window (ts 16895–20492) —
+  exactly when the fullscreen filter chain is active on a DPR≈2.6
+  mobile GPU.
+- 4 `raf_gap`s (116–183 ms) — **all** at the transit room-swap boundary
+  (ts 20321, 20532, 20869, 25961). Transient handoff cost, not steady.
+- The capture **cannot** attribute filters-vs-labels.
+
+## The decisive clue: sandbox vs game
+
+The sandbox (`src/client/__offscreen-spike__/visual-effects-sandbox-main.ts`)
+runs the **same** OffscreenCanvas worker + the **same** filter chain and
+is smooth. So the lag is **contention with the in-game per-frame
+workload, not the shaders themselves.** What the sandbox does NOT do that
+the game does (the differential to measure):
+
+1. **BackgroundGrid label `Text` churn** — `computeGridLabels` is O(n²)
+   over the padded window; during spool the camera pans fast (ship flies
+   ~539 u) so labels create/destroy every frame. (`BackgroundGrid.ts`.)
+2. **Per-frame `RenderMirror` structured-clone** across the
+   `WorkerRendererClient → worker` postMessage boundary — scales with
+   entity count; sandbox has 1 ship. (`WorkerRendererClient.ts:282`,
+   `protocol.ts`.)
+3. **Per-frame mirror rebuild** (`ColyseusClient.updateMirror`,
+   ~`:2413`) + snapshot apply.
+4. The 4 `raf_gap`s look like a **separate** transit room-swap stall
+   (Colyseus re-subscription / new-sector entity sync), not steady spool
+   cost.
+
+UNVERIFIED hypothesis from code-reading only: `tickWarpShockwaves` is
+~1–2 ms/frame and **not** the bottleneck. **Do not lighten the filter
+chain on this hypothesis** — the markers (F2) decide.
+
+## Plan (data-driven; Invariant #13)
+
+**F1 — Instrument (the "measuring test first").** No per-frame client
+sub-cost markers exist. Add cheap, sampled/gated `performance.now()`
+markers into the existing diagnostic NDJSON sink (co-locate with the
+`raf_gap` writer): `renderer_update` (PixiRenderer.update entry→exit,
+paired with a postMessage send/recv timestamp), `grid_update` split
+`labelMs` vs `cleanupMs`, `warp_tick` (+`filterCount`), `mirror_rebuild`,
+`mirror_clone` (approx bytes + post cost). Add an analyzer (extend
+`scripts/analyze-cdp-profile.mjs` or new `scripts/analyze-frame-markers.mjs`)
+that prints per-marker mean/p50/p95 **within the spool window** and **at
+the transit boundary** separately, plus residual (frame − Σmarkers) =
+GPU/other. Verify the markers don't distort the measurement.
+
+**F2 — Reproduce in Playwright FIRST; attribute.** Automated repro is
+the first attempt — drive join→spool→arrival in a Playwright scenario
+emitting a capture; escalate *within Playwright* (device-emulation
+viewport/DPR, CDP CPU/GPU throttling, a mobile project) if desktop
+under-represents the DPR≈2.6 mobile GPU. **The user's phone / a fresh
+on-device capture is a LAST RESORT**, only after the automated path
+provably can't surface the cost, stated with evidence (their manual
+bandwidth is finite — Invariant #13). Also analyze the existing
+`…s3b9l8` capture. Output: a ranked attribution table. This table — not
+the hypotheses above — gates F3.
+
+**F3 — Fix only the data-indicted dominant cost** (ONE principled
+change): grid-label pool/suppress-during-spool *or* mirror-clone
+trim/delta/transferable *or* in-place mirror rebuild *or* (separately)
+the transit room-swap stall. Touch the filter chain *only* if the data
+indicts the filter GPU pass, with before/after proof.
+
+**F4 — Re-measure** (same markers/scenario). If flat, REVERT and
+re-attribute — never stack a second guess.
+
+**F5 — Lock + green-bar + merge.** Perf-budget regression test
+(Invariant #9/#13) asserting spool-window mean frame ≤ budget + transit
+max `raf_gap` ≤ budget, at the layer the cost lives (worker-seam ⇒
+probe-page). Full Invariant-#8 bar. Update `src/client/CLAUDE.md`
+(per-frame budget paradigm) in the same commit as the fix. `--no-ff`
+merge.
+
+## Also tracked here (carried from the warp-merge session)
+
+- **bench-in-CI**: `.github/workflows/ci.yml` does not run `pnpm bench`,
+  though Invariant #8 lists it. Add a `Bench` step after `Unit tests`,
+  before `Build`; verify deterministic on `ubuntu-latest`. **Caveat
+  found 2026-05-16:** only `spring.bench.ts` produces samples;
+  `swarm-broadcast`/`physics-tick`/`persistence-worker` report 0 samples
+  / `NaNx` — a pre-existing harness quirk that makes bench a weak gate.
+  Fix the 0-sample benches *before* wiring bench into CI, else the gate
+  is theatre.
+- **Pre-existing combat/collision E2E debt + suite scale** (separate
+  from perf, but needed context for whoever runs CI): `combat.spec.ts`
+  `:172/:246/:376` fail on `main` (warp-innocent, confirmed
+  2026-05-16); the 124-spec suite cannot finish Playwright's 6-min
+  `globalTimeout` at 1 worker. Needs its own effort: fix/quarantine the
+  dual-client flakes + shard CI (or raise globalTimeout/workers, or tag
+  `@slow`). NOT a perf item; logged so the next session has the full
+  picture.
+
+## Pointers
+
+- Warp centre resolver: `resolveWarpFilterCenter`
+  (`src/client/render/PixiRenderer.ts`, pure/tested).
+- Warp filter tick: `tickWarpShockwaves` (~`PixiRenderer.ts:1741`).
+- Grid labels: `computeGridLabels` (`BackgroundGrid.ts`).
+- Worker boundary: `WorkerRendererClient.ts:282`, `protocol.ts`,
+  `renderer.worker.ts`.
+- Mirror rebuild / snapshot apply: `ColyseusClient.ts` (`updateMirror`
+  ~`:2413`, `handleSnapshot` ~`:1373`).
+- Sandbox A/B reference: `src/client/__offscreen-spike__/visual-effects-sandbox-main.ts`.
+- Architecture: `docs/architecture/warp-visual.md`.
+- Origin record: `docs/HANDOFF-warp-perf-2026-05-15.md`.
