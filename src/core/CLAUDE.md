@@ -140,6 +140,25 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 The regression lock for this is [`tests/e2e/feel-test-lockstep.spec.ts`](../../tests/e2e/feel-test-lockstep.spec.ts) — its p50 thresholds will fail the moment a dual-correction-path bug reappears.
 
+### Corollary — Living World "hunters" reuse `markHostile`, never a new behaviour (2026-05-16)
+
+A Living World hunter bot is **just a drone made hostile to a player it
+wasn't shot by** — it runs the *unchanged* `HostileDroneBehaviour`
+`COMBAT` branch. The `LivingWorldDirector` drives the *existing*
+`markHostile`/`purgeHostility` channel (server) and the server broadcasts
+one discrete `bot_aggro` the client feeds into its own
+`_aiController.markHostile` — the exact server→client twin of the proven
+`damage`→`markHostile` mirror. **Do NOT add a `proactive` (or any new)
+`HostileDroneBehaviour` branch, and do NOT add a per-drone behaviour flag
+to the binary swarm wire.** Reason: the client constructs + ticks its own
+`HostileDroneBehaviour` for in-interest drones, so a server-only
+behaviour difference is exactly the dual-path divergence the Input
+Symmetry Rule above forbids — whereas `markHostile` already fires
+symmetrically on both sides, so hunting needs zero new lockstep surface
+and zero `SWARM_WIRE_VERSION` bump. This was a deliberate design fork
+(the rejected alternative — a `proactive` branch + a `drones[]`-slice
+flag — is recorded in [docs/architecture/living-world.md](../../docs/architecture/living-world.md)).
+
 ## Rapier `castRay` API (Phase 4 — do not look these up again)
 
 - `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
