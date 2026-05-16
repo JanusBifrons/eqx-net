@@ -1890,21 +1890,37 @@ export class ColyseusGameClient {
         }
       }
 
+      // Player-scoped replay (2026-05-16 — diag a3f5na, ~25 drones → 266 ms
+      // client stall; measured replay = O(ticksAhead × N), 48 ms at
+      // ticksAhead=48/N=500). The in-interest DRONE bodies (kind=1 →
+      // `_aiRegisteredIds`; NOT asteroids, which are permanently locked at
+      // spawn and must stay so) are frozen for the uncapped replay loop:
+      // they hold at their `droneSeed` server-authoritative anchor, the
+      // per-tick `world.step()` becomes O(player) not O(player + N), and
+      // because a frozen body cannot inertia-drift the per-replay-tick AI
+      // re-sim that used to correct that drift is now dead work — so it is
+      // dropped from the callback. The per-frame live loop (`tickPhysics`
+      // → `tickClientAi`, capped steps/frame) is the single owned forward
+      // path that advances drones from the fresh anchor; chapter-2's one-
+      // correction-path rule is intact (binary-packet setShipState stays
+      // gated by `_droneSnapshotAnchored`). Remote SHIPS are deliberately
+      // NOT frozen (few; Stage-3 `applyRemoteInputs` lockstep unchanged).
+      const freezeDroneKeys: string[] = [];
+      for (const id of this._aiRegisteredIds) freezeDroneKeys.push(`swarm-${id}`);
       this.reconciler.reconcile(
         serverState,
         snap.serverTick,
         this.inputTick,
         ackedTick,
         () => {
-          // Phase 3 (2026-05-09): drones get AI impulses on every replayed
-          // tick, identical to the input replay path. Without this, the
-          // reconciler's `predWorld.tick(1/60)` calls would inertia-drift
-          // drones for `leadTicks` ticks each snapshot — exactly the drift
-          // we're trying to eliminate.
+          // Remote-ship Stage-3 forward-prediction only — O(remote
+          // players), not the swarm. Swarm AI is intentionally absent:
+          // frozen drones can't drift, so re-ticking it here was the
+          // O(ticksAhead × N) cost with no correctness benefit.
           this.applyRemoteInputs();
-          this.tickClientAi();
         },
         droneSeed ? { drones: droneSeed } : undefined,
+        freezeDroneKeys,
       );
 
       // Compute remote ship lerp offsets.

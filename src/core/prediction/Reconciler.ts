@@ -194,6 +194,16 @@ export class Reconciler {
    *                        from that already-stale anchor, surfacing as
    *                        the per-packet ~10-15 u snap distance the
    *                        `swarm_snap_diagnostics` event captures.
+   * @param freeze          Body ids locked for the duration of the replay
+   *                        loop and released after (player-scoped replay,
+   *                        diag a3f5na). The caller passes the in-interest
+   *                        swarm keys: they hold at their `replaySeed`
+   *                        anchor through the uncapped player replay so
+   *                        per-tick `world.step()` is O(player), not
+   *                        O(player + N). Caller must also drop the swarm
+   *                        AI re-tick from `perReplayTick` (frozen bodies
+   *                        can't drift, so it is dead work). Released in a
+   *                        `finally` so a replay throw can't strand them.
    */
   reconcile(
     serverState: ShipPhysicsState,
@@ -202,6 +212,7 @@ export class Reconciler {
     ackedTick: number,
     perReplayTick?: () => void,
     replaySeed?: { drones?: ReadonlyMap<string, ShipPhysicsState> },
+    freeze?: Iterable<string>,
   ): void {
     const before = this.world.getShipState(this.playerId);
     if (!before) return;
@@ -260,16 +271,44 @@ export class Reconciler {
     // tick and land predWorld one frame in the future, producing a per-
     // snapshot backward-lerp that manifests as visible jitter.
     const replayStart = Math.max(ackedTick + 1, currentTick - BUFFER_SIZE);
-    for (let t = replayStart; t < currentTick; t++) {
-      const rec = this.buffer[t % BUFFER_SIZE];
-      if (rec && rec.tick === t) {
-        this.world.applyInput(this.playerId, rec);
+
+    // Player-scoped replay (2026-05-16 — diag a3f5na): freeze the supplied
+    // bodies (the in-interest swarm) for the duration of the replay loop.
+    // The loop is uncapped (replayStart..currentTick, up to BUFFER_SIZE),
+    // so without this each `world.tick(1/60)` integrates N swarm bodies
+    // and the caller re-ticks N drone AI brains PER replayed tick —
+    // O(ticksAhead × N), measured at 48 ms for ticksAhead=48/N=500 (≈3×
+    // the 16.67 ms frame budget; the phone "lag spike"). Frozen bodies
+    // are skipped by `world.step()`, so replay cost is O(ticksAhead) in
+    // the player alone. The drones are already anchored to their
+    // server-authoritative `serverTick` pose by `replaySeed` above and
+    // simply HOLD there through the player replay — no inertia drift, so
+    // the per-replay-tick AI re-sim that previously corrected that drift
+    // is no longer needed (the caller drops it from `perReplayTick`). The
+    // per-frame live loop advances them forward from the fresh anchor
+    // (bounded, capped steps/frame) — one owned forward path, chapter-2
+    // intact. `finally` guarantees release even if replay throws.
+    const frozen: string[] = [];
+    if (freeze) {
+      for (const id of freeze) {
+        this.world.lockBody(id);
+        frozen.push(id);
       }
-      // Stage 3 — orchestrator's chance to apply remote-ship `lastInput`
-      // before this tick advances. Bodies that don't receive input
-      // integrate with damping only (pre-Stage-3 behaviour).
-      if (perReplayTick) perReplayTick();
-      this.world.tick(1 / 60);
+    }
+    try {
+      for (let t = replayStart; t < currentTick; t++) {
+        const rec = this.buffer[t % BUFFER_SIZE];
+        if (rec && rec.tick === t) {
+          this.world.applyInput(this.playerId, rec);
+        }
+        // Stage 3 — orchestrator's chance to apply remote-ship `lastInput`
+        // before this tick advances. Bodies that don't receive input
+        // integrate with damping only (pre-Stage-3 behaviour).
+        if (perReplayTick) perReplayTick();
+        this.world.tick(1 / 60);
+      }
+    } finally {
+      for (const id of frozen) this.world.unlockBody(id);
     }
 
     const after = this.world.getShipState(this.playerId);

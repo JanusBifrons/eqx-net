@@ -437,6 +437,23 @@ export class PhysicsWorld {
   }
 
   /**
+   * Reverse {@link lockBody}: re-enable translation + rotation integration
+   * so `world.step()` simulates the body again. Used to bracket the
+   * reconciler's player-only replay loop — the swarm is frozen for the
+   * duration of the (uncapped, ticksAhead-long) replay so the per-tick
+   * `world.step()` cost stays O(player) instead of O(player + N swarm),
+   * then released so the per-frame live loop advances drones normally.
+   * Idempotent / safe on an unknown id.
+   */
+  unlockBody(id: string): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    rec.body.lockTranslations(false, false);
+    rec.body.lockRotations(false, false);
+    rec.body.wakeUp();
+  }
+
+  /**
    * Rename a body's lookup key without disturbing the underlying
    * Rapier rigid body. Used by the Phase 4 abandon flow: the wreck's
    * body must outlive its original playerId so the player can rejoin
