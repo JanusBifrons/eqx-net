@@ -52,17 +52,65 @@ chain on this hypothesis** — the markers (F2) decide.
 
 ## Plan (data-driven; Invariant #13)
 
-**F1 — Instrument (the "measuring test first").** No per-frame client
-sub-cost markers exist. Add cheap, sampled/gated `performance.now()`
-markers into the existing diagnostic NDJSON sink (co-locate with the
-`raf_gap` writer): `renderer_update` (PixiRenderer.update entry→exit,
-paired with a postMessage send/recv timestamp), `grid_update` split
-`labelMs` vs `cleanupMs`, `warp_tick` (+`filterCount`), `mirror_rebuild`,
-`mirror_clone` (approx bytes + post cost). Add an analyzer (extend
-`scripts/analyze-cdp-profile.mjs` or new `scripts/analyze-frame-markers.mjs`)
-that prints per-marker mean/p50/p95 **within the spool window** and **at
-the transit boundary** separately, plus residual (frame − Σmarkers) =
-GPU/other. Verify the markers don't distort the measurement.
+**F1 — Instrument (the "measuring test first"). DESIGN VERIFIED FROM
+CODE 2026-05-16 — turnkey; one architectural decision flagged.**
+
+*Sink* — `logEvent(tag,data)` at `src/client/debug/ClientLogger.ts:29`
+pushes `{ts:performance.now(),tag,data}` to a 2000-entry ring exposed as
+`window.__eqxLogs`; server route `src/server/routes/diagRouter.ts`
+(`POST /diag/capture`, `BUCKETS` ~L36-90) buckets by tag into
+`<capture>/<bucket>.ndjson`. **No gate** — `logEvent` is already
+unconditionally per-frame (`rafTick`/`raf_gap`); a blanket gate would
+regress E2E specs reading `window.__eqxLogs`. Markers use the same
+always-on model (capture is the opt-in via the diag route). Add the 5
+tags to `BUCKETS → 'perf'` so they land in `perf.ndjson`.
+
+*Boundary (DECISION REQUIRED before coding)* — `PixiRenderer` runs in
+the worker (`renderer.worker.ts`); no `window.__eqxLogs` there.
+`renderer_update`/`warp_tick`/`grid_update` must cross to main. Minimal
+channel = one optional `markers?` field on `RendererFeedback`
+(`src/core/contracts/IRenderer.ts:269`) piggybacking the existing
+per-frame `FEEDBACK` postMessage (no new message type; ~40 B vs the
+KB-scale mirror going the other way). **BUT `RendererFeedback`'s
+docstring + `src/client/CLAUDE.md` mandate a phase-gate review for any
+new field** (every entry expands the worker→main per-frame payload).
+Options: (a) accept the optional diag-only field, review noted; (b) a
+separate `FRAME_MARKERS` worker→main message (no contract change; +1
+`protocol.ts` variant + a worker-side enable). Choose first.
+
+*Verified anchors (✓ read 2026-05-16)* —
+`ClientLogger.ts:29` logEvent / :34 installWindowLogger;
+`protocol.ts` FeedbackMsg@333, WorkerToMainMsg@357, MirrorUpdateMsg@49;
+`IRenderer.ts` RendererFeedback@269 (closed-set, phase-gated);
+`PixiRenderer.ts` feedback field@532, update()@806, feedback-populate
+block@1331-1357, tickWarpShockwaves@1741, getFeedback@2005;
+`BackgroundGrid.ts` update()@128, computeGridLabels caller + Text-create
+loop ~186-203, cleanup/destroy loop ~206-211 (the split point);
+`ColyseusClient.ts` updateMirror()@~2413 (MAIN, direct logEvent);
+`WorkerRendererClient.ts` update()@~282 (MAIN, bracket the
+`this.post({type:'MIRROR_UPDATE',mirror})`), FEEDBACK receive handler =
+where worker markers re-emit via logEvent.
+
+*The 5 markers* — `renderer_update {totalMs,spriteCount}` (worker),
+`warp_tick {totalMs,filterCount}` (worker), `grid_update {labelSpecMs,
+textCreateMs,cleanupMs,labelCount}` (worker), `mirror_rebuild {totalMs}`
+(main, ColyseusClient), `mirror_clone {costMs,approxBytes:
+JSON.stringify(mirror).length}` (main, WorkerRendererClient). Worker
+ones collect into a per-frame object, ship via the chosen boundary,
+main re-emits each via `logEvent`.
+
+*Analyzer* — new `scripts/analyze-frame-markers.mjs` (NOT
+`analyze-cdp-profile.mjs` — that reads a `.cpuprofile`). Read a capture
+dir's `perf.ndjson` (+`raf.ndjson` for frame boundaries), filter the 5
+tags, compute mean/p50/p95/max **within the spool window** (handoff
+cites client `ts` 16895–20492) and **at the transit boundary** (raf_gaps
+ts 20321/20532/20869/25961) separately, plus residual = frame −
+Σ(markers) ⇒ GPU/other. Line shape:
+`{"source":"client","ts":<perfNow>,"tag":<tag>,"data":{...}}`.
+
+*Budget check* — `performance.now()` brackets are sub-µs; confirm a
+markers-off vs markers-on baseline frame-time delta is within noise
+before trusting F2 numbers.
 
 **F2 — Reproduce in Playwright FIRST; attribute.** Automated repro is
 the first attempt — drive join→spool→arrival in a Playwright scenario
