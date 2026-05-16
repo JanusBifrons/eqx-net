@@ -19,7 +19,11 @@ import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
-const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling.
+// 64 MB ceiling. Dev-only diagnostic capture: the client log ring is up
+// to 30000 entries when `?diag=1` (ClientLogger `DIAG_MAX_ENTRIES`,
+// raised so the sparse `transit_mark` rows survive a warp-out + Capture
+// delay) plus the server-events bundle, which exceeds the old 2 MB.
+const MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * Tag → bucket. Anything unmapped lands in `other`. Adding a new tag means

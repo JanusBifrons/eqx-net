@@ -36,9 +36,17 @@ app.use((_req, res, next) => {
 
 app.options('*', (_req, res) => { res.sendStatus(204); });
 
-// 2 MB body limit matches the diag/capture route's MAX_BYTES ceiling. Default
-// Express limit is 100 KB, which 413's any non-trivial diagnostic capture
-// (a 500-entry log + server events is ~150 KB+).
+// `/diag/capture` carries the full client log ring — up to 30000 entries
+// when `?diag=1` (ClientLogger `DIAG_MAX_ENTRIES`) + the server-events
+// bundle — which exceeds the 2 MB global cap. Parse THIS dev-only route
+// with a much larger limit, registered BEFORE the global parser so it
+// consumes the body first; the global `express.json()` then no-ops
+// (`req._body` is already set), so `/auth` and every other route keep
+// the safe 2 MB limit. Matches the route's own `MAX_BYTES` ceiling.
+app.use('/diag/capture', express.json({ limit: '64mb' }));
+// 2 MB body limit for all other routes. Default Express limit is 100 KB,
+// which 413's any non-trivial diagnostic capture (a 500-entry log +
+// server events is ~150 KB+).
 app.use(express.json({ limit: '2mb' }));
 app.use('/auth', authRouter);
 // Phase 8 — public route exposing the galaxy graph for the landing screen
