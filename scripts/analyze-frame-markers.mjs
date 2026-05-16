@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * F1 analyzer — attribute per-frame warp-spool cost from a diagnostic
  * capture. Companion to the F1 instrumentation in

@@ -66,6 +66,11 @@ export default [
   {
     ignores: [
       'dist/**',
+      // Agent worktrees (.claude/worktrees/<id>) are transient nested git
+      // clones incl. their dist/ build output; `eslint .` would recurse
+      // into them and flag compiled JS. Nothing under .claude is project
+      // source — never lint it.
+      '.claude/**',
       'node_modules/**',
       '.pnpm-store/**',
       'playwright-report/**',

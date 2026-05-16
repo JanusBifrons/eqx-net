@@ -57,7 +57,7 @@ export default defineConfig({
     include: [
       'tests/integration/**/*.test.ts',
     ],
-    exclude: ['**/node_modules/**', 'dist/**'],
+    exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**'],
     pool: 'threads',
     poolOptions: {
       threads: {
