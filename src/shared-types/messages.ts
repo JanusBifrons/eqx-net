@@ -323,6 +323,24 @@ export interface DestroyEvent {
   shooterId: string;
 }
 
+/** Server -> client (broadcast): a DISCRETE shield-state transition NOT
+ *  carried by a `damage` event. Shield value on every hit rides
+ *  DamageEvent.newShield; the regen ramp is NEVER streamed — the client
+ *  tweens the bar between these anchors using the deterministic per-kind
+ *  regen curve (locked design: no continuous shield traffic on the wire).
+ *  phase 'restored' = shield crossed 0 -> >0 (regen began; server swapped
+ *  the collider back to the cheap circle). phase 'regen_complete' = shield
+ *  reached shieldMax (tween end-anchor). `broke` is intentionally absent:
+ *  the damage event that dropped the shield already carries newShield:0. */
+export interface ShieldEventMessage {
+  type: 'shield';
+  targetId: string;
+  shield: number;
+  shieldMax: number;
+  phase: 'restored' | 'regen_complete';
+  tick: number;
+}
+
 /** Server → client (direct): respawn confirmed — new position and server tick to reseed input clock. */
 export interface RespawnAckMessage {
   type: 'respawn_ack';

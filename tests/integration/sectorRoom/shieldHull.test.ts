@@ -1,22 +1,21 @@
 /**
- * Phase 3a lock — server shield/hull authority through the real
- * SectorRoom.applyDamage + tickShieldRegen paths (plan: clever-wombat).
+ * Phase 3a + 3b lock — server shield/hull authority + DISCRETE shield
+ * broadcast through the real SectorRoom.applyDamage + tickShieldRegen
+ * paths (plan: clever-wombat).
  *
  * COVERS:
  *   1. A spawned ship seeds shield to kind.shieldMax (fighter = 100);
  *      hull is unchanged from today (ship.health).
- *   2. Damage < shield is fully absorbed by the shield; hull untouched;
- *      the broadcast DamageEvent carries { newShield, shieldMax, hullMax,
- *      hitLayer:'shield' } and newHealth stays the hull value.
- *   3. The FINAL hit before the shield drops is FULLY absorbed — a 70 HP
- *      shield eats a 1e9 hit, shield -> 0, hull still untouched (no
- *      spillover). A `shield_broken` diagnostic fires for the hull's
- *      shipInstanceId (the SET_HULL_EXPOSED worker hop itself is locked
- *      by the Phase 2b real-worker boundary test).
- *   4. Once shield is 0, damage goes to the hull; hitLayer:'hull'.
- *   5. After the post-damage delay the shield regenerates; `shield_restored`
- *      fires exactly ONCE on the 0-cross-up, and shield clamps at
- *      kind.shieldMax.
+ *   2. Damage < shield is fully absorbed; hull untouched; the broadcast
+ *      DamageEvent carries { newShield, shieldMax, hullMax, hitLayer }
+ *      and newHealth stays the hull value.
+ *   3. The FINAL hit before the shield drops is FULLY absorbed (1e9 hit
+ *      on a 70 shield -> shield 0, hull still untouched — no spillover).
+ *      `shield_broken` diagnostic fires for the shipInstanceId.
+ *   4. Shield down -> damage reaches the hull; hitLayer:'hull'.
+ *   5. (3b) The regen ramp is delivered as EXACTLY two discrete `shield`
+ *      messages (restored, regen_complete) — never per-tick, and nothing
+ *      at all during the post-damage delay. `shield_restored` fires once.
  *
  * applyDamage is private; accessed via a typed cast — same sanctioned
  * white-box lifecycle pattern as wreckDamage.test.ts.
@@ -94,7 +93,6 @@ describe('SectorRoom integration — shield/hull authority', () => {
       throw new Error('damage broadcast not received');
     };
 
-    // (a) shield absorbs a partial hit
     internal.applyDamage(pid, shooter, 30);
     expect(findShip(state, pid).shield).toBe(FIGHTER.shieldMax - 30); // 70
     expect(findShip(state, pid).health).toBe(hull0); // hull untouched
@@ -107,7 +105,6 @@ describe('SectorRoom integration — shield/hull authority', () => {
       newHealth: hull0,
     });
 
-    // (b) the final hit before the shield drops is FULLY absorbed
     internal.applyDamage(pid, shooter, 1_000_000_000);
     expect(findShip(state, pid).shield).toBe(0);
     expect(findShip(state, pid).health).toBe(hull0); // STILL untouched — no spillover
@@ -119,7 +116,6 @@ describe('SectorRoom integration — shield/hull authority', () => {
     );
     expect(broke.data['kindId']).toBe('fighter');
 
-    // (c) shield down — damage now reaches the hull
     internal.applyDamage(pid, shooter, 25);
     expect(findShip(state, pid).shield).toBe(0);
     expect(findShip(state, pid).health).toBe(hull0 - 25);
@@ -134,8 +130,7 @@ describe('SectorRoom integration — shield/hull authority', () => {
     internal.applyDamage(pid, randomUUID(), 1_000_000_000); // break the shield
     expect(findShip(state, pid).shield).toBe(0);
 
-    // Skip the 5 s Halo delay deterministically (white-box).
-    findShip(state, pid).shieldLastDamageTick = -100_000;
+    findShip(state, pid).shieldLastDamageTick = -100_000; // skip the 5 s delay
 
     await harness.advance(400);
     expect(findShip(state, pid).shield).toBeGreaterThan(0); // regen started
@@ -144,12 +139,43 @@ describe('SectorRoom integration — shield/hull authority', () => {
       { timeoutMs: 2000 },
     );
 
-    await harness.advance(4000); // let it ramp to full
+    await harness.advance(4000); // ramp to full
     expect(findShip(state, pid).shield).toBe(FIGHTER.shieldMax); // clamped
 
-    // The 0-cross-up logs exactly once, NOT every regen tick.
     expect(
       harness.events.count({ tag: 'shield_restored', where: (d) => d['entityId'] === shipInstanceId }),
     ).toBe(1);
+  }, 30_000);
+
+  it('3b: the regen ramp is exactly two discrete shield messages — no continuous traffic', async () => {
+    const { pid, cr, room, state } = await joinFighter();
+    const internal = room as unknown as ApplyDamageInternals;
+    const shieldMsgs: Array<Record<string, unknown>> = [];
+    cr.onMessage('shield', (e: Record<string, unknown>) => shieldMsgs.push(e));
+
+    internal.applyDamage(pid, randomUUID(), 1_000_000_000); // break
+    expect(findShip(state, pid).shield).toBe(0);
+
+    // During the post-damage delay there must be ZERO shield traffic
+    // (break is delivered via the damage event, not a shield message).
+    await harness.advance(500);
+    expect(shieldMsgs).toHaveLength(0);
+
+    // Skip the delay and let the shield fully regenerate.
+    findShip(state, pid).shieldLastDamageTick = -100_000;
+    await harness.advance(5000);
+    expect(findShip(state, pid).shield).toBe(FIGHTER.shieldMax);
+
+    // The whole 0->full ramp (~120 ticks) produced EXACTLY two messages:
+    // one 'restored' (0-cross-up) and one 'regen_complete' — never per-tick.
+    const restored = shieldMsgs.filter((m) => m['phase'] === 'restored');
+    const complete = shieldMsgs.filter((m) => m['phase'] === 'regen_complete');
+    expect(restored).toHaveLength(1);
+    expect(complete).toHaveLength(1);
+    expect(shieldMsgs).toHaveLength(2);
+    expect(restored[0]).toMatchObject({ type: 'shield', targetId: pid, shieldMax: FIGHTER.shieldMax });
+    expect(restored[0]!['shield']).toBeGreaterThan(0);
+    expect(restored[0]!['shield']).toBeLessThan(FIGHTER.shieldMax);
+    expect(complete[0]).toMatchObject({ shield: FIGHTER.shieldMax, shieldMax: FIGHTER.shieldMax });
   }, 30_000);
 });

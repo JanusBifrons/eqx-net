@@ -40,7 +40,7 @@ import {
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, ShieldEventMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { applyLayeredDamage, regenStep, type ShieldHullState } from '../../core/combat/ShieldHull.js';
 
@@ -1616,7 +1616,16 @@ export class SectorRoom extends Room<SectorState> {
         serverLogEvent('shield_restored', { entityId: ship.shipInstanceId, tick: t });
         if (ship.isActive) {
           this.postToWorker({ type: 'SET_HULL_EXPOSED', id: ship.playerId, exposed: false, kindId: ship.kind, tick: t });
+          // Discrete client anchor: regen began. The client tweens the
+          // bar from here to shieldMax over the known regen duration —
+          // the ramp itself is never streamed (locked: no continuous
+          // shield traffic). Lingering hulls' owners aren't connected,
+          // so only active player ships broadcast.
+          this.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: ship.shield, shieldMax: kind.shieldMax, phase: 'restored', tick: t } satisfies ShieldEventMessage);
         }
+      }
+      if (r.regenComplete && ship.isActive) {
+        this.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: kind.shieldMax, shieldMax: kind.shieldMax, phase: 'regen_complete', tick: t } satisfies ShieldEventMessage);
       }
     }
     for (const [id, shieldVal] of this.swarmShield) {
