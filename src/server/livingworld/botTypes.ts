@@ -1,0 +1,25 @@
+/**
+ * Living World — shared bot value types.
+ *
+ * Kept in its own tiny module (not inside the ~3.8k-line SectorRoom) so
+ * the director / transit controller can depend on the carry-state shape
+ * without importing the room's full surface, and so SectorRoom imports a
+ * narrow type rather than the other way round.
+ */
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+
+/**
+ * The state a bot carries across a server-internal inter-sector warp.
+ * Captured by `SectorRoom.despawnLivingWorldBot` (SAB pose + health +
+ * kind) and replayed by `spawnLivingWorldBot` in the destination room —
+ * the in-process analogue of the player Limbo payload (bots are not
+ * Colyseus clients, so they never touch Limbo / reserveSeatFor / onJoin).
+ */
+export interface BotCarry {
+  kind: ShipKindId;
+  health: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
+}
