@@ -111,3 +111,27 @@ Update this section when a threshold is set.
 - **Hand-rolled mocks for orchestrator-shaped logic**: `src/server/transit/TransitOrchestrator.test.ts` is the gold standard. `makeRoom()`, `makePlayerShipStore()`, `makeFakeClient()` factories let a test set up a Sector-room-shaped harness in ~50 lines of mock plumbing. Fast (~10 ms per case), no I/O, no IPC. Use this for any test that exercises decision logic over state — the messages-to-state-to-broadcasts pipeline doesn't need a real server.
 - **Integration tests for end-to-end snapshot routing** (Phase A1, 2026-05-13): `tests/integration/sectorRoom/harness.ts` boots a real `Server` + `SectorRoom` + `WebSocketTransport` + `colyseus.js` client in the same node process. Run via `pnpm test:integration` (separate vitest config — `vitest.integration.config.ts`). Use this whenever a behaviour spans the snapshot wire format, the broadcast gates (idle suppression, backpressure), or the schema-diff serialisation. The Phase 6b "lingering hull invisible" bug class is the canonical reason: the bug was in the broadcast loop's iteration, not in the room's state-mutation code. A hand-rolled mock couldn't catch it. The integration test would have.
 - **When introducing a new visible entity type** (wreck, lingering hull, future X), add an integration test in `tests/integration/sectorRoom/` that drives the full snapshot path. Don't rely on smoke tests — they are not repeatable and don't protect future PRs.
+
+## Shield/Hull + ramming (2026-05-16)
+
+- Two-layer survivability for all ships. `applyDamage` routes
+  active/lingering/drone through `ShieldHull.applyLayeredDamage`
+  (no-spillover: the final pre-drop hit is fully absorbed). Per-update
+  `tickShieldRegen` (cheap full-shield skip, no per-tick alloc). On the
+  shield 0-cross/restore: `SET_HULL_EXPOSED` worker post + bus
+  `SHIELD_BROKEN`/`SHIELD_RESTORED` + `shield_broken`/`shield_restored`
+  serverLogEvent diagnostics.
+- Shield value reaches clients on DISCRETE events only: `DamageEvent`
+  (`newShield/shieldMax/hullMax/hitLayer`) per hit + `ShieldEventMessage`
+  (`restored`/`regen_complete`). The regen ramp is NEVER streamed (no
+  Colyseus schema field; `ShipState.shield` is a plain non-@type field).
+- Drones: `SWARM_RECORD_FLAG_SHIELD_DOWN = 1<<1` (spare recordFlags bit
+  — NO stride change, NO `SWARM_WIRE_VERSION` bump) + `drones[].shieldDown`
+  on the snapshot. `SwarmEntityRecord.shieldDown` maintained event-driven.
+- Ramming (`src/core/combat/Ramming.ts`): CONTACT_BATCH aggregated per
+  unordered {aId,bId} per tick BEFORE floor/damage/broadcast (a
+  shield-down hull is N triangle colliders → N sub-events). Symmetric;
+  asteroids deal but don't take.
+- `feel-test-lockstep.spec.ts` is host-load sensitive — confirm on a
+  quiet host/CI (it fails on pre-shield HEAD too in a loaded session;
+  see docs/LESSONS.md 2026-05-16). Catalogue version bumped 1→2.

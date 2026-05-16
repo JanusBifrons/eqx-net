@@ -487,6 +487,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           // Expose combat state for E2E assertions.
           const uiState = useUIStore.getState();
           el.dataset['hullPct'] = String(uiState.hullPct);
+          el.dataset['shieldPct'] = String(uiState.shieldPct);
           el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
           // Phase 6 — TiDi observables for the swarm-tidi / tidi-overlay E2E specs.
           el.dataset['clockRate'] = uiState.clockRate.toFixed(4);

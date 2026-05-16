@@ -168,3 +168,23 @@ The regression lock for this is [`tests/e2e/feel-test-lockstep.spec.ts`](../../t
 - Anything that draws pixels or plays sound.
 - Anything that calls React or MUI.
 - Anything that depends on `performance.now()` vs `process.hrtime()` — abstract time via an injected clock.
+
+## Shield/Hull collider model (2026-05-16)
+
+- `src/core/combat/ShieldHull.ts` is **SERVER-AUTHORITY-ONLY** — unlike
+  the shared `HostileDroneBehaviour` brain, the client must NEVER run
+  its damage/regen functions (predicting the 0-cross flaps the collider
+  every RTT). It lives in core only for testability; a banner says so.
+- `src/core/geometry/triangulate.ts` ear-clips ship polygons
+  deterministically (`+ - * /` + cross-sign only, fixed ear order →
+  bit-identical Node↔Chromium). Per-kind triangles precomputed once at
+  module load — never per-tick/per-break.
+- `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
+  is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
+  FromColliders()` IS called after every collider change and is
+  REQUIRED + safe (it folds in the additional props; "FromColliders" is
+  a misnomer — see rapier2d-compat rigid_body.d.ts:377/395). The new
+  geometry lags one `world.step()` for queries — never `updateScene-
+  Queries()` (diverges from client predWorld).
+- Full internals + the feel-test-lockstep env-noise caveat:
+  [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
