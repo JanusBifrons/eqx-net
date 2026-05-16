@@ -48,6 +48,11 @@ import type { Room as ServerRoom } from 'colyseus';
 import { createServerEventsApi, type ServerEventsApi } from './serverEvents.js';
 
 import { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
+import {
+  LivingWorldDirector,
+  type LivingWorldOptions,
+} from '../../../src/server/livingworld/LivingWorldDirector.js';
+import { makeSeededRng } from '../../../src/server/livingworld/population.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import {
   setPersistence,
@@ -241,4 +246,143 @@ export async function bootSectorTestServer(opts: {
   };
 
   return harness;
+}
+
+// ── Living World multi-sector harness ─────────────────────────────────────
+
+export interface LivingWorldTestHarness {
+  port: number;
+  client: Client;
+  director: LivingWorldDirector;
+  /** Server-side SectorRoom for a galaxy sector key. */
+  getRoom(sectorKey: string): SectorRoom;
+  /** Join a specific galaxy room as a player. */
+  connectAs(
+    playerId: string,
+    sectorKey: string,
+    joinOpts?: Record<string, unknown>,
+  ): Promise<ClientRoom<SectorState>>;
+  disconnectClient(room: ClientRoom<SectorState>): Promise<void>;
+  /** Poll until `predicate()` is true (or reject after `timeoutMs`).
+   *  Outcome-gated waiting per DETERMINISM.md — never assert tick counts. */
+  waitUntil(predicate: () => boolean, timeoutMs?: number, label?: string): Promise<void>;
+  advance(ms: number): Promise<void>;
+  events: ServerEventsApi;
+  cleanup(): Promise<void>;
+}
+
+/**
+ * Boots a real multi-room galaxy (one SectorRoom + physics worker per
+ * `sectors[]` key) wired to a live `LivingWorldDirector` with a SEEDED
+ * rng + tiny timings, so the cross-room population behaviour is
+ * deterministic and fast. Closes the documented multi-sector harness gap
+ * (warpBroadcasts.test.ts:81-103). Keep `sectors` small (≤3) — each is a
+ * worker thread.
+ */
+export async function bootLivingWorldTestServer(opts: {
+  sectors: string[];
+  botCount: number;
+  seed?: number;
+  director?: Partial<LivingWorldOptions>;
+}): Promise<LivingWorldTestHarness> {
+  const sink = new CaptureSink();
+  setPersistence(sink);
+  setLimboStore(new LimboStore({}));
+  setPlayerShipStore(new PlayerShipStore({
+    generateShipId: ((): () => string => {
+      let n = 0;
+      return () => `test-ship-${++n}`;
+    })(),
+  }));
+  const events = createServerEventsApi();
+  events.clear();
+
+  const port = pickRandomPort();
+  const httpServer: HttpServer = createServer();
+  const gameServer = new Server({
+    transport: new WebSocketTransport({ server: httpServer }),
+  });
+  for (const key of opts.sectors) {
+    gameServer.define(`galaxy-${key}`, SectorRoom, {
+      sectorKey: key,
+      droneCount: 0,
+      testMode: true,
+    });
+  }
+  await gameServer.listen(port);
+
+  // Eagerly create each galaxy room (mirrors index.ts) so its physics
+  // worker is READY before the director starts spawning bots.
+  const roomsByKey = new Map<string, SectorRoom>();
+  for (const key of opts.sectors) {
+    const listing = await matchMaker.createRoom(`galaxy-${key}`, {});
+    const room = matchMaker.getLocalRoomById(listing.roomId) as unknown as SectorRoom;
+    roomsByKey.set(key, room);
+  }
+
+  const director = new LivingWorldDirector(roomsByKey, {
+    botCount: opts.botCount,
+    rng: makeSeededRng(opts.seed ?? 1),
+    // Tight defaults for fast deterministic tests; per-test override via
+    // `opts.director`.
+    controlIntervalMs: 60,
+    spoolMs: 40,
+    respawnDelayMs: 150,
+    arrivalCooldownMs: 80,
+    shedRecoveryMs: 200,
+    initialStaggerMs: 5,
+    maxMigrationsPerTick: 4,
+    ...opts.director,
+  });
+  director.start();
+
+  const client = new Client(`ws://localhost:${port}`);
+  const connectedRooms: ClientRoom<SectorState>[] = [];
+
+  return {
+    port,
+    client,
+    director,
+    getRoom(sectorKey) {
+      const r = roomsByKey.get(sectorKey);
+      if (!r) throw new Error(`no room for sector ${sectorKey}`);
+      return r;
+    },
+    async connectAs(playerId, sectorKey, joinOpts = {}) {
+      const room = await client.joinOrCreate<SectorState>(`galaxy-${sectorKey}`, {
+        playerId,
+        ...joinOpts,
+      });
+      connectedRooms.push(room);
+      return room;
+    },
+    async disconnectClient(room) {
+      try { await room.leave(); } catch { /* ignore */ }
+      const idx = connectedRooms.indexOf(room);
+      if (idx !== -1) connectedRooms.splice(idx, 1);
+    },
+    async waitUntil(predicate, timeoutMs = 6000, label = 'condition') {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      if (!predicate()) throw new Error(`waitUntil timed out: ${label}`);
+    },
+    async advance(ms) {
+      await new Promise((r) => setTimeout(r, ms));
+    },
+    events,
+    async cleanup() {
+      director.stop();
+      for (const r of [...connectedRooms]) {
+        try { await r.leave(); } catch { /* ignore */ }
+      }
+      connectedRooms.length = 0;
+      try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }
+      try { httpServer.close(); } catch { /* ignore */ }
+      setLimboStore(new LimboStore({}));
+      setPlayerShipStore(new PlayerShipStore({}));
+    },
+  };
 }

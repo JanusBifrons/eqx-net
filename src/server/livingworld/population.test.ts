@@ -189,6 +189,23 @@ describe('planMigrations', () => {
     expect(out).toHaveLength(1);
   });
 
+  it('counts frozen (arrival-cooldown) bots toward occupancy but never moves them', () => {
+    const out = planMigrations({
+      sectorKeys: KEYS,
+      current: new Map([['sol-prime', ['b1', 'b2', 'b3']]]),
+      desired: new Map([
+        ['sol-prime', 1],
+        ['orion-belt', 2],
+      ]),
+      maxPerTick: 5,
+      frozen: new Set(['b1', 'b2']), // only b3 is movable
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.botId).toBe('b3');
+    expect(out[0]!.from).toBe('sol-prime');
+    expect(out[0]!.to).toBe('orion-belt');
+  });
+
   it('does nothing when supply already matches demand (hysteresis)', () => {
     const out = planMigrations({
       sectorKeys: KEYS,

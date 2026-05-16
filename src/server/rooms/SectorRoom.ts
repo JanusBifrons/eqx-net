@@ -1732,6 +1732,14 @@ export class SectorRoom extends Room<SectorState> {
     return this.freeSlots.length > 0;
   }
 
+  /** Narrow read accessor onto this room's per-process event bus, so the
+   *  process-global LivingWorldDirector can subscribe to `ENTITY_DESTROYED`
+   *  (combat kill → respawn) / `ENTITY_SHED` (load-shed → pause) for its
+   *  bots without the room exposing its whole surface. */
+  eventBus(): Bus {
+    return this.bus;
+  }
+
   /**
    * Spawn a Living World bot into this sector. Reuses the standard swarm
    * spawn path (slot alloc, SAB prime, worker SPAWN_OBSTACLE, registry,

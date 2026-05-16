@@ -179,14 +179,22 @@ export function nextHopToward(from: string, goal: string): string | null {
 
 export interface MigrationPlanInput {
   readonly sectorKeys: readonly string[];
-  /** sectorKey → botIds physically present there and eligible to move
-   *  (NOT mid-transit, NOT in arrival cooldown). */
+  /** sectorKey → ALL bots physically present there (active in that
+   *  sector). In-transit bots are excluded entirely (they're between
+   *  rooms); arrival-cooldown bots stay here — they count toward
+   *  occupancy — and are listed in `frozen` so they're never picked to
+   *  move. */
   readonly current: ReadonlyMap<string, readonly string[]>;
   /** sectorKey → desired bot count (from `computeDesiredDistribution`). */
   readonly desired: ReadonlyMap<string, number>;
   /** Hard cap on transits started this control tick — keeps the warp
    *  traffic legible and avoids a thundering herd. */
   readonly maxPerTick: number;
+  /** Bots present-but-not-movable (arrival cooldown). They COUNT toward
+   *  their sector's occupancy (so the planner doesn't see the sector as
+   *  under-supplied and over-migrate — the flapping this guards against)
+   *  but are never selected as the bot to move. Absent ⇒ none frozen. */
+  readonly frozen?: ReadonlySet<string>;
 }
 
 export interface Migration {
@@ -202,21 +210,22 @@ export interface Migration {
  * first), pull a bot from the closest surplus sector and route it one hop
  * toward the deficit via `nextHopToward`. Bounded by `maxPerTick`; only
  * acts when |surplus|≥1 and |deficit|≥1 (the ≥1 delta is the hysteresis
- * that stops single-bot flapping when player counts jitter). Pure: callers
- * pre-filter `current` to exclude in-transit / cooldown bots.
+ * that stops single-bot flapping when player counts jitter). `frozen`
+ * bots count toward occupancy but are never moved (arrival cooldown).
+ * Pure: callers exclude in-transit bots from `current` entirely.
  */
 export function planMigrations(input: MigrationPlanInput): Migration[] {
-  const { sectorKeys, current, desired, maxPerTick } = input;
+  const { sectorKeys, current, desired, maxPerTick, frozen } = input;
   const out: Migration[] = [];
   if (maxPerTick <= 0) return out;
 
-  // Mutable working counts + per-sector movable bot queues.
+  // Occupancy counts include frozen bots; the movable pool excludes them.
   const count = new Map<string, number>();
   const pool = new Map<string, string[]>();
   for (const k of sectorKeys) {
-    const ids = [...(current.get(k) ?? [])];
-    pool.set(k, ids);
-    count.set(k, ids.length);
+    const all = current.get(k) ?? [];
+    count.set(k, all.length);
+    pool.set(k, frozen ? all.filter((id) => !frozen.has(id)) : [...all]);
   }
   const order = sectorKeys.reduce<Map<string, number>>((m, k, i) => m.set(k, i), new Map());
   const deficitOf = (k: string): number => (desired.get(k) ?? 0) - (count.get(k) ?? 0);
