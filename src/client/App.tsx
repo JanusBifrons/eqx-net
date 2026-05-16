@@ -32,6 +32,7 @@ import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
 import { useMountLog } from './debug/useMountLog';
+import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { WeaponSelector } from './components/WeaponSelector';
 import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
@@ -171,92 +172,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   }, [joinGeneration]);
 
   // ── Warp visual orchestration ─────────────────────────────────────
-  //
-  // Three orthogonal effects, each owning one decision:
-  //
-  //   1. `loadCurtain` — opaque overlay hiding the canvas during the
-  //      join + transit load periods. The "loading screen" itself.
-  //   2. `setWarpMode` — the spool→climax→burst+flash envelope. Fires
-  //      only during the source-side SPOOLING phase of inter-sector
-  //      transit; never on initial join.
-  //   3. `triggerWarpIn` — the arrival flash. Fires once at the
-  //      moment the curtain transitions from loading → ready.
-  //
-  // The fourth piece (remote-player warp visuals via `pendingWarpEvents`)
-  // is driven by `ColyseusClient` directly — see the per-frame mirror
-  // drain in `PixiRenderer.update`.
-  //
-  // Helper: are we in a load period? Used by both the curtain and the
-  // arrival-flash edge detector below so they stay in lockstep.
-  // `GameSurface` only mounts when `phase === 'game'`, so the
-  // pre-`game` connecting period is covered by the App-level
-  // `<WarpScreen>` overlay, not by the renderer's curtain (the
-  // renderer doesn't exist yet at that point).
-  const transitState = useUIStore((s) => s.transitState);
-  const loading = !gameReady
-    || transitState === 'IN_TRANSIT'
-    || transitState === 'ARRIVED';
-
-  // 1 + 3. Curtain + arrival-flash combined effect. They share the
-  // `loading` derived value, so co-locating avoids drift.
-  // `prevLoadingRef` starts false so the first run (loading=true on
-  // initial mount) detects a transition and logs the curtain rise —
-  // otherwise the log only captures the fall, and E2E coverage of
-  // the orchestration is half-blind.
-  const prevLoadingRef = useRef(false);
-  useEffect(() => {
-    const r = rendererRef.current;
-    if (!r) return;
-    if (prevLoadingRef.current !== loading) {
-      logEvent('load_curtain_change', { active: loading });
-    }
-    if (prevLoadingRef.current && !loading) {
-      // Transition from loading → ready — arrival reveal. Anchor to the
-      // local ship ENTITY: the renderer tracks that sprite live every
-      // frame, so the flash+ripple stays on the ship as it starts
-      // moving post-arrival (and never anchors to a stale pre-reconcile
-      // pose). `null` → screen-centre fallback if the id isn't known
-      // yet (renderer also falls back if the sprite isn't up).
-      const localId = getGameClient()?.mirror.localPlayerId ?? null;
-      r.triggerWarpIn(localId ? { kind: 'entity', entityId: localId } : null);
-      // F-transit-instrument — the arrival curtain dropped. No-op
-      // unless a transit is in flight (so the initial-join reveal,
-      // which also hits this branch, is correctly ignored) and
-      // idempotent per transit. Arms the bounded post-reveal frame
-      // burst driven from the rAF loop below.
-      getGameClient()?.transitInstr.curtainDown();
-    }
-    prevLoadingRef.current = loading;
-    r.setLoadCurtain(loading);
-  }, [loading]);
-
-  // 2. Warp-mode envelope — spool→climax+burst+flash. Fires only
-  // during transit SPOOLING (the source-sector build-up). When
-  // SPOOLING ends — either commit (IN_TRANSIT) or cancel back to
-  // DOCKED — `setWarpMode(false)` runs the renderer's internal
-  // fade-out + burst. The curtain effect above is already rising at
-  // that moment because the IN_TRANSIT state flips `loading` to
-  // true, so the burst+flash and curtain rise are perceived as a
-  // single hand-off.
-  useEffect(() => {
-    const r = rendererRef.current;
-    if (!r) return;
-    if (transitState === 'SPOOLING') {
-      // Anchor to the local ship ENTITY: the renderer re-resolves that
-      // sprite's position EVERY frame. The player keeps flying through
-      // the ~3.6s spool; a one-shot capture froze the ripple where
-      // charging began (2026-05-15 diagnostic: ship moved ~539u away
-      // during the spool — "did the effect where I started charging,
-      // not where I was"). The same entity mechanism works for remote/
-      // bot warps too — no local special-case.
-      const localId = getGameClient()?.mirror.localPlayerId ?? null;
-      r.setWarpCenter(localId ? { kind: 'entity', entityId: localId } : null);
-      logEvent('warp_mode_change', { active: true, trigger: 'transit_spooling' });
-      r.setWarpMode(true);
-    } else {
-      r.setWarpMode(false);
-    }
-  }, [transitState]);
+  // Load curtain + spool→climax+burst envelope + single arrival flash.
+  // Extracted to `useWarpOrchestration` (behaviour-identical to the
+  // prior inline effects) so the call-ordering invariant — curtain up
+  // before the spool-exit burst → a single arrival flash (Phase G) —
+  // is unit-lockable. See `App.warpOrchestration.test.tsx`.
+  useWarpOrchestration(rendererRef);
 
   // Phase 5 scope change — when the player dies and clicks Respawn, send
   // them BACK TO THE GALAXY MAP rather than respawning in-place. The

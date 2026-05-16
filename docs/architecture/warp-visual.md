@@ -146,7 +146,11 @@ burst, masking it — so the player sees only the single arrival-reveal
 flash (the author's intended "single hand-off"). Bug A ("double flash")
 was a consequence of Bug B ("WarpScreen never re-showed on consecutive
 warps"); one root, fixed at one ownership site. See `docs/LESSONS.md`
-2026-05-16 Phase-G entry.
+2026-05-16 Phase-G entry. The three warp effects + the `loading`
+derivation now live in `src/client/useWarpOrchestration.ts` (a
+behaviour-preserving extraction from `App.tsx`'s `GameSurface`, done so
+this curtain-vs-burst call-ordering invariant is unit-lockable —
+`App.warpOrchestration.test.tsx`).
 
 ## 6. GalaxyMapLayer is worker-hosted
 
@@ -195,6 +199,7 @@ the markers to confirm, not a license to lighten the chain blind.
 | Transit join-readiness re-arm (Phase G) | `src/client/state/store.rearmJoinReadiness.test.ts` |
 | WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
+| Single arrival flash / orchestration call-ordering (Phase G) | `src/client/App.warpOrchestration.test.tsx` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
 ## 10. See also
