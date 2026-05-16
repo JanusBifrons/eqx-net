@@ -1570,7 +1570,7 @@ export class SectorRoom extends Room<SectorState> {
    * so no SET_HULL_EXPOSED is posted here (drones still collide circle).
    */
   private damageSwarmLayered(
-    rec: { id: string; entityId: number; shipKind?: string },
+    rec: { id: string; entityId: number; shipKind?: string; shieldDown?: boolean },
     damage: number,
   ): { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null {
     const hull0 = this.swarmHealth.get(rec.id);
@@ -1588,6 +1588,10 @@ export class SectorRoom extends Room<SectorState> {
     if (r.brokeThisHit) {
       this.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: `swarm-${rec.entityId}` });
       serverLogEvent('shield_broken', { entityId: `swarm-${rec.entityId}`, tick: this.serverTick });
+      // Phase 6 — flip the wire bit + swap the drone worker body to its
+      // hull polygon (worker body id == rec.id; kind from rec.shipKind).
+      rec.shieldDown = true;
+      this.postToWorker({ type: 'SET_HULL_EXPOSED', id: rec.id, exposed: true, kindId: rec.shipKind ?? DEFAULT_SHIP_KIND, tick: this.serverTick });
     }
     return { newShield: state.shield, shieldMax, hullMax: getDroneMaxHealth(rec.shipKind) ?? 40, hitLayer: r.hitLayer };
   }
@@ -1643,7 +1647,11 @@ export class SectorRoom extends Room<SectorState> {
       const state: ShieldHullState = { shield: shieldVal, hull, lastDamageTick: this.swarmShieldLastDmg.get(id) ?? t };
       const r = regenStep(state, dkind, t);
       if (r.regenerated) this.swarmShield.set(id, state.shield);
-      if (r.restoredThisStep) serverLogEvent('shield_restored', { entityId: `swarm-${rec.entityId}`, tick: t });
+      if (r.restoredThisStep) {
+        serverLogEvent('shield_restored', { entityId: `swarm-${rec.entityId}`, tick: t });
+        rec.shieldDown = false;
+        this.postToWorker({ type: 'SET_HULL_EXPOSED', id: rec.id, exposed: false, kindId: rec.shipKind ?? DEFAULT_SHIP_KIND, tick: t });
+      }
     }
   }
 
@@ -3891,6 +3899,7 @@ export class SectorRoom extends Room<SectorState> {
               vx: pose.vx, vy: pose.vy,
               angle: pose.angle, angvel: pose.angvel,
               ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
+              ...(rec.shieldDown ? { shieldDown: true } : {}),
             });
           }
         }

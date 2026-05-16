@@ -198,9 +198,15 @@ export class PhysicsWorld {
         collider.setRestitution(0.8).setFriction(0).setDensity(density);
       }
     }
+    const isBall = !(vertices && vertices.length >= 3);
     if (!collider) {
-      const density = mass / (Math.PI * radius * radius);
-      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(density);
+      // Drone / plain-obstacle ball: ZERO density + a pinned additional
+      // mass (set after createCollider below) so setHullExposed\u2019s
+      // circle<->hull swap is dynamically transparent for drones, exactly
+      // like spawnShip. Mathematically identical to the legacy
+      // mass/(pi r^2) ball for any body that never swaps. Asteroids
+      // (convexHull branch) keep real area-density — they never swap.
+      collider = RAPIER.ColliderDesc.ball(radius).setRestitution(0.8).setFriction(0).setDensity(0);
     }
     // Stage 2: enable contact-force events on obstacles too — ship-vs-asteroid
     // collisions are the dominant case the network-feel collision-event
@@ -209,6 +215,12 @@ export class PhysicsWorld {
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(10);
     this.world.createCollider(collider, body);
+    if (isBall) {
+      // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
+      // identical to what the legacy density ball produced. See spawnShip.
+      body.setAdditionalMassProperties(mass, { x: 0, y: 0 }, 0.5 * mass * radius * radius, true);
+      body.recomputeMassPropertiesFromColliders();
+    }
     // Obstacles are tracked under the default kind purely so the bodies map
     // shape stays uniform; obstacle physics never reads this kind back.
     this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });

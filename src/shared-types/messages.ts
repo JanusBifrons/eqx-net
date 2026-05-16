@@ -264,6 +264,10 @@ export interface SnapshotMessage {
   drones?: Array<{
     id: number;
     x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+    /** Phase: shield — true while this drone's shield is down. Single
+     *  channel with the binary recordFlags bit; the client applies the
+     *  collider swap from ONE site (syncSwarmIntoPredWorld). */
+    shieldDown?: boolean;
     /** Multi-mount/turret refactor (Phase 4c, 2026-05-11). Per-mount slewed
      *  angle in arc-local frame for this drone, indexed by mount-order in
      *  the ship-kind catalogue. Emitted only for in-interest drones whose

@@ -1841,6 +1841,7 @@ export class ColyseusGameClient {
             } else if (sw.mountAngles) {
               sw.mountAngles = undefined;
             }
+            if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
           }
         }
       }
@@ -2047,6 +2048,14 @@ export class ColyseusGameClient {
           this._aiRegisteredIds.add(entityId);
         }
         this.predSwarmKeys.add(key);
+      }
+      // Phase 6 — drive the drone hull collider swap from the SINGLE
+      // authoritative shield-down field (binary packet bit; the snapshot
+      // loop keeps it consistent for in-interest drones). setHullExposed
+      // is idempotent so calling it every sync is cheap. One ownership
+      // site — no second correction path (chapter-2 rule).
+      if (entry.kind === 1) {
+        this.predWorld.setHullExposed(key, entry.shieldDown ?? false, getShipKind(entry.shipKind ?? null));
       }
       // Capture pre-snap pose for drones so we can drive the render lerp
       // offset (see `_droneRenderOffsets`). Only meaningful when the body

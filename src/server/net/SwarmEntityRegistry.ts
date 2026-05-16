@@ -37,6 +37,10 @@ export interface SwarmEntityRecord {
    *  AI uses. Pre-v3 the field was missing from the wire and from the delta
    *  detector; the client's drone angvel free-ran and AI torque diverged. */
   lastBroadcast: { x: number; y: number; angle: number; angvel: number };
+  /** Phase: shield — true while this drone's shield is 0 (hull exposed).
+   *  Maintained by SectorRoom at the shield 0-cross/restore; the swarm
+   *  encoder ORs it into recordFlags bit 1. */
+  shieldDown: boolean;
   /** Last sleeping flag included in a swarm packet, for transition detection. */
   lastBroadcastSleeping: boolean;
   /** Tick when this entity was last shipped in a packet. Used by sweepers later. */
@@ -84,6 +88,7 @@ export class SwarmEntityRegistry {
       kind,
       radius,
       lastBroadcast: { x, y, angle, angvel: 0 },
+      shieldDown: false,
       lastBroadcastSleeping: false,
       lastBroadcastTick: -1,
     };

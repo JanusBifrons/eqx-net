@@ -22,6 +22,7 @@ import {
   SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
+  SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
   swarmPacketSize,
 } from '../../shared-types/swarmWireFormat.js';
@@ -149,7 +150,8 @@ export class BinarySwarmBroadcast {
       // Per-record header.
       this.view.setUint16(writeOffset + 0, rec.entityId, true);
       this.view.setUint8(writeOffset + 2, rec.kind);
-      const recFlags = sleeping ? SWARM_RECORD_FLAG_SLEEPING : 0;
+      let recFlags = sleeping ? SWARM_RECORD_FLAG_SLEEPING : 0;
+      if (rec.shieldDown) recFlags |= SWARM_RECORD_FLAG_SHIELD_DOWN;
       this.view.setUint8(writeOffset + 3, recFlags);
       this.view.setFloat32(writeOffset + 4, x, true);
       this.view.setFloat32(writeOffset + 8, y, true);

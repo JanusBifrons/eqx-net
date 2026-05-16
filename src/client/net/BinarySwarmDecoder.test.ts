@@ -7,6 +7,7 @@ import {
   SWARM_REC_RADIUS_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
+  SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
 } from '../../shared-types/swarmWireFormat.js';
 
@@ -52,6 +53,20 @@ function makeMirror(): RenderMirror {
 }
 
 describe('decodeSwarmPacket', () => {
+  it('decodes the SHIELD_DOWN recordFlags bit into mirror.swarm[*].shieldDown (Phase 6)', () => {
+    const mirror = makeMirror();
+    const packet = buildPacket(99, true, [
+      { entityId: 7, kind: 1, recFlags: SWARM_RECORD_FLAG_SHIELD_DOWN, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 12 },
+      { entityId: 8, kind: 1, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 12 },
+      { entityId: 9, kind: 1, recFlags: SWARM_RECORD_FLAG_SLEEPING | SWARM_RECORD_FLAG_SHIELD_DOWN, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 12 },
+    ]);
+    decodeSwarmPacket(packet, mirror);
+    expect(mirror.swarm!.get(7)!.shieldDown).toBe(true);
+    expect(mirror.swarm!.get(8)!.shieldDown).toBe(false);
+    // SHIELD_DOWN coexists with SLEEPING in the same recordFlags byte.
+    expect(mirror.swarm!.get(9)!.shieldDown).toBe(true);
+    expect(mirror.swarm!.get(9)!.sleeping).toBe(true);
+  });
   it('mirrors a full snapshot into mirror.swarm', () => {
     const mirror = makeMirror();
     const packet = buildPacket(60, true, [
