@@ -19,6 +19,7 @@
  * converge instead of racing. See the plan's risk audit.
  */
 import type { Bus } from '../../core/events/Bus.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { SHIP_KINDS_LIST, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { BotTransitController } from './BotTransitController.js';
@@ -246,6 +247,7 @@ export class LivingWorldDirector {
         rec.state = 'active';
         rec.sectorKey = sector;
         rec.arrivedAtMs = now;
+        serverLogEvent('bot_spawn', { botId: rec.botId, sectorKey: sector, kind: rec.kind });
       } else {
         rec.respawnAtMs = now;
       }
@@ -292,6 +294,7 @@ export class LivingWorldDirector {
         from: m.from,
         to: m.to,
       });
+      serverLogEvent('bot_transit_start', { botId: rec.botId, from: m.from, to: m.to });
       ctrl.begin({
         now: this.nowMs,
         commit: () => this.doHop(rec, m.from, m.to),
@@ -305,6 +308,16 @@ export class LivingWorldDirector {
       const room = this.rooms.get(rec.sectorKey);
       if (room && room.playerCount() > 0) room.markBotHostile(rec.botId);
     }
+
+    // ── 4. per-tick population telemetry (diag bucket: 'population') ──────
+    const snap = this.snapshot();
+    serverLogEvent('population_report', {
+      total: snap.total,
+      active: snap.active,
+      inTransit: snap.inTransit,
+      respawning: snap.respawning,
+      perSector: snap.perSector,
+    });
   }
 
   /** The atomic cross-room hop, invoked by the controller at spool end.
@@ -336,6 +349,7 @@ export class LivingWorldDirector {
       return true; // accounted for via the respawn path
     }
     rec.kind = carry.kind;
+    serverLogEvent('bot_transit_commit', { botId: rec.botId, from, to });
     return true;
   }
 
@@ -358,6 +372,7 @@ export class LivingWorldDirector {
       rec.state = 'active';
       rec.sectorKey = from; // never left the source
       rec.controller = null;
+      serverLogEvent('bot_transit_cancel', { botId: rec.botId, from, result: 'failed' });
     } else {
       // 'destroyed' but the ENTITY_DESTROYED handler hasn't run yet
       // (subscription-order race) — own the transition here; the handler
@@ -375,5 +390,6 @@ export class LivingWorldDirector {
     rec.respawnAtMs = this.nowMs() + delayMs;
     rec.controller?.dispose();
     rec.controller = null;
+    serverLogEvent('bot_respawn', { botId: rec.botId, sectorKey: rec.sectorKey, delayMs });
   }
 }

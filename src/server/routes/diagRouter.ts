@@ -102,6 +102,14 @@ const BUCKETS: Record<string, string> = {
   phase_change: 'lifecycle',
   server_health_change: 'lifecycle',
   button_click: 'lifecycle',
+  // Living World population (director lifecycle + per-tick report)
+  bot_spawn: 'population',
+  bot_despawn: 'population',
+  bot_transit_start: 'population',
+  bot_transit_commit: 'population',
+  bot_transit_cancel: 'population',
+  bot_respawn: 'population',
+  population_report: 'population',
   // snapshots
   snapshot: 'snapshots',
   snapshot_broadcast: 'snapshots',
@@ -111,7 +119,7 @@ const BUCKETS: Record<string, string> = {
   input_received: 'raf',
 };
 
-const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'snapshots', 'raf', 'other'] as const;
+const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
 type BucketName = typeof ALL_BUCKETS[number];
 
 // `captureSchema` + `DIAG_CAPTURE_MAX_LOG_ENTRIES` live in
@@ -222,7 +230,7 @@ diagRouter.post('/capture', async (req: Request, res: Response) => {
 
   // Bucket and write NDJSON siblings.
   const buckets: Record<BucketName, RoutedEntry[]> = {
-    perf: [], corrections: [], combat: [], lifecycle: [], snapshots: [], raf: [], other: [],
+    perf: [], corrections: [], combat: [], lifecycle: [], population: [], snapshots: [], raf: [], other: [],
   };
   for (const e of entries) buckets[routeBucket(e.tag)].push(e);
 

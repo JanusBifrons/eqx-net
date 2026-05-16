@@ -14,6 +14,7 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
+import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT } from './livingworld/LivingWorldDirector.js';
 
 const logger = pino({
   name: 'server',
@@ -68,6 +69,9 @@ app.use('/galaxy', galaxyRouter);
  * event loop.
  */
 let serverReady = false;
+/** Process-global Living World population brain. Constructed in `main()`
+ *  after the eager galaxy rooms exist; stopped on shutdown. */
+let livingWorldDirector: LivingWorldDirector | null = null;
 app.get('/healthz', (_req, res) => {
   res.json({
     status: 'ok',
@@ -123,6 +127,13 @@ if (process.env['NODE_ENV'] !== 'production') {
 
   // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
   app.get('/dev/limbo', devLimboHandler);
+
+  // GET /dev/population — Living World director snapshot (per-sector
+  // players/bots, totals, in-transit/respawning) for E2E + diagnostics.
+  // Read-only; mirrors /dev/limbo's inspection-only shape.
+  app.get('/dev/population', (_req, res) => {
+    res.json(livingWorldDirector ? livingWorldDirector.snapshot() : { ready: false });
+  });
 
   // GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster
   // inspection. Returns the player's full roster (up to 10 entries).
@@ -279,14 +290,28 @@ async function main(): Promise<void> {
   // snapshots at boot (not on first traveller) and so future transit
   // reservations always find a live destination. Sequential await: the
   // matchmaker doesn't love parallel `create` calls during boot.
+  const galaxyRooms = new Map<string, SectorRoom>();
   for (const sector of GALAXY_SECTORS) {
     try {
-      await matchMaker.createRoom(`galaxy-${sector.key}`, {});
+      const listing = await matchMaker.createRoom(`galaxy-${sector.key}`, {});
+      const room = matchMaker.getLocalRoomById(listing.roomId) as unknown as SectorRoom;
+      galaxyRooms.set(sector.key, room);
       logger.info({ sectorKey: sector.key }, 'galaxy room created');
     } catch (err) {
       logger.error({ err, sectorKey: sector.key }, 'failed to eagerly create galaxy room');
     }
   }
+
+  // Living World — start the population director over the live galaxy
+  // rooms (production timings). Single process-global owner of the 25
+  // hunter bots; unref'd control loop so it never keeps Node alive on
+  // its own. Stopped in `shutdown()`.
+  livingWorldDirector = new LivingWorldDirector(galaxyRooms);
+  livingWorldDirector.start();
+  logger.info(
+    { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT },
+    'living world director started',
+  );
 
   // All boot work is done — joining a galaxy room will now succeed.
   // Flip the /healthz `ready` flag so the client landing screen enables
@@ -319,6 +344,15 @@ const shutdown = async (sig: string): Promise<void> => {
     getLimboStore().stopPruneTimer();
   } catch (err) {
     logger.warn({ err }, 'limboStore.stopPruneTimer threw');
+  }
+
+  // Living World — stop the control loop, abandon in-flight bot
+  // transits, unsubscribe the bus listeners. (The loop is unref'd, but
+  // an explicit stop keeps a graceful shutdown clean and deterministic.)
+  try {
+    livingWorldDirector?.stop();
+  } catch (err) {
+    logger.warn({ err }, 'livingWorldDirector.stop threw');
   }
 
   try {
