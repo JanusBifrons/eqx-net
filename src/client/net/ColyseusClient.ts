@@ -1,7 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -1048,6 +1048,21 @@ export class ColyseusGameClient {
     };
     room.onMessage('warp_in', handleWarpEvent);
     room.onMessage('warp_out', handleWarpEvent);
+
+    // Living World — server→client twin of the damage→markHostile mirror.
+    // When the director makes a bot proactively hostile to a player, the
+    // server marks its own HostileDroneBehaviour AND broadcasts this; the
+    // client feeds it into ITS predicted AiController so the in-interest
+    // drone's predicted brain matches the authoritative one (no
+    // swarm-wire bump — the existing, proven hostility channel). The
+    // client AiController is keyed on the bare numeric entity id (see the
+    // damage handler), so strip the `swarm-` prefix exactly as that path
+    // does. A dropped packet self-heals on the next director re-mark.
+    room.onMessage('bot_aggro', (evt: BotAggroEvent) => {
+      if (!evt.botEntityId.startsWith('swarm-') || !evt.targetPlayerId) return;
+      const numeric = evt.botEntityId.slice('swarm-'.length);
+      this._aiController.markHostile(numeric, evt.targetPlayerId, this.inputTick);
+    });
 
     // Phase 8 sub-phase B — transit lifecycle messages.
     room.onMessage('transit_state', (msg: TransitStateMessage) => {

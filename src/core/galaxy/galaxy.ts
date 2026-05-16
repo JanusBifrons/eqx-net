@@ -31,11 +31,25 @@ export interface GalaxySector {
   neighbours: string[];
   /** Asteroid layout key — resolved server-side via asteroidConfigs.ts. */
   asteroidConfigKey: AsteroidConfigKey;
-  /** Number of hostile drones to seed at room creation. */
+  /** Ambient patrol-drone floor seeded at room creation so an empty
+   *  sector still feels alive BEFORE the Living World hunter bots route
+   *  in. These are the legacy non-proactive `drone-*` patrol drones; the
+   *  25 cross-sector `lwbot-*` hunters are owned separately by the
+   *  `LivingWorldDirector` and are ADDITIVE to this floor. */
   droneCount: number;
   /** Default ship spawn coords for fresh entry into this sector. */
   defaultSpawn: { x: number; y: number };
 }
+
+/**
+ * Ambient patrol-drone floor per galaxy sector (Living World, 2026-05-16).
+ * Deliberately small: the world's "alive" feeling now comes primarily
+ * from the 25 director-owned hunter bots warping between sectors toward
+ * players; a couple of patrol drones per sector keep an empty,
+ * not-yet-visited sector from looking dead. Pre-Living-World these were
+ * 8–20 per sector (a static per-sector garrison) — that role is gone.
+ */
+export const AMBIENT_DRONE_FLOOR = 2;
 
 /**
  * 7-sector sunflower: 1 centre + 6 ring outers.
@@ -51,7 +65,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: 0, r: 0 },
     neighbours: ['orion-belt', 'vega-reach', 'cygnus-arm', 'kepler-spur', 'andromeda-rim', 'lyra-fringe'],
     asteroidConfigKey: 'dense',
-    droneCount: 8,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -61,7 +75,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: 0, r: -1 },
     neighbours: ['sol-prime', 'vega-reach', 'lyra-fringe'],
     asteroidConfigKey: 'sparse',
-    droneCount: 14,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -71,7 +85,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: 1, r: -1 },
     neighbours: ['sol-prime', 'orion-belt', 'cygnus-arm'],
     asteroidConfigKey: 'sparse',
-    droneCount: 14,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -81,7 +95,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: 1, r: 0 },
     neighbours: ['sol-prime', 'vega-reach', 'kepler-spur'],
     asteroidConfigKey: 'none',
-    droneCount: 20,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -91,7 +105,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: 0, r: 1 },
     neighbours: ['sol-prime', 'cygnus-arm', 'andromeda-rim'],
     asteroidConfigKey: 'sparse',
-    droneCount: 14,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -101,7 +115,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: -1, r: 1 },
     neighbours: ['sol-prime', 'kepler-spur', 'lyra-fringe'],
     asteroidConfigKey: 'dense',
-    droneCount: 8,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
   {
@@ -111,7 +125,7 @@ export const GALAXY_SECTORS: readonly GalaxySector[] = [
     hex: { q: -1, r: 0 },
     neighbours: ['sol-prime', 'andromeda-rim', 'orion-belt'],
     asteroidConfigKey: 'dense',
-    droneCount: 8,
+    droneCount: AMBIENT_DRONE_FLOOR,
     defaultSpawn: { x: 0, y: 0 },
   },
 ];
