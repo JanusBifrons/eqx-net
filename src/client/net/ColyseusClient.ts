@@ -1146,6 +1146,22 @@ export class ColyseusGameClient {
       this.resetPredictionState();
       this.transitInstr.mark('pred_reset:end');
 
+      // Phase G — UI-readiness analogue of the spatial reseed above.
+      // A pure inter-sector transit keeps `phase==='game'`, so
+      // `setPhase` never re-arms the WarpScreen readiness flags / the
+      // 5 s minimum-display floor (`setPhase`'s comment claimed it did
+      // — it never fired for pure transit; same defect class as the
+      // 7829d04 resetPredictionState "fresh-connect seed"). Re-arm them
+      // here, exactly as a fresh connect would, so the destination's
+      // first snapshot + the re-armed floor mask the post-reseed
+      // reconcile settle, AND so `!gameReady` raises the load curtain
+      // NOW (before the IN_TRANSIT spool-exit burst) — that ordering is
+      // what collapses the "double arrival flash" to a single masked
+      // hand-off. One ownership site; sibling to `resetPredictionState`
+      // (NOT folded into it — that method is src/client/net prediction
+      // state; SRP).
+      useUIStore.getState().rearmJoinReadiness();
+
       // Wipe stale spatial state from the source sector. Without this, the old
       // sector's asteroids/drones (and remote ships) linger in the mirror at
       // their last-shipped world positions until the destination's first FULL

@@ -125,6 +125,29 @@ connected + welcomed + first-frame + 5 s-elapsed; warp mode is active
 only during transit SPOOLING. By the time the curtain fades, the
 on-screen pose *is* the server-authoritative one.
 
+**Phase G (2026-05-16) — transit re-arms join-readiness; single arrival
+flash.** A pure inter-sector transit keeps `phase==='game'`, so
+`setPhase` never re-armed the readiness flags (its comment claimed it
+did — same defect class as the 7829d04 spatial bug). The `transit_ready`
+handler now calls `useUIStore.getState().rearmJoinReadiness()` as a
+sibling to `resetPredictionState()`: it clears `firstSnapshotApplied` +
+`joinMinimumElapsed` and bumps `joinGeneration` (the 5 s-floor
+`useEffect` is keyed on it, so the floor re-runs per transit — a pure
+transit doesn't remount GameSurface, so the old `[]`-dep effect armed
+the floor exactly once per session). `rendererFirstFrameRendered` is
+deliberately NOT re-armed on transit — the renderer stays live
+(GPU-init lag is an initial-join concern; `setPhase` resets 3 flags,
+`rearmJoinReadiness` resets 2). `WarpScreen` now reads `useGameReady()`
+directly (a prior local copy had drifted to 4 gates vs the canonical
+5). **This also collapses the "double arrival flash":** with
+`gameReady` re-armed false at `transit_ready`, `!gameReady` raises the
+load curtain *before* the IN_TRANSIT spool-exit `setWarpMode(false)`
+burst, masking it — so the player sees only the single arrival-reveal
+flash (the author's intended "single hand-off"). Bug A ("double flash")
+was a consequence of Bug B ("WarpScreen never re-showed on consecutive
+warps"); one root, fixed at one ownership site. See `docs/LESSONS.md`
+2026-05-16 Phase-G entry.
+
 ## 6. GalaxyMapLayer is worker-hosted
 
 The in-game galaxy overlay (`GalaxyMapLayer`) lives in the renderer
@@ -168,12 +191,18 @@ the markers to confirm, not a license to lighten the chain blind.
 | Join-grace force-broadcast | `tests/integration/sectorRoom/joinBroadcastGrace.test.ts` |
 | warp_in/out broadcasts | `tests/integration/sectorRoom/warpBroadcasts.test.ts` |
 | Transit commit/abort | `src/server/transit/TransitOrchestrator.test.ts` |
+| Arrival prediction-drift reseed (7829d04) | `src/client/net/ColyseusClient.transitArrivalDrift.test.ts` |
+| Transit join-readiness re-arm (Phase G) | `src/client/state/store.rearmJoinReadiness.test.ts` |
+| WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
+| Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 
 ## 10. See also
 
 - `docs/LESSONS.md` — 2026-05-15 entries (Y-flip, on-device-evidence,
-  entity-anchor, debugging discipline).
+  entity-anchor, debugging discipline); 2026-05-16 entries (arrival
+  prediction-drift; Phase-G transit join-readiness re-arm + the
+  Bug-A-is-a-consequence-of-Bug-B coupling).
 - `src/client/CLAUDE.md` → Renderer Rules (the Y-flip rule), Renderer
   worker boundary.
 - `src/server/CLAUDE.md` → Thresholds (`JOIN_BROADCAST_GRACE_TICKS`).

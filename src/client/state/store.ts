@@ -231,26 +231,49 @@ interface UIStore {
   setLocalShipInstanceId: (id: string | null) => void;
   /** Join-render readiness sub-flag. Set true the first time
    *  `ColyseusClient.handleSnapshot()` runs with a non-null
-   *  `mirror.localPlayerId` after (re)connect. Reset to false whenever
-   *  `setPhase` puts the app into `'game'` (initial join, ship-swap
-   *  arrival, transit arrival). Discrete UI flag — purity-clean. */
+   *  `mirror.localPlayerId` after (re)connect. Reset by `setPhase`
+   *  enter/leave-`game` (initial join, ship-swap, respawn) AND by
+   *  `rearmJoinReadiness()` on every committed inter-sector transit
+   *  (which keeps `phase==='game'`, so `setPhase` never fires).
+   *  Discrete UI flag — purity-clean. */
   firstSnapshotApplied: boolean;
   setFirstSnapshotApplied: (v: boolean) => void;
   /** Join-render readiness sub-flag. Set true when the renderer first
    *  paints a frame with the local player visible (observed via
    *  `RendererFeedback.firstFrameRendered` from main-thread rAF). Reset
-   *  on phase change into `'game'`. */
+   *  ONLY on phase change into `'game'` — NOT on a pure inter-sector
+   *  transit, which keeps the same live renderer (GPU-init lag is an
+   *  initial-join concern; resetting it on transit would be false). */
   rendererFirstFrameRendered: boolean;
   setRendererFirstFrameRendered: (v: boolean) => void;
   /** Minimum-display-time floor for the WarpScreen. Set true 5 s
-   *  after GameSurface mount by a setTimeout. Required by
-   *  `useGameReady` so the warp visual shows for at least this long
-   *  even when the rest of the gates fire faster — gives the
-   *  reconciler enough wall-clock to apply its first correction
-   *  beneath the visual, absorbing the first-move teleport user
-   *  symptom. Reset on phase change. */
+   *  after the App.tsx timer (re)arms. Required by `useGameReady` so
+   *  the warp visual shows for at least this long even when the rest of
+   *  the gates fire faster — gives the reconciler enough wall-clock to
+   *  apply its first correction beneath the visual, absorbing the
+   *  first-move teleport user symptom. Reset by `setPhase`
+   *  enter/leave-`game` AND `rearmJoinReadiness()` (the timer effect
+   *  re-runs via the `joinGeneration` dep). */
   joinMinimumElapsed: boolean;
   setJoinMinimumElapsed: (v: boolean) => void;
+  /** Monotone counter bumped once per "fresh sector" event — `setPhase`
+   *  enter/leave-`game` AND every committed inter-sector transit
+   *  (`rearmJoinReadiness`). The App.tsx 5 s `joinMinimumElapsed` timer
+   *  keys its effect on this so the minimum-display floor re-runs on a
+   *  pure transit (which does NOT remount GameSurface — a mount-scoped
+   *  `[]` effect would never otherwise re-arm). */
+  joinGeneration: number;
+  /** Re-arm WarpScreen join-readiness for a NEW committed inter-sector
+   *  transit: clears `firstSnapshotApplied` + `joinMinimumElapsed` and
+   *  bumps `joinGeneration`. Does NOT touch `rendererFirstFrameRendered`
+   *  (the renderer stays live across a transit). ONE ownership site,
+   *  invoked from the `transit_ready` handler — the UI-readiness
+   *  analogue of `resetPredictionState()`. A pure inter-sector transit
+   *  keeps `phase==='game'` so `setPhase` never re-arms; this does.
+   *  Locked by `store.rearmJoinReadiness.test.ts`,
+   *  `WarpScreen.transit.test.tsx`,
+   *  `ColyseusClient.transitRearmReadiness.test.ts`. */
+  rearmJoinReadiness: () => void;
   /** Apply the latest `/healthz` poll result. Updates both the gate
    *  state and the cached `playersOnline` in one set so subscribers see
    *  a consistent pair. */
@@ -303,6 +326,28 @@ function persistSettings(
   });
 }
 
+/**
+ * Shared WarpScreen join-readiness re-arm. Used by BOTH `setPhase`
+ * (enter/leave-`game`) and `rearmJoinReadiness` (committed inter-sector
+ * transit) so the overlapping flags + the monotone `joinGeneration`
+ * bump (which re-runs the App.tsx 5 s minimum-display timer — a pure
+ * transit does NOT remount GameSurface, so its `[]`-dep effect would
+ * never otherwise re-fire) stay identical between the two paths.
+ * `setPhase` additionally clears `rendererFirstFrameRendered` because a
+ * phase change remounts GameSurface and the renderer may re-init (real
+ * GPU-init lag); a pure inter-sector transit keeps the SAME live
+ * renderer, so that flag stays truthfully true there. This is the
+ * UI-readiness analogue of `resetPredictionState()` — the one
+ * spatial-seed site, invoked by connect + the `transit_ready` handler.
+ */
+function commonReadinessRearm(prevGen: number): {
+  firstSnapshotApplied: false;
+  joinMinimumElapsed: false;
+  joinGeneration: number;
+} {
+  return { firstSnapshotApplied: false, joinMinimumElapsed: false, joinGeneration: prevGen + 1 };
+}
+
 export const useUIStore = create<UIStore>((set, get) => ({
   connectionStatus: 'disconnected',
   sectorName: '',
@@ -343,6 +388,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   firstSnapshotApplied: false,
   rendererFirstFrameRendered: false,
   joinMinimumElapsed: false,
+  joinGeneration: 0,
   serverHealth: 'unknown',
   playersOnline: null,
 
@@ -379,29 +425,26 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
   setDrawerTab: (id) => set({ drawerTab: id }),
   setPhase: (p) => set((prev) => {
-    // Join-render readiness reset: every entry into 'game' (initial
-    // join, ship-swap arrival, transit arrival) re-arms the WarpScreen
-    // overlay by clearing both readiness sub-flags. Leaving 'game'
-    // also clears them so a subsequent re-entry doesn't see stale
-    // post-arrival flags carried over.
+    // Join-render readiness reset. `setPhase` re-arms on phase
+    // ENTER/LEAVE-`game` (initial join, ship-swap arrival, respawn) —
+    // GameSurface remounts there and the renderer may re-init, so
+    // `rendererFirstFrameRendered` is correctly cleared too. A pure
+    // inter-sector transit keeps `phase==='game'` the whole time, so
+    // `setPhase` is intentionally a no-op for the flags then; that path
+    // is re-armed by `rearmJoinReadiness()` from the `transit_ready`
+    // handler instead (the UI-readiness analogue of
+    // `resetPredictionState()` — one ownership concept, two
+    // domain-correct variants). Both share `commonReadinessRearm` so
+    // the overlapping flags + the `joinGeneration` bump stay identical.
     if (p === 'game' && prev.phase !== 'game') {
-      return {
-        phase: p,
-        firstSnapshotApplied: false,
-        rendererFirstFrameRendered: false,
-        joinMinimumElapsed: false,
-      };
+      return { phase: p, ...commonReadinessRearm(prev.joinGeneration), rendererFirstFrameRendered: false };
     }
     if (p !== 'game' && prev.phase === 'game') {
-      return {
-        phase: p,
-        firstSnapshotApplied: false,
-        rendererFirstFrameRendered: false,
-        joinMinimumElapsed: false,
-      };
+      return { phase: p, ...commonReadinessRearm(prev.joinGeneration), rendererFirstFrameRendered: false };
     }
     return { phase: p };
   }),
+  rearmJoinReadiness: () => set((s) => commonReadinessRearm(s.joinGeneration)),
   setGalaxyMapOpen: (v) => set({ isGalaxyMapOpen: v }),
   toggleGalaxyMapOpen: () => set((s) => ({ isGalaxyMapOpen: !s.isGalaxyMapOpen })),
   setGalaxyOverviewOpen: (v) => set({ isGalaxyOverviewOpen: v }),

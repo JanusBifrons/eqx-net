@@ -152,12 +152,23 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // pose and the first-move-teleport user symptom resurfaces
   // (2026-05-14 capture `2026-05-14T21-39-07-346Z-tkc6ad` showed a
   // 311-unit drift correction landing pre-capture-window).
+  //
+  // Keyed on `joinGeneration` (Phase G): a pure inter-sector transit
+  // keeps `phase==='game'` so GameSurface does NOT remount — a
+  // mount-scoped `[]` effect would arm the floor exactly once per
+  // session and never again, so the 2nd+ transit had no floor and the
+  // WarpScreen never re-showed. `rearmJoinReadiness()` (from the
+  // `transit_ready` handler) bumps `joinGeneration`; the dep change
+  // tears down the stale timer (cleanup) and re-runs a fresh 5 s
+  // floor. The literal `setTimeout(…, 5000)` is unchanged — the floor
+  // is NOT weakened, it now re-runs instead of never.
+  const joinGeneration = useUIStore((s) => s.joinGeneration);
   useEffect(() => {
     const timer = setTimeout(() => {
       useUIStore.getState().setJoinMinimumElapsed(true);
     }, 5000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [joinGeneration]);
 
   // ── Warp visual orchestration ─────────────────────────────────────
   //

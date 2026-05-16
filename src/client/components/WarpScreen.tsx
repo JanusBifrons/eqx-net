@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Box, Typography } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useGameReady, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 
 /**
@@ -39,12 +39,14 @@ export function WarpScreen(): JSX.Element | null {
 
   const joinMinimumElapsed = useUIStore((s) => s.joinMinimumElapsed);
   const isConnecting = phase === 'connecting';
-  // Mirrors `useGameReady` — all four gates must be true.
-  const ready =
-    connectionStatus === 'connected'
-    && localShipInstanceId !== null
-    && rendererFirstFrameRendered
-    && joinMinimumElapsed;
+  // Single source of truth: `useGameReady()` IS the 5-gate readiness
+  // predicate (incl. `firstSnapshotApplied`). A prior local copy here
+  // listed only 4 gates (omitted `firstSnapshotApplied`) and silently
+  // drifted from `useGameReady`; calling it directly makes `visible`
+  // provably equal the load-curtain's `!gameReady` driver and kills
+  // the drift permanently. The individual sub-flag selectors above
+  // stay — the status text below reports WHICH gate is still open.
+  const ready = useGameReady();
   const inGameNotReady = phase === 'game' && !ready;
   const visible = isConnecting || inGameNotReady;
 
