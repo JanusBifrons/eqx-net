@@ -306,6 +306,14 @@ export interface DamageEvent {
   shooterId: string;
   hitX?: number;
   hitY?: number;
+  /** Shield/hull layered model (Phase: shield, plan clever-wombat). The
+   *  client uses these instead of a global SHIP_MAX_HEALTH constant.
+   *  `newHealth` remains the HULL value (hull == today's health). */
+  newShield: number;
+  shieldMax: number;
+  hullMax: number;
+  /** Which layer this hit landed on. */
+  hitLayer: 'shield' | 'hull';
 }
 
 /** Server → client (broadcast): a ship was destroyed. */

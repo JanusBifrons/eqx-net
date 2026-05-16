@@ -42,6 +42,7 @@ import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { applyLayeredDamage, regenStep, type ShieldHullState } from '../../core/combat/ShieldHull.js';
 
 /** Resolve a (possibly missing) ship-kind id to the kind's max health, or
  *  null when the id is unknown. Drones use this on spawn so each kind has
@@ -49,6 +50,12 @@ import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipK
 function getDroneMaxHealth(kindId: string | undefined): number | null {
   if (!kindId) return null;
   return getShipKind(kindId).maxHealth;
+}
+
+/** Per-kind shield pool for a drone (0 when the kind id is unknown). */
+function getDroneShieldMax(kindId: string | undefined): number {
+  if (!kindId) return 0;
+  return getShipKind(kindId).shieldMax;
 }
 import {
   SEQLOCK_IDX,
@@ -424,6 +431,11 @@ export class SectorRoom extends Room<SectorState> {
   private projectileCounter = 0;
   /** Per-swarm-entity health. Drones are killable; asteroids are not present in this map. */
   private readonly swarmHealth = new Map<string, number>();
+  /** Per-drone shield pool (mirrors swarmHealth; cleared together in
+   *  evictSwarmEntity). Server-authoritative; not on the wire in Phase 3a
+   *  (drone wire bit + collider swap = Phase 6). */
+  private readonly swarmShield = new Map<string, number>();
+  private readonly swarmShieldLastDmg = new Map<string, number>();
 
   // Tick-budget telemetry. Accumulated each `update()`; flushed every 60 ticks
   // (≈ 1 s wall-clock) to a single serverLogEvent so a diagnostic capture can
@@ -650,6 +662,8 @@ export class SectorRoom extends Room<SectorState> {
       for (const rec of this.swarmRegistry.all()) {
         if (rec.kind === 1) {
           this.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
+          this.swarmShield.set(rec.id, getDroneShieldMax(rec.shipKind));
+          this.swarmShieldLastDmg.set(rec.id, this.serverTick);
         }
       }
       logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
@@ -670,6 +684,8 @@ export class SectorRoom extends Room<SectorState> {
         // spawner picks it randomly and stamps it onto the record.
         const rec = this.swarmRegistry.get(id);
         this.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
+        this.swarmShield.set(id, getDroneShieldMax(rec?.shipKind));
+        this.swarmShieldLastDmg.set(id, this.serverTick);
       }
     }
 
@@ -1509,6 +1525,116 @@ export class SectorRoom extends Room<SectorState> {
     // interest-filtered list is folded into the snapshot in the broadcast loop.
   }
 
+  /**
+   * Shield->hull layered damage for a schema ShipState (active or
+   * lingering). Mutates ship.health (hull) + ship.shield +
+   * ship.shieldLastDamageTick. On the shield 0-cross emits SHIELD_BROKEN
+   * and, when a worker body id is given, posts SET_HULL_EXPOSED so Rapier
+   * swaps the body to its hull polygon. workerBodyId is null where the
+   * collider swap is deferred (lingering hulls: dual body-id cases).
+   */
+  private damageShipLayered(
+    ship: ShipState,
+    damage: number,
+    workerBodyId: string | null,
+  ): { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } {
+    const kind = getShipKind(ship.kind);
+    const state: ShieldHullState = {
+      shield: ship.shield,
+      hull: ship.health,
+      lastDamageTick: ship.shieldLastDamageTick,
+    };
+    const r = applyLayeredDamage(state, damage, this.serverTick);
+    ship.shield = state.shield;
+    ship.health = state.hull;
+    ship.shieldLastDamageTick = state.lastDamageTick;
+    if (r.brokeThisHit) {
+      this.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: ship.shipInstanceId });
+      serverLogEvent('shield_broken', { entityId: ship.shipInstanceId, kindId: ship.kind, tick: this.serverTick });
+      if (workerBodyId !== null) {
+        this.postToWorker({ type: 'SET_HULL_EXPOSED', id: workerBodyId, exposed: true, kindId: ship.kind, tick: this.serverTick });
+      }
+    }
+    // hullMax stays ship.maxHealth (schema): hull behaves exactly as today
+    // ("hull works as health does currently"); shield is the new layer.
+    return { newShield: state.shield, shieldMax: kind.shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
+  }
+
+  /**
+   * Shield->hull layered damage for a swarm drone (state in swarmShield/
+   * swarmShieldLastDmg, hull in swarmHealth). Returns null for asteroids
+   * (immune - no swarmHealth entry). Drone collider swap + wire = Phase 6,
+   * so no SET_HULL_EXPOSED is posted here (drones still collide circle).
+   */
+  private damageSwarmLayered(
+    rec: { id: string; entityId: number; shipKind?: string },
+    damage: number,
+  ): { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null {
+    const hull0 = this.swarmHealth.get(rec.id);
+    if (hull0 === undefined) return null;
+    const shieldMax = getDroneShieldMax(rec.shipKind);
+    const state: ShieldHullState = {
+      shield: this.swarmShield.get(rec.id) ?? shieldMax,
+      hull: hull0,
+      lastDamageTick: this.swarmShieldLastDmg.get(rec.id) ?? this.serverTick,
+    };
+    const r = applyLayeredDamage(state, damage, this.serverTick);
+    this.swarmShield.set(rec.id, state.shield);
+    this.swarmShieldLastDmg.set(rec.id, state.lastDamageTick);
+    this.swarmHealth.set(rec.id, state.hull);
+    if (r.brokeThisHit) {
+      this.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: `swarm-${rec.entityId}` });
+      serverLogEvent('shield_broken', { entityId: `swarm-${rec.entityId}`, tick: this.serverTick });
+    }
+    return { newShield: state.shield, shieldMax, hullMax: getDroneMaxHealth(rec.shipKind) ?? 40, hitLayer: r.hitLayer };
+  }
+
+  /**
+   * Halo shield regen - one cheap pass per update(). Full-shield entities
+   * skip with two comparisons (no allocation). On the 0-cross-up an active
+   * player ship swaps its collider back to the cheap circle and
+   * SHIELD_RESTORED fires. Drone regen is server-side only here (collider
+   * swap + wire = Phase 6); the discrete regen-ramp broadcast is Phase 3b.
+   */
+  private tickShieldRegen(): void {
+    const t = this.serverTick;
+    for (const [, ship] of this.state.ships) {
+      if (!ship.alive) continue;
+      const kind = getShipKind(ship.kind);
+      if (ship.shield >= kind.shieldMax) continue;
+      if (t - ship.shieldLastDamageTick < kind.shieldRegenDelayTicks) continue;
+      const state: ShieldHullState = {
+        shield: ship.shield,
+        hull: ship.health,
+        lastDamageTick: ship.shieldLastDamageTick,
+      };
+      const r = regenStep(state, kind, t);
+      if (!r.regenerated) continue;
+      ship.shield = state.shield;
+      if (r.restoredThisStep) {
+        this.bus.emit('SHIELD_RESTORED', { type: 'SHIELD_RESTORED', entityId: ship.shipInstanceId });
+        serverLogEvent('shield_restored', { entityId: ship.shipInstanceId, tick: t });
+        if (ship.isActive) {
+          this.postToWorker({ type: 'SET_HULL_EXPOSED', id: ship.playerId, exposed: false, kindId: ship.kind, tick: t });
+        }
+      }
+    }
+    for (const [id, shieldVal] of this.swarmShield) {
+      const rec = this.swarmRegistry.get(id);
+      if (!rec) continue;
+      const sMax = getDroneShieldMax(rec.shipKind);
+      if (shieldVal >= sMax) continue;
+      const hull = this.swarmHealth.get(id);
+      if (hull === undefined || hull <= 0) continue;
+      const dkind = getShipKind(rec.shipKind);
+      if (t - (this.swarmShieldLastDmg.get(id) ?? t) < dkind.shieldRegenDelayTicks) continue;
+      const state: ShieldHullState = { shield: shieldVal, hull, lastDamageTick: this.swarmShieldLastDmg.get(id) ?? t };
+      const r = regenStep(state, dkind, t);
+      if (r.regenerated) this.swarmShield.set(id, state.shield);
+      if (r.restoredThisStep) serverLogEvent('shield_restored', { entityId: `swarm-${rec.entityId}`, tick: t });
+    }
+  }
+
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
     // Phase 4 — wreck damage. Wire id has the `wreck-` prefix; the rest
     // is the shipInstanceId UUID. Route to `state.wrecks` and tear down
@@ -1527,6 +1653,10 @@ export class SectorRoom extends Room<SectorState> {
         shooterId,
         hitX: hitX ?? pose?.x,
         hitY: hitY ?? pose?.y,
+        newShield: 0,
+        shieldMax: 0,
+        hullMax: wreck.maxHealth,
+        hitLayer: 'hull',
       } satisfies DamageEvent);
       if (wreck.health <= 0) {
         const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
@@ -1545,7 +1675,10 @@ export class SectorRoom extends Room<SectorState> {
     const directLingering = this.state.ships.get(targetId);
     if (directLingering && !directLingering.isActive) {
       if (!directLingering.alive) return;
-      directLingering.health = Math.max(0, directLingering.health - damage);
+      // Lingering hulls keep shield + regen. Collider swap deferred
+      // (workerBodyId null): the lingering worker body id has two cases
+      // (playerId vs linger-<id>) resolved in a Phase-6 follow-up.
+      const f = this.damageShipLayered(directLingering, damage, null);
       const pose = this.lingeringPoseCache.get(targetId);
       const dmgEvent: DamageEvent = {
         type: 'damage',
@@ -1555,6 +1688,10 @@ export class SectorRoom extends Room<SectorState> {
         shooterId,
         hitX: hitX ?? pose?.x,
         hitY: hitY ?? pose?.y,
+        newShield: f.newShield,
+        shieldMax: f.shieldMax,
+        hullMax: f.hullMax,
+        hitLayer: f.hitLayer,
       };
       this.broadcast('damage', dmgEvent);
       if (directLingering.health <= 0) {
@@ -1585,7 +1722,9 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.getActiveShip(targetId);
     if (ship) {
       if (!ship.alive) return;
-      ship.health = Math.max(0, ship.health - damage);
+      // Active branch: targetId is the playerId, which is exactly the
+      // worker body id for the player ship (SPAWN used playerId).
+      const f = this.damageShipLayered(ship, damage, targetId);
 
       const pose = this.shipPoseCache.get(targetId);
       const dmgEvent: DamageEvent = {
@@ -1596,6 +1735,10 @@ export class SectorRoom extends Room<SectorState> {
         shooterId,
         hitX: hitX ?? pose?.x,
         hitY: hitY ?? pose?.y,
+        newShield: f.newShield,
+        shieldMax: f.shieldMax,
+        hullMax: f.hullMax,
+        hitLayer: f.hitLayer,
       };
       this.broadcast('damage', dmgEvent);
       this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
@@ -1614,11 +1757,9 @@ export class SectorRoom extends Room<SectorState> {
     // immune; drones (kind=1) take damage and despawn at zero health.
     const rec = this.swarmRegistry.get(targetId);
     if (!rec) return;
-    const currentHealth = this.swarmHealth.get(targetId);
-    if (currentHealth === undefined) return; // immune (asteroid)
-
-    const newHealth = Math.max(0, currentHealth - damage);
-    this.swarmHealth.set(targetId, newHealth);
+    const sf = this.damageSwarmLayered(rec, damage);
+    if (sf === null) return; // immune (asteroid - no swarmHealth entry)
+    const newHealth = this.swarmHealth.get(targetId) ?? 0;
 
     // Broadcast damage event keyed by the wire id (`swarm-${entityId}`) so the
     // client can flash the right sprite. Damage event reuses the player shape
@@ -1635,6 +1776,10 @@ export class SectorRoom extends Room<SectorState> {
       shooterId,
       hitX: swarmHitX,
       hitY: swarmHitY,
+      newShield: sf.newShield,
+      shieldMax: sf.shieldMax,
+      hullMax: sf.hullMax,
+      hitLayer: sf.hitLayer,
     } satisfies DamageEvent);
 
     // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and
@@ -1695,6 +1840,8 @@ export class SectorRoom extends Room<SectorState> {
     this.swarmRegistry.unregister(rec.id);
     this.aiController.unregister(rec.id);
     this.swarmHealth.delete(rec.id);
+    this.swarmShield.delete(rec.id);
+    this.swarmShieldLastDmg.delete(rec.id);
     this.snapshotRing.unregisterEntity(rec.id);
     // Phase 4c — clean up drone turret state alongside the body.
     this.droneMountAngles.delete(rec.id);
@@ -1741,6 +1888,11 @@ export class SectorRoom extends Room<SectorState> {
     // Reset authoritative ship state.
     ship.health = SHIP_MAX_HEALTH;
     ship.alive  = true;
+    // Shield refills on respawn; force the body back to its cheap circle
+    // collider (SET_HULL_EXPOSED is idempotent - no-op if already circle).
+    ship.shield = getShipKind(ship.kind).shieldMax;
+    ship.shieldLastDamageTick = this.serverTick;
+    this.postToWorker({ type: 'SET_HULL_EXPOSED', id: playerId, exposed: false, kindId: ship.kind, tick: this.serverTick });
     // Seed the pose cache so any consumer that runs before the next update()
     // tick (e.g. an in-flight fire request resolved on this same client.send
     // turn) sees the respawn position rather than the corpse pose.
@@ -2417,6 +2569,10 @@ export class SectorRoom extends Room<SectorState> {
     // ship records keyed by shipInstanceId; the snapshot wire format
     // already matched this since Phase 6a.
     this.state.ships.set(ship.shipInstanceId, ship);
+    // Shield seeds full on spawn (transient - never persisted; only hull
+    // persists). Body spawns circle (exposed:false in spawnShip).
+    ship.shield = getShipKind(ship.kind).shieldMax;
+    ship.shieldLastDamageTick = this.serverTick;
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -3341,6 +3497,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
+    this.tickShieldRegen();
     phaseTime('projectiles');
 
     // Phase 8 — sector persistence. Galaxy rooms snapshot their volatile
