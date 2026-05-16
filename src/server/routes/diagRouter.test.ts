@@ -3,6 +3,7 @@ import express, { type Express } from 'express';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DIAG_CAPTURE_MAX_LOG_ENTRIES } from './captureSchema.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
@@ -154,18 +155,55 @@ describe('diagRouter', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects payloads above the 2 MB ceiling with 413', async () => {
-    // Each entry ~120 bytes serialised; 25 000 entries → ~3 MB.
-    const logs = Array.from({ length: 25_000 }, (_, i) => ({
-      ts: i,
-      tag: 'snapshot',
-      data: { padding: 'x'.repeat(100) },
+  it('accepts a large capture above the old 2000 cap (the 2026-05-16 regression)', async () => {
+    // The client diag ring was raised 2000 -> 30000 for the warp-out
+    // transit timeline but the schema cap was left at 2000, so every
+    // >2000-entry capture 400'd ("invalid capture") and wasted on-device
+    // smoke tests. Tiny entries (well under the harness body limit) +
+    // realistic marker shapes (nested object/array `data`) prove it is
+    // the COUNT cap, not the byte limit or the data shape.
+    const logs = [
+      ...Array.from({ length: 5_000 }, (_, i) => ({
+        ts: i, tag: 'rafTick', data: { elapsedMs: 16 + (i % 4) },
+      })),
+      { ts: 6_000, tag: 'transit_mark', data: { phase: 'curtain_down', sinceEngageMs: 6451, stepMs: 2473 } },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        ts: 6_100 + i, tag: 'transit_frame',
+        data: { idx: i, sinceCurtainMs: i * 11, elapsedMs: 11, spriteCount: 19 },
+      })),
+      { ts: 7_000, tag: 'longtask', data: { durationMs: 51, attribution: [{ containerType: 'window' }] } },
+    ];
+    const res = await fetch(`${baseUrl}/diag/capture`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logs, note: 'large warp-out capture' }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; dir: string };
+    expect(body.ok).toBe(true);
+    const dirs = await readdir(captureDir);
+    expect(dirs).toHaveLength(1);
+    const summary = JSON.parse(
+      await readFile(join(captureDir, dirs[0]!, 'summary.json'), 'utf8'),
+    ) as SummaryShape;
+    expect(summary.counts.total).toBe(logs.length);
+    expect(summary.counts.tags['client/transit_frame']).toBe(40);
+  });
+
+  it(`rejects more than ${DIAG_CAPTURE_MAX_LOG_ENTRIES} entries with 400 (schema cap)`, async () => {
+    // The operative guard for oversized captures is now the entry-count
+    // schema cap, not the old 2 MB byte limit. The route's MAX_BYTES
+    // byte backstop is 64 MB — too large to exercise at unit speed — so
+    // this locks the count cap with tiny, fast entries that reach the
+    // schema (under the harness body limit).
+    const logs = Array.from({ length: DIAG_CAPTURE_MAX_LOG_ENTRIES + 1 }, (_, i) => ({
+      ts: i, tag: 'snapshot', data: {},
     }));
     const res = await fetch(`${baseUrl}/diag/capture`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ logs }),
     });
-    expect(res.status).toBe(413);
+    expect(res.status).toBe(400);
   });
 });

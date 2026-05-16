@@ -11,7 +11,7 @@
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { z } from 'zod';
+import { captureSchema } from './captureSchema.js';
 import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
@@ -19,7 +19,11 @@ import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
-const MAX_BYTES = 2 * 1024 * 1024; // 2 MB ceiling.
+// 64 MB ceiling. Dev-only diagnostic capture: the client log ring is up
+// to 30000 entries when `?diag=1` (ClientLogger `DIAG_MAX_ENTRIES`,
+// raised so the sparse `transit_mark` rows survive a warp-out + Capture
+// delay) plus the server-events bundle, which exceeds the old 2 MB.
+const MAX_BYTES = 64 * 1024 * 1024;
 
 /**
  * Tag → bucket. Anything unmapped lands in `other`. Adding a new tag means
@@ -110,16 +114,11 @@ const BUCKETS: Record<string, string> = {
 const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'snapshots', 'raf', 'other'] as const;
 type BucketName = typeof ALL_BUCKETS[number];
 
-const captureSchema = z.object({
-  note: z.string().max(500).optional(),
-  userAgent: z.string().max(500).optional(),
-  viewport: z.object({ w: z.number(), h: z.number() }).optional(),
-  stats: z.record(z.unknown()).optional(),
-  /** Wall-clock ms epoch at client boot, so client `ts` (perf.now) and server `ts` (wall) can be aligned. */
-  clientEpochMs: z.number().optional(),
-  /** Ring-buffer entries from `window.__eqxLogs`. Free-shape per entry. */
-  logs: z.array(z.record(z.unknown())).max(2000),
-}).strict();
+// `captureSchema` + `DIAG_CAPTURE_MAX_LOG_ENTRIES` live in
+// `./captureSchema` (pure, zod-only, unit-testable — extracted
+// 2026-05-16 to fix the stale 2000-entry cap that 400'd every
+// >2000-entry warp-out capture, and to give the diag upload real
+// unit coverage without the server's node:sqlite transitive load).
 
 interface RoutedEntry {
   source: 'client' | 'server';
