@@ -39,6 +39,7 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
+import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, SHIP_MAX_HEALTH } from '@core/combat/Weapons';
@@ -280,6 +281,18 @@ export class ColyseusGameClient {
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
   };
+
+  /**
+   * F-transit-instrument — gated single-clock timeline for the
+   * inter-sector transit (warp-out → arrival → settle) path. The
+   * room-swap handlers below drive the lifecycle marks; `App.tsx`
+   * drives `engage` / `curtain_down` / the post-reveal frame burst via
+   * `getGameClient().transitInstr`. Lives on the client (not the React
+   * component) because it must survive the room hot-swap and share one
+   * `performance.now()` clock across the whole flow. Fully no-op unless
+   * `?diag=1` / WebDriver. See `debug/TransitInstrumentation.ts`.
+   */
+  readonly transitInstr = new TransitInstrumentation();
 
   /** Keys (`swarm-${entityId}`) of swarm bodies currently spawned in the prediction world. */
   private predSwarmKeys = new Set<string>();
@@ -1007,6 +1020,14 @@ export class ColyseusGameClient {
     room.onMessage('transit_state', (msg: TransitStateMessage) => {
       const ui = useUIStore.getState();
       ui.setTransitState(msg.state);
+      // F-transit-instrument — one mark per transit_state transition.
+      // `setTransitState(msg.state)` above runs unconditionally before
+      // the per-state branch, so this single site captures SPOOLING /
+      // IN_TRANSIT / DOCKED / ARRIVED. Gated/no-op when diag is off.
+      this.transitInstr.mark(`state:${msg.state}`, {
+        ...(msg.targetSectorKey !== undefined ? { target: msg.targetSectorKey } : {}),
+        ...(msg.reason !== undefined ? { reason: msg.reason } : {}),
+      });
       if (msg.targetSectorKey !== undefined) ui.setTransitTargetSectorKey(msg.targetSectorKey);
       if (msg.state === 'SPOOLING') {
         ui.setTransitProgress(0);
@@ -1070,11 +1091,15 @@ export class ColyseusGameClient {
       // The visible result is the player rendered in both sectors at once.
       // (The source onLeave's existing `transitState` early-return correctly
       // suppresses the disconnected-status flicker during this window.)
+      // F-transit-instrument — bracket the source-room leave. `stepMs`
+      // on `leave_room:end` is its own duration.
+      this.transitInstr.mark('leave_room:begin');
       try {
         await room.leave(true /* consented */);
       } catch (err) {
         console.warn('[ColyseusClient] source room.leave during transit failed', err);
       }
+      this.transitInstr.mark('leave_room:end');
 
       // Wipe Stage 4 prediction-loop state so the destination sector's first
       // snapshot is treated like a fresh-connect seed. Without this, the
@@ -1082,7 +1107,11 @@ export class ColyseusGameClient {
       // client over-predicts ~600 ms ahead of authoritative state for
       // tens of seconds post-arrival. See `resetPredictionState()` for the
       // full pathology and the diagnostic captures that motivated the fix.
+      // F-transit-instrument — bracket resetPredictionState; `stepMs`
+      // on `pred_reset:end` is its duration.
+      this.transitInstr.mark('pred_reset:begin');
       this.resetPredictionState();
+      this.transitInstr.mark('pred_reset:end');
 
       // Wipe stale spatial state from the source sector. Without this, the old
       // sector's asteroids/drones (and remote ships) linger in the mirror at
@@ -1114,9 +1143,20 @@ export class ColyseusGameClient {
       }
 
       try {
+        // F-transit-instrument — bracket the destination seat consume
+        // (opens the new WS). `join_room` `stepMs` is the consume cost.
+        this.transitInstr.mark('seat_consume');
         const newRoom = await client.consumeSeatReservation<unknown>(msg.reservation as never);
         this.room = newRoom;
         bindRoomHandlers(newRoom);
+        this.transitInstr.mark('join_room');
+        // Arm the destination-room one-shots NOW (handlers just bound
+        // on `newRoom`). Until this, `markOnce` is inert, so the source
+        // room's still-live `onStateChange` / `snapshot` handlers
+        // (firing through spool) cannot steal `first_state` /
+        // `first_snapshot` — they'll capture the destination's first.
+        this.transitInstr.arm('first_state');
+        this.transitInstr.arm('first_snapshot');
         // Server's onJoin will send a `welcome` setting currentSectorKey;
         // it'll also send `transit_state ARRIVED` once the destination
         // orchestrator marks the player landed (this path only fires on
@@ -1147,6 +1187,12 @@ export class ColyseusGameClient {
     });
 
     room.onStateChange((state: unknown) => {
+      // F-transit-instrument — first `onStateChange` in the
+      // DESTINATION room. This handler is bound on both rooms and fires
+      // ~60 Hz; `markOnce` is inert until `arm('first_state')` runs at
+      // the room swap, so a source-room tick during spool can't steal
+      // it. Captures exactly the new sector's first state patch.
+      this.transitInstr.markOnce('first_state');
       this.syncMirror(state);
     });
 
@@ -1805,6 +1851,17 @@ export class ColyseusGameClient {
 
       const drift = this.reconciler.lastDrift;
       const angleDrift = this.reconciler.lastAngleDrift;
+      // F-transit-instrument — first DESTINATION-room snapshot
+      // reconcile. The `snapshot` handler is bound on both rooms;
+      // `markOnce` is inert until `arm('first_snapshot')` at the room
+      // swap, so a source-room snapshot during spool can't steal it.
+      // Drift is already in hand (cheap) — a large first-correction
+      // here would explain a post-reveal stall.
+      this.transitInstr.markOnce('first_snapshot', {
+        serverTick: snap.serverTick,
+        driftUnits: parseFloat(drift.toFixed(4)),
+        angleDriftRad: parseFloat(angleDrift.toFixed(4)),
+      });
       this.stats.rttMs = Math.round(this.reconciler.lastRtt);
       this.stats.driftUnits = drift;
       this.stats.angleDriftRad = angleDrift;

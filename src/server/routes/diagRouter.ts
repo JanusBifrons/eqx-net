@@ -51,6 +51,15 @@ const BUCKETS: Record<string, string> = {
   grid_update: 'perf',
   mirror_rebuild: 'perf',
   mirror_clone: 'perf',
+  // client perf — F-transit-instrument: gated, discrete client-ts
+  // timeline across the inter-sector transit (warp-out → arrival →
+  // settle) path + the bounded 40-frame post-reveal burst. Emitted
+  // only on `?diag=1` / WebDriver. Routed to `perf` so they land in
+  // `perf.ndjson` alongside `raf_gap` / `rafTick` for correlation
+  // (the ts≈17546 residual-stall localisation —
+  // `docs/HANDOFF-warp-spool-perf-followup.md`).
+  transit_mark: 'perf',
+  transit_frame: 'perf',
   // client corrections
   correction: 'corrections',
   // combat (client + server)
