@@ -24,6 +24,8 @@ export function HudTestAttributes(): JSX.Element {
       <SwarmCount />
       <ClockRate />
       <ServerTickHz />
+      <ShieldPct />
+      <HullPct />
     </div>
   );
 }
@@ -46,4 +48,14 @@ function ClockRate(): JSX.Element {
 function ServerTickHz(): JSX.Element {
   const hz = useUIStore((s) => s.serverTickHz);
   return <div data-testid="server-tick-hz">{hz.toFixed(0)}</div>;
+}
+
+function ShieldPct(): JSX.Element {
+  const p = useUIStore((s) => s.shieldPct);
+  return <div data-testid="shield-pct">{Math.round(p)}</div>;
+}
+
+function HullPct(): JSX.Element {
+  const p = useUIStore((s) => s.hullPct);
+  return <div data-testid="hull-pct">{Math.round(p)}</div>;
 }
