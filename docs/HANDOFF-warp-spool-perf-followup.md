@@ -161,6 +161,102 @@ coarse-pointer — gated so desktop is unchanged. Confirm the residual IS
 the filter pass (on-device + filter-on/off A/B) BEFORE the fix. ONE
 principled change, before/after capture proof, no blind stacking.
 
+### F2 ON-DEVICE CONFIRM — 2026-05-16 (phone capture `…jgimvi`)
+
+Real device: Android 10 / Chrome 148 Mobile, viewport 411×809; ~6.5 s
+join-warp smoke (`?diag=1`). Analyzer: **steady FRAME p50/p95 = 16.6 /
+16.8 ms ≈ a clean 60 fps.** Σ all CPU markers **2.48 ms**
+(`renderer_update` 1.76 the largest; `grid_update` 0.45; `mirror_clone`
+0.18; `mirror_rebuild` 0.07; `warp_tick` 0.016). **CPU exonerated on
+real mobile — confirms the F2 desktop result; the lightened filter
+chain performs fine at mobile DPR.**
+
+The ONLY blemish: a **single transient ~133 ms frame** at ts ≈ 18650 =
+the **warp→game handoff teardown** — a 51 ms `self` longtask
+(18628–18679) + a React `component_unmount` @ 18677.5 coinciding with
+the 132.9 ms rafTick; `renderer_update` stays ~1–2 ms across it (the
+spike is **residual**, not CPU). Matches the user's "lag spike but
+otherwise okay" exactly. Not sustained; partly masked by the arrival
+curtain/flash.
+
+**F3 — REVISED TARGET (if pursued at all).** The warp is healthy
+on-device; this is optional polish, not a correctness blocker (user
+bar: "otherwise okay / move on if no issues"). IF pursued: target the
+**warp-end teardown frame ONLY** — stagger the Pixi filter-stack
+detach off the React unmount frame and/or soften the WarpScreen/curtain
+unmount so the detach + unmount + any longtask don't converge on one
+frame. ONE change, before/after on-device capture proof. Do NOT touch
+the steady filter chain (proven fine).
+
+### F2 ON-DEVICE — WARP-OUT LOCALIZED — 2026-05-16 (`…y8ftt6`)
+
+User report: "laggy on warp **out**; the starting (cold-load) lag is
+gone on subsequent loads." Phone capture confirms + localizes:
+
+- Steady FRAME **p50 11.1 ms** (~90 fps idle — phone is fast). But
+  **p95 44.4 ms, max 111 ms.** Σ all CPU markers **1.40 ms**
+  (`renderer_update` max 2.5). Residual again ⇒ GPU/pipeline, CPU dead.
+- Slowest rafTick frames cluster **ts 17546–17852**: 111→77→55→55→44→44
+  ms — a **~300 ms run of consecutive 44–111 ms frames**, i.e.
+  *sustained* warp-out degradation, NOT a one-off. Load curtain dropped
+  at ts 15333 (≈2.2 s earlier) ⇒ this is **not** load/join. A separate
+  55 ms longtask + `component_unmount` ~ts 18300–18360 is the minor
+  teardown blip (secondary, ≈ jgimvi's).
+- Cold-start join hitch (jgimvi 133 ms) does NOT recur warm — confirmed
+  by the user; deprioritised.
+
+VERDICT: the reproducible "warp-out lag" = a ~300 ms GPU-fill burst
+during the warp-out **climax/burst** — the filter chain at its DESIGNED
+peak (`DEFAULT_WARP_PARAMS`: climaxAmplitude 220, climaxZoomBlur 0.7,
+burstAmplitude 440, burstBrightness 2.6, bloomStrengthMax 6) doing
+fullscreen shader fill on the mobile GPU. The original handoff
+hypothesis, now on-device-confirmed in the RIGHT scenario.
+
+**F3 — DATA-LOCKED TARGET: warp-out climax/burst GPU fill on
+coarse-pointer (mobile).** ONE principled change: lower
+`bloomStrengthMax` + Bloom quality/kernelSize, `climaxZoomBlur`, and/or
+cap the warp filter render-target `resolution`, **gated to
+`pointer: coarse` / mobile DPR** so desktop visuals are untouched.
+Visible tradeoff: a less intense bloom/blur at the warp-out peak on
+phones (the climax/burst is already curtained/flashed, so the
+perceptual hit is small). Steady filter chain + spool: do NOT touch
+(proven fine). F4: re-measure on-device via the same `?diag=1` +
+Settings→Capture loop; the 17546-cluster p95/max must drop.
+
+### F3 HYPOTHESIS FALSIFIED — 2026-05-16 (user on-device A/B)
+
+**F3 (cap warp filter resolution) was REVERTED — uncommitted, never
+shipped.** User: "I only test on mobile" + "[the sandbox] was lag-free
+on mobile." The sandbox (`visual-effects-sandbox-main.ts`) runs the
+**same `WorkerRendererClient` + same filter chain** as the game; the
+user runs **both on the same phone (same DPR)**. Sandbox lag-free at
+mobile DPR ⇒ the filter chain (incl. climax/burst) is affordable at
+that DPR ⇒ the warp-out lag is **NOT the filter GPU fill**. The
+"sandbox-smooth was low-DPR desktop" reasoning was wrong (user never
+tests desktop). The earlier leap "residual at ts-17546 = filter
+climax/burst" had no direct evidence (no transit/warp event ts in the
+capture) and is **not supported**.
+
+CORRECTED ATTRIBUTION: the real sandbox-vs-game differential at the
+SAME device/DPR is what the game does that the sandbox does NOT —
+**the inter-sector transit room-swap** (Colyseus leave old room → join
+new → new-sector schema sync → predWorld/reconciler reset). The capture
+has `player_leave/join/rebind` server events; warp-OUT == a networked
+room swap. The F1 CPU markers (`mirror_rebuild`/`mirror_clone`/etc.)
+bracket the STEADY per-frame path, NOT the room-swap burst, so it lands
+in "residual" as a transient stall — matching the original handoff's
+"raf_gaps at the transit room-swap boundary". This is largely inherent
+to a networked sector change and is masked by the load curtain / warp
+flash; steady play is 60–90 fps.
+
+ASSESSMENT (user: "we might be chasing tail here" — concur): the merge
+(the actual deliverable) is long done & solid; steady play is smooth;
+the warp-out hitch is a ~300 ms transient during an already-curtained
+network transition. Micro-optimising it is low-ROI. RECOMMEND: accept
+it as inherent-to-the-room-swap, document, and close Phase F — unless a
+dedicated transit-pipeline profiling effort is explicitly wanted (a
+separate, deeper, uncertain-payoff investigation; NOT the filters).
+
 **F4 — Re-measure** (same markers/scenario). If flat, REVERT and
 re-attribute — never stack a second guess.
 
@@ -202,4 +298,33 @@ merge.
   ~`:2413`, `handleSnapshot` ~`:1373`).
 - Sandbox A/B reference: `src/client/__offscreen-spike__/visual-effects-sandbox-main.ts`.
 - Architecture: `docs/architecture/warp-visual.md`.
-- Origin record: `docs/HANDOFF-warp-perf-2026-05-15.md`.
+- Origin record: `docs/HANDOFF-warp-perf-2026-05-15.md`
+
+## ROOM-SWAP HYPOTHESIS ALSO FALSIFIED — 2026-05-16 (cross-clock)
+
+User chose to keep instrumenting (correct call). Cross-clock
+correlation of `…y8ftt6` via `clientEpochMs` 1778926490084: server
+room-swap `player_leave → player_join` = client-ts **10762 → 10988**
+(finished ~11 s); curtain down (`load_curtain_change`) = client-ts
+**15333**; stall cluster = client-ts **17546–17852**. The stall is
+**~6.5 s after the room-swap completed and ~2.2 s after the curtain
+revealed the new sector** ⇒ NOT room-swap mechanics.
+
+Robust theory-free facts: a ~300 ms residual stall hits **~2 s
+post-arrival, curtain-down, settled in-sector**; NOT CPU (F1 markers
+<2.5 ms through it), NOT filters (same-device sandbox A/B), NOT
+room-swap (timing). **Zero client log events near ts 17546** — the
+warp-out→arrival→settle path is an instrumentation black box. Two
+hypotheses (filter-fill, room-swap) killed by data; no third guess —
+instrument the black box.
+
+**NEXT (F-transit-instrument):** gated (`isDiagEnabled`) discrete
+`logEvent` lifecycle+span markers across the FULL inter-sector
+transit→arrival→settle path so a CLIENT-ts timeline exists around the
+stall: engage → old-room leave → seat-consume/new-room join → first
+`onStateChange` → `resetPredictionState` → first post-arrival snapshot
+reconcile → curtain-down → first ~30 post-reveal frames (surface a
+per-frame `spriteCount` delta to catch a first-render GPU-upload
+spike). Route new tags → `perf` bucket. Then ONE on-device capture
+names the step that eats the 300 ms. Data tool, not a regression lock.
+Then F3′ fixes only the indicted step; F4′ re-measures..
