@@ -1,4 +1,4 @@
-# HANDOFF — warp-spool frame cost (OPEN, headline next work)
+# HANDOFF — warp-spool frame cost (RESOLVED 2026-05-16 — arrival prediction drift, test-locked)
 
 Live worklog for the deferred warp performance item. Supersedes the
 "OPEN" section of `docs/HANDOFF-warp-perf-2026-05-15.md` (which is
@@ -328,3 +328,59 @@ per-frame `spriteCount` delta to catch a first-render GPU-upload
 spike). Route new tags → `perf` bucket. Then ONE on-device capture
 names the step that eats the 300 ms. Data tool, not a regression lock.
 Then F3′ fixes only the indicted step; F4′ re-measures..
+
+## RESOLVED — 2026-05-16 — arrival prediction drift (test-first fix, Invariant #13)
+
+The F-transit-instrument plan worked exactly as intended. The user's
+on-device capture **`2026-05-16T11-59-43-103Z-tl56wa`** (fixed diag
+pipeline: 30000 ring, 64 MB limit, 30000 schema cap — full timeline
+survived: `transit_mark` 39, `transit_frame` 120, `raf_gap` 44, 18365
+logs) named the step in one read.
+
+**Timeline (intentional vs the actual defect):**
+- `SPOOLING → IN_TRANSIT` ≈ 3 s — the designed vulnerable spool. Intentional.
+- room-swap ≈ 0.3 s, `pred_reset` step 0 ms — fast; **not** it (room-swap hypothesis already falsified above, now confirmed by direct span).
+- `first_snapshot → curtain_down` ≈ 2.5 s — the **5 s `joinMinimumElapsed` minimum-display floor** (commit 8792822). Intentional.
+- **`first_snapshot` `driftUnits` = 210 / 380 / 87** ⇐ **THE DEFECT.** The destination's first authoritative snapshot is hundreds of units off the client's reset prediction; the reconciler lerps that out over the first ~1.3 s post-curtain (choppy 33–144 ms frames, `raf_gap`s to 344 ms). That correction lerp *is* the "warp-out lag".
+
+**Root cause:** `resetPredictionState()`'s "fresh-connect seed" was true
+for the RTT/timing state it re-creates and **false for the spatial
+body** — it never despawned the local `predWorld` body nor dropped the
+`Reconciler`. The `transit_ready` mirror-cleanup preserves the local
+ship, so `tryInitPredWorld` early-returned on `hasShip(localId)` at the
+destination and the body kept the SOURCE pose; the first destination
+reconcile surfaced the whole source→dest delta as drift. Intermittency
+= configurable-arrival varying how far the landing point is from the
+pre-transit pose. Full write-up: `docs/LESSONS.md` 2026-05-16.
+
+**Fix (one ownership site, no second correction path):**
+`resetPredictionState()` now despawns the local predWorld body + nulls
+the `Reconciler`; the destination's first state-diff/snapshot reseeds at
+the AUTHORITATIVE arrival pose via the existing `tryInitPredWorld`
+(rebuilds the Reconciler). `tickPhysics` + `handleSnapshot` already
+guard `!this.reconciler` — re-enters a well-tested state.
+
+**Test-first (Invariant #13):**
+`src/client/net/ColyseusClient.transitArrivalDrift.test.ts` — drives the
+real seed→`resetPredictionState`→reseed→first-snapshot sequence on a
+real `ColyseusGameClient` + real `PhysicsWorld` (the level the bug
+lives — NOT the integration harness, which uses a raw colyseus.js
+client and can't observe `reconciler.lastDrift`; NOT a naive Reconciler
+unit test). Asserts first-arrival `reconciler.lastDrift < 5`: **RED at
+384 u pre-fix, GREEN ~0 post-fix, re-fails on revert.** Companion
+`ColyseusClient.resetPredictionState.test.ts` updated to the new
+contract (reconciler nulled, not just `lastRtt` zeroed).
+
+Green bar: typecheck 0 · lint 0 (29 pre-existing cosmetic warnings) ·
+`pnpm test` 87 files / 820 · `pnpm test:integration` 14 / 45. CLAUDE.md
+(`src/client`) + `docs/LESSONS.md` updated same commit (Invariant
+#7/#10). The three earlier theories (filters / grid-labels / room-swap)
+remain falsified — recorded above as the methodological win: instrument
+the black box, don't guess a fourth time.
+
+**Note on the residual carried in the 2026-05-15 LESSONS entry:** the
+~29 ms spool-window mean frame + transit-boundary `raf_gap`s are a
+*separate, lower-priority* steady-cost question (filter fill + grid
+labels on a DPR≈2.6 GPU) and were NOT the user-reported "lag" — that
+was the drift, now fixed. If spool-window frame cost is ever revisited,
+it gets its own capture + measurement; do not conflate it with this.

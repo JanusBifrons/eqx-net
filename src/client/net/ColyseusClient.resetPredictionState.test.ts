@@ -106,23 +106,25 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     expect(internals._intervalEwma).toBe(0);
   });
 
-  it('zeroes reconciler.lastRtt when the reconciler is bound', () => {
-    // The first post-transit welford push (line 1082 of ColyseusGameClient)
-    // reads `this.reconciler.lastRtt` from the *previous* reconcile call.
-    // Without resetting it, the very first push after the room handoff
-    // re-injects the pre-transit RTT — re-poisoning the welford we just
-    // re-created. Lock that down.
+  it('NULLS the reconciler so the destination reseeds it fresh (2026-05-16)', () => {
+    // Contract change (2026-05-16 arrival-drift fix): transit no longer
+    // merely zeroes `reconciler.lastRtt` — it drops the Reconciler
+    // entirely so the destination's first state-diff / snapshot rebuilds
+    // it at the AUTHORITATIVE arrival pose via `tryInitPredWorld`. That
+    // subsumes the old lastRtt-zeroing: there is no surviving reconciler
+    // to re-poison the freshly re-created welford. Full mechanism +
+    // regression lock: `ColyseusClient.transitArrivalDrift.test.ts`.
     const client = new ColyseusGameClient();
     const internals = asInternals(client);
 
     internals.reconciler = { lastRtt: 5000 };
     internals.resetPredictionState();
-    expect(internals.reconciler.lastRtt).toBe(0);
+    expect(internals.reconciler).toBeNull();
   });
 
-  it('is a no-op on the reconciler field when no reconciler is bound', () => {
+  it('leaves the reconciler null and does not throw when none is bound', () => {
     // Pre-welcome (before the first snapshot binds the reconciler) the
-    // field is null. The reset must not throw.
+    // field is null. The reset must not throw and must keep it null.
     const client = new ColyseusGameClient();
     const internals = asInternals(client);
 

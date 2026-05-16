@@ -696,9 +696,29 @@ export class ColyseusGameClient {
    * `2026-05-09T07-51-26-622Z-wc5fm0` (steady-state long after the same
    * session, offset settled to −15) is the clean baseline.
    *
-   * Also resets `reconciler.lastRtt` so the first post-transit welford
-   * push (which reads the *previous* reconcile's lastRtt — see ordering
-   * in `handleSnapshot`) doesn't seed welford with the pre-transit value.
+   * Spatial seed (2026-05-16 fix). The pre-2026-05-16 version reset only
+   * the RTT/timing state above and left the local `predWorld` ship body
+   * + the `Reconciler` instance untouched. The `transit_ready`
+   * mirror-cleanup loop preserves the local ship, so `tryInitPredWorld`
+   * early-returned on `predWorld.hasShip(localId)` at the destination and
+   * the body arrived still at the SOURCE-sector pose. The destination's
+   * first `handleSnapshot` then reconciled that stale body against the
+   * arrival pose, surfacing the entire source→destination delta as
+   * "drift" (210-380 u on-device, diag
+   * `2026-05-16T11-59-43-103Z-tl56wa`), which the reconciler lerped out
+   * over ~1.3 s post-curtain — the warp-out jank. So this also despawns
+   * the local predWorld body and NULLS the reconciler: the destination's
+   * first state-diff / snapshot reseeds via the existing
+   * `tryInitPredWorld` path AT THE AUTHORITATIVE ARRIVAL POSE (which
+   * rebuilds the `Reconciler`), making the "fresh-connect seed" the
+   * comment above promises true for the spatial body too. Nulling the
+   * reconciler also subsumes the old `reconciler.lastRtt = 0` (there is
+   * no surviving reconciler to re-poison the welford). `handleSnapshot`
+   * + `tickPhysics` both already guard `!this.reconciler` (the
+   * pre-first-welcome state) — the fix re-enters that well-tested state,
+   * it does not invent one. One ownership site; no second correction
+   * path (Invariant #12 philosophy). Locked by
+   * `ColyseusClient.transitArrivalDrift.test.ts`.
    */
   private resetPredictionState(): void {
     this._rttWelford = createWelford();
@@ -710,7 +730,20 @@ export class ColyseusGameClient {
     this._recentIntervals.length = 0;
     this._recentCorrFlags.length = 0;
     this._intervalEwma = 0;
-    if (this.reconciler) this.reconciler.lastRtt = 0;
+    // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
+    // local predWorld ship body and drop the Reconciler so the
+    // destination's first state-diff / snapshot reseeds the body AT THE
+    // AUTHORITATIVE ARRIVAL POSE via `tryInitPredWorld` (which rebuilds
+    // the Reconciler). Without this the body carries the source pose into
+    // the destination and the first reconcile lerps out the full
+    // inter-sector delta — the warp-out drift jank. Subsumes the old
+    // `reconciler.lastRtt = 0` (no surviving reconciler to re-poison the
+    // welford).
+    const localId = this.mirror.localPlayerId;
+    if (localId && this.predWorld?.hasShip(localId)) {
+      this.predWorld.despawnShip(localId);
+    }
+    this.reconciler = null;
     // Phase 3 — drop AI registrations on sector handoff. The destination
     // sector has a different swarm; old behaviours would hold stale
     // `lastFireTick` and target stale player IDs that may not exist there.
