@@ -95,6 +95,8 @@ The worker posts three discrete message types to the main thread:
 
 Adding a fourth variant: extend the worker's `parentPort!.postMessage` site, the SectorRoom message handler's discriminator (`msg.type`), and update this list. The main→worker direction has its own discriminated union (`WorkerCommand`); the reverse direction is informally typed because the message handler does explicit type narrowing on receive.
 
+**Main → Worker commands (current set):** `SPAWN`, `DESPAWN`, `INPUT`, `SPAWN_OBSTACLE`, `AI_INTENT`, `CLOCK_RATE`, `SET_POSITION`, `REKEY_SHIP`, `SET_HULL_EXPOSED`. `SET_HULL_EXPOSED { id, exposed, kindId, tick }` (shield/hull refactor) swaps a body between its cheap circle collider and its exact hull-polygon compound on the shield 0-cross; `kindId` is carried in the command (server-authoritative — no worker-side kind map). The authoritative list is the `WorkerCommand` union + the header docstring in [physics/worker.ts](physics/worker.ts); keep all three (worker union, `SectorRoom.WorkerCmd`, this note) in sync.
+
 ## WeaponMountController contract (Phase 4, 2026-05-11)
 
 Pure module at [src/core/ai/WeaponMountController.ts](ai/WeaponMountController.ts) — zero zone awareness, zero I/O, zero allocation in the hot path. Same inputs ⇒ same outputs on server and client (the foundation of mount-angle lockstep).

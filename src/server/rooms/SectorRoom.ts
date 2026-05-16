@@ -193,7 +193,8 @@ type WorkerCmd =
   | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   | { type: 'CLOCK_RATE';     rate: number }
-  | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number };
+  | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
+  | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number };
 
 /** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
  *  initial swarm population matches between sessions. Spawned via SwarmSpawner
