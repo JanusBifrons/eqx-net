@@ -11,7 +11,7 @@
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { z } from 'zod';
+import { captureSchema } from './captureSchema.js';
 import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
@@ -114,16 +114,11 @@ const BUCKETS: Record<string, string> = {
 const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'snapshots', 'raf', 'other'] as const;
 type BucketName = typeof ALL_BUCKETS[number];
 
-const captureSchema = z.object({
-  note: z.string().max(500).optional(),
-  userAgent: z.string().max(500).optional(),
-  viewport: z.object({ w: z.number(), h: z.number() }).optional(),
-  stats: z.record(z.unknown()).optional(),
-  /** Wall-clock ms epoch at client boot, so client `ts` (perf.now) and server `ts` (wall) can be aligned. */
-  clientEpochMs: z.number().optional(),
-  /** Ring-buffer entries from `window.__eqxLogs`. Free-shape per entry. */
-  logs: z.array(z.record(z.unknown())).max(2000),
-}).strict();
+// `captureSchema` + `DIAG_CAPTURE_MAX_LOG_ENTRIES` live in
+// `./captureSchema` (pure, zod-only, unit-testable — extracted
+// 2026-05-16 to fix the stale 2000-entry cap that 400'd every
+// >2000-entry warp-out capture, and to give the diag upload real
+// unit coverage without the server's node:sqlite transitive load).
 
 interface RoutedEntry {
   source: 'client' | 'server';
