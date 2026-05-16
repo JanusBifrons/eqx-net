@@ -2,7 +2,7 @@ import { Application, Graphics, Container } from 'pixi.js';
 import { ShockwaveFilter, ZoomBlurFilter, BloomFilter } from 'pixi-filters';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
-import { DEFAULT_WARP_PARAMS, type WarpParams, type WarpCenter } from './worker/protocol';
+import { DEFAULT_WARP_PARAMS, type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
@@ -537,6 +537,38 @@ export class PixiRenderer implements IRenderer {
     firstFrameRendered: false,
   };
 
+  /**
+   * F1 instrumentation — per-frame worker-side sub-costs (warp-spool
+   * perf investigation, `docs/HANDOFF-warp-spool-perf-followup.md`).
+   * Mutated in place at the tail of `update()` (no per-frame alloc); the
+   * worker reads it via `getFrameMarkers()` after `update()` returns and
+   * posts a `FRAME_MARKERS` message ONLY when diagnostics are enabled.
+   * `warpTickMs` / `filterCount` are written by the `tickWarpShockwaves`
+   * ticker callback (a separate Pixi ticker, not part of `update()`), so
+   * each `FRAME_MARKERS` carries the most recent warp-tick cost.
+   *
+   * This is deliberately NOT on `RendererFeedback` — that's a
+   * phase-gated closed-set DI contract (see `IRenderer.ts` /
+   * `src/client/CLAUDE.md`); a separate gated channel keeps the
+   * contract untouched and the production cost at zero.
+   */
+  private readonly frameMarkers: FrameMarkers = {
+    rendererUpdateMs: 0,
+    spriteCount: 0,
+    warpTickMs: 0,
+    filterCount: 0,
+    gridLabelSpecMs: 0,
+    gridTextCreateMs: 0,
+    gridCleanupMs: 0,
+    gridLabelCount: 0,
+  };
+
+  /** Read the most recent per-frame sub-cost markers. See `FrameMarkers`
+   *  + `getFeedback()` for the parallel (but contract-gated) channel. */
+  getFrameMarkers(): FrameMarkers {
+    return this.frameMarkers;
+  }
+
   async init(rawContainer: unknown): Promise<void> {
     // Two init modes:
     //   - DOM context (main thread): rawContainer is an HTMLElement —
@@ -804,6 +836,11 @@ export class PixiRenderer implements IRenderer {
   }
 
   update(mirror: RenderMirror): void {
+    // F1 — bracket the whole update() for `rendererUpdateMs`. Single
+    // exit point (the method has no early `return`), so a start-stamp +
+    // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
+    // production cost). See `frameMarkers` / `FrameMarkers`.
+    const updateStart = performance.now();
     const seen = new Set<string>();
 
     // Precompute the sets of entities hit by any active beam this frame —
@@ -1356,6 +1393,28 @@ export class PixiRenderer implements IRenderer {
         && mirror.ships.has(mirror.localPlayerId)) {
       this.feedback.firstFrameRendered = true;
     }
+
+    // ---------- F1 frame markers (end-of-frame, worker→main diag) ----------
+    // Fold in the grid label-churn split that `BackgroundGrid.update()`
+    // recorded earlier this frame (called at ~L1310 via
+    // `this.backgroundGrid?.update(this.camera)`). `warpTickMs` /
+    // `filterCount` are written by the separate `tickWarpShockwaves`
+    // ticker callback. `rendererUpdateMs` closes the bracket opened at
+    // method entry. The worker posts these only when diagnostics are on.
+    const grid = this.backgroundGrid?.lastFrameMarkers;
+    if (grid) {
+      this.frameMarkers.gridLabelSpecMs = grid.labelSpecMs;
+      this.frameMarkers.gridTextCreateMs = grid.textCreateMs;
+      this.frameMarkers.gridCleanupMs = grid.cleanupMs;
+      this.frameMarkers.gridLabelCount = grid.labelCount;
+    } else {
+      this.frameMarkers.gridLabelSpecMs = 0;
+      this.frameMarkers.gridTextCreateMs = 0;
+      this.frameMarkers.gridCleanupMs = 0;
+      this.frameMarkers.gridLabelCount = 0;
+    }
+    this.frameMarkers.spriteCount = this.sprites.size;
+    this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
   }
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
@@ -1733,12 +1792,29 @@ export class PixiRenderer implements IRenderer {
     this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
   }
 
+  /**
+   * F1 bracket wrapper for the warp tick. `runWarpShockwavesTick` has
+   * six early `return`s (all "warp inactive / nothing to do" paths), so
+   * a single tail-stamp inside it would miss most frames. Wrapping the
+   * call brackets EVERY path exactly. This is a pure extraction — the
+   * body is verbatim the old `tickWarpShockwaves`, behaviour unchanged.
+   * `filterCount` is read AFTER the tick so it reflects any in-tick
+   * stack rebuild (`buildShockwaveStack` on a phase change). Sub-µs,
+   * unconditional (markers-off baseline = production cost).
+   */
+  private tickWarpShockwaves = (): void => {
+    const warpStart = performance.now();
+    this.runWarpShockwavesTick();
+    this.frameMarkers.warpTickMs = performance.now() - warpStart;
+    this.frameMarkers.filterCount = this.warpShockwaves?.length ?? 0;
+  };
+
   /** Per-frame warp tick — two-phase envelope (spool → climax), fade-out
    *  tween, burst + flash decay, centre projection from world space.
    *  Also drives the load-curtain alpha tween (which is independent of
    *  the warp filter envelope — runs every frame as long as the stage
    *  has been built). */
-  private tickWarpShockwaves = (): void => {
+  private runWarpShockwavesTick = (): void => {
     if (!this.warpStage || !this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpFlash || !this.loadCurtain) return;
     const now = performance.now();
     const p = this.warpParams;

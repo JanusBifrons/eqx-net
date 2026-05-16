@@ -299,6 +299,25 @@ export interface WheelEventMsg {
   native: SerialisedWheelEvent;
 }
 
+/**
+ * Toggle the worker's per-frame diagnostic-marker emission (F1 of the
+ * warp-spool perf investigation — see
+ * `docs/HANDOFF-warp-spool-perf-followup.md`). When `enabled` the worker
+ * `postMessage`s a `FRAME_MARKERS` message at the tail of each
+ * `MIRROR_UPDATE`; when disabled it posts NOTHING (zero extra IPC in
+ * production). The cheap `performance.now()` brackets that produce the
+ * numbers stay unconditional in the worker (sub-µs, uniform), so the
+ * markers-off baseline is the production cost.
+ *
+ * Sent once at `WorkerRendererClient.init` based on `isDiagEnabled()`
+ * (`?diag=1` in the URL OR `navigator.webdriver`), so E2E specs /
+ * diagnostic captures get markers with zero cost on normal sessions.
+ */
+export interface SetDiagMarkersMsg {
+  type: 'SET_DIAG_MARKERS';
+  enabled: boolean;
+}
+
 /** Tear-down request. Worker should clean its Pixi handles then `self.close()`. */
 export interface DisposeMsg { type: 'DISPOSE' }
 
@@ -316,6 +335,7 @@ export type MainToWorkerMsg =
   | SetCameraCenterMsg
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
+  | SetDiagMarkersMsg
   | PointerEventMsg
   | WheelEventMsg
   | DisposeMsg;
@@ -354,11 +374,67 @@ export interface WorkerErrorMsg {
   message: string;
 }
 
+/**
+ * Per-frame worker-side sub-cost markers (F1 of the warp-spool perf
+ * investigation — `docs/HANDOFF-warp-spool-perf-followup.md`). All the
+ * worker-side per-frame costs for ONE frame, collected by
+ * `PixiRenderer.update()` and shipped here so the main thread can
+ * re-emit each via `logEvent` (the worker has no `window.__eqxLogs`).
+ *
+ * **Why a separate message and NOT a `RendererFeedback` field**: a
+ * `markers?` field on `RendererFeedback` (`src/core/contracts/IRenderer.ts`)
+ * would piggyback the existing per-frame `FEEDBACK` postMessage with no
+ * new message type — BUT `RendererFeedback` is a phase-gated closed-set
+ * DI contract (its docstring + `src/client/CLAUDE.md` mandate a
+ * phase-gate review for every new field, because each entry permanently
+ * expands the worker→main per-frame payload). This is diagnostic-only
+ * scaffolding, not a contract surface, so it gets its own gated
+ * message instead: zero contract change, and zero cost when
+ * diagnostics are off (the worker only posts this when
+ * `SET_DIAG_MARKERS { enabled: true }` was received).
+ *
+ * Plain primitives only — structured-cloneable, no Maps/handles. Locked
+ * by `protocol.test.ts`.
+ */
+export interface FrameMarkers {
+  /** `PixiRenderer.update()` entry→exit wall-clock (ms). */
+  rendererUpdateMs: number;
+  /** `this.sprites.size` at the end of `update()` — entity-count proxy. */
+  spriteCount: number;
+  /** `tickWarpShockwaves` entry→exit wall-clock (ms). ~0 when warp inactive. */
+  warpTickMs: number;
+  /** Active stacked `ShockwaveFilter` count (`warpShockwaves?.length ?? 0`). */
+  filterCount: number;
+  /** `BackgroundGrid`: `computeGridLabels` + new-`Text` create loop (ms). */
+  gridLabelSpecMs: number;
+  /** `BackgroundGrid`: cost folded into the spec/create bracket — see
+   *  `BackgroundGrid.lastFrameMarkers`. Kept distinct so the analyzer
+   *  can attribute label-spec vs text-create separately if the split
+   *  is later refined. */
+  gridTextCreateMs: number;
+  /** `BackgroundGrid`: the destroy/`labels.delete` cleanup loop (ms). */
+  gridCleanupMs: number;
+  /** `BackgroundGrid` live label `Text` count after this frame. */
+  gridLabelCount: number;
+}
+
+/**
+ * Per-frame diagnostic markers. Posted by the worker at the tail of
+ * `MIRROR_UPDATE` ONLY while `SET_DIAG_MARKERS { enabled: true }` is in
+ * effect. The main side (`WorkerRendererClient`) re-emits the fields as
+ * `logEvent('renderer_update' | 'warp_tick' | 'grid_update', …)`.
+ */
+export interface FrameMarkersMsg {
+  type: 'FRAME_MARKERS';
+  markers: FrameMarkers;
+}
+
 export type WorkerToMainMsg =
   | ReadyMsg
   | FeedbackMsg
   | OverlayTappedMsg
-  | WorkerErrorMsg;
+  | WorkerErrorMsg
+  | FrameMarkersMsg;
 
 // ---------- Serialised event shapes (structured-cloneable) ----------
 

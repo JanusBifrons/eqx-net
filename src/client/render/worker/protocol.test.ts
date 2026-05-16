@@ -119,6 +119,8 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_TICKER_FPS undefined', msg: { type: 'SET_TICKER_FPS', fps: undefined } },
       { name: 'SET_WARP_MODE on', msg: { type: 'SET_WARP_MODE', active: true } },
       { name: 'SET_WARP_MODE off', msg: { type: 'SET_WARP_MODE', active: false } },
+      { name: 'SET_DIAG_MARKERS on', msg: { type: 'SET_DIAG_MARKERS', enabled: true } },
+      { name: 'SET_DIAG_MARKERS off', msg: { type: 'SET_DIAG_MARKERS', enabled: false } },
       { name: 'POINTER_EVENT', msg: { type: 'POINTER_EVENT', native: pointerSample } },
       { name: 'WHEEL_EVENT', msg: { type: 'WHEEL_EVENT', native: wheelSample } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
@@ -146,12 +148,40 @@ describe('renderer-worker protocol', () => {
       },
       { name: 'OVERLAY_TAPPED', msg: { type: 'OVERLAY_TAPPED', sectorKey: 'beta-7' } },
       { name: 'ERROR', msg: { type: 'ERROR', message: 'boom' } },
+      {
+        name: 'FRAME_MARKERS',
+        msg: {
+          type: 'FRAME_MARKERS',
+          markers: {
+            rendererUpdateMs: 4.2,
+            spriteCount: 12,
+            warpTickMs: 1.1,
+            filterCount: 4,
+            gridLabelSpecMs: 0.8,
+            gridTextCreateMs: 0.3,
+            gridCleanupMs: 0.05,
+            gridLabelCount: 240,
+          },
+        },
+      },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);
       expect(back.type).toBe(msg.type);
       if (back.type === 'FEEDBACK') {
         expect(back.feedback.haloArrowCount).toBe(7);
         expect(back.feedback.mountCounts.get('ship-1')).toBe(3);
+      }
+      if (back.type === 'FRAME_MARKERS') {
+        // Primitive struct — every field must survive the clone intact
+        // (no Maps/handles, so this is a value-equality check).
+        expect(back.markers.rendererUpdateMs).toBe(4.2);
+        expect(back.markers.spriteCount).toBe(12);
+        expect(back.markers.warpTickMs).toBe(1.1);
+        expect(back.markers.filterCount).toBe(4);
+        expect(back.markers.gridLabelSpecMs).toBe(0.8);
+        expect(back.markers.gridTextCreateMs).toBe(0.3);
+        expect(back.markers.gridCleanupMs).toBe(0.05);
+        expect(back.markers.gridLabelCount).toBe(240);
       }
     });
   });
@@ -171,6 +201,7 @@ describe('renderer-worker protocol', () => {
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'SET_WARP_MODE':
+          case 'SET_DIAG_MARKERS':
           case 'POINTER_EVENT':
           case 'WHEEL_EVENT':
           case 'DISPOSE':
@@ -178,6 +209,7 @@ describe('renderer-worker protocol', () => {
         }
       }
       expect(_assertExhaustive({ type: 'DISPOSE' })).toBe('DISPOSE');
+      expect(_assertExhaustive({ type: 'SET_DIAG_MARKERS', enabled: true })).toBe('SET_DIAG_MARKERS');
     });
 
     it('every WorkerToMainMsg type is in the discriminated union', () => {
@@ -187,10 +219,26 @@ describe('renderer-worker protocol', () => {
           case 'FEEDBACK':
           case 'OVERLAY_TAPPED':
           case 'ERROR':
+          case 'FRAME_MARKERS':
             return msg.type;
         }
       }
       expect(_assertExhaustive({ type: 'READY' })).toBe('READY');
+      expect(
+        _assertExhaustive({
+          type: 'FRAME_MARKERS',
+          markers: {
+            rendererUpdateMs: 0,
+            spriteCount: 0,
+            warpTickMs: 0,
+            filterCount: 0,
+            gridLabelSpecMs: 0,
+            gridTextCreateMs: 0,
+            gridCleanupMs: 0,
+            gridLabelCount: 0,
+          },
+        }),
+      ).toBe('FRAME_MARKERS');
     });
   });
 });

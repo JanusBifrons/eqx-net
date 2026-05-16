@@ -37,6 +37,18 @@ function post(msg: WorkerToMainMsg): void {
 let renderer: PixiRenderer | null = null;
 let galaxyLayer: GalaxyMapLayer | null = null;
 
+/**
+ * F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
+ * Default OFF: production posts ZERO extra IPC. Flipped by the main
+ * thread's `SET_DIAG_MARKERS` message (sent once at
+ * `WorkerRendererClient.init` from `isDiagEnabled()` — `?diag=1` OR
+ * `navigator.webdriver`). The cheap `performance.now()` brackets that
+ * produce the numbers run unconditionally in `PixiRenderer` /
+ * `BackgroundGrid` (sub-µs, uniform); only the `postMessage` below is
+ * gated, so the markers-off path is the true production cost.
+ */
+let diagMarkersEnabled = false;
+
 self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   const msg = e.data;
   try {
@@ -84,6 +96,15 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             firstFrameRendered: fb.firstFrameRendered,
           },
         });
+        // F1 — per-frame sub-cost markers. GATED: only post when
+        // diagnostics are enabled, so production pays zero extra IPC
+        // (the `performance.now()` brackets in PixiRenderer always run
+        // — sub-µs — but this postMessage is the only real cost). Copy
+        // the struct by value so the main side owns its own snapshot.
+        if (diagMarkersEnabled) {
+          const m = renderer.getFrameMarkers();
+          post({ type: 'FRAME_MARKERS', markers: { ...m } });
+        }
         break;
       }
 
@@ -158,6 +179,14 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       }
       case 'SET_TRANSIT_DOCKED': {
         galaxyLayer?.setTransitDocked(msg.docked);
+        break;
+      }
+
+      case 'SET_DIAG_MARKERS': {
+        // F1 — flip per-frame marker emission. No renderer dependency
+        // (the brackets run regardless); this only toggles the gated
+        // `FRAME_MARKERS` post in the MIRROR_UPDATE handler.
+        diagMarkersEnabled = msg.enabled;
         break;
       }
 

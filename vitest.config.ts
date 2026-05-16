@@ -43,6 +43,10 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       'dist/**',
+      // Agent worktrees under .claude/worktrees/<id> hold duplicated
+      // *.test.ts (+ dist/*.test.js) — exclude so the parent suite does
+      // not double-discover / fail to parse them.
+      '**/.claude/**',
       'tests/e2e/**',
       'benchmarks/**',
       // Phase A1 — integration tests run via `pnpm test:integration`.

@@ -42,6 +42,24 @@ const BUCKETS: Record<string, string> = {
   // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
   longtask: 'perf',
   raf_gap: 'perf',
+  // client perf — F1 per-frame sub-cost markers for the warp-spool
+  // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
+  // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-
+  // markers.mjs` reads these from `perf.ndjson`.
+  renderer_update: 'perf',
+  warp_tick: 'perf',
+  grid_update: 'perf',
+  mirror_rebuild: 'perf',
+  mirror_clone: 'perf',
+  // client perf — F-transit-instrument: gated, discrete client-ts
+  // timeline across the inter-sector transit (warp-out → arrival →
+  // settle) path + the bounded 40-frame post-reveal burst. Emitted
+  // only on `?diag=1` / WebDriver. Routed to `perf` so they land in
+  // `perf.ndjson` alongside `raf_gap` / `rafTick` for correlation
+  // (the ts≈17546 residual-stall localisation —
+  // `docs/HANDOFF-warp-spool-perf-followup.md`).
+  transit_mark: 'perf',
+  transit_frame: 'perf',
   // client corrections
   correction: 'corrections',
   // combat (client + server)

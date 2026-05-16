@@ -208,6 +208,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       // yet (renderer also falls back if the sprite isn't up).
       const localId = getGameClient()?.mirror.localPlayerId ?? null;
       r.triggerWarpIn(localId ? { kind: 'entity', entityId: localId } : null);
+      // F-transit-instrument — the arrival curtain dropped. No-op
+      // unless a transit is in flight (so the initial-join reveal,
+      // which also hits this branch, is correctly ignored) and
+      // idempotent per transit. Arms the bounded post-reveal frame
+      // burst driven from the rAF loop below.
+      getGameClient()?.transitInstr.curtainDown();
     }
     prevLoadingRef.current = loading;
     r.setLoadCurtain(loading);
@@ -298,6 +304,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   const handleEngageTransit = useCallback((targetSectorKey: string) => {
     const room = clientRef.current?.getRoom();
     if (!room) return;
+    // F-transit-instrument — t0 for the transit timeline. The user's
+    // "warp-out" == opening the in-game galaxy MAP and tapping a
+    // neighbour, which routes here. Gated/no-op unless ?diag=1 /
+    // WebDriver. Lives on the client so it survives the room
+    // hot-swap (see TransitInstrumentation).
+    clientRef.current?.transitInstr.engage({ target: targetSectorKey });
     // Pull the current arrival picker state (mobile-only UI; PC keeps the
     // default `'same'` mode and sends no `arrival`, preserving legacy
     // behaviour). The xy values were already clamped on blur in GalaxyTab,
@@ -467,6 +479,27 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           if (shouldRender) renderer.update(gameClient.mirror);
           // Clear one-frame triggers after the renderer has consumed them.
           gameClient.mirror.explodingShips?.clear();
+
+          // F-transit-instrument — bounded post-reveal frame burst.
+          // `wantsFrame()` is false (single boolean read, zero cost)
+          // unless a transit curtain just dropped AND fewer than the
+          // hard cap (40) of frames have been recorded; it self-
+          // disables and emits `settled` exactly once. This makes the
+          // ts≈17546 stall (~2 s post-arrival, curtain down, settled)
+          // fall INSIDE a numbered `transit_frame` with elapsed-ms
+          // context — the black box the handoff calls out. `elapsedMs`
+          // is the frame's full wall delta (incl. this render).
+          // `spriteCount` is a CHEAP mirror-entity proxy (O(1) Map
+          // .size sum) — NOT a renderer-internal count (the
+          // RendererFeedback closed-set is deliberately untouched per
+          // the task constraint); it surfaces a first-render upload
+          // delta when entity count jumps post-reveal.
+          if (gameClient.transitInstr.wantsFrame()) {
+            const m = gameClient.mirror;
+            const spriteCount =
+              m.ships.size + (m.swarm?.size ?? 0) + (m.projectiles?.size ?? 0);
+            gameClient.transitInstr.frame(deltaMs, spriteCount);
+          }
 
           // Join-render readiness: latch the moment the renderer first
           // paints a frame with the local player visible. Drives the
@@ -979,6 +1012,14 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     logEvent('phase_change', { phase });
+    // F-transit-instrument — phase machine back to 'game'. For PURE
+    // inter-sector transit (the user's warp-out) GameSurface stays
+    // mounted and phase never leaves 'game', so this is a no-op there
+    // (documented expectation). It only emits if a transit-initiated
+    // flow also crosses a phase→'game' transition; `mark` itself is a
+    // no-op unless an `engage()` t0 is live, so the roster-swap path
+    // (which never calls engage) can't produce a spurious row.
+    if (phase === 'game') getGameClient()?.transitInstr.mark('phase_game');
   }, [phase]);
 
   // Server-health poll loop. Runs for the whole app lifetime — the
