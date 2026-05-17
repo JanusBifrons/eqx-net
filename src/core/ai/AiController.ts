@@ -113,13 +113,16 @@ export class AiController {
   }
 
   /**
-   * Tick every registered AI once. `entitySnapshot(id)` must return the live
-   * pose (read from SAB by the caller earlier in the tick); behaviours never
-   * touch the worker themselves. `players` is the up-to-date list of alive
-   * player poses for nearest-target queries.
+   * Tick EVERY registered AI once (the per-frame live loop). `entitySnapshot(id)`
+   * must return the live pose (read from SAB by the caller earlier in the tick);
+   * behaviours never touch the worker themselves. `players` is the up-to-date
+   * list of alive player poses for nearest-target queries.
    *
    * Intents are posted to the worker immediately; fire requests buffer for the
-   * caller to drain via `drainFireRequests()` after physics steps.
+   * caller to drain via `drainFireRequests()` after physics steps. Iteration
+   * order over `this.entities` is registration order — the tie-break
+   * determinism the WeaponMountController contract depends on. Unchanged since
+   * before Option A: the live loop is byte-identical to pre-2026-05-17.
    */
   tick(
     tick: number,
@@ -129,29 +132,69 @@ export class AiController {
   ): void {
     if (this.entities.size === 0) return;
     const view: AiWorldView = { players, tick, dtSec };
-
     for (const [id, reg] of this.entities) {
-      const self = entitySnapshot(id);
-      if (!self) continue;
-      const intent = reg.behaviour.tick(self, view);
+      this.runEntity(id, reg, view, tick, entitySnapshot);
+    }
+  }
 
-      if (
-        intent.fx !== 0 ||
-        intent.fy !== 0 ||
-        intent.torque !== 0 ||
-        intent.setAngvel !== undefined
-      ) {
-        this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
-      }
+  /**
+   * Tick ONLY the supplied entity ids — the relevance-culled reconciler-replay
+   * re-sim (Option A, 2026-05-17, diag a3f5na). This iterates `ids` (O(k)), NOT
+   * the full registry, so it does NOT reintroduce the O(ticksAhead × N) Map
+   * scan that a predicate-over-`tick` would: replay re-sim is genuinely
+   * O(k × ticksAhead), k ≪ N, while the stable FAR majority holds frozen at
+   * its server-authoritative replay anchor (no inertia drift → its re-sim
+   * would be dead work). Per-entity semantics are identical to {@link tick}
+   * (shared `runEntity`). Unknown / unregistered ids are skipped. Cross-entity
+   * order is irrelevant to determinism — each behaviour's intent is an
+   * independent function of its own pose + the shared player view; drones
+   * never observe each other.
+   */
+  tickOnly(
+    ids: Iterable<string>,
+    tick: number,
+    dtSec: number,
+    players: ReadonlyArray<AiPlayerView>,
+    entitySnapshot: (id: string) => AiEntity | null,
+  ): void {
+    if (this.entities.size === 0) return;
+    const view: AiWorldView = { players, tick, dtSec };
+    for (const id of ids) {
+      const reg = this.entities.get(id);
+      if (reg) this.runEntity(id, reg, view, tick, entitySnapshot);
+    }
+  }
 
-      if (intent.fire) {
-        this.fireQueue.push({
-          shooterId: id,
-          dirX: intent.fire.dirX,
-          dirY: intent.fire.dirY,
-          tick,
-        });
-      }
+  /** Snapshot → behaviour.tick → post intent / queue fire for one entity.
+   *  Shared by {@link tick} (all) and {@link tickOnly} (relevance-culled
+   *  replay) so the two paths can never diverge in per-entity semantics. */
+  private runEntity(
+    id: string,
+    reg: AiRegistration,
+    view: AiWorldView,
+    tick: number,
+    entitySnapshot: (id: string) => AiEntity | null,
+  ): void {
+    const self = entitySnapshot(id);
+    if (!self) return;
+    const intent = reg.behaviour.tick(self, view);
+
+    if (
+      intent.fx !== 0 ||
+      intent.fy !== 0 ||
+      intent.torque !== 0 ||
+      intent.setAngvel !== undefined
+    ) {
+      this.sink.postIntent(reg.slot, intent.fx, intent.fy, intent.torque, intent.setAngvel);
+    }
+
+    if (intent.fire) {
+      this.fireQueue.push({
+        shooterId: id,
+        dirX: intent.fire.dirX,
+        dirY: intent.fire.dirY,
+        tick,
+      });
     }
   }
 

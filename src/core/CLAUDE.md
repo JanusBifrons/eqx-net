@@ -161,6 +161,44 @@ and zero `SWARM_WIRE_VERSION` bump. This was a deliberate design fork
 (the rejected alternative — a `proactive` branch + a `drones[]`-slice
 flag — is recorded in [docs/architecture/living-world.md](../../docs/architecture/living-world.md)).
 
+### Corollary — replay re-sim is relevance-CULLED, and that is prediction-only (Option A, 2026-05-17)
+
+Tick-accurate N-drone client lockstep is **intrinsically O(ticksAhead × N)**
+— the per-replay-tick re-sim *is* the Phase C mechanism, not an accident
+(48 ms at N=500/ticksAhead=48 → the 116–266 ms sector-change stall, diag
+`a3f5na`). The fix ([`prediction/droneRelevance.ts`](prediction/droneRelevance.ts)
++ [`AiController.tickOnly`](ai/AiController.ts)) brain-re-sims only the NEAR
+set (hostile / within `HITSCAN_RANGE×2` / recently large-corrected); the FAR
+majority is **dead-reckoned, NOT frozen** — `replaySeed` re-anchors it and
+the unfrozen replay `world.tick()` integrates it ballistically. Replay
+*brain* cost → O(k × ticksAhead), k ≪ N. (Freezing FAR was tried and
+reverted: it regressed the quiet-host canary `swarmSnapP50` 11→20; dead-reckon
+→ 1.6, *better* than `main`. `Reconciler.ts`/`World.ts` stay identical to
+`main` — no `freeze` param. See `docs/architecture/reconciler-replay-scaling.md`
+§9.)
+
+Two rules this must not break:
+
+1. **Culling is CLIENT-PREDICTION-ONLY. The server's `AiController.tick`
+   still ticks every drone authoritatively — `tickOnly` is a client-replay
+   path only.** Never cull the server's authoritative tick to "match": that
+   would change authority, not just prediction, and is exactly the
+   server-only-divergence the Input Symmetry Rule forbids. Authority stays
+   whole; only the client's *prediction fidelity* is spent selectively.
+2. **The relevance predicate must read the same server-authoritative anchor
+   the re-sim will read** (the snapshot `drones[]` pose / `replaySeed`), NOT
+   a free-evolving predWorld pose — otherwise NEAR/FAR membership itself
+   diverges from what the server would compute, reintroducing a
+   per-side-divergent input. `partitionDronesByRelevance` takes the anchor
+   pose for this reason; keep it that way.
+
+`tickOnly` iterates the NEAR set, NEVER a predicate over the full registry
+(a predicate-over-`tick` keeps the O(ticksAhead × N) scan even when it culls
+the brain work — measured + rejected, `docs/LESSONS.md` 2026-05-17). This is
+NOT a second correction path: the SAME `AiController` path advances NEAR
+drones, only scoped. Full story:
+[docs/architecture/reconciler-replay-scaling.md](../../docs/architecture/reconciler-replay-scaling.md).
+
 ## Rapier `castRay` API (Phase 4 — do not look these up again)
 
 - `world.castRay(ray, maxDist, solid, filter, filterMask, filterGroups, filterExcludeRigidBody)` — the exclude parameter takes a `RigidBody` object (from `bodies.get(id)`), not a handle number.
