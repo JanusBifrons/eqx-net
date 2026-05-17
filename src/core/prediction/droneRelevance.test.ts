@@ -17,6 +17,7 @@ import {
   partitionDronesByRelevance,
   DRONE_RELEVANCE_RADIUS,
   DRONE_SNAP_RELEVANCE_U,
+  DRONE_RESIM_BUDGET,
   type DroneRelevanceInput,
 } from './droneRelevance.js';
 import { HITSCAN_RANGE } from '../combat/Weapons.js';
@@ -114,6 +115,86 @@ describe('partitionDronesByRelevance', () => {
       hostile: false,
     }));
     expect(partitionDronesByRelevance(far3, opts).far).toEqual(['a', 'b', 'c']);
+  });
+});
+
+/**
+ * In-pack re-sim budget (k-cap), diag m6rq2t 2026-05-17. Option A's radius
+ * cull gives ZERO relief in a melee: when the player is inside the bot pack
+ * every drone is hostile/near, so NEAR≈ALL and per-snapshot reconcile is
+ * O(replayWindow × N) — as the client's snapshot-handle interval slows the
+ * window grows, work grows, handling slows further → the progressive
+ * combat-lag spiral that killed the player BEFORE death. Completing Option A
+ * with a hard per-snapshot re-sim BUDGET bounds it: tick-accurately re-sim
+ * only the K most-relevant (hostile, then closest); dead-reckon the rest
+ * (Option A already established that's visually fine for non-engaged
+ * drones). Per-snapshot cost → O(replayWindow × K), K bounded regardless of
+ * pack size → no spiral, scales to the 500-objects/sector target.
+ *
+ * Default-ON (an unbounded re-sim IS the bug); BYTE-IDENTICAL when
+ * NEAR ≤ K, so steady-state + chapter-2 lockstep + the feel-test-lockstep
+ * canary are untouched (only the in-pack pathological case changes).
+ */
+describe('partitionDronesByRelevance — in-pack re-sim budget (k-cap)', () => {
+  const opts = { playerX: 0, playerY: 0 };
+
+  it('exports a sane default budget; it is the cap when maxResim is omitted', () => {
+    expect(DRONE_RESIM_BUDGET).toBeGreaterThan(0);
+    expect(DRONE_RESIM_BUDGET).toBeLessThan(30); // must bound an in-pack melee (~26)
+  });
+
+  it('FAILING-FIRST: 30 all-near drones must NOT all be re-simmed — capped to the budget', () => {
+    // In-pack melee: 30 drones all well inside the radius (all NEAR).
+    // Pre-fix: near.size === 30 (the spiral). Fixed: capped at the budget.
+    const drones: DroneRelevanceInput[] = [];
+    for (let i = 0; i < 30; i++) {
+      drones.push({ id: `d${i}`, x: 100 + i, y: 0, hostile: false });
+    }
+    const { near, far } = partitionDronesByRelevance(drones, { ...opts, maxResim: 12 });
+    expect(near.size).toBe(12);
+    expect(far.length).toBe(18); // the 18 demoted overflow dead-reckon
+    // The kept 12 are the CLOSEST 12 (ids d0..d11 — x = 100..111).
+    for (let i = 0; i < 12; i++) expect(near.has(`d${i}`)).toBe(true);
+    for (let i = 12; i < 30; i++) expect(near.has(`d${i}`)).toBe(false);
+  });
+
+  it('hostile drones win the budget over closer non-hostile (you perceive who shoots you)', () => {
+    const drones: DroneRelevanceInput[] = [
+      { id: 'close-passive', x: 1, y: 0, hostile: false },
+      { id: 'close-passive2', x: 2, y: 0, hostile: false },
+      { id: 'far-hostile', x: 900, y: 0, hostile: true },
+    ];
+    const { near } = partitionDronesByRelevance(drones, { ...opts, maxResim: 2 });
+    expect(near.size).toBe(2);
+    expect(near.has('far-hostile')).toBe(true); // hostile prioritised
+    expect(near.has('close-passive')).toBe(true); // then closest non-hostile
+    expect(near.has('close-passive2')).toBe(false);
+  });
+
+  it('is deterministic under equidistant ties (id tiebreak — no frame-to-frame flicker)', () => {
+    const drones: DroneRelevanceInput[] = ['z', 'a', 'm', 'b'].map((id) => ({
+      id, x: 100, y: 0, hostile: false, // all equidistant
+    }));
+    const a = partitionDronesByRelevance(drones, { ...opts, maxResim: 2 });
+    const b = partitionDronesByRelevance([...drones].reverse(), { ...opts, maxResim: 2 });
+    expect([...a.near].sort()).toEqual([...b.near].sort()); // input-order-independent
+    expect(a.near.has('a')).toBe(true);
+    expect(a.near.has('b')).toBe(true); // 'a','b' are the lowest ids
+  });
+
+  it('BYTE-IDENTICAL when NEAR ≤ budget (steady-state / canary untouched)', () => {
+    const drones: DroneRelevanceInput[] = [
+      { id: '1', x: 10, y: 0, hostile: false },
+      { id: '2', x: DRONE_RELEVANCE_RADIUS + 1, y: 0, hostile: false }, // far
+      { id: '3', x: 20, y: 0, hostile: true },
+    ];
+    const capped = partitionDronesByRelevance(drones, { ...opts, maxResim: 12 });
+    const uncapped = partitionDronesByRelevance(drones, { ...opts, maxResim: Infinity });
+    expect([...capped.near].sort()).toEqual([...uncapped.near].sort());
+    expect(capped.far).toEqual(uncapped.far);
+    expect(capped.near.has('1')).toBe(true);
+    expect(capped.near.has('3')).toBe(true);
+    expect(capped.far).toEqual(['2']);
   });
 });
 

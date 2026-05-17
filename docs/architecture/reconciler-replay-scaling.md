@@ -255,3 +255,32 @@ Option A on top of `main`, with `Reconciler.ts`/`World.ts` unchanged from
 ALL benches under vitest 2.x — invariant #8 lists it as a green bar but it
 currently proves nothing. Tracked in `docs/LESSONS.md` 2026-05-17; the
 `performance.now()` ratio lock is the de-facto perf gate meanwhile.
+
+### In-pack completion — per-snapshot re-sim BUDGET (2026-05-17, diag m6rq2t)
+
+Option A's radius cull deferred one case: **the player inside the bot
+pack**. There NEAR≈ALL (every drone hostile/close), the cull gives zero
+relief, and per-snapshot reconcile is O(replayWindow × N). On-device that
+was the *progressive combat-lag spiral*: as the client's snapshot-handle
+interval slows (33→91 ms over a fight), the replay window grows → work
+grows → handling slows → rubber-band worsens until the player can't fight
+and dies. (The disconnect/respawn the capture also showed was a
+*downstream symptom*, not the bug — the user's "the lag was before death
+and built progressively" correctly falsified an earlier respawn theory.)
+
+Fix completes the relevance model with a hard per-snapshot **re-sim
+budget** `DRONE_RESIM_BUDGET` (`droneRelevance.ts`, default 12):
+`partitionDronesByRelevance` keeps only the **K most-relevant** (hostile,
+then closest, deterministic id tiebreak) in NEAR; the overflow demotes to
+FAR (dead-reckon — Option A established that's visually fine for
+non-engaged drones). Per-snapshot brain cost → O(replayWindow × K), K
+bounded regardless of pack size → spiral broken, scales to the 500 target.
+**Default-ON** (an unbounded in-pack re-sim *is* the bug); **byte-identical
+when NEAR ≤ K**, so steady-state + chapter-2 lockstep + the
+feel-test-lockstep canary are untouched (canary room = 10 drones < budget
+12, provably unaffected). Production needs **no callsite change** (sole
+caller omits `maxResim` → default). Locks: `droneRelevance.test.ts` (k-cap
+unit) + `reconcilerReplayScaling.test.ts` in-pack ratio lock (≥2× win vs
+the all-near spiral; bounded brain premium over the zero-brain floor — NOT
+"flat in N": body integration is O(N), on `main` too — asserting flatness
+is wrong, same host-robust contract as Option A's).

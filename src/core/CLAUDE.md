@@ -196,7 +196,18 @@ Two rules this must not break:
 (a predicate-over-`tick` keeps the O(ticksAhead × N) scan even when it culls
 the brain work — measured + rejected, `docs/LESSONS.md` 2026-05-17). This is
 NOT a second correction path: the SAME `AiController` path advances NEAR
-drones, only scoped. Full story:
+drones, only scoped.
+
+**The cull is radius AND budget (2026-05-17, diag m6rq2t).** Radius alone
+gives zero relief when the player is *inside* the bot pack (NEAR≈ALL) — the
+progressive in-fight reconcile-cost spiral. `partitionDronesByRelevance`
+also enforces a hard per-snapshot `DRONE_RESIM_BUDGET` (default 12): keep
+only the K most-relevant (hostile → closest → id), demote the overflow to
+FAR/dead-reckon, so per-snapshot brain cost is O(replayWindow × K), K
+bounded regardless of pack size. Default-ON (unbounded in-pack re-sim *is*
+the bug); byte-identical when NEAR ≤ K (steady-state + canary untouched).
+Do NOT remove the budget to "re-sim more for accuracy" — that
+reintroduces the spiral the 500-target cannot afford. Full story:
 [docs/architecture/reconciler-replay-scaling.md](../../docs/architecture/reconciler-replay-scaling.md).
 
 ## Rapier `castRay` API (Phase 4 — do not look these up again)
