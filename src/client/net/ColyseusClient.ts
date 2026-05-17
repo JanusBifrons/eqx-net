@@ -4,6 +4,10 @@ import type { IAudio } from '@core/contracts/IAudio';
 import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
+import {
+  partitionDronesByRelevance,
+  type DroneRelevanceInput,
+} from '@core/prediction/droneRelevance';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
   applyCollisionResolved,
@@ -371,6 +375,16 @@ export class ColyseusGameClient {
     number,
     { sx: SpringState; sy: SpringState; sa: SpringState; halfLifeMs: number }
   >();
+  /**
+   * Per-drone magnitude (u) of the most recent snapshot correction, captured
+   * unthrottled at the `swarm_snap_diagnostics` site (the `dist` already
+   * computed there — zero extra cost, no per-drone ring scan). Read once per
+   * snapshot by the relevance partition (Option A, 2026-05-17) so a drone that
+   * is actively diverging is re-simmed even when far / non-hostile. Keyed by
+   * numeric entityId; swept alongside `_droneRenderOffsets` on drone despawn
+   * and cleared on sector reset.
+   */
+  private readonly _droneLastSnapDist = new Map<number, number>();
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -752,6 +766,7 @@ export class ColyseusGameClient {
     }
     this._aiRegisteredIds.clear();
     this._droneRenderOffsets.clear();
+    this._droneLastSnapDist.clear();
     this._droneSnapshotAnchored.clear();
     // Multi-mount/turret refactor (Phase 4b.2): drop the local ship's
     // sticky turret target on sector handoff — the destination sector has
@@ -1890,19 +1905,76 @@ export class ColyseusGameClient {
         }
       }
 
+      // Relevance-culled replay (2026-05-17 — Option A, diag a3f5na). The
+      // chapter-2 Phase C per-replay-tick swarm re-sim is O(ticksAhead × N)
+      // (48 ms at N=500/ticksAhead=48 — the 116–266 ms sector-change stall).
+      // The EXPENSIVE part is `HostileDroneBehaviour.tick` per drone per
+      // replayed tick; the cheap part is Rapier integrating the body. So we
+      // cull only the expensive brain re-sim: `tickClientAi(NEAR)` re-sims
+      // only the drones the player can perceive (hostile / within
+      // `HITSCAN_RANGE×2` / recently large-corrected). The FAR majority is
+      // **dead-reckoned, NOT frozen** — `replaySeed` re-anchors every
+      // in-interest drone to its server-authoritative pose, then the
+      // (unfrozen) replay `world.tick()` integrates them ballistically from
+      // that anchor. They get their linear motion for free; only the AI
+      // *curve* over the replay window is missing, which for a stable far
+      // drone is small (≪ the full anchor→now snap a *frozen* body would
+      // take — freezing was measured to regress `swarmSnapP50` 11→20 and
+      // `swarmAngleP99` 0.1→1.2 on the quiet-host canary because a frozen
+      // body is held a whole snapshot interval while `_droneSnapshotAnchored`
+      // gates off the binary correction). Replay BRAIN cost is
+      // O(k × ticksAhead), k ≪ N; the O(N) body integration is cheap and was
+      // already O(N) on `main`. Prediction-only: the server still sims every
+      // drone authoritatively. Recomputed every snapshot, so a far→near
+      // transition is picked up within one snapshot. chapter-2's
+      // one-correction-path rule is intact — the SAME `tickClientAi` /
+      // `AiController` path advances NEAR drones, just scoped; binary-packet
+      // setShipState stays gated by `_droneSnapshotAnchored`. The player
+      // anchor is the snapshot's own `serverState` (authoritative, same tick
+      // + frame as the `droneSeed` anchors the cull predicate reads).
+      const localPid = this.mirror.localPlayerId;
+      const relevanceInputs: DroneRelevanceInput[] = [];
+      for (const id of this._aiRegisteredIds) {
+        const aiId = `${id}`;
+        const anchor = droneSeed?.get(`swarm-${id}`);
+        if (!anchor) {
+          // No authoritative anchor this snapshot (drone outside the
+          // `drones[]` slice / body not spawned yet). It is NOT in
+          // `_droneSnapshotAnchored`, so the binary-packet path still owns
+          // it (skipSetShipState=false) and the per-frame live loop ticks
+          // it — leave it out of the NEAR re-sim (Inf distance, not hostile,
+          // no snap signal ⇒ FAR ⇒ dead-reckon, consistent with the binary
+          // path re-syncing it).
+          relevanceInputs.push({ id: aiId, x: Infinity, y: Infinity, hostile: false });
+          continue;
+        }
+        relevanceInputs.push({
+          id: aiId,
+          x: anchor.x,
+          y: anchor.y,
+          hostile: localPid !== null && this._aiController.isEntityHostileToPlayer(aiId, localPid),
+          lastSnapDist: this._droneLastSnapDist.get(id),
+        });
+      }
+      // Only the NEAR set is consumed — FAR drones need no action: not being
+      // in `nearAiIds` means `tickClientAi` skips their brain during replay,
+      // and (unfrozen) they dead-reckon via the replay `world.tick()`.
+      const { near: nearAiIds } = partitionDronesByRelevance(relevanceInputs, {
+        playerX: serverState.x,
+        playerY: serverState.y,
+      });
       this.reconciler.reconcile(
         serverState,
         snap.serverTick,
         this.inputTick,
         ackedTick,
         () => {
-          // Phase 3 (2026-05-09): drones get AI impulses on every replayed
-          // tick, identical to the input replay path. Without this, the
-          // reconciler's `predWorld.tick(1/60)` calls would inertia-drift
-          // drones for `leadTicks` ticks each snapshot — exactly the drift
-          // we're trying to eliminate.
+          // Remote-ship Stage-3 forward-prediction + the relevance-culled
+          // NEAR swarm brain re-sim (O(k), k ≪ N). FAR drones are NOT
+          // brain-ticked here and NOT frozen — they dead-reckon ballistically
+          // in the replay `world.tick()` from their `replaySeed` anchor.
           this.applyRemoteInputs();
-          this.tickClientAi();
+          this.tickClientAi(nearAiIds);
         },
         droneSeed ? { drones: droneSeed } : undefined,
       );
@@ -2197,6 +2269,11 @@ export class ColyseusGameClient {
         this._swarmSnapDistBuf.push(dist);
         this._swarmSnapAngleBuf.push(angleSnap);
         this._swarmSnapAngvelBuf.push(angvelDelta);
+        // Option A (2026-05-17): cheapest possible per-drone "is it
+        // diverging?" signal — `dist` is already computed here, so the
+        // relevance partition's snap gate costs one Map.set per snap and
+        // zero extra maths / no ring scan.
+        this._droneLastSnapDist.set(entityId, dist);
         this.stats.swarmSnapCount++;
         // Throttle p50/p99 recompute to once per second. The stats are
         // diagnostic-only (read by the Capture button in SettingsModal),
@@ -2255,6 +2332,7 @@ export class ColyseusGameClient {
             this._aiRegisteredIds.delete(id);
           }
           this._droneRenderOffsets.delete(id);
+          this._droneLastSnapDist.delete(id);
         }
         // Phase B — drop any per-drone log throttle so a respawned entity
         // (same id, fresh ship) gets a snap event on its next packet.
@@ -3312,13 +3390,17 @@ export class ColyseusGameClient {
    *      targetTick, mirroring the server's per-tick AI advance.
    *   2. `Reconciler.reconcile` per-replay-tick callback — each replay step
    *      reapplies AI to keep drone trajectory aligned with what the server
-   *      simulated for that tick.
+   *      simulated for that tick. Here `onlyAiIds` is the relevance-culled
+   *      NEAR set (Option A, 2026-05-17): only those drones are re-simmed;
+   *      the FAR majority is frozen at its anchor by the reconciler so the
+   *      replay is O(k × ticksAhead), k ≪ N. The per-frame caller (1) passes
+   *      nothing, so every registered drone still ticks live — unchanged.
    *
    * Fire requests are drained and discarded — the server is still the
    * authority for drone shots; client predicts only drone movement, not
    * weapon resolution.
    */
-  private tickClientAi(): void {
+  private tickClientAi(onlyAiIds?: ReadonlySet<string>): void {
     if (!this.predWorld || this._aiRegisteredIds.size === 0) return;
     this._aiPlayersBuf.length = 0;
     for (const [pid] of this.mirror.ships) {
@@ -3326,24 +3408,28 @@ export class ColyseusGameClient {
       if (ps) this._aiPlayersBuf.push({ id: pid, x: ps.x, y: ps.y, vx: ps.vx, vy: ps.vy });
     }
     if (this._aiPlayersBuf.length === 0) return;
-    this._aiController.tick(
-      this.inputTick,
-      1 / 60,
-      this._aiPlayersBuf,
-      (id): AiEntity | null => {
-        const state = this.predWorld!.getShipState(`swarm-${id}`);
-        if (!state) return null;
-        return {
-          id,
-          x: state.x,
-          y: state.y,
-          vx: state.vx,
-          vy: state.vy,
-          angle: state.angle,
-          angvel: state.angvel ?? 0,
-        };
-      },
-    );
+    const entitySnapshot = (id: string): AiEntity | null => {
+      const state = this.predWorld!.getShipState(`swarm-${id}`);
+      if (!state) return null;
+      return {
+        id,
+        x: state.x,
+        y: state.y,
+        vx: state.vx,
+        vy: state.vy,
+        angle: state.angle,
+        angvel: state.angvel ?? 0,
+      };
+    };
+    if (onlyAiIds === undefined) {
+      // Per-frame live loop — every registered drone, unchanged.
+      this._aiController.tick(this.inputTick, 1 / 60, this._aiPlayersBuf, entitySnapshot);
+    } else {
+      // Relevance-culled replay re-sim — O(k), iterates only the NEAR set
+      // (NOT a predicate over all N; that would keep the O(ticksAhead × N)
+      // scan Option A exists to remove).
+      this._aiController.tickOnly(onlyAiIds, this.inputTick, 1 / 60, this._aiPlayersBuf, entitySnapshot);
+    }
     this._aiController.drainFireRequests();
   }
 
