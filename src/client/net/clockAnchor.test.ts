@@ -178,6 +178,64 @@ describe('updateAnchor (Phase 6.5 EWMA clock anchor)', () => {
     expect(Math.abs(t - (serverTick - 3))).toBeLessThanOrEqual(1);
   });
 
+  // RULED-OUT HYPOTHESIS LOCK (diag xxiyix, 2026-05-17). A theory that the
+  // `xxiyix` lag spikes were unbounded `inputTick` drift from a sub-60 Hz
+  // server was investigated and FALSIFIED: this test passes (the anchor IS
+  // bounded under a slow server) and the capture's real cause was
+  // network-bunched snapshot DELIVERY (server broadcast was a metronomic
+  // 50 ms; client received 116–571 ms bunches), not clock drift. Kept as a
+  // genuine invariant + a signpost so the clock-drift dead end isn't
+  // re-chased. See docs/LESSONS.md 2026-05-17.
+  it('clock anchor stays bounded even when the server ticks a hair under 60 Hz', () => {
+    // The previous test only feeds an EXACTLY-60 Hz server (50 ms / 3 ticks).
+    // Real servers don't run at exactly 60 Hz: the physics worker yields via
+    // `setTimeout(loop, 1)` whose Windows timer granularity makes the
+    // effective tick rate a hair under 60 (the file's own history notes
+    // `setInterval(16.67)` degraded to 32 Hz on Windows). Model that: each
+    // 3-tick snapshot interval takes 51 ms of REAL wall-clock instead of 50
+    // (≈ 58.8 Hz server). `performance.now()` (render clock AND snapshot
+    // arrival clock) advances at TRUE wall-clock; `serverTick` advances at
+    // the server's real, slower rate.
+    //
+    // Per-snapshot drift = (51 − 50) ≈ 1 ms — far below the 200 ms hard-snap,
+    // so the α=0.1 EWMA is the only corrector, and it removes just 10 % of a
+    // slope error that is regenerated EVERY snapshot. Captured live as
+    // reconcile `n` climbing 92→103 (+1/correction) while `ticksAhead`
+    // stayed a healthy ~10 — `inputTick` decoupled from the bounded
+    // lookahead and drifted unbounded toward the BUFFER_SIZE=128 cap.
+    //
+    // INVARIANT: the client should sit ~leadTicks ahead of the *true* server
+    // tick, BOUNDED, no matter the server's real rate. Assert targetTick −
+    // trueServerTick stays within a few ticks of leadTicks over a long
+    // session. FAILS on current code (grows without bound); the fix re-couples
+    // inputTick to the authoritative serverTick + bounded leadTicks.
+    const leadTicks = 6;
+    const SNAP_TICKS = 3;
+    const REAL_MS_PER_SNAP = 51; // ≈58.8 Hz server; 1 ms slow per 3 ticks
+    let anchor: AnchorState = { anchorServerTick: 0, anchorPerfNow: 0 };
+    anchor = updateAnchor(anchor, 0, 0);
+
+    let serverTick = SNAP_TICKS;
+    let realNowMs = REAL_MS_PER_SNAP;
+    let maxAheadOfTrue = 0;
+    // ~100 s session (2000 snapshots @ ~51 ms) — the user's "long capture".
+    for (let i = 0; i < 2000; i++) {
+      anchor = updateAnchor(anchor, serverTick, realNowMs);
+      // Sanity: the slow-drift path must NOT be trivially hard-snapping —
+      // that would mean we're testing the freeze path, not the bug.
+      const target = targetTickAt(anchor, realNowMs, leadTicks);
+      const aheadOfTrue = target - serverTick; // should hover ≈ leadTicks
+      if (i > 50 && aheadOfTrue > maxAheadOfTrue) maxAheadOfTrue = aheadOfTrue;
+      serverTick += SNAP_TICKS;
+      realNowMs += REAL_MS_PER_SNAP;
+    }
+    // Correct behaviour: ≈ leadTicks ahead of the TRUE server tick, with a
+    // few ticks of slack for sub-snapshot freshness + rounding. Bug
+    // behaviour: grows ~ (60/58.8 − 1) × totalTicks ≈ hundreds of ticks
+    // (pegging the 128-tick reconcile cap).
+    expect(maxAheadOfTrue).toBeLessThanOrEqual(leadTicks + 8);
+  });
+
   it('CLOCK_ANCHOR_HARD_SNAP_MS is past typical jitter but well under network freezes', () => {
     // Sanity: 30 ms jitter (typical) shouldn't snap; 200 ms drift (≥ HARD_SNAP) does.
     expect(CLOCK_ANCHOR_HARD_SNAP_MS).toBeGreaterThan(50);

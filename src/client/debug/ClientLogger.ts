@@ -16,7 +16,16 @@
 // one-shots (`welcome`, `pixi_first_frame`, `join_chain_complete`)
 // survive until the E2E reads the log. Previously 500 — too tight on
 // CI where the test sometimes ran to ~10 s and lost the early events.
-const PROD_MAX_ENTRIES = 2000;
+// 2026-05-17: 2000 → 8000. Phone smoke captures use THIS cap (not
+// DIAG — the device isn't `?diag=1`); at the in-combat event rate
+// (~450/s, dominated by per-drone `swarm_snap_diagnostics`) 2000 only
+// spanned ~5 s, so sparse INTERMITTENT network-bunching spikes (the
+// `xxiyix` 571 ms snapshot-receipt gap class) routinely rotated out
+// before the user could hit Capture. 8000 ≈ ~18–25 s of in-combat
+// history (much longer when calmer) so a spike + its calm lead-in are
+// both retained. ~8000 small objects/tab — acceptable dev-stage cost,
+// trivially revertable pre-release.
+const PROD_MAX_ENTRIES = 8000;
 // Diagnostic sessions (`?diag=1` / WebDriver — see `isDiagEnabled`) add
 // the F1 per-frame sub-cost markers + the F-transit `transit_mark` /
 // `transit_frame` rows on top of the steady spam (~300–600 ev/s). The

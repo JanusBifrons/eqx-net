@@ -8,6 +8,7 @@ import {
   partitionDronesByRelevance,
   type DroneRelevanceInput,
 } from '@core/prediction/droneRelevance';
+import { anchoredDroneReseedSmoothing } from '@core/prediction/correctionSmoothing';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
   applyCollisionResolved,
@@ -241,6 +242,14 @@ const RTT_SAMPLE_CLAMP_MS = 250;
  *  leadTicks stays sized for combat. See `docs/LESSONS.md`. */
 const STEADY_STATE_INTERVAL_MIN_MS = 35;
 const STEADY_STATE_INTERVAL_MAX_MS = 75;
+
+/** Nominal snapshot inter-arrival (ms): the server broadcasts every 3
+ *  server ticks at 60 Hz = 50 ms (steady cadence; src/server/CLAUDE.md
+ *  snapshot-rate). Used by `anchoredDroneReseedSmoothing` to classify a
+ *  snapshot as a network-bunched delivery gap (interval > 50 × 1.8 ≈
+ *  90 ms ⇒ ≥1 missed broadcast). Fixed, NOT the EWMA — the EWMA is
+ *  polluted by the very gaps we're detecting. */
+const SNAPSHOT_NOMINAL_INTERVAL_MS = 50;
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
@@ -1871,6 +1880,14 @@ export class ColyseusGameClient {
       // would just yank them backward by leadTicks worth of motion).
       this._droneSnapshotAnchored.clear();
       let droneSeed: Map<string, ShipPhysicsState> | undefined;
+      // Graceful bulk-gap recovery (2026-05-17, diag xxiyix). Capture each
+      // anchored drone's PRE-reseed predWorld pose so that, IF this snapshot
+      // arrived after a delivery gap, we can glide the (otherwise
+      // synchronized, ~30-at-once) re-anchor via `_droneRenderOffsets`
+      // instead of teleporting. Steady-state (on-cadence) snapshots set NO
+      // offset (decided by `anchoredDroneReseedSmoothing`) — byte-identical
+      // to pre-fix, Phase C invariant + feel-test-lockstep canary intact.
+      const preReseedDronePos = new Map<number, { x: number; y: number; angle: number }>();
       if (snap.drones && snap.drones.length > 0 && this.predWorld) {
         droneSeed = new Map();
         for (const d of snap.drones) {
@@ -1885,6 +1902,8 @@ export class ColyseusGameClient {
             droneSeed.set(key, {
               x: d.x, y: d.y, vx: d.vx, vy: d.vy, angle: d.angle, angvel: d.angvel,
             });
+            const pre = this.predWorld.getShipState(key);
+            if (pre) preReseedDronePos.set(d.id, { x: pre.x, y: pre.y, angle: pre.angle });
           }
           // Phase 4c — push the authoritative drone mount angles into
           // the swarm mirror so MountVisualManager rotates the drone's
@@ -1978,6 +1997,47 @@ export class ColyseusGameClient {
         },
         droneSeed ? { drones: droneSeed } : undefined,
       );
+
+      // Graceful bulk-gap recovery (2026-05-17, diag xxiyix). If this
+      // snapshot arrived after a network-bunched DELIVERY gap (mobile
+      // radio; server broadcast is a metronomic ~50 ms), the reconcile just
+      // re-anchored every in-interest drone at once — a synchronized
+      // ~30-entity teleport whose magnitude scales with sector occupancy
+      // (the user-reported "lag spike"). Glide it via the existing
+      // `_droneRenderOffsets` spring instead. `anchoredDroneReseedSmoothing`
+      // returns `engage:false` for on-cadence snapshots, so steady-state is
+      // byte-identical to pre-fix (Phase C "snapshot owns predWorld"
+      // invariant + feel-test-lockstep canary untouched); only the
+      // pathological gap path springs. Mirrors the remote-ship offset
+      // pattern directly below.
+      if (this.predWorld && preReseedDronePos.size > 0) {
+        for (const [id, pre] of preReseedDronePos) {
+          const post = this.predWorld.getShipState(`swarm-${id}`);
+          if (!post) continue;
+          const ox = pre.x - post.x;
+          const oy = pre.y - post.y;
+          const dist = Math.hypot(ox, oy);
+          const sm = anchoredDroneReseedSmoothing({
+            intervalMs: this.stats.snapshotIntervalMs,
+            nominalMs: SNAPSHOT_NOMINAL_INTERVAL_MS,
+            dist,
+          });
+          if (!sm.engage) continue;
+          const oa = normalizeAngleDelta(pre.angle - post.angle);
+          const existing = this._droneRenderOffsets.get(id);
+          if (existing) {
+            existing.sx.x = ox; existing.sx.v = 0;
+            existing.sy.x = oy; existing.sy.v = 0;
+            existing.sa.x = oa; existing.sa.v = 0;
+            existing.halfLifeMs = sm.halfLifeMs;
+          } else {
+            this._droneRenderOffsets.set(id, {
+              sx: { x: ox, v: 0 }, sy: { x: oy, v: 0 }, sa: { x: oa, v: 0 },
+              halfLifeMs: sm.halfLifeMs,
+            });
+          }
+        }
+      }
 
       // Compute remote ship lerp offsets.
       if (this.predWorld) {
