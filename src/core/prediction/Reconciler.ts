@@ -23,6 +23,7 @@
  * src/core/math/CritDampedSpring.ts for the math.
  */
 import { springStep, type SpringState } from '../math/CritDampedSpring.js';
+import { playerCorrectionHalfLifeMs } from './correctionSmoothing.js';
 import type { PhysicsWorld, ShipPhysicsState } from '../physics/World.js';
 
 const BUFFER_SIZE = 128; // ~2 s at 60 Hz
@@ -40,18 +41,12 @@ const SPRING_VEL_END_MS = 0.05;        // 0.05 u/ms = 50 u/s, below ship speeds
 const SPRING_ANGLE_END = ANGLE_LERP_THRESHOLD;
 const SPRING_ANGVEL_END_MS = 0.001;    // 0.001 rad/ms ≈ 1 rad/s
 
-/** Spring half-life (time-to-half-offset) chosen by drift magnitude.
- *  Stage 1 replaces lerpFramesForDrift's frame counter. Sub-pixel
- *  corrections settle almost imperceptibly fast; everything else uses a
- *  single 25 ms half-life so the visible feel is consistent regardless of
- *  drift magnitude — the *amplitude* of the correction varies with drift,
- *  the *settling time* doesn't. With these half-lives, total wall-clock
- *  settle (offset back below LERP_THRESHOLD) is ~75 ms / ~125 ms, close to
- *  Stage 0's 100 ms cap while gaining frame-rate independence. */
-function halfLifeForDrift(drift: number): number {
-  if (drift < 0.5) return 12;   //  ~75 ms total settle — sub-pixel
-  return 25;                    // ~125 ms total settle — everything else
-}
+// Spring half-life (time-to-half-offset) is chosen by drift magnitude via
+// the pure `playerCorrectionHalfLifeMs` (see `correctionSmoothing.ts`).
+// Pre-2026-05-17 this was a flat 25 ms for any drift ≥ 0.5 u; that snapped
+// large network-bunched gap-recovery corrections (178–249 u) in ~5 frames
+// — a teleport (diag `xxiyix`). Small steady-state corrections keep the
+// 12/25 ms snappy feel (canary-safe); large gap corrections now glide.
 
 export interface InputRecord {
   tick: number;
@@ -296,7 +291,7 @@ export class Reconciler {
       this.lerpOffset.x = this._springX.x;
       this.lerpOffset.y = this._springY.x;
       this.lerpAngleOffset = this._springA.x;
-      this.lerpHalfLifeMs = halfLifeForDrift(drift);
+      this.lerpHalfLifeMs = playerCorrectionHalfLifeMs(drift);
       this._lerping = true;
     }
     // Prediction world now holds the corrected state.

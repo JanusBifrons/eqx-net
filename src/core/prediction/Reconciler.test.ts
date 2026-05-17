@@ -71,7 +71,11 @@ describe('Reconciler', () => {
 
     const initialAbsX = Math.abs(r.lerpOffset.x);
     expect(initialAbsX).toBeGreaterThan(20);
-    expect(r.lerpHalfLifeMs).toBe(25);
+    // Half-life is now magnitude-scaled (correctionSmoothing) — a 30 u
+    // drift glides gentler than the old flat 25 ms. The 50 %-at-half-life
+    // SPRING CONTRACT this test locks is half-life-value-agnostic: step by
+    // the actual half-life, assert the closed-form property.
+    expect(r.lerpHalfLifeMs).toBeGreaterThan(25);
 
     // Step forward by exactly halfLife in 0.5 ms slices.
     const dtMs = 0.5;
@@ -84,15 +88,17 @@ describe('Reconciler', () => {
     expect(Math.abs(r.lerpOffset.x)).toBeCloseTo(initialAbsX * 0.5, 0);
   });
 
-  it('Stage 1: large-drift correction settles within ~5×halfLife wall-clock', async () => {
+  it('Stage 1: a steady-state-band correction settles within ~6×halfLife wall-clock', async () => {
     // Termination is threshold-based (offset < LERP_THRESHOLD AND
-    // velocity small), but for the standard 25 ms halfLife on a moderate
-    // drift the lerp lands within ~125 ms — close to Stage 0's 100 ms cap
-    // while gaining frame-rate independence.
+    // velocity small). This locks the settle-time CONTRACT for the
+    // unchanged snappy band (drift ≤ 20 u ⇒ 25 ms half-life) — the
+    // common steady-state combat case; the original ≤160 ms (≈6×25)
+    // calibration stays valid. Large gap-recovery glides are covered by
+    // the FAILING-FIRST glide test below.
     const world = await makeWorld(0, 0);
     const r = new Reconciler(world, PLAYER);
     r.recordInput(makeInput(0));
-    r.reconcile({ x: 30, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0);
+    r.reconcile({ x: 18, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0); // ~18 u — snappy band
 
     expect(r.isLerping).toBe(true);
     expect(r.lerpHalfLifeMs).toBe(25);
@@ -248,6 +254,35 @@ describe('Reconciler', () => {
     for (let i = 1; i < magnitudes.length; i++) {
       expect(magnitudes[i]!).toBeLessThanOrEqual(magnitudes[i - 1]! + 1e-9);
     }
+  });
+
+  it('FAILING-FIRST (diag xxiyix): a large gap-recovery correction must GLIDE, not snap with the steady-state 25 ms half-life', async () => {
+    // Root cause of the lingering smoke-test spikes: mobile networks deliver
+    // metronomic 50 ms server broadcasts in 116–571 ms BUNCHES. The bunched
+    // snapshot lands and the reconcile produces a large accumulated drift
+    // (captured: 178, 249 u). Pre-fix `halfLifeForDrift` returns a flat
+    // 25 ms for ANY drift ≥ 0.5 u, so a 200 u correction settles in ~5
+    // frames — a teleport. Combined with the synchronized ~30-drone
+    // re-anchor it is the visible "lag spike that scales with sector
+    // occupancy" the user reported.
+    //
+    // INVARIANT: small steady-state corrections stay snappy (canary-safe);
+    // a large gap-recovery correction settles GENTLY (a brief glide). Fails
+    // on current code (flat 25 ms); the fix routes the half-life through
+    // `playerCorrectionHalfLifeMs`.
+    const wSmall = await makeWorld(0, 0);
+    const rSmall = new Reconciler(wSmall, PLAYER);
+    rSmall.recordInput(makeInput(0));
+    rSmall.reconcile({ x: 5, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0); // ~5 u — steady-state
+    expect(rSmall.lerpHalfLifeMs).toBe(25); // unchanged snappy band
+
+    const wGap = await makeWorld(0, 0);
+    const rGap = new Reconciler(wGap, PLAYER);
+    rGap.recordInput(makeInput(0));
+    rGap.reconcile({ x: 220, y: 0, vx: 0, vy: 0, angle: 0 }, 0, 1, 0); // ~220 u gap-recovery
+    expect(rGap.lastDrift).toBeGreaterThan(150);
+    // The bug: this is 25 on current code. The fix: a gentle glide.
+    expect(rGap.lerpHalfLifeMs).toBeGreaterThan(120);
   });
 
   it('caps the replay window at BUFFER_SIZE so the first-snapshot-after-join does not hang (2026-05-06 regression)', async () => {
