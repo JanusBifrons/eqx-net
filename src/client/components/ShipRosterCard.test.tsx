@@ -21,11 +21,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { ShipRosterCard, type RosterShipEntry } from './ShipRosterCard.js';
+import { getShipKind } from '../../shared-types/shipKinds.js';
 
 function makeShip(overrides: Partial<RosterShipEntry> = {}): RosterShipEntry {
   return {
     shipId: 'ship-abc-123',
-    kind: 'fighter', // maxHealth 100 (catalogue lookup)
+    kind: 'fighter', // maxHealth read from the live catalogue (Fighter)
     kindVersion: 1,
     health: 75,
     sectorKey: 'sol-prime',
@@ -80,13 +81,18 @@ describe('ShipRosterCard — full variant', () => {
   });
 
   it('health bar fill data-pct = round((health / kind.maxHealth) * 100)', () => {
-    // Fighter.maxHealth = 100; 75/100 = 75 %.
-    // We assert via `data-pct` rather than `style.width` because MUI's
-    // sx flows through an Emotion-generated class, not inline style —
-    // jsdom can't compute it. The data-pct attribute is the test seam.
-    const ship = makeShip({ kind: 'fighter', health: 75 });
+    // Expected pct is derived from the LIVE catalogue (the same source the
+    // component reads via getShipKind) so a kind retune updates both sides
+    // together instead of re-breaking this lock. The contract under test is
+    // "component looks up kind.maxHealth, applies round(), renders to the
+    // fill testid" — not a frozen percentage. We assert via `data-pct`
+    // rather than `style.width` because MUI's sx flows through an
+    // Emotion-generated class, not inline style — jsdom can't compute it.
+    const health = 75;
+    const expectedPct = String(Math.round((health / getShipKind('fighter').maxHealth) * 100));
+    const ship = makeShip({ kind: 'fighter', health });
     render(<ShipRosterCard ship={ship} compact={false} onClick={() => {}} />);
-    expect(screen.getByTestId('ship-roster-health-fill')).toHaveAttribute('data-pct', '75');
+    expect(screen.getByTestId('ship-roster-health-fill')).toHaveAttribute('data-pct', expectedPct);
   });
 
   it('clicking the card fires onClick once', () => {
@@ -135,9 +141,11 @@ describe('ShipRosterCard — compact variant', () => {
   });
 
   it('keeps the health-bar fill — still observable for HUD diagnostics', () => {
-    const ship = makeShip({ kind: 'fighter', health: 40 });
+    const health = 40;
+    const expectedPct = String(Math.round((health / getShipKind('fighter').maxHealth) * 100));
+    const ship = makeShip({ kind: 'fighter', health });
     render(<ShipRosterCard ship={ship} compact={true} onClick={() => {}} />);
-    expect(screen.getByTestId('ship-roster-health-fill')).toHaveAttribute('data-pct', '40');
+    expect(screen.getByTestId('ship-roster-health-fill')).toHaveAttribute('data-pct', expectedPct);
   });
 
   it('clicking the compact card fires onClick once', () => {

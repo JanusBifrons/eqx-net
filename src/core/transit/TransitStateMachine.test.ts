@@ -101,6 +101,10 @@ describe('TransitStateMachine', () => {
 
   it('scheduledCommitMs reflects spool start + spoolMs', () => {
     m.beginSpool(1000);
+    // `m` is constructed in beforeEach with an EXPLICIT spoolMs of 3_000
+    // (fast fixture, deliberately decoupled from the catalogue default) so
+    // this assertion is independent of SPOOL_DURATION_MS. The default-spool
+    // path is covered by the sibling test below via the constant.
     expect(m.scheduledCommitMs).toBe(1000 + 3_000);
   });
 
@@ -108,6 +112,18 @@ describe('TransitStateMachine', () => {
     const dflt = new TransitStateMachine('p2');
     dflt.beginSpool(0);
     expect(dflt.scheduledCommitMs).toBe(SPOOL_DURATION_MS);
+  });
+
+  it('SPOOL_DURATION_MS is the post-tune 30 s (absolute revert-lock)', () => {
+    // Slow-down-gameplay pass 2026-05-18 (plan: i-d-like-you-to-silly-penguin):
+    // warp spool 10×, 3 s → 30 s. Every OTHER spool assertion is
+    // constant-relative (asserts `=== SPOOL_DURATION_MS` or injects its own
+    // fixture spoolMs), so a revert of the constant would pass them all. This
+    // absolute literal is the regression lock that fails LOUDLY on a revert —
+    // the transit-timing analogue of `ShipKindPhysics.tuning.test.ts`. It
+    // also pins the value the server sends clients in the SPOOLING
+    // `transit_state` message and that `HyperspaceOverlay` counts down from.
+    expect(SPOOL_DURATION_MS).toBe(30_000);
   });
 
   it('works with no bus injected', () => {

@@ -61,7 +61,7 @@ of racing — a lifecycle bus event always wins over a transit outcome.
 ### Four load-bearing design decisions (and why)
 
 1. **Hybrid transit, server-internal hop.** Bots reuse the *pure*
-   `TransitStateMachine` (same 3 s vulnerable spool, cancel-on-death,
+   `TransitStateMachine` (same 30 s vulnerable spool, cancel-on-death,
    `TRANSIT_STATE_CHANGED` emits) and the *existing* `warp_out`/`warp_in`
    broadcasts players already see — but the cross-room move is a director
    callback, NOT the player path. `reserveSeatFor` / `onJoin` / Limbo are

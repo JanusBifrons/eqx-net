@@ -7,6 +7,7 @@ import {
   SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_ANGVEL_OFF,
   SAB_TOTAL_BYTES, slotBase,
 } from '../../shared-types/sabLayout.js';
+import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 
 interface FakeClientSent {
   channel: string;
@@ -116,7 +117,7 @@ describe('TransitOrchestrator', () => {
       const msg = sent[0]!.msg as { state: string; targetSectorKey?: string; spoolMs?: number };
       expect(msg.state).toBe('SPOOLING');
       expect(msg.targetSectorKey).toBe('orion-belt');
-      expect(msg.spoolMs).toBe(3000);
+      expect(msg.spoolMs).toBe(SPOOL_DURATION_MS);
     });
 
     it('a second beginTransit while in flight is a no-op', () => {
@@ -198,7 +199,7 @@ describe('TransitOrchestrator', () => {
       orch.beginTransit('p1', 'orion-belt');
       sent.length = 0;
       // Skip ahead to commit.
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       // Allow microtasks (the await chain in commitTransit).
       await vi.runAllTimersAsync();
 
@@ -236,7 +237,7 @@ describe('TransitOrchestrator', () => {
       // call shape.
       const { orch } = withFakeReserve(reserve);
       orch.beginTransit('p1', 'orion-belt');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(reserve).toHaveBeenCalledTimes(1);
       const args = reserve.mock.calls[0]!;
@@ -250,7 +251,7 @@ describe('TransitOrchestrator', () => {
       const { orch, room, limbo, sent } = withFakeReserve(reserve);
       orch.beginTransit('p1', 'orion-belt');
       sent.length = 0;
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       // No Limbo entry written.
       expect(limbo.peek('p1')).toBeNull();
@@ -267,7 +268,7 @@ describe('TransitOrchestrator', () => {
       const { orch, limbo } = withFakeReserve(reserve);
       // Departure pose was 100/200 (set by makeRoom). Request arrival at 500/-300.
       orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const entry = limbo.peek('p1');
       expect(entry).not.toBeNull();
@@ -285,7 +286,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, limbo } = withFakeReserve(reserve);
       orch.beginTransit('p1', 'orion-belt', { x: 999_999, y: -50_000 });
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const entry = limbo.peek('p1');
       expect(entry).not.toBeNull();
@@ -298,7 +299,7 @@ describe('TransitOrchestrator', () => {
       const { orch, limbo } = withFakeReserve(reserve);
       // No third arg — legacy PC behaviour.
       orch.beginTransit('p1', 'orion-belt');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const entry = limbo.peek('p1');
       expect(entry).not.toBeNull();
@@ -313,7 +314,7 @@ describe('TransitOrchestrator', () => {
       orch.beginTransit('p1', 'orion-belt');
       // Simulate disconnect: clear the slot map.
       (room.playerToSlot as Map<string, number>).delete('p1');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(reserve).not.toHaveBeenCalled();
       expect(limbo.peek('p1')).toBeNull();
@@ -328,7 +329,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, broadcasts } = withFakeReserve(reserve);
       orch.beginTransit('p1', 'orion-belt');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
 
       const warpOut = broadcasts.find((b) => b.type === 'warp_out');
@@ -350,7 +351,7 @@ describe('TransitOrchestrator', () => {
       // see the burst at the leaver's CURRENT position (100, 200), not
       // at the destination arrival point.
       orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const warpOut = broadcasts.find((b) => b.type === 'warp_out');
       const payload = warpOut!.message as { x: number; y: number };
@@ -362,7 +363,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockRejectedValue(new Error('destination unavailable'));
       const { orch, broadcasts } = withFakeReserve(reserve);
       orch.beginTransit('p1', 'orion-belt');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(broadcasts.find((b) => b.type === 'warp_out')).toBeUndefined();
     });
@@ -469,7 +470,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
       orch.beginTransit('p1', 'orion-belt', undefined, 'own-ship');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(reserve).toHaveBeenCalledTimes(1);
       const args = reserve.mock.calls[0]!;
@@ -486,7 +487,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
       orch.beginTransit('p1', 'orion-belt');
-      vi.advanceTimersByTime(3000);
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const opts = reserve.mock.calls[0]![1] as Record<string, unknown>;
       expect(opts).not.toHaveProperty('shipId');
