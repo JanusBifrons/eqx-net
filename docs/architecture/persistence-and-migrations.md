@@ -202,6 +202,42 @@ returns `{ exists, sectorKey, expiresAt }` for E2E inspection. It deliberately
 destination room's `onJoin` and we don't want to leak ship pose to a side
 channel.
 
+## Ship-kind catalogue drift (`player_ships.kindVersion`)
+
+Distinct from the snapshot `schemaVersion` above: persistent roster rows in
+`player_ships` carry a `kindVersion` stamping the `SHIP_KIND_CATALOGUE_VERSION`
+([src/shared-types/shipKinds.ts](../../src/shared-types/shipKinds.ts)) they
+were last saved at. On hydrate, `applyKindVersionDrift`
+([src/server/playerShips/PlayerShipStore.ts](../../src/server/playerShips/PlayerShipStore.ts))
+reconciles a stale row: it **clamps `health` to the current kind's
+`maxHealth` (DOWN only — `Math.min`)** and re-stamps the version. Every other
+numeric stat (speed, thrust, damping, grip, angvel, regen) is **never cached
+on the row** — it is read live off the catalogue per physics frame via
+`getShipKind(row.kind)`, so a catalogue retune takes effect instantly for
+every player, returning or new, with no migration.
+
+**Bumping rule (invariant #11):** any PR that edits a numeric field inside
+`SHIP_KINDS` MUST bump `SHIP_KIND_CATALOGUE_VERSION` by 1 in the same PR.
+There is **no SQLite migration** — the `kindVersion` stamp + the live-read
+design *is* the entire migration mechanism.
+
+### v2 → v3 (2026-05-18, "slow down gameplay")
+
+- 0.5× ship speed (halved `thrustImpulse` / `maxSpeed` / `ai.thrust` for all
+  5 kinds), turn rate unchanged, ×1.5 hull + shield with `shieldRegenRate`
+  also ×1.5 (full-shield regen *time* held constant), and 10× warp spool
+  (a transit-timing constant, unrelated to persisted rows).
+- **Documented asymmetry — the +50% hull is NOT back-filled onto existing
+  stored rows.** `applyKindVersionDrift` clamps *down* only; it never gifts
+  hull. A returning player's stored ship keeps its stored health and reaches
+  the new (higher) cap only on its next fresh spawn / shield+hull reset, by
+  design. This is correct (never strip earned damage, never gift hull above
+  the cap the player last saw) and is regression-locked by
+  `PlayerShipStore.test.ts` ("drift does not gift hull when stored health is
+  below current maxHealth"). The speed/regen half of the retune *is* instant
+  for stored ships (live-read). If a future reader files "returning ships
+  have old health", this is the expected behaviour, not a bug.
+
 ## Future plans
 
 - **Runtime zod validation at hydrate time.** `parseSnapshot` currently

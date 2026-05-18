@@ -366,28 +366,29 @@ const SCOUT: ShipKind = ShipKindSchema.parse({
   displayName: 'Scout',
   description: 'Light, fast, twitchy. Glass cannon.',
   // d=0.5 → 37% retained after 2 s (decisive decel without being grippy).
-  // F=6.0, boost=2 → v_boosted = 6*2 / (1-e^(-0.5/60)) = 12 / 0.00831 ≈ 1444 u/s
-  // Doubled impulse vs initial tune: punchier off the line AND higher cruise.
-  thrustImpulse: 6.0,
+  // F=3.0, boost=2 → v_boosted = 3*2 / (1-e^(-0.5/60)) = 6 / 0.00831 ≈ 722 u/s
+  // 0.5× speed / +50% hull pass (2026-05-18): halved thrust + maxSpeed for
+  // manageable pacing; hull/shield ×1.5 with regen rate ×1.5 (regen TIME held).
+  thrustImpulse: 3.0,
   reverseFactor: 0.5,
   boostMultiplier: 2.0,
   maxAngvel: 3.0,        // 172°/s — twitchy.
-  maxSpeed: 1500,
+  maxSpeed: 750,
   linearDamping: 0.5,
   angularDamping: 0,     // unused — applyInput owns angvel every tick.
   lateralGrip: 0.05,     // half-life ≈ 230 ms — quickest to bite, still drifts.
   radius: 10,
-  maxHealth: 60,
+  maxHealth: 90,
   // Glass cannon: shield equals hull, standard Halo regen.
-  shieldMax: 60,
+  shieldMax: 90,
   shieldRegenDelayTicks: 300,
-  shieldRegenRate: 60 / 120,
+  shieldRegenRate: 90 / 120,
   // Phase-1 agility uplift (2026-05-10): drone terminal angvel
   // = maxTorque / ANGVEL_DAMPING (1.5). To match the player's
   // `maxAngvel = 3.0` we need `maxTorque ≈ 4.5`. `turnKp` bumped from
   // 5.0 → 8.0 so the P-controller actually asks for the new headroom
   // at modest bearing errors instead of saturating only when way off.
-  ai: { thrust: 0.7, turnKp: 8.0, maxTorque: 4.5 },
+  ai: { thrust: 0.35, turnKp: 8.0, maxTorque: 4.5 },
   shape: {
     kind: 'polygon',
     color: 0x00d4ff,
@@ -409,25 +410,26 @@ const FIGHTER: ShipKind = ShipKindSchema.parse({
   displayName: 'Fighter',
   description: 'Balanced all-rounder. The default.',
   // d=0.3 → 55% retained after 2 s (clear glide, still slows down).
-  // F=4.0, boost=2 → v_boosted = 4*2 / (1-e^(-0.3/60)) = 8 / 0.00499 ≈ 1604 u/s
-  // Doubled impulse vs initial tune: punchier accel, higher cruise.
-  thrustImpulse: 4.0,
+  // F=2.0, boost=2 → v_boosted = 2*2 / (1-e^(-0.3/60)) = 4 / 0.00499 ≈ 802 u/s
+  // 0.5× speed / +50% hull pass (2026-05-18): halved thrust + maxSpeed for
+  // manageable pacing; hull/shield ×1.5 with regen rate ×1.5 (regen TIME held).
+  thrustImpulse: 2.0,
   reverseFactor: 0.5,
   boostMultiplier: 2.0,
   maxAngvel: 2.0,        // 115°/s — fine aim resolution at short taps.
-  maxSpeed: 1700,
+  maxSpeed: 850,
   linearDamping: 0.3,
   angularDamping: 0,
   lateralGrip: 0.025,    // half-life ≈ 460 ms — clear drift on hard turns.
   radius: 12,
-  maxHealth: 100,
+  maxHealth: 150,
   // Balanced: shield equals hull, standard Halo regen.
-  shieldMax: 100,
+  shieldMax: 150,
   shieldRegenDelayTicks: 300,
-  shieldRegenRate: 100 / 120,
+  shieldRegenRate: 150 / 120,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 2.0`
   // — terminal angvel = maxTorque / 1.5, so maxTorque = 3.0.
-  ai: { thrust: 0.5, turnKp: 6.0, maxTorque: 3.0 },
+  ai: { thrust: 0.25, turnKp: 6.0, maxTorque: 3.0 },
   shape: {
     kind: 'polygon',
     color: 0x00ff88,
@@ -450,24 +452,25 @@ const HEAVY: ShipKind = ShipKindSchema.parse({
   displayName: 'Heavy',
   description: 'Sluggish accel, brutal top speed, a lot of hull.',
   // d=0.2 → 67% retained after 2 s (heavy momentum, long glide).
-  // F=3.0, boost=2 → v_boosted = 3*2 / (1-e^(-0.2/60)) = 6 / 0.00333 ≈ 1802 u/s
-  // Doubled impulse vs initial tune: still slowest accel, but the highest top speed.
-  thrustImpulse: 3.0,
+  // F=1.5, boost=2 → v_boosted = 1.5*2 / (1-e^(-0.2/60)) = 3 / 0.00333 ≈ 901 u/s
+  // 0.5× speed / +50% hull pass (2026-05-18): halved thrust + maxSpeed for
+  // manageable pacing; hull/shield ×1.5 with regen rate ×1.5 (regen TIME held).
+  thrustImpulse: 1.5,
   reverseFactor: 0.4,
   boostMultiplier: 2.0,
   maxAngvel: 1.4,        // 80°/s — sluggish wheel.
-  maxSpeed: 1900,
+  maxSpeed: 950,
   linearDamping: 0.2,
   angularDamping: 0,
   lateralGrip: 0.012,    // half-life ≈ 960 ms — slides like a tank around corners.
   radius: 16,
-  maxHealth: 180,
+  maxHealth: 270,
   // Tank: deepest shield mirrors deepest hull, standard Halo regen.
-  shieldMax: 180,
+  shieldMax: 270,
   shieldRegenDelayTicks: 300,
-  shieldRegenRate: 180 / 120,
+  shieldRegenRate: 270 / 120,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 1.4`.
-  ai: { thrust: 0.35, turnKp: 4.0, maxTorque: 2.1 },
+  ai: { thrust: 0.175, turnKp: 4.0, maxTorque: 2.1 },
   shape: {
     kind: 'polygon',
     color: 0xff7733,
@@ -511,23 +514,25 @@ const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
   displayName: 'Interceptor',
   description: 'Twin-cannon light. Two forward beams per cooldown — high DPS, low hull.',
   // d=0.4 → 45% retained after 2 s (between fighter 0.3 and scout 0.5).
-  // F=5.0, boost=2 → v_boosted = 5*2 / (1-e^(-0.4/60)) = 10 / 0.00664 ≈ 1506 u/s.
-  thrustImpulse: 5.0,
+  // F=2.5, boost=2 → v_boosted = 2.5*2 / (1-e^(-0.4/60)) = 5 / 0.00664 ≈ 753 u/s.
+  // 0.5× speed / +50% hull pass (2026-05-18): halved thrust + maxSpeed for
+  // manageable pacing; hull/shield ×1.5 with regen rate ×1.5 (regen TIME held).
+  thrustImpulse: 2.5,
   reverseFactor: 0.5,
   boostMultiplier: 2.0,
   maxAngvel: 2.5,        // 143°/s — quicker than fighter, less twitchy than scout.
-  maxSpeed: 1600,
+  maxSpeed: 800,
   linearDamping: 0.4,
   angularDamping: 0,
   lateralGrip: 0.04,     // half-life ≈ 280 ms — clear drift but bites.
   radius: 11,
-  maxHealth: 80,
+  maxHealth: 120,
   // Twin-cannon light: shield equals hull, standard Halo regen.
-  shieldMax: 80,
+  shieldMax: 120,
   shieldRegenDelayTicks: 300,
-  shieldRegenRate: 80 / 120,
+  shieldRegenRate: 120 / 120,
   // AI tuning sized to the new maxAngvel: maxTorque = maxAngvel * 1.5 = 3.75.
-  ai: { thrust: 0.6, turnKp: 7.0, maxTorque: 3.75 },
+  ai: { thrust: 0.3, turnKp: 7.0, maxTorque: 3.75 },
   shape: {
     kind: 'polygon',
     color: 0xb066ff,
@@ -578,22 +583,24 @@ const GUNSHIP: ShipKind = ShipKindSchema.parse({
   displayName: 'Gunship',
   description: 'Fore-and-aft platform. Forward laser plus a backward rear gun — fire while you flee.',
   // d=0.25 → 60% retained after 2 s (between fighter 0.3 and heavy 0.2).
-  // F=3.5, boost=2 → v_boosted = 3.5*2 / (1-e^(-0.25/60)) = 7 / 0.00415 ≈ 1685 u/s.
-  thrustImpulse: 3.5,
+  // F=1.75, boost=2 → v_boosted = 1.75*2 / (1-e^(-0.25/60)) = 3.5 / 0.00415 ≈ 842 u/s.
+  // 0.5× speed / +50% hull pass (2026-05-18): halved thrust + maxSpeed for
+  // manageable pacing; hull/shield ×1.5 with regen rate ×1.5 (regen TIME held).
+  thrustImpulse: 1.75,
   reverseFactor: 0.4,
   boostMultiplier: 2.0,
   maxAngvel: 1.6,        // 92°/s — between fighter 2.0 and heavy 1.4.
-  maxSpeed: 1500,
+  maxSpeed: 750,
   linearDamping: 0.25,
   angularDamping: 0,
   lateralGrip: 0.018,    // half-life ≈ 640 ms — slidy.
   radius: 14,
-  maxHealth: 140,
+  maxHealth: 210,
   // Fore-and-aft platform: shield equals hull, standard Halo regen.
-  shieldMax: 140,
+  shieldMax: 210,
   shieldRegenDelayTicks: 300,
-  shieldRegenRate: 140 / 120,
-  ai: { thrust: 0.4, turnKp: 5.0, maxTorque: 2.4 },
+  shieldRegenRate: 210 / 120,
+  ai: { thrust: 0.2, turnKp: 5.0, maxTorque: 2.4 },
   shape: {
     kind: 'polygon',
     color: 0xff7722,
@@ -680,7 +687,7 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(Object.values(
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 2;
+export const SHIP_KIND_CATALOGUE_VERSION = 3;
 
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 
