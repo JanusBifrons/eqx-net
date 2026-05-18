@@ -31,6 +31,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   interpolateSwarmPose,
   setSwarmDisplayDelayMs,
+  getSwarmDisplayDelayMs,
   type InterpolatedPose,
 } from '../../src/client/net/swarmInterpolation.js';
 import type { SwarmRenderState, PoseRingEntry } from '../../src/core/contracts/IRenderer.js';
@@ -138,30 +139,36 @@ describe('drone snapshot-interpolation — (a) smoothness under realistic wire c
   });
 });
 
-describe('drone snapshot-interpolation — (b) teleport guard (RED until Step 2)', () => {
+describe('drone snapshot-interpolation — (b) teleport guard (GREEN, Step 2 lock)', () => {
   it('hard discontinuity SNAPS, never lerp-streaks across open space', () => {
+    // Ask for 0 delay; post-Step-4 the hard floor clamps the effective
+    // delay UP to DISPLAY_DELAY_MS, so read it back and offset the sample
+    // window by it — keeps this lock exercising the SAME @16→@32 bracket
+    // regardless of the floor value (the guard is delay-independent).
     setSwarmDisplayDelayMs(0);
+    const D = getSwarmDisplayDelayMs();
     const entry = freshEntry();
     // Two near poses establish a normal interpolation window...
     deliver(entry, { x: 0, y: 0, angle: 0 }, 0);
     deliver(entry, { x: 5, y: 0, angle: 0 }, 16);
     // ...then a hard server discontinuity (keyframe / SET_POSITION / id-reuse):
-    // a 7071 u jump. With no guard, interpolateSwarmPose lerps the gap over the
-    // 16→32 ms bracket — the sprite visibly flies across the sector.
+    // a 7071 u jump. Without the guard, interpolateSwarmPose would lerp the
+    // gap over the 16→32 ms bracket — the sprite flies across the sector.
     deliver(entry, { x: 5000, y: 5000, angle: 0 }, 32);
 
-    // Sample every frame across the bracket window. EVERY sample must be at
+    // Sample every frame across the bracket window (offset by the effective
+    // display delay so targetMs sweeps [16, 40]). EVERY sample must be at
     // one of the ring poses (a snap), never a far in-between lerp point.
     let worstMinDist = 0;
-    for (let now = 16; now <= 40; now += 2) {
+    for (let now = 16 + D; now <= 40 + D; now += 2) {
       interpolateSwarmPose(entry, now, out);
       const dPrev = Math.hypot(out.x - 5, out.y - 0);
       const dNew = Math.hypot(out.x - 5000, out.y - 5000);
       worstMinDist = Math.max(worstMinDist, Math.min(dPrev, dNew));
     }
-    // RED on current code: mid-bracket the lerp sits ~3500 u from BOTH poses.
-    // GREEN after Step 2: the ring is marked single-arrival on the
-    // discontinuity so the sprite pins to the new pose (worstMinDist ≈ 0).
+    // The Step-2 guard marks the ring single-arrival on the discontinuity
+    // so the sprite pins to the new pose (worstMinDist ≈ 0) instead of
+    // gliding ~3500 u from BOTH poses mid-bracket.
     expect(
       worstMinDist,
       `teleport produced a lerp-streak: a render frame was ${worstMinDist.toFixed(0)} u from both the old and new pose (should snap, not glide across space)`,

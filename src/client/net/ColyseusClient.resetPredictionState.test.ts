@@ -44,7 +44,8 @@ type Internals = {
   lastSnapshotAt: number;
   _recentIntervals: number[];
   _recentCorrFlags: number[];
-  _intervalEwma: number;
+  _swarmBinaryLastMs: number;
+  _swarmBinaryEwma: number;
   reconciler: { lastRtt: number } | null;
   resetPredictionState: () => void;
 };
@@ -89,7 +90,11 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     internals.lastSnapshotAt = 9999;
     internals._recentIntervals.push(50, 60, 70);
     internals._recentCorrFlags.push(1, 0, 1);
-    internals._intervalEwma = 175;
+    // Drone display-delay cadence state (Step 4) — polluted by the
+    // pre-transit sector's binary cadence; must reset so the destination
+    // sector's cadence is learned fresh (no ceiling-pinned stale seed).
+    internals._swarmBinaryLastMs = 123456;
+    internals._swarmBinaryEwma = 175;
 
     internals.resetPredictionState();
 
@@ -103,7 +108,8 @@ describe('ColyseusGameClient.resetPredictionState', () => {
     expect(internals.lastSnapshotAt).toBe(0);
     expect(internals._recentIntervals).toEqual([]);
     expect(internals._recentCorrFlags).toEqual([]);
-    expect(internals._intervalEwma).toBe(0);
+    expect(internals._swarmBinaryLastMs).toBe(-1);
+    expect(internals._swarmBinaryEwma).toBe(0);
   });
 
   it('NULLS the reconciler so the destination reseeds it fresh (2026-05-16)', () => {

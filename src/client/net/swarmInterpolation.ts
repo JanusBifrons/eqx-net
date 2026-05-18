@@ -17,39 +17,43 @@
 import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 
-/** Default / minimum display delay.
+/** Default / minimum display delay — the FEEL CORE of the drone
+ * snapshot-interpolation pivot (Step 4, 2026-05-18).
  *
  * History:
- *   - Original: 100 ms — generous buffer when arrival jitter measurements
- *     were unknown.
- *   - Stage 0 of the network-feel roadmap: 50 ms — measured jitter ≤ 20 ms
- *     in practice, halved the visible remote-entity lag.
- *   - 2026-05-09 fix (this commit): 0 ms.
+ *   - Original: 100 ms — generous buffer when arrival jitter was unknown.
+ *   - Network-feel Stage 0: 50 ms.
+ *   - 2026-05-09: 0 ms — when drones were client-AI re-simmed in predWorld
+ *     and the renderer read the predWorld pose, a non-zero delay made the
+ *     *rendered* sprite lag the *predWorld collision body*, so you could
+ *     visually overlap a drone and pass through it. 0 ms aligned render
+ *     with the predWorld dead-reckon.
+ *   - 2026-05-18 (the pivot): back to a 100 ms floor.
  *
- * The 50 ms backward-buffered delay made the *rendered* swarm position
- * lag the *predWorld* swarm position (which is the collision shape) by
- * up to 50 ms × drone-velocity. For a drone moving at 30 u/sec that is
- * ~1.5 u; a fast drone moving at 100 u/sec is 5 u. The user could
- * visually overlap a drone (which looks like a hit) and have the ship
- * pass through, because the collision was against the predWorld drone
- * at a position 5 u further along. Same root cause for hitscan
- * accuracy complaints — the ray geometry is built from rendered
- * positions but server lag-comp uses authoritative ones.
+ * Why the 0 ms rationale no longer applies: drones are no longer
+ * client-AI re-simmed. They are PURE snapshot-interpolated off the
+ * decoder `poseRing`, and the predWorld drone body is a KINEMATIC
+ * follower driven to that *same* interpolated pose each frame
+ * (`ColyseusClient.updateMirror`). Render and collision are now the
+ * identical pose by construction at ANY delay — the visible-vs-collision
+ * mismatch that forced 0 ms is structurally gone.
  *
- * With `0 ms` and `interpolateSwarmPose` falling into the
- * "targetMs >= newest.arrivalMs" branch, the renderer reads the
- * latest packet pose plus forward dead-reckoning by `vx*dt` —
- * exactly what predWorld does for dynamic drones (since the
- * 2026-05-09 unlock fix). Render and collision shape now align.
+ * What 100 ms buys: in-interest combat drones arrive on the binary wire
+ * ~per server tick (≈16 ms). A 100 ms backward buffer means two
+ * bracketing samples essentially always exist, so the hot path is a
+ * genuine lerp of buffered authoritative truth — zero steady-state
+ * extrapolation, total immunity to wire-arrival jitter ≤ 100 ms. The
+ * cost is a fixed ~100 ms of perceived latency on drone visuals, which
+ * is the deliberate, standard "render the past" cheat (Quake / Source /
+ * Overwatch). 100 ms is the classic value and the on-device tuning knob
+ * (the plan says start 80–110 ms; raise/lower here from device feel).
  *
- * Trade-off: any wire-arrival jitter beyond the inter-arrival
- * cadence shows as a small visual snap when the next packet finally
- * lands and corrects the dead-reckoning. With p99 snapshot intervals
- * of ~85 ms (vs nominal 50 ms) the snap on a worst-case packet is
- * ~35 ms × velocity ≈ 1 u for a typical drone — visible only as
- * mild stutter, vastly preferable to the visible-collision mismatch.
+ * NOTE: this is also the hard floor in `setSwarmDisplayDelayMs`'s clamp,
+ * so the adaptive feed can only ever push the delay UP from here. Tests
+ * that need a different effective delay must read it back via
+ * `getSwarmDisplayDelayMs()` rather than assuming their argument sticks.
  */
-export const DISPLAY_DELAY_MS = 0;
+export const DISPLAY_DELAY_MS = 100;
 
 /** Maximum dead-reckoning window past the newest arrival before freezing. */
 export const EXTRAPOLATION_LIMIT_MS = 100;
@@ -77,11 +81,18 @@ export const TELEPORT_FLOOR_U = 64; // absolute floor for tiny spans
 export const ADAPTIVE_DELAY_FACTOR = 1.5;
 
 /** Hard ceiling on adaptive delay — past this the perceived latency starts
- *  to feel unresponsive even if motion is smooth. Reached only when the
- *  server is severely behind (e.g. ≤ 10 Hz wall-clock). Stage 0 dropped
- *  this from 350 ms: jitter is stable < 20 ms in practice, so 200 ms is
- *  10× the worst-case buffer width — plenty without being conservative. */
-export const ADAPTIVE_DELAY_CEILING_MS = 200;
+ *  to feel unresponsive even if motion is smooth. Raised 200 → 280 for the
+ *  drone snapshot-interpolation pivot (Step 4, 2026-05-18): an
+ *  out-of-interest / decimated drone arrives every `DECIMATION_TICKS≈6`
+ *  ticks ≈ 100–170 ms; the adaptive feed sizes the delay at
+ *  `binaryInterArrivalEwma × ADAPTIVE_DELAY_FACTOR` (≈ 1.5×), so a 170 ms
+ *  decimated cadence wants ~255 ms of buffer to still have two bracketing
+ *  samples. 280 leaves headroom above that without feeling unresponsive
+ *  for the combat pack (which is in-interest at ~per-tick cadence and sits
+ *  near the 100 ms floor, nowhere near this ceiling). Distant decimated
+ *  drones accept the added latency by design — they are not the threat;
+ *  the teleport guard covers the in↔out re-acquire. */
+export const ADAPTIVE_DELAY_CEILING_MS = 280;
 
 /** Module-level adaptive delay, updated by ColyseusClient on every snapshot
  *  via `setSwarmDisplayDelayMs()`. Default is the static 100 ms; under slow
@@ -166,15 +177,22 @@ export function interpolateSwarmPose(
     return out;
   }
 
-  // Render time past the newest arrival: dead-reckon with vx/vy up to
-  // EXTRAPOLATION_LIMIT_MS, then freeze. Without this the sprite snaps
-  // backwards through the buffer when arrivals stall briefly.
+  // Render time past the newest arrival: dead-reckon with vx/vy AND angvel
+  // up to EXTRAPOLATION_LIMIT_MS, then freeze. Gliding the angle by
+  // `angvel·dt` (not freezing it) matters post-pivot: out-of-interest
+  // decimated drones (≈100–170 ms cadence) frequently render in this
+  // extrapolation window, and a maneuvering drone is usually turning —
+  // freezing the angle then snapping it on the next decimated packet reads
+  // as a turret/heading "stutter". Wire-format v3 carries `angvel`, the
+  // decoder populates every ring slot, so this is a free glide. Without
+  // the position dead-reckon the sprite snaps backward through the buffer
+  // when arrivals stall briefly.
   if (targetMs >= newest.arrivalMs) {
     const overshootMs = Math.min(EXTRAPOLATION_LIMIT_MS, targetMs - newest.arrivalMs);
     const dt = overshootMs / 1000;
     out.x = newest.x + newest.vx * dt;
     out.y = newest.y + newest.vy * dt;
-    out.angle = newest.angle;
+    out.angle = newest.angle + newest.angvel * dt;
     return out;
   }
 

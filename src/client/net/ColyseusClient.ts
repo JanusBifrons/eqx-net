@@ -541,9 +541,17 @@ export class ColyseusGameClient {
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
-  /** Phase 6.5 — EWMA of `snapshotIntervalMs`, used to size the adaptive
-   *  swarm display-delay buffer. 0 = uninitialised; first snapshot seeds. */
-  private _intervalEwma = 0;
+  /** Drone snapshot-interpolation pivot (Step 4, 2026-05-18) — adaptive
+   *  swarm display-delay is sized from the BINARY swarm packet
+   *  inter-arrival cadence, NOT the 20 Hz JSON snapshot interval. The
+   *  binary channel is what actually carries drone pose: in-interest ≈
+   *  per server tick (~16 ms), out-of-interest decimated (~100–170 ms).
+   *  Sizing the buffer to the JSON snapshot rate (always ~50 ms) would
+   *  over-buffer the fast combat case and under-buffer decimated drones.
+   *  `_swarmBinaryLastMs` = perf.now() of the previous binary packet (-1 =
+   *  none yet); `_swarmBinaryEwma` = EWMA of inter-arrival ms (0 = unseeded). */
+  private _swarmBinaryLastMs = -1;
+  private _swarmBinaryEwma = 0;
   private readonly _recentCorrFlags: number[] = [];
 
   // Remote ship interpolation: per-player timestamped history
@@ -619,7 +627,11 @@ export class ColyseusGameClient {
     this.lastSnapshotAt = 0;
     this._recentIntervals.length = 0;
     this._recentCorrFlags.length = 0;
-    this._intervalEwma = 0;
+    // Drone display-delay cadence tracking — reset so the destination
+    // sector's binary cadence is learned fresh (a stale cross-warp gap
+    // must not seed the adaptive delay at the ceiling).
+    this._swarmBinaryLastMs = -1;
+    this._swarmBinaryEwma = 0;
     // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
     // local predWorld ship body and drop the Reconciler so the
     // destination's first state-diff / snapshot reseeds the body AT THE
@@ -805,6 +817,23 @@ export class ColyseusGameClient {
     // server's `laser_fired` events use the same key for swarm hits.
     room.onMessage('swarm', (raw: unknown) => {
       const bw = bwStats();
+      // Drone display-delay cadence (Step 4): EWMA of binary-packet
+      // inter-arrival. This is the ACTUAL drone-pose channel the
+      // interpolation buffer must cover — in-interest ≈ per server tick
+      // (~16 ms), out-of-interest decimated (~100–170 ms) — unlike the
+      // steady 20 Hz JSON snapshot. Sample clamped to ≤ 500 ms so one
+      // tab-background / radio gap can't pin the EWMA at the ceiling (the
+      // JSON drop-detector `dropBias` already biases up on loss bursts).
+      const swNowMs = performance.now();
+      if (this._swarmBinaryLastMs >= 0) {
+        const dtMs = Math.min(500, swNowMs - this._swarmBinaryLastMs);
+        if (dtMs > 0) {
+          this._swarmBinaryEwma = this._swarmBinaryEwma === 0
+            ? dtMs
+            : this._swarmBinaryEwma * 0.85 + dtMs * 0.15;
+        }
+      }
+      this._swarmBinaryLastMs = swNowMs;
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
         decodeSwarmPacket(raw, this.mirror);
@@ -1520,21 +1549,21 @@ export class ColyseusGameClient {
       const smoothed = prev * 0.8 + instantHz * 0.2;
       useUIStore.getState().setServerTickHz(smoothed);
 
-      // Phase 6.5 — adapt the swarm display-delay buffer's lookback window
-      // to the observed inter-arrival cadence. EWMA-smoothed so single-tick
-      // jitter doesn't make sprites stutter as the delay snaps around.
-      // Steady-state at 60 Hz server: intervalMs ≈ 50 → delay = 75 → clamped
-      // to 100 (the floor). Burn / overload at 19 Hz: intervalMs ≈ 170 →
-      // delay = 255 — buffer always has half an arrival of headroom.
-      this._intervalEwma = this._intervalEwma === 0
-        ? intervalMs
-        : this._intervalEwma * 0.85 + intervalMs * 0.15;
-      // Stage 4 — observe each snapshot's serverTick for drop detection;
-      // bias the swarm display-delay upward when the wire is dropping
-      // packets so the interp buffer doesn't run out of bracketing arrivals.
+      // Adapt the swarm display-delay buffer to the BINARY swarm cadence
+      // (Step 4, drone-snapshot-interpolation pivot). `_swarmBinaryEwma`
+      // (updated in the 'swarm' handler) tracks the actual drone-pose
+      // channel inter-arrival, NOT this 20 Hz JSON snapshot interval:
+      //   - in-interest combat: ewma ≈ 16–30 ms → ×1.5 ≈ 45 → clamped UP
+      //     to the 100 ms floor (two bracketing per-tick samples always
+      //     exist → smooth lerp, zero steady-state extrapolation).
+      //   - out-of-interest decimated: ewma ≈ 100–170 ms → ×1.5 ≈
+      //     150–255 → within the 280 ms ceiling, still has a bracket.
+      // Re-evaluated on the JSON snapshot tick (~20 Hz) — frequent enough
+      // to track cadence shifts, and `dropBias` (JSON drop-detector) still
+      // biases up on genuine loss bursts so the buffer never empties.
       observeSnapshotTick(this._dropDetector, snap.serverTick);
       const dropBias = computeInterpBiasMs(this._dropDetector.dropCount);
-      setSwarmDisplayDelayMs(this._intervalEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
+      setSwarmDisplayDelayMs(this._swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
     }
 
     // Rolling jitter: max − min of the last 10 snapshot intervals.
