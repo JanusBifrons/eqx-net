@@ -54,6 +54,23 @@ export const DISPLAY_DELAY_MS = 0;
 /** Maximum dead-reckoning window past the newest arrival before freezing. */
 export const EXTRAPOLATION_LIMIT_MS = 100;
 
+/** Teleport guard (drone snapshot-interpolation pivot, 2026-05-18).
+ *
+ * Routing drones through `interpolateSwarmPose` exposed a streak the old
+ * predWorld path masked (instantaneous `setShipState`): a server-side
+ * discontinuity — full-snapshot keyframe (`FULL_SNAPSHOT_INTERVAL_TICKS=60`,
+ * once/sec), `SET_POSITION`, swarm despawn+entityId-reuse, sleep→wake — lands
+ * as two adjacent ring poses thousands of units apart. The unconditional lerp
+ * animated the sprite ACROSS that gap over the bracket window (the drone
+ * "flies across the sector"). When the gap between the two bracketing poses
+ * exceeds what a real entity could plausibly travel in that span, we are
+ * looking at a teleport, not motion — SNAP to the newer authoritative pose
+ * instead of interpolating. `MAX_PLAUSIBLE_SPEED` sits comfortably above any
+ * ship/drone top speed (post-slow-down ~950 u/s); the floor catches
+ * short-span jumps where `speed × span` underflows. */
+export const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — well above any entity
+export const TELEPORT_FLOOR_U = 64; // absolute floor for tiny spans
+
 /** How aggressively the adaptive delay tracks observed inter-arrival times.
  *  1.5× means the buffer always has half an arrival of headroom past the
  *  display target, so a single late packet never empties the lerp window. */
@@ -177,6 +194,23 @@ export function interpolateSwarmPose(
   }
 
   const span = b.arrivalMs - a.arrivalMs;
+
+  // Teleport guard: if the bracketing poses are further apart than any entity
+  // could plausibly have moved in `span`, this is a server discontinuity
+  // (keyframe / SET_POSITION / id-reuse / sleep→wake), not motion. Snap to the
+  // newer authoritative pose — never animate across the gap.
+  const gap = Math.hypot(b.x - a.x, b.y - a.y);
+  const maxPlausible = Math.max(
+    TELEPORT_FLOOR_U,
+    (TELEPORT_MAX_PLAUSIBLE_SPEED * Math.max(0, span)) / 1000,
+  );
+  if (gap > maxPlausible) {
+    out.x = b.x;
+    out.y = b.y;
+    out.angle = b.angle;
+    return out;
+  }
+
   const t = span > 0 ? Math.max(0, Math.min(1, (targetMs - a.arrivalMs) / span)) : 0;
   const dAngle = shortestArc(b.angle, a.angle);
   out.x = a.x + (b.x - a.x) * t;
