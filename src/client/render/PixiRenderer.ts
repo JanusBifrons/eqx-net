@@ -1043,42 +1043,35 @@ export class PixiRenderer implements IRenderer {
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }
-        // Drones (kind=1) post Phase 3 reset (2026-05-09): rendered from
-        // `entry.x/y/angle`, which `ColyseusClient.updateMirror` rewrites
-        // each frame to the predWorld pose. predWorld has AI-integrated
-        // smooth motion matching the server; rendering at that pose
-        // eliminates the per-snapshot snap that produced visible jolt
-        // when the previous dead-reckoning path got the velocity-direction
-        // change one packet late.
-        //
-        // Asteroids (kind=0) stay on `interpolateSwarmPose` — they're
-        // locked in predWorld and only change pose on collision events,
-        // where the packet-to-packet lerp is the right thing.
-        if (entry.kind === 1) {
-          sprite.x = entry.x;
-          sprite.y = -entry.y;
-          sprite.rotation = -entry.angle;
+        // ALL swarm entities (drones kind=1 AND asteroids kind=0) render
+        // from `interpolateSwarmPose` — time-based entity interpolation off
+        // the decoder-fed `poseRing` with the display-delay buffer +
+        // teleport guard (drone-snapshot-interpolation pivot, 2026-05-18).
+        // Drones no longer have a client AI re-sim / predWorld reconcile
+        // anchor; the binary swarm channel is the single pose source for
+        // both sides. `ColyseusClient.updateMirror` keeps the kinematic
+        // predWorld drone body following this same interpolated pose so
+        // player↔drone collision stays render-consistent (server remains
+        // hit-authoritative).
+        const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
+        sprite.x = lerped.x;
+        sprite.y = -lerped.y;
+        sprite.rotation = -lerped.angle;
+        if (entry.kind === 1 && entry.shipKind) {
           // Phase 4c (2026-05-11) — drones get the same mount cluster
           // treatment as player ships: turret sprites parented to the
-          // drone body, rotated per-mount via the snapshot-anchored
-          // `entry.mountAngles`. Legacy single-mount drone kinds have
-          // zero-arc mounts so applyMountAngles is essentially a no-op
-          // (sets rotation to -baseAngle, same as the static Phase-3
-          // path); multi-mount kinds (interceptor / gunship drones)
-          // now visibly slew their wing/rear turrets to track players.
-          if (entry.shipKind) {
-            this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
-            const swarmKind = getShipKind(entry.shipKind);
-            const swarmMounts = swarmKind.mounts ?? [];
-            if (swarmMounts.length > 0) {
-              this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
-            }
+          // drone body, rotated per-mount via `entry.mountAngles` (the
+          // authoritative slim `snap.drones[]` slice). Legacy single-mount
+          // drone kinds have zero-arc mounts so applyMountAngles is
+          // essentially a no-op (rotation = -baseAngle); multi-mount kinds
+          // (interceptor / gunship drones) visibly slew their wing/rear
+          // turrets to track players.
+          this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
+          const swarmKind = getShipKind(entry.shipKind);
+          const swarmMounts = swarmKind.mounts ?? [];
+          if (swarmMounts.length > 0) {
+            this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
           }
-        } else {
-          const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
-          sprite.x = lerped.x;
-          sprite.y = -lerped.y;
-          sprite.rotation = -lerped.angle;
         }
         // Damage flash takes priority over the active-beam hit tint so a
         // drone clearly registers a hit even when no beam is currently on it.

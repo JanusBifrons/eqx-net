@@ -251,19 +251,16 @@ export interface SnapshotMessage {
    *  pose snapshot at `serverTick`; the client mirrors it into its local
    *  projectile map and lets ghosts (client-side prediction) layer on top. */
   projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string; weaponId?: string }>;
-  /** Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
-   *  In-interest drones at the snapshot's `serverTick`, sourced from the
-   *  per-tick `SnapshotRing` so the pose is temporally aligned with the
-   *  player states above. The client uses these to seed predWorld drone
-   *  bodies before reconciler replay, eliminating the structural lookahead
-   *  snap-distance that previously surfaced as visible per-packet jitter
-   *  (see `swarm_snap_diagnostics` events). Absent when no drones are
-   *  in-interest, or when the recipient is in a sector that hasn't seeded
-   *  drones (e.g. a fresh test-sector join before any AI has registered).
-   *  `id` is the dense `u16 entityId` matching the binary swarm channel. */
+  /** Slim per-drone turret + shield slice for in-interest drones (drone-
+   *  snapshot-interpolation pivot, 2026-05-18). Drone POSE is NOT here —
+   *  it flows exclusively on the binary swarm channel and is rendered via
+   *  time-based `interpolateSwarmPose` (no client AI re-sim, no predWorld
+   *  reconcile anchor). This slice carries only the non-pose fields that
+   *  ride the JSON snapshot: per-mount turret angles and the shield-down
+   *  flag. Absent when no in-interest drone has anything to report. `id`
+   *  is the dense `u16 entityId` matching the binary swarm channel. */
   drones?: Array<{
     id: number;
-    x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
     /** Phase: shield — true while this drone's shield is down. Single
      *  channel with the binary recordFlags bit; the client applies the
      *  collider swap from ONE site (syncSwarmIntoPredWorld). */
@@ -274,8 +271,8 @@ export interface SnapshotMessage {
      *  kind has at least one rotating mount (legacy fighter/scout/heavy
      *  drones omit the field — their single 'forward' mount has zero arc
      *  so the angle is always 0 and would only add bytes). Out-of-interest
-     *  drones never carry mountAngles; their turrets freeze at baseAngle
-     *  until they re-enter interest and the next snapshot anchors them. */
+     *  drones never carry mountAngles; their turrets render at baseAngle
+     *  until they re-enter interest and the next snapshot updates them. */
     mountAngles?: number[];
   }>;
   /** Phase 4 — abandoned-ship wrecks in this sector. Each entry is the

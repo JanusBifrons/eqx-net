@@ -4000,39 +4000,34 @@ export class SectorRoom extends Room<SectorState> {
           }
         }
 
-        // Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
-        //
-        // For every drone in this recipient's 9-cell interest window, ship
-        // its pose AT `serverTick` (read from `SnapshotRing.getPoseAt`).
-        // The client uses these to reset predWorld drone bodies before the
-        // reconciler replay loop, so AI re-tick across replay starts from a
-        // server-authoritative pose at `ackedTick`. Closes the structural
-        // lookahead-gap that surfaced as ~10–15 u per-packet snap distance
-        // (visible on mobile as "two positions fighting").
+        // Slim per-drone turret + shield slice (drone-snapshot-interpolation
+        // pivot, 2026-05-18). Drone POSE is NO LONGER on the JSON snapshot —
+        // it flows exclusively on the binary swarm channel and the client
+        // renders it via time-based `interpolateSwarmPose` (no client AI
+        // re-sim, no predWorld reconcile anchor). For every drone in this
+        // recipient's 9-cell interest window we emit ONLY the non-pose
+        // fields that ride JSON: per-mount turret angles + the shield-down
+        // flag, and ONLY when there is something to carry (no `{ id }`-only
+        // entries — they would just be wasted bytes).
         //
         // Reuse the `interestScratch` Set populated by the swarm-broadcast
         // block earlier in this `update()` — same per-(client, tick) cell
-        // window, no second `query9` call. Out-of-interest drones aren't
-        // anchored; they continue on the binary-channel cadence (acceptable
-        // since they cannot collide with the local ship within a snapshot
-        // window). Asteroids (kind === 0) are skipped — they don't run AI
-        // and don't need the anchor.
+        // window, no second `query9` call. Asteroids (kind === 0) are
+        // skipped — they have no turret/shield. The binary channel still
+        // carries every in-interest drone's pose at full cadence.
         let drones: SnapshotMessage['drones'];
         const interest = this.interestScratch.get(client.sessionId);
         if (interest && interest.size > 0) {
           for (const eid of interest) {
             const rec = this.swarmRegistry.getByEntityId(eid);
             if (!rec || rec.kind !== 1) continue;
-            const pose = this.snapshotRing.getPoseAt(rec.id, this.serverTick);
-            if (!pose) continue;
-            if (!drones) drones = [];
             // Phase 4c — per-drone mount angles for in-interest drones
             // whose ship-kind has rotating mounts. Only emitted when at
             // least one angle is non-zero (quantised to dedupe trailing
             // noise), same gate as the player snapshot path. Out-of-
-            // interest drones never reach this branch, so their mounts
-            // freeze at baseAngle on the client until they re-enter
-            // interest and the next snapshot anchors them.
+            // interest drones never reach this branch, so their turrets
+            // render at baseAngle on the client until they re-enter
+            // interest and the next snapshot updates them.
             const droneAngles = this.droneMountAngles.get(rec.id);
             let droneMountAnglesArr: number[] | undefined;
             if (droneAngles && droneAngles.length > 0) {
@@ -4047,11 +4042,10 @@ export class SectorRoom extends Room<SectorState> {
                 }
               }
             }
+            if (!droneMountAnglesArr && !rec.shieldDown) continue;
+            if (!drones) drones = [];
             drones.push({
               id: eid,
-              x: pose.x, y: pose.y,
-              vx: pose.vx, vy: pose.vy,
-              angle: pose.angle, angvel: pose.angvel,
               ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
               ...(rec.shieldDown ? { shieldDown: true } : {}),
             });
