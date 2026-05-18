@@ -35,7 +35,7 @@ export type TransitState =
   | 'ARRIVED'
   | 'CANCELLED';
 
-export const SPOOL_DURATION_MS = 3_000;
+export const SPOOL_DURATION_MS = 30_000;
 
 export class TransitStateMachine {
   private _state: TransitState = 'DOCKED';
