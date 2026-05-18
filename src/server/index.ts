@@ -203,6 +203,23 @@ gameServer.define('feel-test', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-05-18 — drone-snapshot-interpolation pivot, Step 6 render-smoothness
+// regression lock. 25 drones (the >12 in-pack regime the old 10-drone
+// `feel-test` room was structurally blind to — the bug the pivot fixed
+// only manifests above ~12). Used by `tests/e2e/feel-test-lockstep.spec.ts`
+// to assert on-screen drone sprites TRACK (never pin/freeze/lurch) while
+// the player strafes through the pack. Same shape as `feel-test`, wider
+// ring so 25 drones aren't overlapping at spawn.
+gameServer.define('feel-test-25', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  swarmCount: 25,
+  swarmRatio: 0,        // 0 asteroids — 25 drones only
+  swarmRadius: 500,     // ring centred on origin, room for 25
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
 // 2026-05-11 — Phase 4c (multi-mount / turret refactor) engineering room.
 // Deterministic spawn of 6 multi-mount drones (alternating interceptor +
 // gunship) in a tight ring 250 u from origin, so the player spawns into
