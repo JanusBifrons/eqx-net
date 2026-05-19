@@ -19,6 +19,7 @@
     "e2e": "playwright test",
     "e2e:headed": "cross-env PWHEADED=1 playwright test",
     "e2e:scenarios": "playwright test tests/e2e/scenarios/",
+    "e2e:netgate": "tsx tests/netgate/run-netgate.ts",
     "build:client": "vite build",
     "build:server": "tsc -b tsconfig.server.json",
     "build": "pnpm run build:server && pnpm run build:client",

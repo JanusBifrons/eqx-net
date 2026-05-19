@@ -64,7 +64,16 @@ class OrderedDelayRelay {
     const copy = Buffer.from(chunk); // own the bytes (source buffer may be reused)
     const t = setTimeout(() => {
       this.timers.delete(t);
-      if (!this.closed && this.dst.writable) this.dst.write(copy);
+      if (this.closed || !this.dst.writable) return;
+      try {
+        this.dst.write(copy);
+      } catch {
+        // Peer closed between the writable check and the delayed write
+        // (e.g. Playwright closed the context mid-flight) — a delayed
+        // chunk landing on a torn-down socket is expected at teardown,
+        // not a proxy fault. Swallow; the socket 'error'/'close' handler
+        // drives the connection cleanup.
+      }
     }, wait);
     this.timers.add(t);
   }
@@ -97,6 +106,7 @@ export class EqxLatencyProxy {
 
   /** HTTP REST → upstream, UNDELAYED. Makes colyseus.js joinOrCreate work. */
   private onHttp(req: IncomingMessage, res: ServerResponse): void {
+    console.error(`[eqxproxy] HTTP ${req.method} ${req.url}`);
     const upstream = httpRequest(
       {
         host: this.upstreamHost,
@@ -106,11 +116,13 @@ export class EqxLatencyProxy {
         headers: { ...req.headers, host: `${this.upstreamHost}:${this.opts.upstreamPort}` },
       },
       (up) => {
+        console.error(`[eqxproxy] HTTP ${req.method} ${req.url} -> ${up.statusCode}`);
         res.writeHead(up.statusCode ?? 502, up.headers);
         up.pipe(res);
       },
     );
-    upstream.on('error', () => {
+    upstream.on('error', (e) => {
+      console.error(`[eqxproxy] HTTP upstream error ${req.url}: ${(e as Error).message}`);
       if (!res.headersSent) res.writeHead(502);
       res.end();
     });
@@ -121,10 +133,12 @@ export class EqxLatencyProxy {
    *  ordered jittered relay each way. */
   private onUpgrade(req: IncomingMessage, socket: Socket, head: Buffer): void {
     const url = req.url ?? '/';
+    console.error(`[eqxproxy] WS upgrade ${url}`);
     const proxy = netConnect(this.opts.upstreamPort, this.upstreamHost);
     const sched = new LatencyScheduler(this.opts.profile);
     const c2s = new OrderedDelayRelay(proxy, 'c2s', sched);
     const s2c = new OrderedDelayRelay(socket, 's2c', sched);
+    let loggedFirstS2c = false;
 
     proxy.once('connect', () => {
       let raw = `GET ${url} HTTP/1.1\r\nHost: ${this.upstreamHost}:${this.opts.upstreamPort}\r\n`;
@@ -135,10 +149,32 @@ export class EqxLatencyProxy {
       raw += '\r\n';
       proxy.write(raw);
       if (head?.length) proxy.write(head);
+      console.error(
+        `[eqxproxy] WS upstream connected; wrote ${raw.length}b GET + ${head?.length ?? 0}b head`,
+      );
     });
 
     socket.on('data', (d: Buffer) => c2s.push(d));
-    proxy.on('data', (d: Buffer) => s2c.push(d));
+    proxy.on('data', (d: Buffer) => {
+      if (!loggedFirstS2c) {
+        loggedFirstS2c = true;
+        console.error(
+          `[eqxproxy] WS first upstream->client ${d.length}b: ${JSON.stringify(d.subarray(0, 48).toString('latin1'))}`,
+        );
+      }
+      s2c.push(d);
+    });
+    // ECONNRESET/ECONNABORTED/EPIPE on a relayed socket are the expected
+    // shape of a peer (browser/upstream) going away at test teardown —
+    // not a proxy fault. Don't spam the gate log with them.
+    const benign = (e: NodeJS.ErrnoException): boolean =>
+      e.code === 'ECONNRESET' || e.code === 'ECONNABORTED' || e.code === 'EPIPE';
+    proxy.on('error', (e) => {
+      if (!benign(e)) console.error(`[eqxproxy] WS upstream socket error: ${e.message}`);
+    });
+    socket.on('error', (e) => {
+      if (!benign(e)) console.error(`[eqxproxy] WS client socket error: ${e.message}`);
+    });
 
     const entry = {
       destroy: (): void => {
