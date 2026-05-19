@@ -53,6 +53,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
+import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
@@ -577,6 +578,13 @@ export class ColyseusGameClient {
    *  exactly one number shows per confirmed hit. The server stays 100%
    *  hit-authoritative — this only hides the RTT on the felt impact. */
   private readonly _hitLedger = new HitPredictionLedger();
+  /** beam-attach fix (capture pe6rdt) — `performance.now()` of the last
+   *  LOCAL hitscan fire. The continuous liveBeam (redrawn from
+   *  `mirror.ships` every frame, so rigidly ship-attached) persists for
+   *  `LIVE_BEAM_PERSIST_MS` past this so a tap / held burst reads as ONE
+   *  continuous beam instead of a 1-tick flicker or a chain of frozen
+   *  ghosts. Null ⇒ no live hitscan beam. */
+  private _lastHitscanFireMs: number | null = null;
   /** weapon-hit-prediction Phase 3 — routes ledger reconcile corrections
    *  onto the existing mirror drains. cancel → the pendingDamageNumber-
    *  Cancels queue (renderer hard-cancels by tag); flash-clear → drop the
@@ -2607,6 +2615,19 @@ export class ColyseusGameClient {
       if (cancels) for (const e of expiredShots) cancels.push(e.clientShotId);
     }
 
+    // beam-attach fix (capture pe6rdt): expire the persisted local
+    // hitscan beam once its post-fire window has elapsed. While within
+    // the window the renderer keeps drawing `mirror.liveBeams` from
+    // `mirror.ships` every frame (ship-attached); past it, clear so a
+    // released / switched weapon doesn't leave a beam lingering.
+    if (
+      this.mirror.liveBeams &&
+      this.mirror.liveBeams.size > 0 &&
+      !liveBeamVisible(performance.now(), this._lastHitscanFireMs, LIVE_BEAM_PERSIST_MS)
+    ) {
+      this.mirror.liveBeams.clear();
+    }
+
     // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
     // actually sees the set on the frame it was populated.
 
@@ -2801,15 +2822,23 @@ export class ColyseusGameClient {
         if (activeWeaponDef.mode === 'hitscan') {
           this.updateLiveBeam();
         } else {
+          // Projectile has no continuous beam — clear immediately so a
+          // mid-hold weapon switch can't leave a stale hitscan beam.
           this.mirror.liveBeams?.clear();
+          this._lastHitscanFireMs = null;
         }
         if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
           this.sendFire(tick);
           this.lastFiredAtTick = tick;
+          if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = performance.now();
         }
-      } else {
-        this.mirror.liveBeams?.clear();
       }
+      // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
+      // held. The local hitscan beam persists ~LIVE_BEAM_PERSIST_MS past
+      // the last shot (expired in updateMirror) and is redrawn from
+      // `mirror.ships` every frame, so a tap / held burst reads as ONE
+      // continuous SHIP-ATTACHED beam — server lag/correction invisible.
+      // Death still clears it via killEntity's liveBeams.clear().
     }
 
     // One ring-buffer entry per RAF — diagnostic data for capture analysis.
@@ -3075,14 +3104,27 @@ export class ColyseusGameClient {
     // resolver can aggregate the closest mount-hit, exactly as the server
     // aggregates its hit_ack.
     const mountGeom: MountFireGeom[] = [];
+    // beam-attach fix (capture 2026-05-19T10-55-36-274Z-pe6rdt): a LOCAL
+    // hitscan fire spawns NO ghost. The continuous liveBeam — recomputed
+    // from the ship's RENDERED pose (`mirror.ships`) every frame — is the
+    // sole local hitscan visual, so it is rigidly ship-attached and
+    // server lag/correction is invisible. A ghost frozen at this
+    // input-tick `predWorld` sample is the redundant layer that visibly
+    // detached from the ship under lag. Projectiles still ghost — the
+    // bolt actually travels. `mountGeom` is collected regardless (the
+    // predicted-hit resolver still needs every mount's ray).
+    const spawnGhost = localFireSpawnsGhost(getWeapon(activeWeapon).mode);
     if (mounts.length === 0) {
-      // Defensive fallback: no mounts → spawn the legacy single ghost at
-      // ship centre. Should not happen for any shipped kind today.
+      // Defensive fallback: no mounts → (projectile only) spawn the
+      // legacy single ghost at ship centre. Should not happen for any
+      // shipped kind today.
       const fwdX = -Math.sin(state.angle);
       const fwdY = Math.cos(state.angle);
       const fromX = state.x + fwdX * 20;
       const fromY = state.y + fwdY * 20;
-      this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+      if (spawnGhost) {
+        this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+      }
       mountGeom.push({ fromX, fromY, fwdX, fwdY });
     } else {
       for (let i = 0; i < mounts.length; i++) {
@@ -3098,18 +3140,20 @@ export class ColyseusGameClient {
         const fwdY = Math.cos(mountFireAngle);
         const fromX = mountWorldX + fwdX * 20;
         const fromY = mountWorldY + fwdY * 20;
-        this.ghostManager.spawn(
-          shotId,
-          localId,
-          fromX,
-          fromY,
-          fwdX,
-          fwdY,
-          activeWeapon,
-          state.vx,
-          state.vy,
-          mount.id,
-        );
+        if (spawnGhost) {
+          this.ghostManager.spawn(
+            shotId,
+            localId,
+            fromX,
+            fromY,
+            fwdX,
+            fwdY,
+            activeWeapon,
+            state.vx,
+            state.vy,
+            mount.id,
+          );
+        }
         mountGeom.push({ fromX, fromY, fwdX, fwdY });
       }
     }
