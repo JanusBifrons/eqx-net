@@ -2,6 +2,7 @@ import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
+import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -1142,12 +1143,22 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.getActiveShip(shooterId);
     if (!ship || !ship.alive) return;
 
-    // Temporal plausibility: reject claims older than LAG_COMP_WINDOW ticks (~200 ms).
-    if (this.serverTick - tick > LAG_COMP_WINDOW) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-      client.send('hit_ack', ack);
-      return;
-    }
+    // Temporal resolution. We USED to hard-reject claims older than
+    // LAG_COMP_WINDOW — that silently dropped ~37% of a laggy client's
+    // shots: after a main-thread stall the wall-clock-anchored inputTick
+    // falls behind serverTick and recovers slowly (capped catch-up), so a
+    // long run of legitimate held-fires is timestamped stale (diagnostic
+    // capture 2026-05-19T11-22-22-628Z-uf0o8g; the felt "shot rejected").
+    // Instead CLAMP a stale claim to the window floor and resolve the
+    // shot against the OLDEST available SnapshotRing pose. The rewind is
+    // bounded identically to a legitimate edge-of-window claim
+    // (≤ LAG_COMP_WINDOW), so there is no abuse advantage and no extra
+    // rewind cost; the per-shooter cooldown below (raw client-tick
+    // spacing) is the unchanged anti-rapid-fire guard. Future claims
+    // (client running ahead — the steady state under this prediction
+    // model) pass through untouched (getPoseAt(future) → live-pose
+    // fallback, exactly as before).
+    const effTick = clampFireTick(tick, this.serverTick, LAG_COMP_WINDOW);
 
     // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
     // RTT jitter between consecutive messages doesn't cause false rejections.
@@ -1167,7 +1178,7 @@ export class SectorRoom extends Room<SectorState> {
     // is preferred (matches what the client predicted); shipPoseCache is the
     // fallback for ticks outside the lag-comp window (rare, since temporal
     // plausibility above already rejects anything beyond 12 ticks).
-    const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, tick);
+    const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, effTick);
     const fallbackShooter = this.shipPoseCache.get(shooterId);
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
     const sy = rewoundShooter?.y ?? fallbackShooter?.y;
@@ -1275,6 +1286,11 @@ export class SectorRoom extends Room<SectorState> {
         clientTick: tick,
         serverTick: this.serverTick,
         tickDelta: this.serverTick - tick,
+        // weapon-hit-prediction shot-rejected fix (capture uf0o8g): the
+        // tick actually used for lag-comp rewind. When != clientTick the
+        // claim was stale and got clamped to the window floor (resolved,
+        // NOT dropped). Lets on-device captures confirm the fix.
+        effTick,
         weapon,
         rewoundFromRing: rewoundShooter !== undefined,
         shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
@@ -1315,7 +1331,7 @@ export class SectorRoom extends Room<SectorState> {
         if (targetId === shooterId) continue;
         const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
-        const rewound = this.snapshotRing.getPoseAt(targetId, tick);
+        const rewound = this.snapshotRing.getPoseAt(targetId, effTick);
         const fallback = this.shipPoseCache.get(targetId);
         const cx = rewound?.x ?? fallback?.x;
         const cy = rewound?.y ?? fallback?.y;
@@ -1346,7 +1362,7 @@ export class SectorRoom extends Room<SectorState> {
       }
 
       for (const rec of this.swarmRegistry.all()) {
-        const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
+        const rewound = this.snapshotRing.getPoseAt(rec.id, effTick);
         const b = slotBase(rec.slot);
         const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
         const cy = rewound?.y ?? this.sabF32[b + SLOT_Y_OFF]!;

@@ -156,4 +156,63 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     expect(ack['damage']).toBeUndefined();
     expect(damages.length).toBe(0);
   }, 20_000);
+
+  // Shot-rejected fix (capture 2026-05-19T11-22-22-628Z-uf0o8g): a fire
+  // whose claimed tick is far behind serverTick (the client's input
+  // clock lagged after a stall) used to be HARD-REJECTED — ~37% of a
+  // laggy client's shots silently dropped. It must now be CLAMPED to the
+  // lag-comp window floor and RESOLVED, not rejected. End-to-end wiring
+  // lock; the decision canary is src/core/combat/fireTemporal.test.ts.
+  it('a STALE-tick fire (tick << serverTick) is honored (clamped+resolved), NOT rejected', async () => {
+    const shooterPid = randomUUID();
+    const targetPid = randomUUID();
+    const shooter = (await harness.connectAs(shooterPid, {
+      shipKind: 'fighter',
+      spawnX: 0,
+      spawnY: 0,
+    })) as ClientRoom<SectorState>;
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === shooterPid });
+    await harness.connectAs(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
+
+    const hitAcks: Array<Record<string, unknown>> = [];
+    const damages: Array<Record<string, unknown>> = [];
+    shooter.onMessage('hit_ack', (m: Record<string, unknown>) => hitAcks.push(m));
+    shooter.onMessage('damage', (m: Record<string, unknown>) => damages.push(m));
+    // Tick the fresh server well past 100 so `serverTick - 100` is a
+    // POSITIVE stale tick (a fresh test sector starts serverTick≈0; the
+    // real client's is in the hundred-thousands). A negative tick would
+    // fail the FireMessage zod schema and never reach handleFire.
+    await harness.advance(2500);
+
+    const serverTick = (harness.getServerRoom() as unknown as { serverTick: number }).serverTick;
+    expect(serverTick).toBeGreaterThan(120); // precondition: enough ticks elapsed
+    const clientShotId = 'ct-stale-tick';
+    // 100 ticks behind — far past LAG_COMP_WINDOW (12); the capture saw
+    // rejected runs out to ~420 behind. Stationary shooter ⇒ the clamped
+    // (oldest-ring) pose still resolves the +Y ray onto the target.
+    shooter.send('fire', {
+      type: 'fire',
+      tick: serverTick - 100,
+      clientShotId,
+      weapon: 'hitscan',
+      dirAngle: 0,
+    });
+
+    await waitUntil(
+      () => hitAcks.some((a) => a['clientShotId'] === clientShotId),
+      2500,
+      'hit_ack for the stale-tick fire',
+    );
+    const ack = hitAcks.find((a) => a['clientShotId'] === clientShotId)!;
+    // The whole point: NOT rejected, and it actually resolved as a hit.
+    expect(ack['rejected']).toBeFalsy();
+    expect(ack['hit']).toBe(true);
+    expect(ack['targetId']).toBe(targetPid);
+    await waitUntil(
+      () => damages.some((d) => d['targetId'] === targetPid),
+      2000,
+      'DamageEvent for the stale-tick fire',
+    );
+  }, 20_000);
 });
