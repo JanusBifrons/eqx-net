@@ -9,6 +9,7 @@ import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import { computeFrameGate } from './app/oneFrameTriggerGate';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -364,10 +365,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           lastFrameTime = now;
           gameClient.tickPhysics(deltaMs);
           gameClient.updateMirror();
-          const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
-          if (shouldRender) renderer.update(gameClient.mirror);
-          // Clear one-frame triggers after the renderer has consumed them.
-          gameClient.mirror.explodingShips?.clear();
+          const gate = computeFrameGate(useWorker, workerUpdateCounter);
+          workerUpdateCounter = gate.nextCounter;
+          if (gate.shouldRender) renderer.update(gameClient.mirror);
+          // Clear one-frame triggers ONLY on a frame the renderer
+          // consumed them (see app/oneFrameTriggerGate.ts). Under the
+          // worker renderer `renderer.update()` runs every 2nd frame; the
+          // old unconditional per-frame clear wiped ~50% of explosion
+          // triggers (those added on a skipped-render frame) before they
+          // were ever drawn — the "first ship I killed showed no
+          // explosion" bug. Triggers now accumulate across the skipped
+          // frame and fire on the next real render.
+          if (gate.shouldClearOneFrameTriggers) gameClient.mirror.explodingShips?.clear();
 
           // F-transit-instrument — bounded post-reveal frame burst.
           // `wantsFrame()` is false (single boolean read, zero cost)
