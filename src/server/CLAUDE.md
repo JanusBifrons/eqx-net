@@ -79,6 +79,13 @@ Update this section when a threshold is set.
 - Discrete lifecycle events (join/leave, transit state changes, sector spin-up/-down): **full fidelity**.
 - Never log position/velocity data.
 
+### Combat-funnel diagnostic coverage (2026-05-19, plan: wrap-up-known-issues)
+
+The `combat` diag bucket ([`src/server/routes/diagRouter.ts`](routes/diagRouter.ts) `BUCKETS`) routes the **whole** fire funnel: `fire`/`fire_received` **and** `hit_ack`/`damage`/`destroy`/`shield_broken`/`shield_restored`/`ram_damage` (plus the client `explosion` VFX tag). Before this, only `fire`/`fire_received` were bucketed — capture `76idw1` proved a kill + shield-break occurred yet **no** post-"shot accepted" event was in any ndjson, so invariant-#13 repro-first on the inconsistent-damage + explosion bugs was *blocked*. Adding a tag here is a one-line `BUCKETS` edit; the routing half is locked by `routeBucket` unit tests in `diagRouter.test.ts`.
+
+- **Single ownership for the emit half:** every combat damage/destroy broadcast goes through `SectorRoom.broadcastDamage(evt)` / `broadcastDestroy(evt)`, which call `this.broadcast(...)` **and** the sibling `serverLogEvent(...)`. A raw `this.broadcast('damage'|'destroy', …)` must never be reintroduced — it would ship a broadcast with no diagnostic twin. The diag-suppressed kill (`evictSwarmEntity { broadcast:false }`, LoadShedder/Living-World) never calls `broadcastDestroy`, so phantom destroys are excluded *structurally*, not by a flag.
+- **ids + scalars only — never pos/vel** (the rule above still binds). The `damage` *wire* payload carries `hitX/hitY` for the client's damage-number/health-bar pipeline; the `serverLogEvent('damage', …)` twin deliberately omits them. `shield_broken`/`shield_restored`/`ram_damage` already emitted via `serverLogEvent` — they were merely mis-bucketed to `other`; do NOT add duplicate emits.
+
 ---
 
 ## Combat Architecture (Phase 4)

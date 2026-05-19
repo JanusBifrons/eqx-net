@@ -21,6 +21,7 @@ let app: Express;
 let server: Server;
 let baseUrl: string;
 let captureDir: string;
+let routeBucket: (tag: string) => string;
 
 beforeAll(async () => {
   // CAPTURE_DIR is resolved at module load from process.cwd(); chdir before
@@ -31,6 +32,7 @@ beforeAll(async () => {
 
   const mod = await import('./diagRouter.js');
   captureDir = mod.captureDir;
+  routeBucket = mod.routeBucket;
 
   app = express();
   app.use(express.json({ limit: '5mb' }));
@@ -188,6 +190,38 @@ describe('diagRouter', () => {
     ) as SummaryShape;
     expect(summary.counts.total).toBe(logs.length);
     expect(summary.counts.tags['client/transit_frame']).toBe(40);
+  });
+
+  // Phase 1 (plan: wrap-up-known-issues) — the combat-event diagnosis
+  // gap: capture `76idw1` recorded NO damage/hit_ack/destroy/shield/
+  // explosion events (only fire/fire_received), so invariant-#13
+  // repro-first on the inconsistent-damage + explosion bugs was BLOCKED.
+  // These tags must route to the `combat` bucket, not silently fall
+  // through to `other`. RED before the BUCKETS additions.
+  describe('routeBucket — combat-event coverage (Phase 1)', () => {
+    it('routes the previously-blind combat events to the combat bucket', () => {
+      for (const tag of [
+        'damage',
+        'hit_ack',
+        'destroy',
+        'shield_broken',
+        'shield_restored',
+        'explosion',
+        'ram_damage',
+      ]) {
+        expect(routeBucket(tag)).toBe('combat');
+      }
+    });
+
+    it('keeps the pre-existing combat tags in the combat bucket', () => {
+      for (const tag of ['fire', 'fireRejected', 'fire_received', 'collision_resolved']) {
+        expect(routeBucket(tag)).toBe('combat');
+      }
+    });
+
+    it('still falls unknown tags through to the other bucket', () => {
+      expect(routeBucket('totally-not-a-real-tag')).toBe('other');
+    });
   });
 
   it(`rejects more than ${DIAG_CAPTURE_MAX_LOG_ENTRIES} entries with 400 (schema cap)`, async () => {

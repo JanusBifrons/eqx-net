@@ -79,6 +79,22 @@ const BUCKETS: Record<string, string> = {
   // Phase 6b — diagnostic for the same-playerId active+lingering hull
   // self-collisions that we drop at the broadcast site.
   collision_self_filtered: 'combat',
+  // wrap-up-known-issues Phase 1 — the combat funnel AFTER "shot
+  // accepted" was invisible (capture 76idw1 recorded only fire/
+  // fire_received), blocking invariant-#13 repro-first on the
+  // inconsistent-damage + explosion bugs. `damage`/`hit_ack`/`destroy`
+  // get a new sibling serverLogEvent at their broadcast sites;
+  // `shield_broken`/`shield_restored`/`ram_damage` already emit but
+  // mis-bucketed to `other`; `explosion` is a client VFX tag (no
+  // server emit) — bucketed so a client/derived explosion marker
+  // lands beside its cause, not in `other`.
+  damage: 'combat',
+  hit_ack: 'combat',
+  destroy: 'combat',
+  shield_broken: 'combat',
+  shield_restored: 'combat',
+  ram_damage: 'combat',
+  explosion: 'combat',
   // lifecycle
   welcome: 'lifecycle',
   disconnected: 'lifecycle',
@@ -129,7 +145,7 @@ interface RoutedEntry {
   data: Record<string, unknown>;
 }
 
-function routeBucket(tag: string): BucketName {
+export function routeBucket(tag: string): BucketName {
   const b = BUCKETS[tag];
   return (b ?? 'other') as BucketName;
 }
