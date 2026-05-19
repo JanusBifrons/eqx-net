@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
 import {
   Box,
-  Button,
   Typography,
 } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
@@ -28,6 +27,7 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
+import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
@@ -57,50 +57,6 @@ const SERVER_URL =
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
-
-function DeathOverlay({ onRespawn }: { onRespawn: () => void }): JSX.Element | null {
-  const isDead = useUIStore((s) => s.isDead);
-  if (!isDead) return null;
-  return (
-    <Slot anchor="fullscreen" order={10}>
-      <Box
-        data-testid="death-overlay"
-        sx={{
-          position: 'absolute',
-          inset: 0,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: 'rgba(0,0,0,0.65)',
-          gap: 3,
-        }}
-      >
-        <Typography
-          variant="h2"
-          sx={{ color: '#ff3333', fontWeight: 700, letterSpacing: 6, textTransform: 'uppercase', textShadow: '0 0 30px #ff0000' }}
-        >
-          You Died
-        </Typography>
-        <Button
-          variant="contained"
-          size="large"
-          onClick={onRespawn}
-          sx={{
-            bgcolor: '#00ff88',
-            color: '#000',
-            fontWeight: 700,
-            px: 6,
-            fontSize: '1.1rem',
-            '&:hover': { bgcolor: '#00cc6a' },
-          }}
-        >
-          Respawn
-        </Button>
-      </Box>
-    </Slot>
-  );
-}
 
 interface GameSurfaceProps {
   /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
