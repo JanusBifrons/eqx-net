@@ -44,6 +44,12 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
+import { HitPredictionLedger } from '@core/combat/HitPrediction';
+import {
+  predictShotOutcome,
+  type PredictedFeedbackSink,
+  type MountFireGeom,
+} from '../combat/HitPrediction.client';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
@@ -236,6 +242,7 @@ export class ColyseusGameClient {
     boostingShips: new Set(),
     thrustingShips: new Set(),
     pendingDamageNumbers: [],
+    pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
   };
@@ -561,6 +568,12 @@ export class ColyseusGameClient {
   private readonly ghostManager = new GhostManager();
   /** Damage flash: set of player IDs currently flashing red (cleared after one frame). */
   private readonly _damageFlashFrames = new Map<string, number>();
+  /** weapon-hit-prediction — client favor-the-shooter hit-prediction ledger.
+   *  Phase 2 records a prediction on every fire (presentation-only) and
+   *  TTL-expires it; Phase 3 wires the hit_ack / DamageEvent reconcile so
+   *  exactly one number shows per confirmed hit. The server stays 100%
+   *  hit-authoritative — this only hides the RTT on the felt impact. */
+  private readonly _hitLedger = new HitPredictionLedger();
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
 
@@ -2532,6 +2545,16 @@ export class ColyseusGameClient {
       }
     }
 
+    // weapon-hit-prediction Phase 2 — TTL-expire predictions whose
+    // confirmation never arrived and hard-cancel their predicted numbers
+    // (lost-ack / projectile-that-missed failsafe). Phase 3 adds the
+    // hit_ack/DamageEvent-driven cancels on top of this one channel.
+    const expiredShots = this._hitLedger.tick(performance.now());
+    if (expiredShots.length > 0) {
+      const cancels = this.mirror.pendingDamageNumberCancels;
+      if (cancels) for (const e of expiredShots) cancels.push(e.clientShotId);
+    }
+
     // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
     // actually sees the set on the frame it was populated.
 
@@ -2995,6 +3018,11 @@ export class ColyseusGameClient {
     const sinA = Math.sin(state.angle);
     const localShip = this.mirror.ships.get(localId);
     const mountAngles = localShip?.mountAngles;
+    // weapon-hit-prediction Phase 2 — collect each mount's fire ray
+    // (identical geometry to the ghost spawn) so the predicted-hit
+    // resolver can aggregate the closest mount-hit, exactly as the server
+    // aggregates its hit_ack.
+    const mountGeom: MountFireGeom[] = [];
     if (mounts.length === 0) {
       // Defensive fallback: no mounts → spawn the legacy single ghost at
       // ship centre. Should not happen for any shipped kind today.
@@ -3003,6 +3031,7 @@ export class ColyseusGameClient {
       const fromX = state.x + fwdX * 20;
       const fromY = state.y + fwdY * 20;
       this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+      mountGeom.push({ fromX, fromY, fwdX, fwdY });
     } else {
       for (let i = 0; i < mounts.length; i++) {
         const mount = mounts[i]!;
@@ -3029,6 +3058,7 @@ export class ColyseusGameClient {
           state.vy,
           mount.id,
         );
+        mountGeom.push({ fromX, fromY, fwdX, fwdY });
       }
     }
 
@@ -3038,6 +3068,41 @@ export class ColyseusGameClient {
       clientShotId: shotId,
       weapon: activeWeapon,
       dirAngle: state.angle,
+    });
+
+    // weapon-hit-prediction Phase 2 — predict the outcome against the pose
+    // the player SEES (predWorld.hitscan, the exact seam updateLiveBeam
+    // uses; NO client lag-comp ring) and show immediate tagged feedback.
+    // Presentation-only: the server stays 100% hit-authoritative. The
+    // prediction just TTL-expires until Phase 3 wires the single
+    // hit_ack/DamageEvent reconcile path. Mode/damage read off the
+    // catalogue def (no weapon-id branch). Projectile uses the same ray as
+    // a straight-flight proxy for the predicted target (decision #2: the
+    // bolt itself is untouched and reconciles via the eventual DamageEvent).
+    const weaponDef = getWeapon(activeWeapon);
+    const predMaxDist =
+      weaponDef.mode === 'hitscan'
+        ? HITSCAN_RANGE
+        : (weaponDef.speed * weaponDef.maxTicks) / 60;
+    const predSink: PredictedFeedbackSink = {
+      pushDamageNumber: (x, y, damage, tag) => {
+        this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+      },
+      flashTarget: (id) => {
+        this._damageFlashFrames.set(id, 6);
+      },
+    };
+    predictShotOutcome({
+      ledger: this._hitLedger,
+      sink: predSink,
+      world: this.predWorld,
+      clientShotId: shotId,
+      mode: weaponDef.mode,
+      damage: weaponDef.damage,
+      mounts: mountGeom,
+      maxDist: predMaxDist,
+      excludeId: localId,
+      nowMs: performance.now(),
     });
     // Diagnostic — captures the three reference points needed to debug
     // "lasers firing from the wrong place". `spawnPos` is the legacy

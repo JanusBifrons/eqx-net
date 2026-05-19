@@ -199,8 +199,20 @@ export interface RenderMirror {
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   localPlayerId: string | null;
-  /** Floating damage numbers to spawn this frame. Drained + cleared each frame. */
-  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number }>;
+  /** Floating damage numbers to spawn this frame. Drained + cleared each
+   *  frame. `tag` (weapon-hit-prediction Phase 2) is the originating
+   *  `clientShotId` for client-PREDICTED numbers, so a later mispredict /
+   *  rollback / TTL-expiry can hard-cancel exactly that number via
+   *  `pendingDamageNumberCancels`. Authoritative (server `DamageEvent`)
+   *  numbers leave it undefined. Plain string ⇒ structured-clone-safe
+   *  across the renderer→worker boundary. */
+  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number; tag?: string }>;
+  /** Predicted damage-number tags to hard-cancel this frame (weapon-hit-
+   *  prediction Phase 2). The renderer drains it and calls
+   *  `DamageNumberManager.cancelByTag(tag)` for each — the rollback /
+   *  TTL-expiry channel, mirroring the `pendingDamageNumbers` drain
+   *  pattern. Cleared + drained each frame. */
+  pendingDamageNumberCancels?: string[];
   /** Health bar hit events this frame. Drained + cleared each frame. */
   pendingHealthBarHits?: Array<{ entityId: string; healthPct: number }>;
   /** Remote warp events (`warp_in` / `warp_out` broadcasts from the

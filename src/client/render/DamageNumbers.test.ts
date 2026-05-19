@@ -239,3 +239,63 @@ describe('DamageNumberManager — destroy cleanup', () => {
     expect(typeof vi).toBe('object');
   });
 });
+
+// weapon-hit-prediction Phase 2 — a predicted number is spawned TAGGED
+// with its clientShotId so a later mispredict / rollback / TTL-expiry can
+// hard-cancel exactly that number mid-life (not wait for the natural
+// fade). Authoritative numbers spawn untagged and are unaffected.
+describe('DamageNumberManager — cancelByTag (predicted-hit rollback channel)', () => {
+  let parent: Container;
+  let camera: Camera;
+  let mgr: DamageNumberManager;
+
+  beforeEach(() => {
+    parent = new Container();
+    camera = makeMockCamera(1);
+    mgr = new DamageNumberManager(parent, camera);
+  });
+
+  it('cancels only the entries carrying the given tag, leaving others alive', () => {
+    mgr.spawn(0, 0, 10, 'shot-1');
+    mgr.spawn(0, 0, 20, 'shot-2');
+    mgr.spawn(0, 0, 30); // authoritative / untagged
+    expect(mgr.getActiveCount()).toBe(3);
+
+    const removed = mgr.cancelByTag('shot-1');
+
+    expect(removed).toBe(1);
+    expect(mgr.getActiveCount()).toBe(2); // shot-2 + the untagged one survive
+  });
+
+  it('cancels every entry sharing a tag (a multi-mount salvo shares one clientShotId)', () => {
+    mgr.spawn(0, 0, 10, 'salvo');
+    mgr.spawn(1, 1, 10, 'salvo');
+    expect(mgr.getActiveCount()).toBe(2);
+    expect(mgr.cancelByTag('salvo')).toBe(2);
+    expect(mgr.getActiveCount()).toBe(0);
+  });
+
+  it('an unknown tag is a no-op (returns 0, nothing removed)', () => {
+    mgr.spawn(0, 0, 10, 'shot-1');
+    expect(mgr.cancelByTag('nope')).toBe(0);
+    expect(mgr.getActiveCount()).toBe(1);
+  });
+
+  it('an untagged (authoritative) number is never matched by cancelByTag', () => {
+    mgr.spawn(0, 0, 10); // no tag
+    expect(mgr.cancelByTag('shot-1')).toBe(0);
+    expect(mgr.getActiveCount()).toBe(1);
+  });
+
+  it('a tagged number can be cancelled mid-life (before its natural expiry)', () => {
+    mgr.spawn(0, 0, 10, 'shot-1');
+    mgr.update(); // tick a frame — still well within LIFETIME_FRAMES
+    mgr.update();
+    expect(mgr.getActiveCount()).toBe(1);
+    mgr.cancelByTag('shot-1');
+    expect(mgr.getActiveCount()).toBe(0);
+    // Pixi child was actually removed (no leak).
+    const inner = parent.children[0] as Container;
+    expect(inner.children.length).toBe(0);
+  });
+});

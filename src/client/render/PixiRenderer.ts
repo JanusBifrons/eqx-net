@@ -1347,9 +1347,19 @@ export class PixiRenderer implements IRenderer {
     // tick every frame to advance lifetime + counter-scale.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
-        this.damageNumbers.spawn(dn.x, dn.y, dn.damage);
+        this.damageNumbers.spawn(dn.x, dn.y, dn.damage, dn.tag);
       }
       mirror.pendingDamageNumbers.length = 0;
+    }
+    // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
+    // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
+    // rollback in the same frame nets to nothing) and BEFORE update() (a
+    // cancelled number gets zero frames of life).
+    if (this.damageNumbers && mirror.pendingDamageNumberCancels) {
+      for (const tag of mirror.pendingDamageNumberCancels) {
+        this.damageNumbers.cancelByTag(tag);
+      }
+      mirror.pendingDamageNumberCancels.length = 0;
     }
     this.damageNumbers?.update();
 
