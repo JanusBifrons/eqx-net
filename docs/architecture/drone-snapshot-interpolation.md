@@ -49,6 +49,57 @@ model asteroids and remote players already used. The client drone brain is
 No client brain ⇒ no divergent inputs ⇒ nothing to snap. The interpolation
 delay is a deliberate, tunable, standard cheat.
 
+## One pose per frame, one `now` — the rule, actually enforced (2026-05-19)
+
+The pivot's design says the drone pose is "computed once per frame and every
+reader sees one consistent pose". For ~6 weeks that was **only a claim**:
+`updateMirror` did resolve it once and write `entry.x/y/angle`, but two
+consumers then called `interpolateSwarmPose` *again* at their own clock —
+the `PixiRenderer` sprite at **render-now**, and `buildLocalAimTargets`
+(turret/laser aim) at **tickPhysics-now** (`0e24448` introduced the latter;
+directionally correct — aim the drawn pose — but it added a *third*
+divergent-`now` site). `App.tsx`'s loop is `tickPhysics → updateMirror →
+render`, so within one frame those three `now`s differ by a variable,
+raf-jitter-amplified amount (a whole frame under the 30 Hz worker sprite
+gate). The drone's collision body + laser beam used the `updateMirror`
+pose while the sprite used a different one ⇒ on-device the drones
+"jittered like two things fighting for their position" and the laser
+"jittered between the target and where it's drawn" (HIGH-priority report,
+capture `2026-05-19T12-27-31-674Z-jfagww`, 10 `raf_gap`s).
+
+**Enforcement:** `interpolateSwarmPose` is called for a drone **exactly
+once per frame, in `updateMirror`, at the frame's single `now`**. Every
+other consumer reads the resolved `entry.x/y/angle` through the named seam
+[`resolveDroneDisplayPose`](../../src/client/net/swarmDisplayPose.ts) and
+**must never re-interpolate**. The seam is a one-liner *by design* — it
+exists so the rule is greppable and unit-lockable, not because the read is
+complex. `interpolateSwarmPose` itself was **not** touched (its
+display-delay / teleport guard / adaptive delay, and the
+`swarmInterpolation.smoothness` canary, are unchanged) — this was purely
+about *who* resolves the pose and *how many times*. The decoder is also
+**unchanged**: it still writes the raw authoritative `entry.x/y` and feeds
+the poseRing; the once-per-frame resolve overwrites the drone `entry.x/y`
+before any consumer reads it, so the proposed "decoder feeds poseRing only"
+cleanup was proven unnecessary and deferred (it would have added
+asteroid/HaloRadar risk for no benefit). Asteroids (`kind===0`) are the
+documented exception — locked/static server-side, never the jitter
+complaint, still render-now-interpolated off the poseRing with their
+predWorld bodies posed from the raw decoded pose.
+
+Accepted residual: `buildLocalAimTargets` runs in `tickPhysics`, *before*
+`updateMirror`, so the aim reads the **previous** frame's resolved pose — a
+constant, deterministic ≤1-frame lead-lag (the universally-accepted "render
+the past"), **not** jitter. Eliminating even that would need a loop reorder
+or the decoder cleanup; both perturb the delicate pivot core for ~16 ms of
+aim lag and were rejected.
+
+Locks: [tests/unit/swarmPoseConsistency.test.ts](../../tests/unit/swarmPoseConsistency.test.ts)
+(per-frame pure core — RED-first) +
+[tests/scenarios/droneOnePoseAcrossFrames.test.ts](../../tests/scenarios/droneOnePoseAcrossFrames.test.ts)
+(across-frames App-loop-ordering boundary lock). The
+host-load-sensitive [tests/e2e/feel-test-lockstep.spec.ts](../../tests/e2e/feel-test-lockstep.spec.ts)
+remains a same-env smoke, not the gate.
+
 ## The wire (binary v3 unchanged)
 
 `SWARM_WIRE_VERSION` stays **3**. Drone x/y/vx/vy/angle/angvel flow ONLY on
