@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-05-11T11:12:37.400Z",
+  "capturedAt": "2026-05-18T17:57:16.719Z",
   "scenario": {
     "clients": 4,
     "players": 4,
@@ -12,10 +12,10 @@
   },
   "measurement": {
     "totalSwarmBytes": 201570,
-    "totalSnapshotBytes": 312878,
-    "bytesPerSecPerClient": 128612,
+    "totalSnapshotBytes": 31415,
+    "bytesPerSecPerClient": 58246.25,
     "peakSwarmTickBytes": 3308,
-    "peakSnapshotTickBytes": 4066,
+    "peakSnapshotTickBytes": 393,
     "snapshotCount": 80,
     "swarmPacketCount": 240
   }

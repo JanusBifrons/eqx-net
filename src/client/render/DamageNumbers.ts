@@ -7,6 +7,11 @@ const LIFETIME_FRAMES = 60;
 interface DamageNumberEntry {
   text: Text;
   framesLeft: number;
+  /** weapon-hit-prediction Phase 2 — the originating `clientShotId` for a
+   *  client-PREDICTED number, so `cancelByTag` can hard-cancel exactly
+   *  this number on a mispredict / rollback / TTL-expiry. Undefined for
+   *  authoritative (server `DamageEvent`) numbers. */
+  tag?: string;
 }
 
 const STYLE = new TextStyle({
@@ -42,7 +47,7 @@ export class DamageNumberManager {
     this.camera = camera;
   }
 
-  spawn(x: number, y: number, damage: number): void {
+  spawn(x: number, y: number, damage: number, tag?: string): void {
     if (this.active.length >= POOL_CAP) {
       const oldest = this.active.shift();
       if (oldest) {
@@ -56,7 +61,28 @@ export class DamageNumberManager {
     text.x = x;
     text.y = -y; // Y-flip: world +Y (up) → Pixi -Y
     this.container.addChild(text);
-    this.active.push({ text, framesLeft: LIFETIME_FRAMES });
+    this.active.push({ text, framesLeft: LIFETIME_FRAMES, tag });
+  }
+
+  /**
+   * Hard-cancel every active number tagged with `tag` (a `clientShotId`).
+   * The weapon-hit-prediction rollback / TTL-expiry channel: a mispredicted
+   * predicted number vanishes immediately rather than lingering until its
+   * natural fade. A multi-mount salvo shares one `clientShotId`, so all of
+   * its predicted numbers cancel together. Untagged (authoritative) numbers
+   * are never matched. Returns how many were removed.
+   */
+  cancelByTag(tag: string): number {
+    let removed = 0;
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const entry = this.active[i]!;
+      if (entry.tag !== tag) continue;
+      this.container.removeChild(entry.text);
+      entry.text.destroy();
+      this.active.splice(i, 1);
+      removed++;
+    }
+    return removed;
   }
 
   update(): void {

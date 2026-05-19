@@ -79,12 +79,6 @@ const BUCKETS: Record<string, string> = {
   // Phase 6b — diagnostic for the same-playerId active+lingering hull
   // self-collisions that we drop at the broadcast site.
   collision_self_filtered: 'combat',
-  // Phase B (2026-05-09 AI lockstep) — per-drone snap distances /
-  // angle deltas / angvel deltas captured in `syncSwarmIntoPredWorld`.
-  // Buckets to `corrections` because that's structurally what these
-  // events are: a per-drone correction signal parallel to the local-
-  // ship `correction` event. See ColyseusClient.ts logEvent call.
-  swarm_snap_diagnostics: 'corrections',
   // lifecycle
   welcome: 'lifecycle',
   disconnected: 'lifecycle',

@@ -4,6 +4,7 @@ import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { DEFAULT_WARP_PARAMS, type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
@@ -1043,42 +1044,43 @@ export class PixiRenderer implements IRenderer {
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }
-        // Drones (kind=1) post Phase 3 reset (2026-05-09): rendered from
-        // `entry.x/y/angle`, which `ColyseusClient.updateMirror` rewrites
-        // each frame to the predWorld pose. predWorld has AI-integrated
-        // smooth motion matching the server; rendering at that pose
-        // eliminates the per-snapshot snap that produced visible jolt
-        // when the previous dead-reckoning path got the velocity-direction
-        // change one packet late.
-        //
-        // Asteroids (kind=0) stay on `interpolateSwarmPose` — they're
-        // locked in predWorld and only change pose on collision events,
-        // where the packet-to-packet lerp is the right thing.
-        if (entry.kind === 1) {
-          sprite.x = entry.x;
-          sprite.y = -entry.y;
-          sprite.rotation = -entry.angle;
+        // DRONES (kind=1): read the SINGLE per-frame display pose that
+        // `ColyseusClient.updateMirror` already resolved (one
+        // `interpolateSwarmPose` per frame, written into `entry.x/y/angle`
+        // — the same value the predWorld collision body + turret aim +
+        // laser beam use). Re-interpolating here at render-`now` (which
+        // differs from updateMirror's now by a variable, raf-jitter-
+        // amplified amount — a whole frame under the 30 Hz worker gate)
+        // made the sprite occupy a different pose than the collision
+        // body/beam every frame: drones "jittered like two things
+        // fighting" and the laser jittered against the sprite (on-device
+        // 2026-05-19, capture jfagww; the drone-snapshot pivot's stated
+        // "one pose per frame, every reader sees it" rule, now enforced).
+        // ASTEROIDS (kind=0): keep render-now interpolation off the
+        // poseRing — they are locked/static server-side, were never the
+        // jitter complaint, and `syncSwarmIntoPredWorld` still poses their
+        // bodies from the raw decoded `entry.x/y` (decoder unchanged).
+        const lerped = entry.kind === 1
+          ? resolveDroneDisplayPose(entry, this.swarmPoseScratch)
+          : interpolateSwarmPose(entry, now, this.swarmPoseScratch);
+        sprite.x = lerped.x;
+        sprite.y = -lerped.y;
+        sprite.rotation = -lerped.angle;
+        if (entry.kind === 1 && entry.shipKind) {
           // Phase 4c (2026-05-11) — drones get the same mount cluster
           // treatment as player ships: turret sprites parented to the
-          // drone body, rotated per-mount via the snapshot-anchored
-          // `entry.mountAngles`. Legacy single-mount drone kinds have
-          // zero-arc mounts so applyMountAngles is essentially a no-op
-          // (sets rotation to -baseAngle, same as the static Phase-3
-          // path); multi-mount kinds (interceptor / gunship drones)
-          // now visibly slew their wing/rear turrets to track players.
-          if (entry.shipKind) {
-            this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
-            const swarmKind = getShipKind(entry.shipKind);
-            const swarmMounts = swarmKind.mounts ?? [];
-            if (swarmMounts.length > 0) {
-              this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
-            }
+          // drone body, rotated per-mount via `entry.mountAngles` (the
+          // authoritative slim `snap.drones[]` slice). Legacy single-mount
+          // drone kinds have zero-arc mounts so applyMountAngles is
+          // essentially a no-op (rotation = -baseAngle); multi-mount kinds
+          // (interceptor / gunship drones) visibly slew their wing/rear
+          // turrets to track players.
+          this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
+          const swarmKind = getShipKind(entry.shipKind);
+          const swarmMounts = swarmKind.mounts ?? [];
+          if (swarmMounts.length > 0) {
+            this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
           }
-        } else {
-          const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
-          sprite.x = lerped.x;
-          sprite.y = -lerped.y;
-          sprite.rotation = -lerped.angle;
         }
         // Damage flash takes priority over the active-beam hit tint so a
         // drone clearly registers a hit even when no beam is currently on it.
@@ -1354,9 +1356,19 @@ export class PixiRenderer implements IRenderer {
     // tick every frame to advance lifetime + counter-scale.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
-        this.damageNumbers.spawn(dn.x, dn.y, dn.damage);
+        this.damageNumbers.spawn(dn.x, dn.y, dn.damage, dn.tag);
       }
       mirror.pendingDamageNumbers.length = 0;
+    }
+    // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
+    // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
+    // rollback in the same frame nets to nothing) and BEFORE update() (a
+    // cancelled number gets zero frames of life).
+    if (this.damageNumbers && mirror.pendingDamageNumberCancels) {
+      for (const tag of mirror.pendingDamageNumberCancels) {
+        this.damageNumbers.cancelByTag(tag);
+      }
+      mirror.pendingDamageNumberCancels.length = 0;
     }
     this.damageNumbers?.update();
 

@@ -12,25 +12,21 @@
  * 500-objects/sector target this is catastrophic by construction.
  *
  * We cannot fix mobile delivery jitter (environmental). We CAN stop the
- * architecture from amplifying one hiccup into an instantaneous N-entity
- * snap: spread the discharge over a few frames so it reads as a brief
- * smooth catch-up. Two pure decisions live here:
+ * architecture from amplifying one hiccup into an instantaneous teleport:
+ * spread the player reconciliation over a few frames so it reads as a brief
+ * smooth catch-up.
  *
- *  1. `playerCorrectionHalfLifeMs(drift)` — the reconciler's correction
- *     spring half-life. Was binary (12 ms sub-pixel / 25 ms everything),
- *     so a 249 u gap-correction settled in ~5 frames (a teleport). Now
- *     magnitude-scaled: tiny corrections stay snappy (steady-state feel +
- *     the feel-test-lockstep canary UNCHANGED — small drifts keep 12/25 ms),
- *     large gap-induced corrections glide.
+ *  `playerCorrectionHalfLifeMs(drift)` — the reconciler's correction
+ *  spring half-life. Was binary (12 ms sub-pixel / 25 ms everything), so a
+ *  249 u gap-correction settled in ~5 frames (a teleport). Now
+ *  magnitude-scaled: tiny corrections stay snappy (steady-state feel +
+ *  the feel-test-lockstep canary UNCHANGED — small drifts keep 12/25 ms),
+ *  large gap-induced corrections glide.
  *
- *  2. `anchoredDroneReseedSmoothing(...)` — Phase C deliberately skips the
- *     `_droneRenderOffsets` spring for snapshot-anchored drones ("snapshot
- *     owns predWorld, no jolt to smooth"). That assumption holds ONLY when
- *     snapshots arrive on cadence. After a delivery gap the re-seed IS a
- *     large jolt. This decides — purely from the snapshot interval vs the
- *     steady-state cadence + the re-seed distance — whether to engage the
- *     spring for an anchored drone. Steady-state (no gap) ⇒ `engage:false`
- *     ⇒ behaviour byte-identical to pre-fix (chapter-2 lockstep intact).
+ * (The companion anchored-drone reseed smoother was retired with the
+ * drone-snapshot-interpolation pivot, 2026-05-18 — drones no longer have a
+ * predWorld reconcile anchor to smooth; they are pure snapshot-interpolated
+ * via `swarmInterpolation.ts`, whose teleport guard handles discontinuities.)
  *
  * Pure / deterministic / no DOM / no I/O — unit-tested in
  * `correctionSmoothing.test.ts`.
@@ -66,49 +62,4 @@ export function playerCorrectionHalfLifeMs(drift: number): number {
   // (SNAPPY_DRIFT_MAX, GLIDE_DRIFT_MAX].
   const t = (drift - SNAPPY_DRIFT_MAX) / (GLIDE_DRIFT_MAX - SNAPPY_DRIFT_MAX);
   return SNAPPY_HALF_LIFE_MS + t * (GLIDE_HALF_LIFE_MAX_MS - SNAPPY_HALF_LIFE_MS);
-}
-
-/** A snapshot whose inter-arrival exceeds `nominalMs × this` is a delivery
- *  gap (bunched mobile delivery), not steady cadence. 1.8× of the ~50 ms
- *  nominal ⇒ > ~90 ms ⇒ at least one missed broadcast. */
-export const GAP_INTERVAL_FACTOR = 1.8;
-/** Below this re-seed distance there's no visible jolt to smooth even on a
- *  gap — leave it instant (cheaper, and matches steady-state). */
-const DRONE_RESEED_SMOOTH_MIN_DIST = 1;
-/** Anchored-drone gap glide half-life. Matches the existing
- *  `droneRenderOffsetHalfLifeForDrift` non-trivial-drift value so drone and
- *  player recovery feel consistent. */
-const DRONE_GAP_HALF_LIFE_MS = 150;
-
-export interface AnchoredDroneReseedInput {
-  /** This snapshot's inter-arrival (ms) — `stats.snapshotIntervalMs`. */
-  readonly intervalMs: number;
-  /** Steady-state cadence (ms) — the ~50 ms nominal or its EWMA. */
-  readonly nominalMs: number;
-  /** Re-seed jolt distance (u): |predicted pose − snapshot-anchored pose|. */
-  readonly dist: number;
-}
-export interface AnchoredDroneReseedDecision {
-  /** Engage the `_droneRenderOffsets` spring for this anchored drone? */
-  readonly engage: boolean;
-  /** Spring half-life (ms) when `engage`. */
-  readonly halfLifeMs: number;
-}
-
-/**
- * Decide whether to glide an anchored drone's gap-recovery re-seed instead
- * of snapping it. `engage` ONLY when the snapshot arrived after a delivery
- * gap (`intervalMs > nominalMs × GAP_INTERVAL_FACTOR`) AND the jolt is
- * visible. Steady cadence ⇒ `{ engage: false }` ⇒ the caller does exactly
- * what it did pre-fix (no spring for anchored drones — Phase C invariant
- * + feel-test-lockstep canary preserved). Pure.
- */
-export function anchoredDroneReseedSmoothing(
-  i: AnchoredDroneReseedInput,
-): AnchoredDroneReseedDecision {
-  const isGap = i.nominalMs > 0 && i.intervalMs > i.nominalMs * GAP_INTERVAL_FACTOR;
-  if (!isGap || i.dist < DRONE_RESEED_SMOOTH_MIN_DIST) {
-    return { engage: false, halfLifeMs: 0 };
-  }
-  return { engage: true, halfLifeMs: DRONE_GAP_HALF_LIFE_MS };
 }

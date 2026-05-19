@@ -251,19 +251,16 @@ export interface SnapshotMessage {
    *  pose snapshot at `serverTick`; the client mirrors it into its local
    *  projectile map and lets ghosts (client-side prediction) layer on top. */
   projectiles?: Array<{ id: string; x: number; y: number; vx: number; vy: number; ownerId: string; weaponId?: string }>;
-  /** Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
-   *  In-interest drones at the snapshot's `serverTick`, sourced from the
-   *  per-tick `SnapshotRing` so the pose is temporally aligned with the
-   *  player states above. The client uses these to seed predWorld drone
-   *  bodies before reconciler replay, eliminating the structural lookahead
-   *  snap-distance that previously surfaced as visible per-packet jitter
-   *  (see `swarm_snap_diagnostics` events). Absent when no drones are
-   *  in-interest, or when the recipient is in a sector that hasn't seeded
-   *  drones (e.g. a fresh test-sector join before any AI has registered).
-   *  `id` is the dense `u16 entityId` matching the binary swarm channel. */
+  /** Slim per-drone turret + shield slice for in-interest drones (drone-
+   *  snapshot-interpolation pivot, 2026-05-18). Drone POSE is NOT here —
+   *  it flows exclusively on the binary swarm channel and is rendered via
+   *  time-based `interpolateSwarmPose` (no client AI re-sim, no predWorld
+   *  reconcile anchor). This slice carries only the non-pose fields that
+   *  ride the JSON snapshot: per-mount turret angles and the shield-down
+   *  flag. Absent when no in-interest drone has anything to report. `id`
+   *  is the dense `u16 entityId` matching the binary swarm channel. */
   drones?: Array<{
     id: number;
-    x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
     /** Phase: shield — true while this drone's shield is down. Single
      *  channel with the binary recordFlags bit; the client applies the
      *  collider swap from ONE site (syncSwarmIntoPredWorld). */
@@ -274,8 +271,8 @@ export interface SnapshotMessage {
      *  kind has at least one rotating mount (legacy fighter/scout/heavy
      *  drones omit the field — their single 'forward' mount has zero arc
      *  so the angle is always 0 and would only add bytes). Out-of-interest
-     *  drones never carry mountAngles; their turrets freeze at baseAngle
-     *  until they re-enter interest and the next snapshot anchors them. */
+     *  drones never carry mountAngles; their turrets render at baseAngle
+     *  until they re-enter interest and the next snapshot updates them. */
     mountAngles?: number[];
   }>;
   /** Phase 4 — abandoned-ship wrecks in this sector. Each entry is the
@@ -299,6 +296,12 @@ export interface HitAckMessage {
   targetId?: string;
   /** True only when the server discarded the shot (cooldown or temporal plausibility). */
   rejected?: boolean;
+  /** Damage the server applied for the closest mount-hit in this salvo
+   *  (the hit reported by `targetId`). Present only on `hit:true` acks.
+   *  Lets the client-side hit-prediction reconcile path confirm/de-dupe a
+   *  predicted number against the authoritative value without waiting for
+   *  the broadcast `DamageEvent`. weapon-hit-prediction Phase 0. */
+  damage?: number;
 }
 
 /** Server → client (broadcast): a ship took damage. */
@@ -473,3 +476,50 @@ export const CollisionResolvedMessageSchema = z
   .strict();
 
 export type CollisionResolvedMessage = z.infer<typeof CollisionResolvedMessageSchema>;
+
+// weapon-hit-prediction Phase 0 — defensive schemas for the two server →
+// client combat messages the client-side hit-prediction now *consumes*
+// across the trust boundary. Exactly like `collision_resolved` above: the
+// server builds these itself and trusts its own shape, so it never parses
+// through them; the client `safeParse`s them on ingest and drops malformed
+// packets (invariant #4) before they reach the prediction ledger / HUD.
+// The shapes mirror the hand-written `HitAckMessage` / `DamageEvent`
+// interfaces exactly — the bidirectional `z.infer` ↔ interface
+// assignability lock in `messages.test.ts` fails `pnpm typecheck` if they
+// ever drift. The interfaces stay the canonical type names (used
+// throughout server + client); these schemas are validation-only, so no
+// redundant `z.infer` alias is exported.
+
+/** Server → client (direct): result of a fire request. `damage` rides
+ *  only `hit:true` acks (the closest mount-hit's applied damage). */
+export const HitAckSchema = z
+  .object({
+    type: z.literal('hit_ack'),
+    clientShotId: z.string(),
+    hit: z.boolean(),
+    targetId: z.string().optional(),
+    /** True only when the server discarded the shot (cooldown / temporal). */
+    rejected: z.boolean().optional(),
+    /** Applied damage for the `targetId` hit — present only when `hit:true`. */
+    damage: z.number().optional(),
+  })
+  .strict();
+
+/** Server → client (broadcast): a ship took damage. The client-side
+ *  hit-prediction de-dupes a confirmed predicted number against this
+ *  authoritative event; `handleDamage()` stays the SOLE HP/HUD authority. */
+export const DamageEventSchema = z
+  .object({
+    type: z.literal('damage'),
+    targetId: z.string(),
+    damage: z.number(),
+    newHealth: z.number(),
+    shooterId: z.string(),
+    hitX: z.number().optional(),
+    hitY: z.number().optional(),
+    newShield: z.number(),
+    shieldMax: z.number(),
+    hullMax: z.number(),
+    hitLayer: z.enum(['shield', 'hull']),
+  })
+  .strict();

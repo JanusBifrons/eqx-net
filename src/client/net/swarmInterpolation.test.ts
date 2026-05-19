@@ -12,7 +12,7 @@ import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 function emptyRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
   for (let i = 0; i < POSE_RING_DEPTH; i++) {
-    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
   }
   return ring;
 }
@@ -23,6 +23,7 @@ interface ArrivalSpec {
   angle?: number;
   vx?: number;
   vy?: number;
+  angvel?: number;
   arrivalMs: number;
 }
 
@@ -35,6 +36,7 @@ function entryWithArrivals(arrivals: ArrivalSpec[], overrides: Partial<SwarmRend
     slot.angle = a.angle ?? 0;
     slot.vx = a.vx ?? 0;
     slot.vy = a.vy ?? 0;
+    slot.angvel = a.angvel ?? 0;
     slot.arrivalMs = a.arrivalMs;
     slot.serverTick = i;
     slot.empty = false;
@@ -53,23 +55,27 @@ function entryWithArrivals(arrivals: ArrivalSpec[], overrides: Partial<SwarmRend
 
 const out: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
-describe('Stage 0 constants', () => {
-  it('DISPLAY_DELAY_MS = 0 ms (visual swarm pose tracks predWorld collision shape)', () => {
-    // The 50 ms backward-buffered delay made rendered swarm sprites
-    // lag predWorld bodies by ~delay × velocity, producing
-    // visible-vs-collision mismatch (user could overlap a drone
-    // sprite and pass through the body). With 0 ms, the
-    // dead-reckoning branch of interpolateSwarmPose (vx*dt forward
-    // extrapolation from the latest arrival) matches what
-    // predWorld is doing for dynamic drones — render and collision
-    // shape align. See docs/LESSONS.md 2026-05-09 entry.
-    expect(DISPLAY_DELAY_MS).toBe(0);
+describe('drone snapshot-interpolation constants (Step 4, 2026-05-18 pivot)', () => {
+  it('DISPLAY_DELAY_MS = 100 ms (the deliberate "render the past" feel buffer)', () => {
+    // The pivot retired client drone AI re-sim: drones are now PURE
+    // snapshot-interpolated off the decoder poseRing, and the predWorld
+    // drone body is a kinematic follower of that SAME interpolated pose.
+    // Render and collision are the identical pose by construction, so the
+    // 2026-05-09 "0 ms to align render with predWorld collision" rationale
+    // no longer applies. 100 ms backward-buffers the in-interest combat
+    // cadence (~per server tick) so two bracketing samples essentially
+    // always exist — a true lerp of buffered authoritative truth, immune
+    // to wire jitter ≤ 100 ms. Industry standard (Quake/Source/Overwatch).
+    expect(DISPLAY_DELAY_MS).toBe(100);
   });
 
-  it('ADAPTIVE_DELAY_CEILING_MS = 200 ms (was 350; jitter is < 20 ms in practice)', () => {
-    // Ceiling drops 350 → 200 because measured snapshot jitter has been
-    // stable below 20 ms — 4× headroom is plenty; 7× was unnecessary.
-    expect(ADAPTIVE_DELAY_CEILING_MS).toBe(200);
+  it('ADAPTIVE_DELAY_CEILING_MS = 280 ms (covers decimated out-of-interest drones)', () => {
+    // Raised 200 → 280: an out-of-interest decimated drone arrives every
+    // ~100–170 ms; the adaptive feed sizes the buffer at
+    // binaryInterArrivalEwma × 1.5, so a 170 ms cadence wants ~255 ms to
+    // still bracket two samples. 280 leaves headroom; the in-interest
+    // combat pack sits at the 100 ms floor, nowhere near this.
+    expect(ADAPTIVE_DELAY_CEILING_MS).toBe(280);
   });
 });
 
@@ -217,62 +223,43 @@ describe('interpolateSwarmPose (display-delay buffer)', () => {
   });
 });
 
-describe('visual-vs-physics alignment (2026-05-09 fix)', () => {
-  // The rendered swarm pose must track the predWorld swarm body's pose
-  // closely enough that "what you see is what you collide with." With
-  // DISPLAY_DELAY_MS = 0 and dynamic drones in predWorld, the renderer
-  // dead-reckons forward from the latest packet by `vx*dt`, and predWorld
-  // integrates Rapier physics from the same packet pose. In the absence
-  // of collisions the two paths agree exactly (both = pos + vel * dt).
-  //
-  // Pre-fix (DELAY=50 ms): the renderer reads at `now − 50 ms`, lagging
-  // predWorld by 50 ms × velocity. For a typical fast drone (50 u/s)
-  // that's 2.5 u of misalignment — visually overlapping the sprite while
-  // the physics body has already moved past.
-  it('rendered pose matches predWorld extrapolation for a drone moving steadily', () => {
-    // Two arrivals to satisfy the multi-arrival branch (single-arrival
-    // case pins to oldest pose without extrapolation, by design — the
-    // dead-reckoning path needs ≥ 2 arrivals to be active).
+describe('extrapolation dead-reckon glides angle by angvel (Step 4, 2026-05-18)', () => {
+  // Post-pivot, out-of-interest decimated drones (≈100–170 ms cadence)
+  // frequently render in the past-the-newest extrapolation window. A
+  // maneuvering drone is usually turning, so the dead-reckon must glide
+  // the ANGLE by `angvel·dt` (not freeze it then snap on the next
+  // decimated packet — that reads as a turret/heading stutter). Wire v3
+  // carries angvel; the decoder fills every ring slot. (These tests don't
+  // call setSwarmDisplayDelayMs, so the effective delay is the module's
+  // DISPLAY_DELAY_MS floor; render times add it so targetMs lands where
+  // intended — same pattern as the buffer tests above.)
+  it('angle advances by angvel·dt within EXTRAPOLATION_LIMIT_MS (x/y still glide too)', () => {
     const e = entryWithArrivals([
-      { x:  95, y: 0, vx: 50, vy: 0, arrivalMs:  950 },
-      { x: 100, y: 0, vx: 50, vy: 0, arrivalMs: 1000 },
+      { x: 0,  y: 0, angle: 0.5, vx: 200, vy: 0, angvel: 2.0, arrivalMs: 1000 },
+      { x: 10, y: 0, angle: 0.5, vx: 200, vy: 0, angvel: 2.0, arrivalMs: 1100 },
     ]);
-    // Render 30 ms after the latest arrival (= 80 ms after first).
-    const nowMs = 1030;
-    interpolateSwarmPose(e, nowMs, out);
-
-    // predWorld at this point: snapped to (100, 0) on the latest packet,
-    // integrating at vx=50 for 30 ms ⇒ x = 100 + 50 × 0.030 = 101.5.
-    const predWorldX = 100 + 50 * (30 / 1000);
-    expect(out.x).toBeCloseTo(predWorldX, 3);
-    expect(out.y).toBe(0);
+    // 50 ms past the newest arrival → dt = 0.05.
+    interpolateSwarmPose(e, 1150 + DISPLAY_DELAY_MS, out);
+    expect(out.angle).toBeCloseTo(0.5 + 2.0 * 0.05, 6); // glided, NOT frozen at 0.5
+    expect(out.x).toBeCloseTo(10 + 200 * 0.05, 4);      // position still dead-reckons
   });
 
-  it('rendered pose matches predWorld extrapolation up to EXTRAPOLATION_LIMIT_MS', () => {
+  it('angle glide is capped at EXTRAPOLATION_LIMIT_MS (same cap as position)', () => {
     const e = entryWithArrivals([
-      { x: 0, y:  -5, vx: 0, vy: 50, arrivalMs: 1950 },
-      { x: 0, y:   0, vx: 0, vy: 50, arrivalMs: 2000 },
+      { x: 0, y: 0, angle: 0.5, vx: 0, vy: 0, angvel: 2.0, arrivalMs: 1000 },
+      { x: 0, y: 0, angle: 0.5, vx: 0, vy: 0, angvel: 2.0, arrivalMs: 1100 },
     ]);
-    const nowMs = 2000 + EXTRAPOLATION_LIMIT_MS;
-    interpolateSwarmPose(e, nowMs, out);
-
-    const predWorldY = 0 + 50 * (EXTRAPOLATION_LIMIT_MS / 1000);
-    expect(out.y).toBeCloseTo(predWorldY, 3);
+    // 500 ms past newest — overshoot clamps to EXTRAPOLATION_LIMIT_MS.
+    interpolateSwarmPose(e, 1600 + DISPLAY_DELAY_MS, out);
+    expect(out.angle).toBeCloseTo(0.5 + 2.0 * (EXTRAPOLATION_LIMIT_MS / 1000), 6);
   });
 
-  it('two packets bracketing render time: render uses dead-reckon from newest, matching predWorld', () => {
-    // Render time is past the newest arrival. With DELAY=0 we extrapolate
-    // forward from `newest`, which is exactly what predWorld does
-    // (predWorld snapped to newest on the latest snapshot).
+  it('zero angvel ⇒ angle is held (no spurious drift for non-rotating drones)', () => {
     const e = entryWithArrivals([
-      { x: 0, y: 0, vx: 100, vy: 0, arrivalMs: 1000 },
-      { x: 5, y: 0, vx: 100, vy: 0, arrivalMs: 1050 },
+      { x: 0, y: 0, angle: 1.23, vx: 50, vy: 0, angvel: 0, arrivalMs: 1000 },
+      { x: 5, y: 0, angle: 1.23, vx: 50, vy: 0, angvel: 0, arrivalMs: 1100 },
     ]);
-    const nowMs = 1080; // 30 ms past newest
-    interpolateSwarmPose(e, nowMs, out);
-
-    // From newest (x=5) at vx=100: predWorld at +30 ms = 5 + 100 × 0.030 = 8.
-    const predWorldX = 5 + 100 * (30 / 1000);
-    expect(out.x).toBeCloseTo(predWorldX, 3);
+    interpolateSwarmPose(e, 1180 + DISPLAY_DELAY_MS, out);
+    expect(out.angle).toBeCloseTo(1.23, 6);
   });
 });

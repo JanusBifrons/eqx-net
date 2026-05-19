@@ -115,7 +115,6 @@ function droneVelocity(i: number): { vx: number; vy: number } {
 function buildSnapshotJsonSize(
   allShips: ReadonlyArray<{ id: string; x: number; y: number; vx: number; vy: number; angle: number; angvel: number }>,
   swarmRegistry: SwarmEntityRegistry,
-  sabF32: Float32Array,
   inInterest: Set<number>,
   serverTick: number,
   ackedTick: number,
@@ -130,24 +129,19 @@ function buildSnapshotJsonSize(
     };
   }
 
-  // Per-recipient drone slice — in-interest drones at serverTick. This bench
-  // skips the SnapshotRing rewind (uses live SAB pose) — close enough for a
-  // wire-byte budget; rewinding to a 12-tick-old pose costs the same bytes.
+  // Per-recipient slim drone slice (drone-snapshot-interpolation pivot,
+  // 2026-05-18) — turret/shield only; drone POSE now flows on the binary
+  // swarm channel, NOT the JSON snapshot. Mirrors the new SectorRoom
+  // producer: an entry is emitted only when the drone has rotating-mount
+  // angles or its shield is down. This bench's drones have neither, so the
+  // JSON drone slice is absent — exactly the new production cost.
   let drones: SnapshotMessage['drones'];
   for (const eid of inInterest) {
     const rec = swarmRegistry.getByEntityId(eid);
     if (!rec || rec.kind !== 1) continue;
-    const base = slotBase(rec.slot);
+    if (!rec.shieldDown) continue;
     if (!drones) drones = [];
-    drones.push({
-      id: eid,
-      x: sabF32[base + SLOT_X_OFF]!,
-      y: sabF32[base + SLOT_Y_OFF]!,
-      vx: sabF32[base + SLOT_VX_OFF]!,
-      vy: sabF32[base + SLOT_VY_OFF]!,
-      angle: sabF32[base + SLOT_ANGLE_OFF]!,
-      angvel: sabF32[base + SLOT_ANGVEL_OFF]!,
-    });
+    drones.push({ id: eid, shieldDown: true });
   }
 
   const snap: SnapshotMessage = {
@@ -274,7 +268,6 @@ function runScenario(): BandwidthMeasurement {
         const snapBytes = buildSnapshotJsonSize(
           allShipsEntries,
           swarmRegistry,
-          sabF32,
           scratch,
           tick,
           tick - 2, // ackedTick — close enough for byte-budget purposes

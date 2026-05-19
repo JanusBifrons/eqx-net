@@ -121,6 +121,21 @@ See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.m
 
 ## AI lockstep — Input Symmetry Rule (chapter 2, 2026-05-09)
 
+> **⚠️ SUPERSEDED FOR DRONES (2026-05-18, drone-snapshot-interpolation
+> pivot).** The client no longer runs `AiController`/`HostileDroneBehaviour`
+> for drones at all — drones are pure snapshot-interpolated from the
+> binary wire (see [docs/architecture/drone-snapshot-interpolation.md](../../docs/architecture/drone-snapshot-interpolation.md)).
+> The Input-Symmetry Rule below is therefore **moot for drones** (there is
+> no client drone brain whose inputs could diverge) but remains the
+> governing principle for any *future* shared client/server brain and for
+> the `damage`/`bot_aggro` → `markHostile` server→client mirror (the
+> surviving hostility ledger). **The "Corollary — replay re-sim is
+> relevance-CULLED (Option A)" section below is fully RETIRED**: the
+> replay re-sim, `droneRelevance.ts`, `DRONE_RESIM_BUDGET`,
+> `AiController.tickOnly`, and the `replaySeed` drone anchor were all
+> deleted. `AiController.tick` is now server-authoritative-only. Player
+> prediction is unaffected by all of this.
+
 `src/core/ai/HostileDroneBehaviour.tick(self, view)` is pure: same arguments produce the same `(fx, fy, torque)` impulse on both sides. The same instance of this code runs on the server (under `AiController` in `SectorRoom`) and on the client (under the same `AiController` in `ColyseusClient`). The brain is shared; for client-side prediction to match server reality, **the brain's sensory inputs must match too**.
 
 **The rule**: any field consumed by `IAiBehaviour` MUST flow on the same channel and at the same cadence on both sides. Adding a behaviour-visible field requires a wire-format bump, not "we'll wire it up later." The 2026-05-09 chapter-2 work shipped wire-format v3 specifically to add `angvel` after discovering the AI's `1.5·ω` damping term was reading SAB-authoritative ω on the server and unsynced predWorld ω on the client — drone bearing diverged every tick because of one missing field.

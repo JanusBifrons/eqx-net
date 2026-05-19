@@ -314,6 +314,11 @@ export class WorkerRendererClient implements IRenderer {
     // main-thread contract. Regression-locked by
     // `tests/e2e/damage-number-lifetime.spec.ts`.
     if (mirror.pendingDamageNumbers) mirror.pendingDamageNumbers.length = 0;
+    // weapon-hit-prediction Phase 2 — same worker-path drain contract as
+    // pendingDamageNumbers: the worker cancels on its STRUCTURED-CLONE, so
+    // the main-thread queue must be cleared here or cancels re-post every
+    // frame. (The 2026-05-14 damage-number boundary lesson.)
+    if (mirror.pendingDamageNumberCancels) mirror.pendingDamageNumberCancels.length = 0;
     if (mirror.pendingHealthBarHits) mirror.pendingHealthBarHits.length = 0;
     if (mirror.pendingWarpEvents) mirror.pendingWarpEvents.length = 0;
   }

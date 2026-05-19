@@ -61,15 +61,32 @@ export interface PoseRingEntry {
   empty: boolean;
 }
 
-/** Depth of the per-entity pose ring. Must be ≥ ceil((DISPLAY_DELAY_MS +
- *  one inter-arrival) / inter-arrival) + 1 so the *oldest* arrival the
- *  interpolator might still be lerping FROM is still resident in the ring
- *  when a new arrival lands. With DISPLAY_DELAY_MS=100 and 50ms broadcasts,
- *  depth 3 is the theoretical minimum but offers no margin under jitter — a
- *  late arrival evicts the oldest just as the interpolator still needs it,
- *  producing a single-frame snap. Depth 4 has measured headroom for ±30 ms
- *  arrival jitter. */
-export const POSE_RING_DEPTH = 4;
+/** Depth of the per-entity pose ring. Load-bearing invariant: it must hold
+ *  ≥ ceil(maxDisplayDelay / minInterArrival) packets + headroom, so the
+ *  read point (`now − DISPLAY_DELAY_MS`) always has two *resident*
+ *  bracketing arrivals. The binding case is the IN-INTEREST binary
+ *  cadence — drones ship ~per server tick (≈ 1000/60 ≈ 16.7 ms), NOT the
+ *  50 ms JSON-snapshot rate the old sizing assumed.
+ *
+ *  Regression history (do NOT shrink this back): the drone
+ *  snapshot-interpolation pivot raised `DISPLAY_DELAY_MS` 0 → 100 ms
+ *  (Step 4) but left this at 4. ceil(100 / 16.7) = 6, so a 4-deep ring
+ *  (~64 ms span) could not reach 100 ms back: `interpolateSwarmPose`
+ *  pinned every drone to its stale oldest entry and lurched one
+ *  packet-of-motion every 16 ms. Because the kinematic predWorld follower
+ *  drives drone COLLISION bodies to that pose inside the player's
+ *  prediction world, the player ship jumped and client beam geometry
+ *  lagged too — global symptom, this single root cause (smoke cap
+ *  2026-05-18T18-56-32-1fc0oe). Locked by the liveness + structural-
+ *  invariant tests in `tests/unit/swarmInterpolation.smoothness.test.ts`.
+ *
+ *  10 = ceil(100 / 16.7)=6 + 4 headroom (arrival jitter + a late packet
+ *  not evicting the one still needed). Cheap: ~10 small objects per
+ *  entity, pre-allocated once, zero per-packet alloc. Also covers the
+ *  adaptive-delay range: the delay only rises toward
+ *  ADAPTIVE_DELAY_CEILING_MS when the observed cadence is correspondingly
+ *  slower, so the ring still spans it. */
+export const POSE_RING_DEPTH = 10;
 
 export interface SwarmRenderState {
   /** Latest pose received from the wire. Mirror of `poseRing[ringHead − 1]`'s pose. */
@@ -182,8 +199,20 @@ export interface RenderMirror {
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   localPlayerId: string | null;
-  /** Floating damage numbers to spawn this frame. Drained + cleared each frame. */
-  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number }>;
+  /** Floating damage numbers to spawn this frame. Drained + cleared each
+   *  frame. `tag` (weapon-hit-prediction Phase 2) is the originating
+   *  `clientShotId` for client-PREDICTED numbers, so a later mispredict /
+   *  rollback / TTL-expiry can hard-cancel exactly that number via
+   *  `pendingDamageNumberCancels`. Authoritative (server `DamageEvent`)
+   *  numbers leave it undefined. Plain string ⇒ structured-clone-safe
+   *  across the renderer→worker boundary. */
+  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number; tag?: string }>;
+  /** Predicted damage-number tags to hard-cancel this frame (weapon-hit-
+   *  prediction Phase 2). The renderer drains it and calls
+   *  `DamageNumberManager.cancelByTag(tag)` for each — the rollback /
+   *  TTL-expiry channel, mirroring the `pendingDamageNumbers` drain
+   *  pattern. Cleared + drained each frame. */
+  pendingDamageNumberCancels?: string[];
   /** Health bar hit events this frame. Drained + cleared each frame. */
   pendingHealthBarHits?: Array<{ entityId: string; healthPct: number }>;
   /** Remote warp events (`warp_in` / `warp_out` broadcasts from the

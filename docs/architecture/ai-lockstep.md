@@ -1,5 +1,17 @@
 # AI Lockstep — Drone client/server alignment
 
+> **⚠️ SUPERSEDED FOR DRONES (2026-05-18).** The client-side drone AI
+> re-sim / lockstep architecture described below was **retired** by the
+> drone-snapshot-interpolation pivot — drones are now pure
+> snapshot-interpolated (no client drone brain, no replay-seed, no
+> relevance cull). This document is **historical** for the drone path;
+> read [`drone-snapshot-interpolation.md`](./drone-snapshot-interpolation.md)
+> for the current design. The Input-Symmetry reasoning still applies to
+> any *shared* brain (none currently runs client-side) and the
+> `damage`/`bot_aggro` → `markHostile` server→client mirror (the
+> surviving hostility ledger). The player-prediction discussion is
+> unaffected.
+
 This is the architecture that makes drones feel "fast" on the client without their behaviour drifting from server reality. It is the chapter-2 follow-up to the [remote-prediction](./remote-prediction.md) work that did the same thing for player ships.
 
 The user-facing problem this solved: drones felt jittery and unpredictable in close combat — sometimes "two locations fighting over which is right and both winning." Diagnostic captures showed per-drone snap distance of 15–40 u every packet, even with the AI brain shared in `src/core` between server and client. The brain was the same; its **sensory inputs** weren't.

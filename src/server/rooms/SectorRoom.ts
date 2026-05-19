@@ -2,6 +2,7 @@ import { Room, Client } from 'colyseus';
 import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
+import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -1142,12 +1143,22 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.getActiveShip(shooterId);
     if (!ship || !ship.alive) return;
 
-    // Temporal plausibility: reject claims older than LAG_COMP_WINDOW ticks (~200 ms).
-    if (this.serverTick - tick > LAG_COMP_WINDOW) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
-      client.send('hit_ack', ack);
-      return;
-    }
+    // Temporal resolution. We USED to hard-reject claims older than
+    // LAG_COMP_WINDOW — that silently dropped ~37% of a laggy client's
+    // shots: after a main-thread stall the wall-clock-anchored inputTick
+    // falls behind serverTick and recovers slowly (capped catch-up), so a
+    // long run of legitimate held-fires is timestamped stale (diagnostic
+    // capture 2026-05-19T11-22-22-628Z-uf0o8g; the felt "shot rejected").
+    // Instead CLAMP a stale claim to the window floor and resolve the
+    // shot against the OLDEST available SnapshotRing pose. The rewind is
+    // bounded identically to a legitimate edge-of-window claim
+    // (≤ LAG_COMP_WINDOW), so there is no abuse advantage and no extra
+    // rewind cost; the per-shooter cooldown below (raw client-tick
+    // spacing) is the unchanged anti-rapid-fire guard. Future claims
+    // (client running ahead — the steady state under this prediction
+    // model) pass through untouched (getPoseAt(future) → live-pose
+    // fallback, exactly as before).
+    const effTick = clampFireTick(tick, this.serverTick, LAG_COMP_WINDOW);
 
     // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
     // RTT jitter between consecutive messages doesn't cause false rejections.
@@ -1167,7 +1178,7 @@ export class SectorRoom extends Room<SectorState> {
     // is preferred (matches what the client predicted); shipPoseCache is the
     // fallback for ticks outside the lag-comp window (rare, since temporal
     // plausibility above already rejects anything beyond 12 ticks).
-    const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, tick);
+    const rewoundShooter = this.snapshotRing.getPoseAt(shooterId, effTick);
     const fallbackShooter = this.shipPoseCache.get(shooterId);
     const sx = rewoundShooter?.x ?? fallbackShooter?.x;
     const sy = rewoundShooter?.y ?? fallbackShooter?.y;
@@ -1216,6 +1227,28 @@ export class SectorRoom extends Room<SectorState> {
     let bestHitIsObstacle = false;
     let bestHitX = 0;
     let bestHitY = 0;
+    // weapon-hit-prediction Phase 0 — the closest mount-hit's applied
+    // damage, tracked in lockstep with `bestHitId` so the aggregate
+    // `hit_ack` carries the exact value `applyDamage()` used for that
+    // target. That is also what the imminent `DamageEvent` carries, which
+    // lets the client de-dupe a confirmed prediction. Captured per-mount
+    // (not from the loop-scoped `hitscanDef` after the loop) so it stays
+    // correct for the Phase-2b multi-weapon future — today every mount in
+    // a salvo shares one `weaponDef`, so this equals that single value.
+    let bestHitDamage = 0;
+    // weapon-hit-prediction Phase 3 — the closest mount-hit's WIRE id
+    // (`wireTargetId`), tracked in lockstep with `bestHitId`. The internal
+    // `bestHitId`/`mountHitId` for a swarm target is the registry key
+    // (`swarm-drone-<i>` / `lwbot-<n>`), but `DamageEvent.targetId` and
+    // `laser_fired.targetId` both use the dense wire id `swarm-<entityId>`
+    // — which is also the only id space the client knows (its predWorld
+    // drone bodies are keyed `swarm-<entityId>`). Acking the internal id
+    // made the client's hitscan reconcile mis-compare EVERY drone hit as
+    // `corrected`. The `hit_ack` must speak the same wire id as every
+    // other client-facing combat message; `wireTargetId` already is that
+    // id (it's what `laser_fired` broadcasts). Player / wreck / lingering
+    // targets are unaffected (their `wireTargetId === mountHitId`).
+    let bestHitWireId: string | undefined;
 
     const playerAngles = this.playerMountAngles.get(shooterId);
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
@@ -1253,6 +1286,11 @@ export class SectorRoom extends Room<SectorState> {
         clientTick: tick,
         serverTick: this.serverTick,
         tickDelta: this.serverTick - tick,
+        // weapon-hit-prediction shot-rejected fix (capture uf0o8g): the
+        // tick actually used for lag-comp rewind. When != clientTick the
+        // claim was stale and got clamped to the window floor (resolved,
+        // NOT dropped). Lets on-device captures confirm the fix.
+        effTick,
         weapon,
         rewoundFromRing: rewoundShooter !== undefined,
         shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
@@ -1293,7 +1331,7 @@ export class SectorRoom extends Room<SectorState> {
         if (targetId === shooterId) continue;
         const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
-        const rewound = this.snapshotRing.getPoseAt(targetId, tick);
+        const rewound = this.snapshotRing.getPoseAt(targetId, effTick);
         const fallback = this.shipPoseCache.get(targetId);
         const cx = rewound?.x ?? fallback?.x;
         const cy = rewound?.y ?? fallback?.y;
@@ -1324,7 +1362,7 @@ export class SectorRoom extends Room<SectorState> {
       }
 
       for (const rec of this.swarmRegistry.all()) {
-        const rewound = this.snapshotRing.getPoseAt(rec.id, tick);
+        const rewound = this.snapshotRing.getPoseAt(rec.id, effTick);
         const b = slotBase(rec.slot);
         const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
         const cy = rewound?.y ?? this.sabF32[b + SLOT_Y_OFF]!;
@@ -1380,6 +1418,13 @@ export class SectorRoom extends Room<SectorState> {
           bestHitIsObstacle = mountHitIsObstacle;
           bestHitX = hitX;
           bestHitY = hitY;
+          bestHitDamage = hitscanDef.damage;
+          // wire id (== mountHitId for player/wreck/lingering; the dense
+          // `swarm-<entityId>` for drones/asteroids) — see the bestHitWireId
+          // declaration. This is what every other client-facing combat
+          // message already uses, so the client's hit-prediction reconcile
+          // compares like-for-like.
+          bestHitWireId = wireTargetId;
         }
       }
 
@@ -1405,7 +1450,7 @@ export class SectorRoom extends Room<SectorState> {
     // resolved later via the snapshot's `projectiles[]` slice.
     void bestHitX; void bestHitY; void bestHitIsObstacle; // reserved for future hit-pos in hit_ack
     if (bestHitId) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitId };
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitWireId, damage: bestHitDamage };
       client.send('hit_ack', ack);
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
@@ -4000,39 +4045,34 @@ export class SectorRoom extends Room<SectorState> {
           }
         }
 
-        // Phase C (2026-05-09 AI lockstep) — drone reconcile-anchor slice.
-        //
-        // For every drone in this recipient's 9-cell interest window, ship
-        // its pose AT `serverTick` (read from `SnapshotRing.getPoseAt`).
-        // The client uses these to reset predWorld drone bodies before the
-        // reconciler replay loop, so AI re-tick across replay starts from a
-        // server-authoritative pose at `ackedTick`. Closes the structural
-        // lookahead-gap that surfaced as ~10–15 u per-packet snap distance
-        // (visible on mobile as "two positions fighting").
+        // Slim per-drone turret + shield slice (drone-snapshot-interpolation
+        // pivot, 2026-05-18). Drone POSE is NO LONGER on the JSON snapshot —
+        // it flows exclusively on the binary swarm channel and the client
+        // renders it via time-based `interpolateSwarmPose` (no client AI
+        // re-sim, no predWorld reconcile anchor). For every drone in this
+        // recipient's 9-cell interest window we emit ONLY the non-pose
+        // fields that ride JSON: per-mount turret angles + the shield-down
+        // flag, and ONLY when there is something to carry (no `{ id }`-only
+        // entries — they would just be wasted bytes).
         //
         // Reuse the `interestScratch` Set populated by the swarm-broadcast
         // block earlier in this `update()` — same per-(client, tick) cell
-        // window, no second `query9` call. Out-of-interest drones aren't
-        // anchored; they continue on the binary-channel cadence (acceptable
-        // since they cannot collide with the local ship within a snapshot
-        // window). Asteroids (kind === 0) are skipped — they don't run AI
-        // and don't need the anchor.
+        // window, no second `query9` call. Asteroids (kind === 0) are
+        // skipped — they have no turret/shield. The binary channel still
+        // carries every in-interest drone's pose at full cadence.
         let drones: SnapshotMessage['drones'];
         const interest = this.interestScratch.get(client.sessionId);
         if (interest && interest.size > 0) {
           for (const eid of interest) {
             const rec = this.swarmRegistry.getByEntityId(eid);
             if (!rec || rec.kind !== 1) continue;
-            const pose = this.snapshotRing.getPoseAt(rec.id, this.serverTick);
-            if (!pose) continue;
-            if (!drones) drones = [];
             // Phase 4c — per-drone mount angles for in-interest drones
             // whose ship-kind has rotating mounts. Only emitted when at
             // least one angle is non-zero (quantised to dedupe trailing
             // noise), same gate as the player snapshot path. Out-of-
-            // interest drones never reach this branch, so their mounts
-            // freeze at baseAngle on the client until they re-enter
-            // interest and the next snapshot anchors them.
+            // interest drones never reach this branch, so their turrets
+            // render at baseAngle on the client until they re-enter
+            // interest and the next snapshot updates them.
             const droneAngles = this.droneMountAngles.get(rec.id);
             let droneMountAnglesArr: number[] | undefined;
             if (droneAngles && droneAngles.length > 0) {
@@ -4047,11 +4087,10 @@ export class SectorRoom extends Room<SectorState> {
                 }
               }
             }
+            if (!droneMountAnglesArr && !rec.shieldDown) continue;
+            if (!drones) drones = [];
             drones.push({
               id: eid,
-              x: pose.x, y: pose.y,
-              vx: pose.vx, vy: pose.vy,
-              angle: pose.angle, angvel: pose.angvel,
               ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
               ...(rec.shieldDown ? { shieldDown: true } : {}),
             });

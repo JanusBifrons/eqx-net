@@ -1,5 +1,17 @@
 # Reconciler replay scaling — WIP handoff (2026-05-16 → tomorrow)
 
+> **⚠️ SUPERSEDED (2026-05-18) — drone replay re-sim no longer exists.**
+> The entire premise of this document (relevance-culled *client drone
+> re-sim* during reconciler replay — Option A, `droneRelevance.ts`,
+> `DRONE_RESIM_BUDGET`, the `replaySeed` drone anchor) was **deleted** by
+> the drone-snapshot-interpolation pivot. Drones are pure
+> snapshot-interpolated; `Reconciler.reconcile` has no drone seed param
+> and replay no longer touches drones. Read
+> [`drone-snapshot-interpolation.md`](./drone-snapshot-interpolation.md).
+> Retained as investigation history and because the *player* reconcile /
+> bulk-gap-smoothing / `playerCorrectionHalfLifeMs` work it also covered
+> is still live on `main`.
+
 > **Status (2026-05-17): SHIPPED — Option A (relevance-culled re-sim).** The
 > §6 fork was decided (user-selected fork **A**); it is implemented, green on
 > every deterministic gate, and the scaling lock proves the win host-robustly.

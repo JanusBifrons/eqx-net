@@ -1,21 +1,16 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
-import {
-  partitionDronesByRelevance,
-  type DroneRelevanceInput,
-} from '@core/prediction/droneRelevance';
-import { anchoredDroneReseedSmoothing } from '@core/prediction/correctionSmoothing';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
   applyCollisionResolved,
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
   recordRemoteCorrection,
@@ -49,21 +44,34 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
+import { HitPredictionLedger } from '@core/combat/HitPrediction';
+import {
+  predictShotOutcome,
+  reconcileAckToFeedback,
+  reconcileDamageToFeedback,
+  type PredictedFeedbackSink,
+  type ReconcileFeedbackSink,
+  type MountFireGeom,
+} from '../combat/HitPrediction.client';
+import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
-import { setSwarmDisplayDelayMs, ADAPTIVE_DELAY_FACTOR } from './swarmInterpolation';
+import {
+  setSwarmDisplayDelayMs,
+  ADAPTIVE_DELAY_FACTOR,
+  interpolateSwarmPose,
+  type InterpolatedPose,
+} from './swarmInterpolation';
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
-import type { AiEntity, AiPlayerView } from '@core/contracts/IAiBehaviour';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 import {
   pickTarget,
   rotateMountToward,
   wrapPi,
-  type MountTargetView,
 } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
@@ -124,17 +132,6 @@ export interface PredictionStats {
   rttStdDevMs: number;
   /** Stage 4 — sliding-window count of dropped snapshots (last 10 arrivals). */
   droppedSnapshotsRecent: number;
-  /** Phase B — sliding-window p50 of per-drone snap distance (last 240 events). */
-  swarmSnapP50: number;
-  /** Phase B — sliding-window p99 of per-drone snap distance (last 240 events). */
-  swarmSnapP99: number;
-  /** Phase B — sliding-window p99 of per-drone angle delta (last 240 events). */
-  swarmAngleP99: number;
-  /** Phase B — sliding-window p99 of per-drone angvel delta (last 240 events). */
-  swarmAngvelP99: number;
-  /** Phase B — total number of drone snaps logged since connect. Different from
-   *  `swarm_snap_diagnostics` ring length (capped) — gives total volume. */
-  swarmSnapCount: number;
 }
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
@@ -167,41 +164,6 @@ const ANGLE_NOISE_THRESHOLD = 0.001;
 function remoteOffsetHalfLifeForDrift(drift: number): number {
   if (drift < 0.5) return 12;
   return 25;
-}
-
-/**
- * Half-life for drone render-pose lerp offsets — much longer than the
- * remote-ship version because drone snaps are structurally bigger.
- *
- * Math: each binary swarm packet snaps the drone backward by `LEAD_TICKS
- * × velocity × FIXED_DT` worth of motion (the predWorld was forward-
- * predicted ~6 ticks ahead). For V=30 u/s that's ~3 u; for V=100 u/s
- * it's ~10 u. The remote-ship 25 ms half-life decays the offset faster
- * than predWorld's forward advance can replace it, producing the
- * frame-to-frame backward motion the user reported as "double vision."
- *
- * Derivation in `tests/scenarios/droneRenderSmoothness.test.ts`: for
- * critically-damped spring x(t) = (x₀ + ω·x₀·t)·exp(-ω·t) starting
- * from rest, the per-frame decay rate is bounded above by predWorld's
- * forward advance rate when `H ≥ K·dt·√(LEAD_TICKS/2)` — about 48 ms
- * for `dt=16.67`, `LEAD_TICKS=6`. The threshold is V-independent.
- *
- * Picking 100 ms gives ~2× margin over the math bound. Larger snaps
- * (which suggest a real desync, not just leadTicks lookahead) get a
- * 150 ms half-life so the recovery is even gentler.
- */
-function droneRenderOffsetHalfLifeForDrift(drift: number): number {
-  if (drift < 1) return 100;
-  return 150;
-}
-
-/** Wrap angle delta to [-π, π] so the spring lerps the short way around. */
-function normalizeAngleDelta(a: number): number {
-  const TWO_PI = 2 * Math.PI;
-  let r = a % TWO_PI;
-  if (r > Math.PI) r -= TWO_PI;
-  if (r < -Math.PI) r += TWO_PI;
-  return r;
 }
 
 /** Termination thresholds for remote-ship offset springs. Match the
@@ -243,14 +205,6 @@ const RTT_SAMPLE_CLAMP_MS = 250;
 const STEADY_STATE_INTERVAL_MIN_MS = 35;
 const STEADY_STATE_INTERVAL_MAX_MS = 75;
 
-/** Nominal snapshot inter-arrival (ms): the server broadcasts every 3
- *  server ticks at 60 Hz = 50 ms (steady cadence; src/server/CLAUDE.md
- *  snapshot-rate). Used by `anchoredDroneReseedSmoothing` to classify a
- *  snapshot as a network-bunched delivery gap (interval > 50 × 1.8 ≈
- *  90 ms ⇒ ≥1 missed broadcast). Fixed, NOT the EWMA — the EWMA is
- *  polluted by the very gaps we're detecting. */
-const SNAPSHOT_NOMINAL_INTERVAL_MS = 50;
-
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;
 function nextShotId(): string {
@@ -291,6 +245,7 @@ export class ColyseusGameClient {
     boostingShips: new Set(),
     thrustingShips: new Set(),
     pendingDamageNumbers: [],
+    pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
   };
@@ -311,89 +266,36 @@ export class ColyseusGameClient {
   private predSwarmKeys = new Set<string>();
 
   /**
-   * Phase 3 of the network-feel reset (2026-05-09): client-side drone AI.
-   *
-   * The same `AiController` + `HostileDroneBehaviour` modules the server runs,
-   * driving the same drone bodies (in the client's predWorld) with the same
-   * deterministic intent the server is producing on its side. This closes
-   * the "drones not predicted client-side" architectural gap that produced
-   * the 22 u correction bursts in cap `2026-05-09T09-54-45-849Z-8grdi1`
-   * and the visible clip-through the user reported.
-   *
-   * Sink: applies the AI's per-tick (fx, fy, torque) directly to the matching
-   * `swarm-${entityId}` body in `predWorld` via `applyImpulse`. The slot
-   * passed to `postIntent` is the numeric drone entityId — same key the
-   * mirror uses, so no mapping needed.
+   * No-op AI intent sink. `AiController`'s constructor requires a sink, but
+   * post the drone-snapshot-interpolation pivot (2026-05-18) the client
+   * NEVER ticks the drone brain — `_aiController` is a hostility ledger
+   * only (see `_aiRegisteredIds`). Drones are pure snapshot-interpolated
+   * from the binary swarm wire; no client AI ⇒ no divergent inputs ⇒
+   * nothing to snap. The historical client-side re-sim (the
+   * 2026-05-09 → 2026-05-17 Phase C / Option A architecture) was retired
+   * here; see `docs/architecture/drone-snapshot-interpolation.md`.
    */
-  private readonly _aiSink: AiIntentSink = {
-    postIntent: (slot, fx, fy, torque, setAngvel) => {
-      const id = `swarm-${slot}`;
-      // Mirror the server-worker order: snap-set angvel first, then layer
-      // any linear/torque impulse on top. Behaviours wanting player-
-      // equivalent turn rate set `setAngvel` and leave `torque = 0`.
-      if (setAngvel !== undefined) this.predWorld?.setShipAngvel(id, setAngvel);
-      this.predWorld?.applyImpulse(id, fx, fy, torque);
-    },
-  };
+  private readonly _aiSink: AiIntentSink = { postIntent: () => {} };
   private readonly _aiController = new AiController(this._aiSink);
-  /** Numeric entityIds currently registered with `_aiController`. */
+  /** Numeric entityIds currently registered with `_aiController`. Post the
+   *  drone-snapshot-interpolation pivot (2026-05-18) `_aiController` is a
+   *  HOSTILITY LEDGER ONLY — its brain is never ticked client-side. The
+   *  set still tracks register/unregister so `isEntityHostileToPlayer`
+   *  (HaloRadar threat colour, fed by `damage`/`bot_aggro` → `markHostile`)
+   *  resolves, and so the registrations are torn down on sector handoff. */
   private readonly _aiRegisteredIds = new Set<number>();
-  /** Reusable AiPlayerView buffer to avoid per-tick allocation in the AI tick. */
-  private readonly _aiPlayersBuf: AiPlayerView[] = [];
-  /**
-   * Phase C follow-up (2026-05-09 mobile re-test): set of drone entityIds the
-   * MOST RECENT snapshot's `drones[]` slice anchored. For these drones the
-   * snapshot path (Reconciler.reconcile + replay loop running client AI) is
-   * the source of truth for predWorld pose; the binary swarm packet's
-   * `setShipState` call must be skipped or it will pull predWorld backward
-   * by `currentTick − ackedTick` ticks of motion every packet, undoing the
-   * forward-extrapolation Phase C just produced. (The mobile cap
-   * 2026-05-09 18:25 showed the two paths fighting: per-drone snap distance
-   * tripled vs pre-C because every packet snap pulled drones back to where
-   * server's pose WAS, then replay re-extrapolated forward, then next
-   * packet pulled back again.) Drones NOT in this set fall through to the
-   * legacy setShipState path — out-of-interest drones receive their pose
-   * only via the decimated binary channel, so the binary packet still
-   * needs to anchor them.
-   *
-   * Rebuilt from scratch on each snapshot so drones leaving interest drop
-   * out automatically. Cleared on sector handoff alongside the other
-   * prediction-state surfaces.
-   */
-  private readonly _droneSnapshotAnchored = new Set<number>();
-
-  /**
-   * Phase 3 follow-up (2026-05-09): per-drone render lerp offsets.
-   *
-   * Every binary swarm packet calls `setShipState` on the matching drone
-   * body in predWorld — that "rewinds" the drone by ~leadTicks worth of
-   * AI-integrated motion to the server's just-shipped pose. AI then
-   * re-extrapolates over the next few RAF frames to bring it back to
-   * "now." If we render predWorld directly, that rewind shows as a
-   * 50 ms-cadence backward snap → forward catch-up oscillation — the
-   * "double vision" the user reported after the render path was
-   * re-pointed at predWorld.
-   *
-   * Fix: same pattern player ships use (`_remoteShipOffsets`). When the
-   * snap happens, capture the pre-snap render position; the offset is
-   * `pre - post`. Each frame the offset decays via critically-damped
-   * spring; the rendered drone position is `predWorld + offset`. Visible
-   * motion stays smooth across the snap.
-   */
-  private readonly _droneRenderOffsets = new Map<
-    number,
-    { sx: SpringState; sy: SpringState; sa: SpringState; halfLifeMs: number }
-  >();
-  /**
-   * Per-drone magnitude (u) of the most recent snapshot correction, captured
-   * unthrottled at the `swarm_snap_diagnostics` site (the `dist` already
-   * computed there — zero extra cost, no per-drone ring scan). Read once per
-   * snapshot by the relevance partition (Option A, 2026-05-17) so a drone that
-   * is actively diverging is re-simmed even when far / non-hostile. Keyed by
-   * numeric entityId; swept alongside `_droneRenderOffsets` on drone despawn
-   * and cleared on sector reset.
-   */
-  private readonly _droneLastSnapDist = new Map<number, number>();
+  /** Scratch for the per-frame kinematic drone follower — `updateMirror`
+   *  interpolates each in-interest drone's pose off its decoder-fed
+   *  `poseRing` (display-delay + teleport guard) and drives the predWorld
+   *  drone body to it so player↔drone collision stays render-consistent.
+   *  Server stays hit-authoritative; this is presentation/collision only. */
+  private readonly _swarmInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  /** Scratch the `tickLocalMountAim` aim builder writes the resolved
+   *  drone pose into. `buildLocalAimTargets` no longer interpolates — it
+   *  READS the single per-frame pose `updateMirror` wrote (via
+   *  `resolveDroneDisplayPose`) into this scratch. Kept distinct from
+   *  `_swarmInterpScratch` so the two never alias across frame phases. */
+  private readonly _aimInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -541,26 +443,7 @@ export class ColyseusGameClient {
     rttMeanMs: 0,
     rttStdDevMs: 0,
     droppedSnapshotsRecent: 0,
-    swarmSnapP50: 0,
-    swarmSnapP99: 0,
-    swarmAngleP99: 0,
-    swarmAngvelP99: 0,
-    swarmSnapCount: 0,
   };
-
-  /** Phase B (2026-05-09 AI lockstep) — per-drone snap-event ring buffers
-   *  for surfacing p50/p99 metrics on `stats.swarmSnap*`. Sliding window of
-   *  the most recent 240 snap events across all drones (~12 s at 20 Hz × 10
-   *  drones); older entries drop off the front. Three parallel arrays keep
-   *  the hot path branch-free. */
-  private readonly _swarmSnapDistBuf: number[] = [];
-  private readonly _swarmSnapAngleBuf: number[] = [];
-  private readonly _swarmSnapAngvelBuf: number[] = [];
-  /** Phase B — last server tick we emitted a `swarm_snap_diagnostics` event
-   *  for each drone. Caps log volume to one event per drone per 4 ticks
-   *  (~67 ms at 60 Hz) so the 500-entry log ring isn't dominated by snap
-   *  events when many drones are in interest. */
-  private readonly _swarmSnapLastLogTick = new Map<number, number>();
 
   private room: Room | null = null;
 
@@ -649,10 +532,6 @@ export class ColyseusGameClient {
    *  rather than per-mount because all mounts in a slot share one target
    *  (user-clarified design rule). */
   private _localSlotTarget: string | null = null;
-  /** Scratch buffer reused across ticks — fed to `pickTarget` as the
-   *  candidate list. Cleared and refilled each call; never escapes the
-   *  ColyseusClient so concurrent reuse is fine. */
-  private _droneTargetsScratch: MountTargetView[] = [];
   /** Idle-suppression for the input upstream (network-discipline P4). The
    *  client only emits an `input` message when the control state has changed
    *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
@@ -674,9 +553,17 @@ export class ColyseusGameClient {
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
   private readonly _recentIntervals: number[] = [];
-  /** Phase 6.5 — EWMA of `snapshotIntervalMs`, used to size the adaptive
-   *  swarm display-delay buffer. 0 = uninitialised; first snapshot seeds. */
-  private _intervalEwma = 0;
+  /** Drone snapshot-interpolation pivot (Step 4, 2026-05-18) — adaptive
+   *  swarm display-delay is sized from the BINARY swarm packet
+   *  inter-arrival cadence, NOT the 20 Hz JSON snapshot interval. The
+   *  binary channel is what actually carries drone pose: in-interest ≈
+   *  per server tick (~16 ms), out-of-interest decimated (~100–170 ms).
+   *  Sizing the buffer to the JSON snapshot rate (always ~50 ms) would
+   *  over-buffer the fast combat case and under-buffer decimated drones.
+   *  `_swarmBinaryLastMs` = perf.now() of the previous binary packet (-1 =
+   *  none yet); `_swarmBinaryEwma` = EWMA of inter-arrival ms (0 = unseeded). */
+  private _swarmBinaryLastMs = -1;
+  private _swarmBinaryEwma = 0;
   private readonly _recentCorrFlags: number[] = [];
 
   // Remote ship interpolation: per-player timestamped history
@@ -686,6 +573,31 @@ export class ColyseusGameClient {
   private readonly ghostManager = new GhostManager();
   /** Damage flash: set of player IDs currently flashing red (cleared after one frame). */
   private readonly _damageFlashFrames = new Map<string, number>();
+  /** weapon-hit-prediction — client favor-the-shooter hit-prediction ledger.
+   *  Phase 2 records a prediction on every fire (presentation-only) and
+   *  TTL-expires it; Phase 3 wires the hit_ack / DamageEvent reconcile so
+   *  exactly one number shows per confirmed hit. The server stays 100%
+   *  hit-authoritative — this only hides the RTT on the felt impact. */
+  private readonly _hitLedger = new HitPredictionLedger();
+  /** beam-attach fix (capture pe6rdt) — `performance.now()` of the last
+   *  LOCAL hitscan fire. The continuous liveBeam (redrawn from
+   *  `mirror.ships` every frame, so rigidly ship-attached) persists for
+   *  `LIVE_BEAM_PERSIST_MS` past this so a tap / held burst reads as ONE
+   *  continuous beam instead of a 1-tick flicker or a chain of frozen
+   *  ghosts. Null ⇒ no live hitscan beam. */
+  private _lastHitscanFireMs: number | null = null;
+  /** weapon-hit-prediction Phase 3 — routes ledger reconcile corrections
+   *  onto the existing mirror drains. cancel → the pendingDamageNumber-
+   *  Cancels queue (renderer hard-cancels by tag); flash-clear → drop the
+   *  predicted 6-frame flash. */
+  private readonly _reconcileSink: ReconcileFeedbackSink = {
+    cancelPredictedNumber: (id) => {
+      this.mirror.pendingDamageNumberCancels?.push(id);
+    },
+    clearPredictedFlash: (tid) => {
+      this._damageFlashFrames.delete(tid);
+    },
+  };
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
 
@@ -752,7 +664,11 @@ export class ColyseusGameClient {
     this.lastSnapshotAt = 0;
     this._recentIntervals.length = 0;
     this._recentCorrFlags.length = 0;
-    this._intervalEwma = 0;
+    // Drone display-delay cadence tracking — reset so the destination
+    // sector's binary cadence is learned fresh (a stale cross-warp gap
+    // must not seed the adaptive delay at the ceiling).
+    this._swarmBinaryLastMs = -1;
+    this._swarmBinaryEwma = 0;
     // Spatial seed (2026-05-16) — see the method doc comment. Despawn the
     // local predWorld ship body and drop the Reconciler so the
     // destination's first state-diff / snapshot reseeds the body AT THE
@@ -774,29 +690,14 @@ export class ColyseusGameClient {
       this._aiController.unregister(`${id}`);
     }
     this._aiRegisteredIds.clear();
-    this._droneRenderOffsets.clear();
-    this._droneLastSnapDist.clear();
-    this._droneSnapshotAnchored.clear();
     // Multi-mount/turret refactor (Phase 4b.2): drop the local ship's
     // sticky turret target on sector handoff — the destination sector has
     // a fresh swarm with different ids, so holding the previous pin would
     // mean "no target in view" until the controller times out and re-picks.
     this._localSlotTarget = null;
-    // Phase B — drop the per-drone snap-event rings + log throttle. The new
-    // sector has a fresh swarm; carrying old percentiles across the warp
-    // gap pollutes the visible p50/p99 in the dev overlay.
-    this._swarmSnapDistBuf.length = 0;
-    this._swarmSnapAngleBuf.length = 0;
-    this._swarmSnapAngvelBuf.length = 0;
-    this._swarmSnapLastLogTick.clear();
     // Join-render diagnostic latch — re-arm so the destination room's
     // `tryInitPredWorld` success fires a fresh `local_pose_resolved`.
     this._localPoseResolvedLogged = false;
-    this.stats.swarmSnapP50 = 0;
-    this.stats.swarmSnapP99 = 0;
-    this.stats.swarmAngleP99 = 0;
-    this.stats.swarmAngvelP99 = 0;
-    this.stats.swarmSnapCount = 0;
   }
 
   async connect(
@@ -953,6 +854,23 @@ export class ColyseusGameClient {
     // server's `laser_fired` events use the same key for swarm hits.
     room.onMessage('swarm', (raw: unknown) => {
       const bw = bwStats();
+      // Drone display-delay cadence (Step 4): EWMA of binary-packet
+      // inter-arrival. This is the ACTUAL drone-pose channel the
+      // interpolation buffer must cover — in-interest ≈ per server tick
+      // (~16 ms), out-of-interest decimated (~100–170 ms) — unlike the
+      // steady 20 Hz JSON snapshot. Sample clamped to ≤ 500 ms so one
+      // tab-background / radio gap can't pin the EWMA at the ceiling (the
+      // JSON drop-detector `dropBias` already biases up on loss bursts).
+      const swNowMs = performance.now();
+      if (this._swarmBinaryLastMs >= 0) {
+        const dtMs = Math.min(500, swNowMs - this._swarmBinaryLastMs);
+        if (dtMs > 0) {
+          this._swarmBinaryEwma = this._swarmBinaryEwma === 0
+            ? dtMs
+            : this._swarmBinaryEwma * 0.85 + dtMs * 0.15;
+        }
+      }
+      this._swarmBinaryLastMs = swNowMs;
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
         decodeSwarmPacket(raw, this.mirror);
@@ -967,8 +885,24 @@ export class ColyseusGameClient {
       useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
-    room.onMessage('damage', (evt: DamageEvent) => {
-      this.handleDamage(evt);
+    room.onMessage('damage', (raw: unknown) => {
+      // weapon-hit-prediction Phase 3 — defensive zod parse on receive
+      // (invariant #4; mirrors the collision_resolved drop-on-fail). The
+      // client now CONSUMES this message for prediction de-dupe, so it
+      // crosses the trust boundary.
+      const parsed = DamageEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const evt = parsed.data;
+      // Single reconcile path: if a prediction already showed this number,
+      // suppress handleDamage's duplicate. handleDamage stays the SOLE
+      // HP/HUD authority — only the number push is gated.
+      const suppressNumber = reconcileDamageToFeedback(
+        this._hitLedger,
+        { targetId: evt.targetId, damage: evt.damage },
+        evt.shooterId === this.mirror.localPlayerId,
+        performance.now(),
+      );
+      this.handleDamage(evt, suppressNumber);
     });
 
     room.onMessage('shield', (evt: ShieldEventMessage) => {
@@ -978,7 +912,24 @@ export class ColyseusGameClient {
       this.handleDestroy(evt);
     });
 
-    room.onMessage('hit_ack', (ack: HitAckMessage) => {
+    room.onMessage('hit_ack', (raw: unknown) => {
+      // weapon-hit-prediction Phase 3 — defensive zod parse (invariant #4;
+      // the client now consumes hit_ack as its single reconcile path, so
+      // it crosses the trust boundary). Drop-on-fail like collision_resolved.
+      const parsed = HitAckSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const ack = parsed.data;
+      // THE single reconcile path — runs BEFORE ghostManager.resolve so a
+      // mispredicted number is hard-cancelled the same frame the ghost
+      // fades. resolve() itself is unchanged (still fades the ghost salvo
+      // by clientShotId on the wire ack).
+      reconcileAckToFeedback(
+        this._hitLedger,
+        ack.clientShotId,
+        { hit: ack.hit, targetId: ack.targetId, damage: ack.damage },
+        this._reconcileSink,
+        performance.now(),
+      );
       this.ghostManager.resolve(ack.clientShotId, ack.hit);
       if (ack.rejected) {
         // Surface rejection events in the diagnostic ring buffer. The 2026-05-06
@@ -1334,7 +1285,7 @@ export class ColyseusGameClient {
     }
   }
 
-  private handleDamage(evt: DamageEvent): void {
+  private handleDamage(evt: DamageEvent, suppressNumber = false): void {
     const localId = this.mirror.localPlayerId;
     if (evt.targetId === localId) {
       // Phase 7 — use the event-provided PER-KIND maxes, not the global
@@ -1355,8 +1306,12 @@ export class ColyseusGameClient {
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
 
-    // Floating damage number at hit location.
-    if (this.mirror.pendingDamageNumbers) {
+    // Floating damage number at hit location. weapon-hit-prediction
+    // Phase 3 — suppressed when a confirmed/settled prediction already
+    // showed this number (de-dupe: exactly one number per confirmed hit).
+    // Everything else in handleDamage stays unconditional — this remains
+    // the SOLE HP/HUD/flash/healthbar/hostility authority.
+    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
@@ -1668,21 +1623,21 @@ export class ColyseusGameClient {
       const smoothed = prev * 0.8 + instantHz * 0.2;
       useUIStore.getState().setServerTickHz(smoothed);
 
-      // Phase 6.5 — adapt the swarm display-delay buffer's lookback window
-      // to the observed inter-arrival cadence. EWMA-smoothed so single-tick
-      // jitter doesn't make sprites stutter as the delay snaps around.
-      // Steady-state at 60 Hz server: intervalMs ≈ 50 → delay = 75 → clamped
-      // to 100 (the floor). Burn / overload at 19 Hz: intervalMs ≈ 170 →
-      // delay = 255 — buffer always has half an arrival of headroom.
-      this._intervalEwma = this._intervalEwma === 0
-        ? intervalMs
-        : this._intervalEwma * 0.85 + intervalMs * 0.15;
-      // Stage 4 — observe each snapshot's serverTick for drop detection;
-      // bias the swarm display-delay upward when the wire is dropping
-      // packets so the interp buffer doesn't run out of bracketing arrivals.
+      // Adapt the swarm display-delay buffer to the BINARY swarm cadence
+      // (Step 4, drone-snapshot-interpolation pivot). `_swarmBinaryEwma`
+      // (updated in the 'swarm' handler) tracks the actual drone-pose
+      // channel inter-arrival, NOT this 20 Hz JSON snapshot interval:
+      //   - in-interest combat: ewma ≈ 16–30 ms → ×1.5 ≈ 45 → clamped UP
+      //     to the 100 ms floor (two bracketing per-tick samples always
+      //     exist → smooth lerp, zero steady-state extrapolation).
+      //   - out-of-interest decimated: ewma ≈ 100–170 ms → ×1.5 ≈
+      //     150–255 → within the 280 ms ceiling, still has a bracket.
+      // Re-evaluated on the JSON snapshot tick (~20 Hz) — frequent enough
+      // to track cadence shifts, and `dropBias` (JSON drop-detector) still
+      // biases up on genuine loss bursts so the buffer never empties.
       observeSnapshotTick(this._dropDetector, snap.serverTick);
       const dropBias = computeInterpBiasMs(this._dropDetector.dropCount);
-      setSwarmDisplayDelayMs(this._intervalEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
+      setSwarmDisplayDelayMs(this._swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
     }
 
     // Rolling jitter: max − min of the last 10 snapshot intervals.
@@ -1863,181 +1818,44 @@ export class ColyseusGameClient {
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
 
-      // Phase C (2026-05-09 AI lockstep) — build the drone reconcile-anchor
-      // seed map from `snap.drones`. Each entry's `id` is the dense u16
-      // entityId matching the binary swarm channel; predWorld keys swarm
-      // bodies as `swarm-${entityId}`. Seeding before replay re-anchors
-      // every in-interest drone at the snapshot's `serverTick`, so the
-      // reconciler's per-replay-tick AI tick starts from a server-
-      // authoritative pose at `ackedTick` rather than from "wherever the
-      // most recent binary swarm packet happened to drop the body". The
-      // reconciler installs each pose via `world.setShipState` before
-      // entering the replay loop (see Reconciler.reconcile).
-      // Rebuild the snapshot-anchor set from this snapshot's drone slice.
-      // The set tells `syncSwarmIntoPredWorld` to skip its setShipState
-      // call for these drones (the snapshot + replay path is now the
-      // source of truth for their predWorld pose; binary-packet snapping
-      // would just yank them backward by leadTicks worth of motion).
-      this._droneSnapshotAnchored.clear();
-      let droneSeed: Map<string, ShipPhysicsState> | undefined;
-      // Graceful bulk-gap recovery (2026-05-17, diag xxiyix). Capture each
-      // anchored drone's PRE-reseed predWorld pose so that, IF this snapshot
-      // arrived after a delivery gap, we can glide the (otherwise
-      // synchronized, ~30-at-once) re-anchor via `_droneRenderOffsets`
-      // instead of teleporting. Steady-state (on-cadence) snapshots set NO
-      // offset (decided by `anchoredDroneReseedSmoothing`) — byte-identical
-      // to pre-fix, Phase C invariant + feel-test-lockstep canary intact.
-      const preReseedDronePos = new Map<number, { x: number; y: number; angle: number }>();
-      if (snap.drones && snap.drones.length > 0 && this.predWorld) {
-        droneSeed = new Map();
+      // Drone snapshot slice (drone-snapshot-interpolation pivot,
+      // 2026-05-18). Drones are PURE snapshot-interpolated from the binary
+      // swarm wire — NO client AI re-sim, NO predWorld reconcile anchor,
+      // NO relevance cull. `snap.drones[]` is a slim turret/shield slice
+      // ({ id, mountAngles?, shieldDown? }); the pose flows on the binary
+      // channel and renders via `interpolateSwarmPose`. Push the
+      // authoritative per-mount angles + shield-down flag into the swarm
+      // mirror so MountVisualManager rotates the drone turrets and the
+      // collider swap tracks the server. Out-of-interest drones never
+      // appear here, so their mountAngles stays undefined (renderer falls
+      // back to baseAngle) — unchanged.
+      if (snap.drones && snap.drones.length > 0) {
         for (const d of snap.drones) {
-          this._droneSnapshotAnchored.add(d.id);
-          const key = `swarm-${d.id}`;
-          // Skip drones we don't have a body for yet (will be spawned by
-          // the next binary packet via syncSwarmIntoPredWorld). Setting
-          // state on a non-existent body is a silent no-op in World, but
-          // building the map only for known bodies makes the test path
-          // observable.
-          if (this.predWorld.hasShip(key)) {
-            droneSeed.set(key, {
-              x: d.x, y: d.y, vx: d.vx, vy: d.vy, angle: d.angle, angvel: d.angvel,
-            });
-            const pre = this.predWorld.getShipState(key);
-            if (pre) preReseedDronePos.set(d.id, { x: pre.x, y: pre.y, angle: pre.angle });
-          }
-          // Phase 4c — push the authoritative drone mount angles into
-          // the swarm mirror so MountVisualManager rotates the drone's
-          // turret sprites to match what the server is computing (and
-          // so handleAiFire's lag-comp matches what the player saw).
-          // Out-of-interest drones never appear in `snap.drones`, so
-          // their mirror entry's mountAngles stays undefined and the
-          // renderer falls back to baseAngle (static barrels).
           const sw = this.mirror.swarm?.get(d.id);
-          if (sw) {
-            if (d.mountAngles && d.mountAngles.length > 0) {
-              sw.mountAngles = d.mountAngles.slice();
-            } else if (sw.mountAngles) {
-              sw.mountAngles = undefined;
-            }
-            if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
+          if (!sw) continue;
+          if (d.mountAngles && d.mountAngles.length > 0) {
+            sw.mountAngles = d.mountAngles.slice();
+          } else if (sw.mountAngles) {
+            sw.mountAngles = undefined;
           }
+          if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
         }
       }
 
-      // Relevance-culled replay (2026-05-17 — Option A, diag a3f5na). The
-      // chapter-2 Phase C per-replay-tick swarm re-sim is O(ticksAhead × N)
-      // (48 ms at N=500/ticksAhead=48 — the 116–266 ms sector-change stall).
-      // The EXPENSIVE part is `HostileDroneBehaviour.tick` per drone per
-      // replayed tick; the cheap part is Rapier integrating the body. So we
-      // cull only the expensive brain re-sim: `tickClientAi(NEAR)` re-sims
-      // only the drones the player can perceive (hostile / within
-      // `HITSCAN_RANGE×2` / recently large-corrected). The FAR majority is
-      // **dead-reckoned, NOT frozen** — `replaySeed` re-anchors every
-      // in-interest drone to its server-authoritative pose, then the
-      // (unfrozen) replay `world.tick()` integrates them ballistically from
-      // that anchor. They get their linear motion for free; only the AI
-      // *curve* over the replay window is missing, which for a stable far
-      // drone is small (≪ the full anchor→now snap a *frozen* body would
-      // take — freezing was measured to regress `swarmSnapP50` 11→20 and
-      // `swarmAngleP99` 0.1→1.2 on the quiet-host canary because a frozen
-      // body is held a whole snapshot interval while `_droneSnapshotAnchored`
-      // gates off the binary correction). Replay BRAIN cost is
-      // O(k × ticksAhead), k ≪ N; the O(N) body integration is cheap and was
-      // already O(N) on `main`. Prediction-only: the server still sims every
-      // drone authoritatively. Recomputed every snapshot, so a far→near
-      // transition is picked up within one snapshot. chapter-2's
-      // one-correction-path rule is intact — the SAME `tickClientAi` /
-      // `AiController` path advances NEAR drones, just scoped; binary-packet
-      // setShipState stays gated by `_droneSnapshotAnchored`. The player
-      // anchor is the snapshot's own `serverState` (authoritative, same tick
-      // + frame as the `droneSeed` anchors the cull predicate reads).
-      const localPid = this.mirror.localPlayerId;
-      const relevanceInputs: DroneRelevanceInput[] = [];
-      for (const id of this._aiRegisteredIds) {
-        const aiId = `${id}`;
-        const anchor = droneSeed?.get(`swarm-${id}`);
-        if (!anchor) {
-          // No authoritative anchor this snapshot (drone outside the
-          // `drones[]` slice / body not spawned yet). It is NOT in
-          // `_droneSnapshotAnchored`, so the binary-packet path still owns
-          // it (skipSetShipState=false) and the per-frame live loop ticks
-          // it — leave it out of the NEAR re-sim (Inf distance, not hostile,
-          // no snap signal ⇒ FAR ⇒ dead-reckon, consistent with the binary
-          // path re-syncing it).
-          relevanceInputs.push({ id: aiId, x: Infinity, y: Infinity, hostile: false });
-          continue;
-        }
-        relevanceInputs.push({
-          id: aiId,
-          x: anchor.x,
-          y: anchor.y,
-          hostile: localPid !== null && this._aiController.isEntityHostileToPlayer(aiId, localPid),
-          lastSnapDist: this._droneLastSnapDist.get(id),
-        });
-      }
-      // Only the NEAR set is consumed — FAR drones need no action: not being
-      // in `nearAiIds` means `tickClientAi` skips their brain during replay,
-      // and (unfrozen) they dead-reckon via the replay `world.tick()`.
-      const { near: nearAiIds } = partitionDronesByRelevance(relevanceInputs, {
-        playerX: serverState.x,
-        playerY: serverState.y,
-      });
       this.reconciler.reconcile(
         serverState,
         snap.serverTick,
         this.inputTick,
         ackedTick,
         () => {
-          // Remote-ship Stage-3 forward-prediction + the relevance-culled
-          // NEAR swarm brain re-sim (O(k), k ≪ N). FAR drones are NOT
-          // brain-ticked here and NOT frozen — they dead-reckon ballistically
-          // in the replay `world.tick()` from their `replaySeed` anchor.
+          // Remote-ship Stage-3 forward-prediction only. Drones carry no
+          // client brain post-pivot — they are interpolated from the wire,
+          // never re-simmed in replay. One path: interpolation (the
+          // chapter-2 dual-correction-path concern dissolves for drones —
+          // there is no second path left to fight).
           this.applyRemoteInputs();
-          this.tickClientAi(nearAiIds);
         },
-        droneSeed ? { drones: droneSeed } : undefined,
       );
-
-      // Graceful bulk-gap recovery (2026-05-17, diag xxiyix). If this
-      // snapshot arrived after a network-bunched DELIVERY gap (mobile
-      // radio; server broadcast is a metronomic ~50 ms), the reconcile just
-      // re-anchored every in-interest drone at once — a synchronized
-      // ~30-entity teleport whose magnitude scales with sector occupancy
-      // (the user-reported "lag spike"). Glide it via the existing
-      // `_droneRenderOffsets` spring instead. `anchoredDroneReseedSmoothing`
-      // returns `engage:false` for on-cadence snapshots, so steady-state is
-      // byte-identical to pre-fix (Phase C "snapshot owns predWorld"
-      // invariant + feel-test-lockstep canary untouched); only the
-      // pathological gap path springs. Mirrors the remote-ship offset
-      // pattern directly below.
-      if (this.predWorld && preReseedDronePos.size > 0) {
-        for (const [id, pre] of preReseedDronePos) {
-          const post = this.predWorld.getShipState(`swarm-${id}`);
-          if (!post) continue;
-          const ox = pre.x - post.x;
-          const oy = pre.y - post.y;
-          const dist = Math.hypot(ox, oy);
-          const sm = anchoredDroneReseedSmoothing({
-            intervalMs: this.stats.snapshotIntervalMs,
-            nominalMs: SNAPSHOT_NOMINAL_INTERVAL_MS,
-            dist,
-          });
-          if (!sm.engage) continue;
-          const oa = normalizeAngleDelta(pre.angle - post.angle);
-          const existing = this._droneRenderOffsets.get(id);
-          if (existing) {
-            existing.sx.x = ox; existing.sx.v = 0;
-            existing.sy.x = oy; existing.sy.v = 0;
-            existing.sa.x = oa; existing.sa.v = 0;
-            existing.halfLifeMs = sm.halfLifeMs;
-          } else {
-            this._droneRenderOffsets.set(id, {
-              sx: { x: ox, v: 0 }, sy: { x: oy, v: 0 }, sa: { x: oa, v: 0 },
-              halfLifeMs: sm.halfLifeMs,
-            });
-          }
-        }
-      }
 
       // Compute remote ship lerp offsets.
       if (this.predWorld) {
@@ -2226,154 +2044,30 @@ export class ColyseusGameClient {
         this.predSwarmKeys.add(key);
       }
       // Phase 6 — drive the drone hull collider swap from the SINGLE
-      // authoritative shield-down field (binary packet bit; the snapshot
-      // loop keeps it consistent for in-interest drones). setHullExposed
-      // is idempotent so calling it every sync is cheap. One ownership
-      // site — no second correction path (chapter-2 rule).
+      // authoritative shield-down field (the slim `snap.drones[]` slice
+      // keeps `entry.shieldDown` consistent for in-interest drones; the
+      // binary recordFlags bit covers the rest). `setHullExposed` is
+      // idempotent so calling it every sync is cheap. One ownership site
+      // — no second correction path (chapter-2 rule).
       if (entry.kind === 1) {
         this.predWorld.setHullExposed(key, entry.shieldDown ?? false, getShipKind(entry.shipKind ?? null));
       }
-      // Capture pre-snap pose for drones so we can drive the render lerp
-      // offset (see `_droneRenderOffsets`). Only meaningful when the body
-      // already exists; first-spawn case has nothing to lerp from.
-      // Position AND angle are captured — drones rotate under AI to track
-      // the player, and a packet snap rewinds `LEAD_TICKS × angvel × dt`
-      // worth of rotation. Without smoothing the angle the sprite visibly
-      // jolts on every packet (the user-reported "still jittering" after
-      // the position-only spring landed in commit ac429de).
-      let preSnapX: number | undefined;
-      let preSnapY: number | undefined;
-      let preSnapAngle: number | undefined;
-      let preSnapAngvel: number | undefined;
-      if (entry.kind === 1) {
-        const pre = this.predWorld.getShipState(key);
-        if (pre) {
-          preSnapX = pre.x;
-          preSnapY = pre.y;
-          preSnapAngle = pre.angle;
-          preSnapAngvel = pre.angvel ?? 0;
-        }
-      }
-      // Phase C follow-up (2026-05-09 mobile re-test): for drones the most
-      // recent snapshot anchored, the snapshot+replay path owns predWorld
-      // pose. Skip the binary-packet setShipState call entirely — it would
-      // pull predWorld backward by `currentTick − ackedTick` ticks of
-      // motion, restoring exactly the divergence Phase C tries to remove.
-      // Out-of-interest drones (not in the anchor set) still need the
-      // binary path because the snapshot doesn't carry them; the spring
-      // offset capture below applies to those too. Asteroids (kind=0) are
-      // never AI-driven and use the binary-packet path unconditionally.
-      const skipSetShipState = entry.kind === 1 && this._droneSnapshotAnchored.has(entityId);
-      if (!skipSetShipState) {
-        // 2026-05-09 AI lockstep (Phase A): pass angvel through. Wire-format v3
-        // carries the field; without it the client AI's `1.5·ω` damping term
-        // ran on a free-evolving predWorld value while the server's ran on the
-        // SAB-authoritative one — drone bearing diverged every tick. World
-        // setShipState (`World.ts:359`) wakes the body via Rapier's setAngvel.
+      // Asteroids (kind=0) take their predWorld pose straight from the
+      // binary packet — they're locked / static server-side and only move
+      // on collision events, where the authoritative snap IS correct.
+      //
+      // Drones (kind=1) are NO LONGER posed here. Post the drone-snapshot-
+      // interpolation pivot (2026-05-18) the drone's predWorld body is a
+      // KINEMATIC follower driven each frame from the time-interpolated
+      // pose in `updateMirror` (single pose source: the decoder-fed
+      // `poseRing`). Writing the raw binary pose here as well would be a
+      // second, fighting correction path — exactly the chapter-2
+      // dual-path bug. There is no client drone AI to re-anchor anymore;
+      // the server stays fully hit-authoritative (no client drone ray).
+      if (entry.kind === 0) {
         this.predWorld.setShipState(key, {
           x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
         });
-      }
-      if (
-        entry.kind === 1
-        && preSnapX !== undefined
-        && preSnapY !== undefined
-        && preSnapAngle !== undefined
-        && preSnapAngvel !== undefined
-      ) {
-        const ox = preSnapX - entry.x;
-        const oy = preSnapY - entry.y;
-        const oa = normalizeAngleDelta(preSnapAngle - entry.angle);
-        const oavel = preSnapAngvel - entry.angvel;
-        const dist = Math.hypot(ox, oy);
-        // Spring-offset capture is only useful when we actually snapped
-        // predWorld backward (binary-packet path). For snapshot-anchored
-        // drones we skipped the setShipState above so predWorld is
-        // unchanged → no jolt to smooth → no spring needed. Gating here
-        // keeps the diagnostic + stats capture below firing for ALL
-        // drones (so the test can observe alignment quality even when
-        // the new path produces ~0 deltas).
-        if (!skipSetShipState && (dist > 0.05 || Math.abs(oa) > 0.06)) {
-          const halfLifeMs = droneRenderOffsetHalfLifeForDrift(dist);
-          const existing = this._droneRenderOffsets.get(entityId);
-          if (existing) {
-            existing.sx.x = ox; existing.sx.v = 0;
-            existing.sy.x = oy; existing.sy.v = 0;
-            existing.sa.x = oa; existing.sa.v = 0;
-            existing.halfLifeMs = halfLifeMs;
-          } else {
-            this._droneRenderOffsets.set(entityId, {
-              sx: { x: ox, v: 0 },
-              sy: { x: oy, v: 0 },
-              sa: { x: oa, v: 0 },
-              halfLifeMs,
-            });
-          }
-        }
-
-        // Phase B (2026-05-09 AI lockstep) — per-drone snap diagnostic.
-        // Records pre/post pose, snap distance, angle delta, angvel delta
-        // for *every* snap on an existing entry (not first-sight). The
-        // log-emit is throttled to one event per drone per 4 server ticks
-        // so the 500-entry ring isn't dominated by snap events at 10
-        // drones × 20 Hz. The stats ring buffer is updated unthrottled —
-        // p50/p99 in `stats.swarmSnap*` reflect every snap.
-        const angleSnap = Math.abs(oa);
-        const angvelDelta = Math.abs(oavel);
-        // Sliding window of 240 events (~12 s at 20 Hz × 10 in-interest
-        // drones). Older entries drop off the front; FIFO trim keeps the
-        // arrays bounded without per-tick allocation.
-        if (this._swarmSnapDistBuf.length >= 240) this._swarmSnapDistBuf.shift();
-        if (this._swarmSnapAngleBuf.length >= 240) this._swarmSnapAngleBuf.shift();
-        if (this._swarmSnapAngvelBuf.length >= 240) this._swarmSnapAngvelBuf.shift();
-        this._swarmSnapDistBuf.push(dist);
-        this._swarmSnapAngleBuf.push(angleSnap);
-        this._swarmSnapAngvelBuf.push(angvelDelta);
-        // Option A (2026-05-17): cheapest possible per-drone "is it
-        // diverging?" signal — `dist` is already computed here, so the
-        // relevance partition's snap gate costs one Map.set per snap and
-        // zero extra maths / no ring scan.
-        this._droneLastSnapDist.set(entityId, dist);
-        this.stats.swarmSnapCount++;
-        // Throttle p50/p99 recompute to once per second. The stats are
-        // diagnostic-only (read by the Capture button in SettingsModal),
-        // so refreshing at 1 Hz is more than adequate. Unthrottled, this
-        // function was the #1 non-MUI hit in the drawer-lag CPU profile
-        // (2.3 s of self-time during a 13.7 s drawer-mount window) —
-        // 3 array sorts × 200 swarm-snap events/s = 600 sorts/s on the
-        // main thread, blocking the React render of the MUI Drawer.
-        const nowMs = performance.now();
-        if (nowMs - this._swarmSnapStatsLastMs >= 1000) {
-          this._swarmSnapStatsLastMs = nowMs;
-          this._recomputeSwarmSnapStats();
-        }
-
-        const lastTick = this._swarmSnapLastLogTick.get(entityId) ?? -1000;
-        if (this.stats.lastServerTick - lastTick >= 4) {
-          this._swarmSnapLastLogTick.set(entityId, this.stats.lastServerTick);
-          logEvent('swarm_snap_diagnostics', {
-            entityId,
-            kind: entry.kind,
-            shipKind: entry.shipKind ?? null,
-            pre: {
-              x: parseFloat(preSnapX.toFixed(3)),
-              y: parseFloat(preSnapY.toFixed(3)),
-              angle: parseFloat(preSnapAngle.toFixed(4)),
-              angvel: parseFloat(preSnapAngvel.toFixed(4)),
-            },
-            post: {
-              x: parseFloat(entry.x.toFixed(3)),
-              y: parseFloat(entry.y.toFixed(3)),
-              angle: parseFloat(entry.angle.toFixed(4)),
-              angvel: parseFloat(entry.angvel.toFixed(4)),
-            },
-            snapDistance: parseFloat(dist.toFixed(3)),
-            angleSnap: parseFloat(angleSnap.toFixed(4)),
-            angvelDelta: parseFloat(angvelDelta.toFixed(4)),
-            serverTick: this.stats.lastServerTick,
-            inputTick: this.inputTick,
-          });
-        }
       }
     }
     // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
@@ -2381,65 +2075,17 @@ export class ColyseusGameClient {
       if (!seen.has(key)) {
         this.predWorld.despawnShip(key);
         this.predSwarmKeys.delete(key);
-        // If the swept body was a drone, unregister from the AI controller
-        // and drop any pending render lerp offset. Numeric entityId is
-        // encoded in the key as `swarm-${id}`.
+        // If the swept body was a drone, unregister it from the hostility
+        // ledger (`_aiController` is ledger-only post-pivot — never ticked).
+        // Numeric entityId is encoded in the key as `swarm-${id}`.
         const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
         const id = Number(idStr);
-        if (Number.isFinite(id)) {
-          if (this._aiRegisteredIds.has(id)) {
-            this._aiController.unregister(`${id}`);
-            this._aiRegisteredIds.delete(id);
-          }
-          this._droneRenderOffsets.delete(id);
-          this._droneLastSnapDist.delete(id);
+        if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
+          this._aiController.unregister(`${id}`);
+          this._aiRegisteredIds.delete(id);
         }
-        // Phase B — drop any per-drone log throttle so a respawned entity
-        // (same id, fresh ship) gets a snap event on its next packet.
-        this._swarmSnapLastLogTick.delete(id);
       }
     }
-  }
-
-  /** Phase B — recompute sliding-window p50/p99 across the snap-event rings.
-   *  Called once per push; the rings are bounded at 240 so cost is bounded
-   *  even when many drones are in interest. Single shared scratch array is
-   *  acceptable here because reads happen once per push, not per frame. */
-  private _statsScratch: number[] = [];
-  /** Wall-clock ms of the last `_recomputeSwarmSnapStats` call. Used to
-   *  throttle the O(n log n) percentile sort to ~1 Hz (it was running
-   *  ~200×/s pre-throttle, costing 2.3 s of CPU during the drawer-mount
-   *  window — see the drawer-lag CPU profile). */
-  private _swarmSnapStatsLastMs = 0;
-
-  private _recomputeSwarmSnapStats(): void {
-    const dist = this._swarmSnapDistBuf;
-    if (dist.length === 0) {
-      this.stats.swarmSnapP50 = 0;
-      this.stats.swarmSnapP99 = 0;
-      this.stats.swarmAngleP99 = 0;
-      this.stats.swarmAngvelP99 = 0;
-      return;
-    }
-    // Reuse the scratch array to avoid per-snap allocation.
-    const scratch = this._statsScratch;
-    scratch.length = dist.length;
-    for (let i = 0; i < dist.length; i++) scratch[i] = dist[i]!;
-    scratch.sort((a, b) => a - b);
-    this.stats.swarmSnapP50 = scratch[Math.floor(scratch.length * 0.5)]!;
-    this.stats.swarmSnapP99 = scratch[Math.floor(scratch.length * 0.99)]!;
-
-    const ang = this._swarmSnapAngleBuf;
-    scratch.length = ang.length;
-    for (let i = 0; i < ang.length; i++) scratch[i] = ang[i]!;
-    scratch.sort((a, b) => a - b);
-    this.stats.swarmAngleP99 = scratch[Math.floor(scratch.length * 0.99)]!;
-
-    const av = this._swarmSnapAngvelBuf;
-    scratch.length = av.length;
-    for (let i = 0; i < av.length; i++) scratch[i] = av[i]!;
-    scratch.sort((a, b) => a - b);
-    this.stats.swarmAngvelP99 = scratch[Math.floor(scratch.length * 0.99)]!;
   }
 
   /** Sync authoritative projectile positions from the per-recipient snapshot.
@@ -2813,56 +2459,36 @@ export class ColyseusGameClient {
     // have no client prediction — server-authoritative @ 60 Hz lerped between
     // received frames. The renderer reads mirror.swarm directly each frame.
 
-    // Phase 3 (2026-05-09): drone visual smoothness.
+    // Drones (kind=1): PURE snapshot interpolation off the decoder-fed
+    // `poseRing` (drone-snapshot-interpolation pivot, 2026-05-18). The
+    // SAME `interpolateSwarmPose` the renderer uses (display-delay buffer
+    // + teleport guard), computed ONCE here and written into the mirror
+    // entry so every reader — renderer, HaloRadar, labels, health bars,
+    // MountVisualManager, damage numbers — sees one consistent pose. We
+    // also drive the predWorld drone body KINEMATICALLY to that same
+    // interpolated pose so the local player's predicted ship collides
+    // with the drone where it is drawn (the folded "kinematic follower").
+    // No client AI, no re-sim, no reconcile anchor — the server stays
+    // fully hit-authoritative (there is no client drone ray), so this
+    // body is presentation/collision only.
     //
-    // After the client-side AI fix, drones in predWorld have AI-integrated
-    // positions matching the server. But the renderer was still reading
-    // their pose via `interpolateSwarmPose` — a linear dead-reckoning from
-    // the latest packet's velocity that doesn't see AI impulses. Each new
-    // packet snapped the sprite to the new packet pose, producing the
-    // visible jolt the user reported ("enemy ships look jolty and jumpy").
-    //
-    // Fix: write predWorld's drone pose into the mirror entry each frame.
-    // Combined with the renderer change to use `entry.x/y/angle` directly
-    // for drones (skipping the dead-reckoning branch), the sprite tracks
-    // predWorld's smooth AI-integrated motion exactly like player ships
-    // track their predWorld pose.
-    //
-    // Asteroids (kind=0) remain locked in predWorld and continue to use
-    // `interpolateSwarmPose` against the packet ring — their pose changes
-    // discretely on collision events, where the lerp is the right choice.
+    // Asteroids (kind=0) keep their predWorld pose from the binary packet
+    // (set in `syncSwarmIntoPredWorld`) and the renderer interpolates them
+    // off the same poseRing — nothing to do for them here.
     if (this.predWorld && this.mirror.swarm) {
+      const nowMs = performance.now();
       for (const [entityId, entry] of this.mirror.swarm) {
         if (entry.kind !== 1) continue;
-        const pose = this.predWorld.getShipState(`swarm-${entityId}`);
-        if (!pose) continue;
-        // Apply (and decay) the per-drone render lerp offset so the
-        // ~50 ms-cadence packet snap is invisible. Spring is shared
-        // shape with `_remoteShipOffsets`. Drop the entry once all
-        // three axes settle below the noise floor.
-        let ox = 0, oy = 0, oa = 0;
-        const off = this._droneRenderOffsets.get(entityId);
-        if (off) {
-          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
-          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
-          springStep(off.sa, 0, off.halfLifeMs, this.lastFrameMs);
-          ox = off.sx.x;
-          oy = off.sy.x;
-          oa = off.sa.x;
-          const stillMoving =
-            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sa.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sa.v) > REMOTE_SPRING_VEL_END_MS;
-          if (!stillMoving) this._droneRenderOffsets.delete(entityId);
+        interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
+        entry.x = this._swarmInterpScratch.x;
+        entry.y = this._swarmInterpScratch.y;
+        entry.angle = this._swarmInterpScratch.angle;
+        if (this.predWorld.hasShip(`swarm-${entityId}`)) {
+          this.predWorld.setShipState(`swarm-${entityId}`, {
+            x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
+            angle: entry.angle, angvel: 0,
+          });
         }
-        entry.x = pose.x + ox;
-        entry.y = pose.y + oy;
-        entry.angle = pose.angle + oa;
-        entry.vx = pose.vx;
-        entry.vy = pose.vy;
       }
     }
 
@@ -2978,6 +2604,29 @@ export class ColyseusGameClient {
         this.mirror.damagedShips?.add(id);
         this._damageFlashFrames.set(id, frames - 1);
       }
+    }
+
+    // weapon-hit-prediction Phase 2 — TTL-expire predictions whose
+    // confirmation never arrived and hard-cancel their predicted numbers
+    // (lost-ack / projectile-that-missed failsafe). Phase 3 adds the
+    // hit_ack/DamageEvent-driven cancels on top of this one channel.
+    const expiredShots = this._hitLedger.tick(performance.now());
+    if (expiredShots.length > 0) {
+      const cancels = this.mirror.pendingDamageNumberCancels;
+      if (cancels) for (const e of expiredShots) cancels.push(e.clientShotId);
+    }
+
+    // beam-attach fix (capture pe6rdt): expire the persisted local
+    // hitscan beam once its post-fire window has elapsed. While within
+    // the window the renderer keeps drawing `mirror.liveBeams` from
+    // `mirror.ships` every frame (ship-attached); past it, clear so a
+    // released / switched weapon doesn't leave a beam lingering.
+    if (
+      this.mirror.liveBeams &&
+      this.mirror.liveBeams.size > 0 &&
+      !liveBeamVisible(performance.now(), this._lastHitscanFireMs, LIVE_BEAM_PERSIST_MS)
+    ) {
+      this.mirror.liveBeams.clear();
     }
 
     // explodingShips is cleared in App.tsx AFTER renderer.update() so the renderer
@@ -3098,14 +2747,10 @@ export class ColyseusGameClient {
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
       const reverse   = kb.reverse;
       const tick = this.inputTick++;
-      // Phase 3 (2026-05-09): tick the AI BEFORE applying this tick's input.
-      // Server's AI runs at end of `update()` post-step, using state from
-      // the just-completed tick (no current-tick input applied yet). To
-      // match, the client's AI must see the *pre-step* state too — i.e.
-      // before this tick's `applyInput` modifies the player body. Otherwise
-      // the player's velocity in the AI's view differs by one input
-      // application from what the server saw.
-      this.tickClientAi();
+      // No client-side drone AI tick (drone-snapshot-interpolation pivot,
+      // 2026-05-18). Drones are pure snapshot-interpolated from the binary
+      // swarm wire; the server simulates every drone authoritatively. No
+      // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = performance.now();
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
@@ -3178,15 +2823,23 @@ export class ColyseusGameClient {
         if (activeWeaponDef.mode === 'hitscan') {
           this.updateLiveBeam();
         } else {
+          // Projectile has no continuous beam — clear immediately so a
+          // mid-hold weapon switch can't leave a stale hitscan beam.
           this.mirror.liveBeams?.clear();
+          this._lastHitscanFireMs = null;
         }
         if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
           this.sendFire(tick);
           this.lastFiredAtTick = tick;
+          if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = performance.now();
         }
-      } else {
-        this.mirror.liveBeams?.clear();
       }
+      // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
+      // held. The local hitscan beam persists ~LIVE_BEAM_PERSIST_MS past
+      // the last shot (expired in updateMirror) and is redrawn from
+      // `mirror.ships` every frame, so a tap / held burst reads as ONE
+      // continuous SHIP-ATTACHED beam — server lag/correction invisible.
+      // Death still clears it via killEntity's liveBeams.clear().
     }
 
     // One ring-buffer entry per RAF — diagnostic data for capture analysis.
@@ -3286,24 +2939,23 @@ export class ColyseusGameClient {
       return;
     }
 
-    // Gather drone targets from the swarm mirror. We use the swarm
-    // sprite's current rendered pose (post-interpolation) because the
-    // turret should aim at where the player visually sees the drone, not
-    // at the raw network pose 100 ms in the past.
-    const targets = this._droneTargetsScratch;
-    targets.length = 0;
-    if (this.mirror.swarm) {
-      for (const [entityId, sw] of this.mirror.swarm) {
-        if (sw.kind !== 1) continue; // asteroids aren't valid targets
-        targets.push({
-          id: `swarm-${entityId}`,
-          x: sw.x,
-          y: sw.y,
-          vx: sw.vx,
-          vy: sw.vy,
-        });
-      }
-    }
+    // Gather drone auto-aim targets from the SINGLE per-frame display
+    // pose. `buildLocalAimTargets` reads the pose `updateMirror` already
+    // resolved into `entry.x/y` (the one `interpolateSwarmPose` per
+    // frame; the same value the sprite + predWorld collision body + laser
+    // beam use) — it does NOT re-interpolate. tickLocalMountAim runs in
+    // tickPhysics, *earlier* in the frame than updateMirror/the renderer;
+    // re-interpolating here resolved the pose at a different `now` than
+    // the frame's single resolution, so the turret aimed where the drone
+    // *wasn't drawn* and the beam jittered against the sprite ("two
+    // things fighting"; capture jfagww). Reading the one written pose
+    // makes aim == draw == collide by construction (≤1-frame smooth
+    // lead-lag, never per-frame jitter). 0e24448's "aim the drawn pose,
+    // not the raw/ahead one" guarantee is preserved — updateMirror wrote
+    // the display-delayed pose there.
+    const targets = this.mirror.swarm
+      ? buildLocalAimTargets(this.mirror.swarm, this._aimInterpScratch)
+      : [];
 
     // Range gate: only acquire targets within hitscan reach. Out-of-range
     // drones don't peg the turret — when no candidate is in view, the
@@ -3426,73 +3078,6 @@ export class ColyseusGameClient {
     return out;
   }
 
-  /**
-   * Phase 3 of the network-feel reset (2026-05-09) — client-side drone AI tick.
-   *
-   * Runs the same `AiController` + `HostileDroneBehaviour` modules the server
-   * runs, so drones in the client's predWorld get the same per-tick impulses
-   * the server's drones get. With identical inputs both sides produce
-   * identical motion → drones in predWorld track the server's authoritative
-   * drone positions, collisions resolve at matching geometry, hitscan rays
-   * hit what the player aimed at.
-   *
-   * Determinism contract:
-   *   - Player view comes from `predWorld.getShipState`, NOT `mirror.ships`.
-   *     mirror.ships includes the reconciler's render-only lerp offset; the
-   *     server never sees that. Using predWorld gives the AI the same
-   *     authoritative-physics positions both sides use.
-   *   - `entitySnapshot` reads the drone's current predWorld pose.
-   *   - `view.tick` uses `inputTick` so behaviours' tick-based gates align
-   *     with the server's tick numbering.
-   *
-   * Called from two places:
-   *   1. `tickPhysics` input loop — each forward step from inputTick toward
-   *      targetTick, mirroring the server's per-tick AI advance.
-   *   2. `Reconciler.reconcile` per-replay-tick callback — each replay step
-   *      reapplies AI to keep drone trajectory aligned with what the server
-   *      simulated for that tick. Here `onlyAiIds` is the relevance-culled
-   *      NEAR set (Option A, 2026-05-17): only those drones are re-simmed;
-   *      the FAR majority is frozen at its anchor by the reconciler so the
-   *      replay is O(k × ticksAhead), k ≪ N. The per-frame caller (1) passes
-   *      nothing, so every registered drone still ticks live — unchanged.
-   *
-   * Fire requests are drained and discarded — the server is still the
-   * authority for drone shots; client predicts only drone movement, not
-   * weapon resolution.
-   */
-  private tickClientAi(onlyAiIds?: ReadonlySet<string>): void {
-    if (!this.predWorld || this._aiRegisteredIds.size === 0) return;
-    this._aiPlayersBuf.length = 0;
-    for (const [pid] of this.mirror.ships) {
-      const ps = this.predWorld.getShipState(pid);
-      if (ps) this._aiPlayersBuf.push({ id: pid, x: ps.x, y: ps.y, vx: ps.vx, vy: ps.vy });
-    }
-    if (this._aiPlayersBuf.length === 0) return;
-    const entitySnapshot = (id: string): AiEntity | null => {
-      const state = this.predWorld!.getShipState(`swarm-${id}`);
-      if (!state) return null;
-      return {
-        id,
-        x: state.x,
-        y: state.y,
-        vx: state.vx,
-        vy: state.vy,
-        angle: state.angle,
-        angvel: state.angvel ?? 0,
-      };
-    };
-    if (onlyAiIds === undefined) {
-      // Per-frame live loop — every registered drone, unchanged.
-      this._aiController.tick(this.inputTick, 1 / 60, this._aiPlayersBuf, entitySnapshot);
-    } else {
-      // Relevance-culled replay re-sim — O(k), iterates only the NEAR set
-      // (NOT a predicate over all N; that would keep the O(ticksAhead × N)
-      // scan Option A exists to remove).
-      this._aiController.tickOnly(onlyAiIds, this.inputTick, 1 / 60, this._aiPlayersBuf, entitySnapshot);
-    }
-    this._aiController.drainFireRequests();
-  }
-
   private sendFire(tick: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return;
@@ -3514,14 +3099,33 @@ export class ColyseusGameClient {
     const sinA = Math.sin(state.angle);
     const localShip = this.mirror.ships.get(localId);
     const mountAngles = localShip?.mountAngles;
+    // weapon-hit-prediction Phase 2 — collect each mount's fire ray
+    // (identical geometry to the ghost spawn) so the predicted-hit
+    // resolver can aggregate the closest mount-hit, exactly as the server
+    // aggregates its hit_ack.
+    const mountGeom: MountFireGeom[] = [];
+    // beam-attach fix (capture 2026-05-19T10-55-36-274Z-pe6rdt): a LOCAL
+    // hitscan fire spawns NO ghost. The continuous liveBeam — recomputed
+    // from the ship's RENDERED pose (`mirror.ships`) every frame — is the
+    // sole local hitscan visual, so it is rigidly ship-attached and
+    // server lag/correction is invisible. A ghost frozen at this
+    // input-tick `predWorld` sample is the redundant layer that visibly
+    // detached from the ship under lag. Projectiles still ghost — the
+    // bolt actually travels. `mountGeom` is collected regardless (the
+    // predicted-hit resolver still needs every mount's ray).
+    const spawnGhost = localFireSpawnsGhost(getWeapon(activeWeapon).mode);
     if (mounts.length === 0) {
-      // Defensive fallback: no mounts → spawn the legacy single ghost at
-      // ship centre. Should not happen for any shipped kind today.
+      // Defensive fallback: no mounts → (projectile only) spawn the
+      // legacy single ghost at ship centre. Should not happen for any
+      // shipped kind today.
       const fwdX = -Math.sin(state.angle);
       const fwdY = Math.cos(state.angle);
       const fromX = state.x + fwdX * 20;
       const fromY = state.y + fwdY * 20;
-      this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+      if (spawnGhost) {
+        this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+      }
+      mountGeom.push({ fromX, fromY, fwdX, fwdY });
     } else {
       for (let i = 0; i < mounts.length; i++) {
         const mount = mounts[i]!;
@@ -3536,18 +3140,21 @@ export class ColyseusGameClient {
         const fwdY = Math.cos(mountFireAngle);
         const fromX = mountWorldX + fwdX * 20;
         const fromY = mountWorldY + fwdY * 20;
-        this.ghostManager.spawn(
-          shotId,
-          localId,
-          fromX,
-          fromY,
-          fwdX,
-          fwdY,
-          activeWeapon,
-          state.vx,
-          state.vy,
-          mount.id,
-        );
+        if (spawnGhost) {
+          this.ghostManager.spawn(
+            shotId,
+            localId,
+            fromX,
+            fromY,
+            fwdX,
+            fwdY,
+            activeWeapon,
+            state.vx,
+            state.vy,
+            mount.id,
+          );
+        }
+        mountGeom.push({ fromX, fromY, fwdX, fwdY });
       }
     }
 
@@ -3557,6 +3164,41 @@ export class ColyseusGameClient {
       clientShotId: shotId,
       weapon: activeWeapon,
       dirAngle: state.angle,
+    });
+
+    // weapon-hit-prediction Phase 2 — predict the outcome against the pose
+    // the player SEES (predWorld.hitscan, the exact seam updateLiveBeam
+    // uses; NO client lag-comp ring) and show immediate tagged feedback.
+    // Presentation-only: the server stays 100% hit-authoritative. The
+    // prediction just TTL-expires until Phase 3 wires the single
+    // hit_ack/DamageEvent reconcile path. Mode/damage read off the
+    // catalogue def (no weapon-id branch). Projectile uses the same ray as
+    // a straight-flight proxy for the predicted target (decision #2: the
+    // bolt itself is untouched and reconciles via the eventual DamageEvent).
+    const weaponDef = getWeapon(activeWeapon);
+    const predMaxDist =
+      weaponDef.mode === 'hitscan'
+        ? HITSCAN_RANGE
+        : (weaponDef.speed * weaponDef.maxTicks) / 60;
+    const predSink: PredictedFeedbackSink = {
+      pushDamageNumber: (x, y, damage, tag) => {
+        this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+      },
+      flashTarget: (id) => {
+        this._damageFlashFrames.set(id, 6);
+      },
+    };
+    predictShotOutcome({
+      ledger: this._hitLedger,
+      sink: predSink,
+      world: this.predWorld,
+      clientShotId: shotId,
+      mode: weaponDef.mode,
+      damage: weaponDef.damage,
+      mounts: mountGeom,
+      maxDist: predMaxDist,
+      excludeId: localId,
+      nowMs: performance.now(),
     });
     // Diagnostic — captures the three reference points needed to debug
     // "lasers firing from the wrong place". `spawnPos` is the legacy
