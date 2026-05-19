@@ -3,6 +3,7 @@ import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
+import { isFireOnCooldown } from '../../core/combat/fireCooldown.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -1163,7 +1164,7 @@ export class SectorRoom extends Room<SectorState> {
     // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
     // RTT jitter between consecutive messages doesn't cause false rejections.
     const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) {
+    if (isFireOnCooldown(tick, lastFireCt, WEAPON_COOLDOWN_TICKS)) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
       // wrap-up-known-issues Phase 1 — the cooldown-rejected ack is the
