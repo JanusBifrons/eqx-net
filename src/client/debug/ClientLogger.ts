@@ -65,10 +65,17 @@ export function logEvent(tag: string, data: Record<string, unknown>): void {
  * Diagnostic-mode flag (F1 of the warp-spool perf investigation — see
  * `docs/HANDOFF-warp-spool-perf-followup.md`).
  *
- * `true` when `?diag=1` is in the URL OR `navigator.webdriver` is set
- * (Playwright / any WebDriver-controlled session), so E2E specs and
- * `/diag/capture` runs get the per-frame sub-cost markers with **zero
- * cost on a normal player session**.
+ * Precedence (highest first):
+ *   1. `?diag=0` — explicit opt-out, wins over EVERYTHING incl. the
+ *      webdriver auto-enable. The ONLY way an E2E / perf gate can
+ *      measure the *production* code path (the netcode-health gate
+ *      depends on this — Playwright always sets `navigator.webdriver`,
+ *      so without this escape every spec measures an instrumented build
+ *      no real player runs).
+ *   2. `navigator.webdriver` — Playwright / any WebDriver-controlled
+ *      session (so E2E + `/diag/capture` get the markers by default).
+ *   3. `?diag=1` — explicit opt-in on a normal browser session.
+ *   4. otherwise off — **zero cost on a normal player session**.
  *
  * This gates ONLY the *new* expensive diagnostic work that F1 adds:
  *   - the worker's `FRAME_MARKERS` postMessage (via `SET_DIAG_MARKERS`),
@@ -81,17 +88,26 @@ export function logEvent(tag: string, data: Record<string, unknown>): void {
  * blanket gate would regress every spec that reads the ring.
  *
  * Cached at first read; the URL/webdriver state is fixed for the
- * document's lifetime so re-evaluating per frame would be waste.
+ * document's lifetime so re-evaluating per frame would be waste. Tests
+ * and the netcode-health gate flip `?diag` between harness arms — they
+ * call `__resetDiagCache()` to drop the cache (production never does).
  */
 let _diagEnabled: boolean | null = null;
 export function isDiagEnabled(): boolean {
   if (_diagEnabled !== null) return _diagEnabled;
   let enabled = false;
   try {
-    if (typeof navigator !== 'undefined' && navigator.webdriver === true) {
+    const q =
+      typeof window !== 'undefined' && window.location?.search
+        ? new URLSearchParams(window.location.search).get('diag')
+        : null;
+    if (q === '0') {
+      // Explicit opt-out wins over the webdriver auto-enable.
+      enabled = false;
+    } else if (typeof navigator !== 'undefined' && navigator.webdriver === true) {
       enabled = true;
-    } else if (typeof window !== 'undefined' && window.location?.search) {
-      enabled = new URLSearchParams(window.location.search).get('diag') === '1';
+    } else if (q === '1') {
+      enabled = true;
     }
   } catch {
     // Defensive: no URL/navigator (non-browser context) ⇒ stay off.
@@ -99,6 +115,19 @@ export function isDiagEnabled(): boolean {
   }
   _diagEnabled = enabled;
   return enabled;
+}
+
+/**
+ * Test / netcode-gate-only: clear BOTH cached latches so the next
+ * `isDiagEnabled()` / `logEvent()` re-resolves against the current
+ * environment. Production never calls this (URL/webdriver are fixed for
+ * the document lifetime). Resets `_diagEnabled` (the predicate) AND
+ * `_maxEntries` (the ring-size latch) — both must reset together or a
+ * harness that flips `?diag` between arms keeps a stale ring cap.
+ */
+export function __resetDiagCache(): void {
+  _diagEnabled = null;
+  _maxEntries = -1;
 }
 
 export function installWindowLogger(): void {
