@@ -10,6 +10,8 @@
  * the frozen layer detached from the ship under lag/reconcile correction.
  */
 import type { WeaponMode } from '@core/combat/WeaponCatalogue';
+import type { SwarmRenderState } from '@core/contracts/IRenderer';
+import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 
 /**
  * Should a LOCAL-player fire of this weapon mode spawn a travelling ghost
@@ -47,4 +49,52 @@ export const LIVE_BEAM_PERSIST_MS = 220;
  */
 export function liveBeamVisible(nowMs: number, lastFireMs: number | null, persistMs: number): boolean {
   return lastFireMs !== null && nowMs - lastFireMs <= persistMs;
+}
+
+/** A turret auto-aim candidate, in the SAME pose the drone is drawn at. */
+export interface LocalAimTarget {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
+/**
+ * Build the local turret's auto-aim candidate list from the swarm mirror.
+ *
+ * Each drone's aim position is resolved through the SAME
+ * `interpolateSwarmPose` (display-delay buffer) that the renderer and the
+ * predWorld kinematic follower use — NOT the raw `entry.x/y`. That raw
+ * field holds the latest AUTHORITATIVE decoded pose (the binary decoder
+ * writes it ~20 Hz; `updateMirror` only overwrites it with the
+ * interpolated pose later in the frame), so reading it from
+ * `tickLocalMountAim` (which runs earlier, in `tickPhysics`) made the
+ * turret aim at where the drone *is* on the wire — ~100 ms / its
+ * dead-reckoned lead ahead of where the sprite is DRAWN. Resolving the
+ * pose here makes "aim == draw == collide" true by construction,
+ * independent of packet / `updateMirror` ordering.
+ *
+ * Asteroids (`kind !== 1`) are never turret targets. Returns a fresh
+ * array (caller scope = once per `tickLocalMountAim`; the per-candidate
+ * object cost is unchanged from the prior inline construction).
+ */
+export function buildLocalAimTargets(
+  swarm: ReadonlyMap<number, SwarmRenderState>,
+  nowMs: number,
+  scratch: InterpolatedPose,
+): LocalAimTarget[] {
+  const out: LocalAimTarget[] = [];
+  for (const [entityId, sw] of swarm) {
+    if (sw.kind !== 1) continue; // asteroids aren't valid targets
+    interpolateSwarmPose(sw, nowMs, scratch);
+    out.push({
+      id: `swarm-${entityId}`,
+      x: scratch.x,
+      y: scratch.y,
+      vx: sw.vx,
+      vy: sw.vy,
+    });
+  }
+  return out;
 }

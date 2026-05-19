@@ -33,10 +33,14 @@
  */
 import { describe, it, expect } from 'vitest';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
+import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation.js';
+import type { SwarmRenderState, PoseRingEntry } from '@core/contracts/IRenderer';
+import { POSE_RING_DEPTH } from '@core/contracts/IRenderer';
 import {
   localFireSpawnsGhost,
   liveBeamVisible,
   LIVE_BEAM_PERSIST_MS,
+  buildLocalAimTargets,
 } from './LocalBeam.js';
 
 describe('localFireSpawnsGhost', () => {
@@ -85,5 +89,113 @@ describe('LIVE_BEAM_PERSIST_MS bridges consecutive held shots (no beam blink)', 
   it('is a sane positive bound (not an accidental huge lingering beam)', () => {
     expect(LIVE_BEAM_PERSIST_MS).toBeGreaterThan(0);
     expect(LIVE_BEAM_PERSIST_MS).toBeLessThanOrEqual(400);
+  });
+});
+
+/**
+ * THE bug (on-device, capture `2026-05-19T11-22-22-628Z-uf0o8g`, user:
+ * "when it autoaims at the enemy bot it aims AHEAD of it, almost at its
+ * dead-reckoning target, instead of where it is being DRAWN"):
+ *
+ *   `tickLocalMountAim` built its turret targets from the raw swarm
+ *   mirror entry `{ x: sw.x, y: sw.y }`. `decodeSwarmPacket` writes the
+ *   AUTHORITATIVE decoded pose into `sw.x/sw.y` on every binary packet
+ *   (~20 Hz); `updateMirror` only overwrites it with the ~100 ms
+ *   display-delayed `interpolateSwarmPose` result LATER in the frame.
+ *   `tickLocalMountAim` runs in `tickPhysics` and frequently read the
+ *   freshly-decoded AUTHORITATIVE pose — so the turret aimed at where
+ *   the drone *is* (network-truth / dead-reckoned ahead) while the
+ *   sprite is drawn ~100 ms behind. The "aims ahead" the player saw.
+ *   (The 2941-2944 "we use the post-interpolation rendered pose" comment
+ *   was false-by-ordering — the "comment promises X, the data is Y"
+ *   defect class src/client/CLAUDE.md flags.)
+ *
+ * THE FIX, locked here: `buildLocalAimTargets` resolves every drone's
+ * aim pose through the SAME `interpolateSwarmPose` the renderer + the
+ * predWorld kinematic follower use — so turret aim == where the drone
+ * is DRAWN == where it collides, by construction, regardless of
+ * packet/updateMirror ordering.
+ */
+function emptyRing(): PoseRingEntry[] {
+  const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
+  for (let i = 0; i < POSE_RING_DEPTH; i++) {
+    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+  }
+  return ring;
+}
+
+function movingDrone(arrivals: Array<{ x: number; y: number; arrivalMs: number }>): SwarmRenderState {
+  const ring = emptyRing();
+  arrivals.forEach((a, i) => {
+    const slot = ring[i % POSE_RING_DEPTH]!;
+    slot.x = a.x;
+    slot.y = a.y;
+    slot.angle = 0;
+    slot.vx = 0;
+    slot.vy = 0;
+    slot.angvel = 0;
+    slot.arrivalMs = a.arrivalMs;
+    slot.serverTick = i;
+    slot.empty = false;
+  });
+  const newest = arrivals[arrivals.length - 1]!;
+  return {
+    // entry.x/y == the latest AUTHORITATIVE decoded pose (decoder-written).
+    x: newest.x, y: newest.y, vx: 0, vy: 0, angle: 0,
+    prevX: 0, prevY: 0, prevAngle: 0,
+    prevArrivalMs: 0, latestArrivalMs: newest.arrivalMs,
+    poseRing: ring,
+    ringHead: arrivals.length % POSE_RING_DEPTH,
+    radius: 16, kind: 1, sleeping: false, lastUpdateTick: 0,
+  };
+}
+
+describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its authoritative/ahead pose', () => {
+  it('resolves the drone target to the display-delayed interpolated pose (== the renderer pose), NOT entry.x/y', () => {
+    // Drone travelled (0,0) → (2000,0) over 1 s = 2000 u/s — fast but
+    // below TELEPORT_MAX_PLAUSIBLE_SPEED (2500), so interpolateSwarmPose
+    // genuinely lerps (no teleport snap). entry.x/y holds the newest
+    // AUTHORITATIVE pose (2000,0); the sprite is drawn well behind it.
+    const drone = movingDrone([
+      { x: 0, y: 0, arrivalMs: 0 },
+      { x: 2000, y: 0, arrivalMs: 1000 },
+    ]);
+    const swarm = new Map<number, SwarmRenderState>([[7, drone]]);
+    const now = 1000;
+
+    const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    const targets = buildLocalAimTargets(swarm, now, scratch);
+
+    expect(targets).toHaveLength(1);
+    const t = targets[0]!;
+    expect(t.id).toBe('swarm-7');
+
+    // Must equal the SAME interpolateSwarmPose the renderer/predWorld use…
+    const renderPose: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    interpolateSwarmPose(drone, now, renderPose);
+    expect(t.x).toBeCloseTo(renderPose.x, 6);
+    expect(t.y).toBeCloseTo(renderPose.y, 6);
+    // …and must be meaningfully BEHIND the raw authoritative/ahead pose
+    // (the bug = aiming at drone.x). Delay-independent: across the whole
+    // adaptive range the interpolated pose trails the newest sample.
+    expect(t.x).toBeLessThan(drone.x - 100); // drone.x === 2000 (the lead)
+  });
+
+  it('excludes asteroids (kind !== 1) — they are not turret targets', () => {
+    const drone = movingDrone([{ x: 10, y: 20, arrivalMs: 0 }]);
+    const asteroid = movingDrone([{ x: 1, y: 2, arrivalMs: 0 }]);
+    asteroid.kind = 0;
+    const swarm = new Map<number, SwarmRenderState>([
+      [1, drone],
+      [2, asteroid],
+    ]);
+    const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    const targets = buildLocalAimTargets(swarm, 0, scratch);
+    expect(targets.map((t) => t.id)).toEqual(['swarm-1']);
+  });
+
+  it('an empty / absent swarm yields no targets (turret slews back to forward)', () => {
+    const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    expect(buildLocalAimTargets(new Map(), 0, scratch)).toEqual([]);
   });
 });

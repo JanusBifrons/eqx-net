@@ -53,7 +53,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../combat/LocalBeam';
+import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
@@ -72,7 +72,6 @@ import {
   pickTarget,
   rotateMountToward,
   wrapPi,
-  type MountTargetView,
 } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
@@ -291,6 +290,11 @@ export class ColyseusGameClient {
    *  drone body to it so player↔drone collision stays render-consistent.
    *  Server stays hit-authoritative; this is presentation/collision only. */
   private readonly _swarmInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  /** Separate scratch for resolving drone auto-aim poses via
+   *  `interpolateSwarmPose` in `tickLocalMountAim`. Distinct from
+   *  `_swarmInterpScratch` (used by `updateMirror`) — different frame
+   *  phase; kept separate so the two never alias by accident. */
+  private readonly _aimInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -527,10 +531,6 @@ export class ColyseusGameClient {
    *  rather than per-mount because all mounts in a slot share one target
    *  (user-clarified design rule). */
   private _localSlotTarget: string | null = null;
-  /** Scratch buffer reused across ticks — fed to `pickTarget` as the
-   *  candidate list. Cleared and refilled each call; never escapes the
-   *  ColyseusClient so concurrent reuse is fine. */
-  private _droneTargetsScratch: MountTargetView[] = [];
   /** Idle-suppression for the input upstream (network-discipline P4). The
    *  client only emits an `input` message when the control state has changed
    *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
@@ -2938,24 +2938,19 @@ export class ColyseusGameClient {
       return;
     }
 
-    // Gather drone targets from the swarm mirror. We use the swarm
-    // sprite's current rendered pose (post-interpolation) because the
-    // turret should aim at where the player visually sees the drone, not
-    // at the raw network pose 100 ms in the past.
-    const targets = this._droneTargetsScratch;
-    targets.length = 0;
-    if (this.mirror.swarm) {
-      for (const [entityId, sw] of this.mirror.swarm) {
-        if (sw.kind !== 1) continue; // asteroids aren't valid targets
-        targets.push({
-          id: `swarm-${entityId}`,
-          x: sw.x,
-          y: sw.y,
-          vx: sw.vx,
-          vy: sw.vy,
-        });
-      }
-    }
+    // Gather drone auto-aim targets at the SAME display-delayed pose the
+    // renderer + the predWorld kinematic follower use (buildLocalAimTargets
+    // → interpolateSwarmPose). The old inline path read the raw mirror
+    // entry, which holds the AUTHORITATIVE decoded pose whenever a binary
+    // packet arrived since the last updateMirror — so tickLocalMountAim
+    // (running earlier, in tickPhysics) aimed the turret at the drone's
+    // network/ahead pose while the sprite was drawn ~100 ms behind
+    // (capture uf0o8g: "aims ahead at its dead-reckoning target, not where
+    // it's drawn"). Resolving the pose here makes aim == draw == collide
+    // by construction, independent of packet / updateMirror ordering.
+    const targets = this.mirror.swarm
+      ? buildLocalAimTargets(this.mirror.swarm, performance.now(), this._aimInterpScratch)
+      : [];
 
     // Range gate: only acquire targets within hitscan reach. Out-of-range
     // drones don't peg the turret — when no candidate is in view, the
