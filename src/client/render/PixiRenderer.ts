@@ -4,6 +4,7 @@ import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { DEFAULT_WARP_PARAMS, type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
@@ -1043,17 +1044,25 @@ export class PixiRenderer implements IRenderer {
           this.shipContainer.addChild(sprite);
           this.sprites.set(spriteKey, sprite);
         }
-        // ALL swarm entities (drones kind=1 AND asteroids kind=0) render
-        // from `interpolateSwarmPose` — time-based entity interpolation off
-        // the decoder-fed `poseRing` with the display-delay buffer +
-        // teleport guard (drone-snapshot-interpolation pivot, 2026-05-18).
-        // Drones no longer have a client AI re-sim / predWorld reconcile
-        // anchor; the binary swarm channel is the single pose source for
-        // both sides. `ColyseusClient.updateMirror` keeps the kinematic
-        // predWorld drone body following this same interpolated pose so
-        // player↔drone collision stays render-consistent (server remains
-        // hit-authoritative).
-        const lerped = interpolateSwarmPose(entry, now, this.swarmPoseScratch);
+        // DRONES (kind=1): read the SINGLE per-frame display pose that
+        // `ColyseusClient.updateMirror` already resolved (one
+        // `interpolateSwarmPose` per frame, written into `entry.x/y/angle`
+        // — the same value the predWorld collision body + turret aim +
+        // laser beam use). Re-interpolating here at render-`now` (which
+        // differs from updateMirror's now by a variable, raf-jitter-
+        // amplified amount — a whole frame under the 30 Hz worker gate)
+        // made the sprite occupy a different pose than the collision
+        // body/beam every frame: drones "jittered like two things
+        // fighting" and the laser jittered against the sprite (on-device
+        // 2026-05-19, capture jfagww; the drone-snapshot pivot's stated
+        // "one pose per frame, every reader sees it" rule, now enforced).
+        // ASTEROIDS (kind=0): keep render-now interpolation off the
+        // poseRing — they are locked/static server-side, were never the
+        // jitter complaint, and `syncSwarmIntoPredWorld` still poses their
+        // bodies from the raw decoded `entry.x/y` (decoder unchanged).
+        const lerped = entry.kind === 1
+          ? resolveDroneDisplayPose(entry, this.swarmPoseScratch)
+          : interpolateSwarmPose(entry, now, this.swarmPoseScratch);
         sprite.x = lerped.x;
         sprite.y = -lerped.y;
         sprite.rotation = -lerped.angle;

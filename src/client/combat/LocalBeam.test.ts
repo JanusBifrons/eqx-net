@@ -110,11 +110,24 @@ describe('LIVE_BEAM_PERSIST_MS bridges consecutive held shots (no beam blink)', 
  *   was false-by-ordering — the "comment promises X, the data is Y"
  *   defect class src/client/CLAUDE.md flags.)
  *
- * THE FIX, locked here: `buildLocalAimTargets` resolves every drone's
- * aim pose through the SAME `interpolateSwarmPose` the renderer + the
- * predWorld kinematic follower use — so turret aim == where the drone
- * is DRAWN == where it collides, by construction, regardless of
- * packet/updateMirror ordering.
+ * THE FIX (updated 2026-05-19, drone/laser-jitter fix — same goal, the
+ * mechanism `0e24448` anticipated): `buildLocalAimTargets` reads the
+ * SINGLE per-frame display pose `ColyseusClient.updateMirror` already
+ * resolved into `entry.x/y/angle` (one `interpolateSwarmPose` per
+ * frame; the same value the sprite + predWorld collision body + laser
+ * beam read), via `resolveDroneDisplayPose`. It no longer interpolates
+ * itself. `0e24448` had it re-interpolate here — correct in direction
+ * (aim the drawn pose, not the raw/ahead one) but it added a THIRD
+ * divergent-`now` resolution site (aim @ tickPhysics-now ≠ updateMirror
+ * @ now ≠ sprite @ render-now), so the turret aimed at one pose while
+ * the sprite was drawn at another → "two things fighting", the laser
+ * jittering against the drone (on-device, capture `…-jfagww`). Reading
+ * the one written pose makes aim == draw == collide TRUE (≤1-frame
+ * smooth lead-lag, never per-frame jitter) AND keeps the
+ * aim-the-drawn-not-the-ahead guarantee — `updateMirror` wrote the
+ * display-delayed interpolated pose into `entry.x/y`, so that is what
+ * is read. The canary `tests/unit/swarmPoseConsistency.test.ts` locks
+ * the one-resolution-per-frame invariant directly.
  */
 function emptyRing(): PoseRingEntry[] {
   const ring: PoseRingEntry[] = new Array(POSE_RING_DEPTH);
@@ -151,11 +164,11 @@ function movingDrone(arrivals: Array<{ x: number; y: number; arrivalMs: number }
 }
 
 describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its authoritative/ahead pose', () => {
-  it('resolves the drone target to the display-delayed interpolated pose (== the renderer pose), NOT entry.x/y', () => {
+  it('returns the SINGLE per-frame pose updateMirror wrote (display-delayed, behind the raw/ahead sample) — no re-interpolation', () => {
     // Drone travelled (0,0) → (2000,0) over 1 s = 2000 u/s — fast but
     // below TELEPORT_MAX_PLAUSIBLE_SPEED (2500), so interpolateSwarmPose
-    // genuinely lerps (no teleport snap). entry.x/y holds the newest
-    // AUTHORITATIVE pose (2000,0); the sprite is drawn well behind it.
+    // genuinely lerps (no teleport snap). entry.x/y starts at the newest
+    // AUTHORITATIVE pose (2000,0) — what the decoder writes.
     const drone = movingDrone([
       { x: 0, y: 0, arrivalMs: 0 },
       { x: 2000, y: 0, arrivalMs: 1000 },
@@ -163,22 +176,27 @@ describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its
     const swarm = new Map<number, SwarmRenderState>([[7, drone]]);
     const now = 1000;
 
+    // Simulate ColyseusClient.updateMirror (lines 2481-2484): the ONE
+    // per-frame interpolation, written into entry.x/y/angle — the value
+    // the sprite + predWorld collision body + laser beam also read.
+    const resolved: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    interpolateSwarmPose(drone, now, resolved);
+    drone.x = resolved.x; drone.y = resolved.y; drone.angle = resolved.angle;
+
     const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-    const targets = buildLocalAimTargets(swarm, now, scratch);
+    const targets = buildLocalAimTargets(swarm, scratch);
 
     expect(targets).toHaveLength(1);
     const t = targets[0]!;
     expect(t.id).toBe('swarm-7');
 
-    // Must equal the SAME interpolateSwarmPose the renderer/predWorld use…
-    const renderPose: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-    interpolateSwarmPose(drone, now, renderPose);
-    expect(t.x).toBeCloseTo(renderPose.x, 6);
-    expect(t.y).toBeCloseTo(renderPose.y, 6);
-    // …and must be meaningfully BEHIND the raw authoritative/ahead pose
-    // (the bug = aiming at drone.x). Delay-independent: across the whole
-    // adaptive range the interpolated pose trails the newest sample.
-    expect(t.x).toBeLessThan(drone.x - 100); // drone.x === 2000 (the lead)
+    // Reads exactly the written per-frame pose (aim == draw == collide).
+    expect(t.x).toBeCloseTo(drone.x, 6);
+    expect(t.y).toBeCloseTo(drone.y, 6);
+    // 0e24448's guarantee preserved: that pose is the display-delayed
+    // one, meaningfully BEHIND the raw/ahead authoritative sample (the
+    // original bug was aiming at the raw 2000 lead).
+    expect(t.x).toBeLessThan(2000 - 100);
   });
 
   it('excludes asteroids (kind !== 1) — they are not turret targets', () => {
@@ -190,12 +208,12 @@ describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its
       [2, asteroid],
     ]);
     const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-    const targets = buildLocalAimTargets(swarm, 0, scratch);
+    const targets = buildLocalAimTargets(swarm, scratch);
     expect(targets.map((t) => t.id)).toEqual(['swarm-1']);
   });
 
   it('an empty / absent swarm yields no targets (turret slews back to forward)', () => {
     const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-    expect(buildLocalAimTargets(new Map(), 0, scratch)).toEqual([]);
+    expect(buildLocalAimTargets(new Map(), scratch)).toEqual([]);
   });
 });

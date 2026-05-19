@@ -11,7 +11,8 @@
  */
 import type { WeaponMode } from '@core/combat/WeaponCatalogue';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
-import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import type { InterpolatedPose } from '../net/swarmInterpolation';
+import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 
 /**
  * Should a LOCAL-player fire of this weapon mode spawn a travelling ghost
@@ -63,17 +64,27 @@ export interface LocalAimTarget {
 /**
  * Build the local turret's auto-aim candidate list from the swarm mirror.
  *
- * Each drone's aim position is resolved through the SAME
- * `interpolateSwarmPose` (display-delay buffer) that the renderer and the
- * predWorld kinematic follower use — NOT the raw `entry.x/y`. That raw
- * field holds the latest AUTHORITATIVE decoded pose (the binary decoder
- * writes it ~20 Hz; `updateMirror` only overwrites it with the
- * interpolated pose later in the frame), so reading it from
- * `tickLocalMountAim` (which runs earlier, in `tickPhysics`) made the
- * turret aim at where the drone *is* on the wire — ~100 ms / its
- * dead-reckoned lead ahead of where the sprite is DRAWN. Resolving the
- * pose here makes "aim == draw == collide" true by construction,
- * independent of packet / `updateMirror` ordering.
+ * Each drone's aim position is read from the SINGLE per-frame display
+ * pose that `ColyseusClient.updateMirror` already resolved (one
+ * `interpolateSwarmPose` call per frame, written into `entry.x/y/angle`,
+ * and the pose the predWorld collision body + sprite + laser beam all
+ * use) — via `resolveDroneDisplayPose`. It does **not** re-interpolate.
+ *
+ * Why this matters (drone/laser-jitter fix, 2026-05-19; supersedes the
+ * `0e24448` mechanism, same goal): `buildLocalAimTargets` runs in
+ * `tickPhysics`, *earlier* in the frame than `updateMirror` and the
+ * renderer. If it called `interpolateSwarmPose` itself it resolved the
+ * pose at a DIFFERENT `now` than the frame's single resolution — by a
+ * variable, raf-jitter-amplified amount — so the turret aimed at one
+ * pose while the sprite was drawn at another and the beam jittered
+ * against the drone ("two things fighting"; on-device, capture
+ * `…-jfagww`). Reading the one written pose makes "aim == draw ==
+ * collide" true by construction, with at most a smooth ≤1-frame
+ * lead-lag (the accepted "render the past"), never per-frame jitter.
+ * `0e24448`'s guarantee — aim the DRAWN pose, not the raw/ahead
+ * authoritative one — is preserved: `updateMirror` wrote the
+ * display-delayed interpolated pose into `entry.x/y`, so that is what
+ * is read here.
  *
  * Asteroids (`kind !== 1`) are never turret targets. Returns a fresh
  * array (caller scope = once per `tickLocalMountAim`; the per-candidate
@@ -81,13 +92,12 @@ export interface LocalAimTarget {
  */
 export function buildLocalAimTargets(
   swarm: ReadonlyMap<number, SwarmRenderState>,
-  nowMs: number,
   scratch: InterpolatedPose,
 ): LocalAimTarget[] {
   const out: LocalAimTarget[] = [];
   for (const [entityId, sw] of swarm) {
     if (sw.kind !== 1) continue; // asteroids aren't valid targets
-    interpolateSwarmPose(sw, nowMs, scratch);
+    resolveDroneDisplayPose(sw, scratch);
     out.push({
       id: `swarm-${entityId}`,
       x: scratch.x,

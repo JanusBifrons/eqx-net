@@ -290,10 +290,11 @@ export class ColyseusGameClient {
    *  drone body to it so player↔drone collision stays render-consistent.
    *  Server stays hit-authoritative; this is presentation/collision only. */
   private readonly _swarmInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-  /** Separate scratch for resolving drone auto-aim poses via
-   *  `interpolateSwarmPose` in `tickLocalMountAim`. Distinct from
-   *  `_swarmInterpScratch` (used by `updateMirror`) — different frame
-   *  phase; kept separate so the two never alias by accident. */
+  /** Scratch the `tickLocalMountAim` aim builder writes the resolved
+   *  drone pose into. `buildLocalAimTargets` no longer interpolates — it
+   *  READS the single per-frame pose `updateMirror` wrote (via
+   *  `resolveDroneDisplayPose`) into this scratch. Kept distinct from
+   *  `_swarmInterpScratch` so the two never alias across frame phases. */
   private readonly _aimInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
   /** IDs of remote ships currently spawned in the prediction world. */
@@ -2938,18 +2939,22 @@ export class ColyseusGameClient {
       return;
     }
 
-    // Gather drone auto-aim targets at the SAME display-delayed pose the
-    // renderer + the predWorld kinematic follower use (buildLocalAimTargets
-    // → interpolateSwarmPose). The old inline path read the raw mirror
-    // entry, which holds the AUTHORITATIVE decoded pose whenever a binary
-    // packet arrived since the last updateMirror — so tickLocalMountAim
-    // (running earlier, in tickPhysics) aimed the turret at the drone's
-    // network/ahead pose while the sprite was drawn ~100 ms behind
-    // (capture uf0o8g: "aims ahead at its dead-reckoning target, not where
-    // it's drawn"). Resolving the pose here makes aim == draw == collide
-    // by construction, independent of packet / updateMirror ordering.
+    // Gather drone auto-aim targets from the SINGLE per-frame display
+    // pose. `buildLocalAimTargets` reads the pose `updateMirror` already
+    // resolved into `entry.x/y` (the one `interpolateSwarmPose` per
+    // frame; the same value the sprite + predWorld collision body + laser
+    // beam use) — it does NOT re-interpolate. tickLocalMountAim runs in
+    // tickPhysics, *earlier* in the frame than updateMirror/the renderer;
+    // re-interpolating here resolved the pose at a different `now` than
+    // the frame's single resolution, so the turret aimed where the drone
+    // *wasn't drawn* and the beam jittered against the sprite ("two
+    // things fighting"; capture jfagww). Reading the one written pose
+    // makes aim == draw == collide by construction (≤1-frame smooth
+    // lead-lag, never per-frame jitter). 0e24448's "aim the drawn pose,
+    // not the raw/ahead one" guarantee is preserved — updateMirror wrote
+    // the display-delayed pose there.
     const targets = this.mirror.swarm
-      ? buildLocalAimTargets(this.mirror.swarm, performance.now(), this._aimInterpScratch)
+      ? buildLocalAimTargets(this.mirror.swarm, this._aimInterpScratch)
       : [];
 
     // Range gate: only acquire targets within hitscan reach. Out-of-range
