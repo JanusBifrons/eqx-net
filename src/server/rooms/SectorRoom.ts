@@ -1225,6 +1225,19 @@ export class SectorRoom extends Room<SectorState> {
     // correct for the Phase-2b multi-weapon future — today every mount in
     // a salvo shares one `weaponDef`, so this equals that single value.
     let bestHitDamage = 0;
+    // weapon-hit-prediction Phase 3 — the closest mount-hit's WIRE id
+    // (`wireTargetId`), tracked in lockstep with `bestHitId`. The internal
+    // `bestHitId`/`mountHitId` for a swarm target is the registry key
+    // (`swarm-drone-<i>` / `lwbot-<n>`), but `DamageEvent.targetId` and
+    // `laser_fired.targetId` both use the dense wire id `swarm-<entityId>`
+    // — which is also the only id space the client knows (its predWorld
+    // drone bodies are keyed `swarm-<entityId>`). Acking the internal id
+    // made the client's hitscan reconcile mis-compare EVERY drone hit as
+    // `corrected`. The `hit_ack` must speak the same wire id as every
+    // other client-facing combat message; `wireTargetId` already is that
+    // id (it's what `laser_fired` broadcasts). Player / wreck / lingering
+    // targets are unaffected (their `wireTargetId === mountHitId`).
+    let bestHitWireId: string | undefined;
 
     const playerAngles = this.playerMountAngles.get(shooterId);
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
@@ -1390,6 +1403,12 @@ export class SectorRoom extends Room<SectorState> {
           bestHitX = hitX;
           bestHitY = hitY;
           bestHitDamage = hitscanDef.damage;
+          // wire id (== mountHitId for player/wreck/lingering; the dense
+          // `swarm-<entityId>` for drones/asteroids) — see the bestHitWireId
+          // declaration. This is what every other client-facing combat
+          // message already uses, so the client's hit-prediction reconcile
+          // compares like-for-like.
+          bestHitWireId = wireTargetId;
         }
       }
 
@@ -1415,7 +1434,7 @@ export class SectorRoom extends Room<SectorState> {
     // resolved later via the snapshot's `projectiles[]` slice.
     void bestHitX; void bestHitY; void bestHitIsObstacle; // reserved for future hit-pos in hit_ack
     if (bestHitId) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitId, damage: bestHitDamage };
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitWireId, damage: bestHitDamage };
       client.send('hit_ack', ack);
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };

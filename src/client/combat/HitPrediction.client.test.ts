@@ -15,9 +15,12 @@ import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   resolveClosestPredictedHit,
   predictShotOutcome,
+  reconcileAckToFeedback,
+  reconcileDamageToFeedback,
   type PredHitscanWorld,
   type MountFireGeom,
   type PredictedFeedbackSink,
+  type ReconcileFeedbackSink,
 } from './HitPrediction.client.js';
 
 /** Fake predWorld: returns a scripted hit per (fromX) so multi-mount
@@ -180,5 +183,105 @@ describe('predictShotOutcome — ledger.predict + immediate tagged feedback', ()
     expect(ret).toBe('swarm-near');
     expect(sink.numbers).toEqual([{ x: 50, y: 0, damage: 20, tag: 'shot-3' }]);
     expect(sink.flashes).toEqual(['swarm-near']);
+  });
+});
+
+// ── Phase 3 — the SINGLE reconcile path (hit_ack / DamageEvent) ─────────────
+function recordingReconcileSink(): ReconcileFeedbackSink & {
+  cancels: string[];
+  flashClears: string[];
+} {
+  const cancels: string[] = [];
+  const flashClears: string[] = [];
+  return {
+    cancels,
+    flashClears,
+    cancelPredictedNumber: (id) => cancels.push(id),
+    clearPredictedFlash: (tid) => flashClears.push(tid),
+  };
+}
+
+describe('reconcileAckToFeedback — hitscan hit_ack is the single correction path', () => {
+  it('confirmed ack: NO cancel/flash-clear, then the authoritative DamageEvent de-dupes (no double-count)', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    ledger.predict('s1', 'hitscan', 'swarm-7', 20, 1000);
+    const r = reconcileAckToFeedback(ledger, 's1', { hit: true, targetId: 'swarm-7', damage: 20 }, sink, 1100);
+    expect(r.kind).toBe('confirmed');
+    expect(sink.cancels).toEqual([]);
+    expect(sink.flashClears).toEqual([]);
+    // The predicted number stays on screen; the imminent DamageEvent must
+    // be suppressed so exactly one number shows for the confirmed hit.
+    expect(reconcileDamageToFeedback(ledger, { targetId: 'swarm-7', damage: 20 }, true, 1150)).toBe(true);
+    expect(ledger.size()).toBe(0);
+  });
+
+  it('rolled_back ack (predicted hit, server says miss): hard-cancel number + clear flash', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    ledger.predict('s1', 'hitscan', 'swarm-7', 20, 1000);
+    const r = reconcileAckToFeedback(ledger, 's1', { hit: false }, sink, 1100);
+    expect(r.kind).toBe('rolled_back');
+    expect(sink.cancels).toEqual(['s1']);
+    expect(sink.flashClears).toEqual(['swarm-7']);
+  });
+
+  it('corrected ack (server hit a different target): hard-cancel the mispredicted number + clear its flash', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    ledger.predict('s1', 'hitscan', 'swarm-7', 20, 1000);
+    const r = reconcileAckToFeedback(ledger, 's1', { hit: true, targetId: 'swarm-9', damage: 20 }, sink, 1100);
+    expect(r.kind).toBe('corrected');
+    expect(sink.cancels).toEqual(['s1']);
+    expect(sink.flashClears).toEqual(['swarm-7']); // the WRONG (predicted) target
+  });
+
+  it('false_negative ack (predicted miss, server says hit): NO spurious rollback; authoritative path untouched', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    ledger.predict('s1', 'hitscan', null, 0, 1000);
+    const r = reconcileAckToFeedback(ledger, 's1', { hit: true, targetId: 'swarm-9', damage: 20 }, sink, 1100);
+    expect(r.kind).toBe('false_negative');
+    expect(sink.cancels).toEqual([]);
+    expect(sink.flashClears).toEqual([]);
+    // The real DamageEvent must NOT be suppressed (there was no predicted
+    // number) — handleDamage shows it exactly as today.
+    expect(reconcileDamageToFeedback(ledger, { targetId: 'swarm-9', damage: 20 }, true, 1150)).toBe(false);
+  });
+
+  it('noop ack (unknown clientShotId): nothing emitted', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    const r = reconcileAckToFeedback(ledger, 'ghost', { hit: true, targetId: 'x', damage: 1 }, sink, 1000);
+    expect(r.kind).toBe('noop');
+    expect(sink.cancels).toEqual([]);
+    expect(sink.flashClears).toEqual([]);
+  });
+
+  it('projectile: the ack is a noop (never rolled back); the DamageEvent confirms + de-dupes', () => {
+    const ledger = new HitPredictionLedger();
+    const sink = recordingReconcileSink();
+    ledger.predict('p1', 'projectile', 'swarm-9', 10, 1000);
+    const r = reconcileAckToFeedback(ledger, 'p1', { hit: false }, sink, 1050);
+    expect(r.kind).toBe('noop');
+    expect(sink.cancels).toEqual([]); // NOT rolled back on the (always-false) projectile ack
+    expect(ledger.size()).toBe(1);
+    expect(reconcileDamageToFeedback(ledger, { targetId: 'swarm-9', damage: 10 }, true, 1600)).toBe(true);
+    expect(ledger.size()).toBe(0);
+  });
+});
+
+describe('reconcileDamageToFeedback — handleDamage stays the sole authority; only the dup number is gated', () => {
+  it('a DamageEvent from another shooter is never suppressed (passthrough)', () => {
+    const ledger = new HitPredictionLedger();
+    ledger.predict('s1', 'hitscan', 'swarm-7', 20, 1000);
+    reconcileAckToFeedback(ledger, 's1', { hit: true, targetId: 'swarm-7', damage: 20 }, recordingReconcileSink(), 1100);
+    // shooterIsSelf=false → handleDamage must behave exactly as today.
+    expect(reconcileDamageToFeedback(ledger, { targetId: 'swarm-7', damage: 20 }, false, 1150)).toBe(false);
+  });
+
+  it('a DamageEvent with no matching prediction is never suppressed (passthrough)', () => {
+    const ledger = new HitPredictionLedger();
+    expect(reconcileDamageToFeedback(ledger, { targetId: 'swarm-3', damage: 20 }, true, 1000)).toBe(false);
   });
 });

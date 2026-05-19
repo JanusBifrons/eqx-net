@@ -22,7 +22,7 @@
  * construction). `mode` is still threaded to the ledger so reconcile
  * routes correctly (projectile ignores the ack; hitscan uses it).
  */
-import type { HitPredictionLedger } from '@core/combat/HitPrediction';
+import type { HitPredictionLedger, AckResult } from '@core/combat/HitPrediction';
 import type { WeaponMode } from '@core/combat/WeaponCatalogue';
 
 /** The single predWorld method the prediction needs — same signature as
@@ -127,4 +127,68 @@ export function predictShotOutcome(p: PredictShotParams): string | null {
     p.sink.flashTarget(hit.hitId);
   }
   return targetId;
+}
+
+/** Presentation-correction surface for the reconcile path (Phase 3). The
+ *  ColyseusClient adapter routes these onto the existing mirror drains:
+ *  cancel → `mirror.pendingDamageNumberCancels`; flash-clear →
+ *  `_damageFlashFrames.delete`. */
+export interface ReconcileFeedbackSink {
+  cancelPredictedNumber(clientShotId: string): void;
+  clearPredictedFlash(targetId: string): void;
+}
+
+/**
+ * THE SINGLE reconcile path for a hitscan `hit_ack`. Applies it to the
+ * ledger and emits the resulting presentation correction:
+ *  - `confirmed`  → keep the predicted number (ledger is now `settled`, so
+ *                   the imminent authoritative DamageEvent de-dupes it);
+ *                   nothing emitted here.
+ *  - `rolled_back`→ the shot missed/was rejected server-side: hard-cancel
+ *                   the predicted number + clear its flash THIS frame.
+ *  - `corrected`  → server hit a different target: hard-cancel the
+ *                   mispredicted number + clear the WRONG target's flash;
+ *                   the authoritative DamageEvent shows the real hit.
+ *  - `false_negative`/`noop` → nothing (the authoritative path is
+ *                   untouched — no predicted number existed to undo).
+ * Returns the ledger result for the caller's diagnostics. Projectile
+ * predictions return `noop` here (their sole authority is the eventual
+ * DamageEvent / TTL — never the ack).
+ */
+export function reconcileAckToFeedback(
+  ledger: HitPredictionLedger,
+  clientShotId: string,
+  ack: { hit: boolean; targetId?: string; damage?: number },
+  sink: ReconcileFeedbackSink,
+  nowMs: number,
+): AckResult {
+  const r = ledger.reconcileAck(clientShotId, ack, nowMs);
+  if (r.kind === 'rolled_back') {
+    sink.cancelPredictedNumber(r.clientShotId);
+    sink.clearPredictedFlash(r.targetId);
+  } else if (r.kind === 'corrected') {
+    sink.cancelPredictedNumber(r.clientShotId);
+    if (r.fromTargetId) sink.clearPredictedFlash(r.fromTargetId);
+  }
+  return r;
+}
+
+/**
+ * THE SINGLE reconcile path for an authoritative `DamageEvent`. Returns
+ * whether the caller (`handleDamage`) must SUPPRESS its duplicate damage
+ * number because a prediction already showed it (`dedupe` = ack-confirmed
+ * hitscan; `confirmed` = projectile now authoritative). `handleDamage`
+ * stays the SOLE HP/HUD authority — only the number push is gated; HP,
+ * shield, flash, healthbar, and hostility are all untouched. A
+ * non-self-shooter or no-matching-prediction event returns `false`
+ * (handleDamage behaves exactly as it does today).
+ */
+export function reconcileDamageToFeedback(
+  ledger: HitPredictionLedger,
+  damage: { targetId: string; damage: number },
+  shooterIsSelf: boolean,
+  nowMs: number,
+): boolean {
+  const r = ledger.reconcileDamage(damage, shooterIsSelf, nowMs);
+  return r.kind === 'dedupe' || r.kind === 'confirmed';
 }

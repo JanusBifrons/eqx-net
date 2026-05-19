@@ -1,7 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -10,7 +10,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
   recordRemoteCorrection,
@@ -47,7 +47,10 @@ import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
+  reconcileAckToFeedback,
+  reconcileDamageToFeedback,
   type PredictedFeedbackSink,
+  type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
 import type { TouchInput } from '../input/TouchInput';
@@ -574,6 +577,18 @@ export class ColyseusGameClient {
    *  exactly one number shows per confirmed hit. The server stays 100%
    *  hit-authoritative — this only hides the RTT on the felt impact. */
   private readonly _hitLedger = new HitPredictionLedger();
+  /** weapon-hit-prediction Phase 3 — routes ledger reconcile corrections
+   *  onto the existing mirror drains. cancel → the pendingDamageNumber-
+   *  Cancels queue (renderer hard-cancels by tag); flash-clear → drop the
+   *  predicted 6-frame flash. */
+  private readonly _reconcileSink: ReconcileFeedbackSink = {
+    cancelPredictedNumber: (id) => {
+      this.mirror.pendingDamageNumberCancels?.push(id);
+    },
+    clearPredictedFlash: (tid) => {
+      this._damageFlashFrames.delete(tid);
+    },
+  };
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
 
@@ -861,8 +876,24 @@ export class ColyseusGameClient {
       useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
-    room.onMessage('damage', (evt: DamageEvent) => {
-      this.handleDamage(evt);
+    room.onMessage('damage', (raw: unknown) => {
+      // weapon-hit-prediction Phase 3 — defensive zod parse on receive
+      // (invariant #4; mirrors the collision_resolved drop-on-fail). The
+      // client now CONSUMES this message for prediction de-dupe, so it
+      // crosses the trust boundary.
+      const parsed = DamageEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const evt = parsed.data;
+      // Single reconcile path: if a prediction already showed this number,
+      // suppress handleDamage's duplicate. handleDamage stays the SOLE
+      // HP/HUD authority — only the number push is gated.
+      const suppressNumber = reconcileDamageToFeedback(
+        this._hitLedger,
+        { targetId: evt.targetId, damage: evt.damage },
+        evt.shooterId === this.mirror.localPlayerId,
+        performance.now(),
+      );
+      this.handleDamage(evt, suppressNumber);
     });
 
     room.onMessage('shield', (evt: ShieldEventMessage) => {
@@ -872,7 +903,24 @@ export class ColyseusGameClient {
       this.handleDestroy(evt);
     });
 
-    room.onMessage('hit_ack', (ack: HitAckMessage) => {
+    room.onMessage('hit_ack', (raw: unknown) => {
+      // weapon-hit-prediction Phase 3 — defensive zod parse (invariant #4;
+      // the client now consumes hit_ack as its single reconcile path, so
+      // it crosses the trust boundary). Drop-on-fail like collision_resolved.
+      const parsed = HitAckSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const ack = parsed.data;
+      // THE single reconcile path — runs BEFORE ghostManager.resolve so a
+      // mispredicted number is hard-cancelled the same frame the ghost
+      // fades. resolve() itself is unchanged (still fades the ghost salvo
+      // by clientShotId on the wire ack).
+      reconcileAckToFeedback(
+        this._hitLedger,
+        ack.clientShotId,
+        { hit: ack.hit, targetId: ack.targetId, damage: ack.damage },
+        this._reconcileSink,
+        performance.now(),
+      );
       this.ghostManager.resolve(ack.clientShotId, ack.hit);
       if (ack.rejected) {
         // Surface rejection events in the diagnostic ring buffer. The 2026-05-06
@@ -1228,7 +1276,7 @@ export class ColyseusGameClient {
     }
   }
 
-  private handleDamage(evt: DamageEvent): void {
+  private handleDamage(evt: DamageEvent, suppressNumber = false): void {
     const localId = this.mirror.localPlayerId;
     if (evt.targetId === localId) {
       // Phase 7 — use the event-provided PER-KIND maxes, not the global
@@ -1249,8 +1297,12 @@ export class ColyseusGameClient {
     // Flash the damaged ship for 6 frames.
     this._damageFlashFrames.set(evt.targetId, 6);
 
-    // Floating damage number at hit location.
-    if (this.mirror.pendingDamageNumbers) {
+    // Floating damage number at hit location. weapon-hit-prediction
+    // Phase 3 — suppressed when a confirmed/settled prediction already
+    // showed this number (de-dupe: exactly one number per confirmed hit).
+    // Everything else in handleDamage stays unconditional — this remains
+    // the SOLE HP/HUD/flash/healthbar/hostility authority.
+    if (!suppressNumber && this.mirror.pendingDamageNumbers) {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
