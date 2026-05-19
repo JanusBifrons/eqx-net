@@ -26,8 +26,9 @@
  *   - maxDriftUnits   clean < 1.0u (prediction-diagnostics.spec.ts:76);
  *     ~12u realistic / >50u catastrophic divergence (:153-155)
  *   - ticksAhead cap = 30          (lookaheadController.ts:40 CEILING_TICKS)
- *   - snapshotJitterMs cadence     = 20 Hz / 50 ms
  *   - droppedSnapshotsRecent window = last 10 (PredictionStats:134)
+ *   - snapshotJitterMs is PRINT-ONLY (NOT gated) — proxy-jitter-
+ *     dominated, demoted 2026-05-19 from Step-5 data (see module header)
  *
  * Level: pure threshold math with zero IO — a node unit test at exactly
  * that level is the faithful lock. RED today: the module does not exist.
@@ -152,10 +153,16 @@ describe('evaluateNetHealth — EPS floor (near-zero baseline cannot make the ra
   });
 
   it('exact threshold equality is NOT a breach (strict >, boundary safety)', () => {
-    const { margin, eps } = NET_HEALTH_BUDGET.snapshotJitterMs;
-    const baselineVal = 20;
+    // meanDriftUnits: headVal sits exactly on the relative threshold AND
+    // far over the absolute ceil (3.0) — so pass=true here PROVES the
+    // relative test is strict `>` (not `>=`); a `>=` bug would FAIL it.
+    const { margin, eps } = NET_HEALTH_BUDGET.meanDriftUnits;
+    const baselineVal = 5;
     const headVal = baselineVal * (1 + margin) + eps; // exactly the threshold
-    const v = evaluateNetHealth({ ...ok(), snapshotJitterMs: headVal }, { ...ok(), snapshotJitterMs: baselineVal });
+    const v = evaluateNetHealth(
+      { ...ok(), meanDriftUnits: headVal },
+      { ...ok(), meanDriftUnits: baselineVal },
+    );
     expect(v.pass).toBe(true);
   });
 });
@@ -186,15 +193,14 @@ describe('evaluateNetHealth — liveness preconditions are a DISTINCT channel (n
   });
 });
 
-describe('NET_HEALTH_BUDGET — the gated set is exactly the six grounded metrics', () => {
-  it('locks the gated metric set (adding/removing one is a deliberate, reviewed change)', () => {
+describe('NET_HEALTH_BUDGET — the gated set is exactly the five grounded metrics', () => {
+  it('locks the gated metric set (snapshotJitterMs is print-only; changing the set is deliberate)', () => {
     expect(Object.keys(NET_HEALTH_BUDGET).sort()).toEqual(
       [
         'droppedSnapshotsRecent',
         'maxDriftUnits',
         'meanDriftUnits',
         'rollingCorrRate',
-        'snapshotJitterMs',
         'ticksAhead',
       ].sort(),
     );

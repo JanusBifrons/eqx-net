@@ -33,8 +33,17 @@
  *   - ticksAhead  cap = 30         (src/client/net/lookaheadController.ts:40
  *                     CEILING_TICKS — the system's own prediction-window
  *                     saturation cap; the incident's ≈43 is past it)
- *   - snapshotJitterMs cadence = 20 Hz / 50 ms (src/server/CLAUDE.md)
  *   - droppedSnapshotsRecent window = last 10 (PredictionStats:134)
+ *
+ * `snapshotJitterMs` is PRINT-ONLY, NOT gated (demoted 2026-05-19 from
+ * Step-5 data): the gate's proxy deliberately injects ±30 ms delivery
+ * jitter, so this metric is dominated by the injected noise + host
+ * scheduling, not a code property — baseline spanned 19.5–130.8 ms over
+ * 4 reps on IDENTICAL code (6.7×). Same disqualifier the gate uses to
+ * exclude `rtt*` ("proxy-dominated ⇒ tests the proxy, not the code").
+ * The plan pre-authorised this data-driven demotion (acceptance step 3
+ * / self-critique #1); regression power is unaffected — the code-side
+ * acceptance trips on the drift/correction metrics, never jitter.
  */
 
 /**
@@ -47,6 +56,8 @@ export interface NetHealthArm {
   ticksAhead: number;
   maxDriftUnits: number;
   meanDriftUnits: number;
+  /** PRINT-ONLY — proxy-jitter-dominated, NOT gated (see header). Kept
+   *  on the arm so the spec can log it for diagnosis. */
   snapshotJitterMs: number;
   droppedSnapshotsRecent: number;
   /** Liveness: snapshots actually flowed (≈ RUN_MS at 20 Hz, minus warmup). */
@@ -92,7 +103,9 @@ export const NET_HEALTH_BUDGET = {
   ticksAhead: { margin: 0.4, eps: 3, ceil: 30 },
   maxDriftUnits: { margin: 0.5, eps: 0.5, ceil: 12.0 },
   meanDriftUnits: { margin: 0.4, eps: 0.2, ceil: 3.0 },
-  snapshotJitterMs: { margin: 0.6, eps: 8, ceil: 80 },
+  // snapshotJitterMs DEMOTED to print-only (proxy-jitter-dominated — see
+  // header). Re-adding it without solving the injected-jitter confound
+  // is a deliberate, reviewed change.
   droppedSnapshotsRecent: { margin: 1.0, eps: 1, ceil: 4 },
 } as const satisfies Record<string, MetricBudget>;
 
