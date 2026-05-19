@@ -39,6 +39,11 @@ export default defineConfig({
       'tests/unit/**/*.test.ts',
       // Stage 4.5 — scenario-harness regression fixtures (network-feel roadmap).
       'tests/scenarios/**/*.test.ts',
+      // Netcode-health gate pure modules (plan: e2e-rebuild). Lives OUTSIDE
+      // tests/e2e/ so Playwright (testDir ./tests/e2e, default *.test.ts
+      // match) does not collide-collect these vitest units; the Playwright
+      // spec imports the pure modules from here.
+      'tests/netgate/**/*.test.ts',
     ],
     exclude: [
       '**/node_modules/**',
