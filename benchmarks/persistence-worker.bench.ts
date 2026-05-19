@@ -17,11 +17,15 @@
  * milliseconds. Headline number is "enqueues per ms" — should comfortably
  * exceed 100 (i.e., < 10 µs each), even with the worker spinning.
  *
- * Caveat: vitest 2.1 + Node 24 reports NaN for hz/ms in some bench runs
- * (pre-existing issue noted in Phase 5 closure). We exercise the path
- * regardless so regressions in cost surface as obvious slow-downs.
+ * vitest 2.x bench mode does NOT run `beforeAll`/`afterAll` suite hooks
+ * (that was the "NaN for hz/ms" caveat — the worker was never attached,
+ * so every iteration threw → zero samples). Setup is now at module load
+ * via top-level await; the worker is `unref()`'d and torn down from a
+ * sync `process.on('exit')` handler since `afterAll` never fires.
+ * Guarded by `scripts/check-bench-samples.mjs`. See docs/LESSONS.md
+ * 2026-05-19.
  */
-import { bench, describe, beforeAll, afterAll } from 'vitest';
+import { bench, describe } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -51,29 +55,22 @@ const SHED_OP: PersistOp = {
   ts: Date.now(),
 };
 
+const tempDir = mkdtempSync(path.join(tmpdir(), 'eqx-bench-'));
+const dbPath = path.join(tempDir, 'bench.db');
+const code = await bundleWorker({ entryPoint: DB_WORKER_TS });
+const worker = new Worker(code, { eval: true, workerData: { dbPath } });
+const sink = new WorkerBackedSink();
+await sink.attach(worker as unknown as WorkerHandle);
+// afterAll never runs in vitest bench mode: unref so the live worker
+// can't keep the bench process alive, and tear down synchronously on
+// exit (best-effort; the process is ending anyway).
+worker.unref();
+process.once('exit', () => {
+  try { void worker.terminate(); } catch { /* noop */ }
+  try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* noop */ }
+});
+
 describe('WorkerBackedSink — enqueue cost on the main thread', () => {
-  let tempDir: string;
-  let sink: WorkerBackedSink;
-  let worker: Worker;
-
-  beforeAll(async () => {
-    tempDir = mkdtempSync(path.join(tmpdir(), 'eqx-bench-'));
-    const dbPath = path.join(tempDir, 'bench.db');
-    const code = await bundleWorker({ entryPoint: DB_WORKER_TS });
-    worker = new Worker(code, { eval: true, workerData: { dbPath } });
-    sink = new WorkerBackedSink();
-    await sink.attach(worker as unknown as WorkerHandle);
-  });
-
-  afterAll(async () => {
-    try {
-      await sink.shutdown({ timeoutMs: 5000 });
-    } catch {
-      try { await worker.terminate(); } catch { /* noop */ }
-    }
-    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* noop */ }
-  });
-
   bench('enqueueCritical(KILL)', () => {
     sink.enqueueCritical(KILL_OP);
   });
