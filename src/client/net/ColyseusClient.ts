@@ -53,7 +53,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
+import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets, resolveLocalBeamRay, type BeamShipPose } from '../combat/LocalBeam';
 import type { TouchInput } from '../input/TouchInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
@@ -3035,20 +3035,27 @@ export class ColyseusGameClient {
     for (const m of mounts) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
-    const cosA = Math.cos(state.angle);
-    const sinA = Math.sin(state.angle);
+    // Hit-test from the pose the renderer DRAWS the beam at — the
+    // lerp-included `mirror.ships` pose, NOT raw `predWorld`. With a
+    // reconcile lerp offset active the two diverge by the full
+    // correction magnitude, so the beam was drawn pointing one way and
+    // hit-tested another (the parked local-ship-origin frame mismatch —
+    // the 0e24448 drone-TARGET fix's mirror image). `resolveLocalBeamRay`
+    // makes draw-origin == hit-test-origin by construction; residual is
+    // the same accepted ≤1-frame "render the past" lead-lag as
+    // `buildLocalAimTargets`. Presentation only — the server stays
+    // hit-authoritative via its own SnapshotRing-rewound ray. Fallback
+    // to raw predWorld only pre-first-mirror-write (mirror entry absent).
+    const beamPose: BeamShipPose = ship
+      ? { x: ship.x, y: ship.y, angle: ship.angle }
+      : { x: state.x, y: state.y, angle: state.angle };
     const mountAngles = ship?.mountAngles;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
-      const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
-      const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
       const currentMountAngle = mountAngles?.[i] ?? 0;
-      const mountAngle = state.angle + mount.baseAngle + currentMountAngle;
-      const fwdX = -Math.sin(mountAngle);
-      const fwdY = Math.cos(mountAngle);
-      const fromX = mountWorldX + fwdX * 20;
-      const fromY = mountWorldY + fwdY * 20;
-      const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      const mountAngle = beamPose.angle + mount.baseAngle + currentMountAngle;
+      const ray = resolveLocalBeamRay(beamPose, mount.localX, mount.localY, mountAngle);
+      const hit = this.predWorld.hitscan(ray.fromX, ray.fromY, ray.fwdX, ray.fwdY, HITSCAN_RANGE, localId);
       liveBeams.set(mount.id, {
         dist: hit ? hit.dist : HITSCAN_RANGE,
         hitId: hit?.hitId,

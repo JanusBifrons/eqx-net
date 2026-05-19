@@ -90,6 +90,72 @@ export interface LocalAimTarget {
  * array (caller scope = once per `tickLocalMountAim`; the per-candidate
  * object cost is unchanged from the prior inline construction).
  */
+/** A ship pose in the frame the player actually SEES it (lerp-included
+ *  `mirror.ships`), not the raw `predWorld` pose. */
+export interface BeamShipPose {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+/** One mount's hitscan ray, world-space. */
+export interface LocalBeamRay {
+  fromX: number;
+  fromY: number;
+  fwdX: number;
+  fwdY: number;
+}
+
+/** Barrel-tip clearance along the mount's fire direction. MUST match the
+ *  20 u server-side self-hit clearance in `SectorRoom.handleFire` and the
+ *  renderer's `BARREL_LENGTH` so the drawn beam emerges from the visible
+ *  barrel tip and the hit-test ray starts there too. */
+export const LOCAL_BEAM_BARREL_OFFSET = 20;
+
+/**
+ * Resolve one mount's local hitscan ray from the ship pose the RENDERER
+ * draws (lerp-included `mirror.ships`), not the raw `predWorld` pose.
+ *
+ * Why (parked local-ship-origin frame mismatch — the `0e24448`
+ * drone-TARGET fix's mirror image, ORIGIN side): the renderer draws the
+ * local beam from `mirror.ships.get(localId)` (predWorld pose + lerp
+ * offset) while `updateLiveBeam` hit-tested from raw
+ * `predWorld.getShipState(localId)`. When a reconcile lerp offset is
+ * active (e.g. post-correction) the two diverge by the FULL correction
+ * magnitude, so the drawn beam points/originates differently from where
+ * it was hit-tested — it visually misses. Sourcing the ray from the
+ * rendered pose makes draw-origin == hit-test-origin by construction;
+ * the residual collapses to the same accepted ≤1-frame "render the
+ * past" lead-lag as `buildLocalAimTargets` (both run in `tickPhysics`,
+ * before `updateMirror`, so they read the prior frame's written pose).
+ * Presentation only — `liveBeams` drives the DRAWN beam; the server
+ * stays hit-authoritative via its own SnapshotRing-rewound ray.
+ *
+ * Geometry is byte-identical to the prior inline `updateLiveBeam` math;
+ * only the pose SOURCE changes. `mountAngle` is the absolute world fire
+ * angle (`pose.angle + mount.baseAngle + currentMountAngle`) — resolved
+ * by the caller so this stays a pure value fn with no mount types.
+ */
+export function resolveLocalBeamRay(
+  pose: BeamShipPose,
+  mountLocalX: number,
+  mountLocalY: number,
+  mountAngle: number,
+): LocalBeamRay {
+  const cosA = Math.cos(pose.angle);
+  const sinA = Math.sin(pose.angle);
+  const mountWorldX = pose.x + (mountLocalX * cosA - mountLocalY * sinA);
+  const mountWorldY = pose.y + (mountLocalX * sinA + mountLocalY * cosA);
+  const fwdX = -Math.sin(mountAngle);
+  const fwdY = Math.cos(mountAngle);
+  return {
+    fromX: mountWorldX + fwdX * LOCAL_BEAM_BARREL_OFFSET,
+    fromY: mountWorldY + fwdY * LOCAL_BEAM_BARREL_OFFSET,
+    fwdX,
+    fwdY,
+  };
+}
+
 export function buildLocalAimTargets(
   swarm: ReadonlyMap<number, SwarmRenderState>,
   scratch: InterpolatedPose,
