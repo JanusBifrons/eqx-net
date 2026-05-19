@@ -1216,6 +1216,15 @@ export class SectorRoom extends Room<SectorState> {
     let bestHitIsObstacle = false;
     let bestHitX = 0;
     let bestHitY = 0;
+    // weapon-hit-prediction Phase 0 — the closest mount-hit's applied
+    // damage, tracked in lockstep with `bestHitId` so the aggregate
+    // `hit_ack` carries the exact value `applyDamage()` used for that
+    // target. That is also what the imminent `DamageEvent` carries, which
+    // lets the client de-dupe a confirmed prediction. Captured per-mount
+    // (not from the loop-scoped `hitscanDef` after the loop) so it stays
+    // correct for the Phase-2b multi-weapon future — today every mount in
+    // a salvo shares one `weaponDef`, so this equals that single value.
+    let bestHitDamage = 0;
 
     const playerAngles = this.playerMountAngles.get(shooterId);
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
@@ -1380,6 +1389,7 @@ export class SectorRoom extends Room<SectorState> {
           bestHitIsObstacle = mountHitIsObstacle;
           bestHitX = hitX;
           bestHitY = hitY;
+          bestHitDamage = hitscanDef.damage;
         }
       }
 
@@ -1405,7 +1415,7 @@ export class SectorRoom extends Room<SectorState> {
     // resolved later via the snapshot's `projectiles[]` slice.
     void bestHitX; void bestHitY; void bestHitIsObstacle; // reserved for future hit-pos in hit_ack
     if (bestHitId) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitId };
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitId, damage: bestHitDamage };
       client.send('hit_ack', ack);
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };

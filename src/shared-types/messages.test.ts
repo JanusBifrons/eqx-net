@@ -10,12 +10,15 @@
  */
 import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
+import { z } from 'zod';
 import {
   CollisionResolvedMessageSchema,
   EngageTransitSchema,
   FireMessageSchema,
+  HitAckSchema,
+  DamageEventSchema,
 } from './messages.js';
-import type { SnapshotMessage, WelcomeMessage } from './messages.js';
+import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -273,5 +276,141 @@ describe('Phase 6a wire shape — SnapshotMessage + WelcomeMessage', () => {
       shipInstanceId: '',
     };
     expect(welcome.shipInstanceId).toBe('');
+  });
+});
+
+// ── Hit-prediction wire contract (weapon-hit-prediction Phase 0) ────────────
+//
+// Pre-existing invariant #4 gap: the server creates `hit_ack` and `damage`
+// itself and trusts its own shape, so neither had a zod schema. The
+// client-side weapon-hit-prediction feature makes the client a *consumer*
+// of `hit_ack` (its single reconcile path) and a de-dupe consumer of
+// `damage` — both now cross the trust boundary, so both need a defensive
+// schema validated on ingest (mirrors how `collision_resolved` is handled).
+//
+// `hit_ack` also gains an optional `damage?: number` so a confirmed
+// prediction can be reconciled/de-duped against the authoritative
+// `DamageEvent.damage` without waiting for the broadcast. Schemas mirror
+// the hand-written interfaces exactly; the bidirectional `z.infer` ↔
+// interface assignability lock (typecheck-enforced) keeps them from
+// drifting apart.
+describe('HitAckSchema (weapon-hit-prediction Phase 0)', () => {
+  const validHit = {
+    type: 'hit_ack' as const,
+    clientShotId: 'shot-abc',
+    hit: true,
+    targetId: 'swarm-7',
+    damage: 12,
+  };
+
+  it('accepts a hit:true ack carrying targetId + damage', () => {
+    expect(HitAckSchema.safeParse(validHit).success).toBe(true);
+  });
+
+  it('accepts a legacy hit:false miss (no targetId / damage / rejected)', () => {
+    const r = HitAckSchema.safeParse({ type: 'hit_ack', clientShotId: 'shot-abc', hit: false });
+    expect(r.success).toBe(true);
+  });
+
+  it('accepts the server cooldown/temporal reject form (hit:false, rejected:true)', () => {
+    const r = HitAckSchema.safeParse({
+      type: 'hit_ack',
+      clientShotId: 'shot-abc',
+      hit: false,
+      rejected: true,
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects a wrong type literal', () => {
+    expect(HitAckSchema.safeParse({ ...validHit, type: 'hit' }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields (strict mode)', () => {
+    expect(HitAckSchema.safeParse({ ...validHit, extra: 'nope' }).success).toBe(false);
+  });
+
+  it('rejects a non-string clientShotId', () => {
+    expect(HitAckSchema.safeParse({ ...validHit, clientShotId: 42 }).success).toBe(false);
+  });
+
+  it('rejects a non-boolean hit', () => {
+    expect(HitAckSchema.safeParse({ ...validHit, hit: 'yes' }).success).toBe(false);
+  });
+
+  it('rejects a non-number damage', () => {
+    expect(HitAckSchema.safeParse({ ...validHit, damage: '12' }).success).toBe(false);
+  });
+
+  it('z.infer<HitAckSchema> ↔ HitAckMessage are bidirectionally assignable', () => {
+    // Typecheck-enforced structural-equality lock. `null as unknown as T`
+    // yields a value of exactly T with no excess-property freshness, so
+    // each assignment checks one direction of mutual assignability — if the
+    // schema and the interface drift (a field added to one only, or an
+    // optionality mismatch) `pnpm typecheck` fails here.
+    type SchemaT = z.infer<typeof HitAckSchema>;
+    const schemaToIface: HitAckMessage = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as HitAckMessage;
+    void schemaToIface;
+    void ifaceToSchema;
+    // Runtime: the parsed value is usable as the hand-written interface.
+    const parsed: HitAckMessage = HitAckSchema.parse(validHit);
+    expect(parsed.damage).toBe(12);
+  });
+});
+
+describe('DamageEventSchema (weapon-hit-prediction Phase 0)', () => {
+  const valid = {
+    type: 'damage' as const,
+    targetId: 'swarm-7',
+    damage: 12,
+    newHealth: 88,
+    shooterId: 'player-1',
+    hitX: 100,
+    hitY: -50,
+    newShield: 0,
+    shieldMax: 50,
+    hullMax: 100,
+    hitLayer: 'hull' as const,
+  };
+
+  it('accepts a full valid payload', () => {
+    expect(DamageEventSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts a payload without the optional hitX/hitY', () => {
+    const { hitX: _x, hitY: _y, ...rest } = valid;
+    expect(DamageEventSchema.safeParse(rest).success).toBe(true);
+  });
+
+  it('accepts hitLayer: "shield"', () => {
+    expect(DamageEventSchema.safeParse({ ...valid, hitLayer: 'shield' }).success).toBe(true);
+  });
+
+  it('rejects a wrong type literal', () => {
+    expect(DamageEventSchema.safeParse({ ...valid, type: 'dmg' }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields (strict mode)', () => {
+    expect(DamageEventSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('rejects an invalid hitLayer enum value', () => {
+    expect(DamageEventSchema.safeParse({ ...valid, hitLayer: 'armour' }).success).toBe(false);
+  });
+
+  it('rejects a missing required field (newHealth)', () => {
+    const { newHealth: _n, ...rest } = valid;
+    expect(DamageEventSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('z.infer<DamageEventSchema> ↔ DamageEvent are bidirectionally assignable', () => {
+    type SchemaT = z.infer<typeof DamageEventSchema>;
+    const schemaToIface: DamageEvent = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as DamageEvent;
+    void schemaToIface;
+    void ifaceToSchema;
+    const parsed: DamageEvent = DamageEventSchema.parse(valid);
+    expect(parsed.hitLayer).toBe('hull');
   });
 });
