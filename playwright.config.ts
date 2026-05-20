@@ -86,6 +86,7 @@ const FEATURE_SPECS: string[] = [
   '**/sync-diagnostics.spec.ts',
   '**/sync-health.spec.ts',
   '**/tidi-overlay.spec.ts',
+  '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
 ];
 
