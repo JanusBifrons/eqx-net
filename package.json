@@ -16,6 +16,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "bench": "vitest bench --run",
+    "bench:check": "tsx benchmarks/run-bench-check.ts",
     "e2e": "playwright test --project=smoke --project=feature",
     "e2e:smoke": "playwright test --project=smoke",
     "e2e:feature": "playwright test --project=feature",

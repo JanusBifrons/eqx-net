@@ -14,6 +14,30 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-20 — perf-floor Phase 0 — `beforeAll` does NOT run in vitest 2.1.x bench mode; module-level or inline `setup` is the only working pattern
+
+Commit: `chore(bench): restore numeric timings + baseline.json + bench:check (Phase 0, plan: perf-floor)`.
+
+The 2026-05-05 "pnpm bench reports NaN/0 for all benchmarks under vitest 2.1 + Node 24" entry was almost right but not fully diagnosed. The correction:
+
+- The NaN/0 affects bench files that use `beforeAll` / `afterAll` — **NOT all benches**. `benchmarks/spring.bench.ts` and `benchmarks/weapon-hittest.bench.ts` (which create state inline in the bench function) have worked the whole time.
+- `benchmarks/physics-tick.bench.ts`, `persistence-worker.bench.ts`, and `swarm-broadcast.bench.ts` used `beforeAll` for shared state; vitest 2.1.x's bench mode discovers their bench functions but never runs the `beforeAll`, so the closure-captured state is `undefined` and the bench either throws (caught silently by tinybench → `samples: 0`) or runs against `undefined` → meaningless.
+
+**Fix:** two patterns, both confirmed working on vitest 2.1.9 + Node 22.16:
+
+1. **Module-level setup** — declare state with `const` / `let` at module scope, populate eagerly (top-level await is OK for ESM). Cleanest for shared infrastructure that survives the whole bench file. Use this when teardown is fine via process exit.
+2. **Inline `setup` / `teardown` on each `bench()`** — `bench(name, fn, { setup, teardown })`. Each is async-friendly. Vitest 2.1.x DOES run these per-bench. Use this when state must be rebuilt per bench OR when you need a controlled teardown that runs even if the test fails.
+
+**Caveat with `setup` / `teardown` and shared infrastructure** (e.g. a persistent Worker): the teardown of bench-A runs before the setup of bench-B in the same describe, so if both benches share infrastructure that needs to survive both runs, use module-level setup instead. The `persistence-worker.bench.ts` file hit this — first attempt with per-bench setup deleted the temp DB between the two benches, causing "unable to open database file" + cascade of "FOREIGN KEY constraint failed" warnings. Module-level eager setup with no explicit teardown (process exit cleans up) was the fix.
+
+**Deliverables shipped:**
+- All 5 bench files emit real numeric timings via `pnpm bench`.
+- `benchmarks/baseline.json` (slim, ~210 lines) — committed for diff-vs-future comparison; schema `{ v:1, capturedAt, samples: [{ file, group, name, hz, mean, p99, sampleCount }] }`.
+- `benchmarks/benchBudget.ts` — pure decision core mirroring `tests/netgate/netHealthBudget.ts` (relative∧absolute AND-gate per metric, precondition failures distinct from regressions). Unit-locked by `benchmarks/benchBudget.test.ts` (15 cases).
+- `pnpm bench:check` — runs the bench, normalises vitest output, diffs against baseline, prints verdict, exits 0/1. Flags: `--update` overwrites baseline; `--print` prints current run + verdict and exits 0.
+
+**Downstream:** the perf-floor plan's Phase 5 `perfBudget.ts` follows the exact same shape; Phase 0 is the prototype.
+
 ## 2026-05-11 — Multi-mount refactor — six lessons in one session
 
 Commits: `47ff0be`..`a73a2a9` (multi-mount/turret refactor Phases 0–4c).

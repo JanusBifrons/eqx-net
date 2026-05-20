@@ -44,6 +44,11 @@ export default defineConfig({
       // match) does not collide-collect these vitest units; the Playwright
       // spec imports the pure modules from here.
       'tests/netgate/**/*.test.ts',
+      // Bench-budget pure module unit lock (plan: perf-floor, Phase 0).
+      // The .bench.ts files in this directory are still excluded from the
+      // unit run via the `benchmark.include` glob below — only .test.ts
+      // files match this entry.
+      'benchmarks/**/*.test.ts',
     ],
     exclude: [
       '**/node_modules/**',
@@ -53,7 +58,8 @@ export default defineConfig({
       // not double-discover / fail to parse them.
       '**/.claude/**',
       'tests/e2e/**',
-      'benchmarks/**',
+      // benchmarks/**/*.bench.ts is excluded by include-glob (matches only
+      // *.test.ts); benchmarks/**/*.test.ts IS included (plan: perf-floor).
       // Phase A1 — integration tests run via `pnpm test:integration`.
       'tests/integration/**',
     ],

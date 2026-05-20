@@ -17,16 +17,21 @@
  * milliseconds. Headline number is "enqueues per ms" — should comfortably
  * exceed 100 (i.e., < 10 µs each), even with the worker spinning.
  *
- * Caveat: vitest 2.1 + Node 24 reports NaN for hz/ms in some bench runs
- * (pre-existing issue noted in Phase 5 closure). We exercise the path
- * regardless so regressions in cost surface as obvious slow-downs.
+ * Implementation note: vitest 2.1.x bench mode does NOT run `beforeAll` /
+ * `afterAll` hooks (samples drop to 0); and per-bench `setup` / `teardown`
+ * does not work for shared infrastructure like a persistent worker thread
+ * (the second bench's setup would try to re-create the worker after the
+ * first bench's teardown already shut everything down — see "FOREIGN KEY
+ * constraint failed" failure mode). Module-level top-level await is the
+ * only pattern that gives both benches a stable worker. The process exit
+ * cleans up tempDir + worker; no explicit teardown.
  */
-import { bench, describe, beforeAll, afterAll } from 'vitest';
+import { bench, describe } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
 import { bundleWorker } from '../src/server/workers/bundleWorker.js';
 import { WorkerBackedSink, type WorkerHandle } from '../src/server/db/WorkerBackedSink.js';
 import type { PersistOp } from '../src/core/contracts/IPersistenceSink.js';
@@ -51,29 +56,15 @@ const SHED_OP: PersistOp = {
   ts: Date.now(),
 };
 
+// Module-level eager setup. Top-level await is supported in ESM.
+const tempDir = mkdtempSync(path.join(tmpdir(), 'eqx-bench-'));
+const dbPath = path.join(tempDir, 'bench.db');
+const code = await bundleWorker({ entryPoint: DB_WORKER_TS });
+const worker = new Worker(code, { eval: true, workerData: { dbPath } });
+const sink = new WorkerBackedSink();
+await sink.attach(worker as unknown as WorkerHandle);
+
 describe('WorkerBackedSink — enqueue cost on the main thread', () => {
-  let tempDir: string;
-  let sink: WorkerBackedSink;
-  let worker: Worker;
-
-  beforeAll(async () => {
-    tempDir = mkdtempSync(path.join(tmpdir(), 'eqx-bench-'));
-    const dbPath = path.join(tempDir, 'bench.db');
-    const code = await bundleWorker({ entryPoint: DB_WORKER_TS });
-    worker = new Worker(code, { eval: true, workerData: { dbPath } });
-    sink = new WorkerBackedSink();
-    await sink.attach(worker as unknown as WorkerHandle);
-  });
-
-  afterAll(async () => {
-    try {
-      await sink.shutdown({ timeoutMs: 5000 });
-    } catch {
-      try { await worker.terminate(); } catch { /* noop */ }
-    }
-    try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* noop */ }
-  });
-
   bench('enqueueCritical(KILL)', () => {
     sink.enqueueCritical(KILL_OP);
   });
