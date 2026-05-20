@@ -126,3 +126,39 @@ The cost of the current bag-of-specs setup is concrete: every E2E run shoulders 
 - **Should `feel-test-lockstep` + `feel-tuning` be reaped?** Their per-frame canary role is now in `tests/unit/swarmInterpolation.smoothness.test.ts` (deterministic, ~1 s) and `netcode-health.spec.ts` (relative, machine-insensitive). They survive here as integration smokes that cross-validate the live server+client. If they ever flake on the CI runner, the answer is to reap them, not widen the bound — the load-bearing canary is elsewhere.
 - **Should the consolidated drawer spec be written in Phase 2 or Phase 3?** Plan said "the 6 drawer-* collapse to one `@feature`" but only 2 of the drawer-* specs are real-flow locks (`drawer-galaxy-overview-spawn`, `drawer-galaxy-map-open-close`); the other 4 are `@diag` and get moved out. Consolidating those 2 is its own refactor — not part of the Phase 2 tagging commit.
 - **Where do new tests file themselves?** New specs default to `@feature`. Promoting to `@smoke` requires (a) the spec stays under 30 s, (b) it locks a critical-path failure mode (boot/join/spawn/basic combat/ship switch/persistence/mobile/probe-page), (c) it uses state predicates not fixed waits. Demoting to `@diag` requires the spec to be capture-only — `@diag` is a quarantine for "useful for debugging, useless as a regression signal," and a spec that asserts behaviour should never be `@diag`.
+
+## Current health (2026-05-20 baseline `pnpm e2e:smoke` run on `feat/e2e-rebuild @ 937e608`)
+
+First post-Phase-2 smoke run. Results: **31 passed / 19 failed of 50 (15 min wall-clock).** None of the failures are recent regressions — every one points at a stale spec that hasn't run since an old UI refactor. The cluster is informative; per-spec repair is queued for follow-up sessions (each broken spec gets its own small commit: find the new UI signal, replace the old locator, re-run, lock the fix).
+
+### Stale-at-HEAD smoke specs needing repair (19 tests)
+
+| Spec | Tests failing | Root cause (likely) |
+|---|---:|---|
+| `sector-alpha.spec.ts` | 11 / 11 (ALL) | `joinSector` helper clicks `getByRole('button', { name: /enter sector alpha/i })` — the string "Enter Sector Alpha" does not exist in any `src/` file; the post-auth join flow was refactored to galaxy-map-spawn. Every test fails at its first action. |
+| `ship-selection.spec.ts` | 4 / 4 (ALL) | Ship-picker UI flow changed; the spec's locators no longer match. |
+| `scenarios/combat-lifecycle.spec.ts` | 2 / 5 | `:108` (full lifecycle respawn) and `:155` (shooter sees hull decrease) — likely the same post-auth flow issue or a shared helper assumption. The first 3 tests pass. |
+| `spawn-select-flow.spec.ts` | 1 / 2 | `:44` (galaxy-sector variant) fails; `:19` (engineering-sector variant) passes. Galaxy-sector click flow has diverged. |
+| `weapon-switching.spec.ts` | 1 / 6 | `:114` (laser ghost sprite cleanup) — race between weapon-switch and the brief tap-fire. Plausibly a real flake rather than a stale-locator issue (see Phase 2c notes in the plan-status memory). |
+| `happy-path-ui-switch.spec.ts` | 1 / 1 (ALL) | `:97` (drawer → Galaxy tab → roster card → Spawn) — also likely the new spawn flow. |
+| **TOTAL** | **19** | |
+
+### Stable-at-HEAD (31 tests)
+
+`boot.spec.ts` (1), `damage-number-lifetime.spec.ts` (3), `happy-path-switch-ship.spec.ts` (1), `join-warp-screen.spec.ts` (3), `layout-slots.spec.ts` (1), `mobile-joystick-ship-swap.spec.ts` (1), `persistence-kill.spec.ts` (1), `scenarios/combat-lifecycle.spec.ts` (3), `shield-hud.spec.ts` (1), `spawn-select-flow.spec.ts` (1), `weapon-switching.spec.ts` (5).
+
+### Repair playbook (when picking off a broken spec)
+
+1. Open the spec, find the first action that fails (usually a `getByRole`/`getByText`/`waitForSelector` for a UI element).
+2. Locate the new UI signal in `src/client/` (grep for the surface name — e.g. "ship picker" / "galaxy map" — to find the current component).
+3. Update the spec's locator OR replace the click with the new flow (often the spec needs to traverse drawer → galaxy tab → sector card instead of clicking a top-level "Enter X" button).
+4. Run the spec in isolation: `pnpm e2e:smoke tests/e2e/<file>.spec.ts --reporter=line --grep "specific test"`.
+5. Commit per spec: `fix(e2e): repair stale <surface> spec — <reason> (plan: e2e-rebuild)`.
+
+The clustering means most fixes are mechanically similar — once `sector-alpha.spec.ts`'s `joinSector` helper is updated to the new flow, the same pattern likely repairs `ship-selection` + `happy-path-ui-switch` + `spawn-select-flow:44`.
+
+### What we do NOT change for this finding
+
+- **Do not delete the broken specs.** They lock real surfaces (two-client isolation, identity persistence, physics-worker tick continuity, etc.). Deletion would lose coverage; repair preserves it.
+- **Do not change the tier of broken specs.** A failing smoke spec is exactly the signal the smoke tier exists to surface; demoting them to `@feature` (where failures are less visible) defeats the purpose.
+- **Do not lower the smoke pass-rate bar in CI yet.** Phase 5 wires the smoke run into CI; before that wire-up, repair the broken specs OR explicitly skip them with a documented `test.skip(STALE)` annotation. CI red on a stale spec is a *correct* signal that the repair queue is non-empty.
