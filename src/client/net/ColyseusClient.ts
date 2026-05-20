@@ -38,7 +38,12 @@ import {
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
+import {
+  computeRollingRafStats,
+  countRecentTagOccurrences,
+  readHeapUsedMb,
+} from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -132,6 +137,23 @@ export interface PredictionStats {
   rttStdDevMs: number;
   /** Stage 4 — sliding-window count of dropped snapshots (last 10 arrivals). */
   droppedSnapshotsRecent: number;
+  /** perf-floor Phase 1 — rolling p50 of `rafTick.elapsedMs` over the
+   *  last 5 s (ms). NaN until the ring has a sample. */
+  rafP50Ms: number;
+  /** perf-floor Phase 1 — rolling p99 of `rafTick.elapsedMs` over the
+   *  last 5 s (ms). NaN until the ring has a sample. */
+  rafP99Ms: number;
+  /** perf-floor Phase 1 — count of `longtask` ring entries in the last
+   *  30 s. >50 ms tasks via PerformanceObserver. Chromium / Edge / Safari
+   *  18+ only; Firefox always 0 (no longtask entry type). */
+  longtaskCount30s: number;
+  /** perf-floor Phase 1 — count of `raf_gap` ring entries in the last
+   *  30 s. A `raf_gap` is fired when a RAF elapsed > 100 ms (main-thread
+   *  block / focus loss / hidden tab). */
+  rafGapCount30s: number;
+  /** perf-floor Phase 1 — `performance.memory.usedJSHeapSize` in MiB.
+   *  Undefined on non-Chromium browsers (Firefox / Safari). */
+  heapUsedMb: number | undefined;
 }
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
@@ -443,6 +465,11 @@ export class ColyseusGameClient {
     rttMeanMs: 0,
     rttStdDevMs: 0,
     droppedSnapshotsRecent: 0,
+    rafP50Ms: Number.NaN,
+    rafP99Ms: Number.NaN,
+    longtaskCount30s: 0,
+    rafGapCount30s: 0,
+    heapUsedMb: undefined,
   };
 
   private room: Room | null = null;
@@ -1608,6 +1635,18 @@ export class ColyseusGameClient {
     this.stats.snapshotCount++;
     this.stats.snapshotIntervalMs = intervalMs;
     this.stats.lastServerTick = snap.serverTick;
+
+    // perf-floor Phase 1 — rolling RAF / longtask / heap stats. Reads
+    // the existing `__eqxLogs` ring (no new producer, no new ring) at
+    // the existing per-snapshot cadence (~20 Hz). Cost is O(ring) per
+    // call ≈ tens of microseconds on desktop. See src/client/net/perfStats.ts.
+    const ring = getRingEntries();
+    const rolling = computeRollingRafStats(ring, now, 5000);
+    this.stats.rafP50Ms = rolling.rafP50Ms;
+    this.stats.rafP99Ms = rolling.rafP99Ms;
+    this.stats.longtaskCount30s = countRecentTagOccurrences(ring, 'longtask', now, 30_000);
+    this.stats.rafGapCount30s = countRecentTagOccurrences(ring, 'raf_gap', now, 30_000);
+    this.stats.heapUsedMb = readHeapUsedMb();
     // Stage 2 — feed the collision-event stale-guard with the authoritative
     // snapshot tick. Late collision events (worker → main → wire latency)
     // arriving with tick < this value are dropped, since the snapshot has

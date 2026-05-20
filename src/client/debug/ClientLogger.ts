@@ -130,6 +130,16 @@ export function __resetDiagCache(): void {
   _maxEntries = -1;
 }
 
+/**
+ * Read-only accessor for the ring (plan: perf-floor, Phase 1). Returns
+ * the live array — the perfStats helpers do their own filtering by tag
+ * + timestamp window. Same reference `window.__eqxLogs` points at, so
+ * the consumer pays zero copy cost. Treat as `readonly`.
+ */
+export function getRingEntries(): readonly LogEntry[] {
+  return entries;
+}
+
 export function installWindowLogger(): void {
   const w = window as unknown as Record<string, unknown>;
   w['__eqxLogs'] = entries;
