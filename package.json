@@ -22,6 +22,7 @@
     "e2e:headed": "cross-env PWHEADED=1 playwright test --project=smoke --project=feature",
     "e2e:scenarios": "playwright test --project=smoke tests/e2e/scenarios/",
     "e2e:netgate": "tsx tests/netgate/run-netgate.ts",
+    "e2e:diag": "playwright test --config=playwright.diag.config.ts",
     "build:client": "vite build",
     "build:server": "tsc -b tsconfig.server.json",
     "build": "pnpm run build:server && pnpm run build:client",

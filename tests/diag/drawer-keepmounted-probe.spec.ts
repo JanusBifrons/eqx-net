@@ -1,3 +1,5 @@
+// @diag (manual-only): see docs/architecture/e2e-framework.md
+// Run: pnpm e2e:diag tests/diag/drawer-keepmounted-probe.spec.ts
 import { test, expect } from '@playwright/test';
 
 /**

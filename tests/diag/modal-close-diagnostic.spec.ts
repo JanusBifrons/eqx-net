@@ -1,3 +1,5 @@
+// @diag (manual-only): see docs/architecture/e2e-framework.md
+// Run: pnpm e2e:diag tests/diag/modal-close-diagnostic.spec.ts
 import { test, type Page } from '@playwright/test';
 
 /**

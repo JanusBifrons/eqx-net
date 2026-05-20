@@ -1,3 +1,5 @@
+// @diag (manual-only): see docs/architecture/e2e-framework.md
+// Run: pnpm e2e:diag tests/diag/offscreen-spike-probe.spec.ts
 import { test, expect, type ConsoleMessage } from '@playwright/test';
 
 /**

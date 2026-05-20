@@ -1,3 +1,5 @@
+// @diag (manual-only): see docs/architecture/e2e-framework.md
+// Run: pnpm e2e:diag tests/diag/warp-spool-perf-capture.spec.ts
 import { test, expect, type Page } from '@playwright/test';
 
 /**

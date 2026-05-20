@@ -1,3 +1,5 @@
+// @diag (manual-only): see docs/architecture/e2e-framework.md
+// Run: pnpm e2e:diag tests/diag/drawer-lag-trace.spec.ts
 import { test, expect, type Page } from '@playwright/test';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
