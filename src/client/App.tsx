@@ -558,6 +558,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
+      // Test-only HP overrides for E2E specs (server-side gated to
+      // testMode rooms). See JoinOptionsSchema in SectorRoom.ts.
+      if (urlParams.has('initialHull'))
+        extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
+      if (urlParams.has('initialShield'))
+        extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
       // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
       if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
       if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);

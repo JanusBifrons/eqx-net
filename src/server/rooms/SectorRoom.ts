@@ -131,6 +131,15 @@ const JoinOptionsSchema = z
     authToken: z.string().optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
+    /** Test-only initial hull override. Honoured only when the room has
+     *  `testMode === true` (engineering rooms like `test-sector`). Lets
+     *  E2E specs that just need "do they die when shot?" spawn with
+     *  1 HP so the kill resolves in a single beam tick instead of
+     *  fighting full 500 HP + shield. Ignored on galaxy rooms. */
+    initialHull: z.number().int().min(1).optional(),
+    /** Test-only initial shield override; same testMode gate. 0 lets the
+     *  first beam hit hull immediately. */
+    initialShield: z.number().int().min(0).optional(),
     /** Player-chosen ship kind id (e.g. 'scout' | 'fighter' | 'heavy').
      *  Validated against `isShipKindId` in `onJoin`; unknown / missing values
      *  fall back to `DEFAULT_SHIP_KIND`. Ignored on Limbo rebind paths so a
@@ -2837,6 +2846,20 @@ export class SectorRoom extends Room<SectorState> {
     // Shield seeds full on spawn (transient - never persisted; only hull
     // persists). Body spawns circle (exposed:false in spawnShip).
     ship.shield = getShipKind(ship.kind).shieldMax;
+    // Test-only initialHull / initialShield overrides. Gated to testMode
+    // rooms (engineering, never galaxy) so live gameplay can't be nerfed
+    // via the wire. Applied AFTER the kind-default hull/shield are
+    // installed so the test spec gets the exact override it asked for.
+    // E2E specs that just need "do they die when shot?" spawn with
+    // initialHull=1, initialShield=0 → one beam tick kills.
+    if (this.testMode && parsed.success) {
+      if (typeof parsed.data.initialHull === 'number') {
+        ship.health = Math.max(1, parsed.data.initialHull);
+      }
+      if (typeof parsed.data.initialShield === 'number') {
+        ship.shield = Math.max(0, parsed.data.initialShield);
+      }
+    }
     ship.shieldLastDamageTick = this.serverTick;
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a

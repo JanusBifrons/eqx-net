@@ -5,6 +5,11 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 export interface TestClientOpts {
   spawnX: number;
   spawnY: number;
+  /** Optional spawn HP override (test-sector only; gated server-side).
+   *  Use 1 for "kill in one tick" scenarios so the spec runs in seconds
+   *  instead of fighting 500 HP + shield through full TTK. */
+  initialHull?: number;
+  initialShield?: number;
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
@@ -15,6 +20,8 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
     spawnX: String(opts.spawnX),
     spawnY: String(opts.spawnY),
   });
+  if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
+  if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () =>
