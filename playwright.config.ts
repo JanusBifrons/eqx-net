@@ -94,10 +94,13 @@ export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
   /** Hard ceiling on a full suite. Stops a wedged spec series from eating
-   *  an unbounded wall-clock window. 6 min covers ~12 sequential 30 s
-   *  failures (the practical worst case for a focused-spec run) plus
-   *  webServer spin-up. */
-  globalTimeout: 6 * 60 * 1000,
+   *  an unbounded wall-clock window. 25 min (hostile M4, e2e-rebuild plan):
+   *  the suite is ~50 specs × 30 s worst-case = ~25 min serial worst-case.
+   *  The previous 6 min would abort the whole suite first on a slow CI
+   *  runner — i.e. globalTimeout was *itself* the suite ceiling, masking
+   *  real wall-clock health as "globalTimeout exceeded." Matches the CI
+   *  `timeout-minutes` on .github/workflows/ci.yml. */
+  globalTimeout: 25 * 60 * 1000,
   fullyParallel: false,
   workers: 1,
   forbidOnly: !!process.env.CI,
