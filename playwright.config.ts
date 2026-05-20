@@ -78,6 +78,8 @@ const FEATURE_SPECS: string[] = [
   '**/robustness.spec.ts',
   '**/rotate-jitter.spec.ts',
   '**/ship-roster-panel.spec.ts',
+  '**/spiral-disconnect-reconnect.spec.ts',
+  '**/spiral-in-pack-density.spec.ts',
   '**/swarm-bandwidth.spec.ts',
   '**/swarm-jitter.spec.ts',
   '**/swarm-sleep.spec.ts',
