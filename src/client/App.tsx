@@ -9,6 +9,7 @@ import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import { consumeOneFrameTriggers } from './render/perFrameTriggers';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -366,8 +367,11 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           gameClient.updateMirror();
           const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
           if (shouldRender) renderer.update(gameClient.mirror);
-          // Clear one-frame triggers after the renderer has consumed them.
-          gameClient.mirror.explodingShips?.clear();
+          // Clear one-frame triggers ONLY after the renderer has actually
+          // consumed them. The clear MUST be gated on the same condition
+          // as the renderer-update — see `consumeOneFrameTriggers` for the
+          // contract and `perFrameTriggers.test.ts` for the regression lock.
+          consumeOneFrameTriggers(gameClient.mirror, shouldRender);
 
           // F-transit-instrument — bounded post-reveal frame burst.
           // `wantsFrame()` is false (single boolean read, zero cost)
