@@ -77,6 +77,7 @@ The cost of the current bag-of-specs setup is concrete: every E2E run shoulders 
 | `sync-diagnostics.spec.ts` | `@feature` | Sync diagnostics: idle → W-thrust → release. | LOCK | 🚶 medium | KEEP |
 | `sync-health.spec.ts` | `@feature` | W-thrust correction rate < 15% after 3 s; idle correction rate near-zero. | LOCK | 🚶 medium | KEEP |
 | `tidi-overlay.spec.ts` | `@feature` | Phase 6b TiDi overlay — `data-sector-alert` = "Temporal Anomaly", clockRate < 0.99 within 30 s. | LOCK | 🐢 slow (75 s timeout) | KEEP |
+| `warp-engage-cancel.spec.ts` | `@feature` | Phase 3b — full warp/transit state-machine roundtrip E2E: engage_transit wire → SPOOLING overlay (`data-testid="hyperspace-overlay"` + `data-transit-state="SPOOLING"`) → cancel_transit wire → DOCKED (overlay unmounts). The wire roundtrip lock the plan called the biggest Phase-3b gap; commit/arrive side covered by integration tests (warpBroadcasts / TransitOrchestrator / transitArrivalDrift / WarpScreen.transit / rearmJoinReadiness). | LOCK | 🚶 medium (~20 s; dominated by warp curtain wait, not game-time) | KEEP |
 | `wreck-render-probe.spec.ts` | `@feature` | 4 tests on wreck-sprite lifecycle at the `WorkerRendererClient ↔ worker ↔ PixiRenderer` boundary. Mirror of `damage-number-lifetime.spec.ts` for wrecks. Note: filename says "probe" but content is real assertions. | LOCK | 🚶 medium | KEEP |
 | `renderer-worker-probe.spec.ts` | `@feature` | Renderer worker boot + mirror + feedback round-trip lock. Same caveat — "probe" filename, real assertions. | LOCK | 🚶 medium | KEEP |
 | `netcode-health.spec.ts` | `@gate` | The Phase-1 deliverable — baseline-vs-HEAD netcode-health budget assertion. `skip`s when `NETGATE_ARMS` is unset (driven by `pnpm e2e:netgate` only). | LOCK (relative) | n/a (driven) | KEEP |
@@ -92,10 +93,10 @@ The cost of the current bag-of-specs setup is concrete: every E2E run shoulders 
 | Bucket | Count | Verdict |
 |---|---:|---|
 | `@smoke` | 14 | KEEP all. Default CI step 1; smoke-first fail-fast. |
-| `@feature` | 30 | KEEP all. Default CI step 2. Two specs (`combat`, `robustness`) carry most of the `waitForTimeout` debt — Phase 2c target. Two drawer-* specs flagged for *consolidation* (one combined `@feature` covering open/close + roster-card flow), but consolidation is its own commit, not part of the tagging commit. |
+| `@feature` | 31 | KEEP all. Default CI step 2. Two specs (`combat`, `robustness`) carry most of the `waitForTimeout` debt — Phase 2c target. Two drawer-* specs flagged for *consolidation* (one combined `@feature` covering open/close + roster-card flow), but consolidation is its own commit, not part of the tagging commit. Count bumped 30→31 with `warp-engage-cancel.spec.ts` (Phase 3b, 2026-05-20). |
 | `@gate` | 1 | KEEP. Driven by `pnpm e2e:netgate`; standalone `pnpm e2e:gate` runs a skipped no-op (expected). |
 | `@diag` | 6 | MOVE to `tests/diag/`, exclude from `testDir`. Manually runnable for investigations; never in CI. |
-| Total | 51 | |
+| Total | 52 | |
 
 ## Phase 2 acts on this doc — implementation order
 
@@ -210,3 +211,14 @@ When 3+ tests would benefit from the same skip, it's worth adding a new server-s
 ### Proof the philosophy pays off (2026-05-20 vanity stat)
 
 Smoke suite went from 31 pass / 19 fail / ~15 min → **41 pass / 3 fail / 6 skipped / 8.3 min** — same 50 tests, sequentially executed on the same box. Per-test repair work mostly meant "add the right primitive" (the `initialHull/initialShield` server-side override, the `testTimeScale` room option, the `filterBy(['testId'])` per-test rooms) — not "bump the timeout."
+
+## Project-local skills (Phase 4c, 2026-05-20)
+
+Two slash commands live in `.claude/skills/` so any dev who clones the repo gets them automatically (Claude Code auto-discovers `.claude/skills/<name>/SKILL.md`):
+
+| Skill | When to use | What it does |
+|---|---|---|
+| `/netgate` | After live-loop-touching changes (anything under `src/client/net/`, `src/core/prediction/`, `src/core/physics/`, render loop, snapshot decode/interpolate, mount aim, `SectorRoom` tick/snapshot). | Runs `pnpm e2e:netgate [<baselineRef> <headRef>]`, parses the verdict stanza (baseline + HEAD stat blocks + REGRESSION lines + PASS=...), reports pass/fail with the offending metric + magnitude, suggests `git bisect run pnpm e2e:netgate` on RED. The front door to Phase 1. |
+| `/e2e-triage <spec.ts>` | When a `@smoke` or `@feature` spec is failing and you want to know if it's locator drift, timing, or a real regression. | Re-runs the spec in isolation, classifies the failure (LOCATOR_DRIFT / TIMING_RACE / REAL_REGRESSION), proposes a deterministic fix. **For TIMING_RACE the fix MUST be a bespoke trigger, never a timeout bump.** Refuses `@gate` triage — routes to `/netgate` instead so a margin-loosening "fix" is impossible via this skill. |
+
+Phase 4a (Playwright `init-agents --loop=claude` planner / generator / healer) needs Playwright v1.56+; this repo is on 1.49.0. Deferred until the upgrade lands as a separate dependency story — agents are breadth-only per the plan, gates AI-fenced.
