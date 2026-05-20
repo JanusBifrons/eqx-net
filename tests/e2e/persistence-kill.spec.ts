@@ -77,10 +77,13 @@ async function joinClientAt(browser: Browser, token: string, spawnX: number, spa
 }
 
 test('kill is recorded in player_kills and queryable via /dev/stats', async ({ browser }) => {
-  // Cold server boot + 2x context create + 2 s settle + ~5 s of firing +
-  // DB flush + stats query is borderline under the 30 s default. Allow 60 s
-  // headroom for slow CI machines.
-  test.setTimeout(60_000);
+  // Cold server boot + 2x context create + 2 s settle + ~10-15 s of firing
+  // + DB flush + stats query. Pre-2026-05-17, the budget assumed ~5 s of
+  // fire to kill at 500 HP. The slow-down-gameplay PR raised shield + hull
+  // each +50 %, so effective HP-to-kill is roughly 1.5x and fire-to-kill
+  // is closer to 7-10 s; under shared-server load it can climb above 15 s.
+  // 90 s test budget + 30 s fire window (below) absorbs both.
+  test.setTimeout(90_000);
 
   // Stamp emails with the worker index so parallel runs (different
   // playwright projects) don't collide on user rows.
@@ -111,12 +114,14 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     ]);
 
     // Hold Space — the beam fires straight forward (+Y) and stays locked on
-    // the victim until hull reaches 0.
+    // the victim until hull reaches 0. Fire window 30 s (was 15 s pre-
+    // slow-down-gameplay; shield + hull each +50 % doubled the effective
+    // HP-to-kill, plus shared-server load adds variance).
     const start = Date.now();
     let killed = false;
     await killer.page.keyboard.down('Space');
     try {
-      while (Date.now() - start < 15_000) {
+      while (Date.now() - start < 30_000) {
         await killer.page.waitForTimeout(200);
         const hullStr = await victim.page
           .locator('[data-testid="game-surface"]')
@@ -132,7 +137,7 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     }
 
     if (!killed) {
-      throw new Error('Beam did not deplete victim hull within 15 s — geometry or fire path is broken');
+      throw new Error('Beam did not deplete victim hull within 30 s — geometry or fire path is broken');
     }
 
     // Allow the WAB flush window (50 ms) + worker IPC + DB write to settle.
