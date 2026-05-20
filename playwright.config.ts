@@ -101,14 +101,15 @@ export default defineConfig({
    *  real wall-clock health as "globalTimeout exceeded." Matches the CI
    *  `timeout-minutes` on .github/workflows/ci.yml. */
   globalTimeout: 25 * 60 * 1000,
-  // Parallelism is enabled at the PROJECT level (see `projects` below).
-  // Smoke + feature run `fullyParallel: true` because each spec creates
-  // its own per-test room via `filterBy(['testId'])` (server-side) +
-  // randomUUID per launchTestClient call — so cross-test pollution is
-  // structurally impossible. Gate stays serial: the netcode-health
-  // baseline-vs-HEAD comparison is load-sensitive by design.
+  // Workers: 1 (cross-FILE serial). Per-test rooms via `filterBy(testId)`
+  // are wired but a single shared `dev:server:nowatch` can't service
+  // multiple concurrent test sessions without contention regressions
+  // (pre-existing tests started failing at workers=3). True
+  // parallelism needs N independent server processes (one per worker)
+  // — that's a separate plumbing task. The infrastructure (per-test
+  // rooms + testTimeScale) stays in for future use.
   fullyParallel: false,
-  workers: process.env.CI ? 2 : 3,
+  workers: 1,
   forbidOnly: !!process.env.CI,
   retries: process.env.PLAYWRIGHT_RETRIES ? Number(process.env.PLAYWRIGHT_RETRIES) : 0,
   reporter: process.env.CI ? 'github' : 'list',
