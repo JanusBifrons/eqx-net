@@ -88,7 +88,11 @@ async function countJoysticks(page: Page): Promise<{ zones: number; joysticks: n
 }
 
 test('in-game ship swap does NOT leave a stale joystick (two thumbsticks bug)', async ({ page }) => {
-  test.setTimeout(45_000);
+  // 45 s was too tight after the 2026-05-17 slow-down-gameplay tuning:
+  // 10x warp spool + 50% hull/shield raised the mobile-viewport
+  // `?galaxy=sol-prime` join + waitForLocalShip wall-clock past the 25 s
+  // helper budget, leaving < 5 s for the rest. 90 s is conservative.
+  test.setTimeout(90_000);
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
