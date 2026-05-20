@@ -21,6 +21,7 @@
     "e2e:smoke": "playwright test --project=smoke",
     "e2e:feature": "playwright test --project=feature",
     "e2e:gate": "playwright test --project=gate",
+    "e2e:perf": "playwright test --config=playwright.perf.config.ts",
     "e2e:headed": "cross-env PWHEADED=1 playwright test --project=smoke --project=feature",
     "e2e:scenarios": "playwright test --project=smoke tests/e2e/scenarios/",
     "e2e:netgate": "tsx tests/netgate/run-netgate.ts",

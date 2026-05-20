@@ -37,7 +37,12 @@ data/
 # dev-only diagnostic captures (POST /diag/capture). Anchored to repo
 # root with the leading slash so it does NOT shadow `tests/diag/` (the
 # @diag E2E specs, e2e-rebuild Phase 2b).
-/diag/
+# Use /diag/* (not /diag/) so subsequent negation rules can re-include
+# specific subdirectories (perf-floor's perf-baseline/).
+/diag/*
+# perf-floor Phase 2 baselines — committed deliberately for diff-vs-future
+# comparison and Phase 5 lock reads. Un-ignore the subdirectory only.
+!/diag/perf-baseline/
 
 # session log scratch (e2e capture, debug, regression runs, etc) —
 # written from inside the repo by Bash/PowerShell calls during dev

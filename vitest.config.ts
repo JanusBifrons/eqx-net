@@ -49,6 +49,10 @@ export default defineConfig({
       // unit run via the `benchmark.include` glob below — only .test.ts
       // files match this entry.
       'benchmarks/**/*.test.ts',
+      // Perf-capture / perfBudget pure module unit locks (plan: perf-floor,
+      // Phases 2 + 5). The .spec.ts Playwright spec lives in the same
+      // directory but is excluded by the .test.ts-only match.
+      'tests/perf/**/*.test.ts',
     ],
     exclude: [
       '**/node_modules/**',
