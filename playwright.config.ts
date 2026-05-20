@@ -69,6 +69,7 @@ const FEATURE_SPECS: string[] = [
   '**/galaxy-map-overlay.spec.ts',
   '**/galaxy-polish.spec.ts',
   '**/halo-radar.spec.ts',
+  '**/input-throttle-drift.spec.ts',
   '**/laser-smoothness.spec.ts',
   '**/living-world.spec.ts',
   '**/network-feel-combat.spec.ts',
