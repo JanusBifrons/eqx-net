@@ -1,11 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Phase 0 baseline: one Chromium project, one trivial boot test.
- * Later phases add multi-tab scenarios driven against a locally-spawned
- * server (see tests/e2e/).
- *
- * ── E2E policy (2026-05-11) ─────────────────────────────────────────────
+ * ── E2E policy (2026-05-11; tier taxonomy 2026-05-20) ───────────────────
  * 1. **30-second per-test cap, non-negotiable**: any test that takes longer
  *    fails immediately. Long timeouts are bugs, not features. Use
  *    `--reporter=line` for diagnostic runs so failing tests surface fast.
@@ -24,8 +20,76 @@ import { defineConfig, devices } from '@playwright/test';
  *    and turns idle servers into 700%-CPU runaways across long sessions —
  *    the unwatched variant is identical for test purposes since Playwright
  *    starts a fresh process per suite.
+ * 5. **Four-tier taxonomy** (`docs/architecture/e2e-framework.md`):
+ *    - `@smoke`   (14 specs) — fast deterministic critical-path locks.
+ *                  CI step 1; `pnpm e2e:smoke`.
+ *    - `@feature` (30 specs) — per-surface exhaustive locks.
+ *                  CI step 2; `pnpm e2e` runs `@smoke` THEN `@feature`
+ *                  (smoke-first fail-fast).
+ *    - `@gate`    (1 spec)   — machine-insensitive baseline-vs-HEAD gate
+ *                  (`netcode-health.spec.ts`). Standalone `pnpm e2e:gate`
+ *                  runs a self-skipping no-op; the gate proper is driven
+ *                  by `pnpm e2e:netgate` (sets `NETGATE_ARMS`).
+ *    - `@diag`    (6 specs)  — capture-only probes, MANUAL ONLY, live
+ *                  under `tests/diag/` and are excluded from `testDir`
+ *                  here so they never bloat CI.
+ *    Tier membership is in this file (testMatch lists). The doc is the
+ *    decision artefact; this config is the runtime enforcement.
  * ───────────────────────────────────────────────────────────────────────
  */
+
+const SMOKE_SPECS: string[] = [
+  '**/boot.spec.ts',
+  '**/damage-number-lifetime.spec.ts',
+  '**/happy-path-switch-ship.spec.ts',
+  '**/happy-path-ui-switch.spec.ts',
+  '**/join-warp-screen.spec.ts',
+  '**/layout-slots.spec.ts',
+  '**/mobile-joystick-ship-swap.spec.ts',
+  '**/persistence-kill.spec.ts',
+  '**/scenarios/combat-lifecycle.spec.ts',
+  '**/sector-alpha.spec.ts',
+  '**/shield-hud.spec.ts',
+  '**/ship-selection.spec.ts',
+  '**/spawn-select-flow.spec.ts',
+  '**/weapon-switching.spec.ts',
+];
+
+const FEATURE_SPECS: string[] = [
+  '**/asteroid-shape.spec.ts',
+  '**/combat.spec.ts',
+  '**/collision-events.spec.ts',
+  '**/configurable-arrival.spec.ts',
+  '**/drawer-galaxy-map-open-close.spec.ts',
+  '**/drawer-galaxy-overview-spawn.spec.ts',
+  '**/drone-destruction.spec.ts',
+  '**/drone-laser-smoothness.spec.ts',
+  '**/feel-test-lockstep.spec.ts',
+  '**/feel-tuning.spec.ts',
+  '**/galaxy-map-overlay.spec.ts',
+  '**/galaxy-polish.spec.ts',
+  '**/halo-radar.spec.ts',
+  '**/laser-smoothness.spec.ts',
+  '**/living-world.spec.ts',
+  '**/network-feel-combat.spec.ts',
+  '**/prediction-diagnostics.spec.ts',
+  '**/renderer-worker-probe.spec.ts',
+  '**/robustness.spec.ts',
+  '**/rotate-jitter.spec.ts',
+  '**/ship-roster-panel.spec.ts',
+  '**/swarm-bandwidth.spec.ts',
+  '**/swarm-jitter.spec.ts',
+  '**/swarm-sleep.spec.ts',
+  '**/swarm-stationary-stability.spec.ts',
+  '**/swarm-tidi.spec.ts',
+  '**/sync-diagnostics.spec.ts',
+  '**/sync-health.spec.ts',
+  '**/tidi-overlay.spec.ts',
+  '**/wreck-render-probe.spec.ts',
+];
+
+const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -51,9 +115,27 @@ export default defineConfig({
     // every browser context, including those created via `browser.newContext()`.
     storageState: 'tests/e2e/.auth/storage-state.json',
   },
+  // Tiered projects (see policy note 5 above). Order matters: when
+  // `pnpm e2e` runs `--project=smoke --project=feature`, Playwright
+  // executes them in the order listed here — smoke first, so a critical-
+  // path regression fails CI in ~2 min instead of after the full suite.
+  // Default `playwright test` (no --project flag) runs ALL THREE; the
+  // scripts in package.json (`e2e`, `e2e:smoke`, `e2e:gate`) are the
+  // canonical entry points and explicitly filter.
   projects: [
     {
-      name: 'chromium',
+      name: 'smoke',
+      testMatch: SMOKE_SPECS,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'feature',
+      testMatch: FEATURE_SPECS,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'gate',
+      testMatch: GATE_SPECS,
       use: { ...devices['Desktop Chrome'] },
     },
   ],
