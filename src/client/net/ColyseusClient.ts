@@ -60,6 +60,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
 import type { TouchInput } from '../input/TouchInput';
+import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
   setSwarmDisplayDelayMs,
@@ -233,14 +234,12 @@ function nextShotId(): string {
   return `shot-${_shotCounter++}`;
 }
 
-/** Joystick magnitude below this is treated as idle (deadzone). */
-const TOUCH_DEADZONE = 0.2;
-/** Stick magnitude above this engages thrust (when roughly aligned with target). */
-const TOUCH_THRUST_MAG = 0.4;
-/** Allow thrust within this cone (radians) around the desired heading. */
-const TOUCH_THRUST_CONE = Math.PI / 3; // 60°
-/** Minimum |angular delta| (radians) before turning. Prevents jitter when aligned. */
-const TOUCH_TURN_TOLERANCE = 0.08; // ~4.6°
+// 2026-05-20 spiral fix: joystick→input thresholds (with hysteresis)
+// moved into the pure `joystickToInput` helper. The single-band constants
+// (TOUCH_DEADZONE, TOUCH_THRUST_MAG, TOUCH_THRUST_CONE,
+// TOUCH_TURN_TOLERANCE) caused analog-noise toggles at ~10 Hz under
+// steady stick use → sustained prediction-correction spiral on mobile.
+// See `src/client/input/joystickToInput.ts` + its unit lock.
 /** Idle-input heartbeat (network-discipline P4). When the control state has
  *  not changed for this long, we re-send the latest state once anyway, so the
  *  server can detect a missing client (idle != disconnected) and so a UDP
@@ -552,6 +551,11 @@ export class ColyseusGameClient {
   private keyboard: { read: () => { thrust: boolean; turnLeft: boolean; turnRight: boolean; fireHeld: boolean; boost: boolean; reverse: boolean } } | null = null;
   private touchInput: TouchInput | null = null;
   private lastFiredAtTick = -999;
+  /** 2026-05-20 spiral fix: previous joystick-resolved boolean state.
+   *  Drives the hysteresis bands in `joystickToInput`. Reset on
+   *  disconnect / death so the engaged-band re-anchors on next stick
+   *  use. */
+  private _joystickInputState: JoystickInputState = IDLE_INPUT_STATE;
 
   /** Multi-mount/turret refactor (Phase 4b.2): sticky target id chosen by
    *  the local ship's turret AI last tick. Reset to null on death, sector
@@ -2755,27 +2759,19 @@ export class ColyseusGameClient {
         const v = this.touchInput.getJoystickVector();
         const localId = this.mirror.localPlayerId;
         const localShip = localId ? this.mirror.ships.get(localId) : null;
-        if (v && localShip) {
-          const mag = Math.hypot(v.x, v.y);
-          if (mag > TOUCH_DEADZONE) {
-            // Physics: ship at angle θ has forward = (-sin θ, cos θ) in world coords.
-            // Renderer: sprite.y = -ship.y (world +Y → screen UP).
-            // nipplejs: vector.y is already inverted from screen y, so stick UP → v.y > 0.
-            // Mapping: stick UP (v=(0,1)) → forward=(0,1) → θ=0;
-            //          stick RIGHT (v=(1,0)) → forward=(1,0) → θ=-π/2.
-            const targetAngle = Math.atan2(-v.x, v.y);
-            let delta = targetAngle - localShip.angle;
-            // Wrap to [-π, π] so the ship turns the short way around.
-            while (delta >  Math.PI) delta -= 2 * Math.PI;
-            while (delta < -Math.PI) delta += 2 * Math.PI;
-            // World.applyInput: turnLeft → +angvel (CCW, increasing angle).
-            if (delta >  TOUCH_TURN_TOLERANCE) tcTurnLeft  = true;
-            else if (delta < -TOUCH_TURN_TOLERANCE) tcTurnRight = true;
-            // Thrust only when stick is pushed firmly AND ship roughly faces target.
-            if (Math.abs(delta) < TOUCH_THRUST_CONE && mag > TOUCH_THRUST_MAG) {
-              tcThrust = true;
-            }
-          }
+        if (localShip) {
+          // 2026-05-20 spiral fix: pure resolver with HYSTERESIS bands.
+          // Pre-fix `delta > TOUCH_TURN_TOLERANCE` had no off-threshold;
+          // as the ship rotated toward target, delta crossed 0.08 rad,
+          // turn toggled — analog stick noise then nudged it back across,
+          // toggled again. Empirical ~10 Hz state-change rate → sustained
+          // ~45-70 % rollingCorrRate spiral. Unit-locked in
+          // src/client/input/joystickToInput.test.ts.
+          const next = joystickToInput(v, localShip.angle, this._joystickInputState);
+          this._joystickInputState = next;
+          tcTurnLeft = next.turnLeft;
+          tcTurnRight = next.turnRight;
+          tcThrust = next.thrust;
         }
       }
       const thrust    = kb.thrust    || tcThrust;
