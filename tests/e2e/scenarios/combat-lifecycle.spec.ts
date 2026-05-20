@@ -13,6 +13,7 @@
  * Run headed for visual verification:
  *   pnpm e2e:headed tests/e2e/scenarios/combat-lifecycle.spec.ts
  */
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import {
   launchTestClient,
@@ -64,9 +65,12 @@ test('ship spawns at the position specified in URL params', async ({ browser }) 
 // ---------------------------------------------------------------------------
 test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ browser }) => {
   // P1 at south, fires north — P2 at north, directly in P1's sights.
+  // Shared testId so both clients land in the SAME isolated room
+  // (Colyseus filterBy routes by testId).
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, testId }),
   ]);
   try {
     // Let both clients sync with the server before firing.
@@ -126,9 +130,10 @@ test.fixme('full lifecycle: P2 dies, respawns at initial position with full hull
   // spawn, which would make waitForDeath return immediately before P1
   // even fires. hull=10 reports ~1 % which is non-zero, and one 20-dmg
   // hitscan tick still drops it to 0.
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialHull: 10, initialShield: 0 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialHull: 10, initialShield: 0, testId }),
   ]);
   try {
     await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
@@ -178,9 +183,10 @@ test('shooter sees target hull decrease in shared ship positions', async ({ brow
   // burst, leaving hull at 100 — the test would pass trivially at
   // hull<100 only via a multi-second drain). We keep default hull so the
   // damage-magnitude check (< 100) is meaningful.
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialShield: 0 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialShield: 0, testId }),
   ]);
   try {
     await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);

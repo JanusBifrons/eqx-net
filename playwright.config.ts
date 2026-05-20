@@ -101,8 +101,14 @@ export default defineConfig({
    *  real wall-clock health as "globalTimeout exceeded." Matches the CI
    *  `timeout-minutes` on .github/workflows/ci.yml. */
   globalTimeout: 25 * 60 * 1000,
+  // Parallelism is enabled at the PROJECT level (see `projects` below).
+  // Smoke + feature run `fullyParallel: true` because each spec creates
+  // its own per-test room via `filterBy(['testId'])` (server-side) +
+  // randomUUID per launchTestClient call — so cross-test pollution is
+  // structurally impossible. Gate stays serial: the netcode-health
+  // baseline-vs-HEAD comparison is load-sensitive by design.
   fullyParallel: false,
-  workers: 1,
+  workers: process.env.CI ? 2 : 3,
   forbidOnly: !!process.env.CI,
   retries: process.env.PLAYWRIGHT_RETRIES ? Number(process.env.PLAYWRIGHT_RETRIES) : 0,
   reporter: process.env.CI ? 'github' : 'list',
@@ -129,16 +135,24 @@ export default defineConfig({
     {
       name: 'smoke',
       testMatch: SMOKE_SPECS,
+      // fullyParallel intentionally OFF inside a file (within-file tests
+      // run serially; their per-room state and shared-server contention
+      // are not always safe). Cross-FILE parallelism still happens via
+      // `workers: N` at the top level — different spec files run on
+      // different workers concurrently, each with its own per-test
+      // rooms via `filterBy(['testId'])`.
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'feature',
       testMatch: FEATURE_SPECS,
+      // Same rationale as smoke.
       use: { ...devices['Desktop Chrome'] },
     },
     {
       name: 'gate',
       testMatch: GATE_SPECS,
+      // gate stays serial — netcode-health is load-sensitive by design.
       use: { ...devices['Desktop Chrome'] },
     },
   ],

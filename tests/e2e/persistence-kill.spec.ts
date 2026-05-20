@@ -16,6 +16,7 @@
  * Run with:
  *   pnpm e2e --project=chromium tests/e2e/persistence-kill.spec.ts --reporter=line
  */
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 
@@ -53,7 +54,7 @@ async function joinClientAt(
   token: string,
   spawnX: number,
   spawnY: number,
-  opts: { initialHull?: number; initialShield?: number } = {},
+  opts: { initialHull?: number; initialShield?: number; testId?: string } = {},
 ) {
   // CRITICAL: pass an EXPLICIT empty storageState. `undefined` falls back to
   // the project-level default in playwright.config.ts (the globalSetup file),
@@ -74,6 +75,7 @@ async function joinClientAt(
   const params = new URLSearchParams({ room: 'test-sector', spawnX: String(spawnX), spawnY: String(spawnY) });
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
   if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
+  if (opts.testId !== undefined) params.set('testId', opts.testId);
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () => {
@@ -107,10 +109,12 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
   // the victim 100 u directly forward of the killer means the beam holds
   // on target from the moment Space goes down. Victim spawns at 1 HP +
   // 0 shield so a single hit kills — we're testing the persistence
-  // write path, not the time-to-kill mechanics.
+  // write path, not the time-to-kill mechanics. Shared testId so both
+  // clients land in the same per-test-isolated room.
+  const testId = randomUUID();
   const [killer, victim] = await Promise.all([
-    joinClientAt(browser, killerToken.token, 0, 0),
-    joinClientAt(browser, victimToken.token, 0, 100, { initialHull: 1, initialShield: 0 }),
+    joinClientAt(browser, killerToken.token, 0, 0, { testId }),
+    joinClientAt(browser, victimToken.token, 0, 100, { initialHull: 1, initialShield: 0, testId }),
   ]);
 
   try {

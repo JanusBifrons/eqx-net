@@ -564,6 +564,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
       if (urlParams.has('initialShield'))
         extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+      // Per-test room isolation. The test rooms (`test-sector`,
+      // `test-sector-fast`) use Colyseus `filterBy(['testId'])` so each
+      // unique value routes to its own room instance. Tests with
+      // multiple clients use the SAME testId so they share a room.
+      if (urlParams.has('testId'))
+        extraJoinOptions['testId'] = urlParams.get('testId')!;
       // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
       if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
       if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);

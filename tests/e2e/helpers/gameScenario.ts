@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { Browser, Page } from '@playwright/test';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
@@ -10,15 +11,26 @@ export interface TestClientOpts {
    *  instead of fighting 500 HP + shield through full TTK. */
   initialHull?: number;
   initialShield?: number;
+  /** Which test room to join (default 'test-sector'). Pass
+   *  'test-sector-fast' for 10x physics-tick acceleration. */
+  room?: 'test-sector' | 'test-sector-fast';
+  /** Per-test room isolation. Pass a unique value (e.g. randomUUID) for
+   *  the first client; pass the SAME value for additional clients that
+   *  must share a room with the first. Omit ⇒ a fresh UUID is minted
+   *  per call (NOT shared — every launchTestClient call is its own
+   *  room). For multi-client specs, mint the testId at the test level
+   *  and pass it explicitly to each launchTestClient call. */
+  testId?: string;
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   const params = new URLSearchParams({
-    room: 'test-sector',
+    room: opts.room ?? 'test-sector',
     spawnX: String(opts.spawnX),
     spawnY: String(opts.spawnY),
+    testId: opts.testId ?? randomUUID(),
   });
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
   if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));

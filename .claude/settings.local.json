@@ -29,7 +29,9 @@
       "PowerShell(*)",
       "Bash(echo \"EXIT=$?\")",
       "PowerShell(pnpm lint *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git checkout *)",
+      "Bash(git rev-list *)"
     ]
   }
 }
