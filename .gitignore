@@ -34,8 +34,10 @@ data/
 .env.local
 .env.*.local
 
-# dev-only diagnostic captures (POST /diag/capture)
-diag/
+# dev-only diagnostic captures (POST /diag/capture). Anchored to repo
+# root with the leading slash so it does NOT shadow `tests/diag/` (the
+# @diag E2E specs, e2e-rebuild Phase 2b).
+/diag/
 
 # session log scratch (e2e capture, debug, regression runs, etc) —
 # written from inside the repo by Bash/PowerShell calls during dev
