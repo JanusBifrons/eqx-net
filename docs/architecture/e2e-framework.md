@@ -162,3 +162,51 @@ The clustering means most fixes are mechanically similar — once `sector-alpha.
 - **Do not delete the broken specs.** They lock real surfaces (two-client isolation, identity persistence, physics-worker tick continuity, etc.). Deletion would lose coverage; repair preserves it.
 - **Do not change the tier of broken specs.** A failing smoke spec is exactly the signal the smoke tier exists to surface; demoting them to `@feature` (where failures are less visible) defeats the purpose.
 - **Do not lower the smoke pass-rate bar in CI yet.** Phase 5 wires the smoke run into CI; before that wire-up, repair the broken specs OR explicitly skip them with a documented `test.skip(STALE)` annotation. CI red on a stale spec is a *correct* signal that the repair queue is non-empty.
+
+## Bespoke gameplay triggers — catalogue + design rules
+
+**The principle:** E2E tests must be **highly controlled and tightly scoped**. Target wall-clock per test is **1-2 seconds** wherever game logic allows. When a test needs longer, almost always the right move is to **add a bespoke server-side gameplay trigger that bypasses the game-time wait**, NOT to expand the timeout. Bumping the budget hides the real signal, invites flakes, and silently breaks again on the next gameplay-tuning PR.
+
+### Triage flow (when a test needs > 30 s default)
+
+1. *What gameplay state am I waiting for?*
+2. **Infrastructural cost** (page navigation, browser cold-boot, Colyseus join + first snapshot, Vite cold-compile) — a budget bump is reasonable. Not under test control.
+3. **Game-time cost** (TTK, projectile travel, shield regen, warp spool, respawn delay, ghost TTL, snapshot cadence convergence) — **find or add a bespoke trigger**. The new primitive pays for itself within 2-3 tests.
+
+### Catalogue
+
+| Primitive | Purpose | API |
+|---|---|---|
+| `initialHull: number` | Override spawn HP. `1` = one-tick-kill. (Use `10` if the test polls `data-hull-pct === '0'` to confirm death — `1` rounds to 0 % against `maxHealth`.) | URL `?initialHull=N` or `launchTestClient({ initialHull: N })`. testMode-gated server side. |
+| `initialShield: number` | Override spawn shield. `0` = first beam hit lands hull immediately, no shield buffer to absorb. | URL `?initialShield=N` or `launchTestClient({ initialShield: N })`. testMode-gated. |
+| `testTimeScale: number` (room option) | Multiplies physics-tick dt at the worker level. `test-sector-fast` ticks 10×. Ghost TTL (500 ms) → 50 ms wall-clock; projectile lifetime (4 s) → 400 ms; warp spool (30 s) → 3 s; regen cycles likewise. Server-side `state.clockRate` stays unmultiplied so audio + TiDi UI don't show fake anomalies. | Set on the room definition in `src/server/index.ts`. Currently `test-sector-fast = 10×`. Use `launchTestClient({ room: 'test-sector-fast' })`. |
+| `testId: string` + `filterBy(['testId'])` | Per-test room isolation via Colyseus matchmaker. Each unique testId routes to its own room instance. | `launchTestClient` defaults to `randomUUID()` per call. Multi-client tests mint one testId at the test level and pass to every client. |
+
+### Adding a new primitive
+
+When 3+ tests would benefit from the same skip, it's worth adding a new server-side trigger. Pattern:
+
+1. Define the JoinOption (zod schema, testMode-gated) in `SectorRoom.JoinOptionsSchema`.
+2. Apply it in `onJoin` (after kind-default initialisation, before persistence write).
+3. Wire URL → joinOption in `App.tsx`'s URL-param pass-through block (`if (urlParams.has('myFlag')) extraJoinOptions['myFlag'] = ...`).
+4. Surface in `TestClientOpts` in `tests/e2e/helpers/gameScenario.ts`.
+5. Document here in this catalogue.
+
+### Backlog (don't add until needed)
+
+- `initialDeath: true` — spawn the ship already destroyed. Test the respawn UX without the kill setup.
+- `instantWarpSpool: true` — bypass the 30 s spool. Test warp completion + arrival binding without 30 s of waiting.
+- `bypassJoinGrace: true` — skip the 5 s `JOIN_BROADCAST_GRACE_TICKS` snapshot window. Useful for post-warm-up assertions.
+- `pinnedDronePoses: Array<{id, x, y}>` — deterministic drone placement instead of default scatter.
+- `weaponCooldownTicks: 1` — per-tick fire mode. Lets ghost / projectile tests fire many shots in sub-second wall-clock.
+
+### Anti-patterns (reject in code review)
+
+- `test.setTimeout(N_MUCH_LARGER)` without a corresponding game-time trigger added.
+- `await page.waitForTimeout(N)` to pace past a game-time wait. Use `waitForFunction(state predicate)` with the same N as a *deadline*, while triggering the state through a bespoke flag.
+- Hardcoded `expect(duration).toBeLessThan(N)` that assumes pre-tuning TTK / cooldown.
+- Tests that only fail when a recent gameplay-tuning PR landed — that's a test-design defect, fix at the source.
+
+### Proof the philosophy pays off (2026-05-20 vanity stat)
+
+Smoke suite went from 31 pass / 19 fail / ~15 min → **41 pass / 3 fail / 6 skipped / 8.3 min** — same 50 tests, sequentially executed on the same box. Per-test repair work mostly meant "add the right primitive" (the `initialHull/initialShield` server-side override, the `testTimeScale` room option, the `filterBy(['testId'])` per-test rooms) — not "bump the timeout."

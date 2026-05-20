@@ -232,3 +232,43 @@ The Phase-1 deliverable of the e2e-rebuild plan (`C:\Users\alecv\.claude\plans\i
 - **Don't measure the gate with `?diag=1`.** Phase-0a's `?diag=0` URL override + `__resetDiagCache()` is the entire reason the gate measures the production code path (Playwright sets `navigator.webdriver=true` which auto-enables diag; without the override every spec measures an instrumented build no player ever runs). The spec asserts `__eqxDiagEnabled === false` before reading stats.
 - **Don't widen a margin to silence a flake.** If it flakes, characterise the variance with `main`-vs-`main` ≥ 3× and either fix the *metric set* (demote → print-only, like `snapshotJitterMs`) or fix the *mechanism*, not the threshold. The whole anti-flake architecture is mechanism not margin.
 - **Don't bypass the measurement-harness overlay.** The driver copies the working tree's `ClientLogger.ts` + `vite.config.ts` onto every worktree before booting its dev server — the measurement harness must be uniform across arms; each ref keeps its own netcode. Booting a pre-Phase-0a ref naïvely makes the diff a harness mismatch, not a netcode delta.
+
+---
+
+## Test-harness philosophy — bespoke gameplay triggers, never bump timeouts
+
+E2E tests must be **highly controlled and tightly scoped**. Target: a single test runs in **1-2 seconds wall-clock** wherever the game logic allows it. When a test needs longer, the right move is almost always to **add a bespoke gameplay trigger** that bypasses the wait, NOT to expand the timeout. Bumping the budget hides the real signal ("the game-time wait is too long to belong in a test"), invites flakes, and bloats the suite wall-clock under the next gameplay-tuning change.
+
+**The proof:** the 2026-05-17 slow-down-gameplay PR (+50 % shield + hull, 10× warp spool) silently broke every combat smoke spec that assumed pre-tuning TTK. The wrong fix was bumping timeouts (15 s → 30 s → 45 s); the right fix was the `initialHull=1` / `initialShield=0` server-side override that makes a 1-tick kill test possible. The bump-pattern would have broken again on the NEXT tuning pass; the bespoke trigger is invariant under future combat-tuning changes.
+
+**Triage when a test needs > 30 s default:**
+
+1. *What gameplay state am I waiting for?*
+2. **Infrastructural cost** (page navigation, browser cold-boot, Colyseus join + first snapshot, Vite cold-compile) — a budget bump is reasonable. These aren't under test control.
+3. **Game-time cost** (TTK, projectile travel, shield regen, warp spool, respawn delay, ghost TTL, snapshot cadence convergence) — **find or add a bespoke trigger.** If none exists, add one; the new primitive will pay for itself within 2-3 tests.
+
+**Existing bespoke primitives** (catalogue + when to reach for them):
+
+| Primitive | Purpose | Where | Caveat |
+|---|---|---|---|
+| `initialHull: number` | Override spawn HP. `1` = one-tick-kill. | `JoinOption`, testMode-only. `tests/e2e/helpers/gameScenario.ts:TestClientOpts.initialHull` | `data-hull-pct` is a percent against `maxHealth` (~750 post-slow-down), so `initialHull=1` rounds to 0 % at spawn — use `10` (~1 %) when the test needs hull-pct > 0 at spawn. |
+| `initialShield: number` | Override spawn shield. `0` = first beam hit lands hull. | Same as above. | None — shield is transient. |
+| `testTimeScale: number` | Multiplies physics-tick dt. The `test-sector-fast` room ticks 10×. Ghost TTL (500 ms) → 50 ms wall-clock; projectile lifetime (4 s) → 400 ms; warp spool (30 s) → 3 s. | Room option (`src/server/index.ts` definition). | `state.clockRate` stays unmultiplied (audio + TiDi UI unaffected). Only physics speeds up; network cadence (20 Hz) and broadcasts stay at real-time. |
+| `testId: string` + `filterBy(['testId'])` | Per-test room isolation. Each unique testId routes to its own room. Multi-client tests share an explicit testId. | `JoinOption` (clients) + `filterBy` on the room definition (`src/server/index.ts:test-sector` + `test-sector-fast`). | Use `randomUUID()` at the test level; pass to every `launchTestClient` / `joinClientAt`. Tests that don't pass a testId share a default room (back-compat). |
+
+**Adding a new primitive** (when 3+ tests would benefit from the same skip):
+
+1. Define the JoinOption (zod schema, testMode-gated) in `SectorRoom.JoinOptionsSchema`.
+2. Apply it in `onJoin` (after kind-default initialisation, before persistence write).
+3. Wire URL → joinOption in `App.tsx`'s URL-param pass-through block (`if (urlParams.has('myFlag')) extraJoinOptions['myFlag'] = ...`).
+4. Surface in `TestClientOpts` in `tests/e2e/helpers/gameScenario.ts`.
+5. Document in `docs/architecture/e2e-framework.md` "Bespoke gameplay triggers" section.
+
+**Anti-patterns to reject in code review:**
+
+- `test.setTimeout(N_MUCH_LARGER)` without a corresponding game-time trigger added — bumping the test budget to "fix" a TTK problem is hiding the defect, not solving it.
+- `await page.waitForTimeout(N)` to pace past a game-time wait — use `waitForFunction(state predicate)` with the same N as a *deadline*, while triggering the state through a bespoke flag instead of pacing.
+- Hardcoded `expect(duration).toBeLessThan(N)` that assumes pre-tuning TTK / cooldown — express expectations against the gameplay state being tested, not the wall-clock to reach it.
+- Tests that only fail when a recent gameplay-tuning PR landed — that's not a test infrastructure problem, it's a test-design defect that the framework should surface and fix at the source.
+
+**Vanity stat from 2026-05-20 (the philosophy pays off):** smoke suite 31 pass / 19 fail / 15 min → 41 pass / 3 fail / 6 skipped / 8.3 min — same 50 tests, sequentially, on the same box, via per-test repair work that mostly meant "add the right primitive" rather than "bump the timeout."
