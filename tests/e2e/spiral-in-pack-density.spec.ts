@@ -45,13 +45,17 @@ const PLAY_MS = 25_000;
 
 interface PredStats {
   ticksAhead: number;
+  driftUnits: number;
   maxDriftUnits: number;
   rollingCorrRate: number;
   rafP50Ms: number;
   rafP99Ms: number;
   snapshotCount: number;
+  significantCorrectionCount: number;
+  totalDriftUnits: number;
   longtaskCount30s: number;
   rafGapCount30s: number;
+  collisionEventsApplied: number;
 }
 
 async function readPredStats(page: Page): Promise<PredStats | null> {
@@ -98,15 +102,19 @@ test('in-pack reconcile spiral: 25-drone ring engagement keeps prediction bounde
     timeout: 30_000,
   });
   await waitForJoinReady(page);
+  const samples0: PredStats[] = [];
 
-  // Pure thrust (held W) + sample every 2 s. Earlier swivel/fire mix
-  // starved the sample loop (3 samples in 25 s); the bug reproduces
-  // on thrust alone if it's going to reproduce.
+  // Pure thrust (held W) + 0.75 s sampling so we see early-second drift.
+  // Sample BEFORE thrusting so we capture the t=0 baseline.
+  {
+    const s0 = await readPredStats(page);
+    if (s0) samples0.push({ ...s0, _t: 0 } as PredStats & { _t: number });
+  }
   await page.keyboard.down('w');
-  const samples: PredStats[] = [];
+  const samples: PredStats[] = samples0;
   const startMs = Date.now();
   while (Date.now() - startMs < PLAY_MS) {
-    await page.waitForTimeout(1_500);
+    await page.waitForTimeout(750);
     const s = await readPredStats(page);
     if (s) samples.push({ ...s, _t: Math.round((Date.now() - startMs) / 1000) } as PredStats & { _t: number });
   }
@@ -120,10 +128,12 @@ test('in-pack reconcile spiral: 25-drone ring engagement keeps prediction bounde
   console.log(`\n=== in-pack 25-drone spiral lock (${samples.length} samples) ===`);
   for (const s of samples) {
     const t = (s as PredStats & { _t?: number })._t ?? 0;
+    const mean = s.snapshotCount > 0 ? s.totalDriftUnits / s.snapshotCount : 0;
     console.log(
       `  t=${String(t).padStart(3)}s ticksAhead=${s.ticksAhead.toString().padStart(3)} ` +
-        `drift=${s.maxDriftUnits.toFixed(1).padStart(6)}u corr=${s.rollingCorrRate.toFixed(2)} ` +
-        `rafP99=${(s.rafP99Ms ?? 0).toFixed(1).padStart(6)}ms gaps=${s.rafGapCount30s}`,
+        `lastDrift=${s.driftUnits.toFixed(3).padStart(7)}u meanDrift=${mean.toFixed(3).padStart(6)}u ` +
+        `maxDrift=${s.maxDriftUnits.toFixed(1).padStart(6)}u corr=${s.rollingCorrRate.toFixed(2)} ` +
+        `corrs=${s.significantCorrectionCount}/${s.snapshotCount} collisions=${s.collisionEventsApplied}`,
     );
   }
   console.log(`  PEAK: ticksAhead=${maxTicksAhead}, maxCorr=${maxCorr.toFixed(2)}`);

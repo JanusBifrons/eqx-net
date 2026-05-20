@@ -74,6 +74,7 @@ const FEATURE_SPECS: string[] = [
   '**/living-world.spec.ts',
   '**/network-feel-combat.spec.ts',
   '**/prediction-diagnostics.spec.ts',
+  '**/prediction-idle-bounded.spec.ts',
   '**/renderer-worker-probe.spec.ts',
   '**/robustness.spec.ts',
   '**/rotate-jitter.spec.ts',
