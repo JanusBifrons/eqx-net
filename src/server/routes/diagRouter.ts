@@ -9,9 +9,10 @@
  * Disabled when `NODE_ENV === 'production'` — the index.ts mount is gated.
  */
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, readFile, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { captureSchema } from './captureSchema.js';
+import { captureSchema, streamingBatchSchema } from './captureSchema.js';
 import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
@@ -202,29 +203,169 @@ function timeBounds(entries: RoutedEntry[], source: 'client' | 'server'): { firs
 export const diagRouter: ExpressRouter = Router();
 
 /**
- * Streaming capture endpoint — STUB for Phase 0 observer-effect
- * measurement (plan: streaming auto-capture, 2026-05-21).
+ * Streaming capture endpoint — real persistence (plan: streaming
+ * auto-capture, Phase 2, 2026-05-21).
  *
- * Accepts a POST + immediately discards. The body is not persisted yet.
- * The whole purpose of this stub is to measure whether the network +
- * client-side JSON.stringify cost of sending streaming batches every
- * 2s during gameplay perturbs the netcode-health metrics. If the gate
- * passes with this stub mounted, we know the disk-IO factor (added in
- * Phase 2) is the only remaining unknown.
+ * Each batch is appended to `diag/captures/<sessionId>/<bucket>.ndjson`
+ * using the same BUCKETS routing as manual captures, so the directory
+ * shape is identical and the replay harness consumes streaming sessions
+ * unchanged. The first batch (batchSeq=0) also writes `session.json`
+ * with the client metadata.
  *
- * Phase 2 will replace this with the real implementation (ndjson
- * append, session.json, idempotent retry, hydration, idle finalize).
+ * Idempotency: `lastAppliedSeq` is tracked in `session.json` (durable
+ * across `tsx watch` restarts) AND in memory (fast path). Duplicate /
+ * out-of-order batches return 409.
+ *
+ * Per-session write serialisation: a per-sessionId Promise chain
+ * ensures concurrent batches for the same session serialise their
+ * disk writes (Windows `appendFile` is not concurrent-safe).
  *
  * NODE_ENV-gated by the existing `/diag/*` mount in `src/server/index.ts`.
+ *
+ * Out of scope for this commit (deferred):
+ *   - Idle-timeout sweep + automatic summary.json finalize
+ *   - Per-bucket running counters (for summary.json without disk re-sweep)
+ *   - LRU eviction of the in-memory session map
+ *   Those land in a follow-up commit if/when needed. Replay harness
+ *   doesn't depend on summary.json; the streaming directory is usable
+ *   as-is for `replayCapture()`.
  */
-diagRouter.post('/capture/stream', (req: Request, res: Response) => {
-  // Minimal validation so a malformed POST doesn't tie up the server,
-  // but no schema parse yet (Phase 2 lands streamingBatchSchema).
-  if (!req.body || typeof req.body !== 'object') {
-    res.status(400).json({ error: 'invalid streaming batch' });
+
+interface StreamingSessionState {
+  /** Highest applied batchSeq. Loaded from session.json on first batch. */
+  lastAppliedSeq: number;
+  /** Promise chain head for write serialisation. Resolves when the last
+   *  write completed. New writes await this then push themselves on. */
+  writeChain: Promise<void>;
+  /** Sticky metadata from the first batch. */
+  startedAtMs: number;
+}
+
+const _streamingSessions = new Map<string, StreamingSessionState>();
+
+async function loadStateFromDisk(
+  sessionId: string,
+): Promise<StreamingSessionState | null> {
+  const sessionDir = join(CAPTURE_DIR, sessionId);
+  const sessionPath = join(sessionDir, 'session.json');
+  if (!existsSync(sessionPath)) return null;
+  try {
+    const raw = await readFile(sessionPath, 'utf8');
+    const parsed = JSON.parse(raw) as { lastAppliedSeq?: number; startedAtMs?: number };
+    if (typeof parsed.lastAppliedSeq !== 'number') return null;
+    return {
+      lastAppliedSeq: parsed.lastAppliedSeq,
+      writeChain: Promise.resolve(),
+      startedAtMs: parsed.startedAtMs ?? Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Atomic write: write to `<path>.tmp`, then rename. POSIX + Windows
+ *  both guarantee rename atomicity on the same filesystem. */
+async function atomicWriteJson(path: string, data: unknown): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+  await rename(tmp, path);
+}
+
+diagRouter.post('/capture/stream', async (req: Request, res: Response) => {
+  const parsed = streamingBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid streaming batch', detail: parsed.error.format() });
     return;
   }
-  res.json({ ok: true, accepted: 'stub' });
+  const body = parsed.data;
+  const sessionId = body.sessionId;
+  const sessionDir = join(CAPTURE_DIR, sessionId);
+  const sessionPath = join(sessionDir, 'session.json');
+
+  // Hydrate session state (lazy — on first request for this sessionId).
+  // Reads session.json from disk if present (survives `tsx watch`
+  // restarts; the in-memory map dies but the durable seq counter lives
+  // on disk).
+  let state = _streamingSessions.get(sessionId);
+  if (!state) {
+    const fromDisk = await loadStateFromDisk(sessionId);
+    if (fromDisk) {
+      state = fromDisk;
+    } else {
+      // Brand-new session — directory may or may not exist yet.
+      state = {
+        lastAppliedSeq: -1, // first batch has seq 0; rule is batchSeq > lastAppliedSeq
+        writeChain: Promise.resolve(),
+        startedAtMs: Date.now(),
+      };
+    }
+    _streamingSessions.set(sessionId, state);
+  }
+
+  // Idempotency: batchSeq must be strictly greater than lastAppliedSeq.
+  if (body.batchSeq <= state.lastAppliedSeq) {
+    res.status(409).json({
+      error: 'duplicate or out-of-order batch',
+      lastAppliedSeq: state.lastAppliedSeq,
+      receivedSeq: body.batchSeq,
+    });
+    return;
+  }
+
+  // Chain this batch's writes onto the per-session promise so concurrent
+  // batches for the same session serialise (Windows appendFile is not
+  // concurrent-safe).
+  const writeOp = async (): Promise<void> => {
+    // mkdir is idempotent with `recursive: true`. Always cheap.
+    await mkdir(sessionDir, { recursive: true });
+
+    // Group entries by bucket using the existing BUCKETS map.
+    const buckets = new Map<BucketName, string[]>();
+    for (const entry of body.entries) {
+      const tag = typeof entry['tag'] === 'string' ? entry['tag'] : '';
+      const bucket = (BUCKETS[tag] as BucketName | undefined) ?? 'other';
+      // Stamp each entry with the source ('client') so downstream tooling
+      // (replay harness, ingest script) can distinguish.
+      const line = JSON.stringify({ source: 'client', ...entry });
+      if (!buckets.has(bucket)) buckets.set(bucket, []);
+      buckets.get(bucket)!.push(line);
+    }
+
+    // Append each bucket's lines.
+    for (const [bucket, lines] of buckets) {
+      const file = join(sessionDir, `${bucket}.ndjson`);
+      await appendFile(file, lines.join('\n') + '\n', 'utf8');
+    }
+
+    // Update session.json (atomic write) AFTER the ndjson appends so a
+    // partial-write crash leaves the seq counter behind, not ahead.
+    state!.lastAppliedSeq = body.batchSeq;
+    await atomicWriteJson(sessionPath, {
+      sessionId,
+      streaming: true,
+      hasFinalized: body.final === true,
+      lastAppliedSeq: state!.lastAppliedSeq,
+      lastBatchAtMs: Date.now(),
+      startedAtMs: state!.startedAtMs,
+      // First-batch metadata, sticky.
+      ...(body.userAgent ? { userAgent: body.userAgent } : {}),
+      ...(body.viewport ? { viewport: body.viewport } : {}),
+      ...(body.clientEpochMs ? { clientEpochMs: body.clientEpochMs } : {}),
+    });
+  };
+
+  // Push onto the per-session write chain; the chain handles
+  // serialisation, and rejections are caught so a write failure on one
+  // batch doesn't poison subsequent ones.
+  state.writeChain = state.writeChain.then(writeOp, writeOp);
+  try {
+    await state.writeChain;
+  } catch (err) {
+    res.status(500).json({ error: 'write failed', detail: String((err as Error).message) });
+    return;
+  }
+
+  res.json({ ok: true, lastAppliedSeq: state.lastAppliedSeq });
 });
 
 diagRouter.post('/capture', async (req: Request, res: Response) => {
