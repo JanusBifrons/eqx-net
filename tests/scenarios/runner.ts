@@ -16,7 +16,6 @@ import { createWelford, welfordPush, welfordMean, welfordStdDev } from '../../sr
 import { createLookaheadController, computeDesiredLead, updateLookahead } from '../../src/client/net/lookaheadController';
 import { createDropDetector, observeSnapshotTick } from '../../src/client/net/snapshotDropDetector';
 import { recoverInputTickFromStarvation } from '../../src/client/net/inputTickRecovery';
-import { recoverInputTickFromOverPrediction, MAX_TICKS_AHEAD } from '../../src/client/net/inputTickOverPredictionRecovery';
 import { updateAnchor, CLOCK_ANCHOR_HARD_SNAP_MS } from '../../src/client/net/clockAnchor';
 import type { Event, Observation, SimulatedClientState } from './types';
 
@@ -43,7 +42,6 @@ export function createInitialClientState(opts?: {
     leadTicks: initialLead,
     lastFrameMs: 16.67,
     lastSnapshotAtMs: -1,
-    lastAckedTick: -1,
   };
 }
 
@@ -61,18 +59,10 @@ const STEADY_STATE_INTERVAL_MAX_MS = 75;
  * Process a single rafTick event. Mirrors `ColyseusClient.tickPhysics`'s
  * input-loop logic — advance `inputTick` toward the wall-clock-anchored
  * `targetTick`, bounded by `MAX_CATCH_UP_TICKS`.
- *
- * perf-floor session 3 — targetTick is ALSO bounded by
- * `lastAckedTick + MAX_TICKS_AHEAD`. Prevents the wall-clock anchor
- * from pulling inputTick unboundedly past the server's actual progress
- * under sustained server-queue depth (mobile bufferbloat). Without
- * this cap, the catch-up loop scrambles inputTick back into the
- * over-prediction zone immediately after each snapshot recovery.
  */
 function applyRafTick(
   state: SimulatedClientState,
   ev: Extract<Event, { type: 'rafTick' }>,
-  overPredictionRecoveryEnabled: boolean = true,
 ): void {
   state.lastFrameMs = ev.dtMs;
   if (!state.anchorInitialised) {
@@ -81,15 +71,7 @@ function applyRafTick(
     return;
   }
   const ticksSinceAnchor = Math.floor((ev.atMs - state.clockAnchorPerfNow) / FIXED_MS);
-  let targetTick = state.clockAnchorServerTick + ticksSinceAnchor + state.leadTicks;
-  // Cap targetTick at (lastAckedTick + MAX_TICKS_AHEAD) — see header.
-  // Only when over-prediction recovery is enabled, so the regression-
-  // demonstration tests can disable the cap and prove the bug exists
-  // without it.
-  if (overPredictionRecoveryEnabled && state.lastAckedTick >= 0) {
-    const ackCap = state.lastAckedTick + MAX_TICKS_AHEAD;
-    if (targetTick > ackCap) targetTick = ackCap;
-  }
+  const targetTick = state.clockAnchorServerTick + ticksSinceAnchor + state.leadTicks;
   let stepsThisFrame = 0;
   while (state.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
     state.inputTick++;
@@ -111,13 +93,11 @@ function applySnapshot(
     rttClampEnabled: boolean;
     rttGapFilterEnabled: boolean;
     rttLeadSubtractEnabled: boolean;
-    overPredictionRecoveryEnabled: boolean;
   } = {
     recoveryEnabled: true,
     rttClampEnabled: true,
     rttGapFilterEnabled: true,
     rttLeadSubtractEnabled: true,
-    overPredictionRecoveryEnabled: true,
   },
 ): { starvationSnapTriggered: boolean } {
   // ── clockAnchor update (mirrors ColyseusClient.handleSnapshot lines around 1004) ──
@@ -180,7 +160,6 @@ function applySnapshot(
     state.leadTicks = updateLookahead(state.lookaheadCtrl, desiredLead, state.lastFrameMs);
   }
   state.lastSnapshotAtMs = ev.atMs;
-  state.lastAckedTick = ev.ackedTick;
 
   // ── Stage 4 hotfix #2 — inputTick starvation recovery ──
   let starvationSnapTriggered = false;
@@ -191,26 +170,6 @@ function applySnapshot(
       state.clockAnchorServerTick = ev.serverTick;
       state.clockAnchorPerfNow = ev.atMs;
       starvationSnapTriggered = true;
-    }
-  }
-
-  // ── perf-floor session 3 — inputTick OVER-prediction recovery ──
-  // Symmetric counterpart to the starvation recovery above. Fires when
-  // the server's input queue is so deep the client is predicting >60
-  // ticks past the latest ack (mobile bufferbloat). Snaps inputTick
-  // BACK to (ackedTick + leadTicks); rest of state untouched (clock
-  // anchor stays put — the wall-clock anchor remains true, only the
-  // inputTick is re-aligned with the server's actual progress).
-  if (flags.overPredictionRecoveryEnabled) {
-    const recovered = recoverInputTickFromOverPrediction(state.inputTick, ev.ackedTick, state.leadTicks);
-    if (recovered !== state.inputTick) {
-      state.inputTick = recovered;
-      // Re-anchor the clock too — otherwise the next rafTick computes
-      // ticksSinceAnchor = (now - clockAnchorPerfNow) / FIXED_MS which
-      // is large + drives inputTick back up past the cap on the very
-      // next frame. Re-anchoring resets the wall-clock baseline.
-      state.clockAnchorServerTick = ev.serverTick;
-      state.clockAnchorPerfNow = ev.atMs;
     }
   }
 
@@ -242,11 +201,6 @@ export interface RunOptions {
    *  network-only RTT and the gate doesn't create a positive-feedback
    *  loop on the lookahead controller. */
   rttLeadSubtractEnabled?: boolean;
-  /** When false, the runner bypasses `recoverInputTickFromOverPrediction`
-   *  on snapshot — used for the regression-demonstration tests in
-   *  `spiral-ondevice-replay.test.ts` that prove the spiral reproduces
-   *  without the hotfix. Default true (production behaviour). */
-  overPredictionRecoveryEnabled?: boolean;
 }
 
 /**
@@ -263,21 +217,14 @@ export function runScenario(
   const rttClampEnabled = opts.rttClampEnabled !== false;
   const rttGapFilterEnabled = opts.rttGapFilterEnabled !== false;
   const rttLeadSubtractEnabled = opts.rttLeadSubtractEnabled !== false;
-  const overPredictionRecoveryEnabled = opts.overPredictionRecoveryEnabled !== false;
   const observations: Observation[] = [];
 
   for (const ev of events) {
     let starvationSnapTriggered = false;
     if (ev.type === 'rafTick') {
-      applyRafTick(state, ev, overPredictionRecoveryEnabled);
+      applyRafTick(state, ev);
     } else {
-      ({ starvationSnapTriggered } = applySnapshot(state, ev, {
-        recoveryEnabled,
-        rttClampEnabled,
-        rttGapFilterEnabled,
-        rttLeadSubtractEnabled,
-        overPredictionRecoveryEnabled,
-      }));
+      ({ starvationSnapTriggered } = applySnapshot(state, ev, { recoveryEnabled, rttClampEnabled, rttGapFilterEnabled, rttLeadSubtractEnabled }));
     }
     observations.push({
       atMs: ev.atMs,

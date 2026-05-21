@@ -37,7 +37,6 @@ import {
   type DropDetector,
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
-import { recoverInputTickFromOverPrediction, MAX_TICKS_AHEAD } from './inputTickOverPredictionRecovery';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -1815,22 +1814,6 @@ export class ColyseusGameClient {
         this.clockAnchorServerTick = snap.serverTick;
         this.clockAnchorPerfNow = now;
       }
-      // perf-floor session 3 — recover from inputTick OVER-prediction
-      // (symmetric counterpart). Sustained mobile burst-transit grows the
-      // server's input queue depth unbounded; the wall-clock-anchored
-      // input loop keeps advancing inputTick at 60 Hz while the server's
-      // ackedTick lags 100-300+ ticks behind. Each subsequent snapshot
-      // replays up to BUFFER_SIZE=128 ticks of physics (~50-1000 ms on
-      // mobile), and the user perceives the ship as unresponsive. Snap
-      // inputTick BACK when (inputTick - ackedTick) > MAX_TICKS_AHEAD.
-      // See `inputTickOverPredictionRecovery.ts` for the full mechanism
-      // and the 2026-05-20 captures (vg9hon, ers7xy) that motivated it.
-      const recoveredOver = recoverInputTickFromOverPrediction(this.inputTick, ackedTick, this.leadTicks);
-      if (recoveredOver !== this.inputTick) {
-        this.inputTick = recoveredOver;
-        this.clockAnchorServerTick = snap.serverTick;
-        this.clockAnchorPerfNow = now;
-      }
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
@@ -2764,17 +2747,7 @@ export class ColyseusGameClient {
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     const ticksSinceAnchor = Math.floor((performance.now() - this.clockAnchorPerfNow) / FIXED_MS);
-    let targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
-    // perf-floor session 3 — cap targetTick at lastAckedTick + MAX_TICKS_AHEAD.
-    // Prevents the wall-clock anchor from pulling inputTick unboundedly past
-    // the server's actual progress under sustained server-queue depth (mobile
-    // bufferbloat). Without this cap, the on-snapshot over-prediction recovery
-    // would be undone within ~167 ms by the catch-up loop. The cap is the
-    // primary mechanism; the recovery is defence in depth.
-    if (this.stats.lastAckedTick > 0) {
-      const ackCap = this.stats.lastAckedTick + MAX_TICKS_AHEAD;
-      if (targetTick > ackCap) targetTick = ackCap;
-    }
+    const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
     const tickDeficitBefore = targetTick - this.inputTick;
     let stepsThisFrame = 0;
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
