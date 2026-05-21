@@ -1997,8 +1997,20 @@ export class ColyseusGameClient {
         : 0;
       const rec = this.reconciler;
       const px = (n: number): number => parseFloat(n.toFixed(3));
+      const pa = (n: number): number => parseFloat(n.toFixed(5));
+      // Replay-grade serverState capture (plan: capture-driven replay
+      // Phase A.1, 2026-05-21). The reconciler's `lastServerState` is
+      // the authoritative pose for the LOCAL player at this snapshot.
+      // Captured here so the replay harness can synthesize a minimal
+      // SnapshotMessage and drive `handleSnapshot()` deterministically.
+      const _ss = rec.lastServerState as { x: number; y: number; vx?: number; vy?: number; angle?: number; angvel?: number };
       const recPositions = {
-        serverX: px(rec.lastServerState.x), serverY: px(rec.lastServerState.y),
+        serverX:      px(_ss.x),
+        serverY:      px(_ss.y),
+        serverVx:     px(_ss.vx ?? 0),
+        serverVy:     px(_ss.vy ?? 0),
+        serverAngle:  pa(_ss.angle ?? 0),
+        serverAngvel: pa(_ss.angvel ?? 0),
         beforeX: px(rec.lastBeforePos.x),   beforeY: px(rec.lastBeforePos.y),
         afterX:  px(rec.lastAfterPos.x),    afterY:  px(rec.lastAfterPos.y),
       };

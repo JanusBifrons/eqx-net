@@ -53,6 +53,12 @@ export default defineConfig({
       // Phases 2 + 5). The .spec.ts Playwright spec lives in the same
       // directory but is excluded by the .test.ts-only match.
       'tests/perf/**/*.test.ts',
+      // Capture-driven replay harness + user-contract assertions
+      // (plan: capture-driven replay infra, Phases C-F, 2026-05-21).
+      // Drives the REAL ColyseusGameClient through captured on-device
+      // sessions deterministically — the missing piece that lets a
+      // smoke-test capture become a regression-locked test.
+      'tests/replay/**/*.test.ts',
     ],
     exclude: [
       '**/node_modules/**',
