@@ -70,7 +70,29 @@ Phase-A-enriched. The first such capture should be paired with a
 `captures/<id>-groundtruth.test.ts` that adds the
 `assertGroundTruthMatch` assertion, completing Phase E proper.
 
-## Workflow (Phase F)
+## Workflow (Phase F + streaming auto-capture)
+
+### Streaming-capture workflow (recommended — `?autocapture=1`)
+
+After the streaming auto-capture plan (commits `0e3af93`-`2ec1f87`,
+2026-05-21) shipped, the smoke-test workflow is:
+
+```
+# 1. User opens the game with ?autocapture=1 in the URL (and any other
+#    relevant params, e.g. ?room=feel-test-25&autocapture=1). The
+#    client streams ring entries to the server every 2s automatically.
+# 2. User plays / reproduces the bug. NO MANUAL CAPTURE BUTTON PRESS
+#    NEEDED. If the page crashes / tab closes / OS reaps the process,
+#    data is already on disk (loss window = ~CADENCE + 3s, see below).
+# 3. Find the session id:
+#      - Browser console logs it on boot: "[streamingDiag] streaming
+#        enabled, sessionId=<id>, ..."
+#      - Or: ls diag/captures/ and grab the most recent dir
+#      - Or: Settings → Capture button shows it ("Streaming active → <id>")
+# 4. Continue as below from step 2.
+```
+
+### Manual-capture workflow (fallback)
 
 ```
 # 1. User takes a smoke test and submits diag/captures/<NEW_ID>/
@@ -91,6 +113,43 @@ Phase-A-enriched. The first such capture should be paired with a
 #      pnpm test                      # full unit suite stays green
 # 5. ONE smoke handoff to confirm.
 ```
+
+### Note on streaming captures + `summary.json`
+
+Streaming sessions are USABLE for replay before `summary.json` exists
+(the loader doesn't require it). But test files that read
+`ON_DEVICE_TICKS_AHEAD` from `summary.json.stats.ticksAhead` (the
+canonical pattern) need to wait until the streaming session is
+finalized OR read the value from a different source (e.g., the LAST
+snapshot's `ticksAhead` field in `snapshots.ndjson`).
+
+Server-side automatic finalize-on-idle is not yet wired (planned but
+deferred). For now, when a streaming session is "done":
+  - The client will have sent a `final: true` batch on page-hide.
+  - The server stores `hasFinalized: true` in `session.json` but
+    doesn't write `summary.json` yet.
+  - Manual finalize: read the last snapshot from `snapshots.ndjson`
+    to seed the test's expected `ticksAhead`.
+
+### Data-loss window (honest)
+
+Streaming claims "crash-proof" with caveats. Real-world loss windows
+under various failure modes:
+
+| Failure mode | Loss window |
+|---|---|
+| Clean tab close (desktop) | ≤ 100 ms (sendBeacon final flush usually lands) |
+| Tab swipe-up-kill (mobile) | ≤ 3 s (visibilitychange triggers, beacon best-effort) |
+| Browser process crash mid-fetch | ≤ CADENCE_MS + RTT (the in-flight + buffered batches) |
+| OS process-reap under memory pressure | ≤ CADENCE_MS + RTT (no event fires; last successful POST is the floor) |
+| Network drop, then continue playing | 0 (next POST retries from current pending buffer) |
+| Network drop, then crash | ≤ time-since-network-recovered + CADENCE_MS |
+
+The original "~2s" claim from the v1 plan was too optimistic. With the
+Phase 3 hardening (visibilitychange + pagehide + beforeunload +
+sendBeacon + one-in-flight lock), the typical case is much better
+than 2s on a clean close, but the worst case (OS reap, no event) is
+up to a full cadence + RTT.
 
 ### Why no CLI tool?
 
