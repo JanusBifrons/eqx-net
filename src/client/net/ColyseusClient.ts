@@ -2882,8 +2882,20 @@ export class ColyseusGameClient {
         tcFire = this.touchInput.getFireHeld();
         const v = this.touchInput.getJoystickVector();
         const localId = this.mirror.localPlayerId;
+        // Render-jitter-fix Phase 1: read REAL-TIME predWorld angle for
+        // the joystick hysteresis. The mirror angle now carries the
+        // dead-reckon term (up to 32 ms × angvel ≈ 0.08 rad at max
+        // turn rate), which is 2× the joystick hysteresis band
+        // (TURN_OFF_RAD=0.04 in joystickToInput). Reading the mirror
+        // could perturb the engaged/disengaged crossing and cause
+        // phantom turn-direction reversal under sustained held input —
+        // exactly the spiral-fix bug class the joystick hysteresis was
+        // built to prevent. Mirror fallback covers the boot window
+        // before predWorld has a ship body.
+        const predState = localId ? this.predWorld?.getShipState(localId) ?? null : null;
         const localShip = localId ? this.mirror.ships.get(localId) : null;
-        if (localShip) {
+        const realAngle = predState?.angle ?? localShip?.angle ?? null;
+        if (realAngle !== null) {
           // 2026-05-20 spiral fix: pure resolver with HYSTERESIS bands.
           // Pre-fix `delta > TOUCH_TURN_TOLERANCE` had no off-threshold;
           // as the ship rotated toward target, delta crossed 0.08 rad,
@@ -2891,7 +2903,7 @@ export class ColyseusGameClient {
           // toggled again. Empirical ~10 Hz state-change rate → sustained
           // ~45-70 % rollingCorrRate spiral. Unit-locked in
           // src/client/input/joystickToInput.test.ts.
-          const next = joystickToInput(v, localShip.angle, this._joystickInputState);
+          const next = joystickToInput(v, realAngle, this._joystickInputState);
           this._joystickInputState = next;
           tcTurnLeft = next.turnLeft;
           tcTurnRight = next.turnRight;
@@ -3077,9 +3089,14 @@ export class ColyseusGameClient {
       if (this.touchInput) {
         tcFire2 = this.touchInput.getFireHeld();
         const v = this.touchInput.getJoystickVector();
+        // Render-jitter-fix Phase 1: same rule as the in-loop joystick
+        // read — hysteresis MUST track REAL-TIME predWorld angle, not
+        // the dead-reckoned mirror angle.
+        const predState = this.predWorld?.getShipState(this.mirror.localPlayerId) ?? null;
         const localShip = this.mirror.ships.get(this.mirror.localPlayerId);
-        if (localShip) {
-          const next = joystickToInput(v, localShip.angle, this._joystickInputState);
+        const realAngle = predState?.angle ?? localShip?.angle ?? null;
+        if (realAngle !== null) {
+          const next = joystickToInput(v, realAngle, this._joystickInputState);
           this._joystickInputState = next;
           tcTurnLeft2 = next.turnLeft;
           tcTurnRight2 = next.turnRight;
