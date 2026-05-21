@@ -89,4 +89,10 @@ export interface SimulatedClientState {
    *  and have contaminated `lastRtt`. Skip the Welford push for those.
    *  -1 = no prior snapshot. */
   lastSnapshotAtMs: number;
+  /** Most recent ackedTick from any snapshot. Drives the perf-floor
+   *  session 3 over-prediction cap in `applyRafTick`: the wall-clock-
+   *  anchored input loop's targetTick is capped at
+   *  `lastAckedTick + MAX_TICKS_AHEAD` so the spiral cannot grow under
+   *  sustained server-queue depth. -1 = no prior snapshot. */
+  lastAckedTick: number;
 }
