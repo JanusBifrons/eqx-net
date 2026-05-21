@@ -73,10 +73,33 @@ Phase-A-enriched. The first such capture should be paired with a
 ## Workflow (Phase F)
 
 ```
-# 1. User takes a smoke test and submits diag/captures/<id>/
-# 2. (Phase F: capture-to-test.mjs CLI) — generate failing lock test
-# 3. Fix-iterate against:
-#      pnpm test tests/replay/                # all replay locks must pass
-#      pnpm test                              # full unit suite stays green
-# 4. ONE smoke handoff to confirm.
+# 1. User takes a smoke test and submits diag/captures/<NEW_ID>/
+# 2. Add a regression-lock test file:
+#      cp tests/replay/captures/vg9hon-idle.test.ts \
+#         tests/replay/captures/<short-id>.test.ts
+#    Update:
+#      - CAPTURE_PATH constant to the new dir
+#      - ON_DEVICE_TICKS_AHEAD from the capture's summary.json `stats.ticksAhead`
+#      - Test description in describe(...) to match the smoke symptom
+# 3. Run the new lock:  pnpm vitest run tests/replay/captures/<short-id>.test.ts
+#    Expected: faithfulness assertion PASS (within ±5 of on-device),
+#              user-contract assertions FAIL on whatever the bug is
+#    (teleport, input-flow violation, ticksAhead unbounded, etc.).
+#    Each failure points at the FIRST observable issue with timestamp.
+# 4. Fix-iterate against:
+#      pnpm test tests/replay/        # all replay locks must pass
+#      pnpm test                      # full unit suite stays green
+# 5. ONE smoke handoff to confirm.
 ```
+
+### Why no CLI tool?
+
+The plan originally included `scripts/capture-to-test.mjs` for one-step
+test-from-capture generation. That hit the `@core/*` alias chain — tsx
+doesn't read vitest's `resolve.alias`, so any script that imports
+`ColyseusClient.ts` (which uses `@core/...` extensively) can't run via
+`pnpm tsx scripts/...`. The "copy-the-template" workflow above is one
+extra minute and avoids the alias-handling complexity entirely. If you
+really want a CLI later, the right shape is a vitest-runnable
+diagnostic test that prints a report on stdout (since vitest IS the
+only runtime that resolves `@core/*` correctly).
