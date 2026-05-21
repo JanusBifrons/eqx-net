@@ -56,12 +56,75 @@ const entries: LogEntry[] = [];
 // `logEvent` firing before `installWindowLogger()`. `isDiagEnabled` is a
 // hoisted function declaration below — safe to call from here at runtime.
 let _maxEntries = -1;
+
+/**
+ * Pending-stream buffer — Phase 3 of the streaming auto-capture plan.
+ *
+ * When `?autocapture=1` is set, every `logEvent` also pushes into this
+ * buffer, which is drained by `streamingDiag.ts`'s timer every
+ * CADENCE_MS. Kept separate from the main `entries` ring so:
+ *   - The main ring stays available for manual Capture / devtools
+ *     inspection at all times.
+ *   - The streaming buffer drains independently of the ring's FIFO
+ *     eviction (we never lose unsent entries to ring rotation).
+ *
+ * Cap: 5_000 entries (matches the server-side schema cap). On overflow,
+ * oldest is dropped + a one-time `streaming_dropped` marker is pushed
+ * into both the ring AND the pending buffer so the loss is visible in
+ * any downstream capture.
+ */
+const PENDING_STREAM_MAX = 5_000;
+const _pendingStreamBuffer: LogEntry[] = [];
+let _streamingDroppedFirstAt: number | null = null;
+
 export function logEvent(tag: string, data: Record<string, unknown>): void {
   if (_maxEntries < 0) {
     _maxEntries = isDiagEnabled() ? DIAG_MAX_ENTRIES : PROD_MAX_ENTRIES;
   }
-  entries.push({ ts: performance.now(), tag, data });
+  const entry: LogEntry = { ts: performance.now(), tag, data };
+  entries.push(entry);
   if (entries.length > _maxEntries) entries.shift();
+
+  // Phase 3 streaming hook — gated by isAutoCaptureEnabled() so normal
+  // sessions pay zero cost. The check is a single cached boolean read.
+  if (isAutoCaptureEnabled()) {
+    _pendingStreamBuffer.push(entry);
+    if (_pendingStreamBuffer.length > PENDING_STREAM_MAX) {
+      _pendingStreamBuffer.shift();
+      if (_streamingDroppedFirstAt === null) {
+        _streamingDroppedFirstAt = entry.ts;
+        const droppedMarker: LogEntry = {
+          ts: entry.ts,
+          tag: 'streaming_dropped',
+          data: { firstDroppedAt: _streamingDroppedFirstAt, max: PENDING_STREAM_MAX },
+        };
+        // Push into both surfaces so it's visible in any capture variant.
+        entries.push(droppedMarker);
+        if (entries.length > _maxEntries) entries.shift();
+        _pendingStreamBuffer.push(droppedMarker);
+        // eslint-disable-next-line no-console
+        console.warn(`[ClientLogger] streaming pending buffer overflow — events dropped from ${entry.ts}`);
+      }
+    }
+  }
+}
+
+/**
+ * Drain + return the current pending-stream buffer. Streaming module
+ * calls this every CADENCE_MS. The buffer is cleared atomically (the
+ * splice returns the old array, the new one starts empty).
+ *
+ * Pattern is "drain, send, on-success drop". If the send fails, the
+ * caller is responsible for retrying — the buffer is already empty by
+ * then. (The plan accepts this: a failed send loses up to one
+ * cadence's worth of events; the next batch picks up from there. The
+ * trade-off is simpler than re-queueing on failure, and the dropped
+ * events are still in the main ring for manual Capture as fallback.)
+ */
+export function drainPendingStream(): readonly LogEntry[] {
+  const drained = _pendingStreamBuffer.slice();
+  _pendingStreamBuffer.length = 0;
+  return drained;
 }
 
 /**
