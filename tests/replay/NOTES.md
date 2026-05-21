@@ -29,7 +29,8 @@ tests/replay/
 ├── userContracts.test.ts               assertion self-tests
 └── captures/
     ├── vg9hon-idle.test.ts             lock against the 2026-05-20 idle capture
-    └── ers7xy-active.test.ts           lock against the 2026-05-20 active capture
+    ├── ers7xy-active.test.ts           lock against the 2026-05-20 active capture
+    └── 1kwv1z-phone-streaming.test.ts  lock against the 2026-05-21 phone ?autocapture=1 streaming capture; Phase-A-enriched; spiral with ticksAhead=155 on a real mobile network (rttMs≈3974, intervalMs≈340)
 ```
 
 ## Harness faithfulness (Phase E, 2026-05-21)
