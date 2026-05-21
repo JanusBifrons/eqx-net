@@ -40,6 +40,7 @@ import {
   assertNoTeleport,
   assertInputFlowMaintained,
   assertTicksAheadBounded,
+  assertFramePacingSmooth,
 } from '../userContracts';
 
 const CAPTURE_PATH = 'diag/captures/2026-05-21T16-04-16Z-2q0jxw';
@@ -97,5 +98,23 @@ describe('replay lock — 2q0jxw mobile RAF jitter', () => {
     const trace = await replayCapture(CAPTURE_PATH);
     const r = assertInputFlowMaintained(trace);
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
+  });
+
+  // THE TARGET ASSERTION for this fix. Reads the on-device
+  // `local_pose_rendered` stream directly (sidesteps harness drift).
+  // On baseline `2790b0d`: RED with 81 violations — most clustered in
+  // 4-10 frame runs that the user perceives as "stop-start" jitter.
+  // Comparison: 1kwv1z (also mobile, also Phase-A enriched, also has
+  // RAF jitter) has only 6 violations at the same threshold — most of
+  // those are multi-second tab-background stalls, NOT the rapid
+  // alternation pattern. The 13× gap is a clean signal.
+  //
+  // Should turn GREEN — or violations drop dramatically — after a
+  // fix lands that produces motion on every RAF (e.g., dead-reckon
+  // between physics ticks).
+  it('USER CONTRACT — frame pacing smooth (no >3-frame holds)', async () => {
+    const trace = await replayCapture(CAPTURE_PATH);
+    const r = assertFramePacingSmooth(trace, { maxConsecutiveSameRender: 3 });
+    expect(r.pass, r.violations.slice(0, 10).map((v) => v.detail).join('\n')).toBe(true);
   });
 });

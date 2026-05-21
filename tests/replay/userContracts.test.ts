@@ -11,6 +11,7 @@ import {
   assertInputFlowMaintained,
   assertTicksAheadBounded,
   assertGroundTruthMatch,
+  assertFramePacingSmooth,
 } from './userContracts';
 import type { ReplayTrace, RenderedPoseSample, InputSample } from './ReplayTrace';
 
@@ -18,6 +19,7 @@ function emptyTrace(): ReplayTrace {
   return {
     source: { path: 'synthetic', playerId: 'p1' },
     renderedPoses: [],
+    capturedRenderedPoses: [],
     predictedPoses: [],
     inputSent: [],
     inputs: [],
@@ -214,5 +216,79 @@ describe('assertGroundTruthMatch', () => {
     const r = assertGroundTruthMatch(t);
     expect(r.pass).toBe(false);
     expect(r.violations[0]!.kind).toBe('no_ground_truth');
+  });
+});
+
+describe('assertFramePacingSmooth', () => {
+  function capturedSample(i: number, x: number, y: number): RenderedPoseSample {
+    return {
+      atMs: i * FRAME_MS,
+      inputTick: 1000 + i,
+      x, y,
+      angle: 0,
+      lerpOffsetX: 0,
+      lerpOffsetY: 0,
+      lerpAngleOffset: 0,
+    };
+  }
+
+  it('passes on smooth motion (each frame advances)', () => {
+    const t = emptyTrace();
+    for (let i = 0; i < 100; i++) t.capturedRenderedPoses.push(capturedSample(i, i, 0));
+    const r = assertFramePacingSmooth(t);
+    expect(r.pass).toBe(true);
+  });
+
+  it('passes on a 3-frame hold (default threshold maxConsecutive=3)', () => {
+    const t = emptyTrace();
+    // 3-frame run of identical pose, then advance.
+    for (let i = 0; i < 3; i++) t.capturedRenderedPoses.push(capturedSample(i, 100, 100));
+    for (let i = 3; i < 10; i++) t.capturedRenderedPoses.push(capturedSample(i, 100 + i, 100));
+    const r = assertFramePacingSmooth(t);
+    expect(r.pass).toBe(true);
+  });
+
+  it('FAILS on a 4-frame hold (above threshold=3)', () => {
+    const t = emptyTrace();
+    for (let i = 0; i < 4; i++) t.capturedRenderedPoses.push(capturedSample(i, 100, 100));
+    for (let i = 4; i < 10; i++) t.capturedRenderedPoses.push(capturedSample(i, 100 + i, 100));
+    const r = assertFramePacingSmooth(t);
+    expect(r.pass).toBe(false);
+    expect(r.violations[0]!.kind).toBe('frame_hold');
+    expect(r.violations[0]!.detail).toContain('4 consecutive frames');
+  });
+
+  it('honors a custom threshold', () => {
+    const t = emptyTrace();
+    // 5-frame run, threshold raised to 10 → passes.
+    for (let i = 0; i < 5; i++) t.capturedRenderedPoses.push(capturedSample(i, 100, 100));
+    for (let i = 5; i < 20; i++) t.capturedRenderedPoses.push(capturedSample(i, 100 + i, 100));
+    const r = assertFramePacingSmooth(t, { maxConsecutiveSameRender: 10 });
+    expect(r.pass).toBe(true);
+  });
+
+  it('catches a tail-run hold (last frames frozen)', () => {
+    const t = emptyTrace();
+    for (let i = 0; i < 5; i++) t.capturedRenderedPoses.push(capturedSample(i, i, 0));
+    // Final 8 frames all identical.
+    for (let i = 5; i < 13; i++) t.capturedRenderedPoses.push(capturedSample(i, 5, 0));
+    const r = assertFramePacingSmooth(t);
+    expect(r.pass).toBe(false);
+    expect(r.violations[0]!.detail).toContain('tail');
+  });
+
+  it('vacuously satisfied when capturedRenderedPoses is empty (pre-Phase-A capture)', () => {
+    const t = emptyTrace();
+    const r = assertFramePacingSmooth(t);
+    expect(r.pass).toBe(true);
+    expect(r.violations.length).toBe(0);
+  });
+
+  it('reads from `renderedPoses` when useCapturedStream=false', () => {
+    const t = emptyTrace();
+    for (let i = 0; i < 5; i++) t.renderedPoses.push(renderedSample(i, 100, 100));
+    const r = assertFramePacingSmooth(t, { useCapturedStream: false });
+    expect(r.pass).toBe(false);
+    expect(r.violations[0]!.detail).toContain('5 consecutive frames');
   });
 });

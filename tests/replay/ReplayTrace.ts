@@ -65,6 +65,15 @@ export interface ReplayTrace {
   source: { path: string; playerId: string };
   /** All replayed rendered-pose samples in time order. */
   renderedPoses: RenderedPoseSample[];
+  /** The ON-DEVICE `local_pose_rendered` events from the capture file
+   *  (the EXACT poses the user actually saw on their screen). Use
+   *  THIS — not `renderedPoses` — for assertions about user
+   *  experience on long combat-style captures, because the harness's
+   *  re-rendered stream drifts from on-device due to missing
+   *  drone/projectile/collision state. Empty on pre-Phase-A captures
+   *  that lack the tag.
+   *  Plan: render-jitter-fix Phase 0a (2026-05-21). */
+  capturedRenderedPoses: RenderedPoseSample[];
   /** All replayed predicted-pose samples in time order. */
   predictedPoses: PredictedPoseSample[];
   /** Every `room.send('input', ...)` call captured during replay. The

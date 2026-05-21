@@ -211,6 +211,7 @@ export async function replayCapture(
   const trace: ReplayTrace = {
     source: { path: capturePath, playerId },
     renderedPoses: [],
+    capturedRenderedPoses: [],
     predictedPoses: [],
     inputSent: [],
     inputs: [],
@@ -310,11 +311,22 @@ export async function replayCapture(
       }
 
       case 'local_pose_rendered': {
-        // Capture's ground-truth pose for this RAF. Pair it with the
-        // closest replayed-rendered sample (same ts).
+        // Capture's ground-truth pose for this RAF.
         const captured = ev.data;
-        // Find the replayed sample at the same atMs (rafTick events fire
-        // at the same ts as the local_pose_rendered log).
+        // Render-jitter-fix Phase 0a: also append to capturedRenderedPoses
+        // so frame-pacing assertions can read the ON-DEVICE stream
+        // directly (sidesteps harness drift on long combat captures).
+        trace.capturedRenderedPoses.push({
+          atMs: ev.ts,
+          inputTick: captured.inputTick,
+          x: captured.x,
+          y: captured.y,
+          angle: captured.angle,
+          lerpOffsetX: captured.lerpOffsetX ?? 0,
+          lerpOffsetY: captured.lerpOffsetY ?? 0,
+          lerpAngleOffset: captured.lerpAngleOffset ?? 0,
+        });
+        // Pair with the closest replayed-rendered sample (same ts).
         const replayed = trace.renderedPoses[trace.renderedPoses.length - 1];
         if (replayed && Math.abs(replayed.atMs - ev.ts) < 0.5) {
           trace.groundTruth.push({

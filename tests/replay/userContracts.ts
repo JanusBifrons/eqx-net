@@ -191,6 +191,87 @@ export function assertTicksAheadBounded(
 }
 
 /**
+ * Frame-pacing smoothness — measures the 0-step-hold pattern that
+ * produces the user-perceived "stop-start" jitter on mobile RAF.
+ *
+ * Why this exists (render-jitter-fix Phase 0a, 2026-05-21):
+ *
+ * `assertNoTeleport` measures per-frame position DELTA against a 30 u
+ * threshold. It catches reconcile-induced jumps and bursty catch-up
+ * motion, but it does NOT catch the 0-step-hold pattern that mobile
+ * users actually report as "stop-start":
+ *
+ *   - 90 Hz mobile display fires RAFs every ~11 ms.
+ *   - 60 Hz physics ticks every ~16.7 ms.
+ *   - When a RAF fires < 16.7 ms after the last physics tick, NO
+ *     physics tick advances; rendered pose is identical to last frame.
+ *   - Cluster of 0-step RAFs = sprite holds on screen for 3-5 display
+ *     frames = visible "stop".
+ *   - Next physics tick fires = sprite jumps forward 1 tick of motion =
+ *     visible "start".
+ *
+ * The user's complaint pattern: hold-hold-hold-jump-hold-hold-hold-jump.
+ *
+ * This assertion measures it directly from the on-device
+ * `local_pose_rendered` stream (`capturedRenderedPoses`), NOT the
+ * harness's re-rendered stream — the latter drifts ~232 u over 60 s on
+ * combat-style captures (no drone/projectile state to drive collisions),
+ * making harness-rendered-pose-deltas an unreliable signal.
+ *
+ * Default `maxConsecutiveSameRender = 3` — up to 3 holds-in-a-row is
+ * baseline-RAF-cadence variance (90 Hz / 60 Hz ratio); ≥ 4 is the
+ * "stop-start" defect.
+ */
+export function assertFramePacingSmooth(
+  trace: ReplayTrace,
+  opts?: { maxConsecutiveSameRender?: number; useCapturedStream?: boolean },
+): ContractResult {
+  const max = opts?.maxConsecutiveSameRender ?? 3;
+  const useCapturedStream = opts?.useCapturedStream ?? true;
+  const samples = useCapturedStream ? trace.capturedRenderedPoses : trace.renderedPoses;
+  const violations: ContractViolation[] = [];
+
+  if (samples.length === 0) {
+    // Pre-Phase-A captures lack `local_pose_rendered` events; vacuously
+    // satisfied (no signal to assert on).
+    return { pass: true, violations };
+  }
+
+  let runStart = 0;
+  let runX = samples[0]!.x;
+  let runY = samples[0]!.y;
+  for (let i = 1; i < samples.length; i++) {
+    const cur = samples[i]!;
+    // Exact equality — the on-device log has 3-decimal precision and
+    // a true "no physics advance" produces identical fields.
+    const sameAsRun = (cur.x === runX && cur.y === runY);
+    if (!sameAsRun) {
+      const runLen = i - runStart;
+      if (runLen > max) {
+        violations.push({
+          atMs: samples[runStart]!.atMs,
+          kind: 'frame_hold',
+          detail: `${runLen} consecutive frames rendered identical pose (${runX.toFixed(1)}, ${runY.toFixed(1)}) from atMs=${samples[runStart]!.atMs.toFixed(0)} to ${samples[i - 1]!.atMs.toFixed(0)} (${(samples[i - 1]!.atMs - samples[runStart]!.atMs).toFixed(0)} ms of frozen sprite) — perceived as "stop-start" jitter`,
+        });
+      }
+      runStart = i;
+      runX = cur.x;
+      runY = cur.y;
+    }
+  }
+  // Tail run
+  const tailLen = samples.length - runStart;
+  if (tailLen > max) {
+    violations.push({
+      atMs: samples[runStart]!.atMs,
+      kind: 'frame_hold',
+      detail: `${tailLen} consecutive frames (tail) rendered identical pose (${runX.toFixed(1)}, ${runY.toFixed(1)}) — perceived as "stop-start" jitter`,
+    });
+  }
+  return { pass: violations.length === 0, violations };
+}
+
+/**
  * Ground-truth match assertion (Phase E). For replays produced from a
  * Phase-A-enriched capture, every captured `local_pose_rendered` event
  * should match the harness's replayed-rendered pose within tolerance.
