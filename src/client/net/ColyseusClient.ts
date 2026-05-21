@@ -1,6 +1,7 @@
 import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
+import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
@@ -250,6 +251,24 @@ function nextShotId(): string {
 const INPUT_HEARTBEAT_MS = 250;
 
 export class ColyseusGameClient {
+  /**
+   * Wall-clock source. Production code uses `REAL_CLOCK` (default —
+   * `this.clock.now()`). Tests / the replay harness inject a `MockClock`
+   * to step time deterministically. Plan: capture-driven replay infra,
+   * Phase B (2026-05-21). Every internal `this.clock.now()` call has
+   * been replaced with `this.clock.now()` for replay parity.
+   */
+  private readonly clock: Clock;
+
+  /**
+   * Default constructor uses real wall-clock — production behaviour is
+   * byte-identical. The replay harness in `tests/replay/` passes a
+   * `MockClock` to drive captured timestamps.
+   */
+  constructor(clock: Clock = REAL_CLOCK) {
+    this.clock = clock;
+  }
+
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
    *  contexts can omit it and rate-shift becomes a no-op. */
   private audio: IAudio | null = null;
@@ -278,7 +297,7 @@ export class ColyseusGameClient {
    * drives `engage` / `curtain_down` / the post-reveal frame burst via
    * `getGameClient().transitInstr`. Lives on the client (not the React
    * component) because it must survive the room hot-swap and share one
-   * `performance.now()` clock across the whole flow. Fully no-op unless
+   * `this.clock.now()` clock across the whole flow. Fully no-op unless
    * `?diag=1` / WebDriver. See `debug/TransitInstrumentation.ts`.
    */
   readonly transitInstr = new TransitInstrumentation();
@@ -488,7 +507,7 @@ export class ColyseusGameClient {
    */
   private serverTickAtWelcome = 0;
   /**
-   * `performance.now()` when the welcome message was processed. Used as the
+   * `this.clock.now()` when the welcome message was processed. Used as the
    * initial anchor for `inputTick`; on every subsequent snapshot the anchor is
    * advanced to the snapshot's `serverTick` (`updateClockAnchor()`). See
    * `tickPhysics()`.
@@ -610,7 +629,7 @@ export class ColyseusGameClient {
    *  exactly one number shows per confirmed hit. The server stays 100%
    *  hit-authoritative — this only hides the RTT on the felt impact. */
   private readonly _hitLedger = new HitPredictionLedger();
-  /** beam-attach fix (capture pe6rdt) — `performance.now()` of the last
+  /** beam-attach fix (capture pe6rdt) — `this.clock.now()` of the last
    *  LOCAL hitscan fire. The continuous liveBeam (redrawn from
    *  `mirror.ships` every frame, so rigidly ship-attached) persists for
    *  `LIVE_BEAM_PERSIST_MS` past this so a tap / held burst reads as ONE
@@ -796,14 +815,17 @@ export class ColyseusGameClient {
     if (import.meta.env.DEV) {
       const w = window as unknown as { __EQX_BW_STATS?: BwStats };
       if (!w.__EQX_BW_STATS) {
+        // Closure-capture the injected clock so the `reset()` method (where
+        // `this` rebinds to `stats`) still uses the right time source.
+        const devClock = this.clock;
         const stats: BwStats = {
-          startedAt: performance.now(),
+          startedAt: devClock.now(),
           swarmBytes: 0,
           swarmPackets: 0,
           snapshotBytes: 0,
           snapshotCount: 0,
           reset(): void {
-            this.startedAt = performance.now();
+            this.startedAt = devClock.now();
             this.swarmBytes = 0;
             this.swarmPackets = 0;
             this.snapshotBytes = 0;
@@ -829,7 +851,7 @@ export class ColyseusGameClient {
         'serverTick:', msg.serverTick,
       );
       this.serverTickAtWelcome = msg.serverTick;
-      this.welcomePerfNow = performance.now();
+      this.welcomePerfNow = this.clock.now();
       this.clockAnchorServerTick = msg.serverTick;
       this.clockAnchorPerfNow = this.welcomePerfNow;
       // The welcome handshake gives us a perfect anchor; let the next
@@ -892,7 +914,7 @@ export class ColyseusGameClient {
       // steady 20 Hz JSON snapshot. Sample clamped to ≤ 500 ms so one
       // tab-background / radio gap can't pin the EWMA at the ceiling (the
       // JSON drop-detector `dropBias` already biases up on loss bursts).
-      const swNowMs = performance.now();
+      const swNowMs = this.clock.now();
       if (this._swarmBinaryLastMs >= 0) {
         const dtMs = Math.min(500, swNowMs - this._swarmBinaryLastMs);
         if (dtMs > 0) {
@@ -931,7 +953,7 @@ export class ColyseusGameClient {
         this._hitLedger,
         { targetId: evt.targetId, damage: evt.damage },
         evt.shooterId === this.mirror.localPlayerId,
-        performance.now(),
+        this.clock.now(),
       );
       this.handleDamage(evt, suppressNumber);
     });
@@ -959,7 +981,7 @@ export class ColyseusGameClient {
         ack.clientShotId,
         { hit: ack.hit, targetId: ack.targetId, damage: ack.damage },
         this._reconcileSink,
-        performance.now(),
+        this.clock.now(),
       );
       this.ghostManager.resolve(ack.clientShotId, ack.hit);
       if (ack.rejected) {
@@ -1012,7 +1034,7 @@ export class ColyseusGameClient {
         range,
         hit: evt.hit,
         targetId: evt.targetId,
-        expiresAt: performance.now() + ttlMs,
+        expiresAt: this.clock.now() + ttlMs,
         fromX: evt.fromX,
         fromY: evt.fromY,
         toX: evt.toX,
@@ -1037,7 +1059,7 @@ export class ColyseusGameClient {
         result.data,
         this.predWorld,
         this._collisionGuard,
-        performance.now(),
+        this.clock.now(),
       );
       if (outcome.applied.length > 0) {
         this.stats.collisionEventsApplied++;
@@ -1088,7 +1110,7 @@ export class ColyseusGameClient {
       if (msg.targetSectorKey !== undefined) ui.setTransitTargetSectorKey(msg.targetSectorKey);
       if (msg.state === 'SPOOLING') {
         ui.setTransitProgress(0);
-        const start = performance.now();
+        const start = this.clock.now();
         const dur = msg.spoolMs ?? 3000;
         ui.setTransitSpoolMs(dur);
         // Surface the destination once via the alert toast — the new
@@ -1105,7 +1127,7 @@ export class ColyseusGameClient {
           }, 1800);
         }
         const ramp = (): void => {
-          const elapsed = performance.now() - start;
+          const elapsed = this.clock.now() - start;
           const cur = useUIStore.getState();
           // Ramp only while still SPOOLING — bail if cancelled or committed.
           if (cur.transitState !== 'SPOOLING') return;
@@ -1435,14 +1457,14 @@ export class ColyseusGameClient {
     this.predWorld.spawnShip(playerId, msg.x, msg.y);
 
     // Re-initialise reconciler so it doesn't try to replay inputs from before death.
-    this.reconciler = new Reconciler(this.predWorld, playerId);
+    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
 
     // Sync input tick to server tick so first fire passes temporal plausibility,
     // and re-anchor the clock so tickPhysics()'s `targetTick` derivation stays
     // consistent with the new tick base.
     this.inputTick = msg.serverTick;
     this.serverTickAtWelcome = msg.serverTick;
-    this.welcomePerfNow = performance.now();
+    this.welcomePerfNow = this.clock.now();
     this.clockAnchorServerTick = msg.serverTick;
     this.clockAnchorPerfNow = this.welcomePerfNow;
     this._anchorInitialised = true;
@@ -1481,7 +1503,7 @@ export class ColyseusGameClient {
     }
     this.predWorld.spawnShip(playerId, existing.x, existing.y, existing.kind);
     this.predWorld.setShipState(playerId, existing);
-    this.reconciler = new Reconciler(this.predWorld, playerId);
+    this.reconciler = new Reconciler(this.predWorld, playerId, this.clock);
     logEvent('predworld_init', {
       playerId,
       x: existing.x, y: existing.y, kind: existing.kind ?? null,
@@ -1492,7 +1514,7 @@ export class ColyseusGameClient {
     if (!this._localPoseResolvedLogged) {
       this._localPoseResolvedLogged = true;
       const msSinceWelcome = this.welcomePerfNow > 0
-        ? Math.round(performance.now() - this.welcomePerfNow)
+        ? Math.round(this.clock.now() - this.welcomePerfNow)
         : -1;
       logEvent('local_pose_resolved', {
         playerId,
@@ -1521,7 +1543,7 @@ export class ColyseusGameClient {
 
   private handleSnapshot(snap: SnapshotMessage): void {
     const localId = this.mirror.localPlayerId;
-    const now = performance.now();
+    const now = this.clock.now();
 
     // Join-render readiness signal: the FIRST snapshot tick after a
     // (re)connect is when the reconciler/predWorld pipeline is fully
@@ -2266,7 +2288,7 @@ export class ColyseusGameClient {
     }
 
     const localId = this.mirror.localPlayerId;
-    const now = performance.now();
+    const now = this.clock.now();
     const seen = new Set<string>();
 
     // Phase 6b — state.ships is now shipInstanceId-keyed on the wire.
@@ -2404,7 +2426,7 @@ export class ColyseusGameClient {
     // tail-emit is exact. GATED behind `isDiagEnabled()` so a normal
     // session pays nothing — when off, `mirrorRebuildStart` stays -1 and
     // the tail `logEvent` is skipped.
-    const mirrorRebuildStart = isDiagEnabled() ? performance.now() : -1;
+    const mirrorRebuildStart = isDiagEnabled() ? this.clock.now() : -1;
     const localId = this.mirror.localPlayerId;
 
     // Local ship — prediction + lerp correction.
@@ -2538,7 +2560,7 @@ export class ColyseusGameClient {
     // (set in `syncSwarmIntoPredWorld`) and the renderer interpolates them
     // off the same poseRing — nothing to do for them here.
     if (this.predWorld && this.mirror.swarm) {
-      const nowMs = performance.now();
+      const nowMs = this.clock.now();
       for (const [entityId, entry] of this.mirror.swarm) {
         if (entry.kind !== 1) continue;
         interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
@@ -2672,7 +2694,7 @@ export class ColyseusGameClient {
     // confirmation never arrived and hard-cancel their predicted numbers
     // (lost-ack / projectile-that-missed failsafe). Phase 3 adds the
     // hit_ack/DamageEvent-driven cancels on top of this one channel.
-    const expiredShots = this._hitLedger.tick(performance.now());
+    const expiredShots = this._hitLedger.tick(this.clock.now());
     if (expiredShots.length > 0) {
       const cancels = this.mirror.pendingDamageNumberCancels;
       if (cancels) for (const e of expiredShots) cancels.push(e.clientShotId);
@@ -2686,7 +2708,7 @@ export class ColyseusGameClient {
     if (
       this.mirror.liveBeams &&
       this.mirror.liveBeams.size > 0 &&
-      !liveBeamVisible(performance.now(), this._lastHitscanFireMs, LIVE_BEAM_PERSIST_MS)
+      !liveBeamVisible(this.clock.now(), this._lastHitscanFireMs, LIVE_BEAM_PERSIST_MS)
     ) {
       this.mirror.liveBeams.clear();
     }
@@ -2697,7 +2719,7 @@ export class ColyseusGameClient {
     // Expire remote lasers past their TTL. Per-mount, so different mounts on
     // the same shooter independently fade out as their cooldown windows end.
     if (this.mirror.remoteLasers && this.mirror.remoteLasers.size > 0) {
-      const now = performance.now();
+      const now = this.clock.now();
       for (const [shooterId, perShooter] of this.mirror.remoteLasers) {
         for (const [mountId, laser] of perShooter) {
           if (laser.expiresAt <= now) perShooter.delete(mountId);
@@ -2723,7 +2745,7 @@ export class ColyseusGameClient {
     // F1 — close the mirror-rebuild bracket opened at method entry.
     // Only emitted when diagnostics are enabled (see note at the top).
     if (mirrorRebuildStart >= 0) {
-      logEvent('mirror_rebuild', { totalMs: performance.now() - mirrorRebuildStart });
+      logEvent('mirror_rebuild', { totalMs: this.clock.now() - mirrorRebuildStart });
     }
   }
 
@@ -2765,7 +2787,7 @@ export class ColyseusGameClient {
     }
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
-    const ticksSinceAnchor = Math.floor((performance.now() - this.clockAnchorPerfNow) / FIXED_MS);
+    const ticksSinceAnchor = Math.floor((this.clock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
     const tickDeficitBefore = targetTick - this.inputTick;
     let stepsThisFrame = 0;
@@ -2829,7 +2851,7 @@ export class ColyseusGameClient {
       // swarm wire; the server simulates every drone authoritatively. No
       // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
-        const nowMs = performance.now();
+        const nowMs = this.clock.now();
         const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
         this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost, reverse });
         this.reconciler.recordInput(rec);
@@ -2931,7 +2953,7 @@ export class ColyseusGameClient {
         if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
           this.sendFire(tick);
           this.lastFiredAtTick = tick;
-          if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = performance.now();
+          if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
         }
       }
       // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
@@ -3299,7 +3321,7 @@ export class ColyseusGameClient {
       mounts: mountGeom,
       maxDist: predMaxDist,
       excludeId: localId,
-      nowMs: performance.now(),
+      nowMs: this.clock.now(),
     });
     // Diagnostic — captures the three reference points needed to debug
     // "lasers firing from the wrong place". `spawnPos` is the legacy
