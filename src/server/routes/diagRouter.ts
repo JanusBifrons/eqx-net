@@ -108,6 +108,16 @@ const BUCKETS: Record<string, string> = {
   // snapshots
   snapshot: 'snapshots',
   snapshot_broadcast: 'snapshots',
+  // Render-jitter-fix Phase 1b (2026-05-21): WS-receive timing +
+  // handler duration. `snapshot_received` fires at the moment the
+  // colyseus onMessage handler is entered (with `recvGapMs` =
+  // wall-clock since the previous one). `snapshot_applied` fires
+  // after `handleSnapshot` returns (with `applyMs` = duration of the
+  // handler call). Together they distinguish "server didn't send"
+  // from "WS delivered late" from "we couldn't process in time"
+  // during a spiral.
+  snapshot_received: 'snapshots',
+  snapshot_applied: 'snapshots',
   // high-volume per-frame noise
   rafTick: 'raf',
   inputSent: 'raf',

@@ -611,6 +611,14 @@ export class ColyseusGameClient {
    *  Sentinel `-1` = "no tick has fired yet"; dead-reckon skipped. */
   private _lastLocalTickAtMs = -1;
 
+  /** Render-jitter-fix Phase 1b instrumentation (2026-05-21): wall-clock
+   *  of the most recent `room.onMessage('snapshot', ...)` arrival. Used
+   *  by the new `snapshot_received` event to log the gap between
+   *  successive WS-receive timestamps — distinguishes "server didn't
+   *  send" from "we couldn't process in time" from "WebSocket queue
+   *  bunched up". Sentinel `-1` = no snapshot yet. */
+  private _lastSnapshotRecvAtMs = -1;
+
   // Snapshot timing
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
@@ -906,15 +914,41 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('snapshot', (snap: SnapshotMessage) => {
+      // Render-jitter-fix Phase 1b: log WS-receive timing + handler
+      // duration BEFORE/AFTER handleSnapshot. The pre-existing
+      // 'snapshot' log fires INSIDE handleSnapshot and only carries
+      // post-processing state — it cannot distinguish "snapshot
+      // arrived 800ms late" from "snapshot arrived on time but
+      // handleSnapshot took 800ms to apply". This pair of events
+      // makes both observable.
+      const recvAtMs = this.clock.now();
+      const recvGapMs = this._lastSnapshotRecvAtMs >= 0
+        ? recvAtMs - this._lastSnapshotRecvAtMs
+        : -1;
+      this._lastSnapshotRecvAtMs = recvAtMs;
+      logEvent('snapshot_received', {
+        serverTick: snap.serverTick,
+        recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
+      });
+
       const bw = bwStats();
-      if (bw) {
+      const snapJson = bw ? JSON.stringify(snap) : null;
+      if (bw && snapJson) {
         // Approximation — Colyseus uses msgpack on the wire, which is
         // typically ~70% of the JSON length. Using JSON length is a
         // conservative upper bound that's easy to compute without DPI.
-        bw.snapshotBytes += JSON.stringify(snap).length;
+        bw.snapshotBytes += snapJson.length;
         bw.snapshotCount += 1;
       }
+
+      const applyStart = this.clock.now();
       this.handleSnapshot(snap);
+      const applyMs = this.clock.now() - applyStart;
+      logEvent('snapshot_applied', {
+        serverTick: snap.serverTick,
+        applyMs: Math.round(applyMs * 100) / 100,
+        snapBytes: snapJson ? snapJson.length : -1,
+      });
     });
 
     // Phase 5c: binary swarm channel. Server packs asteroids/drones into a
@@ -2067,6 +2101,16 @@ export class ColyseusGameClient {
         corrections: this.stats.significantCorrectionCount,
         angleCorrections: this.stats.significantAngleCorrectionCount,
         lerping: this.reconciler.isLerping,
+        // Render-jitter-fix Phase 1b: client-side perf metrics
+        // (already on `this.stats` since perf-floor Phase 1; never
+        // emitted to the capture stream). Fills the diagnostic gap
+        // for the af742v-style spiral where RTT climbed 50ms→10s on
+        // WiFi and the cause was invisible from the capture alone.
+        rafP50Ms: Number.isFinite(this.stats.rafP50Ms) ? parseFloat(this.stats.rafP50Ms.toFixed(2)) : null,
+        rafP99Ms: Number.isFinite(this.stats.rafP99Ms) ? parseFloat(this.stats.rafP99Ms.toFixed(2)) : null,
+        longtaskCount30s: this.stats.longtaskCount30s,
+        rafGapCount30s: this.stats.rafGapCount30s,
+        heapUsedMb: this.stats.heapUsedMb !== undefined ? parseFloat(this.stats.heapUsedMb.toFixed(2)) : null,
         ...recPositions,
       });
 
