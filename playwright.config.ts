@@ -56,6 +56,7 @@ const SMOKE_SPECS: string[] = [
 ];
 
 const FEATURE_SPECS: string[] = [
+  '**/autocapture-observer-effect.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/combat.spec.ts',
   '**/collision-events.spec.ts',

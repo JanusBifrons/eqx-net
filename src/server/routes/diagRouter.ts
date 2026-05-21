@@ -201,6 +201,32 @@ function timeBounds(entries: RoutedEntry[], source: 'client' | 'server'): { firs
 
 export const diagRouter: ExpressRouter = Router();
 
+/**
+ * Streaming capture endpoint — STUB for Phase 0 observer-effect
+ * measurement (plan: streaming auto-capture, 2026-05-21).
+ *
+ * Accepts a POST + immediately discards. The body is not persisted yet.
+ * The whole purpose of this stub is to measure whether the network +
+ * client-side JSON.stringify cost of sending streaming batches every
+ * 2s during gameplay perturbs the netcode-health metrics. If the gate
+ * passes with this stub mounted, we know the disk-IO factor (added in
+ * Phase 2) is the only remaining unknown.
+ *
+ * Phase 2 will replace this with the real implementation (ndjson
+ * append, session.json, idempotent retry, hydration, idle finalize).
+ *
+ * NODE_ENV-gated by the existing `/diag/*` mount in `src/server/index.ts`.
+ */
+diagRouter.post('/capture/stream', (req: Request, res: Response) => {
+  // Minimal validation so a malformed POST doesn't tie up the server,
+  // but no schema parse yet (Phase 2 lands streamingBatchSchema).
+  if (!req.body || typeof req.body !== 'object') {
+    res.status(400).json({ error: 'invalid streaming batch' });
+    return;
+  }
+  res.json({ ok: true, accepted: 'stub' });
+});
+
 diagRouter.post('/capture', async (req: Request, res: Response) => {
   const rawLength = JSON.stringify(req.body ?? {}).length;
   if (rawLength > MAX_BYTES) {

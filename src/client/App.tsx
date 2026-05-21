@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
+import { installStreamingDiag } from './debug/streamingDiag';
 import {
   Box,
   Typography,
@@ -58,6 +59,12 @@ const SERVER_URL =
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
+// Streaming auto-capture mode — no-op unless `?autocapture=1`. Plan:
+// streaming auto-capture, Phase 0 stub (2026-05-21). Installs from the
+// same module-top-level site as installWindowLogger so streaming
+// captures pre-game events (auth / galaxy map / ship picker), not just
+// post-join state.
+installStreamingDiag();
 
 interface GameSurfaceProps {
   /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
