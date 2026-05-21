@@ -7,11 +7,6 @@ import {
   joystickToInput,
   IDLE_INPUT_STATE,
   DEADZONE_ON,
-  DEADZONE_OFF,
-  TURN_ON_RAD,
-  TURN_OFF_RAD,
-  THRUST_ON_CONE_RAD,
-  THRUST_ON_MAG,
   type JoystickInputState,
 } from './joystickToInput.js';
 
