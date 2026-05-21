@@ -121,16 +121,54 @@ export function isDiagEnabled(): boolean {
 }
 
 /**
- * Test / netcode-gate-only: clear BOTH cached latches so the next
- * `isDiagEnabled()` / `logEvent()` re-resolves against the current
- * environment. Production never calls this (URL/webdriver are fixed for
- * the document lifetime). Resets `_diagEnabled` (the predicate) AND
- * `_maxEntries` (the ring-size latch) — both must reset together or a
- * harness that flips `?diag` between arms keeps a stale ring cap.
+ * Streaming auto-capture mode — `?autocapture=1`. Mirror of the
+ * `isDiagEnabled()` predicate above, distinct latch + window flag.
+ *
+ * Background (plan: streaming auto-capture, Phase 1, 2026-05-21): the
+ * plan adds a continuous diagnostic-streaming mode to remove the manual
+ * Capture step + survive client crashes. The whole concern from the
+ * hostile review is that streaming-time network + main-thread overhead
+ * could perturb the netcode metrics the captures are designed to
+ * measure. The netcode-gate (`tests/e2e/netcode-health.spec.ts`) needs
+ * a symmetric way to assert "streaming is OFF on this rep" so a future
+ * accidental `?autocapture=1` leak doesn't silently turn the gate's
+ * measurement into a different program.
+ *
+ * Precedence is simpler than `?diag` — `?autocapture=1` enables
+ * streaming, anything else (absent / =0) disables. WebDriver does NOT
+ * auto-enable: streaming is opt-in only, never automatic.
+ */
+let _autoCaptureEnabled: boolean | null = null;
+export function isAutoCaptureEnabled(): boolean {
+  if (_autoCaptureEnabled !== null) return _autoCaptureEnabled;
+  let enabled = false;
+  try {
+    const q =
+      typeof window !== 'undefined' && window.location?.search
+        ? new URLSearchParams(window.location.search).get('autocapture')
+        : null;
+    enabled = q === '1';
+  } catch {
+    enabled = false;
+  }
+  _autoCaptureEnabled = enabled;
+  return enabled;
+}
+
+/**
+ * Test / netcode-gate-only: clear ALL cached latches so the next
+ * `isDiagEnabled()` / `isAutoCaptureEnabled()` / `logEvent()` re-
+ * resolves against the current environment. Production never calls
+ * this (URL/webdriver are fixed for the document lifetime). Resets
+ * `_diagEnabled` (the predicate), `_maxEntries` (the ring-size latch),
+ * AND `_autoCaptureEnabled` (the streaming latch — must reset together
+ * with `_diagEnabled` or a harness that flips both params between arms
+ * keeps stale state).
  */
 export function __resetDiagCache(): void {
   _diagEnabled = null;
   _maxEntries = -1;
+  _autoCaptureEnabled = null;
 }
 
 /**
@@ -151,4 +189,9 @@ export function installWindowLogger(): void {
   // Expose the resolved diag flag so devtools / E2E can confirm markers
   // are active without re-deriving the predicate.
   w['__eqxDiagEnabled'] = isDiagEnabled();
+  // Mirror flag for the streaming auto-capture mode. The netcode-gate
+  // spec asserts this is `false` on every rep so a future accidental
+  // `?autocapture=1` in a gate URL doesn't silently regress
+  // measurement (plan: streaming auto-capture, Phase 1).
+  w['__eqxAutoCaptureEnabled'] = isAutoCaptureEnabled();
 }

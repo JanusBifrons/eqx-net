@@ -118,6 +118,21 @@ async function visitArm(
     );
     expect(preDiag, `[${arm.name}] __eqxDiagEnabled must be false (Phase 0a)`).toBe(false);
 
+    // Streaming auto-capture mode symmetric assertion (plan: streaming
+    // auto-capture, Phase 1, 2026-05-21). The streaming mode adds a
+    // continuous network + main-thread cost (POST every N seconds with
+    // ring entries) that could perturb the netcode metrics this gate
+    // measures. Assert OFF so a future accidental `?autocapture=1` in
+    // the gate URL fails LOUDLY here, not as a slow drift in the
+    // budget medians.
+    const preAutoCapture = await page.evaluate(
+      () => (window as unknown as { __eqxAutoCaptureEnabled?: boolean }).__eqxAutoCaptureEnabled === true,
+    );
+    expect(
+      preAutoCapture,
+      `[${arm.name}] __eqxAutoCaptureEnabled must be false (streaming changes the program under measurement)`,
+    ).toBe(false);
+
     await runScenario(page);
 
     const s = await page.evaluate(() => {

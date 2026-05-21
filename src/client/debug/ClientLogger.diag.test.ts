@@ -108,3 +108,61 @@ describe('installWindowLogger() — __eqxDiagEnabled mirrors the resolved predic
     expect(w.__eqxDiagEnabled).toBe(false);
   });
 });
+
+/**
+ * Streaming auto-capture mode (`?autocapture=1`) — plan: streaming
+ * auto-capture, Phase 1 (2026-05-21). Mirror of the `isDiagEnabled()`
+ * matrix above. Streaming is opt-in only — `?autocapture=1` enables,
+ * anything else disables. WebDriver does NOT auto-enable (unlike
+ * `?diag` which auto-enables for E2E specs).
+ */
+describe('isAutoCaptureEnabled() — opt-in via ?autocapture=1, never auto-enabled', () => {
+  const matrix: Array<[boolean, string, boolean, string]> = [
+    [false, '', false, 'no webdriver, no flag → off (normal player)'],
+    [false, '?autocapture=0', false, 'no webdriver, ?autocapture=0 → off'],
+    [false, '?autocapture=1', true, 'no webdriver, ?autocapture=1 → ON (opt-in)'],
+    [true, '', false, 'webdriver, no flag → off (E2E / netcode-gate measures production)'],
+    [true, '?autocapture=0', false, 'webdriver, ?autocapture=0 → off'],
+    [true, '?autocapture=1', true, 'webdriver, ?autocapture=1 → ON (test wants streaming)'],
+  ];
+
+  for (const [webdriver, search, expected, label] of matrix) {
+    it(`{ webdriver:${webdriver}, search:'${search}' } → ${expected}  (${label})`, async () => {
+      const mod = await freshModule({ webdriver, search });
+      expect(mod.isAutoCaptureEnabled()).toBe(expected);
+    });
+  }
+});
+
+describe('installWindowLogger() — __eqxAutoCaptureEnabled mirrors isAutoCaptureEnabled()', () => {
+  it('exposes false on normal sessions (the gate reads this)', async () => {
+    const mod = await freshModule({ webdriver: true, search: '?diag=0' });
+    mod.installWindowLogger();
+    const w = globalThis.window as unknown as { __eqxAutoCaptureEnabled: boolean };
+    expect(w.__eqxAutoCaptureEnabled).toBe(false);
+  });
+
+  it('exposes true when ?autocapture=1 is set', async () => {
+    const mod = await freshModule({ webdriver: false, search: '?autocapture=1' });
+    mod.installWindowLogger();
+    const w = globalThis.window as unknown as { __eqxAutoCaptureEnabled: boolean };
+    expect(w.__eqxAutoCaptureEnabled).toBe(true);
+  });
+});
+
+describe('__resetDiagCache() — also clears the autocapture latch', () => {
+  it('re-evaluates _autoCaptureEnabled after the environment changes', async () => {
+    vi.resetModules();
+    vi.stubGlobal('navigator', { webdriver: false } as Navigator);
+    vi.stubGlobal('window', { location: { search: '?autocapture=1' } } as unknown as Window & typeof globalThis);
+    const mod = await import('./ClientLogger');
+
+    expect(mod.isAutoCaptureEnabled()).toBe(true); // latched on first read
+
+    vi.stubGlobal('window', { location: { search: '' } } as unknown as Window & typeof globalThis);
+    expect(mod.isAutoCaptureEnabled()).toBe(true); // still cached
+
+    mod.__resetDiagCache();
+    expect(mod.isAutoCaptureEnabled()).toBe(false); // re-evaluated
+  });
+});
