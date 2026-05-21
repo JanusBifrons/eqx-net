@@ -2436,6 +2436,25 @@ export class ColyseusGameClient {
           ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
         });
 
+        // Replay-grade per-RAF rendered-pose capture (plan: replay infra
+        // Phase A, 2026-05-21). This is the EXACT position+angle the
+        // renderer will draw this frame — `predicted + lerpOffset`. The
+        // GROUND TRUTH for the on-device user experience and the basis
+        // for the "no teleport" assertion in tests/replay/userContracts.
+        // Frame-to-frame deltas of these (x, y) values reveal a visible
+        // teleport even when the underlying predWorld has done nothing
+        // anomalous (e.g., a Reconciler reset). Logged unconditionally;
+        // size cost accommodated by the PROD_MAX_ENTRIES bump.
+        logEvent('local_pose_rendered', {
+          inputTick: this.inputTick,
+          x: Math.round((state.x + ox) * 1000) / 1000,
+          y: Math.round((state.y + oy) * 1000) / 1000,
+          angle: Math.round((state.angle + oa) * 10000) / 10000,
+          lerpOffsetX: Math.round(ox * 1000) / 1000,
+          lerpOffsetY: Math.round(oy * 1000) / 1000,
+          lerpAngleOffset: Math.round(oa * 10000) / 10000,
+        });
+
         // Diagnostic — track swarm entities entering/leaving overlap range.
         // The user reported "overlapping with enemy ships" (drones, since
         // ship-on-ship interactions wouldn't show in single-player rooms).
@@ -2782,6 +2801,29 @@ export class ColyseusGameClient {
       // Reverse is keyboard-only in v1 — no on-screen button on touch yet.
       const reverse   = kb.reverse;
       const tick = this.inputTick++;
+
+      // Replay-grade input-intent capture (plan: replay infra Phase A).
+      // This is the EXACT raw input state for this tick — what the user
+      // pressed at this client-side wall-clock moment. Required by the
+      // deterministic replay harness to drive the same input stream into
+      // a Node-side ColyseusGameClient instance. Logged BEFORE the
+      // throttle check (`inputSent` is sampled / state-change-gated; this
+      // is the ground truth of what the loop SAW). Joystick vector pulled
+      // raw via `getJoystickVector()` so the replay can reconstruct
+      // analog stick motion (not just the booleans it resolved to).
+      const _jv = this.touchInput?.getJoystickVector() ?? null;
+      logEvent('input_intent', {
+        tick,
+        thrust,
+        turnLeft,
+        turnRight,
+        boost,
+        reverse,
+        fireHeld,
+        joystickX: _jv ? Math.round(_jv.x * 1000) / 1000 : null,
+        joystickY: _jv ? Math.round(_jv.y * 1000) / 1000 : null,
+      });
+
       // No client-side drone AI tick (drone-snapshot-interpolation pivot,
       // 2026-05-18). Drones are pure snapshot-interpolated from the binary
       // swarm wire; the server simulates every drone authoritatively. No
@@ -2845,6 +2887,29 @@ export class ColyseusGameClient {
         this.predWorld.tick(1 / 60);
       }
 
+      // Replay-grade per-tick predicted-pose capture (plan: replay infra
+      // Phase A). After `applyInput` + `world.tick`, the local ship's
+      // predWorld pose IS the prediction for this tick. The replay harness
+      // re-runs the same predWorld through the same input stream and
+      // compares against THIS value to confirm bit-identical simulation
+      // (the ground-truth check that makes the harness a faithful
+      // surrogate for on-device behaviour). Skip-safe when localDead /
+      // pre-init: predWorld may not have a ship body yet.
+      if (!this.localDead && this.predWorld && this.mirror.localPlayerId) {
+        const _ps = this.predWorld.getShipState(this.mirror.localPlayerId);
+        if (_ps) {
+          logEvent('local_pose_predicted', {
+            tick,
+            x: Math.round(_ps.x * 1000) / 1000,
+            y: Math.round(_ps.y * 1000) / 1000,
+            vx: Math.round(_ps.vx * 1000) / 1000,
+            vy: Math.round(_ps.vy * 1000) / 1000,
+            angle: Math.round(_ps.angle * 10000) / 10000,
+            angvel: _ps.angvel !== undefined ? Math.round(_ps.angvel * 10000) / 10000 : 0,
+          });
+        }
+      }
+
       // Multi-mount/turret refactor (Phase 4b.2): client-side turret aim
       // update for the local ship. Runs every physics tick so the
       // rotation stays continuous and the beams emerge from the slewed
@@ -2877,23 +2942,24 @@ export class ColyseusGameClient {
       // Death still clears it via killEntity's liveBeams.clear().
     }
 
-    // One ring-buffer entry per RAF — diagnostic data for capture analysis.
-    // Sampled to keep buffer-friendly: every 6th RAF, plus any frame whose
-    // catch-up window was non-trivial (≥ 2 ticks deficit). One log line per
-    // frame would saturate the 500-entry buffer in ~10 s.
-    const anomalous = tickDeficitBefore >= 2;
-    if (anomalous || (this.inputTick & 0b11) === 0) {
-      logEvent('rafTick', {
-        elapsedMs: Math.round(elapsedMs * 100) / 100,
-        targetTick,
-        inputTick: this.inputTick,
-        deficitBefore: tickDeficitBefore,
-        stepsThisFrame,
-        capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
-        anchorServerTick: this.clockAnchorServerTick,
-        leadTicks: this.leadTicks,
-      });
-    }
+    // One ring-buffer entry per RAF — diagnostic + replay anchor data.
+    // Plan: replay infra Phase A (2026-05-21) — UNSAMPLED. Was every 6th
+    // RAF, now every frame. Deterministic replay requires the full clock
+    // trajectory so the harness can reconstruct wall-clock timing
+    // identically. Cost: ~60/s extra entries; accommodated by the
+    // PROD_MAX_ENTRIES bump in ClientLogger.ts (25000). Added
+    // `clockAnchorPerfNow` for replay-side time-base reconstruction.
+    logEvent('rafTick', {
+      elapsedMs: Math.round(elapsedMs * 100) / 100,
+      targetTick,
+      inputTick: this.inputTick,
+      deficitBefore: tickDeficitBefore,
+      stepsThisFrame,
+      capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
+      anchorServerTick: this.clockAnchorServerTick,
+      anchorPerfNow: Math.round(this.clockAnchorPerfNow * 100) / 100,
+      leadTicks: this.leadTicks,
+    });
   }
 
   /**

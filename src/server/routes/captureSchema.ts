@@ -13,7 +13,7 @@ import { z } from 'zod';
  * kept in sync BY HAND — change both together. Locked by
  * `captureSchema.test.ts` (unit) + the diagRouter integration test.
  */
-export const DIAG_CAPTURE_MAX_LOG_ENTRIES = 30000;
+export const DIAG_CAPTURE_MAX_LOG_ENTRIES = 60000;
 
 /**
  * Shape of the `POST /diag/capture` body. Extracted from `diagRouter.ts`

@@ -10,34 +10,37 @@
  *   window.__eqxClearLogs()   // reset
  */
 
-// 2000-entry ring keeps ~20 s of per-frame events at the steady-state
-// rate of `rafTick` + `snapshot` + `correction` + `swarm_snap_diagnostics`
-// (~100 events/sec). Anything older gets rotated out, but join-time
-// one-shots (`welcome`, `pixi_first_frame`, `join_chain_complete`)
-// survive until the E2E reads the log. Previously 500 — too tight on
-// CI where the test sometimes ran to ~10 s and lost the early events.
-// 2026-05-17: 2000 → 8000. Phone smoke captures use THIS cap (not
-// DIAG — the device isn't `?diag=1`); at the in-combat event rate
-// (~450/s, dominated by per-drone `swarm_snap_diagnostics`) 2000 only
-// spanned ~5 s, so sparse INTERMITTENT network-bunching spikes (the
-// `xxiyix` 571 ms snapshot-receipt gap class) routinely rotated out
-// before the user could hit Capture. 8000 ≈ ~18–25 s of in-combat
-// history (much longer when calmer) so a spike + its calm lead-in are
-// both retained. ~8000 small objects/tab — acceptable dev-stage cost,
-// trivially revertable pre-release.
-const PROD_MAX_ENTRIES = 8000;
+// 2026-05-21: 8000 → 25000 for the replay-infrastructure plan
+// (i-d-like-you-to-zany-narwhal.md, Phase A). On TOP of the existing
+// in-combat ~450/s event rate, captures now ALSO carry the replay-
+// grade ground-truth + input-intent streams:
+//   - `local_pose_rendered` per RAF (~60/s)
+//   - `local_pose_predicted` per inner tick (~60-240/s under catch-up)
+//   - `input_intent` per inner tick (~60-240/s)
+//   - `rafTick` is now unsampled (was every 6th, now every RAF — +50/s)
+// Total steady-state on phone: ~750/s. 25000 entries ≈ ~33 s of
+// in-combat history at the worst combat case, much longer under calm.
+// 30-second phone smoke sessions need to retain the whole window for
+// deterministic replay; 8000 only spanned ~10 s at the new rate.
+//
+// Earlier history (the 2000-/8000-entry rings):
+// "2000-entry ring keeps ~20 s of per-frame events… 2026-05-17:
+// 2000 → 8000 because the in-combat event rate (~450/s, dominated by
+// per-drone `swarm_snap_diagnostics`) only spanned ~5 s at 2000, so
+// sparse INTERMITTENT network-bunching spikes routinely rotated out
+// before the user could hit Capture."
+//
+// Cost trade-off: ~25000 small objects/tab — acceptable dev-stage cost,
+// trivially revertable pre-release. The new ground-truth/input streams
+// are what enable the smoke-test → capture → deterministic replay loop.
+const PROD_MAX_ENTRIES = 25000;
 // Diagnostic sessions (`?diag=1` / WebDriver — see `isDiagEnabled`) add
 // the F1 per-frame sub-cost markers + the F-transit `transit_mark` /
-// `transit_frame` rows on top of the steady spam (~300–600 ev/s). The
-// sparse, high-value discrete `transit_mark` rows (≈12 per warp) then
-// get evicted by the per-frame flood before the user can Capture a few
-// seconds after a warp-out — observed 2026-05-16 capture `…juj8j7`:
-// only `curtain_down` + `settled` survived; `engage` / `leave_room` /
-// `pred_reset` / `join_room` / `first_snapshot` had rotated out. A
-// larger diag-only ring retains the full engage→curtain timeline.
-// ZERO production cost: `isDiagEnabled()` is false for normal players,
-// so the cap stays 2000 and the FIFO behaviour is byte-identical.
-const DIAG_MAX_ENTRIES = 30000;
+// `transit_frame` rows on top of the steady spam. Combined with the
+// replay-grade ground-truth tags added 2026-05-21, the steady-state
+// rate under diag is ~1000-1200 ev/s; 60000 retains ~50 s of history.
+// ZERO production cost — only used when `?diag=1` / WebDriver.
+const DIAG_MAX_ENTRIES = 60000;
 
 export interface LogEntry {
   ts: number;

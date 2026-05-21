@@ -79,22 +79,24 @@ describe('__resetDiagCache() — clears BOTH cached latches (hostile S3)', () =>
   it('clears the _maxEntries ring-size latch so the cap re-latches to the new mode', async () => {
     vi.resetModules();
     vi.stubGlobal('navigator', { webdriver: true } as Navigator);
-    // diag OFF via the new override → PROD ring cap (8000) must latch.
+    // diag OFF via the new override → PROD ring cap (25000) must latch.
+    // 2026-05-21: PROD cap bumped 8000 → 25000 for the replay-grade
+    // ground-truth tag streams (Phase A of the replay-infra plan).
     vi.stubGlobal('window', { location: { search: '?diag=0' } } as unknown as Window & typeof globalThis);
     const mod = await import('./ClientLogger');
     mod.installWindowLogger();
     const w = globalThis.window as unknown as { __eqxLogs: unknown[] };
 
     expect(mod.isDiagEnabled()).toBe(false);
-    for (let i = 0; i < 8050; i++) mod.logEvent('t', { i });
-    expect(w.__eqxLogs.length).toBe(8000); // PROD cap latched (not 30000)
+    for (let i = 0; i < 25050; i++) mod.logEvent('t', { i });
+    expect(w.__eqxLogs.length).toBe(25000); // PROD cap latched (not 60000)
 
-    // Flip to diag ON and reset → the cap latch must clear, not stay at 8000.
+    // Flip to diag ON and reset → the cap latch must clear, not stay at 25000.
     vi.stubGlobal('window', { location: { search: '?diag=1' } } as unknown as Window & typeof globalThis);
     mod.__resetDiagCache();
     expect(mod.isDiagEnabled()).toBe(true);
     for (let i = 0; i < 200; i++) mod.logEvent('t', { i });
-    expect(w.__eqxLogs.length).toBe(8200); // grew past 8000 ⇒ _maxEntries re-latched to DIAG
+    expect(w.__eqxLogs.length).toBe(25200); // grew past 25000 ⇒ _maxEntries re-latched to DIAG
   });
 });
 

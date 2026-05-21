@@ -111,6 +111,16 @@ const BUCKETS: Record<string, string> = {
   rafTick: 'raf',
   inputSent: 'raf',
   input_received: 'raf',
+  // Replay-grade ground-truth tags (plan: capture-driven replay infra,
+  // i-d-like-you-to-zany-narwhal.md, Phase A, 2026-05-21). All three are
+  // ALWAYS-ON (not diag-gated) and feed the deterministic replay harness:
+  //   - input_intent          (per inner tick): raw keyboard/joystick read
+  //   - local_pose_predicted  (per inner tick): predWorld state after tick
+  //   - local_pose_rendered   (per RAF):        mirror state the renderer drew
+  // Routed to `raf` for proximity to `rafTick` (correlation window).
+  input_intent: 'raf',
+  local_pose_predicted: 'raf',
+  local_pose_rendered: 'raf',
 };
 
 const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
