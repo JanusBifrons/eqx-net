@@ -58,6 +58,11 @@ export interface RafTickEventData {
   deficitBefore: number;
   stepsThisFrame: number;
   capped: boolean;
+  /** Optional (plan: spiral-fix, Phase 2). True when the over-prediction cap
+   * (`inputTick >= ackedTick + MAX_OVER_PREDICTION_TICKS`) engaged this RAF.
+   * Distinct from `capped` (per-RAF step ceiling). Absent on pre-fix
+   * captures; loader tolerates missing field. */
+  overPredictionCapped?: boolean;
   anchorServerTick: number;
   anchorPerfNow?: number;
   leadTicks: number;

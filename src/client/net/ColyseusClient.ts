@@ -2799,13 +2799,38 @@ export class ColyseusGameClient {
     }
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
+    // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction
+    // at 60 ticks beyond ackedTick (~1 sec at 60 Hz). 2× the healthy-network
+    // CEILING_TICKS=30 ticksAhead ceiling, so the cap never engages on the
+    // healthy local profile but bounds bufferbloat-induced spiral on mobile
+    // networks. NOT capping inputTick itself (the 6e4d9c2 anti-pattern) —
+    // capping the CONDITION `inputTick - ackedTick`. Companion change:
+    // `keyboard.read()` hoisted out of the loop so cap-engaged RAFs still
+    // emit a sentinel input + diagnostic log.
+    const MAX_OVER_PREDICTION_TICKS = 60;
     const ticksSinceAnchor = Math.floor((this.clock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.leadTicks;
     const tickDeficitBefore = targetTick - this.inputTick;
     let stepsThisFrame = 0;
+    let capEngaged = false;
+    // Hoist Keyboard.read() out of the loop — Keyboard.ts read() returns
+    // current boolean state with no internal mutation (stateless). CRITICAL:
+    // do NOT also hoist the joystick block below — `joystickToInput` reads
+    // per-iteration `localShip.angle` (which advances via `predWorld.tick`
+    // each step) and its hysteresis bands (TURN_OFF_RAD=0.04, …) track those
+    // rotation-induced threshold crossings. Hoisting joystick would cause
+    // phantom over-rotation on held-stick inputs; regression-guarded by
+    // `tests/e2e/spiral-joystick-flicker.spec.ts`.
+    const kb = this.keyboard.read();
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
+      // Over-prediction cap. `lastAckedTick > 0` excludes the
+      // welcome-to-first-snapshot window (~50 ms; too short to spiral).
+      if (this.stats.lastAckedTick > 0
+          && this.inputTick >= this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS) {
+        capEngaged = true;
+        break;
+      }
       stepsThisFrame++;
-      const kb = this.keyboard.read();
       let tcThrust = false, tcTurnLeft = false, tcTurnRight = false, tcFire = false;
       if (this.touchInput) {
         tcFire = this.touchInput.getFireHeld();
@@ -2976,6 +3001,72 @@ export class ColyseusGameClient {
       // Death still clears it via killEntity's liveBeams.clear().
     }
 
+    // Sentinel input on zero-iteration cap-engaged RAFs (plan: spiral-fix,
+    // Phase 2 step 3). When the cap stops the catch-up loop on its FIRST
+    // check, no `inputSent` would fire — which is the 6e4d9c2 starvation
+    // class. Sentinel keeps RAF-rate input flow alive (at 60 Hz that's
+    // 60 `inputSent`/sec, well over `assertInputFlowMaintained`'s 30/sec
+    // floor) and gives the server something fresh to ack. Server's
+    // `tickInputQueue` handles same-tick re-applies (`max(entry.tick,
+    // baseline)` — no ack regression, idempotent boolean re-apply).
+    // Throttle replicates the in-loop idle-suppression to avoid spamming
+    // the server with stale all-idle inputs.
+    if (
+      stepsThisFrame === 0
+      && capEngaged
+      && !this.localDead
+      && this.predWorld
+      && this.reconciler
+      && this.mirror.localPlayerId
+    ) {
+      let tcThrust2 = false, tcTurnLeft2 = false, tcTurnRight2 = false, tcFire2 = false;
+      if (this.touchInput) {
+        tcFire2 = this.touchInput.getFireHeld();
+        const v = this.touchInput.getJoystickVector();
+        const localShip = this.mirror.ships.get(this.mirror.localPlayerId);
+        if (localShip) {
+          const next = joystickToInput(v, localShip.angle, this._joystickInputState);
+          this._joystickInputState = next;
+          tcTurnLeft2 = next.turnLeft;
+          tcTurnRight2 = next.turnRight;
+          tcThrust2 = next.thrust;
+        }
+      }
+      const thrust    = kb.thrust    || tcThrust2;
+      const turnLeft  = kb.turnLeft  || tcTurnLeft2;
+      const turnRight = kb.turnRight || tcTurnRight2;
+      // tcFire2 is sampled for parity with the in-loop block but the
+      // sentinel never spawns a fire — fire is per-tick and we're not
+      // advancing inputTick. Reading it (rather than dropping the var)
+      // keeps the touch state machine consistent with the in-loop path.
+      void tcFire2;
+      const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      const reverse   = kb.reverse;
+      const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
+      const nowMs = this.clock.now();
+      const last = this.lastSentInputState;
+      const allIdle = !thrust && !turnLeft && !turnRight && !boost && !reverse;
+      const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
+      const stateChanged = !last
+        || last.thrust !== thrust
+        || last.turnLeft !== turnLeft
+        || last.turnRight !== turnRight
+        || last.boost !== boost
+        || last.reverse !== reverse;
+      const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
+      const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
+      if (!throttle) {
+        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
+        this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+        this.lastSentInputAtMs = nowMs;
+        // Always log on sentinel send (no stateChanged / tick%60 gate) so
+        // `assertInputFlowMaintained` sees the per-RAF cadence during a
+        // sustained cap engagement — this is the explicit anti-regression
+        // for the 6e4d9c2 class.
+        logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
+      }
+    }
+
     // One ring-buffer entry per RAF — diagnostic + replay anchor data.
     // Plan: replay infra Phase A (2026-05-21) — UNSAMPLED. Was every 6th
     // RAF, now every frame. Deterministic replay requires the full clock
@@ -2990,6 +3081,7 @@ export class ColyseusGameClient {
       deficitBefore: tickDeficitBefore,
       stepsThisFrame,
       capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
+      overPredictionCapped: capEngaged,
       anchorServerTick: this.clockAnchorServerTick,
       anchorPerfNow: Math.round(this.clockAnchorPerfNow * 100) / 100,
       leadTicks: this.leadTicks,

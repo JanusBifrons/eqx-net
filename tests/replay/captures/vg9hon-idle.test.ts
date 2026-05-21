@@ -34,11 +34,17 @@
  *     Future fresh captures will validate harness faithfulness more
  *     finely.
  *
- * Current state (2026-05-21):
- *   - FAITHFULNESS: PASS — harness reproduces on-device ticksAhead=214.
- *   - USER CONTRACT: FAIL on assertTicksAheadBounded (spiral exists,
- *     no fix yet).
- *   - The whole test FAILS until Phase F lands a real spiral fix.
+ * Current state (post-fix, 2026-05-21):
+ *   - FAITHFULNESS: locked at EXPECTED_REPLAY_TICKS_AHEAD = 46 (replay through
+ *     the fixed code; cap engages and bounds inputTick growth). Original
+ *     on-device value 214 — superseded by the fix.
+ *   - USER CONTRACT: all PASS. assertTicksAheadBounded passes because the
+ *     cap holds final ticksAhead well below 60. assertNoTeleport and
+ *     assertInputFlowMaintained are vacuous on this pre-Phase-A capture.
+ *   - Whole test GREEN — first time since Phase E. If a future PR reverts
+ *     the spiral cap, ticksAhead will climb back to ~214 and this test
+ *     will fire on both FAITHFULNESS (drift past ±5) and
+ *     assertTicksAheadBounded (> 60).
  */
 import { describe, it, expect } from 'vitest';
 import { replayCapture } from '../captureHarness';
@@ -50,17 +56,24 @@ import {
 
 const CAPTURE_PATH = 'diag/captures/2026-05-20T22-37-34-348Z-vg9hon';
 
-/** On-device final ticksAhead, read from the capture's `summary.json`. */
-const ON_DEVICE_TICKS_AHEAD = 214;
+/**
+ * Replayed ticksAhead through the FIXED code (plan: spiral-fix, Phase 2.5,
+ * 2026-05-21). Original on-device value was 214 (pre-fix). After the cap +
+ * sentinel landed, the harness replaying this capture produces 46 — the
+ * cap (MAX_OVER_PREDICTION_TICKS = 60) bounds inputTick growth before the
+ * spiral develops. The faithfulness assertion locks the post-fix behaviour;
+ * if a future fix changes prediction logic, this value MUST be re-recorded.
+ */
+const EXPECTED_REPLAY_TICKS_AHEAD = 46;
 
 describe('replay lock — vg9hon idle-bufferbloat spiral', () => {
-  it('FAITHFULNESS: harness reproduces on-device ticksAhead within ±5', async () => {
+  it('FAITHFULNESS: replay reproduces post-fix ticksAhead within ±5', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     expect(
-      Math.abs(trace.finalStats.ticksAhead - ON_DEVICE_TICKS_AHEAD),
-      `harness ticksAhead=${trace.finalStats.ticksAhead}, on-device was ${ON_DEVICE_TICKS_AHEAD}. ` +
-        `If this fails, the harness no longer reproduces real-device prediction state and CANNOT be trusted ` +
-        `as a surrogate for on-device behaviour. Investigate the harness BEFORE any production-code claims.`,
+      Math.abs(trace.finalStats.ticksAhead - EXPECTED_REPLAY_TICKS_AHEAD),
+      `harness ticksAhead=${trace.finalStats.ticksAhead}, expected ${EXPECTED_REPLAY_TICKS_AHEAD} ` +
+        `(post-fix value with MAX_OVER_PREDICTION_TICKS=60 cap). If this drifts past ±5, either the cap ` +
+        `behaviour changed (re-record) or the harness diverged from the production code (investigate harness).`,
     ).toBeLessThanOrEqual(5);
   });
 
@@ -76,7 +89,7 @@ describe('replay lock — vg9hon idle-bufferbloat spiral', () => {
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
   });
 
-  it('USER CONTRACT — ticksAhead stays bounded (FAILS until spiral fix lands)', async () => {
+  it('USER CONTRACT — ticksAhead stays bounded (spiral fix locked, plan: spiral-fix Phase 2)', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     const r = assertTicksAheadBounded(trace, { maxFinalTicks: 60 });
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
