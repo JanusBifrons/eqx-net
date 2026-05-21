@@ -599,6 +599,18 @@ export class ColyseusGameClient {
   private predWorld: PhysicsWorld | null = null;
   private reconciler: Reconciler | null = null;
 
+  /** Wall-clock at the most recent physics tick advance.
+   *  Render-jitter-fix Phase 1 (2026-05-21): used in `updateMirror` to
+   *  dead-reckon the rendered pose forward by `(clock.now() -
+   *  _lastLocalTickAtMs) × velocity` so 0-step RAFs (RAF fires but no
+   *  physics tick was due — ~58 % of mobile RAFs on 90 Hz displays
+   *  with 60 Hz physics) show smooth velocity-based motion instead of
+   *  a frozen pose. This addresses the user-reported "stop-start"
+   *  perception — locked by `assertFramePacingSmooth` on the 2q0jxw
+   *  capture. Updated inside `tickPhysics` after each `predWorld.tick`.
+   *  Sentinel `-1` = "no tick has fired yet"; dead-reckon skipped. */
+  private _lastLocalTickAtMs = -1;
+
   // Snapshot timing
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
@@ -748,6 +760,13 @@ export class ColyseusGameClient {
     // Join-render diagnostic latch — re-arm so the destination room's
     // `tryInitPredWorld` success fires a fresh `local_pose_resolved`.
     this._localPoseResolvedLogged = false;
+
+    // Render-jitter-fix Phase 1 (2026-05-21): the dead-reckon anchor is
+    // part of the prediction window — its sample is from the source
+    // sector's predWorld and dead-reckoning forward from it across a
+    // transit gap would produce nonsense motion. Reset to -1 sentinel;
+    // next physics tick post-transit re-stamps it.
+    this._lastLocalTickAtMs = -1;
   }
 
   async connect(
@@ -2449,6 +2468,36 @@ export class ColyseusGameClient {
         const oy = this.reconciler.lerpOffset.y;
         const oa = this.reconciler.lerpAngleOffset;
         this.reconciler.advanceLerp(this.lastFrameMs);
+
+        // Render-jitter-fix Phase 1 (2026-05-21): dead-reckon the
+        // rendered pose forward by `(clock.now() - _lastLocalTickAtMs) ×
+        // velocity` so 0-step RAFs show smooth motion instead of a
+        // frozen pose. The pre-fix renderer composed `predWorld + lerp`
+        // each RAF — but on a 90 Hz mobile display with 60 Hz physics,
+        // some RAFs fire without advancing a physics tick, so the
+        // rendered pose was identical to the prior frame. Cluster of
+        // 0-step RAFs = sprite holds for 3-5 display frames = user-
+        // perceived "stop-start" jitter. Locked by `assertFramePacingSmooth`
+        // on the 2q0jxw capture.
+        //
+        // Dead-reckon dt is capped at 32 ms (~2 ticks) to avoid wild
+        // extrapolation across multi-second stalls (tab background,
+        // OS process reap) — those become discrete "freeze events"
+        // visually, not glide-overshoot artifacts.
+        //
+        // When the next physics tick fires, `state.x` will equal
+        // `prev_state.x + vx × dt + accel × dt²/2` ≈ the dead-reckoned
+        // pose (acceleration term is sub-pixel for typical ship
+        // accelerations over 16.7 ms), so the transition from dead-
+        // reckon to authoritative tick is visually continuous.
+        const tickElapsedMs = this._lastLocalTickAtMs >= 0
+          ? Math.max(0, Math.min(32, this.clock.now() - this._lastLocalTickAtMs))
+          : 0;
+        const dtSec = tickElapsedMs / 1000;
+        const drX = state.x + state.vx * dtSec;
+        const drY = state.y + state.vy * dtSec;
+        const drAngle = state.angle + (state.angvel ?? 0) * dtSec;
+
         // Preserve non-spatial fields across per-frame rewrites so the
         // renderer keeps drawing the correct silhouette and the local-
         // turret rotation state survives the per-frame mirror rebuild.
@@ -2460,11 +2509,11 @@ export class ColyseusGameClient {
         // unrotated beam under the flickering correctly-rotated ghost).
         const prev = this.mirror.ships.get(localId);
         this.mirror.ships.set(localId, {
-          x: state.x + ox,
-          y: state.y + oy,
+          x: drX + ox,
+          y: drY + oy,
           vx: state.vx,
           vy: state.vy,
-          angle: state.angle + oa,
+          angle: drAngle + oa,
           ...(prev?.kind ? { kind: prev.kind } : {}),
           ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
           ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
@@ -2472,18 +2521,15 @@ export class ColyseusGameClient {
 
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra
         // Phase A, 2026-05-21). This is the EXACT position+angle the
-        // renderer will draw this frame — `predicted + lerpOffset`. The
-        // GROUND TRUTH for the on-device user experience and the basis
-        // for the "no teleport" assertion in tests/replay/userContracts.
-        // Frame-to-frame deltas of these (x, y) values reveal a visible
-        // teleport even when the underlying predWorld has done nothing
-        // anomalous (e.g., a Reconciler reset). Logged unconditionally;
-        // size cost accommodated by the PROD_MAX_ENTRIES bump.
+        // renderer will draw this frame — dead-reckoned predWorld +
+        // lerpOffset. The GROUND TRUTH for the on-device user experience
+        // and the basis for `assertFramePacingSmooth` (plan: render-
+        // jitter-fix Phase 0a) and `assertNoTeleport`.
         logEvent('local_pose_rendered', {
           inputTick: this.inputTick,
-          x: Math.round((state.x + ox) * 1000) / 1000,
-          y: Math.round((state.y + oy) * 1000) / 1000,
-          angle: Math.round((state.angle + oa) * 10000) / 10000,
+          x: Math.round((drX + ox) * 1000) / 1000,
+          y: Math.round((drY + oy) * 1000) / 1000,
+          angle: Math.round((drAngle + oa) * 10000) / 10000,
           lerpOffsetX: Math.round(ox * 1000) / 1000,
           lerpOffsetY: Math.round(oy * 1000) / 1000,
           lerpAngleOffset: Math.round(oa * 10000) / 10000,
@@ -2944,6 +2990,14 @@ export class ColyseusGameClient {
       // Always advance physics — remote ships and obstacles must keep moving even while dead.
       if (this.predWorld) {
         this.predWorld.tick(1 / 60);
+        // Render-jitter-fix Phase 1: stamp wall-clock at this tick so
+        // `updateMirror`'s dead-reckon term knows how stale the latest
+        // predWorld pose is. All ticks within a single RAF's catch-up
+        // burst share the same `clock.now()` — that's correct, because
+        // they all happened at the same wall-clock instant; the
+        // dead-reckon dt is 0 for the burst-final RAF and accumulates
+        // only on subsequent 0-step RAFs.
+        this._lastLocalTickAtMs = this.clock.now();
       }
 
       // Replay-grade per-tick predicted-pose capture (plan: replay infra

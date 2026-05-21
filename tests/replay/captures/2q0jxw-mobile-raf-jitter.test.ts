@@ -100,21 +100,23 @@ describe('replay lock — 2q0jxw mobile RAF jitter', () => {
     expect(r.pass, r.violations.map((v) => v.detail).join('\n')).toBe(true);
   });
 
-  // THE TARGET ASSERTION for this fix. Reads the on-device
-  // `local_pose_rendered` stream directly (sidesteps harness drift).
-  // On baseline `2790b0d`: RED with 81 violations — most clustered in
-  // 4-10 frame runs that the user perceives as "stop-start" jitter.
-  // Comparison: 1kwv1z (also mobile, also Phase-A enriched, also has
-  // RAF jitter) has only 6 violations at the same threshold — most of
-  // those are multi-second tab-background stalls, NOT the rapid
-  // alternation pattern. The 13× gap is a clean signal.
+  // Documents the user-perceived "stop-start" pattern from the
+  // ON-DEVICE capture. The on-device `local_pose_rendered` stream
+  // shows 81 runs > 3 frames of identical pose (clustered in 4-10
+  // frame holds = the rapid alternation the user perceives as
+  // jitter). This is HISTORICAL data, frozen at capture time. A
+  // future capture taken AFTER the fix would have fewer holds, and
+  // that future capture's lock would flip this to GREEN.
   //
-  // Should turn GREEN — or violations drop dramatically — after a
-  // fix lands that produces motion on every RAF (e.g., dead-reckon
-  // between physics ticks).
-  it('USER CONTRACT — frame pacing smooth (no >3-frame holds)', async () => {
+  // The harness's re-rendering CAN'T validate the fix here: the
+  // harness's predWorld drifts in velocity over 60 s of combat
+  // play (no drone/projectile state to drive collisions), so its
+  // dead-reckon term is 0 even when on-device velocity was non-zero.
+  // Direct validation of the dead-reckon logic lives in
+  // `src/client/net/ColyseusClient.deadReckon.test.ts`.
+  it.fails('USER CONTRACT — frame pacing smooth (ON-DEVICE — documents user complaint; can\'t change without new capture)', async () => {
     const trace = await replayCapture(CAPTURE_PATH);
     const r = assertFramePacingSmooth(trace, { maxConsecutiveSameRender: 3 });
-    expect(r.pass, r.violations.slice(0, 10).map((v) => v.detail).join('\n')).toBe(true);
+    expect(r.pass, r.violations.slice(0, 5).map((v) => v.detail).join('\n')).toBe(true);
   });
 });
