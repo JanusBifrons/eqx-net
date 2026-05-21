@@ -405,6 +405,17 @@ export interface FrameMarkers {
   warpTickMs: number;
   /** Active stacked `ShockwaveFilter` count (`warpShockwaves?.length ?? 0`). */
   filterCount: number;
+  /** `app.stage.filters.length > 0` at the END of this frame. The big
+   *  diagnostic — if this stays `true` indefinitely across many frames
+   *  (rather than cycling within ~1.5 s burst windows), the warp filter
+   *  chain is stuck attached and the GPU is running the full shockwave
+   *  + zoom-blur + bloom pass every frame. Render-jitter-fix Phase 1b
+   *  (2026-05-21). */
+  warpFiltersAttached: boolean;
+  /** Wall-clock ms since `warpBurstStartedAt`, or -1 when no burst is
+   *  in flight. Pairs with `warpFiltersAttached` to characterise the
+   *  attach/detach cycle. */
+  warpBurstAgeMs: number;
   /** `BackgroundGrid`: `computeGridLabels` + new-`Text` create loop (ms). */
   gridLabelSpecMs: number;
   /** `BackgroundGrid`: cost folded into the spec/create bracket — see

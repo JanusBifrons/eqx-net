@@ -619,6 +619,18 @@ export class ColyseusGameClient {
    *  bunched up". Sentinel `-1` = no snapshot yet. */
   private _lastSnapshotRecvAtMs = -1;
 
+  /** Heap + stall instrumentation (2026-05-21, render-jitter probe).
+   *  Wall-clock + heap value at the most recent >100ms RAF stall.
+   *  Surfaced in the `raf_gap` log as `msSinceLastStall` +
+   *  `heapDeltaMbSinceLastStall` so a GC-pause hypothesis is visible:
+   *  if every stall coincides with a heap drop (the GC just ran), or
+   *  heap grows monotonically between stalls (allocation pressure),
+   *  the cost is GC/allocation, not Pixi/network. */
+  private _lastRafStallAtMs = -1;
+  private _lastRafStallHeapMb = -1;
+  /** RAF counter for periodic heap sampling between stalls. */
+  private _rafSampleCounter = 0;
+
   // Snapshot timing
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
@@ -1126,12 +1138,25 @@ export class ColyseusGameClient {
     // (the same direction-agnostic flash + burst ripple) at each one.
     // Local-player events are never reflected here — the server's
     // `except: client` filter excludes the originating connection.
-    const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent): void => {
+    const handleWarpEvent = (msg: WarpInEvent | WarpOutEvent, kind: 'warp_in' | 'warp_out'): void => {
+      // Render-jitter-fix Phase 1b (2026-05-21): log every warp event so
+      // we can correlate drone-warp triggers with RAF stalls in the
+      // diag capture. PRE-FIX the handler pushed silently into
+      // `pendingWarpEvents` and the renderer drained it — invisible to
+      // diagnostics. Drone warps (Living World hunter migrations) fire
+      // these every few seconds; if the per-event renderer cost is what
+      // builds the spiral, each event will line up with the next slow
+      // RAF in the trace.
+      logEvent('warp_event', {
+        kind,
+        x: Math.round(msg.x * 100) / 100,
+        y: Math.round(msg.y * 100) / 100,
+      });
       if (!this.mirror.pendingWarpEvents) return;
       this.mirror.pendingWarpEvents.push({ x: msg.x, y: msg.y });
     };
-    room.onMessage('warp_in', handleWarpEvent);
-    room.onMessage('warp_out', handleWarpEvent);
+    room.onMessage('warp_in', (msg) => handleWarpEvent(msg, 'warp_in'));
+    room.onMessage('warp_out', (msg) => handleWarpEvent(msg, 'warp_out'));
 
     // Living World — server→client twin of the damage→markHostile mirror.
     // When the director makes a bot proactively hostile to a player, the
@@ -2881,11 +2906,39 @@ export class ColyseusGameClient {
     // every RAF would saturate the 500-entry ring buffer in ~8 s; logging
     // only the gaps gives one entry per genuine stall, paired with the
     // `longtask` observer's attribution (when supported) to pin the cause.
+    // Per-RAF heap sample once every 60 RAFs (~once/sec at 60Hz) so we
+    // have a growth trajectory between stall events. Tiny cost: one
+    // performance.memory read on Chromium.
+    this._rafSampleCounter++;
+    if (this._rafSampleCounter >= 60) {
+      this._rafSampleCounter = 0;
+      const heap = readHeapUsedMb();
+      if (heap !== undefined) {
+        logEvent('heap_sample', { heapUsedMb: parseFloat(heap.toFixed(2)) });
+      }
+    }
     if (elapsedMs > 100) {
+      const heap = readHeapUsedMb();
+      const heapVal = heap !== undefined ? parseFloat(heap.toFixed(2)) : null;
+      const nowMs = this.clock.now();
+      const msSinceLastStall = this._lastRafStallAtMs >= 0
+        ? Math.round(nowMs - this._lastRafStallAtMs)
+        : -1;
+      const heapDelta = (heap !== undefined && this._lastRafStallHeapMb >= 0)
+        ? parseFloat((heap - this._lastRafStallHeapMb).toFixed(2))
+        : null;
       logEvent('raf_gap', {
         elapsedMs: Math.round(elapsedMs * 100) / 100,
         inputTickBefore: this.inputTick,
+        // Heap + GC probe (2026-05-21). If heap drops at a stall, GC
+        // just ran (the stall IS the GC pause). If it grows steadily
+        // between stalls, allocation pressure is building.
+        heapUsedMb: heapVal,
+        msSinceLastStall,
+        heapDeltaMbSinceLastStall: heapDelta,
       });
+      this._lastRafStallAtMs = nowMs;
+      if (heap !== undefined) this._lastRafStallHeapMb = heap;
     }
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;

@@ -47,6 +47,10 @@ const BUCKETS: Record<string, string> = {
   // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
   longtask: 'perf',
   raf_gap: 'perf',
+  // Render-jitter-fix Phase 1c (2026-05-21) — periodic heap sample
+  // between stalls. Pairs with `raf_gap`'s new heap fields so the
+  // capture shows both growth trajectory AND per-stall heap value.
+  heap_sample: 'perf',
   // client perf — F1 per-frame sub-cost markers for the warp-spool
   // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
   // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-
@@ -118,6 +122,11 @@ const BUCKETS: Record<string, string> = {
   // during a spiral.
   snapshot_received: 'snapshots',
   snapshot_applied: 'snapshots',
+  // Drone-triggered warp visuals (Living World hunter migrations
+  // across sectors). The handler was silent before render-jitter-fix
+  // Phase 1b — fix surfaces every drone warp event so we can correlate
+  // its renderer cost with RAF stalls in the same capture window.
+  warp_event: 'other',
   // high-volume per-frame noise
   rafTick: 'raf',
   inputSent: 'raf',

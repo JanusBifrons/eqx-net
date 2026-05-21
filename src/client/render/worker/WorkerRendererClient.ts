@@ -30,7 +30,7 @@ import type {
   WarpParams,
   WarpCenter,
 } from './protocol';
-import { logEvent, isDiagEnabled } from '../../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
@@ -117,10 +117,14 @@ export class WorkerRendererClient implements IRenderer {
 
     // F1 — tell the worker once whether to emit per-frame markers.
     // Ordered after BOOT (messages are processed FIFO) and before the
-    // first MIRROR_UPDATE, so the gate is set before any frame. Default
-    // is off; only `?diag=1` / WebDriver sessions opt in (zero cost on
-    // normal player sessions). See `docs/HANDOFF-warp-spool-perf-followup.md`.
-    this.post({ type: 'SET_DIAG_MARKERS', enabled: isDiagEnabled() });
+    // first MIRROR_UPDATE, so the gate is set before any frame.
+    // Render-jitter-fix Phase 1b (2026-05-21): also enabled under
+    // `?autocapture=1` so streamed phone captures carry per-frame
+    // renderer / warp / grid cost markers — without them we can't see
+    // whether render cost grows monotonically (the user's accumulating-
+    // filter hypothesis). Production player sessions (neither flag set)
+    // still pay zero IPC cost.
+    this.post({ type: 'SET_DIAG_MARKERS', enabled: isDiagEnabled() || isAutoCaptureEnabled() });
 
     this.installEventListeners(this.canvas);
     // Resize listeners — without these, OffscreenCanvas's drawing
@@ -508,7 +512,16 @@ export class WorkerRendererClient implements IRenderer {
         // worker gates the post), so no production-path cost here.
         const m = msg.markers;
         logEvent('renderer_update', { totalMs: m.rendererUpdateMs, spriteCount: m.spriteCount });
-        logEvent('warp_tick', { totalMs: m.warpTickMs, filterCount: m.filterCount });
+        logEvent('warp_tick', {
+          totalMs: m.warpTickMs,
+          filterCount: m.filterCount,
+          // Render-jitter-fix Phase 1b — the load-bearing diagnostic
+          // for the stuck-filter-chain hypothesis. `attached=true`
+          // for many frames in a row + `burstAgeMs` climbing past
+          // ~1500ms means filters are stuck on (the bug-fix-target).
+          attached: m.warpFiltersAttached,
+          burstAgeMs: m.warpBurstAgeMs,
+        });
         logEvent('grid_update', {
           labelSpecMs: m.gridLabelSpecMs,
           textCreateMs: m.gridTextCreateMs,
