@@ -14,6 +14,43 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-22 — render-jitter-chain-trigger — 90 Hz native RAF was the spiral chain trigger; an internal 60 Hz work-loop cap removes it
+
+Commit: `fix(client): cap internal work loop to ~60 Hz to remove 90 Hz spiral trigger (plan: render-jitter-chain-trigger, Phase 1)`.
+
+After dead-reckon (`9b8d77c`), filter-disable (`a7a4f1c`), and the spiral cap (`2790b0d`) shipped on `feat/perf-floor`, the phone smoke `d3cprl` was the first session that felt smooth — but only because the phone was already in 60 Hz battery-saver mode. Every other capture on the same branch (`q4wtht`, `wivf9n`, `ecat41`, `af742v`) was a fresh 90 Hz session that ran into the spiral within 7-90 s. The chain was understood (`90 Hz → occasional >100 ms stall → thermal → 30 Hz → reconciler can't keep up → spiral`) but the trigger of the first stall was not localised.
+
+This session re-mined the 6 existing captures rather than collect a new one. The decisive numbers, same device, identical code (`a7a4f1c`):
+
+| Metric | `d3cprl` (60 Hz native) | `q4wtht` (90 Hz native) |
+|---|---|---|
+| RAFs over ~110 s | 6588 | 5203 |
+| RAFs at ≤12 ms (90 Hz period) | 0 | 4626 (88.9 %) |
+| RAFs at 13-18 ms (60 Hz period) | 6550 (99.4 %) | 0 |
+| `raf_gap` events (>100 ms) | **2** | **172** (86× more) |
+| `snapshot_applied` mean | 1.46 ms | **2.48 ms (+70 %)** |
+| `snapshot_applied` p95 | 2.2 ms | **5.6 ms (×2.5)** |
+| `renderer_update` p99 | 3.0 ms | 4.0 ms (≈) |
+
+Reading: per-render renderer cost is similar; the cost difference lives in `snapshot_applied` (reconciler replay / GC pressure) and `raf_gap`. At 90 Hz native we do 50 % more `updateMirror` + `worker.postMessage(MIRROR_UPDATE)` + reconciler `advanceLerp` + `consumeOneFrameTriggers` per second, all while physics is fixed 60 Hz and the worker render is `every-2nd-RAF`-throttled — so the extra RAFs deliver **zero** physics or render fidelity and burn the heap on Maps + JSON.stringify + Pixi sprite-update plumbing. The accumulated per-RAF allocation pressure produces the first big stall (288 ms at t=7.7 s in `q4wtht`), and the chain runs from there.
+
+**Fix:** one early-return in the `App.tsx` RAF loop. Skip work when `deltaMs < 15 ms` (just below the 16.67 ms 60 Hz period), critically **without** updating `lastFrameTime` on skip — otherwise the cap never engages. The pure decision lives in `src/client/perf/frameRateCap.ts` (mirrors the `spriteUpdateDecisions.ts` extraction pattern); the cadence table is in `tests/unit/frameRateCap.test.ts`. By refresh rate:
+
+- 60 Hz native → 60 Hz processed (unchanged).
+- 90 Hz native → ~45 Hz processed (alternating skip/process).
+- 120 Hz native → ~60 Hz processed (alternating skip/process).
+- 30 Hz post-thermal → 30 Hz processed (unchanged; we already can't keep up).
+
+The 90 Hz device ends up doing **strictly less main-thread work per second than the 60 Hz reference baseline** the user already accepted as smooth.
+
+**Counterfactual already collected before the fix landed.** `d3cprl` is the same code running at 60 Hz natively and was the smooth reference — no hypothesis here, the user already lived through the cap behaviour by virtue of phone battery-saver mode. The risk class the previous session called out ("don't ship hypothesis-fixes for phone bugs without evidence") doesn't bind because the evidence is the 86× stall delta + the user-accepted 60 Hz reference.
+
+**Why a phone smoke is still required.** The replay harness drives `tickPhysics` deterministically via `MockClock` — it cannot reproduce **thermal escalation** (the step 4 → step 5 link in the chain, which lives in the OS scheduler / GPU pipeline, not in deterministic logic). The harness verifies the cap doesn't break replay determinism or any regression lock; only a phone smoke verifies the chain trigger is removed in the wild. One cold smoke (fresh phone, `?autocapture=1`) is the minimum signal.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; CLAUDE.md rule under "Renderer Rules" → "Internal 60 Hz work-loop cap"; capture dirs `diag/captures/2026-05-21T21-46-15Z-d3cprl/` + `diag/captures/2026-05-21T21-35-11Z-q4wtht/`.
+
+---
+
 ## 2026-05-20 — perf-floor Phase 0 — `beforeAll` does NOT run in vitest 2.1.x bench mode; module-level or inline `setup` is the only working pattern
 
 Commit: `chore(bench): restore numeric timings + baseline.json + bench:check (Phase 0, plan: perf-floor)`.

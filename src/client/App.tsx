@@ -11,6 +11,7 @@ import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
 import { consumeOneFrameTriggers } from './render/perFrameTriggers';
+import { shouldSkipFrame, DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -368,7 +369,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       let workerUpdateCounter = 0;
       const loop = (now: number): void => {
         if (!disposed) {
-          const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
+          const isFirstFrame = lastFrameTime === 0;
+          const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
+          // Internal 60 Hz work-loop cap. On 90/120 Hz native displays
+          // we skip alternate RAFs and leave `lastFrameTime` stale so
+          // the next RAF's `deltaMs` reflects the full wall-clock gap.
+          // See `src/client/perf/frameRateCap.ts` for the rationale
+          // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
+          // `src/client/CLAUDE.md` for the load-bearing rule.
+          if (shouldSkipFrame(deltaMs, DEFAULT_MIN_FRAME_INTERVAL_MS, isFirstFrame)) {
+            animFrameRef.current = requestAnimationFrame(loop);
+            return;
+          }
           lastFrameTime = now;
           gameClient.tickPhysics(deltaMs);
           gameClient.updateMirror();
