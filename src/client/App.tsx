@@ -240,8 +240,22 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // off the main thread. Otherwise fall back to the main-thread
     // PixiRenderer — same class, same render code-path, same Camera.
     // See ~/.claude/plans/humble-strolling-coral.md.
-    const useWorker = supportsOffscreenRenderer();
+    //
+    // `?worker=0` URL param forces main-thread renderer on a worker-
+    // capable browser. Diagnostic-only switch for localising 110 ms
+    // below-JS stalls (capture 721mwk, 2026-05-22): if disabling the
+    // worker IPC eliminates the recurring stall, OffscreenCanvas
+    // commit / postMessage scheduling is the layer. The flag has no
+    // production use; do not promote without a follow-up plan.
+    const forceMainThreadRenderer =
+      new URLSearchParams(window.location.search).get('worker') === '0';
+    const useWorker = !forceMainThreadRenderer && supportsOffscreenRenderer();
     const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
+    logEvent('renderer_path_chosen', {
+      useWorker,
+      forceMainThreadRenderer,
+      supportsOffscreenRenderer: supportsOffscreenRenderer(),
+    });
     rendererRef.current = renderer;
 
     const gameClient = new ColyseusGameClient();
