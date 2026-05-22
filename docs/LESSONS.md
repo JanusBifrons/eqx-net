@@ -14,9 +14,40 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
-## 2026-05-22 — smooth-beam — "tick" feel was the 167 ms cooldown gap, not first-shot latency; retune to 33 ms × 4 HP (DPS preserved)
+## 2026-05-22 — smooth-beam — server-side retune REGRESSED touch-device lag; reverted, smoothing moved client-side via visual splitting
 
-Commit: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)`.
+Commits: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted)*; `feat(client): smooth-beam via predicted-damage splitting (server cadence unchanged)`.
+
+The first retune (4 HP × 33 ms cooldown, DPS preserved) FELT smoother to the player but re-triggered the 110 ms below-JS compositor stalls on touch devices — capture `o4n4pw` 2026-05-22 vs `iph9cv` baseline:
+
+| Metric | iph9cv (pre-retune, 105 s) | o4n4pw (retune, 157 s) |
+|---|---|---|
+| `raf_gap > 100 ms` events | 3 | **14** |
+| Stall rate | 0.029 / s | **0.089 / s (~3× worse)** |
+| Heap growth during combat | (steady) | **50 → 130 MB in 22 s** (then GC drops to 46 MB, cycle repeats) |
+| Damage worked | yes | yes (the feel improvement was real) |
+
+The mechanism: `WeaponCatalogue.ts` is shared between player and drone fire (`handleAiFire` reads `WEAPON_COOLDOWN_TICKS` for drones too), so the 5× retune scaled DRONE fire rate identically. In a 25-drone sector, total drone-fire events went from ~150/s to ~750/s. Each fire = `laser_fired` + `damage` broadcast to ALL clients in the room. The 5× wire-event amplification → 3.6 MB/sec allocation rate on the client (Map / Graphics / event objects) → V8 thrashes the heap → Android scheduler reacts to allocation pressure → compositor scheduler throttles the RAF rate → ~110 ms stalls return.
+
+User pushback was decisive: *"Drones and players should play the same"* + *"Can't the player simulate the damage on hit so it looks smooth?"* The first rejected the asymmetric "drones at 10-tick / players at 2-tick" fix; the second pointed at the right shape — the smooth feel lives in the **client visual layer**, not the server cadence.
+
+The new approach: **server-side cadence unchanged (6 Hz, 20 HP)**, smoothness produced client-side. In `ColyseusClient.sendFire`'s predicted-feedback sink, hitscan hits split the 20 HP into N small visual ticks (currently 5 × 4 HP) spread across the cooldown window. The first tick spawns immediately (so first-shot feel is preserved); the rest are scheduled in `_scheduledDamageSpawns` and drained per-frame in `updateMirror`. All splits share one `clientShotId` so the existing `reconcileDamageToFeedback` / `cancelByTag` paths handle confirmation / rollback unchanged — no new prediction state, no wire-format change, no server change. Drones + players use the same code path (same server catalogue, same client splitter applies to the local player's view of being hit).
+
+Net:
+- Wire load: **baseline** (no drone-fire amplification, no broadcast spike)
+- Visual feel: **~30 Hz damage stream** (5 ticks × 6 fires/sec)
+- Drones + players: **identical code path** (server-side symmetric)
+- Compositor stalls: **stay at iph9cv baseline** (3 / 105 s, "playable")
+
+**Process lesson — wire amplification is invisible to the local feel test.** The first retune passed the held-fire E2E lock (74 fires in 1.2 s, well above ≥25 threshold) because the spec measured the LOCAL CLIENT's fire dispatch rate, which is exactly what the retune scaled. It did NOT measure: (a) total wire events broadcast to all clients per sector, (b) allocation rate on receiving clients, (c) compositor stall recurrence under combat load. The next iteration of this E2E lock needs a 2-client setup where one client is the SHOOTER and the other measures inbound event rate + heap growth — only an observer can see the wire amplification. Single-client locks miss this class of regression. The unit-test side (`WeaponCatalogue.test.ts` locking the catalogue values + `LocalBeam.test.ts` locking persistence-window ≥ cooldown) caught the catalogue revert correctly; only the END-TO-END wire-cadence regression was unmeasured.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; captures `iph9cv` baseline + `o4n4pw` retune-regression; LESSONS.md 2026-05-22 worker-IPC entry (the 110 ms stall pattern we eliminated by going main-thread on touch, now confirmed re-triggerable by allocation pressure even WITH the main-thread renderer).
+
+---
+
+## 2026-05-22 — smooth-beam (initial, reverted) — "tick" feel was the 167 ms cooldown gap, not first-shot latency
+
+Commit: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted by the entry above)*.
 
 The user reported the "Beam" weapon (hitscan mode) felt and played badly — appeared to tick damage and took a long time to start hitting. First reaction was to suspect first-shot latency: server-validated input, network round-trip, prediction reconciliation. But the diagnosis pointed elsewhere.
 

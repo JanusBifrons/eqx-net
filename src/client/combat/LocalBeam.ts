@@ -35,18 +35,12 @@ export function localFireSpawnsGhost(mode: WeaponMode): boolean {
 /**
  * How long the continuous local hitscan beam stays drawn after the last
  * fire tick. Must be ≥ the hitscan inter-shot interval (`cooldownTicks /
- * 60 s` ≈ 33 ms post-smooth-beam-retune) so a held burst never blinks
- * off between shots — the gap the frozen ghost layer used to paper over.
- * Kept small so a single tap does not leave a beam lingering unnaturally.
- * Locked against the catalogue cooldown by `LocalBeam.test.ts`.
- *
- * Smooth-beam retune (2026-05-22): cooldownTicks dropped 10 → 2 (33 ms
- * gap instead of 167 ms), so the prior 220 ms persistence is now
- * gratuitous — a single tap would leave the beam lingering ~6× the
- * cooldown. 80 ms covers 2.4× the new 33 ms cooldown comfortably and
- * keeps single-tap visuals snappy.
+ * 60 s` ≈ 167 ms) so a held burst never blinks off between shots — the
+ * gap the frozen ghost layer used to paper over. Kept small so a single
+ * tap does not leave a beam lingering unnaturally. Locked against the
+ * catalogue cooldown by `LocalBeam.test.ts`.
  */
-export const LIVE_BEAM_PERSIST_MS = 80;
+export const LIVE_BEAM_PERSIST_MS = 220;
 
 /**
  * Is the local hitscan beam still within its post-fire persistence

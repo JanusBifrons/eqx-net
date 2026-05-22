@@ -655,6 +655,14 @@ export class ColyseusGameClient {
   private readonly ghostManager = new GhostManager();
   /** Damage flash: set of player IDs currently flashing red (cleared after one frame). */
   private readonly _damageFlashFrames = new Map<string, number>();
+  /** Smooth-beam (2026-05-22): scheduled visual-only damage-number spawns,
+   *  drained per frame in `updateMirror`. Each predicted hit splits its
+   *  damage into N small ticks spread across the cooldown window so the
+   *  on-screen feel is continuous while the server cadence (and wire
+   *  load) stays at the original 6 Hz. Splits share one `clientShotId`
+   *  so existing `cancelByTag` / `reconcileDamageToFeedback` handle
+   *  rollback / confirmation unchanged. */
+  private _scheduledDamageSpawns: Array<{ atMs: number; x: number; y: number; damage: number; tag: string }> = [];
   /** weapon-hit-prediction — client favor-the-shooter hit-prediction ledger.
    *  Phase 2 records a prediction on every fire (presentation-only) and
    *  TTL-expires it; Phase 3 wires the hit_ack / DamageEvent reconcile so
@@ -675,6 +683,16 @@ export class ColyseusGameClient {
   private readonly _reconcileSink: ReconcileFeedbackSink = {
     cancelPredictedNumber: (id) => {
       this.mirror.pendingDamageNumberCancels?.push(id);
+      // Smooth-beam (2026-05-22): also evict any not-yet-due scheduled
+      // splits sharing this clientShotId so a mispredict / TTL-expiry
+      // does not produce a delayed phantom number AFTER the rollback.
+      // Splits already spawned into `pendingDamageNumbers` are
+      // hard-cancelled by the existing `cancelByTag` queue (above).
+      for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
+        if (this._scheduledDamageSpawns[i]!.tag === id) {
+          this._scheduledDamageSpawns.splice(i, 1);
+        }
+      }
     },
     clearPredictedFlash: (tid) => {
       this._damageFlashFrames.delete(tid);
@@ -787,6 +805,12 @@ export class ColyseusGameClient {
     // transit gap would produce nonsense motion. Reset to -1 sentinel;
     // next physics tick post-transit re-stamps it.
     this._lastLocalTickAtMs = -1;
+
+    // Smooth-beam (2026-05-22): drop scheduled visual splits. The source
+    // sector's prediction state is dead; any pending splits would spawn
+    // damage numbers at coordinates from the source pose against the
+    // destination mirror.
+    this._scheduledDamageSpawns.length = 0;
   }
 
   async connect(
@@ -2529,6 +2553,31 @@ export class ColyseusGameClient {
     const mirrorRebuildStart = isDiagEnabled() ? this.clock.now() : -1;
     const localId = this.mirror.localPlayerId;
 
+    // Smooth-beam (2026-05-22): drain scheduled visual damage-number
+    // spawns whose time has come. See `_scheduledDamageSpawns` field
+    // declaration for the why; the splits are seeded inside
+    // `sendFire` per predicted hit, share one `clientShotId`, and ride
+    // the existing pendingDamageNumbers pipeline (which DamageNumberManager
+    // drains in its own update() — cancelByTag on a mispredict cancels
+    // ALREADY-SPAWNED numbers; the loop below also evicts not-yet-due
+    // entries for the cancelled tag so a misprediction never produces
+    // a delayed visual after the rollback). Bounded array (max ~5 ×
+    // active predictions); the `cancelScheduledDamageSpawnsByTag`
+    // hook is invoked from the existing reconcile path.
+    if (this._scheduledDamageSpawns.length > 0) {
+      const now = this.clock.now();
+      const pending = this.mirror.pendingDamageNumbers;
+      // Iterate from the tail so splice() is O(1) and ordering is
+      // preserved for the kept entries.
+      for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
+        const s = this._scheduledDamageSpawns[i]!;
+        if (s.atMs <= now) {
+          pending?.push({ x: s.x, y: s.y, damage: s.damage, tag: s.tag });
+          this._scheduledDamageSpawns.splice(i, 1);
+        }
+      }
+    }
+
     // Local ship — prediction + lerp correction.
     if (localId && this.predWorld && this.reconciler) {
       const state = this.predWorld.getShipState(localId);
@@ -3575,9 +3624,51 @@ export class ColyseusGameClient {
       weaponDef.mode === 'hitscan'
         ? HITSCAN_RANGE
         : (weaponDef.speed * weaponDef.maxTicks) / 60;
+    // Smooth-beam visual splitting (2026-05-22). Hitscan: split the
+    // predicted damage into N small ticks spread across the cooldown
+    // window so the on-screen damage feels continuous; server stays at
+    // the original cadence so wire load is unchanged. Projectile keeps
+    // the single-spawn behaviour — its bolt is its own visual stream.
+    // Splits share one `clientShotId` so cancelByTag /
+    // reconcileDamageToFeedback wipe them together on misprediction.
+    const isHitscan = weaponDef.mode === 'hitscan';
+    const SMOOTH_BEAM_SPLITS = 5;
+    const splitIntervalMs = isHitscan
+      ? (weaponDef.cooldownTicks / 60) * 1000 / SMOOTH_BEAM_SPLITS
+      : 0;
+    const scheduledRef = this._scheduledDamageSpawns;
+    const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
       pushDamageNumber: (x, y, damage, tag) => {
-        this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+        if (!isHitscan || damage <= 0) {
+          this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+          logEvent('damage_number_predicted', { damage, tag, scheduled: false });
+          return;
+        }
+        // Hitscan: schedule N visual ticks. Floor-divide the damage,
+        // put the remainder on the last tick so the cumulative shown
+        // matches the authoritative damage exactly (reconcile/suppress
+        // can then match cleanly).
+        const base = Math.floor(damage / SMOOTH_BEAM_SPLITS);
+        const remainder = damage - base * SMOOTH_BEAM_SPLITS;
+        for (let i = 0; i < SMOOTH_BEAM_SPLITS; i++) {
+          const tickDamage = i === SMOOTH_BEAM_SPLITS - 1 ? base + remainder : base;
+          if (tickDamage <= 0) continue;
+          if (i === 0) {
+            // First tick spawns immediately so the player feels the
+            // first hit without any latency.
+            this.mirror.pendingDamageNumbers?.push({ x, y, damage: tickDamage, tag });
+            logEvent('damage_number_predicted', { damage: tickDamage, tag, scheduled: false });
+          } else {
+            scheduledRef.push({
+              atMs: clockNow + i * splitIntervalMs,
+              x, y,
+              damage: tickDamage,
+              tag,
+            });
+            logEvent('damage_number_predicted', { damage: tickDamage, tag, scheduled: true });
+          }
+        }
       },
       flashTarget: (id) => {
         this._damageFlashFrames.set(id, 6);
