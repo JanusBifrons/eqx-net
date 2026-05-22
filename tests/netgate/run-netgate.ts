@@ -272,7 +272,7 @@ async function main(): Promise<void> {
           'playwright',
           'test',
           'tests/e2e/netcode-health.spec.ts',
-          '--project=chromium',
+          '--project=gate',
           '--reporter=line',
         ],
         {
