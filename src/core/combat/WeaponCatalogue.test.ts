@@ -6,7 +6,11 @@ describe('WeaponCatalogue', () => {
     const w = getWeapon('hitscan');
     expect(w.id).toBe('hitscan');
     expect(w.mode).toBe('hitscan');
-    expect(w.damage).toBe(20);
+    // Smooth-beam retune (2026-05-22): 4 HP × 33 ms = 120 DPS preserved
+    // from the prior 20 HP × 167 ms. The cadence is the load-bearing
+    // feel knob; the damage scales inversely to keep balance fixed.
+    expect(w.damage).toBe(4);
+    expect(w.cooldownTicks).toBe(2);
   });
 
   it('getWeapon returns the laser definition', () => {

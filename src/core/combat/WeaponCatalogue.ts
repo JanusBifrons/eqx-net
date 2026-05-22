@@ -27,8 +27,16 @@ const HITSCAN_DEF: HitscanWeaponDef = {
   id: 'hitscan',
   displayName: 'Beam',
   mode: 'hitscan',
-  damage: 20,
-  cooldownTicks: 10,
+  // Smooth continuous-feel beam (2026-05-22 retune, plan: smooth-beam):
+  // 4 HP × 33 ms cadence (cooldownTicks=2 @ 60 Hz) preserves the prior
+  // 120 DPS while making damage application near-continuous. The 167 ms
+  // chunky cadence (cooldownTicks=10, damage=20) felt like a discrete
+  // "tick" instead of a held beam. The cooldown+damage retune reuses
+  // the existing per-fire prediction/auth pipeline — no new wire
+  // shape, no new server state. See `docs/LESSONS.md` 2026-05-22 and
+  // `tests/e2e/held-fire-continuous-damage.spec.ts` (the cadence lock).
+  damage: 4,
+  cooldownTicks: 2,
   range: 500,
 };
 

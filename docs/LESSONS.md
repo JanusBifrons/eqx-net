@@ -14,6 +14,28 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-22 — smooth-beam — "tick" feel was the 167 ms cooldown gap, not first-shot latency; retune to 33 ms × 4 HP (DPS preserved)
+
+Commit: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)`.
+
+The user reported the "Beam" weapon (hitscan mode) felt and played badly — appeared to tick damage and took a long time to start hitting. First reaction was to suspect first-shot latency: server-validated input, network round-trip, prediction reconciliation. But the diagnosis pointed elsewhere.
+
+**The first-shot latency is already low.** `predictShotOutcome` (`src/client/net/ColyseusClient.ts:3580`) spawns a predicted damage number synchronously in `sendFire`, so the player sees their first damage within ~22 ms (one physics tick after `keydown`). The cooldown gate at the very first fire — `tick - lastFiredAtTick >= cooldownTicks` with `lastFiredAtTick = -999` — always passes. The first shot is instant.
+
+**What's slow is the GAP between shots.** `HITSCAN_DEF.cooldownTicks = 10` meant a shot every 167 ms (6 Hz). At that cadence the health bar drops in 20-HP chunks ~6× per second; the perceptual gap dominates because 167 ms is well above the ~70 ms threshold where discrete events stop feeling like a continuous beam. The phrase "takes a long time to start hitting" is the player's gloss on "the next chunk of damage takes 167 ms after the first one."
+
+**OS keydown auto-repeat is a red herring here.** Holding a key on desktop fires `keydown` once, then auto-repeats after ~500 ms — but the `Keyboard` class (`src/client/input/Keyboard.ts:42`) sets `spaceDown = true` on the first event and the input loop polls held-state every physics tick, so auto-repeat is irrelevant. The user's "doesn't trigger for 1-2 seconds" observation about keydown applies generally to event-driven fire systems, not ours. Our system is held-state-polled and was already firing every 167 ms throughout the held window (confirmed by `tests/e2e/held-fire-continuous-damage.spec.ts` showing 18 fire events in 1.2 s on baseline).
+
+**The retune.** Drop `cooldownTicks` 10 → 2 (33 ms cadence, ~30 fires/sec), drop `damage` 20 → 4. DPS preserved at ~120 HP/sec — same balance, same TTK, smoother feel. No new wire shape, no new server state, no new prediction model — the existing per-fire hitscan + lag-comp + DamageEvent broadcast pipeline absorbs the 5× higher rate trivially (each fire is sub-ms server-side; each DamageEvent is ~150 bytes). `DamageNumbers.LIFETIME_FRAMES` also drops 60 → 25 to prevent visual stacking at the new spawn rate (steady-state concurrent ≈ 12 within the pool cap of 20). `LIVE_BEAM_PERSIST_MS` drops 220 → 80 since the inter-shot gap is now 33 ms (single-tap visuals stay snappy).
+
+**Architectural rewrite deliberately deferred.** A "true continuous beam" — server-side beam state, `beam_start` / `beam_stop` messages, server-tick damage accumulator, coalesced damage events — would be cleaner but is a multi-day refactor with new wire shapes and new prediction state. The retune ships in a single commit and may be sufficient; the rewrite is gated on the phone-smoke verdict per the smooth-beam plan's Phase 5.
+
+**Process lesson.** Re-mining the existing diagnostic stream against the hypothesis (held-fire spec showing 18 fires/s on baseline, fireHeldCount=198 of 283 input_intents) was decisive — the data was already in hand. The architectural reflex ("rewrite to true continuous beam") would have been more code, more risk, and not necessarily a better feel. Tune the cheapest knob first; escalate only if it falls short.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; capture pair (pending Phase 5 smoke); `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF; `tests/e2e/held-fire-continuous-damage.spec.ts` (the cadence lock).
+
+---
+
 ## 2026-05-22 — render-jitter-chain-trigger follow-up — the 110 ms below-JS stalls were the OffscreenCanvas worker IPC; touch devices now default to main-thread `PixiRenderer`
 
 Commit: `feat(client): default touch devices to main-thread renderer (worker IPC was the 110 ms stall cause)`.

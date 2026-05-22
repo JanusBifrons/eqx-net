@@ -79,9 +79,10 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
     const initialHull = await getHullPct(p2.page);
     expect(initialHull).toBe(100);
 
-    // P1 fires until P2 is dead.
-    // HITSCAN_DAMAGE=20, 5 hits = kill. WEAPON_COOLDOWN_TICKS=10 @ 60 Hz ≈ 167 ms/shot.
-    // 5 shots + RTT budget → should complete in < 5 s.
+    // P1 fires until P2 is dead. Hitscan DPS = 120 HP/sec (catalogue-driven —
+    // post-smooth-beam retune 4 HP × 33 ms = same DPS as the prior 20 HP × 167 ms,
+    // see `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF). 100 HP ship → kill
+    // in ~0.8 s + RTT; comfortable within the 5 s budget below.
     await p1.page.keyboard.down('Space');
     await waitForDeath(p2.page, 5_000);
     await p1.page.keyboard.up('Space');
