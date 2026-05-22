@@ -14,6 +14,45 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-22 — render-jitter-chain-trigger follow-up — the 110 ms below-JS stalls were the OffscreenCanvas worker IPC; touch devices now default to main-thread `PixiRenderer`
+
+Commit: `feat(client): default touch devices to main-thread renderer (worker IPC was the 110 ms stall cause)`.
+
+The 2026-05-22 cap (commit `9e23436`) reduced overall stall frequency by 3× but did not make the game playable. The first post-cap phone smoke (`721mwk`) showed:
+- 91 % of RAFs at the expected 22 ms cap-cadence (the cap was working).
+- 38 `raf_gap > 100 ms` events over 67 s, **clustered**, with nearly every stall at exactly 110.7-110.8 ms.
+- Boot-window stalls of 642 + 745 ms at renderer init / first-frame upload.
+- **Crucially: `longtaskCount30s = 0` while `rafGapCount30s = 5-22` post-boot** — the stalls were not blocking JS, so neither GC nor any other main-thread mechanism could explain them.
+
+The "below-JS" finding falsified two hypotheses in succession:
+1. **Chain-trigger** (the cap fix) — partially right but downstream of the real cause.
+2. **V8 major GC** (the architectural rethink we almost shipped) — would have rebuilt the per-frame allocation hot path for nothing; longtasks=0 says GC is not on the critical path.
+
+The third probe (commit `604ad67` — `?worker=0` diagnostic flag) forced the main-thread `PixiRenderer` on the same device and the same network. Result (capture `iph9cv` vs `721mwk`):
+
+| Metric | worker on (`721mwk`) | `?worker=0` (`iph9cv`) | delta |
+|---|---|---|---|
+| Session length | 67 s | 105 s | — |
+| `raf_gap > 100 ms` | 38 | **3** | **19× fewer** |
+| Stall rate | 0.57 / s | 0.029 / s | -95 % |
+| Continuous zero-stall window | — | 85 s (t=10–95 s) | "playable" |
+| Boot-window worst stall | 745 ms | 133 ms | -82 % |
+
+The OffscreenCanvas / worker→main compositor-commit path was the dominant source of 110 ms tail-latency stalls on this user's phone. The render cost saved by off-loading Pixi (~1.5 ms / frame) was dwarfed by the ~110 ms IPC commit penalty *every time the compositor drained*. Boot was hurt too: the worker init + first-frame upload + texture binding crossed the boundary several times before the first painted frame.
+
+The fix is a one-liner: `App.tsx`'s renderer-path selection now defaults to the main-thread `PixiRenderer` on touch devices. `?worker=1` opts back into the worker for A/B; `?worker=0` is a non-touch override for diagnosis. Desktop is unchanged (no IPC pain there — yet; revisit if a desktop user reports similar stalls). The `humble-strolling-coral` migration's assumption that the worker is a mobile perf win was falsified by direct on-device measurement.
+
+**Process lesson — far more important than the technical fix.** The investigation took *three* hypothesis fixes before landing on the right layer:
+1. Filter-disable + dead-reckon (commits up to `a7a4f1c`) — addressed real but separate issues.
+2. Internal 60 Hz cap (`9e23436`) — addressed a real downstream symptom (`snapshot_applied` +70 % at 90 Hz native), but the root cause was elsewhere.
+3. **Diagnostic flag** (`604ad67`) — the *only* probe that produced a counterfactual capture that decisively localised the layer.
+
+The user's repeated "evidence-first, not fix-first" pushback over several sessions was the only reason we didn't ship the architectural rethink (a multi-day rebuild of the per-frame allocation hot path that would have been wasted). The smoking gun was the cross-reference of `longtaskCount30s` against `rafGapCount30s` in the *cap-engaged* smoke — a piece of evidence we already had in the diagnostic stream from prior phases but hadn't read against the hypothesis until forced to. Process: **before any architectural commit, re-mine existing captures against the current hypothesis with the freshest data, and look for counterfactual signals — not just confirming ones.** "RAF gaps without long tasks" was the falsifying signal sitting in plain view.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md` (Phase 1 cap); commits `9e23436`, `604ad67`; capture pair `diag/captures/2026-05-22T17-39-24Z-721mwk/` + `diag/captures/2026-05-22T17-56-43Z-iph9cv/`; `src/client/CLAUDE.md` under "Renderer worker boundary".
+
+---
+
 ## 2026-05-22 — render-jitter-chain-trigger — 90 Hz native RAF was the spiral chain trigger; an internal 60 Hz work-loop cap removes it
 
 Commit: `fix(client): cap internal work loop to ~60 Hz to remove 90 Hz spiral trigger (plan: render-jitter-chain-trigger, Phase 1)`.

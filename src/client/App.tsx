@@ -234,26 +234,39 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    // OffscreenCanvas migration: when the browser supports
-    // `OffscreenCanvas.transferControlToOffscreen()` (Chrome, Firefox,
-    // Safari 17+), construct the worker-backed renderer so Pixi runs
-    // off the main thread. Otherwise fall back to the main-thread
-    // PixiRenderer — same class, same render code-path, same Camera.
-    // See ~/.claude/plans/humble-strolling-coral.md.
+    // Renderer path selection (2026-05-22).
     //
-    // `?worker=0` URL param forces main-thread renderer on a worker-
-    // capable browser. Diagnostic-only switch for localising 110 ms
-    // below-JS stalls (capture 721mwk, 2026-05-22): if disabling the
-    // worker IPC eliminates the recurring stall, OffscreenCanvas
-    // commit / postMessage scheduling is the layer. The flag has no
-    // production use; do not promote without a follow-up plan.
-    const forceMainThreadRenderer =
-      new URLSearchParams(window.location.search).get('worker') === '0';
-    const useWorker = !forceMainThreadRenderer && supportsOffscreenRenderer();
+    // Non-touch (desktop) + OffscreenCanvas-capable → worker-backed
+    // renderer. Pixi runs off the main thread, freeing CDP budget for
+    // React + drawer animations. See ~/.claude/plans/humble-strolling-coral.md.
+    //
+    // Touch devices → main-thread `PixiRenderer`. On high-DPR mobile,
+    // the OffscreenCanvas commit / worker→main IPC path produces ~110 ms
+    // tail-latency stalls every time the compositor drains. The
+    // 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv`
+    // worker-off, same device same session) showed a 19× reduction in
+    // `raf_gap` events (38 → 3) and 85 s of continuous zero-stall play
+    // after switching off the worker. The render cost saved by
+    // off-loading Pixi (~1.5 ms / frame on a phone) is dwarfed by the
+    // ~110 ms IPC commit tail-latency that the worker introduces.
+    //
+    // `?worker=1` opts back into the worker (for A/B diagnosis or
+    // desktop debugging of mobile behaviour). `?worker=0` forces the
+    // main-thread path (for non-touch verification of the mobile path).
+    // Without an override, the default follows `isTouchDevice()`.
+    const workerParam = new URLSearchParams(window.location.search).get('worker');
+    const isTouch = isTouchDevice();
+    const useWorker =
+      workerParam === '1'
+        ? supportsOffscreenRenderer()
+        : workerParam === '0'
+          ? false
+          : !isTouch && supportsOffscreenRenderer();
     const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
     logEvent('renderer_path_chosen', {
       useWorker,
-      forceMainThreadRenderer,
+      workerParam,
+      isTouch,
       supportsOffscreenRenderer: supportsOffscreenRenderer(),
     });
     rendererRef.current = renderer;

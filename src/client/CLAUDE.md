@@ -64,6 +64,8 @@ The renderer is migrating off the main thread onto a dedicated Web Worker via `O
 
 - **Fallback for browsers without OffscreenCanvas** (Safari < 17): `WorkerRendererClient` constructor branches on `supportsOffscreenRenderer()` and returns `PixiRenderer` (still alive in [render/PixiRenderer.ts](render/PixiRenderer.ts)) on `false`. Production code never assumes worker rendering is available.
 
+- **Touch devices DEFAULT to the main-thread `PixiRenderer`, NOT the worker (2026-05-22).** The selection logic in `App.tsx` is: `?worker=1` → force worker (if capable); `?worker=0` → force main-thread; no override → `!isTouchDevice() && supportsOffscreenRenderer()`. The OffscreenCanvas commit / worker→main IPC path produces ~110 ms tail-latency stalls on high-DPR Android phones; the 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv` worker-off, same device same session) showed a **19× reduction in `raf_gap > 100 ms` events** (38 → 3) and 85 s of continuous zero-stall play. The `humble-strolling-coral` migration assumed the worker would be a perf win on mobile; the on-device measurement falsified that for at least this user's device. The render cost saved by off-loading Pixi (~1.5 ms / frame) is dwarfed by the ~110 ms IPC commit tail-latency. **Do not flip the touch default back without a fresh smoke** — and if you do, the smoke MUST measure `raf_gap` clusters under the cap (commit `9e23436`), not just frame time. The IPC mechanism is below JS — `longtaskCount30s=0` while `rafGapCount30s` climbed in `721mwk` — so reducing JS allocation pressure or capping work cadence cannot reach it.
+
 ---
 
 ## UI Scope
