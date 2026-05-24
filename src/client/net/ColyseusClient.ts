@@ -267,6 +267,18 @@ export class ColyseusGameClient {
    */
   constructor(clock: Clock = REAL_CLOCK) {
     this.clock = clock;
+    // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
+    // testing. Default ON. Tests construct with the mock URL absent →
+    // coalesce defaults ON, matching production behaviour.
+    let coalesceParam: string | null = null;
+    try {
+      if (typeof window !== 'undefined' && window.location?.search) {
+        coalesceParam = new URLSearchParams(window.location.search).get('coalesce');
+      }
+    } catch {
+      // Non-browser context — keep default.
+    }
+    this._coalesceEnabled = coalesceParam !== '0';
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -636,6 +648,32 @@ export class ColyseusGameClient {
    *  window. -1 sentinel when not yet measured. */
   private _lastReconcileMs = -1;
   private _lastReplayWindow = -1;
+
+  /** Probe 6 (mobile-perf-investigation, 2026-05-24) — snapshot
+   *  coalescing on receive.
+   *
+   *  The 2kn41x capture proved a GC-driven spiral: a ~500 ms major-GC
+   *  pause queues ~10 snapshots in the WebSocket event-queue. When the
+   *  main thread frees, all 10 fire `onMessage` in burst, each
+   *  measuring `RTT = now - inputSentAt`, with `now` being the
+   *  burst-tail time. The Welford RTT estimator absorbs 10 inflated
+   *  samples, drives ticksAhead up, reconcile cost grows, more main-
+   *  thread time, more frequent GC pauses → spiral.
+   *
+   *  Coalescing: store the latest snapshot as pending, process at the
+   *  top of `tickPhysics` (next RAF). When a GC pause queues 10
+   *  snapshots, the last one overwrites the first nine — they were
+   *  full-state anyway, so the newest fully supersedes them. Damage
+   *  events fire on a SEPARATE `onMessage('damage', ...)` channel, so
+   *  no events are lost.
+   *
+   *  Net effect: 1 RTT sample per GC-burst instead of ~10. Welford
+   *  mean stays stable. Spiral breaks.
+   *
+   *  Default ON. URL override: `?coalesce=0` disables for A/B testing. */
+  private _pendingSnapshot: SnapshotMessage | null = null;
+  private _coalesceEnabled: boolean;
+  private _coalescedSinceLastProcess = 0;
 
   /** RAF counter for periodic heap sampling between stalls. */
   private _rafSampleCounter = 0;
@@ -1010,29 +1048,19 @@ export class ColyseusGameClient {
         });
       }
 
-      const bw = bwStats();
-      const snapJson = bw ? JSON.stringify(snap) : null;
-      if (bw && snapJson) {
-        // Approximation — Colyseus uses msgpack on the wire, which is
-        // typically ~70% of the JSON length. Using JSON length is a
-        // conservative upper bound that's easy to compute without DPI.
-        bw.snapshotBytes += snapJson.length;
-        bw.snapshotCount += 1;
+      // Probe 6 — coalesce branch: store pending, defer apply to next
+      // tickPhysics. If a prior pending snapshot exists, it's discarded
+      // (the newer snap supersedes; snapshots are full-state, not deltas).
+      // The discarded count is logged so we can see the burst-collapse
+      // happening in captures.
+      if (this._coalesceEnabled) {
+        if (this._pendingSnapshot !== null) {
+          this._coalescedSinceLastProcess++;
+        }
+        this._pendingSnapshot = snap;
+        return;
       }
-
-      const applyStart = this.clock.now();
-      this.handleSnapshot(snap);
-      const applyMs = this.clock.now() - applyStart;
-      // Probe 5 — reconcile is the dominant cost per the y0eo1h
-      // capture's linear correlation; surface it directly so a
-      // single field shows the spiral's drive.
-      logEvent('snapshot_applied', {
-        serverTick: snap.serverTick,
-        applyMs: Math.round(applyMs * 100) / 100,
-        reconcileMs: this._lastReconcileMs >= 0 ? Math.round(this._lastReconcileMs * 100) / 100 : -1,
-        replayWindow: this._lastReplayWindow,
-        snapBytes: snapJson ? snapJson.length : -1,
-      });
+      this.applySnapshotNow(snap);
     });
 
     // Phase 5c: binary swarm channel. Server packs asteroids/drones into a
@@ -1708,6 +1736,61 @@ export class ColyseusGameClient {
   }
 
   // ── Snapshot / reconciliation ───────────────────────────────────────────
+
+  /**
+   * Probe 6 — extracted apply path. Wraps `handleSnapshot` with the
+   * bandwidth + applyMs instrumentation that used to live inline in
+   * the onMessage handler. Called either:
+   *   - Immediately in onMessage when `?coalesce=0` (legacy mode), or
+   *   - From `processPendingSnapshot()` at the top of tickPhysics
+   *     (default coalesced mode).
+   */
+  private applySnapshotNow(snap: SnapshotMessage): void {
+    const bw = bwStats();
+    const snapJson = bw ? JSON.stringify(snap) : null;
+    if (bw && snapJson) {
+      bw.snapshotBytes += snapJson.length;
+      bw.snapshotCount += 1;
+    }
+    const applyStart = this.clock.now();
+    this.handleSnapshot(snap);
+    const applyMs = this.clock.now() - applyStart;
+    logEvent('snapshot_applied', {
+      serverTick: snap.serverTick,
+      applyMs: Math.round(applyMs * 100) / 100,
+      reconcileMs: this._lastReconcileMs >= 0 ? Math.round(this._lastReconcileMs * 100) / 100 : -1,
+      replayWindow: this._lastReplayWindow,
+      snapBytes: snapJson ? snapJson.length : -1,
+    });
+  }
+
+  /**
+   * Probe 6 — drain the coalesced-pending snapshot. Called once at the
+   * top of `tickPhysics()` per RAF. If the WebSocket has queued multiple
+   * snapshots since the last RAF (e.g., during a 500 ms GC pause), all
+   * but the newest were discarded in the `onMessage` handler; only the
+   * newest is processed here.
+   *
+   * Logs `snapshot_coalesced` when one or more snapshots were discarded
+   * in the burst so captures show how often the burst-collapse fires.
+   * The event includes `dropped` (count discarded) and `newestServerTick`.
+   *
+   * No-op when `?coalesce=0`.
+   */
+  processPendingSnapshot(): void {
+    if (!this._coalesceEnabled || this._pendingSnapshot === null) return;
+    const snap = this._pendingSnapshot;
+    this._pendingSnapshot = null;
+    const dropped = this._coalescedSinceLastProcess;
+    this._coalescedSinceLastProcess = 0;
+    if (dropped > 0) {
+      logEvent('snapshot_coalesced', {
+        dropped,
+        newestServerTick: snap.serverTick,
+      });
+    }
+    this.applySnapshotNow(snap);
+  }
 
   private handleSnapshot(snap: SnapshotMessage): void {
     const localId = this.mirror.localPlayerId;
@@ -2715,17 +2798,33 @@ export class ColyseusGameClient {
         // beam geometry from it, so wiping it here makes the visible beam
         // flip back to baseAngle every render frame (visible bug: a solid
         // unrotated beam under the flickering correctly-rotated ghost).
-        const prev = this.mirror.ships.get(localId);
-        this.mirror.ships.set(localId, {
-          x: drX + ox,
-          y: drY + oy,
-          vx: state.vx,
-          vy: state.vy,
-          angle: drAngle + oa,
-          ...(prev?.kind ? { kind: prev.kind } : {}),
-          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
-          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
-        });
+        // Probe 7 (mobile-perf-investigation, 2026-05-24) — mutate
+        // the existing entry in place instead of allocating a new
+        // object literal per RAF. Non-spatial fields (`kind`,
+        // `displayName`, `mountAngles`) are PRESERVED by not touching
+        // them — they were written previously by `syncMirror` (kind/
+        // displayName) and `tickLocalMountAim` (mountAngles) and stay
+        // on the entry across rebuilds. Pre-fix the conditional-spread
+        // pattern allocated 2-4 objects per ship per RAF, ~9000
+        // allocations/sec at 25 in-interest entities. Pooling eliminates
+        // these allocations entirely after the first-spawn create.
+        let entry = this.mirror.ships.get(localId);
+        if (!entry) {
+          entry = {
+            x: drX + ox,
+            y: drY + oy,
+            vx: state.vx,
+            vy: state.vy,
+            angle: drAngle + oa,
+          };
+          this.mirror.ships.set(localId, entry);
+        } else {
+          entry.x = drX + ox;
+          entry.y = drY + oy;
+          entry.vx = state.vx;
+          entry.vy = state.vy;
+          entry.angle = drAngle + oa;
+        }
 
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra
         // Phase A, 2026-05-21). This is the EXACT position+angle the
@@ -2866,19 +2965,26 @@ export class ColyseusGameClient {
             Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
           if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
         }
-        const prev = this.mirror.ships.get(remoteId);
-        this.mirror.ships.set(remoteId, {
-          ...s,
-          x: s.x + ox,
-          y: s.y + oy,
-          ...(prev?.kind ? { kind: prev.kind } : {}),
-          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
-          // Phase 4b.3: preserve mount angles across per-frame rebuilds
-          // so the snapshot-anchored values from `handleSnapshot` survive
-          // until the next snapshot lands. Same pattern as the local
-          // ship's preserve path.
-          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
-        });
+        // Probe 7 — mutate in place. Same rationale as the local-ship
+        // pooling above: non-spatial fields (kind, displayName,
+        // mountAngles) are preserved by NOT touching them.
+        let entry = this.mirror.ships.get(remoteId);
+        if (!entry) {
+          entry = {
+            x: s.x + ox,
+            y: s.y + oy,
+            vx: s.vx,
+            vy: s.vy,
+            angle: s.angle,
+          };
+          this.mirror.ships.set(remoteId, entry);
+        } else {
+          entry.x = s.x + ox;
+          entry.y = s.y + oy;
+          entry.vx = s.vx;
+          entry.vy = s.vy;
+          entry.angle = s.angle;
+        }
       }
     }
 
@@ -3038,6 +3144,10 @@ export class ColyseusGameClient {
     if (!this.room || !this.keyboard) return;
     this.lastFrameMs = elapsedMs;
     if (this.welcomePerfNow === 0) return; // welcome not yet received
+    // Probe 6 — drain the coalesced-pending snapshot before any
+    // per-RAF physics work. Snapshots queued in the WebSocket event
+    // queue during a stall collapse to one here.
+    this.processPendingSnapshot();
     // Frame-gap detector. The mobile capture
     // `2026-05-09T07-23-39-893Z-651792` showed two ~500–600 ms RAF stalls
     // that bunched WebSocket arrivals into a single post-stall snapshot
