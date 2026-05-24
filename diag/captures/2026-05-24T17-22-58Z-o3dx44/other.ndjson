@@ -296,3 +296,24 @@
 {"source":"client","ts":161822.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
 {"source":"client","ts":161902.5,"tag":"roster_fetch","data":{"stage":"ok","count":2,"kinds":["fighter","fighter"]}}
 {"source":"client","ts":164111.70000004768,"tag":"warp_event","data":{"kind":"warp_in","x":1702.63,"y":4273.3}}
+{"source":"client","ts":171075.5,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":188880,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":192956.70000004768,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":193125.29999995232,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":195671.29999995232,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":195675.5,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":198751.90000009537,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":201672.90000009537,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":204672.90000009537,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":207672.70000004768,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":210672.40000009537,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":213672.29999995232,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":216676.79999995232,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":219672.59999990463,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":222671.79999995232,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":1107477.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1107485.0999999046,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":1107728.2000000477,"tag":"roster_fetch","data":{"stage":"ok","count":2,"kinds":["fighter","fighter"]}}
+{"source":"client","ts":1107750,"tag":"lost_connection_overlay_auto_return","data":{}}
+{"source":"client","ts":1107827.7000000477,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":1107828.9000000954,"tag":"joystick_destroyed","data":{"leftoverInZone":1,"leftoverSiblings":0}}
