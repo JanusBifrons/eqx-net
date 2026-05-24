@@ -271,6 +271,32 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     });
     rendererRef.current = renderer;
 
+    // Probe 0 (mobile-perf-investigation-review): `?profile=1` opts into a
+    // bounded `console.profile()` window so a user on a Chrome-remote-
+    // debugged phone can submit a real DevTools timeline alongside the
+    // diag capture. Auto-stops after 60 s so the trace stays loadable —
+    // a 5-minute trace pegs DevTools on mobile. The hostile review noted
+    // this is the cheaper missed probe — distinguishes GC vs frame-cap-
+    // artifact vs compositor-stall via flame-graph layer, which the
+    // NDJSON stream alone cannot.
+    const profileParam = new URLSearchParams(window.location.search).get('profile');
+    if (profileParam === '1') {
+      try {
+        console.profile('eqx-mobile-session');
+        logEvent('profile_started', { autoStopMs: 60_000 });
+        window.setTimeout(() => {
+          try {
+            console.profileEnd('eqx-mobile-session');
+            logEvent('profile_ended', { reason: 'auto-stop' });
+          } catch (e) {
+            logEvent('profile_ended', { reason: 'error', error: String(e) });
+          }
+        }, 60_000);
+      } catch (e) {
+        logEvent('profile_started', { error: String(e) });
+      }
+    }
+
     const gameClient = new ColyseusGameClient();
     gameClient.setAudio(new HowlerAudioService());
     clientRef.current = gameClient;
