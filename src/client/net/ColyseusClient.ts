@@ -628,6 +628,15 @@ export class ColyseusGameClient {
    *  the cost is GC/allocation, not Pixi/network. */
   private _lastRafStallAtMs = -1;
   private _lastRafStallHeapMb = -1;
+  /** Probe 5 — rolling fields for the per-snapshot reconcile cost.
+   *  Surfaced on `snapshot_applied` so a capture shows reconcile time
+   *  separately from the rest of handleSnapshot. The y0eo1h capture
+   *  (2026-05-24) confirmed applyMs ≈ 1.0 ms + 0.04 ms × ticksAhead —
+   *  reconcile is the dominant cost, scaling linearly with the replay
+   *  window. -1 sentinel when not yet measured. */
+  private _lastReconcileMs = -1;
+  private _lastReplayWindow = -1;
+
   /** RAF counter for periodic heap sampling between stalls. */
   private _rafSampleCounter = 0;
 
@@ -986,6 +995,20 @@ export class ColyseusGameClient {
         serverTick: snap.serverTick,
         recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
       });
+      // Probe 5 — flag large receive gaps (>200 ms = ≥4 missed
+      // 20 Hz cadence ticks) with heap context. The y0eo1h capture
+      // showed 15 such gaps in 184 s, each 250-633 ms long, while
+      // p50 recvGapMs stayed at 49 ms — these are CLIENT-side main-
+      // thread blocks (snapshots queue, then fire onMessage in burst).
+      // Heap dump alongside lets us correlate with GC pauses. Rare
+      // event (~0.5 % of snapshots) — negligible diag-stream volume.
+      if (recvGapMs > 200) {
+        const heap = readHeapUsedMb();
+        logEvent('recv_gap_long', {
+          recvGapMs: Math.round(recvGapMs * 100) / 100,
+          heapUsedMb: heap !== undefined ? parseFloat(heap.toFixed(2)) : null,
+        });
+      }
 
       const bw = bwStats();
       const snapJson = bw ? JSON.stringify(snap) : null;
@@ -1000,9 +1023,14 @@ export class ColyseusGameClient {
       const applyStart = this.clock.now();
       this.handleSnapshot(snap);
       const applyMs = this.clock.now() - applyStart;
+      // Probe 5 — reconcile is the dominant cost per the y0eo1h
+      // capture's linear correlation; surface it directly so a
+      // single field shows the spiral's drive.
       logEvent('snapshot_applied', {
         serverTick: snap.serverTick,
         applyMs: Math.round(applyMs * 100) / 100,
+        reconcileMs: this._lastReconcileMs >= 0 ? Math.round(this._lastReconcileMs * 100) / 100 : -1,
+        replayWindow: this._lastReplayWindow,
         snapBytes: snapJson ? snapJson.length : -1,
       });
     });
@@ -2047,6 +2075,15 @@ export class ColyseusGameClient {
         }
       }
 
+      // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
+      // reconcile separately from the rest of handleSnapshot. The
+      // y0eo1h capture (Pixel 6, fpscap=10) showed applyMs growing
+      // linearly with ticksAhead (1.0 ms + 0.04 ms × ticksAhead),
+      // confirming reconcile is the dominant cost. `replayWindow` and
+      // `reconcileMs` go onto the snapshot_applied event so a single
+      // capture distinguishes reconcile time from everything-else time.
+      const replayWindow = this.inputTick - ackedTick;
+      const reconcileStartMs = this.clock.now();
       this.reconciler.reconcile(
         serverState,
         snap.serverTick,
@@ -2061,6 +2098,8 @@ export class ColyseusGameClient {
           this.applyRemoteInputs();
         },
       );
+      this._lastReconcileMs = this.clock.now() - reconcileStartMs;
+      this._lastReplayWindow = replayWindow;
 
       // Compute remote ship lerp offsets.
       if (this.predWorld) {

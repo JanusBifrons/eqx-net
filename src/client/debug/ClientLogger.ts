@@ -81,6 +81,11 @@ export function logEvent(tag: string, data: Record<string, unknown>): void {
   if (_maxEntries < 0) {
     _maxEntries = isDiagEnabled() ? DIAG_MAX_ENTRIES : PROD_MAX_ENTRIES;
   }
+  // Probe 5 — `?diag=light` mode suppresses the highest-cardinality
+  // per-RAF tags to cut capture size by ~60-70 %. Resolved once via
+  // cached `_diagLight`; subsequent calls are a single boolean check.
+  if (_diagLight === null) isDiagLightMode(); // populates _diagLight
+  if (_diagLight === true && HIGH_VOLUME_TAGS.has(tag)) return;
   const entry: LogEntry = { ts: performance.now(), tag, data };
   entries.push(entry);
   if (entries.length > _maxEntries) entries.shift();
@@ -159,6 +164,7 @@ export function drainPendingStream(): readonly LogEntry[] {
  * call `__resetDiagCache()` to drop the cache (production never does).
  */
 let _diagEnabled: boolean | null = null;
+let _diagLight: boolean | null = null;
 export function isDiagEnabled(): boolean {
   if (_diagEnabled !== null) return _diagEnabled;
   let enabled = false;
@@ -172,7 +178,10 @@ export function isDiagEnabled(): boolean {
       enabled = false;
     } else if (typeof navigator !== 'undefined' && navigator.webdriver === true) {
       enabled = true;
-    } else if (q === '1') {
+    } else if (q === '1' || q === 'light') {
+      // Probe 5 — `?diag=light` is the volume-reduced mode (drops the
+      // highest-cardinality per-RAF events). Still counts as
+      // "diag-enabled" for downstream consumers like the buffer cap.
       enabled = true;
     }
   } catch {
@@ -182,6 +191,51 @@ export function isDiagEnabled(): boolean {
   _diagEnabled = enabled;
   return enabled;
 }
+
+/**
+ * Probe 5 (mobile-perf-investigation, 2026-05-24) — `?diag=light` mode.
+ *
+ * The 2026-05-24 captures crossed 14 MB / session, dominated by the
+ * per-RAF event volume (~12k rafTick events × ~250 bytes = ~3 MB
+ * alone, plus input_intent / local_pose_* at similar volumes). For
+ * investigations that don't need per-RAF granularity, light mode
+ * drops the highest-cardinality tags but keeps everything else
+ * (snapshots, corrections, perf, combat, lifecycle).
+ *
+ * Tags suppressed in light mode (see HIGH_VOLUME_TAGS):
+ *   - rafTick (per-RAF, ~90/s)
+ *   - input_intent (per-tick, ~60/s)
+ *   - local_pose_predicted (per-tick, ~60/s)
+ *   - local_pose_rendered (per-RAF, ~90/s)
+ *   - inputSent (per-sent-tick, throttled but still ~10-60/s)
+ *
+ * Estimated reduction: ~60-70 % of capture size.
+ */
+let _diagLightCached: boolean | null = null;
+export function isDiagLightMode(): boolean {
+  if (_diagLightCached !== null) return _diagLightCached;
+  let light = false;
+  try {
+    const q =
+      typeof window !== 'undefined' && window.location?.search
+        ? new URLSearchParams(window.location.search).get('diag')
+        : null;
+    light = q === 'light';
+  } catch {
+    light = false;
+  }
+  _diagLightCached = light;
+  _diagLight = light;
+  return light;
+}
+
+const HIGH_VOLUME_TAGS = new Set<string>([
+  'rafTick',
+  'input_intent',
+  'local_pose_predicted',
+  'local_pose_rendered',
+  'inputSent',
+]);
 
 /**
  * Streaming auto-capture mode — `?autocapture=1`. Mirror of the
@@ -230,6 +284,8 @@ export function isAutoCaptureEnabled(): boolean {
  */
 export function __resetDiagCache(): void {
   _diagEnabled = null;
+  _diagLight = null;
+  _diagLightCached = null;
   _maxEntries = -1;
   _autoCaptureEnabled = null;
 }
