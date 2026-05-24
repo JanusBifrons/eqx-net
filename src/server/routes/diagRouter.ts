@@ -57,6 +57,13 @@ const BUCKETS: Record<string, string> = {
   // 22 ms budget went and whether the 45 Hz cap is JS-cost-driven or
   // OS/thermal-driven. ~45 events/sec — same order as rafTick.
   rafWork: 'perf',
+  // Probe 2 (mobile-perf-investigation, 2026-05-24) — device fingerprint
+  // + native rAF cadence calibration. One-shot events at session start;
+  // captured in `perf.ndjson` alongside other perf fields so a single
+  // file read tells us device + measured refresh rate + battery state.
+  device_info: 'perf',
+  device_info_calibration: 'perf',
+  device_battery: 'perf',
   // client perf — F1 per-frame sub-cost markers for the warp-spool
   // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
   // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-
