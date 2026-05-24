@@ -64,6 +64,10 @@ const BUCKETS: Record<string, string> = {
   device_info: 'perf',
   device_info_calibration: 'perf',
   device_battery: 'perf',
+  // Probe 3 (2026-05-24) — `?fpscap=N` URL override of the internal
+  // frame-rate cap. Fires once at session start when an override is
+  // active so the capture identifies which arm it was run under.
+  fps_cap_override: 'perf',
   // client perf — F1 per-frame sub-cost markers for the warp-spool
   // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
   // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-

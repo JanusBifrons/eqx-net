@@ -408,6 +408,24 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       }
 
       let lastFrameTime = 0;
+      // Probe 3 (mobile-perf-investigation, 2026-05-24) — `?fpscap=N`
+      // URL override for DEFAULT_MIN_FRAME_INTERVAL_MS. Default 15 ms
+      // throttles 90 Hz devices to 45 fps (the documented intent of
+      // commit `9e23436`); Probe 0/1/2 evidence on a Pixel 6 with 1 ms
+      // per-RAF work shows that throttle is the dominant source of
+      // user-felt unplayability and the original 86×-stalls-at-90 Hz
+      // concern no longer applies (per-RAF work dropped ~10×). Lets
+      // the user A/B test before committing a permanent change.
+      // `?fpscap=10` allows 90 Hz through (still caps 120 Hz to ~91).
+      // `?fpscap=0` removes the cap entirely.
+      const fpsCapParam = new URLSearchParams(window.location.search).get('fpscap');
+      const fpsCapOverride = fpsCapParam !== null ? Math.max(0, parseFloat(fpsCapParam)) : null;
+      const effectiveCapMs = fpsCapOverride !== null && !Number.isNaN(fpsCapOverride)
+        ? fpsCapOverride
+        : DEFAULT_MIN_FRAME_INTERVAL_MS;
+      if (fpsCapOverride !== null) {
+        logEvent('fps_cap_override', { fpsCapParam, effectiveCapMs });
+      }
       // E2E-inspection dataset writes are throttled to every 5th frame
       // (12 Hz) — at 60 Hz they were producing 21+ DOM mutations per
       // frame including multiple `JSON.stringify(...)` calls, which
@@ -438,7 +456,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           // See `src/client/perf/frameRateCap.ts` for the rationale
           // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
           // `src/client/CLAUDE.md` for the load-bearing rule.
-          if (shouldSkipFrame(deltaMs, DEFAULT_MIN_FRAME_INTERVAL_MS, isFirstFrame)) {
+          if (shouldSkipFrame(deltaMs, effectiveCapMs, isFirstFrame)) {
             animFrameRef.current = requestAnimationFrame(loop);
             return;
           }
