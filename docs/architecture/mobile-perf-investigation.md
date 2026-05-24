@@ -1,6 +1,8 @@
 # Mobile performance regression — Living World era investigation
 
-Status: diagnosis-only. No code changes. Cross-checked against the actual code at the cited SHAs and the actual captures on `origin/feat/perf-floor`.
+> **SUPERSEDED (2026-05-24 EOD):** the canonical state of this investigation is **[`docs/HANDOFF-mobile-perf-2026-05-24.md`](../HANDOFF-mobile-perf-2026-05-24.md)**. Read that first. This file is the earliest diagnosis (kept for historical traceability of the journey) — several of its conclusions were later falsified by capture data. See the handoff doc's "The story compressed" section for the corrected causal chain.
+
+Status: historical diagnosis-only. No code changes. Cross-checked against the actual code at the cited SHAs and the actual captures on `origin/feat/perf-floor`.
 
 ## Timeline (evidence-grounded)
 
