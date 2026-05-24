@@ -1,5 +1,7 @@
 # Hostile review of mobile-perf-investigation.md
 
+> **SUPERSEDED (2026-05-24 EOD):** start at **[`docs/HANDOFF-mobile-perf-2026-05-24.md`](../HANDOFF-mobile-perf-2026-05-24.md)**. This review of the earliest diagnosis identified gaps that the subsequent probes (0-8) addressed; the fixes shipped are documented in the handoff doc. Kept here for historical traceability.
+
 Reviewer's stance: the diagnosis is doing real work — it correctly demolishes the
 worker-IPC narrative and correctly refuses to declare a winner — but several
 of its load-bearing comparative claims are weaker than the prose suggests,
