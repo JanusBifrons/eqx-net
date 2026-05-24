@@ -2798,17 +2798,33 @@ export class ColyseusGameClient {
         // beam geometry from it, so wiping it here makes the visible beam
         // flip back to baseAngle every render frame (visible bug: a solid
         // unrotated beam under the flickering correctly-rotated ghost).
-        const prev = this.mirror.ships.get(localId);
-        this.mirror.ships.set(localId, {
-          x: drX + ox,
-          y: drY + oy,
-          vx: state.vx,
-          vy: state.vy,
-          angle: drAngle + oa,
-          ...(prev?.kind ? { kind: prev.kind } : {}),
-          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
-          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
-        });
+        // Probe 7 (mobile-perf-investigation, 2026-05-24) — mutate
+        // the existing entry in place instead of allocating a new
+        // object literal per RAF. Non-spatial fields (`kind`,
+        // `displayName`, `mountAngles`) are PRESERVED by not touching
+        // them — they were written previously by `syncMirror` (kind/
+        // displayName) and `tickLocalMountAim` (mountAngles) and stay
+        // on the entry across rebuilds. Pre-fix the conditional-spread
+        // pattern allocated 2-4 objects per ship per RAF, ~9000
+        // allocations/sec at 25 in-interest entities. Pooling eliminates
+        // these allocations entirely after the first-spawn create.
+        let entry = this.mirror.ships.get(localId);
+        if (!entry) {
+          entry = {
+            x: drX + ox,
+            y: drY + oy,
+            vx: state.vx,
+            vy: state.vy,
+            angle: drAngle + oa,
+          };
+          this.mirror.ships.set(localId, entry);
+        } else {
+          entry.x = drX + ox;
+          entry.y = drY + oy;
+          entry.vx = state.vx;
+          entry.vy = state.vy;
+          entry.angle = drAngle + oa;
+        }
 
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra
         // Phase A, 2026-05-21). This is the EXACT position+angle the
@@ -2949,19 +2965,26 @@ export class ColyseusGameClient {
             Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
           if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
         }
-        const prev = this.mirror.ships.get(remoteId);
-        this.mirror.ships.set(remoteId, {
-          ...s,
-          x: s.x + ox,
-          y: s.y + oy,
-          ...(prev?.kind ? { kind: prev.kind } : {}),
-          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
-          // Phase 4b.3: preserve mount angles across per-frame rebuilds
-          // so the snapshot-anchored values from `handleSnapshot` survive
-          // until the next snapshot lands. Same pattern as the local
-          // ship's preserve path.
-          ...(prev?.mountAngles ? { mountAngles: prev.mountAngles } : {}),
-        });
+        // Probe 7 — mutate in place. Same rationale as the local-ship
+        // pooling above: non-spatial fields (kind, displayName,
+        // mountAngles) are preserved by NOT touching them.
+        let entry = this.mirror.ships.get(remoteId);
+        if (!entry) {
+          entry = {
+            x: s.x + ox,
+            y: s.y + oy,
+            vx: s.vx,
+            vy: s.vy,
+            angle: s.angle,
+          };
+          this.mirror.ships.set(remoteId, entry);
+        } else {
+          entry.x = s.x + ox;
+          entry.y = s.y + oy;
+          entry.vx = s.vx;
+          entry.vy = s.vy;
+          entry.angle = s.angle;
+        }
       }
     }
 
