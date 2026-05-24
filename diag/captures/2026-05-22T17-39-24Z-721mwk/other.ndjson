@@ -1,0 +1,122 @@
+{"source":"client","ts":9927.400000095367,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":9927.600000143051,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":9954.799999952316,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":9955,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":9955,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":9964.700000047684,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":9988.100000143051,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":11577.700000047684,"tag":"galaxy_sector_click","data":{"key":"sol-prime","mode":"spawn","ts":11577.700000047684}}
+{"source":"client","ts":11778.200000047684,"tag":"picker_open_scheduled","data":{"key":"sol-prime","dispatchLatencyMs":200.40000009536743}}
+{"source":"client","ts":12955.600000143051,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":13015.900000095367,"tag":"ship_picker_select","data":{"kind":"interceptor","pendingSpawnSector":"sol-prime","ts":13015.900000095367}}
+{"source":"client","ts":13016.400000095367,"tag":"ship_picker_close","data":{"pendingSpawnSector":"sol-prime","ts":13016.400000095367}}
+{"source":"client","ts":13065.900000095367,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":13077.5,"tag":"galaxy_map_toggle","data":{"open":false,"worker":true}}
+{"source":"client","ts":13078.600000143051,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":13079.5,"tag":"galaxy_map_toggle","data":{"open":false,"worker":true}}
+{"source":"client","ts":13135.700000047684,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":13135.700000047684,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}
+{"source":"client","ts":13144.400000095367,"tag":"joystick_created","data":{"zoneChildCount":1}}
+{"source":"client","ts":13144.700000047684,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":13144.700000047684,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}
+{"source":"client","ts":13151,"tag":"worker_resize","data":{"w":914,"h":411,"dpr":2.625}}
+{"source":"client","ts":13164.299999952316,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":13704.100000143051,"tag":"renderer_init_complete","data":{"rendererInitMs":625,"msFromPhaseEnter":625}}
+{"source":"client","ts":13885.5,"tag":"predworld_init","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","x":0,"y":0,"kind":"interceptor"}}
+{"source":"client","ts":13885.600000143051,"tag":"local_pose_resolved","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","x":0,"y":0,"kind":"interceptor","msSinceWelcome":6}}
+{"source":"client","ts":13942.299999952316,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":13942.299999952316,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":15058.700000047684,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":15482.200000047684,"tag":"pixi_first_frame","data":{"msFromPhaseEnter":2403,"shipsInMirror":1,"hasLocal":true,"localX":-29.81207473887484,"localY":-156.15887384719252}}
+{"source":"client","ts":16947.299999952316,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":16990.10000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":18086.400000095367,"tag":"join_chain_complete","data":{"msFromPhaseEnter":5062}}
+{"source":"client","ts":18086.400000095367,"tag":"load_curtain_change","data":{"active":false}}
+{"source":"client","ts":19948.799999952316,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":19981.60000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":22945,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":22965.700000047684,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":25944.700000047684,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":25979.60000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":26380.900000095367,"tag":"warp_event","data":{"kind":"warp_out","x":2786.86,"y":-475.21}}
+{"source":"client","ts":26380.900000095367,"tag":"warp_event","data":{"kind":"warp_out","x":4303.29,"y":3737.55}}
+{"source":"client","ts":27879.700000047684,"tag":"warp_event","data":{"kind":"warp_in","x":844.06,"y":4521.9}}
+{"source":"client","ts":28955.299999952316,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":29015.60000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":29375.900000095367,"tag":"warp_event","data":{"kind":"warp_in","x":-1934.25,"y":4173.57}}
+{"source":"client","ts":30873.200000047684,"tag":"warp_event","data":{"kind":"warp_out","x":-434.19,"y":-424.82}}
+{"source":"client","ts":30873.200000047684,"tag":"warp_event","data":{"kind":"warp_out","x":51.02,"y":891.02}}
+{"source":"client","ts":30873.200000047684,"tag":"warp_event","data":{"kind":"warp_out","x":-451.84,"y":996.28}}
+{"source":"client","ts":31960.10000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":31983.799999952316,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":32381.799999952316,"tag":"warp_event","data":{"kind":"warp_out","x":-93.59,"y":897.88}}
+{"source":"client","ts":32381.900000095367,"tag":"warp_event","data":{"kind":"warp_in","x":-3757.15,"y":-2654.02}}
+{"source":"client","ts":34237.799999952316,"tag":"warp_event","data":{"kind":"warp_out","x":757.01,"y":349.85}}
+{"source":"client","ts":35320.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":36745.60000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":38357.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":39949,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":41467.5,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":43429.10000014305,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":44673.700000047684,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":45076.40000009537,"tag":"warp_event","data":{"kind":"warp_in","x":-2131.42,"y":4076.4}}
+{"source":"client","ts":45076.5,"tag":"warp_event","data":{"kind":"warp_in","x":4592.12,"y":-269.13}}
+{"source":"client","ts":45076.5,"tag":"warp_event","data":{"kind":"warp_in","x":4390.52,"y":1372.34}}
+{"source":"client","ts":45076.5,"tag":"warp_event","data":{"kind":"warp_in","x":814.44,"y":-4527.33}}
+{"source":"client","ts":46729.90000009537,"tag":"warp_event","data":{"kind":"warp_in","x":-1385.04,"y":-4386.53}}
+{"source":"client","ts":46729.90000009537,"tag":"warp_event","data":{"kind":"warp_in","x":3270.77,"y":-3234.51}}
+{"source":"client","ts":46730,"tag":"warp_event","data":{"kind":"warp_in","x":3092.83,"y":3405.06}}
+{"source":"client","ts":46730,"tag":"warp_event","data":{"kind":"warp_in","x":-3116.34,"y":3383.55}}
+{"source":"client","ts":47052.40000009537,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":47780.5,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":48271.60000014305,"tag":"warp_event","data":{"kind":"warp_in","x":2665.72,"y":3748.85}}
+{"source":"client","ts":48271.60000014305,"tag":"warp_event","data":{"kind":"warp_in","x":-2645.48,"y":3763.17}}
+{"source":"client","ts":48271.700000047684,"tag":"warp_event","data":{"kind":"warp_in","x":4594.51,"y":-224.71}}
+{"source":"client","ts":48271.700000047684,"tag":"warp_event","data":{"kind":"warp_in","x":-3689.16,"y":-2747.74}}
+{"source":"client","ts":51434.90000009537,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":51449.60000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":54689.299999952316,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":56691.799999952316,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":57850.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":60517,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":61053.200000047684,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":64170.10000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":64241,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":64838.200000047684,"tag":"warp_event","data":{"kind":"warp_in","x":-2210.42,"y":-4034.11}}
+{"source":"client","ts":64838.299999952316,"tag":"warp_event","data":{"kind":"warp_in","x":-377.04,"y":4584.52}}
+{"source":"client","ts":66654.10000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":67031.40000009537,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":91588.90000009537,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":91848.60000014305,"tag":"warp_event","data":{"kind":"warp_in","x":1267.22,"y":4422.01}}
+{"source":"client","ts":91849.70000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":98571.70000004768,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":98586.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":101433.79999995232,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":101476.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":104433.60000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":107455.60000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":110433,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":113455.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":116433.79999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":119454.60000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":122434.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":125461.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":912036.4000000954,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912036.600000143,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912037.600000143,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912037.7000000477,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912037.7000000477,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912037.7999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912038.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912038.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912038.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912038.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912038.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":912041.600000143,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":912071.600000143,"tag":"worker_resize","data":{"w":411,"h":922,"dpr":2.625}}
+{"source":"client","ts":912082.100000143,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":912153.7999999523,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":912377.4000000954,"tag":"worker_resize","data":{"w":411,"h":810,"dpr":2.625}}
+{"source":"client","ts":912484.4000000954,"tag":"lost_connection_overlay_auto_return","data":{}}
+{"source":"client","ts":912525.4000000954,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":912526.7000000477,"tag":"joystick_destroyed","data":{"leftoverInZone":1,"leftoverSiblings":0}}

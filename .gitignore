@@ -34,15 +34,13 @@ data/
 .env.local
 .env.*.local
 
-# dev-only diagnostic captures (POST /diag/capture). Anchored to repo
-# root with the leading slash so it does NOT shadow `tests/diag/` (the
-# @diag E2E specs, e2e-rebuild Phase 2b).
-# Use /diag/* (not /diag/) so subsequent negation rules can re-include
-# specific subdirectories (perf-floor's perf-baseline/).
-/diag/*
-# perf-floor Phase 2 baselines — committed deliberately for diff-vs-future
-# comparison and Phase 5 lock reads. Un-ignore the subdirectory only.
-!/diag/perf-baseline/
+# diag/ is COMMITTED — captures, perf baselines, and CDP traces persist
+# in-repo as auditable artefacts. Phone smoke captures (POST /diag/capture),
+# automated perf baselines, and one-off CDP profiles are reviewed alongside
+# the commit that produced them; deleting one is a deliberate cleanup, not
+# a default. *.log inside diag/ is still caught by the global *.log rule.
+# Policy reversed 2026-05-24 (was: /diag/* with !/diag/perf-baseline/).
+# See diag/README.md.
 
 # session log scratch (e2e capture, debug, regression runs, etc) —
 # written from inside the repo by Bash/PowerShell calls during dev

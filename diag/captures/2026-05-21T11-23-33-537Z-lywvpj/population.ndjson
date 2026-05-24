@@ -1,0 +1,16 @@
+{"source":"server","ts":1779362607773,"tag":"bot_transit_commit","data":{"botId":"lwbot-24","from":"orion-belt","to":"sol-prime"}}
+{"source":"server","ts":1779362607773,"tag":"bot_transit_start","data":{"botId":"lwbot-6","from":"vega-reach","to":"sol-prime"}}
+{"source":"server","ts":1779362607773,"tag":"bot_transit_start","data":{"botId":"lwbot-11","from":"cygnus-arm","to":"sol-prime"}}
+{"source":"server","ts":1779362607773,"tag":"bot_transit_start","data":{"botId":"lwbot-14","from":"kepler-spur","to":"sol-prime"}}
+{"source":"server","ts":1779362607774,"tag":"population_report","data":{"total":25,"active":14,"inTransit":11,"respawning":0,"perSector":{"sol-prime":{"players":1,"bots":7},"orion-belt":{"players":0,"bots":0},"vega-reach":{"players":0,"bots":4},"cygnus-arm":{"players":0,"bots":2},"kepler-spur":{"players":0,"bots":1},"andromeda-rim":{"players":0,"bots":0},"lyra-fringe":{"players":0,"bots":0}}}}
+{"source":"server","ts":1779362609241,"tag":"bot_respawn","data":{"botId":"lwbot-21","sectorKey":"sol-prime","delayMs":12000}}
+{"source":"server","ts":1779362609273,"tag":"bot_transit_start","data":{"botId":"lwbot-12","from":"vega-reach","to":"sol-prime"}}
+{"source":"server","ts":1779362609273,"tag":"bot_transit_start","data":{"botId":"lwbot-16","from":"vega-reach","to":"sol-prime"}}
+{"source":"server","ts":1779362609273,"tag":"bot_transit_start","data":{"botId":"lwbot-17","from":"cygnus-arm","to":"sol-prime"}}
+{"source":"server","ts":1779362609273,"tag":"bot_transit_start","data":{"botId":"lwbot-22","from":"kepler-spur","to":"sol-prime"}}
+{"source":"server","ts":1779362609273,"tag":"population_report","data":{"total":25,"active":9,"inTransit":15,"respawning":1,"perSector":{"sol-prime":{"players":1,"bots":6},"orion-belt":{"players":0,"bots":0},"vega-reach":{"players":0,"bots":2},"cygnus-arm":{"players":0,"bots":1},"kepler-spur":{"players":0,"bots":0},"andromeda-rim":{"players":0,"bots":0},"lyra-fringe":{"players":0,"bots":0}}}}
+{"source":"server","ts":1779362610773,"tag":"bot_transit_start","data":{"botId":"lwbot-20","from":"vega-reach","to":"sol-prime"}}
+{"source":"server","ts":1779362610773,"tag":"population_report","data":{"total":25,"active":8,"inTransit":16,"respawning":1,"perSector":{"sol-prime":{"players":1,"bots":6},"orion-belt":{"players":0,"bots":0},"vega-reach":{"players":0,"bots":1},"cygnus-arm":{"players":0,"bots":1},"kepler-spur":{"players":0,"bots":0},"andromeda-rim":{"players":0,"bots":0},"lyra-fringe":{"players":0,"bots":0}}}}
+{"source":"server","ts":1779362612273,"tag":"bot_transit_start","data":{"botId":"lwbot-18","from":"vega-reach","to":"sol-prime"}}
+{"source":"server","ts":1779362612273,"tag":"bot_transit_start","data":{"botId":"lwbot-23","from":"cygnus-arm","to":"sol-prime"}}
+{"source":"server","ts":1779362612273,"tag":"population_report","data":{"total":25,"active":6,"inTransit":18,"respawning":1,"perSector":{"sol-prime":{"players":1,"bots":6},"orion-belt":{"players":0,"bots":0},"vega-reach":{"players":0,"bots":0},"cygnus-arm":{"players":0,"bots":0},"kepler-spur":{"players":0,"bots":0},"andromeda-rim":{"players":0,"bots":0},"lyra-fringe":{"players":0,"bots":0}}}}

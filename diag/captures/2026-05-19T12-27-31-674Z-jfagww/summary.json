@@ -1,0 +1,307 @@
+{
+  "capturedAt": "2026-05-19T12-27-31-674Z",
+  "dirName": "2026-05-19T12-27-31-674Z-jfagww",
+  "note": "sent from death overlay",
+  "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+  "viewport": {
+    "w": 914,
+    "h": 411
+  },
+  "clientEpochMs": 1779193584200,
+  "serverReceivedAtMs": 1779193651706,
+  "timing": {
+    "note": "client ts is performance.now() (relative to client boot); server ts is Date.now() wall-clock ms.",
+    "client": {
+      "firstTs": 830,
+      "lastTs": 69133.29999995232,
+      "durationMs": 68303.29999995232
+    },
+    "server": {
+      "firstTs": 1779193644471,
+      "lastTs": 1779193651675,
+      "durationMs": 7204
+    }
+  },
+  "counts": {
+    "total": 3746,
+    "buckets": {
+      "perf": 62,
+      "corrections": 52,
+      "combat": 181,
+      "lifecycle": 31,
+      "population": 9,
+      "snapshots": 1327,
+      "raf": 2009,
+      "other": 75
+    },
+    "tags": {
+      "client/component_mount": 14,
+      "client/phase_change": 4,
+      "client/component_unmount": 10,
+      "client/server_health_change": 1,
+      "client/button_click": 1,
+      "client/roster_panel_mount": 7,
+      "client/roster_fetch": 45,
+      "client/roster_panel_unmount": 2,
+      "client/galaxy_map_toggle": 2,
+      "client/load_curtain_change": 2,
+      "client/joystick_created": 1,
+      "client/worker_resize": 1,
+      "client/renderer_init_complete": 1,
+      "client/welcome": 1,
+      "client/predworld_init": 1,
+      "client/local_pose_resolved": 1,
+      "client/correction": 52,
+      "client/snapshot": 1183,
+      "client/raf_gap": 10,
+      "client/inputSent": 417,
+      "client/rafTick": 1360,
+      "client/longtask": 2,
+      "client/pixi_first_frame": 1,
+      "client/join_chain_complete": 1,
+      "client/swarm_near_enter": 8,
+      "client/swarm_near_exit": 7,
+      "client/fire": 111,
+      "server/ram_damage": 8,
+      "server/snapshot_broadcast": 144,
+      "server/tick_budget": 50,
+      "server/fire_received": 48,
+      "server/bot_transit_commit": 3,
+      "server/population_report": 5,
+      "server/shield_broken": 2,
+      "server/input_received": 232,
+      "server/collision_resolved": 7,
+      "server/bot_respawn": 1
+    }
+  },
+  "highlights": {
+    "topTickHitches": [],
+    "topTickBudgets": [
+      {
+        "source": "server",
+        "ts": 1779193644641,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 62101,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.018,
+            "projectiles": 0.007,
+            "swarmEncode": 0.001,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.02,
+            "aiFire": 0.001,
+            "total": 0.061,
+            "playerMounts": 0.001,
+            "droneMounts": 0.011
+          },
+          "maxTotalMs": 0.121,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 10,
+          "aiSize": 2
+        }
+      },
+      {
+        "source": "server",
+        "ts": 1779193644696,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 62161,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.015,
+            "projectiles": 0.006,
+            "swarmEncode": 0.001,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.022,
+            "aiFire": 0.001,
+            "total": 0.052,
+            "playerMounts": 0.001,
+            "droneMounts": 0.006
+          },
+          "maxTotalMs": 0.179,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 6,
+          "aiSize": 2
+        }
+      },
+      {
+        "source": "server",
+        "ts": 1779193644908,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 62161,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.009,
+            "projectiles": 0.003,
+            "swarmEncode": 0,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.014,
+            "aiFire": 0.001,
+            "total": 0.033,
+            "playerMounts": 0,
+            "droneMounts": 0.003
+          },
+          "maxTotalMs": 0.088,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 2,
+          "aiSize": 2
+        }
+      }
+    ],
+    "gcPauses": [],
+    "topCorrections": [
+      {
+        "source": "client",
+        "ts": 7806.5,
+        "tag": "correction",
+        "data": {
+          "n": 1,
+          "nAngle": 0,
+          "serverTick": 58880,
+          "ackedTick": 0,
+          "ticksAhead": 58878,
+          "driftUnits": 7265.187694,
+          "angleDriftRad": 0,
+          "lerping": true,
+          "lerpHalfLifeMs": 220,
+          "serverX": 3671.205,
+          "serverY": -6269.386,
+          "beforeX": 0,
+          "beforeY": 0,
+          "afterX": 3671.205,
+          "afterY": -6269.386
+        }
+      },
+      {
+        "source": "client",
+        "ts": 67034,
+        "tag": "correction",
+        "data": {
+          "n": 47,
+          "nAngle": 18,
+          "serverTick": 62419,
+          "ackedTick": 62404,
+          "ticksAhead": 29,
+          "driftUnits": 137.286101,
+          "angleDriftRad": 0.39007,
+          "lerping": true,
+          "lerpHalfLifeMs": 139.35394834345792,
+          "serverX": -1177.57,
+          "serverY": 406.236,
+          "beforeX": -1257.359,
+          "beforeY": 490.569,
+          "afterX": -1168.416,
+          "afterY": 385.991
+        }
+      },
+      {
+        "source": "client",
+        "ts": 66712.70000004768,
+        "tag": "correction",
+        "data": {
+          "n": 42,
+          "nAngle": 13,
+          "serverTick": 62405,
+          "ackedTick": 62390,
+          "ticksAhead": 24,
+          "driftUnits": 62.594621,
+          "angleDriftRad": 0.045165,
+          "lerping": true,
+          "lerpHalfLifeMs": 66.5297550842256,
+          "serverX": -1191.297,
+          "serverY": 458.078,
+          "beforeX": -1167.027,
+          "beforeY": 365.618,
+          "afterX": -1218.045,
+          "afterY": 401.885
+        }
+      },
+      {
+        "source": "client",
+        "ts": 66836.20000004768,
+        "tag": "correction",
+        "data": {
+          "n": 44,
+          "nAngle": 15,
+          "serverTick": 62410,
+          "ackedTick": 62395,
+          "ticksAhead": 26,
+          "driftUnits": 52.415547,
+          "angleDriftRad": 1.023021,
+          "lerping": true,
+          "lerpHalfLifeMs": 56.60515806181456,
+          "serverX": -1186.607,
+          "serverY": 438.472,
+          "beforeX": -1231.137,
+          "beforeY": 413.888,
+          "afterX": -1192.151,
+          "afterY": 448.923
+        }
+      },
+      {
+        "source": "client",
+        "ts": 66900.70000004768,
+        "tag": "correction",
+        "data": {
+          "n": 45,
+          "nAngle": 16,
+          "serverTick": 62413,
+          "ackedTick": 62398,
+          "ticksAhead": 27,
+          "driftUnits": 37.034657,
+          "angleDriftRad": 0.105672,
+          "lerping": true,
+          "lerpHalfLifeMs": 41.60879066572264,
+          "serverX": -1183.61,
+          "serverY": 426.58,
+          "beforeX": -1194.641,
+          "beforeY": 459.866,
+          "afterX": -1230.859,
+          "afterY": 467.6
+        }
+      }
+    ],
+    "firstError": null
+  },
+  "stats": {
+    "rttMs": 544,
+    "driftUnits": 0,
+    "angleDriftRad": 0,
+    "lerping": false,
+    "snapshotIntervalMs": 63.200000047683716,
+    "snapshotCount": 1218,
+    "ticksAhead": 32,
+    "lastServerTick": 62533,
+    "lastAckedTick": 62413,
+    "significantCorrectionCount": 49,
+    "significantAngleCorrectionCount": 19,
+    "maxDriftUnits": 7265.187693722895,
+    "totalDriftUnits": 7804.147499350182,
+    "maxAngleDriftRad": 1.0230208078967493,
+    "totalAngleDriftRad": 2.926722125393347,
+    "snapshotJitterMs": 26.200000047683716,
+    "rollingCorrRate": 0.8,
+    "collisionEventsApplied": 1,
+    "rttMeanMs": 77.6843363184095,
+    "rttStdDevMs": 74.64769032742616,
+    "droppedSnapshotsRecent": 0
+  },
+  "files": [
+    "perf.ndjson",
+    "corrections.ndjson",
+    "combat.ndjson",
+    "lifecycle.ndjson",
+    "population.ndjson",
+    "snapshots.ndjson",
+    "raf.ndjson",
+    "other.ndjson"
+  ]
+}
