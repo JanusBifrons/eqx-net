@@ -698,10 +698,20 @@ export class ColyseusGameClient {
       // does not produce a delayed phantom number AFTER the rollback.
       // Splits already spawned into `pendingDamageNumbers` are
       // hard-cancelled by the existing `cancelByTag` queue (above).
+      let cancelledScheduled = 0;
       for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
         if (this._scheduledDamageSpawns[i]!.tag === id) {
           this._scheduledDamageSpawns.splice(i, 1);
+          cancelledScheduled++;
         }
+      }
+      // Probe 4 (mobile-perf-investigation, 2026-05-24) — surface cancels
+      // so the damage_number_scheduled count vs damage_number_spawned count
+      // diff is explicable. `cancelledScheduled` may be 0 (cancel arrived
+      // after all splits already spawned) or up to count-1 (cancel arrived
+      // after the immediate spawn but before any scheduled splits drained).
+      if (cancelledScheduled > 0) {
+        logEvent('damage_number_cancelled', { tag: id, cancelledScheduled });
       }
     },
     clearPredictedFlash: (tid) => {
@@ -2602,6 +2612,19 @@ export class ColyseusGameClient {
         if (s.atMs <= now) {
           pending?.push({ x: s.x, y: s.y, damage: s.damage, tag: s.tag });
           this._scheduledDamageSpawns.splice(i, 1);
+          // Probe 4 (mobile-perf-investigation, 2026-05-24) — log spawn
+          // separately from schedule. Previously `damage_number_predicted`
+          // fired at SCHEDULE time, making it look like 5 damage numbers
+          // spawned simultaneously per shot (confusing the "laser damage
+          // applying inconsistently" investigation). Now schedule fires
+          // once per shot with `count`, and spawn fires per actual emit
+          // with `lateMs` (time between scheduled `atMs` and actual spawn
+          // — measures how late the drain ran).
+          logEvent('damage_number_spawned', {
+            damage: s.damage,
+            tag: s.tag,
+            lateMs: parseFloat((now - s.atMs).toFixed(2)),
+          });
         }
       }
     }
@@ -3015,6 +3038,20 @@ export class ColyseusGameClient {
         this._swarmDecodeTotalMs = 0;
         this._swarmDecodeCount = 0;
       }
+    }
+    // Probe 4 (mobile-perf-investigation, 2026-05-24) — raf_stutter event
+    // for medium-sized inter-RAF gaps (30 ms < elapsedMs ≤ 100 ms). The
+    // existing `raf_gap` only fires above 100 ms; capture n6uznw showed
+    // the user's felt "lag spikes" include 33-89 ms missed-frame events
+    // that don't cross the raf_gap threshold but happen every 10-30 s and
+    // are perceptible at 90 Hz native (any 30 ms gap == 2-3 missed
+    // frames). Distinct event class so the existing raf_gap rate metric
+    // and tests stay unchanged.
+    if (elapsedMs > 30 && elapsedMs <= 100) {
+      logEvent('raf_stutter', {
+        elapsedMs: Math.round(elapsedMs * 100) / 100,
+        inputTickBefore: this.inputTick,
+      });
     }
     if (elapsedMs > 100) {
       const heap = readHeapUsedMb();
@@ -3692,7 +3729,19 @@ export class ColyseusGameClient {
       pushDamageNumber: (x, y, damage, tag) => {
         if (!isHitscan || damage <= 0) {
           this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
-          logEvent('damage_number_predicted', { damage, tag, scheduled: false });
+          // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
+          // five-events-at-the-same-ts pattern with one event per shot
+          // (schedule) + one event per actual spawn (damage_number_spawned
+          // in the drain). `count: 1` here distinguishes the
+          // single-spawn projectile/no-damage path from the hitscan
+          // split path below.
+          logEvent('damage_number_scheduled', {
+            tag,
+            totalDamage: damage,
+            count: 1,
+            intervalMs: 0,
+            firstSpawnImmediate: true,
+          });
           return;
         }
         // Hitscan: schedule N visual ticks. Floor-divide the damage,
@@ -3701,14 +3750,15 @@ export class ColyseusGameClient {
         // can then match cleanly).
         const base = Math.floor(damage / SMOOTH_BEAM_SPLITS);
         const remainder = damage - base * SMOOTH_BEAM_SPLITS;
+        let actualCount = 0;
         for (let i = 0; i < SMOOTH_BEAM_SPLITS; i++) {
           const tickDamage = i === SMOOTH_BEAM_SPLITS - 1 ? base + remainder : base;
           if (tickDamage <= 0) continue;
+          actualCount++;
           if (i === 0) {
             // First tick spawns immediately so the player feels the
             // first hit without any latency.
             this.mirror.pendingDamageNumbers?.push({ x, y, damage: tickDamage, tag });
-            logEvent('damage_number_predicted', { damage: tickDamage, tag, scheduled: false });
           } else {
             scheduledRef.push({
               atMs: clockNow + i * splitIntervalMs,
@@ -3716,9 +3766,19 @@ export class ColyseusGameClient {
               damage: tickDamage,
               tag,
             });
-            logEvent('damage_number_predicted', { damage: tickDamage, tag, scheduled: true });
           }
         }
+        // Single per-shot event — the count vs actual `damage_number_spawned`
+        // count diff (with `cancelled` subtracted) reveals dropped spawns,
+        // which would explain the user-reported "damage applying
+        // inconsistently".
+        logEvent('damage_number_scheduled', {
+          tag,
+          totalDamage: damage,
+          count: actualCount,
+          intervalMs: parseFloat(splitIntervalMs.toFixed(2)),
+          firstSpawnImmediate: true,
+        });
       },
       flashTarget: (id) => {
         this._damageFlashFrames.set(id, 6);

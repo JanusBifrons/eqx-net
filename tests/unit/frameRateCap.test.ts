@@ -63,17 +63,16 @@ describe('shouldSkipFrame — pure decision', () => {
     expect(shouldSkipFrame(1000, DEFAULT_MIN_FRAME_INTERVAL_MS, true)).toBe(false);
   });
 
-  it('skips when deltaMs is below the cap interval', () => {
-    expect(shouldSkipFrame(11.11, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(true);
+  it('skips when deltaMs is below the cap interval (10 ms post-2026-05-24)', () => {
     expect(shouldSkipFrame(8.33, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(true);
-    expect(shouldSkipFrame(14.99, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(true);
+    expect(shouldSkipFrame(9.99, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(true);
   });
 
-  it('processes when deltaMs equals or exceeds the cap interval', () => {
-    expect(shouldSkipFrame(15.0, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
+  it('processes when deltaMs equals or exceeds the cap interval (10 ms post-2026-05-24)', () => {
+    expect(shouldSkipFrame(10.0, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
+    expect(shouldSkipFrame(11.11, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
     expect(shouldSkipFrame(16.67, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
     expect(shouldSkipFrame(22.22, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
-    expect(shouldSkipFrame(33.33, DEFAULT_MIN_FRAME_INTERVAL_MS, false)).toBe(false);
   });
 });
 
@@ -89,17 +88,21 @@ describe('shouldSkipFrame — cadence simulation', () => {
     expect(r.processedHz).toBeLessThanOrEqual(61);
   });
 
-  it('90 Hz native: alternates skip/process, processed rate ≈ 45 Hz', () => {
+  it('90 Hz native: processes every RAF, processed rate ≈ 90 Hz (cap=10, 2026-05-24)', () => {
+    // Pre-2026-05-24 the cap was 15 ms, which throttled 90 Hz devices to
+    // ~45 Hz processed. Probe 1 on capture `3vzz3q` proved per-RAF work
+    // was ~1 ms with 14 ms headroom, so the historical thermal-cascade
+    // concern no longer binds. Cap lowered to 10 ms; 90 Hz devices now
+    // process every RAF. See `frameRateCap.realCapture.test.ts` for the
+    // device-grounded validation against capture `4qm14l`.
     const r = simulate({
       nativePeriodMs: 1000 / 90,
       durationMs: 1000,
       minIntervalMs: DEFAULT_MIN_FRAME_INTERVAL_MS,
     });
-    expect(r.skipped).toBeGreaterThan(0);
-    expect(r.processedHz).toBeGreaterThanOrEqual(44);
-    expect(r.processedHz).toBeLessThanOrEqual(46);
-    // The cap must produce strictly less work than the 60 Hz baseline.
-    expect(r.processedHz).toBeLessThan(60);
+    expect(r.skipped).toBe(0);
+    expect(r.processedHz).toBeGreaterThanOrEqual(89);
+    expect(r.processedHz).toBeLessThanOrEqual(91);
   });
 
   it('120 Hz native: alternates skip/process, processed rate ≈ 60 Hz', () => {
@@ -124,10 +127,12 @@ describe('shouldSkipFrame — cadence simulation', () => {
     expect(r.processedHz).toBeLessThanOrEqual(31);
   });
 
-  it('DEFAULT_MIN_FRAME_INTERVAL_MS is in the band the CLAUDE.md doc constraint requires (11-17 ms)', () => {
-    // Above ~17 ms would penalise 60 Hz devices (RAF jitter pushes some
-    // frames below the cap). Below ~11 ms would not bind 90 Hz devices.
-    expect(DEFAULT_MIN_FRAME_INTERVAL_MS).toBeGreaterThan(11);
-    expect(DEFAULT_MIN_FRAME_INTERVAL_MS).toBeLessThan(17);
+  it('DEFAULT_MIN_FRAME_INTERVAL_MS sits between the 120 Hz period (8.3 ms) and the 90 Hz period (11.1 ms)', () => {
+    // Above ~11 ms would re-throttle 90 Hz devices to ~45 fps (the bug
+    // we fixed). Below ~8.3 ms would cease to bind 120 Hz devices.
+    // 10 ms is the only value that throttles 120 Hz without penalising
+    // 90 Hz.
+    expect(DEFAULT_MIN_FRAME_INTERVAL_MS).toBeGreaterThan(8.3);
+    expect(DEFAULT_MIN_FRAME_INTERVAL_MS).toBeLessThan(11.1);
   });
 });

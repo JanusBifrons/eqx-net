@@ -74,6 +74,7 @@ const FEATURE_SPECS: string[] = [
   '**/input-throttle-drift.spec.ts',
   '**/laser-smoothness.spec.ts',
   '**/living-world.spec.ts',
+  '**/mobile-perf-probe4.spec.ts',
   '**/network-feel-combat.spec.ts',
   '**/prediction-diagnostics.spec.ts',
   '**/prediction-idle-bounded.spec.ts',
