@@ -61,6 +61,12 @@ const BUCKETS: Record<string, string> = {
   damage_number_scheduled: 'combat',
   damage_number_spawned: 'combat',
   damage_number_cancelled: 'combat',
+  // Probe 5 (mobile-perf-investigation, 2026-05-24) — large receive-
+  // gap events (>200 ms between successive snapshot WebSocket
+  // arrivals) with heap-at-time context, for correlating client-side
+  // main-thread blocks with GC pauses. Rare (~0.5 % of snapshots) —
+  // routes to perf alongside heap_sample / raf_gap.
+  recv_gap_long: 'perf',
   // Render-jitter-fix Phase 1c (2026-05-21) — periodic heap sample
   // between stalls. Pairs with `raf_gap`'s new heap fields so the
   // capture shows both growth trajectory AND per-stall heap value.
