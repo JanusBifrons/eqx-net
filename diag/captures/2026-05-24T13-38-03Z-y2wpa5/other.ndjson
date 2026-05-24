@@ -383,3 +383,24 @@
 {"source":"client","ts":77451.70000004768,"tag":"warp_event","data":{"kind":"warp_in","x":4544.39,"y":-713.09}}
 {"source":"client","ts":78951.29999995232,"tag":"warp_event","data":{"kind":"warp_in","x":2580.44,"y":3808.06}}
 {"source":"client","ts":80932.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":101481.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":112524.29999995232,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":112569.60000014305,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":112573.29999995232,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":113311.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":115311.20000004768,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":116309.90000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":119445.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":122313.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":125310.79999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":128312.79999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":131323.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":134311.90000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":137320.40000009537,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":140312.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":751755,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":751756.4000000954,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":751756.600000143,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":751756.7000000477,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":751757,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":751762.9000000954,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}

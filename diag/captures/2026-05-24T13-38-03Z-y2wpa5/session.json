@@ -1,8 +1,8 @@
 {
   "sessionId": "2026-05-24T13-38-03Z-y2wpa5",
   "streaming": true,
-  "hasFinalized": true,
-  "lastAppliedSeq": 32,
-  "lastBatchAtMs": 1779629955415,
+  "hasFinalized": false,
+  "lastAppliedSeq": 34,
+  "lastBatchAtMs": 1779630974078,
   "startedAtMs": 1779629882705
 }
