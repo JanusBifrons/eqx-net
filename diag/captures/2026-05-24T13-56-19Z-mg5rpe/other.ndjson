@@ -438,3 +438,22 @@
 {"source":"client","ts":104728.79999995232,"tag":"damage_number_predicted","data":{"damage":4,"tag":"shot-195","scheduled":true}}
 {"source":"client","ts":105931.29999995232,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
 {"source":"client","ts":105972.20000004768,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":123554.89999985695,"tag":"swarm_decode_slow","data":{"decodeMs":7.4,"swarmCount":30}}
+{"source":"client","ts":136145.70000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":136614.39999985695,"tag":"swarm_decode_slow","data":{"decodeMs":8.6,"swarmCount":30}}
+{"source":"client","ts":144306,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":157604.20000004768,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":157722.89999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":160106.29999995232,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":160111.70000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":163102.5,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":166103.09999990463,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":169104,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":1495425.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495425.7999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495530.2000000477,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495531.899999857,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495533.399999857,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495534.7999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1495556,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":1495690.5,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}

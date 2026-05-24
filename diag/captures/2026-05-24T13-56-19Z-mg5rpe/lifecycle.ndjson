@@ -29,3 +29,5 @@
 {"source":"client","ts":5552.599999904633,"tag":"component_unmount","data":{"name":"ShipRosterPanel"}}
 {"source":"client","ts":5552.700000047684,"tag":"component_mount","data":{"name":"ShipRosterPanel","compact":false,"hasPlayerId":false}}
 {"source":"client","ts":6898.200000047684,"tag":"welcome","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","serverTick":95867,"idReassigned":false}}
+{"source":"client","ts":157550.70000004768,"tag":"disconnected","data":{"code":1006}}
+{"source":"client","ts":157728.5,"tag":"server_health_change","data":{"from":"healthy","to":"unreachable","playersOnline":null}}
