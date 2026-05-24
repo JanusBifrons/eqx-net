@@ -1,0 +1,338 @@
+{
+  "capturedAt": "2026-05-24T17-56-22-499Z",
+  "dirName": "2026-05-24T17-56-22-499Z-mlebct",
+  "note": null,
+  "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+  "viewport": {
+    "w": 914,
+    "h": 411
+  },
+  "clientEpochMs": 1779645202732,
+  "serverReceivedAtMs": 1779645382599,
+  "timing": {
+    "note": "client ts is performance.now() (relative to client boot); server ts is Date.now() wall-clock ms.",
+    "client": {
+      "firstTs": 131959.89999985695,
+      "lastTs": 185825.59999990463,
+      "durationMs": 53865.700000047684
+    },
+    "server": {
+      "firstTs": 1779645368041,
+      "lastTs": 1779645382389,
+      "durationMs": 14348
+    }
+  },
+  "counts": {
+    "total": 25500,
+    "buckets": {
+      "perf": 5551,
+      "corrections": 135,
+      "combat": 301,
+      "lifecycle": 1,
+      "population": 11,
+      "snapshots": 3475,
+      "raf": 15984,
+      "other": 42
+    },
+    "tags": {
+      "client/rafTick": 4641,
+      "client/local_pose_rendered": 4641,
+      "client/rafWork": 4641,
+      "client/input_intent": 3234,
+      "client/local_pose_predicted": 3234,
+      "client/roster_fetch": 36,
+      "client/heap_sample": 773,
+      "client/snapshot_received": 1081,
+      "client/correction": 135,
+      "client/snapshot": 1046,
+      "client/snapshot_applied": 1046,
+      "client/fire": 162,
+      "client/inputSent": 134,
+      "client/damage_number_scheduled": 36,
+      "client/raf_stutter": 30,
+      "client/snapshot_coalesced": 14,
+      "client/raf_gap": 4,
+      "client/swarm_near_enter": 16,
+      "client/swarm_near_exit": 16,
+      "client/recv_gap_long": 2,
+      "client/warp_event": 5,
+      "client/damage_number_spawned": 68,
+      "client/damage_number_cancelled": 3,
+      "client/component_unmount": 1,
+      "client/roster_panel_unmount": 1,
+      "server/snapshot_broadcast": 288,
+      "server/input_received": 100,
+      "server/tick_budget": 100,
+      "server/population_report": 9,
+      "server/bot_transit_commit": 2,
+      "server/gc_pause": 1
+    }
+  },
+  "highlights": {
+    "topTickHitches": [],
+    "topTickBudgets": [
+      {
+        "source": "server",
+        "ts": 1779645368325,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 128294,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.011,
+            "projectiles": 0.005,
+            "swarmEncode": 0.001,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.017,
+            "aiFire": 0,
+            "total": 0.043,
+            "playerMounts": 0,
+            "droneMounts": 0.007
+          },
+          "maxTotalMs": 0.094,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 6,
+          "aiSize": 2
+        }
+      },
+      {
+        "source": "server",
+        "ts": 1779645368325,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 128234,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.008,
+            "projectiles": 0.003,
+            "swarmEncode": 0,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.015,
+            "aiFire": 0,
+            "total": 0.034,
+            "playerMounts": 0,
+            "droneMounts": 0.005
+          },
+          "maxTotalMs": 0.075,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 6,
+          "aiSize": 2
+        }
+      },
+      {
+        "source": "server",
+        "ts": 1779645368642,
+        "tag": "tick_budget",
+        "data": {
+          "serverTick": 128234,
+          "sampleCount": 60,
+          "avgMs": {
+            "sabRead": 0.011,
+            "projectiles": 0.005,
+            "swarmEncode": 0.001,
+            "swarmBroadcast": 0,
+            "snapshotBroadcast": 0.001,
+            "aiTick": 0.023,
+            "aiFire": 0.001,
+            "total": 0.053,
+            "playerMounts": 0,
+            "droneMounts": 0.01
+          },
+          "maxTotalMs": 0.129,
+          "overBudgetCount": 0,
+          "playerCount": 0,
+          "swarmCount": 11,
+          "aiSize": 3
+        }
+      }
+    ],
+    "gcPauses": [
+      {
+        "source": "server",
+        "ts": 1779645377719,
+        "tag": "gc_pause",
+        "data": {
+          "durationMs": 5.186,
+          "kind": "scavenge",
+          "kindBits": 1,
+          "startTime": 2162513
+        }
+      }
+    ],
+    "topCorrections": [
+      {
+        "source": "client",
+        "ts": 157315.69999980927,
+        "tag": "correction",
+        "data": {
+          "n": 152,
+          "nAngle": 92,
+          "serverTick": 127446,
+          "ackedTick": 127443,
+          "ticksAhead": 9,
+          "driftUnits": 37.698017,
+          "angleDriftRad": 0,
+          "lerping": true,
+          "lerpHalfLifeMs": 42.25556634416718,
+          "serverX": -475.172,
+          "serverY": -1348.057,
+          "serverVx": 0,
+          "serverVy": 0,
+          "serverAngle": 0,
+          "serverAngvel": 0,
+          "beforeX": -394.995,
+          "beforeY": -1316.098,
+          "afterX": -430.02,
+          "afterY": -1330.042
+        }
+      },
+      {
+        "source": "client",
+        "ts": 137523.5,
+        "tag": "correction",
+        "data": {
+          "n": 101,
+          "nAngle": 76,
+          "serverTick": 126234,
+          "ackedTick": 126209,
+          "ticksAhead": 26,
+          "driftUnits": 28.368216,
+          "angleDriftRad": 0.066108,
+          "lerping": true,
+          "lerpHalfLifeMs": 33.15901024668183,
+          "serverX": 621.083,
+          "serverY": -1012.401,
+          "serverVx": 0,
+          "serverVy": 0,
+          "serverAngle": 0,
+          "serverAngvel": 0,
+          "beforeX": 682.52,
+          "beforeY": -1046.78,
+          "afterX": 654.257,
+          "afterY": -1049.223
+        }
+      },
+      {
+        "source": "client",
+        "ts": 136323.19999980927,
+        "tag": "correction",
+        "data": {
+          "n": 92,
+          "nAngle": 68,
+          "serverTick": 126153,
+          "ackedTick": 126133,
+          "ticksAhead": 38,
+          "driftUnits": 28.33267,
+          "angleDriftRad": 0.218696,
+          "lerping": true,
+          "lerpHalfLifeMs": 33.12435343884803,
+          "serverX": 419.775,
+          "serverY": -756.849,
+          "serverVx": 0,
+          "serverVy": 0,
+          "serverAngle": 0,
+          "serverAngvel": 0,
+          "beforeX": 500.455,
+          "beforeY": -907.315,
+          "afterX": 528.776,
+          "afterY": -906.507
+        }
+      },
+      {
+        "source": "client",
+        "ts": 177047.69999980927,
+        "tag": "correction",
+        "data": {
+          "n": 197,
+          "nAngle": 106,
+          "serverTick": 128634,
+          "ackedTick": 128632,
+          "ticksAhead": 5,
+          "driftUnits": 27.63333,
+          "angleDriftRad": 0,
+          "lerping": true,
+          "lerpHalfLifeMs": 32.44249690500979,
+          "serverX": 44.47,
+          "serverY": -1585.603,
+          "serverVx": 0,
+          "serverVy": 0,
+          "serverAngle": 0,
+          "serverAngvel": 0,
+          "beforeX": 63.191,
+          "beforeY": -1554.409,
+          "afterX": 48.969,
+          "afterY": -1578.102
+        }
+      },
+      {
+        "source": "client",
+        "ts": 137639.5,
+        "tag": "correction",
+        "data": {
+          "n": 102,
+          "nAngle": 77,
+          "serverTick": 126246,
+          "ackedTick": 126219,
+          "ticksAhead": 20,
+          "driftUnits": 22.866166,
+          "angleDriftRad": 0.080807,
+          "lerping": true,
+          "lerpHalfLifeMs": 27.794512023644803,
+          "serverX": 641.52,
+          "serverY": -1029.111,
+          "serverVx": 0,
+          "serverVy": 0,
+          "serverAngle": 0,
+          "serverAngvel": 0,
+          "beforeX": 658.291,
+          "beforeY": -1053.796,
+          "afterX": 676.68,
+          "afterY": -1040.206
+        }
+      }
+    ],
+    "firstError": null
+  },
+  "stats": {
+    "rttMs": 65,
+    "driftUnits": 0,
+    "angleDriftRad": 0,
+    "lerping": false,
+    "snapshotIntervalMs": 54.09999990463257,
+    "snapshotCount": 1982,
+    "ticksAhead": 5,
+    "lastServerTick": 129159,
+    "lastAckedTick": 129157,
+    "significantCorrectionCount": 199,
+    "significantAngleCorrectionCount": 106,
+    "maxDriftUnits": 128.61476914421618,
+    "totalDriftUnits": 907.648452166779,
+    "maxAngleDriftRad": 0.28000013530254364,
+    "totalAngleDriftRad": 5.366991888043479,
+    "snapshotJitterMs": 20.200000286102295,
+    "rollingCorrRate": 0.1,
+    "collisionEventsApplied": 11,
+    "rttMeanMs": 6.085592770318422,
+    "rttStdDevMs": 8.279366139826147,
+    "droppedSnapshotsRecent": 0,
+    "rafP50Ms": 11.1,
+    "rafP99Ms": 44.3,
+    "longtaskCount30s": 0,
+    "rafGapCount30s": 1,
+    "heapUsedMb": 52.30067157745361
+  },
+  "files": [
+    "perf.ndjson",
+    "corrections.ndjson",
+    "combat.ndjson",
+    "lifecycle.ndjson",
+    "population.ndjson",
+    "snapshots.ndjson",
+    "raf.ndjson",
+    "other.ndjson"
+  ]
+}
