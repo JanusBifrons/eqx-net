@@ -1,0 +1,213 @@
+{
+  "v": 1,
+  "capturedAt": "2026-05-20T20:15:24.625Z",
+  "samples": [
+    {
+      "file": "benchmarks/persistence-worker.bench.ts",
+      "group": "WorkerBackedSink — enqueue cost on the main thread",
+      "name": "enqueueCritical(KILL)",
+      "hz": 10977753.804449761,
+      "mean": 0.0000910933163389633,
+      "p99": 0.0001999999999497959,
+      "sampleCount": 5488878
+    },
+    {
+      "file": "benchmarks/persistence-worker.bench.ts",
+      "group": "WorkerBackedSink — enqueue cost on the main thread",
+      "name": "enqueueVolatile(TELEMETRY_SHED)",
+      "hz": 410452.8507320507,
+      "mean": 0.00243633342591355,
+      "p99": 0.006199999999807915,
+      "sampleCount": 205227
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "100 entities",
+      "name": "physics tick (main thread)",
+      "hz": 105365.43102667727,
+      "mean": 0.009490778809103073,
+      "p99": 0.0221000000000231,
+      "sampleCount": 52683
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "100 entities",
+      "name": "SAB read — seqlock + N entity states",
+      "hz": 178810.7125628415,
+      "mean": 0.005592506095788632,
+      "p99": 0.012699999999767897,
+      "sampleCount": 89406
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "100 entities",
+      "name": "SAB write — seqlock + N entity states",
+      "hz": 9264.43801575057,
+      "mean": 0.10793962875026951,
+      "p99": 0.2537999999999556,
+      "sampleCount": 4633
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "1000 entities",
+      "name": "physics tick (main thread)",
+      "hz": 6437.540359618272,
+      "mean": 0.1553388319353849,
+      "p99": 0.7986999999993714,
+      "sampleCount": 3219
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "1000 entities",
+      "name": "SAB read — seqlock + N entity states",
+      "hz": 16496.304179931194,
+      "mean": 0.06061963874408692,
+      "p99": 0.16460000000006403,
+      "sampleCount": 8249
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "1000 entities",
+      "name": "SAB write — seqlock + N entity states",
+      "hz": 895.6363716331259,
+      "mean": 1.1165245535714174,
+      "p99": 2.860200000000077,
+      "sampleCount": 448
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "500 entities",
+      "name": "physics tick (main thread)",
+      "hz": 20662.847013136026,
+      "mean": 0.04839604142470146,
+      "p99": 0.20910000000003492,
+      "sampleCount": 10332
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "500 entities",
+      "name": "SAB read — seqlock + N entity states",
+      "hz": 33456.501148754935,
+      "mean": 0.029889557056602567,
+      "p99": 0.08460000000013679,
+      "sampleCount": 16729
+    },
+    {
+      "file": "benchmarks/physics-tick.bench.ts",
+      "group": "500 entities",
+      "name": "SAB write — seqlock + N entity states",
+      "hz": 1830.385599900893,
+      "mean": 0.5463329694323127,
+      "p99": 1.5632999999997992,
+      "sampleCount": 916
+    },
+    {
+      "file": "benchmarks/spring.bench.ts",
+      "group": "CritDampedSpring step cost",
+      "name": "springStep — 100 parallel springs (local + 32 remote × 3 axes)",
+      "hz": 373676.8042341662,
+      "mean": 0.002676109377592904,
+      "p99": 0.008299999999508145,
+      "sampleCount": 186839
+    },
+    {
+      "file": "benchmarks/spring.bench.ts",
+      "group": "CritDampedSpring step cost",
+      "name": "springStep — converging from 100u over 200 frames @ 16 ms",
+      "hz": 480546.3661422321,
+      "mean": 0.002080964648693275,
+      "p99": 0.006899999999404827,
+      "sampleCount": 240274
+    },
+    {
+      "file": "benchmarks/spring.bench.ts",
+      "group": "CritDampedSpring step cost",
+      "name": "springStep — single call",
+      "hz": 13782825.999998994,
+      "mean": 0.00007255406111925616,
+      "p99": 0.0001999999999497959,
+      "sampleCount": 6891413
+    },
+    {
+      "file": "benchmarks/swarm-broadcast.bench.ts",
+      "group": "swarm broadcast — 500 entities × 4 clients",
+      "name": "encode broadcast-all (no filter, baseline)",
+      "hz": 3056.5890784813782,
+      "mean": 0.3271620667102676,
+      "p99": 0.7095000000001619,
+      "sampleCount": 1529
+    },
+    {
+      "file": "benchmarks/swarm-broadcast.bench.ts",
+      "group": "swarm broadcast — 500 entities × 4 clients",
+      "name": "encode for 4 clients (per server tick)",
+      "hz": 3486.3216847409662,
+      "mean": 0.28683526376146784,
+      "p99": 0.6526000000000067,
+      "sampleCount": 1744
+    },
+    {
+      "file": "benchmarks/swarm-broadcast.bench.ts",
+      "group": "swarm broadcast — 500 entities × 4 clients",
+      "name": "grid.query9 only (4 clients)",
+      "hz": 315599.49504080345,
+      "mean": 0.003168572877059614,
+      "p99": 0.009399999999914144,
+      "sampleCount": 157800
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "hitscan hit-test",
+      "name": "circle baseline (legacy shield-up cost)",
+      "hz": 12430733.51385464,
+      "mean": 0.00008044577569661941,
+      "p99": 0.00020000000006348273,
+      "sampleCount": 6215368
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "hitscan hit-test",
+      "name": "clear miss (circle rejects, no polygon)",
+      "hz": 9929136.861223832,
+      "mean": 0.00010071368881068515,
+      "p99": 0.00029999999969732016,
+      "sampleCount": 4964909
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "hitscan hit-test",
+      "name": "shield-down refine (circle + hull polygon)",
+      "hz": 5005721.999996895,
+      "mean": 0.00019977138163098556,
+      "p99": 0.0004000000008090865,
+      "sampleCount": 2502861
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "hitscan hit-test",
+      "name": "shield-up effective path (circle + short-circuit)",
+      "hz": 10872529.650995538,
+      "mean": 0.00009197491587511426,
+      "p99": 0.00020000000040454324,
+      "sampleCount": 5436267
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "projectile sweep hit-test",
+      "name": "circle baseline (legacy shield-up cost)",
+      "hz": 6764952.647023411,
+      "mean": 0.00014782069471543183,
+      "p99": 0.0005000000001018634,
+      "sampleCount": 3382477
+    },
+    {
+      "file": "benchmarks/weapon-hittest.bench.ts",
+      "group": "projectile sweep hit-test",
+      "name": "shield-down refine (circle + hull polygon)",
+      "hz": 3247339.9999950025,
+      "mean": 0.0003079443482978496,
+      "p99": 0.0008999999990919605,
+      "sampleCount": 1623670
+    }
+  ]
+}

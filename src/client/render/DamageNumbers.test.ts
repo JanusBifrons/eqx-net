@@ -20,7 +20,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { Container, Text } from 'pixi.js';
-import { DamageNumberManager } from './DamageNumbers.js';
+import { DamageNumberManager, LIFETIME_FRAMES, POOL_CAP } from './DamageNumbers.js';
 import type { Camera } from './worker/Camera.js';
 
 /**
@@ -126,13 +126,15 @@ describe('DamageNumberManager — per-frame update is unconditional (regression)
     const inner = parent.children[0] as Container;
     const text = inner.children[0] as Text;
 
-    // Newly spawned → first update sets alpha to (LIFETIME_FRAMES - 1) / LIFETIME_FRAMES ≈ 0.983.
+    // Newly spawned → first update sets alpha to (LIFETIME_FRAMES - 1) / LIFETIME_FRAMES.
     mgr.update();
     expect(text.alpha).toBeGreaterThan(0.9);
     expect(text.alpha).toBeLessThan(1.0);
 
-    // After 30 frames (half life) → ~0.5.
-    for (let i = 0; i < 29; i++) mgr.update();
+    // After LIFETIME_FRAMES / 2 frames (half life) → ~0.5. Drives off the
+    // exported constant so the assertion follows future tuning.
+    const halfLife = Math.floor(LIFETIME_FRAMES / 2);
+    for (let i = 1; i < halfLife; i++) mgr.update();
     expect(text.alpha).toBeCloseTo(0.5, 1);
   });
 });
@@ -148,13 +150,13 @@ describe('DamageNumberManager — lifetime expiry (regression: numbers must disa
     mgr = new DamageNumberManager(parent, camera);
   });
 
-  it('removes the text after LIFETIME_FRAMES (60) updates', () => {
+  it('removes the text after LIFETIME_FRAMES updates', () => {
     mgr.spawn(0, 0, 10);
     const inner = parent.children[0] as Container;
     expect(inner.children.length).toBe(1);
 
     // Tick exactly the lifetime — number should be gone.
-    for (let i = 0; i < 60; i++) mgr.update();
+    for (let i = 0; i < LIFETIME_FRAMES; i++) mgr.update();
     expect(inner.children.length).toBe(0);
   });
 
@@ -172,34 +174,40 @@ describe('DamageNumberManager — lifetime expiry (regression: numbers must disa
   });
 
   it('handles multiple concurrent damage numbers independently', () => {
+    // Drive the offset from LIFETIME_FRAMES so the test follows tuning.
+    // Use a one-third offset so the two numbers are clearly out of phase
+    // (spawn #2 has spawn #1's remaining lifetime + offset to spare).
+    const offset = Math.floor(LIFETIME_FRAMES / 3);
+
     mgr.spawn(0, 0, 10);
-    // Tick a few times so spawn #1 is mid-lifetime.
-    for (let i = 0; i < 20; i++) mgr.update();
+    // Tick `offset` times so spawn #1 is early-mid-lifetime.
+    for (let i = 0; i < offset; i++) mgr.update();
     mgr.spawn(0, 0, 20);
     const inner = parent.children[0] as Container;
     expect(inner.children.length).toBe(2);
 
-    // After 40 more updates: spawn #1 has lived 60 frames total →
-    // expired. Spawn #2 has lived 40 frames → still alive.
-    for (let i = 0; i < 40; i++) mgr.update();
+    // After (LIFETIME_FRAMES - offset) more updates: spawn #1 has lived
+    // its full lifetime → expired. Spawn #2 has lived (LIFETIME_FRAMES -
+    // offset) frames → still alive.
+    for (let i = 0; i < LIFETIME_FRAMES - offset; i++) mgr.update();
     expect(inner.children.length).toBe(1);
     const remaining = inner.children[0] as Text;
     expect(remaining.text).toBe('-20');
 
-    // After 20 more → spawn #2 lifetime done.
-    for (let i = 0; i < 20; i++) mgr.update();
+    // After `offset` more updates → spawn #2 lifetime done.
+    for (let i = 0; i < offset; i++) mgr.update();
     expect(inner.children.length).toBe(0);
   });
 
-  it('pool cap (20) — spawning the 21st evicts the oldest', () => {
-    for (let i = 0; i < 20; i++) {
+  it('pool cap — spawning the (cap+1)th evicts the oldest', () => {
+    for (let i = 0; i < POOL_CAP; i++) {
       mgr.spawn(0, 0, i);
     }
     const inner = parent.children[0] as Container;
-    expect(inner.children.length).toBe(20);
+    expect(inner.children.length).toBe(POOL_CAP);
 
-    mgr.spawn(0, 0, 999); // 21st
-    expect(inner.children.length).toBe(20);
+    mgr.spawn(0, 0, 999); // one over the cap
+    expect(inner.children.length).toBe(POOL_CAP);
     // Oldest (`-0`) was evicted; newest (`-999`) is in.
     const labels = (inner.children as Text[]).map((t) => t.text);
     expect(labels).not.toContain('-0');

@@ -1,0 +1,9 @@
+{"source":"client","ts":463.59999990463257,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":463.89999985694885,"tag":"component_mount","data":{"name":"App"}}
+{"source":"client","ts":463.89999985694885,"tag":"phase_change","data":{"phase":"meta"}}
+{"source":"client","ts":464.39999985694885,"tag":"component_unmount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":464.39999985694885,"tag":"component_unmount","data":{"name":"App"}}
+{"source":"client","ts":464.5,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":464.59999990463257,"tag":"component_mount","data":{"name":"App"}}
+{"source":"client","ts":464.59999990463257,"tag":"phase_change","data":{"phase":"meta"}}
+{"source":"client","ts":482.59999990463257,"tag":"server_health_change","data":{"from":"unknown","to":"healthy","playersOnline":651}}

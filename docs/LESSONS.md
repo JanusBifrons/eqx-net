@@ -14,6 +14,159 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-22 — smooth-beam — server-side retune REGRESSED touch-device lag; reverted, smoothing moved client-side via visual splitting
+
+Commits: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted)*; `feat(client): smooth-beam via predicted-damage splitting (server cadence unchanged)`.
+
+The first retune (4 HP × 33 ms cooldown, DPS preserved) FELT smoother to the player but re-triggered the 110 ms below-JS compositor stalls on touch devices — capture `o4n4pw` 2026-05-22 vs `iph9cv` baseline:
+
+| Metric | iph9cv (pre-retune, 105 s) | o4n4pw (retune, 157 s) |
+|---|---|---|
+| `raf_gap > 100 ms` events | 3 | **14** |
+| Stall rate | 0.029 / s | **0.089 / s (~3× worse)** |
+| Heap growth during combat | (steady) | **50 → 130 MB in 22 s** (then GC drops to 46 MB, cycle repeats) |
+| Damage worked | yes | yes (the feel improvement was real) |
+
+The mechanism: `WeaponCatalogue.ts` is shared between player and drone fire (`handleAiFire` reads `WEAPON_COOLDOWN_TICKS` for drones too), so the 5× retune scaled DRONE fire rate identically. In a 25-drone sector, total drone-fire events went from ~150/s to ~750/s. Each fire = `laser_fired` + `damage` broadcast to ALL clients in the room. The 5× wire-event amplification → 3.6 MB/sec allocation rate on the client (Map / Graphics / event objects) → V8 thrashes the heap → Android scheduler reacts to allocation pressure → compositor scheduler throttles the RAF rate → ~110 ms stalls return.
+
+User pushback was decisive: *"Drones and players should play the same"* + *"Can't the player simulate the damage on hit so it looks smooth?"* The first rejected the asymmetric "drones at 10-tick / players at 2-tick" fix; the second pointed at the right shape — the smooth feel lives in the **client visual layer**, not the server cadence.
+
+The new approach: **server-side cadence unchanged (6 Hz, 20 HP)**, smoothness produced client-side. In `ColyseusClient.sendFire`'s predicted-feedback sink, hitscan hits split the 20 HP into N small visual ticks (currently 5 × 4 HP) spread across the cooldown window. The first tick spawns immediately (so first-shot feel is preserved); the rest are scheduled in `_scheduledDamageSpawns` and drained per-frame in `updateMirror`. All splits share one `clientShotId` so the existing `reconcileDamageToFeedback` / `cancelByTag` paths handle confirmation / rollback unchanged — no new prediction state, no wire-format change, no server change. Drones + players use the same code path (same server catalogue, same client splitter applies to the local player's view of being hit).
+
+Net:
+- Wire load: **baseline** (no drone-fire amplification, no broadcast spike)
+- Visual feel: **~30 Hz damage stream** (5 ticks × 6 fires/sec)
+- Drones + players: **identical code path** (server-side symmetric)
+- Compositor stalls: **stay at iph9cv baseline** (3 / 105 s, "playable")
+
+**Process lesson — wire amplification is invisible to the local feel test.** The first retune passed the held-fire E2E lock (74 fires in 1.2 s, well above ≥25 threshold) because the spec measured the LOCAL CLIENT's fire dispatch rate, which is exactly what the retune scaled. It did NOT measure: (a) total wire events broadcast to all clients per sector, (b) allocation rate on receiving clients, (c) compositor stall recurrence under combat load. The next iteration of this E2E lock needs a 2-client setup where one client is the SHOOTER and the other measures inbound event rate + heap growth — only an observer can see the wire amplification. Single-client locks miss this class of regression. The unit-test side (`WeaponCatalogue.test.ts` locking the catalogue values + `LocalBeam.test.ts` locking persistence-window ≥ cooldown) caught the catalogue revert correctly; only the END-TO-END wire-cadence regression was unmeasured.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; captures `iph9cv` baseline + `o4n4pw` retune-regression; LESSONS.md 2026-05-22 worker-IPC entry (the 110 ms stall pattern we eliminated by going main-thread on touch, now confirmed re-triggerable by allocation pressure even WITH the main-thread renderer).
+
+---
+
+## 2026-05-22 — smooth-beam (initial, reverted) — "tick" feel was the 167 ms cooldown gap, not first-shot latency
+
+Commit: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted by the entry above)*.
+
+The user reported the "Beam" weapon (hitscan mode) felt and played badly — appeared to tick damage and took a long time to start hitting. First reaction was to suspect first-shot latency: server-validated input, network round-trip, prediction reconciliation. But the diagnosis pointed elsewhere.
+
+**The first-shot latency is already low.** `predictShotOutcome` (`src/client/net/ColyseusClient.ts:3580`) spawns a predicted damage number synchronously in `sendFire`, so the player sees their first damage within ~22 ms (one physics tick after `keydown`). The cooldown gate at the very first fire — `tick - lastFiredAtTick >= cooldownTicks` with `lastFiredAtTick = -999` — always passes. The first shot is instant.
+
+**What's slow is the GAP between shots.** `HITSCAN_DEF.cooldownTicks = 10` meant a shot every 167 ms (6 Hz). At that cadence the health bar drops in 20-HP chunks ~6× per second; the perceptual gap dominates because 167 ms is well above the ~70 ms threshold where discrete events stop feeling like a continuous beam. The phrase "takes a long time to start hitting" is the player's gloss on "the next chunk of damage takes 167 ms after the first one."
+
+**OS keydown auto-repeat is a red herring here.** Holding a key on desktop fires `keydown` once, then auto-repeats after ~500 ms — but the `Keyboard` class (`src/client/input/Keyboard.ts:42`) sets `spaceDown = true` on the first event and the input loop polls held-state every physics tick, so auto-repeat is irrelevant. The user's "doesn't trigger for 1-2 seconds" observation about keydown applies generally to event-driven fire systems, not ours. Our system is held-state-polled and was already firing every 167 ms throughout the held window (confirmed by `tests/e2e/held-fire-continuous-damage.spec.ts` showing 18 fire events in 1.2 s on baseline).
+
+**The retune.** Drop `cooldownTicks` 10 → 2 (33 ms cadence, ~30 fires/sec), drop `damage` 20 → 4. DPS preserved at ~120 HP/sec — same balance, same TTK, smoother feel. No new wire shape, no new server state, no new prediction model — the existing per-fire hitscan + lag-comp + DamageEvent broadcast pipeline absorbs the 5× higher rate trivially (each fire is sub-ms server-side; each DamageEvent is ~150 bytes). `DamageNumbers.LIFETIME_FRAMES` also drops 60 → 25 to prevent visual stacking at the new spawn rate (steady-state concurrent ≈ 12 within the pool cap of 20). `LIVE_BEAM_PERSIST_MS` drops 220 → 80 since the inter-shot gap is now 33 ms (single-tap visuals stay snappy).
+
+**Architectural rewrite deliberately deferred.** A "true continuous beam" — server-side beam state, `beam_start` / `beam_stop` messages, server-tick damage accumulator, coalesced damage events — would be cleaner but is a multi-day refactor with new wire shapes and new prediction state. The retune ships in a single commit and may be sufficient; the rewrite is gated on the phone-smoke verdict per the smooth-beam plan's Phase 5.
+
+**Process lesson.** Re-mining the existing diagnostic stream against the hypothesis (held-fire spec showing 18 fires/s on baseline, fireHeldCount=198 of 283 input_intents) was decisive — the data was already in hand. The architectural reflex ("rewrite to true continuous beam") would have been more code, more risk, and not necessarily a better feel. Tune the cheapest knob first; escalate only if it falls short.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; capture pair (pending Phase 5 smoke); `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF; `tests/e2e/held-fire-continuous-damage.spec.ts` (the cadence lock).
+
+---
+
+## 2026-05-22 — render-jitter-chain-trigger follow-up — the 110 ms below-JS stalls were the OffscreenCanvas worker IPC; touch devices now default to main-thread `PixiRenderer`
+
+Commit: `feat(client): default touch devices to main-thread renderer (worker IPC was the 110 ms stall cause)`.
+
+The 2026-05-22 cap (commit `9e23436`) reduced overall stall frequency by 3× but did not make the game playable. The first post-cap phone smoke (`721mwk`) showed:
+- 91 % of RAFs at the expected 22 ms cap-cadence (the cap was working).
+- 38 `raf_gap > 100 ms` events over 67 s, **clustered**, with nearly every stall at exactly 110.7-110.8 ms.
+- Boot-window stalls of 642 + 745 ms at renderer init / first-frame upload.
+- **Crucially: `longtaskCount30s = 0` while `rafGapCount30s = 5-22` post-boot** — the stalls were not blocking JS, so neither GC nor any other main-thread mechanism could explain them.
+
+The "below-JS" finding falsified two hypotheses in succession:
+1. **Chain-trigger** (the cap fix) — partially right but downstream of the real cause.
+2. **V8 major GC** (the architectural rethink we almost shipped) — would have rebuilt the per-frame allocation hot path for nothing; longtasks=0 says GC is not on the critical path.
+
+The third probe (commit `604ad67` — `?worker=0` diagnostic flag) forced the main-thread `PixiRenderer` on the same device and the same network. Result (capture `iph9cv` vs `721mwk`):
+
+| Metric | worker on (`721mwk`) | `?worker=0` (`iph9cv`) | delta |
+|---|---|---|---|
+| Session length | 67 s | 105 s | — |
+| `raf_gap > 100 ms` | 38 | **3** | **19× fewer** |
+| Stall rate | 0.57 / s | 0.029 / s | -95 % |
+| Continuous zero-stall window | — | 85 s (t=10–95 s) | "playable" |
+| Boot-window worst stall | 745 ms | 133 ms | -82 % |
+
+The OffscreenCanvas / worker→main compositor-commit path was the dominant source of 110 ms tail-latency stalls on this user's phone. The render cost saved by off-loading Pixi (~1.5 ms / frame) was dwarfed by the ~110 ms IPC commit penalty *every time the compositor drained*. Boot was hurt too: the worker init + first-frame upload + texture binding crossed the boundary several times before the first painted frame.
+
+The fix is a one-liner: `App.tsx`'s renderer-path selection now defaults to the main-thread `PixiRenderer` on touch devices. `?worker=1` opts back into the worker for A/B; `?worker=0` is a non-touch override for diagnosis. Desktop is unchanged (no IPC pain there — yet; revisit if a desktop user reports similar stalls). The `humble-strolling-coral` migration's assumption that the worker is a mobile perf win was falsified by direct on-device measurement.
+
+**Process lesson — far more important than the technical fix.** The investigation took *three* hypothesis fixes before landing on the right layer:
+1. Filter-disable + dead-reckon (commits up to `a7a4f1c`) — addressed real but separate issues.
+2. Internal 60 Hz cap (`9e23436`) — addressed a real downstream symptom (`snapshot_applied` +70 % at 90 Hz native), but the root cause was elsewhere.
+3. **Diagnostic flag** (`604ad67`) — the *only* probe that produced a counterfactual capture that decisively localised the layer.
+
+The user's repeated "evidence-first, not fix-first" pushback over several sessions was the only reason we didn't ship the architectural rethink (a multi-day rebuild of the per-frame allocation hot path that would have been wasted). The smoking gun was the cross-reference of `longtaskCount30s` against `rafGapCount30s` in the *cap-engaged* smoke — a piece of evidence we already had in the diagnostic stream from prior phases but hadn't read against the hypothesis until forced to. Process: **before any architectural commit, re-mine existing captures against the current hypothesis with the freshest data, and look for counterfactual signals — not just confirming ones.** "RAF gaps without long tasks" was the falsifying signal sitting in plain view.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md` (Phase 1 cap); commits `9e23436`, `604ad67`; capture pair `diag/captures/2026-05-22T17-39-24Z-721mwk/` + `diag/captures/2026-05-22T17-56-43Z-iph9cv/`; `src/client/CLAUDE.md` under "Renderer worker boundary".
+
+---
+
+## 2026-05-22 — render-jitter-chain-trigger — 90 Hz native RAF was the spiral chain trigger; an internal 60 Hz work-loop cap removes it
+
+Commit: `fix(client): cap internal work loop to ~60 Hz to remove 90 Hz spiral trigger (plan: render-jitter-chain-trigger, Phase 1)`.
+
+After dead-reckon (`9b8d77c`), filter-disable (`a7a4f1c`), and the spiral cap (`2790b0d`) shipped on `feat/perf-floor`, the phone smoke `d3cprl` was the first session that felt smooth — but only because the phone was already in 60 Hz battery-saver mode. Every other capture on the same branch (`q4wtht`, `wivf9n`, `ecat41`, `af742v`) was a fresh 90 Hz session that ran into the spiral within 7-90 s. The chain was understood (`90 Hz → occasional >100 ms stall → thermal → 30 Hz → reconciler can't keep up → spiral`) but the trigger of the first stall was not localised.
+
+This session re-mined the 6 existing captures rather than collect a new one. The decisive numbers, same device, identical code (`a7a4f1c`):
+
+| Metric | `d3cprl` (60 Hz native) | `q4wtht` (90 Hz native) |
+|---|---|---|
+| RAFs over ~110 s | 6588 | 5203 |
+| RAFs at ≤12 ms (90 Hz period) | 0 | 4626 (88.9 %) |
+| RAFs at 13-18 ms (60 Hz period) | 6550 (99.4 %) | 0 |
+| `raf_gap` events (>100 ms) | **2** | **172** (86× more) |
+| `snapshot_applied` mean | 1.46 ms | **2.48 ms (+70 %)** |
+| `snapshot_applied` p95 | 2.2 ms | **5.6 ms (×2.5)** |
+| `renderer_update` p99 | 3.0 ms | 4.0 ms (≈) |
+
+Reading: per-render renderer cost is similar; the cost difference lives in `snapshot_applied` (reconciler replay / GC pressure) and `raf_gap`. At 90 Hz native we do 50 % more `updateMirror` + `worker.postMessage(MIRROR_UPDATE)` + reconciler `advanceLerp` + `consumeOneFrameTriggers` per second, all while physics is fixed 60 Hz and the worker render is `every-2nd-RAF`-throttled — so the extra RAFs deliver **zero** physics or render fidelity and burn the heap on Maps + JSON.stringify + Pixi sprite-update plumbing. The accumulated per-RAF allocation pressure produces the first big stall (288 ms at t=7.7 s in `q4wtht`), and the chain runs from there.
+
+**Fix:** one early-return in the `App.tsx` RAF loop. Skip work when `deltaMs < 15 ms` (just below the 16.67 ms 60 Hz period), critically **without** updating `lastFrameTime` on skip — otherwise the cap never engages. The pure decision lives in `src/client/perf/frameRateCap.ts` (mirrors the `spriteUpdateDecisions.ts` extraction pattern); the cadence table is in `tests/unit/frameRateCap.test.ts`. By refresh rate:
+
+- 60 Hz native → 60 Hz processed (unchanged).
+- 90 Hz native → ~45 Hz processed (alternating skip/process).
+- 120 Hz native → ~60 Hz processed (alternating skip/process).
+- 30 Hz post-thermal → 30 Hz processed (unchanged; we already can't keep up).
+
+The 90 Hz device ends up doing **strictly less main-thread work per second than the 60 Hz reference baseline** the user already accepted as smooth.
+
+**Counterfactual already collected before the fix landed.** `d3cprl` is the same code running at 60 Hz natively and was the smooth reference — no hypothesis here, the user already lived through the cap behaviour by virtue of phone battery-saver mode. The risk class the previous session called out ("don't ship hypothesis-fixes for phone bugs without evidence") doesn't bind because the evidence is the 86× stall delta + the user-accepted 60 Hz reference.
+
+**Why a phone smoke is still required.** The replay harness drives `tickPhysics` deterministically via `MockClock` — it cannot reproduce **thermal escalation** (the step 4 → step 5 link in the chain, which lives in the OS scheduler / GPU pipeline, not in deterministic logic). The harness verifies the cap doesn't break replay determinism or any regression lock; only a phone smoke verifies the chain trigger is removed in the wild. One cold smoke (fresh phone, `?autocapture=1`) is the minimum signal.
+
+Cross-links: plan `i-d-like-you-to-quirky-hartmanis.md`; CLAUDE.md rule under "Renderer Rules" → "Internal 60 Hz work-loop cap"; capture dirs `diag/captures/2026-05-21T21-46-15Z-d3cprl/` + `diag/captures/2026-05-21T21-35-11Z-q4wtht/`.
+
+---
+
+## 2026-05-20 — perf-floor Phase 0 — `beforeAll` does NOT run in vitest 2.1.x bench mode; module-level or inline `setup` is the only working pattern
+
+Commit: `chore(bench): restore numeric timings + baseline.json + bench:check (Phase 0, plan: perf-floor)`.
+
+The 2026-05-05 "pnpm bench reports NaN/0 for all benchmarks under vitest 2.1 + Node 24" entry was almost right but not fully diagnosed. The correction:
+
+- The NaN/0 affects bench files that use `beforeAll` / `afterAll` — **NOT all benches**. `benchmarks/spring.bench.ts` and `benchmarks/weapon-hittest.bench.ts` (which create state inline in the bench function) have worked the whole time.
+- `benchmarks/physics-tick.bench.ts`, `persistence-worker.bench.ts`, and `swarm-broadcast.bench.ts` used `beforeAll` for shared state; vitest 2.1.x's bench mode discovers their bench functions but never runs the `beforeAll`, so the closure-captured state is `undefined` and the bench either throws (caught silently by tinybench → `samples: 0`) or runs against `undefined` → meaningless.
+
+**Fix:** two patterns, both confirmed working on vitest 2.1.9 + Node 22.16:
+
+1. **Module-level setup** — declare state with `const` / `let` at module scope, populate eagerly (top-level await is OK for ESM). Cleanest for shared infrastructure that survives the whole bench file. Use this when teardown is fine via process exit.
+2. **Inline `setup` / `teardown` on each `bench()`** — `bench(name, fn, { setup, teardown })`. Each is async-friendly. Vitest 2.1.x DOES run these per-bench. Use this when state must be rebuilt per bench OR when you need a controlled teardown that runs even if the test fails.
+
+**Caveat with `setup` / `teardown` and shared infrastructure** (e.g. a persistent Worker): the teardown of bench-A runs before the setup of bench-B in the same describe, so if both benches share infrastructure that needs to survive both runs, use module-level setup instead. The `persistence-worker.bench.ts` file hit this — first attempt with per-bench setup deleted the temp DB between the two benches, causing "unable to open database file" + cascade of "FOREIGN KEY constraint failed" warnings. Module-level eager setup with no explicit teardown (process exit cleans up) was the fix.
+
+**Deliverables shipped:**
+- All 5 bench files emit real numeric timings via `pnpm bench`.
+- `benchmarks/baseline.json` (slim, ~210 lines) — committed for diff-vs-future comparison; schema `{ v:1, capturedAt, samples: [{ file, group, name, hz, mean, p99, sampleCount }] }`.
+- `benchmarks/benchBudget.ts` — pure decision core mirroring `tests/netgate/netHealthBudget.ts` (relative∧absolute AND-gate per metric, precondition failures distinct from regressions). Unit-locked by `benchmarks/benchBudget.test.ts` (15 cases).
+- `pnpm bench:check` — runs the bench, normalises vitest output, diffs against baseline, prints verdict, exits 0/1. Flags: `--update` overwrites baseline; `--print` prints current run + verdict and exits 0.
+
+**Downstream:** the perf-floor plan's Phase 5 `perfBudget.ts` follows the exact same shape; Phase 0 is the prototype.
+
 ## 2026-05-11 — Multi-mount refactor — six lessons in one session
 
 Commits: `47ff0be`..`a73a2a9` (multi-mount/turret refactor Phases 0–4c).
@@ -1475,3 +1628,39 @@ The drone-snapshot-interpolation pivot's `src/client/CLAUDE.md` text and the arc
 3. **Phase 0 (a no-code consumer/writer map) collapsed the scope before any risk was taken.** The plan's worst case was a decoder rewrite (scope #1) with asteroid/HaloRadar blast radius. Mapping every reader/writer first *proved* only two consumers re-interpolated and that `syncSwarmIntoPredWorld` was not a drone-body dual-writer — so the fix was 6 files, decoder-untouched, no loop reorder, and the plan's explicit "safe fallback" became the evidence-backed *correct* choice, not a compromise. On a delicate core, the cheapest risk reduction is an exhaustive read before the first edit.
 
 4. **"Most correct" ≠ "right".** Option A (single resolve pass + decoder cleanup + loop reorder) would have made the doc literally true with zero residual. Rejected for a ≤1-frame, smooth, *non-jittering* aim lead-lag — the universally-accepted "render the past". Perturbing the pivot's heart (a whole plan to stabilise) to remove ~16 ms of lag the user cannot perceive is negative-EV. Pick the smallest change that removes the *reported symptom*, not the one that satisfies an aesthetic of total correctness.
+
+## 2026-05-19/20 — e2e-rebuild Phase 1 — netcode-health regression gate (commits `c1a0710`..`1588de0`)
+
+The 6-commit wrap-up shipped 2026-05-19 with every deterministic gate green (typecheck 0 / lint 0 / 1031 unit / integration / boot / bench) and was unplayable on-device. The directive: rebuild the E2E framework with a *machine-insensitive netcode gate that engineers the host-sensitivity out instead of disclaiming it*, then use the gate to localise the unplayable incident on the dev box — no phone. Phase 1 delivered exactly that; the verdict it rendered (twice, outcome-only) was that the wrap-up does NOT regress netcode vs `origin/main` (HEAD equal-or-better on every gated prediction-health metric: maxDrift 11 vs 20, meanDrift 1.17 vs 1.63, corr 0.35 vs 0.5, dropped 3 vs 4). The on-device pain was the pre-existing mobile baseline + a dev-build/`?diag=1`/WiFi config wrongly handed off — a config bug, not a code regression. Six non-obvious findings made that gate trustworthy:
+
+1. **The diag-instrumentation trap (framework-wide false-confidence class).** `ClientLogger.isDiagEnabled()` returned `true` for *any* `navigator.webdriver`-controlled session — so all 50 E2E specs silently ran the heavy `?diag=1` path (`JSON.stringify(mirror)`/`mirror_clone` every frame, worker `FRAME_MARKERS` every frame, 30 000-entry ring vs prod 8 000). Perf-sensitive specs were measuring an *instrumented* build no real player ever runs. The fix is a `?diag=0` URL override that wins over the webdriver auto-enable — but a single-knob fix isn't enough: the predicate is *cached* in `_diagEnabled` AND the ring size in `_maxEntries` (separate latch), so a harness that flips `?diag` between arms needs to reset BOTH or it keeps a stale cap. Root rule (now in CLAUDE.md): per-frame diagnostic load MUST funnel through `isDiagEnabled()` so a single switch can turn it off; any new "fourth expensive site" that bypasses the gate is invisible to this whole class of tests.
+
+2. **`VITE_WS_URL` reroutes ALL Colyseus traffic, not just WebSocket — colyseus.js derives its REST endpoint from the client URL.** A WS-only latency proxy looks correct in code review and silently breaks `joinOrCreate` in production: the matchmake POST goes to a socket that doesn't speak HTTP, no room joins, zero stats, the gate reads "no snapshots" and (without a liveness precondition channel) could trivially report "healthy." Verified at `node_modules/colyseus.js/build/cjs/Client.js:211-220`. The latency proxy must be a **full HTTP+WS reverse proxy** with the byte-faithful upgrade-line rewrite mirroring `vite.config.ts:32-52`; HTTP is passed undelayed (join/auth latency is not what the gate measures), WS gets the seeded per-direction delay scheduler. Implementation gotcha: `VITE_WS_URL=ws://...` is rejected by `fetch()` for the REST derivation — `http://` is the correct scheme; the dev pipe upgrades it to `ws://` at handshake time.
+
+3. **Anti-flake is mechanism, not margin.** The classic move when a perf E2E flakes is to widen the threshold; the classic outcome is a gate that no longer catches anything. The Phase-1 gate refuses that move in *three* layered ways. (a) **Same-session interleaved A/B/A/B with median across ≥3 reps** — sequential A→B cannot cancel a one-arm GC/scheduler transient (it survives as a permanent diff); per-rep arm-order alternation balances the systematic "second-after-reset" slot across arms, and median across reps rejects single-rep outliers. The first design ran always-baseline-then-HEAD and the data immediately exposed the bias. (b) **Relative AND absolute AND-gate**: `FAIL = head > baseline·(1+margin) + eps AND head > ceiling`. Pure relative false-fails on identical code (lucky baseline); pure absolute misses sub-ceiling regressions. AND-ing them means a regression must be both worse than baseline *and* past the documented playable line — and improvements (ratio ≤ 1) can never fail. (c) **Liveness preconditions are a DISTINCT channel** — `snapshotCount < 40` or `diagEnabled === true` returns `pass: false` via `preconditionFailures`, separate from `failures[]`. "The gate did not validly run" must never read as "healthy." That false-confidence class is the entire reason this plan exists.
+
+4. **A proxy-dominated metric is a *proxy* test — demote it, don't widen the margin.** `snapshotJitterMs` baseline spanned 19.5–130.8 ms across 4 reps on IDENTICAL code (6.7× spread) because the gate's proxy deliberately injects ±30 ms delivery jitter, and the metric is dominated by the injected noise + host scheduling — not a code property. Same disqualifier the plan used at the outset to exclude `rtt*` ("proxy-dominated ⇒ measures the proxy, not the code"). Crucially this was caught by *running the gate against itself* (`main`-vs-`main` 4×) before trusting any incident verdict — the calibration data exposed the artefact metric. Code-side perturbation (a +1.5 u/tick prediction throwaway inject) reliably trips `meanDriftUnits` / `rollingCorrRate` / `maxDriftUnits` and *never* jitter, so demotion to print-only does NOT weaken regression detection (re-verified after demote). Rule: when a metric's baseline variance over identical-code reps exceeds the gating margin, fix the *metric set*, not the margin.
+
+5. **The measurement harness must be uniform across arms; only the code under test must vary.** Old refs (`origin/main`, `fix/wrap-up-known-issues`) predate the Phase-0a diag fix. Booting them naïvely as baseline arms means *they* run with diag ON while HEAD runs with diag OFF — and the gate's "regression" is then a harness mismatch, not a netcode delta. The driver overlays the working tree's `ClientLogger.ts` AND `vite.config.ts` onto every worktree before booting its dev server, so every arm measures with the same instrumentation off-switch + the same HMR config. (Two Vite dev servers also originally collided on hardcoded HMR port 24678 — symmetric asymmetric-broken-HMR would skew the comparison. The overlay disables HMR entirely on both arms, `VITE_HMR_PORT=off`: zero noise, fully symmetric.) Each ref keeps its own *netcode*; only the measurement harness is unified. Related adaptation: `pnpm build:client` is broken on `main` itself (pre-existing Vite `worker.format:'iife'` ✗ a code-split build — OffscreenCanvas-migration mid-flight), so the plan's Mech 3 ran `vite preview` of two prod builds → switched to **same-mode `vite` dev arms** (REV 3). Dev-mode overhead is common to both arms and cancels in the relative test; `?diag=0` defeats the diag trap in dev or prod. We lose *absolute* numbers (and no working prod build exists to produce them); we keep relative regression detection — which is what the gate measures anyway.
+
+6. **The verdict is outcome-only — never predict from `git diff`.** Tempting shortcut after a perf incident: "`git diff` shows `ColyseusClient.ts +29`, those commits ARE netcode-adjacent, probably a regression." Equally tempting (and the user's memory specifically calls this out as the *falsified cop-out class*): "the commits don't touch netcode, so it's probably fine." The gate exists so we never assert either. Read the pass/fail, name the offending metric + magnitude, *don't* synthesise a story from the diff. When the gate said PASS for `fix/wrap-up-known-issues` vs `origin/main`, the answer was reported as the data (maxDrift 11 vs 20, etc.) — not as "the commits look safe." This is the load-bearing rule that lets the gate replace the on-device A/B.
+
+Meta — what this phase *measured* that prior phases only *asserted*: the previous wrap-up entry in this file (and the user's standing memory) had already articulated "green deterministic gates ≠ playability" as a *lesson*. Phase 1 turns the lesson into an *instrument*. The deterministic suite (typecheck/lint/unit/integration/bench) still owns the inner loop — fast, exhaustive, logic-level. `pnpm e2e:netgate` is the live-loop gate the deterministic suite was never trying to be: it joins a real Colyseus room over an injected mobile network, reads the same `data-pred-stats` the production client writes, and compares to a checked-in baseline ref on the same box in the same session. The cost is that running it is multi-minute and worktree-creating; the payoff is a measurable "still playable vs baseline?" verdict that no isolated logic test can produce. CLAUDE.md (root) now lists this as required for any live-loop-touching change.
+
+## 2026-05-20 — e2e-rebuild Phase 2 — tier taxonomy + the framework's first concrete bug-catch (commits `95f59d4`..`937e608`)
+
+Phase 2 of the e2e-rebuild plan: a four-tier taxonomy (`@smoke` / `@feature` / `@gate` / `@diag`) shipped via Playwright `testMatch` projects, the six diagnostic-capture specs moved to a sibling `tests/diag/` directory with their own inheriting config, and `globalTimeout` + CI `timeout-minutes` both raised to 25 min. The phase ended with `pnpm e2e:smoke` runnable for the first time and the result spoke for itself: **19 of 50 smoke tests fail at HEAD** — every one of them a stale spec that nobody had been running, all clustered around the post-auth UI flow that was refactored months ago (sector-alpha 11/11, ship-selection 4/4, one spawn-select-flow variant, two combat-lifecycle, one weapon-switching, one happy-path-ui-switch). Six findings from doing the work:
+
+1. **Playwright projects via `testMatch` lists beat in-spec `@tag` annotations for tier-tagging.** Tier membership is in the config, not the spec — zero in-spec edits to ship the tagging, and re-tiering a spec is a one-file move. With `@tag`-in-title you have to grep specs to find tier membership; with `testMatch` lists you read one file. The Playwright-blessed alternative (`{ tag: '@smoke' }` annotation per test) would have required touching every `test('...')` call in 45 files — the testMatch approach is `testMatch: ['**/foo.spec.ts']` once.
+
+2. **`testDir` is a hard boundary; positional paths outside it return "No tests found."** Verified empirically before scope creep: `playwright test tests/diag/foo.spec.ts` won't pick up a spec outside `testDir: './tests/e2e'`. The canonical workaround is a sibling config file (`playwright.diag.config.ts`) that inherits via `{...baseConfig}` spread and overrides only `testDir` + `projects`. Tried changing `testDir` to `'./tests'` first — that opens a much bigger footgun (every `testMatch: ['**/foo.spec.ts']` now matches at any sub-depth, accidentally including diag specs in feature projects). The dedicated-config approach is structurally cleaner.
+
+3. **`.gitignore` patterns without a leading slash match at any depth — a slow-fuse footgun across directory tiers.** The pre-existing `diag/` rule (intended for root-level `diag/` dev-capture artefacts written by `POST /diag/capture`) silently matched the new `tests/diag/` location. Files renamed via `git mv` made it through (already tracked), but any NEW spec added to `tests/diag/` later would have been silently `git add`-ignored — a bug that would only surface weeks later when someone wonders why their new spec isn't on the branch. Fix: anchor with leading slash (`/diag/` matches only the root). Verifiable with `git check-ignore -v <path>` — pattern in column 1, file in column 2. Should be a rule for any project-level `.gitignore`: if you mean a specific root directory, anchor it.
+
+4. **`globalTimeout` was masking the suite's own ceiling.** Pre-Phase-2d, `globalTimeout: 6 * 60 * 1000` was *below* the suite's worst-case 25 min wall-clock (50 specs × 30 s per-test cap × `workers:1, fullyParallel:false`). On any slow CI runner, the GLOBAL timeout fired before any individual spec could surface — so "the suite timed out at 6 min" was the visible failure for *everything*, masking whether a specific spec deadlocked or every spec ran fast and the suite is just legitimately long. The fix: raise `globalTimeout` AND the CI workflow's `timeout-minutes` to *exceed* the worst-case suite wall-clock; otherwise individual-spec failures aren't legible. Both must be raised together — they're paired ceilings.
+
+5. **Tier-organizing dead specs surfaces them. The framework's first bug-catch isn't a regression — it's the rot it inherits.** Before Phase 2, `pnpm e2e` ran every spec in `tests/e2e/` together; if a spec broke six months ago in an unrelated UI refactor and nobody ran it, nobody knew. Tiering smoke ahead of feature gave `pnpm e2e:smoke` a *purpose* — "must pass on every PR" — that the un-tiered `pnpm e2e` never had. Running it on the freshly-tiered suite immediately found 19/50 smoke tests failing at HEAD. The cluster is informative: all 11 sector-alpha tests share `await page.getByRole('button', { name: /enter sector alpha/i }).click()` as their first action; the string "Enter Sector Alpha" exists in NO `src/` file (only in `CLAUDE.md`); the post-auth join flow was refactored to galaxy-map-spawn months ago. These specs have not been catching anything since that refactor — they failed at their first step. Same pattern for the 4 ship-selection tests and a handful of others. **Per-spec repair is queued as follow-up work; the framework's contribution is making the queue visible.**
+
+6. **The user's confidence threshold is "the framework demonstrably catches things," not "the framework is comprehensive."** The user said *"Once it starts catching bugs actively I'll be convinced it works. For now it's a confidence thing."* That framing is technically correct: a test suite that no one runs catches nothing, regardless of how many tests it contains. The 19 stale-at-HEAD failures are the framework's first concrete bug-catch — and they're caught not by added cleverness but by adding a single command (`pnpm e2e:smoke`) and a purpose ("smoke must pass") that makes someone — eventually — run it. The lesson is process, not technique: **a test suite that nobody runs is dead code.** Phase 2's tier taxonomy + the `e2e:smoke` script + a green-bar mention + a CI step are the chain that closes the gap between "we have tests" and "the tests catch things."
+
+Phase 5 deferred to follow-up sessions: per-spec repair of the 19 stale smoke failures. The triage doc (`docs/architecture/e2e-framework.md`) is annotated with the broken cluster. Each broken spec gets its own small commit (find the new UI signal, replace the old locator, re-run, lock the fix). The clustering means most fixes are mechanically similar — once one is repaired the pattern replicates.

@@ -13,7 +13,7 @@ import { z } from 'zod';
  * kept in sync BY HAND — change both together. Locked by
  * `captureSchema.test.ts` (unit) + the diagRouter integration test.
  */
-export const DIAG_CAPTURE_MAX_LOG_ENTRIES = 30000;
+export const DIAG_CAPTURE_MAX_LOG_ENTRIES = 60000;
 
 /**
  * Shape of the `POST /diag/capture` body. Extracted from `diagRouter.ts`
@@ -36,3 +36,34 @@ export const captureSchema = z.object({
 }).strict();
 
 export type CaptureBody = z.infer<typeof captureSchema>;
+
+/**
+ * Streaming-batch schema for `POST /diag/capture/stream`.
+ *
+ * Plan: streaming auto-capture, Phase 2 (2026-05-21). Each batch
+ * carries up to 5000 ring entries collected on the client since the
+ * previous successful POST. First batch (`batchSeq === 0`) carries
+ * the metadata fields (userAgent, viewport, clientEpochMs); subsequent
+ * batches may omit them.
+ *
+ * `sessionId` is a client-generated `<ISO timestamp>-<random>` string
+ * mirroring the manual-capture directory naming convention so
+ * streaming sessions sort alongside manual captures under
+ * `diag/captures/`.
+ *
+ * `batchSeq` is monotonic per session — the server rejects batches
+ * where `batchSeq <= lastAppliedSeq` with 409 (idempotent retry safe).
+ * `final: true` signals the session is ending; the server can
+ * finalize and write `summary.json` (Phase 2.1, deferred).
+ */
+export const streamingBatchSchema = z.object({
+  sessionId: z.string().min(8).max(100),
+  batchSeq: z.number().int().min(0),
+  final: z.boolean().optional(),
+  userAgent: z.string().max(500).optional(),
+  viewport: z.object({ w: z.number(), h: z.number() }).optional(),
+  clientEpochMs: z.number().optional(),
+  entries: z.array(z.record(z.unknown())).max(5_000),
+}).strict();
+
+export type StreamingBatchBody = z.infer<typeof streamingBatchSchema>;

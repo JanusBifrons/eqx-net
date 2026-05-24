@@ -1,0 +1,18 @@
+[
+  {
+    "name": "test:before-click",
+    "startTime": 39793.70000000298
+  },
+  {
+    "name": "test:click-fired",
+    "startTime": 84294
+  },
+  {
+    "name": "test:drawer-aria-open",
+    "startTime": 86405.20000000298
+  },
+  {
+    "name": "test:panel-visible",
+    "startTime": 88026.5
+  }
+]

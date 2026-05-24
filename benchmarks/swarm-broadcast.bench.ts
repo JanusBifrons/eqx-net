@@ -9,7 +9,7 @@
  * iterations so any per-call alloc would surface as a heap-growth signal
  * (vitest-bench surfaces ms; we just measure cost here, not heap delta).
  */
-import { bench, describe, beforeAll } from 'vitest';
+import { bench, describe } from 'vitest';
 import { BinarySwarmBroadcast } from '../src/server/net/BinarySwarmBroadcast.js';
 import { SwarmEntityRegistry } from '../src/server/net/SwarmEntityRegistry.js';
 import { SpatialGrid } from '../src/server/interest/SpatialGrid.js';
@@ -23,60 +23,54 @@ const ENTITY_COUNT = 500;
 const CLIENT_COUNT = 4;
 const WORLD_RADIUS = 18_000;
 
+// Module-level eager setup. vitest 2.1.x bench mode does NOT run
+// `beforeAll` reliably (samples drop to 0). Module-level init is the
+// supported pattern; the alternative `bench(..., { setup })` works for
+// async/per-bench-instance state. See benchmarks/README.md.
+const registry = new SwarmEntityRegistry();
+const encoder = new BinarySwarmBroadcast();
+const grid = new SpatialGrid();
+const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
+const f32 = new Float32Array(sab);
+const u32 = new Uint32Array(sab);
+
+// Sunflower-spiral spread mirroring SwarmSpawner.seed.
+const PHI = Math.PI * (3 - Math.sqrt(5));
+for (let i = 0; i < ENTITY_COUNT; i++) {
+  const t = (i + 0.5) / ENTITY_COUNT;
+  const r = Math.sqrt(t) * WORLD_RADIUS;
+  const angle = i * PHI;
+  const x = Math.cos(angle) * r;
+  const y = Math.sin(angle) * r;
+  const slot = i;
+  const rec = registry.register(`e-${i}`, slot, i % 5 === 0 ? 1 : 0, 24, x, y, 0);
+  const b = slotBase(slot);
+  f32[b + SLOT_X_OFF] = x;
+  f32[b + SLOT_Y_OFF] = y;
+  f32[b + SLOT_VX_OFF] = Math.cos(angle * 1.7) * 0.5;
+  f32[b + SLOT_VY_OFF] = Math.sin(angle * 1.7) * 0.5;
+  f32[b + SLOT_ANGLE_OFF] = 0;
+  grid.insert(rec.entityId, x, y);
+}
+
+// Spread clients evenly across the disc so their interest windows don't
+// overlap entirely (worst case for the encoder is non-overlapping windows
+// — each entity ships to many clients).
+const clientCells: Array<{ cx: number; cy: number }> = [];
+const scratchSets: Array<Set<number>> = [];
+for (let c = 0; c < CLIENT_COUNT; c++) {
+  const angle = (c / CLIENT_COUNT) * Math.PI * 2;
+  const r = WORLD_RADIUS * 0.5;
+  const x = Math.cos(angle) * r;
+  const y = Math.sin(angle) * r;
+  const cell = grid.cellOf(x, y);
+  clientCells.push(cell);
+  scratchSets.push(new Set<number>());
+}
+
+let serverTick = 0;
+
 describe('swarm broadcast — 500 entities × 4 clients', () => {
-  let registry: SwarmEntityRegistry;
-  let encoder: BinarySwarmBroadcast;
-  let grid: SpatialGrid;
-  let f32: Float32Array;
-  let u32: Uint32Array;
-  /** Per-client (cx, cy) cell coordinates the encoder filters against. */
-  let clientCells: Array<{ cx: number; cy: number }>;
-  /** Pre-allocated scratch sets so query9 doesn't allocate per call. */
-  let scratchSets: Array<Set<number>>;
-  let serverTick = 0;
-
-  beforeAll(() => {
-    registry = new SwarmEntityRegistry();
-    encoder = new BinarySwarmBroadcast();
-    grid = new SpatialGrid();
-    const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
-    f32 = new Float32Array(sab);
-    u32 = new Uint32Array(sab);
-
-    // Sunflower-spiral spread mirroring SwarmSpawner.seed.
-    const PHI = Math.PI * (3 - Math.sqrt(5));
-    for (let i = 0; i < ENTITY_COUNT; i++) {
-      const t = (i + 0.5) / ENTITY_COUNT;
-      const r = Math.sqrt(t) * WORLD_RADIUS;
-      const angle = i * PHI;
-      const x = Math.cos(angle) * r;
-      const y = Math.sin(angle) * r;
-      const slot = i;
-      const rec = registry.register(`e-${i}`, slot, i % 5 === 0 ? 1 : 0, 24, x, y, 0);
-      const b = slotBase(slot);
-      f32[b + SLOT_X_OFF] = x;
-      f32[b + SLOT_Y_OFF] = y;
-      f32[b + SLOT_VX_OFF] = Math.cos(angle * 1.7) * 0.5;
-      f32[b + SLOT_VY_OFF] = Math.sin(angle * 1.7) * 0.5;
-      f32[b + SLOT_ANGLE_OFF] = 0;
-      grid.insert(rec.entityId, x, y);
-    }
-
-    // Spread clients evenly across the disc so their interest windows don't
-    // overlap entirely (worst case for the encoder is non-overlapping windows
-    // — each entity ships to many clients).
-    clientCells = [];
-    scratchSets = [];
-    for (let c = 0; c < CLIENT_COUNT; c++) {
-      const angle = (c / CLIENT_COUNT) * Math.PI * 2;
-      const r = WORLD_RADIUS * 0.5;
-      const x = Math.cos(angle) * r;
-      const y = Math.sin(angle) * r;
-      const cell = grid.cellOf(x, y);
-      clientCells.push(cell);
-      scratchSets.push(new Set<number>());
-    }
-  });
 
   bench('encode for 4 clients (per server tick)', () => {
     serverTick = (serverTick + 1) >>> 0;

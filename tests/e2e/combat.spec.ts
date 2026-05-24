@@ -284,8 +284,9 @@ test('victim sees own death: hull 0, SHIP DESTROYED alert, beam inactive', async
       victim.page.waitForTimeout(2000),
     ]);
 
-    // Shooter holds space for up to 12 s — HITSCAN_DAMAGE=20, 5 hits kill.
-    // Ships spawn at random positions so we keep rotating while firing.
+    // Shooter holds space for up to 12 s — hitscan DPS = 120 HP/sec
+    // (catalogue-driven, see `src/core/combat/WeaponCatalogue.ts`). Ships
+    // spawn at random positions so we keep rotating while firing.
     let killed = false;
     const deadline = Date.now() + 12000;
     while (Date.now() < deadline) {

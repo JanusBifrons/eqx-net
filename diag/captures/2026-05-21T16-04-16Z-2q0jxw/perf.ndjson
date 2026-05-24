@@ -1,0 +1,6 @@
+{"source":"client","ts":7368.199999809265,"tag":"longtask","data":{"startTime":7310.4,"durationMs":54,"name":"self","attribution":[{"containerType":"window","containerName":"","containerSrc":""}]}}
+{"source":"client","ts":7493.599999904633,"tag":"raf_gap","data":{"elapsedMs":199.9,"inputTickBefore":4454}}
+{"source":"client","ts":7755.399999856949,"tag":"raf_gap","data":{"elapsedMs":288.9,"inputTickBefore":4458}}
+{"source":"client","ts":7988.5,"tag":"raf_gap","data":{"elapsedMs":110.9,"inputTickBefore":4466}}
+{"source":"client","ts":8026.799999952316,"tag":"raf_gap","data":{"elapsedMs":133.3,"inputTickBefore":4470}}
+{"source":"client","ts":65113.199999809265,"tag":"longtask","data":{"startTime":64803.9,"durationMs":54,"name":"self","attribution":[{"containerType":"window","containerName":"","containerSrc":""}]}}

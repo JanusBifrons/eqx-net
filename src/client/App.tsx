@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
+import { installStreamingDiag } from './debug/streamingDiag';
 import {
   Box,
   Typography,
@@ -9,6 +10,8 @@ import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import { consumeOneFrameTriggers } from './render/perFrameTriggers';
+import { shouldSkipFrame, DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -57,6 +60,12 @@ const SERVER_URL =
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
+// Streaming auto-capture mode — no-op unless `?autocapture=1`. Plan:
+// streaming auto-capture, Phase 0 stub (2026-05-21). Installs from the
+// same module-top-level site as installWindowLogger so streaming
+// captures pre-game events (auth / galaxy map / ship picker), not just
+// post-join state.
+installStreamingDiag();
 
 interface GameSurfaceProps {
   /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
@@ -225,14 +234,41 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    // OffscreenCanvas migration: when the browser supports
-    // `OffscreenCanvas.transferControlToOffscreen()` (Chrome, Firefox,
-    // Safari 17+), construct the worker-backed renderer so Pixi runs
-    // off the main thread. Otherwise fall back to the main-thread
-    // PixiRenderer — same class, same render code-path, same Camera.
-    // See ~/.claude/plans/humble-strolling-coral.md.
-    const useWorker = supportsOffscreenRenderer();
+    // Renderer path selection (2026-05-22).
+    //
+    // Non-touch (desktop) + OffscreenCanvas-capable → worker-backed
+    // renderer. Pixi runs off the main thread, freeing CDP budget for
+    // React + drawer animations. See ~/.claude/plans/humble-strolling-coral.md.
+    //
+    // Touch devices → main-thread `PixiRenderer`. On high-DPR mobile,
+    // the OffscreenCanvas commit / worker→main IPC path produces ~110 ms
+    // tail-latency stalls every time the compositor drains. The
+    // 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv`
+    // worker-off, same device same session) showed a 19× reduction in
+    // `raf_gap` events (38 → 3) and 85 s of continuous zero-stall play
+    // after switching off the worker. The render cost saved by
+    // off-loading Pixi (~1.5 ms / frame on a phone) is dwarfed by the
+    // ~110 ms IPC commit tail-latency that the worker introduces.
+    //
+    // `?worker=1` opts back into the worker (for A/B diagnosis or
+    // desktop debugging of mobile behaviour). `?worker=0` forces the
+    // main-thread path (for non-touch verification of the mobile path).
+    // Without an override, the default follows `isTouchDevice()`.
+    const workerParam = new URLSearchParams(window.location.search).get('worker');
+    const isTouch = isTouchDevice();
+    const useWorker =
+      workerParam === '1'
+        ? supportsOffscreenRenderer()
+        : workerParam === '0'
+          ? false
+          : !isTouch && supportsOffscreenRenderer();
     const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
+    logEvent('renderer_path_chosen', {
+      useWorker,
+      workerParam,
+      isTouch,
+      supportsOffscreenRenderer: supportsOffscreenRenderer(),
+    });
     rendererRef.current = renderer;
 
     const gameClient = new ColyseusGameClient();
@@ -360,14 +396,28 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       let workerUpdateCounter = 0;
       const loop = (now: number): void => {
         if (!disposed) {
-          const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
+          const isFirstFrame = lastFrameTime === 0;
+          const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
+          // Internal 60 Hz work-loop cap. On 90/120 Hz native displays
+          // we skip alternate RAFs and leave `lastFrameTime` stale so
+          // the next RAF's `deltaMs` reflects the full wall-clock gap.
+          // See `src/client/perf/frameRateCap.ts` for the rationale
+          // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
+          // `src/client/CLAUDE.md` for the load-bearing rule.
+          if (shouldSkipFrame(deltaMs, DEFAULT_MIN_FRAME_INTERVAL_MS, isFirstFrame)) {
+            animFrameRef.current = requestAnimationFrame(loop);
+            return;
+          }
           lastFrameTime = now;
           gameClient.tickPhysics(deltaMs);
           gameClient.updateMirror();
           const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
           if (shouldRender) renderer.update(gameClient.mirror);
-          // Clear one-frame triggers after the renderer has consumed them.
-          gameClient.mirror.explodingShips?.clear();
+          // Clear one-frame triggers ONLY after the renderer has actually
+          // consumed them. The clear MUST be gated on the same condition
+          // as the renderer-update — see `consumeOneFrameTriggers` for the
+          // contract and `perFrameTriggers.test.ts` for the regression lock.
+          consumeOneFrameTriggers(gameClient.mirror, shouldRender);
 
           // F-transit-instrument — bounded post-reveal frame burst.
           // `wantsFrame()` is false (single boolean read, zero cost)
@@ -558,6 +608,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
+      // Test-only HP overrides for E2E specs (server-side gated to
+      // testMode rooms). See JoinOptionsSchema in SectorRoom.ts.
+      if (urlParams.has('initialHull'))
+        extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
+      if (urlParams.has('initialShield'))
+        extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+      // Per-test room isolation. The test rooms (`test-sector`,
+      // `test-sector-fast`) use Colyseus `filterBy(['testId'])` so each
+      // unique value routes to its own room instance. Tests with
+      // multiple clients use the SAME testId so they share a room.
+      if (urlParams.has('testId'))
+        extraJoinOptions['testId'] = urlParams.get('testId')!;
       // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
       if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
       if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);

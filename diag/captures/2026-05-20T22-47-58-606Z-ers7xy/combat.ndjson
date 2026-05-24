@@ -1,0 +1,14 @@
+{"source":"client","ts":17847.300000190735,"tag":"swarm_near_enter","data":{"entityId":7,"kind":0,"swarmPos":{"x":-440,"y":-59.9},"rendered":{"x":-486.69,"y":26.39},"predWorld":{"x":-482.69,"y":26.66},"lerpOffset":{"x":-3.99,"y":-0.27},"distRendered":98.11}}
+{"source":"client","ts":18761.800000190735,"tag":"swarm_near_exit","data":{"entityId":7}}
+{"source":"client","ts":21557.10000014305,"tag":"swarm_near_enter","data":{"entityId":1,"kind":0,"swarmPos":{"x":-379.4,"y":239.6},"rendered":{"x":-478.93,"y":230.28},"predWorld":{"x":-478.94,"y":231},"lerpOffset":{"x":0.02,"y":-0.72},"distRendered":99.96}}
+{"source":"client","ts":21886,"tag":"swarm_near_exit","data":{"entityId":1}}
+{"source":"client","ts":22889.400000095367,"tag":"swarm_near_enter","data":{"entityId":10,"kind":1,"swarmPos":{"x":-482.8,"y":458.13},"rendered":{"x":-431.67,"y":380.44},"predWorld":{"x":-428.76,"y":383.54},"lerpOffset":{"x":-2.91,"y":-3.1},"distRendered":93.01}}
+{"source":"client","ts":23330.800000190735,"tag":"swarm_near_exit","data":{"entityId":10}}
+{"source":"client","ts":23641.400000095367,"tag":"swarm_near_enter","data":{"entityId":5,"kind":0,"swarmPos":{"x":-260,"y":579.41},"rendered":{"x":-330.48,"y":531.4},"predWorld":{"x":-283.66,"y":504.57},"lerpOffset":{"x":-46.82,"y":26.83},"distRendered":85.28}}
+{"source":"client","ts":24546.60000014305,"tag":"swarm_near_exit","data":{"entityId":5}}
+{"source":"client","ts":32827.60000014305,"tag":"swarm_near_enter","data":{"entityId":1,"kind":0,"swarmPos":{"x":-379.4,"y":239.6},"rendered":{"x":-377.85,"y":258.43},"predWorld":{"x":-363.42,"y":282.77},"lerpOffset":{"x":-14.43,"y":-24.34},"distRendered":18.9}}
+{"source":"client","ts":33502.700000047684,"tag":"swarm_near_exit","data":{"entityId":1}}
+{"source":"client","ts":34362.300000190735,"tag":"swarm_near_enter","data":{"entityId":1,"kind":0,"swarmPos":{"x":-379.4,"y":239.6},"rendered":{"x":-327.87,"y":322.9},"predWorld":{"x":-336.04,"y":308.1},"lerpOffset":{"x":8.17,"y":14.79},"distRendered":97.95}}
+{"source":"client","ts":35001.5,"tag":"swarm_near_exit","data":{"entityId":1}}
+{"source":"server","ts":1779317276959,"tag":"collision_resolved","data":{"aId":"asteroid-2","bId":"lwbot-12","impulse":55476.094,"tick":3664}}
+{"source":"server","ts":1779317277249,"tag":"collision_resolved","data":{"aId":"asteroid-5","bId":"lwbot-3","impulse":72846.766,"tick":3681}}

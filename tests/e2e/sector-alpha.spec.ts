@@ -3,15 +3,28 @@ import { test, expect } from '@playwright/test';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function joinSector(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto(BASE_URL);
-  await page.getByRole('button', { name: /enter sector alpha/i }).click();
-  // Wait for connection — ship count becomes > 0 once state arrives from the server.
+  // Post-auth flow (storageState pre-pops the JWT). The old "Enter Sector
+  // Alpha" button is gone — flow is now: landing → "Join the fight" CTA →
+  // galaxy-map-screen → engineering-rooms-button → engineering-room-test-sector.
+  // Pattern lifted from the working spawn-select-flow.spec.ts:19.
+  // test-sector (engineering, testMode=true, no drones) is the right room
+  // for the basic connectivity/movement/broadcast tests below.
+  await page.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
+  const cta = page.locator('text=Join the fight').first();
+  if (await cta.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await cta.click();
+  }
+  await page.locator('[data-testid="galaxy-map-screen"]').waitFor({ timeout: 15_000 });
+  await page.locator('[data-testid="engineering-rooms-button"]').click();
+  await page.locator('[data-testid="engineering-room-test-sector"]').click();
+  // Wait for the in-game HUD to mount + the local ship to broadcast.
+  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 20_000 });
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
       return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
     },
-    { timeout: 10000 },
+    { timeout: 10_000 },
   );
 }
 
@@ -46,9 +59,13 @@ async function waitForShipPos(page: import('@playwright/test').Page): Promise<vo
 // ---------------------------------------------------------------------------
 
 test.describe('connection', () => {
-  test('splash screen shows join button', async ({ page }) => {
+  test('splash screen shows the Join the fight CTA', async ({ page }) => {
+    // The old "Enter Sector Alpha" splash button was removed when the
+    // post-auth flow was refactored to galaxy-map-spawn. The new entry
+    // point is the meta-landing's "Join the fight" CTA. Storage-state
+    // pre-pops the JWT so we land on the post-auth meta-landing.
     await page.goto(BASE_URL);
-    await expect(page.getByRole('button', { name: /enter sector alpha/i })).toBeVisible();
+    await expect(page.locator('text=Join the fight').first()).toBeVisible({ timeout: 15_000 });
   });
 
   test('single client connects and receives a playerId', async ({ browser }) => {
@@ -57,7 +74,12 @@ test.describe('connection', () => {
 
     await joinSector(page);
 
-    await expect(page.locator('text=/ID: [0-9a-f]{8}/')).toBeVisible({ timeout: 5000 });
+    // playerId is exposed on the game-surface dataset (the old "ID: <hex>"
+    // HUD chip was removed when the diagnostics moved drawer-side).
+    const localId = await page
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    expect(localId, 'local player id present after join').toMatch(/^[0-9a-f-]{8,}/);
     await expect(page.locator('[data-testid="ship-count"]')).not.toHaveText('Ships: 0');
 
     const canvas = await page.locator('canvas').boundingBox();
@@ -85,8 +107,15 @@ test.describe('two-client isolation', () => {
     await joinSector(page1);
     await joinSector(page2);
 
-    const id1 = await page1.locator('text=/ID: [0-9a-f]{8}/').textContent();
-    const id2 = await page2.locator('text=/ID: [0-9a-f]{8}/').textContent();
+    // playerId is exposed on the game-surface dataset (old HUD chip is gone).
+    const id1 = await page1
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    const id2 = await page2
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    expect(id1).toBeTruthy();
+    expect(id2).toBeTruthy();
     expect(id1).not.toBe(id2); // distinct identities
 
     // Both clients must see at least 2 ships. The server is shared across test
@@ -210,9 +239,17 @@ test.describe('movement', () => {
     await page1.waitForTimeout(1000);
     await page1.keyboard.up('w');
 
-    // No crashes or disconnects.
-    await expect(page1.getByText('connected')).toBeVisible();
-    await expect(page2.getByText('connected')).toBeVisible();
+    // No crashes or disconnects. (The old "connected" indicator text moved
+    // into the drawer's Debug tab — but if either client had disconnected,
+    // the game-surface's data-local-player-id would have been cleared and
+    // the ship-stats-card unmounted, both of which we already covered via
+    // joinSector. Re-assert the playerId is still present on both.)
+    expect(
+      await page1.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id'),
+    ).toBeTruthy();
+    expect(
+      await page2.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id'),
+    ).toBeTruthy();
     expect(await shipCount(page2)).toBeGreaterThanOrEqual(2);
 
     await ctx1.close();
@@ -331,13 +368,17 @@ test.describe('identity', () => {
     const page = await ctx.newPage();
 
     await joinSector(page);
-    await expect(page.locator('text=/ID: [0-9a-f]{8}/')).toBeVisible({ timeout: 5000 });
-    const id1 = await page.locator('text=/ID: [0-9a-f]{8}/').textContent();
+    const id1 = await page
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    expect(id1).toBeTruthy();
 
     await page.reload();
     await joinSector(page);
-    await expect(page.locator('text=/ID: [0-9a-f]{8}/')).toBeVisible({ timeout: 5000 });
-    const id2 = await page.locator('text=/ID: [0-9a-f]{8}/').textContent();
+    const id2 = await page
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    expect(id2).toBeTruthy();
 
     expect(id1).toBe(id2);
 
@@ -366,9 +407,15 @@ test.describe('identity', () => {
     await joinSector(page1);
     await joinSector(page2);
 
-    const id1 = await page1.locator('text=/ID: [0-9a-f]{8}/').textContent();
-    const id2 = await page2.locator('text=/ID: [0-9a-f]{8}/').textContent();
+    const id1 = await page1
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
+    const id2 = await page2
+      .locator('[data-testid="game-surface"]')
+      .getAttribute('data-local-player-id');
 
+    expect(id1).toBeTruthy();
+    expect(id2).toBeTruthy();
     // The server must have assigned a different ID to the second joiner.
     expect(id1).not.toBe(id2);
 
@@ -414,7 +461,11 @@ test.describe('physics worker', () => {
     const dist = Math.hypot(pos.x, pos.y);
     expect(dist).toBeGreaterThan(2);
 
-    await expect(page.getByText('connected')).toBeVisible();
+    // Connection alive — the "connected" text moved into the drawer's debug
+    // tab, but localPlayerId is the structural-survival signal.
+    expect(
+      await page.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id'),
+    ).toBeTruthy();
 
     await ctx.close();
   });

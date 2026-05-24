@@ -59,7 +59,15 @@ export default defineConfig({
     // Bind to 0.0.0.0 so the dev server is reachable from phones on the LAN.
     // Look for the printed "Network:" URL in the dev console.
     host: true,
-    hmr: { port: 24678 },
+    // Default 24678 (unchanged for normal dev). The netcode-health gate
+    // runs TWO dev servers at once and never edits files mid-run, so it
+    // sets VITE_HMR_PORT=off to disable HMR entirely on BOTH arms —
+    // eliminating the 24678 collision as a symmetric, zero-noise source
+    // (an asymmetric broken-HMR arm would skew the comparison).
+    hmr:
+      process.env['VITE_HMR_PORT'] === 'off'
+        ? false
+        : { port: Number(process.env['VITE_HMR_PORT'] ?? 24678) },
     proxy: {
       '/matchmake': {
         target: 'http://localhost:2567',

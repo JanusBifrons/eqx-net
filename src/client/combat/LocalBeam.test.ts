@@ -71,7 +71,12 @@ describe('liveBeamVisible — the post-fire persistence window', () => {
   });
 
   it('stays visible across a normal hold (sampled mid-window)', () => {
-    expect(liveBeamVisible(1100, 1000, LIVE_BEAM_PERSIST_MS)).toBe(true);
+    // Sample at +half of the persistence window — confirms the beam is
+    // still drawn between the last fire tick and the next one. Pre-
+    // smooth-beam retune this was `+100ms` against a 220 ms window;
+    // post-retune the window is 80 ms, so we sample at +40 ms.
+    const midSample = Math.floor(LIVE_BEAM_PERSIST_MS / 2);
+    expect(liveBeamVisible(1000 + midSample, 1000, LIVE_BEAM_PERSIST_MS)).toBe(true);
   });
 });
 
