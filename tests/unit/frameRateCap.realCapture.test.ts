@@ -85,25 +85,27 @@ describe('frame-rate cap — user device 4qm14l (Pixel 6, Mali-G78, Chrome 148)'
     expect(cal.effectiveHz).toBeLessThan(95);
   });
 
-  it('CURRENT (cap=15): processes ~45 Hz on this device — the documented but unintended user pain', () => {
+  it('REGRESSION (cap=15, the old value): would have processed ~45 Hz on this device — the user pain that drove the 2026-05-24 cap change', () => {
     const cal = loadCalibrationFromCapture(CAPTURE_PATH);
     const r = simulateOverDuration({
       nativePeriodMs: cal.medianIntervalMs,
       durationMs: 1000,
-      minIntervalMs: DEFAULT_MIN_FRAME_INTERVAL_MS,
+      minIntervalMs: 15.0,
     });
-    // The cap binds: roughly half of native RAFs get skipped.
+    // The pre-2026-05-24 cap bound: roughly half of native RAFs got skipped.
+    // This test stays as a historical lock — if anyone proposes raising the
+    // cap back to 15 ms, this assertion shows the regression they'd ship.
     expect(r.skipped).toBeGreaterThan(0);
     expect(r.processedHz).toBeGreaterThan(40);
     expect(r.processedHz).toBeLessThan(50);
   });
 
-  it('PROPOSED (cap=10): processes ~90 Hz on this device — full native rate, the fix', () => {
+  it('CURRENT (cap=10 post-2026-05-24): processes ~90 Hz on this device — full native rate', () => {
     const cal = loadCalibrationFromCapture(CAPTURE_PATH);
     const r = simulateOverDuration({
       nativePeriodMs: cal.medianIntervalMs,
       durationMs: 1000,
-      minIntervalMs: 10.0,
+      minIntervalMs: DEFAULT_MIN_FRAME_INTERVAL_MS,
     });
     // Cap at 10 ms < 11.1 ms native period → cap never engages.
     expect(r.skipped).toBe(0);
