@@ -47,6 +47,20 @@ const BUCKETS: Record<string, string> = {
   // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
   longtask: 'perf',
   raf_gap: 'perf',
+  // Probe 4 (mobile-perf-investigation, 2026-05-24) — medium-stutter
+  // event for 30-100 ms inter-RAF gaps, below the raf_gap threshold but
+  // perceptible at 90 Hz native. Same channel as raf_gap for correlation.
+  raf_stutter: 'perf',
+  // Probe 4 — damage-number scheduling vs spawn vs cancel split.
+  // Previously the smooth-beam path logged 5 `damage_number_predicted`
+  // events at the same ts per shot, obscuring whether spawns actually
+  // emitted (and confusing the "damage applying inconsistently" investigation).
+  // Now: one schedule event per shot (with count + intervalMs), one spawn
+  // event per actual emit (with lateMs), one cancel event per misprediction.
+  // Route to combat for proximity to fire/damage events.
+  damage_number_scheduled: 'combat',
+  damage_number_spawned: 'combat',
+  damage_number_cancelled: 'combat',
   // Render-jitter-fix Phase 1c (2026-05-21) — periodic heap sample
   // between stalls. Pairs with `raf_gap`'s new heap fields so the
   // capture shows both growth trajectory AND per-stall heap value.
