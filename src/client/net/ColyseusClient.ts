@@ -1822,14 +1822,25 @@ export class ColyseusGameClient {
       if (entry.isActive === false) {
         // Route to the lingering map. We update pose every snapshot;
         // identity fields come from the schema diff and are preserved.
-        const prev = this.mirror.lingeringShips.get(shipInstanceId);
-        this.mirror.lingeringShips.set(shipInstanceId, {
-          x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-          angle: entry.angle,
-          ownerPlayerId: entry.playerId,
-          ...(prev?.kind ? { kind: prev.kind } : {}),
-          ...(prev?.displayName !== undefined ? { displayName: prev.displayName } : {}),
-        });
+        // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
+        // lingering entry in place. Same rationale as Probe 7's ship
+        // pooling: kind / displayName preserved by NOT touching them.
+        let lingerEntry = this.mirror.lingeringShips.get(shipInstanceId);
+        if (!lingerEntry) {
+          lingerEntry = {
+            x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
+            angle: entry.angle,
+            ownerPlayerId: entry.playerId,
+          };
+          this.mirror.lingeringShips.set(shipInstanceId, lingerEntry);
+        } else {
+          lingerEntry.x = entry.x;
+          lingerEntry.y = entry.y;
+          lingerEntry.vx = entry.vx;
+          lingerEntry.vy = entry.vy;
+          lingerEntry.angle = entry.angle;
+          lingerEntry.ownerPlayerId = entry.playerId;
+        }
         lingeringSeen.add(shipInstanceId);
         // Phase 6b — spawn / refresh the predWorld body so the local
         // player can collide with the parked hull (mirrors the wreck
@@ -1854,7 +1865,14 @@ export class ColyseusGameClient {
         }
       }
     }
-    snap = { ...snap, states: statesByPlayerId };
+    // Probe 8 — mutate snap.states in place rather than spreading into
+    // a new object. `snap` is the parameter from `room.onMessage` and
+    // is owned by us for the duration of this handler — Colyseus
+    // freshly-parses it per message, no aliasing concern. Saves one
+    // object allocation per snapshot (the spread also copied references
+    // to all the other snap fields — projectiles, wrecks, drones,
+    // boostingIds, etc.).
+    snap.states = statesByPlayerId;
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
@@ -2454,17 +2472,32 @@ export class ColyseusGameClient {
         // against its travel direction, producing the visible 20 Hz stutter.
         // We accept the small server/client position drift; vx/vy are still
         // refreshed authoritatively each snapshot.
+        // Probe 8 — pool the projectile entry in place. Branch on
+        // existing prev: NEW (or post-ghost-resolve) entry gets a fresh
+        // object once; SUBSEQUENT updates mutate fields (preserving the
+        // client-integrated x/y). Saves allocations during sustained
+        // projectile flight.
         const prev = this.mirror.projectiles.get(p.id);
         const isNew = !prev || prev.isGhost;
-        this.mirror.projectiles.set(p.id, {
-          x: isNew ? p.x : prev.x,
-          y: isNew ? p.y : prev.y,
-          vx: p.vx,
-          vy: p.vy,
-          ownerId: p.ownerId,
-          isGhost: false,
-          weaponId: p.weaponId,
-        } satisfies ProjectileRenderState);
+        if (isNew) {
+          this.mirror.projectiles.set(p.id, {
+            x: p.x,
+            y: p.y,
+            vx: p.vx,
+            vy: p.vy,
+            ownerId: p.ownerId,
+            isGhost: false,
+            weaponId: p.weaponId,
+          } satisfies ProjectileRenderState);
+        } else {
+          // Mutate in place; preserve x/y (client-integrated), refresh
+          // vx/vy + identity fields.
+          prev.vx = p.vx;
+          prev.vy = p.vy;
+          prev.ownerId = p.ownerId;
+          prev.isGhost = false;
+          prev.weaponId = p.weaponId;
+        }
       }
     }
     for (const [id, entry] of this.mirror.projectiles) {
@@ -2536,19 +2569,30 @@ export class ColyseusGameClient {
       for (const [shipInstanceId, w] of wreckMap.entries()) {
         const wr = w as Record<string, unknown>;
         seenWrecks.add(shipInstanceId);
-        const prev = this.mirror.wrecks.get(shipInstanceId);
-        this.mirror.wrecks.set(shipInstanceId, {
-          shipInstanceId,
-          x: prev?.x ?? 0,
-          y: prev?.y ?? 0,
-          vx: prev?.vx ?? 0,
-          vy: prev?.vy ?? 0,
-          angle: prev?.angle ?? 0,
-          angvel: prev?.angvel ?? 0,
-          kind: typeof wr['kind'] === 'string' ? (wr['kind'] as string) : 'fighter',
-          health: Number(wr['health'] ?? 0),
-          maxHealth: Number(wr['maxHealth'] ?? 100),
-        });
+        // Probe 8 — pool the wreck entry. Schema-diff path fires on
+        // wreck identity updates (kind/health/maxHealth); pose comes
+        // from syncWreckPoses. Mutating preserves pose (pose-write
+        // happens elsewhere) and avoids the per-update allocation.
+        let wreckEntry = this.mirror.wrecks.get(shipInstanceId);
+        const kindVal = typeof wr['kind'] === 'string' ? (wr['kind'] as string) : 'fighter';
+        const healthVal = Number(wr['health'] ?? 0);
+        const maxHealthVal = Number(wr['maxHealth'] ?? 100);
+        if (!wreckEntry) {
+          wreckEntry = {
+            shipInstanceId,
+            x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+            kind: kindVal,
+            health: healthVal,
+            maxHealth: maxHealthVal,
+          };
+          this.mirror.wrecks.set(shipInstanceId, wreckEntry);
+        } else {
+          wreckEntry.kind = kindVal;
+          wreckEntry.health = healthVal;
+          wreckEntry.maxHealth = maxHealthVal;
+          // x/y/vx/vy/angle/angvel are pose — owned by syncWreckPoses,
+          // do not touch here.
+        }
       }
       for (const id of this.mirror.wrecks.keys()) {
         if (!seenWrecks.has(id)) {
@@ -2600,19 +2644,22 @@ export class ColyseusGameClient {
         // arrives separately in the snapshot's `states` slice and is
         // mirrored in handleSnapshot. We only set kind / displayName /
         // ownerPlayerId here from the schema diff (low-frequency).
+        // Probe 8 — pool the entry; identity fields update, pose owned
+        // by handleSnapshot (sibling path), preserved by NOT touching.
         const kind = typeof sh['kind'] === 'string' ? (sh['kind'] as string) : undefined;
         const displayName = typeof sh['displayName'] === 'string' ? (sh['displayName'] as string) : undefined;
-        const prev = this.mirror.lingeringShips.get(shipInstanceId);
-        this.mirror.lingeringShips.set(shipInstanceId, {
-          x: prev?.x ?? 0,
-          y: prev?.y ?? 0,
-          vx: prev?.vx ?? 0,
-          vy: prev?.vy ?? 0,
-          angle: prev?.angle ?? 0,
-          ownerPlayerId: playerId,
-          ...(kind !== undefined ? { kind } : {}),
-          ...(displayName !== undefined ? { displayName } : {}),
-        });
+        let lEntry = this.mirror.lingeringShips.get(shipInstanceId);
+        if (!lEntry) {
+          lEntry = {
+            x: 0, y: 0, vx: 0, vy: 0, angle: 0,
+            ownerPlayerId: playerId,
+          };
+          this.mirror.lingeringShips.set(shipInstanceId, lEntry);
+        } else {
+          lEntry.ownerPlayerId = playerId;
+        }
+        if (kind !== undefined) lEntry.kind = kind;
+        if (displayName !== undefined) lEntry.displayName = displayName;
         // Phase 6b cleanup (2026-05-13) — spawn the predWorld body
         // here too, in case the schema diff arrived BEFORE the first
         // snapshot. Without this, the predWorld body was deferred a
