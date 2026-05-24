@@ -631,6 +631,16 @@ export class ColyseusGameClient {
   /** RAF counter for periodic heap sampling between stalls. */
   private _rafSampleCounter = 0;
 
+  /** Probe 0 — rolling stats for the binary swarm decode + predWorld sync,
+   *  the uninstrumented post-pivot dominant per-frame surface per the
+   *  hostile review of `docs/architecture/mobile-perf-investigation.md`.
+   *  Window resets every `heap_sample` emit (~10 Hz), so the surfaced
+   *  max/avg/count reflect the last ~100 ms of decode work — adjacent in
+   *  time to the heap trajectory the same event publishes. */
+  private _swarmDecodeMaxMs = 0;
+  private _swarmDecodeTotalMs = 0;
+  private _swarmDecodeCount = 0;
+
   // Snapshot timing
   private lastSnapshotAt = 0;
   // Rolling buffers for jitter and correction-rate metrics (last 10 snapshots).
@@ -1013,6 +1023,14 @@ export class ColyseusGameClient {
         }
       }
       this._swarmBinaryLastMs = swNowMs;
+      // Probe 0 (mobile-perf-investigation-review §"Confound the diagnosis
+      // did not address"): the binary swarm decode + predWorld sync is the
+      // uninstrumented post-pivot dominant per-frame surface. `applyMs`
+      // measures only JSON `handleSnapshot`; this path runs separately at
+      // ~60 Hz with the kinematic follower writing ~N drone bodies. Wrap
+      // with `performance.now()` to feed rolling max/avg into `heap_sample`
+      // and to log slow individual packets (> 5 ms) as discrete events.
+      const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
         decodeSwarmPacket(raw, this.mirror);
@@ -1021,6 +1039,16 @@ export class ColyseusGameClient {
         decodeSwarmPacket(raw, this.mirror);
       }
       this.syncSwarmIntoPredWorld();
+      const decodeMs = performance.now() - decodeStartMs;
+      this._swarmDecodeTotalMs += decodeMs;
+      this._swarmDecodeCount += 1;
+      if (decodeMs > this._swarmDecodeMaxMs) this._swarmDecodeMaxMs = decodeMs;
+      if (decodeMs > 5) {
+        logEvent('swarm_decode_slow', {
+          decodeMs: parseFloat(decodeMs.toFixed(2)),
+          swarmCount: this.mirror.swarm?.size ?? 0,
+        });
+      }
       // Phase 6 HUD readout. mirror.swarm is the live decoded set; .size is
       // O(1). At decimation-only ticks the count stays steady (no entities
       // come and go), so updating this on every packet is cheap.
@@ -2959,11 +2987,33 @@ export class ColyseusGameClient {
     // have a growth trajectory between stall events. Tiny cost: one
     // performance.memory read on Chromium.
     this._rafSampleCounter++;
-    if (this._rafSampleCounter >= 60) {
+    if (this._rafSampleCounter >= 6) {
+      // Probe 0 (mobile-perf-investigation-review): bumped 60→6 RAFs
+      // (~1Hz → ~10Hz) so the GC sawtooth between stalls is visible. The
+      // hostile review observed `heapDeltaMbSinceLastStall` sawtooths
+      // ±2-5 MB on every 110 ms stall but the 1Hz sample resolution can
+      // miss intermediate dips. 10Hz still bounded — 600 entries/min in
+      // a 5000-entry diag ring, ~8 min of session before pressure.
       this._rafSampleCounter = 0;
       const heap = readHeapUsedMb();
       if (heap !== undefined) {
-        logEvent('heap_sample', { heapUsedMb: parseFloat(heap.toFixed(2)) });
+        logEvent('heap_sample', {
+          heapUsedMb: parseFloat(heap.toFixed(2)),
+          // Probe 0: surface the rolling binary-swarm decode cost so the
+          // uninstrumented post-pivot surface the hostile review flagged
+          // becomes visible against heap trajectory.
+          swarmDecodeMaxMs: this._swarmDecodeMaxMs > 0
+            ? parseFloat(this._swarmDecodeMaxMs.toFixed(2))
+            : undefined,
+          swarmDecodeAvgMs: this._swarmDecodeCount > 0
+            ? parseFloat((this._swarmDecodeTotalMs / this._swarmDecodeCount).toFixed(2))
+            : undefined,
+          swarmDecodeCount: this._swarmDecodeCount,
+        });
+        // Reset rolling window so each heap_sample reports cost-since-last-sample.
+        this._swarmDecodeMaxMs = 0;
+        this._swarmDecodeTotalMs = 0;
+        this._swarmDecodeCount = 0;
       }
     }
     if (elapsedMs > 100) {
