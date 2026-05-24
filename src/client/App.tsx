@@ -34,6 +34,7 @@ import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
+import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
@@ -60,6 +61,13 @@ const SERVER_URL =
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
+
+// Probe 2 — device fingerprint + native rAF cadence calibration. Fires
+// before any game work starts so the measurement is uncontaminated. See
+// `debug/deviceInfo.ts` for the captured fields. Critical for the
+// mobile-perf-investigation: tells us if a 45 fps cadence is a real
+// 45 Hz panel or a Chrome software throttle on a 60/90 Hz panel.
+captureDeviceInfo();
 // Streaming auto-capture mode — no-op unless `?autocapture=1`. Plan:
 // streaming auto-capture, Phase 0 stub (2026-05-21). Installs from the
 // same module-top-level site as installWindowLogger so streaming
