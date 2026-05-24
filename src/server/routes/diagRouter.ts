@@ -51,6 +51,12 @@ const BUCKETS: Record<string, string> = {
   // between stalls. Pairs with `raf_gap`'s new heap fields so the
   // capture shows both growth trajectory AND per-stall heap value.
   heap_sample: 'perf',
+  // Probe 1 (mobile-perf-investigation, 2026-05-24) — per-RAF work
+  // breakdown (physicsMs/mirrorMs/renderMs). Lands next to raf_gap +
+  // heap_sample so a single perf.ndjson read shows where each frame's
+  // 22 ms budget went and whether the 45 Hz cap is JS-cost-driven or
+  // OS/thermal-driven. ~45 events/sec — same order as rafTick.
+  rafWork: 'perf',
   // client perf — F1 per-frame sub-cost markers for the warp-spool
   // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
   // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-

@@ -435,10 +435,33 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             return;
           }
           lastFrameTime = now;
+          // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
+          // The 2026-05-24 mg5rpe capture showed 99 % of RAFs land at
+          // exactly 22 ms = 1/45 Hz vsync, with the user reporting
+          // unplayable feel even at 0.354 % stalls. This says either
+          // (a) per-RAF cost is approaching 16.67 ms so Chrome aligns
+          // vsync to 45 Hz to give us breathing room, or (b) the 45 Hz
+          // floor is OS/thermal-imposed and unfixable from JS. The
+          // breakdown distinguishes the two: if physics+mirror+render
+          // sums to >12 ms steady-state, (a); if it sits comfortably
+          // <8 ms, (b). Logged every RAF (~45/s) into perf.ndjson via
+          // the rafWork tag — same order-of-magnitude as rafTick.
+          const physicsStart = performance.now();
           gameClient.tickPhysics(deltaMs);
+          const mirrorStart = performance.now();
           gameClient.updateMirror();
+          const renderStart = performance.now();
           const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
           if (shouldRender) renderer.update(gameClient.mirror);
+          const renderEnd = performance.now();
+          logEvent('rafWork', {
+            physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
+            mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
+            renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
+            shouldRender,
+            totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
+            deltaMs: parseFloat(deltaMs.toFixed(2)),
+          });
           // Clear one-frame triggers ONLY after the renderer has actually
           // consumed them. The clear MUST be gated on the same condition
           // as the renderer-update — see `consumeOneFrameTriggers` for the
