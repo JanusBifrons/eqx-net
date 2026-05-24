@@ -67,6 +67,11 @@ const BUCKETS: Record<string, string> = {
   // main-thread blocks with GC pauses. Rare (~0.5 % of snapshots) —
   // routes to perf alongside heap_sample / raf_gap.
   recv_gap_long: 'perf',
+  // Probe 6 (mobile-perf-investigation, 2026-05-24) — snapshot
+  // coalescing on receive. Fires once per RAF window when 1+ snapshots
+  // were discarded in favour of a newer one (full-state supersession).
+  // Tracks how often the GC-burst-collapse mechanism fires.
+  snapshot_coalesced: 'snapshots',
   // Render-jitter-fix Phase 1c (2026-05-21) — periodic heap sample
   // between stalls. Pairs with `raf_gap`'s new heap fields so the
   // capture shows both growth trajectory AND per-stall heap value.
