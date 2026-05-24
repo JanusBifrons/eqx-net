@@ -1,67 +1,55 @@
-# Probe 0 capture analysis — y2wpa5
+# Probe 0 capture analysis — mg5rpe
+
+Source: `diag/captures/2026-05-24T13-56-19Z-mg5rpe/` on `origin/feat/perf-floor` (65428c7; off ebd81a5 + 74d2847 "Probe 0").
 
 ## Session summary
 
-72 s capture on `origin/feat/perf-floor` (HEAD `e25bf27`). Player journey: meta-landing → galaxy-map (t=18s) → game phase (t=20.98s) → game ends at capture cutoff (t=80.4s). ~59 s of in-game time. Combat was sporadic, concentrated at t=71–73s (12 `swarm_near_enter/exit` toggles in 2 s — repeated AI proximity churn), 118 fire events total, 285 damage_number_predicted events, 141 corrections. Stall rate (rafTick gaps > 30 ms, game phase only): **3.39 %** (83 / 2446 ticks). **Middle regime** — worse than `o4n4pw` (0.48 %, healthy) but materially better than `su7udq` (10.59 %) / `x8hdwj` (10.00 %, unplayable).
+- 101.4 s in-game rafTicks; 196 fire + 23 warp_in + 9 swarm_near_enter/exit — active combat.
+- **Stall rate**: 16/4517 frames > 50 ms = **0.354 %**. Better than y2wpa5 (1.27 %), much better than su7udq/x8hdwj (10 %+), close to o4n4pw (0.48 %). User reported it as unplayable smoke.
+- **Big surprise (load-bearing for the verdict)**: rafTick `elapsedMs` has a hard 22.0 ms mode — **4337/4517 = 96.0 %** of frames at exactly that. Stalls fall on integer multiples (22, 33, 44, 55, 66, 77, 88, 99, 110 ms). y2wpa5 shows the same 22 ms mode (93.7 %). **The phone is running a 45 Hz vsync floor**, in both captures.
 
-## Probe 0 instrumentation: did it work?
+## Probe 0 instrumentation: did it land?
 
-**No. Probe 0 is absent from this capture.** Search across all eight NDJSON files: zero `swarm_decode_slow`, zero `profile_started`, zero `profile_ended` events. The `heap_sample` events carry only `heapUsedMb` — no `swarmDecodeMaxMs`, `swarmDecodeAvgMs`, or `swarmDecodeCount` fields. `git grep` on `feat/perf-floor` for any of those identifiers returns nothing — the Probe 0 code was never landed before the capture was taken. Cadence confirms: 40 heap_samples over 53.5 s = **~0.75 Hz** (interval ~1320–1328 ms), the legacy 1 Hz tick, not the promised 10 Hz.
+Yes.
 
-**This capture cannot discriminate H1 vs H2 directly.** It only carries the pre-existing instrumentation surface.
+- `heap_sample` with new fields present from `perf.ndjson` line 3: `{"ts":7332.7,"tag":"heap_sample","data":{"heapUsedMb":41.62,"swarmDecodeMaxMs":3.9,"swarmDecodeAvgMs":0.28,"swarmDecodeCount":26}}`. 752 samples; 723 carry the swarm fields (29 omit zero-valued fields via NDJSON sparseness).
+- `profile_started` fired at ts=5479.5 / 5484.4 (StrictMode dual-mount); `profile_ended` at ts=65480.9 / 65486.0 (`reason: "auto-stop"`). 60 s autoStop worked.
+- **`swarm_decode_slow` count: 0**. No decode crossed 5 ms across 106 s of combat.
 
-## The heap trajectory
+## Heap trajectory + swarm decode
 
-Two distinct sawtooth cycles, both ending in a major GC:
+- **heapUsedMb**: min 37.6, max 142.6, mean 80.4. Sawtooth — 4 full GCs dropping **75–98 MB at t=36.5, 54.7, 76.2, 99.2 s** (~22 s cadence). Many minor 5–7 MB drops between.
+- **swarmDecodeMaxMs**: max **3.90**, mean **0.150**, p95 0.20. 1 sample > 3 ms (the first), 6 > 1 ms total. Never crossed 5 ms.
+- **swarmDecodeAvgMs** mean 0.069, max 0.30. **swarmDecodeCount** max 52/window, mean 7.7. Probe wired; cost trivial.
 
-| Window | Heap path | Notes |
-|---|---|---|
-| t=24.9 → 41.4 s | 43.81 → 69.66 MB (+25.8 MB / 16.5 s = **1.56 MB/s**) | growth during early gameplay |
-| t=42.0 s | 41.52 MB | **major GC drop (-28 MB)** |
-| t=43.0 → 77.0 s | 41.66 → 93.13 MB (+51.5 MB / 34 s = **1.52 MB/s**) | sustained allocation through combat |
-| t=78.4 s | 47.56 MB | **major GC drop (-45.6 MB)** |
+**Stalls vs swarm decode** (200 ms window before each): none had `swarmDecodeMaxMs > 0.30`. The 110.9 / 100.9 ms gaps at t=44.8/44.9 s show swMax = 0.00 and 0.20 — flat. **H2 falsified.**
 
-**Steady allocation pressure ~1.5 MB/s** during gameplay, indistinguishable between idle and combat windows at 1 Hz resolution. The two big drops are full GCs; we cannot see intermediate incremental-marking activity at 1 Hz.
-
-## The binary swarm decode cost
-
-**Not measured.** No swarmDecode fields exist in this capture. Cannot evaluate H2 directly. Indirect proxy: `swarm_near_enter` events at t=47, t=53, t=66, t=71–73 — drones within interest radius — coincide with the second growth phase, but so does everything else.
+**Stalls vs major GC**: 4 major GCs at 36.5/54.7/76.2/99.2 s have **zero** stalls within ±500 ms. Conversely, the 5 stall clusters (7 s init, 28, 44–47, 62–67, 85 s) have **zero** major GCs within ±500 ms. Disjoint timelines. **H1 falsified for major GCs.** Minor GCs (5–7 MB) also not clustered around stalls — the 44–47 s cluster sits in steady 73 → 94 MB *growth* with no drop. The one `raf_gap` with delta data (t=67.3 s, +14.24 MB over 22 s) is 0.65 MB/s — well below GC-pressure rates.
 
 ## Stall pattern
 
-22 stalls > 100 ms. Distribution:
-
-- **108–114 ms cluster**: 16 stalls — the suspect "110 ms" signature.
-- **122–129 ms cluster**: 6 stalls.
-- **Outliers**: 173, 207, 213 ms.
-
-Timeline:
-- t=23.4 s: 1 stall (early, in galaxy-map → game transition).
-- t=36.0 s: 1 isolated stall (heap ~57 MB).
-- **t=74.7–76.8 s: 11 stalls in 2.1 s** — the combat burst window. Heap was at ~87–93 MB, near pre-GC peak.
-- **t=79.4–80.4 s: 9 stalls in 1 s** — post-GC, immediately after heap dropped from 93→47 MB.
-
-Cross-check with `raf_gap.heapDeltaMbSinceLastStall`: the 74.7 s stall reports `+48.17 MB` heap delta since the *prior* stall (51 s earlier — the t=23.4 stall). Successive stalls inside the burst show ±5 MB jitter (small allocs between stalls).
+16 stalls > 50 ms. Clusters: **7.0–7.3 s** (4, 78–99 ms; startup) / **28.6 s** (1, 77 ms) / **44.7–47.1 s** (5, 55–110 ms; mid-combat) / **62.9–67.5 s** (5, 66–110 ms; mid-combat) / **85.2 s** (1, 55 ms). Durations are multiples of 22 ms: 55, 66, 77, 88, 99, 110. **Compositor missed N vsyncs in a row.** y2wpa5 had identical modal cadence and the same multiple-of-22 stall distribution, just more often.
 
 ## Verdict
 
-**H3 is the data's best fit; H1 is a viable alternate; H2 cannot be ruled in or out from this capture.**
+**The data supports H3 (below-JS / compositor / vsync).**
 
-Evidence for H3 (below-JS / compositor):
-- Stalls cluster tightly at 108–114 ms — a suspiciously uniform duration consistent with a fixed-size pipeline event (e.g., ~7 missed vsync frames at 60 Hz = 116 ms), not GC slices which would vary with heap size and survivor population.
-- The t=79.4–80.4 s burst happens **immediately after** the major GC (93 → 47 MB at t=78). If H1 were dominant, stalls should *abate* post-GC — instead a 9-stall burst occurs in fresh-heap conditions.
-- Total longtask count is only 6 (and 4 of them fire in a 100 ms window at t=81.26 s after the capture's game-end). The PerformanceObserver longtask API is not reporting these 110 ms stalls, which is consistent with stalls living below the JS-task layer.
+Three independent lines:
 
-Evidence for H1 (GC pacing) — secondary support, not refuted:
-- 1.5 MB/s sustained allocation is real. The two full GCs land at ~70 MB and ~93 MB respectively, plausible incremental-marking budget territory.
-- The t=74.7 s 12-stall burst peaks at heap = 93 MB, the highest pre-GC reading.
+1. **45 Hz vsync floor**: 96 % of frames at exactly 22.0 ms is a hardware refresh cadence, not a JS workload signature. JS work would produce a continuous distribution. The compositor is gating frame delivery at 45 Hz; stalls are quantised to vsync misses.
+2. **Major GCs and stalls are disjoint timelines**: 4 largest GCs of the session (75–98 MB each) produced zero stalls; 5 stall clusters had no major GC. y2wpa5 flagged this tentatively; mg5rpe confirms.
+3. **Swarm decode is negligible**: 0.15 ms mean, 3.9 ms max, zero crossings of 5 ms. Probe 0 measured the feared surface; it doesn't dominate.
 
-Evidence against H2 (binary swarm decode): **none, but only because we did not measure it.** The fact that stall bursts coincide with `swarm_near_enter` activity (t=71–73) is weak — drone presence is correlated with everything player-relevant.
+**Specific fix**: none of the JS-side mitigations (pool scratch arrays, batch follower writes, reduce binary cadence) will move the floor. The 45 Hz mode is set below JS.
 
-**The 110 ms uniform cluster + persistence-through-GC + longtask invisibility together point at H3.** But the only way to definitively rule out H1/H2 is to land Probe 0 and re-capture.
-
-**Next probe (required):** actually land the Probe 0 instrumentation before the next capture. Specifically: 10 Hz heap_sample with swarmDecode{Max,Avg,Count}Ms fields, swarm_decode_slow per-packet event, and profile_started/ended toggle. Until those events appear in NDJSON, H2 is being evaluated by absence-of-evidence which is invalid.
+**Next probe needed**: the Chrome flame graph from `?profile=1` (the toggle worked — the profile blob exists). Inspect compositor + GPU thread timelines during the 44–47 s or 62–67 s clusters. Secondary: instrument `document.timeline.currentTime` vs `performance.now()` rAF stamps to confirm the 22 ms interval is the screen and not Chrome rAF coalescing.
 
 ## Confidence
 
-**Low.** The capture's instrumentation did not include Probe 0 — the entire premise of the analysis (cross-correlating swarmDecode with stalls at 10 Hz) is unmeasurable. What we can say with medium confidence: y2wpa5 is in a milder regime (3.4 % stalls) than the unplayable captures, the 110 ms cluster is real and uniform, and the post-GC burst weakens H1. What we cannot decide: whether decode cost spikes, whether incremental marking is the 110 ms slice cause, and whether the post-GC burst is below-JS or a tail of compactor work. Re-land Probe 0 and re-capture under the same scenario (similar combat density at similar heap pressure) before drawing fix-side conclusions.
+**Medium-high** on the negatives (H1 and H2 falsified); **medium** on the positive (H3).
+
+Decided cleanly: swarm decode is not the bottleneck (Probe 0 measured it directly); major GCs are not the stall mechanism (0/4 correlation).
+
+Cannot decide: whether the 22 ms cadence is a Chrome power-mode artefact, the Android panel native rate, or thermal/battery throttle (the probe doesn't see below JS by design); whether the 44–47 s and 62–67 s mid-combat clusters share cause with the vsync floor or are separate (swarmDecode windows are flat, so they aren't workload-spike-driven, but mid-combat clustering is suspicious).
+
+Next capture: `?profile=1` with the Chrome profile downloaded, inspected for compositor + GPU thread activity during a mid-combat stall cluster. If the compositor shows long commit gaps with main idle, the plan must pivot to render-pipeline scoping (texture upload cadence, layer count, OffscreenCanvas viability) instead of allocation budgets.
