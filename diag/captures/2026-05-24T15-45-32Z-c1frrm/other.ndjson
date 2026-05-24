@@ -195,3 +195,28 @@
 {"source":"client","ts":52892.59999990463,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
 {"source":"client","ts":54242.199999809265,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
 {"source":"client","ts":55245.699999809265,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["scout","fighter","fighter"]}}
+{"source":"client","ts":73437.09999990463,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":86526.29999995232,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":86527.5,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":87729.39999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":88729.19999980927,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":90807.09999990463,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":93729.59999990463,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":96814.59999990463,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":99727.39999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":102818.19999980927,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":105732.89999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":108728,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":111730.89999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":114729.89999985695,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":1458585,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458585.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458585.6999998093,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.2999999523,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.399999857,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.399999857,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.5,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.5999999046,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
+{"source":"client","ts":1458735.6999998093,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}
