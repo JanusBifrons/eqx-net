@@ -605,6 +605,16 @@ export class ColyseusGameClient {
    *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
    *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
   private readonly _swarmSyncSeenScratch = new Set<string>();
+  /** 2026-05-25 heap-growth gate step 8 — pooled `{targetId, damage}`
+   *  literal for the per-damage-event reconcileDamageToFeedback call.
+   *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
+   *  literal was a real allocator. Mutate the scratch each call. */
+  private readonly _damageReconcileScratch: { targetId: string; damage: number } = { targetId: '', damage: 0 };
+  /** 2026-05-25 heap-growth gate step 8 — cached last-pushed swarm
+   *  count so we only dispatch to Zustand when it actually changed.
+   *  Pre-fix: every 60Hz binary packet called `setSwarmCount(n)`
+   *  regardless. Zustand subscribers allocate per notification. */
+  private _lastPushedSwarmCount = -1;
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -1157,7 +1167,15 @@ export class ColyseusGameClient {
       // Phase 6 HUD readout. mirror.swarm is the live decoded set; .size is
       // O(1). At decimation-only ticks the count stays steady (no entities
       // come and go), so updating this on every packet is cheap.
-      useUIStore.getState().setSwarmCount(this.mirror.swarm?.size ?? 0);
+      // step 8: dedupe the Zustand dispatch — only call when the count
+      // actually changed. Pre-fix this fired every 60 Hz binary packet
+      // regardless of whether the value moved; Zustand subscribers
+      // allocate per notification.
+      const swarmCount = this.mirror.swarm?.size ?? 0;
+      if (swarmCount !== this._lastPushedSwarmCount) {
+        this._lastPushedSwarmCount = swarmCount;
+        useUIStore.getState().setSwarmCount(swarmCount);
+      }
     });
 
     room.onMessage('damage', (raw: unknown) => {
@@ -1171,9 +1189,12 @@ export class ColyseusGameClient {
       // Single reconcile path: if a prediction already showed this number,
       // suppress handleDamage's duplicate. handleDamage stays the SOLE
       // HP/HUD authority — only the number push is gated.
+      // step 8: pooled scratch (was per-event literal).
+      this._damageReconcileScratch.targetId = evt.targetId;
+      this._damageReconcileScratch.damage = evt.damage;
       const suppressNumber = reconcileDamageToFeedback(
         this._hitLedger,
-        { targetId: evt.targetId, damage: evt.damage },
+        this._damageReconcileScratch,
         evt.shooterId === this.mirror.localPlayerId,
         this.clock.now(),
       );
