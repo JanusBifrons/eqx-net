@@ -15,26 +15,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import type { Room as ServerRoom } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState, ShipState } from '../../../src/server/rooms/schema/SectorState.js';
+import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { getShipKind } from '../../../src/shared-types/shipKinds.js';
 
-interface RoomInternals {
-  applyDamage: (t: string, s: string, d: number, hx?: number, hy?: number) => void;
-  postToWorker: (cmd: {
-    type: 'SET_POSITION';
-    entityId: string;
-    x: number;
-    y: number;
-    angle: number;
-    vx: number;
-    vy: number;
-    angvel: number;
-  }) => void;
-}
-function getRoomById(roomId: string): ServerRoom<SectorState> {
-  return matchMaker.getLocalRoomById(roomId) as unknown as ServerRoom<SectorState>;
+function getRoomById(roomId: string): SectorRoom {
+  return matchMaker.getLocalRoomById(roomId) as unknown as SectorRoom;
 }
 const FIGHTER = getShipKind('fighter');
 
@@ -62,7 +49,7 @@ describe('SectorRoom integration — ramming damage', () => {
 
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;
-    const internal = room as unknown as RoomInternals;
+    const internal = room._internals;
 
     expect(findShip(state, p1).shield).toBe(FIGHTER.shieldMax);
     expect(findShip(state, p2).shield).toBe(FIGHTER.shieldMax);

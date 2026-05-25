@@ -37,6 +37,7 @@ import type { Room as ClientRoom } from 'colyseus.js';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getWeapon } from '../../../src/core/combat/WeaponCatalogue.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
 const HITSCAN_DAMAGE = getWeapon('hitscan').damage;
 
@@ -88,7 +89,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     // loop). Zero input ⇒ the ships stay exactly at their spawn poses.
     await harness.advance(300);
 
-    const serverTick = (harness.getServerRoom() as unknown as { serverTick: number }).serverTick;
+    const serverTick = (harness.getServerRoom() as unknown as SectorRoom)._internals.serverTick;
     const clientShotId = 'ct-phase4-hit';
     shooter.send('fire', {
       type: 'fire',
@@ -136,7 +137,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
 
     await harness.advance(300); // symmetry with the hit test (ring-recorded shooter)
 
-    const serverTick = (harness.getServerRoom() as unknown as { serverTick: number }).serverTick;
+    const serverTick = (harness.getServerRoom() as unknown as SectorRoom)._internals.serverTick;
     const clientShotId = 'ct-phase4-miss';
     // Fire into empty space (no target on the +Y ray; droneCount 0).
     shooter.send('fire', {
@@ -185,7 +186,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     // fail the FireMessage zod schema and never reach handleFire.
     await harness.advance(2500);
 
-    const serverTick = (harness.getServerRoom() as unknown as { serverTick: number }).serverTick;
+    const serverTick = (harness.getServerRoom() as unknown as SectorRoom)._internals.serverTick;
     expect(serverTick).toBeGreaterThan(120); // precondition: enough ticks elapsed
     const clientShotId = 'ct-stale-tick';
     // 100 ticks behind — far past LAG_COMP_WINDOW (12); the capture saw

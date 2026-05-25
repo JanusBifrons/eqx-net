@@ -206,7 +206,7 @@ const IDLE_MOTION_EPSILON_SQ = 0.05;
  *  units). Asteroids are unaffected. */
 const DRONE_MAX_BOUNDS = 10000;
 
-type WorkerCmd =
+export type WorkerCmd =
   | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
   | { type: 'DESPAWN';        slot: number; playerId: string }
   | { type: 'REKEY_SHIP';     oldId: string; newId: string }
@@ -239,6 +239,28 @@ interface ProjectileRecord {
   radius: number;
   maxTicks: number;
   weaponId: WeaponId;
+}
+
+/**
+ * @internal Test-only piercing surface for SectorRoom internals.
+ *
+ * Integration tests reach into private SectorRoom state to set up scenarios
+ * or assert post-conditions. Rather than each test redefining its own
+ * `interface RoomInternals` cast, the room exposes this stable shape via
+ * `room._internals`. As subsystems extract in the planned refactor
+ * (`i-d-like-you-to-hazy-pillow`), the accessor's implementation moves to
+ * the new owning subsystem — but this surface stays — so test files don't
+ * churn step by step.
+ *
+ * Not for production code. The `@internal` tag and `_internals` name are
+ * deliberate signals; do not import this from a non-test module.
+ */
+export interface SectorRoomInternals {
+  readonly serverTick: number;
+  readonly aiPlayerScratch: AiPlayerView[];
+  readonly ownerlessShips: ReadonlyMap<string, ReturnType<typeof setTimeout>>;
+  applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void;
+  postToWorker(cmd: WorkerCmd): void;
 }
 
 export class SectorRoom extends Room<SectorState> {
@@ -500,6 +522,28 @@ export class SectorRoom extends Room<SectorState> {
    *  context on the next admitted hitch. */
   private static readonly TICK_HITCH_MIN_INTERVAL_MS = 250;
   private lastTickHitchAtMs = 0;
+
+  /**
+   * @internal Test-only piercing surface. See SectorRoomInternals JSDoc.
+   *
+   * As the `hazy-pillow` refactor extracts subsystems, the implementation
+   * of each property moves under the hood (e.g. once AiSubsystem extracts,
+   * `aiPlayerScratch` will live on it); this accessor routes to the current
+   * owner so test bodies stay stable across the refactor.
+   */
+  get _internals(): SectorRoomInternals {
+    // eslint-disable-next-line @typescript-eslint/no-this-alias -- intentional:
+    // the returned object's getters need to read this room's fields lazily, and
+    // a getter inside an object literal can't reach the outer `this`.
+    const room = this;
+    return {
+      get serverTick() { return room.serverTick; },
+      get aiPlayerScratch() { return room.aiPlayerScratch; },
+      get ownerlessShips() { return room.ownerlessShips; },
+      applyDamage: (t, s, d, hx, hy) => room.applyDamage(t, s, d, hx, hy),
+      postToWorker: (cmd) => room.postToWorker(cmd),
+    };
+  }
 
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
