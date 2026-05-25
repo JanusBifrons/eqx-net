@@ -1845,7 +1845,10 @@ export class ColyseusGameClient {
     // instead of `new Set<string>()` per snapshot.
     const lingeringSeen = this._lingeringSeenScratch;
     lingeringSeen.clear();
-    for (const [shipInstanceId, entry] of Object.entries(snap.states)) {
+    // 2026-05-25 heap-growth gate step 4: `for…in` instead of
+    // `Object.entries` — saves the per-snapshot [key,value] tuple array.
+    for (const shipInstanceId in snap.states) {
+      const entry = snap.states[shipInstanceId]!;
       if (entry.isActive === false) {
         // Route to the lingering map. We update pose every snapshot;
         // identity fields come from the schema diff and are preserved.
@@ -2113,8 +2116,10 @@ export class ColyseusGameClient {
         // Phase 5c: swarm entities (asteroids, drones) are not in predWorld;
         // they live render-only in mirror.swarm and lerp between binary
         // swarm packets server-authoritatively.
-        for (const [remoteId, state] of Object.entries(snap.states)) {
+        // step 4: for…in (no tuple-array alloc).
+        for (const remoteId in snap.states) {
           if (remoteId === localId) continue;
+          const state = snap.states[remoteId]!;
           if (this.predWorld.hasShip(remoteId)) this.predWorld.setShipState(remoteId, state);
         }
       }
@@ -2148,9 +2153,11 @@ export class ColyseusGameClient {
       preResetRemotePos.clear();
       const preResetEntries = this._preResetRemotePosEntries;
       let preResetEntryIdx = 0;
-      for (const [remoteId, state] of Object.entries(snap.states)) {
+      // step 4: for…in (no tuple-array alloc).
+      for (const remoteId in snap.states) {
         if (remoteId === localId) continue;
         if (!this.predWorld?.hasShip(remoteId)) continue;
+        const state = snap.states[remoteId]!;
         const current = this.predWorld.getShipState(remoteId);
         if (current) {
           let entry = preResetEntries[preResetEntryIdx];
