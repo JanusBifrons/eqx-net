@@ -576,6 +576,11 @@ export class ColyseusGameClient {
    *  diagnostic. Entry/exit semantics avoid flooding the 500-entry
    *  ring buffer with per-frame proximity logs. */
   private _swarmNearbyIds: Set<number> = new Set();
+  /** 2026-05-25 heap-growth gate step 2 — second Set swapped with
+   *  `_swarmNearbyIds` each RAF in the swarm-near-enter/exit diagnostic.
+   *  Pre-fix allocated `new Set<number>()` per RAF. Both Sets are class
+   *  fields, allocated once; the swap reassigns references. */
+  private _swarmNearbySwapScratch: Set<number> = new Set();
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -2921,7 +2926,9 @@ export class ColyseusGameClient {
           const renderedX = state.x + ox;
           const renderedY = state.y + oy;
           const SWARM_OVERLAP_LOG_DIST = 100; // ~ ship radius + drone radius + buffer
-          const nowNear = new Set<number>();
+          // 2026-05-25 heap-growth gate step 2: two-Set swap.
+          const nowNear = this._swarmNearbySwapScratch;
+          nowNear.clear();
           for (const [entityId, entry] of this.mirror.swarm) {
             const dx = entry.x - renderedX;
             const dy = entry.y - renderedY;
@@ -2957,7 +2964,9 @@ export class ColyseusGameClient {
               logEvent('swarm_near_exit', { entityId: oldId });
             }
           }
+          const oldActive = this._swarmNearbyIds;
           this._swarmNearbyIds = nowNear;
+          this._swarmNearbySwapScratch = oldActive;
         }
       }
     }
