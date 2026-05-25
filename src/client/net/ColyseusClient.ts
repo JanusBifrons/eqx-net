@@ -622,6 +622,15 @@ export class ColyseusGameClient {
    *  dedupes most calls but the dispatch still fires. */
   private _lastPushedHullPct = -1;
   private _lastPushedShieldPct = -1;
+  /** 2026-05-25 heap-growth gate step 10 — throttle HUD dispatch to
+   *  1 Hz; bar interpolates between samples via 1s CSS transition.
+   *  Eliminates per-hit Zustand dispatch (75/sec under combat) at the
+   *  cost of up-to-1s visual latency. Trade-off the user explicitly
+   *  designed for ("doesn't jump or look/feel slow"). */
+  private _pendingHullPct = -1;
+  private _pendingShieldPct = -1;
+  private _lastHudDispatchAtMs = -1;
+  private static readonly HUD_DISPATCH_INTERVAL_MS = 1000;
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -1616,7 +1625,8 @@ export class ColyseusGameClient {
   private handleShield(evt: ShieldEventMessage): void {
     if (evt.targetId !== this.mirror.localPlayerId) return;
     const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
-    useUIStore.getState().setShieldPct(pct);
+    // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
+    this._pendingShieldPct = pct;
     if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
       this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
     }
@@ -1630,15 +1640,11 @@ export class ColyseusGameClient {
       // != 500 rendered a wrong %). newHealth is the HULL value.
       const hullPct = evt.hullMax > 0 ? Math.round((evt.newHealth / evt.hullMax) * 100) : 0;
       const shPct = evt.shieldMax > 0 ? Math.round((evt.newShield / evt.shieldMax) * 100) : 0;
-      // step 9: dedupe — only dispatch when the rounded value changed.
-      if (hullPct !== this._lastPushedHullPct) {
-        this._lastPushedHullPct = hullPct;
-        useUIStore.getState().setHullPct(hullPct);
-      }
-      if (shPct !== this._lastPushedShieldPct) {
-        this._lastPushedShieldPct = shPct;
-        useUIStore.getState().setShieldPct(shPct);
-      }
+      // step 10: just stash the latest target value; the 1Hz dispatcher
+      // in updateMirror() pushes to Zustand. Bar's 1s CSS transition
+      // animates smoothly between samples.
+      this._pendingHullPct = hullPct;
+      this._pendingShieldPct = shPct;
       // Authoritative shield break -> mirror the collider swap into the
       // local predWorld so client hit/ramming prediction matches the
       // server. The client NEVER computes the 0-cross (reacts to the
@@ -2889,6 +2895,23 @@ export class ColyseusGameClient {
    * Called once per render frame by App.tsx before renderer.update().
    */
   updateMirror(): void {
+    // step 10: 1Hz HUD dispatcher — drains pending hull/shield pct to
+    // Zustand at most once per second. Bar's CSS transition animates
+    // smoothly between samples. Per-event handlers (handleDamage,
+    // handleShield) just stash the latest pending value; this is the
+    // single dispatch site.
+    const nowHud = this.clock.now();
+    if (nowHud - this._lastHudDispatchAtMs >= ColyseusGameClient.HUD_DISPATCH_INTERVAL_MS) {
+      this._lastHudDispatchAtMs = nowHud;
+      if (this._pendingHullPct !== this._lastPushedHullPct && this._pendingHullPct >= 0) {
+        this._lastPushedHullPct = this._pendingHullPct;
+        useUIStore.getState().setHullPct(this._pendingHullPct);
+      }
+      if (this._pendingShieldPct !== this._lastPushedShieldPct && this._pendingShieldPct >= 0) {
+        this._lastPushedShieldPct = this._pendingShieldPct;
+        useUIStore.getState().setShieldPct(this._pendingShieldPct);
+      }
+    }
     // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
     // Per-frame mirror rebuild + snapshot-apply is a candidate for the
     // in-game-vs-sandbox differential (sandbox has 1 ship). Single exit
