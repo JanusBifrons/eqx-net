@@ -16,6 +16,7 @@ import { SwarmLifecycleManager } from './SwarmLifecycleManager.js';
 import { PhysicsBridge } from './PhysicsBridge.js';
 import { CombatSubsystem, type ProjectileRecord as _CombatProjectileRecord } from './CombatSubsystem.js';
 import { MountAimSubsystem } from './MountAimSubsystem.js';
+import { AiSubsystem } from './AiSubsystem.js';
 type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -320,9 +321,11 @@ export class SectorRoom extends Room<SectorState> {
   private readonly swarm = new SwarmLifecycleManager();
   private readonly swarmEncoder = new BinarySwarmBroadcast();
   private swarmSpawner!: SwarmSpawner;
-  private aiController!: AiController;
-  /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
-  private aiPlayerScratch: AiPlayerView[] = [];
+  /** AI controller + per-tick view scratch — extracted Step 10 (hazy-pillow).
+   *  Controller is wired in onCreate via `this.ai.setController(...)`;
+   *  scratch is mutated in place each tick. Access via `this.ai.controller`
+   *  and `this.ai.scratch`. */
+  private readonly ai = new AiSubsystem();
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
   /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
@@ -477,7 +480,7 @@ export class SectorRoom extends Room<SectorState> {
     const room = this;
     return {
       get serverTick() { return room.serverTick; },
-      get aiPlayerScratch() { return room.aiPlayerScratch; },
+      get aiPlayerScratch() { return room.ai.scratch; },
       get ownerlessShips() { return room.ownerlessShips; },
       applyDamage: (t, s, d, hx, hy) => room.applyDamage(t, s, d, hx, hy),
       postToWorker: (cmd) => room.postToWorker(cmd),
@@ -613,7 +616,7 @@ export class SectorRoom extends Room<SectorState> {
     // command. Asteroids and drones share the same physics body shape
     // (dynamic Rapier ball with damping=0); the AI behaviour determines
     // whether they drift passively or steer toward players.
-    this.aiController = new AiController({
+    this.ai.setController(new AiController({
       postIntent: (slot, fx, fy, torque, setAngvel) => {
         this.postToWorker({
           type: 'AI_INTENT',
@@ -621,7 +624,7 @@ export class SectorRoom extends Room<SectorState> {
           ...(setAngvel !== undefined ? { setAngvel } : {}),
         });
       },
-    });
+    }));
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
     // is set, the spawner advances through this array round-robin instead
@@ -643,7 +646,7 @@ export class SectorRoom extends Room<SectorState> {
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
-      registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
+      registerAi: (id, slot, behaviour) => this.ai.controller.register(id, slot, behaviour),
       droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.swarm.grid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
@@ -1076,7 +1079,7 @@ export class SectorRoom extends Room<SectorState> {
       // Hostility filter — same source of truth as HostileDroneBehaviour.
       // The behaviour instance lives inside `AiController`; we query it
       // via the controller's accessor.
-      const behaviour = this.aiController.getBehaviour(rec.id);
+      const behaviour = this.ai.controller.getBehaviour(rec.id);
       const isHostile = (playerId: string): boolean => {
         if (!behaviour) return false;
         // `markHostile`/`purgeHostility` mutate the same set the drone
@@ -1844,7 +1847,7 @@ export class SectorRoom extends Room<SectorState> {
     // from its damage-event handler — both sides converge on the same
     // hostility state without a wire-format bump.
     if (shooterId) {
-      this.aiController.markHostile(rec.id, shooterId, this.serverTick);
+      this.ai.controller.markHostile(rec.id, shooterId, this.serverTick);
     }
 
     if (newHealth <= 0) {
@@ -1895,7 +1898,7 @@ export class SectorRoom extends Room<SectorState> {
     this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
     this.swarm.grid.remove(rec.entityId);
     this.swarm.registry.unregister(rec.id);
-    this.aiController.unregister(rec.id);
+    this.ai.controller.unregister(rec.id);
     this.combat.swarmHealth.delete(rec.id);
     this.combat.swarmShield.delete(rec.id);
     this.combat.swarmShieldLastDmg.delete(rec.id);
@@ -2052,7 +2055,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const [pid] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(pid);
       if (!ship?.alive || !ship.isActive) continue;
-      this.aiController.markHostile(botId, pid, this.serverTick);
+      this.ai.controller.markHostile(botId, pid, this.serverTick);
       this.broadcast('bot_aggro', {
         type: 'bot_aggro',
         botEntityId: wireId,
@@ -2937,7 +2940,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 1 AI: drop this player from every drone's hostile set so that
     // when (or if) they return to the sector — or another player engages —
     // the drones aren't still gunning for someone who's no longer here.
-    this.aiController.purgeHostility(playerId);
+    this.ai.controller.purgeHostility(playerId);
 
     // Always clear session-bound state. Boost is held — drop it on
     // disconnect (no key is held during the offline window so the ship
@@ -4150,8 +4153,8 @@ export class SectorRoom extends Room<SectorState> {
     // intent is still in-flight and the encoder broadcasts a pose that
     // doesn't include this tick's impulse — observed as drone stutter.
     // View is rebuilt in-place each tick to avoid alloc.
-    if (this.aiController.size() > 0) {
-      this.aiPlayerScratch.length = 0;
+    if (this.ai.controller.size() > 0) {
+      this.ai.scratch.length = 0;
       for (const [pid] of this.slots.playerToSlot) {
         const ship = this.getActiveShip(pid);
         if (!ship?.alive) continue;
@@ -4165,12 +4168,12 @@ export class SectorRoom extends Room<SectorState> {
         if (!ship.isActive) continue;
         const pose = this.shipPoseCache.get(pid);
         if (!pose) continue;
-        this.aiPlayerScratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
+        this.ai.scratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
       }
-      this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
+      this.ai.controller.tick(this.serverTick, 1 / 60, this.ai.scratch, (id) => this.swarmEntitySnapshot(id));
       phaseTime('aiTick');
 
-      const fires = this.aiController.drainFireRequests();
+      const fires = this.ai.controller.drainFireRequests();
       for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
       phaseTime('aiFire');
     }
@@ -4198,7 +4201,7 @@ export class SectorRoom extends Room<SectorState> {
     const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
     const playerCount = this.slots.playerToSlot.size;
     const swarmCount = this.swarm.registry.size();
-    const aiSize = this.aiController.size();
+    const aiSize = this.ai.controller.size();
     const { busiestMs } = this.budget.finishMeasurement({
       serverTick: this.serverTick,
       workerTickMs,
