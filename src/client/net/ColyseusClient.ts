@@ -581,6 +581,15 @@ export class ColyseusGameClient {
    *  Pre-fix allocated `new Set<number>()` per RAF. Both Sets are class
    *  fields, allocated once; the swap reassigns references. */
   private _swarmNearbySwapScratch: Set<number> = new Set();
+  /** 2026-05-25 heap-growth gate step 3 — persistent Map scratch for
+   *  pre-reset remote-ship positions inside handleSnapshot. Pre-fix
+   *  allocated `new Map<>()` per snapshot. `.clear()` at top of use. */
+  private readonly _preResetRemotePosScratch = new Map<string, { x: number; y: number }>();
+  /** 2026-05-25 heap-growth gate step 3 — pool of `{x, y}` entries
+   *  reused inside `_preResetRemotePosScratch`. Per-snapshot peak ==
+   *  remote-ship count; grows once, never shrinks (bounded by max
+   *  concurrent remotes in the room). */
+  private readonly _preResetRemotePosEntries: { x: number; y: number }[] = [];
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -2133,12 +2142,27 @@ export class ColyseusGameClient {
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
       // Reset remote ships to serverTick state BEFORE reconcile.
-      const preResetRemotePos = new Map<string, { x: number; y: number }>();
+      // 2026-05-25 heap-growth gate step 3: persistent Map + pooled
+      // {x,y} entries. Peak == remote-ship count; grow-once + reuse.
+      const preResetRemotePos = this._preResetRemotePosScratch;
+      preResetRemotePos.clear();
+      const preResetEntries = this._preResetRemotePosEntries;
+      let preResetEntryIdx = 0;
       for (const [remoteId, state] of Object.entries(snap.states)) {
         if (remoteId === localId) continue;
         if (!this.predWorld?.hasShip(remoteId)) continue;
         const current = this.predWorld.getShipState(remoteId);
-        if (current) preResetRemotePos.set(remoteId, { x: current.x, y: current.y });
+        if (current) {
+          let entry = preResetEntries[preResetEntryIdx];
+          if (!entry) {
+            entry = { x: 0, y: 0 };
+            preResetEntries[preResetEntryIdx] = entry;
+          }
+          entry.x = current.x;
+          entry.y = current.y;
+          preResetRemotePos.set(remoteId, entry);
+          preResetEntryIdx++;
+        }
         this.predWorld.setShipState(remoteId, state);
         // Stage 3 — capture each remote's last-applied input from the
         // snapshot for forward-prediction during the upcoming replay
