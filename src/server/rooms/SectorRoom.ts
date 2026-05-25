@@ -14,6 +14,8 @@ import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import { PlayerSlotMap } from './PlayerSlotMap.js';
 import { SwarmLifecycleManager } from './SwarmLifecycleManager.js';
 import { PhysicsBridge } from './PhysicsBridge.js';
+import { CombatSubsystem, type ProjectileRecord as _CombatProjectileRecord } from './CombatSubsystem.js';
+type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -232,18 +234,10 @@ const ASTEROIDS: ReadonlyArray<AsteroidSpec> = [
   { id: 'asteroid-2', x:   80, y: -220, vx: 0,   vy: 0,    radius: 46 },
 ];
 
-interface ProjectileRecord {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  ownerId: string;
-  birthTick: number;
-  damage: number;
-  radius: number;
-  maxTicks: number;
-  weaponId: WeaponId;
-}
+// `ProjectileRecord` now lives on CombatSubsystem (extracted Step 8,
+// hazy-pillow). Aliased above as ProjectileRecordAlias for the few
+// internal references that still reference the type.
+type ProjectileRecord = ProjectileRecordAlias;
 
 /**
  * @internal Test-only piercing surface for SectorRoom internals.
@@ -466,16 +460,14 @@ export class SectorRoom extends Room<SectorState> {
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
-  private readonly lastFireClientTick = new Map<string, number>();
-  private readonly liveProjectiles = new Map<string, ProjectileRecord>();
-  private projectileCounter = 0;
-  /** Per-swarm-entity health. Drones are killable; asteroids are not present in this map. */
-  private readonly swarmHealth = new Map<string, number>();
-  /** Per-drone shield pool (mirrors swarmHealth; cleared together in
-   *  evictSwarmEntity). Server-authoritative; not on the wire in Phase 3a
-   *  (drone wire bit + collider swap = Phase 6). */
-  private readonly swarmShield = new Map<string, number>();
-  private readonly swarmShieldLastDmg = new Map<string, number>();
+  /** Combat state — fire cooldown ticks, live projectiles, per-drone
+   *  health/shield pools. Extracted Step 8 (hazy-pillow). Maps remain
+   *  public readonly on the class so existing iteration patterns at the
+   *  ~80 call sites work via `this.combat.<field>`. Method bodies
+   *  (handleFire, applyDamage, advanceProjectiles, etc.) remain inline
+   *  in SectorRoom until their cross-subsystem deps (SnapshotRing,
+   *  PlayerMountAngles, ShieldHull, schema) consolidate further. */
+  private readonly combat = new CombatSubsystem();
 
   /** Per-tick performance telemetry — owns phase-time accumulation, hitch
    *  detection, rolling 3-tick history, and the 60-sample `tick_budget`
@@ -695,9 +687,9 @@ export class SectorRoom extends Room<SectorState> {
       // doesn't carry a kind (very old codepaths or test stubs).
       for (const rec of this.swarm.registry.all()) {
         if (rec.kind === 1) {
-          this.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
-          this.swarmShield.set(rec.id, getDroneShieldMax(rec.shipKind));
-          this.swarmShieldLastDmg.set(rec.id, this.serverTick);
+          this.combat.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
+          this.combat.swarmShield.set(rec.id, getDroneShieldMax(rec.shipKind));
+          this.combat.swarmShieldLastDmg.set(rec.id, this.serverTick);
         }
       }
       logger.info({ requested, spawned: bulk }, 'Phase 5e bulk seed');
@@ -717,9 +709,9 @@ export class SectorRoom extends Room<SectorState> {
         // Read the kind back from the registry record after spawn — the
         // spawner picks it randomly and stamps it onto the record.
         const rec = this.swarm.registry.get(id);
-        this.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
-        this.swarmShield.set(id, getDroneShieldMax(rec?.shipKind));
-        this.swarmShieldLastDmg.set(id, this.serverTick);
+        this.combat.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
+        this.combat.swarmShield.set(id, getDroneShieldMax(rec?.shipKind));
+        this.combat.swarmShieldLastDmg.set(id, this.serverTick);
       }
     }
 
@@ -1173,13 +1165,13 @@ export class SectorRoom extends Room<SectorState> {
 
     // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
     // RTT jitter between consecutive messages doesn't cause false rejections.
-    const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
+    const lastFireCt = this.combat.lastFireClientTick.get(shooterId) ?? -999;
     if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
       return;
     }
-    this.lastFireClientTick.set(shooterId, tick);
+    this.combat.lastFireClientTick.set(shooterId, tick);
 
     // Slim-fire payload (network-discipline P5): the client sends only
     // `dirAngle`. The ray origin is reconstructed from the shooter's
@@ -1499,9 +1491,9 @@ export class SectorRoom extends Room<SectorState> {
    * preview the duplication is contained to this single method.
    */
   private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number): void {
-    const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
+    const lastFireCt = this.combat.lastFireClientTick.get(shooterId) ?? -999;
     if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) return;
-    this.lastFireClientTick.set(shooterId, tick);
+    this.combat.lastFireClientTick.set(shooterId, tick);
 
     const len = Math.hypot(dirX, dirY);
     if (len < 0.001) return;
@@ -1579,8 +1571,8 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
-    const projId = `proj-${this.projectileCounter++}`;
-    this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick, damage, radius, maxTicks, weaponId });
+    const projId = `proj-${this.combat.projectileCounter++}`;
+    this.combat.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick, damage, radius, maxTicks, weaponId });
     // Wire-discipline P3: projectiles no longer ride MapSchema. Per-recipient
     // interest-filtered list is folded into the snapshot in the broadcast loop.
   }
@@ -1630,18 +1622,18 @@ export class SectorRoom extends Room<SectorState> {
     rec: { id: string; entityId: number; shipKind?: string; shieldDown?: boolean },
     damage: number,
   ): { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null {
-    const hull0 = this.swarmHealth.get(rec.id);
+    const hull0 = this.combat.swarmHealth.get(rec.id);
     if (hull0 === undefined) return null;
     const shieldMax = getDroneShieldMax(rec.shipKind);
     const state: ShieldHullState = {
-      shield: this.swarmShield.get(rec.id) ?? shieldMax,
+      shield: this.combat.swarmShield.get(rec.id) ?? shieldMax,
       hull: hull0,
-      lastDamageTick: this.swarmShieldLastDmg.get(rec.id) ?? this.serverTick,
+      lastDamageTick: this.combat.swarmShieldLastDmg.get(rec.id) ?? this.serverTick,
     };
     const r = applyLayeredDamage(state, damage, this.serverTick);
-    this.swarmShield.set(rec.id, state.shield);
-    this.swarmShieldLastDmg.set(rec.id, state.lastDamageTick);
-    this.swarmHealth.set(rec.id, state.hull);
+    this.combat.swarmShield.set(rec.id, state.shield);
+    this.combat.swarmShieldLastDmg.set(rec.id, state.lastDamageTick);
+    this.combat.swarmHealth.set(rec.id, state.hull);
     if (r.brokeThisHit) {
       this.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: `swarm-${rec.entityId}` });
       serverLogEvent('shield_broken', { entityId: `swarm-${rec.entityId}`, tick: this.serverTick });
@@ -1692,18 +1684,18 @@ export class SectorRoom extends Room<SectorState> {
         this.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: kind.shieldMax, shieldMax: kind.shieldMax, phase: 'regen_complete', tick: t } satisfies ShieldEventMessage);
       }
     }
-    for (const [id, shieldVal] of this.swarmShield) {
+    for (const [id, shieldVal] of this.combat.swarmShield) {
       const rec = this.swarm.registry.get(id);
       if (!rec) continue;
       const sMax = getDroneShieldMax(rec.shipKind);
       if (shieldVal >= sMax) continue;
-      const hull = this.swarmHealth.get(id);
+      const hull = this.combat.swarmHealth.get(id);
       if (hull === undefined || hull <= 0) continue;
       const dkind = getShipKind(rec.shipKind);
-      if (t - (this.swarmShieldLastDmg.get(id) ?? t) < dkind.shieldRegenDelayTicks) continue;
-      const state: ShieldHullState = { shield: shieldVal, hull, lastDamageTick: this.swarmShieldLastDmg.get(id) ?? t };
+      if (t - (this.combat.swarmShieldLastDmg.get(id) ?? t) < dkind.shieldRegenDelayTicks) continue;
+      const state: ShieldHullState = { shield: shieldVal, hull, lastDamageTick: this.combat.swarmShieldLastDmg.get(id) ?? t };
       const r = regenStep(state, dkind, t);
-      if (r.regenerated) this.swarmShield.set(id, state.shield);
+      if (r.regenerated) this.combat.swarmShield.set(id, state.shield);
       if (r.restoredThisStep) {
         serverLogEvent('shield_restored', { entityId: `swarm-${rec.entityId}`, tick: t });
         rec.shieldDown = false;
@@ -1836,7 +1828,7 @@ export class SectorRoom extends Room<SectorState> {
     if (!rec) return;
     const sf = this.damageSwarmLayered(rec, damage);
     if (sf === null) return; // immune (asteroid - no swarmHealth entry)
-    const newHealth = this.swarmHealth.get(targetId) ?? 0;
+    const newHealth = this.combat.swarmHealth.get(targetId) ?? 0;
 
     // Broadcast damage event keyed by the wire id (`swarm-${entityId}`) so the
     // client can flash the right sprite. Damage event reuses the player shape
@@ -1916,9 +1908,9 @@ export class SectorRoom extends Room<SectorState> {
     this.swarm.grid.remove(rec.entityId);
     this.swarm.registry.unregister(rec.id);
     this.aiController.unregister(rec.id);
-    this.swarmHealth.delete(rec.id);
-    this.swarmShield.delete(rec.id);
-    this.swarmShieldLastDmg.delete(rec.id);
+    this.combat.swarmHealth.delete(rec.id);
+    this.combat.swarmShield.delete(rec.id);
+    this.combat.swarmShieldLastDmg.delete(rec.id);
     this.snapshotRing.unregisterEntity(rec.id);
     // Phase 4c — clean up drone turret state alongside the body.
     this.droneMountAngles.delete(rec.id);
@@ -1993,7 +1985,7 @@ export class SectorRoom extends Room<SectorState> {
     });
     if (!ok) return false;
     const maxHp = getDroneMaxHealth(spec.kind) ?? 40;
-    this.swarmHealth.set(spec.botId, spec.health ?? maxHp);
+    this.combat.swarmHealth.set(spec.botId, spec.health ?? maxHp);
     // Stream snapshots regardless of motion so a freshly-arrived client
     // reconciles the new body (mirrors the player-join grace; see the
     // warp/transit join-broadcast-grace lesson in src/server/CLAUDE.md).
@@ -2029,7 +2021,7 @@ export class SectorRoom extends Room<SectorState> {
     const b = slotBase(rec.slot);
     const carry: BotCarry = {
       kind: (rec.shipKind as ShipKindId | undefined) ?? DEFAULT_SHIP_KIND,
-      health: this.swarmHealth.get(botId) ?? getDroneMaxHealth(rec.shipKind) ?? 40,
+      health: this.combat.swarmHealth.get(botId) ?? getDroneMaxHealth(rec.shipKind) ?? 40,
       vx: this.sabF32[b + SLOT_VX_OFF]!,
       vy: this.sabF32[b + SLOT_VY_OFF]!,
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
@@ -2137,7 +2129,7 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     // Clear fire cooldown so first shot after respawn isn't rejected.
-    this.lastFireClientTick.delete(playerId);
+    this.combat.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
 
@@ -2181,7 +2173,7 @@ export class SectorRoom extends Room<SectorState> {
 
   private advanceProjectiles(): void {
     const DT = 1 / 60;
-    for (const [projId, proj] of this.liveProjectiles) {
+    for (const [projId, proj] of this.combat.liveProjectiles) {
       // Swept collision: test the segment from the current position to the
       // would-be next position, not just the next-position point. At 1600 u/s
       // a bolt advances ~26 units per tick, well over typical target radii;
@@ -2264,7 +2256,7 @@ export class SectorRoom extends Room<SectorState> {
 
       if (bestTargetId !== null) {
         this.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
-        this.liveProjectiles.delete(projId);
+        this.combat.liveProjectiles.delete(projId);
         continue;
       }
 
@@ -2272,7 +2264,7 @@ export class SectorRoom extends Room<SectorState> {
       proj.x += stepX;
       proj.y += stepY;
       if (this.serverTick - proj.birthTick >= proj.maxTicks) {
-        this.liveProjectiles.delete(projId);
+        this.combat.liveProjectiles.delete(projId);
       }
     }
   }
@@ -2881,7 +2873,7 @@ export class SectorRoom extends Room<SectorState> {
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
 
     if (resumedLastFireTick !== null && shouldHonourResumedCooldown(resumedLastFireTick, currentServerTick)) {
-      this.lastFireClientTick.set(playerId, resumedLastFireTick);
+      this.combat.lastFireClientTick.set(playerId, resumedLastFireTick);
     }
     const welcome: WelcomeMessage = {
       type: 'welcome',
@@ -3009,7 +3001,7 @@ export class SectorRoom extends Room<SectorState> {
         angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
         angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
         health: ship!.health,
-        lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
+        lastFireClientTick: this.combat.lastFireClientTick.get(playerId) ?? 0,
         userId: this.playerToUser.get(playerId) ?? null,
         sectorKey: this.sectorKey!,
         kind: ship!.kind,
@@ -3065,7 +3057,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Despawn path — engineering room, dead ship, or transit-in-flight
     // (the destination's onJoin will restore from the transit Limbo entry).
-    this.lastFireClientTick.delete(playerId);
+    this.combat.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
     this.slots.initialSpawnPositions.delete(playerId);
@@ -3149,7 +3141,7 @@ export class SectorRoom extends Room<SectorState> {
         angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
         angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
         health: Math.max(1, ship.health),
-        lastFireClientTick: isLingeringHull ? 0 : (this.lastFireClientTick.get(playerId) ?? 0),
+        lastFireClientTick: isLingeringHull ? 0 : (this.combat.lastFireClientTick.get(playerId) ?? 0),
       };
     }
 
@@ -3167,7 +3159,7 @@ export class SectorRoom extends Room<SectorState> {
       }
     } else {
       // Active-hull eviction — full player-scope teardown.
-      this.lastFireClientTick.delete(playerId);
+      this.combat.lastFireClientTick.delete(playerId);
       this.playerMountAngles.delete(playerId);
       this.playerSlotTargets.delete(playerId);
       this.slots.initialSpawnPositions.delete(playerId);
@@ -3376,7 +3368,7 @@ export class SectorRoom extends Room<SectorState> {
     //    freeSlots — the wreck still owns it.
     this.slots.playerToSlot.delete(playerId);
     this.slots.slotToPlayer.delete(slot);
-    this.lastFireClientTick.delete(playerId);
+    this.combat.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
     this.slots.initialSpawnPositions.delete(playerId);
@@ -3492,7 +3484,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       playerToSlot: this.slots.playerToSlot,
       playerToUser: this.playerToUser,
-      lastFireClientTick: this.lastFireClientTick,
+      lastFireClientTick: this.combat.lastFireClientTick,
       getShipHealth: (playerId: string): number => {
         const ship = this.getActiveShip(playerId);
         return ship?.health ?? SHIP_MAX_HEALTH;
@@ -3526,7 +3518,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const rec of this.swarm.registry.all()) {
       // Asteroids aren't tracked in swarmHealth; default them to 0 (unused on
       // restore because asteroids aren't kill-tracked).
-      const health = this.swarmHealth.get(rec.id) ?? 0;
+      const health = this.combat.swarmHealth.get(rec.id) ?? 0;
       const b = slotBase(rec.slot);
       swarm.push({
         entityId: rec.id,
@@ -3587,7 +3579,7 @@ export class SectorRoom extends Room<SectorState> {
       // Drones only — asteroids aren't health-tracked.
       if (e.kind !== 1) continue;
       if (this.swarm.registry.has(e.entityId)) {
-        this.swarmHealth.set(e.entityId, e.health);
+        this.combat.swarmHealth.set(e.entityId, e.health);
         restored += 1;
       }
     }
@@ -3836,7 +3828,7 @@ export class SectorRoom extends Room<SectorState> {
     // Stage 5 — sector idle tracking. Updated every tick from motion +
     // projectile-in-flight signals; when no activity in IDLE_THRESHOLD_TICKS
     // (= 1 s at 60 Hz), the snapshot broadcast block short-circuits.
-    if (this.liveProjectiles.size > 0) {
+    if (this.combat.liveProjectiles.size > 0) {
       noteSectorEvent(this.idleTracker, this.serverTick);
     } else {
       for (const [, pose] of this.shipPoseCache) {
@@ -4047,8 +4039,8 @@ export class SectorRoom extends Room<SectorState> {
 
         // Per-recipient projectiles in the 3×3 cell window.
         let projectiles: SnapshotMessage['projectiles'];
-        if (this.liveProjectiles.size > 0) {
-          for (const [projId, proj] of this.liveProjectiles) {
+        if (this.combat.liveProjectiles.size > 0) {
+          for (const [projId, proj] of this.combat.liveProjectiles) {
             if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
             if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
             if (!projectiles) projectiles = [];
@@ -4225,7 +4217,7 @@ export class SectorRoom extends Room<SectorState> {
       playerCount,
       swarmCount,
       aiSize,
-      liveProjectileCount: this.liveProjectiles.size,
+      liveProjectileCount: this.combat.liveProjectiles.size,
     });
 
     // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.
