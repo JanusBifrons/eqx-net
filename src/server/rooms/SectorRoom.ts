@@ -12,6 +12,7 @@ import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import { PlayerSlotMap } from './PlayerSlotMap.js';
+import { SwarmLifecycleManager } from './SwarmLifecycleManager.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -315,12 +316,13 @@ export class SectorRoom extends Room<SectorState> {
   // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
   // pose, sleeping flag) is owned by the swarm registry and shipped via the
   // binary swarm channel — never on MapSchema.
-  private readonly swarmRegistry = new SwarmEntityRegistry();
+  //
+  // The registry / interest grid / per-recipient interest scratch live on
+  // `this.swarm` (SwarmLifecycleManager; extracted Step 5, hazy-pillow).
+  // Access them via `this.swarm.registry`, `this.swarm.grid`,
+  // `this.swarm.interestScratch`.
+  private readonly swarm = new SwarmLifecycleManager();
   private readonly swarmEncoder = new BinarySwarmBroadcast();
-  /** Phase 5d: per-client interest grid. 2048-unit cells, 3×3 query window. */
-  private readonly interestGrid = new SpatialGrid();
-  /** Reused per-tick scratch sets so query9 doesn't allocate per call. */
-  private readonly interestScratch = new Map<string, Set<number>>();
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -504,7 +506,7 @@ export class SectorRoom extends Room<SectorState> {
     this.budget = new TickBudgetTelemetry(serverLogEvent);
     this.simClock = new SimulationClock(this.bus);
     this.shedder = new LoadShedder({
-      registry: this.swarmRegistry,
+      registry: this.swarm.registry,
       getPlayers: () => this.alivePlayerPositions(),
       getPosition: (rec) => {
         const b = slotBase(rec.slot);
@@ -651,7 +653,7 @@ export class SectorRoom extends Room<SectorState> {
           return k;
         }
       : undefined;
-    this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
+    this.swarmSpawner = new SwarmSpawner(this.swarm.registry, {
       takeSlot: () => this.slots.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices }),
@@ -659,7 +661,7 @@ export class SectorRoom extends Room<SectorState> {
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
       droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
-      interestGrid: this.interestGrid,
+      interestGrid: this.swarm.grid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
       ...(pickDroneKind ? { pickDroneKind } : {}),
     });
@@ -687,7 +689,7 @@ export class SectorRoom extends Room<SectorState> {
       // — Heavy drones eat more hits than Scout drones, mirroring the player
       // matrix. Falls back to 40 for back-compat when the registry record
       // doesn't carry a kind (very old codepaths or test stubs).
-      for (const rec of this.swarmRegistry.all()) {
+      for (const rec of this.swarm.registry.all()) {
         if (rec.kind === 1) {
           this.swarmHealth.set(rec.id, getDroneMaxHealth(rec.shipKind) ?? 40);
           this.swarmShield.set(rec.id, getDroneShieldMax(rec.shipKind));
@@ -710,7 +712,7 @@ export class SectorRoom extends Room<SectorState> {
         if (!ok) { logger.warn({ requested: droneCount, spawned: i }, 'drone wave truncated (slot pool full)'); break; }
         // Read the kind back from the registry record after spawn — the
         // spawner picks it randomly and stamps it onto the record.
-        const rec = this.swarmRegistry.get(id);
+        const rec = this.swarm.registry.get(id);
         this.swarmHealth.set(id, getDroneMaxHealth(rec?.shipKind) ?? 40);
         this.swarmShield.set(id, getDroneShieldMax(rec?.shipKind));
         this.swarmShieldLastDmg.set(id, this.serverTick);
@@ -967,7 +969,7 @@ export class SectorRoom extends Room<SectorState> {
     // every player's pickTarget call.
     const targets = this.mountTargetsScratch;
     targets.length = 0;
-    for (const rec of this.swarmRegistry.all()) {
+    for (const rec of this.swarm.registry.all()) {
       if (rec.kind !== 1) continue;
       const b = slotBase(rec.slot);
       targets.push({
@@ -1044,7 +1046,7 @@ export class SectorRoom extends Room<SectorState> {
    * hostile players slews its mounts back toward 0 (forward).
    */
   private tickDroneMounts(): void {
-    if (this.swarmRegistry.size() === 0) return;
+    if (this.swarm.registry.size() === 0) return;
     const dtSec = 1 / 60;
 
     // Build the player candidate list once per tick (shared across all
@@ -1059,7 +1061,7 @@ export class SectorRoom extends Room<SectorState> {
       targets.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
     }
 
-    for (const rec of this.swarmRegistry.all()) {
+    for (const rec of this.swarm.registry.all()) {
       if (rec.kind !== 1) continue; // asteroids: no turrets
       const kindId = rec.shipKind ?? DEFAULT_SHIP_KIND;
       const kind = getShipKind(kindId);
@@ -1366,7 +1368,7 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
 
-      for (const rec of this.swarmRegistry.all()) {
+      for (const rec of this.swarm.registry.all()) {
         const rewound = this.snapshotRing.getPoseAt(rec.id, effTick);
         const b = slotBase(rec.slot);
         const cx = rewound?.x ?? this.sabF32[b + SLOT_X_OFF]!;
@@ -1405,7 +1407,7 @@ export class SectorRoom extends Room<SectorState> {
       // the 'swarm-${entityId}' wire convention).
       let wireTargetId: string | undefined = mountHitId ?? undefined;
       if (mountHitId && mountHitIsObstacle) {
-        const rec = this.swarmRegistry.get(mountHitId);
+        const rec = this.swarm.registry.get(mountHitId);
         if (rec) wireTargetId = `swarm-${rec.entityId}`;
       }
 
@@ -1468,7 +1470,7 @@ export class SectorRoom extends Room<SectorState> {
    * Used by AiController to feed live poses to behaviours each tick.
    */
   private swarmEntitySnapshot(id: string): AiEntity | null {
-    const rec = this.swarmRegistry.get(id);
+    const rec = this.swarm.registry.get(id);
     if (!rec) return null;
     const b = slotBase(rec.slot);
     return {
@@ -1508,7 +1510,7 @@ export class SectorRoom extends Room<SectorState> {
     // once and produces identical behaviour to the pre-refactor path.
     const self = this.swarmEntitySnapshot(shooterId);
     if (!self) return;
-    const shooterRec = this.swarmRegistry.get(shooterId);
+    const shooterRec = this.swarm.registry.get(shooterId);
     const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
     const droneKind = getShipKind(droneKindId);
     const slotMounts = this.resolveSlotMounts(droneKind);
@@ -1687,7 +1689,7 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
     for (const [id, shieldVal] of this.swarmShield) {
-      const rec = this.swarmRegistry.get(id);
+      const rec = this.swarm.registry.get(id);
       if (!rec) continue;
       const sMax = getDroneShieldMax(rec.shipKind);
       if (shieldVal >= sMax) continue;
@@ -1826,7 +1828,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Swarm target. Asteroids (kind=0) have no `swarmHealth` entry and are
     // immune; drones (kind=1) take damage and despawn at zero health.
-    const rec = this.swarmRegistry.get(targetId);
+    const rec = this.swarm.registry.get(targetId);
     if (!rec) return;
     const sf = this.damageSwarmLayered(rec, damage);
     if (sf === null) return; // immune (asteroid - no swarmHealth entry)
@@ -1907,8 +1909,8 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
-    this.interestGrid.remove(rec.entityId);
-    this.swarmRegistry.unregister(rec.id);
+    this.swarm.grid.remove(rec.entityId);
+    this.swarm.registry.unregister(rec.id);
     this.aiController.unregister(rec.id);
     this.swarmHealth.delete(rec.id);
     this.swarmShield.delete(rec.id);
@@ -2018,7 +2020,7 @@ export class SectorRoom extends Room<SectorState> {
    * like a kill). Returns null if the bot isn't registered here.
    */
   despawnLivingWorldBot(botId: string): BotCarry | null {
-    const rec = this.swarmRegistry.get(botId);
+    const rec = this.swarm.registry.get(botId);
     if (!rec) return null;
     const b = slotBase(rec.slot);
     const carry: BotCarry = {
@@ -2060,7 +2062,7 @@ export class SectorRoom extends Room<SectorState> {
    * bot isn't registered here or no players are present.
    */
   markBotHostile(botId: string): void {
-    const rec = this.swarmRegistry.get(botId);
+    const rec = this.swarm.registry.get(botId);
     if (!rec) return;
     const wireId = `swarm-${rec.entityId}`;
     for (const [pid] of this.slots.playerToSlot) {
@@ -2206,7 +2208,7 @@ export class SectorRoom extends Room<SectorState> {
         }
       }
 
-      for (const rec of this.swarmRegistry.all()) {
+      for (const rec of this.swarm.registry.all()) {
         const b = slotBase(rec.slot);
         const cx = this.sabF32[b + SLOT_X_OFF]!;
         const cy = this.sabF32[b + SLOT_Y_OFF]!;
@@ -2404,7 +2406,7 @@ export class SectorRoom extends Room<SectorState> {
             errName: errAny?.name,
             errCode: errAny?.code,
             playerCount: this.slots.playerToSlot.size,
-            swarmCount: this.swarmRegistry.size(),
+            swarmCount: this.swarm.registry.size(),
           },
           'physics worker error',
         );
@@ -2414,7 +2416,7 @@ export class SectorRoom extends Room<SectorState> {
       this.physicsWorker.on('exit', (code) => {
         if (code !== 0) {
           logger.error(
-            { code, playerCount: this.slots.playerToSlot.size, swarmCount: this.swarmRegistry.size() },
+            { code, playerCount: this.slots.playerToSlot.size, swarmCount: this.swarm.registry.size() },
             'physics worker exited unexpectedly',
           );
           if (!ready) reject(new Error(`physics worker exited with code ${code}`));
@@ -2957,7 +2959,7 @@ export class SectorRoom extends Room<SectorState> {
     // shouldn't keep boosting).
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
-    this.interestScratch.delete(client.sessionId);
+    this.swarm.interestScratch.delete(client.sessionId);
     this.sabAppliedTicks.delete(playerId);
     this.boostingPlayers.delete(playerId);
     this.thrustingPlayers.delete(playerId);
@@ -3516,7 +3518,7 @@ export class SectorRoom extends Room<SectorState> {
   private persistSectorSnapshot(): void {
     if (this.sectorKey === null) return;
     const swarm: SectorSnapshotPayload['swarm'] = [];
-    for (const rec of this.swarmRegistry.all()) {
+    for (const rec of this.swarm.registry.all()) {
       // Asteroids aren't tracked in swarmHealth; default them to 0 (unused on
       // restore because asteroids aren't kill-tracked).
       const health = this.swarmHealth.get(rec.id) ?? 0;
@@ -3579,7 +3581,7 @@ export class SectorRoom extends Room<SectorState> {
     for (const e of payload.swarm) {
       // Drones only — asteroids aren't health-tracked.
       if (e.kind !== 1) continue;
-      if (this.swarmRegistry.has(e.entityId)) {
+      if (this.swarm.registry.has(e.entityId)) {
         this.swarmHealth.set(e.entityId, e.health);
         restored += 1;
       }
@@ -3599,7 +3601,7 @@ export class SectorRoom extends Room<SectorState> {
     if (
       this.sectorKey === null
       && this.slots.playerToSlot.size === 0
-      && this.swarmRegistry.size() === 0
+      && this.swarm.registry.size() === 0
     ) return;
 
     // Phase 6 synthetic load: busy-wait `tickBurnMs` so the budget tracker
@@ -3722,11 +3724,11 @@ export class SectorRoom extends Room<SectorState> {
     // normal play; this is a "should never fire" guard against runaway
     // pursuits and the long-session drift bug (real diag: drones at
     // (4 133 782, -1 093 669) on 2026-05-10). Asteroids unaffected.
-    for (const rec of this.swarmRegistry.all()) {
+    for (const rec of this.swarm.registry.all()) {
       const b = slotBase(rec.slot);
       const sx = this.sabF32[b + SLOT_X_OFF]!;
       const sy = this.sabF32[b + SLOT_Y_OFF]!;
-      this.interestGrid.move(rec.entityId, sx, sy);
+      this.swarm.grid.move(rec.entityId, sx, sy);
       if (rec.kind === 1 && (Math.abs(sx) > DRONE_MAX_BOUNDS || Math.abs(sy) > DRONE_MAX_BOUNDS)) {
         const clampedX = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sx));
         const clampedY = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sy));
@@ -3756,7 +3758,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!pose) continue;
       this.snapshotRing.recordEntity(id, pose.x, pose.y, pose.vx, pose.vy, pose.angle, pose.angvel ?? 0);
     }
-    for (const rec of this.swarmRegistry.all()) {
+    for (const rec of this.swarm.registry.all()) {
       const b = slotBase(rec.slot);
       this.snapshotRing.recordEntity(
         rec.id,
@@ -3810,16 +3812,16 @@ export class SectorRoom extends Room<SectorState> {
           const b = slotBase(slot);
           const sx = this.sabF32[b + SLOT_X_OFF]!;
           const sy = this.sabF32[b + SLOT_Y_OFF]!;
-          const { cx, cy } = this.interestGrid.cellOf(sx, sy);
-          let scratch = this.interestScratch.get(client.sessionId);
+          const { cx, cy } = this.swarm.grid.cellOf(sx, sy);
+          let scratch = this.swarm.interestScratch.get(client.sessionId);
           if (!scratch) {
             scratch = new Set<number>();
-            this.interestScratch.set(client.sessionId, scratch);
+            this.swarm.interestScratch.set(client.sessionId, scratch);
           }
-          this.interestGrid.query9(cx, cy, scratch);
+          this.swarm.grid.query9(cx, cy, scratch);
           inInterest = scratch;
         }
-        const swarmPacket = this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick, inInterest);
+        const swarmPacket = this.swarmEncoder.encode(this.swarm.registry, this.sabF32, this.sabU32, this.serverTick, inInterest);
         if (swarmPacket) client.send('swarm', swarmPacket);
       }
     }
@@ -4070,10 +4072,10 @@ export class SectorRoom extends Room<SectorState> {
         // skipped — they have no turret/shield. The binary channel still
         // carries every in-interest drone's pose at full cadence.
         let drones: SnapshotMessage['drones'];
-        const interest = this.interestScratch.get(client.sessionId);
+        const interest = this.swarm.interestScratch.get(client.sessionId);
         if (interest && interest.size > 0) {
           for (const eid of interest) {
-            const rec = this.swarmRegistry.getByEntityId(eid);
+            const rec = this.swarm.registry.getByEntityId(eid);
             if (!rec || rec.kind !== 1) continue;
             // Phase 4c — per-drone mount angles for in-interest drones
             // whose ship-kind has rotating mounts. Only emitted when at
@@ -4210,7 +4212,7 @@ export class SectorRoom extends Room<SectorState> {
     // history live in TickBudgetTelemetry (extracted Step 3, hazy-pillow).
     const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
     const playerCount = this.slots.playerToSlot.size;
-    const swarmCount = this.swarmRegistry.size();
+    const swarmCount = this.swarm.registry.size();
     const aiSize = this.aiController.size();
     const { busiestMs } = this.budget.finishMeasurement({
       serverTick: this.serverTick,
