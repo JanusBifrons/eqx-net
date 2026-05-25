@@ -14,6 +14,36 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-25 — hazy-pillow — SectorRoom decomposition: storage-relocation pattern + `_internals` accessor
+
+Commits: `_internals + test rewrites (Step 1)` → `PlayerSessionManager (Step 14)` on branch `claude/colyseus-refactor-plan-XEAuw`.
+
+The `hazy-pillow` plan aimed to decompose `src/server/rooms/SectorRoom.ts` (4365 LOC, ~100 fields, ~30 helpers, 9-phase `update()`) into ~14 subsystems. After a hostile-review pass that found ~10 plan defects (the most damning: a "multi-subscriber bus fan-out" claim that didn't exist in the code), the plan was rewritten and execution proceeded.
+
+What worked:
+- **Step 1 (`_internals` accessor + test rewrites) is the load-bearing first step.** Before any subsystem extraction, ship a stable `room._internals` getter that returns subsystem references / bound methods. Then rewrite every integration test that pierces private state to route through it. After that, every subsequent extraction either updates an `_internals` getter line OR doesn't touch it — test bodies stay stable across the refactor. We had 4 piercing tests (`droneTargetActiveOnly`, `ramming`, `hitAckContract`, `lingering`) and routing them through `_internals` made the next 10 commits boringly mechanical.
+- **Storage-relocation pattern.** For each subsystem extraction commit: (1) create a `<Subsystem>.ts` file with the 3-7 storage fields as `public readonly` maps + getter/setter pairs for any non-Map fields; (2) replace the SectorRoom field declarations with `private readonly <name> = new <Subsystem>()`; (3) global `replace_all` on `this.<field>` → `this.<name>.<field>`. Each commit is small (one new file + ~50 line diff in SectorRoom), inner-loop green, and inherits the previous extraction's `_internals` updates.
+- **Identity preservation.** Subsystems expose Map/Set fields as `public readonly` because external code (`TransitOrchestrator`, `SwarmSpawner`, `LoadShedder`) caches references at construction time. Returning a fresh wrapper from a getter would break those caches. The encapsulation cost (subsystems expose internals via `public readonly`) is the right tradeoff at this scope.
+
+What didn't:
+- **The plan's R1 promised method-body extractions per step.** Reality: most subsystem method bodies span 3-8 collaborators (`convertShipToWreck` touches 8; `tickPlayerMounts` touches 4; the per-client snapshot loop touches 6). Extracting them requires every collaborator to have a stable interface, which means method-body extractions are a DIFFERENT, later refactor pass after storage ownership is in place. Steps 8-14 ship STATE ownership; the methods stay on SectorRoom for now. Documenting this honestly in each commit message and in `docs/architecture/sector-room-anatomy.md` "Deferred work" section.
+- **The `update()` collapse (Step 17) cannot land until method bodies extract.** A 700-line `update()` body cannot become a 55-line subsystem-tick sequence when every phase body still calls into inline SectorRoom helpers. Deferred explicitly.
+- **PhysicsBridge was the hardest single step.** Its ideal scope (SAB buffers + drainSab + worker onmessage dispatcher + spawnWorker) is too tangled with collaborators to extract in one commit. Step 6 shipped a minimal seam: worker handle + `post(cmd)` + `sabAppliedTicks`. The rest stays inline until the worker-onmessage handler can be replaced with a registered dispatcher (which depends on Combat extracting its damage path).
+- **Lint's `@typescript-eslint/no-this-alias` rule trips the `_internals` getter pattern.** Inside `get _internals()` you need `const room = this;` because object-literal getters don't see the outer `this`. Inline `eslint-disable-next-line` with a justification comment is the right fix; the rule is correct in general but wrong here.
+
+Hostile-review payoff:
+- The original plan claimed "ENTITY_WOKE has 2 bus subscribers" — grep showed 1 bus subscriber total (`SHIP_DESTROYED`). The plan was inventing a coupling. Revised plan documents the real shape: one inline worker dispatcher, no fan-out.
+- Claimed `update()` "byte-for-byte phase order preserved" was false: actual `phaseTime` keys are 9, R1's target had 13 with new keys that would break `tick_budget` log consumers. Fixed in R2.
+- `onJoin` was "4 branches" — actual is 5 + 1 fall-through. The engineering-room synthetic-UUID branch was missing.
+- Integration test count was 18 — actual is 19.
+- 5 tests pierce private fields (R1 named none); `_internals` accessor in Step 1 made all of them safe.
+
+Output: 10 new files under `src/server/rooms/` + 2 new test files; SectorRoom 4365 → 4236 LOC; 14 commits; inner loop (typecheck + lint + 58 integration tests + boot smoke) green at each commit. Full PR not yet opened — the user controls that.
+
+See: [`docs/architecture/sector-room-anatomy.md`](architecture/sector-room-anatomy.md) for the post-refactor map.
+
+---
+
 ## 2026-05-22 — smooth-beam — server-side retune REGRESSED touch-device lag; reverted, smoothing moved client-side via visual splitting
 
 Commits: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted)*; `feat(client): smooth-beam via predicted-damage splitting (server cadence unchanged)`.

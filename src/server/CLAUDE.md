@@ -100,6 +100,37 @@ Update this section when a threshold is set.
 
 ---
 
+## SectorRoom subsystems (hazy-pillow Step 14 — 2026-05-25)
+
+`src/server/rooms/SectorRoom.ts` (~4236 LOC) is decomposed into 10
+state-owning subsystems. State lives on subsystems; method bodies
+stay on SectorRoom for now (they span multiple subsystems each).
+Full anatomy + deferred work in
+[`docs/architecture/sector-room-anatomy.md`](../../docs/architecture/sector-room-anatomy.md).
+
+| Field cluster | Subsystem | File |
+|---|---|---|
+| slot allocation (7 maps) | `this.slots` | [`PlayerSlotMap.ts`](rooms/PlayerSlotMap.ts) |
+| swarm registry + interest grid | `this.swarm` | [`SwarmLifecycleManager.ts`](rooms/SwarmLifecycleManager.ts) |
+| worker IPC | `this.physics` | [`PhysicsBridge.ts`](rooms/PhysicsBridge.ts) |
+| fire / projectiles / drone HP-shield | `this.combat` | [`CombatSubsystem.ts`](rooms/CombatSubsystem.ts) |
+| per-mount aiming | `this.mounts` | [`MountAimSubsystem.ts`](rooms/MountAimSubsystem.ts) |
+| AI controller + view scratch | `this.ai` | [`AiSubsystem.ts`](rooms/AiSubsystem.ts) |
+| snapshot cadence + TiDi clock + idle | `this.snapshot` | [`SnapshotBroadcaster.ts`](rooms/SnapshotBroadcaster.ts) |
+| wreck conversion + ownerless evict | `this.wrecks` | [`WreckLifecycleCoordinator.ts`](rooms/WreckLifecycleCoordinator.ts) |
+| session / identity / input counter | `this.players` | [`PlayerSessionManager.ts`](rooms/PlayerSessionManager.ts) |
+| per-tick timing + hitch detection | `this.budget` | [`TickBudgetTelemetry.ts`](rooms/TickBudgetTelemetry.ts) |
+
+`SectorRoom._internals` (Step 1) is the test-only piercing surface —
+integration tests reach into private state through it rather than
+declaring local cast interfaces. The 5 piercing integration tests
+(`droneTargetActiveOnly`, `ramming`, `hitAckContract`, `lingering`,
+`rosterFullWreck`) route through `_internals`; each subsystem
+extraction updates the `_internals` getters without touching test
+bodies.
+
+---
+
 ## Threading
 
 - Phase 2 evicts Rapier to a `worker_threads` worker; the main Colyseus thread reads SAB directly.
