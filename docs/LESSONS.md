@@ -1693,3 +1693,37 @@ Six findings worth recording — none are bugs in the merged code, all are about
 6. **Pre-existing failing tests are NOT necessarily broken work.** `tests/scenarios/spiral-ondevice-replay.test.ts` fails 2 cases at HEAD (capture `vg9hon` ticksAhead, capture `ers7xy` ticksAhead). The first instinct on a fresh session is "I broke something." Five minutes of `git log --oneline -5 -- <path>` revealed: the test was added by commit `33d9ba7` as a `FAILING` regression lock; a fix attempt landed (`6e4d9c2`) and was REVERTED (`c3f3d8b`). The yellow state IS the current intentional state of main. Always check `git log` on a failing test before suspecting your own change — and read the test's own commit message; on this project's discipline it usually says "FAILING" if it's intentional.
 
 Deferred to a follow-up multi-day session (per the plan): commits 2 (AppBootstrap shell), 5 (World.ts → 6 files), 7 (HaloRadar → 4 files), 8 (WorkerRendererClient → 4 files), 10–14 (PixiRenderer → 15 files), 15–19 (ColyseusClient → 15 files + WreckLifecycleCoordinator), 20–23 (SectorRoom → 17 files), 24 (App.tsx slim down), 25–27 (perf-baseline / CI / docs). The plan file at `docs/plans/refactor-god-files.md` is the source of truth for what each remaining commit does, the field-ownership decisions, the regression locks, and the test-harness-philosophy rules — anyone (including a future session) picks up exactly where this stopped.
+
+### Session continuation — pushed through the hard 80% with minimum-viable pure-helper extractions
+
+After the easy-20% data file splits, the rest of the session kept going on the orchestrator classes — but with the same "extract pure helpers first, leave the class internals for the dedicated commit" discipline. The pattern: every god file has SOME pure module-level helpers that touch no class state; pulling them into a sibling file shrinks the god file without restructuring its internals, and gives the eventual full extraction a clean dependency target.
+
+Full ledger at session end (16 commits, **-2202 LOC out of god files** total):
+
+| File | Before | After | Δ | What landed |
+|---|---|---|---|---|
+| `shipKinds.ts` | 738 | 145 | **-593** | Family-split: types / fighters / heavyClass / catalogueOrder |
+| `messages.ts` | 525 | 62 | **-463** | Family-split: clientMessages / snapshotMessages / combatMessages / transitMessages / livingWorldMessages / rosterMessages |
+| `PixiRenderer.ts` | 2272 | 1934 | **-338** | pixi/warpHelpers (3 pure functions + WarpBurstEvent) + pixi/spriteBuilders (13 Pixi `Graphics` builders + colour tokens) |
+| `store.ts` | 540 | 283 | **-257** | storeTypes.ts (UIStore interface + 5 type aliases + DevData + RosterEntry) |
+| `diagRouter.ts` | 765 | 519 | **-246** | diag/devHandlers.ts (6 dev introspection endpoints) |
+| `HaloRadar.ts` | 625 | 417 | **-208** | halo/projection + halo/wedgeGrouping + halo/arrowGraphics |
+| `ColyseusClient.ts` | 4237 | 4138 | **-99** | predictionTuning (8 constants + remoteOffsetHalfLifeForDrift) + predictionStats (27-field PredictionStats interface) |
+| `WorkerRendererClient.ts` | 556 | 505 | **-51** | eventSerialisation.ts (serialisePointerEvent / serialiseWheelEvent DPR-scaled) |
+| `SectorRoom.ts` | 4348 | 4321 | **-27** | droneKindHelpers (getDroneMaxHealth / getDroneShieldMax) + mountGeometry (resolveSlotMounts / mountWorldOrigin) |
+| `World.ts` | 553 | 533 | **-20** | colliderConfig (configureShipCollider / shipBallColliderDesc) |
+| `App.tsx` | 1263 | 1263 | 0 | Untouched — module-level is dominated by component definitions; no easy pure-helper wins |
+
+Total god-file LOC: 16322 → 14120 (-2202 / -13.5%). Total new files: 22. Inner loop stayed green every commit (typecheck pass, lint 0 errors, 1300 tests pass, same 2 pre-existing spiral-ondevice-replay failures throughout). Public APIs preserved — zero call-site changes across the ~110 import sites the god files have.
+
+Five more findings from doing the second pass:
+
+7. **`PredictionStats` interface as a type-only file is a high-leverage extraction.** It's the 27-field public surface for `data-pred-stats` consumed by E2E specs + the netgate. Lifting the interface to its own type-only file with `export type { PredictionStats } from '...'` re-export in ColyseusClient lets the future `ColyseusClientDiagnostics` collaborator import it without circular-dependency hazards, and the ~60 LOC of jsdoc + property declarations are immediately greppable. Same pattern works for any "public contract" surface buried inside a god file — `RenderMirror`, `RendererFeedback`, etc. would similarly extract cleanly.
+
+8. **Pure tuning constants are cheap to extract and pay back during reviews.** ColyseusClient's 8 `NOISE_THRESHOLD` / `RTT_SAMPLE_CLAMP_MS` / `STAGE_3_MAX_LOOKAHEAD_TICKS` constants were threaded through the class — each had a multi-paragraph "do not regress" comment documenting a Stage-4 hotfix incident. Moving them to `predictionTuning.ts` doesn't change behaviour, but it makes the tuning surface auditable as one screen-full of decisions instead of scattered throughout the class. Same pattern for SectorRoom (drone-kind helpers, mount geometry) and World.ts (collider config).
+
+9. **The thin-method-wrapper pattern preserves call-sites while moving implementation.** For SectorRoom's `resolveSlotMounts` and `mountWorldOrigin`, the implementation moved to `mountGeometry.ts` but the class kept private wrappers that delegate. This means `this.resolveSlotMounts(kind)` at every call site continues to work — the wrapper can be deleted in commit 21 when the methods relocate to `WeaponMountTicker`. The pattern is: minimal blast-radius extraction first, full ownership move later.
+
+10. **Re-export from the original file is the safest backward-compat pattern.** Every god file split keeps a barrel-style `export type { X } from './newPath.js'` line so the 30+ external import sites resolve unchanged. Even when the type moves, the canonical import path is preserved. This is what made the data-file splits trivial (messages, shipKinds), the type extractions safe (PredictionStats, store types), and the warp-helpers extraction painless (the three pure functions stayed importable from `PixiRenderer` for the three regression-lock test files).
+
+11. **HaloRadar's halo/ subdirectory is a small win that demonstrates the full pattern.** 625 LOC monolith → 417 LOC orchestrator class + 3 collaborator files (projection.ts 95 LOC, wedgeGrouping.ts 95 LOC, arrowGraphics.ts 85 LOC). The class still owns the per-frame render loop + ArrowEntry lifecycle, but the pure-math projection, the wedge-grouping logic, and the Pixi paint helpers each live in their own greppable single-concern file. This is the shape every other class-based god file should eventually take: thin orchestrator + N single-concern collaborators. Doing it incrementally (one collaborator per commit) is the safest path; doing it all at once is the multi-day push the plan describes.
