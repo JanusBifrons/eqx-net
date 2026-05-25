@@ -57,6 +57,10 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - Rapier bodies / colliders are pooled; do not allocate per-tick.
 - Sleep callbacks are meaningful: Phase 5 uses them to drive `ENTITY_SLEPT` / `ENTITY_WOKE` — do not suppress or re-enter them without thinking about the handshake.
 
+## Allocation discipline (root invariant #14)
+
+`src/core` ships [`util/ObjectPool.ts`](util/ObjectPool.ts) — the canonical pool primitive (acquire / release / `releaseAll` / `allocations()` probe) modelled on [`HitPredictionLedger`](combat/HitPrediction.ts). Both server and client hot paths consume it. The idiom for collection-resident objects is: **acquire on populate, release at the start of the next tick** — `pool.releaseAll(scratchArray)` for arrays, or a `for…in + delete + pool.release` walk for `{}` maps. Prefer `[]` over `{}` for scratch collections where keys aren't load-bearing. Full paradigm: [docs/architecture/gc-discipline.md](../../docs/architecture/gc-discipline.md).
+
 ---
 
 ## Physics Worker — Input Queue Contract
