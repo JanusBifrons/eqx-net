@@ -576,6 +576,16 @@ export class ColyseusGameClient {
    *  diagnostic. Entry/exit semantics avoid flooding the 500-entry
    *  ring buffer with per-frame proximity logs. */
   private _swarmNearbyIds: Set<number> = new Set();
+  /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
+   *  tracking lingering shipInstanceIds seen in the current snapshot.
+   *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
+   *  Cleared via `.clear()` at the top of each handleSnapshot call. */
+  private readonly _lingeringSeenScratch = new Set<string>();
+  /** 2026-05-25 heap-growth gate step 1 — persistent array scratch for
+   *  the lingering-eviction loop. Pre-fix used
+   *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
+   *  allocation). Cleared via `length = 0` at the eviction site. */
+  private readonly _lingeringToEvictScratch: string[] = [];
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -1817,7 +1827,10 @@ export class ColyseusGameClient {
     // `syncMirror`.
     const statesByPlayerId: SnapshotMessage['states'] = {};
     if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
-    const lingeringSeen = new Set<string>();
+    // 2026-05-25 heap-growth gate step 1: reuse persistent Set scratch
+    // instead of `new Set<string>()` per snapshot.
+    const lingeringSeen = this._lingeringSeenScratch;
+    lingeringSeen.clear();
     for (const [shipInstanceId, entry] of Object.entries(snap.states)) {
       if (entry.isActive === false) {
         // Route to the lingering map. We update pose every snapshot;
@@ -1855,14 +1868,20 @@ export class ColyseusGameClient {
     // Remove lingering hulls that didn't appear in this snapshot (evicted
     // by the 15-min timer, or destroyed) — plus despawn their predWorld
     // bodies so the local player stops colliding with ghosts.
-    for (const id of [...this.mirror.lingeringShips.keys()]) {
-      if (!lingeringSeen.has(id)) {
-        this.mirror.lingeringShips.delete(id);
-        const bodyId = `linger-${id}`;
-        if (this.predLingeringIds.has(bodyId)) {
-          this.predWorld?.despawnShip(bodyId);
-          this.predLingeringIds.delete(bodyId);
-        }
+    // 2026-05-25 heap-growth gate step 1: collect ids to evict into a
+    // persistent scratch array instead of `[...keys()]` spread alloc.
+    // Two-phase (collect then evict) so we don't mutate the Map mid-iter.
+    const toEvict = this._lingeringToEvictScratch;
+    toEvict.length = 0;
+    for (const id of this.mirror.lingeringShips.keys()) {
+      if (!lingeringSeen.has(id)) toEvict.push(id);
+    }
+    for (const id of toEvict) {
+      this.mirror.lingeringShips.delete(id);
+      const bodyId = `linger-${id}`;
+      if (this.predLingeringIds.has(bodyId)) {
+        this.predWorld?.despawnShip(bodyId);
+        this.predLingeringIds.delete(bodyId);
       }
     }
     // Probe 8 — mutate snap.states in place rather than spreading into
