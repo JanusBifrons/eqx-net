@@ -19,6 +19,7 @@ import { MountAimSubsystem } from './MountAimSubsystem.js';
 import { AiSubsystem } from './AiSubsystem.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
+import { PlayerSessionManager } from './PlayerSessionManager.js';
 type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -286,7 +287,12 @@ export class SectorRoom extends Room<SectorState> {
    *  player invariant still holds, so the 1:1 mapping is preserved.
    *  Phase 6b will rekey the slot maps when lingering hulls need
    *  multiple entries per player. */
-  private readonly playerToActiveShipInstance = new Map<string, string>();
+  /** Session / identity / per-tick-input state — Step 14 (hazy-pillow).
+   *  Owns sessionToPlayer/playerToSession/inputCountThisTick/playerToUser/
+   *  playerToActiveShipInstance/playerToTransitInFlight. Method bodies
+   *  (onJoin / onLeave) remain inline in SectorRoom because they cross
+   *  many subsystems; this commit lands ownership for the state. */
+  private readonly players = new PlayerSessionManager();
 
   /** Phase 6b — lingering hulls' SAB slots. When a player fresh-spawns
    *  while their previous ship is still in the linger window, that
@@ -364,9 +370,8 @@ export class SectorRoom extends Room<SectorState> {
   // `this.snapshot` (SnapshotBroadcaster; extracted Step 11).
   /** Physics-tick acceleration multiplier; see roomOpts.testTimeScale. */
   private testTimeScale = 1;
-  private sessionToPlayer = new Map<string, string>();
-  private playerToSession = new Map<string, string>();
-  private inputCountThisTick = new Map<string, number>();
+  // `sessionToPlayer`, `playerToSession`, `inputCountThisTick` now
+  // live on `this.players` (PlayerSessionManager; extracted Step 14).
   /** Worker IPC boundary — owns the worker handle and `sabAppliedTicks`
    *  mirror. Extracted Step 6 (hazy-pillow). Larger logic (drainSab,
    *  worker onmessage dispatcher, SAB buffer ownership) remains inline
@@ -409,7 +414,7 @@ export class SectorRoom extends Room<SectorState> {
    *  entry written with destination sectorKey, seat reserved, ship about to
    *  leave). The subsequent `onLeave` checks this and skips its own Limbo
    *  put so the destination-keyed entry survives intact. Cleared in onLeave. */
-  readonly playerToTransitInFlight = new Set<string>();
+  // `playerToTransitInFlight` now lives on `this.players` (extracted Step 14).
   /** Phase 8 sub-phase B — per-room transit driver, set in onCreate. */
   private transitOrchestrator: TransitOrchestrator | null = null;
   /** Phase 8 sub-phase B (lingering ships) — 15-min auto-evict timers for
@@ -433,7 +438,7 @@ export class SectorRoom extends Room<SectorState> {
   // (WreckLifecycleCoordinator; extracted Step 12).
 
   // Auth — maps playerId → userId (null for anonymous)
-  private readonly playerToUser = new Map<string, string | null>();
+  // `playerToUser` now lives on `this.players` (extracted Step 14).
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
@@ -720,7 +725,7 @@ export class SectorRoom extends Room<SectorState> {
     );
 
     this.onMessage('engage_transit', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
+      const playerId = this.players.sessionToPlayer.get(client.sessionId);
       if (!playerId || !this.transitOrchestrator) return;
       const parsed = EngageTransitSchema.safeParse(raw);
       if (!parsed.success) {
@@ -736,7 +741,7 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.onMessage('cancel_transit', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
+      const playerId = this.players.sessionToPlayer.get(client.sessionId);
       if (!playerId || !this.transitOrchestrator) return;
       const parsed = CancelTransitSchema.safeParse(raw);
       if (!parsed.success) return;
@@ -744,12 +749,12 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.onMessage('input', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
+      const playerId = this.players.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
 
-      const count = this.inputCountThisTick.get(playerId) ?? 0;
+      const count = this.players.inputCountThisTick.get(playerId) ?? 0;
       if (count >= MAX_INPUTS_PER_TICK) return;
-      this.inputCountThisTick.set(playerId, count + 1);
+      this.players.inputCountThisTick.set(playerId, count + 1);
 
       const result = InputMessageSchema.safeParse(raw);
       if (!result.success) {
@@ -809,9 +814,9 @@ export class SectorRoom extends Room<SectorState> {
       const destroyedShip = activeHull ?? this.state.ships.get(evt.targetId);
       const victimPlayerId = activeHull ? evt.targetId : destroyedShip?.playerId;
 
-      const killerUser = this.playerToUser.get(evt.shooterId) ?? null;
+      const killerUser = this.players.playerToUser.get(evt.shooterId) ?? null;
       const victimUser = victimPlayerId !== undefined
-        ? (this.playerToUser.get(victimPlayerId) ?? null)
+        ? (this.players.playerToUser.get(victimPlayerId) ?? null)
         : null;
       recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
       // Phase 3 dual-write — drop the destroyed ship from the roster.
@@ -870,7 +875,7 @@ export class SectorRoom extends Room<SectorState> {
    * elsewhere.
    */
   private resolveActiveShipKey(playerId: string): string | undefined {
-    return this.playerToActiveShipInstance.get(playerId);
+    return this.players.playerToActiveShipInstance.get(playerId);
   }
 
   /**
@@ -1117,7 +1122,7 @@ export class SectorRoom extends Room<SectorState> {
     }
     const { tick, clientShotId, weapon, dirAngle, slotId } = parsed.data;
 
-    const shooterId = this.sessionToPlayer.get(client.sessionId);
+    const shooterId = this.players.sessionToPlayer.get(client.sessionId);
     if (!shooterId) return;
 
     const ship = this.getActiveShip(shooterId);
@@ -2052,7 +2057,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private handleRespawn(client: Client): void {
-    const playerId = this.sessionToPlayer.get(client.sessionId);
+    const playerId = this.players.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
 
     const ship = this.getActiveShip(playerId);
@@ -2430,7 +2435,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // If the requested ID is already held by an active session (e.g. two tabs
     // sharing the same localStorage), assign a fresh UUID.
-    if (this.playerToSession.has(playerId)) {
+    if (this.players.playerToSession.has(playerId)) {
       playerId = assignPlayerId(null);
     }
 
@@ -2488,7 +2493,7 @@ export class SectorRoom extends Room<SectorState> {
           this.slots.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
           // The hull is no longer "the player's active hull"; the fresh
           // spawn will overwrite playerToActiveShipInstance below.
-          this.playerToActiveShipInstance.delete(playerId);
+          this.players.playerToActiveShipInstance.delete(playerId);
           // existingShip.isActive was already false from the original
           // onLeave linger branch — leave it false so the client
           // continues to render with the lingering tint.
@@ -2537,8 +2542,8 @@ export class SectorRoom extends Room<SectorState> {
         // anchor + render tint + (Phase 6c) drone targeting all treat
         // it as fully alive again.
         existingShip.isActive = true;
-        this.sessionToPlayer.set(client.sessionId, playerId);
-        this.playerToSession.set(playerId, client.sessionId);
+        this.players.sessionToPlayer.set(client.sessionId, playerId);
+        this.players.playerToSession.set(playerId, client.sessionId);
 
         // Take the Limbo entry to clear the active-Limbo UI gate. The
         // payload is irrelevant on this path — the live ShipState/SAB is
@@ -2547,7 +2552,7 @@ export class SectorRoom extends Room<SectorState> {
         const limbo = getLimboStore().take(playerId);
         const resumedUserId = limbo?.payload.userId ?? null;
         const effectiveUserId = userId ?? resumedUserId;
-        this.playerToUser.set(playerId, effectiveUserId);
+        this.players.playerToUser.set(playerId, effectiveUserId);
 
         // lastFireClientTick is already retained from the original session;
         // do NOT reset — preserves cooldown across reconnect.
@@ -2608,8 +2613,8 @@ export class SectorRoom extends Room<SectorState> {
     }
 
     // ── FRESH SPAWN PATH ───────────────────────────────────────────────────
-    this.sessionToPlayer.set(client.sessionId, playerId);
-    this.playerToSession.set(playerId, client.sessionId);
+    this.players.sessionToPlayer.set(client.sessionId, playerId);
+    this.players.playerToSession.set(playerId, client.sessionId);
 
     const slot = this.slots.freeSlots.pop();
     if (slot === undefined) {
@@ -2806,7 +2811,7 @@ export class SectorRoom extends Room<SectorState> {
     // Populate the indirection map BEFORE setting the schema entry so
     // any synchronous observer (e.g. a re-entrant fire-handler) can
     // already resolve the player's active hull.
-    this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
+    this.players.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
     // Phase 6b — schema map is keyed by shipInstanceId. This supports
     // multiple entries per player (active + lingering hulls). All the
     // `state.ships.get(playerId)` callsites have been migrated to the
@@ -2865,7 +2870,7 @@ export class SectorRoom extends Room<SectorState> {
     // Limbo-resumed value when this connect was anonymous (covers the
     // "close-tab, reopen-without-relogging" path on the same browser).
     const effectiveUserId = userId ?? resumedUserId;
-    this.playerToUser.set(playerId, effectiveUserId);
+    this.players.playerToUser.set(playerId, effectiveUserId);
     recordGameJoin(effectiveUserId, playerId, this.sectorKey ?? this.roomId);
 
     // Phase 1 — propagate the player's display label so other clients can
@@ -2913,7 +2918,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onLeave(client: Client, _consented: boolean): void {
-    const playerId = this.sessionToPlayer.get(client.sessionId);
+    const playerId = this.players.sessionToPlayer.get(client.sessionId);
     if (!playerId) return;
 
     // Phase 6b — capture the active ship's shipInstanceId now, before
@@ -2931,8 +2936,8 @@ export class SectorRoom extends Room<SectorState> {
     // Always clear session-bound state. Boost is held — drop it on
     // disconnect (no key is held during the offline window so the ship
     // shouldn't keep boosting).
-    this.sessionToPlayer.delete(client.sessionId);
-    this.playerToSession.delete(playerId);
+    this.players.sessionToPlayer.delete(client.sessionId);
+    this.players.playerToSession.delete(playerId);
     this.swarm.interestScratch.delete(client.sessionId);
     this.physics.sabAppliedTicks.delete(playerId);
     this.snapshot.boostingPlayers.delete(playerId);
@@ -2943,8 +2948,8 @@ export class SectorRoom extends Room<SectorState> {
 
     const slot = this.slots.playerToSlot.get(playerId);
     const ship = this.getActiveShip(playerId);
-    const transitInFlight = this.playerToTransitInFlight.has(playerId);
-    this.playerToTransitInFlight.delete(playerId);
+    const transitInFlight = this.players.playerToTransitInFlight.has(playerId);
+    this.players.playerToTransitInFlight.delete(playerId);
 
     // Cancel any in-flight orchestrator entry for this player (e.g. they
     // disconnected during SPOOLING). Idempotent if there's no entry.
@@ -2979,7 +2984,7 @@ export class SectorRoom extends Room<SectorState> {
         angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
         health: ship!.health,
         lastFireClientTick: this.combat.lastFireClientTick.get(playerId) ?? 0,
-        userId: this.playerToUser.get(playerId) ?? null,
+        userId: this.players.playerToUser.get(playerId) ?? null,
         sectorKey: this.sectorKey!,
         kind: ship!.kind,
       };
@@ -3042,7 +3047,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
     // schema entry is being deleted below; resolveActiveShipKey would
     // return a stale id otherwise.
-    this.playerToActiveShipInstance.delete(playerId);
+    this.players.playerToActiveShipInstance.delete(playerId);
 
     if (slot !== undefined) {
       this.slots.playerToSlot.delete(playerId);
@@ -3054,7 +3059,7 @@ export class SectorRoom extends Room<SectorState> {
     if (onLeaveShipKey !== undefined) this.state.ships.delete(onLeaveShipKey);
     this.shipPoseCache.delete(playerId);
     recordGameLeave(playerId);
-    this.playerToUser.delete(playerId);
+    this.players.playerToUser.delete(playerId);
     this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     serverLogEvent('player_leave', { playerId });
     logger.info({ playerId }, 'player left');
@@ -3141,7 +3146,7 @@ export class SectorRoom extends Room<SectorState> {
       this.mounts.playerSlotTargets.delete(playerId);
       this.slots.initialSpawnPositions.delete(playerId);
       this.snapshotRing.unregisterEntity(playerId);
-      this.playerToActiveShipInstance.delete(playerId);
+      this.players.playerToActiveShipInstance.delete(playerId);
       if (slot !== undefined) {
         this.slots.playerToSlot.delete(playerId);
         this.slots.slotToPlayer.delete(slot);
@@ -3149,7 +3154,7 @@ export class SectorRoom extends Room<SectorState> {
         this.postToWorker({ type: 'DESPAWN', slot, playerId });
       }
       this.shipPoseCache.delete(playerId);
-      this.playerToUser.delete(playerId);
+      this.players.playerToUser.delete(playerId);
 
       // Clear the active-Limbo UI gate. Without this, the landing screen
       // would keep pointing at a sector this player no longer has a ship in.
@@ -3357,24 +3362,24 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
     // hull is now a wreck (keyed by shipInstanceId in `state.wrecks`);
     // the player no longer has an active ship in this room.
-    this.playerToActiveShipInstance.delete(playerId);
+    this.players.playerToActiveShipInstance.delete(playerId);
 
     // 4) Force the owning session to leave (if connected). The player
     //    sees their roster missing this ship on the next galaxy-map
     //    visit. The Limbo path is bypassed — the row is already gone.
-    const sessionId = this.playerToSession.get(playerId);
+    const sessionId = this.players.playerToSession.get(playerId);
     if (sessionId !== undefined) {
       const client = this.clients.find((c) => c.sessionId === sessionId);
       if (client !== undefined) {
         try { client.send('ship_abandoned', { shipInstanceId }); } catch { /* socket already closed */ }
         try { client.leave(1000); } catch { /* already gone */ }
       }
-      this.playerToSession.delete(playerId);
+      this.players.playerToSession.delete(playerId);
     }
-    this.sessionToPlayer.forEach((pid, sid) => {
-      if (pid === playerId) this.sessionToPlayer.delete(sid);
+    this.players.sessionToPlayer.forEach((pid, sid) => {
+      if (pid === playerId) this.players.sessionToPlayer.delete(sid);
     });
-    this.playerToUser.delete(playerId);
+    this.players.playerToUser.delete(playerId);
 
     this.wrecks.wreckConversions++;
     serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
@@ -3460,7 +3465,7 @@ export class SectorRoom extends Room<SectorState> {
       bus: this.bus,
       sabF32: this.sabF32,
       playerToSlot: this.slots.playerToSlot,
-      playerToUser: this.playerToUser,
+      playerToUser: this.players.playerToUser,
       lastFireClientTick: this.combat.lastFireClientTick,
       getShipHealth: (playerId: string): number => {
         const ship = this.getActiveShip(playerId);
@@ -3470,9 +3475,9 @@ export class SectorRoom extends Room<SectorState> {
         const ship = this.getActiveShip(playerId);
         return ship?.kind ?? DEFAULT_SHIP_KIND;
       },
-      playerToTransitInFlight: this.playerToTransitInFlight,
+      playerToTransitInFlight: this.players.playerToTransitInFlight,
       clientForPlayer: (playerId: string): Client | null => {
-        const sessionId = this.playerToSession.get(playerId);
+        const sessionId = this.players.playerToSession.get(playerId);
         if (!sessionId) return null;
         const c = this.clients.find((x) => x.sessionId === sessionId);
         return c ?? null;
@@ -3566,7 +3571,7 @@ export class SectorRoom extends Room<SectorState> {
   // ── Simulation loop (main thread — reads SAB, updates Colyseus schema) ──
 
   private update(): void {
-    this.inputCountThisTick.clear();
+    this.players.inputCountThisTick.clear();
     // Phase 8 — galaxy sectors always run the simulation step regardless of
     // player count, so the world feels alive (drones patrol, asteroids drift,
     // sleep transitions fire) even when nobody's logged in. Engineering rooms
@@ -3779,7 +3784,7 @@ export class SectorRoom extends Room<SectorState> {
         if (bp === 'close') { client.leave(4002); continue; }
         if (bp === 'drop') continue;
 
-        const playerId = this.sessionToPlayer.get(client.sessionId);
+        const playerId = this.players.sessionToPlayer.get(client.sessionId);
         const slot = playerId !== undefined ? this.slots.playerToSlot.get(playerId) : undefined;
         let inInterest: Set<number> | undefined;
         if (slot !== undefined) {
@@ -3951,7 +3956,7 @@ export class SectorRoom extends Room<SectorState> {
         if (bp === 'close') { client.leave(4002); continue; }
         if (bp === 'drop') continue;
 
-        const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
+        const recipientPlayerId = this.players.sessionToPlayer.get(client.sessionId);
         if (!recipientPlayerId) continue;
 
         // Stage 5 (post-hotfix #4) — single 20 Hz cadence with per-client
