@@ -9,7 +9,10 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Matches playwright.config.ts:globalTimeout (25 min). e2e-rebuild
+    # Phase 2d / hostile M4: previously 15 min would abort the whole job
+    # before Playwright's own globalTimeout could fire on a slow runner.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 

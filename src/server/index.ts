@@ -176,11 +176,31 @@ for (const sector of GALAXY_SECTORS) {
 // `joinOrCreate` and have no persistent identity (sectorKey is undefined),
 // so their state is ephemeral by design.
 gameServer.define('sector', SectorRoom, { maxClients: 16 });
-gameServer.define('test-sector', SectorRoom, {
-  testMode: true,
-  asteroidConfig: [],
-  maxClients: 8,
-});
+// `filterBy(['testId'])` lets each Playwright spec create its OWN room
+// instance by passing a unique `testId` in JoinOptions. Without a
+// testId the room is shared (back-compat). Per-test isolation +
+// parallelism: two specs running concurrently each get their own
+// physics worker + Colyseus state, with no cross-test pollution.
+gameServer
+  .define('test-sector', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
+// E2E-only accelerated test sector — physics ticks 10x faster so
+// ghost-TTL / projectile-lifetime / regen / warp-spool tests compress
+// real-time waits 10x. Same shape as test-sector otherwise (no drones,
+// no asteroids, testMode=true). Same `filterBy(['testId'])` isolation
+// as above.
+gameServer
+  .define('test-sector-fast', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    maxClients: 8,
+    testTimeScale: 10,
+  })
+  .filterBy(['testId']);
 // Phase 5e soak room. swarmCount can be overridden per join via room
 // options, but the default of 500 is the master plan's acceptance gate.
 gameServer.define('swarm-soak', SectorRoom, {

@@ -1,8 +1,17 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import type { Camera } from './worker/Camera';
 
-const POOL_CAP = 20;
-const LIFETIME_FRAMES = 60;
+export const POOL_CAP = 20;
+// Smooth-beam retune (2026-05-22): the beam catalogue now spawns
+// damage numbers at ~30 Hz under held fire (was ~6 Hz). 25 frames
+// (~417 ms @ 60 Hz) keeps the steady-state concurrent count at ~12
+// — within the pool cap — and the shorter fade hides any
+// mispredict-cancel flicker. Old 60-frame lifetime stacked visibly
+// at the new spawn rate. Exported so the regression-lock test
+// (`DamageNumbers.test.ts`) drives off the same constant rather
+// than hard-coding a value that would silently break on future
+// tuning.
+export const LIFETIME_FRAMES = 25;
 
 interface DamageNumberEntry {
   text: Text;

@@ -13,6 +13,7 @@
  * Run headed for visual verification:
  *   pnpm e2e:headed tests/e2e/scenarios/combat-lifecycle.spec.ts
  */
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import {
   launchTestClient,
@@ -64,9 +65,12 @@ test('ship spawns at the position specified in URL params', async ({ browser }) 
 // ---------------------------------------------------------------------------
 test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ browser }) => {
   // P1 at south, fires north — P2 at north, directly in P1's sights.
+  // Shared testId so both clients land in the SAME isolated room
+  // (Colyseus filterBy routes by testId).
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, testId }),
   ]);
   try {
     // Let both clients sync with the server before firing.
@@ -75,9 +79,10 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
     const initialHull = await getHullPct(p2.page);
     expect(initialHull).toBe(100);
 
-    // P1 fires until P2 is dead.
-    // HITSCAN_DAMAGE=20, 5 hits = kill. WEAPON_COOLDOWN_TICKS=10 @ 60 Hz ≈ 167 ms/shot.
-    // 5 shots + RTT budget → should complete in < 5 s.
+    // P1 fires until P2 is dead. Hitscan DPS = 120 HP/sec (catalogue-driven —
+    // post-smooth-beam retune 4 HP × 33 ms = same DPS as the prior 20 HP × 167 ms,
+    // see `src/core/combat/WeaponCatalogue.ts` HITSCAN_DEF). 100 HP ship → kill
+    // in ~0.8 s + RTT; comfortable within the 5 s budget below.
     await p1.page.keyboard.down('Space');
     await waitForDeath(p2.page, 5_000);
     await p1.page.keyboard.up('Space');
@@ -105,17 +110,38 @@ test('P1 destroys P2: hull reaches 0, SHIP DESTROYED alert fires', async ({ brow
 // ---------------------------------------------------------------------------
 // D. Full lifecycle: death → respawn → hull restored → back at initial position
 // ---------------------------------------------------------------------------
-test('full lifecycle: P2 dies, respawns at initial position with full hull', async ({ browser }) => {
+// fixme: respawn flow refactored. The DeathOverlay Respawn button now
+// calls `setPhase('galaxy-map')` (App.tsx:167) — the player has to pick
+// a new sector + ship from the post-death galaxy-map screen rather than
+// respawning in-place. The "respawn at initial position" assertion this
+// test was built for is no longer a meaningful contract: a new spawn
+// after death is a fresh sector pick + URL re-entry, not a return to
+// the prior spawnX/spawnY. The death-side coverage (hull -> 0, SHIP
+// DESTROYED alert, dead ship cannot fire) is locked by :65 just above;
+// the new respawn-via-galaxy-map flow needs its own spec when the
+// repair queue gets to it.
+// (e2e-rebuild Phase 5 repair queue, 2026-05-20.)
+test.fixme('full lifecycle: P2 dies, respawns at initial position with full hull', async ({ browser }) => {
+  // P2 spawns with 10 HP + 0 shield (testMode-only override) so one beam
+  // tick kills — we're testing the death -> respawn lifecycle, not the
+  // time-to-kill mechanics. P1 spawns at full HP so it survives.
+  //
+  // initialHull = 10 (not 1) because `data-hull-pct` is a percent against
+  // the kind's maxHealth (750 post-slow-down) — hull=1 rounds to 0 % at
+  // spawn, which would make waitForDeath return immediately before P1
+  // even fires. hull=10 reports ~1 % which is non-zero, and one 20-dmg
+  // hitscan tick still drops it to 0.
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialHull: 10, initialShield: 0, testId }),
   ]);
   try {
     await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
 
-    // Kill P2.
+    // Kill P2. waitForDeath default 10 s budget is fine for a 1 HP target.
     await p1.page.keyboard.down('Space');
-    await waitForDeath(p2.page, 5_000);
+    await waitForDeath(p2.page, 10_000);
     await p1.page.keyboard.up('Space');
 
     expect(await getHullPct(p2.page)).toBe(0);
@@ -153,21 +179,28 @@ test('full lifecycle: P2 dies, respawns at initial position with full hull', asy
 // E. Snapshot shows P2's hull reduced on P1's view (server broadcasts damage)
 // ---------------------------------------------------------------------------
 test('shooter sees target hull decrease in shared ship positions', async ({ browser }) => {
+  // P2 spawns with 0 shield so the first beam hit goes straight to hull
+  // (the slow-down-gameplay shield buffer would otherwise absorb every
+  // burst, leaving hull at 100 — the test would pass trivially at
+  // hull<100 only via a multi-second drain). We keep default hull so the
+  // damage-magnitude check (< 100) is meaningful.
+  const testId = randomUUID();
   const [p1, p2] = await Promise.all([
-    launchTestClient(browser, { spawnX: 0, spawnY: -200 }),
-    launchTestClient(browser, { spawnX: 0, spawnY: 200 }),
+    launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
+    launchTestClient(browser, { spawnX: 0, spawnY: 200, initialShield: 0, testId }),
   ]);
   try {
     await Promise.all([p1.page.waitForTimeout(1000), p2.page.waitForTimeout(1000)]);
 
     const hullBefore = await getHullPct(p2.page);
 
-    // Fire one burst.
+    // One burst (400 ms) is enough now that shield = 0 — the first beam
+    // tick lands hull damage.
     await p1.page.keyboard.down('Space');
     await p1.page.waitForTimeout(400);
     await p1.page.keyboard.up('Space');
 
-    // Wait for damage to propagate.
+    // Wait for damage to propagate (default 3 s budget).
     await p2.page.waitForFunction(
       () => parseInt(
         document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-hull-pct') ?? '100',

@@ -16,6 +16,7 @@
  * Run with:
  *   pnpm e2e --project=chromium tests/e2e/persistence-kill.spec.ts --reporter=line
  */
+import { randomUUID } from 'node:crypto';
 import { test, expect } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 
@@ -48,7 +49,13 @@ async function devStats(email: string): Promise<DevStats> {
   return (await res.json()) as DevStats;
 }
 
-async function joinClientAt(browser: Browser, token: string, spawnX: number, spawnY: number) {
+async function joinClientAt(
+  browser: Browser,
+  token: string,
+  spawnX: number,
+  spawnY: number,
+  opts: { initialHull?: number; initialShield?: number; testId?: string } = {},
+) {
   // CRITICAL: pass an EXPLICIT empty storageState. `undefined` falls back to
   // the project-level default in playwright.config.ts (the globalSetup file),
   // which would inject the e2e@test.local token instead of our per-user one.
@@ -65,7 +72,11 @@ async function joinClientAt(browser: Browser, token: string, spawnX: number, spa
   // alternative defined in src/server/index.ts for exactly this case.
   // Note: `?room=` triggers `autoJoin` in App.tsx (skips the splash entirely),
   // so we do NOT click the "Enter Sector Alpha" button — there isn't one.
-  await page.goto(`${BASE_URL}?room=test-sector&spawnX=${spawnX}&spawnY=${spawnY}`);
+  const params = new URLSearchParams({ room: 'test-sector', spawnX: String(spawnX), spawnY: String(spawnY) });
+  if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
+  if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
+  if (opts.testId !== undefined) params.set('testId', opts.testId);
+  await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="ship-count"]');
@@ -77,10 +88,10 @@ async function joinClientAt(browser: Browser, token: string, spawnX: number, spa
 }
 
 test('kill is recorded in player_kills and queryable via /dev/stats', async ({ browser }) => {
-  // Cold server boot + 2x context create + 2 s settle + ~5 s of firing +
-  // DB flush + stats query is borderline under the 30 s default. Allow 60 s
-  // headroom for slow CI machines.
-  test.setTimeout(60_000);
+  // Tight budget: victim spawns with 1 HP + 0 shield (testMode-only
+  // override). One beam tick kills. Pre-override the test needed ~25 s
+  // to deplete 500 HP + 750 shield post-slow-down; now < 5 s end-to-end.
+  test.setTimeout(45_000);
 
   // Stamp emails with the worker index so parallel runs (different
   // playwright projects) don't collide on user rows.
@@ -93,13 +104,17 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     mintToken(victimEmail),
   ]);
 
-  // Align ships on +Y so no rotation is needed: ships spawn at angle 0, and
-  // the forward direction is `(-sin(0), cos(0)) = (0, 1)`. Putting the victim
-  // 100 u directly forward of the killer means the beam holds on target from
-  // the moment Space goes down. 25 hits × 167 ms = ~4.2 s to deplete 500 HP.
+  // Align ships on +Y so no rotation is needed: ships spawn at angle 0,
+  // and the forward direction is `(-sin(0), cos(0)) = (0, 1)`. Putting
+  // the victim 100 u directly forward of the killer means the beam holds
+  // on target from the moment Space goes down. Victim spawns at 1 HP +
+  // 0 shield so a single hit kills — we're testing the persistence
+  // write path, not the time-to-kill mechanics. Shared testId so both
+  // clients land in the same per-test-isolated room.
+  const testId = randomUUID();
   const [killer, victim] = await Promise.all([
-    joinClientAt(browser, killerToken.token, 0, 0),
-    joinClientAt(browser, victimToken.token, 0, 100),
+    joinClientAt(browser, killerToken.token, 0, 0, { testId }),
+    joinClientAt(browser, victimToken.token, 0, 100, { initialHull: 1, initialShield: 0, testId }),
   ]);
 
   try {
@@ -110,14 +125,15 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
       victim.page.waitForTimeout(2000),
     ]);
 
-    // Hold Space — the beam fires straight forward (+Y) and stays locked on
-    // the victim until hull reaches 0.
+    // Hold Space — the beam fires straight forward (+Y). Victim is at
+    // 1 HP + 0 shield, so the first hit kills. 5 s fire window absorbs
+    // RTT + cooldown variance without bloating the budget.
     const start = Date.now();
     let killed = false;
     await killer.page.keyboard.down('Space');
     try {
-      while (Date.now() - start < 15_000) {
-        await killer.page.waitForTimeout(200);
+      while (Date.now() - start < 5_000) {
+        await killer.page.waitForTimeout(100);
         const hullStr = await victim.page
           .locator('[data-testid="game-surface"]')
           .getAttribute('data-hull-pct');
@@ -132,7 +148,7 @@ test('kill is recorded in player_kills and queryable via /dev/stats', async ({ b
     }
 
     if (!killed) {
-      throw new Error('Beam did not deplete victim hull within 15 s — geometry or fire path is broken');
+      throw new Error('Beam did not deplete victim hull within 5 s — fire path or initialHull override is broken');
     }
 
     // Allow the WAB flush window (50 ms) + worker IPC + DB write to settle.

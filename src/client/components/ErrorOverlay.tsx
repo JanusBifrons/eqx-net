@@ -178,7 +178,13 @@ function ErrorOverlay({ onReset }: { onReset?: () => void }): JSX.Element | null
     );
     const stats = getGameClient()?.stats as Record<string, unknown> | undefined;
     const result = await captureDiagnostic(stats !== undefined ? { note, stats } : { note });
-    if (result.ok) {
+    if (result.noopBecauseStreaming) {
+      // Plan: streaming auto-capture, Phase 4. ?autocapture=1 is on;
+      // the streaming session is auto-saving so the manual send is a
+      // no-op. Surface the active session id so the user knows
+      // where the data is going.
+      setSendStatus({ state: 'sent', dir: `${result.dir ?? '(session unknown)'} (streaming)` });
+    } else if (result.ok) {
       setSendStatus({ state: 'sent', dir: result.dir ?? result.filename ?? '(unknown)' });
     } else {
       setSendStatus({ state: 'failed', error: result.error ?? 'unknown error' });

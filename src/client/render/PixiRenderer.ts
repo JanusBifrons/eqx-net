@@ -587,6 +587,8 @@ export class PixiRenderer implements IRenderer {
     spriteCount: 0,
     warpTickMs: 0,
     filterCount: 0,
+    warpFiltersAttached: false,
+    warpBurstAgeMs: -1,
     gridLabelSpecMs: 0,
     gridTextCreateMs: 0,
     gridCleanupMs: 0,
@@ -1385,9 +1387,28 @@ export class PixiRenderer implements IRenderer {
     // flash + burst ripple at the world point so observers see where
     // the remote ship arrived / departed. Local-player warps are never
     // here (server filters with `except: client`).
-    if (mirror.pendingWarpEvents) {
-      for (const evt of mirror.pendingWarpEvents) {
-        this.triggerWarpIn({ kind: 'world', worldX: evt.x, worldY: evt.y });
+    //
+    // Render-jitter-fix Phase 1b (2026-05-21) — only fire ONE warp
+    // visual per RAF, AND only when a burst is not already in flight.
+    // Each `triggerWarpIn` attaches the warp filter chain (shockwave +
+    // bloom + zoom-blur) to `app.stage.filters` and resets
+    // `warpBurstStartedAt`. The 1.5 s burst duration only tears those
+    // filters down via `shouldDetachWarpVisual` IF `warpBurstStartedAt`
+    // ages past `burstDurationMs`. Without this guard, Living World
+    // bot migrations push 1-2 warp events per second; each restarts
+    // the burst timer; filters stay attached indefinitely; GPU runs
+    // the multi-pass filter chain every frame → frame rate collapses
+    // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
+    if (mirror.pendingWarpEvents && mirror.pendingWarpEvents.length > 0) {
+      const burstInFlight = this.warpBurstStartedAt > 0;
+      if (!burstInFlight) {
+        // Fire ONLY the first queued event this frame. Subsequent
+        // events get visually skipped — at 1-2 warps/sec from drones
+        // plus a 1.5 s burst window, the visible duty cycle is close
+        // to 100 % anyway, so dropping 1-2 visuals is invisible to the
+        // player but bounds GPU cost.
+        const first = mirror.pendingWarpEvents[0]!;
+        this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
       }
       mirror.pendingWarpEvents.length = 0;
     }
@@ -1840,7 +1861,16 @@ export class PixiRenderer implements IRenderer {
    *  wavefronts). Bloom last so it amplifies the final composited image. */
   private attachWarpFilters(): void {
     if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
-    this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
+    // Render-jitter-fix Phase 1b (2026-05-21) — warp filter chain
+    // DISABLED. Captures `wivf9n` (filters on, throttled) and
+    // `q4wtht` (filters off) both spiraled, definitively ruling out
+    // filters as the cause. Capture `d3cprl` (filters off, phone at
+    // steady 60Hz battery-saver) was smooth, confirming filters are
+    // not load-bearing for playability. The shockwave + bloom + zoom-
+    // blur chain is a visual nice-to-have, not core gameplay; keeping
+    // them off avoids any duty-cycle cost on mobile. Re-enable by
+    // uncommenting the assignment below.
+    // this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
   }
 
   /**
@@ -1858,6 +1888,14 @@ export class PixiRenderer implements IRenderer {
     this.runWarpShockwavesTick();
     this.frameMarkers.warpTickMs = performance.now() - warpStart;
     this.frameMarkers.filterCount = this.warpShockwaves?.length ?? 0;
+    // Render-jitter-fix Phase 1b — surface the filter-attach state into
+    // the capture stream so a stuck-attached filter chain is visible
+    // (the bot-warp queue drain bug, fixed in the same plan).
+    this.frameMarkers.warpFiltersAttached = Array.isArray(this.app.stage.filters)
+      && (this.app.stage.filters as unknown[]).length > 0;
+    this.frameMarkers.warpBurstAgeMs = this.warpBurstStartedAt > 0
+      ? Math.round(performance.now() - this.warpBurstStartedAt)
+      : -1;
   };
 
   /** Per-frame warp tick — two-phase envelope (spool → climax), fade-out

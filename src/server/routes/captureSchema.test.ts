@@ -17,7 +17,10 @@ describe('captureSchema (unit)', () => {
     // Cross-zone sync is by hand (server cannot import the client const).
     // If this changes, change DIAG_MAX_ENTRIES in
     // src/client/debug/ClientLogger.ts in the same commit.
-    expect(DIAG_CAPTURE_MAX_LOG_ENTRIES).toBe(30000);
+    // 2026-05-21: bumped 30000 → 60000 for the replay-grade ground-truth
+    // tag streams (local_pose_rendered/predicted, input_intent) added in
+    // Phase A of the capture-driven replay plan.
+    expect(DIAG_CAPTURE_MAX_LOG_ENTRIES).toBe(60000);
   });
 
   it('accepts exactly DIAG_CAPTURE_MAX_LOG_ENTRIES entries', () => {

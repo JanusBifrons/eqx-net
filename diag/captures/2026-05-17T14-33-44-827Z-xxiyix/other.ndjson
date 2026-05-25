@@ -1,0 +1,5 @@
+{"source":"client","ts":97328.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":97693.90000009537,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":100068.20000004768,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":100097.70000004768,"tag":"roster_fetch","data":{"stage":"ok","count":4,"kinds":["scout","fighter","fighter","interceptor"]}}
+{"source":"client","ts":100494.79999995232,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}

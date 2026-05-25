@@ -13,7 +13,14 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 async function joinClient(browser: Browser) {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?room=sector`);
+  // test-sector-fast (testMode=true, no drones, no asteroids,
+  // testTimeScale=10): physics ticks 10x faster so ghost-TTL (500 ms)
+  // and server-projectile lifetime (4 s) compress to 50 ms + 400 ms
+  // wall-clock. The waitForTimeout(5000) below at the original 1x rate
+  // is now ~500 ms equivalent game-time. Switched from `?room=sector`
+  // (30 drones — laser would be resolved by hit_ack within ~167 ms and
+  // the ghost would be destroyed before the test could observe it).
+  await page.goto(`${BASE_URL}?room=test-sector-fast`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');

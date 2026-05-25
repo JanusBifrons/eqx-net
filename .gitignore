@@ -34,8 +34,13 @@ data/
 .env.local
 .env.*.local
 
-# dev-only diagnostic captures (POST /diag/capture)
-diag/
+# diag/ is COMMITTED — captures, perf baselines, and CDP traces persist
+# in-repo as auditable artefacts. Phone smoke captures (POST /diag/capture),
+# automated perf baselines, and one-off CDP profiles are reviewed alongside
+# the commit that produced them; deleting one is a deliberate cleanup, not
+# a default. *.log inside diag/ is still caught by the global *.log rule.
+# Policy reversed 2026-05-24 (was: /diag/* with !/diag/perf-baseline/).
+# See diag/README.md.
 
 # session log scratch (e2e capture, debug, regression runs, etc) —
 # written from inside the repo by Bash/PowerShell calls during dev
@@ -46,3 +51,6 @@ diag/
 # Claude Code session-local state
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Netcode-health gate worktrees — created by tests/netgate/run-netgate.ts
+# (incremental — preserved across runs to keep node_modules warm; never commit).
+.claude/worktrees/

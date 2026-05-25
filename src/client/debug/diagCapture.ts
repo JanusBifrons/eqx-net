@@ -10,6 +10,8 @@
  * without copy-pasting from devtools.
  */
 import type { LogEntry } from './ClientLogger';
+import { isAutoCaptureEnabled } from './ClientLogger';
+import { getStreamingSessionId } from './streamingDiag';
 
 interface CaptureInput {
   /** Free-form note from the user (e.g. "corr feels really bad"). */
@@ -28,6 +30,14 @@ export interface CaptureResult {
   dir?: string;
   error?: string;
   bytes?: number;
+  /**
+   * Set when `?autocapture=1` was active and the manual Capture call
+   * was a no-op. The streaming session is already auto-saving to disk
+   * under `dir` (the streaming sessionId). UI callers should show a
+   * toast pointing at this rather than treating it as failure.
+   * Plan: streaming auto-capture, Phase 4 (2026-05-21).
+   */
+  noopBecauseStreaming?: boolean;
 }
 
 declare global {
@@ -40,8 +50,24 @@ declare global {
 /**
  * POST the current ring buffer + stats + UA to `/diag/capture`.
  * Resolves with the server's response or an error string.
+ *
+ * Phase 4 short-circuit (plan: streaming auto-capture, 2026-05-21):
+ * when `?autocapture=1` is set, this is a no-op — the streaming module
+ * is already POSTing to `/diag/capture/stream` every 2s. Returns
+ * `{ ok: true, noopBecauseStreaming: true, dir: <streamingSessionId> }`
+ * so the UI can show a toast pointing at the auto-saved session
+ * instead of duplicating the capture work.
  */
 export async function captureDiagnostic(input: CaptureInput = {}): Promise<CaptureResult> {
+  if (isAutoCaptureEnabled()) {
+    const streamingId = getStreamingSessionId();
+    return {
+      ok: true,
+      noopBecauseStreaming: true,
+      dir: streamingId ?? undefined,
+      filename: streamingId ?? undefined,
+    };
+  }
   const logs: LogEntry[] = (typeof window !== 'undefined' && window.__eqxLogs) ? [...window.__eqxLogs] : [];
 
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : undefined;

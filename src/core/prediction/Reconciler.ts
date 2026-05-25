@@ -25,6 +25,7 @@
 import { springStep, type SpringState } from '../math/CritDampedSpring.js';
 import { playerCorrectionHalfLifeMs } from './correctionSmoothing.js';
 import type { PhysicsWorld, ShipPhysicsState } from '../physics/World.js';
+import { REAL_CLOCK, type Clock } from '../clock/Clock.js';
 
 const BUFFER_SIZE = 128; // ~2 s at 60 Hz
 // Lerp ANY correction above noise floor so there are no silent position snaps.
@@ -100,9 +101,12 @@ export class Reconciler {
   /** predWorld position after reconciliation (replay result). */
   lastAfterPos = { x: 0, y: 0 };
 
-  constructor(world: PhysicsWorld, playerId: string) {
+  private readonly clock: Clock;
+
+  constructor(world: PhysicsWorld, playerId: string, clock: Clock = REAL_CLOCK) {
     this.world = world;
     this.playerId = playerId;
+    this.clock = clock;
     this.buffer = new Array<InputRecord | undefined>(BUFFER_SIZE).fill(undefined);
   }
 
@@ -188,7 +192,7 @@ export class Reconciler {
     // Estimate RTT from the buffered input the server last acked.
     const ackedRec = this.buffer[ackedTick % BUFFER_SIZE];
     if (ackedRec && ackedRec.tick === ackedTick) {
-      this.lastRtt = performance.now() - ackedRec.sentAt;
+      this.lastRtt = this.clock.now() - ackedRec.sentAt;
     }
 
     // Roll back to server state and re-simulate forward by replaying every
