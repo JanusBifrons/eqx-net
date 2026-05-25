@@ -18,6 +18,7 @@ import { CombatSubsystem, type ProjectileRecord as _CombatProjectileRecord } fro
 import { MountAimSubsystem } from './MountAimSubsystem.js';
 import { AiSubsystem } from './AiSubsystem.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
+import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -308,7 +309,12 @@ export class SectorRoom extends Room<SectorState> {
   private wreckPoseCache = new Map<string, ShipPhysicsState>();
   /** Counter — increments on every poll-driven conversion so we know
    *  the abandon→wreck rail is firing. */
-  private wreckConversions = 0;
+  /** Wreck-conversion + ownerless-hull-eviction state — Step 12
+   *  (hazy-pillow). Owns `ownerlessShips` (15-min auto-evict timers
+   *  keyed by shipInstanceId) and `wreckConversions` counter. The
+   *  `convertShipToWreck` 8-collaborator transaction stays inline in
+   *  SectorRoom until the collaborators have stable interfaces. */
+  private readonly wrecks = new WreckLifecycleCoordinator();
 
   // Phase 5c: swarm entities (asteroids, drones) live in the same SAB slot
   // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
@@ -423,7 +429,8 @@ export class SectorRoom extends Room<SectorState> {
    *  dispose. Now keyed by the hull's stable shipInstanceId, so the displaced
    *  hull's timer keeps firing correctly whether or not the player has
    *  re-bound or fresh-spawned in the meantime. */
-  private readonly ownerlessShips = new Map<string, ReturnType<typeof setTimeout>>();
+  // `ownerlessShips` now lives on `this.wrecks.ownerlessShips`
+  // (WreckLifecycleCoordinator; extracted Step 12).
 
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
@@ -460,7 +467,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       get serverTick() { return room.serverTick; },
       get aiPlayerScratch() { return room.ai.scratch; },
-      get ownerlessShips() { return room.ownerlessShips; },
+      get ownerlessShips() { return room.wrecks.ownerlessShips; },
       applyDamage: (t, s, d, hx, hy) => room.applyDamage(t, s, d, hx, hy),
       postToWorker: (cmd) => room.postToWorker(cmd),
     };
@@ -817,7 +824,7 @@ export class SectorRoom extends Room<SectorState> {
       // and lets the player fresh-spawn from the galaxy map.
       // Phase 6b cleanup — ownerlessShips is shipInstanceId-keyed. Look up
       // by the destroyed ship's id, not by playerId.
-      if (destroyedShip !== undefined && this.ownerlessShips.has(destroyedShip.shipInstanceId)) {
+      if (destroyedShip !== undefined && this.wrecks.ownerlessShips.has(destroyedShip.shipInstanceId)) {
         this.evictOwnerlessShip(destroyedShip.shipInstanceId);
       }
     });
@@ -2447,7 +2454,7 @@ export class SectorRoom extends Room<SectorState> {
     // linger branch.
     const lingeringShipId = this.resolveActiveShipKey(playerId);
     const ownerlessTimer = lingeringShipId !== undefined
-      ? this.ownerlessShips.get(lingeringShipId)
+      ? this.wrecks.ownerlessShips.get(lingeringShipId)
       : undefined;
     if (this.sectorKey !== null && ownerlessTimer !== undefined) {
       const existingShip = this.getActiveShip(playerId);
@@ -2522,7 +2529,7 @@ export class SectorRoom extends Room<SectorState> {
         // Original rebind behaviour: reattach to the existing slot.
         // Phase 6b cleanup — ownerlessShips keyed by shipInstanceId.
         clearTimeout(ownerlessTimer);
-        if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
+        if (lingeringShipId !== undefined) this.wrecks.ownerlessShips.delete(lingeringShipId);
         const existingSlot = this.slots.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
         // Phase 6b — flip the lingering flag back. The hull is being
@@ -3000,7 +3007,7 @@ export class SectorRoom extends Room<SectorState> {
       if (typeof evictTimer === 'object' && evictTimer !== null && 'unref' in evictTimer) {
         (evictTimer as { unref: () => void }).unref();
       }
-      this.ownerlessShips.set(shipInstanceId, evictTimer);
+      this.wrecks.ownerlessShips.set(shipInstanceId, evictTimer);
 
       // Phase 6b — flip the schema's `isActive` flag to false so the
       // client renderer can tint lingering hulls (grey-ish, no thrust
@@ -3062,10 +3069,10 @@ export class SectorRoom extends Room<SectorState> {
    * keep showing a sector the player can no longer enter.
    */
   private evictOwnerlessShip(shipInstanceId: string): void {
-    const timer = this.ownerlessShips.get(shipInstanceId);
+    const timer = this.wrecks.ownerlessShips.get(shipInstanceId);
     if (timer !== undefined) {
       clearTimeout(timer);
-      this.ownerlessShips.delete(shipInstanceId);
+      this.wrecks.ownerlessShips.delete(shipInstanceId);
     }
 
     const ship = this.state.ships.get(shipInstanceId);
@@ -3369,7 +3376,7 @@ export class SectorRoom extends Room<SectorState> {
     });
     this.playerToUser.delete(playerId);
 
-    this.wreckConversions++;
+    this.wrecks.wreckConversions++;
     serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
     logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → wreck');
   }
@@ -3428,8 +3435,8 @@ export class SectorRoom extends Room<SectorState> {
     // Clear lingering-ship eviction timers — the room is being torn down,
     // so the timers would fire against a dead `this`. The ships' Limbo
     // entries stay on disk so a server-restart restore can find them.
-    for (const timer of this.ownerlessShips.values()) clearTimeout(timer);
-    this.ownerlessShips.clear();
+    for (const timer of this.wrecks.ownerlessShips.values()) clearTimeout(timer);
+    this.wrecks.ownerlessShips.clear();
     // Phase 8 — final snapshot before tear-down so swarm health survives
     // a graceful shutdown. `persistence.shutdown` (called from index.ts on
     // SIGINT/SIGTERM) drains the CRITICAL queue afterwards.
