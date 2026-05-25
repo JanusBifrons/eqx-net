@@ -544,6 +544,19 @@ export class PixiRenderer implements IRenderer {
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  /** 2026-05-25 heap-growth gate step 6 — persistent scratches for the
+   *  five containers `update()` allocated per frame (60-90 Hz). Each
+   *  is `.clear()`'d at the start of `update()` and refilled. The
+   *  `lingeringPosesView` Map's per-entry `{x, y}` literals are also
+   *  pooled via `_explosionPoseEntries` (grow-once, reused thereafter).
+   *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
+   *  pressure under combat (see capture lnnkkh, 2026-05-25). */
+  private readonly _updateSeenScratch = new Set<string>();
+  private readonly _updateRemoteHitTargetsScratch = new Set<string>();
+  private readonly _updateLocalHitTargetsScratch = new Set<string>();
+  private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
+  private readonly _updateLingeringPoseEntries: { x: number; y: number }[] = [];
+  private readonly _updateProjSeenScratch = new Set<string>();
   private readonly halo = new HaloRadar();
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
@@ -873,14 +886,18 @@ export class PixiRenderer implements IRenderer {
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
     // production cost). See `frameMarkers` / `FrameMarkers`.
     const updateStart = performance.now();
-    const seen = new Set<string>();
+    // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
+    // containers instead of `new Set<string>()` per frame.
+    const seen = this._updateSeenScratch;
+    seen.clear();
 
     // Precompute the sets of entities hit by any active beam this frame —
     // remote (other shooters' beams) and local (any mount on the local
     // player's ship). Multi-mount/turret refactor (Phase 2c): both
     // `mirror.remoteLasers` and `mirror.liveBeams` are now per-mount, so we
     // flatten across all mounts to drive the damage-flash tint logic.
-    const remoteHitTargets = new Set<string>();
+    const remoteHitTargets = this._updateRemoteHitTargetsScratch;
+    remoteHitTargets.clear();
     if (mirror.remoteLasers) {
       for (const perShooter of mirror.remoteLasers.values()) {
         for (const laser of perShooter.values()) {
@@ -888,7 +905,8 @@ export class PixiRenderer implements IRenderer {
         }
       }
     }
-    const localHitTargets = new Set<string>();
+    const localHitTargets = this._updateLocalHitTargetsScratch;
+    localHitTargets.clear();
     if (mirror.liveBeams) {
       for (const beam of mirror.liveBeams.values()) {
         if (beam.hitId) localHitTargets.add(beam.hitId);
@@ -988,9 +1006,22 @@ export class PixiRenderer implements IRenderer {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
       // which the helper doesn't need.
-      const lingeringPosesView = new Map<string, { x: number; y: number }>();
+      // 2026-05-25 heap-growth gate step 6: persistent Map + pooled
+      // {x,y} entries (peak == lingering-sprite count; grow-once).
+      const lingeringPosesView = this._updateLingeringPosesView;
+      lingeringPosesView.clear();
+      const lingeringPoseEntries = this._updateLingeringPoseEntries;
+      let lingeringPoseIdx = 0;
       for (const [id, entry] of this.lingeringSprites) {
-        lingeringPosesView.set(id, { x: entry.sprite.x, y: entry.sprite.y });
+        let pose = lingeringPoseEntries[lingeringPoseIdx];
+        if (!pose) {
+          pose = { x: 0, y: 0 };
+          lingeringPoseEntries[lingeringPoseIdx] = pose;
+        }
+        pose.x = entry.sprite.x;
+        pose.y = entry.sprite.y;
+        lingeringPosesView.set(id, pose);
+        lingeringPoseIdx++;
       }
       for (const targetId of mirror.explodingShips) {
         const pose = decideExplosionPosition({
@@ -1114,7 +1145,9 @@ export class PixiRenderer implements IRenderer {
 
     // Projectiles and ghost projectiles.
     if (mirror.projectiles) {
-      const projSeen = new Set<string>();
+      // 2026-05-25 heap-growth gate step 6: reuse persistent Set.
+      const projSeen = this._updateProjSeenScratch;
+      projSeen.clear();
       for (const [projId, proj] of mirror.projectiles) {
         projSeen.add(projId);
         let ps = this.projectileSprites.get(projId);
