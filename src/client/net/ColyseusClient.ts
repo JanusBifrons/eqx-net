@@ -590,6 +590,21 @@ export class ColyseusGameClient {
    *  remote-ship count; grows once, never shrinks (bounded by max
    *  concurrent remotes in the room). */
   private readonly _preResetRemotePosEntries: { x: number; y: number }[] = [];
+  /** 2026-05-25 heap-growth gate step 5 — pooled state object for the
+   *  swarm-kinematic-follower setShipState loop in updateMirror. Pre-
+   *  fix the loop allocated `{x, y, vx, vy, angle, angvel: 0}` literal
+   *  PER drone PER RAF (25 × 90 = 2250/sec). Mutate, then pass; the
+   *  World copies into Rapier synchronously so next iteration reuses. */
+  private readonly _swarmKinematicScratch = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  /** 2026-05-25 heap-growth gate step 5 — pre-computed `swarm-${id}`
+   *  body-key strings, cached on first encounter. Pre-fix the swarm-
+   *  kinematic loop did `` `swarm-${entityId}` `` per drone per RAF =
+   *  2250 template-literal string allocs/sec. Keyed by entityId. */
+  private readonly _swarmBodyKeyCache = new Map<number, string>();
+  /** 2026-05-25 heap-growth gate step 5 — persistent Set scratch for
+   *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
+   *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
+  private readonly _swarmSyncSeenScratch = new Set<string>();
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -2432,9 +2447,17 @@ export class ColyseusGameClient {
    */
   private syncSwarmIntoPredWorld(): void {
     if (!this.predWorld || !this.mirror.swarm) return;
-    const seen = new Set<string>();
+    // 2026-05-25 heap-growth gate step 5: persistent scratch Set +
+    // cached key strings (shared with the updateMirror kinematic loop).
+    const seen = this._swarmSyncSeenScratch;
+    seen.clear();
+    const keyCache = this._swarmBodyKeyCache;
     for (const [entityId, entry] of this.mirror.swarm) {
-      const key = `swarm-${entityId}`;
+      let key = keyCache.get(entityId);
+      if (key === undefined) {
+        key = `swarm-${entityId}`;
+        keyCache.set(entityId, key);
+      }
       seen.add(key);
       if (!this.predWorld.hasShip(key)) {
         // Asteroids (kind=0) get a deterministic convex-polygon collider —
@@ -2502,6 +2525,11 @@ export class ColyseusGameClient {
         // Numeric entityId is encoded in the key as `swarm-${id}`.
         const idStr = key.startsWith('swarm-') ? key.slice(6) : '';
         const id = Number(idStr);
+        if (Number.isFinite(id)) {
+          // Step 5 cleanup: also evict the cached key string so the
+          // cache doesn't grow unbounded across entity churn.
+          this._swarmBodyKeyCache.delete(id);
+        }
         if (Number.isFinite(id) && this._aiRegisteredIds.has(id)) {
           this._aiController.unregister(`${id}`);
           this._aiRegisteredIds.delete(id);
@@ -3032,17 +3060,31 @@ export class ColyseusGameClient {
     // off the same poseRing — nothing to do for them here.
     if (this.predWorld && this.mirror.swarm) {
       const nowMs = this.clock.now();
+      // 2026-05-25 heap-growth gate step 5: pooled outer state object
+      // + cached `swarm-${id}` keys. Per drone per RAF, this loop was
+      // the biggest single allocator in the combat repro (25 × 90 ≈
+      // 2250 object literals + 2250 strings/sec). Both pooled now.
+      const kinematicScratch = this._swarmKinematicScratch;
+      const keyCache = this._swarmBodyKeyCache;
       for (const [entityId, entry] of this.mirror.swarm) {
         if (entry.kind !== 1) continue;
         interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
         entry.x = this._swarmInterpScratch.x;
         entry.y = this._swarmInterpScratch.y;
         entry.angle = this._swarmInterpScratch.angle;
-        if (this.predWorld.hasShip(`swarm-${entityId}`)) {
-          this.predWorld.setShipState(`swarm-${entityId}`, {
-            x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-            angle: entry.angle, angvel: 0,
-          });
+        let bodyKey = keyCache.get(entityId);
+        if (bodyKey === undefined) {
+          bodyKey = `swarm-${entityId}`;
+          keyCache.set(entityId, bodyKey);
+        }
+        if (this.predWorld.hasShip(bodyKey)) {
+          kinematicScratch.x = entry.x;
+          kinematicScratch.y = entry.y;
+          kinematicScratch.vx = entry.vx;
+          kinematicScratch.vy = entry.vy;
+          kinematicScratch.angle = entry.angle;
+          kinematicScratch.angvel = 0;
+          this.predWorld.setShipState(bodyKey, kinematicScratch);
         }
       }
     }

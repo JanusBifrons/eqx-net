@@ -77,6 +77,16 @@ export class PhysicsWorld {
   private bodies = new Map<string, ShipBody>();
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
+  /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
+   *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
+   *  is called per-drone per-RAF on the client (kinematic follower for
+   *  snapshot-interpolated drones) — at 25 drones × 90 RAFs/sec the
+   *  prior `{x, y}` literals were 2 × 2250 = 4500 allocations/sec just
+   *  from this method. Rapier's API takes Vector2-like objects, so we
+   *  reuse a single instance per call site. Safe because rapier copies
+   *  the values into native memory synchronously inside the call. */
+  private readonly _setShipStateTranslationScratch = { x: 0, y: 0 };
+  private readonly _setShipStateLinvelScratch = { x: 0, y: 0 };
 
   private constructor(world: RAPIER.World) {
     this.world = world;
@@ -459,8 +469,15 @@ export class PhysicsWorld {
     const rec = this.bodies.get(id);
     if (!rec) return;
     const body = rec.body;
-    body.setTranslation({ x: state.x, y: state.y }, true);
-    body.setLinvel({ x: state.vx, y: state.vy }, true);
+    // 2026-05-25 heap-growth fix — reuse pooled Vector2 scratches
+    // instead of allocating `{x, y}` literals per call. Rapier copies
+    // values synchronously, so reuse is safe (next call overwrites).
+    const t = this._setShipStateTranslationScratch;
+    t.x = state.x; t.y = state.y;
+    body.setTranslation(t, true);
+    const v = this._setShipStateLinvelScratch;
+    v.x = state.vx; v.y = state.vy;
+    body.setLinvel(v, true);
     body.setRotation(state.angle, true);
     if (state.angvel !== undefined) body.setAngvel(state.angvel, true);
   }
