@@ -11,6 +11,7 @@ import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
+import { PlayerSlotMap } from './PlayerSlotMap.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -270,11 +271,11 @@ export class SectorRoom extends Room<SectorState> {
   private sabU32!: Uint32Array;
   private sabF32!: Float32Array;
 
-  // Slot management — maps playerId ↔ integer SAB slot index.
-  private playerToSlot = new Map<string, number>();
-  private slotToPlayer = new Map<number, string>();
-  private freeSlots: number[] = [];
-  private initialSpawnPositions = new Map<string, { x: number; y: number }>();
+  /** Slot management — playerId/wreck/linger ↔ integer SAB slot index.
+   *  Extracted Step 4 (hazy-pillow). Map fields are public readonly on
+   *  the class so existing `for (const [pid] of this.slots.playerToSlot)`
+   *  iteration patterns keep working unchanged. */
+  private readonly slots = new PlayerSlotMap(MAX_ENTITIES);
 
   /** Phase 6a — `playerId → shipInstanceId` indirection. The schema map
    *  (`state.ships`) and the snapshot wire keys both use shipInstanceId
@@ -294,21 +295,15 @@ export class SectorRoom extends Room<SectorState> {
    *  `playerToSlot[playerId]` while the lingering ship sits in this
    *  parallel map. Cleaned up by `evictOwnerlessShip` (15-min TTL)
    *  and by `convertShipToWreck` if a lingering hull is destroyed. */
-  private readonly lingeringSlots = new Map<string, number>();
+  // `lingeringSlots`, `wreckToSlot`, `slotToWreck` now live on `this.slots`
+  // (PlayerSlotMap; extracted Step 4). The maps remain public readonly on
+  // the class so the existing iteration patterns at the ~30 callsites
+  // continue to work via `this.slots.lingeringSlots` etc.
+
   /** Phase 6b — pose mirror for lingering hulls. Mirrors `shipPoseCache`
    *  but keyed by shipInstanceId. Updated once per `update()` from
    *  the SAB so the snapshot can include them. */
   private readonly lingeringPoseCache = new Map<string, ShipPhysicsState>();
-
-  // Phase 4 — abandoned-ship hulls. When a player abandons their ship via
-  // the roster panel, the SAB slot is repurposed (slot stays allocated,
-  // ownership transfers from a player to a wreck). The physics worker
-  // continues to step the slot, so wrecks drift on their final-frame
-  // velocity, drag-decay over time, and collide with everything. Damage
-  // resolves through the standard `applyDamage` path; health 0 frees the
-  // slot back into `freeSlots` and removes the wreck.
-  private wreckToSlot = new Map<string, number>();
-  private slotToWreck = new Map<number, string>();
   /** Pose mirror for wrecks, parallel to `shipPoseCache`. Updated once
    *  per `update()` from the SAB. Keyed by shipInstanceId. */
   private wreckPoseCache = new Map<string, ShipPhysicsState>();
@@ -519,8 +514,7 @@ export class SectorRoom extends Room<SectorState> {
       bus: this.bus,
     });
 
-    // Fill slot pool (push in reverse so slot 0 is popped first).
-    for (let i = MAX_ENTITIES - 1; i >= 0; i--) this.freeSlots.push(i);
+    // Slot pool initialised inside PlayerSlotMap's constructor (Step 4).
 
     // Shared memory buffer for zero-copy physics state transfer.
     this.sab    = new SharedArrayBuffer(SAB_TOTAL_BYTES);
@@ -658,7 +652,7 @@ export class SectorRoom extends Room<SectorState> {
         }
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
-      takeSlot: () => this.freeSlots.pop(),
+      takeSlot: () => this.slots.freeSlots.pop(),
       postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
         this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices }),
       sabF32: this.sabF32,
@@ -790,7 +784,7 @@ export class SectorRoom extends Room<SectorState> {
       const { tick, thrust, turnLeft, turnRight } = result.data;
       const boost = result.data.boost ?? false;
       const reverse = result.data.reverse ?? false;
-      const slot = this.playerToSlot.get(playerId);
+      const slot = this.slots.playerToSlot.get(playerId);
       if (slot !== undefined) {
         this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse });
       }
@@ -966,7 +960,7 @@ export class SectorRoom extends Room<SectorState> {
    * matching `SnapshotMessage.drones[].mountAngles` anchor.
    */
   private tickPlayerMounts(): void {
-    if (this.playerToSlot.size === 0) return;
+    if (this.slots.playerToSlot.size === 0) return;
     const dtSec = 1 / 60;
 
     // Build the drone candidate list once per tick — same list re-used for
@@ -985,7 +979,7 @@ export class SectorRoom extends Room<SectorState> {
       });
     }
 
-    for (const [playerId] of this.playerToSlot) {
+    for (const [playerId] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(playerId);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(playerId);
@@ -1057,7 +1051,7 @@ export class SectorRoom extends Room<SectorState> {
     // drones). Players are `shipPoseCache` rows for alive players.
     const targets = this.droneMountTargetsScratch;
     targets.length = 0;
-    for (const [pid] of this.playerToSlot) {
+    for (const [pid] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(pid);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(pid);
@@ -1338,7 +1332,7 @@ export class SectorRoom extends Room<SectorState> {
       let mountHitDist = Infinity;
       let mountHitIsObstacle = false;
 
-      for (const [targetId] of this.playerToSlot) {
+      for (const [targetId] of this.slots.playerToSlot) {
         if (targetId === shooterId) continue;
         const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
@@ -1361,7 +1355,7 @@ export class SectorRoom extends Room<SectorState> {
       // we use the live pose mirror. Acceptable because lingering
       // hulls drift slowly (drag-decay), so the few-ms rewind delta
       // wouldn't change the hit decision meaningfully.
-      for (const [shipInstanceId] of this.lingeringSlots) {
+      for (const [shipInstanceId] of this.slots.lingeringSlots) {
         const lingeringPose = this.lingeringPoseCache.get(shipInstanceId);
         if (!lingeringPose) continue;
         const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
@@ -1395,7 +1389,7 @@ export class SectorRoom extends Room<SectorState> {
       // as live ships since their hull occupies the same shape. Targeted
       // via `wreck-<shipInstanceId>` on the wire so `applyDamage` can
       // route to `state.wrecks`.
-      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+      for (const [shipInstanceId, slot] of this.slots.wreckToSlot) {
         const b = slotBase(slot);
         const cx = this.sabF32[b + SLOT_X_OFF]!;
         const cy = this.sabF32[b + SLOT_Y_OFF]!;
@@ -1545,7 +1539,7 @@ export class SectorRoom extends Room<SectorState> {
 
       let hitId: string | null = null;
       let hitDist = Infinity;
-      for (const [targetId] of this.playerToSlot) {
+      for (const [targetId] of this.slots.playerToSlot) {
         const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
         const pose = this.shipPoseCache.get(targetId);
@@ -1778,11 +1772,11 @@ export class SectorRoom extends Room<SectorState> {
         // Free the lingering slot and clear schema bookkeeping. The
         // roster row deletion happens via the SHIP_DESTROYED bus
         // handler's deleteRosterRow call below.
-        const slot = this.lingeringSlots.get(targetId);
+        const slot = this.slots.lingeringSlots.get(targetId);
         if (slot !== undefined) {
-          this.lingeringSlots.delete(targetId);
+          this.slots.lingeringSlots.delete(targetId);
           this.lingeringPoseCache.delete(targetId);
-          this.freeSlots.push(slot);
+          this.slots.freeSlots.push(slot);
           // After the fresh-spawn-displaces rekey, the worker's body
           // for this hull is keyed by `linger-${shipInstanceId}`,
           // NOT by playerId (which now points at the player's active
@@ -1923,7 +1917,7 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4c — clean up drone turret state alongside the body.
     this.droneMountAngles.delete(rec.id);
     this.droneSlotTargets.delete(rec.id);
-    this.freeSlots.push(rec.slot);
+    this.slots.freeSlots.push(rec.slot);
     if (opts.broadcast) {
       logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
     }
@@ -1942,7 +1936,7 @@ export class SectorRoom extends Room<SectorState> {
    *  computation. */
   playerCount(): number {
     let n = 0;
-    for (const [pid] of this.playerToSlot) {
+    for (const [pid] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(pid);
       if (ship?.alive && ship.isActive) n++;
     }
@@ -1953,7 +1947,7 @@ export class SectorRoom extends Room<SectorState> {
    *  pre-checks this on the DESTINATION before despawning a bot from the
    *  source room, so a transit can't lose a bot to slot exhaustion. */
   hasFreeSlot(): boolean {
-    return this.freeSlots.length > 0;
+    return this.slots.freeSlots.length > 0;
   }
 
   /** Narrow read accessor onto this room's per-process event bus, so the
@@ -2069,7 +2063,7 @@ export class SectorRoom extends Room<SectorState> {
     const rec = this.swarmRegistry.get(botId);
     if (!rec) return;
     const wireId = `swarm-${rec.entityId}`;
-    for (const [pid] of this.playerToSlot) {
+    for (const [pid] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(pid);
       if (!ship?.alive || !ship.isActive) continue;
       this.aiController.markHostile(botId, pid, this.serverTick);
@@ -2089,10 +2083,10 @@ export class SectorRoom extends Room<SectorState> {
     const ship = this.getActiveShip(playerId);
     if (!ship || ship.alive) return; // only dead ships may respawn
 
-    const slot = this.playerToSlot.get(playerId);
+    const slot = this.slots.playerToSlot.get(playerId);
     if (slot === undefined) return;
 
-    const storedPos = this.initialSpawnPositions.get(playerId);
+    const storedPos = this.slots.initialSpawnPositions.get(playerId);
     // testMode preserves the originally-joined position so respawn doesn't
     // teleport mid-test. Else: the room-level default anchor (engineering
     // test rooms) wins over random scatter, matching `onJoin`'s fallback.
@@ -2197,7 +2191,7 @@ export class SectorRoom extends Room<SectorState> {
       let bestHitX = proj.x;
       let bestHitY = proj.y;
 
-      for (const [targetId] of this.playerToSlot) {
+      for (const [targetId] of this.slots.playerToSlot) {
         if (targetId === proj.ownerId) continue;
         const targetShip = this.getActiveShip(targetId);
         if (!targetShip || !targetShip.alive) continue;
@@ -2228,7 +2222,7 @@ export class SectorRoom extends Room<SectorState> {
       // Phase 4 — projectile sweep against wrecks. Same sphere geometry
       // as live ships; targetId carries the `wreck-` prefix so
       // applyDamage routes to state.wrecks.
-      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+      for (const [shipInstanceId, slot] of this.slots.wreckToSlot) {
         const b = slotBase(slot);
         const cx = this.sabF32[b + SLOT_X_OFF]!;
         const cy = this.sabF32[b + SLOT_Y_OFF]!;
@@ -2248,7 +2242,7 @@ export class SectorRoom extends Room<SectorState> {
       // targetId we surface is the shipInstanceId so `applyDamage` can
       // route through the schema map. We pull pose from `lingeringSlots`
       // (parallel to `playerToSlot` for active ships).
-      for (const [shipInstanceId, slot] of this.lingeringSlots) {
+      for (const [shipInstanceId, slot] of this.slots.lingeringSlots) {
         if (shipInstanceId === proj.ownerId) continue;
         const b = slotBase(slot);
         const cx = this.sabF32[b + SLOT_X_OFF]!;
@@ -2409,7 +2403,7 @@ export class SectorRoom extends Room<SectorState> {
             errStack: errAny?.stack,
             errName: errAny?.name,
             errCode: errAny?.code,
-            playerCount: this.playerToSlot.size,
+            playerCount: this.slots.playerToSlot.size,
             swarmCount: this.swarmRegistry.size(),
           },
           'physics worker error',
@@ -2420,7 +2414,7 @@ export class SectorRoom extends Room<SectorState> {
       this.physicsWorker.on('exit', (code) => {
         if (code !== 0) {
           logger.error(
-            { code, playerCount: this.playerToSlot.size, swarmCount: this.swarmRegistry.size() },
+            { code, playerCount: this.slots.playerToSlot.size, swarmCount: this.swarmRegistry.size() },
             'physics worker exited unexpectedly',
           );
           if (!ready) reject(new Error(`physics worker exited with code ${code}`));
@@ -2513,9 +2507,9 @@ export class SectorRoom extends Room<SectorState> {
         // for THAT hull at the 15-min mark — independent of whatever fresh
         // hull the player has bound in the meantime. This closes the
         // "displaced lingering hulls have no auto-evict" leak.
-        const lingeringSlot = this.playerToSlot.get(playerId);
+        const lingeringSlot = this.slots.playerToSlot.get(playerId);
         if (lingeringSlot !== undefined && existingShip && existingShip.shipInstanceId !== '') {
-          this.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
+          this.slots.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
           // The hull is no longer "the player's active hull"; the fresh
           // spawn will overwrite playerToActiveShipInstance below.
           this.playerToActiveShipInstance.delete(playerId);
@@ -2560,7 +2554,7 @@ export class SectorRoom extends Room<SectorState> {
         // Phase 6b cleanup — ownerlessShips keyed by shipInstanceId.
         clearTimeout(ownerlessTimer);
         if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
-        const existingSlot = this.playerToSlot.get(playerId);
+        const existingSlot = this.slots.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
         // Phase 6b — flip the lingering flag back. The hull is being
         // re-bound to a live session; isActive=true means the snapshot
@@ -2641,14 +2635,14 @@ export class SectorRoom extends Room<SectorState> {
     this.sessionToPlayer.set(client.sessionId, playerId);
     this.playerToSession.set(playerId, client.sessionId);
 
-    const slot = this.freeSlots.pop();
+    const slot = this.slots.freeSlots.pop();
     if (slot === undefined) {
       logger.error({ playerId }, 'no free SAB slots — room is full');
       client.leave(1001);
       return;
     }
-    this.playerToSlot.set(playerId, slot);
-    this.slotToPlayer.set(slot, playerId);
+    this.slots.playerToSlot.set(playerId, slot);
+    this.slots.slotToPlayer.set(slot, playerId);
     this.snapshotRing.registerEntity(playerId);
 
     // URL-param wins; else room-level `defaultSpawnX/Y` (engineering test
@@ -2776,7 +2770,7 @@ export class SectorRoom extends Room<SectorState> {
       }
     }
 
-    this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
+    this.slots.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
     // Pre-populate the SAB slot so the update() loop sees a sane position
     // immediately, before the worker processes the SPAWN command.
@@ -2971,7 +2965,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastInputCaches.delete(client.sessionId);
     clearSession(client.sessionId);
 
-    const slot = this.playerToSlot.get(playerId);
+    const slot = this.slots.playerToSlot.get(playerId);
     const ship = this.getActiveShip(playerId);
     const transitInFlight = this.playerToTransitInFlight.has(playerId);
     this.playerToTransitInFlight.delete(playerId);
@@ -3067,7 +3061,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
-    this.initialSpawnPositions.delete(playerId);
+    this.slots.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
     // schema entry is being deleted below; resolveActiveShipKey would
@@ -3075,9 +3069,9 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToActiveShipInstance.delete(playerId);
 
     if (slot !== undefined) {
-      this.playerToSlot.delete(playerId);
-      this.slotToPlayer.delete(slot);
-      this.freeSlots.push(slot);
+      this.slots.playerToSlot.delete(playerId);
+      this.slots.slotToPlayer.delete(slot);
+      this.slots.freeSlots.push(slot);
       this.postToWorker({ type: 'DESPAWN', slot, playerId });
     }
 
@@ -3121,10 +3115,10 @@ export class SectorRoom extends Room<SectorState> {
     //   lingering: free lingeringSlots ONLY; leave player-keyed maps alone
     //              (those refer to the player's CURRENT active hull, not
     //              this displaced one).
-    const isLingeringHull = this.lingeringSlots.has(shipInstanceId);
+    const isLingeringHull = this.slots.lingeringSlots.has(shipInstanceId);
     const slot = isLingeringHull
-      ? this.lingeringSlots.get(shipInstanceId)
-      : this.playerToSlot.get(playerId);
+      ? this.slots.lingeringSlots.get(shipInstanceId)
+      : this.slots.playerToSlot.get(playerId);
 
     // Capture the ship's final pose for the roster mirror BEFORE freeing
     // the schema entry.
@@ -3155,10 +3149,10 @@ export class SectorRoom extends Room<SectorState> {
     if (isLingeringHull) {
       // Free only the lingering-hull side of bookkeeping. The player's
       // active hull (if any) keeps all of its playerId-keyed entries.
-      this.lingeringSlots.delete(shipInstanceId);
+      this.slots.lingeringSlots.delete(shipInstanceId);
       this.lingeringPoseCache.delete(shipInstanceId);
       if (slot !== undefined) {
-        this.freeSlots.push(slot);
+        this.slots.freeSlots.push(slot);
         // The worker rekeyed this body to `linger-${shipInstanceId}` at
         // the fresh-spawn-displaces point; DESPAWN must use the same key
         // or it'd despawn the player's active ship.
@@ -3169,13 +3163,13 @@ export class SectorRoom extends Room<SectorState> {
       this.lastFireClientTick.delete(playerId);
       this.playerMountAngles.delete(playerId);
       this.playerSlotTargets.delete(playerId);
-      this.initialSpawnPositions.delete(playerId);
+      this.slots.initialSpawnPositions.delete(playerId);
       this.snapshotRing.unregisterEntity(playerId);
       this.playerToActiveShipInstance.delete(playerId);
       if (slot !== undefined) {
-        this.playerToSlot.delete(playerId);
-        this.slotToPlayer.delete(slot);
-        this.freeSlots.push(slot);
+        this.slots.playerToSlot.delete(playerId);
+        this.slots.slotToPlayer.delete(slot);
+        this.slots.freeSlots.push(slot);
         this.postToWorker({ type: 'DESPAWN', slot, playerId });
       }
       this.shipPoseCache.delete(playerId);
@@ -3330,7 +3324,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   private convertShipToWreck(playerId: string): void {
     const ship = this.getActiveShip(playerId);
-    const slot = this.playerToSlot.get(playerId);
+    const slot = this.slots.playerToSlot.get(playerId);
     if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
     if (!ship.alive) {
       // Already destroyed — the standard despawn path handles cleanup.
@@ -3367,18 +3361,18 @@ export class SectorRoom extends Room<SectorState> {
     //    render the wreck at a stale frozen pose while the real
     //    physics body drifts somewhere else and collisions land in
     //    empty space.
-    this.slotToWreck.set(slot, shipInstanceId);
-    this.wreckToSlot.set(shipInstanceId, slot);
+    this.slots.slotToWreck.set(slot, shipInstanceId);
+    this.slots.wreckToSlot.set(shipInstanceId, slot);
     this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `wreck-${shipInstanceId}` });
 
     // 3) Tear down player-keyed bookkeeping. Slot is NOT pushed onto
     //    freeSlots — the wreck still owns it.
-    this.playerToSlot.delete(playerId);
-    this.slotToPlayer.delete(slot);
+    this.slots.playerToSlot.delete(playerId);
+    this.slots.slotToPlayer.delete(slot);
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
-    this.initialSpawnPositions.delete(playerId);
+    this.slots.initialSpawnPositions.delete(playerId);
     this.shipPoseCache.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     // Phase 6b — schema is shipInstanceId-keyed; the local already
@@ -3417,11 +3411,11 @@ export class SectorRoom extends Room<SectorState> {
    * `onDispose` so we don't leak slots on room teardown.
    */
   private destroyWreck(shipInstanceId: string): void {
-    const slot = this.wreckToSlot.get(shipInstanceId);
+    const slot = this.slots.wreckToSlot.get(shipInstanceId);
     if (slot !== undefined) {
-      this.wreckToSlot.delete(shipInstanceId);
-      this.slotToWreck.delete(slot);
-      this.freeSlots.push(slot);
+      this.slots.wreckToSlot.delete(shipInstanceId);
+      this.slots.slotToWreck.delete(slot);
+      this.slots.freeSlots.push(slot);
       this.postToWorker({ type: 'DESPAWN', slot, playerId: `wreck-${shipInstanceId}` });
     }
     this.state.wrecks.delete(shipInstanceId);
@@ -3489,7 +3483,7 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: this.sectorKey,
       bus: this.bus,
       sabF32: this.sabF32,
-      playerToSlot: this.playerToSlot,
+      playerToSlot: this.slots.playerToSlot,
       playerToUser: this.playerToUser,
       lastFireClientTick: this.lastFireClientTick,
       getShipHealth: (playerId: string): number => {
@@ -3604,7 +3598,7 @@ export class SectorRoom extends Room<SectorState> {
     // there's no reason to burn CPU on them when idle.
     if (
       this.sectorKey === null
-      && this.playerToSlot.size === 0
+      && this.slots.playerToSlot.size === 0
       && this.swarmRegistry.size() === 0
     ) return;
 
@@ -3633,7 +3627,7 @@ export class SectorRoom extends Room<SectorState> {
       const seq1 = Atomics.load(this.sabU32, SEQLOCK_IDX);
       if (seq1 & 1) continue; // odd → write in progress, spin
 
-      for (const [playerId, slot] of this.playerToSlot) {
+      for (const [playerId, slot] of this.slots.playerToSlot) {
         const pose = this.shipPoseCache.get(playerId);
         if (!pose) continue;
         const b = slotBase(slot);
@@ -3653,7 +3647,7 @@ export class SectorRoom extends Room<SectorState> {
       // their final velocity vector). lingeringPoseCache is allocated
       // lazily here so we don't carry an empty object for the common
       // case (no lingering hulls).
-      for (const [shipInstanceId, slot] of this.lingeringSlots) {
+      for (const [shipInstanceId, slot] of this.slots.lingeringSlots) {
         let pose = this.lingeringPoseCache.get(shipInstanceId);
         if (!pose) {
           pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -3670,7 +3664,7 @@ export class SectorRoom extends Room<SectorState> {
       // Phase 4 — wreck pose mirror. Wrecks live in SAB slots like
       // player ships; the worker steps them every physics tick. We
       // mirror their pose here for the snapshot path.
-      for (const [shipInstanceId, slot] of this.wreckToSlot) {
+      for (const [shipInstanceId, slot] of this.slots.wreckToSlot) {
         const pose = this.wreckPoseCache.get(shipInstanceId);
         if (!pose) continue;
         const b = slotBase(slot);
@@ -3683,7 +3677,7 @@ export class SectorRoom extends Room<SectorState> {
       }
       // (player-loop continuation just below for the appliedTicks
       //  decode — kept inside the seqlock window for consistency.)
-      for (const [playerId, slot] of this.playerToSlot) {
+      for (const [playerId, slot] of this.slots.playerToSlot) {
         const b = slotBase(slot);
         const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
         this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
@@ -3755,7 +3749,7 @@ export class SectorRoom extends Room<SectorState> {
     // (position + angle) to the shooter's tick. Mass-independent: any
     // moving entity benefits from accurate hit attribution.
     this.snapshotRing.beginTick(this.serverTick);
-    for (const id of this.playerToSlot.keys()) {
+    for (const id of this.slots.playerToSlot.keys()) {
       const ship = this.getActiveShip(id);
       if (!ship?.alive) continue;
       const pose = this.shipPoseCache.get(id);
@@ -3810,7 +3804,7 @@ export class SectorRoom extends Room<SectorState> {
         if (bp === 'drop') continue;
 
         const playerId = this.sessionToPlayer.get(client.sessionId);
-        const slot = playerId !== undefined ? this.playerToSlot.get(playerId) : undefined;
+        const slot = playerId !== undefined ? this.slots.playerToSlot.get(playerId) : undefined;
         let inInterest: Set<number> | undefined;
         if (slot !== undefined) {
           const b = slotBase(slot);
@@ -3909,7 +3903,7 @@ export class SectorRoom extends Room<SectorState> {
       const allShips: AllShipEntry[] = [];
       const ackedTicksTelemetry: Record<string, number> = {};
       const aliveIds = new Set<string>();
-      for (const [playerId, slot] of this.playerToSlot) {
+      for (const [playerId, slot] of this.slots.playerToSlot) {
         const ship = this.getActiveShip(playerId);
         if (!ship || !ship.alive) continue;
         const pose = this.shipPoseCache.get(playerId);
@@ -3941,7 +3935,7 @@ export class SectorRoom extends Room<SectorState> {
       // (the worker doesn't apply input to lingering hulls). They get
       // included in every recipient's snapshot the same way active
       // hulls do, so clients see them drifting in the sector.
-      for (const [shipInstanceId, _slot] of this.lingeringSlots) {
+      for (const [shipInstanceId, _slot] of this.slots.lingeringSlots) {
         const ship = this.state.ships.get(shipInstanceId);
         if (!ship || !ship.alive) continue;
         const pose = this.lingeringPoseCache.get(shipInstanceId);
@@ -4148,7 +4142,7 @@ export class SectorRoom extends Room<SectorState> {
       if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
         serverLogEvent('snapshot_broadcast', {
           serverTick: this.serverTick,
-          playerCount: this.playerToSlot.size,
+          playerCount: this.slots.playerToSlot.size,
           ackedTicks: ackedTicksTelemetry,
           states: Object.fromEntries(
             allShips.map((s) => [s.playerId, {
@@ -4171,7 +4165,7 @@ export class SectorRoom extends Room<SectorState> {
     // View is rebuilt in-place each tick to avoid alloc.
     if (this.aiController.size() > 0) {
       this.aiPlayerScratch.length = 0;
-      for (const [pid] of this.playerToSlot) {
+      for (const [pid] of this.slots.playerToSlot) {
         const ship = this.getActiveShip(pid);
         if (!ship?.alive) continue;
         // Phase 6c — drones only see active hulls. Lingering hulls
@@ -4215,7 +4209,7 @@ export class SectorRoom extends Room<SectorState> {
     // are emitted as one server event per second. Hitch detection + rolling
     // history live in TickBudgetTelemetry (extracted Step 3, hazy-pillow).
     const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
-    const playerCount = this.playerToSlot.size;
+    const playerCount = this.slots.playerToSlot.size;
     const swarmCount = this.swarmRegistry.size();
     const aiSize = this.aiController.size();
     const { busiestMs } = this.budget.finishMeasurement({
