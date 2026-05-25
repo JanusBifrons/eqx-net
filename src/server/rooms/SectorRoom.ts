@@ -15,6 +15,7 @@ import { PlayerSlotMap } from './PlayerSlotMap.js';
 import { SwarmLifecycleManager } from './SwarmLifecycleManager.js';
 import { PhysicsBridge } from './PhysicsBridge.js';
 import { CombatSubsystem, type ProjectileRecord as _CombatProjectileRecord } from './CombatSubsystem.js';
+import { MountAimSubsystem } from './MountAimSubsystem.js';
 type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -331,27 +332,14 @@ export class SectorRoom extends Room<SectorState> {
    *  and shipped per-recipient in `SnapshotMessage.states[id].mountAngles`
    *  so remote observers see the same turret rotation the firer's screen
    *  is drawing. */
-  private readonly playerMountAngles = new Map<string, Float32Array>();
-  /** Sticky target id per player slot, used by `pickTarget` to suppress
-   *  oscillation. Cleared on `onLeave` and on death. */
-  private readonly playerSlotTargets = new Map<string, string | null>();
-  /** Reused per-tick drone candidate list passed to `pickTarget` for each
-   *  player slot — avoids per-tick allocation. */
-  private readonly mountTargetsScratch: MountTargetView[] = [];
-
-  // ── Phase 4c (drone turret rotation, 2026-05-11) ────────────────────────
-  /** Per-drone authoritative mount rotation angles. Indexed by drone id
-   *  (`swarm-*`). Only drones whose ship-kind has rotating mounts get an
-   *  entry; legacy single-mount drones (zero-arc 'forward' mount) skip
-   *  the controller call entirely. Mirrors the player-side
-   *  `playerMountAngles` map. Per-recipient snapshot emits these in the
-   *  `drones[]` slice for in-interest drones so the client renders the
-   *  same rotation the server is computing. */
-  private readonly droneMountAngles = new Map<string, Float32Array>();
-  /** Sticky target id per drone slot. Cleared on despawn. */
-  private readonly droneSlotTargets = new Map<string, string | null>();
-  /** Reused per-tick player candidate list for drone turret target picks. */
-  private readonly droneMountTargetsScratch: MountTargetView[] = [];
+  /** Weapon-mount aiming state — extracted Step 9 (hazy-pillow). Owns
+   *  per-mount angles + sticky target maps for both players and drones,
+   *  plus the reused target-candidate scratch arrays. Access via
+   *  `this.mounts.<field>`. Method bodies (tickPlayerMounts, tickDroneMounts)
+   *  remain inline in SectorRoom until shipPoseCache / state.ships
+   *  ownership consolidates further. Plan invariant #12: mount-angle
+   *  storage has exactly one ownership site. */
+  private readonly mounts = new MountAimSubsystem();
 
   private bus!: Bus;
   /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
@@ -963,7 +951,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Build the drone candidate list once per tick — same list re-used for
     // every player's pickTarget call.
-    const targets = this.mountTargetsScratch;
+    const targets = this.mounts.mountTargetsScratch;
     targets.length = 0;
     for (const rec of this.swarm.registry.all()) {
       if (rec.kind !== 1) continue;
@@ -986,16 +974,16 @@ export class SectorRoom extends Room<SectorState> {
       const mounts = this.resolveSlotMounts(kind);
       if (mounts.length === 0) continue;
 
-      const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
+      const prevTargetId = this.mounts.playerSlotTargets.get(playerId) ?? null;
       const target = pickTarget(pose.x, pose.y, targets, prevTargetId, () => true, {
         maxDistance: HITSCAN_RANGE,
       });
-      this.playerSlotTargets.set(playerId, target?.id ?? null);
+      this.mounts.playerSlotTargets.set(playerId, target?.id ?? null);
 
-      let angles = this.playerMountAngles.get(playerId);
+      let angles = this.mounts.playerMountAngles.get(playerId);
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
-        this.playerMountAngles.set(playerId, angles);
+        this.mounts.playerMountAngles.set(playerId, angles);
       }
 
       if (target === null) {
@@ -1047,7 +1035,7 @@ export class SectorRoom extends Room<SectorState> {
 
     // Build the player candidate list once per tick (shared across all
     // drones). Players are `shipPoseCache` rows for alive players.
-    const targets = this.droneMountTargetsScratch;
+    const targets = this.mounts.droneMountTargetsScratch;
     targets.length = 0;
     for (const [pid] of this.slots.playerToSlot) {
       const ship = this.getActiveShip(pid);
@@ -1075,8 +1063,8 @@ export class SectorRoom extends Room<SectorState> {
       if (!hasRotatingMount) {
         // Defensive cleanup if a drone's kind ever loses its rotation
         // (e.g. catalogue change mid-life — currently impossible).
-        if (this.droneMountAngles.has(rec.id)) this.droneMountAngles.delete(rec.id);
-        if (this.droneSlotTargets.has(rec.id)) this.droneSlotTargets.delete(rec.id);
+        if (this.mounts.droneMountAngles.has(rec.id)) this.mounts.droneMountAngles.delete(rec.id);
+        if (this.mounts.droneSlotTargets.has(rec.id)) this.mounts.droneSlotTargets.delete(rec.id);
         continue;
       }
 
@@ -1098,16 +1086,16 @@ export class SectorRoom extends Room<SectorState> {
         return ho ? ho.has(playerId) : false;
       };
 
-      const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
+      const prevTargetId = this.mounts.droneSlotTargets.get(rec.id) ?? null;
       const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
         maxDistance: HITSCAN_RANGE,
       });
-      this.droneSlotTargets.set(rec.id, target?.id ?? null);
+      this.mounts.droneSlotTargets.set(rec.id, target?.id ?? null);
 
-      let angles = this.droneMountAngles.get(rec.id);
+      let angles = this.mounts.droneMountAngles.get(rec.id);
       if (!angles || angles.length !== mounts.length) {
         angles = new Float32Array(mounts.length);
-        this.droneMountAngles.set(rec.id, angles);
+        this.mounts.droneMountAngles.set(rec.id, angles);
       }
 
       if (target === null) {
@@ -1253,7 +1241,7 @@ export class SectorRoom extends Room<SectorState> {
     // targets are unaffected (their `wireTargetId === mountHitId`).
     let bestHitWireId: string | undefined;
 
-    const playerAngles = this.playerMountAngles.get(shooterId);
+    const playerAngles = this.mounts.playerMountAngles.get(shooterId);
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
       const mountWorld = this.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
@@ -1523,7 +1511,7 @@ export class SectorRoom extends Room<SectorState> {
     // preserving the pre-4c behaviour bit-for-bit.
     const fireAngle = Math.atan2(-dirNdx, dirNdy);
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
-    const droneAngles = this.droneMountAngles.get(shooterId);
+    const droneAngles = this.mounts.droneMountAngles.get(shooterId);
 
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
@@ -1913,8 +1901,8 @@ export class SectorRoom extends Room<SectorState> {
     this.combat.swarmShieldLastDmg.delete(rec.id);
     this.snapshotRing.unregisterEntity(rec.id);
     // Phase 4c — clean up drone turret state alongside the body.
-    this.droneMountAngles.delete(rec.id);
-    this.droneSlotTargets.delete(rec.id);
+    this.mounts.droneMountAngles.delete(rec.id);
+    this.mounts.droneSlotTargets.delete(rec.id);
     this.slots.freeSlots.push(rec.slot);
     if (opts.broadcast) {
       logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
@@ -2130,8 +2118,8 @@ export class SectorRoom extends Room<SectorState> {
 
     // Clear fire cooldown so first shot after respawn isn't rejected.
     this.combat.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
+    this.mounts.playerMountAngles.delete(playerId);
+    this.mounts.playerSlotTargets.delete(playerId);
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
     const ack: RespawnAckMessage = { type: 'respawn_ack', x: spawnX, y: spawnY, serverTick: currentServerTick };
@@ -3058,8 +3046,8 @@ export class SectorRoom extends Room<SectorState> {
     // Despawn path — engineering room, dead ship, or transit-in-flight
     // (the destination's onJoin will restore from the transit Limbo entry).
     this.combat.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
+    this.mounts.playerMountAngles.delete(playerId);
+    this.mounts.playerSlotTargets.delete(playerId);
     this.slots.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
@@ -3160,8 +3148,8 @@ export class SectorRoom extends Room<SectorState> {
     } else {
       // Active-hull eviction — full player-scope teardown.
       this.combat.lastFireClientTick.delete(playerId);
-      this.playerMountAngles.delete(playerId);
-      this.playerSlotTargets.delete(playerId);
+      this.mounts.playerMountAngles.delete(playerId);
+      this.mounts.playerSlotTargets.delete(playerId);
       this.slots.initialSpawnPositions.delete(playerId);
       this.snapshotRing.unregisterEntity(playerId);
       this.playerToActiveShipInstance.delete(playerId);
@@ -3369,8 +3357,8 @@ export class SectorRoom extends Room<SectorState> {
     this.slots.playerToSlot.delete(playerId);
     this.slots.slotToPlayer.delete(slot);
     this.combat.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
+    this.mounts.playerMountAngles.delete(playerId);
+    this.mounts.playerSlotTargets.delete(playerId);
     this.slots.initialSpawnPositions.delete(playerId);
     this.shipPoseCache.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
@@ -4005,7 +3993,7 @@ export class SectorRoom extends Room<SectorState> {
           // that index in the ship-kind's catalogue. The client renders
           // every observer's turrets at these angles and reseeds its
           // own predicted angles when a snapshot lands.
-          const angles = this.playerMountAngles.get(ship.playerId);
+          const angles = this.mounts.playerMountAngles.get(ship.playerId);
           let mountAnglesArr: number[] | undefined;
           if (angles && angles.length > 0) {
             let anyNonZero = false;
@@ -4081,7 +4069,7 @@ export class SectorRoom extends Room<SectorState> {
             // interest drones never reach this branch, so their turrets
             // render at baseAngle on the client until they re-enter
             // interest and the next snapshot updates them.
-            const droneAngles = this.droneMountAngles.get(rec.id);
+            const droneAngles = this.mounts.droneMountAngles.get(rec.id);
             let droneMountAnglesArr: number[] | undefined;
             if (droneAngles && droneAngles.length > 0) {
               let anyNonZero = false;
