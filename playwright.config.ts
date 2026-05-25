@@ -61,6 +61,8 @@ const FEATURE_SPECS: string[] = [
   '**/combat.spec.ts',
   '**/collision-events.spec.ts',
   '**/configurable-arrival.spec.ts',
+  '**/diag-mode-side-effect.spec.ts',
+  '**/heap-growth-gate.spec.ts',
   '**/drawer-galaxy-map-open-close.spec.ts',
   '**/drawer-galaxy-overview-spawn.spec.ts',
   '**/drone-destruction.spec.ts',
