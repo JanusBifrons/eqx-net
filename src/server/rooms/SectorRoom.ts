@@ -17,6 +17,7 @@ import { PhysicsBridge } from './PhysicsBridge.js';
 import { CombatSubsystem, type ProjectileRecord as _CombatProjectileRecord } from './CombatSubsystem.js';
 import { MountAimSubsystem } from './MountAimSubsystem.js';
 import { AiSubsystem } from './AiSubsystem.js';
+import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 type ProjectileRecordAlias = _CombatProjectileRecord;
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -319,7 +320,12 @@ export class SectorRoom extends Room<SectorState> {
   // Access them via `this.swarm.registry`, `this.swarm.grid`,
   // `this.swarm.interestScratch`.
   private readonly swarm = new SwarmLifecycleManager();
-  private readonly swarmEncoder = new BinarySwarmBroadcast();
+  /** Snapshot broadcast state — encoder, idle tracker, per-recipient
+   *  lastInput cache, force-grace tick, boost/thrust sets, TiDi clock,
+   *  snapshot-persist counter. Extracted Step 11 (hazy-pillow). Access
+   *  via `this.snapshot.<field>`. Method bodies (the per-client snapshot
+   *  loop, idle update, swarm-broadcast block) remain inline. */
+  private readonly snapshot = new SnapshotBroadcaster();
   private swarmSpawner!: SwarmSpawner;
   /** AI controller + per-tick view scratch — extracted Step 10 (hazy-pillow).
    *  Controller is wired in onCreate via `this.ai.setController(...)`;
@@ -345,28 +351,16 @@ export class SectorRoom extends Room<SectorState> {
   private readonly mounts = new MountAimSubsystem();
 
   private bus!: Bus;
-  /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
-   *  rate via SAB. Named `simClock` to avoid colliding with Colyseus `Room.clock`
-   *  (a `ClockTimer` instance for `setInterval` / `setTimeout` helpers). */
-  private simClock!: SimulationClock;
   /** Phase 6 — second-lever load shedder. Drops far drones in batches when
    *  the simClock is at its floor and the budget is still overrun. */
   private shedder!: LoadShedder;
-  /** Last clockRate value pushed to the worker, used to gate CLOCK_RATE postMessages
-   *  to once per RAMP_PER_TICK step (≈ once per ~6 server ticks at most). */
-  private lastSentClockRate = 1.0;
+  // `lastSentClockRate`, `boostingPlayers`, `thrustingPlayers` now live on
+  // `this.snapshot` (SnapshotBroadcaster; extracted Step 11).
   /** Physics-tick acceleration multiplier; see roomOpts.testTimeScale. */
   private testTimeScale = 1;
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
-  /** PlayerIds currently holding shift-boost AND thrust. Surfaced on every
-   *  snapshot so all clients can render an exhaust trail for that ship. */
-  private readonly boostingPlayers = new Set<string>();
-  /** PlayerIds currently holding thrust (regardless of boost). Surfaced on
-   *  every snapshot so observers can see a baseline thrust flame whenever
-   *  a ship is accelerating. Strict superset of `boostingPlayers`. */
-  private readonly thrustingPlayers = new Set<string>();
   /** Worker IPC boundary — owns the worker handle and `sabAppliedTicks`
    *  mirror. Extracted Step 6 (hazy-pillow). Larger logic (drainSab,
    *  worker onmessage dispatcher, SAB buffer ownership) remains inline
@@ -382,25 +376,10 @@ export class SectorRoom extends Room<SectorState> {
    *  removed on player leave. */
   private readonly shipPoseCache = new Map<string, ShipPhysicsState>();
   private serverTick = 0;
-  /** Pre-Stage-5: gated the 20 Hz broadcast — fired every 3 update() calls.
-   *  Stage 5 replaces this with per-client {@link shouldBroadcastFar} /
-   *  {@link shouldBroadcastClose} predicates. Field retained for the
-   *  swarm broadcast (binary channel) which still uses the same 60 Hz
-   *  cadence with no per-client phasing. */
-  private broadcastCounter = 0;
-  /** Stage 5 — per-recipient cache of the last lastInput bits sent for
-   *  each ship, used by {@link shouldIncludeLastInput} to omit the
-   *  field when the bits haven't changed. Keyed by Colyseus sessionId;
-   *  cleared in onLeave. */
-  private readonly lastInputCaches = new Map<string, LastInputCache>();
-  /** Stage 5 — sector-wide idle tracker. Updated each update() with
-   *  motion / projectile-in-flight signals; when isSectorIdle returns
-   *  true, the snapshot broadcast block short-circuits entirely. */
-  private readonly idleTracker: IdleTracker = createIdleTracker();
-  /** Server tick until which snapshot broadcasts are forced ON,
-   *  bypassing idle-suppression. Set on every player join/spawn — see
-   *  `JOIN_BROADCAST_GRACE_TICKS`. */
-  private forceBroadcastUntilTick = 0;
+  // `broadcastCounter`, `lastInputCaches`, `idleTracker`,
+  // `forceBroadcastUntilTick` now live on `this.snapshot`
+  // (SnapshotBroadcaster; extracted Step 11). The `idleTracker` is
+  // created in SnapshotBroadcaster's constructor.
   private testMode = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
@@ -418,8 +397,8 @@ export class SectorRoom extends Room<SectorState> {
    *  player joining without params still lands at the known anchor. */
   private defaultSpawnX: number | null = null;
   private defaultSpawnY: number | null = null;
-  /** Phase 8 — counter for the 60-second snapshot cadence (galaxy sectors only). */
-  private ticksSinceSnapshot = 0;
+  // `ticksSinceSnapshot` now lives on `this.snapshot.ticksSinceSnapshot`
+  // (SnapshotBroadcaster; extracted Step 11).
   /** Phase 8 sub-phase B — set when an in-flight transit has committed (Limbo
    *  entry written with destination sectorKey, seat reserved, ship about to
    *  leave). The subsequent `onLeave` checks this and skips its own Limbo
@@ -491,7 +470,7 @@ export class SectorRoom extends Room<SectorState> {
     this.setState(new SectorState());
     this.bus = new Bus();
     this.budget = new TickBudgetTelemetry(serverLogEvent);
-    this.simClock = new SimulationClock(this.bus);
+    this.snapshot.setClock(new SimulationClock(this.bus));
     this.shedder = new LoadShedder({
       registry: this.swarm.registry,
       getPlayers: () => this.alivePlayerPositions(),
@@ -780,12 +759,12 @@ export class SectorRoom extends Room<SectorState> {
       // Track per-player boost state so the snapshot can broadcast it to all
       // observers for the visual exhaust trail. Only "active" while boosting
       // AND thrusting — shift alone doesn't visually do anything.
-      if (boost && thrust) this.boostingPlayers.add(playerId);
-      else this.boostingPlayers.delete(playerId);
+      if (boost && thrust) this.snapshot.boostingPlayers.add(playerId);
+      else this.snapshot.boostingPlayers.delete(playerId);
       // Parallel track: any thrust at all gets a baseline flame. Superset of
       // `boostingPlayers` (boost ⇒ thrust). Renderer layers boost on top.
-      if (thrust) this.thrustingPlayers.add(playerId);
-      else this.thrustingPlayers.delete(playerId);
+      if (thrust) this.snapshot.thrustingPlayers.add(playerId);
+      else this.snapshot.thrustingPlayers.delete(playerId);
       // Diagnostic: log every 30th input plus any input whose claimed tick is
       // far from the current server tick (indicates clock drift). The delta
       // tells us how the client's tick numbering relates to the server's.
@@ -1980,7 +1959,7 @@ export class SectorRoom extends Room<SectorState> {
     // Stream snapshots regardless of motion so a freshly-arrived client
     // reconciles the new body (mirrors the player-join grace; see the
     // warp/transit join-broadcast-grace lesson in src/server/CLAUDE.md).
-    this.forceBroadcastUntilTick = this.serverTick + JOIN_BROADCAST_GRACE_TICKS;
+    this.snapshot.forceBroadcastUntilTick = this.serverTick + JOIN_BROADCAST_GRACE_TICKS;
     this.broadcast('warp_in', {
       type: 'warp_in',
       playerId: spec.botId,
@@ -2599,7 +2578,7 @@ export class SectorRoom extends Room<SectorState> {
         // Reconnect-restore path: force snapshot broadcasts so the
         // returning client reconciles its prediction before
         // idle-suppression can kick in. See JOIN_BROADCAST_GRACE_TICKS.
-        this.forceBroadcastUntilTick =
+        this.snapshot.forceBroadcastUntilTick =
           Atomics.load(this.sabU32, TICK_IDX) + JOIN_BROADCAST_GRACE_TICKS;
         serverLogEvent('player_rebind', {
           playerId,
@@ -2908,7 +2887,7 @@ export class SectorRoom extends Room<SectorState> {
     // snapshots until the player moves — then the first snapshot snaps
     // the (stale, free-run) prediction hundreds of units. See
     // JOIN_BROADCAST_GRACE_TICKS.
-    this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
+    this.snapshot.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
     logger.info(
       { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromLimbo },
@@ -2949,10 +2928,10 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToSession.delete(playerId);
     this.swarm.interestScratch.delete(client.sessionId);
     this.physics.sabAppliedTicks.delete(playerId);
-    this.boostingPlayers.delete(playerId);
-    this.thrustingPlayers.delete(playerId);
+    this.snapshot.boostingPlayers.delete(playerId);
+    this.snapshot.thrustingPlayers.delete(playerId);
     // Stage 5 — drop per-recipient scheduler state.
-    this.lastInputCaches.delete(client.sessionId);
+    this.snapshot.lastInputCaches.delete(client.sessionId);
     clearSession(client.sessionId);
 
     const slot = this.slots.playerToSlot.get(playerId);
@@ -3768,9 +3747,9 @@ export class SectorRoom extends Room<SectorState> {
     // state (swarm health) every 60 s. Engineering rooms (sectorKey null)
     // skip; their state is ephemeral by design.
     if (this.sectorKey !== null) {
-      this.ticksSinceSnapshot += 1;
-      if (this.ticksSinceSnapshot >= 3600 /* 60 s at 60 Hz */) {
-        this.ticksSinceSnapshot = 0;
+      this.snapshot.ticksSinceSnapshot += 1;
+      if (this.snapshot.ticksSinceSnapshot >= 3600 /* 60 s at 60 Hz */) {
+        this.snapshot.ticksSinceSnapshot = 0;
         this.persistSectorSnapshot();
       }
     }
@@ -3809,7 +3788,7 @@ export class SectorRoom extends Room<SectorState> {
           this.swarm.grid.query9(cx, cy, scratch);
           inInterest = scratch;
         }
-        const swarmPacket = this.swarmEncoder.encode(this.swarm.registry, this.sabF32, this.sabU32, this.serverTick, inInterest);
+        const swarmPacket = this.snapshot.encoder.encode(this.swarm.registry, this.sabF32, this.sabU32, this.serverTick, inInterest);
         if (swarmPacket) client.send('swarm', swarmPacket);
       }
     }
@@ -3820,16 +3799,16 @@ export class SectorRoom extends Room<SectorState> {
     // projectile-in-flight signals; when no activity in IDLE_THRESHOLD_TICKS
     // (= 1 s at 60 Hz), the snapshot broadcast block short-circuits.
     if (this.combat.liveProjectiles.size > 0) {
-      noteSectorEvent(this.idleTracker, this.serverTick);
+      noteSectorEvent(this.snapshot.idleTracker, this.serverTick);
     } else {
       for (const [, pose] of this.shipPoseCache) {
         const speedSq = pose.vx * pose.vx + pose.vy * pose.vy;
         if (speedSq > IDLE_MOTION_EPSILON_SQ) {
-          noteSectorEvent(this.idleTracker, this.serverTick);
+          noteSectorEvent(this.snapshot.idleTracker, this.serverTick);
           break;
         }
         if (Math.abs(pose.angvel ?? 0) > 0.05) {
-          noteSectorEvent(this.idleTracker, this.serverTick);
+          noteSectorEvent(this.snapshot.idleTracker, this.serverTick);
           break;
         }
       }
@@ -3840,10 +3819,10 @@ export class SectorRoom extends Room<SectorState> {
     // while the current tick is inside that window the sector is
     // treated as non-idle regardless of motion. See
     // JOIN_BROADCAST_GRACE_TICKS for the full rationale.
-    const inJoinGrace = this.serverTick < this.forceBroadcastUntilTick;
+    const inJoinGrace = this.serverTick < this.snapshot.forceBroadcastUntilTick;
     const sectorIdle =
       !inJoinGrace &&
-      isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
+      isSectorIdle(this.snapshot.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
 
     // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
     //
@@ -3874,7 +3853,7 @@ export class SectorRoom extends Room<SectorState> {
     // loops drift; using SAB tick % 3 for scheduling caused ~25% missed
     // broadcasts pre-Phase-3. See `docs/LESSONS.md`. broadcastCounter is
     // purely main-thread and so is monotonic with update() calls.
-    this.broadcastCounter++;
+    this.snapshot.broadcastCounter++;
     if (this.serverTick > 0 && !sectorIdle) {
       // Build the global "all alive ships" digest once — same data for every
       // recipient, just the inclusion decision differs per (recipient, ship).
@@ -3944,11 +3923,11 @@ export class SectorRoom extends Room<SectorState> {
 
       // Boosting/thrusting filter — small lists, sent in every snapshot.
       const boostingIds: string[] = [];
-      for (const id of this.boostingPlayers) {
+      for (const id of this.snapshot.boostingPlayers) {
         if (aliveIds.has(id)) boostingIds.push(id);
       }
       const thrustingIds: string[] = [];
-      for (const id of this.thrustingPlayers) {
+      for (const id of this.snapshot.thrustingPlayers) {
         if (aliveIds.has(id)) thrustingIds.push(id);
       }
       const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
@@ -3972,15 +3951,15 @@ export class SectorRoom extends Room<SectorState> {
         // phase offset hashed from playerId. Two recipients with different
         // offsets almost never fire on the same tick, smoothing CPU spikes,
         // but each individual recipient sees a clean 50 ms interval at 20 Hz.
-        if (!shouldBroadcastFar(this.broadcastCounter, recipientPlayerId)) continue;
+        if (!shouldBroadcastFar(this.snapshot.broadcastCounter, recipientPlayerId)) continue;
 
         const recipientPose = this.shipPoseCache.get(recipientPlayerId);
         if (!recipientPose) continue;
 
-        let lastInputCache = this.lastInputCaches.get(client.sessionId);
+        let lastInputCache = this.snapshot.lastInputCaches.get(client.sessionId);
         if (!lastInputCache) {
           lastInputCache = createLastInputCache();
-          this.lastInputCaches.set(client.sessionId, lastInputCache);
+          this.snapshot.lastInputCaches.set(client.sessionId, lastInputCache);
         }
 
         // Build per-recipient states map. Every alive ship is included
@@ -4129,7 +4108,7 @@ export class SectorRoom extends Room<SectorState> {
 
       // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick) to preserve
       // pre-Stage-5 log volume even though the actual broadcast is per-client.
-      if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
+      if (anySnapshotSent && this.snapshot.broadcastCounter % 3 === 0) {
         serverLogEvent('snapshot_broadcast', {
           serverTick: this.serverTick,
           playerCount: this.slots.playerToSlot.size,
@@ -4217,8 +4196,8 @@ export class SectorRoom extends Room<SectorState> {
     // overrun is whichever is longer. Without this, a worker that's grinding
     // at 50 ms/tick goes undetected because the server thread reads the SAB
     // in <1 ms and reports a healthy budget.
-    this.simClock.report(busiestMs);
-    const newRate = this.simClock.rate;
+    this.snapshot.clock.report(busiestMs);
+    const newRate = this.snapshot.clock.rate;
     // testTimeScale lets testMode rooms run physics N× faster (default 1).
     // The worker scales its accumulator by the rate; multiplying here is
     // structurally cheap because the worker already supports rate > 1
@@ -4227,8 +4206,8 @@ export class SectorRoom extends Room<SectorState> {
     // simClock value so client audio pitch + TiDi UI don't show a fake
     // anomaly under acceleration.
     const outboundRate = newRate * this.testTimeScale;
-    if (Math.abs(outboundRate - this.lastSentClockRate) >= 1e-4) {
-      this.lastSentClockRate = outboundRate;
+    if (Math.abs(outboundRate - this.snapshot.lastSentClockRate) >= 1e-4) {
+      this.snapshot.lastSentClockRate = outboundRate;
       this.state.clockRate = newRate;
       this.postToWorker({ type: 'CLOCK_RATE', rate: outboundRate });
     }
