@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:alloc": "cross-env NODE_OPTIONS=--expose-gc vitest run --config vitest.integration.config.ts tests/integration/allocations",
     "coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "bench": "vitest bench --run",
     "bench:check": "tsx benchmarks/run-bench-check.ts",
