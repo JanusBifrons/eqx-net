@@ -131,6 +131,24 @@ const JoinOptionsSchema = z
     authToken: z.string().optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
+    /** Test-only initial hull override. Honoured only when the room has
+     *  `testMode === true` (engineering rooms like `test-sector`). Lets
+     *  E2E specs that just need "do they die when shot?" spawn with
+     *  1 HP so the kill resolves in a single beam tick instead of
+     *  fighting full 500 HP + shield. Ignored on galaxy rooms. */
+    initialHull: z.number().int().min(1).optional(),
+    /** Test-only initial shield override; same testMode gate. 0 lets the
+     *  first beam hit hull immediately. */
+    initialShield: z.number().int().min(0).optional(),
+    /** Per-test room isolation knob. Combined with the test rooms'
+     *  `filterBy(['testId'])` (in `src/server/index.ts`), passing a
+     *  unique testId routes each Playwright spec to its own physics-
+     *  worker-backed Colyseus room — enabling safe `fullyParallel`
+     *  execution across specs without cross-test state pollution.
+     *  Omit (default) → shared room for back-compat with pre-filterBy
+     *  specs. The server doesn't otherwise consume this field; Colyseus
+     *  routes by it at the matchmaker layer. */
+    testId: z.string().optional(),
     /** Player-chosen ship kind id (e.g. 'scout' | 'fighter' | 'heavy').
      *  Validated against `isShipKindId` in `onJoin`; unknown / missing values
      *  fall back to `DEFAULT_SHIP_KIND`. Ignored on Limbo rebind paths so a
@@ -340,6 +358,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Last clockRate value pushed to the worker, used to gate CLOCK_RATE postMessages
    *  to once per RAMP_PER_TICK step (≈ once per ~6 server ticks at most). */
   private lastSentClockRate = 1.0;
+  /** Physics-tick acceleration multiplier; see roomOpts.testTimeScale. */
+  private testTimeScale = 1;
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
@@ -575,8 +595,23 @@ export class SectorRoom extends Room<SectorState> {
        */
       defaultSpawnX?: number;
       defaultSpawnY?: number;
+      /** Test-only physics-tick acceleration. The worker already scales
+       *  its physics-step accumulator by the SAB-resident clock rate
+       *  (Phase 6 TiDi — `physics.tick(FIXED_DT * rate)`); setting this
+       *  to e.g. 10 in a `testMode` room multiplies the outbound rate
+       *  by 10 so 1 wall-clock tick advances 10 physics ticks of game
+       *  time. Ghost-TTL (500 ms), projectile lifetime (4 s), warp
+       *  spool (30 s), regen cycles all compress proportionally.
+       *  Ignored on non-testMode rooms (galaxy gameplay never sees a
+       *  multiplied clock). Server-side `state.clockRate` continues to
+       *  report the unmultiplied `simClock.rate` so client audio pitch
+       *  + TiDi UI stay honest. */
+      testTimeScale?: number;
     };
     this.testMode = roomOpts.testMode ?? false;
+    // Default 1.0 (no acceleration). Only honoured when testMode is true,
+    // so a malicious / mis-targeted galaxy join can't ever speed it up.
+    this.testTimeScale = this.testMode ? Math.max(1, roomOpts.testTimeScale ?? 1) : 1;
     this.sectorKey = roomOpts.sectorKey ?? null;
     this.tickBurnMs = Math.max(0, Math.min(50, roomOpts.tickBurnMs ?? 0));
     this.defaultSpawnX = roomOpts.defaultSpawnX ?? null;
@@ -2837,6 +2872,20 @@ export class SectorRoom extends Room<SectorState> {
     // Shield seeds full on spawn (transient - never persisted; only hull
     // persists). Body spawns circle (exposed:false in spawnShip).
     ship.shield = getShipKind(ship.kind).shieldMax;
+    // Test-only initialHull / initialShield overrides. Gated to testMode
+    // rooms (engineering, never galaxy) so live gameplay can't be nerfed
+    // via the wire. Applied AFTER the kind-default hull/shield are
+    // installed so the test spec gets the exact override it asked for.
+    // E2E specs that just need "do they die when shot?" spawn with
+    // initialHull=1, initialShield=0 → one beam tick kills.
+    if (this.testMode && parsed.success) {
+      if (typeof parsed.data.initialHull === 'number') {
+        ship.health = Math.max(1, parsed.data.initialHull);
+      }
+      if (typeof parsed.data.initialShield === 'number') {
+        ship.shield = Math.max(0, parsed.data.initialShield);
+      }
+    }
     ship.shieldLastDamageTick = this.serverTick;
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
@@ -4259,10 +4308,18 @@ export class SectorRoom extends Room<SectorState> {
     const busiestMs = Math.max(totalMs, workerTickMs);
     this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
-    if (Math.abs(newRate - this.lastSentClockRate) >= 1e-4) {
-      this.lastSentClockRate = newRate;
+    // testTimeScale lets testMode rooms run physics N× faster (default 1).
+    // The worker scales its accumulator by the rate; multiplying here is
+    // structurally cheap because the worker already supports rate > 1
+    // (it just hasn't been used before — SimulationClock floors at 0.7
+    // and ceilings at 1.0). state.clockRate stays at the UNMULTIPLIED
+    // simClock value so client audio pitch + TiDi UI don't show a fake
+    // anomaly under acceleration.
+    const outboundRate = newRate * this.testTimeScale;
+    if (Math.abs(outboundRate - this.lastSentClockRate) >= 1e-4) {
+      this.lastSentClockRate = outboundRate;
       this.state.clockRate = newRate;
-      this.postToWorker({ type: 'CLOCK_RATE', rate: newRate });
+      this.postToWorker({ type: 'CLOCK_RATE', rate: outboundRate });
     }
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.

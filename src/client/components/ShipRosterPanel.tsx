@@ -6,6 +6,11 @@ import { ROSTER_CAP } from './rosterConstants';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
 import { useUIStore } from '../state/store';
+import {
+  acquireRosterPolling,
+  releaseRosterPolling,
+  forceRefreshRoster,
+} from './rosterPoller';
 
 /**
  * Galaxy-map ship roster panel. Fetches the player's roster from
@@ -40,8 +45,8 @@ interface ShipRosterPanelProps {
   onSpawn: (shipId: string, sectorKey: string) => void;
 }
 
-const POLL_MS = 3000;
-const ENDPOINT_LIST = '/dev/player-ships';
+// Poll cadence + LIST endpoint moved to `rosterPoller.ts` (Probe 4 dedupe,
+// 2026-05-24). Multiple panel mounts share one poll loop now.
 const ENDPOINT_ABANDON = (shipId: string): string => `/dev/player-ships/${encodeURIComponent(shipId)}/abandon`;
 
 export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRosterPanelProps): JSX.Element | null {
@@ -52,44 +57,25 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
   // consumer read from the same store.
   useMountLog('ShipRosterPanel', { compact, hasPlayerId: playerId !== '' });
   const ships = useUIStore((s) => s.shipRoster) as RosterShipEntry[];
-  const setShipRoster = useUIStore((s) => s.setShipRoster);
+  // setShipRoster moved into rosterPoller (Probe 4 dedupe, 2026-05-24).
   const [openShipId, setOpenShipId] = useState<string | null>(null);
 
-  const refresh = useCallback(async (): Promise<void> => {
-    if (playerId === '') {
-      logEvent('roster_fetch', { stage: 'skip', reason: 'no-pid' });
-      return;
-    }
-    try {
-      const url = `${ENDPOINT_LIST}?playerId=${encodeURIComponent(playerId)}`;
-      logEvent('roster_fetch', { stage: 'start', url, playerId });
-      const res = await fetch(url);
-      if (!res.ok) {
-        logEvent('roster_fetch', { stage: 'http-error', status: res.status });
-        return;
-      }
-      const body = (await res.json()) as { ships?: RosterShipEntry[] };
-      const out = Array.isArray(body.ships) ? body.ships : [];
-      setShipRoster(out);
-      logEvent('roster_fetch', { stage: 'ok', count: out.length, kinds: out.map((s) => s.kind) });
-    } catch (err) {
-      logEvent('roster_fetch', { stage: 'exception', message: (err as Error).message ?? 'unknown' });
-    }
-  }, [playerId, setShipRoster]);
-
+  // Probe 4 (2026-05-24) — fetch logic now lives in the shared singleton
+  // (`rosterPoller.ts`). This panel only acquires/releases the refcount.
+  // The Abandon flow uses `forceRefreshRoster()` for an immediate post-
+  // mutation re-fetch.
   useEffect(() => {
     logEvent('roster_panel_mount', { playerId, compact });
     if (playerId === '') {
       logEvent('roster_panel_mount', { stage: 'no-pid' });
       return;
     }
-    void refresh();
-    const handle = window.setInterval(() => { void refresh(); }, POLL_MS);
+    acquireRosterPolling(playerId);
     return () => {
       logEvent('roster_panel_unmount', { playerId });
-      window.clearInterval(handle);
+      releaseRosterPolling();
     };
-  }, [playerId, refresh, compact]);
+  }, [playerId, compact]);
 
   // Phase 5 — Abandon path. When the user abandons the hull THIS browser
   // session is currently piloting, eject them back to the galaxy map.
@@ -108,7 +94,7 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
         body: JSON.stringify({ playerId }),
       });
       setOpenShipId(null);
-      await refresh();
+      await forceRefreshRoster();
       if (wasMyPilotedShip) {
         // The hull I was flying is now a wreck — eject to the galaxy
         // map. Clear currentSectorKey so the map renders neutral instead
@@ -119,7 +105,7 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
     } catch {
       // Best-effort; user can retry.
     }
-  }, [playerId, refresh, setPhase, setCurrentSectorKey, localShipInstanceId]);
+  }, [playerId, setPhase, setCurrentSectorKey, localShipInstanceId]);
 
   const handleSpawn = useCallback((shipId: string, sectorKey: string): void => {
     setOpenShipId(null);

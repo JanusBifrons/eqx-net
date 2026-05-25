@@ -1,0 +1,8 @@
+{
+  "sessionId": "2026-05-25T11-30-47Z-7jrras",
+  "streaming": true,
+  "hasFinalized": false,
+  "lastAppliedSeq": 42,
+  "lastBatchAtMs": 1779709808900,
+  "startedAtMs": 1779708647963
+}

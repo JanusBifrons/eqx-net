@@ -7,7 +7,7 @@
  * at 500 entities, confirming the worker path adds negligible latency vs
  * the Phase 1 main-thread approach.
  */
-import { bench, describe, beforeAll } from 'vitest';
+import { bench, describe } from 'vitest';
 import { PhysicsWorld } from '../src/core/physics/World.js';
 import {
   SEQLOCK_IDX,
@@ -66,13 +66,17 @@ function readSAB(u32: Uint32Array, f32: Float32Array, slots: number[]): void {
 
 for (const N of [100, 500, 1000]) {
   describe(`${N} entities`, () => {
+    // `beforeAll` does NOT run in vitest 2.1.x bench mode (samples drop
+    // to 0). Per-bench `setup` is the supported alternative. Each setup
+    // builds a fresh world / SAB; the closure-captured refs are
+    // initialised once per bench before its sampling window.
     let world: PhysicsWorld;
-    let playerToSlot: Map<string, number>;
-    let slots: number[];
+    let playerToSlot: Map<string, number> = new Map();
+    let slots: number[] = [];
     let u32: Uint32Array;
     let f32: Float32Array;
 
-    beforeAll(async () => {
+    const setup = async (): Promise<void> => {
       world = await PhysicsWorld.create();
       playerToSlot = new Map();
       slots = [];
@@ -86,18 +90,30 @@ for (const N of [100, 500, 1000]) {
       const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
       u32 = new Uint32Array(sab);
       f32 = new Float32Array(sab);
-    });
+    };
 
-    bench('physics tick (main thread)', () => {
-      world.tick(1 / 60);
-    });
+    bench(
+      'physics tick (main thread)',
+      () => {
+        world.tick(1 / 60);
+      },
+      { setup },
+    );
 
-    bench('SAB write — seqlock + N entity states', () => {
-      writeSAB(u32, f32, world.getAllShipStates(), playerToSlot);
-    });
+    bench(
+      'SAB write — seqlock + N entity states',
+      () => {
+        writeSAB(u32, f32, world.getAllShipStates(), playerToSlot);
+      },
+      { setup },
+    );
 
-    bench('SAB read — seqlock + N entity states', () => {
-      readSAB(u32, f32, slots);
-    });
+    bench(
+      'SAB read — seqlock + N entity states',
+      () => {
+        readSAB(u32, f32, slots);
+      },
+      { setup },
+    );
   });
 }

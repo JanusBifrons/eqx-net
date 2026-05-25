@@ -1,0 +1,14 @@
+{
+  "sessionId": "2026-05-25T13-45-56Z-uap6wl",
+  "streaming": true,
+  "hasFinalized": true,
+  "lastAppliedSeq": 0,
+  "lastBatchAtMs": 1779716756603,
+  "startedAtMs": 1779716756599,
+  "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+  "viewport": {
+    "w": 411,
+    "h": 809
+  },
+  "clientEpochMs": 1779716758514
+}

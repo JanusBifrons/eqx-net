@@ -544,6 +544,19 @@ export class PixiRenderer implements IRenderer {
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  /** 2026-05-25 heap-growth gate step 6 — persistent scratches for the
+   *  five containers `update()` allocated per frame (60-90 Hz). Each
+   *  is `.clear()`'d at the start of `update()` and refilled. The
+   *  `lingeringPosesView` Map's per-entry `{x, y}` literals are also
+   *  pooled via `_explosionPoseEntries` (grow-once, reused thereafter).
+   *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
+   *  pressure under combat (see capture lnnkkh, 2026-05-25). */
+  private readonly _updateSeenScratch = new Set<string>();
+  private readonly _updateRemoteHitTargetsScratch = new Set<string>();
+  private readonly _updateLocalHitTargetsScratch = new Set<string>();
+  private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
+  private readonly _updateLingeringPoseEntries: { x: number; y: number }[] = [];
+  private readonly _updateProjSeenScratch = new Set<string>();
   private readonly halo = new HaloRadar();
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
@@ -587,6 +600,8 @@ export class PixiRenderer implements IRenderer {
     spriteCount: 0,
     warpTickMs: 0,
     filterCount: 0,
+    warpFiltersAttached: false,
+    warpBurstAgeMs: -1,
     gridLabelSpecMs: 0,
     gridTextCreateMs: 0,
     gridCleanupMs: 0,
@@ -871,14 +886,18 @@ export class PixiRenderer implements IRenderer {
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
     // production cost). See `frameMarkers` / `FrameMarkers`.
     const updateStart = performance.now();
-    const seen = new Set<string>();
+    // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
+    // containers instead of `new Set<string>()` per frame.
+    const seen = this._updateSeenScratch;
+    seen.clear();
 
     // Precompute the sets of entities hit by any active beam this frame —
     // remote (other shooters' beams) and local (any mount on the local
     // player's ship). Multi-mount/turret refactor (Phase 2c): both
     // `mirror.remoteLasers` and `mirror.liveBeams` are now per-mount, so we
     // flatten across all mounts to drive the damage-flash tint logic.
-    const remoteHitTargets = new Set<string>();
+    const remoteHitTargets = this._updateRemoteHitTargetsScratch;
+    remoteHitTargets.clear();
     if (mirror.remoteLasers) {
       for (const perShooter of mirror.remoteLasers.values()) {
         for (const laser of perShooter.values()) {
@@ -886,7 +905,8 @@ export class PixiRenderer implements IRenderer {
         }
       }
     }
-    const localHitTargets = new Set<string>();
+    const localHitTargets = this._updateLocalHitTargetsScratch;
+    localHitTargets.clear();
     if (mirror.liveBeams) {
       for (const beam of mirror.liveBeams.values()) {
         if (beam.hitId) localHitTargets.add(beam.hitId);
@@ -986,9 +1006,22 @@ export class PixiRenderer implements IRenderer {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
       // which the helper doesn't need.
-      const lingeringPosesView = new Map<string, { x: number; y: number }>();
+      // 2026-05-25 heap-growth gate step 6: persistent Map + pooled
+      // {x,y} entries (peak == lingering-sprite count; grow-once).
+      const lingeringPosesView = this._updateLingeringPosesView;
+      lingeringPosesView.clear();
+      const lingeringPoseEntries = this._updateLingeringPoseEntries;
+      let lingeringPoseIdx = 0;
       for (const [id, entry] of this.lingeringSprites) {
-        lingeringPosesView.set(id, { x: entry.sprite.x, y: entry.sprite.y });
+        let pose = lingeringPoseEntries[lingeringPoseIdx];
+        if (!pose) {
+          pose = { x: 0, y: 0 };
+          lingeringPoseEntries[lingeringPoseIdx] = pose;
+        }
+        pose.x = entry.sprite.x;
+        pose.y = entry.sprite.y;
+        lingeringPosesView.set(id, pose);
+        lingeringPoseIdx++;
       }
       for (const targetId of mirror.explodingShips) {
         const pose = decideExplosionPosition({
@@ -1112,7 +1145,9 @@ export class PixiRenderer implements IRenderer {
 
     // Projectiles and ghost projectiles.
     if (mirror.projectiles) {
-      const projSeen = new Set<string>();
+      // 2026-05-25 heap-growth gate step 6: reuse persistent Set.
+      const projSeen = this._updateProjSeenScratch;
+      projSeen.clear();
       for (const [projId, proj] of mirror.projectiles) {
         projSeen.add(projId);
         let ps = this.projectileSprites.get(projId);
@@ -1385,9 +1420,28 @@ export class PixiRenderer implements IRenderer {
     // flash + burst ripple at the world point so observers see where
     // the remote ship arrived / departed. Local-player warps are never
     // here (server filters with `except: client`).
-    if (mirror.pendingWarpEvents) {
-      for (const evt of mirror.pendingWarpEvents) {
-        this.triggerWarpIn({ kind: 'world', worldX: evt.x, worldY: evt.y });
+    //
+    // Render-jitter-fix Phase 1b (2026-05-21) — only fire ONE warp
+    // visual per RAF, AND only when a burst is not already in flight.
+    // Each `triggerWarpIn` attaches the warp filter chain (shockwave +
+    // bloom + zoom-blur) to `app.stage.filters` and resets
+    // `warpBurstStartedAt`. The 1.5 s burst duration only tears those
+    // filters down via `shouldDetachWarpVisual` IF `warpBurstStartedAt`
+    // ages past `burstDurationMs`. Without this guard, Living World
+    // bot migrations push 1-2 warp events per second; each restarts
+    // the burst timer; filters stay attached indefinitely; GPU runs
+    // the multi-pass filter chain every frame → frame rate collapses
+    // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
+    if (mirror.pendingWarpEvents && mirror.pendingWarpEvents.length > 0) {
+      const burstInFlight = this.warpBurstStartedAt > 0;
+      if (!burstInFlight) {
+        // Fire ONLY the first queued event this frame. Subsequent
+        // events get visually skipped — at 1-2 warps/sec from drones
+        // plus a 1.5 s burst window, the visible duty cycle is close
+        // to 100 % anyway, so dropping 1-2 visuals is invisible to the
+        // player but bounds GPU cost.
+        const first = mirror.pendingWarpEvents[0]!;
+        this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
       }
       mirror.pendingWarpEvents.length = 0;
     }
@@ -1840,7 +1894,16 @@ export class PixiRenderer implements IRenderer {
    *  wavefronts). Bloom last so it amplifies the final composited image. */
   private attachWarpFilters(): void {
     if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
-    this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
+    // Render-jitter-fix Phase 1b (2026-05-21) — warp filter chain
+    // DISABLED. Captures `wivf9n` (filters on, throttled) and
+    // `q4wtht` (filters off) both spiraled, definitively ruling out
+    // filters as the cause. Capture `d3cprl` (filters off, phone at
+    // steady 60Hz battery-saver) was smooth, confirming filters are
+    // not load-bearing for playability. The shockwave + bloom + zoom-
+    // blur chain is a visual nice-to-have, not core gameplay; keeping
+    // them off avoids any duty-cycle cost on mobile. Re-enable by
+    // uncommenting the assignment below.
+    // this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
   }
 
   /**
@@ -1858,6 +1921,14 @@ export class PixiRenderer implements IRenderer {
     this.runWarpShockwavesTick();
     this.frameMarkers.warpTickMs = performance.now() - warpStart;
     this.frameMarkers.filterCount = this.warpShockwaves?.length ?? 0;
+    // Render-jitter-fix Phase 1b — surface the filter-attach state into
+    // the capture stream so a stuck-attached filter chain is visible
+    // (the bot-warp queue drain bug, fixed in the same plan).
+    this.frameMarkers.warpFiltersAttached = Array.isArray(this.app.stage.filters)
+      && (this.app.stage.filters as unknown[]).length > 0;
+    this.frameMarkers.warpBurstAgeMs = this.warpBurstStartedAt > 0
+      ? Math.round(performance.now() - this.warpBurstStartedAt)
+      : -1;
   };
 
   /** Per-frame warp tick — two-phase envelope (spool → climax), fade-out

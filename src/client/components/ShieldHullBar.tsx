@@ -47,7 +47,11 @@ function Bar({ pct, color }: { pct: number; color: string }): JSX.Element {
           width: `${clamped}%`,
           height: '100%',
           backgroundColor: color,
-          transition: 'width 220ms linear, background-color 220ms linear',
+          // 2026-05-25 step 10: bumped 220ms → 1000ms to match the
+          // 1Hz HUD dispatch cadence. Bar interpolates smoothly between
+          // each 1-second authoritative sample; eliminates per-hit
+          // Zustand dispatch (was 75/sec under 25-drone combat).
+          transition: 'width 1000ms linear, background-color 1000ms linear',
         }}
       />
     </Box>

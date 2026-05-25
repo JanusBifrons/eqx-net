@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
+import { installStreamingDiag } from './debug/streamingDiag';
 import {
   Box,
   Typography,
@@ -9,6 +10,8 @@ import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import { consumeOneFrameTriggers } from './render/perFrameTriggers';
+import { shouldSkipFrame, DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -31,6 +34,7 @@ import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
 import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
+import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
@@ -57,6 +61,19 @@ const SERVER_URL =
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
+
+// Probe 2 — device fingerprint + native rAF cadence calibration. Fires
+// before any game work starts so the measurement is uncontaminated. See
+// `debug/deviceInfo.ts` for the captured fields. Critical for the
+// mobile-perf-investigation: tells us if a 45 fps cadence is a real
+// 45 Hz panel or a Chrome software throttle on a 60/90 Hz panel.
+captureDeviceInfo();
+// Streaming auto-capture mode — no-op unless `?autocapture=1`. Plan:
+// streaming auto-capture, Phase 0 stub (2026-05-21). Installs from the
+// same module-top-level site as installWindowLogger so streaming
+// captures pre-game events (auth / galaxy map / ship picker), not just
+// post-join state.
+installStreamingDiag();
 
 interface GameSurfaceProps {
   /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
@@ -225,15 +242,68 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    // OffscreenCanvas migration: when the browser supports
-    // `OffscreenCanvas.transferControlToOffscreen()` (Chrome, Firefox,
-    // Safari 17+), construct the worker-backed renderer so Pixi runs
-    // off the main thread. Otherwise fall back to the main-thread
-    // PixiRenderer — same class, same render code-path, same Camera.
-    // See ~/.claude/plans/humble-strolling-coral.md.
-    const useWorker = supportsOffscreenRenderer();
+    // Renderer path selection (2026-05-22).
+    //
+    // Non-touch (desktop) + OffscreenCanvas-capable → worker-backed
+    // renderer. Pixi runs off the main thread, freeing CDP budget for
+    // React + drawer animations. See ~/.claude/plans/humble-strolling-coral.md.
+    //
+    // Touch devices → main-thread `PixiRenderer`. On high-DPR mobile,
+    // the OffscreenCanvas commit / worker→main IPC path produces ~110 ms
+    // tail-latency stalls every time the compositor drains. The
+    // 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv`
+    // worker-off, same device same session) showed a 19× reduction in
+    // `raf_gap` events (38 → 3) and 85 s of continuous zero-stall play
+    // after switching off the worker. The render cost saved by
+    // off-loading Pixi (~1.5 ms / frame on a phone) is dwarfed by the
+    // ~110 ms IPC commit tail-latency that the worker introduces.
+    //
+    // `?worker=1` opts back into the worker (for A/B diagnosis or
+    // desktop debugging of mobile behaviour). `?worker=0` forces the
+    // main-thread path (for non-touch verification of the mobile path).
+    // Without an override, the default follows `isTouchDevice()`.
+    const workerParam = new URLSearchParams(window.location.search).get('worker');
+    const isTouch = isTouchDevice();
+    const useWorker =
+      workerParam === '1'
+        ? supportsOffscreenRenderer()
+        : workerParam === '0'
+          ? false
+          : !isTouch && supportsOffscreenRenderer();
     const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
+    logEvent('renderer_path_chosen', {
+      useWorker,
+      workerParam,
+      isTouch,
+      supportsOffscreenRenderer: supportsOffscreenRenderer(),
+    });
     rendererRef.current = renderer;
+
+    // Probe 0 (mobile-perf-investigation-review): `?profile=1` opts into a
+    // bounded `console.profile()` window so a user on a Chrome-remote-
+    // debugged phone can submit a real DevTools timeline alongside the
+    // diag capture. Auto-stops after 60 s so the trace stays loadable —
+    // a 5-minute trace pegs DevTools on mobile. The hostile review noted
+    // this is the cheaper missed probe — distinguishes GC vs frame-cap-
+    // artifact vs compositor-stall via flame-graph layer, which the
+    // NDJSON stream alone cannot.
+    const profileParam = new URLSearchParams(window.location.search).get('profile');
+    if (profileParam === '1') {
+      try {
+        console.profile('eqx-mobile-session');
+        logEvent('profile_started', { autoStopMs: 60_000 });
+        window.setTimeout(() => {
+          try {
+            console.profileEnd('eqx-mobile-session');
+            logEvent('profile_ended', { reason: 'auto-stop' });
+          } catch (e) {
+            logEvent('profile_ended', { reason: 'error', error: String(e) });
+          }
+        }, 60_000);
+      } catch (e) {
+        logEvent('profile_started', { error: String(e) });
+      }
+    }
 
     const gameClient = new ColyseusGameClient();
     gameClient.setAudio(new HowlerAudioService());
@@ -338,6 +408,24 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       }
 
       let lastFrameTime = 0;
+      // Probe 3 (mobile-perf-investigation, 2026-05-24) — `?fpscap=N`
+      // URL override for DEFAULT_MIN_FRAME_INTERVAL_MS. Default 15 ms
+      // throttles 90 Hz devices to 45 fps (the documented intent of
+      // commit `9e23436`); Probe 0/1/2 evidence on a Pixel 6 with 1 ms
+      // per-RAF work shows that throttle is the dominant source of
+      // user-felt unplayability and the original 86×-stalls-at-90 Hz
+      // concern no longer applies (per-RAF work dropped ~10×). Lets
+      // the user A/B test before committing a permanent change.
+      // `?fpscap=10` allows 90 Hz through (still caps 120 Hz to ~91).
+      // `?fpscap=0` removes the cap entirely.
+      const fpsCapParam = new URLSearchParams(window.location.search).get('fpscap');
+      const fpsCapOverride = fpsCapParam !== null ? Math.max(0, parseFloat(fpsCapParam)) : null;
+      const effectiveCapMs = fpsCapOverride !== null && !Number.isNaN(fpsCapOverride)
+        ? fpsCapOverride
+        : DEFAULT_MIN_FRAME_INTERVAL_MS;
+      if (fpsCapOverride !== null) {
+        logEvent('fps_cap_override', { fpsCapParam, effectiveCapMs });
+      }
       // E2E-inspection dataset writes are throttled to every 5th frame
       // (12 Hz) — at 60 Hz they were producing 21+ DOM mutations per
       // frame including multiple `JSON.stringify(...)` calls, which
@@ -360,14 +448,51 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       let workerUpdateCounter = 0;
       const loop = (now: number): void => {
         if (!disposed) {
-          const deltaMs = lastFrameTime > 0 ? now - lastFrameTime : 1000 / 60;
+          const isFirstFrame = lastFrameTime === 0;
+          const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
+          // Internal 60 Hz work-loop cap. On 90/120 Hz native displays
+          // we skip alternate RAFs and leave `lastFrameTime` stale so
+          // the next RAF's `deltaMs` reflects the full wall-clock gap.
+          // See `src/client/perf/frameRateCap.ts` for the rationale
+          // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
+          // `src/client/CLAUDE.md` for the load-bearing rule.
+          if (shouldSkipFrame(deltaMs, effectiveCapMs, isFirstFrame)) {
+            animFrameRef.current = requestAnimationFrame(loop);
+            return;
+          }
           lastFrameTime = now;
+          // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
+          // The 2026-05-24 mg5rpe capture showed 99 % of RAFs land at
+          // exactly 22 ms = 1/45 Hz vsync, with the user reporting
+          // unplayable feel even at 0.354 % stalls. This says either
+          // (a) per-RAF cost is approaching 16.67 ms so Chrome aligns
+          // vsync to 45 Hz to give us breathing room, or (b) the 45 Hz
+          // floor is OS/thermal-imposed and unfixable from JS. The
+          // breakdown distinguishes the two: if physics+mirror+render
+          // sums to >12 ms steady-state, (a); if it sits comfortably
+          // <8 ms, (b). Logged every RAF (~45/s) into perf.ndjson via
+          // the rafWork tag — same order-of-magnitude as rafTick.
+          const physicsStart = performance.now();
           gameClient.tickPhysics(deltaMs);
+          const mirrorStart = performance.now();
           gameClient.updateMirror();
+          const renderStart = performance.now();
           const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
           if (shouldRender) renderer.update(gameClient.mirror);
-          // Clear one-frame triggers after the renderer has consumed them.
-          gameClient.mirror.explodingShips?.clear();
+          const renderEnd = performance.now();
+          logEvent('rafWork', {
+            physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
+            mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
+            renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
+            shouldRender,
+            totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
+            deltaMs: parseFloat(deltaMs.toFixed(2)),
+          });
+          // Clear one-frame triggers ONLY after the renderer has actually
+          // consumed them. The clear MUST be gated on the same condition
+          // as the renderer-update — see `consumeOneFrameTriggers` for the
+          // contract and `perFrameTriggers.test.ts` for the regression lock.
+          consumeOneFrameTriggers(gameClient.mirror, shouldRender);
 
           // F-transit-instrument — bounded post-reveal frame burst.
           // `wantsFrame()` is false (single boolean read, zero cost)
@@ -558,6 +683,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
       if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
       if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
+      // Test-only HP overrides for E2E specs (server-side gated to
+      // testMode rooms). See JoinOptionsSchema in SectorRoom.ts.
+      if (urlParams.has('initialHull'))
+        extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
+      if (urlParams.has('initialShield'))
+        extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+      // Per-test room isolation. The test rooms (`test-sector`,
+      // `test-sector-fast`) use Colyseus `filterBy(['testId'])` so each
+      // unique value routes to its own room instance. Tests with
+      // multiple clients use the SAME testId so they share a room.
+      if (urlParams.has('testId'))
+        extraJoinOptions['testId'] = urlParams.get('testId')!;
       // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
       if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
       if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);

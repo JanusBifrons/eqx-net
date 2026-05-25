@@ -31,9 +31,11 @@ export function DeathOverlayContent({ onRespawn }: { onRespawn: () => void }): J
     const result = await captureDiagnostic({ note: 'sent from death overlay', stats });
     setCapturing(false);
     setDiagStatus(
-      result.ok
-        ? `Sent: ${result.dir ?? result.filename ?? '(ok)'}`
-        : `Failed: ${result.error ?? 'unknown error'}`,
+      result.noopBecauseStreaming
+        ? `Streaming active → ${result.dir ?? '(session unknown)'}`
+        : result.ok
+          ? `Sent: ${result.dir ?? result.filename ?? '(ok)'}`
+          : `Failed: ${result.error ?? 'unknown error'}`,
     );
   };
 

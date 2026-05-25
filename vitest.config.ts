@@ -39,6 +39,26 @@ export default defineConfig({
       'tests/unit/**/*.test.ts',
       // Stage 4.5 — scenario-harness regression fixtures (network-feel roadmap).
       'tests/scenarios/**/*.test.ts',
+      // Netcode-health gate pure modules (plan: e2e-rebuild). Lives OUTSIDE
+      // tests/e2e/ so Playwright (testDir ./tests/e2e, default *.test.ts
+      // match) does not collide-collect these vitest units; the Playwright
+      // spec imports the pure modules from here.
+      'tests/netgate/**/*.test.ts',
+      // Bench-budget pure module unit lock (plan: perf-floor, Phase 0).
+      // The .bench.ts files in this directory are still excluded from the
+      // unit run via the `benchmark.include` glob below — only .test.ts
+      // files match this entry.
+      'benchmarks/**/*.test.ts',
+      // Perf-capture / perfBudget pure module unit locks (plan: perf-floor,
+      // Phases 2 + 5). The .spec.ts Playwright spec lives in the same
+      // directory but is excluded by the .test.ts-only match.
+      'tests/perf/**/*.test.ts',
+      // Capture-driven replay harness + user-contract assertions
+      // (plan: capture-driven replay infra, Phases C-F, 2026-05-21).
+      // Drives the REAL ColyseusGameClient through captured on-device
+      // sessions deterministically — the missing piece that lets a
+      // smoke-test capture become a regression-locked test.
+      'tests/replay/**/*.test.ts',
     ],
     exclude: [
       '**/node_modules/**',
@@ -48,7 +68,8 @@ export default defineConfig({
       // not double-discover / fail to parse them.
       '**/.claude/**',
       'tests/e2e/**',
-      'benchmarks/**',
+      // benchmarks/**/*.bench.ts is excluded by include-glob (matches only
+      // *.test.ts); benchmarks/**/*.test.ts IS included (plan: perf-floor).
       // Phase A1 — integration tests run via `pnpm test:integration`.
       'tests/integration/**',
     ],

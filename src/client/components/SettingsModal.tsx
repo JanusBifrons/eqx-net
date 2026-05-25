@@ -36,7 +36,13 @@ export function SettingsModal({ open, onClose }: Props) {
     const stats = (window as unknown as { __eqxClient?: { stats?: Record<string, unknown> } }).__eqxClient?.stats;
     const result = await captureDiagnostic({ note: note || undefined, stats });
     setCapturing(false);
-    if (result.ok) {
+    if (result.noopBecauseStreaming) {
+      // Plan: streaming auto-capture, Phase 4. `?autocapture=1` is on,
+      // and the streaming module is already auto-saving the session
+      // every 2s. Show the active session id so the user knows where
+      // the data is going.
+      setCaptureStatus(`Streaming active → ${result.dir ?? '(session unknown)'}`);
+    } else if (result.ok) {
       setCaptureStatus(`Saved: ${result.filename ?? '(unknown)'}`);
       setNote('');
     } else {

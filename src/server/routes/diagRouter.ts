@@ -9,9 +9,10 @@
  * Disabled when `NODE_ENV === 'production'` — the index.ts mount is gated.
  */
 import { Router, type Request, type Response, type Router as ExpressRouter } from 'express';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, appendFile, readFile, rename } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { captureSchema } from './captureSchema.js';
+import { captureSchema, streamingBatchSchema } from './captureSchema.js';
 import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
 import { db } from '../db/Database.js';
@@ -46,6 +47,52 @@ const BUCKETS: Record<string, string> = {
   // pathology captured in `2026-05-09T07-23-39-893Z-651792`.
   longtask: 'perf',
   raf_gap: 'perf',
+  // Probe 4 (mobile-perf-investigation, 2026-05-24) — medium-stutter
+  // event for 30-100 ms inter-RAF gaps, below the raf_gap threshold but
+  // perceptible at 90 Hz native. Same channel as raf_gap for correlation.
+  raf_stutter: 'perf',
+  // Probe 4 — damage-number scheduling vs spawn vs cancel split.
+  // Previously the smooth-beam path logged 5 `damage_number_predicted`
+  // events at the same ts per shot, obscuring whether spawns actually
+  // emitted (and confusing the "damage applying inconsistently" investigation).
+  // Now: one schedule event per shot (with count + intervalMs), one spawn
+  // event per actual emit (with lateMs), one cancel event per misprediction.
+  // Route to combat for proximity to fire/damage events.
+  damage_number_scheduled: 'combat',
+  damage_number_spawned: 'combat',
+  damage_number_cancelled: 'combat',
+  // Probe 5 (mobile-perf-investigation, 2026-05-24) — large receive-
+  // gap events (>200 ms between successive snapshot WebSocket
+  // arrivals) with heap-at-time context, for correlating client-side
+  // main-thread blocks with GC pauses. Rare (~0.5 % of snapshots) —
+  // routes to perf alongside heap_sample / raf_gap.
+  recv_gap_long: 'perf',
+  // Probe 6 (mobile-perf-investigation, 2026-05-24) — snapshot
+  // coalescing on receive. Fires once per RAF window when 1+ snapshots
+  // were discarded in favour of a newer one (full-state supersession).
+  // Tracks how often the GC-burst-collapse mechanism fires.
+  snapshot_coalesced: 'snapshots',
+  // Render-jitter-fix Phase 1c (2026-05-21) — periodic heap sample
+  // between stalls. Pairs with `raf_gap`'s new heap fields so the
+  // capture shows both growth trajectory AND per-stall heap value.
+  heap_sample: 'perf',
+  // Probe 1 (mobile-perf-investigation, 2026-05-24) — per-RAF work
+  // breakdown (physicsMs/mirrorMs/renderMs). Lands next to raf_gap +
+  // heap_sample so a single perf.ndjson read shows where each frame's
+  // 22 ms budget went and whether the 45 Hz cap is JS-cost-driven or
+  // OS/thermal-driven. ~45 events/sec — same order as rafTick.
+  rafWork: 'perf',
+  // Probe 2 (mobile-perf-investigation, 2026-05-24) — device fingerprint
+  // + native rAF cadence calibration. One-shot events at session start;
+  // captured in `perf.ndjson` alongside other perf fields so a single
+  // file read tells us device + measured refresh rate + battery state.
+  device_info: 'perf',
+  device_info_calibration: 'perf',
+  device_battery: 'perf',
+  // Probe 3 (2026-05-24) — `?fpscap=N` URL override of the internal
+  // frame-rate cap. Fires once at session start when an override is
+  // active so the capture identifies which arm it was run under.
+  fps_cap_override: 'perf',
   // client perf — F1 per-frame sub-cost markers for the warp-spool
   // investigation (`docs/HANDOFF-warp-spool-perf-followup.md`). Emitted
   // only on `?diag=1` / WebDriver sessions; `scripts/analyze-frame-
@@ -107,10 +154,35 @@ const BUCKETS: Record<string, string> = {
   // snapshots
   snapshot: 'snapshots',
   snapshot_broadcast: 'snapshots',
+  // Render-jitter-fix Phase 1b (2026-05-21): WS-receive timing +
+  // handler duration. `snapshot_received` fires at the moment the
+  // colyseus onMessage handler is entered (with `recvGapMs` =
+  // wall-clock since the previous one). `snapshot_applied` fires
+  // after `handleSnapshot` returns (with `applyMs` = duration of the
+  // handler call). Together they distinguish "server didn't send"
+  // from "WS delivered late" from "we couldn't process in time"
+  // during a spiral.
+  snapshot_received: 'snapshots',
+  snapshot_applied: 'snapshots',
+  // Drone-triggered warp visuals (Living World hunter migrations
+  // across sectors). The handler was silent before render-jitter-fix
+  // Phase 1b — fix surfaces every drone warp event so we can correlate
+  // its renderer cost with RAF stalls in the same capture window.
+  warp_event: 'other',
   // high-volume per-frame noise
   rafTick: 'raf',
   inputSent: 'raf',
   input_received: 'raf',
+  // Replay-grade ground-truth tags (plan: capture-driven replay infra,
+  // i-d-like-you-to-zany-narwhal.md, Phase A, 2026-05-21). All three are
+  // ALWAYS-ON (not diag-gated) and feed the deterministic replay harness:
+  //   - input_intent          (per inner tick): raw keyboard/joystick read
+  //   - local_pose_predicted  (per inner tick): predWorld state after tick
+  //   - local_pose_rendered   (per RAF):        mirror state the renderer drew
+  // Routed to `raf` for proximity to `rafTick` (correlation window).
+  input_intent: 'raf',
+  local_pose_predicted: 'raf',
+  local_pose_rendered: 'raf',
 };
 
 const ALL_BUCKETS = ['perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
@@ -190,6 +262,172 @@ function timeBounds(entries: RoutedEntry[], source: 'client' | 'server'): { firs
 }
 
 export const diagRouter: ExpressRouter = Router();
+
+/**
+ * Streaming capture endpoint — real persistence (plan: streaming
+ * auto-capture, Phase 2, 2026-05-21).
+ *
+ * Each batch is appended to `diag/captures/<sessionId>/<bucket>.ndjson`
+ * using the same BUCKETS routing as manual captures, so the directory
+ * shape is identical and the replay harness consumes streaming sessions
+ * unchanged. The first batch (batchSeq=0) also writes `session.json`
+ * with the client metadata.
+ *
+ * Idempotency: `lastAppliedSeq` is tracked in `session.json` (durable
+ * across `tsx watch` restarts) AND in memory (fast path). Duplicate /
+ * out-of-order batches return 409.
+ *
+ * Per-session write serialisation: a per-sessionId Promise chain
+ * ensures concurrent batches for the same session serialise their
+ * disk writes (Windows `appendFile` is not concurrent-safe).
+ *
+ * NODE_ENV-gated by the existing `/diag/*` mount in `src/server/index.ts`.
+ *
+ * Out of scope for this commit (deferred):
+ *   - Idle-timeout sweep + automatic summary.json finalize
+ *   - Per-bucket running counters (for summary.json without disk re-sweep)
+ *   - LRU eviction of the in-memory session map
+ *   Those land in a follow-up commit if/when needed. Replay harness
+ *   doesn't depend on summary.json; the streaming directory is usable
+ *   as-is for `replayCapture()`.
+ */
+
+interface StreamingSessionState {
+  /** Highest applied batchSeq. Loaded from session.json on first batch. */
+  lastAppliedSeq: number;
+  /** Promise chain head for write serialisation. Resolves when the last
+   *  write completed. New writes await this then push themselves on. */
+  writeChain: Promise<void>;
+  /** Sticky metadata from the first batch. */
+  startedAtMs: number;
+}
+
+const _streamingSessions = new Map<string, StreamingSessionState>();
+
+async function loadStateFromDisk(
+  sessionId: string,
+): Promise<StreamingSessionState | null> {
+  const sessionDir = join(CAPTURE_DIR, sessionId);
+  const sessionPath = join(sessionDir, 'session.json');
+  if (!existsSync(sessionPath)) return null;
+  try {
+    const raw = await readFile(sessionPath, 'utf8');
+    const parsed = JSON.parse(raw) as { lastAppliedSeq?: number; startedAtMs?: number };
+    if (typeof parsed.lastAppliedSeq !== 'number') return null;
+    return {
+      lastAppliedSeq: parsed.lastAppliedSeq,
+      writeChain: Promise.resolve(),
+      startedAtMs: parsed.startedAtMs ?? Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Atomic write: write to `<path>.tmp`, then rename. POSIX + Windows
+ *  both guarantee rename atomicity on the same filesystem. */
+async function atomicWriteJson(path: string, data: unknown): Promise<void> {
+  const tmp = `${path}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8');
+  await rename(tmp, path);
+}
+
+diagRouter.post('/capture/stream', async (req: Request, res: Response) => {
+  const parsed = streamingBatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid streaming batch', detail: parsed.error.format() });
+    return;
+  }
+  const body = parsed.data;
+  const sessionId = body.sessionId;
+  const sessionDir = join(CAPTURE_DIR, sessionId);
+  const sessionPath = join(sessionDir, 'session.json');
+
+  // Hydrate session state (lazy — on first request for this sessionId).
+  // Reads session.json from disk if present (survives `tsx watch`
+  // restarts; the in-memory map dies but the durable seq counter lives
+  // on disk).
+  let state = _streamingSessions.get(sessionId);
+  if (!state) {
+    const fromDisk = await loadStateFromDisk(sessionId);
+    if (fromDisk) {
+      state = fromDisk;
+    } else {
+      // Brand-new session — directory may or may not exist yet.
+      state = {
+        lastAppliedSeq: -1, // first batch has seq 0; rule is batchSeq > lastAppliedSeq
+        writeChain: Promise.resolve(),
+        startedAtMs: Date.now(),
+      };
+    }
+    _streamingSessions.set(sessionId, state);
+  }
+
+  // Idempotency: batchSeq must be strictly greater than lastAppliedSeq.
+  if (body.batchSeq <= state.lastAppliedSeq) {
+    res.status(409).json({
+      error: 'duplicate or out-of-order batch',
+      lastAppliedSeq: state.lastAppliedSeq,
+      receivedSeq: body.batchSeq,
+    });
+    return;
+  }
+
+  // Chain this batch's writes onto the per-session promise so concurrent
+  // batches for the same session serialise (Windows appendFile is not
+  // concurrent-safe).
+  const writeOp = async (): Promise<void> => {
+    // mkdir is idempotent with `recursive: true`. Always cheap.
+    await mkdir(sessionDir, { recursive: true });
+
+    // Group entries by bucket using the existing BUCKETS map.
+    const buckets = new Map<BucketName, string[]>();
+    for (const entry of body.entries) {
+      const tag = typeof entry['tag'] === 'string' ? entry['tag'] : '';
+      const bucket = (BUCKETS[tag] as BucketName | undefined) ?? 'other';
+      // Stamp each entry with the source ('client') so downstream tooling
+      // (replay harness, ingest script) can distinguish.
+      const line = JSON.stringify({ source: 'client', ...entry });
+      if (!buckets.has(bucket)) buckets.set(bucket, []);
+      buckets.get(bucket)!.push(line);
+    }
+
+    // Append each bucket's lines.
+    for (const [bucket, lines] of buckets) {
+      const file = join(sessionDir, `${bucket}.ndjson`);
+      await appendFile(file, lines.join('\n') + '\n', 'utf8');
+    }
+
+    // Update session.json (atomic write) AFTER the ndjson appends so a
+    // partial-write crash leaves the seq counter behind, not ahead.
+    state!.lastAppliedSeq = body.batchSeq;
+    await atomicWriteJson(sessionPath, {
+      sessionId,
+      streaming: true,
+      hasFinalized: body.final === true,
+      lastAppliedSeq: state!.lastAppliedSeq,
+      lastBatchAtMs: Date.now(),
+      startedAtMs: state!.startedAtMs,
+      // First-batch metadata, sticky.
+      ...(body.userAgent ? { userAgent: body.userAgent } : {}),
+      ...(body.viewport ? { viewport: body.viewport } : {}),
+      ...(body.clientEpochMs ? { clientEpochMs: body.clientEpochMs } : {}),
+    });
+  };
+
+  // Push onto the per-session write chain; the chain handles
+  // serialisation, and rejections are caught so a write failure on one
+  // batch doesn't poison subsequent ones.
+  state.writeChain = state.writeChain.then(writeOp, writeOp);
+  try {
+    await state.writeChain;
+  } catch (err) {
+    res.status(500).json({ error: 'write failed', detail: String((err as Error).message) });
+    return;
+  }
+
+  res.json({ ok: true, lastAppliedSeq: state.lastAppliedSeq });
+});
 
 diagRouter.post('/capture', async (req: Request, res: Response) => {
   const rawLength = JSON.stringify(req.body ?? {}).length;
