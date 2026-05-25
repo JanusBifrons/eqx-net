@@ -13,6 +13,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import { PlayerSlotMap } from './PlayerSlotMap.js';
 import { SwarmLifecycleManager } from './SwarmLifecycleManager.js';
+import { PhysicsBridge } from './PhysicsBridge.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -381,8 +382,11 @@ export class SectorRoom extends Room<SectorState> {
    *  every snapshot so observers can see a baseline thrust flame whenever
    *  a ship is accelerating. Strict superset of `boostingPlayers`. */
   private readonly thrustingPlayers = new Set<string>();
-  /** Last client input tick the physics worker confirmed it applied, read from SAB. */
-  private sabAppliedTicks = new Map<string, number>();
+  /** Worker IPC boundary — owns the worker handle and `sabAppliedTicks`
+   *  mirror. Extracted Step 6 (hazy-pillow). Larger logic (drainSab,
+   *  worker onmessage dispatcher, SAB buffer ownership) remains inline
+   *  for now per the deferred-extraction reasoning in PhysicsBridge.ts. */
+  private readonly physics = new PhysicsBridge();
   /** Per-tick mirror of player ship pose, sourced from SAB inside `update()`.
    *  Replaces the previous practice of mirroring pose into `ShipState` (a
    *  Colyseus schema) — that path was emitting a duplicate broadcast on top
@@ -2287,6 +2291,7 @@ export class SectorRoom extends Room<SectorState> {
         eval: true,
         workerData: { sab: this.sab },
       });
+      this.physics.setWorker(this.physicsWorker);
 
       let ready = false;
 
@@ -2430,7 +2435,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private postToWorker(cmd: WorkerCmd): void {
-    this.physicsWorker.postMessage(cmd);
+    this.physics.post(cmd);
   }
 
   // ── Colyseus room hooks ─────────────────────────────────────────────────
@@ -2960,7 +2965,7 @@ export class SectorRoom extends Room<SectorState> {
     this.sessionToPlayer.delete(client.sessionId);
     this.playerToSession.delete(playerId);
     this.swarm.interestScratch.delete(client.sessionId);
-    this.sabAppliedTicks.delete(playerId);
+    this.physics.sabAppliedTicks.delete(playerId);
     this.boostingPlayers.delete(playerId);
     this.thrustingPlayers.delete(playerId);
     // Stage 5 — drop per-recipient scheduler state.
@@ -3682,7 +3687,7 @@ export class SectorRoom extends Room<SectorState> {
       for (const [playerId, slot] of this.slots.playerToSlot) {
         const b = slotBase(slot);
         const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
-        this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
+        this.physics.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
       }
 
       const seq2 = Atomics.load(this.sabU32, SEQLOCK_IDX);
@@ -3928,7 +3933,7 @@ export class SectorRoom extends Room<SectorState> {
           },
         });
         aliveIds.add(playerId);
-        ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
+        ackedTicksTelemetry[playerId] = this.physics.sabAppliedTicks.get(playerId) ?? 0;
       }
       // Phase 6b — append lingering hulls to allShips. These have no
       // active player driving them; their pose comes from
@@ -4108,7 +4113,7 @@ export class SectorRoom extends Room<SectorState> {
           }
         }
 
-        const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
+        const recipientAcked = this.physics.sabAppliedTicks.get(recipientPlayerId) ?? 0;
         // Phase 4 — wreck poses for every wreck in the sector. No
         // interest filtering: the wreck count per sector is bounded
         // (one per abandoned ship; players are 10-capped) and Phase 5
