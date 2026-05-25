@@ -14,93 +14,6 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
-## 2026-05-25 — GC discipline sweep — codify the pool primitive, fix nine hotspots
-
-Commit: see `claude/gc-stops-investigation-fixes-RIenC`.
-
-The GC-pause symptom (V8 minor-GC bursts producing the 29 ms
-`snapshotJitterMs` scatter documented in the 2026-05-04 entry) has a
-quantitative root cause: the 60 Hz server snapshot path was allocating
-**~60-200 objects per second per client** in steady-state combat. An
-unbounded compounding allocation rate that V8 has to clean up.
-
-A static audit (2026-05-25 session, no on-device capture needed —
-read the code) surfaced 9 HIGH-severity hotspots:
-
-- `SectorRoom.update()` snapshot broadcast (lines 3894-4116): per-recipient
-  `states` / `projectiles` / `drones` / `wrecks` literals + per-ship
-  `lastInput` object + per-ship `mountAnglesArr = new Array(...)` +
-  per-recipient envelope `snap: SnapshotMessage = { ... }`.
-- `ColyseusClient.updateMirror()` (lines 2385-2531): per-frame per-ship
-  `mirror.ships.set(id, { ...prev, x, y, ... })` spread.
-- `ColyseusClient.handleSnapshot()` (lines 1514, 1543, 1778): per-snapshot
-  `statesByPlayerId = {}` + `new Map()` for remote pose tracking +
-  `[...this.mirror.lingeringShips.keys()]` spread.
-- `ColyseusClient.updateLiveBeam()` (line 3034): per-frame `new Set<string>()`.
-- `ColyseusClient.updateMirror()` (line 2409, gated by diag): per-frame
-  `new Set<number>()` for swarm-overlap diagnostics.
-
-### Lessons
-
-1. **`HitPredictionLedger.allocations() <= 4`** is the canonical regression-
-   lock shape (`src/core/combat/HitPrediction.test.ts:229`). Generalised
-   to `src/core/util/ObjectPool.ts` — both server and client consume one
-   primitive.
-
-2. **Reuse-within-tick is safe for Colyseus broadcasts.** `client.send()`
-   serialises payload synchronously into the WebSocket buffer; the object
-   reference can be re-mutated for the next recipient in the same tick.
-   Locked by `tests/integration/allocations/colyseusSendSyncEncode.test.ts`
-   as a proof-gate. The shared-scratch design's correctness depends on
-   this — without the proof, fall back to per-recipient scratch
-   (`Map<sessionId, Scratch>`).
-
-3. **Mutate-in-place is cleaner than spread-and-replace.** The previous
-   `mirror.ships.set(id, { ...prev, x, y })` pattern needed explicit
-   `...(prev?.kind ? { kind: prev.kind } : {})` blocks to preserve every
-   non-spatial field. Mutating `prev.x = newX; prev.y = newY` preserves
-   them implicitly — and removes a real class of "I forgot to add a
-   preservation block for the new field" bugs.
-
-4. **Allocation-count assertions are PARAMETERISED, never hard-coded.**
-   `expect(pool.allocations()).toBeLessThanOrEqual(SHIPS + 2)` survives
-   adding a synthetic ship to the harness; `<= 12` does not.
-
-5. **The bound is "peak concurrent" not "total operations".** A pool
-   used 1000 times with peak-3 concurrent entries allocates 3, not 1000.
-   This is why the steady-path probe is so cheap to assert.
-
-6. **`--expose-gc` graceful skip.** `pnpm test` doesn't pass the flag;
-   `pnpm test:alloc` does. Allocation tests `requireGc()` / skip when the
-   global isn't present, so local dev never breaks. CI runs `test:alloc`
-   as a parallel step.
-
-7. **V8 minor-GC scatter (2026-05-04) is inherent OS-level granularity
-   we BUFFER against (poseRing); allocation discipline reduces the
-   FREQUENCY of bursts, not their duration.** Both are needed.
-
-### Paradigm shipped in the same PR
-
-- `src/core/util/ObjectPool.ts` — primitive
-- `tests/integration/allocations/` — regression locks
-- `.claude/skills/allocation-audit/SKILL.md` — `/allocation-audit` skill
-- `docs/architecture/gc-discipline.md` — full paradigm doc
-- Root + zone CLAUDE.md invariant #14 — hot-path allocation discipline
-
-The skill is invokable on any future PR; it surfaces hot-path allocation
-regressions the moment they enter a diff. Invariant #14 is scoped to NEW
-code (not retroactive), so PRs touching unrelated parts of hot-path files
-don't get blocked.
-
-### Open follow-ups (out of scope for this PR)
-
-The MEDIUM-tier audit findings remain in code — `/allocation-audit` will
-flag them when the file is next touched. Listed in
-[`docs/architecture/gc-discipline.md`](architecture/gc-discipline.md)
-§ "Known untouched allocators".
-
----
-
 ## 2026-05-22 — smooth-beam — server-side retune REGRESSED touch-device lag; reverted, smoothing moved client-side via visual splitting
 
 Commits: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted)*; `feat(client): smooth-beam via predicted-damage splitting (server cadence unchanged)`.
@@ -253,8 +166,6 @@ The 2026-05-05 "pnpm bench reports NaN/0 for all benchmarks under vitest 2.1 + N
 - `pnpm bench:check` — runs the bench, normalises vitest output, diffs against baseline, prints verdict, exits 0/1. Flags: `--update` overwrites baseline; `--print` prints current run + verdict and exits 0.
 
 **Downstream:** the perf-floor plan's Phase 5 `perfBudget.ts` follows the exact same shape; Phase 0 is the prototype.
-
----
 
 ## 2026-05-11 — Multi-mount refactor — six lessons in one session
 

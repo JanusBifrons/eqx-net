@@ -576,29 +576,6 @@ export class ColyseusGameClient {
    *  diagnostic. Entry/exit semantics avoid flooding the 500-entry
    *  ring buffer with per-frame proximity logs. */
   private _swarmNearbyIds: Set<number> = new Set();
-  /** 2026-05-25 GC sweep — persistent scratch Set used by the diag-gated
-   *  swarm-near-enter/exit log block in `updateMirror()`. Two Sets swap
-   *  roles each frame to avoid `new Set` allocation. */
-  private _swarmNearbySwapScratch: Set<number> = new Set();
-  /** 2026-05-25 GC sweep — persistent `statesByPlayerId` scratch for
-   *  `handleSnapshot()`. Cleared via `for…in + delete` each call. */
-  private readonly _handleSnapshotStatesScratch: SnapshotMessage['states'] = {};
-  /** 2026-05-25 GC sweep — persistent Set scratch for tracking lingering
-   *  shipInstanceIds seen in the current snapshot (avoids per-snapshot
-   *  `new Set`). Cleared via `.clear()` each call. */
-  private readonly _lingeringSeenScratch = new Set<string>();
-  /** 2026-05-25 GC sweep — persistent array scratch holding lingering
-   *  ids to evict (avoids the per-snapshot `[...map.keys()]` spread). */
-  private readonly _lingeringToEvictScratch: string[] = [];
-  /** 2026-05-25 GC sweep — persistent Map scratch for pre-reset remote
-   *  positions (avoids per-snapshot `new Map<...>()`). Cleared each call. */
-  private readonly _preResetRemotePosScratch = new Map<string, { x: number; y: number }>();
-  /** 2026-05-25 GC sweep — pooled `{x,y}` entries reused inside
-   *  `_preResetRemotePosScratch`. Per-snapshot peak == remote-ship count. */
-  private readonly _preResetRemotePosEntries: { x: number; y: number }[] = [];
-  /** 2026-05-25 GC sweep — persistent Set scratch for `updateLiveBeam`
-   *  (avoids per-frame `new Set<string>()`). Cleared each call. */
-  private readonly _beamMountIdsScratch = new Set<string>();
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -1838,39 +1815,31 @@ export class ColyseusGameClient {
     // same playerId. Pose flows from the snapshot directly; identity
     // (kind, displayName) flows from the Colyseus schema diff via
     // `syncMirror`.
-    // 2026-05-25 GC sweep: reuse persistent scratch for the per-snapshot
-    // translation. The original code allocated `statesByPlayerId = {}`,
-    // `new Set<string>` (lingeringSeen), and `Object.entries(...)`
-    // (tuple array) per snapshot at 20 Hz; mutated `snap = { ...snap, ... }`
-    // (envelope clone) too. Now: persistent scratch + direct `for…in`.
-    const statesByPlayerId = this._handleSnapshotStatesScratch;
-    for (const k in statesByPlayerId) delete statesByPlayerId[k];
+    const statesByPlayerId: SnapshotMessage['states'] = {};
     if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
-    const lingeringSeen = this._lingeringSeenScratch;
-    lingeringSeen.clear();
-    for (const shipInstanceId in snap.states) {
-      const entry = snap.states[shipInstanceId]!;
+    const lingeringSeen = new Set<string>();
+    for (const [shipInstanceId, entry] of Object.entries(snap.states)) {
       if (entry.isActive === false) {
-        // Route to the lingering map. Mutate the existing entry in place
-        // when present (preserves kind/displayName implicitly, no spread).
-        // First-time entries are allocated once per lingering-hull
-        // lifetime — `mirror.ships.set()` analogue.
-        const prev = this.mirror.lingeringShips.get(shipInstanceId);
-        if (prev) {
-          prev.x = entry.x;
-          prev.y = entry.y;
-          prev.vx = entry.vx;
-          prev.vy = entry.vy;
-          prev.angle = entry.angle;
-          // ownerPlayerId is part of the lingering entry shape and may
-          // change on rebind; keep it fresh.
-          (prev as { ownerPlayerId?: string }).ownerPlayerId = entry.playerId;
-        } else {
-          this.mirror.lingeringShips.set(shipInstanceId, {
+        // Route to the lingering map. We update pose every snapshot;
+        // identity fields come from the schema diff and are preserved.
+        // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
+        // lingering entry in place. Same rationale as Probe 7's ship
+        // pooling: kind / displayName preserved by NOT touching them.
+        let lingerEntry = this.mirror.lingeringShips.get(shipInstanceId);
+        if (!lingerEntry) {
+          lingerEntry = {
             x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
             angle: entry.angle,
             ownerPlayerId: entry.playerId,
-          });
+          };
+          this.mirror.lingeringShips.set(shipInstanceId, lingerEntry);
+        } else {
+          lingerEntry.x = entry.x;
+          lingerEntry.y = entry.y;
+          lingerEntry.vx = entry.vx;
+          lingerEntry.vy = entry.vy;
+          lingerEntry.angle = entry.angle;
+          lingerEntry.ownerPlayerId = entry.playerId;
         }
         lingeringSeen.add(shipInstanceId);
         // Phase 6b — spawn / refresh the predWorld body so the local
@@ -1883,29 +1852,26 @@ export class ColyseusGameClient {
       }
       statesByPlayerId[entry.playerId] = entry;
     }
-    // Remove lingering hulls that didn't appear in this snapshot. Collect
-    // ids into the persistent eviction scratch first to avoid the legacy
-    // `[...this.mirror.lingeringShips.keys()]` spread (per-snapshot array).
-    const toEvict = this._lingeringToEvictScratch;
-    toEvict.length = 0;
-    for (const id of this.mirror.lingeringShips.keys()) {
-      if (!lingeringSeen.has(id)) toEvict.push(id);
-    }
-    for (const id of toEvict) {
-      this.mirror.lingeringShips.delete(id);
-      const bodyId = `linger-${id}`;
-      if (this.predLingeringIds.has(bodyId)) {
-        this.predWorld?.despawnShip(bodyId);
-        this.predLingeringIds.delete(bodyId);
+    // Remove lingering hulls that didn't appear in this snapshot (evicted
+    // by the 15-min timer, or destroyed) — plus despawn their predWorld
+    // bodies so the local player stops colliding with ghosts.
+    for (const id of [...this.mirror.lingeringShips.keys()]) {
+      if (!lingeringSeen.has(id)) {
+        this.mirror.lingeringShips.delete(id);
+        const bodyId = `linger-${id}`;
+        if (this.predLingeringIds.has(bodyId)) {
+          this.predWorld?.despawnShip(bodyId);
+          this.predLingeringIds.delete(bodyId);
+        }
       }
     }
-    // Swap `snap.states` to the translated playerId-keyed view. This
-    // mutates the incoming wire message (we own it post-decode — Colyseus
-    // freshly-parses it per message, no aliasing concern) so downstream
-    // `snap.states` reads see the local view. Saves one envelope-spread
-    // allocation per snapshot (the legacy `snap = { ...snap, states: ... }`
-    // copied references to all sibling fields — projectiles, wrecks,
-    // drones, boostingIds — too).
+    // Probe 8 — mutate snap.states in place rather than spreading into
+    // a new object. `snap` is the parameter from `room.onMessage` and
+    // is owned by us for the duration of this handler — Colyseus
+    // freshly-parses it per message, no aliasing concern. Saves one
+    // object allocation per snapshot (the spread also copied references
+    // to all the other snap fields — projectiles, wrecks, drones,
+    // boostingIds, etc.).
     snap.states = statesByPlayerId;
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
@@ -2143,29 +2109,12 @@ export class ColyseusGameClient {
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
       // Reset remote ships to serverTick state BEFORE reconcile.
-      // 2026-05-25 GC sweep: persistent Map + pooled {x,y} entries.
-      // Each tick: clear the Map, refill peak-N entries from
-      // `_preResetRemotePosEntries` (alloc-once, reused thereafter).
-      const preResetRemotePos = this._preResetRemotePosScratch;
-      preResetRemotePos.clear();
-      const preResetEntries = this._preResetRemotePosEntries;
-      let preResetEntryIdx = 0;
+      const preResetRemotePos = new Map<string, { x: number; y: number }>();
       for (const [remoteId, state] of Object.entries(snap.states)) {
         if (remoteId === localId) continue;
         if (!this.predWorld?.hasShip(remoteId)) continue;
         const current = this.predWorld.getShipState(remoteId);
-        if (current) {
-          // Acquire from the pooled-entry array; grow once when peak rises.
-          let entry = preResetEntries[preResetEntryIdx];
-          if (!entry) {
-            entry = { x: 0, y: 0 };
-            preResetEntries[preResetEntryIdx] = entry;
-          }
-          entry.x = current.x;
-          entry.y = current.y;
-          preResetRemotePos.set(remoteId, entry);
-          preResetEntryIdx++;
-        }
+        if (current) preResetRemotePos.set(remoteId, { x: current.x, y: current.y });
         this.predWorld.setShipState(remoteId, state);
         // Stage 3 — capture each remote's last-applied input from the
         // snapshot for forward-prediction during the upcoming replay
@@ -2896,29 +2845,32 @@ export class ColyseusGameClient {
         // beam geometry from it, so wiping it here makes the visible beam
         // flip back to baseAngle every render frame (visible bug: a solid
         // unrotated beam under the flickering correctly-rotated ghost).
-        // 2026-05-25 GC sweep: MUTATE IN PLACE rather than spread-and-replace.
-        // Field preservation (kind / displayName / mountAngles) is automatic
-        // because we only write the spatial fields. First-frame fallback
-        // allocates ONCE per ship lifetime — see src/client/CLAUDE.md
-        // "Renderer Rules" + docs/architecture/gc-discipline.md.
-        // Spatial values are DEAD-RECKONED (perf-floor render-jitter work,
-        // 2026-05-21) — drX/drY/drAngle extrapolate from the last physics
-        // tick so the rendered pose advances smoothly between ticks.
-        const prev = this.mirror.ships.get(localId);
-        if (prev) {
-          prev.x = drX + ox;
-          prev.y = drY + oy;
-          prev.vx = state.vx;
-          prev.vy = state.vy;
-          prev.angle = drAngle + oa;
-        } else {
-          this.mirror.ships.set(localId, {
+        // Probe 7 (mobile-perf-investigation, 2026-05-24) — mutate
+        // the existing entry in place instead of allocating a new
+        // object literal per RAF. Non-spatial fields (`kind`,
+        // `displayName`, `mountAngles`) are PRESERVED by not touching
+        // them — they were written previously by `syncMirror` (kind/
+        // displayName) and `tickLocalMountAim` (mountAngles) and stay
+        // on the entry across rebuilds. Pre-fix the conditional-spread
+        // pattern allocated 2-4 objects per ship per RAF, ~9000
+        // allocations/sec at 25 in-interest entities. Pooling eliminates
+        // these allocations entirely after the first-spawn create.
+        let entry = this.mirror.ships.get(localId);
+        if (!entry) {
+          entry = {
             x: drX + ox,
             y: drY + oy,
             vx: state.vx,
             vy: state.vy,
             angle: drAngle + oa,
-          });
+          };
+          this.mirror.ships.set(localId, entry);
+        } else {
+          entry.x = drX + ox;
+          entry.y = drY + oy;
+          entry.vx = state.vx;
+          entry.vy = state.vy;
+          entry.angle = drAngle + oa;
         }
 
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra
@@ -2950,12 +2902,7 @@ export class ColyseusGameClient {
           const renderedX = state.x + ox;
           const renderedY = state.y + oy;
           const SWARM_OVERLAP_LOG_DIST = 100; // ~ ship radius + drone radius + buffer
-          // 2026-05-25 GC sweep (diag-only path): swap two persistent Sets
-          // each frame instead of allocating a fresh `new Set<number>()`.
-          // `_swarmNearbySwapScratch` is the inactive set; we clear and
-          // populate it, then swap with `_swarmNearbyIds` at the end.
-          const nowNear = this._swarmNearbySwapScratch;
-          nowNear.clear();
+          const nowNear = new Set<number>();
           for (const [entityId, entry] of this.mirror.swarm) {
             const dx = entry.x - renderedX;
             const dy = entry.y - renderedY;
@@ -2991,11 +2938,7 @@ export class ColyseusGameClient {
               logEvent('swarm_near_exit', { entityId: oldId });
             }
           }
-          // Swap the two Sets — `_swarmNearbyIds` becomes the populated one,
-          // `_swarmNearbySwapScratch` becomes the next-frame scratch.
-          const oldActive = this._swarmNearbyIds;
           this._swarmNearbyIds = nowNear;
-          this._swarmNearbySwapScratch = oldActive;
         }
       }
     }
@@ -3069,26 +3012,25 @@ export class ColyseusGameClient {
             Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
           if (!stillMoving) this._remoteShipOffsets.delete(remoteId);
         }
-        // 2026-05-25 GC sweep: MUTATE IN PLACE (see local-ship branch above).
-        // Field preservation (kind / displayName / mountAngles) automatic
-        // because we only write x/y/vx/vy/angle/angvel.
-        const prev = this.mirror.ships.get(remoteId);
-        if (prev) {
-          prev.x = s.x + ox;
-          prev.y = s.y + oy;
-          prev.vx = s.vx;
-          prev.vy = s.vy;
-          prev.angle = s.angle;
-          (prev as { angvel?: number }).angvel = s.angvel;
-        } else {
-          this.mirror.ships.set(remoteId, {
+        // Probe 7 — mutate in place. Same rationale as the local-ship
+        // pooling above: non-spatial fields (kind, displayName,
+        // mountAngles) are preserved by NOT touching them.
+        let entry = this.mirror.ships.get(remoteId);
+        if (!entry) {
+          entry = {
             x: s.x + ox,
             y: s.y + oy,
             vx: s.vx,
             vy: s.vy,
             angle: s.angle,
-            ...(s.angvel !== undefined ? { angvel: s.angvel } : {}),
-          });
+          };
+          this.mirror.ships.set(remoteId, entry);
+        } else {
+          entry.x = s.x + ox;
+          entry.y = s.y + oy;
+          entry.vx = s.vx;
+          entry.vy = s.vy;
+          entry.angle = s.angle;
         }
       }
     }
@@ -3816,9 +3758,7 @@ export class ColyseusGameClient {
 
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
-    // 2026-05-25 GC sweep: persistent scratch Set, cleared each frame.
-    const mountIds = this._beamMountIdsScratch;
-    mountIds.clear();
+    const mountIds = new Set<string>();
     for (const m of mounts) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
