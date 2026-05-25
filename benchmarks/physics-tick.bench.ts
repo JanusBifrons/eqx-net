@@ -7,6 +7,12 @@
  * at 500 entities, confirming the worker path adds negligible latency vs
  * the Phase 1 main-thread approach.
  */
+// vitest 2.1.x bench mode does NOT run `beforeAll`/`beforeEach` suite
+// hooks — a `bench()` whose body reads hook-initialised state throws
+// every iteration → zero samples → NaN stats (the silent "NaNx faster
+// than" hollow rung). Fixtures are therefore built at MODULE LOAD via
+// top-level await; the measured `bench()` bodies are unchanged. Guarded
+// by `scripts/check-bench-samples.mjs`. See docs/LESSONS.md 2026-05-19.
 import { bench, describe } from 'vitest';
 import { PhysicsWorld } from '../src/core/physics/World.js';
 import {
@@ -64,56 +70,45 @@ function readSAB(u32: Uint32Array, f32: Float32Array, slots: number[]): void {
 
 // ── benchmark suites ───────────────────────────────────────────────────────
 
-for (const N of [100, 500, 1000]) {
+interface Fixture {
+  world: PhysicsWorld;
+  playerToSlot: Map<string, number>;
+  slots: number[];
+  u32: Uint32Array;
+  f32: Float32Array;
+}
+
+async function makeFixture(N: number): Promise<Fixture> {
+  const world = await PhysicsWorld.create();
+  const playerToSlot = new Map<string, number>();
+  const slots: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const id = `entity-${i}`;
+    world.spawnShip(id, (Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000);
+    playerToSlot.set(id, i);
+    slots.push(i);
+  }
+  const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
+  return { world, playerToSlot, slots, u32: new Uint32Array(sab), f32: new Float32Array(sab) };
+}
+
+const SIZES = [100, 500, 1000] as const;
+const fixtures = new Map<number, Fixture>();
+for (const N of SIZES) fixtures.set(N, await makeFixture(N));
+
+for (const N of SIZES) {
+  const fx = fixtures.get(N)!;
   describe(`${N} entities`, () => {
-    // `beforeAll` does NOT run in vitest 2.1.x bench mode (samples drop
-    // to 0). Per-bench `setup` is the supported alternative. Each setup
-    // builds a fresh world / SAB; the closure-captured refs are
-    // initialised once per bench before its sampling window.
-    let world: PhysicsWorld;
-    let playerToSlot: Map<string, number> = new Map();
-    let slots: number[] = [];
-    let u32: Uint32Array;
-    let f32: Float32Array;
+    bench('physics tick (main thread)', () => {
+      fx.world.tick(1 / 60);
+    });
 
-    const setup = async (): Promise<void> => {
-      world = await PhysicsWorld.create();
-      playerToSlot = new Map();
-      slots = [];
-      for (let i = 0; i < N; i++) {
-        const id = `entity-${i}`;
-        world.spawnShip(id, (Math.random() - 0.5) * 2000, (Math.random() - 0.5) * 2000);
-        playerToSlot.set(id, i);
-        slots.push(i);
-      }
+    bench('SAB write — seqlock + N entity states', () => {
+      writeSAB(fx.u32, fx.f32, fx.world.getAllShipStates(), fx.playerToSlot);
+    });
 
-      const sab = new SharedArrayBuffer(SAB_TOTAL_BYTES);
-      u32 = new Uint32Array(sab);
-      f32 = new Float32Array(sab);
-    };
-
-    bench(
-      'physics tick (main thread)',
-      () => {
-        world.tick(1 / 60);
-      },
-      { setup },
-    );
-
-    bench(
-      'SAB write — seqlock + N entity states',
-      () => {
-        writeSAB(u32, f32, world.getAllShipStates(), playerToSlot);
-      },
-      { setup },
-    );
-
-    bench(
-      'SAB read — seqlock + N entity states',
-      () => {
-        readSAB(u32, f32, slots);
-      },
-      { setup },
-    );
+    bench('SAB read — seqlock + N entity states', () => {
+      readSAB(fx.u32, fx.f32, fx.slots);
+    });
   });
 }

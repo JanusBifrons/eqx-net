@@ -3,6 +3,7 @@ import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
+import { isFireOnCooldown } from '../../core/combat/fireCooldown.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -1198,9 +1199,19 @@ export class SectorRoom extends Room<SectorState> {
     // Weapon cooldown rate limit. Compare client tick values (not serverTick) so
     // RTT jitter between consecutive messages doesn't cause false rejections.
     const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) {
+    if (isFireOnCooldown(tick, lastFireCt, WEAPON_COOLDOWN_TICKS)) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
+      // wrap-up-known-issues Phase 1 — the cooldown-rejected ack is the
+      // 133-fire-vs-28-fire_received funnel's missing rung (capture
+      // 76idw1): fire_received is logged AFTER this early return, so a
+      // rejected shot left no trace. ids+scalars only.
+      serverLogEvent('hit_ack', {
+        shooterId,
+        clientShotId: ack.clientShotId,
+        hit: ack.hit,
+        rejected: ack.rejected,
+      });
       return;
     }
     this.lastFireClientTick.set(shooterId, tick);
@@ -1487,9 +1498,17 @@ export class SectorRoom extends Room<SectorState> {
     if (bestHitId) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitWireId, damage: bestHitDamage };
       client.send('hit_ack', ack);
+      serverLogEvent('hit_ack', {
+        shooterId,
+        clientShotId: ack.clientShotId,
+        hit: ack.hit,
+        targetId: ack.targetId,
+        damage: ack.damage,
+      });
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
+      serverLogEvent('hit_ack', { shooterId, clientShotId: ack.clientShotId, hit: ack.hit });
     }
   }
 
@@ -1736,6 +1755,33 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  // wrap-up-known-issues Phase 1 — every combat damage/destroy broadcast
+  // gets a sibling `serverLogEvent` so the post-"shot accepted" funnel is
+  // visible in diag captures. It was invisible (capture 76idw1 recorded
+  // only fire/fire_received), which BLOCKED invariant-#13 repro-first on
+  // the inconsistent-damage + explosion bugs. ids + scalars ONLY — NO
+  // hitX/hitY (Pino policy: never log position/velocity; the `damage`
+  // WIRE payload still carries them for the client). Single ownership
+  // site so a broadcast can never ship without its diagnostic twin; the
+  // only diag-suppressed kill (LoadShedder/Living-World
+  // `evictSwarmEntity { broadcast:false }`) never calls broadcastDestroy,
+  // so phantom destroys are excluded structurally, not by a flag.
+  private broadcastDamage(evt: DamageEvent): void {
+    this.broadcast('damage', evt);
+    serverLogEvent('damage', {
+      targetId: evt.targetId,
+      shooterId: evt.shooterId,
+      damage: evt.damage,
+      newHealth: evt.newHealth,
+      hitLayer: evt.hitLayer,
+    });
+  }
+
+  private broadcastDestroy(evt: DestroyEvent): void {
+    this.broadcast('destroy', evt);
+    serverLogEvent('destroy', { targetId: evt.targetId, shooterId: evt.shooterId });
+  }
+
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
     // Phase 4 — wreck damage. Wire id has the `wreck-` prefix; the rest
     // is the shipInstanceId UUID. Route to `state.wrecks` and tear down
@@ -1746,7 +1792,7 @@ export class SectorRoom extends Room<SectorState> {
       if (!wreck) return;
       wreck.health = Math.max(0, wreck.health - damage);
       const pose = this.wreckPoseCache.get(shipInstanceId);
-      this.broadcast('damage', {
+      this.broadcastDamage({
         type: 'damage',
         targetId,
         damage,
@@ -1758,10 +1804,10 @@ export class SectorRoom extends Room<SectorState> {
         shieldMax: 0,
         hullMax: wreck.maxHealth,
         hitLayer: 'hull',
-      } satisfies DamageEvent);
+      });
       if (wreck.health <= 0) {
         const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
+        this.broadcastDestroy(destroyEvent);
         this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
         this.destroyWreck(shipInstanceId);
         logger.info({ shipInstanceId, shooterId }, 'wreck destroyed');
@@ -1794,11 +1840,11 @@ export class SectorRoom extends Room<SectorState> {
         hullMax: f.hullMax,
         hitLayer: f.hitLayer,
       };
-      this.broadcast('damage', dmgEvent);
+      this.broadcastDamage(dmgEvent);
       if (directLingering.health <= 0) {
         directLingering.alive = false;
         const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
+        this.broadcastDestroy(destroyEvent);
         // Free the lingering slot and clear schema bookkeeping. The
         // roster row deletion happens via the SHIP_DESTROYED bus
         // handler's deleteRosterRow call below.
@@ -1841,13 +1887,13 @@ export class SectorRoom extends Room<SectorState> {
         hullMax: f.hullMax,
         hitLayer: f.hitLayer,
       };
-      this.broadcast('damage', dmgEvent);
+      this.broadcastDamage(dmgEvent);
       this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
 
       if (ship.health <= 0) {
         ship.alive = false;
         const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
+        this.broadcastDestroy(destroyEvent);
         this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
         logger.info({ targetId, shooterId }, 'ship destroyed');
       }
@@ -1869,7 +1915,7 @@ export class SectorRoom extends Room<SectorState> {
     const b = slotBase(rec.slot);
     const swarmHitX = hitX ?? this.sabF32[b + SLOT_X_OFF]!;
     const swarmHitY = hitY ?? this.sabF32[b + SLOT_Y_OFF]!;
-    this.broadcast('damage', {
+    this.broadcastDamage({
       type: 'damage',
       targetId: wireTargetId,
       damage,
@@ -1881,7 +1927,7 @@ export class SectorRoom extends Room<SectorState> {
       shieldMax: sf.shieldMax,
       hullMax: sf.hullMax,
       hitLayer: sf.hitLayer,
-    } satisfies DamageEvent);
+    });
 
     // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and
     // adds the shooter to its hostile set. Same call goes to the client
@@ -1926,11 +1972,11 @@ export class SectorRoom extends Room<SectorState> {
   ): void {
     if (opts.broadcast) {
       const wireTargetId = `swarm-${rec.entityId}`;
-      this.broadcast('destroy', {
+      this.broadcastDestroy({
         type: 'destroy',
         targetId: wireTargetId,
         shooterId: opts.shooterId ?? '',
-      } satisfies DestroyEvent);
+      });
     }
     if (opts.emitDestroyed) {
       this.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: rec.id });

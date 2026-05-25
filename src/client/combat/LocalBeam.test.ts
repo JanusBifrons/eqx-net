@@ -41,6 +41,9 @@ import {
   liveBeamVisible,
   LIVE_BEAM_PERSIST_MS,
   buildLocalAimTargets,
+  resolveLocalBeamRay,
+  LOCAL_BEAM_BARREL_OFFSET,
+  type BeamShipPose,
 } from './LocalBeam.js';
 
 describe('localFireSpawnsGhost', () => {
@@ -220,5 +223,59 @@ describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its
   it('an empty / absent swarm yields no targets (turret slews back to forward)', () => {
     const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
     expect(buildLocalAimTargets(new Map(), scratch)).toEqual([]);
+  });
+});
+
+describe('resolveLocalBeamRay — local beam hit-tests the RENDERED pose, not raw predWorld', () => {
+  // Phase 6 (plan: wrap-up-known-issues): the renderer draws the local
+  // beam from `mirror.ships.get(localId)` (predWorld pose + reconcile
+  // LERP offset) while `updateLiveBeam` hit-tested from raw
+  // `predWorld.getShipState(localId)`. With a lerp offset active the two
+  // diverge by the full correction magnitude → the drawn beam misses.
+  // Same disease as the 0e24448 drone-TARGET fix, ORIGIN side.
+
+  it('geometry is byte-identical to the prior inline math (axis-aligned)', () => {
+    // pose.angle 0 → cosA 1, sinA 0; mount 10u forward of centre,
+    // baseAngle 0 ⇒ mountAngle 0 ⇒ fwd = (0, 1); barrel offset 20.
+    const pose: BeamShipPose = { x: 100, y: 50, angle: 0 };
+    const ray = resolveLocalBeamRay(pose, 0, 10, 0);
+    expect(ray.fwdX).toBeCloseTo(0, 9);
+    expect(ray.fwdY).toBeCloseTo(1, 9);
+    expect(ray.fromX).toBeCloseTo(100, 9); // 100 + (0) + fwdX*20
+    expect(ray.fromY).toBeCloseTo(50 + 10 + LOCAL_BEAM_BARREL_OFFSET, 9); // 80
+  });
+
+  it('locks the rotation math (pose.angle = π/2)', () => {
+    const pose: BeamShipPose = { x: 0, y: 0, angle: Math.PI / 2 };
+    // cosA 0, sinA 1: mountWorld = (0 + (0·0 − 10·1), 0 + (0·1 + 10·0)) =
+    // (−10, 0). mountAngle π/2 ⇒ fwd = (−1, 0). from = (−10 − 20, 0).
+    const ray = resolveLocalBeamRay(pose, 0, 10, Math.PI / 2);
+    expect(ray.fwdX).toBeCloseTo(-1, 9);
+    expect(ray.fwdY).toBeCloseTo(0, 9);
+    expect(ray.fromX).toBeCloseTo(-30, 9);
+    expect(ray.fromY).toBeCloseTo(0, 9);
+  });
+
+  it('THE BUG: hit-testing the raw predWorld pose while drawing the rendered pose misses by the lerp offset', () => {
+    // A reconcile lerp offset of +30u on x is active: the player SEES
+    // the ship (and the renderer draws the beam) at the rendered pose;
+    // the raw predWorld pose is 30u away.
+    const rendered: BeamShipPose = { x: 100, y: 50, angle: 0 };
+    const rawPredWorld: BeamShipPose = { x: 130, y: 50, angle: 0 };
+
+    const drawnRay = resolveLocalBeamRay(rendered, 0, 10, 0); // what the renderer draws
+    const oldHitTestRay = resolveLocalBeamRay(rawPredWorld, 0, 10, 0); // pre-fix updateLiveBeam source
+
+    // Pre-fix: the hit-test ray originated 30u from where the beam was
+    // drawn — the visible miss. (Characterises the bug; this delta is
+    // exactly the regression the fix removes.)
+    expect(oldHitTestRay.fromX).not.toBeCloseTo(drawnRay.fromX, 1);
+    expect(oldHitTestRay.fromX - drawnRay.fromX).toBeCloseTo(30, 9);
+
+    // The fix: feed the SAME rendered pose the renderer draws from, so
+    // the hit-test ray originates exactly at the drawn barrel tip —
+    // draw == hit-test by construction.
+    expect(drawnRay.fromX).toBeCloseTo(100, 9);
+    expect(drawnRay.fromY).toBeCloseTo(80, 9);
   });
 });

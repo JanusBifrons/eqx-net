@@ -17,21 +17,24 @@
  * milliseconds. Headline number is "enqueues per ms" — should comfortably
  * exceed 100 (i.e., < 10 µs each), even with the worker spinning.
  *
- * Implementation note: vitest 2.1.x bench mode does NOT run `beforeAll` /
- * `afterAll` hooks (samples drop to 0); and per-bench `setup` / `teardown`
- * does not work for shared infrastructure like a persistent worker thread
- * (the second bench's setup would try to re-create the worker after the
- * first bench's teardown already shut everything down — see "FOREIGN KEY
- * constraint failed" failure mode). Module-level top-level await is the
- * only pattern that gives both benches a stable worker. The process exit
- * cleans up tempDir + worker; no explicit teardown.
+ * vitest 2.1.x bench mode does NOT run `beforeAll`/`afterAll` suite hooks
+ * (samples drop to 0 — the worker would never be attached, every iteration
+ * would throw). Per-bench `setup`/`teardown` doesn't work either because
+ * the two benches share the same worker (the second bench's setup would
+ * try to re-create the worker after the first bench's teardown already
+ * shut everything down — see "FOREIGN KEY constraint failed" failure
+ * mode). Module-level top-level await is the only pattern that gives both
+ * benches a stable worker. The worker is `unref()`'d and torn down from a
+ * sync `process.on('exit')` handler since `afterAll` never fires.
+ * Guarded by `scripts/check-bench-samples.mjs`. See docs/LESSONS.md
+ * 2026-05-19.
  */
 import { bench, describe } from 'vitest';
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { bundleWorker } from '../src/server/workers/bundleWorker.js';
 import { WorkerBackedSink, type WorkerHandle } from '../src/server/db/WorkerBackedSink.js';
 import type { PersistOp } from '../src/core/contracts/IPersistenceSink.js';
@@ -63,6 +66,14 @@ const code = await bundleWorker({ entryPoint: DB_WORKER_TS });
 const worker = new Worker(code, { eval: true, workerData: { dbPath } });
 const sink = new WorkerBackedSink();
 await sink.attach(worker as unknown as WorkerHandle);
+// afterAll never runs in vitest bench mode: unref so the live worker
+// can't keep the bench process alive, and tear down synchronously on
+// exit (best-effort; the process is ending anyway).
+worker.unref();
+process.once('exit', () => {
+  try { void worker.terminate(); } catch { /* noop */ }
+  try { rmSync(tempDir, { recursive: true, force: true }); } catch { /* noop */ }
+});
 
 describe('WorkerBackedSink — enqueue cost on the main thread', () => {
   bench('enqueueCritical(KILL)', () => {
