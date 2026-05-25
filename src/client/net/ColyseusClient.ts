@@ -615,6 +615,13 @@ export class ColyseusGameClient {
    *  Pre-fix: every 60Hz binary packet called `setSwarmCount(n)`
    *  regardless. Zustand subscribers allocate per notification. */
   private _lastPushedSwarmCount = -1;
+  /** 2026-05-25 heap-growth gate step 9 — cache last-pushed HUD bar
+   *  values so we only dispatch to Zustand when they actually change.
+   *  Under 75 hits/sec combat the pre-fix called setHullPct +
+   *  setShieldPct unconditionally per hit; rounding to int already
+   *  dedupes most calls but the dispatch still fires. */
+  private _lastPushedHullPct = -1;
+  private _lastPushedShieldPct = -1;
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -1623,8 +1630,15 @@ export class ColyseusGameClient {
       // != 500 rendered a wrong %). newHealth is the HULL value.
       const hullPct = evt.hullMax > 0 ? Math.round((evt.newHealth / evt.hullMax) * 100) : 0;
       const shPct = evt.shieldMax > 0 ? Math.round((evt.newShield / evt.shieldMax) * 100) : 0;
-      useUIStore.getState().setHullPct(hullPct);
-      useUIStore.getState().setShieldPct(shPct);
+      // step 9: dedupe — only dispatch when the rounded value changed.
+      if (hullPct !== this._lastPushedHullPct) {
+        this._lastPushedHullPct = hullPct;
+        useUIStore.getState().setHullPct(hullPct);
+      }
+      if (shPct !== this._lastPushedShieldPct) {
+        this._lastPushedShieldPct = shPct;
+        useUIStore.getState().setShieldPct(shPct);
+      }
       // Authoritative shield break -> mirror the collider swap into the
       // local predWorld so client hit/ramming prediction matches the
       // server. The client NEVER computes the 0-cross (reacts to the
