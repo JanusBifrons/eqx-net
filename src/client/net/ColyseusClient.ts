@@ -1252,16 +1252,37 @@ export class ColyseusGameClient {
         perShooter = new Map();
         lasers.set(evt.shooterId, perShooter);
       }
-      perShooter.set(mountKey, {
-        range,
-        hit: evt.hit,
-        targetId: evt.targetId,
-        expiresAt: this.clock.now() + ttlMs,
-        fromX: evt.fromX,
-        fromY: evt.fromY,
-        toX: evt.toX,
-        toY: evt.toY,
-      });
+      // 2026-05-25 heap-growth gate step 7: pool the per-fire entry.
+      // Pre-fix this handler allocated a fresh 8-field object literal
+      // per drone fire (~150 allocs/sec under 25-drone combat).
+      // Isolation experiment 2026-05-25 showed the 3 message handlers
+      // (swarm/damage/laser_fired) drive 0.435 MB/s heap growth +
+      // 80% of major-GC stalls. Reusing the entry object per
+      // (shooter, mount) is safe — the renderer reads fields
+      // synchronously each frame; upsert semantics are preserved.
+      const expiresAt = this.clock.now() + ttlMs;
+      const existing = perShooter.get(mountKey);
+      if (existing) {
+        existing.range = range;
+        existing.hit = evt.hit;
+        existing.targetId = evt.targetId;
+        existing.expiresAt = expiresAt;
+        existing.fromX = evt.fromX;
+        existing.fromY = evt.fromY;
+        existing.toX = evt.toX;
+        existing.toY = evt.toY;
+      } else {
+        perShooter.set(mountKey, {
+          range,
+          hit: evt.hit,
+          targetId: evt.targetId,
+          expiresAt,
+          fromX: evt.fromX,
+          fromY: evt.fromY,
+          toX: evt.toX,
+          toY: evt.toY,
+        });
+      }
     });
 
     room.onMessage('respawn_ack', (msg: RespawnAckMessage) => {
