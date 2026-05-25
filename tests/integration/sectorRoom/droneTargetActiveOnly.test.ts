@@ -42,26 +42,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { matchMaker } from 'colyseus';
-import type { Room as ServerRoom } from 'colyseus';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
-import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
-interface AiScratchEntry {
-  id: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-}
-
-// SectorRoom's private fields we need to inspect for this test.
-interface SectorRoomInternals {
-  aiPlayerScratch: AiScratchEntry[];
-  state: SectorState;
-}
-
-function getRoomById(roomId: string): ServerRoom<SectorState> & SectorRoomInternals {
-  return matchMaker.getLocalRoomById(roomId) as unknown as ServerRoom<SectorState> & SectorRoomInternals;
+function getRoomById(roomId: string): SectorRoom {
+  return matchMaker.getLocalRoomById(roomId) as unknown as SectorRoom;
 }
 
 describe('Phase 6c — drone retargeting (active-only)', () => {
@@ -95,7 +80,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
     // a tick. (If this fails, the test premise is wrong.)
     await harness.advance(150);
     expect(
-      room.aiPlayerScratch.find((p) => p.id === pid),
+      room._internals.aiPlayerScratch.find((p) => p.id === pid),
       'sanity: active player must be in aiPlayerScratch',
     ).toBeDefined();
 
@@ -115,7 +100,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
     await harness.advance(300);
 
     expect(
-      room.aiPlayerScratch.find((p) => p.id === pid),
+      room._internals.aiPlayerScratch.find((p) => p.id === pid),
       'lingering hull (isActive=false) must NOT appear in the drone AI view',
     ).toBeUndefined();
   });
@@ -132,14 +117,14 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
 
     const room = getRoomById(client.roomId);
     await harness.advance(150);
-    expect(room.aiPlayerScratch.find((p) => p.id === pid)).toBeDefined();
+    expect(room._internals.aiPlayerScratch.find((p) => p.id === pid)).toBeDefined();
 
     // Linger → AI view excludes.
     for (const [, ship] of room.state.ships) {
       if (ship.playerId === pid) ship.isActive = false;
     }
     await harness.advance(200);
-    expect(room.aiPlayerScratch.find((p) => p.id === pid)).toBeUndefined();
+    expect(room._internals.aiPlayerScratch.find((p) => p.id === pid)).toBeUndefined();
 
     // Rebind (simulates the player reconnecting + binding the same
     // hull). Flip back to active.
@@ -148,7 +133,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
     }
     await harness.advance(200);
     expect(
-      room.aiPlayerScratch.find((p) => p.id === pid),
+      room._internals.aiPlayerScratch.find((p) => p.id === pid),
       'rebound (isActive=true) ship must reappear in the AI view',
     ).toBeDefined();
   });
@@ -180,7 +165,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
     }
     await harness.advance(200);
 
-    expect(room.aiPlayerScratch.find((p) => p.id === lingerPid)).toBeUndefined();
-    expect(room.aiPlayerScratch.find((p) => p.id === activePid)).toBeDefined();
+    expect(room._internals.aiPlayerScratch.find((p) => p.id === lingerPid)).toBeUndefined();
+    expect(room._internals.aiPlayerScratch.find((p) => p.id === activePid)).toBeDefined();
   });
 });

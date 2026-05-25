@@ -94,69 +94,12 @@ interface RemoteEntry {
 
 const HISTORY_MAX = 30;
 
-/** Live prediction/latency metrics readable from the DOM or tests. */
-export interface PredictionStats {
-  /** RTT estimate from last reconciliation (ms). */
-  rttMs: number;
-  /** Prediction position drift at last reconciliation (world units). */
-  driftUnits: number;
-  /** Prediction angle drift at last reconciliation (radians). */
-  angleDriftRad: number;
-  /** Whether a visual lerp correction is currently decaying. */
-  lerping: boolean;
-  /** Interval between the last two snapshots (ms). 0 if < 2 snapshots received. */
-  snapshotIntervalMs: number;
-  /** Total snapshots received since connect. */
-  snapshotCount: number;
-  /** How many client input ticks are ahead of the last server-acked tick. */
-  ticksAhead: number;
-  /** Server tick of the last received snapshot. */
-  lastServerTick: number;
-  /** Last server-acked input tick for the local player. */
-  lastAckedTick: number;
-  /** Reconciliations that produced position drift > 0.05 u (filters float32 noise). */
-  significantCorrectionCount: number;
-  /** Reconciliations that produced angle drift > 0.001 rad (filters float32 noise). */
-  significantAngleCorrectionCount: number;
-  /** Largest single-reconciliation position drift observed (world units). */
-  maxDriftUnits: number;
-  /** Sum of all position drift magnitudes. Divide by snapshotCount for mean. */
-  totalDriftUnits: number;
-  /** Largest single-reconciliation angle drift observed (radians). */
-  maxAngleDriftRad: number;
-  /** Sum of all angle drift magnitudes. Divide by snapshotCount for mean. */
-  totalAngleDriftRad: number;
-  /** Max − min of the last 10 snapshot intervals (ms). 0 if < 2 snapshots. */
-  snapshotJitterMs: number;
-  /** Correction rate over the most recent 10-snapshot rolling window (0–1). */
-  rollingCorrRate: number;
-  /** Stage 2 — total `collision_resolved` events that mutated predWorld this
-   *  session. Excludes events dropped by the stale or rate-limit guards. */
-  collisionEventsApplied: number;
-  /** Stage 4 — Welford running mean of per-snapshot RTT samples. */
-  rttMeanMs: number;
-  /** Stage 4 — Welford running standard deviation of per-snapshot RTT. */
-  rttStdDevMs: number;
-  /** Stage 4 — sliding-window count of dropped snapshots (last 10 arrivals). */
-  droppedSnapshotsRecent: number;
-  /** perf-floor Phase 1 — rolling p50 of `rafTick.elapsedMs` over the
-   *  last 5 s (ms). NaN until the ring has a sample. */
-  rafP50Ms: number;
-  /** perf-floor Phase 1 — rolling p99 of `rafTick.elapsedMs` over the
-   *  last 5 s (ms). NaN until the ring has a sample. */
-  rafP99Ms: number;
-  /** perf-floor Phase 1 — count of `longtask` ring entries in the last
-   *  30 s. >50 ms tasks via PerformanceObserver. Chromium / Edge / Safari
-   *  18+ only; Firefox always 0 (no longtask entry type). */
-  longtaskCount30s: number;
-  /** perf-floor Phase 1 — count of `raf_gap` ring entries in the last
-   *  30 s. A `raf_gap` is fired when a RAF elapsed > 100 ms (main-thread
-   *  block / focus loss / hidden tab). */
-  rafGapCount30s: number;
-  /** perf-floor Phase 1 — `performance.memory.usedJSHeapSize` in MiB.
-   *  Undefined on non-Chromium browsers (Firefox / Safari). */
-  heapUsedMb: number | undefined;
-}
+// Public PredictionStats interface moved to ./predictionStats.ts.
+// Re-exported here so existing test imports (e.g.
+// tests/e2e/input-throttle-drift.spec.ts) keep resolving via
+// `import type { PredictionStats } from 'src/client/net/ColyseusClient'`.
+export type { PredictionStats } from './predictionStats.js';
+import type { PredictionStats } from './predictionStats.js';
 
 /** Phase 5e DEV-only inbound bandwidth tally surfaced on `window.__EQX_BW_STATS`. */
 interface BwStats {
@@ -173,61 +116,19 @@ function bwStats(): BwStats | null {
   return (window as unknown as { __EQX_BW_STATS?: BwStats }).__EQX_BW_STATS ?? null;
 }
 
-/** Position drift below this is float32-serialisation noise. */
-const NOISE_THRESHOLD = 0.05;
-/** Angle drift below this is float32-serialisation noise (~0.057°). */
-const ANGLE_NOISE_THRESHOLD = 0.001;
-
-/** Spring half-life for remote-ship offset decay (Stage 1).
- *  Aligned with `Reconciler.halfLifeForDrift` so remote-ship and local-ship
- *  visual recovery are in lockstep — sub-pixel drifts settle imperceptibly
- *  fast (~75 ms total wall-clock); everything above the noise floor settles
- *  in ~125 ms. Pre-Stage-1 used a frame counter; Stage 1 took dtMs and
- *  applies a critically-damped spring so the recovery is frame-rate
- *  independent and reads as "alive". */
-function remoteOffsetHalfLifeForDrift(drift: number): number {
-  if (drift < 0.5) return 12;
-  return 25;
-}
-
-/** Termination thresholds for remote-ship offset springs. Match the
- *  Reconciler's SPRING_POS_END / SPRING_VEL_END_MS so visual recovery
- *  ends consistently across local- and remote-ship offsets. */
-const REMOTE_SPRING_POS_END = 0.05;       // matches LERP_THRESHOLD
-const REMOTE_SPRING_VEL_END_MS = 0.05;    // 50 u/s
-
-/** Stage 3 — maximum forward-prediction ticks per remote, per snapshot.
- *  At 60 Hz that's ~133 ms of speculative integration. A long network
- *  stall can leave `inputTick - serverTick` arbitrarily large, but we
- *  only speculate the remote's input for this many ticks beyond
- *  serverTick — additional ticks integrate the remote with damping
- *  only (pre-Stage-3 behaviour) so visible runaway speculation is
- *  bounded. Reset on every snapshot. */
-const STAGE_3_MAX_LOOKAHEAD_TICKS = 8;
-
-/** Stage 4 hotfix — clamp on RTT samples fed into the Welford state
- *  driving leadTicks. `Reconciler.lastRtt` is contaminated by snapshot-
- *  delay (it's `now - ackedRec.sentAt`, not the true TCP RTT), so a
- *  500 ms inbound network gap can push σ past 200 ms and saturate the
- *  prediction window at the 30-tick cap. Clamping samples at 250 ms
- *  bounds σ even under Pattern A spikes; real-world high-RTT clients
- *  (international, cellular) routinely measure 100–250 ms, so the
- *  clamp doesn't penalise them. See `docs/LESSONS.md` for the
- *  diagnostic. */
-const RTT_SAMPLE_CLAMP_MS = 250;
-
-/** Stage 4 hotfix #3 (2026-05-08 third diagnostic) — gate the Welford
- *  RTT push on snapshot `intervalMs` being inside the steady-state
- *  cadence band. Server broadcasts every 3 server ticks (50 ms nominal
- *  at 60 Hz); real wall-clock jitter spreads this to roughly [35, 75] ms.
- *  Outside that range, the snapshot is part of a Pattern A gap (huge
- *  interval) or a burst-recovery cluster (tiny interval) — its
- *  `Reconciler.lastRtt` is contaminated by snapshot-delay even after
- *  the σ-clamp, so it inflates the running mean. Gating the push lets
- *  Welford track only clean samples; mean stays near live RTT and
- *  leadTicks stays sized for combat. See `docs/LESSONS.md`. */
-const STEADY_STATE_INTERVAL_MIN_MS = 35;
-const STEADY_STATE_INTERVAL_MAX_MS = 75;
+// Prediction tuning constants + remoteOffsetHalfLifeForDrift moved to
+// ./predictionTuning.ts — pure read-only tuning values, no `this`-state.
+import {
+  NOISE_THRESHOLD,
+  ANGLE_NOISE_THRESHOLD,
+  REMOTE_SPRING_POS_END,
+  REMOTE_SPRING_VEL_END_MS,
+  STAGE_3_MAX_LOOKAHEAD_TICKS,
+  RTT_SAMPLE_CLAMP_MS,
+  STEADY_STATE_INTERVAL_MIN_MS,
+  STEADY_STATE_INTERVAL_MAX_MS,
+  remoteOffsetHalfLifeForDrift,
+} from './predictionTuning.js';
 
 /** Simple monotonically incrementing shot ID generator. */
 let _shotCounter = 0;

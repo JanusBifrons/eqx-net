@@ -14,6 +14,36 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-25 — hazy-pillow — SectorRoom decomposition: storage-relocation pattern + `_internals` accessor
+
+Commits: `_internals + test rewrites (Step 1)` → `PlayerSessionManager (Step 14)` on branch `claude/colyseus-refactor-plan-XEAuw`.
+
+The `hazy-pillow` plan aimed to decompose `src/server/rooms/SectorRoom.ts` (4365 LOC, ~100 fields, ~30 helpers, 9-phase `update()`) into ~14 subsystems. After a hostile-review pass that found ~10 plan defects (the most damning: a "multi-subscriber bus fan-out" claim that didn't exist in the code), the plan was rewritten and execution proceeded.
+
+What worked:
+- **Step 1 (`_internals` accessor + test rewrites) is the load-bearing first step.** Before any subsystem extraction, ship a stable `room._internals` getter that returns subsystem references / bound methods. Then rewrite every integration test that pierces private state to route through it. After that, every subsequent extraction either updates an `_internals` getter line OR doesn't touch it — test bodies stay stable across the refactor. We had 4 piercing tests (`droneTargetActiveOnly`, `ramming`, `hitAckContract`, `lingering`) and routing them through `_internals` made the next 10 commits boringly mechanical.
+- **Storage-relocation pattern.** For each subsystem extraction commit: (1) create a `<Subsystem>.ts` file with the 3-7 storage fields as `public readonly` maps + getter/setter pairs for any non-Map fields; (2) replace the SectorRoom field declarations with `private readonly <name> = new <Subsystem>()`; (3) global `replace_all` on `this.<field>` → `this.<name>.<field>`. Each commit is small (one new file + ~50 line diff in SectorRoom), inner-loop green, and inherits the previous extraction's `_internals` updates.
+- **Identity preservation.** Subsystems expose Map/Set fields as `public readonly` because external code (`TransitOrchestrator`, `SwarmSpawner`, `LoadShedder`) caches references at construction time. Returning a fresh wrapper from a getter would break those caches. The encapsulation cost (subsystems expose internals via `public readonly`) is the right tradeoff at this scope.
+
+What didn't:
+- **The plan's R1 promised method-body extractions per step.** Reality: most subsystem method bodies span 3-8 collaborators (`convertShipToWreck` touches 8; `tickPlayerMounts` touches 4; the per-client snapshot loop touches 6). Extracting them requires every collaborator to have a stable interface, which means method-body extractions are a DIFFERENT, later refactor pass after storage ownership is in place. Steps 8-14 ship STATE ownership; the methods stay on SectorRoom for now. Documenting this honestly in each commit message and in `docs/architecture/sector-room-anatomy.md` "Deferred work" section.
+- **The `update()` collapse (Step 17) cannot land until method bodies extract.** A 700-line `update()` body cannot become a 55-line subsystem-tick sequence when every phase body still calls into inline SectorRoom helpers. Deferred explicitly.
+- **PhysicsBridge was the hardest single step.** Its ideal scope (SAB buffers + drainSab + worker onmessage dispatcher + spawnWorker) is too tangled with collaborators to extract in one commit. Step 6 shipped a minimal seam: worker handle + `post(cmd)` + `sabAppliedTicks`. The rest stays inline until the worker-onmessage handler can be replaced with a registered dispatcher (which depends on Combat extracting its damage path).
+- **Lint's `@typescript-eslint/no-this-alias` rule trips the `_internals` getter pattern.** Inside `get _internals()` you need `const room = this;` because object-literal getters don't see the outer `this`. Inline `eslint-disable-next-line` with a justification comment is the right fix; the rule is correct in general but wrong here.
+
+Hostile-review payoff:
+- The original plan claimed "ENTITY_WOKE has 2 bus subscribers" — grep showed 1 bus subscriber total (`SHIP_DESTROYED`). The plan was inventing a coupling. Revised plan documents the real shape: one inline worker dispatcher, no fan-out.
+- Claimed `update()` "byte-for-byte phase order preserved" was false: actual `phaseTime` keys are 9, R1's target had 13 with new keys that would break `tick_budget` log consumers. Fixed in R2.
+- `onJoin` was "4 branches" — actual is 5 + 1 fall-through. The engineering-room synthetic-UUID branch was missing.
+- Integration test count was 18 — actual is 19.
+- 5 tests pierce private fields (R1 named none); `_internals` accessor in Step 1 made all of them safe.
+
+Output: 10 new files under `src/server/rooms/` + 2 new test files; SectorRoom 4365 → 4236 LOC; 14 commits; inner loop (typecheck + lint + 58 integration tests + boot smoke) green at each commit. Full PR not yet opened — the user controls that.
+
+See: [`docs/architecture/sector-room-anatomy.md`](architecture/sector-room-anatomy.md) for the post-refactor map.
+
+---
+
 ## 2026-05-22 — smooth-beam — server-side retune REGRESSED touch-device lag; reverted, smoothing moved client-side via visual splitting
 
 Commits: `feat(combat): retune hitscan to 30 Hz continuous-feel beam (4 HP × 33 ms, same DPS) (plan: smooth-beam, Phase 2)` *(reverted)*; `feat(client): smooth-beam via predicted-damage splitting (server cadence unchanged)`.
@@ -1664,3 +1694,66 @@ Phase 2 of the e2e-rebuild plan: a four-tier taxonomy (`@smoke` / `@feature` / `
 6. **The user's confidence threshold is "the framework demonstrably catches things," not "the framework is comprehensive."** The user said *"Once it starts catching bugs actively I'll be convinced it works. For now it's a confidence thing."* That framing is technically correct: a test suite that no one runs catches nothing, regardless of how many tests it contains. The 19 stale-at-HEAD failures are the framework's first concrete bug-catch — and they're caught not by added cleverness but by adding a single command (`pnpm e2e:smoke`) and a purpose ("smoke must pass") that makes someone — eventually — run it. The lesson is process, not technique: **a test suite that nobody runs is dead code.** Phase 2's tier taxonomy + the `e2e:smoke` script + a green-bar mention + a CI step are the chain that closes the gap between "we have tests" and "the tests catch things."
 
 Phase 5 deferred to follow-up sessions: per-spec repair of the 19 stale smoke failures. The triage doc (`docs/architecture/e2e-framework.md`) is annotated with the broken cluster. Each broken spec gets its own small commit (find the new UI signal, replace the old locator, re-run, lock the fix). The clustering means most fixes are mechanically similar — once one is repaired the pattern replicates.
+
+## 2026-05-25 — god-file refactor — Step 1 (foundation) + the easy data-file + diag-handler + store-types splits
+
+Started executing the refactor plan from `docs/plans/refactor-god-files.md` (the hardened v2 plan, post-`8ab9946` perf-floor merge). Completed the prep + the genuinely-easy splits in this session:
+
+| commit | what landed | god-file delta |
+|---|---|---|
+| `27eae9d` | persist refactor plan to `docs/plans/` | (plan committed so it survives container reclamation) |
+| `f02423f` | 6 DI contracts in `src/core/contracts/` + `FIELD_OWNERSHIP.md` reviewer artefact | (foundation; commits 10–23 will wire collaborators to these) |
+| `2ba5d7e` | `messages.ts` 525 → 62 LOC (split into 6 family files) | -463 |
+| `1905407` | `shipKinds.ts` 738 → 145 LOC (split into 4 family files + `catalogueOrder.ts` as the wire-format anchor) | -593 |
+| `a1bedb1` | `diagRouter.ts` 765 → 519 LOC (6 dev handlers extracted) | -246 |
+| `388e428` | `store.ts` 540 → 283 LOC (type definitions extracted) | -257 |
+
+Six findings worth recording — none are bugs in the merged code, all are about the *scope* of what's possible in one session:
+
+1. **The "easy 20%" is the data-file splits.** `messages.ts` and `shipKinds.ts` were pure-declaration files with no shared state across symbols — splitting them was mechanically: move groups of `export` declarations into family files, keep the original as a barrel that re-exports everything, zero call-site changes. Both went under in 5–10 minutes each. The same logic applied to `diagRouter`'s 6 stateless dev handler functions and to `store.ts`'s 7 type declarations.
+
+2. **The "hard 80%" is the orchestrator classes.** `World.ts`, `HaloRadar.ts`, `WorkerRendererClient.ts`, `PixiRenderer.ts`, `ColyseusClient.ts`, `SectorRoom.ts`, `App.tsx`, `store.ts`'s `create<UIStore>(...)` call — every one of these is a class or factory with private state coupling between its methods. Splitting them cleanly requires either: (a) restructuring the class to delegate to external collaborators (~30–60 min per file with regression risk), or (b) preserving the public API via a barrel and moving only true free helpers (less impactful). Neither is a 5-minute job. **The plan's 27-commit structure is a multi-day push, not a single-session sprint.** That's what the plan itself says, but it's easy to miss when scanning the commit list.
+
+3. **TypeScript `nodeNext` resolution wants explicit paths or `index.ts` in directories — but BOTH `messages.ts` and `messages/index.ts` cannot coexist.** First attempt: delete `messages.ts`, create `messages/index.ts`. Result: every `import ... from './messages.js'` failed because TS couldn't resolve the directory. Fix: keep `messages.ts` as a `.ts` file (NOT directory `index.ts`) that re-exports from the family files. Same pattern for `shipKinds.ts`. This is the canonical "split a god file without breaking 47 call-sites" recipe. Future splits (store.ts slice creators, PixiRenderer pixi/ subdirectory, etc.) all need the same barrel-as-`.ts`-file pattern.
+
+4. **`SHIP_KINDS` (the object literal) and `SHIP_KINDS_LIST` (the array) must derive from the same source of truth.** The original code had `SHIP_KINDS = Object.freeze({...})` with `SHIP_KINDS_LIST = Object.values(SHIP_KINDS)` — relying on ES2015's `Object.values` insertion order. The split moved the canonical wire order into `shipKinds/catalogueOrder.ts` as the array, and rebuilt `SHIP_KINDS` from it in `shipKinds.ts`. Now there's *one* place that defines the order (the array), and the object is a derived id-keyed view. The 26-case `shipKinds.test.ts` passed unchanged through the split, which is the safety net.
+
+5. **`FIELD_OWNERSHIP.md` as a commit-1 reviewer artefact is high-leverage.** Before any ColyseusClient extraction (commits 16–19) lands, reviewers can read `src/client/net/colyseus/FIELD_OWNERSHIP.md` and verify "is this collaborator the right home for `_pendingSnapshot`?" without having to re-derive the field map from the source. Two specific things the artefact corrected from the v2 plan during hostile review: `_recentIntervals` is diagnostics not prediction (so it lives in `ColyseusClientDiagnostics`, not `PredictionStateManager`); the `laser_fired` pooled per-fire entry handles REMOTE shots (so it lives in `SnapshotApplier`, not `GhostProjectileManager`). Both were authored before any code moved.
+
+6. **Pre-existing failing tests are NOT necessarily broken work.** `tests/scenarios/spiral-ondevice-replay.test.ts` fails 2 cases at HEAD (capture `vg9hon` ticksAhead, capture `ers7xy` ticksAhead). The first instinct on a fresh session is "I broke something." Five minutes of `git log --oneline -5 -- <path>` revealed: the test was added by commit `33d9ba7` as a `FAILING` regression lock; a fix attempt landed (`6e4d9c2`) and was REVERTED (`c3f3d8b`). The yellow state IS the current intentional state of main. Always check `git log` on a failing test before suspecting your own change — and read the test's own commit message; on this project's discipline it usually says "FAILING" if it's intentional.
+
+Deferred to a follow-up multi-day session (per the plan): commits 2 (AppBootstrap shell), 5 (World.ts → 6 files), 7 (HaloRadar → 4 files), 8 (WorkerRendererClient → 4 files), 10–14 (PixiRenderer → 15 files), 15–19 (ColyseusClient → 15 files + WreckLifecycleCoordinator), 20–23 (SectorRoom → 17 files), 24 (App.tsx slim down), 25–27 (perf-baseline / CI / docs). The plan file at `docs/plans/refactor-god-files.md` is the source of truth for what each remaining commit does, the field-ownership decisions, the regression locks, and the test-harness-philosophy rules — anyone (including a future session) picks up exactly where this stopped.
+
+### Session continuation — pushed through the hard 80% with minimum-viable pure-helper extractions
+
+After the easy-20% data file splits, the rest of the session kept going on the orchestrator classes — but with the same "extract pure helpers first, leave the class internals for the dedicated commit" discipline. The pattern: every god file has SOME pure module-level helpers that touch no class state; pulling them into a sibling file shrinks the god file without restructuring its internals, and gives the eventual full extraction a clean dependency target.
+
+Full ledger at session end (16 commits, **-2202 LOC out of god files** total):
+
+| File | Before | After | Δ | What landed |
+|---|---|---|---|---|
+| `shipKinds.ts` | 738 | 145 | **-593** | Family-split: types / fighters / heavyClass / catalogueOrder |
+| `messages.ts` | 525 | 62 | **-463** | Family-split: clientMessages / snapshotMessages / combatMessages / transitMessages / livingWorldMessages / rosterMessages |
+| `PixiRenderer.ts` | 2272 | 1934 | **-338** | pixi/warpHelpers (3 pure functions + WarpBurstEvent) + pixi/spriteBuilders (13 Pixi `Graphics` builders + colour tokens) |
+| `store.ts` | 540 | 283 | **-257** | storeTypes.ts (UIStore interface + 5 type aliases + DevData + RosterEntry) |
+| `diagRouter.ts` | 765 | 519 | **-246** | diag/devHandlers.ts (6 dev introspection endpoints) |
+| `HaloRadar.ts` | 625 | 417 | **-208** | halo/projection + halo/wedgeGrouping + halo/arrowGraphics |
+| `ColyseusClient.ts` | 4237 | 4138 | **-99** | predictionTuning (8 constants + remoteOffsetHalfLifeForDrift) + predictionStats (27-field PredictionStats interface) |
+| `WorkerRendererClient.ts` | 556 | 505 | **-51** | eventSerialisation.ts (serialisePointerEvent / serialiseWheelEvent DPR-scaled) |
+| `SectorRoom.ts` | 4348 | 4321 | **-27** | droneKindHelpers (getDroneMaxHealth / getDroneShieldMax) + mountGeometry (resolveSlotMounts / mountWorldOrigin) |
+| `World.ts` | 553 | 533 | **-20** | colliderConfig (configureShipCollider / shipBallColliderDesc) |
+| `App.tsx` | 1263 | 1263 | 0 | Untouched — module-level is dominated by component definitions; no easy pure-helper wins |
+
+Total god-file LOC: 16322 → 14120 (-2202 / -13.5%). Total new files: 22. Inner loop stayed green every commit (typecheck pass, lint 0 errors, 1300 tests pass, same 2 pre-existing spiral-ondevice-replay failures throughout). Public APIs preserved — zero call-site changes across the ~110 import sites the god files have.
+
+Five more findings from doing the second pass:
+
+7. **`PredictionStats` interface as a type-only file is a high-leverage extraction.** It's the 27-field public surface for `data-pred-stats` consumed by E2E specs + the netgate. Lifting the interface to its own type-only file with `export type { PredictionStats } from '...'` re-export in ColyseusClient lets the future `ColyseusClientDiagnostics` collaborator import it without circular-dependency hazards, and the ~60 LOC of jsdoc + property declarations are immediately greppable. Same pattern works for any "public contract" surface buried inside a god file — `RenderMirror`, `RendererFeedback`, etc. would similarly extract cleanly.
+
+8. **Pure tuning constants are cheap to extract and pay back during reviews.** ColyseusClient's 8 `NOISE_THRESHOLD` / `RTT_SAMPLE_CLAMP_MS` / `STAGE_3_MAX_LOOKAHEAD_TICKS` constants were threaded through the class — each had a multi-paragraph "do not regress" comment documenting a Stage-4 hotfix incident. Moving them to `predictionTuning.ts` doesn't change behaviour, but it makes the tuning surface auditable as one screen-full of decisions instead of scattered throughout the class. Same pattern for SectorRoom (drone-kind helpers, mount geometry) and World.ts (collider config).
+
+9. **The thin-method-wrapper pattern preserves call-sites while moving implementation.** For SectorRoom's `resolveSlotMounts` and `mountWorldOrigin`, the implementation moved to `mountGeometry.ts` but the class kept private wrappers that delegate. This means `this.resolveSlotMounts(kind)` at every call site continues to work — the wrapper can be deleted in commit 21 when the methods relocate to `WeaponMountTicker`. The pattern is: minimal blast-radius extraction first, full ownership move later.
+
+10. **Re-export from the original file is the safest backward-compat pattern.** Every god file split keeps a barrel-style `export type { X } from './newPath.js'` line so the 30+ external import sites resolve unchanged. Even when the type moves, the canonical import path is preserved. This is what made the data-file splits trivial (messages, shipKinds), the type extractions safe (PredictionStats, store types), and the warp-helpers extraction painless (the three pure functions stayed importable from `PixiRenderer` for the three regression-lock test files).
+
+11. **HaloRadar's halo/ subdirectory is a small win that demonstrates the full pattern.** 625 LOC monolith → 417 LOC orchestrator class + 3 collaborator files (projection.ts 95 LOC, wedgeGrouping.ts 95 LOC, arrowGraphics.ts 85 LOC). The class still owns the per-frame render loop + ArrowEntry lifecycle, but the pure-math projection, the wedge-grouping logic, and the Pixi paint helpers each live in their own greppable single-concern file. This is the shape every other class-based god file should eventually take: thin orchestrator + N single-concern collaborators. Doing it incrementally (one collaborator per commit) is the safest path; doing it all at once is the multi-day push the plan describes.

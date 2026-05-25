@@ -1,0 +1,295 @@
+/**
+ * Zustand store type definitions. Extracted from `state/store.ts` per the
+ * god-file refactor plan (`docs/plans/refactor-god-files.md`, commit 6).
+ * The store creation and setters stay in `state/store.ts`; this file just
+ * carries the types so consumers can `import type { ... }` without
+ * pulling in the runtime store and its initialisation side effects.
+ *
+ * NOTE: the lint glob that blocks spatial field names lives at
+ * `eslint.config.js` and currently targets `src/client/state/store.ts`.
+ * A future expansion should target both files. For now, the UIStore
+ * interface IS in this file, so any spatial-field-named property would
+ * land here — keep the same naming discipline.
+ */
+
+import type { ArrivalMode } from '../settings/settingsStorage.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+
+export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
+
+/**
+ * Server-health gate state for the pre-game UI (2026-05-13).
+ *
+ * Distinct from `ConnectionStatus` (which tracks the Colyseus WebSocket
+ * lifecycle once a join is in flight). `serverHealth` is the HTTP-level
+ * "is the server process even up?" probe that runs while the player is
+ * on the landing / auth / galaxy-map screens, polled by
+ * `serverHealthPoller`. Two distinct surfaces avoid the temptation to
+ * conflate "WS dropped mid-game" with "server never came up to begin
+ * with" — they need different UX (in-game vs landing banner).
+ *
+ * - `unknown` — initial state, no poll has completed yet.
+ * - `healthy` — last poll returned a valid response AND `ready === true`.
+ * - `warming` — last poll returned a valid response but `ready === false`
+ *               (server is up, mid-boot). Join CTA disabled with a
+ *               softer "Starting up..." banner.
+ * - `unreachable` — last poll failed (network error, non-2xx, malformed
+ *                   response, timeout). Join CTA disabled, error banner.
+ */
+export type ServerHealth = 'unknown' | 'healthy' | 'warming' | 'unreachable';
+
+/**
+ * Phase 5 — singleton roster cache. Holds the player's ship roster as
+ * delivered by `/dev/player-ships` (initial fetch) and refreshed by the
+ * `SHIP_ROSTER` Colyseus push. Replaces the per-`ShipRosterPanel` local
+ * state so multiple panels (galaxy-map landing, drawer galaxy tab) do
+ * not each fire their own fetch (Risk 0b in the Phase 5 plan).
+ *
+ * The shape mirrors `RosterShipEntry` in `components/ShipRosterCard.tsx`,
+ * which is the JSON returned by the diag endpoint.
+ */
+export interface RosterEntry {
+  shipId: string;
+  kind: string;
+  kindVersion: number;
+  health: number;
+  sectorKey: string;
+  x: number;
+  y: number;
+  isActive: boolean;
+  activeRoomId?: string | null;
+  expiresAt?: number;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+/** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
+export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
+
+/**
+ * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
+ * Settings "Return to menu") can change it without prop-drilling through
+ * App → ... → tab.
+ */
+export type Phase = 'meta' | 'auth' | 'galaxy-map' | 'connecting' | 'game' | 'local';
+
+export interface DevData {
+  rtt: number;
+  drift: number;
+  angleDrift: number;
+  lerping: boolean;
+  snapshotIntervalMs: number;
+  ticksAhead: number;
+  snapshotCount: number;
+  significantCorrectionCount: number;
+  significantAngleCorrectionCount: number;
+  maxDriftUnits: number;
+  maxAngleDriftRad: number;
+  // Extended diagnostics
+  ackedTick: number;
+  inputTick: number;
+  serverTick: number;
+  serverX: number;
+  serverY: number;
+  beforeX: number;
+  beforeY: number;
+  afterX: number;
+  afterY: number;
+}
+
+export interface UIStore {
+  connectionStatus: ConnectionStatus;
+  sectorName: string;
+  hullPct: number;
+  /** Local ship shield 0-100. Discrete UI scalar (purity-clean), set
+   *  from DamageEvent / ShieldEventMessage anchors; the HUD bar CSS-tweens
+   *  between anchors (locked: no continuous shield wire traffic). */
+  shieldPct: number;
+  ammo: number;
+  sectorAlert: string | null;
+  playerId: string | null;
+  showDevOverlay: boolean;
+  showLogPanel: boolean;
+  showServerGhost: boolean;
+  /** Player's chosen ship kind for the next spawn. Persisted per-user via
+   *  `shipSelectionStorage`. Defaults to `DEFAULT_SHIP_KIND` until the user
+   *  picks one or `applyUserPrefs(userId)` re-reads from storage. */
+  selectedShipKind: ShipKindId;
+  shipCount: number;
+  /** Live count of swarm entities (asteroids + drones) in `mirror.swarm`. */
+  swarmCount: number;
+  /** Phase 6 TiDi rate broadcast by the server (1.0 = normal, 0.7 = floor). */
+  clockRate: number;
+  /** Effective server wall-clock tick rate, derived from snapshot inter-arrival
+   *  intervals. 60 Hz = healthy; <50 Hz means the server's `update()` is
+   *  running over budget, which is a different failure mode than TiDi. */
+  serverTickHz: number;
+  devData: DevData;
+  /** Fraction 0–1 of snapshots that triggered a significant correction. Always-visible HUD stat. */
+  correctionRate: number;
+  /** True when the local ship has been destroyed and is awaiting respawn. */
+  isDead: boolean;
+  /** Phase 8 — stable galaxy sector key the player is currently in (set
+   *  from the welcome message), or null in engineering rooms. */
+  currentSectorKey: string | null;
+  /** Phase 8 — current transit lifecycle state. Drives the HyperspaceOverlay. */
+  transitState: TransitState;
+  /** Phase 8 — 0..1 spool progress; only meaningful while transitState === 'SPOOLING'. */
+  transitProgress: number;
+  /** Phase 8 — destination sector key during a transit (SPOOLING/IN_TRANSIT/ARRIVED). */
+  transitTargetSectorKey: string | null;
+  /** Total spool duration in ms reported by the server (only set while
+   *  SPOOLING). Used by `HyperspaceOverlay` to render an ms-precision
+   *  countdown alongside the progress fill. Cleared back to null on
+   *  DOCKED / ARRIVED. */
+  transitSpoolMs: number | null;
+  /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
+  activeWeapon: WeaponId;
+  /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
+  isDrawerOpen: boolean;
+  /** Currently active tab inside the advanced drawer (`profile` | `settings` | `galaxy` | `debug`). */
+  drawerTab: string;
+  /** Top-level UX phase. App.tsx routes screens off this value. */
+  phase: Phase;
+  /** In-game additive Pixi overlay (Map B) open state. Toggled by the new
+   *  bottom-center MAP HUD button and the keyboard `M` shortcut. Renders a
+   *  highly transparent galaxy hex layer ON the gameplay canvas — gameplay
+   *  continues underneath. */
+  isGalaxyMapOpen: boolean;
+  /** Standalone Galaxy Overview (Map A) open state in-game. Toggled by the
+   *  drawer's Galaxy tab. Replaces the gameplay canvas full-screen with a
+   *  Pixi-rendered overview that supports drag/pinch/wheel pan & zoom. The
+   *  Colyseus session stays alive in the background. */
+  isGalaxyOverviewOpen: boolean;
+  /** Hyperspace arrival mode for the next warp. UI-discrete value (3 modes),
+   *  not per-frame — purity-clean. PC has no UI for this and the value
+   *  stays at the `'same'` default. Persisted per-user. */
+  arrivalMode: ArrivalMode;
+  /** Last user-typed (or clamped) arrival x. Used when `arrivalMode==='xy'`. */
+  arrivalTargetX: number;
+  arrivalTargetY: number;
+  /** "Home" coordinate, used when `arrivalMode==='home'`. Currently the UI
+   *  pins this to 0/0; future work may let the player set it. */
+  homePosX: number;
+  homePosY: number;
+  /** Phase 5 — singleton roster cache for the local player's ships.
+   *  Populated by the diag-endpoint fetcher (one-shot at login) and
+   *  refreshed by the `SHIP_ROSTER` Colyseus push (server-side abandon /
+   *  transit broadcast). Consumers: `ShipRosterPanel`, `RosterCountBadge`,
+   *  `GalaxyTab`. Empty array when the player has no ships. */
+  shipRoster: RosterEntry[];
+  /** HTTP-level `/healthz` probe state for the pre-game UI gate. Drives
+   *  the landing-screen banner + join-button disabled state. */
+  serverHealth: ServerHealth;
+  /** Latest `playersOnline` value from `/healthz`. Null when the server
+   *  hasn't replied yet or the last reply was malformed. Drives the
+   *  hype-number above the Join CTA. */
+  playersOnline: number | null;
+
+  setConnectionStatus: (s: ConnectionStatus) => void;
+  setSectorName: (name: string) => void;
+  setHullPct: (pct: number) => void;
+  setShieldPct: (pct: number) => void;
+  setAmmo: (ammo: number) => void;
+  setSectorAlert: (msg: string | null) => void;
+  setPlayerId: (id: string) => void;
+  setShowDevOverlay: (v: boolean) => void;
+  setShowLogPanel: (v: boolean) => void;
+  setShowServerGhost: (v: boolean) => void;
+  setSelectedShipKind: (id: ShipKindId) => void;
+  toggleDevOverlay: () => void;
+  setShipCount: (n: number) => void;
+  setSwarmCount: (n: number) => void;
+  setClockRate: (n: number) => void;
+  setServerTickHz: (n: number) => void;
+  setDevData: (d: DevData) => void;
+  setDead: (dead: boolean) => void;
+  setCurrentSectorKey: (key: string | null) => void;
+  setTransitState: (s: TransitState) => void;
+  setTransitProgress: (p: number) => void;
+  setTransitTargetSectorKey: (key: string | null) => void;
+  setTransitSpoolMs: (ms: number | null) => void;
+  setActiveWeapon: (id: WeaponId) => void;
+  cycleWeapon: () => void;
+  setDrawerOpen: (v: boolean) => void;
+  setDrawerTab: (id: string) => void;
+  setPhase: (p: Phase) => void;
+  setGalaxyMapOpen: (v: boolean) => void;
+  toggleGalaxyMapOpen: () => void;
+  setGalaxyOverviewOpen: (v: boolean) => void;
+  toggleGalaxyOverviewOpen: () => void;
+  setArrivalMode: (m: ArrivalMode) => void;
+  setArrivalTarget: (x: number, y: number) => void;
+  setHomePos: (x: number, y: number) => void;
+  /** Phase 5 — overwrite the roster cache (server push or fetch result). */
+  setShipRoster: (ships: RosterEntry[]) => void;
+  /** Phase 5 — pending in-game roster swap request. GalaxyTab sets this
+   *  when the user clicks Spawn on a roster card; App.tsx watches it
+   *  and runs the direct-room-swap flow (NOT engageTransit). Cleared
+   *  by App after dispatching. The swap is a leave-current + join-new
+   *  with a brief 'connecting' phase for the loading spinner — far
+   *  simpler than the transit machine and not bound by neighbour-only
+   *  rules. */
+  pendingShipSwap: { shipId: string; sectorKey: string } | null;
+  setPendingShipSwap: (req: { shipId: string; sectorKey: string } | null) => void;
+  /** Phase 5 — `player_ships.ship_id` of the hull the local browser
+   *  session is currently piloting. Sourced from `WelcomeMessage.
+   *  shipInstanceId` on every successful room join; cleared when the
+   *  player leaves a room (phase != 'game'). Distinct from the
+   *  server-side `ship.isActive` flag (which stays true throughout the
+   *  15-min reconnect-linger window) — `localShipInstanceId` is the
+   *  THIS-session identifier the UI uses to mark "Piloting" / disable
+   *  the spawn-on-self button. */
+  localShipInstanceId: string | null;
+  setLocalShipInstanceId: (id: string | null) => void;
+  /** Join-render readiness sub-flag. Set true the first time
+   *  `ColyseusClient.handleSnapshot()` runs with a non-null
+   *  `mirror.localPlayerId` after (re)connect. Reset by `setPhase`
+   *  enter/leave-`game` (initial join, ship-swap, respawn) AND by
+   *  `rearmJoinReadiness()` on every committed inter-sector transit
+   *  (which keeps `phase==='game'`, so `setPhase` never fires).
+   *  Discrete UI flag — purity-clean. */
+  firstSnapshotApplied: boolean;
+  setFirstSnapshotApplied: (v: boolean) => void;
+  /** Join-render readiness sub-flag. Set true when the renderer first
+   *  paints a frame with the local player visible (observed via
+   *  `RendererFeedback.firstFrameRendered` from main-thread rAF). Reset
+   *  ONLY on phase change into `'game'` — NOT on a pure inter-sector
+   *  transit, which keeps the same live renderer (GPU-init lag is an
+   *  initial-join concern; resetting it on transit would be false). */
+  rendererFirstFrameRendered: boolean;
+  setRendererFirstFrameRendered: (v: boolean) => void;
+  /** Minimum-display-time floor for the WarpScreen. Set true 5 s
+   *  after the App.tsx timer (re)arms. Required by `useGameReady` so
+   *  the warp visual shows for at least this long even when the rest of
+   *  the gates fire faster — gives the reconciler enough wall-clock to
+   *  apply its first correction beneath the visual, absorbing the
+   *  first-move teleport user symptom. Reset by `setPhase`
+   *  enter/leave-`game` AND `rearmJoinReadiness()` (the timer effect
+   *  re-runs via the `joinGeneration` dep). */
+  joinMinimumElapsed: boolean;
+  setJoinMinimumElapsed: (v: boolean) => void;
+  /** Monotone counter bumped once per "fresh sector" event — `setPhase`
+   *  enter/leave-`game` AND every committed inter-sector transit
+   *  (`rearmJoinReadiness`). The App.tsx 5 s `joinMinimumElapsed` timer
+   *  keys its effect on this so the minimum-display floor re-runs on a
+   *  pure transit (which does NOT remount GameSurface — a mount-scoped
+   *  `[]` effect would never otherwise re-arm). */
+  joinGeneration: number;
+  /** Re-arm WarpScreen join-readiness for a NEW committed inter-sector
+   *  transit: clears `firstSnapshotApplied` + `joinMinimumElapsed` and
+   *  bumps `joinGeneration`. Does NOT touch `rendererFirstFrameRendered`
+   *  (the renderer stays live across a transit). ONE ownership site,
+   *  invoked from the `transit_ready` handler — the UI-readiness
+   *  analogue of `resetPredictionState()`. A pure inter-sector transit
+   *  keeps `phase==='game'` so `setPhase` never re-arms; this does.
+   *  Locked by `store.rearmJoinReadiness.test.ts`,
+   *  `WarpScreen.transit.test.tsx`,
+   *  `ColyseusClient.transitRearmReadiness.test.ts`. */
+  rearmJoinReadiness: () => void;
+  /** Apply the latest `/healthz` poll result. Updates both the gate
+   *  state and the cached `playersOnline` in one set so subscribers see
+   *  a consistent pair. */
+  setServerHealth: (health: ServerHealth, playersOnline?: number | null) => void;
+}

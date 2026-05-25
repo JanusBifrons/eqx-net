@@ -7,29 +7,9 @@ import {
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
+import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js';
 
 const FIXED_DT = 1 / 60;
-
-/**
- * Shared config for EVERY ship/drone collider (the cheap ball OR each hull
- * polygon triangle). Density is 0 on all of them: the body's mass + inertia
- * come entirely from setAdditionalMassProperties (pinned once in spawnShip
- * to the legacy disc-equivalent), which is what makes the shield 0-cross
- * collider swap dynamically transparent. Contact-force events stay enabled
- * on every piece so ramming + the contact drain still fire with N colliders.
- */
-function configureShipCollider(desc: RAPIER.ColliderDesc): RAPIER.ColliderDesc {
-  return desc
-    .setDensity(0)
-    .setRestitution(0.3)
-    .setFriction(0)
-    .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-    .setContactForceEventThreshold(10);
-}
-
-function shipBallColliderDesc(radius: number): RAPIER.ColliderDesc {
-  return configureShipCollider(RAPIER.ColliderDesc.ball(radius));
-}
 
 /**
  * Re-export of the legacy `BOOST_MULTIPLIER` constant. The authoritative value

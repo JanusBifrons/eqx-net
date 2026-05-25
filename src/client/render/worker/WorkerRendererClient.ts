@@ -31,6 +31,7 @@ import type {
   WarpCenter,
 } from './protocol';
 import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
+import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
@@ -153,12 +154,12 @@ export class WorkerRendererClient implements IRenderer {
 
   private installEventListeners(canvas: HTMLCanvasElement): void {
     const onPointer = (e: PointerEvent): void => {
-      this.postPointerEvent(this.serialisePointer(e));
+      this.postPointerEvent(serialisePointerEvent(e));
     };
     const onWheel = (e: WheelEvent): void => {
       // Non-passive so we can preventDefault to stop page scroll/zoom.
       e.preventDefault();
-      this.postWheelEvent(this.serialiseWheel(e));
+      this.postWheelEvent(serialiseWheelEvent(e));
     };
     const onTouchMove = (e: TouchEvent): void => {
       // Stops iOS page-pinch hijacking when the gesture starts on the
@@ -235,60 +236,8 @@ export class WorkerRendererClient implements IRenderer {
     this.listeners.push({ event, handler, options });
   }
 
-  private serialisePointer(e: PointerEvent): SerialisedPointerEvent {
-    // The worker-side Camera operates in the renderer's internal pixel
-    // frame, which in worker mode is PHYSICAL pixels (BOOT.width is the
-    // OffscreenCanvas drawing-buffer width). DOM-mode pointer events
-    // arrive in CSS pixels — scale by DPR so a pinch midpoint reported
-    // as CSS-px 200 lines up with the Camera's internal "200 * DPR"
-    // expectation. Otherwise pinch zoom pivots toward the top-left
-    // (the Camera thinks the user is in the left quarter of the canvas).
-    const dpr = window.devicePixelRatio ?? 1;
-    return {
-      type: e.type,
-      pointerId: e.pointerId,
-      pointerType: e.pointerType,
-      button: e.button,
-      buttons: e.buttons,
-      clientX: e.clientX * dpr,
-      clientY: e.clientY * dpr,
-      offsetX: e.offsetX * dpr,
-      offsetY: e.offsetY * dpr,
-      ctrlKey: e.ctrlKey,
-      shiftKey: e.shiftKey,
-      altKey: e.altKey,
-      metaKey: e.metaKey,
-      isPrimary: e.isPrimary,
-      pressure: e.pressure,
-      width: e.width,
-      height: e.height,
-      twist: e.twist,
-      tiltX: e.tiltX,
-      tiltY: e.tiltY,
-      stamp: Date.now(),
-    };
-  }
-
-  private serialiseWheel(e: WheelEvent): SerialisedWheelEvent {
-    // Same DPR scaling as `serialisePointer` — wheel zoom pivots on
-    // (offsetX, offsetY) so the coord frame must match the Camera's.
-    const dpr = window.devicePixelRatio ?? 1;
-    return {
-      deltaX: e.deltaX,
-      deltaY: e.deltaY,
-      deltaZ: e.deltaZ,
-      deltaMode: e.deltaMode,
-      clientX: e.clientX * dpr,
-      clientY: e.clientY * dpr,
-      offsetX: e.offsetX * dpr,
-      offsetY: e.offsetY * dpr,
-      ctrlKey: e.ctrlKey,
-      shiftKey: e.shiftKey,
-      altKey: e.altKey,
-      metaKey: e.metaKey,
-      stamp: Date.now(),
-    };
-  }
+  // Pointer/wheel serialisation lives in `./eventSerialisation.ts` —
+  // pure DPR-aware functions, no `this`-state.
 
   update(mirror: RenderMirror): void {
     // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).

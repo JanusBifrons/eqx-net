@@ -3,27 +3,42 @@ import type { Camera } from './worker/Camera';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import { useUIStore } from '../state/store';
+import {
+  projectArrow,
+  type HaloProjectionParams,
+} from './halo/projection.js';
+import {
+  partitionAndGroupCandidates,
+  RADAR_GROUPING_DISTANCE,
+  RADAR_MAX_DISTANCE,
+  RADAR_WEDGE_COUNT,
+  type Candidate,
+} from './halo/wedgeGrouping.js';
+import {
+  paintArrowGfx,
+  buildArrowGfx,
+  ASTEROID_COLOR,
+  DRONE_HOSTILE_COLOR,
+  DRONE_IDLE_COLOR,
+  REMOTE_SHIP_COLOR,
+} from './halo/arrowGraphics.js';
 
-const ASTEROID_COLOR = 0x886644;
-const DRONE_HOSTILE_COLOR = 0xff3344;
-const DRONE_IDLE_COLOR = 0xf0c040;
-const REMOTE_SHIP_COLOR = 0x00aaff;
-// Glow tokens. All arrows get a soft glow under the triangle; hostile
-// drones get a brighter, larger menace ring tinted toward red. Phase H —
-// glow radii shrunk to match the smaller polygon.
-const GLOW_COLOR_HOSTILE = 0xff5566;
-const GLOW_RADIUS_HOSTILE = 8;
-const GLOW_ALPHA_HOSTILE = 0.35;
-const GLOW_RADIUS_DEFAULT = 5;
-const GLOW_ALPHA_DEFAULT = 0.15;
-// Phase I — arrow fill is genuinely transparent now. 0.70 (Phase G) was
-// still close to opaque; 0.50 reads as a translucent overlay marker,
-// which was the original brief.
-const ARROW_FILL_ALPHA = 0.50;
-// Stroke alphas dropped in lockstep so the white border doesn't make
-// the (now-transparent) fill look stamped onto a solid card.
-const STROKE_ALPHA_DEFAULT = 0.25;
-const STROKE_ALPHA_HOSTILE = 0.65;
+// Re-export the surface the existing test suite imports from this file.
+// `src/client/render/HaloRadar.test.ts` consumes these by name; the
+// extraction is a pure refactor so the test signatures are preserved.
+export {
+  projectArrow,
+  clamp,
+  lerp,
+  type HaloProjectionParams,
+  type HaloProjection,
+} from './halo/projection.js';
+export {
+  wedgeIndex,
+  partitionAndGroupCandidates,
+  type Candidate,
+} from './halo/wedgeGrouping.js';
+
 // Halo radii are specified as a fraction of the viewport's shorter screen
 // dimension. Phase P — inner ring pushed out so it's no longer right next
 // to the ship sprite. On a 375 px phone the inner ring now lands at
@@ -44,15 +59,6 @@ const OUTER_RADIUS_MAX_PX = 400;
 // scaleNear.
 const ARROW_SCALE_NEAR = 1.15;
 const ARROW_SCALE_FAR = 0.65;
-// Phase M — exponent for the exp-saturation distance curve in
-// `projectArrow`. Higher = more aggressive push toward the outer ring.
-// 12 is intentionally steep: entities past the interest-shedding
-// boundary (~2000 u) are essentially glued to the outer ring (t > 0.95),
-// and only entities within close-engagement range (900–~1500 u)
-// actually traverse the band. Matches the user's mental model: arrows
-// fly in to the edge at max radar range, sit there, then become
-// reactive when entities get within realistic close range.
-const EXP_CURVE_K = 12;
 // World-unit distance band. Phase N — endpoints expanded so the curve has
 // more breathing room. The reactive zone (close-end portion of the band
 // where the arrow visibly moves with distance) now spans ~300 u of world
@@ -80,144 +86,6 @@ const ON_SCREEN_HIDE_MS = 500;
 // purely cosmetic: smooth corrections when extrapolation snaps to a fresh
 // packet, and the "fly-in" feel when a wedge's representative changes.
 const ARROW_SMOOTH_HALF_LIFE_MS = 130;
-// Beyond this distance, entities collapse into angular-wedge
-// representatives instead of each getting their own arrow.
-const RADAR_GROUPING_DISTANCE = 2000;
-// Beyond this distance, no arrow at all (distinct from `DIST_MAX`,
-// which is just the lerp-finish point for radius/scale). Between
-// `DIST_MAX` and `RADAR_MAX_DISTANCE` the arrow sits at the outer ring at
-// the far scale, then disappears past the cutoff.
-const RADAR_MAX_DISTANCE = 10000;
-// Phase D: angular bucket size for wedge grouping. 24 wedges around the
-// full ring at 15° each.
-const RADAR_WEDGE_DEG = 15;
-const RADAR_WEDGE_COUNT = Math.round(360 / RADAR_WEDGE_DEG);
-
-export interface HaloProjectionParams {
-  /** Inner ring radius in **screen pixels**. */
-  innerRadiusPx: number;
-  /** Outer ring radius in **screen pixels**. */
-  outerRadiusPx: number;
-  /** World-unit distances bracketing the ring radius lerp. */
-  distMin: number;
-  distMax: number;
-  scaleNear: number;
-  scaleFar: number;
-}
-
-export interface HaloProjection {
-  /** True only for the degenerate case where the POI overlaps the player
-   *  position exactly (no defined bearing). The radar no longer hides
-   *  arrows based on viewport visibility or near-cutoff — every in-range
-   *  entity gets a continuously-tracked arrow regardless of on-screen
-   *  status, so the only "hide me" case is the divide-by-zero one. */
-  hidden: boolean;
-  /** Bearing from the player to the POI in **world space** (atan2
-   *  convention: 0 = east, +π/2 = north, −π/2 = south). Caller composes the
-   *  arrow's screen position via `playerScreenX + cos(theta) * radiusPx` and
-   *  `playerScreenY − sin(theta) * radiusPx` (screen y points down, so y is
-   *  negated). */
-  theta: number;
-  /** Screen-space radius from the player, in pixels. */
-  radiusPx: number;
-  /** Arrow scale factor (1.0 = built size). */
-  scale: number;
-}
-
-export function clamp(t: number, lo: number, hi: number): number {
-  return t < lo ? lo : t > hi ? hi : t;
-}
-
-export function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-/**
- * Pure helper. Computes the bearing, screen-pixel ring radius, and arrow
- * scale for a POI relative to the player. Both positions are in world
- * coordinates. The arrow is rendered for EVERY in-range entity regardless
- * of on-screen status — the user explicitly wanted continuous tracking
- * during high-speed flybys, so there's no visibility hide and no
- * near-cutoff. The only "hidden" case is the degenerate zero-distance one.
- *
- * Pre-Phase E the function returned a Pixi-coord arrow position (world
- * coords with y flipped). The radar drew into the viewport, so the arrow
- * went through the viewport's camera-follow transform each frame — making
- * arrows drift behind the player during fast motion. The current shape
- * returns only the bearing + radius; the caller composes a screen-space
- * position using the player's current screen-pixel coordinates.
- */
-export function projectArrow(
-  local: { x: number; y: number },
-  poi: { x: number; y: number },
-  params: HaloProjectionParams,
-): HaloProjection {
-  const dx = poi.x - local.x;
-  const dy = poi.y - local.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist < 1e-6) return { hidden: true, theta: 0, radiusPx: 0, scale: 0 };
-
-  const theta = Math.atan2(dy, dx);
-  // Phase L — exponential-saturation distance curve. The OUTER ring (screen
-  // edge) is the default: a 1 - exp(-k·normalized) curve pulls most
-  // distances close to t=1 (outer) and only entities very close to
-  // distMin drop toward t=0 (inner). normalized < 0 (dist < distMin)
-  // clamps to t=0, so very-close entities sit at the inner ring instead
-  // of disappearing — Phase O kept the curve but dropped the hard hide.
-  const normalized = (dist - params.distMin) / (params.distMax - params.distMin);
-  const k = EXP_CURVE_K;
-  const tRaw = (1 - Math.exp(-k * normalized)) / (1 - Math.exp(-k));
-  const t = clamp(tRaw, 0, 1);
-  const radiusPx = lerp(params.innerRadiusPx, params.outerRadiusPx, t);
-  const scale = lerp(params.scaleNear, params.scaleFar, t);
-
-  return { hidden: false, theta, radiusPx, scale };
-}
-
-// Two arrow silhouettes — needle-thin for singleton entities (precise
-// direction signal), wider/blunter for wedge representatives (aggregated-
-// area signal). Phase H — pushed the singleton further toward "needle"
-// because motion + bearing already carry direction, the shape can be
-// minimal. After `rotation = -theta` the nose points along the world
-// bearing to the POI.
-const ARROW_POLY_SINGLETON = [
-  { x: 7, y: 0 },
-  { x: -3, y: -1.5 },
-  { x: -3, y: 1.5 },
-];
-const ARROW_POLY_GROUPED = [
-  { x: 5, y: 0 },
-  { x: -3, y: -4 },
-  { x: -3, y: 4 },
-];
-
-function paintArrowGfx(g: Graphics, color: number, hostile: boolean, grouped: boolean): void {
-  g.clear();
-  // Phase G — every arrow gets a soft glow under the triangle. Hostile
-  // entries take a larger menace ring tinted red; everything else gets a
-  // subtle ring tinted by the arrow's own colour.
-  const glowColor = hostile ? GLOW_COLOR_HOSTILE : color;
-  const glowRadius = hostile ? GLOW_RADIUS_HOSTILE : GLOW_RADIUS_DEFAULT;
-  const glowAlpha = hostile ? GLOW_ALPHA_HOSTILE : GLOW_ALPHA_DEFAULT;
-  g.circle(0, 0, glowRadius);
-  g.fill({ color: glowColor, alpha: glowAlpha });
-
-  const poly = grouped ? ARROW_POLY_GROUPED : ARROW_POLY_SINGLETON;
-  g.poly(poly);
-  g.fill({ color, alpha: ARROW_FILL_ALPHA });
-  g.poly(poly);
-  g.stroke({
-    color: 0xffffff,
-    width: hostile ? 1.4 : 1,
-    alpha: hostile ? STROKE_ALPHA_HOSTILE : STROKE_ALPHA_DEFAULT,
-  });
-}
-
-function buildArrowGfx(color: number, hostile: boolean, grouped: boolean): Graphics {
-  const g = new Graphics();
-  paintArrowGfx(g, color, hostile, grouped);
-  return g;
-}
 
 interface ArrowEntry {
   gfx: Graphics;
@@ -247,82 +115,6 @@ interface ArrowEntry {
    *  exceeds ON_SCREEN_HIDE_MS, but keeps tracking bearing/position right
    *  up to that point so a high-speed flyby doesn't flicker. */
   onScreenSinceMs: number | null;
-}
-
-export interface Candidate {
-  key: string;
-  x: number;
-  y: number;
-  color: number;
-  dist: number;
-  /** Whether this entry should render with the hostile glow + bright
-   *  stroke. Defaults to false; set true by the radar for drones the
-   *  client AI currently treats as hostile to the local player. */
-  hostile?: boolean;
-  /** Whether this entry represents a wedge (one arrow standing in for
-   *  N grouped entities at the same bearing). Drives the wider/blunter
-   *  silhouette so the player can distinguish a single off-screen target
-   *  from an aggregated group at a glance. */
-  grouped?: boolean;
-}
-
-/**
- * Pure helper. Maps a world-space offset `(dx, dy)` to a wedge index in
- * `[0, wedgeCount)`. Wedge 0 starts at theta = -π (due west) and increases
- * counter-clockwise. atan2's east-zero / +π-edge convention is handled by
- * clamping the maximum index, so theta = π lands in the last wedge instead
- * of wrapping to 0.
- */
-export function wedgeIndex(dx: number, dy: number, wedgeCount: number = RADAR_WEDGE_COUNT): number {
-  const theta = Math.atan2(dy, dx);
-  const t = (theta + Math.PI) / (2 * Math.PI);
-  const raw = Math.floor(t * wedgeCount);
-  if (raw < 0) return 0;
-  if (raw >= wedgeCount) return wedgeCount - 1;
-  return raw;
-}
-
-/**
- * Pure helper. Drops candidates past `maxDistance`, keeps every candidate
- * within `groupingDistance` as-is, and collapses the rest into angular
- * wedge representatives — the closest entity per wedge wins. The
- * representative inherits all member fields except `key`, which becomes
- * `wedge:${idx}` so the renderer can pool a single Graphics across whatever
- * entity currently leads that wedge.
- */
-export function partitionAndGroupCandidates(
-  local: { x: number; y: number },
-  candidates: ReadonlyArray<Candidate>,
-  groupingDistance: number = RADAR_GROUPING_DISTANCE,
-  maxDistance: number = RADAR_MAX_DISTANCE,
-  wedgeCount: number = RADAR_WEDGE_COUNT,
-): Candidate[] {
-  const result: Candidate[] = [];
-  const wedges = new Map<number, Candidate>();
-  for (const c of candidates) {
-    if (c.dist > maxDistance) continue;
-    if (c.dist <= groupingDistance) {
-      result.push(c);
-      continue;
-    }
-    const idx = wedgeIndex(c.x - local.x, c.y - local.y, wedgeCount);
-    const existing = wedges.get(idx);
-    if (!existing || c.dist < existing.dist) {
-      wedges.set(idx, c);
-    }
-  }
-  for (const [idx, c] of wedges) {
-    result.push({
-      key: `wedge:${idx}`,
-      x: c.x,
-      y: c.y,
-      color: c.color,
-      dist: c.dist,
-      hostile: c.hostile,
-      grouped: true,
-    });
-  }
-  return result;
 }
 
 export class HaloRadar {
