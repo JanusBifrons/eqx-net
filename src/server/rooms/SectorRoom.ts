@@ -25,11 +25,11 @@ import {
   shouldIncludeLastInput,
   type LastInputCache,
   type IdleTracker,
-  type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
+import { SnapshotScratch } from './SnapshotScratch.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import {
@@ -41,7 +41,7 @@ import {
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, HitAckMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { applyLayeredDamage, regenStep, type ShieldHullState } from '../../core/combat/ShieldHull.js';
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -431,6 +431,18 @@ export class SectorRoom extends Room<SectorState> {
 
   // Combat
   private readonly snapshotRing = new SnapshotRing();
+  /** Snapshot-broadcast pooled scratch (2026-05-25 GC sweep). Owned here;
+   *  cleared per-tick and per-recipient; per-ship sub-state released on
+   *  `onLeave` / `evictSwarmEntity` / wreck-conversion. See
+   *  [`SnapshotScratch`](./SnapshotScratch.ts) and
+   *  [docs/architecture/gc-discipline.md]. */
+  private readonly snapshotScratch = new SnapshotScratch();
+  /** Scratch `Record<playerId, ackedTick>` for the 20 Hz telemetry log.
+   *  Cleared at the start of each broadcast tick via `for…in + delete`. */
+  private readonly _snapshotAckedTicksScratch: Record<string, number> = {};
+  /** Scratch alive-ids Set for the boosting/thrusting filter. Cleared
+   *  at the start of each broadcast tick. */
+  private readonly _snapshotAliveIdsScratch = new Set<string>();
   private readonly lastFireClientTick = new Map<string, number>();
   private readonly liveProjectiles = new Map<string, ProjectileRecord>();
   private projectileCounter = 0;
@@ -1074,6 +1086,7 @@ export class SectorRoom extends Room<SectorState> {
         // (e.g. catalogue change mid-life — currently impossible).
         if (this.droneMountAngles.has(rec.id)) this.droneMountAngles.delete(rec.id);
         if (this.droneSlotTargets.has(rec.id)) this.droneSlotTargets.delete(rec.id);
+        this.snapshotScratch.releaseShipMountAngles(rec.id);
         continue;
       }
 
@@ -1912,6 +1925,9 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4c — clean up drone turret state alongside the body.
     this.droneMountAngles.delete(rec.id);
     this.droneSlotTargets.delete(rec.id);
+    // 2026-05-25 GC sweep — release the snapshot-scratch mount-angle
+    // array for this drone alongside its turret state.
+    this.snapshotScratch.releaseShipMountAngles(rec.id);
     this.freeSlots.push(rec.slot);
     if (opts.broadcast) {
       logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
@@ -2129,6 +2145,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
+    this.snapshotScratch.releaseShipMountAngles(playerId);
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
     const ack: RespawnAckMessage = { type: 'respawn_ack', x: spawnX, y: spawnY, serverTick: currentServerTick };
@@ -3042,6 +3059,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
+    this.snapshotScratch.releaseShipMountAngles(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
     // Phase 6a — drop the playerId → shipInstanceId indirection. The
@@ -3144,6 +3162,7 @@ export class SectorRoom extends Room<SectorState> {
       this.lastFireClientTick.delete(playerId);
       this.playerMountAngles.delete(playerId);
       this.playerSlotTargets.delete(playerId);
+      this.snapshotScratch.releaseShipMountAngles(playerId);
       this.initialSpawnPositions.delete(playerId);
       this.snapshotRing.unregisterEntity(playerId);
       this.playerToActiveShipInstance.delete(playerId);
@@ -3353,6 +3372,7 @@ export class SectorRoom extends Room<SectorState> {
     this.lastFireClientTick.delete(playerId);
     this.playerMountAngles.delete(playerId);
     this.playerSlotTargets.delete(playerId);
+    this.snapshotScratch.releaseShipMountAngles(playerId);
     this.initialSpawnPositions.delete(playerId);
     this.shipPoseCache.delete(playerId);
     this.snapshotRing.unregisterEntity(playerId);
@@ -3877,23 +3897,20 @@ export class SectorRoom extends Room<SectorState> {
     // purely main-thread and so is monotonic with update() calls.
     this.broadcastCounter++;
     if (this.serverTick > 0 && !sectorIdle) {
-      // Build the global "all alive ships" digest once — same data for every
-      // recipient, just the inclusion decision differs per (recipient, ship).
-      type AllShipEntry = {
-        playerId: string;
-        // Phase 6a — outer wire key. Falls back to playerId for any ship
-        // missing a shipInstanceId (shouldn't happen post-synthetic-UUID
-        // step, but defensive).
-        shipInstanceId: string;
-        // Phase 6a — true for any ship in 6a (one active hull per player
-        // is invariant). Phase 6b will surface lingering hulls with false.
-        isActive: boolean;
-        pose: ShipPhysicsState;
-        lastInput: ShipInputBits;
-      };
-      const allShips: AllShipEntry[] = [];
-      const ackedTicksTelemetry: Record<string, number> = {};
-      const aliveIds = new Set<string>();
+      // 2026-05-25 GC sweep: scratch + ObjectPool-backed broadcast.
+      // `beginTick()` releases all pooled per-tick state and clears the
+      // shared arrays so they're ready to re-populate.
+      // See SnapshotScratch + docs/architecture/gc-discipline.md.
+      const scratch = this.snapshotScratch;
+      scratch.beginTick();
+      const allShips = scratch.allShips;
+      const boostingIds = scratch.boostingIds;
+      const thrustingIds = scratch.thrustingIds;
+      const ackedTicksTelemetry = this._snapshotAckedTicksScratch;
+      for (const k in ackedTicksTelemetry) delete ackedTicksTelemetry[k];
+      const aliveIds = this._snapshotAliveIdsScratch;
+      aliveIds.clear();
+
       for (const [playerId, slot] of this.playerToSlot) {
         const ship = this.getActiveShip(playerId);
         if (!ship || !ship.alive) continue;
@@ -3903,19 +3920,17 @@ export class SectorRoom extends Room<SectorState> {
         // FLAGS so remote clients can forward-predict this ship. Bits 3–7
         // of the FLAGS u32; sleeping/swarm bits 0–2 are masked off.
         const flags = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
-        allShips.push({
-          playerId,
-          shipInstanceId: ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId,
-          isActive: ship.isActive,
-          pose,
-          lastInput: {
-            thrust:    !!(flags & FLAG_INPUT_THRUST),
-            turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
-            turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
-            boost:     !!(flags & FLAG_INPUT_BOOST),
-            reverse:   !!(flags & FLAG_INPUT_REVERSE),
-          },
-        });
+        const entry = scratch.allShipsPool.acquire();
+        entry.playerId = playerId;
+        entry.shipInstanceId = ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId;
+        entry.isActive = ship.isActive;
+        entry.pose = pose;
+        entry.lastInput.thrust = !!(flags & FLAG_INPUT_THRUST);
+        entry.lastInput.turnLeft = !!(flags & FLAG_INPUT_TURN_LEFT);
+        entry.lastInput.turnRight = !!(flags & FLAG_INPUT_TURN_RIGHT);
+        entry.lastInput.boost = !!(flags & FLAG_INPUT_BOOST);
+        entry.lastInput.reverse = !!(flags & FLAG_INPUT_REVERSE);
+        allShips.push(entry);
         aliveIds.add(playerId);
         ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
       }
@@ -3931,30 +3946,27 @@ export class SectorRoom extends Room<SectorState> {
         if (!ship || !ship.alive) continue;
         const pose = this.lingeringPoseCache.get(shipInstanceId);
         if (!pose) continue;
-        allShips.push({
-          playerId: ship.playerId,
-          shipInstanceId,
-          isActive: false,
-          pose,
-          lastInput: {
-            thrust: false, turnLeft: false, turnRight: false,
-            boost: false, reverse: false,
-          },
-        });
+        const entry = scratch.allShipsPool.acquire();
+        entry.playerId = ship.playerId;
+        entry.shipInstanceId = shipInstanceId;
+        entry.isActive = false;
+        entry.pose = pose;
+        entry.lastInput.thrust = false;
+        entry.lastInput.turnLeft = false;
+        entry.lastInput.turnRight = false;
+        entry.lastInput.boost = false;
+        entry.lastInput.reverse = false;
+        allShips.push(entry);
       }
 
       // Boosting/thrusting filter — small lists, sent in every snapshot.
-      const boostingIds: string[] = [];
+      // (boostingIds / thrustingIds are scratch arrays, already cleared in beginTick.)
       for (const id of this.boostingPlayers) {
         if (aliveIds.has(id)) boostingIds.push(id);
       }
-      const thrustingIds: string[] = [];
       for (const id of this.thrustingPlayers) {
         if (aliveIds.has(id)) thrustingIds.push(id);
       }
-      const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
-      if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
-      if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
 
       // 3×3 cell window radius for projectile interest (unchanged from
       // pre-Stage-5).
@@ -3984,10 +3996,15 @@ export class SectorRoom extends Room<SectorState> {
           this.lastInputCaches.set(client.sessionId, lastInputCache);
         }
 
-        // Build per-recipient states map. Every alive ship is included
-        // (no tier-based filtering — single-cadence design); per-recipient
-        // lastInput omission still applies to save bytes on idle ships.
-        const states: SnapshotMessage['states'] = {};
+        // 2026-05-25 GC sweep: per-recipient scratch reset. Releases
+        // pooled state entries / projectiles / drones / wrecks from the
+        // previous recipient, clears the envelope's optional fields, and
+        // empties the scratch collections so this recipient can populate
+        // them fresh. The proof-gate test (colyseusSendSyncEncode) locks
+        // that `client.send` synchronously encodes — we can safely reuse
+        // the same envelope reference across recipients.
+        scratch.beginRecipient();
+        const states = scratch.statesScratch;
         for (const ship of allShips) {
           const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
           // Phase 4b.3 — per-mount rotation angles, included only when the
@@ -4005,7 +4022,10 @@ export class SectorRoom extends Room<SectorState> {
               if (angles[i] !== 0) { anyNonZero = true; break; }
             }
             if (anyNonZero) {
-              mountAnglesArr = new Array<number>(angles.length);
+              // Reused per-ship scratch array. Lazy-alloc on first use,
+              // resized if mount count changes (rare). See
+              // SnapshotScratch.ensureMountAngleArray + onLeave/evict hooks.
+              mountAnglesArr = scratch.ensureMountAngleArray(ship.playerId, angles.length);
               for (let i = 0; i < angles.length; i++) {
                 // Quantise to 4 decimal places (~0.006° resolution) to
                 // dedupe trailing-noise drift across the wire — the JSON
@@ -4019,29 +4039,40 @@ export class SectorRoom extends Room<SectorState> {
           // playerId (for owner identity) and isActive (for the
           // client's visibility / piloting gate). Other entry fields
           // unchanged from pre-6a snapshots.
-          states[ship.shipInstanceId] = {
-            x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
-            angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
-            playerId: ship.playerId,
-            isActive: ship.isActive,
-            ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
-            ...(mountAnglesArr ? { mountAngles: mountAnglesArr } : {}),
-          };
+          const stateEntry = scratch.stateEntryPool.acquire();
+          stateEntry.x = ship.pose.x;
+          stateEntry.y = ship.pose.y;
+          stateEntry.vx = ship.pose.vx;
+          stateEntry.vy = ship.pose.vy;
+          stateEntry.angle = ship.pose.angle;
+          stateEntry.angvel = ship.pose.angvel ?? 0;
+          stateEntry.playerId = ship.playerId;
+          stateEntry.isActive = ship.isActive;
+          stateEntry.lastInput = includeLastInput ? ship.lastInput : undefined;
+          stateEntry.mountAngles = mountAnglesArr;
+          states[ship.shipInstanceId] = stateEntry;
         }
 
         // Per-recipient projectiles in the 3×3 cell window.
-        let projectiles: SnapshotMessage['projectiles'];
+        // Lazy-bind `projectiles` to the envelope only when we have at
+        // least one entry — preserves the legacy "field absent when empty"
+        // wire shape (msgpack drops missing keys).
         if (this.liveProjectiles.size > 0) {
           for (const [projId, proj] of this.liveProjectiles) {
             if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
             if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
-            if (!projectiles) projectiles = [];
-            projectiles.push({
-              id: projId,
-              x: proj.x, y: proj.y, vx: proj.vx, vy: proj.vy,
-              ownerId: proj.ownerId,
-              weaponId: proj.weaponId,
-            });
+            const projEntry = scratch.projectileEntryPool.acquire();
+            projEntry.id = projId;
+            projEntry.x = proj.x;
+            projEntry.y = proj.y;
+            projEntry.vx = proj.vx;
+            projEntry.vy = proj.vy;
+            projEntry.ownerId = proj.ownerId;
+            projEntry.weaponId = proj.weaponId;
+            scratch.projectilesScratch.push(projEntry);
+          }
+          if (scratch.projectilesScratch.length > 0) {
+            scratch.snapEnvelope.projectiles = scratch.projectilesScratch;
           }
         }
 
@@ -4060,7 +4091,6 @@ export class SectorRoom extends Room<SectorState> {
         // window, no second `query9` call. Asteroids (kind === 0) are
         // skipped — they have no turret/shield. The binary channel still
         // carries every in-interest drone's pose at full cadence.
-        let drones: SnapshotMessage['drones'];
         const interest = this.interestScratch.get(client.sessionId);
         if (interest && interest.size > 0) {
           for (const eid of interest) {
@@ -4081,19 +4111,21 @@ export class SectorRoom extends Room<SectorState> {
                 if (droneAngles[i] !== 0) { anyNonZero = true; break; }
               }
               if (anyNonZero) {
-                droneMountAnglesArr = new Array<number>(droneAngles.length);
+                droneMountAnglesArr = scratch.ensureMountAngleArray(rec.id, droneAngles.length);
                 for (let i = 0; i < droneAngles.length; i++) {
                   droneMountAnglesArr[i] = Math.round(droneAngles[i]! * 10_000) / 10_000;
                 }
               }
             }
             if (!droneMountAnglesArr && !rec.shieldDown) continue;
-            if (!drones) drones = [];
-            drones.push({
-              id: eid,
-              ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
-              ...(rec.shieldDown ? { shieldDown: true } : {}),
-            });
+            const droneEntry = scratch.droneEntryPool.acquire();
+            droneEntry.id = eid;
+            droneEntry.mountAngles = droneMountAnglesArr;
+            droneEntry.shieldDown = rec.shieldDown ? true : undefined;
+            scratch.dronesScratch.push(droneEntry);
+          }
+          if (scratch.dronesScratch.length > 0) {
+            scratch.snapEnvelope.drones = scratch.dronesScratch;
           }
         }
 
@@ -4102,29 +4134,32 @@ export class SectorRoom extends Room<SectorState> {
         // interest filtering: the wreck count per sector is bounded
         // (one per abandoned ship; players are 10-capped) and Phase 5
         // can add interest culling if rosters grow.
-        let wrecks: SnapshotMessage['wrecks'];
         if (this.wreckPoseCache.size > 0) {
-          wrecks = [];
           for (const [shipInstanceId, pose] of this.wreckPoseCache) {
-            wrecks.push({
-              id: shipInstanceId,
-              x: pose.x, y: pose.y,
-              vx: pose.vx, vy: pose.vy,
-              angle: pose.angle, angvel: pose.angvel ?? 0,
-            });
+            const wreckEntry = scratch.wreckEntryPool.acquire();
+            wreckEntry.id = shipInstanceId;
+            wreckEntry.x = pose.x;
+            wreckEntry.y = pose.y;
+            wreckEntry.vx = pose.vx;
+            wreckEntry.vy = pose.vy;
+            wreckEntry.angle = pose.angle;
+            wreckEntry.angvel = pose.angvel ?? 0;
+            scratch.wrecksScratch.push(wreckEntry);
+          }
+          if (scratch.wrecksScratch.length > 0) {
+            scratch.snapEnvelope.wrecks = scratch.wrecksScratch;
           }
         }
-        const snap: SnapshotMessage = {
-          type: 'snapshot',
-          serverTick: this.serverTick,
-          states,
-          ackedTick: recipientAcked,
-          ...sharedTail,
-          ...(projectiles ? { projectiles } : {}),
-          ...(drones ? { drones } : {}),
-          ...(wrecks ? { wrecks } : {}),
-        };
-        client.send('snapshot', snap);
+
+        // Populate the reused envelope. `states` field reference is
+        // stable (it points at `scratch.statesScratch`); we just refresh
+        // `serverTick`/`ackedTick` and conditionally attach the optional
+        // shared-tail collections.
+        scratch.snapEnvelope.serverTick = this.serverTick;
+        scratch.snapEnvelope.ackedTick = recipientAcked;
+        if (boostingIds.length > 0) scratch.snapEnvelope.boostingIds = boostingIds;
+        if (thrustingIds.length > 0) scratch.snapEnvelope.thrustingIds = thrustingIds;
+        client.send('snapshot', scratch.snapEnvelope);
         anySnapshotSent = true;
       }
 
