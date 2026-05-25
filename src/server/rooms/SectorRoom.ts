@@ -49,6 +49,8 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
+// Mount/slot geometry helpers moved to ./mountGeometry.ts.
+import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -926,38 +928,20 @@ export class SectorRoom extends Room<SectorState> {
    * (defensive — every shipped kind has them, but a malformed catalogue
    * shouldn't crash the room).
    */
+  // Pure mount/slot geometry helpers moved to ./mountGeometry.ts. The
+  // class still calls them via `this.resolveSlotMounts(...)` / `this.
+  // mountWorldOrigin(...)` for minimal blast-radius — these thin
+  // method-wrapper delegations preserve every existing call-site.
   private resolveSlotMounts(kind: ShipKind, slotId?: string): ReadonlyArray<WeaponMount> {
-    const mounts = kind.mounts;
-    const slots = kind.slots;
-    if (!mounts || !slots || slots.length === 0) return [];
-    const slot = slotId ? slots.find((s) => s.id === slotId) ?? slots[0]! : slots[0]!;
-    const out: WeaponMount[] = [];
-    for (const mid of slot.mountIds) {
-      const m = mounts.find((mm) => mm.id === mid);
-      if (m) out.push(m);
-    }
-    return out;
+    return resolveSlotMounts(kind, slotId);
   }
-
-  /**
-   * Compute the per-mount world origin given a ship's pose and the mount's
-   * ship-local offset. The ship's `angle` rotates the mount's local coords
-   * into world space; the result is the world position of the mount's pivot
-   * (before the 20 u / 16 u barrel offset applied by callers along the
-   * mount's fire direction).
-   */
   private mountWorldOrigin(
     shipX: number,
     shipY: number,
     shipAngle: number,
     mount: WeaponMount,
   ): { x: number; y: number } {
-    const cosA = Math.cos(shipAngle);
-    const sinA = Math.sin(shipAngle);
-    return {
-      x: shipX + (mount.localX * cosA - mount.localY * sinA),
-      y: shipY + (mount.localX * sinA + mount.localY * cosA),
-    };
+    return mountWorldOrigin(shipX, shipY, shipAngle, mount);
   }
 
   /**
