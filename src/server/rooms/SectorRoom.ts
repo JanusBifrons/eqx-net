@@ -61,6 +61,7 @@ import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
+import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -487,50 +488,9 @@ export class SectorRoom extends Room<SectorState> {
   // Tick-budget telemetry. Accumulated each `update()`; flushed every 60 ticks
   // (≈ 1 s wall-clock) to a single serverLogEvent so a diagnostic capture can
   // see the breakdown without saturating the 500-entry server-event buffer.
-  private readonly tickBudgetSums: Record<string, number> = {
-    sabRead: 0,
-    projectiles: 0,
-    swarmEncode: 0,
-    swarmBroadcast: 0,
-    snapshotBroadcast: 0,
-    aiTick: 0,
-    aiFire: 0,
-    total: 0,
-  };
-  private tickBudgetSampleCount = 0;
-  private tickBudgetMaxTotalMs = 0;
-  private tickBudgetOverBudgetCount = 0;
-
-  /** Per-tick phase breakdown for the CURRENT tick, written by `phaseTime`
-   *  alongside the cumulative `tickBudgetSums`. Reset to zeros at end of
-   *  each tick. Used by the hot-capture branch when `totalMs > TICK_HITCH_THRESHOLD_MS`
-   *  to emit a `tick_hitch` event with the per-phase breakdown — answers
-   *  the question `tick_budget` averages cannot: WHICH SUBSYSTEM ate the
-   *  time on this specific tick. */
-  private readonly thisTickPhases: Record<string, number> = {};
-  /** 3-tick rolling history of (tick, totalMs, phases) for context around
-   *  a hitch event. Push at end of every tick; trim to 3 entries. When a
-   *  hitch fires, the event includes these as `recentTicks` so the
-   *  consumer can see whether the hitch is isolated or part of a cluster. */
-  private readonly tickHistoryRing: Array<{
-    tick: number;
-    totalMs: number;
-    phases: Record<string, number>;
-  }> = [];
-
-  /** Hot-capture threshold for `tick_hitch` events. Any tick whose total
-   *  wall-clock exceeds this fires a hitch event with phase breakdown.
-   *  12 ms is below the 16.67 ms physics budget but well above the
-   *  observed steady-state of ~1 ms — so it captures genuine hitches
-   *  before they cascade into client-visible stutter (24+ ms ticks
-   *  cause ~13 u correction snaps in the diagnostic capture). */
-  private static readonly TICK_HITCH_THRESHOLD_MS = 12;
-  /** Rate-limit hitch events to avoid flooding the server-event buffer
-   *  during a sustained pathology. One per ~250 ms is plenty to reconstruct
-   *  the cause; cluster events still get reported via the `recentTicks`
-   *  context on the next admitted hitch. */
-  private static readonly TICK_HITCH_MIN_INTERVAL_MS = 250;
-  private lastTickHitchAtMs = 0;
+  // Per-tick accumulation + tick_hitch + tick_budget aggregation lives in
+  // TickBudgetTelemetry.
+  private readonly tickBudget = new TickBudgetTelemetry();
 
   override async onCreate(options: unknown): Promise<void> {
     this.setState(new SectorState());
@@ -2374,16 +2334,8 @@ export class SectorRoom extends Room<SectorState> {
       while (performance.now() < burnDeadline) { /* intentional busy-wait */ }
     }
 
-    let tPhase = performance.now();
-    // Reset per-tick phase capture at the top of every update().
-    for (const k of Object.keys(this.thisTickPhases)) this.thisTickPhases[k] = 0;
-    const phaseTime = (key: keyof typeof this.tickBudgetSums): void => {
-      const now = performance.now();
-      const elapsed = now - tPhase;
-      this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + elapsed;
-      this.thisTickPhases[key] = (this.thisTickPhases[key] ?? 0) + elapsed;
-      tPhase = now;
-    };
+    this.tickBudget.beginTick(tStart);
+    const phaseTime = (key: string): void => this.tickBudget.phaseTime(key);
 
     // Seqlock SAB → pose-cache mirror — see SabPoseMirror.ts. Swarm
     // poses are read directly from SAB by the binary encoder later in
@@ -2590,72 +2542,26 @@ export class SectorRoom extends Room<SectorState> {
     // are emitted as one server event per second. The first capture told us
     // server tick rate was 46 Hz instead of 60 — this breakdown will tell us
     // which phase ate the budget so the fix is targeted, not speculative.
-    const totalMs = performance.now() - tStart;
-    this.tickBudgetSums['total'] = (this.tickBudgetSums['total'] ?? 0) + totalMs;
-    this.tickBudgetSampleCount++;
-    if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
-    if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
-
-    // Hot-capture per-tick hitches. The aggregated `tick_budget` log emits
-    // an AVERAGE every 60 ticks, which buries individual tick spikes inside
-    // the mean. A 26 ms spike disappears inside an `avgMs.total = 0.045`
-    // line. The user-perceived "stuttering" diagnosed in the 2026-05-08
-    // captures traced back to single ticks in the 25–30 ms range causing
-    // 13 u correction snaps and 10-snapshot cascades. This branch fires a
-    // dedicated `tick_hitch` event with per-phase breakdown PLUS context
-    // from the previous 3 ticks, so the next diagnostic identifies the
-    // culprit subsystem directly. Rate-limited to avoid flood during
-    // sustained pathology.
-    const nowMs = performance.now();
-    if (
-      totalMs > SectorRoom.TICK_HITCH_THRESHOLD_MS &&
-      nowMs - this.lastTickHitchAtMs >= SectorRoom.TICK_HITCH_MIN_INTERVAL_MS
-    ) {
-      this.lastTickHitchAtMs = nowMs;
-      const phasesSnapshot: Record<string, number> = {};
-      for (const k of Object.keys(this.thisTickPhases)) {
-        phasesSnapshot[k] = parseFloat((this.thisTickPhases[k] ?? 0).toFixed(3));
-      }
-      phasesSnapshot['total'] = parseFloat(totalMs.toFixed(3));
-      const workerTickMsForHitch = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
-      serverLogEvent('tick_hitch', {
-        serverTick: this.serverTick,
-        totalMs: parseFloat(totalMs.toFixed(3)),
-        phases: phasesSnapshot,
-        recentTicks: this.tickHistoryRing.slice(),
-        workerTickMs: parseFloat(workerTickMsForHitch.toFixed(3)),
-        playerCount: this.playerToSlot.size,
-        swarmCount: this.swarmRegistry.size(),
-        aiSize: this.aiController.size(),
-        liveProjectileCount: this.liveProjectiles.size,
-      });
-    }
-    // Maintain the rolling 3-tick history regardless of hitch — context for
-    // the next hitch event.
-    this.tickHistoryRing.push({
-      tick: this.serverTick,
-      totalMs: parseFloat(totalMs.toFixed(3)),
-      phases: { ...this.thisTickPhases },
+    const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
+    const totalMs = this.tickBudget.endTick({
+      serverTick: this.serverTick,
+      workerTickMs,
+      playerCount: this.playerToSlot.size,
+      swarmCount: this.swarmRegistry.size(),
+      aiSize: this.aiController.size(),
+      liveProjectileCount: this.liveProjectiles.size,
     });
-    if (this.tickHistoryRing.length > 3) this.tickHistoryRing.shift();
 
     // Phase 6 — drive the TiDi clock from whichever side is the bottleneck.
     // The server's `update()` time covers SAB-read / encode / broadcast; the
     // worker's most-recent step duration covers physics. The real budget
-    // overrun is whichever is longer. Without this, a worker that's grinding
-    // at 50 ms/tick goes undetected because the server thread reads the SAB
-    // in <1 ms and reports a healthy budget.
-    const workerTickMs = (this.sabU32[WORKER_TICK_US_IDX] ?? 0) / 1000;
+    // overrun is whichever is longer.
     const busiestMs = Math.max(totalMs, workerTickMs);
     this.simClock.report(busiestMs);
     const newRate = this.simClock.rate;
     // testTimeScale lets testMode rooms run physics N× faster (default 1).
-    // The worker scales its accumulator by the rate; multiplying here is
-    // structurally cheap because the worker already supports rate > 1
-    // (it just hasn't been used before — SimulationClock floors at 0.7
-    // and ceilings at 1.0). state.clockRate stays at the UNMULTIPLIED
-    // simClock value so client audio pitch + TiDi UI don't show a fake
-    // anomaly under acceleration.
+    // state.clockRate stays at the UNMULTIPLIED simClock value so client
+    // audio pitch + TiDi UI don't show a fake anomaly under acceleration.
     const outboundRate = newRate * this.testTimeScale;
     if (Math.abs(outboundRate - this.lastSentClockRate) >= 1e-4) {
       this.lastSentClockRate = outboundRate;
@@ -2665,25 +2571,5 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 6 second-lever: if rate is at floor and we're still over budget,
     // shed far drones in batches. No-op when rate > 0.71 or budget healthy.
     this.shedder.consider(newRate, busiestMs);
-    if (this.tickBudgetSampleCount >= 60) {
-      const avg: Record<string, number> = {};
-      for (const k of Object.keys(this.tickBudgetSums)) {
-        avg[k] = parseFloat((this.tickBudgetSums[k]! / this.tickBudgetSampleCount).toFixed(3));
-      }
-      serverLogEvent('tick_budget', {
-        serverTick: this.serverTick,
-        sampleCount: this.tickBudgetSampleCount,
-        avgMs: avg,
-        maxTotalMs: parseFloat(this.tickBudgetMaxTotalMs.toFixed(3)),
-        overBudgetCount: this.tickBudgetOverBudgetCount,
-        playerCount: this.playerToSlot.size,
-        swarmCount: this.swarmRegistry.size(),
-        aiSize: this.aiController.size(),
-      });
-      for (const k of Object.keys(this.tickBudgetSums)) this.tickBudgetSums[k] = 0;
-      this.tickBudgetSampleCount = 0;
-      this.tickBudgetMaxTotalMs = 0;
-      this.tickBudgetOverBudgetCount = 0;
-    }
   }
 }
