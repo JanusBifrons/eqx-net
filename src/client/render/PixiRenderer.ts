@@ -5,8 +5,8 @@ import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/pr
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites } from './pixi/shipSpriteUpdater.js';
+import { updateSwarmSprites } from './pixi/swarmSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
-import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
@@ -21,8 +21,6 @@ import {
   buildShipGfxFromShape,
   shapeForKind,
   desaturate,
-  buildAsteroidGfx,
-  buildDroneGfx,
   buildGhostGfx,
   buildProjectileGfx,
   buildLaserBoltGfx,
@@ -562,82 +560,17 @@ export class PixiRenderer implements IRenderer {
       }
     }
 
-    // Phase 5c: swarm entities (asteroids + drones) — keyed by `swarm-${entityId}`
-    // in the sprite map so they can't collide with playerIds. Sleeping entries
-    // simply stop receiving pose updates; the sprite stays parked at the last
-    // server-shipped pose (no client-side dead reckoning).
-    if (mirror.swarm) {
-      const now = performance.now();
-      for (const [entityId, entry] of mirror.swarm) {
-        const spriteKey = `swarm-${entityId}`;
-        seen.add(spriteKey);
-        let sprite = this.sprites.get(spriteKey);
-        if (!sprite) {
-          if (entry.kind === 1) {
-            // Drones use the same procedural shape as player ships of that
-            // kind, so a Heavy drone visibly reads as a Heavy. Falls back to
-            // the legacy magenta dart silhouette when the wire didn't carry a
-            // kind (older snapshots / pre-v2 packets).
-            sprite = entry.shipKind
-              ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
-              : buildDroneGfx(entry.radius);
-          } else {
-            sprite = buildAsteroidGfx(entityId, entry.radius);
-          }
-          this.shipContainer.addChild(sprite);
-          this.sprites.set(spriteKey, sprite);
-        }
-        // DRONES (kind=1): read the SINGLE per-frame display pose that
-        // `ColyseusClient.updateMirror` already resolved (one
-        // `interpolateSwarmPose` per frame, written into `entry.x/y/angle`
-        // — the same value the predWorld collision body + turret aim +
-        // laser beam use). Re-interpolating here at render-`now` (which
-        // differs from updateMirror's now by a variable, raf-jitter-
-        // amplified amount — a whole frame under the 30 Hz worker gate)
-        // made the sprite occupy a different pose than the collision
-        // body/beam every frame: drones "jittered like two things
-        // fighting" and the laser jittered against the sprite (on-device
-        // 2026-05-19, capture jfagww; the drone-snapshot pivot's stated
-        // "one pose per frame, every reader sees it" rule, now enforced).
-        // ASTEROIDS (kind=0): keep render-now interpolation off the
-        // poseRing — they are locked/static server-side, were never the
-        // jitter complaint, and `syncSwarmIntoPredWorld` still poses their
-        // bodies from the raw decoded `entry.x/y` (decoder unchanged).
-        const lerped = entry.kind === 1
-          ? resolveDroneDisplayPose(entry, this.swarmPoseScratch)
-          : interpolateSwarmPose(entry, now, this.swarmPoseScratch);
-        sprite.x = lerped.x;
-        sprite.y = -lerped.y;
-        sprite.rotation = -lerped.angle;
-        if (entry.kind === 1 && entry.shipKind) {
-          // Phase 4c (2026-05-11) — drones get the same mount cluster
-          // treatment as player ships: turret sprites parented to the
-          // drone body, rotated per-mount via `entry.mountAngles` (the
-          // authoritative slim `snap.drones[]` slice). Legacy single-mount
-          // drone kinds have zero-arc mounts so applyMountAngles is
-          // essentially a no-op (rotation = -baseAngle); multi-mount kinds
-          // (interceptor / gunship drones) visibly slew their wing/rear
-          // turrets to track players.
-          this.mountVisuals.ensureForShip(spriteKey, entry.shipKind, sprite);
-          const swarmKind = getShipKind(entry.shipKind);
-          const swarmMounts = swarmKind.mounts ?? [];
-          if (swarmMounts.length > 0) {
-            this.mountVisuals.applyMountAngles(spriteKey, swarmMounts, entry.mountAngles);
-          }
-        }
-        // Damage flash takes priority over the active-beam hit tint so a
-        // drone clearly registers a hit even when no beam is currently on it.
-        if (mirror.damagedShips?.has(spriteKey)) {
-          sprite.tint = DAMAGE_FLASH_COLOR;
-        } else if (localHitTargets.has(spriteKey) || remoteHitTargets.has(spriteKey)) {
-          sprite.tint = DAMAGE_FLASH_COLOR;
-        } else {
-          sprite.tint = 0xffffff;
-        }
-        // Sleeping entries stop interpolating; their pose is whatever the
-        // server last shipped. (Mark visually muted in 5d if needed.)
-      }
-    }
+    // Phase 5c swarm sprites (asteroids + drones) — see
+    // pixi/swarmSpriteUpdater.ts.
+    updateSwarmSprites(mirror, {
+      shipContainer: this.shipContainer,
+      sprites: this.sprites,
+      mountVisuals: this.mountVisuals,
+      swarmPoseScratch: this.swarmPoseScratch,
+      remoteHitTargets,
+      localHitTargets,
+      seenScratch: seen,
+    });
 
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
