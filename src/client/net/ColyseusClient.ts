@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
@@ -41,6 +41,7 @@ import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { HudDispatcher } from './HudDispatcher.js';
+import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -2402,91 +2403,11 @@ export class ColyseusGameClient {
    *  removed from the mirror. Ghost projectiles (`isGhost: true`) are
    *  preserved; the GhostManager re-adds them per-frame anyway. */
   private syncProjectiles(projectiles: SnapshotMessage['projectiles']): void {
-    if (!this.mirror.projectiles) return;
-    const seen = new Set<string>();
-    if (projectiles) {
-      for (const p of projectiles) {
-        seen.add(p.id);
-        // Preserve client-integrated x/y for existing entries — replacing them
-        // every snapshot would snap the bolt back ~50 ms (one broadcast period)
-        // against its travel direction, producing the visible 20 Hz stutter.
-        // We accept the small server/client position drift; vx/vy are still
-        // refreshed authoritatively each snapshot.
-        // Probe 8 — pool the projectile entry in place. Branch on
-        // existing prev: NEW (or post-ghost-resolve) entry gets a fresh
-        // object once; SUBSEQUENT updates mutate fields (preserving the
-        // client-integrated x/y). Saves allocations during sustained
-        // projectile flight.
-        const prev = this.mirror.projectiles.get(p.id);
-        const isNew = !prev || prev.isGhost;
-        if (isNew) {
-          this.mirror.projectiles.set(p.id, {
-            x: p.x,
-            y: p.y,
-            vx: p.vx,
-            vy: p.vy,
-            ownerId: p.ownerId,
-            isGhost: false,
-            weaponId: p.weaponId,
-          } satisfies ProjectileRenderState);
-        } else {
-          // Mutate in place; preserve x/y (client-integrated), refresh
-          // vx/vy + identity fields.
-          prev.vx = p.vx;
-          prev.vy = p.vy;
-          prev.ownerId = p.ownerId;
-          prev.isGhost = false;
-          prev.weaponId = p.weaponId;
-        }
-      }
-    }
-    for (const [id, entry] of this.mirror.projectiles) {
-      if (entry.isGhost) continue;
-      if (!seen.has(id)) this.mirror.projectiles.delete(id);
-    }
+    syncProjectiles(this.mirror, projectiles);
   }
 
-  /**
-   * Phase 4 — refresh wreck poses from the snapshot. Identity flows
-   * over Colyseus schema diff (see syncMirror); this keeps x/y/vx/vy/angle
-   * fresh per frame so the renderer can draw the drifting hull, AND
-   * mirrors that pose into a predWorld body so the local player's
-   * predicted ship collides with the wreck instead of passing through
-   * it. The wreck body uses `wreck-${shipInstanceId}` as its predWorld
-   * id (disambiguates from the playerId namespace).
-   */
   private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
-    if (!this.mirror.wrecks) return;
-    if (!wrecks) return;
-    for (const w of wrecks) {
-      const entry = this.mirror.wrecks.get(w.id);
-      if (!entry) continue;
-      entry.x = w.x;
-      entry.y = w.y;
-      entry.vx = w.vx;
-      entry.vy = w.vy;
-      entry.angle = w.angle;
-      entry.angvel = w.angvel;
-
-      // Spawn or update the predWorld body. Spawn lazily here because
-      // the schema diff lands first (with x/y=0); we need real pose
-      // before we can place the body sensibly. setShipState pushes the
-      // latest snapshot pose in every tick — same pattern remote ships
-      // use, so the local player's predicted collisions see a fresh
-      // wreck position once per snapshot (~20 Hz).
-      if (this.predWorld) {
-        const bodyId = `wreck-${w.id}`;
-        if (!this.predWorld.hasShip(bodyId)) {
-          this.predWorld.spawnShip(bodyId, w.x, w.y, entry.kind);
-          this.predWreckIds.add(bodyId);
-        }
-        this.predWorld.setShipState(bodyId, {
-          x: w.x, y: w.y, angle: w.angle,
-          vx: w.vx, vy: w.vy,
-          angvel: w.angvel,
-        });
-      }
-    }
+    syncWreckPoses(this.mirror, wrecks, this.predWorld, this.predWreckIds);
   }
 
   // ── State mirror ────────────────────────────────────────────────────────
