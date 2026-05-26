@@ -13,11 +13,8 @@ import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUp
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
-import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
+import { getShipKind } from '../../shared-types/shipKinds';
 import {
-  SHIP_HITBOX_RADIUS,
-  HITBOX_COLOR,
-  SERVER_GHOST_COLOR,
   DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
   shapeForKind,
@@ -66,7 +63,6 @@ import {
   shouldDetachWarpVisual,
   warpEventFiresBurst,
   resolveWarpFilterCenter,
-  type WarpBurstEvent,
 } from './pixi/warpHelpers.js';
 
 

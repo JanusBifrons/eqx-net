@@ -13,11 +13,7 @@ import { mkdir, writeFile, appendFile, readFile, rename } from 'node:fs/promises
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { captureSchema, streamingBatchSchema } from './captureSchema.js';
-import { matchMaker } from 'colyseus';
 import { getRecentEvents } from '../debug/ServerEventLog.js';
-import { db } from '../db/Database.js';
-import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
-import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 
 const CAPTURE_DIR = resolve(process.cwd(), 'diag', 'captures');
 // 64 MB ceiling. Dev-only diagnostic capture: the client log ring is up

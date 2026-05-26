@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
 import { loadShipKind, saveShipKind } from '../settings/shipSelectionStorage.js';
 import type { UserId } from '../settings/userPrefs.js';
-import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { DEFAULT_WEAPON, WEAPON_IDS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import type {
   ConnectionStatus,
