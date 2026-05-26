@@ -58,8 +58,8 @@ import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { LeaveHandler } from './LeaveHandler.js';
+import { mirrorSabPoses } from './SabPoseMirror.js';
 import {
-  SEQLOCK_IDX,
   TICK_IDX,
   WORKER_TICK_US_IDX,
   SLOT_X_OFF,
@@ -68,8 +68,8 @@ import {
   SLOT_VY_OFF,
   SLOT_ANGLE_OFF,
   SLOT_ANGVEL_OFF,
-  SLOT_APPLIED_TICK_OFF,
   // FLAG_INPUT_* + SLOT_FLAGS_OFF now used inside SnapshotBroadcaster.ts
+  // SEQLOCK_IDX + SLOT_APPLIED_TICK_OFF moved into SabPoseMirror.ts
   slotBase,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
@@ -2383,78 +2383,20 @@ export class SectorRoom extends Room<SectorState> {
       tPhase = now;
     };
 
-    // Seqlock read: retry if a write is in progress or if data was torn
-    // (seqlock changed between the two loads). Player pose is mirrored into
-    // `shipPoseCache` (a plain Map of mutable records) — NOT into the
-    // Colyseus schema. Mirroring into the schema previously caused a
-    // duplicate broadcast of every spatial field on top of the custom
-    // SnapshotMessage; see the wire-discipline plan / SectorState.ts notes.
-    // Swarm poses are read directly from SAB by the binary encoder later in
+    // Seqlock SAB → pose-cache mirror — see SabPoseMirror.ts. Swarm
+    // poses are read directly from SAB by the binary encoder later in
     // this tick (see swarmEncoder.encode).
-    for (;;) {
-      const seq1 = Atomics.load(this.sabU32, SEQLOCK_IDX);
-      if (seq1 & 1) continue; // odd → write in progress, spin
-
-      for (const [playerId, slot] of this.playerToSlot) {
-        const pose = this.shipPoseCache.get(playerId);
-        if (!pose) continue;
-        const b = slotBase(slot);
-        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
-        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
-        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
-        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
-        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
-        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
-        // Decode applied tick: storedValue=0 means no input applied yet (use 0);
-        // storedValue=N+1 means client tick N was applied.
-        // (handled below)
-      }
-      // Phase 6b — lingering hulls' pose mirror. Same SAB → cache update
-      // pattern as the active-ship loop above. The worker continues to
-      // step these bodies (drag decays vx/vy/angvel; positions drift on
-      // their final velocity vector). lingeringPoseCache is allocated
-      // lazily here so we don't carry an empty object for the common
-      // case (no lingering hulls).
-      for (const [shipInstanceId, slot] of this.lingeringSlots) {
-        let pose = this.lingeringPoseCache.get(shipInstanceId);
-        if (!pose) {
-          pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
-          this.lingeringPoseCache.set(shipInstanceId, pose);
-        }
-        const b = slotBase(slot);
-        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
-        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
-        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
-        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
-        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
-        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
-      }
-      // Phase 4 — wreck pose mirror. Wrecks live in SAB slots like
-      // player ships; the worker steps them every physics tick. We
-      // mirror their pose here for the snapshot path.
-      for (const [shipInstanceId, slot] of this.wreckToSlot) {
-        const pose = this.wreckPoseCache.get(shipInstanceId);
-        if (!pose) continue;
-        const b = slotBase(slot);
-        pose.x      = this.sabF32[b + SLOT_X_OFF]!;
-        pose.y      = this.sabF32[b + SLOT_Y_OFF]!;
-        pose.angle  = this.sabF32[b + SLOT_ANGLE_OFF]!;
-        pose.vx     = this.sabF32[b + SLOT_VX_OFF]!;
-        pose.vy     = this.sabF32[b + SLOT_VY_OFF]!;
-        pose.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
-      }
-      // (player-loop continuation just below for the appliedTicks
-      //  decode — kept inside the seqlock window for consistency.)
-      for (const [playerId, slot] of this.playerToSlot) {
-        const b = slotBase(slot);
-        const storedTick = this.sabU32[b + SLOT_APPLIED_TICK_OFF]!;
-        this.sabAppliedTicks.set(playerId, storedTick === 0 ? 0 : storedTick - 1);
-      }
-
-      const seq2 = Atomics.load(this.sabU32, SEQLOCK_IDX);
-      if (seq1 === seq2) break; // consistent read
-      // seq changed during read → writer modified data, retry
-    }
+    mirrorSabPoses({
+      sabF32: this.sabF32,
+      sabU32: this.sabU32,
+      playerToSlot: this.playerToSlot,
+      lingeringSlots: this.lingeringSlots,
+      wreckToSlot: this.wreckToSlot,
+      shipPoseCache: this.shipPoseCache,
+      lingeringPoseCache: this.lingeringPoseCache,
+      wreckPoseCache: this.wreckPoseCache,
+      sabAppliedTicks: this.sabAppliedTicks,
+    });
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
