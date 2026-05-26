@@ -9,10 +9,15 @@ import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
-import { WorkerRendererClient } from './render/worker/WorkerRendererClient';
 import { DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
 import { createGameRafLoop } from './app/gameRafLoop';
 import { selectRenderer, installProfileWindow, buildJoinSpec } from './app/gameSurfaceBootstrap';
+import {
+  installGalaxyOverlay,
+  syncGalaxyVisibility,
+  syncGalaxyCurrentSector,
+  syncGalaxyTransitDocked,
+} from './app/galaxyOverlay';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -305,49 +310,14 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
       });
 
-      // Map B — additive in-game galaxy overlay. Lives as a screen-space
-      // sibling of the gameplay viewport on the same Pixi stage, so it
-      // doesn't pan/zoom with the world camera. Two construction paths:
-      //
-      //   - Worker mode: `renderer.worker.ts` constructs the layer
-      //     inside the worker (it's pure Pixi v8, no DOM access) and
-      //     uses a custom hit-test for taps (Pixi's event subsystem
-      //     isn't initialised in worker context). Selection is routed
-      //     back to the main thread via `OVERLAY_TAPPED` messages and
-      //     consumed by `setOverlayTapHandler`.
-      //   - DOM mode: construct the layer here and attach via
-      //     `addOverlayContainer`. The native Pixi event system on the
-      //     DOM-mode renderer handles `pointertap` on each hex.
-      if (useWorker) {
-        // The worker already owns its layer; just route taps + push
-        // initial state so the overlay knows which sector is "you are
-        // here" and whether it's selectable.
-        (renderer as WorkerRendererClient).setOverlayTapHandler((key) => {
-          handleEngageTransit(key);
-          useUIStore.getState().setGalaxyMapOpen(false);
-        });
-        const s0 = useUIStore.getState();
-        (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
-        (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
-        (renderer as WorkerRendererClient).setLayerVisible(s0.isGalaxyMapOpen);
-      } else {
-        const galaxyLayer = new GalaxyMapLayer({
-          onSelect: (key) => {
-            handleEngageTransit(key);
-            // Auto-close the additive overlay on warp-tap; the user explicitly
-            // asked for tap-to-warp to dismiss the map (otherwise it stays
-            // visible during SPOOLING and feels stuck).
-            useUIStore.getState().setGalaxyMapOpen(false);
-          },
-        });
-        renderer.addOverlayContainer(galaxyLayer);
-        const s0 = useUIStore.getState();
-        galaxyLayer.setCurrentSector(s0.currentSectorKey);
-        galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
-        galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
-        galaxyLayer.setVisible(s0.isGalaxyMapOpen);
-        galaxyLayerRef.current = galaxyLayer;
-      }
+      // Map B (additive in-game galaxy overlay) — see galaxyOverlay.ts
+      // for the worker-vs-DOM construction paths.
+      galaxyLayerRef.current = installGalaxyOverlay({
+        renderer,
+        useWorker,
+        el,
+        onEngageTransit: handleEngageTransit,
+      });
 
       // Probe 3 (mobile-perf-investigation): `?fpscap=N` URL override
       // for DEFAULT_MIN_FRAME_INTERVAL_MS. See gameRafLoop.ts.
@@ -427,30 +397,13 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // mode the layer lives inside the worker; state crosses via the
   // `WorkerRendererClient.setLayer*` postMessages.
   useEffect(() => {
-    galaxyLayerRef.current?.setVisible(galaxyMapOpen);
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerVisible(galaxyMapOpen);
-    }
-    // Diagnostic + E2E hook: proves the MAP-button tap reached the
-    // renderer (worker-hosted layer or DOM layer). Regression-locked
-    // by tests/e2e/galaxy-map-toggle.spec.ts — the worker-hosting fix
-    // is exactly "this message now reaches the worker".
-    logEvent('galaxy_map_toggle', {
-      open: galaxyMapOpen,
-      worker: rendererRef.current instanceof WorkerRendererClient,
-    });
+    syncGalaxyVisibility(galaxyLayerRef.current, rendererRef.current, galaxyMapOpen);
   }, [galaxyMapOpen]);
   useEffect(() => {
-    galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey);
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerCurrentSector(galaxyLayerCurrentSectorKey);
-    }
+    syncGalaxyCurrentSector(galaxyLayerRef.current, rendererRef.current, galaxyLayerCurrentSectorKey);
   }, [galaxyLayerCurrentSectorKey]);
   useEffect(() => {
-    galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED');
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerTransitDocked(galaxyLayerTransitState === 'DOCKED');
-    }
+    syncGalaxyTransitDocked(galaxyLayerRef.current, rendererRef.current, galaxyLayerTransitState === 'DOCKED');
   }, [galaxyLayerTransitState]);
 
   // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the

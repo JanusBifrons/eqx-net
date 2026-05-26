@@ -1,0 +1,122 @@
+/**
+ * Galaxy-overlay (Map B) bootstrap + per-frame sync helpers.
+ *
+ * Map B is the additive in-game galaxy overlay that lives as a
+ * screen-space sibling of the gameplay viewport on the same Pixi
+ * stage (so it doesn't pan/zoom with the world camera). Two
+ * construction paths:
+ *
+ *   - Worker mode: `renderer.worker.ts` constructs the layer inside
+ *     the worker (it's pure Pixi v8, no DOM access) and uses a
+ *     custom hit-test for taps (Pixi's event subsystem isn't
+ *     initialised in worker context). Selection is routed back to
+ *     the main thread via `OVERLAY_TAPPED` messages and consumed by
+ *     `setOverlayTapHandler`.
+ *   - DOM mode: construct the layer here and attach via
+ *     `addOverlayContainer`. The native Pixi event system on the
+ *     DOM-mode renderer handles `pointertap` on each hex.
+ *
+ * `installGalaxyOverlay` runs once inside the GameSurface bootstrap
+ * useEffect (after `renderer.init` resolves). The sync helpers
+ * (`syncGalaxyVisibility` / `syncGalaxyCurrentSector` /
+ * `syncGalaxyTransitDocked`) are called by per-state-change
+ * useEffects in App.tsx — each routes BOTH paths
+ * (`galaxyLayerRef.current` for DOM mode and
+ * `WorkerRendererClient.setLayer*` postMessages for worker mode).
+ */
+
+import { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
+import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
+import { useUIStore } from '../state/store';
+import { logEvent } from '../debug/ClientLogger';
+import type { IRenderer } from '@core/contracts/IRenderer';
+
+export interface InstallGalaxyOverlayOpts {
+  renderer: IRenderer;
+  useWorker: boolean;
+  el: HTMLDivElement;
+  onEngageTransit: (key: string) => void;
+}
+
+/**
+ * Constructs the galaxy overlay + wires its tap handler. Returns the
+ * DOM-mode layer if applicable (the caller stores it in
+ * `galaxyLayerRef`); returns null in worker mode (the layer lives
+ * inside the worker, addressed via the renderer's setLayer* methods).
+ */
+export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapLayer | null {
+  const { renderer, useWorker, el, onEngageTransit } = opts;
+  const s0 = useUIStore.getState();
+  if (useWorker) {
+    // The worker already owns its layer; just route taps + push
+    // initial state so the overlay knows which sector is "you are
+    // here" and whether it's selectable.
+    (renderer as WorkerRendererClient).setOverlayTapHandler((key) => {
+      onEngageTransit(key);
+      useUIStore.getState().setGalaxyMapOpen(false);
+    });
+    (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
+    (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
+    (renderer as WorkerRendererClient).setLayerVisible(s0.isGalaxyMapOpen);
+    return null;
+  }
+  const galaxyLayer = new GalaxyMapLayer({
+    onSelect: (key) => {
+      onEngageTransit(key);
+      // Auto-close the additive overlay on warp-tap; the user explicitly
+      // asked for tap-to-warp to dismiss the map (otherwise it stays
+      // visible during SPOOLING and feels stuck).
+      useUIStore.getState().setGalaxyMapOpen(false);
+    },
+  });
+  renderer.addOverlayContainer(galaxyLayer);
+  galaxyLayer.setCurrentSector(s0.currentSectorKey);
+  galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
+  galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
+  galaxyLayer.setVisible(s0.isGalaxyMapOpen);
+  return galaxyLayer;
+}
+
+/**
+ * Visibility sync — routes both the DOM-mode layer and worker-hosted
+ * layer. Emits the `galaxy_map_toggle` diagnostic, which is the E2E
+ * hook regression-locked by tests/e2e/galaxy-map-toggle.spec.ts (the
+ * worker-hosting fix is exactly "this message now reaches the
+ * worker").
+ */
+export function syncGalaxyVisibility(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  open: boolean,
+): void {
+  galaxyLayer?.setVisible(open);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerVisible(open);
+  }
+  logEvent('galaxy_map_toggle', {
+    open,
+    worker: renderer instanceof WorkerRendererClient,
+  });
+}
+
+export function syncGalaxyCurrentSector(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  currentSectorKey: string | null,
+): void {
+  galaxyLayer?.setCurrentSector(currentSectorKey);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerCurrentSector(currentSectorKey);
+  }
+}
+
+export function syncGalaxyTransitDocked(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  docked: boolean,
+): void {
+  galaxyLayer?.setTransitDocked(docked);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerTransitDocked(docked);
+  }
+}
