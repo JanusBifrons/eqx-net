@@ -10,8 +10,8 @@ import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
 import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
-import { consumeOneFrameTriggers } from './render/perFrameTriggers';
-import { shouldSkipFrame, DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
+import { DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
+import { createGameRafLoop } from './app/gameRafLoop';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -333,7 +333,6 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // `phaseEnterPerfNow` is captured BEFORE the async `renderer.init`
     // so the delta covers GPU init + WS handshake + first paint.
     const phaseEnterPerfNow = performance.now();
-    let firstFramePixiLogged = false;
 
     (async () => {
       const rendererInitStartedAt = performance.now();
@@ -407,17 +406,8 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         galaxyLayerRef.current = galaxyLayer;
       }
 
-      let lastFrameTime = 0;
-      // Probe 3 (mobile-perf-investigation, 2026-05-24) — `?fpscap=N`
-      // URL override for DEFAULT_MIN_FRAME_INTERVAL_MS. Default 15 ms
-      // throttles 90 Hz devices to 45 fps (the documented intent of
-      // commit `9e23436`); Probe 0/1/2 evidence on a Pixel 6 with 1 ms
-      // per-RAF work shows that throttle is the dominant source of
-      // user-felt unplayability and the original 86×-stalls-at-90 Hz
-      // concern no longer applies (per-RAF work dropped ~10×). Lets
-      // the user A/B test before committing a permanent change.
-      // `?fpscap=10` allows 90 Hz through (still caps 120 Hz to ~91).
-      // `?fpscap=0` removes the cap entirely.
+      // Probe 3 (mobile-perf-investigation): `?fpscap=N` URL override
+      // for DEFAULT_MIN_FRAME_INTERVAL_MS. See gameRafLoop.ts.
       const fpsCapParam = new URLSearchParams(window.location.search).get('fpscap');
       const fpsCapOverride = fpsCapParam !== null ? Math.max(0, parseFloat(fpsCapParam)) : null;
       const effectiveCapMs = fpsCapOverride !== null && !Number.isNaN(fpsCapOverride)
@@ -426,249 +416,16 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       if (fpsCapOverride !== null) {
         logEvent('fps_cap_override', { fpsCapParam, effectiveCapMs });
       }
-      // E2E-inspection dataset writes are throttled to every 5th frame
-      // (12 Hz) — at 60 Hz they were producing 21+ DOM mutations per
-      // frame including multiple `JSON.stringify(...)` calls, which
-      // measurably blocked the main thread and broke Playwright's
-      // "stable click target" detection (drawer-toggle clicks took
-      // 2.8–4 s instead of <100 ms). 12 Hz is still plenty for any
-      // poll-based E2E spec; specs that need higher cadence can
-      // override via the existing `__eqxClient.stats` path.
-      let frameCounter = 0;
-      // MIRROR_UPDATE throttle for the worker-renderer path. The
-      // structured-clone cost of `mirror` (containing Maps of ships +
-      // swarm + projectiles + beams) is paid by the main thread on
-      // every postMessage. At 60 Hz with ~hundreds of drones this
-      // measurably eats CDP roundtrip budget (drawer-cdp-starvation
-      // probe p95 climbed to 2.5 s under the worker after the
-      // architecture flip — main thread fine, marshaling costly).
-      // 30 Hz is well above visual flicker threshold and halves the
-      // marshaling cost. Skipped when useWorker is false — the
-      // main-thread renderer is a direct call, no postMessage.
-      let workerUpdateCounter = 0;
-      const loop = (now: number): void => {
-        if (!disposed) {
-          const isFirstFrame = lastFrameTime === 0;
-          const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
-          // Internal 60 Hz work-loop cap. On 90/120 Hz native displays
-          // we skip alternate RAFs and leave `lastFrameTime` stale so
-          // the next RAF's `deltaMs` reflects the full wall-clock gap.
-          // See `src/client/perf/frameRateCap.ts` for the rationale
-          // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
-          // `src/client/CLAUDE.md` for the load-bearing rule.
-          if (shouldSkipFrame(deltaMs, effectiveCapMs, isFirstFrame)) {
-            animFrameRef.current = requestAnimationFrame(loop);
-            return;
-          }
-          lastFrameTime = now;
-          // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
-          // The 2026-05-24 mg5rpe capture showed 99 % of RAFs land at
-          // exactly 22 ms = 1/45 Hz vsync, with the user reporting
-          // unplayable feel even at 0.354 % stalls. This says either
-          // (a) per-RAF cost is approaching 16.67 ms so Chrome aligns
-          // vsync to 45 Hz to give us breathing room, or (b) the 45 Hz
-          // floor is OS/thermal-imposed and unfixable from JS. The
-          // breakdown distinguishes the two: if physics+mirror+render
-          // sums to >12 ms steady-state, (a); if it sits comfortably
-          // <8 ms, (b). Logged every RAF (~45/s) into perf.ndjson via
-          // the rafWork tag — same order-of-magnitude as rafTick.
-          const physicsStart = performance.now();
-          gameClient.tickPhysics(deltaMs);
-          const mirrorStart = performance.now();
-          gameClient.updateMirror();
-          const renderStart = performance.now();
-          const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
-          if (shouldRender) renderer.update(gameClient.mirror);
-          const renderEnd = performance.now();
-          logEvent('rafWork', {
-            physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
-            mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
-            renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
-            shouldRender,
-            totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
-            deltaMs: parseFloat(deltaMs.toFixed(2)),
-          });
-          // Clear one-frame triggers ONLY after the renderer has actually
-          // consumed them. The clear MUST be gated on the same condition
-          // as the renderer-update — see `consumeOneFrameTriggers` for the
-          // contract and `perFrameTriggers.test.ts` for the regression lock.
-          consumeOneFrameTriggers(gameClient.mirror, shouldRender);
-
-          // F-transit-instrument — bounded post-reveal frame burst.
-          // `wantsFrame()` is false (single boolean read, zero cost)
-          // unless a transit curtain just dropped AND fewer than the
-          // hard cap (40) of frames have been recorded; it self-
-          // disables and emits `settled` exactly once. This makes the
-          // ts≈17546 stall (~2 s post-arrival, curtain down, settled)
-          // fall INSIDE a numbered `transit_frame` with elapsed-ms
-          // context — the black box the handoff calls out. `elapsedMs`
-          // is the frame's full wall delta (incl. this render).
-          // `spriteCount` is a CHEAP mirror-entity proxy (O(1) Map
-          // .size sum) — NOT a renderer-internal count (the
-          // RendererFeedback closed-set is deliberately untouched per
-          // the task constraint); it surfaces a first-render upload
-          // delta when entity count jumps post-reveal.
-          if (gameClient.transitInstr.wantsFrame()) {
-            const m = gameClient.mirror;
-            const spriteCount =
-              m.ships.size + (m.swarm?.size ?? 0) + (m.projectiles?.size ?? 0);
-            gameClient.transitInstr.frame(deltaMs, spriteCount);
-          }
-
-          // Join-render readiness: latch the moment the renderer first
-          // paints a frame with the local player visible. Drives the
-          // `gameReady` Zustand selector + WarpScreen fade-out. Read on
-          // EVERY frame (not gated to writeDataset) because the
-          // transition we care about happens once per session and we
-          // mustn't miss it.
-          if (!firstFramePixiLogged) {
-            const fb = renderer.getFeedback();
-            if (fb.firstFrameRendered) {
-              firstFramePixiLogged = true;
-              const lid = gameClient.mirror.localPlayerId;
-              const localEntry = lid ? gameClient.mirror.ships.get(lid) : null;
-              logEvent('pixi_first_frame', {
-                msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
-                shipsInMirror: gameClient.mirror.ships.size,
-                hasLocal: lid !== null,
-                localX: localEntry?.x ?? null,
-                localY: localEntry?.y ?? null,
-              });
-              useUIStore.getState().setRendererFirstFrameRendered(true);
-            }
-          }
-          const localId = gameClient.mirror.localPlayerId;
-          const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
-          const writeDataset = (++frameCounter % 5) === 0;
-          // Phase 2 of OffscreenCanvas migration: single batched
-          // renderer-feedback read per frame. Replaces per-attribute
-          // `renderer.mountCountForShip()` / `renderer.getDebugHaloArrowCount()`
-          // calls so the future worker-renderer (where each read is a
-          // postMessage) lands at a single cached-snapshot lookup site.
-          const feedback = writeDataset ? renderer.getFeedback() : null;
-          if (localShip && writeDataset && feedback) {
-            el.dataset['shipX'] = localShip.x.toFixed(3);
-            el.dataset['shipY'] = localShip.y.toFixed(3);
-            el.dataset['shipAngle'] = localShip.angle.toFixed(4);
-            // Multi-mount/turret refactor (Phase 3): expose the local ship's
-            // mount count so E2E specs can assert the new interceptor /
-            // gunship kinds wire visible turret sprites. Legacy single-mount
-            // fighter/scout/heavy report 1.
-            el.dataset['mountCount'] = String(feedback.mountCounts.get(localId!) ?? 0);
-          }
-          if (writeDataset && feedback) {
-          // Expose all ship positions for E2E cross-client position assertions.
-          const posMap: Record<string, { x: number; y: number }> = {};
-          for (const [id, s] of gameClient.mirror.ships) {
-            posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
-          }
-          el.dataset['shipPositions'] = JSON.stringify(posMap);
-          el.dataset['localPlayerId'] = localId ?? '';
-          el.dataset['predStats'] = JSON.stringify(gameClient.stats);
-          // Expose combat state for E2E assertions.
-          const uiState = useUIStore.getState();
-          el.dataset['hullPct'] = String(uiState.hullPct);
-          el.dataset['shieldPct'] = String(uiState.shieldPct);
-          el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
-          // Phase 6 — TiDi observables for the swarm-tidi / tidi-overlay E2E specs.
-          el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
-          el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
-          el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
-          el.dataset['haloArrowCount'] = String(feedback.haloArrowCount);
-          // Multi-mount/turret refactor (Phase 2c): `liveBeam` became
-          // `liveBeams: Map<mountId, ...>`. For legacy single-mount fighter/
-          // scout/heavy there is exactly one entry keyed by `'forward'`, so
-          // the existing E2E surface (`beamActive`, `beamFromX/Y`, `beamDist`)
-          // picks that entry as the "primary" beam. Multi-mount kinds expose
-          // every barrel via the same attribute names, separated by commas,
-          // so a Phase-3 spec can split on `','` if it wants per-mount data.
-          const liveBeams = gameClient.mirror.liveBeams;
-          const beamCount = liveBeams?.size ?? 0;
-          el.dataset['beamActive'] = beamCount > 0 ? '1' : '0';
-          el.dataset['beamCount']  = String(beamCount);
-          if (liveBeams && beamCount > 0 && localShip) {
-            const xs: string[] = [];
-            const ys: string[] = [];
-            const ds: string[] = [];
-            for (const beam of liveBeams.values()) {
-              // The exact mount-local geometry lives in PixiRenderer; the
-              // testid surface reports the ship-origin path (where the beam
-              // "comes from" semantically) so existing assertions keep
-              // working. Phase 3+ may extend this with per-mount world origin.
-              const fwdX = -Math.sin(localShip.angle);
-              const fwdY =  Math.cos(localShip.angle);
-              xs.push((localShip.x + fwdX * 20).toFixed(3));
-              ys.push((localShip.y + fwdY * 20).toFixed(3));
-              ds.push(beam.dist.toFixed(3));
-            }
-            el.dataset['beamFromX'] = xs.join(',');
-            el.dataset['beamFromY'] = ys.join(',');
-            el.dataset['beamDist']  = ds.join(',');
-          } else {
-            delete el.dataset['beamFromX'];
-            delete el.dataset['beamFromY'];
-            delete el.dataset['beamDist'];
-          }
-          // Multi-mount/turret refactor (Phase 2c): `remoteLasers` is now
-          // `Map<shooterId, Map<mountId, beam>>`. The E2E surface flattens
-          // across mounts — `remoteLaserCount` counts shooters (matches the
-          // pre-2c semantic), and `remoteLaserRanges` exposes the maximum
-          // beam range per shooter so legacy assertions still work for
-          // single-mount ships.
-          el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
-          const remoteHitTargetIds: string[] = [];
-          const remoteLaserRanges: Record<string, number> = {};
-          if (gameClient.mirror.remoteLasers) {
-            for (const [shooterId, perShooter] of gameClient.mirror.remoteLasers) {
-              let maxRange = 0;
-              for (const l of perShooter.values()) {
-                if (l.targetId) remoteHitTargetIds.push(l.targetId);
-                if (l.range > maxRange) maxRange = l.range;
-              }
-              remoteLaserRanges[shooterId] = parseFloat(maxRange.toFixed(2));
-            }
-          }
-          el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
-          el.dataset['remoteLaserRanges'] = JSON.stringify(remoteLaserRanges);
-          // Phase 5e: per-entity sleeping flags for the sleep-handshake E2E.
-          // Map of entityId → boolean. Empty when there's no swarm in view.
-          if (gameClient.mirror.swarm) {
-            const sleepMap: Record<string, boolean> = {};
-            for (const [entityId, s] of gameClient.mirror.swarm) {
-              sleepMap[String(entityId)] = !!s.sleeping;
-            }
-            el.dataset['swarmSleeping'] = JSON.stringify(sleepMap);
-          } else {
-            delete el.dataset['swarmSleeping'];
-          }
-          // Expose swarm positions (asteroids/drones) for E2E collision stability
-          // assertions. The string-keyed `data-obstacle-positions` attribute is
-          // preserved so existing E2E tests keep working: each swarm entityId is
-          // serialised as `swarm-${entityId}` to differentiate from the old
-          // hand-rolled `asteroid-N` ids the legacy MapSchema used.
-          if (gameClient.mirror.swarm) {
-            const swarmMap: Record<string, { x: number; y: number }> = {};
-            const swarmDetail: Record<string, { x: number; y: number; angle: number; kind: number; sleeping: boolean; lastUpdateTick: number; radius: number }> = {};
-            for (const [entityId, entry] of gameClient.mirror.swarm.entries()) {
-              const key = `swarm-${entityId}`;
-              swarmMap[key] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
-              swarmDetail[key] = {
-                x: parseFloat(entry.x.toFixed(3)),
-                y: parseFloat(entry.y.toFixed(3)),
-                angle: parseFloat(entry.angle.toFixed(4)),
-                kind: entry.kind,
-                sleeping: entry.sleeping,
-                lastUpdateTick: entry.lastUpdateTick,
-                radius: entry.radius,
-              };
-            }
-            el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
-            el.dataset['swarmDetail'] = JSON.stringify(swarmDetail);
-          }
-          } // end if (writeDataset)
-          animFrameRef.current = requestAnimationFrame(loop);
-        }
-      };
+      const loop = createGameRafLoop({
+        el,
+        gameClient,
+        renderer,
+        useWorker,
+        effectiveCapMs,
+        phaseEnterPerfNow,
+        animFrameRef,
+        isDisposed: () => disposed,
+      });
       animFrameRef.current = requestAnimationFrame(loop);
 
       const storedId = loadStoredPlayerId();
