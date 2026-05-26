@@ -45,7 +45,7 @@ const CAP_SLACK = 10; // tolerate a small in-flight delta during a session
  */
 const ALLOWLIST = {
   'src/server/rooms/SectorRoom.ts': {
-    cap: 3563,
+    cap: 3437,
     target: 450,
     reason:
       'v3 plan commits 20-23 split this into 17 collaborators (PhysicsWorkerProxy, ' +

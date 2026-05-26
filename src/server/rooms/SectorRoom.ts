@@ -35,7 +35,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, RespawnAckMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, DestroyEvent, RespawnAckMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -52,6 +52,7 @@ import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
 import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
+import { DamageRouter } from './DamageRouter.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -452,6 +453,9 @@ export class SectorRoom extends Room<SectorState> {
    *  rewind + 4-target sweep + aggregate hit_ack. Extracted to
    *  `PlayerFireResolver.ts`. */
   private playerFireResolver!: PlayerFireResolver;
+  /** Damage routing — 4 branches (wreck / lingering / active / swarm).
+   *  Extracted to `DamageRouter.ts`. */
+  private damageRouter!: DamageRouter;
   /** Two-layer shield/hull damage + regen routing. Owns the swarm-side
    *  shield/hull state (swarmHealth, swarmShield, swarmShieldLastDmg) +
    *  the three layered-damage methods. Extracted to
@@ -753,6 +757,32 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
       postToWorker: (cmd) => this.postToWorker(cmd),
       broadcast: (type, msg) => this.broadcast(type, msg),
+    });
+
+    // Damage routing. Four branches (wreck / lingering / active /
+    // swarm), each composing ShieldHullRouter + WreckLifecycleCoordinator
+    // + evictSwarmEntity. Extracted to DamageRouter.ts.
+    this.damageRouter = new DamageRouter({
+      serverTick: () => this.serverTick,
+      shipsMap: this.state.ships,
+      wrecksMap: this.state.wrecks,
+      shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
+      wreckPoseCache: this.wreckCoordinator.wreckPoseCache,
+      destroyWreck: (id) => this.destroyWreck(id),
+      freeSlots: this.freeSlots,
+      shieldHullRouter: this.shieldHullRouter,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      sabF32: this.sabF32,
+      swarmRegistry: this.swarmRegistry,
+      evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec as SwarmEntityRecord, opts),
+      aiController: this.aiController,
+      bus: this.bus,
+      broadcastDamage: (msg) => this.broadcast('damage', msg),
+      broadcastDestroy: (msg) => this.broadcast('destroy', msg),
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      logger,
     });
 
     // Server-side projectile lifecycle. Spawn + per-tick sweep + cleanup.
@@ -1192,163 +1222,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
-    // Phase 4 — wreck damage. Wire id has the `wreck-` prefix; the rest
-    // is the shipInstanceId UUID. Route to `state.wrecks` and tear down
-    // on health 0.
-    if (targetId.startsWith('wreck-')) {
-      const shipInstanceId = targetId.slice('wreck-'.length);
-      const wreck = this.state.wrecks.get(shipInstanceId);
-      if (!wreck) return;
-      wreck.health = Math.max(0, wreck.health - damage);
-      const pose = this.wreckPoseCache.get(shipInstanceId);
-      this.broadcast('damage', {
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: wreck.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: 0,
-        shieldMax: 0,
-        hullMax: wreck.maxHealth,
-        hitLayer: 'hull',
-      } satisfies DamageEvent);
-      if (wreck.health <= 0) {
-        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
-        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        this.destroyWreck(shipInstanceId);
-        logger.info({ shipInstanceId, shooterId }, 'wreck destroyed');
-      }
-      return;
-    }
-
-    // Phase 6b — when targetId is a shipInstanceId (a lingering hull, hit
-    // by a projectile sweep that iterates lingeringSlots), route through
-    // the schema directly. Otherwise fall back to the active-ship path
-    // (targetId is a playerId, resolved via the indirection map).
-    const directLingering = this.state.ships.get(targetId);
-    if (directLingering && !directLingering.isActive) {
-      if (!directLingering.alive) return;
-      // Lingering hulls keep shield + regen. Collider swap deferred
-      // (workerBodyId null): the lingering worker body id has two cases
-      // (playerId vs linger-<id>) resolved in a Phase-6 follow-up.
-      const f = this.damageShipLayered(directLingering, damage, null);
-      const pose = this.lingeringPoseCache.get(targetId);
-      const dmgEvent: DamageEvent = {
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: directLingering.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: f.newShield,
-        shieldMax: f.shieldMax,
-        hullMax: f.hullMax,
-        hitLayer: f.hitLayer,
-      };
-      this.broadcast('damage', dmgEvent);
-      if (directLingering.health <= 0) {
-        directLingering.alive = false;
-        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
-        // Free the lingering slot and clear schema bookkeeping. The
-        // roster row deletion happens via the SHIP_DESTROYED bus
-        // handler's deleteRosterRow call below.
-        const slot = this.lingeringSlots.get(targetId);
-        if (slot !== undefined) {
-          this.lingeringSlots.delete(targetId);
-          this.lingeringPoseCache.delete(targetId);
-          this.freeSlots.push(slot);
-          // After the fresh-spawn-displaces rekey, the worker's body
-          // for this hull is keyed by `linger-${shipInstanceId}`,
-          // NOT by playerId (which now points at the player's active
-          // ship). Despawn the correct body.
-          this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${targetId}` });
-        }
-        this.state.ships.delete(targetId);
-        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        logger.info({ shipInstanceId: targetId, shooterId }, 'lingering hull destroyed');
-      }
-      return;
-    }
-
-    const ship = this.getActiveShip(targetId);
-    if (ship) {
-      if (!ship.alive) return;
-      // Active branch: targetId is the playerId, which is exactly the
-      // worker body id for the player ship (SPAWN used playerId).
-      const f = this.damageShipLayered(ship, damage, targetId);
-
-      const pose = this.shipPoseCache.get(targetId);
-      const dmgEvent: DamageEvent = {
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: ship.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: f.newShield,
-        shieldMax: f.shieldMax,
-        hullMax: f.hullMax,
-        hitLayer: f.hitLayer,
-      };
-      this.broadcast('damage', dmgEvent);
-      this.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
-
-      if (ship.health <= 0) {
-        ship.alive = false;
-        const destroyEvent: DestroyEvent = { type: 'destroy', targetId, shooterId };
-        this.broadcast('destroy', destroyEvent);
-        this.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        logger.info({ targetId, shooterId }, 'ship destroyed');
-      }
-      return;
-    }
-
-    // Swarm target. Asteroids (kind=0) have no `swarmHealth` entry and are
-    // immune; drones (kind=1) take damage and despawn at zero health.
-    const rec = this.swarmRegistry.get(targetId);
-    if (!rec) return;
-    const sf = this.damageSwarmLayered(rec, damage);
-    if (sf === null) return; // immune (asteroid - no swarmHealth entry)
-    const newHealth = this.swarmHealth.get(targetId) ?? 0;
-
-    // Broadcast damage event keyed by the wire id (`swarm-${entityId}`) so the
-    // client can flash the right sprite. Damage event reuses the player shape
-    // — clients that key `mirror.damagedShips` by the same id will pick it up.
-    const wireTargetId = `swarm-${rec.entityId}`;
-    const b = slotBase(rec.slot);
-    const swarmHitX = hitX ?? this.sabF32[b + SLOT_X_OFF]!;
-    const swarmHitY = hitY ?? this.sabF32[b + SLOT_Y_OFF]!;
-    this.broadcast('damage', {
-      type: 'damage',
-      targetId: wireTargetId,
-      damage,
-      newHealth,
-      shooterId,
-      hitX: swarmHitX,
-      hitY: swarmHitY,
-      newShield: sf.newShield,
-      shieldMax: sf.shieldMax,
-      hullMax: sf.hullMax,
-      hitLayer: sf.hitLayer,
-    } satisfies DamageEvent);
-
-    // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and
-    // adds the shooter to its hostile set. Same call goes to the client
-    // from its damage-event handler — both sides converge on the same
-    // hostility state without a wire-format bump.
-    if (shooterId) {
-      this.aiController.markHostile(rec.id, shooterId, this.serverTick);
-    }
-
-    if (newHealth <= 0) {
-      this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: true, shooterId });
-    }
+    this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
   }
 
   /** Iterates positions of currently-alive players, for the LoadShedder.
