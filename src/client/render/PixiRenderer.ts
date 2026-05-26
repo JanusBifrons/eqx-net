@@ -4,9 +4,9 @@ import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
-import { updateShipSprites } from './pixi/shipSpriteUpdater.js';
-import { updateSwarmSprites } from './pixi/swarmSpriteUpdater.js';
-import { updateProjectileSprites } from './pixi/projectileSpriteUpdater.js';
+import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
+import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
+import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
@@ -147,6 +147,16 @@ export class PixiRenderer implements IRenderer {
   private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
   private readonly _updateLingeringPoseEntries: { x: number; y: number }[] = [];
   private readonly _updateProjSeenScratch = new Set<string>();
+  /** 2026-05-26 heap-growth gate step 12 — pooled per-frame ctx objects
+   *  for the extracted sprite updaters. Pre-fix each `update()` call
+   *  allocated 3 fresh ctx literals (8/7/3 fields) at 60-90 Hz =
+   *  ~180-270 obj/s, triggering brief GC compaction in the 22-30 ms
+   *  inter-RAF gap band. Every field references a permanent member
+   *  (Container, Map, Set, MountVisualManager) — initialised once in
+   *  the constructor after `this.shipContainer` is assigned. */
+  private _shipUpdaterCtx!: ShipSpriteCtx;
+  private _swarmUpdaterCtx!: SwarmSpriteCtx;
+  private _projectileUpdaterCtx!: ProjectileSpriteCtx;
   private readonly halo = new HaloRadar();
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
@@ -306,6 +316,38 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
+
+    // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
+    // per-frame sprite updaters. All fields are permanent references;
+    // initialised once here, mutated never. Object identity stable for
+    // the renderer's lifetime. Eliminates ~180-270 obj/s of per-frame
+    // ctx-literal allocation introduced by the god-file refactor.
+    // `!`-declared readonly fields accept the constructor-body
+    // assignment without any cast.
+    this._shipUpdaterCtx = {
+      shipContainer: this.shipContainer,
+      sprites: this.sprites,
+      thrustFlames: this.thrustFlames,
+      boostFlames: this.boostFlames,
+      mountVisuals: this.mountVisuals,
+      remoteHitTargets: this._updateRemoteHitTargetsScratch,
+      localHitTargets: this._updateLocalHitTargetsScratch,
+      seenScratch: this._updateSeenScratch,
+    };
+    this._swarmUpdaterCtx = {
+      shipContainer: this.shipContainer,
+      sprites: this.sprites,
+      mountVisuals: this.mountVisuals,
+      swarmPoseScratch: this.swarmPoseScratch,
+      remoteHitTargets: this._updateRemoteHitTargetsScratch,
+      localHitTargets: this._updateLocalHitTargetsScratch,
+      seenScratch: this._updateSeenScratch,
+    };
+    this._projectileUpdaterCtx = {
+      shipContainer: this.shipContainer,
+      projectileSprites: this.projectileSprites,
+      projSeenScratch: this._updateProjSeenScratch,
+    };
 
     this.halo.init(this.camera);
     // Damage numbers attach to the world (pan with camera, anchored at
@@ -500,17 +542,10 @@ export class PixiRenderer implements IRenderer {
     fillHitTargetSets(mirror, remoteHitTargets, localHitTargets);
 
     // Active-ship sprite update — sprite creation, pose, tint, thrust
-    // + boost flames. See pixi/shipSpriteUpdater.ts.
-    updateShipSprites(mirror, {
-      shipContainer: this.shipContainer,
-      sprites: this.sprites,
-      thrustFlames: this.thrustFlames,
-      boostFlames: this.boostFlames,
-      mountVisuals: this.mountVisuals,
-      remoteHitTargets,
-      localHitTargets,
-      seenScratch: seen,
-    });
+    // + boost flames. See pixi/shipSpriteUpdater.ts. Ctx pooled to
+    // `this._shipUpdaterCtx` (heap-growth gate step 12) — same fields
+    // every frame, no per-call literal allocation.
+    updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
     // 2026-05-13 — look up the targetId across ALL three sprite maps
@@ -571,16 +606,8 @@ export class PixiRenderer implements IRenderer {
     }
 
     // Phase 5c swarm sprites (asteroids + drones) — see
-    // pixi/swarmSpriteUpdater.ts.
-    updateSwarmSprites(mirror, {
-      shipContainer: this.shipContainer,
-      sprites: this.sprites,
-      mountVisuals: this.mountVisuals,
-      swarmPoseScratch: this.swarmPoseScratch,
-      remoteHitTargets,
-      localHitTargets,
-      seenScratch: seen,
-    });
+    // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.
+    updateSwarmSprites(mirror, this._swarmUpdaterCtx);
 
     for (const [id, sprite] of this.sprites) {
       if (!seen.has(id)) {
@@ -597,11 +624,8 @@ export class PixiRenderer implements IRenderer {
     }
 
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
-    updateProjectileSprites(mirror, {
-      shipContainer: this.shipContainer,
-      projectileSprites: this.projectileSprites,
-      projSeenScratch: this._updateProjSeenScratch,
-    });
+    // Ctx pooled to `this._projectileUpdaterCtx`.
+    updateProjectileSprites(mirror, this._projectileUpdaterCtx);
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.

@@ -38,11 +38,12 @@ import { RafStallDetector } from './RafStallDetector.js';
 import {
   routeSnapshotShipStates,
   applyBoostingThrustingSets,
+  type ShipRouterCtx,
 } from './snapshotShipRouter.js';
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { preResetRemoteShips, applyDroneMountAngles } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyDroneMountAngles, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
@@ -479,6 +480,38 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** 2026-05-26 heap-growth gate step 12 — pre-bound method for
+   *  `routeSnapshotShipStates` ctx. Pre-fix the call site allocated
+   *  a fresh arrow `(id) => this.tryEnsureLingerPredBody(id)` per
+   *  snapshot (20 Hz). Bound once at construction. */
+  private readonly _boundTryEnsureLingerPredBody = (id: string): void => {
+    this.tryEnsureLingerPredBody(id);
+  };
+  /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
+   *  `routeSnapshotShipStates`. All references stable except
+   *  `predWorld` (null until first welcome), which is mutated on the
+   *  ctx before each call. Pre-fix every snapshot (20 Hz) allocated
+   *  a fresh 6-field ctx literal + the bound arrow above. */
+  private readonly _routeSnapshotShipStatesCtx: ShipRouterCtx = {
+    mirror: this.mirror,
+    predWorld: null,
+    lingerBodies: this.lingerBodies,
+    tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
+    lingeringSeenScratch: this._lingeringSeenScratch,
+    lingeringToEvictScratch: this._lingeringToEvictScratch,
+  };
+  /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
+   *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
+   *  only volatile field. Pre-fix allocated a fresh 6-field ctx per
+   *  snapshot (20 Hz). */
+  private readonly _preResetRemoteShipsCtx: PreResetRemoteCtx = {
+    predWorld: null,
+    mirror: this.mirror,
+    preResetRemotePosScratch: this._preResetRemotePosScratch,
+    preResetRemotePosEntries: this._preResetRemotePosEntries,
+    remoteLastInputs: this._remoteLastInputs,
+    remoteForwardTicks: this._remoteForwardTicks,
+  };
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -1718,14 +1751,12 @@ export class ColyseusGameClient {
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
     // to a playerId-keyed local view + route inactive (lingering)
     // hulls to mirror.lingeringShips. See snapshotShipRouter.ts.
-    routeSnapshotShipStates(snap, {
-      mirror: this.mirror,
-      predWorld: this.predWorld,
-      lingerBodies: this.lingerBodies,
-      tryEnsureLingerPredBody: (id) => this.tryEnsureLingerPredBody(id),
-      lingeringSeenScratch: this._lingeringSeenScratch,
-      lingeringToEvictScratch: this._lingeringToEvictScratch,
-    });
+    // Ctx pooled to `this._routeSnapshotShipStatesCtx` (heap-growth
+    // gate step 12). `predWorld` is the only volatile field — mutate
+    // before the call. Other fields, including the pre-bound
+    // `tryEnsureLingerPredBody` arrow, are stable.
+    this._routeSnapshotShipStatesCtx.predWorld = this.predWorld;
+    routeSnapshotShipStates(snap, this._routeSnapshotShipStatesCtx);
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
@@ -1828,14 +1859,10 @@ export class ColyseusGameClient {
       // Reset remote ships to serverTick state BEFORE reconcile +
       // stash pre-reset poses for the post-reconcile lerp-offset
       // computation. See snapshotRemoteSync.ts.
-      const preResetRemotePos = preResetRemoteShips(snap, localId, {
-        predWorld: this.predWorld,
-        mirror: this.mirror,
-        preResetRemotePosScratch: this._preResetRemotePosScratch,
-        preResetRemotePosEntries: this._preResetRemotePosEntries,
-        remoteLastInputs: this._remoteLastInputs,
-        remoteForwardTicks: this._remoteForwardTicks,
-      });
+      // Ctx pooled to `this._preResetRemoteShipsCtx`. `predWorld` is
+      // the only volatile field; mutate before call.
+      this._preResetRemoteShipsCtx.predWorld = this.predWorld;
+      const preResetRemotePos = preResetRemoteShips(snap, localId, this._preResetRemoteShipsCtx);
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
 
