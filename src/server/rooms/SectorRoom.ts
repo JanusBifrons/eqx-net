@@ -53,6 +53,7 @@ import { RespawnHandler } from './RespawnHandler.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
+import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -70,7 +71,7 @@ import {
   MAX_ENTITIES,
 } from '../../shared-types/sabLayout.js';
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
-import { checkBackpressure } from '../net/Backpressure.js';
+// checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
 import { recordGameJoin, recordGameLeave, recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
@@ -300,6 +301,8 @@ export class SectorRoom extends Room<SectorState> {
   private get interestScratch(): Map<string, Set<number>> { return this.snapshotBroadcaster.interestScratch; }
   /** Per-client snapshot broadcaster. Extracted to `SnapshotBroadcaster.ts`. */
   private snapshotBroadcaster!: SnapshotBroadcaster;
+  /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
+  private swarmBroadcaster!: SwarmBroadcaster;
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -881,6 +884,24 @@ export class SectorRoom extends Room<SectorState> {
       droneMountAngles: this.mountTicker.droneMountAngles,
       logger,
       serverLogEvent,
+    });
+
+    // Per-client binary swarm packet broadcaster. Encodes the swarm
+    // packet per-client with the 9-cell interest window (Phase 5d).
+    // The interestScratch Set populated here is REUSED by the snapshot
+    // broadcaster's drone slice (same per-(client,tick) cell window).
+    this.swarmBroadcaster = new SwarmBroadcaster({
+      serverTick: () => this.serverTick,
+      sabF32: this.sabF32,
+      sabU32: this.sabU32,
+      clients: this.clients,
+      sessionToPlayer: this.sessionToPlayer,
+      playerToSlot: this.playerToSlot,
+      interestGrid: this.interestGrid,
+      swarmRegistry: this.swarmRegistry,
+      swarmEncoder: this.swarmEncoder,
+      snapshotBroadcaster: this.snapshotBroadcaster,
+      logger,
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -2849,32 +2870,7 @@ export class SectorRoom extends Room<SectorState> {
     // deltas. Phase 5d: encode per-client with the spatial grid's 9-cell
     // interest window. Out-of-interest entities still ship at decimated
     // cadence inside the encoder.
-    if (this.serverTick > 0 && this.clients.length > 0) {
-      for (const client of this.clients) {
-        const bp = checkBackpressure(client, logger);
-        if (bp === 'close') { client.leave(4002); continue; }
-        if (bp === 'drop') continue;
-
-        const playerId = this.sessionToPlayer.get(client.sessionId);
-        const slot = playerId !== undefined ? this.playerToSlot.get(playerId) : undefined;
-        let inInterest: Set<number> | undefined;
-        if (slot !== undefined) {
-          const b = slotBase(slot);
-          const sx = this.sabF32[b + SLOT_X_OFF]!;
-          const sy = this.sabF32[b + SLOT_Y_OFF]!;
-          const { cx, cy } = this.interestGrid.cellOf(sx, sy);
-          let scratch = this.interestScratch.get(client.sessionId);
-          if (!scratch) {
-            scratch = new Set<number>();
-            this.interestScratch.set(client.sessionId, scratch);
-          }
-          this.interestGrid.query9(cx, cy, scratch);
-          inInterest = scratch;
-        }
-        const swarmPacket = this.swarmEncoder.encode(this.swarmRegistry, this.sabF32, this.sabU32, this.serverTick, inInterest);
-        if (swarmPacket) client.send('swarm', swarmPacket);
-      }
-    }
+    this.swarmBroadcaster.broadcast();
     phaseTime('swarmEncode');
     phaseTime('swarmBroadcast');
 
