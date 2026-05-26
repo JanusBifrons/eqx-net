@@ -31,8 +31,21 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient';
+import { SnapshotCoalescer } from './SnapshotCoalescer';
 import { getRingEntries, __resetDiagCache } from '../debug/ClientLogger';
 import type { SnapshotMessage } from '@shared-types/messages';
+
+/**
+ * Reach for the coalescer instance the client constructs in its
+ * constructor. The coalescer state was previously inline on the client
+ * (the `_pendingSnapshot` / `_coalescedSinceLastProcess` private fields
+ * the original tests poked). Post-extraction the state lives in
+ * `SnapshotCoalescer`; this accessor mirrors the old field-poking
+ * pattern so the regression-lock cases keep their identity.
+ */
+function getCoalescer(c: ColyseusGameClient): SnapshotCoalescer {
+  return (c as unknown as { snapshotCoalescer: SnapshotCoalescer }).snapshotCoalescer;
+}
 
 function setSearch(query: string): void {
   window.history.replaceState({}, '', `/?${query}`);
@@ -74,31 +87,36 @@ describe('Probe 6 — snapshot coalescing constructor + URL flag', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
+    expect(getCoalescer(c).isEnabled()).toBe(true);
     // Trigger pending queue manually (bypassing onMessage which needs a real room).
-    (c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot = makeSnapshot(100);
+    getCoalescer(c).enqueue(makeSnapshot(100));
     c.processPendingSnapshot();
-    // Pending was cleared (processed) — confirms coalesce path is active.
-    expect((c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot).toBeNull();
+    // Drain processed the snapshot — second drain is a no-op (apply count stable).
+    const before = getAppliedEvents().length;
+    c.processPendingSnapshot();
+    expect(getAppliedEvents().length).toBe(before);
   });
 
   it('?coalesce=0: coalesce DISABLED — processPendingSnapshot is a no-op', () => {
     setSearch('coalesce=0');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const target = makeSnapshot(100);
-    (c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot = target;
+    expect(getCoalescer(c).isEnabled()).toBe(false);
+    // enqueue() on a disabled coalescer is also a no-op (legacy path
+    // would have invoked applySnapshotNow directly from onMessage).
+    getCoalescer(c).enqueue(makeSnapshot(100));
     c.processPendingSnapshot();
-    // Pending was NOT cleared — coalesce-disabled path skipped it.
-    expect((c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot).toBe(target);
+    expect(getAppliedEvents().length).toBe(0);
   });
 
   it('?coalesce=1 (or any non-"0") explicit: ENABLED', () => {
     setSearch('coalesce=1');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    (c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot = makeSnapshot(100);
+    expect(getCoalescer(c).isEnabled()).toBe(true);
+    getCoalescer(c).enqueue(makeSnapshot(100));
     c.processPendingSnapshot();
-    expect((c as unknown as { _pendingSnapshot: SnapshotMessage | null })._pendingSnapshot).toBeNull();
+    expect(getAppliedEvents().length).toBe(1);
   });
 });
 
@@ -107,12 +125,7 @@ describe('Probe 6 — snapshot_coalesced event', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const ci = c as unknown as {
-      _pendingSnapshot: SnapshotMessage | null;
-      _coalescedSinceLastProcess: number;
-    };
-    ci._pendingSnapshot = makeSnapshot(100);
-    ci._coalescedSinceLastProcess = 0;
+    getCoalescer(c).enqueue(makeSnapshot(100));
     c.processPendingSnapshot();
     expect(getCoalescedEvents().length).toBe(0);
   });
@@ -121,19 +134,11 @@ describe('Probe 6 — snapshot_coalesced event', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const ci = c as unknown as {
-      _pendingSnapshot: SnapshotMessage | null;
-      _coalescedSinceLastProcess: number;
-    };
-    // Simulate 5 onMessage fires during a stall. The implementation
-    // sets _pendingSnapshot each time and bumps the counter when a
-    // previous pending existed (so first arrival increments by 0,
-    // each subsequent by 1).
-    ci._pendingSnapshot = makeSnapshot(100); // first arrival, no prior pending
-    for (let i = 101; i <= 104; i++) {
-      // Subsequent arrivals overwrite + count.
-      ci._coalescedSinceLastProcess++;
-      ci._pendingSnapshot = makeSnapshot(i);
+    // Simulate 5 onMessage fires during a stall — each one calls
+    // enqueue(). The coalescer bumps the dropped counter on every
+    // subsequent enqueue while a previous pending exists.
+    for (let i = 100; i <= 104; i++) {
+      getCoalescer(c).enqueue(makeSnapshot(i));
     }
     c.processPendingSnapshot();
     const events = getCoalescedEvents();
@@ -146,17 +151,12 @@ describe('Probe 6 — snapshot_coalesced event', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const ci = c as unknown as {
-      _pendingSnapshot: SnapshotMessage | null;
-      _coalescedSinceLastProcess: number;
-    };
-    // Set pending to oldest, then overwrite with newer ones.
-    ci._pendingSnapshot = makeSnapshot(50);
-    ci._coalescedSinceLastProcess = 4; // 4 prior were dropped
-    ci._pendingSnapshot = makeSnapshot(99);
+    // 5 enqueues — the last one wins.
+    for (let i = 95; i <= 99; i++) {
+      getCoalescer(c).enqueue(makeSnapshot(i));
+    }
     c.processPendingSnapshot();
     const applied = getAppliedEvents();
-    // ONLY ONE snapshot_applied event, with the NEWEST serverTick.
     expect(applied.length).toBe(1);
     expect(applied[0].serverTick).toBe(99);
   });
@@ -165,8 +165,7 @@ describe('Probe 6 — snapshot_coalesced event', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const ci = c as unknown as { _pendingSnapshot: SnapshotMessage | null };
-    ci._pendingSnapshot = makeSnapshot(100);
+    getCoalescer(c).enqueue(makeSnapshot(100));
     c.processPendingSnapshot(); // processes
     c.processPendingSnapshot(); // no-op (pending is null)
     const applied = getAppliedEvents();
@@ -181,14 +180,8 @@ describe('Probe 6 — snapshot_coalesced event', () => {
     setSearch('');
     __resetDiagCache();
     const c = new ColyseusGameClient();
-    const ci = c as unknown as {
-      _pendingSnapshot: SnapshotMessage | null;
-      _coalescedSinceLastProcess: number;
-    };
-    ci._pendingSnapshot = makeSnapshot(100);
-    for (let i = 101; i <= 109; i++) {
-      ci._coalescedSinceLastProcess++;
-      ci._pendingSnapshot = makeSnapshot(i);
+    for (let i = 100; i <= 109; i++) {
+      getCoalescer(c).enqueue(makeSnapshot(i));
     }
     c.processPendingSnapshot();
     const events = getCoalescedEvents();

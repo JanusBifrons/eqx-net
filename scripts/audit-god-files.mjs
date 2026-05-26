@@ -53,7 +53,7 @@ const ALLOWLIST = {
       'BroadcastScheduler, etc.); orchestrator target ~450 LOC.',
   },
   'src/client/net/ColyseusClient.ts': {
-    cap: 4041,
+    cap: 4026,
     target: 350,
     reason:
       'v3 plan commits 16-19 split this into 15 collaborators (PredictionStateManager, ' +

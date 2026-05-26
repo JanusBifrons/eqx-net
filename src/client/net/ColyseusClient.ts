@@ -39,6 +39,7 @@ import {
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
+import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -180,7 +181,7 @@ export class ColyseusGameClient {
     } catch {
       // Non-browser context — keep default.
     }
-    this._coalesceEnabled = coalesceParam !== '0';
+    this.snapshotCoalescer = new SnapshotCoalescer(coalesceParam !== '0');
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -568,9 +569,7 @@ export class ColyseusGameClient {
    *  mean stays stable. Spiral breaks.
    *
    *  Default ON. URL override: `?coalesce=0` disables for A/B testing. */
-  private _pendingSnapshot: SnapshotMessage | null = null;
-  private _coalesceEnabled: boolean;
-  private _coalescedSinceLastProcess = 0;
+  private readonly snapshotCoalescer: SnapshotCoalescer;
 
   /** RAF counter for periodic heap sampling between stalls. */
   private _rafSampleCounter = 0;
@@ -950,11 +949,8 @@ export class ColyseusGameClient {
       // (the newer snap supersedes; snapshots are full-state, not deltas).
       // The discarded count is logged so we can see the burst-collapse
       // happening in captures.
-      if (this._coalesceEnabled) {
-        if (this._pendingSnapshot !== null) {
-          this._coalescedSinceLastProcess++;
-        }
-        this._pendingSnapshot = snap;
+      if (this.snapshotCoalescer.isEnabled()) {
+        this.snapshotCoalescer.enqueue(snap);
         return;
       }
       this.applySnapshotNow(snap);
@@ -1711,18 +1707,7 @@ export class ColyseusGameClient {
    * No-op when `?coalesce=0`.
    */
   processPendingSnapshot(): void {
-    if (!this._coalesceEnabled || this._pendingSnapshot === null) return;
-    const snap = this._pendingSnapshot;
-    this._pendingSnapshot = null;
-    const dropped = this._coalescedSinceLastProcess;
-    this._coalescedSinceLastProcess = 0;
-    if (dropped > 0) {
-      logEvent('snapshot_coalesced', {
-        dropped,
-        newestServerTick: snap.serverTick,
-      });
-    }
-    this.applySnapshotNow(snap);
+    this.snapshotCoalescer.drain((snap) => this.applySnapshotNow(snap));
   }
 
   private handleSnapshot(snap: SnapshotMessage): void {
