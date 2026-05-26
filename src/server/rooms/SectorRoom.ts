@@ -12,18 +12,14 @@ import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
-import { SpatialGrid, CELL_SIZE } from '../interest/SpatialGrid.js';
+import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import {
-  shouldBroadcastFar,
   createIdleTracker,
   noteSectorEvent,
   isSectorIdle,
-  createLastInputCache,
-  shouldIncludeLastInput,
   type LastInputCache,
   type IdleTracker,
-  type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
@@ -35,7 +31,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -56,6 +52,7 @@ import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
+import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -67,12 +64,7 @@ import {
   SLOT_ANGLE_OFF,
   SLOT_ANGVEL_OFF,
   SLOT_APPLIED_TICK_OFF,
-  SLOT_FLAGS_OFF,
-  FLAG_INPUT_THRUST,
-  FLAG_INPUT_TURN_LEFT,
-  FLAG_INPUT_TURN_RIGHT,
-  FLAG_INPUT_BOOST,
-  FLAG_INPUT_REVERSE,
+  // FLAG_INPUT_* + SLOT_FLAGS_OFF now used inside SnapshotBroadcaster.ts
   slotBase,
   SAB_TOTAL_BYTES,
   MAX_ENTITIES,
@@ -301,8 +293,13 @@ export class SectorRoom extends Room<SectorState> {
   private readonly swarmEncoder = new BinarySwarmBroadcast();
   /** Phase 5d: per-client interest grid. 2048-unit cells, 3×3 query window. */
   private readonly interestGrid = new SpatialGrid();
-  /** Reused per-tick scratch sets so query9 doesn't allocate per call. */
-  private readonly interestScratch = new Map<string, Set<number>>();
+  /** Reused per-tick scratch sets so query9 doesn't allocate per call.
+   *  Owned by SnapshotBroadcaster (extracted); aliased here so the
+   *  swarm-broadcast block earlier in update() keeps reading the same
+   *  Map identity. */
+  private get interestScratch(): Map<string, Set<number>> { return this.snapshotBroadcaster.interestScratch; }
+  /** Per-client snapshot broadcaster. Extracted to `SnapshotBroadcaster.ts`. */
+  private snapshotBroadcaster!: SnapshotBroadcaster;
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -360,8 +357,10 @@ export class SectorRoom extends Room<SectorState> {
    *  every snapshot so observers can see a baseline thrust flame whenever
    *  a ship is accelerating. Strict superset of `boostingPlayers`. */
   private readonly thrustingPlayers = new Set<string>();
-  /** Last client input tick the physics worker confirmed it applied, read from SAB. */
-  private sabAppliedTicks = new Map<string, number>();
+  /** Last client input tick the physics worker confirmed it applied, read from SAB.
+   *  Owned by SnapshotBroadcaster (extracted); aliased here for the
+   *  worker-read site + the room's onJoin/onLeave callers. */
+  private get sabAppliedTicks(): Map<string, number> { return this.snapshotBroadcaster.sabAppliedTicks; }
   /** Per-tick mirror of player ship pose, sourced from SAB inside `update()`.
    *  Replaces the previous practice of mirroring pose into `ShipState` (a
    *  Colyseus schema) — that path was emitting a duplicate broadcast on top
@@ -377,12 +376,11 @@ export class SectorRoom extends Room<SectorState> {
    *  {@link shouldBroadcastClose} predicates. Field retained for the
    *  swarm broadcast (binary channel) which still uses the same 60 Hz
    *  cadence with no per-client phasing. */
-  private broadcastCounter = 0;
+  /** Owned by SnapshotBroadcaster (extracted). */
+  private get broadcastCounter(): number { return this.snapshotBroadcaster.broadcastCounter; }
   /** Stage 5 — per-recipient cache of the last lastInput bits sent for
-   *  each ship, used by {@link shouldIncludeLastInput} to omit the
-   *  field when the bits haven't changed. Keyed by Colyseus sessionId;
-   *  cleared in onLeave. */
-  private readonly lastInputCaches = new Map<string, LastInputCache>();
+   *  each ship. Owned by SnapshotBroadcaster (extracted). */
+  private get lastInputCaches(): Map<string, LastInputCache> { return this.snapshotBroadcaster.lastInputCaches; }
   /** Stage 5 — sector-wide idle tracker. Updated each update() with
    *  motion / projectile-in-flight signals; when isSectorIdle returns
    *  true, the snapshot broadcast block short-circuits entirely. */
@@ -857,6 +855,32 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+    });
+
+    // Per-client snapshot broadcaster. Owns broadcastCounter,
+    // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
+    // per-client 20Hz phase-staggered loop with the global "all alive
+    // ships" digest. Extracted to SnapshotBroadcaster.ts.
+    this.snapshotBroadcaster = new SnapshotBroadcaster({
+      serverTick: () => this.serverTick,
+      sabU32: this.sabU32,
+      clients: this.clients,
+      sessionToPlayer: this.sessionToPlayer,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
+      shipsMap: this.state.ships,
+      wreckPoseCache: this.wreckCoordinator.wreckPoseCache,
+      liveProjectiles: this.projectiles.liveProjectiles,
+      boostingPlayers: this.boostingPlayers,
+      thrustingPlayers: this.thrustingPlayers,
+      swarmRegistry: this.swarmRegistry,
+      playerMountAngles: this.mountTicker.playerMountAngles,
+      droneMountAngles: this.mountTicker.droneMountAngles,
+      logger,
+      serverLogEvent,
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -2912,277 +2936,7 @@ export class SectorRoom extends Room<SectorState> {
     // loops drift; using SAB tick % 3 for scheduling caused ~25% missed
     // broadcasts pre-Phase-3. See `docs/LESSONS.md`. broadcastCounter is
     // purely main-thread and so is monotonic with update() calls.
-    this.broadcastCounter++;
-    if (this.serverTick > 0 && !sectorIdle) {
-      // Build the global "all alive ships" digest once — same data for every
-      // recipient, just the inclusion decision differs per (recipient, ship).
-      type AllShipEntry = {
-        playerId: string;
-        // Phase 6a — outer wire key. Falls back to playerId for any ship
-        // missing a shipInstanceId (shouldn't happen post-synthetic-UUID
-        // step, but defensive).
-        shipInstanceId: string;
-        // Phase 6a — true for any ship in 6a (one active hull per player
-        // is invariant). Phase 6b will surface lingering hulls with false.
-        isActive: boolean;
-        pose: ShipPhysicsState;
-        lastInput: ShipInputBits;
-      };
-      const allShips: AllShipEntry[] = [];
-      const ackedTicksTelemetry: Record<string, number> = {};
-      const aliveIds = new Set<string>();
-      for (const [playerId, slot] of this.playerToSlot) {
-        const ship = this.getActiveShip(playerId);
-        if (!ship || !ship.alive) continue;
-        const pose = this.shipPoseCache.get(playerId);
-        if (!pose) continue;
-        // Stage 3 — read the worker's last-applied input bits out of SAB
-        // FLAGS so remote clients can forward-predict this ship. Bits 3–7
-        // of the FLAGS u32; sleeping/swarm bits 0–2 are masked off.
-        const flags = this.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
-        allShips.push({
-          playerId,
-          shipInstanceId: ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId,
-          isActive: ship.isActive,
-          pose,
-          lastInput: {
-            thrust:    !!(flags & FLAG_INPUT_THRUST),
-            turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
-            turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
-            boost:     !!(flags & FLAG_INPUT_BOOST),
-            reverse:   !!(flags & FLAG_INPUT_REVERSE),
-          },
-        });
-        aliveIds.add(playerId);
-        ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
-      }
-      // Phase 6b — append lingering hulls to allShips. These have no
-      // active player driving them; their pose comes from
-      // lingeringPoseCache, their owner from state.ships entry's
-      // playerId field, and isActive=false. lastInput is all-false
-      // (the worker doesn't apply input to lingering hulls). They get
-      // included in every recipient's snapshot the same way active
-      // hulls do, so clients see them drifting in the sector.
-      for (const [shipInstanceId, _slot] of this.lingeringSlots) {
-        const ship = this.state.ships.get(shipInstanceId);
-        if (!ship || !ship.alive) continue;
-        const pose = this.lingeringPoseCache.get(shipInstanceId);
-        if (!pose) continue;
-        allShips.push({
-          playerId: ship.playerId,
-          shipInstanceId,
-          isActive: false,
-          pose,
-          lastInput: {
-            thrust: false, turnLeft: false, turnRight: false,
-            boost: false, reverse: false,
-          },
-        });
-      }
-
-      // Boosting/thrusting filter — small lists, sent in every snapshot.
-      const boostingIds: string[] = [];
-      for (const id of this.boostingPlayers) {
-        if (aliveIds.has(id)) boostingIds.push(id);
-      }
-      const thrustingIds: string[] = [];
-      for (const id of this.thrustingPlayers) {
-        if (aliveIds.has(id)) thrustingIds.push(id);
-      }
-      const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
-      if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
-      if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
-
-      // 3×3 cell window radius for projectile interest (unchanged from
-      // pre-Stage-5).
-      const interestRadius = CELL_SIZE * 1.5;
-      let anySnapshotSent = false;
-
-      for (const client of this.clients) {
-        const bp = checkBackpressure(client, logger);
-        if (bp === 'close') { client.leave(4002); continue; }
-        if (bp === 'drop') continue;
-
-        const recipientPlayerId = this.sessionToPlayer.get(client.sessionId);
-        if (!recipientPlayerId) continue;
-
-        // Stage 5 (post-hotfix #4) — single 20 Hz cadence with per-client
-        // phase offset hashed from playerId. Two recipients with different
-        // offsets almost never fire on the same tick, smoothing CPU spikes,
-        // but each individual recipient sees a clean 50 ms interval at 20 Hz.
-        if (!shouldBroadcastFar(this.broadcastCounter, recipientPlayerId)) continue;
-
-        const recipientPose = this.shipPoseCache.get(recipientPlayerId);
-        if (!recipientPose) continue;
-
-        let lastInputCache = this.lastInputCaches.get(client.sessionId);
-        if (!lastInputCache) {
-          lastInputCache = createLastInputCache();
-          this.lastInputCaches.set(client.sessionId, lastInputCache);
-        }
-
-        // Build per-recipient states map. Every alive ship is included
-        // (no tier-based filtering — single-cadence design); per-recipient
-        // lastInput omission still applies to save bytes on idle ships.
-        const states: SnapshotMessage['states'] = {};
-        for (const ship of allShips) {
-          const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
-          // Phase 4b.3 — per-mount rotation angles, included only when the
-          // ship has rotating mounts (legacy fighter/scout/heavy stays
-          // null and the field is omitted from the wire, no byte cost).
-          // Each entry is the arc-local slewed angle for the mount at
-          // that index in the ship-kind's catalogue. The client renders
-          // every observer's turrets at these angles and reseeds its
-          // own predicted angles when a snapshot lands.
-          const angles = this.playerMountAngles.get(ship.playerId);
-          let mountAnglesArr: number[] | undefined;
-          if (angles && angles.length > 0) {
-            let anyNonZero = false;
-            for (let i = 0; i < angles.length; i++) {
-              if (angles[i] !== 0) { anyNonZero = true; break; }
-            }
-            if (anyNonZero) {
-              mountAnglesArr = new Array<number>(angles.length);
-              for (let i = 0; i < angles.length; i++) {
-                // Quantise to 4 decimal places (~0.006° resolution) to
-                // dedupe trailing-noise drift across the wire — the JSON
-                // serialiser compresses repeats of the same number better
-                // and the visible quality is identical at typical zoom.
-                mountAnglesArr[i] = Math.round(angles[i]! * 10_000) / 10_000;
-              }
-            }
-          }
-          // Phase 6a wire key: shipInstanceId. Each entry carries
-          // playerId (for owner identity) and isActive (for the
-          // client's visibility / piloting gate). Other entry fields
-          // unchanged from pre-6a snapshots.
-          states[ship.shipInstanceId] = {
-            x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
-            angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
-            playerId: ship.playerId,
-            isActive: ship.isActive,
-            ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
-            ...(mountAnglesArr ? { mountAngles: mountAnglesArr } : {}),
-          };
-        }
-
-        // Per-recipient projectiles in the 3×3 cell window.
-        let projectiles: SnapshotMessage['projectiles'];
-        if (this.liveProjectiles.size > 0) {
-          for (const [projId, proj] of this.liveProjectiles) {
-            if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
-            if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
-            if (!projectiles) projectiles = [];
-            projectiles.push({
-              id: projId,
-              x: proj.x, y: proj.y, vx: proj.vx, vy: proj.vy,
-              ownerId: proj.ownerId,
-              weaponId: proj.weaponId,
-            });
-          }
-        }
-
-        // Slim per-drone turret + shield slice (drone-snapshot-interpolation
-        // pivot, 2026-05-18). Drone POSE is NO LONGER on the JSON snapshot —
-        // it flows exclusively on the binary swarm channel and the client
-        // renders it via time-based `interpolateSwarmPose` (no client AI
-        // re-sim, no predWorld reconcile anchor). For every drone in this
-        // recipient's 9-cell interest window we emit ONLY the non-pose
-        // fields that ride JSON: per-mount turret angles + the shield-down
-        // flag, and ONLY when there is something to carry (no `{ id }`-only
-        // entries — they would just be wasted bytes).
-        //
-        // Reuse the `interestScratch` Set populated by the swarm-broadcast
-        // block earlier in this `update()` — same per-(client, tick) cell
-        // window, no second `query9` call. Asteroids (kind === 0) are
-        // skipped — they have no turret/shield. The binary channel still
-        // carries every in-interest drone's pose at full cadence.
-        let drones: SnapshotMessage['drones'];
-        const interest = this.interestScratch.get(client.sessionId);
-        if (interest && interest.size > 0) {
-          for (const eid of interest) {
-            const rec = this.swarmRegistry.getByEntityId(eid);
-            if (!rec || rec.kind !== 1) continue;
-            // Phase 4c — per-drone mount angles for in-interest drones
-            // whose ship-kind has rotating mounts. Only emitted when at
-            // least one angle is non-zero (quantised to dedupe trailing
-            // noise), same gate as the player snapshot path. Out-of-
-            // interest drones never reach this branch, so their turrets
-            // render at baseAngle on the client until they re-enter
-            // interest and the next snapshot updates them.
-            const droneAngles = this.droneMountAngles.get(rec.id);
-            let droneMountAnglesArr: number[] | undefined;
-            if (droneAngles && droneAngles.length > 0) {
-              let anyNonZero = false;
-              for (let i = 0; i < droneAngles.length; i++) {
-                if (droneAngles[i] !== 0) { anyNonZero = true; break; }
-              }
-              if (anyNonZero) {
-                droneMountAnglesArr = new Array<number>(droneAngles.length);
-                for (let i = 0; i < droneAngles.length; i++) {
-                  droneMountAnglesArr[i] = Math.round(droneAngles[i]! * 10_000) / 10_000;
-                }
-              }
-            }
-            if (!droneMountAnglesArr && !rec.shieldDown) continue;
-            if (!drones) drones = [];
-            drones.push({
-              id: eid,
-              ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
-              ...(rec.shieldDown ? { shieldDown: true } : {}),
-            });
-          }
-        }
-
-        const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
-        // Phase 4 — wreck poses for every wreck in the sector. No
-        // interest filtering: the wreck count per sector is bounded
-        // (one per abandoned ship; players are 10-capped) and Phase 5
-        // can add interest culling if rosters grow.
-        let wrecks: SnapshotMessage['wrecks'];
-        if (this.wreckPoseCache.size > 0) {
-          wrecks = [];
-          for (const [shipInstanceId, pose] of this.wreckPoseCache) {
-            wrecks.push({
-              id: shipInstanceId,
-              x: pose.x, y: pose.y,
-              vx: pose.vx, vy: pose.vy,
-              angle: pose.angle, angvel: pose.angvel ?? 0,
-            });
-          }
-        }
-        const snap: SnapshotMessage = {
-          type: 'snapshot',
-          serverTick: this.serverTick,
-          states,
-          ackedTick: recipientAcked,
-          ...sharedTail,
-          ...(projectiles ? { projectiles } : {}),
-          ...(drones ? { drones } : {}),
-          ...(wrecks ? { wrecks } : {}),
-        };
-        client.send('snapshot', snap);
-        anySnapshotSent = true;
-      }
-
-      // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick) to preserve
-      // pre-Stage-5 log volume even though the actual broadcast is per-client.
-      if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
-        serverLogEvent('snapshot_broadcast', {
-          serverTick: this.serverTick,
-          playerCount: this.playerToSlot.size,
-          ackedTicks: ackedTicksTelemetry,
-          states: Object.fromEntries(
-            allShips.map((s) => [s.playerId, {
-              x: parseFloat(s.pose.x.toFixed(3)),
-              y: parseFloat(s.pose.y.toFixed(3)),
-              vx: parseFloat(s.pose.vx.toFixed(3)),
-              vy: parseFloat(s.pose.vy.toFixed(3)),
-            }]),
-          ),
-        });
-      }
-    }
+    this.snapshotBroadcaster.broadcast(sectorIdle);
     phaseTime('snapshotBroadcast');
 
     // Tick AI behaviours AT THE END of update() so impulses posted now reach
