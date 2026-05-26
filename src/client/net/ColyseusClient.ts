@@ -14,7 +14,6 @@ import {
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
-  recordRemoteCorrection,
   shouldForwardPredict,
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
@@ -44,6 +43,7 @@ import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { preResetRemoteShips, applyDroneMountAngles } from './snapshotRemoteSync.js';
+import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
@@ -124,7 +124,6 @@ import {
   REMOTE_SPRING_POS_END,
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
-  remoteOffsetHalfLifeForDrift,
 } from './predictionTuning.js';
 
 /** Simple monotonically incrementing shot ID generator. */
@@ -1836,40 +1835,15 @@ export class ColyseusGameClient {
       this._lastReconcileMs = this.clock.now() - reconcileStartMs;
       this._lastReplayWindow = replayWindow;
 
-      // Compute remote ship lerp offsets.
+      // Post-reconcile remote-ship render lerp offsets — see
+      // remoteLerpOffsets.ts.
       if (this.predWorld) {
-        for (const [remoteId, preReset] of preResetRemotePos) {
-          const postReconcile = this.predWorld.getShipState(remoteId);
-          if (!postReconcile) continue;
-          const ox = preReset.x - postReconcile.x;
-          const oy = preReset.y - postReconcile.y;
-          const dist = Math.hypot(ox, oy);
-          // Stage 3 — feed the per-remote correction magnitude into the
-          // hysteresis guard. 3 consecutive corrections > 5 u disable
-          // forward-prediction for this remote; 3 consecutive < 5 u
-          // re-enable it. Sticky thresholds avoid oscillation.
-          recordRemoteCorrection(this._predGuard, remoteId, dist);
-          if (dist > 1) {
-            const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
-            // Re-anchor the spring at the new offset; velocity zeroed
-            // so the spring's first step is governed purely by the new
-            // offset. This matches Reconciler.reconcile behaviour.
-            const existing = this._remoteShipOffsets.get(remoteId);
-            if (existing) {
-              existing.sx.x = ox;
-              existing.sx.v = 0;
-              existing.sy.x = oy;
-              existing.sy.v = 0;
-              existing.halfLifeMs = halfLifeMs;
-            } else {
-              this._remoteShipOffsets.set(remoteId, {
-                sx: { x: ox, v: 0 },
-                sy: { x: oy, v: 0 },
-                halfLifeMs,
-              });
-            }
-          }
-        }
+        computeRemoteLerpOffsets({
+          predWorld: this.predWorld,
+          preResetRemotePos,
+          remoteShipOffsets: this._remoteShipOffsets,
+          predGuard: this._predGuard,
+        });
       }
 
       const drift = this.reconciler.lastDrift;
