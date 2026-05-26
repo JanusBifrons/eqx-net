@@ -59,6 +59,8 @@ import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { mirrorSabPoses } from './SabPoseMirror.js';
+import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
+import { recordLagCompPoses } from './lagCompRecorder.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -2421,63 +2423,27 @@ export class SectorRoom extends Room<SectorState> {
       for (const playerId of abandoned) this.convertShipToWreck(playerId);
     }
 
-    // Phase 5d: keep the spatial grid current. Most entities don't cross a
-    // 2048-unit cell boundary in a single tick at typical drone/asteroid
-    // speeds (~30-100 u/s), so move() returns early without touching the
-    // bucket map. Cost is one Map.get + integer compare per entity.
-    //
-    // Phase 1 AI backstop: while we iterate, also catch any drone that
-    // has drifted past `DRONE_MAX_BOUNDS` and post a SET_POSITION worker
-    // command to teleport it back. Patrol behaviour pulls drones home in
-    // normal play; this is a "should never fire" guard against runaway
-    // pursuits and the long-session drift bug (real diag: drones at
-    // (4 133 782, -1 093 669) on 2026-05-10). Asteroids unaffected.
-    for (const rec of this.swarmRegistry.all()) {
-      const b = slotBase(rec.slot);
-      const sx = this.sabF32[b + SLOT_X_OFF]!;
-      const sy = this.sabF32[b + SLOT_Y_OFF]!;
-      this.interestGrid.move(rec.entityId, sx, sy);
-      if (rec.kind === 1 && (Math.abs(sx) > DRONE_MAX_BOUNDS || Math.abs(sy) > DRONE_MAX_BOUNDS)) {
-        const clampedX = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sx));
-        const clampedY = Math.max(-DRONE_MAX_BOUNDS, Math.min(DRONE_MAX_BOUNDS, sy));
-        this.postToWorker({
-          type: 'SET_POSITION',
-          entityId: rec.id,
-          x: clampedX, y: clampedY,
-          angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-          vx: 0, vy: 0, angvel: 0,
-        });
-        logger.warn({ entityId: rec.id, sx, sy }, 'drone position clamped to bounds');
-      }
-    }
+    // Phase 5d spatial-grid update + Phase 1 AI runaway-bounds clamp.
+    // See swarmInterestUpdater.ts.
+    updateSwarmInterestGrid({
+      swarmRegistry: this.swarmRegistry,
+      interestGrid: this.interestGrid,
+      sabF32: this.sabF32,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      droneMaxBounds: DRONE_MAX_BOUNDS,
+    });
     phaseTime('sabRead');
 
-    // Record poses for lag compensation. Allocation-free: streams directly
-    // through `beginTick` + `recordEntity` instead of materializing an
-    // intermediate array. Covers every dynamic entity — ships AND swarm —
-    // so the polygon-aware hit resolver can rewind any obstacle's pose
-    // (position + angle) to the shooter's tick. Mass-independent: any
-    // moving entity benefits from accurate hit attribution.
-    this.snapshotRing.beginTick(this.serverTick);
-    for (const id of this.playerToSlot.keys()) {
-      const ship = this.getActiveShip(id);
-      if (!ship?.alive) continue;
-      const pose = this.shipPoseCache.get(id);
-      if (!pose) continue;
-      this.snapshotRing.recordEntity(id, pose.x, pose.y, pose.vx, pose.vy, pose.angle, pose.angvel ?? 0);
-    }
-    for (const rec of this.swarmRegistry.all()) {
-      const b = slotBase(rec.slot);
-      this.snapshotRing.recordEntity(
-        rec.id,
-        this.sabF32[b + SLOT_X_OFF]!,
-        this.sabF32[b + SLOT_Y_OFF]!,
-        this.sabF32[b + SLOT_VX_OFF]!,
-        this.sabF32[b + SLOT_VY_OFF]!,
-        this.sabF32[b + SLOT_ANGLE_OFF]!,
-        this.sabF32[b + SLOT_ANGVEL_OFF]!,
-      );
-    }
+    // Per-tick lag-comp recording — see lagCompRecorder.ts.
+    recordLagCompPoses({
+      snapshotRing: this.snapshotRing,
+      serverTick: this.serverTick,
+      playerToSlot: this.playerToSlot,
+      shipPoseCache: this.shipPoseCache,
+      swarmRegistry: this.swarmRegistry,
+      sabF32: this.sabF32,
+      getActiveShip: (id) => this.getActiveShip(id),
+    });
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
