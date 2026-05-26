@@ -28,7 +28,6 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
-import { InputMessageSchema } from '../../shared-types/messages.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
@@ -65,6 +64,7 @@ import {
   findAbandonedPlayers,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
+import { makeInputHandler } from './InputHandler.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -1101,51 +1101,17 @@ export class SectorRoom extends Room<SectorState> {
       this.transitOrchestrator.cancelTransit(playerId, 'manual');
     });
 
-    this.onMessage('input', (client: Client, raw: unknown) => {
-      const playerId = this.sessionToPlayer.get(client.sessionId);
-      if (!playerId) return;
-
-      const count = this.inputCountThisTick.get(playerId) ?? 0;
-      if (count >= MAX_INPUTS_PER_TICK) return;
-      this.inputCountThisTick.set(playerId, count + 1);
-
-      const result = InputMessageSchema.safeParse(raw);
-      if (!result.success) {
-        logger.warn({ sessionId: client.sessionId }, 'malformed input message');
-        return;
-      }
-      const { tick, thrust, turnLeft, turnRight } = result.data;
-      const boost = result.data.boost ?? false;
-      const reverse = result.data.reverse ?? false;
-      const slot = this.playerToSlot.get(playerId);
-      if (slot !== undefined) {
-        this.postToWorker({ type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse });
-      }
-      // Track per-player boost state so the snapshot can broadcast it to all
-      // observers for the visual exhaust trail. Only "active" while boosting
-      // AND thrusting — shift alone doesn't visually do anything.
-      if (boost && thrust) this.boostingPlayers.add(playerId);
-      else this.boostingPlayers.delete(playerId);
-      // Parallel track: any thrust at all gets a baseline flame. Superset of
-      // `boostingPlayers` (boost ⇒ thrust). Renderer layers boost on top.
-      if (thrust) this.thrustingPlayers.add(playerId);
-      else this.thrustingPlayers.delete(playerId);
-      // Diagnostic: log every 30th input plus any input whose claimed tick is
-      // far from the current server tick (indicates clock drift). The delta
-      // tells us how the client's tick numbering relates to the server's.
-      const tickDelta = tick - this.serverTick;
-      if ((tick % 30) === 0 || Math.abs(tickDelta) > 5) {
-        serverLogEvent('input_received', {
-          playerId,
-          claimedTick: tick,
-          serverTick: this.serverTick,
-          tickDelta,
-          thrust,
-          turnLeft,
-          turnRight,
-        });
-      }
-    });
+    this.onMessage('input', makeInputHandler({
+      sessionToPlayer: this.sessionToPlayer,
+      inputCountThisTick: this.inputCountThisTick,
+      maxInputsPerTick: MAX_INPUTS_PER_TICK,
+      playerToSlot: this.playerToSlot,
+      boostingPlayers: this.boostingPlayers,
+      thrustingPlayers: this.thrustingPlayers,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      serverTick: () => this.serverTick,
+      logger,
+    }));
 
     this.onMessage('fire', (client: Client, raw: unknown) => {
       this.handleFire(client, raw);
