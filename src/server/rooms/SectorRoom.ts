@@ -31,7 +31,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -55,6 +55,7 @@ import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { SectorPersistence } from './SectorPersistence.js';
+import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -300,6 +301,8 @@ export class SectorRoom extends Room<SectorState> {
   private swarmBroadcaster!: SwarmBroadcaster;
   /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
   private sectorPersistence!: SectorPersistence;
+  /** Living World bot lifecycle (spawn/despawn/markHostile). Extracted to `LivingWorldBotHooks.ts`. */
+  private livingWorldBotHooks!: LivingWorldBotHooks;
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -943,6 +946,29 @@ export class SectorRoom extends Room<SectorState> {
       logger.error({ requested: asteroidRoster.length, seeded }, 'swarm spawner: not all asteroids seeded (slot pool exhausted)');
     }
 
+    // Living World bot lifecycle hooks (spawn/despawn/markHostile).
+    // These satisfy the LivingWorldRoom contract; bots are server-
+    // internal swarm entities, NOT Colyseus clients.
+    this.livingWorldBotHooks = new LivingWorldBotHooks({
+      serverTick: () => this.serverTick,
+      sectorKey: () => this.sectorKey,
+      sabF32: this.sabF32,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      swarmHealth: this.shieldHullRouter.swarmHealth,
+      swarmRegistry: this.swarmRegistry,
+      swarmSpawner: this.swarmSpawner,
+      aiController: this.aiController,
+      evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec, opts),
+      extendBroadcastGrace: (untilTick) => { this.forceBroadcastUntilTick = untilTick; },
+      joinBroadcastGraceTicks: JOIN_BROADCAST_GRACE_TICKS,
+      broadcastWarpIn: (msg) => this.broadcast('warp_in', msg),
+      broadcastWarpOut: (msg) => this.broadcast('warp_out', msg),
+      broadcastBotAggro: (msg) => this.broadcast('bot_aggro', msg),
+      bus: this.bus,
+      clients: this.clients,
+    });
+
     if (useSingleAsteroid) {
       // Stationary asteroid 600 u from spawn — far enough that the worker's
       // sleep hysteresis (12 ticks at v ≈ 0) trips quickly without the
@@ -1418,103 +1444,15 @@ export class SectorRoom extends Room<SectorState> {
     vy?: number;
     health?: number;
   }): boolean {
-    const ok = this.swarmSpawner.spawnDrone({
-      id: spec.botId,
-      x: spec.x,
-      y: spec.y,
-      vx: spec.vx ?? 0,
-      vy: spec.vy ?? 0,
-      kind: spec.kind,
-    });
-    if (!ok) return false;
-    const maxHp = getDroneMaxHealth(spec.kind) ?? 40;
-    this.swarmHealth.set(spec.botId, spec.health ?? maxHp);
-    // Stream snapshots regardless of motion so a freshly-arrived client
-    // reconciles the new body (mirrors the player-join grace; see the
-    // warp/transit join-broadcast-grace lesson in src/server/CLAUDE.md).
-    this.forceBroadcastUntilTick = this.serverTick + JOIN_BROADCAST_GRACE_TICKS;
-    this.broadcast('warp_in', {
-      type: 'warp_in',
-      playerId: spec.botId,
-      x: spec.x,
-      y: spec.y,
-    } satisfies WarpInEvent);
-    this.bus.emit('BOT_SPAWNED', {
-      type: 'BOT_SPAWNED',
-      botId: spec.botId,
-      sectorKey: this.sectorKey,
-      x: spec.x,
-      y: spec.y,
-    });
-    return true;
+    return this.livingWorldBotHooks.spawnBot(spec);
   }
 
-  /**
-   * Quietly remove a Living World bot for an inter-sector warp, returning
-   * its carry-state for the destination room. Broadcasts warp-out so
-   * occupants see it leave, then reuses the LoadShedder's proven quiet
-   * teardown (`evictSwarmEntity { broadcast:false, emitDestroyed:false }`):
-   * no `destroy` message and — critically — NO `ENTITY_DESTROYED` (that
-   * bus event is the director's respawn trigger; a transit must not look
-   * like a kill). Returns null if the bot isn't registered here.
-   */
   despawnLivingWorldBot(botId: string): BotCarry | null {
-    const rec = this.swarmRegistry.get(botId);
-    if (!rec) return null;
-    const b = slotBase(rec.slot);
-    const carry: BotCarry = {
-      kind: (rec.shipKind as ShipKindId | undefined) ?? DEFAULT_SHIP_KIND,
-      health: this.swarmHealth.get(botId) ?? getDroneMaxHealth(rec.shipKind) ?? 40,
-      vx: this.sabF32[b + SLOT_VX_OFF]!,
-      vy: this.sabF32[b + SLOT_VY_OFF]!,
-      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-    };
-    const x = this.sabF32[b + SLOT_X_OFF]!;
-    const y = this.sabF32[b + SLOT_Y_OFF]!;
-    this.broadcast('warp_out', {
-      type: 'warp_out',
-      playerId: botId,
-      x,
-      y,
-    } satisfies WarpOutEvent);
-    this.evictSwarmEntity(rec, { broadcast: false, emitDestroyed: false });
-    this.bus.emit('BOT_DESPAWNED', {
-      type: 'BOT_DESPAWNED',
-      botId,
-      sectorKey: this.sectorKey,
-      reason: 'transit',
-    });
-    return carry;
+    return this.livingWorldBotHooks.despawnBot(botId);
   }
 
-  /**
-   * Make a Living World bot proactively hostile to every active player in
-   * this sector via the EXISTING, lockstep-proven `markHostile` channel
-   * (the same call `applyDamage` makes), and broadcast a discrete
-   * `bot_aggro` the client applies through its own
-   * `_aiController.markHostile` — the server→client twin of the
-   * damage→markHostile mirror. The drone's existing COMBAT branch then
-   * pursues + fires the nearest hostile. Re-called by the director each
-   * control tick so the 30 s hostility decay never trips while a player
-   * is present (a lost packet self-heals on the next pass). No-op if the
-   * bot isn't registered here or no players are present.
-   */
   markBotHostile(botId: string): void {
-    const rec = this.swarmRegistry.get(botId);
-    if (!rec) return;
-    const wireId = `swarm-${rec.entityId}`;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive || !ship.isActive) continue;
-      this.aiController.markHostile(botId, pid, this.serverTick);
-      this.broadcast('bot_aggro', {
-        type: 'bot_aggro',
-        botEntityId: wireId,
-        targetPlayerId: pid,
-        tick: this.serverTick,
-      } satisfies BotAggroEvent);
-    }
+    this.livingWorldBotHooks.markBotHostile(botId);
   }
 
   private handleRespawn(client: Client): void {
