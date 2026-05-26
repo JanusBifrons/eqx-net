@@ -1,8 +1,8 @@
 import { Application, Graphics, Container } from 'pixi.js';
-import { ShockwaveFilter, ZoomBlurFilter, BloomFilter } from 'pixi-filters';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
-import { DEFAULT_WARP_PARAMS, type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
+import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
+import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 import { HaloRadar } from './HaloRadar';
@@ -45,24 +45,13 @@ const LASER_CORE_COLOR = 0xffffff;
  * loading) and fades over the same window as `flashDurationMs` so the
  * arrival flash can hide the curtain fade.
  */
-const CURTAIN_PEAK_ALPHA = 0.97;
-const CURTAIN_RISE_MS = 200;
-const CURTAIN_FADE_MS = 380;
-
-// Pure warp-visual decision helpers moved to `pixi/warpHelpers.ts`.
-// Re-exported here so `PixiRenderer.warpDetach.test.ts`,
-// `PixiRenderer.warpBurst.test.ts`, `PixiRenderer.warpCenter.test.ts`,
-// and `App.tsx` continue to import them from this file unchanged.
+// CURTAIN_* + warp helpers now used inside WarpFilterChain.ts.
+// Re-exported here so existing test imports keep working.
 export {
   shouldDetachWarpVisual,
   warpEventFiresBurst,
   resolveWarpFilterCenter,
   type WarpBurstEvent,
-} from './pixi/warpHelpers.js';
-import {
-  shouldDetachWarpVisual,
-  warpEventFiresBurst,
-  resolveWarpFilterCenter,
 } from './pixi/warpHelpers.js';
 
 
@@ -108,74 +97,9 @@ export class PixiRenderer implements IRenderer {
    * directly. GlitchFilter remains unusable in worker context — see
    * `WarpParams` doc in `worker/protocol.ts`.
    */
-  private warpActive = false;
-  private warpStage: Container | null = null;
-  private warpShockwaves: ShockwaveFilter[] | null = null;
-  /** Radial motion-blur layered on top of the shockwave stack at the same
-   *  centre. Cheap pure-shader filter (no DOM, worker-safe). */
-  private warpZoomBlur: ZoomBlurFilter | null = null;
-  /** Current params for the warp visual. Defaults from `DEFAULT_WARP_PARAMS`;
-   *  mutated by `setWarpParams(partial)` (sandbox-only). */
-  private warpParams: WarpParams = { ...DEFAULT_WARP_PARAMS };
-  /** Anchor for the warp centre. World-space anchors are projected to
-   *  screen via `world.toGlobal` each frame; screen-space anchors are
-   *  used as-is. `null` = use screen centre. See `WarpCenter` in
-   *  `worker/protocol.ts`. */
-  private warpCenter: WarpCenter | null = null;
-  /** Wall-clock ms when warp was last armed. Drives the two-phase ramp. */
-  private warpStartedAt = 0;
-  /** Fade-out scalar 0..1 — 1 while armed, ramps to 0 over fadeOutMs after disarm. */
-  private warpIntensity = 0;
-  /** Wall-clock ms when fade-out started, or 0 if not fading. */
-  private warpFadeStartedAt = 0;
-  /** Current warp phase. Drives count + radius selection in the tick. */
-  private warpPhase: 'idle' | 'spool' | 'climax' = 'idle';
-  /** Wall-clock ms when the current phase began. Used to compute each
-   *  ShockwaveFilter's `time` uniform RELATIVE to phase start, so the
-   *  wave is always at radius 0 at phase entry rather than at whatever
-   *  random radius `(performance.now() / 1000) % cycleSec` happens to
-   *  produce. Without this the climax wave can spawn mid-cycle and be
-   *  invisibly far off-centre for the first ~second of climax. */
-  private warpPhaseStartedAt = 0;
-  /** Count + radius the current `warpShockwaves` array was built for.
-   *  When `warpPhase` transitions, the tick rebuilds the array if these
-   *  no longer match the desired (phase-derived) values. */
-  private warpStackCount = 0;
-  private warpStackRadius = -1;
-  /** One-shot ShockwaveFilter that fires at the exit moment (when
-   *  `setWarpMode(false)` is called) and at warp-in. Lives in the
-   *  filter chain at amplitude 0 most of the time. */
-  private warpBurst: ShockwaveFilter | null = null;
-  /** Wall-clock ms when the burst was last triggered, or 0 if inactive. */
-  private warpBurstStartedAt = 0;
-  /** Full-canvas white overlay that fires alongside the burst — hides
-   *  the ship's despawn / cushions the arrival. Lives on `warpStage`
-   *  (above world, NOT inside the warp filter chain). */
-  private warpFlash: Graphics | null = null;
-  /** Full-canvas dark overlay used as a "loading curtain" during the
-   *  join + transit load periods — hides the canvas while the mirror
-   *  is empty / partial / pre-snapshot so the user doesn't see ship-
-   *  at-(0,0) ghost frames or rippled-asteroid bleed-through. Lives on
-   *  `warpStage` BELOW `warpFlash` so the flash can pop on top during
-   *  the arrival reveal. Pure alpha-tween animation. */
-  private loadCurtain: Graphics | null = null;
-  /** Target alpha for the curtain — set by `setLoadCurtain`. Tweened
-   *  toward this each frame in `tickWarpShockwaves`. */
-  private loadCurtainTargetAlpha = 0;
-  /** Wall-clock ms when the current curtain tween started. */
-  private loadCurtainTweenStartedAt = 0;
-  /** Curtain alpha at the moment the current tween started. */
-  private loadCurtainTweenFromAlpha = 0;
-  /** BloomFilter applied last in the warp chain so the bright wavefront
-   *  glows. Strength ramps with climax progress + fade-out intensity;
-   *  amplifies the burst's `brightness` uniform so distant viewers
-   *  catch the wavefront as a luminous line even before displacement
-   *  reaches their screen. */
-  private warpBloom: BloomFilter | null = null;
-  /** When a `triggerWarpIn` call was the SOLE trigger (no spool/climax /
-   *  fade was active), this flag lets the tick tear down the filter
-   *  attachment after the burst completes. */
-  private warpStandaloneBurst = false;
+  /** Warp visual chain (shockwave + bloom + flash + load curtain).
+   *  Extracted to `pixi/WarpFilterChain.ts`. Constructed in `init()`. */
+  private warp!: WarpFilterChain;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -355,6 +279,19 @@ export class PixiRenderer implements IRenderer {
       followLerpFactor: 1,
     });
     this.camera.setScreenSize(initialW, initialH);
+
+    // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
+    // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
+    this.warp = new WarpFilterChain(
+      this.app,
+      this.world,
+      this.camera,
+      (entityId) => {
+        const s = this.sprites.get(entityId);
+        return s ? { x: s.x, y: s.y } : undefined;
+      },
+      this.frameMarkers,
+    );
 
     this.backgroundGrid = new BackgroundGrid();
     this.backgroundGrid.attach(this.camera);
@@ -1091,7 +1028,7 @@ export class PixiRenderer implements IRenderer {
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
     if (mirror.pendingWarpEvents && mirror.pendingWarpEvents.length > 0) {
-      const burstInFlight = this.warpBurstStartedAt > 0;
+      const burstInFlight = this.warp.isBurstInFlight();
       if (!burstInFlight) {
         // Fire ONLY the first queued event this frame. Subsequent
         // events get visually skipped — at 1-2 warps/sec from drones
@@ -1330,527 +1267,36 @@ export class PixiRenderer implements IRenderer {
    */
   setWarpMode(active: boolean): void {
     if (!this.initialized) return;
-    this.warpActive = active;
-    if (active) {
-      this.ensureWarpStage();
-      this.warpIntensity = 1;
-      this.warpFadeStartedAt = 0;
-      const now = performance.now();
-      this.warpStartedAt = now;
-      this.warpPhaseStartedAt = now;
-      this.warpPhase = 'spool';
-      if (this.warpStage) this.warpStage.visible = true;
-      this.attachWarpFilters();
-    } else if (this.warpFadeStartedAt === 0 && this.warpStage) {
-      this.warpFadeStartedAt = performance.now();
-      // Spool-exit: fade the filter chain out ONLY — no burst here.
-      // Post Phase-G the load curtain is already raised by this point
-      // (re-arm at `transit_ready` → !gameReady → loading=true before
-      // SPOOLING→IN_TRANSIT), so the old "climax" burst was an
-      // occluded, curtain-bleeding second flash on every inter-sector
-      // transit (on-device 2026-05-16, user smoke test). The single
-      // warp flash is the arrival reveal in `triggerWarpIn`. Gated via
-      // the `warpEventFiresBurst` policy so a future re-introduction
-      // trips `PixiRenderer.warpBurst.test.ts`.
-      if (warpEventFiresBurst('warp-mode-off')) this.fireBurst();
-    }
+    this.warp.setMode(active);
   }
 
-  /**
-   * Fire the "warp-in" companion effect — a flash + single big ripple
-   * at the supplied centre. No preceding spool/climax. Used when a
-   * ship arrives at a sector (the receiving end of a warp).
-   */
   triggerWarpIn(center: WarpCenter | null): void {
     if (!this.initialized) return;
-    this.ensureWarpStage();
-    if (center !== null) this.warpCenter = center;
-    if (this.warpStage) this.warpStage.visible = true;
-    // Re-attach filters if they're not currently attached. The curtain
-    // (a Graphics on warpStage) does NOT require filters, so warpStage
-    // being visible alone isn't a guarantee that filters are live — we
-    // check `app.stage.filters` directly. Mark standalone so the tick
-    // tears the filter chain down again after the burst completes.
-    const filtersAttached = Array.isArray(this.app.stage.filters)
-      && (this.app.stage.filters as unknown[]).length > 0;
-    if (!filtersAttached) {
-      this.warpStandaloneBurst = true;
-      this.attachWarpFilters();
-    }
-    // The single visible warp flash per inter-sector transit — the
-    // arrival reveal. Always fires; routed through the policy so the
-    // burst's one legitimate trigger is the documented, locked path.
-    if (warpEventFiresBurst('warp-in')) this.fireBurst();
+    this.warp.triggerWarpIn(center);
   }
 
-  /** Internal: trigger the burst ShockwaveFilter pulse + flash overlay.
-   *  Called from `setWarpMode(false)` (exit moment) AND
-   *  `triggerWarpIn` (arrival). The tick animates the decay. */
-  private fireBurst(): void {
-    if (!this.warpBurst) return;
-    this.warpBurstStartedAt = performance.now();
-    this.warpBurst.time = 0;
-  }
-
-  /**
-   * Live-tune warp params. Sandbox-only — production code calls
-   * `setWarpMode` with the defaults baked into `DEFAULT_WARP_PARAMS`.
-   * Mutates `this.warpParams`. The per-frame tick reads from
-   * `warpParams` and rebuilds the filter array on phase transitions
-   * (spool↔climax) so changing `spoolCount` / `spoolRadius` during
-   * spool, or vice versa, takes effect on the next phase entry.
-   */
   setWarpParams(partial: Partial<WarpParams>): void {
-    Object.assign(this.warpParams, partial);
-    // Clamp count so a slider going weird can't crash the renderer.
-    this.warpParams.spoolCount = Math.max(1, Math.min(8, Math.floor(this.warpParams.spoolCount)));
+    this.warp.setWarpParams(partial);
   }
 
-  /**
-   * Set an anchor for the warp centre. World-space anchors are
-   * projected to screen via `world.toGlobal` each frame so the ripple
-   * stays glued to the world point as the camera moves; screen-space
-   * anchors are used as-is. Pass `null` to revert to screen-centre.
-   */
   setWarpCenter(center: WarpCenter | null): void {
-    this.warpCenter = center;
+    this.warp.setWarpCenter(center);
   }
 
-  /**
-   * Show or hide the load curtain — an opaque dark overlay on
-   * `warpStage` that hides the canvas during the join + transit load
-   * periods. Independent of the warp filter chain: the curtain can be
-   * up while filters are detached (initial join, no spool/climax) and
-   * while filters are attached (transit hand-off, where the curtain
-   * rises right as the burst+flash peaks). Tween durations are
-   * asymmetric (200 ms rise, 380 ms fade) so the fade aligns with the
-   * arrival flash for a single perceived pulse.
-   */
   setLoadCurtain(active: boolean): void {
     if (!this.initialized) return;
-    this.ensureWarpStage();
-    const target = active ? CURTAIN_PEAK_ALPHA : 0;
-    if (target === this.loadCurtainTargetAlpha) return;
-    this.loadCurtainTargetAlpha = target;
-    this.loadCurtainTweenFromAlpha = this.loadCurtain?.alpha ?? 0;
-    this.loadCurtainTweenStartedAt = performance.now();
+    this.warp.setLoadCurtain(active);
   }
 
   /**
    * Move the camera so the given world point sits at screen centre.
    * Used by the visual-effects sandbox to anchor world (0, 0) without
-   * needing a local-player ship to follow. Production code uses the
-   * `Camera.follow` path against the local ship instead.
+   * needing a local-player ship to follow.
    */
   setCameraCenter(worldX: number, worldY: number): void {
     if (!this.initialized) return;
     this.camera.moveCenter(worldX, worldY);
   }
-
-  /** Lazy-construct the warp surface. Idempotent — subsequent calls
-   *  return immediately if already built. Built lazily so renderers
-   *  that never enter warp mode don't pay the construction cost. */
-  private ensureWarpStage(): void {
-    if (this.warpStage) return;
-    this.warpStage = new Container();
-    this.warpStage.eventMode = 'none';
-    this.app.stage.addChild(this.warpStage);
-
-    // Filter chain applied to `this.world` (NOT `app.stage`) so the
-    // flash overlay on `warpStage` stays UNFILTERED — the flash needs
-    // to be a clean white pulse, not rippled by the shockwaves.
-    //   - `ShockwaveFilter` × `count` (concentric expanding rings — spool/climax)
-    //   - `warpBurst` (one-shot burst ripple at exit / arrival)
-    //   - `ZoomBlurFilter` (radial motion blur from the same centre)
-    // The shockwave stack is rebuilt at each spool↔climax phase
-    // transition; burst + zoom blur are single instances with per-frame
-    // uniforms.
-    this.warpShockwaves = this.buildShockwaveStack(this.warpParams.spoolCount, this.warpParams.spoolRadius);
-    this.warpStackCount = this.warpParams.spoolCount;
-    this.warpStackRadius = this.warpParams.spoolRadius;
-    this.warpZoomBlur = new ZoomBlurFilter({
-      strength: 0,
-      center: { x: this.camera.screenWidth * 0.5, y: this.camera.screenHeight * 0.5 },
-      innerRadius: this.warpParams.zoomBlurInnerRadius,
-      radius: -1,
-    });
-    this.warpBurst = new ShockwaveFilter({
-      center: { x: this.camera.screenWidth * 0.5, y: this.camera.screenHeight * 0.5 },
-      speed: this.warpParams.burstSpeed,
-      amplitude: 0,
-      wavelength: this.warpParams.burstWavelength,
-      brightness: 1,
-      radius: -1,
-      time: 0,
-    });
-    // `quality: 2` and `kernelSize: 5` keep the multi-pass blur cheap
-    // enough for mobile — we only need a soft glow, not film-grade
-    // bloom. Strength is modulated per frame in the tick.
-    this.warpBloom = new BloomFilter({
-      strength: 0,
-      quality: 2,
-      kernelSize: 5,
-    });
-    // Load-curtain overlay — full-canvas dark rect that hides the
-    // canvas during the join / transit load period. Added BEFORE the
-    // flash so the flash renders ON TOP of the curtain (the arrival
-    // reveal: flash spikes white at the moment the curtain fades).
-    // Colour matches BACKGROUND_COLOR so the cinch transition feels
-    // continuous with the empty stage.
-    this.loadCurtain = new Graphics();
-    this.loadCurtain.rect(-2048, -2048, 8192, 8192);
-    this.loadCurtain.fill({ color: BACKGROUND_COLOR, alpha: 1 });
-    this.loadCurtain.alpha = 0;
-    this.warpStage.addChild(this.loadCurtain);
-
-    // Flash overlay — full-canvas white rect on `warpStage` (above
-    // world, no filter chain). Sized generous so it covers any
-    // reasonable resize without re-drawing each frame.
-    this.warpFlash = new Graphics();
-    this.warpFlash.rect(-2048, -2048, 8192, 8192);
-    this.warpFlash.fill({ color: 0xffffff, alpha: 1 });
-    this.warpFlash.alpha = 0;
-    this.warpStage.addChild(this.warpFlash);
-    this.app.ticker.add(this.tickWarpShockwaves);
-  }
-
-  /** Construct a fresh array of `count` ShockwaveFilters centred on
-   *  screen (centre is updated per-frame in the tick). Per-frame
-   *  uniforms (time, amplitude, brightness) are set by the tick; this
-   *  just provides the initial shape and `radius` (which can't be
-   *  changed without a fresh filter on Pixi v8 in practice). */
-  private buildShockwaveStack(count: number, radius: number): ShockwaveFilter[] {
-    const { speed, wavelength } = this.warpParams;
-    const cx = this.camera.screenWidth * 0.5;
-    const cy = this.camera.screenHeight * 0.5;
-    const filters: ShockwaveFilter[] = [];
-    for (let i = 0; i < count; i++) {
-      filters.push(new ShockwaveFilter({
-        center: { x: cx, y: cy },
-        speed,
-        amplitude: 0,
-        wavelength,
-        brightness: 1,
-        radius,
-        time: 0,
-      }));
-    }
-    return filters;
-  }
-
-  /** Attach the current filter stack to `app.stage` so EVERY visible
-   *  layer ripples — starfield (attached to `app.stage` directly),
-   *  world (grid + ships), and the flash overlay all pass through the
-   *  chain. The flash being slightly rippled is acceptable: it's solid
-   *  white, so bending it is invisible, and bloom passing over it just
-   *  amplifies the pulse. Without this the shockwave only bends the
-   *  sparse grid lines and is barely perceptible — the starfield is
-   *  what makes the ripple legible.
-   *
-   *  Order: shockwaves (ripple) → burst (extra ripple) → zoom blur
-   *  (radial smear) → bloom (glow on the rippled, blurred bright
-   *  wavefronts). Bloom last so it amplifies the final composited image. */
-  private attachWarpFilters(): void {
-    if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
-    // Render-jitter-fix Phase 1b (2026-05-21) — warp filter chain
-    // DISABLED. Captures `wivf9n` (filters on, throttled) and
-    // `q4wtht` (filters off) both spiraled, definitively ruling out
-    // filters as the cause. Capture `d3cprl` (filters off, phone at
-    // steady 60Hz battery-saver) was smooth, confirming filters are
-    // not load-bearing for playability. The shockwave + bloom + zoom-
-    // blur chain is a visual nice-to-have, not core gameplay; keeping
-    // them off avoids any duty-cycle cost on mobile. Re-enable by
-    // uncommenting the assignment below.
-    // this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
-  }
-
-  /**
-   * F1 bracket wrapper for the warp tick. `runWarpShockwavesTick` has
-   * six early `return`s (all "warp inactive / nothing to do" paths), so
-   * a single tail-stamp inside it would miss most frames. Wrapping the
-   * call brackets EVERY path exactly. This is a pure extraction — the
-   * body is verbatim the old `tickWarpShockwaves`, behaviour unchanged.
-   * `filterCount` is read AFTER the tick so it reflects any in-tick
-   * stack rebuild (`buildShockwaveStack` on a phase change). Sub-µs,
-   * unconditional (markers-off baseline = production cost).
-   */
-  private tickWarpShockwaves = (): void => {
-    const warpStart = performance.now();
-    this.runWarpShockwavesTick();
-    this.frameMarkers.warpTickMs = performance.now() - warpStart;
-    this.frameMarkers.filterCount = this.warpShockwaves?.length ?? 0;
-    // Render-jitter-fix Phase 1b — surface the filter-attach state into
-    // the capture stream so a stuck-attached filter chain is visible
-    // (the bot-warp queue drain bug, fixed in the same plan).
-    this.frameMarkers.warpFiltersAttached = Array.isArray(this.app.stage.filters)
-      && (this.app.stage.filters as unknown[]).length > 0;
-    this.frameMarkers.warpBurstAgeMs = this.warpBurstStartedAt > 0
-      ? Math.round(performance.now() - this.warpBurstStartedAt)
-      : -1;
-  };
-
-  /** Per-frame warp tick — two-phase envelope (spool → climax), fade-out
-   *  tween, burst + flash decay, centre projection from world space.
-   *  Also drives the load-curtain alpha tween (which is independent of
-   *  the warp filter envelope — runs every frame as long as the stage
-   *  has been built). */
-  private runWarpShockwavesTick = (): void => {
-    if (!this.warpStage || !this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpFlash || !this.loadCurtain) return;
-    const now = performance.now();
-    const p = this.warpParams;
-
-    // ---- Load curtain alpha tween (runs unconditionally) ----
-    // The curtain is a Graphics on warpStage with no filter cost. When
-    // its alpha is 0 Pixi skips the draw, so idle cost is zero.
-    if (this.loadCurtainTargetAlpha !== this.loadCurtain.alpha) {
-      const rising = this.loadCurtainTargetAlpha > this.loadCurtainTweenFromAlpha;
-      const dur = rising ? CURTAIN_RISE_MS : CURTAIN_FADE_MS;
-      const elapsed = now - this.loadCurtainTweenStartedAt;
-      if (elapsed >= dur) {
-        this.loadCurtain.alpha = this.loadCurtainTargetAlpha;
-      } else {
-        const t = elapsed / Math.max(1, dur);
-        this.loadCurtain.alpha = this.loadCurtainTweenFromAlpha
-          + (this.loadCurtainTargetAlpha - this.loadCurtainTweenFromAlpha) * t;
-      }
-    }
-
-    // ---- Burst + flash decay (independent of warp main envelope) ----
-    let burstActive = false;
-    let burstFalloff = 0;
-    if (this.warpBurstStartedAt > 0) {
-      const elapsed = now - this.warpBurstStartedAt;
-      if (elapsed >= p.burstDurationMs && elapsed >= p.flashDurationMs) {
-        this.warpBurstStartedAt = 0;
-        this.warpBurst.amplitude = 0;
-        this.warpFlash.alpha = 0;
-        // Tear down the filter chain if nothing else is using it — the
-        // fade-out completion path can't tear down while the burst is
-        // still playing, so this is the second chance. See
-        // `shouldDetachWarpVisual` doc for the perf consequence.
-        if (shouldDetachWarpVisual({
-          burstStartedAt: this.warpBurstStartedAt,
-          fadeStartedAt: this.warpFadeStartedAt,
-          intensity: this.warpIntensity,
-        })) {
-          this.app.stage.filters = [];
-          this.warpStandaloneBurst = false;
-          // Only hide warpStage if the load curtain isn't using it —
-          // otherwise the curtain (its child) freezes from view mid-tween.
-          if (this.loadCurtain.alpha === 0 && this.loadCurtainTargetAlpha === 0) {
-            this.warpStage.visible = false;
-          }
-          return;
-        }
-      } else {
-        burstActive = true;
-        // Burst amplitude + brightness decay with a √(1-t) curve —
-        // peaks at burst start then falls off slowly so the
-        // wavefront stays visible at the perimeter (drive-by viewers
-        // still see the tail end). Linear decay collapses too fast.
-        const burstT = Math.min(1, elapsed / Math.max(1, p.burstDurationMs));
-        burstFalloff = Math.sqrt(Math.max(0, 1 - burstT));
-        this.warpBurst.amplitude = p.burstAmplitude * burstFalloff;
-        this.warpBurst.brightness = 1 + (p.burstBrightness - 1) * burstFalloff;
-        this.warpBurst.time = elapsed / 1000;
-        this.warpBurst.speed = p.burstSpeed;
-        this.warpBurst.wavelength = p.burstWavelength;
-
-        // Distance-attenuate the flash. The flash represents the
-        // light-pulse a viewer perceives from a warp event — it
-        // shouldn't blanket the entire sector for every warp. Only the
-        // local viewer (camera world centre = local ship in production)
-        // within `flashRangeMax` world units sees it, with linear
-        // falloff. Non-world centres (sandbox screen-space click or
-        // null) get full intensity (no concept of "distance").
-        let distanceFactor = 1;
-        if (this.warpCenter?.kind === 'world' && p.flashRangeMax > 0) {
-          const cam = this.camera.center;
-          const dx = this.warpCenter.worldX - cam.x;
-          const dy = this.warpCenter.worldY - cam.y;
-          const dist = Math.hypot(dx, dy);
-          distanceFactor = Math.max(0, 1 - dist / p.flashRangeMax);
-        }
-
-        // Flash alpha: instant ramp-up (8% of duration), then linear decay.
-        const flashT = elapsed / Math.max(1, p.flashDurationMs);
-        let flashAlpha: number;
-        if (flashT < 0.08) flashAlpha = p.flashAlphaMax * (flashT / 0.08);
-        else if (flashT < 1) flashAlpha = p.flashAlphaMax * (1 - (flashT - 0.08) / (1 - 0.08));
-        else flashAlpha = 0;
-        this.warpFlash.alpha = Math.max(0, flashAlpha * distanceFactor);
-      }
-    }
-
-    // Fade-out tween. Linear interp from intensity 1 → 0 over fadeOutMs.
-    if (this.warpFadeStartedAt > 0) {
-      const elapsed = now - this.warpFadeStartedAt;
-      this.warpIntensity = Math.max(0, 1 - elapsed / Math.max(1, p.fadeOutMs));
-      if (this.warpIntensity <= 0) {
-        // Main envelope is done. If the burst is still playing, keep
-        // filters attached so it can finish; otherwise tear down.
-        this.warpFadeStartedAt = 0;
-        this.warpPhase = 'idle';
-        if (!burstActive) {
-          this.app.stage.filters = [];
-          this.warpStandaloneBurst = false;
-          // Curtain might be rising (transit hand-off) — keep warpStage
-          // visible so the curtain Graphics renders.
-          if (this.loadCurtain.alpha === 0 && this.loadCurtainTargetAlpha === 0) {
-            this.warpStage.visible = false;
-          }
-        }
-        return;
-      }
-    }
-
-    // If we're in standalone-burst mode (triggerWarpIn called when no
-    // spool/climax was running) and the burst has just completed, tear
-    // down filters now.
-    if (this.warpStandaloneBurst && !burstActive && this.warpFadeStartedAt === 0 && this.warpIntensity <= 0) {
-      this.app.stage.filters = [];
-      this.warpStandaloneBurst = false;
-      if (this.loadCurtain.alpha === 0 && this.loadCurtainTargetAlpha === 0) {
-        this.warpStage.visible = false;
-      }
-      return;
-    }
-
-    if (this.warpIntensity <= 0 && !burstActive) return;
-
-    // Resolve the warp centre EVERY frame. An `entity` anchor re-reads
-    // THAT ship's live sprite (by id — local, remote or bot, no
-    // special-case) so the ripple tracks it through the whole spool
-    // instead of freezing where charging began. The sprite is already
-    // Pixi-placed (`sprite.y = -ship.y`) so its global pos needs no
-    // flip. `world` (remote warp-out, ship gone) negates Y in the
-    // helper; `screen`/`null` pass through.
-    let entityGlobal: { x: number; y: number } | null = null;
-    if (this.warpCenter?.kind === 'entity') {
-      const s = this.sprites.get(this.warpCenter.entityId);
-      if (s) entityGlobal = this.world.toGlobal({ x: s.x, y: s.y });
-    }
-    const { x: cx, y: cy } = resolveWarpFilterCenter({
-      warpCenter: this.warpCenter,
-      projectWorld: (px, py) => this.world.toGlobal({ x: px, y: py }),
-      entityGlobal,
-      screenW: this.camera.screenWidth,
-      screenH: this.camera.screenHeight,
-    });
-
-    // Burst follows the resolved centre regardless of spool/climax
-    // state. Standalone warp-in: only the burst is active, skip the
-    // spool/climax block entirely.
-    if (burstActive) {
-      this.warpBurst.center = { x: cx, y: cy };
-    }
-    if (this.warpIntensity <= 0) return;
-
-    // Resolve phase + per-phase config. The amplitude/brightness/blur
-    // envelope is continuous across the spool→climax boundary — spool
-    // peak feeds into climax start so there's no visual discontinuity.
-    const elapsed = now - this.warpStartedAt;
-    let phase: 'spool' | 'climax';
-    let phaseProgress: number;     // 0..1 within the current phase
-    let targetCount: number;
-    let targetRadius: number;
-    let wavePeriodMs: number;
-    let amplitudeFrom: number;
-    let amplitudeTo: number;
-    let brightnessFrom: number;
-    let brightnessTo: number;
-    let blurFrom: number;
-    let blurTo: number;
-
-    if (this.warpFadeStartedAt === 0 && elapsed < p.spoolDurationMs) {
-      // Spool: count = spoolCount, finite radius, fast cycle, ramp 0 → spool peak.
-      phase = 'spool';
-      phaseProgress = elapsed / Math.max(1, p.spoolDurationMs);
-      targetCount = p.spoolCount;
-      targetRadius = p.spoolRadius;
-      wavePeriodMs = p.spoolWavePeriodMs;
-      amplitudeFrom = 0;
-      amplitudeTo = p.spoolAmplitude;
-      brightnessFrom = 1;
-      brightnessTo = p.spoolBrightness;
-      blurFrom = 0;
-      blurTo = p.spoolZoomBlur;
-    } else {
-      // Climax (or fade-out — climax params still apply during fade):
-      // count = 1, infinite radius, slow cycle, ramp spool-peak → climax peak.
-      phase = 'climax';
-      const climaxElapsed = Math.max(0, elapsed - p.spoolDurationMs);
-      phaseProgress = Math.min(1, climaxElapsed / Math.max(1, p.climaxDurationMs));
-      targetCount = 1;
-      targetRadius = -1;
-      wavePeriodMs = p.climaxWavePeriodMs;
-      amplitudeFrom = p.spoolAmplitude;
-      amplitudeTo = p.climaxAmplitude;
-      brightnessFrom = p.spoolBrightness;
-      brightnessTo = p.climaxBrightness;
-      blurFrom = p.spoolZoomBlur;
-      blurTo = p.climaxZoomBlur;
-    }
-
-    // Phase transition: rebuild the shockwave stack if count or radius
-    // changed (count is structural in pixi-filters; radius is a
-    // construction-time uniform). Cheap — one allocation per transition,
-    // not per frame. Also reset `warpPhaseStartedAt` so the new phase's
-    // shockwave time starts at 0 — otherwise the climax wave can spawn
-    // mid-cycle and be invisibly far off-centre for ~1 s.
-    if (
-      this.warpPhase !== phase ||
-      this.warpStackCount !== targetCount ||
-      this.warpStackRadius !== targetRadius
-    ) {
-      this.warpShockwaves = this.buildShockwaveStack(targetCount, targetRadius);
-      this.warpStackCount = targetCount;
-      this.warpStackRadius = targetRadius;
-      this.warpPhase = phase;
-      this.warpPhaseStartedAt = now;
-      this.attachWarpFilters();
-    }
-
-    const k = this.warpIntensity;
-    const amplitude = (amplitudeFrom + (amplitudeTo - amplitudeFrom) * phaseProgress) * k;
-    const brightness = 1 + ((brightnessFrom - 1) + ((brightnessTo - 1) - (brightnessFrom - 1)) * phaseProgress) * k;
-    const blurStrength = (blurFrom + (blurTo - blurFrom) * phaseProgress) * k;
-
-    // Shared time phase across the stack; each filter is offset by
-    // i/count. `tSec` is measured RELATIVE TO PHASE START so the
-    // wave is at radius 0 (centre) at phase entry, then expands. Using
-    // wall-clock time mod cycleSec would put the wave at a random
-    // radius at phase entry, often off-screen.
-    const cycleSec = Math.max(0.001, wavePeriodMs / 1000);
-    const tSec = ((now - this.warpPhaseStartedAt) / 1000) % cycleSec;
-    const filters = this.warpShockwaves;
-    for (let i = 0; i < filters.length; i++) {
-      const f = filters[i];
-      if (!f) continue;
-      f.time = (tSec + (i / filters.length) * cycleSec) % cycleSec;
-      f.amplitude = amplitude;
-      f.brightness = brightness;
-      f.center = { x: cx, y: cy };
-      f.speed = p.speed;
-      f.wavelength = p.wavelength;
-    }
-
-    this.warpZoomBlur.center = { x: cx, y: cy };
-    this.warpZoomBlur.strength = blurStrength;
-    this.warpZoomBlur.innerRadius = p.zoomBlurInnerRadius;
-
-    // Bloom strength: silent during spool, ramps with climax progress,
-    // takes max(climaxProgress * k, burstFalloff) so once the burst
-    // fires the bloom rides on the burst's slow sqrt decay instead of
-    // collapsing with the (shorter) fade-out tween. That keeps the
-    // wavefront glowing through its whole flight, which is what makes
-    // distant viewers spot it.
-    if (this.warpBloom) {
-      const climaxBloom = phase === 'climax' ? phaseProgress * k : 0;
-      const bloomFactor = Math.max(climaxBloom, burstFalloff);
-      this.warpBloom.strength = p.bloomStrengthMax * bloomFactor;
-    }
-  };
 
   /**
    * Read the most recent feedback the renderer wrote at the tail of its
@@ -1890,6 +1336,8 @@ export class PixiRenderer implements IRenderer {
     // this, the queued requestAnimationFrame(resize) at the end of init()
     // could land post-destroy and read a null renderer.
     this.initialized = false;
+    // Tear down the warp filter chain (removes its ticker handler).
+    this.warp.destroy();
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
     const canvas = this.app?.canvas;
@@ -1915,16 +1363,7 @@ export class PixiRenderer implements IRenderer {
     this.backgroundGrid?.destroy();
     this.starfield?.destroy();
     // Warp stage + filters live on app.stage so `app.destroy({ children: true })`
-    // tears them down. Just drop our references so a stale rAF callback
-    // post-destroy can't reach into the freed Graphics.
-    this.app.ticker.remove(this.tickWarpShockwaves);
-    this.warpStage = null;
-    this.warpShockwaves = null;
-    this.warpZoomBlur = null;
-    this.warpBurst = null;
-    this.warpFlash = null;
-    this.warpBloom = null;
-    this.loadCurtain = null;
+    // tears them down. warp.destroy() already removed the ticker handler.
     this.app.destroy(true, { children: true });
   }
 }
