@@ -32,12 +32,8 @@ import { type Vec2 } from '../../core/swarm/asteroidShape.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
-import {
-  pickTarget,
-  rotateMountToward,
-  wrapPi,
-  type MountTargetView,
-} from '../../core/ai/WeaponMountController.js';
+// pickTarget / rotateMountToward / wrapPi / MountTargetView now used
+// inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema, FireMessageSchema } from '../../shared-types/messages.js';
@@ -51,6 +47,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
+import { WeaponMountTicker } from './WeaponMountTicker.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -316,27 +313,26 @@ export class SectorRoom extends Room<SectorState> {
    *  and shipped per-recipient in `SnapshotMessage.states[id].mountAngles`
    *  so remote observers see the same turret rotation the firer's screen
    *  is drawing. */
-  private readonly playerMountAngles = new Map<string, Float32Array>();
-  /** Sticky target id per player slot, used by `pickTarget` to suppress
-   *  oscillation. Cleared on `onLeave` and on death. */
-  private readonly playerSlotTargets = new Map<string, string | null>();
-  /** Reused per-tick drone candidate list passed to `pickTarget` for each
-   *  player slot — avoids per-tick allocation. */
-  private readonly mountTargetsScratch: MountTargetView[] = [];
-
-  // ── Phase 4c (drone turret rotation, 2026-05-11) ────────────────────────
-  /** Per-drone authoritative mount rotation angles. Indexed by drone id
-   *  (`swarm-*`). Only drones whose ship-kind has rotating mounts get an
-   *  entry; legacy single-mount drones (zero-arc 'forward' mount) skip
-   *  the controller call entirely. Mirrors the player-side
-   *  `playerMountAngles` map. Per-recipient snapshot emits these in the
-   *  `drones[]` slice for in-interest drones so the client renders the
-   *  same rotation the server is computing. */
-  private readonly droneMountAngles = new Map<string, Float32Array>();
-  /** Sticky target id per drone slot. Cleared on despawn. */
-  private readonly droneSlotTargets = new Map<string, string | null>();
-  /** Reused per-tick player candidate list for drone turret target picks. */
-  private readonly droneMountTargetsScratch: MountTargetView[] = [];
+  /**
+   * Per-tick weapon-mount aim updater. Owns:
+   *   - `playerMountAngles` / `droneMountAngles` (per-mount slewed angles)
+   *   - `playerSlotTargets` / `droneSlotTargets` (sticky pickTarget hysteresis)
+   *   - pooled MountTargetView scratch arrays
+   *
+   * Consumers (`handleFire`, `handleAiFire`, snapshot serialiser, eviction
+   * paths) read/write through `mountTicker.playerMountAngles` etc. directly;
+   * the underlying Map identity is the same as the pre-extraction fields.
+   *
+   * Extracted to `WeaponMountTicker.ts` (commit 21 of the v3 refactor plan).
+   */
+  private mountTicker!: WeaponMountTicker;
+  /** Alias accessors so the rest of SectorRoom keeps the old field-style
+   *  reads (`this.playerMountAngles.get(id)`). Initialised in `onCreate`
+   *  after the ticker is constructed. */
+  private get playerMountAngles(): Map<string, Float32Array> { return this.mountTicker.playerMountAngles; }
+  private get droneMountAngles(): Map<string, Float32Array> { return this.mountTicker.droneMountAngles; }
+  private get playerSlotTargets(): Map<string, string | null> { return this.mountTicker.playerSlotTargets; }
+  private get droneSlotTargets(): Map<string, string | null> { return this.mountTicker.droneSlotTargets; }
 
   private bus!: Bus;
   /** Phase 6 — TiDi simulation clock. Owned by the room; the worker reads its
@@ -638,6 +634,19 @@ export class SectorRoom extends Room<SectorState> {
           ...(setAngvel !== undefined ? { setAngvel } : {}),
         });
       },
+    });
+
+    // Per-tick weapon-mount aim updater. Owns playerMountAngles +
+    // droneMountAngles + the sticky targets + the pooled scratches.
+    // Extracted from SectorRoom (commit 21 of v3 refactor plan).
+    this.mountTicker = new WeaponMountTicker({
+      sabF32: this.sabF32,
+      playerToSlot: this.playerToSlot,
+      swarmRegistry: this.swarmRegistry,
+      shipPoseCache: this.shipPoseCache,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      aiController: this.aiController,
+      resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -963,69 +972,7 @@ export class SectorRoom extends Room<SectorState> {
    * matching `SnapshotMessage.drones[].mountAngles` anchor.
    */
   private tickPlayerMounts(): void {
-    if (this.playerToSlot.size === 0) return;
-    const dtSec = 1 / 60;
-
-    // Build the drone candidate list once per tick — same list re-used for
-    // every player's pickTarget call.
-    const targets = this.mountTargetsScratch;
-    targets.length = 0;
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue;
-      const b = slotBase(rec.slot);
-      targets.push({
-        id: rec.id,
-        x: this.sabF32[b + SLOT_X_OFF]!,
-        y: this.sabF32[b + SLOT_Y_OFF]!,
-        vx: this.sabF32[b + SLOT_VX_OFF]!,
-        vy: this.sabF32[b + SLOT_VY_OFF]!,
-      });
-    }
-
-    for (const [playerId] of this.playerToSlot) {
-      const ship = this.getActiveShip(playerId);
-      if (!ship?.alive) continue;
-      const pose = this.shipPoseCache.get(playerId);
-      if (!pose) continue;
-      const kind = getShipKind(ship.kind);
-      const mounts = this.resolveSlotMounts(kind);
-      if (mounts.length === 0) continue;
-
-      const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
-      const target = pickTarget(pose.x, pose.y, targets, prevTargetId, () => true, {
-        maxDistance: HITSCAN_RANGE,
-      });
-      this.playerSlotTargets.set(playerId, target?.id ?? null);
-
-      let angles = this.playerMountAngles.get(playerId);
-      if (!angles || angles.length !== mounts.length) {
-        angles = new Float32Array(mounts.length);
-        this.playerMountAngles.set(playerId, angles);
-      }
-
-      if (target === null) {
-        // No target in range — slew every mount back to forward (0 in
-        // arc-local frame). Matches user-requested behaviour: "return the
-        // weapons to aiming forwards when an enemy ship is out of range".
-        for (let i = 0; i < mounts.length; i++) {
-          angles[i] = rotateMountToward(angles[i]!, 0, mounts[i]!, dtSec);
-        }
-        continue;
-      }
-
-      const cosA = Math.cos(pose.angle);
-      const sinA = Math.sin(pose.angle);
-      for (let i = 0; i < mounts.length; i++) {
-        const mount = mounts[i]!;
-        const mountWorldX = pose.x + (mount.localX * cosA - mount.localY * sinA);
-        const mountWorldY = pose.y + (mount.localX * sinA + mount.localY * cosA);
-        const dx = target.x - mountWorldX;
-        const dy = target.y - mountWorldY;
-        const worldBearing = Math.atan2(-dx, dy);
-        const mountLocalBearing = wrapPi(worldBearing - pose.angle - mount.baseAngle);
-        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, dtSec);
-      }
-    }
+    this.mountTicker.tickPlayer();
   }
 
   /**
@@ -1047,94 +994,7 @@ export class SectorRoom extends Room<SectorState> {
    * hostile players slews its mounts back toward 0 (forward).
    */
   private tickDroneMounts(): void {
-    if (this.swarmRegistry.size() === 0) return;
-    const dtSec = 1 / 60;
-
-    // Build the player candidate list once per tick (shared across all
-    // drones). Players are `shipPoseCache` rows for alive players.
-    const targets = this.droneMountTargetsScratch;
-    targets.length = 0;
-    for (const [pid] of this.playerToSlot) {
-      const ship = this.getActiveShip(pid);
-      if (!ship?.alive) continue;
-      const pose = this.shipPoseCache.get(pid);
-      if (!pose) continue;
-      targets.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
-    }
-
-    for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 1) continue; // asteroids: no turrets
-      const kindId = rec.shipKind ?? DEFAULT_SHIP_KIND;
-      const kind = getShipKind(kindId);
-      const mounts = this.resolveSlotMounts(kind);
-      // Skip drones whose mounts are all static — they have nothing to
-      // slew. This is the common case (fighter/scout/heavy drones), so
-      // the early bail is the hot path.
-      let hasRotatingMount = false;
-      for (const m of mounts) {
-        if (m.rotationSpeed > 0 && m.arcMax > m.arcMin) {
-          hasRotatingMount = true;
-          break;
-        }
-      }
-      if (!hasRotatingMount) {
-        // Defensive cleanup if a drone's kind ever loses its rotation
-        // (e.g. catalogue change mid-life — currently impossible).
-        if (this.droneMountAngles.has(rec.id)) this.droneMountAngles.delete(rec.id);
-        if (this.droneSlotTargets.has(rec.id)) this.droneSlotTargets.delete(rec.id);
-        continue;
-      }
-
-      const b = slotBase(rec.slot);
-      const droneX = this.sabF32[b + SLOT_X_OFF]!;
-      const droneY = this.sabF32[b + SLOT_Y_OFF]!;
-      const droneAngle = this.sabF32[b + SLOT_ANGLE_OFF]!;
-
-      // Hostility filter — same source of truth as HostileDroneBehaviour.
-      // The behaviour instance lives inside `AiController`; we query it
-      // via the controller's accessor.
-      const behaviour = this.aiController.getBehaviour(rec.id);
-      const isHostile = (playerId: string): boolean => {
-        if (!behaviour) return false;
-        // `markHostile`/`purgeHostility` mutate the same set the drone
-        // behaviour uses for combat targeting; mirror that here so the
-        // turret AI and the body AI agree on who's a threat.
-        const ho = (behaviour as unknown as { hostileTo?: Set<string> }).hostileTo;
-        return ho ? ho.has(playerId) : false;
-      };
-
-      const prevTargetId = this.droneSlotTargets.get(rec.id) ?? null;
-      const target = pickTarget(droneX, droneY, targets, prevTargetId, isHostile, {
-        maxDistance: HITSCAN_RANGE,
-      });
-      this.droneSlotTargets.set(rec.id, target?.id ?? null);
-
-      let angles = this.droneMountAngles.get(rec.id);
-      if (!angles || angles.length !== mounts.length) {
-        angles = new Float32Array(mounts.length);
-        this.droneMountAngles.set(rec.id, angles);
-      }
-
-      if (target === null) {
-        for (let i = 0; i < mounts.length; i++) {
-          angles[i] = rotateMountToward(angles[i]!, 0, mounts[i]!, dtSec);
-        }
-        continue;
-      }
-
-      const cosA = Math.cos(droneAngle);
-      const sinA = Math.sin(droneAngle);
-      for (let i = 0; i < mounts.length; i++) {
-        const mount = mounts[i]!;
-        const mountWorldX = droneX + (mount.localX * cosA - mount.localY * sinA);
-        const mountWorldY = droneY + (mount.localX * sinA + mount.localY * cosA);
-        const dx = target.x - mountWorldX;
-        const dy = target.y - mountWorldY;
-        const worldBearing = Math.atan2(-dx, dy);
-        const mountLocalBearing = wrapPi(worldBearing - droneAngle - mount.baseAngle);
-        angles[i] = rotateMountToward(angles[i]!, mountLocalBearing, mount, dtSec);
-      }
-    }
+    this.mountTicker.tickDrone();
   }
 
   private handleFire(client: Client, raw: unknown): void {
