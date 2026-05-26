@@ -3,10 +3,18 @@ import { installWindowLogger } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
 import { Box } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
-import { setGameClient, getGameClient } from './net/clientSingleton';
+import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
+import {
+  useServerHealthPoll,
+  useShipSwapDispatcher,
+  usePhaseChangeLog,
+  useAuthExpiryRedirect,
+  useUserPrefsHydration,
+} from './app/appHooks';
+import { PhaseRouter } from './app/PhaseRouter';
 import {
   syncGalaxyVisibility,
   syncGalaxyCurrentSector,
@@ -16,21 +24,15 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, applyUserPrefs, useGameReady } from './state/store';
+import { useUIStore, useGameReady } from './state/store';
 import { useAuthStore } from './auth/authStore';
-import { AppHeader } from './components/AppHeader';
-import { LoginPage } from './components/LoginPage';
-import { ProfileModal } from './components/ProfileModal';
-import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
-import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
-import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
@@ -42,20 +44,11 @@ import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
-import { MetaLandingScreen } from './components/MetaLandingScreen';
-import { LocalSurface } from './components/LocalSurface';
+import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
 import { TopRightToolbar } from './layout/TopRightToolbar';
-import { MobileAvatarBadge } from './layout/MobileAvatarBadge';
-
-// Default to the page's own origin so the same dev server is reachable from
-// phones on the LAN (e.g. http://192.168.1.5:5173 → ws://192.168.1.5:5173).
-// Override with VITE_WS_URL in .env for cross-origin setups.
-const SERVER_URL =
-  import.meta.env['VITE_WS_URL'] ??
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173');
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
@@ -496,72 +489,16 @@ export function App(): JSX.Element {
     if (autoJoinRef.current) setPhase('game');
   }, [setPhase]);
 
-  // If the auth token expires while the user is on the galaxy-map screen
-  // (which requires a logged-in user to function), bump them back to the
-  // meta landing. Game and local are NOT auto-redirected — let the player
-  // finish their round; auth phase is unaffected (already logged out).
-  useEffect(() => {
-    if (!user && phase === 'galaxy-map') {
-      setPhase('meta');
-    }
-  }, [user, phase, setPhase]);
-
-  // Re-hydrate per-user preferences (settings + selected ship kind) when
-  // auth resolves or the active account changes. Anonymous slot is also
-  // applied on logout so a stale account's prefs don't leak across.
-  useEffect(() => {
-    applyUserPrefs(user?.id ?? null);
-  }, [user?.id]);
-
+  useAuthExpiryRedirect();
+  useUserPrefsHydration();
   // App-level diagnostic logging (2026-05-13). Mount lifecycle + phase
   // transitions + serverHealth transitions go into the same ring buffer
   // the diag capture exports. Logs are cheap (~80 bytes each) and
   // fire at most a handful of times per session, so the perf impact
   // is well below the noise floor.
   useMountLog('App');
-
-  useEffect(() => {
-    logEvent('phase_change', { phase });
-    // F-transit-instrument — phase machine back to 'game'. For PURE
-    // inter-sector transit (the user's warp-out) GameSurface stays
-    // mounted and phase never leaves 'game', so this is a no-op there
-    // (documented expectation). It only emits if a transit-initiated
-    // flow also crosses a phase→'game' transition; `mark` itself is a
-    // no-op unless an `engage()` t0 is live, so the roster-swap path
-    // (which never calls engage) can't produce a spurious row.
-    if (phase === 'game') getGameClient()?.transitInstr.mark('phase_game');
-  }, [phase]);
-
-  // Server-health poll loop. Runs for the whole app lifetime — the
-  // landing-screen banner + Join-button gate are the primary consumers,
-  // but the value also drives the hype-number on `MetaLandingScreen`,
-  // so keep polling even after the player joins. The poller is cheap
-  // (one HTTP GET every ~8 s in steady state).
-  useEffect(() => {
-    const setServerHealth = useUIStore.getState().setServerHealth;
-    let lastState: string = useUIStore.getState().serverHealth;
-    const poller = createServerHealthPoller({
-      url: `${SERVER_URL}/healthz`,
-      onChange: (snapshot) => {
-        const next = snapshot.state === 'healthy'
-          ? (snapshot.data?.ready ? 'healthy' : 'warming')
-          : snapshot.state; // 'unreachable' | 'unknown'
-        // Log only on transitions so we don't fill the ring buffer
-        // with steady-state healthy polls (1 every 8s = 7.5/min).
-        if (next !== lastState) {
-          logEvent('server_health_change', {
-            from: lastState,
-            to: next,
-            playersOnline: snapshot.data?.playersOnline ?? null,
-          });
-          lastState = next;
-        }
-        setServerHealth(next, snapshot.data?.playersOnline ?? null);
-      },
-    });
-    poller.start();
-    return () => poller.stop();
-  }, []);
+  usePhaseChangeLog(phase);
+  useServerHealthPoll();
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);
@@ -577,42 +514,7 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
-  // Phase 5 — in-game roster swap. Dispatched by `GalaxyTab` via the
-  // Zustand `pendingShipSwap` field; we run a `game → connecting → game`
-  // phase cycle so GameSurface unmounts (closing the current room) and
-  // remounts cleanly with the new `roomNameOverride` + `joinOptionsOverride`.
-  // The 'connecting' beat is what the player sees as the loading spinner.
-  // NO transit machinery: no spool-up, no neighbour-only check — the
-  // player explicitly picked a hull they own and wants to fly it.
-  const pendingShipSwap = useUIStore((s) => s.pendingShipSwap);
-  const setPendingShipSwap = useUIStore((s) => s.setPendingShipSwap);
-  const setCurrentSectorKey = useUIStore((s) => s.setCurrentSectorKey);
-  useEffect(() => {
-    if (!pendingShipSwap) return;
-    const { shipId, sectorKey } = pendingShipSwap;
-    logEvent('ship_swap_dispatch', { shipId, sectorKey, fromPhase: phase });
-    // Update room overrides before the phase flip so when GameSurface
-    // remounts it sees the new values immediately.
-    setRoomNameOverride(`galaxy-${sectorKey}`);
-    setJoinOptionsOverride({ shipId });
-    // Clear the current-sector chrome so the brief galaxy-map glimpse
-    // (if any) and post-arrival HUD start from the new sector identity.
-    setCurrentSectorKey(null);
-    // game → connecting unmounts GameSurface (which cleans up the old
-    // Colyseus room). After a microtask the connecting → game flip
-    // remounts GameSurface, triggering a fresh joinOrCreate with the
-    // shipId override.
-    setPhase('connecting');
-    const timer = setTimeout(() => {
-      setPhase('game');
-      setPendingShipSwap(null);
-      logEvent('ship_swap_completed', { shipId, sectorKey });
-    }, 200);
-    return () => clearTimeout(timer);
-    // Note: `phase` is intentionally omitted from the deps list — it
-    // changes inside this effect (setPhase('connecting' then 'game'))
-    // which would re-trigger; the value at dispatch time is sufficient.
-  }, [pendingShipSwap, setPhase, setPendingShipSwap, setCurrentSectorKey]);
+  useShipSwapDispatcher(setRoomNameOverride, setJoinOptionsOverride);
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
     // ShipKind already lives in Zustand `selectedShipKind` (the picker
@@ -639,100 +541,34 @@ export function App(): JSX.Element {
     setPhase(user ? 'galaxy-map' : 'auth');
   }, [user, setPhase]);
 
-  // Compute the per-phase content as a variable so we can wrap the whole
-  // tree in a single LayoutProvider + render the FullscreenToggle once.
-  // The toggle previously only appeared during the 'game' phase, which meant
-  // mobile users couldn't enter fullscreen from the meta landing, login, or
-  // galaxy-map screens. Now it persists everywhere on touch devices.
-  let phaseContent: JSX.Element;
-  if (phase === 'game') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <GameSurface roomNameOverride={roomNameOverride} joinOptionsOverride={joinOptionsOverride} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else if (phase === 'local') {
-    phaseContent = <LocalSurface />;
-  } else if (phase === 'meta') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <MetaLandingScreen
-          onJoin={handleJoinFromMeta}
-          onSelectLocal={user ? handleSelectLocal : undefined}
-        />
-        <MobileAvatarBadge onClick={() => setProfileOpen(true)} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else if (phase === 'auth') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => {}}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <LoginPage onSuccess={handleAuthSuccess} onSkip={handleAuthSuccess} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else {
-    // 'galaxy-map' (or transient 'connecting') — visual hex galaxy.
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        {phase === 'connecting' ? (
-          // Phase === 'connecting' is the brief 200 ms ship-swap window.
-          // The visible content is the `<WarpScreen>` mounted globally
-          // below (in LayoutProvider) — this branch just renders a
-          // black background underneath so the warp streaks have a
-          // contrast surface to paint on.
-          <Box
-            sx={{
-              height: '100vh',
-              pt: 'var(--app-bar-h, 48px)',
-              bgcolor: '#05070f',
-            }}
-          />
-        ) : (
-          <GalaxyOverviewScreen
-            mode="spawn"
-            /* activeLimboSectorKey omitted on purpose so the screen runs its
-               own /dev/limbo lookup and renders the saved-ship card. */
-            onSelectRoom={handleSelectRoom}
-            onSpawnExistingShip={handleSpawnExistingShip}
-            onSpawnNewShip={handleSpawnNewShip}
-            onSelectLocal={handleSelectLocal}
-          />
-        )}
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  }
-
+  // Per-phase content composition lives in PhaseRouter — the App
+  // wraps it in LayoutProvider + ErrorBoundary so the
+  // TopRightToolbar / WarpScreen persist across phase transitions.
   return (
     <ErrorBoundary>
       <LayoutProvider>
-        {phaseContent}
+        <PhaseRouter
+          phase={phase}
+          user={user}
+          profileOpen={profileOpen}
+          setProfileOpen={setProfileOpen}
+          settingsOpen={settingsOpen}
+          openSettings={openSettings}
+          closeSettings={closeSettings}
+          setPhase={setPhase}
+          gameSurface={
+            <GameSurface
+              roomNameOverride={roomNameOverride}
+              joinOptionsOverride={joinOptionsOverride}
+            />
+          }
+          onJoinFromMeta={handleJoinFromMeta}
+          onSelectLocal={handleSelectLocal}
+          onAuthSuccess={handleAuthSuccess}
+          onSelectRoom={handleSelectRoom}
+          onSpawnExistingShip={handleSpawnExistingShip}
+          onSpawnNewShip={handleSpawnNewShip}
+        />
         <TopRightToolbar />
         {/* Unified warp-screen overlay. Internally null when phase !==
             'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted

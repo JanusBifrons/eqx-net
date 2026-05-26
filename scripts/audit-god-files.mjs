@@ -67,13 +67,6 @@ const ALLOWLIST = {
       'CameraController, SpriteFactory, SpriteRegistry, ShipSpriteUpdater, etc.); ' +
       'orchestrator target ~340 LOC.',
   },
-  'src/client/App.tsx': {
-    cap: 755,
-    target: 300,
-    reason:
-      'v3 plan commit 24 slims App.tsx into AppProviders + AppBootstrap + AppHydration + ' +
-      'OverlayComposer; orchestrator target ~300 LOC.',
-  },
 };
 
 /** Skip-list for files we deliberately leave > 600 LOC out of scope. Empty. */

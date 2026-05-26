@@ -28,8 +28,7 @@ import type { TouchInput } from '../input/TouchInput';
 import type { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
 import type { ConnectionStatus } from '../state/store';
 import type { MutableRefObject } from 'react';
-
-const SERVER_URL = (import.meta.env.VITE_SERVER_URL as string | undefined) ?? 'ws://localhost:2567';
+import { SERVER_URL } from './serverUrl';
 
 export interface ConnectFlowOpts {
   el: HTMLDivElement;
