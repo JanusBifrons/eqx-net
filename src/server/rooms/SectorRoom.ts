@@ -56,6 +56,8 @@ import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
+import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
+import { LeaveHandler } from './LeaveHandler.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -75,13 +77,13 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
-import { recordGameJoin, recordGameLeave, recordKill } from '../stats/StatsService.js';
+import { recordGameJoin, recordKill } from '../stats/StatsService.js';
 // db / saveSnapshot / SectorSnapshot.* now used inside SectorPersistence.ts
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
-import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
+// LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
-import { setSession, clearSession } from '../transit/sessionRegistry.js';
+import { setSession } from '../transit/sessionRegistry.js';
 import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
@@ -303,6 +305,10 @@ export class SectorRoom extends Room<SectorState> {
   private sectorPersistence!: SectorPersistence;
   /** Living World bot lifecycle (spawn/despawn/markHostile). Extracted to `LivingWorldBotHooks.ts`. */
   private livingWorldBotHooks!: LivingWorldBotHooks;
+  /** Ownerless ship full-despawn (TTL expiry + lingering destruction). Extracted to `OwnerlessShipEvictor.ts`. */
+  private ownerlessShipEvictor!: OwnerlessShipEvictor;
+  /** Player onLeave handler (lingering / transit / despawn branches). Extracted to `LeaveHandler.ts`. */
+  private leaveHandler!: LeaveHandler;
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -882,6 +888,67 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
+      logger,
+      serverLogEvent,
+    });
+
+    // Player onLeave handler. Three branches: shouldLinger / transit-
+    // in-flight / despawn. Extracted to LeaveHandler.ts.
+    this.leaveHandler = new LeaveHandler({
+      sabF32: this.sabF32,
+      sectorKey: () => this.sectorKey,
+      shipsMap: this.state.ships,
+      sessionToPlayer: this.sessionToPlayer,
+      playerToSession: this.playerToSession,
+      playerToSlot: this.playerToSlot,
+      slotToPlayer: this.slotToPlayer,
+      freeSlots: this.freeSlots,
+      lastFireClientTick: this.lastFireClientTick,
+      initialSpawnPositions: this.initialSpawnPositions,
+      shipPoseCache: this.shipPoseCache,
+      playerToUser: this.playerToUser,
+      playerToActiveShipInstance: this.playerToActiveShipInstance,
+      playerToTransitInFlight: this.playerToTransitInFlight,
+      ownerlessShips: this.ownerlessShips,
+      boostingPlayers: this.boostingPlayers,
+      thrustingPlayers: this.thrustingPlayers,
+      snapshotBroadcaster: this.snapshotBroadcaster,
+      snapshotRing: this.snapshotRing,
+      mountTicker: this.mountTicker,
+      rosterPersistence: this.rosterPersistence,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid),
+      aiController: this.aiController,
+      cancelTransit: (pid, reason) => { this.transitOrchestrator?.cancelTransit(pid, reason); },
+      evictOwnerlessShip: (id) => this.evictOwnerlessShip(id),
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      bus: this.bus,
+      logger,
+      serverLogEvent,
+    });
+
+    // Ownerless-ship eviction (TTL expiry + lingering destruction
+    // tail). Composes the wreck-keyed Limbo delete + roster mark-stored.
+    this.ownerlessShipEvictor = new OwnerlessShipEvictor({
+      sabF32: this.sabF32,
+      sectorKey: () => this.sectorKey,
+      shipsMap: this.state.ships,
+      ownerlessShips: this.ownerlessShips,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
+      playerToSlot: this.playerToSlot,
+      slotToPlayer: this.slotToPlayer,
+      freeSlots: this.freeSlots,
+      lastFireClientTick: this.lastFireClientTick,
+      initialSpawnPositions: this.initialSpawnPositions,
+      shipPoseCache: this.shipPoseCache,
+      playerToUser: this.playerToUser,
+      playerToActiveShipInstance: this.playerToActiveShipInstance,
+      snapshotRing: this.snapshotRing,
+      mountTicker: this.mountTicker,
+      rosterPersistence: this.rosterPersistence,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      bus: this.bus,
       logger,
       serverLogEvent,
     });
@@ -2105,152 +2172,8 @@ export class SectorRoom extends Room<SectorState> {
     );
   }
 
-  override onLeave(client: Client, _consented: boolean): void {
-    const playerId = this.sessionToPlayer.get(client.sessionId);
-    if (!playerId) return;
-
-    // Phase 6b — capture the active ship's shipInstanceId now, before
-    // any cleanup clears the indirection map. We need it to delete from
-    // the schema (which is now shipInstanceId-keyed) at the end of the
-    // despawn path. May be undefined if the player never finished
-    // joining; downstream guards handle that case.
-    const onLeaveShipKey = this.resolveActiveShipKey(playerId);
-
-    // Phase 1 AI: drop this player from every drone's hostile set so that
-    // when (or if) they return to the sector — or another player engages —
-    // the drones aren't still gunning for someone who's no longer here.
-    this.aiController.purgeHostility(playerId);
-
-    // Always clear session-bound state. Boost is held — drop it on
-    // disconnect (no key is held during the offline window so the ship
-    // shouldn't keep boosting).
-    this.sessionToPlayer.delete(client.sessionId);
-    this.playerToSession.delete(playerId);
-    this.interestScratch.delete(client.sessionId);
-    this.sabAppliedTicks.delete(playerId);
-    this.boostingPlayers.delete(playerId);
-    this.thrustingPlayers.delete(playerId);
-    // Stage 5 — drop per-recipient scheduler state.
-    this.lastInputCaches.delete(client.sessionId);
-    clearSession(client.sessionId);
-
-    const slot = this.playerToSlot.get(playerId);
-    const ship = this.getActiveShip(playerId);
-    const transitInFlight = this.playerToTransitInFlight.has(playerId);
-    this.playerToTransitInFlight.delete(playerId);
-
-    // Cancel any in-flight orchestrator entry for this player (e.g. they
-    // disconnected during SPOOLING). Idempotent if there's no entry.
-    this.transitOrchestrator?.cancelTransit(playerId, 'manual');
-
-    // Phase 8 sub-phase B (lingering ships) — for galaxy rooms, keep an
-    // ALIVE ship in the simulation when the player disconnects (not
-    // transiting, not dead). The physics worker continues stepping it; drag
-    // decays vx/vy/angvel and the ship drifts to a stop. Other clients
-    // continue to see it via the snapshot broadcast. Reconnect within
-    // LIMBO_DISCONNECT_TTL_MS rebinds the new session to the existing
-    // ship; on TTL expiry `evictOwnerlessShip` runs full cleanup.
-    //
-    // We still write a Limbo entry — but it serves a different purpose
-    // now: (a) the active-Limbo UI gate on the landing screen reads it
-    // via `/dev/limbo`, (b) on a server crash it's the only way to know
-    // where this player's ship was (live drift state is lost on restart).
-    const shouldLinger =
-      this.sectorKey !== null
-      && slot !== undefined
-      && ship?.alive === true
-      && !transitInFlight;
-
-    if (shouldLinger) {
-      const b = slotBase(slot!);
-      const payload: LimboPayload = {
-        x:      this.sabF32[b + SLOT_X_OFF]!,
-        y:      this.sabF32[b + SLOT_Y_OFF]!,
-        vx:     this.sabF32[b + SLOT_VX_OFF]!,
-        vy:     this.sabF32[b + SLOT_VY_OFF]!,
-        angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
-        angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-        health: ship!.health,
-        lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
-        userId: this.playerToUser.get(playerId) ?? null,
-        sectorKey: this.sectorKey!,
-        kind: ship!.kind,
-      };
-      try {
-        getLimboStore().put(playerId, payload, LIMBO_DISCONNECT_TTL_MS);
-      } catch (err) {
-        logger.warn({ err, playerId }, 'Limbo put on leave failed');
-      }
-
-      // Phase 3 dual-write — mirror linger pose into the roster row so the
-      // /dev/player-ships endpoint shows the player's ship at its current
-      // resting place after disconnect.
-      this.markRosterLinger(ship!.shipInstanceId, {
-        x: payload.x, y: payload.y, vx: payload.vx, vy: payload.vy,
-        angle: payload.angle, angvel: payload.angvel,
-        health: payload.health, lastFireClientTick: payload.lastFireClientTick,
-      });
-
-      // Phase 6b cleanup — keyed by shipInstanceId, not playerId. See the
-      // ownerlessShips field doc for the displaced-hull-leak history.
-      const shipInstanceId = ship!.shipInstanceId;
-      const evictTimer = setTimeout(() => {
-        this.evictOwnerlessShip(shipInstanceId);
-      }, LIMBO_DISCONNECT_TTL_MS);
-      if (typeof evictTimer === 'object' && evictTimer !== null && 'unref' in evictTimer) {
-        (evictTimer as { unref: () => void }).unref();
-      }
-      this.ownerlessShips.set(shipInstanceId, evictTimer);
-
-      // Phase 6b — flip the schema's `isActive` flag to false so the
-      // client renderer can tint lingering hulls (grey-ish, no thrust
-      // flame) and Phase 6c's drone retargeting can ignore them. The
-      // schema field mutation propagates via the Colyseus diff broadcast
-      // automatically. Indirection map (playerToActiveShipInstance)
-      // INTENTIONALLY KEPT — on rebind we look it up to find the
-      // shipInstanceId to flip back to active.
-      ship.isActive = false;
-      // NOTE: We do NOT add to lingeringSlots here. The ship's slot
-      // stays in playerToSlot[playerId] — that's the canonical place
-      // for "this player's hull in this room" while the player might
-      // still reconnect. lingeringSlots only fills when a DIFFERENT
-      // ship (fresh-spawn / different shipId) displaces this one from
-      // playerToSlot — see the rebind branch in onJoin.
-
-      serverLogEvent('player_lingered', { playerId });
-      logger.info(
-        { playerId, sectorKey: this.sectorKey, health: ship.health },
-        'player left, ship lingering in sector',
-      );
-      return;
-    }
-
-    // Despawn path — engineering room, dead ship, or transit-in-flight
-    // (the destination's onJoin will restore from the transit Limbo entry).
-    this.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
-    this.initialSpawnPositions.delete(playerId);
-    this.snapshotRing.unregisterEntity(playerId);
-    // Phase 6a — drop the playerId → shipInstanceId indirection. The
-    // schema entry is being deleted below; resolveActiveShipKey would
-    // return a stale id otherwise.
-    this.playerToActiveShipInstance.delete(playerId);
-
-    if (slot !== undefined) {
-      this.playerToSlot.delete(playerId);
-      this.slotToPlayer.delete(slot);
-      this.freeSlots.push(slot);
-      this.postToWorker({ type: 'DESPAWN', slot, playerId });
-    }
-
-    if (onLeaveShipKey !== undefined) this.state.ships.delete(onLeaveShipKey);
-    this.shipPoseCache.delete(playerId);
-    recordGameLeave(playerId);
-    this.playerToUser.delete(playerId);
-    this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
-    serverLogEvent('player_leave', { playerId });
-    logger.info({ playerId }, 'player left');
+  override onLeave(client: Client, consented: boolean): void {
+    this.leaveHandler.handle(client, consented);
   }
 
   /**
@@ -2262,115 +2185,7 @@ export class SectorRoom extends Room<SectorState> {
    * keep showing a sector the player can no longer enter.
    */
   private evictOwnerlessShip(shipInstanceId: string): void {
-    const timer = this.ownerlessShips.get(shipInstanceId);
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      this.ownerlessShips.delete(shipInstanceId);
-    }
-
-    const ship = this.state.ships.get(shipInstanceId);
-    if (ship === undefined) {
-      // Already cleaned up by another path (e.g. applyDamage destroyed the
-      // lingering hull and ran the lingeringSlots cleanup inline).
-      return;
-    }
-    const playerId = ship.playerId;
-
-    // Phase 6b cleanup — differentiate active-hull eviction (the player has
-    // a live session that just expired its 15-min TTL) from lingering-hull
-    // eviction (the hull was displaced by a fresh spawn; the player is
-    // currently piloting a DIFFERENT hull). The two need different cleanup:
-    //   active: free playerToSlot, drop all player-keyed maps, delete Limbo
-    //   lingering: free lingeringSlots ONLY; leave player-keyed maps alone
-    //              (those refer to the player's CURRENT active hull, not
-    //              this displaced one).
-    const isLingeringHull = this.lingeringSlots.has(shipInstanceId);
-    const slot = isLingeringHull
-      ? this.lingeringSlots.get(shipInstanceId)
-      : this.playerToSlot.get(playerId);
-
-    // Capture the ship's final pose for the roster mirror BEFORE freeing
-    // the schema entry.
-    let rosterPose: {
-      x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
-      health: number; lastFireClientTick: number;
-    } | null = null;
-    if (slot !== undefined) {
-      const b = slotBase(slot);
-      if (ship.alive && ship.health <= 0) {
-        logger.warn(
-          { playerId, shipId: shipInstanceId, shipHealth: ship.health, sectorKey: this.sectorKey, isLingeringHull },
-          'evicting lingering ship with non-positive health — applyDamage race?',
-        );
-      }
-      rosterPose = {
-        x:      this.sabF32[b + SLOT_X_OFF]!,
-        y:      this.sabF32[b + SLOT_Y_OFF]!,
-        vx:     this.sabF32[b + SLOT_VX_OFF]!,
-        vy:     this.sabF32[b + SLOT_VY_OFF]!,
-        angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
-        angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-        health: Math.max(1, ship.health),
-        lastFireClientTick: isLingeringHull ? 0 : (this.lastFireClientTick.get(playerId) ?? 0),
-      };
-    }
-
-    if (isLingeringHull) {
-      // Free only the lingering-hull side of bookkeeping. The player's
-      // active hull (if any) keeps all of its playerId-keyed entries.
-      this.lingeringSlots.delete(shipInstanceId);
-      this.lingeringPoseCache.delete(shipInstanceId);
-      if (slot !== undefined) {
-        this.freeSlots.push(slot);
-        // The worker rekeyed this body to `linger-${shipInstanceId}` at
-        // the fresh-spawn-displaces point; DESPAWN must use the same key
-        // or it'd despawn the player's active ship.
-        this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${shipInstanceId}` });
-      }
-    } else {
-      // Active-hull eviction — full player-scope teardown.
-      this.lastFireClientTick.delete(playerId);
-      this.playerMountAngles.delete(playerId);
-      this.playerSlotTargets.delete(playerId);
-      this.initialSpawnPositions.delete(playerId);
-      this.snapshotRing.unregisterEntity(playerId);
-      this.playerToActiveShipInstance.delete(playerId);
-      if (slot !== undefined) {
-        this.playerToSlot.delete(playerId);
-        this.slotToPlayer.delete(slot);
-        this.freeSlots.push(slot);
-        this.postToWorker({ type: 'DESPAWN', slot, playerId });
-      }
-      this.shipPoseCache.delete(playerId);
-      this.playerToUser.delete(playerId);
-
-      // Clear the active-Limbo UI gate. Without this, the landing screen
-      // would keep pointing at a sector this player no longer has a ship in.
-      try {
-        getLimboStore().delete(playerId);
-      } catch (err) {
-        logger.warn({ err, playerId }, 'Limbo delete on eviction failed');
-      }
-
-      recordGameLeave(playerId);
-    }
-
-    // Schema entry removal applies to both cases.
-    this.state.ships.delete(shipInstanceId);
-
-    // Phase 3 dual-write — flip the roster row to stored state with the
-    // ship's last pose frozen in place. The row persists indefinitely so
-    // the player can pick it back up on a future visit.
-    if (rosterPose !== null) {
-      this.markRosterStored(shipInstanceId, rosterPose);
-    }
-
-    this.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
-    serverLogEvent('ownerless_evicted', { playerId, shipInstanceId, isLingeringHull });
-    logger.info(
-      { playerId, shipInstanceId, sectorKey: this.sectorKey, isLingeringHull },
-      'ownerless ship evicted',
-    );
+    this.ownerlessShipEvictor.evict(shipInstanceId);
   }
 
   // ── Phase 3 multi-ship roster (dual-write) ─────────────────────────────
