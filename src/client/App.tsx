@@ -1,19 +1,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
-import {
-  Box,
-  Typography,
-} from '@mui/material';
+import { Box } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
-import { PixiRenderer } from './render/PixiRenderer';
-import { DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
-import { createGameRafLoop } from './app/gameRafLoop';
-import { selectRenderer, installProfileWindow, buildJoinSpec } from './app/gameSurfaceBootstrap';
+import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
+import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
 import {
-  installGalaxyOverlay,
   syncGalaxyVisibility,
   syncGalaxyCurrentSector,
   syncGalaxyTransitDocked,
@@ -22,8 +16,6 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { LocalGameClient } from './local/LocalGameClient';
-import { loadStoredPlayerId, persistPlayerId } from './identity/token';
 import { useUIStore, applyUserPrefs, useGameReady } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { AppHeader } from './components/AppHeader';
@@ -51,6 +43,7 @@ import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { MetaLandingScreen } from './components/MetaLandingScreen';
+import { LocalSurface } from './components/LocalSurface';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
@@ -282,78 +275,24 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // so the delta covers GPU init + WS handshake + first paint.
     const phaseEnterPerfNow = performance.now();
 
-    (async () => {
-      const rendererInitStartedAt = performance.now();
-      await renderer.init(el);
-      const rendererInitMs = performance.now() - rendererInitStartedAt;
-
-      // StrictMode fires cleanup before the async init resolves. If disposal
-      // happened while we were awaiting, tear down the just-initialised renderer
-      // (which appended a canvas) and exit — the second mount will take over.
-      if (disposed) {
-        renderer.dispose();
-        return;
-      }
-      // Load curtain ON immediately — hides the canvas during the
-      // join load period so the player doesn't see ship-at-(0,0)
-      // ghost frames, partial mirror state, or rippled asteroid
-      // bleed-through. The curtain is independent of the warp filter
-      // chain (no spool/climax/burst on initial join — that envelope
-      // is for inter-sector transit only, and is driven by the
-      // transitState effect below). The curtain fades AND the
-      // arrival flash fires when `gameReady` flips true.
-      if (!useUIStore.getState().rendererFirstFrameRendered) {
-        renderer.setLoadCurtain(true);
-      }
-      logEvent('renderer_init_complete', {
-        rendererInitMs: Math.round(rendererInitMs),
-        msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
-      });
-
-      // Map B (additive in-game galaxy overlay) — see galaxyOverlay.ts
-      // for the worker-vs-DOM construction paths.
-      galaxyLayerRef.current = installGalaxyOverlay({
-        renderer,
-        useWorker,
-        el,
-        onEngageTransit: handleEngageTransit,
-      });
-
-      // Probe 3 (mobile-perf-investigation): `?fpscap=N` URL override
-      // for DEFAULT_MIN_FRAME_INTERVAL_MS. See gameRafLoop.ts.
-      const fpsCapParam = new URLSearchParams(window.location.search).get('fpscap');
-      const fpsCapOverride = fpsCapParam !== null ? Math.max(0, parseFloat(fpsCapParam)) : null;
-      const effectiveCapMs = fpsCapOverride !== null && !Number.isNaN(fpsCapOverride)
-        ? fpsCapOverride
-        : DEFAULT_MIN_FRAME_INTERVAL_MS;
-      if (fpsCapOverride !== null) {
-        logEvent('fps_cap_override', { fpsCapParam, effectiveCapMs });
-      }
-      const loop = createGameRafLoop({
-        el,
-        gameClient,
-        renderer,
-        useWorker,
-        effectiveCapMs,
-        phaseEnterPerfNow,
-        animFrameRef,
-        isDisposed: () => disposed,
-      });
-      animFrameRef.current = requestAnimationFrame(loop);
-
-      const storedId = loadStoredPlayerId();
-      const { roomName, extraJoinOptions, prettyName } = buildJoinSpec(roomNameOverride, joinOptionsOverride);
-
-      await gameClient.connect(SERVER_URL, storedId, keyboard, {
-        onConnectionStatus: setConnectionStatus,
-        onPlayerId: (id) => {
-          persistPlayerId(id);
-          setPlayerId(id);
-        },
-      }, roomName, extraJoinOptions, touchInputRef.current ?? undefined);
-
-      setSectorName(prettyName);
-    })().catch((err: unknown) => {
+    runGameSurfaceConnectFlow({
+      el,
+      renderer,
+      useWorker,
+      gameClient,
+      keyboard,
+      touchInput: touchInputRef.current,
+      phaseEnterPerfNow,
+      isDisposed: () => disposed,
+      galaxyLayerRef,
+      animFrameRef,
+      roomNameOverride,
+      joinOptionsOverride,
+      onEngageTransit: handleEngageTransit,
+      onConnectionStatus: setConnectionStatus,
+      onPlayerId: setPlayerId,
+      onSectorName: setSectorName,
+    }).catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');
     });
@@ -511,70 +450,6 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   );
 }
 
-function LocalSurface(): JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const clientRef = useRef<LocalGameClient | null>(null);
-  const rendererRef = useRef<PixiRenderer | null>(null);
-  const keyboardRef = useRef<Keyboard | null>(null);
-  const animFrameRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const el = containerRef.current;
-    let disposed = false;
-
-    const keyboard = new Keyboard();
-    keyboardRef.current = keyboard;
-
-    const renderer = new PixiRenderer();
-    rendererRef.current = renderer;
-
-    const gameClient = new LocalGameClient();
-    clientRef.current = gameClient;
-
-    (async () => {
-      await renderer.init(el);
-      if (disposed) {
-        renderer.dispose();
-        return;
-      }
-      await gameClient.start(keyboard);
-
-      const loop = (_now: number): void => {
-        if (!disposed) {
-          gameClient.updateMirror();
-          renderer.update(gameClient.mirror);
-          animFrameRef.current = requestAnimationFrame(loop);
-        }
-      };
-      animFrameRef.current = requestAnimationFrame(loop);
-    })().catch((err: unknown) => {
-      console.error('[LocalSurface] start failed', err);
-    });
-
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(animFrameRef.current);
-      keyboard.dispose();
-      gameClient.dispose();
-      renderer.dispose();
-    };
-  }, []);
-
-  return (
-    <Box sx={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: '#05070f' }}>
-      <div ref={containerRef} data-testid="game-surface" style={{ width: '100%', height: '100%' }} />
-      <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10, pointerEvents: 'none' }}>
-        <Typography variant="overline" sx={{ color: '#ff8800' }}>
-          Single-Player Diagnostic — no network
-        </Typography>
-        <Typography variant="caption" sx={{ display: 'block', color: '#888' }}>
-          WASD to move. Three asteroids spawned nearby. If this jitters, the sim itself is bad.
-        </Typography>
-      </Box>
-    </Box>
-  );
-}
 
 export function App(): JSX.Element {
   // Phase 8 — autoJoin escape hatch: ?room= or ?galaxy= bypasses meta + auth
