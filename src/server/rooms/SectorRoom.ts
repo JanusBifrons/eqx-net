@@ -47,6 +47,7 @@ import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
+import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -274,14 +275,17 @@ export class SectorRoom extends Room<SectorState> {
   // velocity, drag-decay over time, and collide with everything. Damage
   // resolves through the standard `applyDamage` path; health 0 frees the
   // slot back into `freeSlots` and removes the wreck.
-  private wreckToSlot = new Map<string, number>();
-  private slotToWreck = new Map<number, string>();
-  /** Pose mirror for wrecks, parallel to `shipPoseCache`. Updated once
-   *  per `update()` from the SAB. Keyed by shipInstanceId. */
-  private wreckPoseCache = new Map<string, ShipPhysicsState>();
-  /** Counter — increments on every poll-driven conversion so we know
-   *  the abandon→wreck rail is firing. */
-  private wreckConversions = 0;
+  /** Atomic ship→wreck conversion + wreck destruction. Owns
+   *  `wreckToSlot`, `slotToWreck`, `wreckPoseCache`, `wreckConversions`.
+   *  Extracted to `WreckLifecycleCoordinator.ts` (commit 15 of v3
+   *  refactor plan). Aliased below as getters so the unchanged call
+   *  sites in `update()` / snapshot serialiser / restore paths keep
+   *  reading the same Map identity. */
+  private wreckCoordinator!: WreckLifecycleCoordinator;
+  private get wreckToSlot(): Map<string, number> { return this.wreckCoordinator.wreckToSlot; }
+  private get slotToWreck(): Map<number, string> { return this.wreckCoordinator.slotToWreck; }
+  private get wreckPoseCache(): Map<string, ShipPhysicsState> { return this.wreckCoordinator.wreckPoseCache; }
+  private get wreckConversions(): number { return this.wreckCoordinator.wreckConversions; }
 
   // Phase 5c: swarm entities (asteroids, drones) live in the same SAB slot
   // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
@@ -640,6 +644,35 @@ export class SectorRoom extends Room<SectorState> {
       getActiveShip: (pid) => this.getActiveShip(pid),
       aiController: this.aiController,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+    });
+
+    // Atomic ship→wreck conversion + wreck destruction. Owns the
+    // wreckTo/From/Pose maps + the diagnostic counter. The 8-collaborator
+    // transaction lives here; the room provides the rest of the world
+    // (slot maps, identity maps, snapshot ring, schema). Extracted to
+    // WreckLifecycleCoordinator.ts (commit 15 of v3 refactor plan).
+    this.wreckCoordinator = new WreckLifecycleCoordinator({
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      newWreckState: () => new WreckState(),
+      state: this.state,
+      sabF32: this.sabF32,
+      shipPoseCache: this.shipPoseCache,
+      playerToSlot: this.playerToSlot,
+      slotToPlayer: this.slotToPlayer,
+      freeSlots: this.freeSlots,
+      lastFireClientTick: this.lastFireClientTick,
+      initialSpawnPositions: this.initialSpawnPositions,
+      mountTicker: this.mountTicker,
+      playerToActiveShipInstance: this.playerToActiveShipInstance,
+      playerToSession: this.playerToSession,
+      sessionToPlayer: this.sessionToPlayer,
+      playerToUser: this.playerToUser,
+      snapshotRing: this.snapshotRing,
+      clients: this.clients,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      sectorKey: () => this.sectorKey,
+      logger,
+      serverLogEvent,
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -3125,103 +3158,11 @@ export class SectorRoom extends Room<SectorState> {
    *    visit shows their (now smaller) roster minus the abandoned row.
    */
   private convertShipToWreck(playerId: string): void {
-    const ship = this.getActiveShip(playerId);
-    const slot = this.playerToSlot.get(playerId);
-    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
-    if (!ship.alive) {
-      // Already destroyed — the standard despawn path handles cleanup.
-      // Don't leave a destroyed-but-orphaned wreck.
-      return;
-    }
-    const shipInstanceId = ship.shipInstanceId;
-    const b = slotBase(slot);
-    const pose = this.shipPoseCache.get(playerId) ?? {
-      x:      this.sabF32[b + SLOT_X_OFF]!,
-      y:      this.sabF32[b + SLOT_Y_OFF]!,
-      vx:     this.sabF32[b + SLOT_VX_OFF]!,
-      vy:     this.sabF32[b + SLOT_VY_OFF]!,
-      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
-      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-    };
-
-    // 1) Build the wreck schema entry.
-    const wreck = new WreckState();
-    wreck.shipInstanceId = shipInstanceId;
-    wreck.kind = ship.kind;
-    wreck.health = ship.health;
-    wreck.maxHealth = ship.maxHealth;
-    this.state.wrecks.set(shipInstanceId, wreck);
-    this.wreckPoseCache.set(shipInstanceId, pose);
-
-    // 2) Transfer SAB slot ownership AND re-key the underlying Rapier
-    //    body in the worker. Without the REKEY_SHIP command, the next
-    //    SPAWN for this playerId (same browser → same eqxPlayerId on
-    //    reconnect) would overwrite `physics.bodies[playerId]` and
-    //    orphan the wreck body — still alive in Rapier, still
-    //    collidable, but invisible to the SAB writer because
-    //    `getAllShipStates()` no longer iterates it. The client would
-    //    render the wreck at a stale frozen pose while the real
-    //    physics body drifts somewhere else and collisions land in
-    //    empty space.
-    this.slotToWreck.set(slot, shipInstanceId);
-    this.wreckToSlot.set(shipInstanceId, slot);
-    this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `wreck-${shipInstanceId}` });
-
-    // 3) Tear down player-keyed bookkeeping. Slot is NOT pushed onto
-    //    freeSlots — the wreck still owns it.
-    this.playerToSlot.delete(playerId);
-    this.slotToPlayer.delete(slot);
-    this.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
-    this.initialSpawnPositions.delete(playerId);
-    this.shipPoseCache.delete(playerId);
-    this.snapshotRing.unregisterEntity(playerId);
-    // Phase 6b — schema is shipInstanceId-keyed; the local already
-    // captured `shipInstanceId` from the ship reference earlier.
-    this.state.ships.delete(shipInstanceId);
-    // Phase 6a — drop the playerId → shipInstanceId indirection. The
-    // hull is now a wreck (keyed by shipInstanceId in `state.wrecks`);
-    // the player no longer has an active ship in this room.
-    this.playerToActiveShipInstance.delete(playerId);
-
-    // 4) Force the owning session to leave (if connected). The player
-    //    sees their roster missing this ship on the next galaxy-map
-    //    visit. The Limbo path is bypassed — the row is already gone.
-    const sessionId = this.playerToSession.get(playerId);
-    if (sessionId !== undefined) {
-      const client = this.clients.find((c) => c.sessionId === sessionId);
-      if (client !== undefined) {
-        try { client.send('ship_abandoned', { shipInstanceId }); } catch { /* socket already closed */ }
-        try { client.leave(1000); } catch { /* already gone */ }
-      }
-      this.playerToSession.delete(playerId);
-    }
-    this.sessionToPlayer.forEach((pid, sid) => {
-      if (pid === playerId) this.sessionToPlayer.delete(sid);
-    });
-    this.playerToUser.delete(playerId);
-
-    this.wreckConversions++;
-    serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
-    logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → wreck');
+    this.wreckCoordinator.convertShipToWreck(playerId);
   }
 
-  /**
-   * Phase 4 — drop a wreck and release its SAB slot. Called from
-   * `applyDamage` when a wreck's health reaches 0, and from
-   * `onDispose` so we don't leak slots on room teardown.
-   */
   private destroyWreck(shipInstanceId: string): void {
-    const slot = this.wreckToSlot.get(shipInstanceId);
-    if (slot !== undefined) {
-      this.wreckToSlot.delete(shipInstanceId);
-      this.slotToWreck.delete(slot);
-      this.freeSlots.push(slot);
-      this.postToWorker({ type: 'DESPAWN', slot, playerId: `wreck-${shipInstanceId}` });
-    }
-    this.state.wrecks.delete(shipInstanceId);
-    this.wreckPoseCache.delete(shipInstanceId);
+    this.wreckCoordinator.destroyWreck(shipInstanceId);
   }
 
   /**
