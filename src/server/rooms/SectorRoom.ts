@@ -1,11 +1,9 @@
 import { Room, Client } from 'colyseus';
-import { Worker } from 'node:worker_threads';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { bundleWorker } from '../workers/bundleWorker.js';
 import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
@@ -28,7 +26,7 @@ import {
   type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
-import { type Vec2 } from '../../core/swarm/asteroidShape.js';
+// Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
@@ -48,6 +46,7 @@ import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
+import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -203,16 +202,7 @@ const IDLE_MOTION_EPSILON_SQ = 0.05;
  *  units). Asteroids are unaffected. */
 const DRONE_MAX_BOUNDS = 10000;
 
-type WorkerCmd =
-  | { type: 'SPAWN';          slot: number; playerId: string; x: number; y: number; kindId?: string }
-  | { type: 'DESPAWN';        slot: number; playerId: string }
-  | { type: 'REKEY_SHIP';     oldId: string; newId: string }
-  | { type: 'INPUT';          slot: number; inputTick: number; thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean }
-  | { type: 'SPAWN_OBSTACLE'; slot: number; obstacleId: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number; vertices?: ReadonlyArray<Vec2> }
-  | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
-  | { type: 'CLOCK_RATE';     rate: number }
-  | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
-  | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number };
+// WorkerCmd union extracted to PhysicsWorkerProxy.ts
 
 /** Fixed asteroid roster for the multiplayer diagnostic. Deterministic so the
  *  initial swarm population matches between sessions. Spawned via SwarmSpawner
@@ -239,7 +229,10 @@ interface ProjectileRecord {
 }
 
 export class SectorRoom extends Room<SectorState> {
-  private physicsWorker!: Worker;
+  /** Owns the physics worker (lifecycle + message routing + typed
+   *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
+   *  of v3 refactor plan). */
+  private physicsWorkerProxy!: PhysicsWorkerProxy;
   private sab!: SharedArrayBuffer;
   private sabU32!: Uint32Array;
   private sabF32!: Float32Array;
@@ -2136,162 +2129,108 @@ export class SectorRoom extends Room<SectorState> {
 
   // ── Worker lifecycle ────────────────────────────────────────────────────
 
+  /**
+   * Bundle + spawn the physics worker through the PhysicsWorkerProxy.
+   * The proxy owns the Worker instance, the READY handshake, and the
+   * SLEEP_TRANSITION / CONTACT_BATCH routing — this room provides
+   * the handlers (bus emit, broadcast, ramming damage) via callbacks.
+   */
   private async spawnWorker(): Promise<void> {
-    const workerCode = await bundleWorker({
-      entryPoint: WORKER_TS_PATH,
-      // Rapier ships a pre-built WASM binary; keep it external so the worker
-      // accesses the same copy as the main thread (avoids double-init).
-      external: ['@dimforge/rapier2d-compat'],
-    });
-    return new Promise<void>((resolve, reject) => {
-      this.physicsWorker = new Worker(workerCode, {
-        eval: true,
-        workerData: { sab: this.sab },
-      });
-
-      let ready = false;
-
-      this.physicsWorker.on('message', (msg: {
-        type: string;
-        entityId?: string;
-        sleeping?: boolean;
-        tick?: number;
-        contacts?: Array<{
-          aId: string; bId: string;
-          vAxPost: number; vAyPost: number;
-          vBxPost: number; vByPost: number;
-          forceMagnitude: number;
-        }>;
-      }) => {
-        if (!ready && msg.type === 'READY') {
-          ready = true;
-          resolve();
-          return;
+    this.physicsWorkerProxy = new PhysicsWorkerProxy({
+      workerEntryPath: WORKER_TS_PATH,
+      sab: this.sab,
+      logger,
+      stats: () => ({
+        playerCount: this.playerToSlot.size,
+        swarmCount: this.swarmRegistry.size(),
+      }),
+      onSleepTransition: (entityId, sleeping) => {
+        // Re-emit on the local bus as a discrete event. Phase 5
+        // subscribers (binary swarm broadcast in 5c, audio/UI in later
+        // phases) consume these to freeze interpolation / play wake
+        // SFX. Pino sampling rule for high-frequency events applies.
+        if (sleeping) {
+          this.bus.emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId });
+        } else {
+          this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId });
         }
-        if (msg.type === 'SLEEP_TRANSITION' && typeof msg.entityId === 'string' && typeof msg.sleeping === 'boolean') {
-          // Re-emit on the local bus as a discrete event. Phase 5 subscribers
-          // (binary swarm broadcast in 5c, audio/UI in later phases) consume
-          // these to freeze interpolation / play wake SFX. Pino sampling rule
-          // for high-frequency events applies — log at 1% if needed.
-          if (msg.sleeping) {
-            this.bus.emit('ENTITY_SLEPT', { type: 'ENTITY_SLEPT', entityId: msg.entityId });
-          } else {
-            this.bus.emit('ENTITY_WOKE', { type: 'ENTITY_WOKE', entityId: msg.entityId });
-          }
-        }
-        // Filter exposed for unit testing (see filterSelfCollisions.test.ts).
-        // Inline here for clarity in the original handler.
-        if (msg.type === 'CONTACT_BATCH' && Array.isArray(msg.contacts) && typeof msg.tick === 'number') {
-          // Stage 2 of the network-feel roadmap: each contact above the
-          // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in the
-          // room as `collision_resolved`. AOI filter is deferred — the
-          // typical 1–4 player room's per-tick contact volume is low, and
-          // the client's `applyCollisionResolved` already silently no-ops
-          // on bodies its predWorld doesn't track (drone-vs-drone events).
-          // Bus emission lets persistence/telemetry subscribe.
-          // Aggregate per unordered {aId,bId} pair FIRST. A hull-polygon
-          // body is a compound of N triangle colliders, so one physical
-          // ram emits up to N contact-force sub-events sharing aId/bId.
-          // Summing before floor/damage/broadcast prevents N-multiplied
-          // damage, sub-floor splitting, and one broadcast per triangle.
-          // See src/core/combat/Ramming.ts.
-          for (const p of aggregateRamming(msg.contacts)) {
-            // Phase 6b self-collision filter (aId === bId): the active +
-            // lingering hulls of one player share the playerId identity.
-            // See ./contactFilter.ts for the rationale + its unit test.
-            if (p.aId === p.bId) {
-              serverLogEvent('collision_self_filtered', {
-                aId: p.aId,
-                tick: msg.tick,
-                impulse: parseFloat(p.force.toFixed(3)),
-              });
-              continue;
-            }
-            this.bus.emit('COLLISION_RESOLVED', {
-              type: 'COLLISION_RESOLVED',
+      },
+      onContactBatch: (tick, contacts) => {
+        // Stage 2 of the network-feel roadmap: each contact above the
+        // worker's CONTACT_FORCE_FLOOR is broadcast to all clients in
+        // the room as `collision_resolved`. AOI filter is deferred —
+        // the typical 1–4 player room's per-tick contact volume is
+        // low, and the client's `applyCollisionResolved` silently
+        // no-ops on bodies its predWorld doesn't track. Bus emission
+        // lets persistence/telemetry subscribe.
+        //
+        // Aggregate per unordered {aId,bId} pair FIRST. A hull-polygon
+        // body is a compound of N triangle colliders, so one physical
+        // ram emits up to N contact-force sub-events sharing aId/bId.
+        // Summing before floor/damage/broadcast prevents N-multiplied
+        // damage, sub-floor splitting, and one broadcast per triangle.
+        // See src/core/combat/Ramming.ts.
+        for (const p of aggregateRamming(contacts)) {
+          // Phase 6b self-collision filter (aId === bId): the active +
+          // lingering hulls of one player share the playerId identity.
+          // See ./contactFilter.ts for the rationale + its unit test.
+          if (p.aId === p.bId) {
+            serverLogEvent('collision_self_filtered', {
               aId: p.aId,
-              bId: p.bId,
-              vA: p.vA,
-              vB: p.vB,
-              impulse: p.force,
-              tick: msg.tick,
-            });
-            this.broadcast('collision_resolved', {
-              type: 'collision_resolved',
-              aId: p.aId,
-              bId: p.bId,
-              vA: p.vA,
-              vB: p.vB,
-              impulse: p.force,
-              tick: msg.tick,
-            });
-            serverLogEvent('collision_resolved', {
-              aId: p.aId,
-              bId: p.bId,
+              tick,
               impulse: parseFloat(p.force.toFixed(3)),
-              tick: msg.tick,
             });
-            // Ramming damage (Phase 4). Symmetric: each side takes the
-            // damage; the OTHER id is the "shooter" (kill-feed +
-            // hostility attribution). applyDamage already no-ops on
-            // asteroids (immune - no swarmHealth entry) while still
-            // damaging the ship they hit, so "asteroids deal but do not
-            // take" falls out for free. Applied once per pair per tick.
-            if (p.damage > 0) {
-              serverLogEvent('ram_damage', {
-                aId: p.aId,
-                bId: p.bId,
-                force: parseFloat(p.force.toFixed(1)),
-                damage: parseFloat(p.damage.toFixed(2)),
-                tick: msg.tick,
-              });
-              this.applyDamage(p.aId, p.bId, p.damage);
-              this.applyDamage(p.bId, p.aId, p.damage);
-            }
+            continue;
+          }
+          this.bus.emit('COLLISION_RESOLVED', {
+            type: 'COLLISION_RESOLVED',
+            aId: p.aId,
+            bId: p.bId,
+            vA: p.vA,
+            vB: p.vB,
+            impulse: p.force,
+            tick,
+          });
+          this.broadcast('collision_resolved', {
+            type: 'collision_resolved',
+            aId: p.aId,
+            bId: p.bId,
+            vA: p.vA,
+            vB: p.vB,
+            impulse: p.force,
+            tick,
+          });
+          serverLogEvent('collision_resolved', {
+            aId: p.aId,
+            bId: p.bId,
+            impulse: parseFloat(p.force.toFixed(3)),
+            tick,
+          });
+          // Ramming damage (Phase 4). Symmetric: each side takes the
+          // damage; the OTHER id is the "shooter" (kill-feed +
+          // hostility attribution). applyDamage already no-ops on
+          // asteroids (immune - no swarmHealth entry) while still
+          // damaging the ship they hit, so "asteroids deal but do not
+          // take" falls out for free. Applied once per pair per tick.
+          if (p.damage > 0) {
+            serverLogEvent('ram_damage', {
+              aId: p.aId,
+              bId: p.bId,
+              force: parseFloat(p.force.toFixed(1)),
+              damage: parseFloat(p.damage.toFixed(2)),
+              tick,
+            });
+            this.applyDamage(p.aId, p.bId, p.damage);
+            this.applyDamage(p.bId, p.aId, p.damage);
           }
         }
-      });
-
-      this.physicsWorker.on('error', (err) => {
-        // Surface the full error — message, stack, name, code — so OOM /
-        // assertion failures from Rapier WASM are diagnostic rather than
-        // mute. Without `err.stack`, pino's serializer may drop the underlying
-        // crash site. Phase 6 risk #2 (exercising the spawner past the prior
-        // 500-entity ceiling) hits this path.
-        const errAny = err as Error & { code?: string };
-        logger.error(
-          {
-            err,
-            errMessage: errAny?.message,
-            errStack: errAny?.stack,
-            errName: errAny?.name,
-            errCode: errAny?.code,
-            playerCount: this.playerToSlot.size,
-            swarmCount: this.swarmRegistry.size(),
-          },
-          'physics worker error',
-        );
-        if (!ready) reject(err);
-      });
-
-      this.physicsWorker.on('exit', (code) => {
-        if (code !== 0) {
-          logger.error(
-            { code, playerCount: this.playerToSlot.size, swarmCount: this.swarmRegistry.size() },
-            'physics worker exited unexpectedly',
-          );
-          if (!ready) reject(new Error(`physics worker exited with code ${code}`));
-        }
-      });
-
-      setTimeout(() => {
-        if (!ready) reject(new Error('physics worker did not become READY within 10 s'));
-      }, 10_000);
+      },
     });
+    await this.physicsWorkerProxy.start();
   }
 
   private postToWorker(cmd: WorkerCmd): void {
-    this.physicsWorker.postMessage(cmd);
+    this.physicsWorkerProxy.postCommand(cmd);
   }
 
   // ── Colyseus room hooks ─────────────────────────────────────────────────
@@ -3330,7 +3269,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null) {
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
-    this.physicsWorker?.terminate();
+    this.physicsWorkerProxy?.terminate();
     logger.info({ sectorKey: this.sectorKey }, 'SectorRoom disposed');
   }
 
