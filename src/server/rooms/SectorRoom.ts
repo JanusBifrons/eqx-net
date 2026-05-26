@@ -54,6 +54,7 @@ import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
+import { SectorPersistence } from './SectorPersistence.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -73,14 +74,8 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
-import { recordGameJoin, recordGameLeave, recordKill, saveSnapshot } from '../stats/StatsService.js';
-import { db } from '../db/Database.js';
-import {
-  CURRENT_SCHEMA_VERSION,
-  SNAPSHOT_STALENESS_MS,
-  parseSnapshot,
-  type SectorSnapshotPayload,
-} from './SectorSnapshot.js';
+import { recordGameJoin, recordGameLeave, recordKill } from '../stats/StatsService.js';
+// db / saveSnapshot / SectorSnapshot.* now used inside SectorPersistence.ts
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
 // RosterFullError is handled inside RosterPersistence.ts
@@ -303,6 +298,8 @@ export class SectorRoom extends Room<SectorState> {
   private snapshotBroadcaster!: SnapshotBroadcaster;
   /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
   private swarmBroadcaster!: SwarmBroadcaster;
+  /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
+  private sectorPersistence!: SectorPersistence;
   private swarmSpawner!: SwarmSpawner;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
@@ -884,6 +881,17 @@ export class SectorRoom extends Room<SectorState> {
       droneMountAngles: this.mountTicker.droneMountAngles,
       logger,
       serverLogEvent,
+    });
+
+    // Sector volatile-state persistence. Galaxy-only — engineering
+    // rooms have no persistent identity. Snapshots swarm health every
+    // 60 s + onDispose; hydrates on onCreate.
+    this.sectorPersistence = new SectorPersistence({
+      sectorKey: () => this.sectorKey,
+      sabF32: this.sabF32,
+      swarmRegistry: this.swarmRegistry,
+      swarmHealth: this.shieldHullRouter.swarmHealth,
+      logger,
     });
 
     // Per-client binary swarm packet broadcaster. Encodes the swarm
@@ -2577,77 +2585,11 @@ export class SectorRoom extends Room<SectorState> {
    * enqueue it through the persistence sink. CRITICAL lane — survives drain.
    */
   private persistSectorSnapshot(): void {
-    if (this.sectorKey === null) return;
-    const swarm: SectorSnapshotPayload['swarm'] = [];
-    for (const rec of this.swarmRegistry.all()) {
-      // Asteroids aren't tracked in swarmHealth; default them to 0 (unused on
-      // restore because asteroids aren't kill-tracked).
-      const health = this.swarmHealth.get(rec.id) ?? 0;
-      const b = slotBase(rec.slot);
-      swarm.push({
-        entityId: rec.id,
-        kind: rec.kind,
-        x: this.sabF32[b + SLOT_X_OFF]!,
-        y: this.sabF32[b + SLOT_Y_OFF]!,
-        health,
-      });
-    }
-    const payload: SectorSnapshotPayload = {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      sectorKey: this.sectorKey,
-      savedAtMs: Date.now(),
-      swarm,
-    };
-    try {
-      saveSnapshot(this.sectorKey, payload);
-    } catch (err) {
-      logger.warn({ err, sectorKey: this.sectorKey }, 'sector snapshot enqueue failed');
-    }
+    this.sectorPersistence.persist();
   }
 
-  /**
-   * Look up the most recent on-disk snapshot for this sector and restore
-   * swarm health (positions are deterministic from the seed — not restored).
-   * Discards snapshots whose schemaVersion mismatches CURRENT_SCHEMA_VERSION
-   * or whose age exceeds SNAPSHOT_STALENESS_MS, falling through to fresh-spawn.
-   */
   private hydrateFromSnapshot(): void {
-    if (this.sectorKey === null) return;
-    let row: { snapshot: string; created_at: number } | undefined;
-    try {
-      row = db.prepare(
-        'SELECT snapshot, created_at FROM game_snapshots WHERE sector_id = ? ORDER BY created_at DESC LIMIT 1',
-      ).get(this.sectorKey) as { snapshot: string; created_at: number } | undefined;
-    } catch (err) {
-      logger.warn({ err, sectorKey: this.sectorKey }, 'snapshot hydrate query failed — fresh spawn');
-      return;
-    }
-    if (!row) {
-      logger.info({ sectorKey: this.sectorKey }, 'no prior snapshot — fresh sector spawn');
-      return;
-    }
-    const ageMs = Date.now() - row.created_at;
-    if (ageMs > SNAPSHOT_STALENESS_MS) {
-      logger.info({ sectorKey: this.sectorKey, ageMs }, 'snapshot stale — fresh sector spawn');
-      return;
-    }
-    let payload: SectorSnapshotPayload;
-    try {
-      payload = parseSnapshot(JSON.parse(row.snapshot));
-    } catch (err) {
-      logger.warn({ err, sectorKey: this.sectorKey }, 'snapshot parse/version mismatch — fresh sector spawn');
-      return;
-    }
-    let restored = 0;
-    for (const e of payload.swarm) {
-      // Drones only — asteroids aren't health-tracked.
-      if (e.kind !== 1) continue;
-      if (this.swarmRegistry.has(e.entityId)) {
-        this.swarmHealth.set(e.entityId, e.health);
-        restored += 1;
-      }
-    }
-    logger.info({ sectorKey: this.sectorKey, ageMs, restored }, 'sector hydrated from snapshot');
+    this.sectorPersistence.hydrate();
   }
 
   // ── Simulation loop (main thread — reads SAB, updates Colyseus schema) ──
