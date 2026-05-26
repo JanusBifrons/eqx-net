@@ -20,15 +20,10 @@ import {
 } from './remotePredictionGuard';
 import {
   createWelford,
-  welfordPush,
-  welfordMean,
-  welfordStdDev,
   type WelfordState,
 } from '@core/math/Welford';
 import {
   createLookaheadController,
-  computeDesiredLead,
-  updateLookahead,
   type LookaheadController,
 } from './lookaheadController';
 import {
@@ -47,6 +42,7 @@ import {
 } from './snapshotShipRouter.js';
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
+import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
@@ -127,9 +123,6 @@ import {
   REMOTE_SPRING_POS_END,
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
-  RTT_SAMPLE_CLAMP_MS,
-  STEADY_STATE_INTERVAL_MIN_MS,
-  STEADY_STATE_INTERVAL_MAX_MS,
   remoteOffsetHalfLifeForDrift,
 } from './predictionTuning.js';
 
@@ -1749,75 +1742,16 @@ export class ColyseusGameClient {
       this.clockAnchorPerfNow = now;
       this._anchorInitialised = true;
     }
-    // Stage 4 — jitter-aware lookahead. Welford-track per-snapshot RTT
-    // (mean + σ) and size the prediction window to `mean + 2σ` rather
-    // than the pre-Stage-4 mean-only EWMA. Multi-tick target jumps ramp
-    // via the spring controller; small changes snap directly.
-    //
-    // 2026-05-08 fix (Stage 4 hotfix #1): Reconciler.lastRtt is computed
-    // as `now - ackedRec.sentAt` — a "time since input was sent" measure
-    // contaminated by snapshot-delay. A 572 ms inbound network gap (per
-    // `docs/LESSONS.md` Pattern A) inflates lastRtt to 572 ms+ even
-    // though the underlying TCP RTT is healthy. Without a clamp, that
-    // outlier sample pushes Welford σ past 200 ms, the `mean + 2σ`
-    // formula saturates at the 30-tick cap, the client speculates 500 ms
-    // ahead, and combat predictions diverge into 100+ u corrections.
-    // The clamp converts outliers into "I have no fresh RTT info"
-    // (the cap value is folded into the running mean cleanly) instead
-    // of letting σ explode.
-    //
-    // 2026-05-08 fix (Stage 4 hotfix #3): the σ-clamp protects against
-    // single-sample explosions but the running mean still drifts upward
-    // because clamped samples (250 ms each) accumulate in Welford's
-    // sum. Repeated Pattern A spikes inflate mean to 177 ms even when
-    // live RTT is 83 ms — leadTicks saturates at ~22 → collision drift
-    // = velocity-diff × leadTicks × dt = 50+ u. Skip the Welford push
-    // entirely when this snapshot's `intervalMs` is outside the
-    // steady-state cadence band [35, 75] ms — those snapshots are part
-    // of a Pattern A gap (intervalMs >> 50) or a burst-recovery cluster
-    // (intervalMs << 50) and their `lastRtt` is contaminated. Welford
-    // then tracks only clean steady-state samples, so the mean stays
-    // close to live RTT and leadTicks stays sized for combat.
-    const isGapRelatedRtt =
-      intervalMs > 0 &&
-      (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
-    if (this.reconciler && this.reconciler.lastRtt > 0 && !isGapRelatedRtt) {
-      // Stage 4 hotfix #5 (2026-05-09) — strip the gate-induced
-      // server-side hold time from the RTT sample before pushing into
-      // welford. Without the input-queue gate (commit c7b8d04),
-      // `Reconciler.lastRtt` measured `now - sentAt` ≈ 2 × wire-D + a
-      // small server-process delay; pushing it into welford gave a
-      // clean network-RTT estimate. With the gate, the server holds
-      // each input claim X for roughly `leadTicks` physics ticks until
-      // its sim tick reaches X, then applies and acks. That hold time
-      // is `leadTicks × FIXED_MS` and is included in `lastRtt` even
-      // though the wire is doing nothing during it. Pushing the raw
-      // value would create a positive feedback loop: bigger leadTicks
-      // → longer hold → bigger lastRtt → bigger welford mean → bigger
-      // leadTicks → … → saturate at the 30-tick `CEILING_TICKS` cap.
-      // Mobile cap 2026-05-09T09-31-30-823Z-n3n9jx caught this with
-      // `rttMs` field saturating at 200–870 ms when actual Wi-Fi RTT
-      // is ~30 ms.
-      //
-      // Subtracting `this.leadTicks × FIXED_MS` recovers the network-
-      // only round-trip estimate. The clamp `max(0, …)` handles the
-      // case where the wire was unusually fast and the subtraction
-      // would yield a negative (rare; would mean lastRtt was less
-      // than the gate-hold, which can happen on first-snapshot or
-      // when the gate just opened). Clamping the upper bound at
-      // RTT_SAMPLE_CLAMP_MS still protects against gap-related
-      // outliers that hotfix #3's interval-band filter missed.
-      const FIXED_MS = 1000 / 60;
-      const networkRtt = Math.max(0, this.reconciler.lastRtt - this.leadTicks * FIXED_MS);
-      const rttSample = Math.min(networkRtt, RTT_SAMPLE_CLAMP_MS);
-      welfordPush(this._rttWelford, rttSample);
-      const mean = welfordMean(this._rttWelford);
-      const stdDev = welfordStdDev(this._rttWelford);
-      const desiredLead = computeDesiredLead(mean, stdDev);
-      this.leadTicks = updateLookahead(this._lookaheadCtrl, desiredLead, this.lastFrameMs);
-      this.stats.rttMeanMs = mean;
-      this.stats.rttStdDevMs = stdDev;
-    }
+    // Stage 4 — jitter-aware lookahead with the three RTT hotfixes.
+    // See rttLookaheadUpdater.ts for the full rationale.
+    this.leadTicks = updateRttAndLookahead(intervalMs, {
+      reconciler: this.reconciler,
+      stats: this.stats,
+      rttWelford: this._rttWelford,
+      lookaheadCtrl: this._lookaheadCtrl,
+      leadTicks: this.leadTicks,
+      lastFrameMs: this.lastFrameMs,
+    });
     this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 
     if (!localId || !this.reconciler) {
