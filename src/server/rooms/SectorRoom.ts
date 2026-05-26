@@ -48,6 +48,7 @@ import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
+import { ProjectilePipeline } from './ProjectilePipeline.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -436,8 +437,13 @@ export class SectorRoom extends Room<SectorState> {
   // Combat
   private readonly snapshotRing = new SnapshotRing();
   private readonly lastFireClientTick = new Map<string, number>();
-  private readonly liveProjectiles = new Map<string, ProjectileRecord>();
-  private projectileCounter = 0;
+  /** Server-side projectile lifecycle (spawn + per-tick sweep + cleanup).
+   *  Owns `liveProjectiles` + the monotonic id counter. Extracted to
+   *  `ProjectilePipeline.ts` (commit 21 of v3 refactor plan). Aliased
+   *  below as a getter so the `update()` callsites that read
+   *  `this.liveProjectiles.size` keep the same Map identity. */
+  private projectiles!: ProjectilePipeline;
+  private get liveProjectiles(): Map<string, ProjectileRecord> { return this.projectiles.liveProjectiles; }
   /** Per-swarm-entity health. Drones are killable; asteroids are not present in this map. */
   private readonly swarmHealth = new Map<string, number>();
   /** Per-drone shield pool (mirrors swarmHealth; cleared together in
@@ -673,6 +679,25 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       logger,
       serverLogEvent,
+    });
+
+    // Server-side projectile lifecycle. Spawn + per-tick sweep + cleanup.
+    // Composes the 4-pass (player / swarm / wreck / lingering) collision
+    // sweep with the injected playerProjectileSweep (shield-vs-hull
+    // routing). Extracted to ProjectilePipeline.ts.
+    this.projectiles = new ProjectilePipeline({
+      sabF32: this.sabF32,
+      serverTick: () => this.serverTick,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipPoseCache: this.shipPoseCache,
+      playerSweep: (ship, fx, fy, sx, sy, r, cx, cy, ang) =>
+        this.playerProjectileSweep(ship, fx, fy, sx, sy, r, cx, cy, ang),
+      swarmRegistry: this.swarmRegistry,
+      wreckToSlot: this.wreckCoordinator.wreckToSlot,
+      lingeringSlots: this.lingeringSlots,
+      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -1462,10 +1487,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
-    const projId = `proj-${this.projectileCounter++}`;
-    this.liveProjectiles.set(projId, { x, y, vx, vy, ownerId, birthTick: this.serverTick, damage, radius, maxTicks, weaponId });
-    // Wire-discipline P3: projectiles no longer ride MapSchema. Per-recipient
-    // interest-filtered list is folded into the snapshot in the broadcast loop.
+    this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
   }
 
   /**
@@ -2063,101 +2085,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private advanceProjectiles(): void {
-    const DT = 1 / 60;
-    for (const [projId, proj] of this.liveProjectiles) {
-      // Swept collision: test the segment from the current position to the
-      // would-be next position, not just the next-position point. At 1600 u/s
-      // a bolt advances ~26 units per tick, well over typical target radii;
-      // a per-tick point-sample would tunnel through targets that sit between
-      // consecutive samples. `projectileSweepCircle` returns the earliest
-      // entry distance plus the exact hit point, which lets us pick the
-      // closest target when the segment crosses multiple of them.
-      const stepX = proj.vx * DT;
-      const stepY = proj.vy * DT;
-
-      let bestEntry = Infinity;
-      let bestTargetId: string | null = null;
-      let bestHitX = proj.x;
-      let bestHitY = proj.y;
-
-      for (const [targetId] of this.playerToSlot) {
-        if (targetId === proj.ownerId) continue;
-        const targetShip = this.getActiveShip(targetId);
-        if (!targetShip || !targetShip.alive) continue;
-        const targetPose = this.shipPoseCache.get(targetId);
-        if (!targetPose) continue;
-        const sweep = this.playerProjectileSweep(targetShip, proj.x, proj.y, stepX, stepY, proj.radius, targetPose.x, targetPose.y, targetPose.angle);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = targetId;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      for (const rec of this.swarmRegistry.all()) {
-        const b = slotBase(rec.slot);
-        const cx = this.sabF32[b + SLOT_X_OFF]!;
-        const cy = this.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.radius);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = rec.id;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      // Phase 4 — projectile sweep against wrecks. Same sphere geometry
-      // as live ships; targetId carries the `wreck-` prefix so
-      // applyDamage routes to state.wrecks.
-      for (const [shipInstanceId, slot] of this.wreckToSlot) {
-        const b = slotBase(slot);
-        const cx = this.sabF32[b + SLOT_X_OFF]!;
-        const cy = this.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = `wreck-${shipInstanceId}`;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      // Phase 6b — projectile sweep against lingering hulls. The schema
-      // `state.ships` entry stays live with `isActive=false`; we want
-      // shots to land like they would on an active ship (damage applies
-      // through the standard player-ship branch in `applyDamage`). The
-      // targetId we surface is the shipInstanceId so `applyDamage` can
-      // route through the schema map. We pull pose from `lingeringSlots`
-      // (parallel to `playerToSlot` for active ships).
-      for (const [shipInstanceId, slot] of this.lingeringSlots) {
-        if (shipInstanceId === proj.ownerId) continue;
-        const b = slotBase(slot);
-        const cx = this.sabF32[b + SLOT_X_OFF]!;
-        const cy = this.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = shipInstanceId;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      if (bestTargetId !== null) {
-        this.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
-        this.liveProjectiles.delete(projId);
-        continue;
-      }
-
-      // No hit — commit the integration and run the lifetime check.
-      proj.x += stepX;
-      proj.y += stepY;
-      if (this.serverTick - proj.birthTick >= proj.maxTicks) {
-        this.liveProjectiles.delete(projId);
-      }
-    }
+    this.projectiles.advance();
   }
 
   // ── Worker lifecycle ────────────────────────────────────────────────────
