@@ -68,7 +68,7 @@ const ALLOWLIST = {
       'orchestrator target ~340 LOC.',
   },
   'src/client/App.tsx': {
-    cap: 1020,
+    cap: 925,
     target: 300,
     reason:
       'v3 plan commit 24 slims App.tsx into AppProviders + AppBootstrap + AppHydration + ' +

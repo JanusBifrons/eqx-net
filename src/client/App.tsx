@@ -9,9 +9,10 @@ import { ColyseusGameClient } from './net/ColyseusClient';
 import { setGameClient, getGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
 import { PixiRenderer } from './render/PixiRenderer';
-import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
+import { WorkerRendererClient } from './render/worker/WorkerRendererClient';
 import { DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
 import { createGameRafLoop } from './app/gameRafLoop';
+import { selectRenderer, installProfileWindow, buildJoinSpec } from './app/gameSurfaceBootstrap';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
@@ -50,7 +51,6 @@ import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { MobileAvatarBadge } from './layout/MobileAvatarBadge';
-import { getSector } from '../core/galaxy/galaxy';
 
 // Default to the page's own origin so the same dev server is reachable from
 // phones on the LAN (e.g. http://192.168.1.5:5173 → ws://192.168.1.5:5173).
@@ -242,68 +242,11 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    // Renderer path selection (2026-05-22).
-    //
-    // Non-touch (desktop) + OffscreenCanvas-capable → worker-backed
-    // renderer. Pixi runs off the main thread, freeing CDP budget for
-    // React + drawer animations. See ~/.claude/plans/humble-strolling-coral.md.
-    //
-    // Touch devices → main-thread `PixiRenderer`. On high-DPR mobile,
-    // the OffscreenCanvas commit / worker→main IPC path produces ~110 ms
-    // tail-latency stalls every time the compositor drains. The
-    // 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv`
-    // worker-off, same device same session) showed a 19× reduction in
-    // `raf_gap` events (38 → 3) and 85 s of continuous zero-stall play
-    // after switching off the worker. The render cost saved by
-    // off-loading Pixi (~1.5 ms / frame on a phone) is dwarfed by the
-    // ~110 ms IPC commit tail-latency that the worker introduces.
-    //
-    // `?worker=1` opts back into the worker (for A/B diagnosis or
-    // desktop debugging of mobile behaviour). `?worker=0` forces the
-    // main-thread path (for non-touch verification of the mobile path).
-    // Without an override, the default follows `isTouchDevice()`.
-    const workerParam = new URLSearchParams(window.location.search).get('worker');
-    const isTouch = isTouchDevice();
-    const useWorker =
-      workerParam === '1'
-        ? supportsOffscreenRenderer()
-        : workerParam === '0'
-          ? false
-          : !isTouch && supportsOffscreenRenderer();
-    const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
-    logEvent('renderer_path_chosen', {
-      useWorker,
-      workerParam,
-      isTouch,
-      supportsOffscreenRenderer: supportsOffscreenRenderer(),
-    });
+    // Renderer-path selection + profile-window opt-in. Extracted to
+    // gameSurfaceBootstrap.ts — full rationale lives there.
+    const { renderer, useWorker } = selectRenderer();
     rendererRef.current = renderer;
-
-    // Probe 0 (mobile-perf-investigation-review): `?profile=1` opts into a
-    // bounded `console.profile()` window so a user on a Chrome-remote-
-    // debugged phone can submit a real DevTools timeline alongside the
-    // diag capture. Auto-stops after 60 s so the trace stays loadable —
-    // a 5-minute trace pegs DevTools on mobile. The hostile review noted
-    // this is the cheaper missed probe — distinguishes GC vs frame-cap-
-    // artifact vs compositor-stall via flame-graph layer, which the
-    // NDJSON stream alone cannot.
-    const profileParam = new URLSearchParams(window.location.search).get('profile');
-    if (profileParam === '1') {
-      try {
-        console.profile('eqx-mobile-session');
-        logEvent('profile_started', { autoStopMs: 60_000 });
-        window.setTimeout(() => {
-          try {
-            console.profileEnd('eqx-mobile-session');
-            logEvent('profile_ended', { reason: 'auto-stop' });
-          } catch (e) {
-            logEvent('profile_ended', { reason: 'error', error: String(e) });
-          }
-        }, 60_000);
-      } catch (e) {
-        logEvent('profile_started', { error: String(e) });
-      }
-    }
+    installProfileWindow();
 
     const gameClient = new ColyseusGameClient();
     gameClient.setAudio(new HowlerAudioService());
@@ -429,35 +372,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       animFrameRef.current = requestAnimationFrame(loop);
 
       const storedId = loadStoredPlayerId();
-      const urlParams = new URLSearchParams(window.location.search);
-      // Phase 8 — precedence: lobby-chosen override → ?room= (engineering /
-      // legacy) → ?galaxy= (deep link to a galaxy sector) → default 'sector'.
-      const galaxyParam = urlParams.get('galaxy');
-      const roomName =
-        roomNameOverride
-        ?? urlParams.get('room')
-        ?? (galaxyParam ? `galaxy-${galaxyParam}` : 'sector');
-      const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
-      if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
-      if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
-      // Test-only HP overrides for E2E specs (server-side gated to
-      // testMode rooms). See JoinOptionsSchema in SectorRoom.ts.
-      if (urlParams.has('initialHull'))
-        extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
-      if (urlParams.has('initialShield'))
-        extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
-      // Per-test room isolation. The test rooms (`test-sector`,
-      // `test-sector-fast`) use Colyseus `filterBy(['testId'])` so each
-      // unique value routes to its own room instance. Tests with
-      // multiple clients use the SAME testId so they share a room.
-      if (urlParams.has('testId'))
-        extraJoinOptions['testId'] = urlParams.get('testId')!;
-      // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
-      if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
-      if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);
-      if (urlParams.has('swarmRadius')) extraJoinOptions['swarmRadius'] = parseFloat(urlParams.get('swarmRadius')!);
-      if (urlParams.has('singleAsteroid')) extraJoinOptions['singleAsteroid'] = urlParams.get('singleAsteroid') === '1';
-      if (urlParams.has('tickBurnMs')) extraJoinOptions['tickBurnMs'] = parseFloat(urlParams.get('tickBurnMs')!);
+      const { roomName, extraJoinOptions, prettyName } = buildJoinSpec(roomNameOverride, joinOptionsOverride);
 
       await gameClient.connect(SERVER_URL, storedId, keyboard, {
         onConnectionStatus: setConnectionStatus,
@@ -467,25 +382,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         },
       }, roomName, extraJoinOptions, touchInputRef.current ?? undefined);
 
-      // Show the actual room name in the HUD. Previously hardcoded to
-      // "Sector Alpha" for any room ≠ test-sector, which made it impossible
-      // to tell at a glance whether `?room=swarm-tidi` etc. had actually
-      // taken effect.
-      const prettyName: Record<string, string> = {
-        'sector': 'Sector Alpha',
-        'test-sector': 'Test Sector',
-        'feel-test': 'Feel Test (10)',
-        'swarm-soak': 'Swarm Soak (500)',
-        'swarm-tidi': 'Swarm TiDi (4000)',
-        'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
-      };
-      // Phase 8 — galaxy room names are `galaxy-${key}`; resolve the display
-      // name from the graph rather than maintaining a parallel map here.
-      if (!prettyName[roomName] && roomName.startsWith('galaxy-')) {
-        const sec = getSector(roomName.slice('galaxy-'.length));
-        if (sec) prettyName[roomName] = sec.name;
-      }
-      setSectorName(prettyName[roomName] ?? roomName);
+      setSectorName(prettyName);
     })().catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');
