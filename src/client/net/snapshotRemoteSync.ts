@@ -1,0 +1,138 @@
+/**
+ * Per-snapshot remote-ship sync — the chunk of `handleSnapshot` that
+ * runs AFTER stats/RTT/lookahead and BEFORE `reconciler.reconcile`.
+ *
+ *   - `preResetRemoteShips` snapshots each remote's current
+ *     predWorld pose into the preReset map, then setShipState's the
+ *     remote to its authoritative snapshot pose. The preReset map is
+ *     consumed by the post-reconcile lerp-offset computation. Also
+ *     stashes the remote's `lastInput` for Stage 3 forward-prediction
+ *     during the upcoming replay + the next tickPhysics window, and
+ *     mirrors the server's per-mount angles into mirror.ships so the
+ *     remote-turret rendering follows the server.
+ *
+ *   - `applyDroneMountAngles` pushes the slim drone snapshot slice
+ *     (`{ id, mountAngles?, shieldDown? }`) into mirror.swarm —
+ *     drones are pure binary-wire-interpolated; the JSON snapshot
+ *     only carries the per-tick turret + shield state.
+ */
+
+import type { SnapshotMessage } from '@shared-types/messages';
+import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { PhysicsWorld } from '@core/physics/World';
+
+type RemoteInput = {
+  thrust: boolean;
+  turnLeft: boolean;
+  turnRight: boolean;
+  boost: boolean;
+  reverse: boolean;
+};
+
+export interface PreResetEntry {
+  x: number;
+  y: number;
+}
+
+export interface PreResetRemoteCtx {
+  predWorld: PhysicsWorld | null;
+  mirror: RenderMirror;
+  /** Persistent Map + pooled {x,y} entries — peak == remote-ship count. */
+  preResetRemotePosScratch: Map<string, PreResetEntry>;
+  preResetRemotePosEntries: PreResetEntry[];
+  remoteLastInputs: Map<string, RemoteInput>;
+  remoteForwardTicks: Map<string, number>;
+}
+
+/**
+ * Reset every remote ship to its serverTick state BEFORE reconcile,
+ * stashing the pre-reset pose so we can compute lerp offsets after.
+ * Returns the preReset map (which is the same Map as
+ * `ctx.preResetRemotePosScratch`, but typed here for clarity).
+ */
+export function preResetRemoteShips(
+  snap: SnapshotMessage,
+  localId: string,
+  ctx: PreResetRemoteCtx,
+): Map<string, PreResetEntry> {
+  const preReset = ctx.preResetRemotePosScratch;
+  preReset.clear();
+  const preResetEntries = ctx.preResetRemotePosEntries;
+  let preResetEntryIdx = 0;
+  // step 4: for…in (no tuple-array alloc).
+  for (const remoteId in snap.states) {
+    if (remoteId === localId) continue;
+    if (!ctx.predWorld?.hasShip(remoteId)) continue;
+    const state = snap.states[remoteId]!;
+    const current = ctx.predWorld.getShipState(remoteId);
+    if (current) {
+      let entry = preResetEntries[preResetEntryIdx];
+      if (!entry) {
+        entry = { x: 0, y: 0 };
+        preResetEntries[preResetEntryIdx] = entry;
+      }
+      entry.x = current.x;
+      entry.y = current.y;
+      preReset.set(remoteId, entry);
+      preResetEntryIdx++;
+    }
+    ctx.predWorld.setShipState(remoteId, state);
+    // Stage 3 — capture each remote's last-applied input from the
+    // snapshot for forward-prediction during the upcoming replay
+    // and the next tickPhysics window.
+    if (state.lastInput) {
+      ctx.remoteLastInputs.set(remoteId, { ...state.lastInput });
+    } else {
+      ctx.remoteLastInputs.delete(remoteId);
+    }
+    // Reset the lookahead-cap counter for this remote — the upcoming
+    // replay starts a fresh forward-prediction window from serverTick.
+    ctx.remoteForwardTicks.set(remoteId, 0);
+    // Phase 4b.3 — push the server's authoritative mount angles into
+    // the mirror so the renderer paints the remote ship's turrets at
+    // the same rotation the server is computing. Local player is
+    // skipped here — `tickLocalMountAim` runs the prediction each
+    // tick and the per-frame `updateMirror` rebuild already
+    // preserves the predicted angles.
+    const mirrorShip = ctx.mirror.ships.get(remoteId);
+    if (mirrorShip) {
+      if (state.mountAngles && state.mountAngles.length > 0) {
+        mirrorShip.mountAngles = state.mountAngles.slice();
+      } else if (mirrorShip.mountAngles) {
+        mirrorShip.mountAngles = undefined;
+      }
+    }
+  }
+  // Drop entries for remotes that are no longer in the snapshot.
+  for (const tracked of [...ctx.remoteLastInputs.keys()]) {
+    if (!(tracked in snap.states)) {
+      ctx.remoteLastInputs.delete(tracked);
+      ctx.remoteForwardTicks.delete(tracked);
+    }
+  }
+  return preReset;
+}
+
+/**
+ * Drone snapshot slice (drone-snapshot-interpolation pivot, 2026-05-18).
+ * Drones are PURE snapshot-interpolated from the binary swarm wire — NO
+ * client AI re-sim, NO predWorld reconcile anchor, NO relevance cull.
+ * `snap.drones[]` is a slim turret/shield slice; the pose flows on the
+ * binary channel and renders via `interpolateSwarmPose`.
+ *
+ * Out-of-interest drones never appear here, so their mountAngles stays
+ * undefined (renderer falls back to baseAngle) — unchanged.
+ */
+export function applyDroneMountAngles(snap: SnapshotMessage, mirror: RenderMirror): void {
+  if (!snap.drones || snap.drones.length === 0) return;
+  for (const d of snap.drones) {
+    const sw = mirror.swarm?.get(d.id);
+    if (!sw) continue;
+    if (d.mountAngles && d.mountAngles.length > 0) {
+      sw.mountAngles = d.mountAngles.slice();
+    } else if (sw.mountAngles) {
+      sw.mountAngles = undefined;
+    }
+    if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
+  }
+}

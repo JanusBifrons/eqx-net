@@ -43,6 +43,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
+import { preResetRemoteShips, applyDroneMountAngles } from './snapshotRemoteSync.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
@@ -1791,90 +1792,23 @@ export class ColyseusGameClient {
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
-      // Reset remote ships to serverTick state BEFORE reconcile.
-      // 2026-05-25 heap-growth gate step 3: persistent Map + pooled
-      // {x,y} entries. Peak == remote-ship count; grow-once + reuse.
-      const preResetRemotePos = this._preResetRemotePosScratch;
-      preResetRemotePos.clear();
-      const preResetEntries = this._preResetRemotePosEntries;
-      let preResetEntryIdx = 0;
-      // step 4: for…in (no tuple-array alloc).
-      for (const remoteId in snap.states) {
-        if (remoteId === localId) continue;
-        if (!this.predWorld?.hasShip(remoteId)) continue;
-        const state = snap.states[remoteId]!;
-        const current = this.predWorld.getShipState(remoteId);
-        if (current) {
-          let entry = preResetEntries[preResetEntryIdx];
-          if (!entry) {
-            entry = { x: 0, y: 0 };
-            preResetEntries[preResetEntryIdx] = entry;
-          }
-          entry.x = current.x;
-          entry.y = current.y;
-          preResetRemotePos.set(remoteId, entry);
-          preResetEntryIdx++;
-        }
-        this.predWorld.setShipState(remoteId, state);
-        // Stage 3 — capture each remote's last-applied input from the
-        // snapshot for forward-prediction during the upcoming replay
-        // and the next tickPhysics window.
-        if (state.lastInput) {
-          this._remoteLastInputs.set(remoteId, { ...state.lastInput });
-        } else {
-          this._remoteLastInputs.delete(remoteId);
-        }
-        // Reset the lookahead-cap counter for this remote — the upcoming
-        // replay starts a fresh forward-prediction window from serverTick.
-        this._remoteForwardTicks.set(remoteId, 0);
-        // Phase 4b.3 — push the server's authoritative mount angles into
-        // the mirror so the renderer paints the remote ship's turrets at
-        // the same rotation the server is computing. Local player is
-        // skipped here — `tickLocalMountAim` runs the prediction each
-        // tick and the per-frame `updateMirror` rebuild already
-        // preserves the predicted angles.
-        const mirrorShip = this.mirror.ships.get(remoteId);
-        if (mirrorShip) {
-          if (state.mountAngles && state.mountAngles.length > 0) {
-            mirrorShip.mountAngles = state.mountAngles.slice();
-          } else if (mirrorShip.mountAngles) {
-            mirrorShip.mountAngles = undefined;
-          }
-        }
-      }
-      // Drop entries for remotes that are no longer in the snapshot.
-      for (const tracked of [...this._remoteLastInputs.keys()]) {
-        if (!(tracked in snap.states)) {
-          this._remoteLastInputs.delete(tracked);
-          this._remoteForwardTicks.delete(tracked);
-        }
-      }
+      // Reset remote ships to serverTick state BEFORE reconcile +
+      // stash pre-reset poses for the post-reconcile lerp-offset
+      // computation. See snapshotRemoteSync.ts.
+      const preResetRemotePos = preResetRemoteShips(snap, localId, {
+        predWorld: this.predWorld,
+        mirror: this.mirror,
+        preResetRemotePosScratch: this._preResetRemotePosScratch,
+        preResetRemotePosEntries: this._preResetRemotePosEntries,
+        remoteLastInputs: this._remoteLastInputs,
+        remoteForwardTicks: this._remoteForwardTicks,
+      });
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
 
-      // Drone snapshot slice (drone-snapshot-interpolation pivot,
-      // 2026-05-18). Drones are PURE snapshot-interpolated from the binary
-      // swarm wire — NO client AI re-sim, NO predWorld reconcile anchor,
-      // NO relevance cull. `snap.drones[]` is a slim turret/shield slice
-      // ({ id, mountAngles?, shieldDown? }); the pose flows on the binary
-      // channel and renders via `interpolateSwarmPose`. Push the
-      // authoritative per-mount angles + shield-down flag into the swarm
-      // mirror so MountVisualManager rotates the drone turrets and the
-      // collider swap tracks the server. Out-of-interest drones never
-      // appear here, so their mountAngles stays undefined (renderer falls
-      // back to baseAngle) — unchanged.
-      if (snap.drones && snap.drones.length > 0) {
-        for (const d of snap.drones) {
-          const sw = this.mirror.swarm?.get(d.id);
-          if (!sw) continue;
-          if (d.mountAngles && d.mountAngles.length > 0) {
-            sw.mountAngles = d.mountAngles.slice();
-          } else if (sw.mountAngles) {
-            sw.mountAngles = undefined;
-          }
-          if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
-        }
-      }
+      // Drone snapshot slice (slim turret/shield slice; pose flows on the
+      // binary swarm wire). See snapshotRemoteSync.ts.
+      applyDroneMountAngles(snap, this.mirror);
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The
