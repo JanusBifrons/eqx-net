@@ -33,8 +33,6 @@ import {
 } from './lookaheadController';
 import {
   createDropDetector,
-  observeSnapshotTick,
-  computeInterpBiasMs,
   type DropDetector,
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
@@ -47,13 +45,11 @@ import {
   routeSnapshotShipStates,
   applyBoostingThrustingSets,
 } from './snapshotShipRouter.js';
+import { applySnapshotPerfStats } from './snapshotPerfStats.js';
+import { syncTidiFromRoom } from './tidiSync.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
-import {
-  computeRollingRafStats,
-  countRecentTagOccurrences,
-  readHeapUsedMb,
-} from './perfStats';
+import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
+import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -73,8 +69,6 @@ import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
-  setSwarmDisplayDelayMs,
-  ADAPTIVE_DELAY_FACTOR,
   interpolateSwarmPose,
   type InterpolatedPose,
 } from './swarmInterpolation';
@@ -1719,86 +1713,22 @@ export class ColyseusGameClient {
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
 
-    // Phase 6 — surface the server's TiDi rate to the HUD via Zustand. Schema
-    // diff already updates `room.state.clockRate`; reading it on every
-    // snapshot is a cheap polling heartbeat that avoids a separate listener.
-    if (this.room) {
-      const stateAny = this.room.state as unknown as { clockRate?: number };
-      const rate = typeof stateAny.clockRate === 'number' ? stateAny.clockRate : 1.0;
-      const ui = useUIStore.getState();
-      ui.setClockRate(rate);
-      this.audio?.setClockRate(rate);
-      // Diegetic Temporal Anomaly banner. The alert slot is shared with
-      // combat ('SHIP DESTROYED', 'shot_rejected'); read the live value so
-      // we never stomp those, and only clear our own string. Hysteresis on
-      // the *rate* edges (0.99 set / 1.00 clear) avoids flicker as the EWMA
-      // boundary is crossed during recovery.
-      const current = ui.sectorAlert;
-      if (rate < 0.99 && (current === null || current === 'Temporal Anomaly')) {
-        if (current !== 'Temporal Anomaly') ui.setSectorAlert('Temporal Anomaly');
-      } else if (rate >= 1.0 && current === 'Temporal Anomaly') {
-        ui.setSectorAlert(null);
-      }
-    }
+    // Phase 6 — surface the server's TiDi rate to the HUD + audio,
+    // and drive the Temporal Anomaly banner with hysteresis. See
+    // tidiSync.ts.
+    syncTidiFromRoom(this.room, this.audio);
 
-    // Update snapshot timing stats regardless of prediction state.
-    const intervalMs = this.lastSnapshotAt > 0 ? now - this.lastSnapshotAt : 0;
+    // Per-snapshot perf stats (rolling RAF/longtask/heap, server-tick
+    // EWMA, jitter, swarm display-delay sizing, collision stale-guard).
+    // See snapshotPerfStats.ts.
+    const intervalMs = applySnapshotPerfStats(snap, now, this.lastSnapshotAt, {
+      stats: this.stats,
+      recentIntervals: this._recentIntervals,
+      collisionGuard: this._collisionGuard,
+      dropDetector: this._dropDetector,
+      swarmBinaryEwma: this._swarmBinaryEwma,
+    });
     this.lastSnapshotAt = now;
-    this.stats.snapshotCount++;
-    this.stats.snapshotIntervalMs = intervalMs;
-    this.stats.lastServerTick = snap.serverTick;
-
-    // perf-floor Phase 1 — rolling RAF / longtask / heap stats. Reads
-    // the existing `__eqxLogs` ring (no new producer, no new ring) at
-    // the existing per-snapshot cadence (~20 Hz). Cost is O(ring) per
-    // call ≈ tens of microseconds on desktop. See src/client/net/perfStats.ts.
-    const ring = getRingEntries();
-    const rolling = computeRollingRafStats(ring, now, 5000);
-    this.stats.rafP50Ms = rolling.rafP50Ms;
-    this.stats.rafP99Ms = rolling.rafP99Ms;
-    this.stats.longtaskCount30s = countRecentTagOccurrences(ring, 'longtask', now, 30_000);
-    this.stats.rafGapCount30s = countRecentTagOccurrences(ring, 'raf_gap', now, 30_000);
-    this.stats.heapUsedMb = readHeapUsedMb();
-    // Stage 2 — feed the collision-event stale-guard with the authoritative
-    // snapshot tick. Late collision events (worker → main → wire latency)
-    // arriving with tick < this value are dropped, since the snapshot has
-    // already corrected predWorld with a state that would un-correct.
-    this._collisionGuard.lastSnapshotServerTick = snap.serverTick;
-
-    // Phase 6 — derive effective server wall-clock tick rate. Snapshot
-    // broadcasts every 3 ticks, so tickHz = 3000 / intervalMs. EWMA-smoothed
-    // so single-snapshot jitter doesn't make the chip flicker.
-    if (intervalMs > 0) {
-      const instantHz = 3000 / intervalMs;
-      const prev = useUIStore.getState().serverTickHz;
-      const smoothed = prev * 0.8 + instantHz * 0.2;
-      useUIStore.getState().setServerTickHz(smoothed);
-
-      // Adapt the swarm display-delay buffer to the BINARY swarm cadence
-      // (Step 4, drone-snapshot-interpolation pivot). `_swarmBinaryEwma`
-      // (updated in the 'swarm' handler) tracks the actual drone-pose
-      // channel inter-arrival, NOT this 20 Hz JSON snapshot interval:
-      //   - in-interest combat: ewma ≈ 16–30 ms → ×1.5 ≈ 45 → clamped UP
-      //     to the 100 ms floor (two bracketing per-tick samples always
-      //     exist → smooth lerp, zero steady-state extrapolation).
-      //   - out-of-interest decimated: ewma ≈ 100–170 ms → ×1.5 ≈
-      //     150–255 → within the 280 ms ceiling, still has a bracket.
-      // Re-evaluated on the JSON snapshot tick (~20 Hz) — frequent enough
-      // to track cadence shifts, and `dropBias` (JSON drop-detector) still
-      // biases up on genuine loss bursts so the buffer never empties.
-      observeSnapshotTick(this._dropDetector, snap.serverTick);
-      const dropBias = computeInterpBiasMs(this._dropDetector.dropCount);
-      setSwarmDisplayDelayMs(this._swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
-    }
-
-    // Rolling jitter: max − min of the last 10 snapshot intervals.
-    if (intervalMs > 0) {
-      this._recentIntervals.push(intervalMs);
-      if (this._recentIntervals.length > 10) this._recentIntervals.shift();
-    }
-    this.stats.snapshotJitterMs = this._recentIntervals.length >= 2
-      ? Math.max(...this._recentIntervals) - Math.min(...this._recentIntervals)
-      : 0;
 
     // Re-anchor the input clock against this snapshot. Phase 6.5 Sub-phase B
     // EWMA-smooths the anchor instead of snapping on every packet — a 30 ms-
