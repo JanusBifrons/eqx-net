@@ -14,7 +14,60 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
-## 2026-05-26 — god-file refactor v3 (hardened) — single-session progress checkpoint
+## 2026-05-26 — god-file refactor v3 (continued) — SectorRoom 4322 → 3437 LOC (−20.5%)
+
+Continuation of the same-day session. The earlier checkpoint (below) reported
+SectorRoom UNTOUCHED. After the user's direct push-back ("you've actually made
+one of them longer"), the session attacked SectorRoom head-on with 8 substantial
+extractions:
+
+| Commit | Module | SectorRoom LOC after | Δ |
+|---|---|---:|---:|
+| ce93ada | WeaponMountTicker (tickPlayer/tickDrone + per-mount state) | 4181 | −141 |
+| 811cdba | PhysicsWorkerProxy (bundleWorker + worker lifecycle + WorkerCmd union) | 4120 | −61 |
+| 951b5c6 | WreckLifecycleCoordinator (convertShipToWreck 8-collab atomic transaction) | 4061 | −59 |
+| 93ba832 | ProjectilePipeline (liveProjectiles + 4-pass sweep + lifetime) | 3989 | −72 |
+| 69b6cdd | ShieldHullRouter (damageShipLayered + damageSwarmLayered + tickShieldRegen) | 3906 | −83 |
+| b3deffa | AiFireResolver (per-drone fire pipeline) | 3851 | −55 |
+| dc0c5df | PlayerFireResolver (handleFire — 327 LOC inline → 3-line delegation) | 3563 | −288 |
+| e7c49d4 | DamageRouter (applyDamage 4-branch dispatch) | 3437 | −126 |
+
+**Combined session totals across all primary god files:**
+
+| File | Pre-session | Post-session | Δ | % |
+|---|---:|---:|---:|---:|
+| src/server/rooms/SectorRoom.ts | 4322 | **3437** | −885 | −20.5% |
+| src/client/net/ColyseusClient.ts | 4138 | **3997** | −141 | −3.4% |
+| src/client/render/PixiRenderer.ts | 1931 | 1931 | 0 | 0% |
+| src/client/App.tsx | 1264 | 1264 | 0 | 0% |
+
+PixiRenderer + App.tsx remain untouched — next-session targets. The 8 SectorRoom
+collaborators (+ the 3 ColyseusClient ones from the earlier checkpoint:
+LingeringPredBodyManager, SnapshotCoalescer, HudDispatcher) are all behind the
+file-size + thin-wrapper audit gates, so re-growth is blocked.
+
+**Construction-order trap (commit e7c49d4)**: 8 integration tests broke when
+DamageRouter was first wired because the deps capture `this.shieldHullRouter` at
+construction time, and the router was being instantiated BEFORE the
+shieldHullRouter. The Map-getter alias pattern (used by WeaponMountTicker /
+WreckLifecycleCoordinator / ShieldHullRouter for state-store identity
+preservation) doesn't help when the DEP itself is undefined — it's not a deferred
+lookup. Rule for future extractions: a collaborator that depends on another
+collaborator must be constructed AFTER it, and the dep-resolution order in
+onCreate is now: mountTicker → wreckCoordinator → playerFireResolver →
+aiFireResolver → shieldHullRouter → damageRouter → projectiles.
+
+**Test layer choice paid off**: 58 integration tests (the 19 sectorRoom files
+in tests/integration/sectorRoom/) caught the DamageRouter ordering bug
+immediately on the first run; the unit suite (1311 tests, all pass) couldn't —
+its mocks don't exercise the real `room.constructor` path. The hostile review
+correctly flagged "smoke-test bug reports require a failing test BEFORE the fix"
+as Invariant #13; this session's mechanical refactors are riding on the
+integration suite that was already there as the regression lock.
+
+---
+
+## 2026-05-26 — god-file refactor v3 (hardened) — initial checkpoint (now superseded by the continuation above)
 
 Commits: branch `claude/god-file-refactor-review-2Wh7H`, 12 commits past `8ab9946` HEAD + the 16 prep commits merged in from `claude/refactor-god-files-plan-Hcoap`.
 
