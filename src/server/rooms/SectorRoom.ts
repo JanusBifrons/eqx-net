@@ -16,8 +16,6 @@ import { SpatialGrid } from '../interest/SpatialGrid.js';
 import { BinarySwarmBroadcast } from '../net/BinarySwarmBroadcast.js';
 import {
   createIdleTracker,
-  noteSectorEvent,
-  isSectorIdle,
   type LastInputCache,
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
@@ -62,6 +60,10 @@ import { mirrorSabPoses } from './SabPoseMirror.js';
 import { updateSwarmInterestGrid } from './swarmInterestUpdater.js';
 import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
+import {
+  evaluateSectorIdle,
+  findAbandonedPlayers,
+} from './sectorIdleEvaluator.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -2355,23 +2357,10 @@ export class SectorRoom extends Room<SectorState> {
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
 
-    // Phase 4 — abandon detection. Every 30 ticks (~500ms) we check
-    // whether any ship currently in this room has had its roster row
-    // deleted (via /dev/player-ships/:shipId/abandon). When that
-    // happens, convert the ship to an ownerless wreck and kick the
-    // player. Galaxy rooms only — engineering rooms have no roster.
+    // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
+    // (~500ms). See sectorIdleEvaluator.ts.
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
-      const store = getPlayerShipStore();
-      const abandoned: string[] = [];
-      // Phase 6b — schema key is shipInstanceId; convertShipToWreck still
-      // takes playerId (internal slot maps haven't been rekeyed), so read
-      // ship.playerId from the schema field. Inactive (lingering) hulls
-      // are skipped: a player can abandon a lingering hull from the
-      // roster panel, but that path goes through a different code branch.
-      for (const [, ship] of this.state.ships) {
-        if (ship.shipInstanceId === '' || !ship.alive || !ship.isActive) continue;
-        if (store.get(ship.shipInstanceId) === null) abandoned.push(ship.playerId);
-      }
+      const abandoned = findAbandonedPlayers(this.state.ships, getPlayerShipStore());
       for (const playerId of abandoned) this.convertShipToWreck(playerId);
     }
 
@@ -2429,34 +2418,16 @@ export class SectorRoom extends Room<SectorState> {
     phaseTime('swarmEncode');
     phaseTime('swarmBroadcast');
 
-    // Stage 5 — sector idle tracking. Updated every tick from motion +
-    // projectile-in-flight signals; when no activity in IDLE_THRESHOLD_TICKS
-    // (= 1 s at 60 Hz), the snapshot broadcast block short-circuits.
-    if (this.liveProjectiles.size > 0) {
-      noteSectorEvent(this.idleTracker, this.serverTick);
-    } else {
-      for (const [, pose] of this.shipPoseCache) {
-        const speedSq = pose.vx * pose.vx + pose.vy * pose.vy;
-        if (speedSq > IDLE_MOTION_EPSILON_SQ) {
-          noteSectorEvent(this.idleTracker, this.serverTick);
-          break;
-        }
-        if (Math.abs(pose.angvel ?? 0) > 0.05) {
-          noteSectorEvent(this.idleTracker, this.serverTick);
-          break;
-        }
-      }
-    }
-    // A freshly-joined client needs a steady snapshot stream to
-    // reconcile its prediction before idle-suppression can quiet the
-    // sector. `forceBroadcastUntilTick` is set on every join/spawn;
-    // while the current tick is inside that window the sector is
-    // treated as non-idle regardless of motion. See
-    // JOIN_BROADCAST_GRACE_TICKS for the full rationale.
-    const inJoinGrace = this.serverTick < this.forceBroadcastUntilTick;
-    const sectorIdle =
-      !inJoinGrace &&
-      isSectorIdle(this.idleTracker, this.serverTick, IDLE_THRESHOLD_TICKS);
+    // Stage 5 sector-idle evaluation — see sectorIdleEvaluator.ts.
+    const sectorIdle = evaluateSectorIdle({
+      idleTracker: this.idleTracker,
+      serverTick: this.serverTick,
+      shipPoseCache: this.shipPoseCache,
+      liveProjectiles: this.liveProjectiles,
+      forceBroadcastUntilTick: this.forceBroadcastUntilTick,
+      idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
+      idleThresholdTicks: IDLE_THRESHOLD_TICKS,
+    });
 
     // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
     //
