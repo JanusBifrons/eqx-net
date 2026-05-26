@@ -64,6 +64,7 @@ import {
   evaluateSectorIdle,
   findAbandonedPlayers,
 } from './sectorIdleEvaluator.js';
+import { runAiTick } from './aiTickRunner.js';
 import {
   TICK_IDX,
   WORKER_TICK_US_IDX,
@@ -2461,36 +2462,19 @@ export class SectorRoom extends Room<SectorState> {
     this.snapshotBroadcaster.broadcast(sectorIdle);
     phaseTime('snapshotBroadcast');
 
-    // Tick AI behaviours AT THE END of update() so impulses posted now reach
-    // the worker BEFORE the next SAB read. Defect 1 (5c-stabilise plan): if
-    // AI ticks before the encoder reads SAB in the same update() call, the
-    // intent is still in-flight and the encoder broadcasts a pose that
-    // doesn't include this tick's impulse — observed as drone stutter.
-    // View is rebuilt in-place each tick to avoid alloc.
-    if (this.aiController.size() > 0) {
-      this.aiPlayerScratch.length = 0;
-      for (const [pid] of this.playerToSlot) {
-        const ship = this.getActiveShip(pid);
-        if (!ship?.alive) continue;
-        // Phase 6c — drones only see active hulls. Lingering hulls
-        // (isActive === false during the 15-min disconnect linger
-        // window) are skipped here so the AI never targets them.
-        // The matching gate on the client side is in
-        // `ColyseusClient.ts`'s AI view construction (Input Symmetry
-        // Rule, `src/core/CLAUDE.md`). Lock test:
-        // `tests/integration/sectorRoom/droneTargetActiveOnly.test.ts`.
-        if (!ship.isActive) continue;
-        const pose = this.shipPoseCache.get(pid);
-        if (!pose) continue;
-        this.aiPlayerScratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
-      }
-      this.aiController.tick(this.serverTick, 1 / 60, this.aiPlayerScratch, (id) => this.swarmEntitySnapshot(id));
-      phaseTime('aiTick');
-
-      const fires = this.aiController.drainFireRequests();
-      for (const f of fires) this.handleAiFire(f.shooterId, f.dirX, f.dirY, f.tick);
-      phaseTime('aiFire');
-    }
+    // Tick AI AT THE END of update() so posted impulses reach the
+    // worker BEFORE the next SAB read. See aiTickRunner.ts.
+    runAiTick({
+      aiController: this.aiController,
+      serverTick: this.serverTick,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (id) => this.getActiveShip(id),
+      shipPoseCache: this.shipPoseCache,
+      aiPlayerScratch: this.aiPlayerScratch,
+      swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
+      handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
+      phaseTime,
+    });
 
     // Phase 4b.3 — server-authoritative turret rotation for player ships.
     // Mirrors the client's `tickLocalMountAim` so the server's hit-test
