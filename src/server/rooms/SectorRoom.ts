@@ -35,7 +35,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, DestroyEvent, RespawnAckMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, DestroyEvent, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -53,6 +53,7 @@ import { ShieldHullRouter } from './ShieldHullRouter.js';
 import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
+import { RespawnHandler } from './RespawnHandler.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -456,6 +457,8 @@ export class SectorRoom extends Room<SectorState> {
   /** Damage routing — 4 branches (wreck / lingering / active / swarm).
    *  Extracted to `DamageRouter.ts`. */
   private damageRouter!: DamageRouter;
+  /** Player respawn handler. Extracted to `RespawnHandler.ts`. */
+  private respawnHandler!: RespawnHandler;
   /** Two-layer shield/hull damage + regen routing. Owns the swarm-side
    *  shield/hull state (swarmHealth, swarmShield, swarmShieldLastDmg) +
    *  the three layered-damage methods. Extracted to
@@ -781,6 +784,26 @@ export class SectorRoom extends Room<SectorState> {
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      logger,
+    });
+
+    // Player respawn handler. Composes worker proxy + SAB writer +
+    // mount-ticker cleanup. Extracted to RespawnHandler.ts.
+    this.respawnHandler = new RespawnHandler({
+      sabF32: this.sabF32,
+      sabU32: this.sabU32,
+      serverTick: () => this.serverTick,
+      testMode: this.testMode,
+      defaultSpawnX: this.defaultSpawnX,
+      defaultSpawnY: this.defaultSpawnY,
+      sessionToPlayer: this.sessionToPlayer,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      initialSpawnPositions: this.initialSpawnPositions,
+      shipPoseCache: this.shipPoseCache,
+      lastFireClientTick: this.lastFireClientTick,
+      mountTicker: this.mountTicker,
       postToWorker: (cmd) => this.postToWorker(cmd),
       logger,
     });
@@ -1436,69 +1459,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private handleRespawn(client: Client): void {
-    const playerId = this.sessionToPlayer.get(client.sessionId);
-    if (!playerId) return;
-
-    const ship = this.getActiveShip(playerId);
-    if (!ship || ship.alive) return; // only dead ships may respawn
-
-    const slot = this.playerToSlot.get(playerId);
-    if (slot === undefined) return;
-
-    const storedPos = this.initialSpawnPositions.get(playerId);
-    // testMode preserves the originally-joined position so respawn doesn't
-    // teleport mid-test. Else: the room-level default anchor (engineering
-    // test rooms) wins over random scatter, matching `onJoin`'s fallback.
-    const spawnX = (this.testMode && storedPos)
-      ? storedPos.x
-      : (this.defaultSpawnX ?? (Math.random() - 0.5) * 400);
-    const spawnY = (this.testMode && storedPos)
-      ? storedPos.y
-      : (this.defaultSpawnY ?? (Math.random() - 0.5) * 400);
-
-    // Reset physics body in worker to new spawn position. Preserve the ship's
-    // existing `kind` — respawn keeps the same vehicle the player was flying.
-    this.postToWorker({ type: 'DESPAWN', slot, playerId });
-    this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: ship.kind });
-
-    // Pre-populate SAB so update() reads a sane position before the worker responds.
-    const base = slotBase(slot);
-    this.sabF32[base + SLOT_X_OFF]  = spawnX;
-    this.sabF32[base + SLOT_Y_OFF]  = spawnY;
-    this.sabF32[base + SLOT_VX_OFF] = 0;
-    this.sabF32[base + SLOT_VY_OFF] = 0;
-
-    // Reset authoritative ship state.
-    ship.health = SHIP_MAX_HEALTH;
-    ship.alive  = true;
-    // Shield refills on respawn; force the body back to its cheap circle
-    // collider (SET_HULL_EXPOSED is idempotent - no-op if already circle).
-    ship.shield = getShipKind(ship.kind).shieldMax;
-    ship.shieldLastDamageTick = this.serverTick;
-    this.postToWorker({ type: 'SET_HULL_EXPOSED', id: playerId, exposed: false, kindId: ship.kind, tick: this.serverTick });
-    // Seed the pose cache so any consumer that runs before the next update()
-    // tick (e.g. an in-flight fire request resolved on this same client.send
-    // turn) sees the respawn position rather than the corpse pose.
-    const pose = this.shipPoseCache.get(playerId);
-    if (pose) {
-      pose.x = spawnX; pose.y = spawnY;
-      pose.vx = 0; pose.vy = 0;
-      // angle/angvel left as-is — the worker will overwrite both before the
-      // next SAB→cache mirror.
-    } else {
-      this.shipPoseCache.set(playerId, { x: spawnX, y: spawnY, vx: 0, vy: 0, angle: 0, angvel: 0 });
-    }
-
-    // Clear fire cooldown so first shot after respawn isn't rejected.
-    this.lastFireClientTick.delete(playerId);
-    this.playerMountAngles.delete(playerId);
-    this.playerSlotTargets.delete(playerId);
-
-    const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
-    const ack: RespawnAckMessage = { type: 'respawn_ack', x: spawnX, y: spawnY, serverTick: currentServerTick };
-    client.send('respawn_ack', ack);
-
-    logger.info({ playerId, spawnX, spawnY }, 'player respawned');
+    this.respawnHandler.handle(client);
   }
 
   /**
