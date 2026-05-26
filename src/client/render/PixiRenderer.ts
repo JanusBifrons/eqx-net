@@ -6,6 +6,7 @@ import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites } from './pixi/shipSpriteUpdater.js';
 import { updateSwarmSprites } from './pixi/swarmSpriteUpdater.js';
+import { updateProjectileSprites } from './pixi/projectileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
@@ -22,9 +23,6 @@ import {
   shapeForKind,
   desaturate,
   buildGhostGfx,
-  buildProjectileGfx,
-  buildLaserBoltGfx,
-  buildBeamGfx,
   applyMountOffset,
   buildExplosionGfx,
 } from './pixi/spriteBuilders.js';
@@ -586,43 +584,12 @@ export class PixiRenderer implements IRenderer {
       }
     }
 
-    // Projectiles and ghost projectiles.
-    if (mirror.projectiles) {
-      // 2026-05-25 heap-growth gate step 6: reuse persistent Set.
-      const projSeen = this._updateProjSeenScratch;
-      projSeen.clear();
-      for (const [projId, proj] of mirror.projectiles) {
-        projSeen.add(projId);
-        let ps = this.projectileSprites.get(projId);
-        if (!ps) {
-          if (proj.beam) {
-            const dx = proj.beam.toX - proj.x;
-            const dy = -(proj.beam.toY - proj.y); // Y-flip for Pixi
-            ps = buildBeamGfx(dx, dy);
-          } else if (proj.weaponId === 'laser') {
-            ps = buildLaserBoltGfx();
-          } else {
-            ps = buildProjectileGfx(proj.isGhost ?? false);
-          }
-          this.shipContainer.addChild(ps);
-          this.projectileSprites.set(projId, ps);
-        }
-        ps.x = proj.x;
-        ps.y = -proj.y;
-        ps.alpha = proj.alpha ?? 1;
-        // Rotate laser bolts to face their velocity heading.
-        if (proj.weaponId === 'laser' && !proj.beam) {
-          ps.rotation = -Math.atan2(proj.vy, proj.vx) + Math.PI / 2;
-        }
-      }
-      for (const [projId, ps] of this.projectileSprites) {
-        if (!projSeen.has(projId)) {
-          this.shipContainer.removeChild(ps);
-          ps.destroy();
-          this.projectileSprites.delete(projId);
-        }
-      }
-    }
+    // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
+    updateProjectileSprites(mirror, {
+      shipContainer: this.shipContainer,
+      projectileSprites: this.projectileSprites,
+      projSeenScratch: this._updateProjSeenScratch,
+    });
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.
