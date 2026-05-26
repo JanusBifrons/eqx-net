@@ -40,6 +40,7 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
+import { HudDispatcher } from './HudDispatcher.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -443,27 +444,12 @@ export class ColyseusGameClient {
    *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
    *  literal was a real allocator. Mutate the scratch each call. */
   private readonly _damageReconcileScratch: { targetId: string; damage: number } = { targetId: '', damage: 0 };
-  /** 2026-05-25 heap-growth gate step 8 — cached last-pushed swarm
-   *  count so we only dispatch to Zustand when it actually changed.
-   *  Pre-fix: every 60Hz binary packet called `setSwarmCount(n)`
-   *  regardless. Zustand subscribers allocate per notification. */
-  private _lastPushedSwarmCount = -1;
-  /** 2026-05-25 heap-growth gate step 9 — cache last-pushed HUD bar
-   *  values so we only dispatch to Zustand when they actually change.
-   *  Under 75 hits/sec combat the pre-fix called setHullPct +
-   *  setShieldPct unconditionally per hit; rounding to int already
-   *  dedupes most calls but the dispatch still fires. */
-  private _lastPushedHullPct = -1;
-  private _lastPushedShieldPct = -1;
-  /** 2026-05-25 heap-growth gate step 10 — throttle HUD dispatch to
-   *  1 Hz; bar interpolates between samples via 1s CSS transition.
-   *  Eliminates per-hit Zustand dispatch (75/sec under combat) at the
-   *  cost of up-to-1s visual latency. Trade-off the user explicitly
-   *  designed for ("doesn't jump or look/feel slow"). */
-  private _pendingHullPct = -1;
-  private _pendingShieldPct = -1;
-  private _lastHudDispatchAtMs = -1;
-  private static readonly HUD_DISPATCH_INTERVAL_MS = 1000;
+  /** 2026-05-25 heap-growth gate steps 8-10 — 1Hz HUD-store dispatcher.
+   *  Owns swarm-count + hull-pct + shield-pct dedupe + 1Hz throttle so
+   *  per-event handlers (handleDamage / handleShield / swarm-decoder)
+   *  pay zero Zustand-notification cost on no-op updates. Extracted to
+   *  `HudDispatcher.ts`. */
+  private readonly hudDispatcher = new HudDispatcher();
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -1015,11 +1001,7 @@ export class ColyseusGameClient {
       // actually changed. Pre-fix this fired every 60 Hz binary packet
       // regardless of whether the value moved; Zustand subscribers
       // allocate per notification.
-      const swarmCount = this.mirror.swarm?.size ?? 0;
-      if (swarmCount !== this._lastPushedSwarmCount) {
-        this._lastPushedSwarmCount = swarmCount;
-        useUIStore.getState().setSwarmCount(swarmCount);
-      }
+      this.hudDispatcher.pushSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
     room.onMessage('damage', (raw: unknown) => {
@@ -1454,7 +1436,7 @@ export class ColyseusGameClient {
     if (evt.targetId !== this.mirror.localPlayerId) return;
     const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
     // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
-    this._pendingShieldPct = pct;
+    this.hudDispatcher.stashShield(pct);
     if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
       this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
     }
@@ -1471,8 +1453,8 @@ export class ColyseusGameClient {
       // step 10: just stash the latest target value; the 1Hz dispatcher
       // in updateMirror() pushes to Zustand. Bar's 1s CSS transition
       // animates smoothly between samples.
-      this._pendingHullPct = hullPct;
-      this._pendingShieldPct = shPct;
+      this.hudDispatcher.stashHull(hullPct);
+      this.hudDispatcher.stashShield(shPct);
       // Authoritative shield break -> mirror the collider swap into the
       // local predWorld so client hit/ramming prediction matches the
       // server. The client NEVER computes the 0-cross (reacts to the
@@ -2712,19 +2694,8 @@ export class ColyseusGameClient {
     // Zustand at most once per second. Bar's CSS transition animates
     // smoothly between samples. Per-event handlers (handleDamage,
     // handleShield) just stash the latest pending value; this is the
-    // single dispatch site.
-    const nowHud = this.clock.now();
-    if (nowHud - this._lastHudDispatchAtMs >= ColyseusGameClient.HUD_DISPATCH_INTERVAL_MS) {
-      this._lastHudDispatchAtMs = nowHud;
-      if (this._pendingHullPct !== this._lastPushedHullPct && this._pendingHullPct >= 0) {
-        this._lastPushedHullPct = this._pendingHullPct;
-        useUIStore.getState().setHullPct(this._pendingHullPct);
-      }
-      if (this._pendingShieldPct !== this._lastPushedShieldPct && this._pendingShieldPct >= 0) {
-        this._lastPushedShieldPct = this._pendingShieldPct;
-        useUIStore.getState().setShieldPct(this._pendingShieldPct);
-      }
-    }
+    // single dispatch site. Owned by `HudDispatcher.ts`.
+    this.hudDispatcher.tick(this.clock.now());
     // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
     // Per-frame mirror rebuild + snapshot-apply is a candidate for the
     // in-game-vs-sandbox differential (sandbox has 1 ship). Single exit
