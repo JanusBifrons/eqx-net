@@ -35,7 +35,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import { InputMessageSchema } from '../../shared-types/messages.js';
-import type { WelcomeMessage, SnapshotMessage, DestroyEvent, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
+import type { WelcomeMessage, SnapshotMessage, WarpInEvent, WarpOutEvent, BotAggroEvent } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
@@ -54,6 +54,8 @@ import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
 import { DamageRouter } from './DamageRouter.js';
 import { RespawnHandler } from './RespawnHandler.js';
+import { SwarmEvictor } from './SwarmEvictor.js';
+import { RosterPersistence } from './RosterPersistence.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -88,7 +90,7 @@ import {
 } from './SectorSnapshot.js';
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
-import { RosterFullError } from '../playerShips/PlayerShipStore.js';
+// RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession, clearSession } from '../transit/sessionRegistry.js';
 import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
@@ -459,6 +461,10 @@ export class SectorRoom extends Room<SectorState> {
   private damageRouter!: DamageRouter;
   /** Player respawn handler. Extracted to `RespawnHandler.ts`. */
   private respawnHandler!: RespawnHandler;
+  /** Swarm entity eviction. Extracted to `SwarmEvictor.ts`. */
+  private swarmEvictor!: SwarmEvictor;
+  /** Roster persistence bridge. Extracted to `RosterPersistence.ts`. */
+  private rosterPersistence!: RosterPersistence;
   /** Two-layer shield/hull damage + regen routing. Owns the swarm-side
    *  shield/hull state (swarmHealth, swarmShield, swarmShieldLastDmg) +
    *  the three layered-damage methods. Extracted to
@@ -786,6 +792,32 @@ export class SectorRoom extends Room<SectorState> {
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
       postToWorker: (cmd) => this.postToWorker(cmd),
       logger,
+    });
+
+    // Roster persistence bridge — wraps the four getPlayerShipStore()
+    // calls (bind on spawn, mark-linger on disconnect, mark-stored on
+    // eviction, delete on destruction). Engineering rooms (sectorKey
+    // null) make all 4 no-ops.
+    this.rosterPersistence = new RosterPersistence({
+      sectorKey: () => this.sectorKey,
+      roomId: () => this.roomId,
+      logger,
+    });
+
+    // Swarm entity eviction. Single canonical teardown for combat-kill
+    // + LoadShedder + livingWorld bot despawn. Extracted to SwarmEvictor.ts.
+    this.swarmEvictor = new SwarmEvictor({
+      bus: this.bus,
+      logger,
+      broadcastDestroy: (msg) => this.broadcast('destroy', msg),
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      interestGrid: this.interestGrid,
+      swarmRegistry: this.swarmRegistry,
+      aiController: this.aiController,
+      snapshotRing: this.snapshotRing,
+      shieldHullRouter: this.shieldHullRouter,
+      mountTicker: this.mountTicker,
+      freeSlots: this.freeSlots,
     });
 
     // Player respawn handler. Composes worker proxy + SAB writer +
@@ -1276,33 +1308,7 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
   ): void {
-    if (opts.broadcast) {
-      const wireTargetId = `swarm-${rec.entityId}`;
-      this.broadcast('destroy', {
-        type: 'destroy',
-        targetId: wireTargetId,
-        shooterId: opts.shooterId ?? '',
-      } satisfies DestroyEvent);
-    }
-    if (opts.emitDestroyed) {
-      this.bus.emit('ENTITY_DESTROYED', { type: 'ENTITY_DESTROYED', entityId: rec.id });
-    }
-
-    this.postToWorker({ type: 'DESPAWN', slot: rec.slot, playerId: rec.id });
-    this.interestGrid.remove(rec.entityId);
-    this.swarmRegistry.unregister(rec.id);
-    this.aiController.unregister(rec.id);
-    this.swarmHealth.delete(rec.id);
-    this.swarmShield.delete(rec.id);
-    this.swarmShieldLastDmg.delete(rec.id);
-    this.snapshotRing.unregisterEntity(rec.id);
-    // Phase 4c — clean up drone turret state alongside the body.
-    this.droneMountAngles.delete(rec.id);
-    this.droneSlotTargets.delete(rec.id);
-    this.freeSlots.push(rec.slot);
-    if (opts.broadcast) {
-      logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
-    }
+    this.swarmEvictor.evict(rec, opts);
   }
 
   // ── Living World Director hooks ─────────────────────────────────────────
@@ -2404,68 +2410,12 @@ export class SectorRoom extends Room<SectorState> {
       x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
       health: number; lastFireClientTick: number;
     },
-    /** When set, bind this specific roster row rather than picking the
-     *  most-recent. Caller is responsible for verifying ownership; here
-     *  we only mark-active. Falls back to the most-recent path on miss. */
     preferredShipId: string = '',
-    /** Phase 3 — when true, skip the most-recent-row fallback and
-     *  always create a fresh roster entry. Used by the galaxy-map
-     *  sector-click → kind-picker flow so clicking a sector spawns a
-     *  *new* ship rather than silently resuming the player's last
-     *  ride. Subject to 10-cap; on RosterFullError the ship still
-     *  spawns but without a roster row (logged warning). */
     forceFreshCreate: boolean = false,
   ): string {
-    if (this.sectorKey === null) return '';
-    const store = getPlayerShipStore();
-    if (preferredShipId !== '') {
-      const next = store.markActive(preferredShipId, this.roomId, pose);
-      if (next !== null) {
-        logger.info({ playerId, shipId: next.shipId, path: 'preferred' }, 'roster bind');
-        return next.shipId;
-      }
-      // Fell through — caller's preferred id didn't exist. Continue with
-      // the legacy most-recent path so the player still spawns into
-      // something rather than getting a roster-less ship.
-    }
-    const existing = store.listByPlayer(playerId);
-    if (existing.length > 0 && !forceFreshCreate) {
-      // Most-recently-updated first. Pre-Phase-4 multi-ship UX uses the
-      // most recent entry as the implicit "current" ship.
-      existing.sort((a, b) => b.updatedAt - a.updatedAt);
-      const chosen = existing[0]!;
-      const next = store.markActive(chosen.shipId, this.roomId, pose);
-      logger.info({ playerId, shipId: next?.shipId, path: 'reuse-recent', existingCount: existing.length }, 'roster bind');
-      return next?.shipId ?? '';
-    }
-    try {
-      const rec = store.create({
-        playerId,
-        userId,
-        kind,
-        sectorKey: this.sectorKey,
-        x: pose.x,
-        y: pose.y,
-        health: pose.health,
-      });
-      store.markActive(rec.shipId, this.roomId, pose);
-      logger.info({ playerId, shipId: rec.shipId, path: 'fresh-create', forceFresh: forceFreshCreate }, 'roster bind');
-      return rec.shipId;
-    } catch (err) {
-      if (err instanceof RosterFullError) {
-        logger.warn({ playerId }, 'Roster full — ship spawned without a roster row');
-      } else {
-        logger.warn({ err, playerId }, 'Failed to create roster row');
-      }
-      return '';
-    }
+    return this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate);
   }
 
-  /**
-   * Mirror the linger state into the roster row — pose freeze at
-   * disconnect, expiresAt = now + 15 min. The room schedules the eviction
-   * timer separately (see onLeave); this is the persistence side.
-   */
   private markRosterLinger(
     shipInstanceId: string,
     pose: {
@@ -2473,10 +2423,7 @@ export class SectorRoom extends Room<SectorState> {
       health: number; lastFireClientTick: number;
     },
   ): void {
-    if (this.sectorKey === null || shipInstanceId === '') return;
-    const store = getPlayerShipStore();
-    if (store.get(shipInstanceId) === null) return;
-    store.markActive(shipInstanceId, this.roomId, pose, Date.now() + LIMBO_DISCONNECT_TTL_MS);
+    this.rosterPersistence.markLinger(shipInstanceId, pose);
   }
 
   /**
@@ -2515,20 +2462,11 @@ export class SectorRoom extends Room<SectorState> {
       health: number; lastFireClientTick: number;
     },
   ): void {
-    if (this.sectorKey === null || shipInstanceId === '') return;
-    const store = getPlayerShipStore();
-    if (store.get(shipInstanceId) === null) return;
-    store.markStored(shipInstanceId, { ...pose, sectorKey: this.sectorKey });
+    this.rosterPersistence.markStored(shipInstanceId, pose);
   }
 
-  /**
-   * Mirror a destruction into the roster — the row is deleted. The
-   * Phase 4 wreck flow will replace this with "leave a wreck behind"
-   * semantics, but for Phase 3 we just remove from the roster.
-   */
   private deleteRosterRow(shipInstanceId: string): void {
-    if (this.sectorKey === null || shipInstanceId === '') return;
-    getPlayerShipStore().delete(shipInstanceId);
+    this.rosterPersistence.delete(shipInstanceId);
   }
 
   override onDispose(): void {
