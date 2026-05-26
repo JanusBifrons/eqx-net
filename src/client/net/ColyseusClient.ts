@@ -42,6 +42,11 @@ import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
+import { RafStallDetector } from './RafStallDetector.js';
+import {
+  routeSnapshotShipStates,
+  applyBoostingThrustingSets,
+} from './snapshotShipRouter.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -517,14 +522,11 @@ export class ColyseusGameClient {
   private _lastSnapshotRecvAtMs = -1;
 
   /** Heap + stall instrumentation (2026-05-21, render-jitter probe).
-   *  Wall-clock + heap value at the most recent >100ms RAF stall.
-   *  Surfaced in the `raf_gap` log as `msSinceLastStall` +
-   *  `heapDeltaMbSinceLastStall` so a GC-pause hypothesis is visible:
-   *  if every stall coincides with a heap drop (the GC just ran), or
-   *  heap grows monotonically between stalls (allocation pressure),
-   *  the cost is GC/allocation, not Pixi/network. */
-  private _lastRafStallAtMs = -1;
-  private _lastRafStallHeapMb = -1;
+   *  Per-RAF heap + frame-gap detector — owns the rolling
+   *  swarm-decode window, the >100ms `raf_gap` log (heap delta +
+   *  ms-since-last-stall) and the 30-100ms `raf_stutter` log.
+   *  See `RafStallDetector.ts`. */
+  private readonly rafStallDetector = new RafStallDetector();
   /** Probe 5 — rolling fields for the per-snapshot reconcile cost.
    *  Surfaced on `snapshot_applied` so a capture shows reconcile time
    *  separately from the rest of handleSnapshot. The y0eo1h capture
@@ -557,19 +559,6 @@ export class ColyseusGameClient {
    *
    *  Default ON. URL override: `?coalesce=0` disables for A/B testing. */
   private readonly snapshotCoalescer: SnapshotCoalescer;
-
-  /** RAF counter for periodic heap sampling between stalls. */
-  private _rafSampleCounter = 0;
-
-  /** Probe 0 — rolling stats for the binary swarm decode + predWorld sync,
-   *  the uninstrumented post-pivot dominant per-frame surface per the
-   *  hostile review of `docs/architecture/mobile-perf-investigation.md`.
-   *  Window resets every `heap_sample` emit (~10 Hz), so the surfaced
-   *  max/avg/count reflect the last ~100 ms of decode work — adjacent in
-   *  time to the heap trajectory the same event publishes. */
-  private _swarmDecodeMaxMs = 0;
-  private _swarmDecodeTotalMs = 0;
-  private _swarmDecodeCount = 0;
 
   // Snapshot timing
   private lastSnapshotAt = 0;
@@ -986,9 +975,7 @@ export class ColyseusGameClient {
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
-      this._swarmDecodeTotalMs += decodeMs;
-      this._swarmDecodeCount += 1;
-      if (decodeMs > this._swarmDecodeMaxMs) this._swarmDecodeMaxMs = decodeMs;
+      this.rafStallDetector.recordSwarmDecode(decodeMs);
       if (decodeMs > 5) {
         logEvent('swarm_decode_slow', {
           decodeMs: parseFloat(decodeMs.toFixed(2)),
@@ -1708,80 +1695,16 @@ export class ColyseusGameClient {
     }
 
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
-    // to a playerId-keyed local view. C-ii strategy: predWorld + mirror
-    // + reconciler all use playerId internally for active hulls.
-    // Phase 6b: inactive hulls (lingering) DO show up — they get
-    // routed to `mirror.lingeringShips` (a separate shipInstanceId-
-    // keyed map) so they don't collide with the active hull on the
-    // same playerId. Pose flows from the snapshot directly; identity
-    // (kind, displayName) flows from the Colyseus schema diff via
-    // `syncMirror`.
-    const statesByPlayerId: SnapshotMessage['states'] = {};
-    if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
-    // 2026-05-25 heap-growth gate step 1: reuse persistent Set scratch
-    // instead of `new Set<string>()` per snapshot.
-    const lingeringSeen = this._lingeringSeenScratch;
-    lingeringSeen.clear();
-    // 2026-05-25 heap-growth gate step 4: `for…in` instead of
-    // `Object.entries` — saves the per-snapshot [key,value] tuple array.
-    for (const shipInstanceId in snap.states) {
-      const entry = snap.states[shipInstanceId]!;
-      if (entry.isActive === false) {
-        // Route to the lingering map. We update pose every snapshot;
-        // identity fields come from the schema diff and are preserved.
-        // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
-        // lingering entry in place. Same rationale as Probe 7's ship
-        // pooling: kind / displayName preserved by NOT touching them.
-        let lingerEntry = this.mirror.lingeringShips.get(shipInstanceId);
-        if (!lingerEntry) {
-          lingerEntry = {
-            x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-            angle: entry.angle,
-            ownerPlayerId: entry.playerId,
-          };
-          this.mirror.lingeringShips.set(shipInstanceId, lingerEntry);
-        } else {
-          lingerEntry.x = entry.x;
-          lingerEntry.y = entry.y;
-          lingerEntry.vx = entry.vx;
-          lingerEntry.vy = entry.vy;
-          lingerEntry.angle = entry.angle;
-          lingerEntry.ownerPlayerId = entry.playerId;
-        }
-        lingeringSeen.add(shipInstanceId);
-        // Phase 6b — spawn / refresh the predWorld body so the local
-        // player can collide with the parked hull (mirrors the wreck
-        // pattern in syncWreckPoses). The helper handles the race
-        // between this site (pose) and syncMirror (kind) — see its
-        // doc comment.
-        this.tryEnsureLingerPredBody(shipInstanceId);
-        continue;
-      }
-      statesByPlayerId[entry.playerId] = entry;
-    }
-    // Remove lingering hulls that didn't appear in this snapshot (evicted
-    // by the 15-min timer, or destroyed) — plus despawn their predWorld
-    // bodies so the local player stops colliding with ghosts.
-    // 2026-05-25 heap-growth gate step 1: collect ids to evict into a
-    // persistent scratch array instead of `[...keys()]` spread alloc.
-    // Two-phase (collect then evict) so we don't mutate the Map mid-iter.
-    const toEvict = this._lingeringToEvictScratch;
-    toEvict.length = 0;
-    for (const id of this.mirror.lingeringShips.keys()) {
-      if (!lingeringSeen.has(id)) toEvict.push(id);
-    }
-    for (const id of toEvict) {
-      this.mirror.lingeringShips.delete(id);
-      if (this.predWorld) this.lingerBodies.despawn(id, this.predWorld);
-    }
-    // Probe 8 — mutate snap.states in place rather than spreading into
-    // a new object. `snap` is the parameter from `room.onMessage` and
-    // is owned by us for the duration of this handler — Colyseus
-    // freshly-parses it per message, no aliasing concern. Saves one
-    // object allocation per snapshot (the spread also copied references
-    // to all the other snap fields — projectiles, wrecks, drones,
-    // boostingIds, etc.).
-    snap.states = statesByPlayerId;
+    // to a playerId-keyed local view + route inactive (lingering)
+    // hulls to mirror.lingeringShips. See snapshotShipRouter.ts.
+    routeSnapshotShipStates(snap, {
+      mirror: this.mirror,
+      predWorld: this.predWorld,
+      lingerBodies: this.lingerBodies,
+      tryEnsureLingerPredBody: (id) => this.tryEnsureLingerPredBody(id),
+      lingeringSeenScratch: this._lingeringSeenScratch,
+      lingeringToEvictScratch: this._lingeringToEvictScratch,
+    });
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
@@ -1793,23 +1716,8 @@ export class ColyseusGameClient {
     // (see syncMirror); this just refreshes per-frame pose.
     this.syncWreckPoses(snap.wrecks);
 
-    // Apply the server-authoritative boost set into the render mirror so the
-    // PixiRenderer can draw an exhaust trail for whichever ships are currently
-    // boosting. Reset first so leavers / shift-released ships drop out.
-    if (this.mirror.boostingShips) {
-      this.mirror.boostingShips.clear();
-      if (snap.boostingIds) {
-        for (const id of snap.boostingIds) this.mirror.boostingShips.add(id);
-      }
-    }
-    // Same pattern for the baseline thrust set — every snapshot is the
-    // authoritative truth; locals are layered on top via per-tick prediction.
-    if (this.mirror.thrustingShips) {
-      this.mirror.thrustingShips.clear();
-      if (snap.thrustingIds) {
-        for (const id of snap.thrustingIds) this.mirror.thrustingShips.add(id);
-      }
-    }
+    // Server-authoritative boost + thrust sets — exhaust-trail renderer.
+    applyBoostingThrustingSets(snap, this.mirror);
 
     // Phase 6 — surface the server's TiDi rate to the HUD via Zustand. Schema
     // diff already updates `room.state.clockRate`; reading it on every
@@ -3056,83 +2964,9 @@ export class ColyseusGameClient {
     // per-RAF physics work. Snapshots queued in the WebSocket event
     // queue during a stall collapse to one here.
     this.processPendingSnapshot();
-    // Frame-gap detector. The mobile capture
-    // `2026-05-09T07-23-39-893Z-651792` showed two ~500–600 ms RAF stalls
-    // that bunched WebSocket arrivals into a single post-stall snapshot
-    // and saturated the prediction window for tens of seconds. Logging
-    // every RAF would saturate the 500-entry ring buffer in ~8 s; logging
-    // only the gaps gives one entry per genuine stall, paired with the
-    // `longtask` observer's attribution (when supported) to pin the cause.
-    // Per-RAF heap sample once every 60 RAFs (~once/sec at 60Hz) so we
-    // have a growth trajectory between stall events. Tiny cost: one
-    // performance.memory read on Chromium.
-    this._rafSampleCounter++;
-    if (this._rafSampleCounter >= 6) {
-      // Probe 0 (mobile-perf-investigation-review): bumped 60→6 RAFs
-      // (~1Hz → ~10Hz) so the GC sawtooth between stalls is visible. The
-      // hostile review observed `heapDeltaMbSinceLastStall` sawtooths
-      // ±2-5 MB on every 110 ms stall but the 1Hz sample resolution can
-      // miss intermediate dips. 10Hz still bounded — 600 entries/min in
-      // a 5000-entry diag ring, ~8 min of session before pressure.
-      this._rafSampleCounter = 0;
-      const heap = readHeapUsedMb();
-      if (heap !== undefined) {
-        logEvent('heap_sample', {
-          heapUsedMb: parseFloat(heap.toFixed(2)),
-          // Probe 0: surface the rolling binary-swarm decode cost so the
-          // uninstrumented post-pivot surface the hostile review flagged
-          // becomes visible against heap trajectory.
-          swarmDecodeMaxMs: this._swarmDecodeMaxMs > 0
-            ? parseFloat(this._swarmDecodeMaxMs.toFixed(2))
-            : undefined,
-          swarmDecodeAvgMs: this._swarmDecodeCount > 0
-            ? parseFloat((this._swarmDecodeTotalMs / this._swarmDecodeCount).toFixed(2))
-            : undefined,
-          swarmDecodeCount: this._swarmDecodeCount,
-        });
-        // Reset rolling window so each heap_sample reports cost-since-last-sample.
-        this._swarmDecodeMaxMs = 0;
-        this._swarmDecodeTotalMs = 0;
-        this._swarmDecodeCount = 0;
-      }
-    }
-    // Probe 4 (mobile-perf-investigation, 2026-05-24) — raf_stutter event
-    // for medium-sized inter-RAF gaps (30 ms < elapsedMs ≤ 100 ms). The
-    // existing `raf_gap` only fires above 100 ms; capture n6uznw showed
-    // the user's felt "lag spikes" include 33-89 ms missed-frame events
-    // that don't cross the raf_gap threshold but happen every 10-30 s and
-    // are perceptible at 90 Hz native (any 30 ms gap == 2-3 missed
-    // frames). Distinct event class so the existing raf_gap rate metric
-    // and tests stay unchanged.
-    if (elapsedMs > 30 && elapsedMs <= 100) {
-      logEvent('raf_stutter', {
-        elapsedMs: Math.round(elapsedMs * 100) / 100,
-        inputTickBefore: this.inputTick,
-      });
-    }
-    if (elapsedMs > 100) {
-      const heap = readHeapUsedMb();
-      const heapVal = heap !== undefined ? parseFloat(heap.toFixed(2)) : null;
-      const nowMs = this.clock.now();
-      const msSinceLastStall = this._lastRafStallAtMs >= 0
-        ? Math.round(nowMs - this._lastRafStallAtMs)
-        : -1;
-      const heapDelta = (heap !== undefined && this._lastRafStallHeapMb >= 0)
-        ? parseFloat((heap - this._lastRafStallHeapMb).toFixed(2))
-        : null;
-      logEvent('raf_gap', {
-        elapsedMs: Math.round(elapsedMs * 100) / 100,
-        inputTickBefore: this.inputTick,
-        // Heap + GC probe (2026-05-21). If heap drops at a stall, GC
-        // just ran (the stall IS the GC pause). If it grows steadily
-        // between stalls, allocation pressure is building.
-        heapUsedMb: heapVal,
-        msSinceLastStall,
-        heapDeltaMbSinceLastStall: heapDelta,
-      });
-      this._lastRafStallAtMs = nowMs;
-      if (heap !== undefined) this._lastRafStallHeapMb = heap;
-    }
+    // RAF heap + frame-gap diagnostics — see RafStallDetector.ts.
+    this.rafStallDetector.sampleHeapIfDue();
+    this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction
