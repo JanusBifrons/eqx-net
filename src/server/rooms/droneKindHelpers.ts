@@ -11,13 +11,13 @@ import { getShipKind } from '../../shared-types/shipKinds.js';
 /** Resolve a (possibly missing) ship-kind id to the kind's max health, or
  *  null when the id is unknown. Drones use this on spawn so each kind has
  *  its own hull pool. */
-export function getDroneMaxHealth(kindId: string | undefined): number | null {
+export function getDroneMaxHealth(kindId: string | null | undefined): number | null {
   if (!kindId) return null;
   return getShipKind(kindId).maxHealth;
 }
 
 /** Per-kind shield pool for a drone (0 when the kind id is unknown). */
-export function getDroneShieldMax(kindId: string | undefined): number {
+export function getDroneShieldMax(kindId: string | null | undefined): number {
   if (!kindId) return 0;
   return getShipKind(kindId).shieldMax;
 }
