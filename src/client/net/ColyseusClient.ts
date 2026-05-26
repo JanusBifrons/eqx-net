@@ -1,5 +1,5 @@
 import { Client, Room } from 'colyseus.js';
-import type { RenderMirror, ProjectileRenderState, ShipRenderState } from '@core/contracts/IRenderer';
+import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
@@ -14,37 +14,40 @@ import {
 import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
-  recordRemoteCorrection,
   shouldForwardPredict,
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import {
   createWelford,
-  welfordPush,
-  welfordMean,
-  welfordStdDev,
   type WelfordState,
 } from '@core/math/Welford';
 import {
   createLookaheadController,
-  computeDesiredLead,
-  updateLookahead,
   type LookaheadController,
 } from './lookaheadController';
 import {
   createDropDetector,
-  observeSnapshotTick,
-  computeInterpBiasMs,
   type DropDetector,
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
-import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
+import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
+import { SnapshotCoalescer } from './SnapshotCoalescer.js';
+import { HudDispatcher } from './HudDispatcher.js';
+import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
+import { RafStallDetector } from './RafStallDetector.js';
 import {
-  computeRollingRafStats,
-  countRecentTagOccurrences,
-  readHeapUsedMb,
-} from './perfStats';
+  routeSnapshotShipStates,
+  applyBoostingThrustingSets,
+  type ShipRouterCtx,
+} from './snapshotShipRouter.js';
+import { applySnapshotPerfStats } from './snapshotPerfStats.js';
+import { syncTidiFromRoom } from './tidiSync.js';
+import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
+import { preResetRemoteShips, applyDroneMountAngles, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
+import { useUIStore, type ConnectionStatus } from '../state/store';
+import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
+import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { GhostManager } from '../combat/GhostProjectile';
@@ -64,8 +67,6 @@ import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
 import {
-  setSwarmDisplayDelayMs,
-  ADAPTIVE_DELAY_FACTOR,
   interpolateSwarmPose,
   type InterpolatedPose,
 } from './swarmInterpolation';
@@ -124,10 +125,6 @@ import {
   REMOTE_SPRING_POS_END,
   REMOTE_SPRING_VEL_END_MS,
   STAGE_3_MAX_LOOKAHEAD_TICKS,
-  RTT_SAMPLE_CLAMP_MS,
-  STEADY_STATE_INTERVAL_MIN_MS,
-  STEADY_STATE_INTERVAL_MAX_MS,
-  remoteOffsetHalfLifeForDrift,
 } from './predictionTuning.js';
 
 /** Simple monotonically incrementing shot ID generator. */
@@ -186,7 +183,7 @@ export class ColyseusGameClient {
     } catch {
       // Non-browser context — keep default.
     }
-    this._coalesceEnabled = coalesceParam !== '0';
+    this.snapshotCoalescer = new SnapshotCoalescer(coalesceParam !== '0');
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -264,95 +261,25 @@ export class ColyseusGameClient {
    *  with the playerId namespace. Despawned when removed from the
    *  schema's `state.wrecks` map. */
   private predWreckIds = new Set<string>();
-  /** Phase 6b — lingering hulls currently spawned in predWorld so the
-   *  local player ship can collide with parked hulls (and so the local
-   *  projectile sweep registers hits on them — server-side projectile
-   *  sweep handles authoritative damage, but the predicted ghost
-   *  projectiles need a body to test against). Stored with the
-   *  `linger-` prefix so they can't collide with the playerId or
-   *  wreck namespaces. Despawned when removed from mirror.lingeringShips. */
-  private predLingeringIds = new Set<string>();
+  /** Phase 6b lingering-hull predWorld bridge. Owns:
+   *   - `predLingeringIds` Set (which `linger-${...}` bodies are spawned)
+   *   - `_lingeringShipOffsets` Map (per-frame visual lerp toward
+   *     authoritative pose; avoids the visible teleport when a
+   *     free-running pred body gets reconciled).
+   *   - `ensure` (formerly `tryEnsureLingerPredBody`) — called from
+   *     handleSnapshot AND syncMirror; no-op when the mirror entry
+   *     isn't fully populated.
+   *  Extracted to `colyseus/LingeringPredBodyManager.ts`. */
+  private readonly lingerBodies = new LingeringPredBodyManager();
 
-  /**
-   * Spawn / update the predWorld body for a lingering hull, given that
-   * both `kind` and pose have been populated in the mirror. Called from
-   * two sites:
-   *
-   *  1. `handleSnapshot` after writing pose from the snapshot.
-   *  2. `syncMirror` after writing `kind` from the Colyseus schema diff.
-   *
-   * Either site can race ahead of the other on a flaky network. The
-   * helper handles both orderings by being a no-op when the mirror
-   * entry isn't fully populated — and the OTHER site re-fires it
-   * once its piece arrives. Closes the "colliding through my hulk"
-   * regression where the predWorld body was deferred a full snapshot
-   * tick after the schema diff (2026-05-13 smoke-test feedback).
-   */
   private tryEnsureLingerPredBody(shipInstanceId: string): void {
     if (!this.predWorld) return;
-    const entry = this.mirror.lingeringShips?.get(shipInstanceId);
-    if (!entry || !entry.kind) return;
-    const bodyId = `linger-${shipInstanceId}`;
-    const isFresh = !this.predWorld.hasShip(bodyId);
-    if (isFresh) {
-      this.predWorld.spawnShip(bodyId, entry.x, entry.y, entry.kind);
-      this.predLingeringIds.add(bodyId);
-    }
-    // Phase 6b reconciliation (2026-05-13): capture the body's
-    // current predicted pose BEFORE we teleport it to the
-    // server-authoritative snapshot pose, so we can store the diff
-    // as a spring-decayed sprite offset and avoid a visible
-    // teleport. Same pattern as the remote-ship reconciler at line
-    // ~1676. On the body's first spawn there's no prior pose to
-    // diff against — skip the offset capture.
-    if (!isFresh) {
-      const before = this.predWorld.getShipState(bodyId);
-      this.predWorld.setShipState(bodyId, {
-        x: entry.x, y: entry.y, angle: entry.angle,
-        vx: entry.vx, vy: entry.vy,
-        angvel: 0,
-      });
-      if (before) {
-        const ox = before.x - entry.x;
-        const oy = before.y - entry.y;
-        const dist = Math.hypot(ox, oy);
-        if (dist > 1) {
-          const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
-          const existing = this._lingeringShipOffsets.get(shipInstanceId);
-          if (existing) {
-            existing.sx.x = ox; existing.sx.v = 0;
-            existing.sy.x = oy; existing.sy.v = 0;
-            existing.halfLifeMs = halfLifeMs;
-          } else {
-            this._lingeringShipOffsets.set(shipInstanceId, {
-              sx: { x: ox, v: 0 },
-              sy: { x: oy, v: 0 },
-              halfLifeMs,
-            });
-          }
-        }
-      }
-    } else {
-      this.predWorld.setShipState(bodyId, {
-        x: entry.x, y: entry.y, angle: entry.angle,
-        vx: entry.vx, vy: entry.vy,
-        angvel: 0,
-      });
-    }
+    this.lingerBodies.ensure(shipInstanceId, this.predWorld, this.mirror);
   }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
   private readonly _remoteShipOffsets = new Map<
-    string,
-    { sx: SpringState; sy: SpringState; halfLifeMs: number }
-  >();
-  /** Phase 6b (2026-05-13) — per-lingering-hull render lerp offsets.
-   *  Same shape as `_remoteShipOffsets`. Set in `tryEnsureLingerPredBody`
-   *  when the snapshot's setShipState would otherwise teleport the body;
-   *  decayed in `updateMirror`. Keyed by `shipInstanceId` (matches the
-   *  mirror.lingeringShips key). */
-  private readonly _lingeringShipOffsets = new Map<
     string,
     { sx: SpringState; sy: SpringState; halfLifeMs: number }
   >();
@@ -518,6 +445,12 @@ export class ColyseusGameClient {
    *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
    *  literal was a real allocator. Mutate the scratch each call. */
   private readonly _damageReconcileScratch: { targetId: string; damage: number } = { targetId: '', damage: 0 };
+  /** 2026-05-25 heap-growth gate steps 8-10 — 1Hz HUD-store dispatcher.
+   *  Owns swarm-count + hull-pct + shield-pct dedupe + 1Hz throttle so
+   *  per-event handlers (handleDamage / handleShield / swarm-decoder)
+   *  pay zero Zustand-notification cost on no-op updates. Extracted to
+   *  `HudDispatcher.ts`. */
+  private readonly hudDispatcher = new HudDispatcher();
   /** 2026-05-26 heap-growth gate step 11 — pooled `{hit, targetId, damage}`
    *  literal for the per-hit_ack reconcileAckToFeedback call. Same shape
    *  as `_damageReconcileScratch`: `PredictedAck` consumer reads the
@@ -537,27 +470,6 @@ export class ColyseusGameClient {
     beforeX: 0, beforeY: 0,
     afterX: 0, afterY: 0,
   };
-  /** 2026-05-25 heap-growth gate step 8 — cached last-pushed swarm
-   *  count so we only dispatch to Zustand when it actually changed.
-   *  Pre-fix: every 60Hz binary packet called `setSwarmCount(n)`
-   *  regardless. Zustand subscribers allocate per notification. */
-  private _lastPushedSwarmCount = -1;
-  /** 2026-05-25 heap-growth gate step 9 — cache last-pushed HUD bar
-   *  values so we only dispatch to Zustand when they actually change.
-   *  Under 75 hits/sec combat the pre-fix called setHullPct +
-   *  setShieldPct unconditionally per hit; rounding to int already
-   *  dedupes most calls but the dispatch still fires. */
-  private _lastPushedHullPct = -1;
-  private _lastPushedShieldPct = -1;
-  /** 2026-05-25 heap-growth gate step 10 — throttle HUD dispatch to
-   *  1 Hz; bar interpolates between samples via 1s CSS transition.
-   *  Eliminates per-hit Zustand dispatch (75/sec under combat) at the
-   *  cost of up-to-1s visual latency. Trade-off the user explicitly
-   *  designed for ("doesn't jump or look/feel slow"). */
-  private _pendingHullPct = -1;
-  private _pendingShieldPct = -1;
-  private _lastHudDispatchAtMs = -1;
-  private static readonly HUD_DISPATCH_INTERVAL_MS = 1000;
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -568,6 +480,38 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** 2026-05-26 heap-growth gate step 12 — pre-bound method for
+   *  `routeSnapshotShipStates` ctx. Pre-fix the call site allocated
+   *  a fresh arrow `(id) => this.tryEnsureLingerPredBody(id)` per
+   *  snapshot (20 Hz). Bound once at construction. */
+  private readonly _boundTryEnsureLingerPredBody = (id: string): void => {
+    this.tryEnsureLingerPredBody(id);
+  };
+  /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
+   *  `routeSnapshotShipStates`. All references stable except
+   *  `predWorld` (null until first welcome), which is mutated on the
+   *  ctx before each call. Pre-fix every snapshot (20 Hz) allocated
+   *  a fresh 6-field ctx literal + the bound arrow above. */
+  private readonly _routeSnapshotShipStatesCtx: ShipRouterCtx = {
+    mirror: this.mirror,
+    predWorld: null,
+    lingerBodies: this.lingerBodies,
+    tryEnsureLingerPredBody: this._boundTryEnsureLingerPredBody,
+    lingeringSeenScratch: this._lingeringSeenScratch,
+    lingeringToEvictScratch: this._lingeringToEvictScratch,
+  };
+  /** 2026-05-26 heap-growth gate step 12 — pooled ctx for
+   *  `preResetRemoteShips`. Same pattern as above; `predWorld` is the
+   *  only volatile field. Pre-fix allocated a fresh 6-field ctx per
+   *  snapshot (20 Hz). */
+  private readonly _preResetRemoteShipsCtx: PreResetRemoteCtx = {
+    predWorld: null,
+    mirror: this.mirror,
+    preResetRemotePosScratch: this._preResetRemotePosScratch,
+    preResetRemotePosEntries: this._preResetRemotePosEntries,
+    remoteLastInputs: this._remoteLastInputs,
+    remoteForwardTicks: this._remoteForwardTicks,
+  };
   private disposed = false;
 
   // Wall-clock-anchored input loop (driven by rAF in App.tsx).
@@ -624,14 +568,11 @@ export class ColyseusGameClient {
   private _lastSnapshotRecvAtMs = -1;
 
   /** Heap + stall instrumentation (2026-05-21, render-jitter probe).
-   *  Wall-clock + heap value at the most recent >100ms RAF stall.
-   *  Surfaced in the `raf_gap` log as `msSinceLastStall` +
-   *  `heapDeltaMbSinceLastStall` so a GC-pause hypothesis is visible:
-   *  if every stall coincides with a heap drop (the GC just ran), or
-   *  heap grows monotonically between stalls (allocation pressure),
-   *  the cost is GC/allocation, not Pixi/network. */
-  private _lastRafStallAtMs = -1;
-  private _lastRafStallHeapMb = -1;
+   *  Per-RAF heap + frame-gap detector — owns the rolling
+   *  swarm-decode window, the >100ms `raf_gap` log (heap delta +
+   *  ms-since-last-stall) and the 30-100ms `raf_stutter` log.
+   *  See `RafStallDetector.ts`. */
+  private readonly rafStallDetector = new RafStallDetector();
   /** Probe 5 — rolling fields for the per-snapshot reconcile cost.
    *  Surfaced on `snapshot_applied` so a capture shows reconcile time
    *  separately from the rest of handleSnapshot. The y0eo1h capture
@@ -663,22 +604,7 @@ export class ColyseusGameClient {
    *  mean stays stable. Spiral breaks.
    *
    *  Default ON. URL override: `?coalesce=0` disables for A/B testing. */
-  private _pendingSnapshot: SnapshotMessage | null = null;
-  private _coalesceEnabled: boolean;
-  private _coalescedSinceLastProcess = 0;
-
-  /** RAF counter for periodic heap sampling between stalls. */
-  private _rafSampleCounter = 0;
-
-  /** Probe 0 — rolling stats for the binary swarm decode + predWorld sync,
-   *  the uninstrumented post-pivot dominant per-frame surface per the
-   *  hostile review of `docs/architecture/mobile-perf-investigation.md`.
-   *  Window resets every `heap_sample` emit (~10 Hz), so the surfaced
-   *  max/avg/count reflect the last ~100 ms of decode work — adjacent in
-   *  time to the heap trajectory the same event publishes. */
-  private _swarmDecodeMaxMs = 0;
-  private _swarmDecodeTotalMs = 0;
-  private _swarmDecodeCount = 0;
+  private readonly snapshotCoalescer: SnapshotCoalescer;
 
   // Snapshot timing
   private lastSnapshotAt = 0;
@@ -1045,11 +971,8 @@ export class ColyseusGameClient {
       // (the newer snap supersedes; snapshots are full-state, not deltas).
       // The discarded count is logged so we can see the burst-collapse
       // happening in captures.
-      if (this._coalesceEnabled) {
-        if (this._pendingSnapshot !== null) {
-          this._coalescedSinceLastProcess++;
-        }
-        this._pendingSnapshot = snap;
+      if (this.snapshotCoalescer.isEnabled()) {
+        this.snapshotCoalescer.enqueue(snap);
         return;
       }
       this.applySnapshotNow(snap);
@@ -1098,9 +1021,7 @@ export class ColyseusGameClient {
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
-      this._swarmDecodeTotalMs += decodeMs;
-      this._swarmDecodeCount += 1;
-      if (decodeMs > this._swarmDecodeMaxMs) this._swarmDecodeMaxMs = decodeMs;
+      this.rafStallDetector.recordSwarmDecode(decodeMs);
       if (decodeMs > 5) {
         logEvent('swarm_decode_slow', {
           decodeMs: parseFloat(decodeMs.toFixed(2)),
@@ -1114,11 +1035,7 @@ export class ColyseusGameClient {
       // actually changed. Pre-fix this fired every 60 Hz binary packet
       // regardless of whether the value moved; Zustand subscribers
       // allocate per notification.
-      const swarmCount = this.mirror.swarm?.size ?? 0;
-      if (swarmCount !== this._lastPushedSwarmCount) {
-        this._lastPushedSwarmCount = swarmCount;
-        useUIStore.getState().setSwarmCount(swarmCount);
-      }
+      this.hudDispatcher.pushSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
     room.onMessage('damage', (raw: unknown) => {
@@ -1561,7 +1478,7 @@ export class ColyseusGameClient {
     if (evt.targetId !== this.mirror.localPlayerId) return;
     const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
     // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
-    this._pendingShieldPct = pct;
+    this.hudDispatcher.stashShield(pct);
     if (evt.phase === 'restored' && this.predWorld?.hasShip(evt.targetId)) {
       this.predWorld.setHullExposed(evt.targetId, false, getShipKind(this.mirror.ships.get(evt.targetId)?.kind ?? null));
     }
@@ -1578,8 +1495,8 @@ export class ColyseusGameClient {
       // step 10: just stash the latest target value; the 1Hz dispatcher
       // in updateMirror() pushes to Zustand. Bar's 1s CSS transition
       // animates smoothly between samples.
-      this._pendingHullPct = hullPct;
-      this._pendingShieldPct = shPct;
+      this.hudDispatcher.stashHull(hullPct);
+      this.hudDispatcher.stashShield(shPct);
       // Authoritative shield break -> mirror the collider swap into the
       // local predWorld so client hit/ramming prediction matches the
       // server. The client NEVER computes the 0-cross (reacts to the
@@ -1814,18 +1731,7 @@ export class ColyseusGameClient {
    * No-op when `?coalesce=0`.
    */
   processPendingSnapshot(): void {
-    if (!this._coalesceEnabled || this._pendingSnapshot === null) return;
-    const snap = this._pendingSnapshot;
-    this._pendingSnapshot = null;
-    const dropped = this._coalescedSinceLastProcess;
-    this._coalescedSinceLastProcess = 0;
-    if (dropped > 0) {
-      logEvent('snapshot_coalesced', {
-        dropped,
-        newestServerTick: snap.serverTick,
-      });
-    }
-    this.applySnapshotNow(snap);
+    this.snapshotCoalescer.drain((snap) => this.applySnapshotNow(snap));
   }
 
   private handleSnapshot(snap: SnapshotMessage): void {
@@ -1843,84 +1749,14 @@ export class ColyseusGameClient {
     }
 
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
-    // to a playerId-keyed local view. C-ii strategy: predWorld + mirror
-    // + reconciler all use playerId internally for active hulls.
-    // Phase 6b: inactive hulls (lingering) DO show up — they get
-    // routed to `mirror.lingeringShips` (a separate shipInstanceId-
-    // keyed map) so they don't collide with the active hull on the
-    // same playerId. Pose flows from the snapshot directly; identity
-    // (kind, displayName) flows from the Colyseus schema diff via
-    // `syncMirror`.
-    const statesByPlayerId: SnapshotMessage['states'] = {};
-    if (!this.mirror.lingeringShips) this.mirror.lingeringShips = new Map();
-    // 2026-05-25 heap-growth gate step 1: reuse persistent Set scratch
-    // instead of `new Set<string>()` per snapshot.
-    const lingeringSeen = this._lingeringSeenScratch;
-    lingeringSeen.clear();
-    // 2026-05-25 heap-growth gate step 4: `for…in` instead of
-    // `Object.entries` — saves the per-snapshot [key,value] tuple array.
-    for (const shipInstanceId in snap.states) {
-      const entry = snap.states[shipInstanceId]!;
-      if (entry.isActive === false) {
-        // Route to the lingering map. We update pose every snapshot;
-        // identity fields come from the schema diff and are preserved.
-        // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the
-        // lingering entry in place. Same rationale as Probe 7's ship
-        // pooling: kind / displayName preserved by NOT touching them.
-        let lingerEntry = this.mirror.lingeringShips.get(shipInstanceId);
-        if (!lingerEntry) {
-          lingerEntry = {
-            x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
-            angle: entry.angle,
-            ownerPlayerId: entry.playerId,
-          };
-          this.mirror.lingeringShips.set(shipInstanceId, lingerEntry);
-        } else {
-          lingerEntry.x = entry.x;
-          lingerEntry.y = entry.y;
-          lingerEntry.vx = entry.vx;
-          lingerEntry.vy = entry.vy;
-          lingerEntry.angle = entry.angle;
-          lingerEntry.ownerPlayerId = entry.playerId;
-        }
-        lingeringSeen.add(shipInstanceId);
-        // Phase 6b — spawn / refresh the predWorld body so the local
-        // player can collide with the parked hull (mirrors the wreck
-        // pattern in syncWreckPoses). The helper handles the race
-        // between this site (pose) and syncMirror (kind) — see its
-        // doc comment.
-        this.tryEnsureLingerPredBody(shipInstanceId);
-        continue;
-      }
-      statesByPlayerId[entry.playerId] = entry;
-    }
-    // Remove lingering hulls that didn't appear in this snapshot (evicted
-    // by the 15-min timer, or destroyed) — plus despawn their predWorld
-    // bodies so the local player stops colliding with ghosts.
-    // 2026-05-25 heap-growth gate step 1: collect ids to evict into a
-    // persistent scratch array instead of `[...keys()]` spread alloc.
-    // Two-phase (collect then evict) so we don't mutate the Map mid-iter.
-    const toEvict = this._lingeringToEvictScratch;
-    toEvict.length = 0;
-    for (const id of this.mirror.lingeringShips.keys()) {
-      if (!lingeringSeen.has(id)) toEvict.push(id);
-    }
-    for (const id of toEvict) {
-      this.mirror.lingeringShips.delete(id);
-      const bodyId = `linger-${id}`;
-      if (this.predLingeringIds.has(bodyId)) {
-        this.predWorld?.despawnShip(bodyId);
-        this.predLingeringIds.delete(bodyId);
-      }
-    }
-    // Probe 8 — mutate snap.states in place rather than spreading into
-    // a new object. `snap` is the parameter from `room.onMessage` and
-    // is owned by us for the duration of this handler — Colyseus
-    // freshly-parses it per message, no aliasing concern. Saves one
-    // object allocation per snapshot (the spread also copied references
-    // to all the other snap fields — projectiles, wrecks, drones,
-    // boostingIds, etc.).
-    snap.states = statesByPlayerId;
+    // to a playerId-keyed local view + route inactive (lingering)
+    // hulls to mirror.lingeringShips. See snapshotShipRouter.ts.
+    // Ctx pooled to `this._routeSnapshotShipStatesCtx` (heap-growth
+    // gate step 12). `predWorld` is the only volatile field — mutate
+    // before the call. Other fields, including the pre-bound
+    // `tryEnsureLingerPredBody` arrow, are stable.
+    this._routeSnapshotShipStatesCtx.predWorld = this.predWorld;
+    routeSnapshotShipStates(snap, this._routeSnapshotShipStatesCtx);
 
     // Wire-discipline P3: projectiles arrive on the snapshot, interest-filtered
     // per recipient. Sync into the mirror first so the rest of this handler can
@@ -1932,104 +1768,25 @@ export class ColyseusGameClient {
     // (see syncMirror); this just refreshes per-frame pose.
     this.syncWreckPoses(snap.wrecks);
 
-    // Apply the server-authoritative boost set into the render mirror so the
-    // PixiRenderer can draw an exhaust trail for whichever ships are currently
-    // boosting. Reset first so leavers / shift-released ships drop out.
-    if (this.mirror.boostingShips) {
-      this.mirror.boostingShips.clear();
-      if (snap.boostingIds) {
-        for (const id of snap.boostingIds) this.mirror.boostingShips.add(id);
-      }
-    }
-    // Same pattern for the baseline thrust set — every snapshot is the
-    // authoritative truth; locals are layered on top via per-tick prediction.
-    if (this.mirror.thrustingShips) {
-      this.mirror.thrustingShips.clear();
-      if (snap.thrustingIds) {
-        for (const id of snap.thrustingIds) this.mirror.thrustingShips.add(id);
-      }
-    }
+    // Server-authoritative boost + thrust sets — exhaust-trail renderer.
+    applyBoostingThrustingSets(snap, this.mirror);
 
-    // Phase 6 — surface the server's TiDi rate to the HUD via Zustand. Schema
-    // diff already updates `room.state.clockRate`; reading it on every
-    // snapshot is a cheap polling heartbeat that avoids a separate listener.
-    if (this.room) {
-      const stateAny = this.room.state as unknown as { clockRate?: number };
-      const rate = typeof stateAny.clockRate === 'number' ? stateAny.clockRate : 1.0;
-      const ui = useUIStore.getState();
-      ui.setClockRate(rate);
-      this.audio?.setClockRate(rate);
-      // Diegetic Temporal Anomaly banner. The alert slot is shared with
-      // combat ('SHIP DESTROYED', 'shot_rejected'); read the live value so
-      // we never stomp those, and only clear our own string. Hysteresis on
-      // the *rate* edges (0.99 set / 1.00 clear) avoids flicker as the EWMA
-      // boundary is crossed during recovery.
-      const current = ui.sectorAlert;
-      if (rate < 0.99 && (current === null || current === 'Temporal Anomaly')) {
-        if (current !== 'Temporal Anomaly') ui.setSectorAlert('Temporal Anomaly');
-      } else if (rate >= 1.0 && current === 'Temporal Anomaly') {
-        ui.setSectorAlert(null);
-      }
-    }
+    // Phase 6 — surface the server's TiDi rate to the HUD + audio,
+    // and drive the Temporal Anomaly banner with hysteresis. See
+    // tidiSync.ts.
+    syncTidiFromRoom(this.room, this.audio);
 
-    // Update snapshot timing stats regardless of prediction state.
-    const intervalMs = this.lastSnapshotAt > 0 ? now - this.lastSnapshotAt : 0;
+    // Per-snapshot perf stats (rolling RAF/longtask/heap, server-tick
+    // EWMA, jitter, swarm display-delay sizing, collision stale-guard).
+    // See snapshotPerfStats.ts.
+    const intervalMs = applySnapshotPerfStats(snap, now, this.lastSnapshotAt, {
+      stats: this.stats,
+      recentIntervals: this._recentIntervals,
+      collisionGuard: this._collisionGuard,
+      dropDetector: this._dropDetector,
+      swarmBinaryEwma: this._swarmBinaryEwma,
+    });
     this.lastSnapshotAt = now;
-    this.stats.snapshotCount++;
-    this.stats.snapshotIntervalMs = intervalMs;
-    this.stats.lastServerTick = snap.serverTick;
-
-    // perf-floor Phase 1 — rolling RAF / longtask / heap stats. Reads
-    // the existing `__eqxLogs` ring (no new producer, no new ring) at
-    // the existing per-snapshot cadence (~20 Hz). Cost is O(ring) per
-    // call ≈ tens of microseconds on desktop. See src/client/net/perfStats.ts.
-    const ring = getRingEntries();
-    const rolling = computeRollingRafStats(ring, now, 5000);
-    this.stats.rafP50Ms = rolling.rafP50Ms;
-    this.stats.rafP99Ms = rolling.rafP99Ms;
-    this.stats.longtaskCount30s = countRecentTagOccurrences(ring, 'longtask', now, 30_000);
-    this.stats.rafGapCount30s = countRecentTagOccurrences(ring, 'raf_gap', now, 30_000);
-    this.stats.heapUsedMb = readHeapUsedMb();
-    // Stage 2 — feed the collision-event stale-guard with the authoritative
-    // snapshot tick. Late collision events (worker → main → wire latency)
-    // arriving with tick < this value are dropped, since the snapshot has
-    // already corrected predWorld with a state that would un-correct.
-    this._collisionGuard.lastSnapshotServerTick = snap.serverTick;
-
-    // Phase 6 — derive effective server wall-clock tick rate. Snapshot
-    // broadcasts every 3 ticks, so tickHz = 3000 / intervalMs. EWMA-smoothed
-    // so single-snapshot jitter doesn't make the chip flicker.
-    if (intervalMs > 0) {
-      const instantHz = 3000 / intervalMs;
-      const prev = useUIStore.getState().serverTickHz;
-      const smoothed = prev * 0.8 + instantHz * 0.2;
-      useUIStore.getState().setServerTickHz(smoothed);
-
-      // Adapt the swarm display-delay buffer to the BINARY swarm cadence
-      // (Step 4, drone-snapshot-interpolation pivot). `_swarmBinaryEwma`
-      // (updated in the 'swarm' handler) tracks the actual drone-pose
-      // channel inter-arrival, NOT this 20 Hz JSON snapshot interval:
-      //   - in-interest combat: ewma ≈ 16–30 ms → ×1.5 ≈ 45 → clamped UP
-      //     to the 100 ms floor (two bracketing per-tick samples always
-      //     exist → smooth lerp, zero steady-state extrapolation).
-      //   - out-of-interest decimated: ewma ≈ 100–170 ms → ×1.5 ≈
-      //     150–255 → within the 280 ms ceiling, still has a bracket.
-      // Re-evaluated on the JSON snapshot tick (~20 Hz) — frequent enough
-      // to track cadence shifts, and `dropBias` (JSON drop-detector) still
-      // biases up on genuine loss bursts so the buffer never empties.
-      observeSnapshotTick(this._dropDetector, snap.serverTick);
-      const dropBias = computeInterpBiasMs(this._dropDetector.dropCount);
-      setSwarmDisplayDelayMs(this._swarmBinaryEwma * ADAPTIVE_DELAY_FACTOR + dropBias);
-    }
-
-    // Rolling jitter: max − min of the last 10 snapshot intervals.
-    if (intervalMs > 0) {
-      this._recentIntervals.push(intervalMs);
-      if (this._recentIntervals.length > 10) this._recentIntervals.shift();
-    }
-    this.stats.snapshotJitterMs = this._recentIntervals.length >= 2
-      ? Math.max(...this._recentIntervals) - Math.min(...this._recentIntervals)
-      : 0;
 
     // Re-anchor the input clock against this snapshot. Phase 6.5 Sub-phase B
     // EWMA-smooths the anchor instead of snapping on every packet — a 30 ms-
@@ -2050,75 +1807,16 @@ export class ColyseusGameClient {
       this.clockAnchorPerfNow = now;
       this._anchorInitialised = true;
     }
-    // Stage 4 — jitter-aware lookahead. Welford-track per-snapshot RTT
-    // (mean + σ) and size the prediction window to `mean + 2σ` rather
-    // than the pre-Stage-4 mean-only EWMA. Multi-tick target jumps ramp
-    // via the spring controller; small changes snap directly.
-    //
-    // 2026-05-08 fix (Stage 4 hotfix #1): Reconciler.lastRtt is computed
-    // as `now - ackedRec.sentAt` — a "time since input was sent" measure
-    // contaminated by snapshot-delay. A 572 ms inbound network gap (per
-    // `docs/LESSONS.md` Pattern A) inflates lastRtt to 572 ms+ even
-    // though the underlying TCP RTT is healthy. Without a clamp, that
-    // outlier sample pushes Welford σ past 200 ms, the `mean + 2σ`
-    // formula saturates at the 30-tick cap, the client speculates 500 ms
-    // ahead, and combat predictions diverge into 100+ u corrections.
-    // The clamp converts outliers into "I have no fresh RTT info"
-    // (the cap value is folded into the running mean cleanly) instead
-    // of letting σ explode.
-    //
-    // 2026-05-08 fix (Stage 4 hotfix #3): the σ-clamp protects against
-    // single-sample explosions but the running mean still drifts upward
-    // because clamped samples (250 ms each) accumulate in Welford's
-    // sum. Repeated Pattern A spikes inflate mean to 177 ms even when
-    // live RTT is 83 ms — leadTicks saturates at ~22 → collision drift
-    // = velocity-diff × leadTicks × dt = 50+ u. Skip the Welford push
-    // entirely when this snapshot's `intervalMs` is outside the
-    // steady-state cadence band [35, 75] ms — those snapshots are part
-    // of a Pattern A gap (intervalMs >> 50) or a burst-recovery cluster
-    // (intervalMs << 50) and their `lastRtt` is contaminated. Welford
-    // then tracks only clean steady-state samples, so the mean stays
-    // close to live RTT and leadTicks stays sized for combat.
-    const isGapRelatedRtt =
-      intervalMs > 0 &&
-      (intervalMs < STEADY_STATE_INTERVAL_MIN_MS || intervalMs > STEADY_STATE_INTERVAL_MAX_MS);
-    if (this.reconciler && this.reconciler.lastRtt > 0 && !isGapRelatedRtt) {
-      // Stage 4 hotfix #5 (2026-05-09) — strip the gate-induced
-      // server-side hold time from the RTT sample before pushing into
-      // welford. Without the input-queue gate (commit c7b8d04),
-      // `Reconciler.lastRtt` measured `now - sentAt` ≈ 2 × wire-D + a
-      // small server-process delay; pushing it into welford gave a
-      // clean network-RTT estimate. With the gate, the server holds
-      // each input claim X for roughly `leadTicks` physics ticks until
-      // its sim tick reaches X, then applies and acks. That hold time
-      // is `leadTicks × FIXED_MS` and is included in `lastRtt` even
-      // though the wire is doing nothing during it. Pushing the raw
-      // value would create a positive feedback loop: bigger leadTicks
-      // → longer hold → bigger lastRtt → bigger welford mean → bigger
-      // leadTicks → … → saturate at the 30-tick `CEILING_TICKS` cap.
-      // Mobile cap 2026-05-09T09-31-30-823Z-n3n9jx caught this with
-      // `rttMs` field saturating at 200–870 ms when actual Wi-Fi RTT
-      // is ~30 ms.
-      //
-      // Subtracting `this.leadTicks × FIXED_MS` recovers the network-
-      // only round-trip estimate. The clamp `max(0, …)` handles the
-      // case where the wire was unusually fast and the subtraction
-      // would yield a negative (rare; would mean lastRtt was less
-      // than the gate-hold, which can happen on first-snapshot or
-      // when the gate just opened). Clamping the upper bound at
-      // RTT_SAMPLE_CLAMP_MS still protects against gap-related
-      // outliers that hotfix #3's interval-band filter missed.
-      const FIXED_MS = 1000 / 60;
-      const networkRtt = Math.max(0, this.reconciler.lastRtt - this.leadTicks * FIXED_MS);
-      const rttSample = Math.min(networkRtt, RTT_SAMPLE_CLAMP_MS);
-      welfordPush(this._rttWelford, rttSample);
-      const mean = welfordMean(this._rttWelford);
-      const stdDev = welfordStdDev(this._rttWelford);
-      const desiredLead = computeDesiredLead(mean, stdDev);
-      this.leadTicks = updateLookahead(this._lookaheadCtrl, desiredLead, this.lastFrameMs);
-      this.stats.rttMeanMs = mean;
-      this.stats.rttStdDevMs = stdDev;
-    }
+    // Stage 4 — jitter-aware lookahead with the three RTT hotfixes.
+    // See rttLookaheadUpdater.ts for the full rationale.
+    this.leadTicks = updateRttAndLookahead(intervalMs, {
+      reconciler: this.reconciler,
+      stats: this.stats,
+      rttWelford: this._rttWelford,
+      lookaheadCtrl: this._lookaheadCtrl,
+      leadTicks: this.leadTicks,
+      lastFrameMs: this.lastFrameMs,
+    });
     this.stats.droppedSnapshotsRecent = this._dropDetector.dropCount;
 
     if (!localId || !this.reconciler) {
@@ -2158,90 +1856,19 @@ export class ColyseusGameClient {
       this.stats.lastAckedTick = ackedTick;
       this.stats.ticksAhead = this.inputTick - ackedTick;
 
-      // Reset remote ships to serverTick state BEFORE reconcile.
-      // 2026-05-25 heap-growth gate step 3: persistent Map + pooled
-      // {x,y} entries. Peak == remote-ship count; grow-once + reuse.
-      const preResetRemotePos = this._preResetRemotePosScratch;
-      preResetRemotePos.clear();
-      const preResetEntries = this._preResetRemotePosEntries;
-      let preResetEntryIdx = 0;
-      // step 4: for…in (no tuple-array alloc).
-      for (const remoteId in snap.states) {
-        if (remoteId === localId) continue;
-        if (!this.predWorld?.hasShip(remoteId)) continue;
-        const state = snap.states[remoteId]!;
-        const current = this.predWorld.getShipState(remoteId);
-        if (current) {
-          let entry = preResetEntries[preResetEntryIdx];
-          if (!entry) {
-            entry = { x: 0, y: 0 };
-            preResetEntries[preResetEntryIdx] = entry;
-          }
-          entry.x = current.x;
-          entry.y = current.y;
-          preResetRemotePos.set(remoteId, entry);
-          preResetEntryIdx++;
-        }
-        this.predWorld.setShipState(remoteId, state);
-        // Stage 3 — capture each remote's last-applied input from the
-        // snapshot for forward-prediction during the upcoming replay
-        // and the next tickPhysics window.
-        if (state.lastInput) {
-          this._remoteLastInputs.set(remoteId, { ...state.lastInput });
-        } else {
-          this._remoteLastInputs.delete(remoteId);
-        }
-        // Reset the lookahead-cap counter for this remote — the upcoming
-        // replay starts a fresh forward-prediction window from serverTick.
-        this._remoteForwardTicks.set(remoteId, 0);
-        // Phase 4b.3 — push the server's authoritative mount angles into
-        // the mirror so the renderer paints the remote ship's turrets at
-        // the same rotation the server is computing. Local player is
-        // skipped here — `tickLocalMountAim` runs the prediction each
-        // tick and the per-frame `updateMirror` rebuild already
-        // preserves the predicted angles.
-        const mirrorShip = this.mirror.ships.get(remoteId);
-        if (mirrorShip) {
-          if (state.mountAngles && state.mountAngles.length > 0) {
-            mirrorShip.mountAngles = state.mountAngles.slice();
-          } else if (mirrorShip.mountAngles) {
-            mirrorShip.mountAngles = undefined;
-          }
-        }
-      }
-      // Drop entries for remotes that are no longer in the snapshot.
-      for (const tracked of [...this._remoteLastInputs.keys()]) {
-        if (!(tracked in snap.states)) {
-          this._remoteLastInputs.delete(tracked);
-          this._remoteForwardTicks.delete(tracked);
-        }
-      }
+      // Reset remote ships to serverTick state BEFORE reconcile +
+      // stash pre-reset poses for the post-reconcile lerp-offset
+      // computation. See snapshotRemoteSync.ts.
+      // Ctx pooled to `this._preResetRemoteShipsCtx`. `predWorld` is
+      // the only volatile field; mutate before call.
+      this._preResetRemoteShipsCtx.predWorld = this.predWorld;
+      const preResetRemotePos = preResetRemoteShips(snap, localId, this._preResetRemoteShipsCtx);
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
 
-      // Drone snapshot slice (drone-snapshot-interpolation pivot,
-      // 2026-05-18). Drones are PURE snapshot-interpolated from the binary
-      // swarm wire — NO client AI re-sim, NO predWorld reconcile anchor,
-      // NO relevance cull. `snap.drones[]` is a slim turret/shield slice
-      // ({ id, mountAngles?, shieldDown? }); the pose flows on the binary
-      // channel and renders via `interpolateSwarmPose`. Push the
-      // authoritative per-mount angles + shield-down flag into the swarm
-      // mirror so MountVisualManager rotates the drone turrets and the
-      // collider swap tracks the server. Out-of-interest drones never
-      // appear here, so their mountAngles stays undefined (renderer falls
-      // back to baseAngle) — unchanged.
-      if (snap.drones && snap.drones.length > 0) {
-        for (const d of snap.drones) {
-          const sw = this.mirror.swarm?.get(d.id);
-          if (!sw) continue;
-          if (d.mountAngles && d.mountAngles.length > 0) {
-            sw.mountAngles = d.mountAngles.slice();
-          } else if (sw.mountAngles) {
-            sw.mountAngles = undefined;
-          }
-          if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
-        }
-      }
+      // Drone snapshot slice (slim turret/shield slice; pose flows on the
+      // binary swarm wire). See snapshotRemoteSync.ts.
+      applyDroneMountAngles(snap, this.mirror);
 
       // Probe 5 (mobile-perf-investigation, 2026-05-24) — instrument
       // reconcile separately from the rest of handleSnapshot. The
@@ -2269,40 +1896,15 @@ export class ColyseusGameClient {
       this._lastReconcileMs = this.clock.now() - reconcileStartMs;
       this._lastReplayWindow = replayWindow;
 
-      // Compute remote ship lerp offsets.
+      // Post-reconcile remote-ship render lerp offsets — see
+      // remoteLerpOffsets.ts.
       if (this.predWorld) {
-        for (const [remoteId, preReset] of preResetRemotePos) {
-          const postReconcile = this.predWorld.getShipState(remoteId);
-          if (!postReconcile) continue;
-          const ox = preReset.x - postReconcile.x;
-          const oy = preReset.y - postReconcile.y;
-          const dist = Math.hypot(ox, oy);
-          // Stage 3 — feed the per-remote correction magnitude into the
-          // hysteresis guard. 3 consecutive corrections > 5 u disable
-          // forward-prediction for this remote; 3 consecutive < 5 u
-          // re-enable it. Sticky thresholds avoid oscillation.
-          recordRemoteCorrection(this._predGuard, remoteId, dist);
-          if (dist > 1) {
-            const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
-            // Re-anchor the spring at the new offset; velocity zeroed
-            // so the spring's first step is governed purely by the new
-            // offset. This matches Reconciler.reconcile behaviour.
-            const existing = this._remoteShipOffsets.get(remoteId);
-            if (existing) {
-              existing.sx.x = ox;
-              existing.sx.v = 0;
-              existing.sy.x = oy;
-              existing.sy.v = 0;
-              existing.halfLifeMs = halfLifeMs;
-            } else {
-              this._remoteShipOffsets.set(remoteId, {
-                sx: { x: ox, v: 0 },
-                sy: { x: oy, v: 0 },
-                halfLifeMs,
-              });
-            }
-          }
-        }
+        computeRemoteLerpOffsets({
+          predWorld: this.predWorld,
+          preResetRemotePos,
+          remoteShipOffsets: this._remoteShipOffsets,
+          predGuard: this._predGuard,
+        });
       }
 
       const drift = this.reconciler.lastDrift;
@@ -2560,91 +2162,11 @@ export class ColyseusGameClient {
    *  removed from the mirror. Ghost projectiles (`isGhost: true`) are
    *  preserved; the GhostManager re-adds them per-frame anyway. */
   private syncProjectiles(projectiles: SnapshotMessage['projectiles']): void {
-    if (!this.mirror.projectiles) return;
-    const seen = new Set<string>();
-    if (projectiles) {
-      for (const p of projectiles) {
-        seen.add(p.id);
-        // Preserve client-integrated x/y for existing entries — replacing them
-        // every snapshot would snap the bolt back ~50 ms (one broadcast period)
-        // against its travel direction, producing the visible 20 Hz stutter.
-        // We accept the small server/client position drift; vx/vy are still
-        // refreshed authoritatively each snapshot.
-        // Probe 8 — pool the projectile entry in place. Branch on
-        // existing prev: NEW (or post-ghost-resolve) entry gets a fresh
-        // object once; SUBSEQUENT updates mutate fields (preserving the
-        // client-integrated x/y). Saves allocations during sustained
-        // projectile flight.
-        const prev = this.mirror.projectiles.get(p.id);
-        const isNew = !prev || prev.isGhost;
-        if (isNew) {
-          this.mirror.projectiles.set(p.id, {
-            x: p.x,
-            y: p.y,
-            vx: p.vx,
-            vy: p.vy,
-            ownerId: p.ownerId,
-            isGhost: false,
-            weaponId: p.weaponId,
-          } satisfies ProjectileRenderState);
-        } else {
-          // Mutate in place; preserve x/y (client-integrated), refresh
-          // vx/vy + identity fields.
-          prev.vx = p.vx;
-          prev.vy = p.vy;
-          prev.ownerId = p.ownerId;
-          prev.isGhost = false;
-          prev.weaponId = p.weaponId;
-        }
-      }
-    }
-    for (const [id, entry] of this.mirror.projectiles) {
-      if (entry.isGhost) continue;
-      if (!seen.has(id)) this.mirror.projectiles.delete(id);
-    }
+    syncProjectiles(this.mirror, projectiles);
   }
 
-  /**
-   * Phase 4 — refresh wreck poses from the snapshot. Identity flows
-   * over Colyseus schema diff (see syncMirror); this keeps x/y/vx/vy/angle
-   * fresh per frame so the renderer can draw the drifting hull, AND
-   * mirrors that pose into a predWorld body so the local player's
-   * predicted ship collides with the wreck instead of passing through
-   * it. The wreck body uses `wreck-${shipInstanceId}` as its predWorld
-   * id (disambiguates from the playerId namespace).
-   */
   private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
-    if (!this.mirror.wrecks) return;
-    if (!wrecks) return;
-    for (const w of wrecks) {
-      const entry = this.mirror.wrecks.get(w.id);
-      if (!entry) continue;
-      entry.x = w.x;
-      entry.y = w.y;
-      entry.vx = w.vx;
-      entry.vy = w.vy;
-      entry.angle = w.angle;
-      entry.angvel = w.angvel;
-
-      // Spawn or update the predWorld body. Spawn lazily here because
-      // the schema diff lands first (with x/y=0); we need real pose
-      // before we can place the body sensibly. setShipState pushes the
-      // latest snapshot pose in every tick — same pattern remote ships
-      // use, so the local player's predicted collisions see a fresh
-      // wreck position once per snapshot (~20 Hz).
-      if (this.predWorld) {
-        const bodyId = `wreck-${w.id}`;
-        if (!this.predWorld.hasShip(bodyId)) {
-          this.predWorld.spawnShip(bodyId, w.x, w.y, entry.kind);
-          this.predWreckIds.add(bodyId);
-        }
-        this.predWorld.setShipState(bodyId, {
-          x: w.x, y: w.y, angle: w.angle,
-          vx: w.vx, vy: w.vy,
-          angvel: w.angvel,
-        });
-      }
-    }
+    syncWreckPoses(this.mirror, wrecks, this.predWorld, this.predWreckIds);
   }
 
   // ── State mirror ────────────────────────────────────────────────────────
@@ -2852,19 +2374,8 @@ export class ColyseusGameClient {
     // Zustand at most once per second. Bar's CSS transition animates
     // smoothly between samples. Per-event handlers (handleDamage,
     // handleShield) just stash the latest pending value; this is the
-    // single dispatch site.
-    const nowHud = this.clock.now();
-    if (nowHud - this._lastHudDispatchAtMs >= ColyseusGameClient.HUD_DISPATCH_INTERVAL_MS) {
-      this._lastHudDispatchAtMs = nowHud;
-      if (this._pendingHullPct !== this._lastPushedHullPct && this._pendingHullPct >= 0) {
-        this._lastPushedHullPct = this._pendingHullPct;
-        useUIStore.getState().setHullPct(this._pendingHullPct);
-      }
-      if (this._pendingShieldPct !== this._lastPushedShieldPct && this._pendingShieldPct >= 0) {
-        this._lastPushedShieldPct = this._pendingShieldPct;
-        useUIStore.getState().setShieldPct(this._pendingShieldPct);
-      }
-    }
+    // single dispatch site. Owned by `HudDispatcher.ts`.
+    this.hudDispatcher.tick(this.clock.now());
     // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
     // Per-frame mirror rebuild + snapshot-apply is a candidate for the
     // in-game-vs-sandbox differential (sandbox has 1 ship). Single exit
@@ -3186,32 +2697,8 @@ export class ColyseusGameClient {
     //     server reality; offset smooths the visual after each
     //     reconcile so the user doesn't see the teleport directly.
     //     Exactly how remote ships have always worked.
-    if (this.predWorld && this.mirror.lingeringShips) {
-      for (const [shipInstanceId, entry] of this.mirror.lingeringShips) {
-        const bodyId = `linger-${shipInstanceId}`;
-        if (!this.predWorld.hasShip(bodyId)) continue;
-        const pose = this.predWorld.getShipState(bodyId);
-        if (!pose) continue;
-        const off = this._lingeringShipOffsets.get(shipInstanceId);
-        let ox = 0, oy = 0;
-        if (off) {
-          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
-          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
-          ox = off.sx.x;
-          oy = off.sy.x;
-          const stillMoving =
-            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
-          if (!stillMoving) this._lingeringShipOffsets.delete(shipInstanceId);
-        }
-        entry.x = pose.x + ox;
-        entry.y = pose.y + oy;
-        entry.angle = pose.angle;
-        entry.vx = pose.vx;
-        entry.vy = pose.vy;
-      }
+    if (this.predWorld) {
+      this.lingerBodies.applyPerFrameOffsets(this.predWorld, this.mirror, this.lastFrameMs);
     }
 
     // Ghost projectiles — advance and write to mirror.projectiles.
@@ -3328,83 +2815,9 @@ export class ColyseusGameClient {
     // per-RAF physics work. Snapshots queued in the WebSocket event
     // queue during a stall collapse to one here.
     this.processPendingSnapshot();
-    // Frame-gap detector. The mobile capture
-    // `2026-05-09T07-23-39-893Z-651792` showed two ~500–600 ms RAF stalls
-    // that bunched WebSocket arrivals into a single post-stall snapshot
-    // and saturated the prediction window for tens of seconds. Logging
-    // every RAF would saturate the 500-entry ring buffer in ~8 s; logging
-    // only the gaps gives one entry per genuine stall, paired with the
-    // `longtask` observer's attribution (when supported) to pin the cause.
-    // Per-RAF heap sample once every 60 RAFs (~once/sec at 60Hz) so we
-    // have a growth trajectory between stall events. Tiny cost: one
-    // performance.memory read on Chromium.
-    this._rafSampleCounter++;
-    if (this._rafSampleCounter >= 6) {
-      // Probe 0 (mobile-perf-investigation-review): bumped 60→6 RAFs
-      // (~1Hz → ~10Hz) so the GC sawtooth between stalls is visible. The
-      // hostile review observed `heapDeltaMbSinceLastStall` sawtooths
-      // ±2-5 MB on every 110 ms stall but the 1Hz sample resolution can
-      // miss intermediate dips. 10Hz still bounded — 600 entries/min in
-      // a 5000-entry diag ring, ~8 min of session before pressure.
-      this._rafSampleCounter = 0;
-      const heap = readHeapUsedMb();
-      if (heap !== undefined) {
-        logEvent('heap_sample', {
-          heapUsedMb: parseFloat(heap.toFixed(2)),
-          // Probe 0: surface the rolling binary-swarm decode cost so the
-          // uninstrumented post-pivot surface the hostile review flagged
-          // becomes visible against heap trajectory.
-          swarmDecodeMaxMs: this._swarmDecodeMaxMs > 0
-            ? parseFloat(this._swarmDecodeMaxMs.toFixed(2))
-            : undefined,
-          swarmDecodeAvgMs: this._swarmDecodeCount > 0
-            ? parseFloat((this._swarmDecodeTotalMs / this._swarmDecodeCount).toFixed(2))
-            : undefined,
-          swarmDecodeCount: this._swarmDecodeCount,
-        });
-        // Reset rolling window so each heap_sample reports cost-since-last-sample.
-        this._swarmDecodeMaxMs = 0;
-        this._swarmDecodeTotalMs = 0;
-        this._swarmDecodeCount = 0;
-      }
-    }
-    // Probe 4 (mobile-perf-investigation, 2026-05-24) — raf_stutter event
-    // for medium-sized inter-RAF gaps (30 ms < elapsedMs ≤ 100 ms). The
-    // existing `raf_gap` only fires above 100 ms; capture n6uznw showed
-    // the user's felt "lag spikes" include 33-89 ms missed-frame events
-    // that don't cross the raf_gap threshold but happen every 10-30 s and
-    // are perceptible at 90 Hz native (any 30 ms gap == 2-3 missed
-    // frames). Distinct event class so the existing raf_gap rate metric
-    // and tests stay unchanged.
-    if (elapsedMs > 30 && elapsedMs <= 100) {
-      logEvent('raf_stutter', {
-        elapsedMs: Math.round(elapsedMs * 100) / 100,
-        inputTickBefore: this.inputTick,
-      });
-    }
-    if (elapsedMs > 100) {
-      const heap = readHeapUsedMb();
-      const heapVal = heap !== undefined ? parseFloat(heap.toFixed(2)) : null;
-      const nowMs = this.clock.now();
-      const msSinceLastStall = this._lastRafStallAtMs >= 0
-        ? Math.round(nowMs - this._lastRafStallAtMs)
-        : -1;
-      const heapDelta = (heap !== undefined && this._lastRafStallHeapMb >= 0)
-        ? parseFloat((heap - this._lastRafStallHeapMb).toFixed(2))
-        : null;
-      logEvent('raf_gap', {
-        elapsedMs: Math.round(elapsedMs * 100) / 100,
-        inputTickBefore: this.inputTick,
-        // Heap + GC probe (2026-05-21). If heap drops at a stall, GC
-        // just ran (the stall IS the GC pause). If it grows steadily
-        // between stalls, allocation pressure is building.
-        heapUsedMb: heapVal,
-        msSinceLastStall,
-        heapDeltaMbSinceLastStall: heapDelta,
-      });
-      this._lastRafStallAtMs = nowMs;
-      if (heap !== undefined) this._lastRafStallHeapMb = heap;
-    }
+    // RAF heap + frame-gap diagnostics — see RafStallDetector.ts.
+    this.rafStallDetector.sampleHeapIfDue();
+    this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction

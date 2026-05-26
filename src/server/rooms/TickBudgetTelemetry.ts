@@ -1,33 +1,43 @@
 /**
- * Per-tick performance telemetry for SectorRoom.
+ * Tick-budget telemetry — accumulates per-phase wall-clock per tick,
+ * emits a `tick_hitch` event for outlier ticks, and aggregates a
+ * `tick_budget` average every 60 ticks.
  *
- * Owns: phase-time accumulator, hitch detection, rolling 3-tick history,
- * 60-sample aggregated `tick_budget` emit cadence. Step 3 of the hazy-pillow
- * decomposition plan — extracts the timing/budget concern from SectorRoom
- * with no behavioural change.
+ * Lifted out of `SectorRoom` because it's a self-contained
+ * instrumentation concern that owns its own counter state:
  *
- * Phase keys: caller-defined strings. The 9 keys SectorRoom uses today
- * (`sabRead`, `projectiles`, `swarmEncode`, `swarmBroadcast`,
- * `snapshotBroadcast`, `aiTick`, `aiFire`, `playerMounts`, `droneMounts`)
- * are preserved exactly so downstream `tick_budget` / `tick_hitch` log
- * consumers stay comparable across the refactor.
+ *   - `tickBudgetSums` (cumulative per-phase ms over the current ~60-tick
+ *     window) + `tickBudgetSampleCount` + `tickBudgetMaxTotalMs` +
+ *     `tickBudgetOverBudgetCount`. Aggregated and emitted as one
+ *     `tick_budget` event per second, then reset.
  *
- * Lifecycle per tick:
- *   1. `startTick()` — reset per-tick scratch
- *   2. for each phase: `mark(key)` after the phase body runs (matches the
- *      existing inline `phaseTime(key)` closure)
- *   3. `finishMeasurement(ctx)` — compute totalMs/busiestMs, fire `tick_hitch`
- *      if over threshold, push to history ring. Returns metrics so the
- *      caller can drive simClock + LoadShedder.
- *   4. `recordSample(ctx)` — accumulate one sample; emit `tick_budget` once
- *      every 60 samples (≈ 1 s wall-clock).
+ *   - `thisTickPhases` — per-tick breakdown reset at the top of each
+ *     `update()`. Written by `phaseTime(key)` after each phase. Read
+ *     by the hot-capture branch when totalMs > TICK_HITCH_THRESHOLD_MS
+ *     (~12 ms). Answers "which subsystem ate the time on THIS tick" —
+ *     the aggregated tick_budget averages can't.
+ *
+ *   - `tickHistoryRing` — 3-tick rolling history of (tick, totalMs,
+ *     phases). Included on each `tick_hitch` event so the consumer can
+ *     see whether the hitch is isolated or part of a cluster.
+ *
+ *   - Hitch rate-limit (~250 ms) so a sustained pathology doesn't
+ *     flood the server-event buffer; cluster context still surfaces
+ *     via `recentTicks` on the next admitted hitch.
+ *
+ * The class owns the state; `SectorRoom.update()` calls `beginTick()`
+ * at top, `phaseTime(key)` at each seam, and `endTick(...)` at the
+ * bottom (which fires the hitch event if applicable, pushes to the
+ * history ring, and emits the aggregated `tick_budget` once per ~60
+ * ticks).
  */
 
-export interface ServerLogEventFn {
-  (event: string, payload: Record<string, unknown>): void;
-}
+import { serverLogEvent } from '../debug/ServerEventLog.js';
 
-export interface FinishMeasurementContext {
+const TICK_HITCH_THRESHOLD_MS = 12;
+const TICK_HITCH_MIN_INTERVAL_MS = 250;
+
+export interface TickEndContext {
   serverTick: number;
   workerTickMs: number;
   playerCount: number;
@@ -36,111 +46,78 @@ export interface FinishMeasurementContext {
   liveProjectileCount: number;
 }
 
-export interface RecordSampleContext {
-  serverTick: number;
-  playerCount: number;
-  swarmCount: number;
-  aiSize: number;
-}
-
-export interface TickMeasurement {
-  totalMs: number;
-  busiestMs: number;
-}
-
-const DEFAULT_PHASE_KEYS = [
-  'sabRead',
-  'projectiles',
-  'swarmEncode',
-  'swarmBroadcast',
-  'snapshotBroadcast',
-  'aiTick',
-  'aiFire',
-  'playerMounts',
-  'droneMounts',
-  'total',
-] as const;
-
 export class TickBudgetTelemetry {
-  /** Hot-capture threshold for `tick_hitch` events. 12 ms is below the
-   *  16.67 ms physics budget but well above the observed steady-state of
-   *  ~1 ms — captures genuine hitches before they cascade into client-
-   *  visible stutter (24+ ms ticks cause ~13 u correction snaps). */
-  static readonly TICK_HITCH_THRESHOLD_MS = 12;
-  /** Rate-limit hitch events to avoid flooding the server-event buffer
-   *  during a sustained pathology. One per ~250 ms is plenty to
-   *  reconstruct the cause; cluster events still get reported via the
-   *  `recentTicks` context on the next admitted hitch. */
-  static readonly TICK_HITCH_MIN_INTERVAL_MS = 250;
-  /** Tick-budget overrun threshold. Any tick whose total wall-clock
-   *  exceeds the physics frame budget counts as overrun. */
-  static readonly OVER_BUDGET_MS = 16.67;
-  /** Rolling history length passed alongside `tick_hitch` events. */
-  static readonly HISTORY_RING_SIZE = 3;
-  /** Aggregated `tick_budget` emit cadence — samples between emits. */
-  static readonly SAMPLE_EMIT_CADENCE = 60;
+  private readonly tickBudgetSums: Record<string, number> = {
+    sabRead: 0,
+    projectiles: 0,
+    swarmEncode: 0,
+    swarmBroadcast: 0,
+    snapshotBroadcast: 0,
+    aiTick: 0,
+    aiFire: 0,
+    total: 0,
+  };
+  private tickBudgetSampleCount = 0;
+  private tickBudgetMaxTotalMs = 0;
+  private tickBudgetOverBudgetCount = 0;
 
-  private readonly sums: Record<string, number> = {};
   private readonly thisTickPhases: Record<string, number> = {};
-  private readonly historyRing: Array<{
+  private readonly tickHistoryRing: Array<{
     tick: number;
     totalMs: number;
     phases: Record<string, number>;
   }> = [];
-  private sampleCount = 0;
-  private maxTotalMs = 0;
-  private overBudgetCount = 0;
-  private lastHitchAtMs = 0;
 
-  private tStart = 0;
-  private tPhase = 0;
+  private lastTickHitchAtMs = 0;
+  private tickStart = 0;
+  private phaseAnchor = 0;
 
-  constructor(private readonly logEvent: ServerLogEventFn) {
-    for (const k of DEFAULT_PHASE_KEYS) {
-      this.sums[k] = 0;
-      this.thisTickPhases[k] = 0;
-    }
-  }
-
-  startTick(): void {
-    this.tStart = performance.now();
-    this.tPhase = this.tStart;
+  /** Call at the very top of update(). */
+  beginTick(tStart: number): void {
+    this.tickStart = tStart;
+    this.phaseAnchor = tStart;
     for (const k of Object.keys(this.thisTickPhases)) this.thisTickPhases[k] = 0;
   }
 
-  /** Record elapsed time since the previous `mark()` / `startTick()` against
-   *  `key`. Matches the existing inline `phaseTime(key)` closure semantics. */
-  mark(key: string): void {
+  /** Call after each phase; key is the phase name (e.g. 'sabRead'). */
+  phaseTime(key: string): void {
     const now = performance.now();
-    const elapsed = now - this.tPhase;
-    this.sums[key] = (this.sums[key] ?? 0) + elapsed;
+    const elapsed = now - this.phaseAnchor;
+    this.tickBudgetSums[key] = (this.tickBudgetSums[key] ?? 0) + elapsed;
     this.thisTickPhases[key] = (this.thisTickPhases[key] ?? 0) + elapsed;
-    this.tPhase = now;
+    this.phaseAnchor = now;
   }
 
-  finishMeasurement(ctx: FinishMeasurementContext): TickMeasurement {
-    const totalMs = performance.now() - this.tStart;
-    this.sums['total'] = (this.sums['total'] ?? 0) + totalMs;
-    this.sampleCount++;
-    if (totalMs > this.maxTotalMs) this.maxTotalMs = totalMs;
-    if (totalMs > TickBudgetTelemetry.OVER_BUDGET_MS) this.overBudgetCount++;
+  /**
+   * Call at the very end of update(). Returns the totalMs for this
+   * tick so the caller can hand it to the TiDi `simClock.report`
+   * (which feeds into LoadShedder).
+   */
+  endTick(ctx: TickEndContext): number {
+    const totalMs = performance.now() - this.tickStart;
+    this.tickBudgetSums['total'] = (this.tickBudgetSums['total'] ?? 0) + totalMs;
+    this.tickBudgetSampleCount++;
+    if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
+    if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
 
+    // Hot-capture single-tick hitches. Rate-limited so a sustained
+    // pathology doesn't flood the server-event buffer.
     const nowMs = performance.now();
     if (
-      totalMs > TickBudgetTelemetry.TICK_HITCH_THRESHOLD_MS &&
-      nowMs - this.lastHitchAtMs >= TickBudgetTelemetry.TICK_HITCH_MIN_INTERVAL_MS
+      totalMs > TICK_HITCH_THRESHOLD_MS &&
+      nowMs - this.lastTickHitchAtMs >= TICK_HITCH_MIN_INTERVAL_MS
     ) {
-      this.lastHitchAtMs = nowMs;
+      this.lastTickHitchAtMs = nowMs;
       const phasesSnapshot: Record<string, number> = {};
       for (const k of Object.keys(this.thisTickPhases)) {
         phasesSnapshot[k] = parseFloat((this.thisTickPhases[k] ?? 0).toFixed(3));
       }
       phasesSnapshot['total'] = parseFloat(totalMs.toFixed(3));
-      this.logEvent('tick_hitch', {
+      serverLogEvent('tick_hitch', {
         serverTick: ctx.serverTick,
         totalMs: parseFloat(totalMs.toFixed(3)),
         phases: phasesSnapshot,
-        recentTicks: this.historyRing.slice(),
+        recentTicks: this.tickHistoryRing.slice(),
         workerTickMs: parseFloat(ctx.workerTickMs.toFixed(3)),
         playerCount: ctx.playerCount,
         swarmCount: ctx.swarmCount,
@@ -148,39 +125,36 @@ export class TickBudgetTelemetry {
         liveProjectileCount: ctx.liveProjectileCount,
       });
     }
-
-    this.historyRing.push({
+    // Maintain the rolling 3-tick history regardless of hitch — context
+    // for the next hitch event.
+    this.tickHistoryRing.push({
       tick: ctx.serverTick,
       totalMs: parseFloat(totalMs.toFixed(3)),
       phases: { ...this.thisTickPhases },
     });
-    if (this.historyRing.length > TickBudgetTelemetry.HISTORY_RING_SIZE) {
-      this.historyRing.shift();
-    }
+    if (this.tickHistoryRing.length > 3) this.tickHistoryRing.shift();
 
-    const busiestMs = Math.max(totalMs, ctx.workerTickMs);
-    return { totalMs, busiestMs };
-  }
-
-  recordSample(ctx: RecordSampleContext): void {
-    if (this.sampleCount < TickBudgetTelemetry.SAMPLE_EMIT_CADENCE) return;
-    const avg: Record<string, number> = {};
-    for (const k of Object.keys(this.sums)) {
-      avg[k] = parseFloat((this.sums[k]! / this.sampleCount).toFixed(3));
+    // Aggregated tick_budget once per ~60 ticks (= 1 s @ 60 Hz).
+    if (this.tickBudgetSampleCount >= 60) {
+      const avg: Record<string, number> = {};
+      for (const k of Object.keys(this.tickBudgetSums)) {
+        avg[k] = parseFloat((this.tickBudgetSums[k]! / this.tickBudgetSampleCount).toFixed(3));
+      }
+      serverLogEvent('tick_budget', {
+        serverTick: ctx.serverTick,
+        sampleCount: this.tickBudgetSampleCount,
+        avgMs: avg,
+        maxTotalMs: parseFloat(this.tickBudgetMaxTotalMs.toFixed(3)),
+        overBudgetCount: this.tickBudgetOverBudgetCount,
+        playerCount: ctx.playerCount,
+        swarmCount: ctx.swarmCount,
+        aiSize: ctx.aiSize,
+      });
+      for (const k of Object.keys(this.tickBudgetSums)) this.tickBudgetSums[k] = 0;
+      this.tickBudgetSampleCount = 0;
+      this.tickBudgetMaxTotalMs = 0;
+      this.tickBudgetOverBudgetCount = 0;
     }
-    this.logEvent('tick_budget', {
-      serverTick: ctx.serverTick,
-      sampleCount: this.sampleCount,
-      avgMs: avg,
-      maxTotalMs: parseFloat(this.maxTotalMs.toFixed(3)),
-      overBudgetCount: this.overBudgetCount,
-      playerCount: ctx.playerCount,
-      swarmCount: ctx.swarmCount,
-      aiSize: ctx.aiSize,
-    });
-    for (const k of Object.keys(this.sums)) this.sums[k] = 0;
-    this.sampleCount = 0;
-    this.maxTotalMs = 0;
-    this.overBudgetCount = 0;
+    return totalMs;
   }
 }

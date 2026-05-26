@@ -11,6 +11,8 @@
   "scripts": {
     "typecheck": "tsc -b tsconfig.core.json tsconfig.server.json tsconfig.client.json",
     "lint": "eslint .",
+    "audit:god-files": "node scripts/audit-god-files.mjs",
+    "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config vitest.integration.config.ts",

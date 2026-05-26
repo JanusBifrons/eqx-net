@@ -8,6 +8,8 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js';
+import { applyShipInput } from './applyShipInput.js';
+import { castHitscan } from './hitscanRay.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -325,59 +327,7 @@ export class PhysicsWorld {
   applyInput(id: string, input: ShipInput): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
-    const { body, kind } = rec;
-
-    // Forward direction at the body's current facing. The visual "nose" is
-    // local -Y in Pixi (see `buildShipGfx`), which maps to (-sin θ, cos θ)
-    // in Rapier (Y-up).
-    const angle = body.rotation();
-    const fx = -Math.sin(angle);
-    const fy =  Math.cos(angle);
-
-    // ---- 1. Throttle (forward + reverse, cancellable) ----------------------
-    const fwd = input.thrust  ? 1 : 0;
-    const rev = input.reverse ? kind.reverseFactor : 0;
-    const throttle = fwd - rev;
-    if (throttle !== 0) {
-      const boostMul = input.boost && throttle > 0 ? kind.boostMultiplier : 1;
-      const mag = kind.thrustImpulse * boostMul * throttle;
-      body.applyImpulse({ x: fx * mag, y: fy * mag }, true);
-    }
-
-    // ---- 2. Snappy turn (direct setAngvel, snap-stop on release) ---------
-    // Holding A/D writes the target angvel directly; releasing both keys
-    // writes 0. This makes per-tap rotation linear in tap duration — a
-    // 100 ms tap of `maxAngvel = 2.5` gives exactly 0.25 rad ≈ 14°, which
-    // is what you want for aim. An earlier version left the angvel to decay
-    // via `angularDamping`, but the post-release decay integrates to
-    // `maxAngvel / angularDamping` rad of additional rotation per tap (≈18°
-    // at the v1 numbers) — half of every tap was happening AFTER you let go,
-    // making fine aim impossible.
-    const target = (input.turnLeft ? 1 : 0) - (input.turnRight ? 1 : 0);
-    body.setAngvel(target * kind.maxAngvel, true);
-
-    // ---- 3. Lateral-grip filter (1-pole low-pass on sideways component) ---
-    if (kind.lateralGrip > 0) {
-      const v = body.linvel();
-      const fwdComp = v.x * fx + v.y * fy;
-      const latX = v.x - fwdComp * fx;
-      const latY = v.y - fwdComp * fy;
-      if (latX !== 0 || latY !== 0) {
-        body.setLinvel(
-          { x: v.x - latX * kind.lateralGrip, y: v.y - latY * kind.lateralGrip },
-          true,
-        );
-      }
-    }
-
-    // ---- 4. Max-speed clamp ----------------------------------------------
-    const v2 = body.linvel();
-    const sp2 = v2.x * v2.x + v2.y * v2.y;
-    const cap2 = kind.maxSpeed * kind.maxSpeed;
-    if (sp2 > cap2) {
-      const k = kind.maxSpeed / Math.sqrt(sp2);
-      body.setLinvel({ x: v2.x * k, y: v2.y * k }, true);
-    }
+    applyShipInput(rec.body, rec.kind, input);
   }
 
   /**
@@ -509,22 +459,16 @@ export class PhysicsWorld {
     excludeId: string,
   ): { hitId: string; dist: number } | null {
     const excludeRec = this.bodies.get(excludeId);
-    const ray = new RAPIER.Ray({ x: fromX, y: fromY }, { x: dirX, y: dirY });
-    const hit = this.world.castRay(
-      ray,
+    return castHitscan(
+      this.world,
+      this.handleToId,
+      fromX,
+      fromY,
+      dirX,
+      dirY,
       maxDist,
-      true,
-      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
-      undefined,
       excludeRec?.body,
     );
-    if (!hit) return null;
-    const parentBody = hit.collider.parent();
-    if (!parentBody) return null;
-    const hitId = this.handleToId.get(parentBody.handle);
-    if (!hitId) return null;
-    return { hitId, dist: hit.timeOfImpact };
   }
 
   dispose(): void {

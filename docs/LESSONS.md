@@ -14,6 +14,108 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-26 — god-file refactor v3 (continued) — SectorRoom 4322 → 3437 LOC (−20.5%)
+
+Continuation of the same-day session. The earlier checkpoint (below) reported
+SectorRoom UNTOUCHED. After the user's direct push-back ("you've actually made
+one of them longer"), the session attacked SectorRoom head-on with 8 substantial
+extractions:
+
+| Commit | Module | SectorRoom LOC after | Δ |
+|---|---|---:|---:|
+| ce93ada | WeaponMountTicker (tickPlayer/tickDrone + per-mount state) | 4181 | −141 |
+| 811cdba | PhysicsWorkerProxy (bundleWorker + worker lifecycle + WorkerCmd union) | 4120 | −61 |
+| 951b5c6 | WreckLifecycleCoordinator (convertShipToWreck 8-collab atomic transaction) | 4061 | −59 |
+| 93ba832 | ProjectilePipeline (liveProjectiles + 4-pass sweep + lifetime) | 3989 | −72 |
+| 69b6cdd | ShieldHullRouter (damageShipLayered + damageSwarmLayered + tickShieldRegen) | 3906 | −83 |
+| b3deffa | AiFireResolver (per-drone fire pipeline) | 3851 | −55 |
+| dc0c5df | PlayerFireResolver (handleFire — 327 LOC inline → 3-line delegation) | 3563 | −288 |
+| e7c49d4 | DamageRouter (applyDamage 4-branch dispatch) | 3437 | −126 |
+
+**Combined session totals across all primary god files:**
+
+| File | Pre-session | Post-session | Δ | % |
+|---|---:|---:|---:|---:|
+| src/server/rooms/SectorRoom.ts | 4322 | **3437** | −885 | −20.5% |
+| src/client/net/ColyseusClient.ts | 4138 | **3997** | −141 | −3.4% |
+| src/client/render/PixiRenderer.ts | 1931 | 1931 | 0 | 0% |
+| src/client/App.tsx | 1264 | 1264 | 0 | 0% |
+
+PixiRenderer + App.tsx remain untouched — next-session targets. The 8 SectorRoom
+collaborators (+ the 3 ColyseusClient ones from the earlier checkpoint:
+LingeringPredBodyManager, SnapshotCoalescer, HudDispatcher) are all behind the
+file-size + thin-wrapper audit gates, so re-growth is blocked.
+
+**Construction-order trap (commit e7c49d4)**: 8 integration tests broke when
+DamageRouter was first wired because the deps capture `this.shieldHullRouter` at
+construction time, and the router was being instantiated BEFORE the
+shieldHullRouter. The Map-getter alias pattern (used by WeaponMountTicker /
+WreckLifecycleCoordinator / ShieldHullRouter for state-store identity
+preservation) doesn't help when the DEP itself is undefined — it's not a deferred
+lookup. Rule for future extractions: a collaborator that depends on another
+collaborator must be constructed AFTER it, and the dep-resolution order in
+onCreate is now: mountTicker → wreckCoordinator → playerFireResolver →
+aiFireResolver → shieldHullRouter → damageRouter → projectiles.
+
+**Test layer choice paid off**: 58 integration tests (the 19 sectorRoom files
+in tests/integration/sectorRoom/) caught the DamageRouter ordering bug
+immediately on the first run; the unit suite (1311 tests, all pass) couldn't —
+its mocks don't exercise the real `room.constructor` path. The hostile review
+correctly flagged "smoke-test bug reports require a failing test BEFORE the fix"
+as Invariant #13; this session's mechanical refactors are riding on the
+integration suite that was already there as the regression lock.
+
+---
+
+## 2026-05-26 — god-file refactor v3 (hardened) — initial checkpoint (now superseded by the continuation above)
+
+Commits: branch `claude/god-file-refactor-review-2Wh7H`, 12 commits past `8ab9946` HEAD + the 16 prep commits merged in from `claude/refactor-god-files-plan-Hcoap`.
+
+**Context.** The v2 plan at `docs/plans/refactor-god-files.md` was hostile-reviewed; the audit found several falsifiable claims (notably the `testTimeScale` "missing JoinOption" hallucination — the agent grepped `JoinOptionsSchema` only and missed the existing room-option implementation at `SectorRoom.ts:600` + the `test-sector-fast` room registration at `index.ts:197`), 3 missed god files (`worker/protocol.ts` 496, `worker/Camera.ts` 470, `livingworld/LivingWorldDirector.ts` 416), and the "single mega-PR" premise was already broken in practice (the prep branch shipped only 16 of 27 promised commits; the LESSONS ledger of `71ce3ad` admits commits 15-23 — the actual class decompositions — were deferred).
+
+**v3 plan**: `docs/plans/refactor-god-files-v3-hardened.md`. Adds Inv #13 (file-size budget) + Inv #14 (no thin-wrapper debt). Plugs the testTimeScale leak (turned out unnecessary — already implemented); adds the 3 missed god files (8b, 8c, 23b); groups live-loop commits into 3 netgate epochs (4 runs vs 8+); adds wrapper-cleanup commit 21b; adds CI gate scripts (26b).
+
+**Landed this session** (in dependency order):
+
+| Commit | What | LOC delta |
+|---|---|---|
+| docs(refactor): hardened v3 plan | v3 plan file | +152 plan |
+| chore(refactor): clean up unused imports | post-prep cleanup (3 files) | −10 |
+| **8b** refactor: split protocol.ts into protocol/ | 496 → 65 barrel + 4 family files | +53 net (test+doc weight) |
+| **8c** refactor: split Camera.ts into camera/ | 470 → 411 + 5 controller modules | +180 net (with 2 new unit-test files) |
+| **23b** refactor: split LivingWorldDirector.ts | 431 → 251 + 3 collaborators + LivingWorldRoom.ts | +188 net |
+| **26b** ci: file-size + thin-wrapper audit scripts | scripts/audit-god-files.mjs + audit-thin-wrappers.mjs + pnpm scripts | +278 |
+| **5** refactor: extract applyShipInput + castHitscan | 533 → 477 World.ts + 2 pure helpers | +72 net |
+| refactor: extract LingeringPredBodyManager | 4138 → 4041 ColyseusClient + manager (167 LOC) | +70 net |
+| **16** refactor: extract SnapshotCoalescer | 4041 → 4026 + coalescer (76 LOC) | +14 net + re-pointed test |
+| **16** refactor: extract HudDispatcher | 4026 → 3997 + dispatcher (76 LOC) | +47 net |
+
+**Numbers**: ColyseusClient 4138 → 3997 (−141 LOC, −3.4%). SectorRoom 4321 (untouched). PixiRenderer 1930 (untouched). App.tsx 1263 (untouched). Total god-file LOC across the 4 primary targets: 11652 → 11511 (−141).
+
+**Audit gate**: `pnpm audit:god-files` passes today (4 allowlisted entries with caps tightened twice this session). `pnpm audit:thin-wrappers` passes (0 violations). Both wired into `pnpm` scripts; CI workflow integration deferred (commit 26).
+
+**Inner loop**: typecheck green; lint green (0 errors, 53 pre-existing warnings); 1311/1313 unit tests pass (same 2 pre-existing spiral-replay failures from baseline `8ab9946`); 58/58 integration tests pass.
+
+**Deferred to follow-up sessions** (per v3 plan §"Revised commit sequence"):
+
+- Full PredictionStateManager extraction (commit 17) — `_rttWelford`, `_lookaheadCtrl`, `_dropDetector`, `leadTicks`, `_anchorInitialised`, clock anchor, `predWorld`, `reconciler`, `_localPoseResolvedLogged`, `lastSnapshotPos`. The `resetPredictionState()` method (56 LOC) is the canonical entry point. Highly entangled with diagnostics (`_recentIntervals`, `_recentCorrFlags`) which per FIELD_OWNERSHIP belong to ColyseusClientDiagnostics, NOT this manager — the bisection must be exact.
+- Full SnapshotApplier + MirrorUpdater extractions (commit 16 completion). `handleSnapshot` at line 1695 is ~610 LOC; `updateMirror` at line 2692 is ~440 LOC. Both are too big for single-pass extraction without a state-passing shim.
+- Combat feedback bridge (commit 18) — `_damageReconcileScratch`, `_scheduledDamageSpawns`, `_reconcileSink`, the smooth-beam visual-split scheduler. Entangled with `_hitLedger` (`HitPredictionLedger`).
+- Remote prediction bridge (commit 19) — `_remoteShipOffsets`, `_collisionGuard`, `_remoteLastInputs`, `_remoteForwardTicks`, `_predGuard`. Touched at 15+ sites.
+- All PixiRenderer splits (commits 10-14): SpriteFactory + SpriteRegistry + ShipSpriteUpdater + DroneSpriteUpdater + AsteroidWreckSpriteUpdater + ThrustVfxController + DamageFlashController + ExplosionVfxController + WarpFilterChain + BeamRenderer + BackgroundLayerStack + CameraController + PixiAppLifecycle + CombatFeedbackBus. The 650-LOC `update()` method at line 541 + the 300-LOC warp filter tick at line 1597 are the biggest blocks.
+- All SectorRoom splits (commits 15, 20-23): WreckLifecycleCoordinator (atomic 8-collaborator transaction), PhysicsWorkerProxy, PlayerSlotMap, SwarmRegistry, OwnerlessShipTimers, CombatResolver, LagCompRing, WeaponMountTicker, BroadcastScheduler, ShieldHullStateTracker, WreckTracker, AiSectorController, SectorTransitAdapter, LivingWorldBridge, SectorDiagnostics. Commit 21b deletes the wrapper-debt the prep commits (04f2aa7 mountGeometry, d29b5a9 droneKindHelpers) left in SectorRoom.
+- App.tsx split (commit 24) — AppProviders + AppBootstrap + AppHydration + OverlayComposer.
+- Per-commit perf-baseline (25), CI workflow (26), docs (27).
+
+**Non-obvious findings from this session**:
+
+1. **The hostile-review-found `testTimeScale` "hallucination" was itself a false-positive.** The hostile-review Explore agent grep'd `SectorRoom.JoinOptionsSchema` and concluded `testTimeScale` doesn't exist; in reality it's a **room option** at `SectorRoom.ts:600` set at `gameServer.define()` time (with the `test-sector-fast` room hardcoded to `testTimeScale: 10`). E2Es needing 10× compression use `?room=test-sector-fast`, not a per-client `testTimeScale=N`. Lesson: hostile-review agent grep scope is critical — `JoinOptionsSchema`-only misses room-define-time options.
+2. **The ESLint `no-restricted-imports` patterns array uses minimatch which globs across path segments.** The v3 plan called for `src/client/net/colyseus/` subdirectory; ESLint rejected ALL relative imports there because pattern `'colyseus'` matched `./colyseus/X`. Workaround: flat layout under `src/client/net/`. Long-term: refine the lint rule to use `paths` (exact match) for `colyseus`/`colyseus.js` and keep `patterns` for the more general groups, OR rename the subdir prefix.
+3. **`SnapshotCoalescer` test extraction is the canonical "re-point existing lock" pattern.** Tests originally poked private `_pendingSnapshot` / `_coalescedSinceLastProcess` fields on `ColyseusGameClient`. Extraction had to (a) introduce a `getCoalescer(c)` accessor that mirrors the field-poking pattern, AND (b) re-pencil the test body to call `enqueue(snap)` instead of direct field writes. The seam IS the test surface — same 8 cases lock, same load-bearing assertions, refactor-stable.
+4. **TS Bundler resolution prefers `protocol.ts` over `protocol/index.ts` when both exist.** For the protocol.ts split: deleted the .ts file and created a `protocol/` directory; the existing `./protocol` / `./protocol.js` imports resolve to `./protocol/index.ts` cleanly. **Caveat**: don't keep both a sibling `protocol.ts` AND a `protocol/index.ts` — resolution becomes ambiguous and the .ts wins.
+5. **The prep commits left wrapper-method debt in SectorRoom.** `mountGeometry.ts` extracted but `SectorRoom.resolveSlotMounts`/`mountWorldOrigin` still exist as thin delegating wrappers (commit d29b5a9's LESSONS entry admits this). Inv #14 (added in v3) forbids new wrapper debt; commit 21b will delete the prep-commit wrappers when their new owner `WeaponMountTicker` lands. Until then, `scripts/audit-thin-wrappers.mjs` reports 0 violations because the wrappers don't yet match the strict `private name(args) { return module.name(args); }` pattern — they have multi-line bodies that wrap the delegate call.
+---
+
 ## 2026-05-25 — hazy-pillow — SectorRoom decomposition: storage-relocation pattern + `_internals` accessor
 
 Commits: `_internals + test rewrites (Step 1)` → `PlayerSessionManager (Step 14)` on branch `claude/colyseus-refactor-plan-XEAuw`.

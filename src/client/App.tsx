@@ -1,38 +1,38 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { installWindowLogger } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
-import {
-  Box,
-  Typography,
-} from '@mui/material';
+import { Box } from '@mui/material';
 import { ColyseusGameClient } from './net/ColyseusClient';
-import { setGameClient, getGameClient } from './net/clientSingleton';
+import { setGameClient } from './net/clientSingleton';
 import { HowlerAudioService } from './audio/HowlerAudioService';
-import { PixiRenderer } from './render/PixiRenderer';
-import { WorkerRendererClient, supportsOffscreenRenderer } from './render/worker/WorkerRendererClient';
-import { consumeOneFrameTriggers } from './render/perFrameTriggers';
-import { shouldSkipFrame, DEFAULT_MIN_FRAME_INTERVAL_MS } from './perf/frameRateCap';
+import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
+import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
+import {
+  useServerHealthPoll,
+  useShipSwapDispatcher,
+  usePhaseChangeLog,
+  useAuthExpiryRedirect,
+  useUserPrefsHydration,
+} from './app/appHooks';
+import { PhaseRouter } from './app/PhaseRouter';
+import {
+  syncGalaxyVisibility,
+  syncGalaxyCurrentSector,
+  syncGalaxyTransitDocked,
+} from './app/galaxyOverlay';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { LocalGameClient } from './local/LocalGameClient';
-import { loadStoredPlayerId, persistPlayerId } from './identity/token';
-import { useUIStore, applyUserPrefs, useGameReady } from './state/store';
+import { useUIStore, useGameReady } from './state/store';
 import { useAuthStore } from './auth/authStore';
-import { AppHeader } from './components/AppHeader';
-import { LoginPage } from './components/LoginPage';
-import { ProfileModal } from './components/ProfileModal';
-import { SettingsModal } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
-import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
 import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
-import { createServerHealthPoller } from './net/serverHealthPoller';
 import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
@@ -44,20 +44,11 @@ import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
-import { MetaLandingScreen } from './components/MetaLandingScreen';
+import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
 import { TopRightToolbar } from './layout/TopRightToolbar';
-import { MobileAvatarBadge } from './layout/MobileAvatarBadge';
-import { getSector } from '../core/galaxy/galaxy';
-
-// Default to the page's own origin so the same dev server is reachable from
-// phones on the LAN (e.g. http://192.168.1.5:5173 → ws://192.168.1.5:5173).
-// Override with VITE_WS_URL in .env for cross-origin setups.
-const SERVER_URL =
-  import.meta.env['VITE_WS_URL'] ??
-  (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173');
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
 installWindowLogger();
@@ -242,68 +233,11 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     const keyboard = new Keyboard();
     keyboardRef.current = keyboard;
 
-    // Renderer path selection (2026-05-22).
-    //
-    // Non-touch (desktop) + OffscreenCanvas-capable → worker-backed
-    // renderer. Pixi runs off the main thread, freeing CDP budget for
-    // React + drawer animations. See ~/.claude/plans/humble-strolling-coral.md.
-    //
-    // Touch devices → main-thread `PixiRenderer`. On high-DPR mobile,
-    // the OffscreenCanvas commit / worker→main IPC path produces ~110 ms
-    // tail-latency stalls every time the compositor drains. The
-    // 2026-05-22 smoke pair (capture `721mwk` worker-on vs `iph9cv`
-    // worker-off, same device same session) showed a 19× reduction in
-    // `raf_gap` events (38 → 3) and 85 s of continuous zero-stall play
-    // after switching off the worker. The render cost saved by
-    // off-loading Pixi (~1.5 ms / frame on a phone) is dwarfed by the
-    // ~110 ms IPC commit tail-latency that the worker introduces.
-    //
-    // `?worker=1` opts back into the worker (for A/B diagnosis or
-    // desktop debugging of mobile behaviour). `?worker=0` forces the
-    // main-thread path (for non-touch verification of the mobile path).
-    // Without an override, the default follows `isTouchDevice()`.
-    const workerParam = new URLSearchParams(window.location.search).get('worker');
-    const isTouch = isTouchDevice();
-    const useWorker =
-      workerParam === '1'
-        ? supportsOffscreenRenderer()
-        : workerParam === '0'
-          ? false
-          : !isTouch && supportsOffscreenRenderer();
-    const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
-    logEvent('renderer_path_chosen', {
-      useWorker,
-      workerParam,
-      isTouch,
-      supportsOffscreenRenderer: supportsOffscreenRenderer(),
-    });
+    // Renderer-path selection + profile-window opt-in. Extracted to
+    // gameSurfaceBootstrap.ts — full rationale lives there.
+    const { renderer, useWorker } = selectRenderer();
     rendererRef.current = renderer;
-
-    // Probe 0 (mobile-perf-investigation-review): `?profile=1` opts into a
-    // bounded `console.profile()` window so a user on a Chrome-remote-
-    // debugged phone can submit a real DevTools timeline alongside the
-    // diag capture. Auto-stops after 60 s so the trace stays loadable —
-    // a 5-minute trace pegs DevTools on mobile. The hostile review noted
-    // this is the cheaper missed probe — distinguishes GC vs frame-cap-
-    // artifact vs compositor-stall via flame-graph layer, which the
-    // NDJSON stream alone cannot.
-    const profileParam = new URLSearchParams(window.location.search).get('profile');
-    if (profileParam === '1') {
-      try {
-        console.profile('eqx-mobile-session');
-        logEvent('profile_started', { autoStopMs: 60_000 });
-        window.setTimeout(() => {
-          try {
-            console.profileEnd('eqx-mobile-session');
-            logEvent('profile_ended', { reason: 'auto-stop' });
-          } catch (e) {
-            logEvent('profile_ended', { reason: 'error', error: String(e) });
-          }
-        }, 60_000);
-      } catch (e) {
-        logEvent('profile_started', { error: String(e) });
-      }
-    }
+    installProfileWindow();
 
     const gameClient = new ColyseusGameClient();
     gameClient.setAudio(new HowlerAudioService());
@@ -333,403 +267,25 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // `phaseEnterPerfNow` is captured BEFORE the async `renderer.init`
     // so the delta covers GPU init + WS handshake + first paint.
     const phaseEnterPerfNow = performance.now();
-    let firstFramePixiLogged = false;
 
-    (async () => {
-      const rendererInitStartedAt = performance.now();
-      await renderer.init(el);
-      const rendererInitMs = performance.now() - rendererInitStartedAt;
-
-      // StrictMode fires cleanup before the async init resolves. If disposal
-      // happened while we were awaiting, tear down the just-initialised renderer
-      // (which appended a canvas) and exit — the second mount will take over.
-      if (disposed) {
-        renderer.dispose();
-        return;
-      }
-      // Load curtain ON immediately — hides the canvas during the
-      // join load period so the player doesn't see ship-at-(0,0)
-      // ghost frames, partial mirror state, or rippled asteroid
-      // bleed-through. The curtain is independent of the warp filter
-      // chain (no spool/climax/burst on initial join — that envelope
-      // is for inter-sector transit only, and is driven by the
-      // transitState effect below). The curtain fades AND the
-      // arrival flash fires when `gameReady` flips true.
-      if (!useUIStore.getState().rendererFirstFrameRendered) {
-        renderer.setLoadCurtain(true);
-      }
-      logEvent('renderer_init_complete', {
-        rendererInitMs: Math.round(rendererInitMs),
-        msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
-      });
-
-      // Map B — additive in-game galaxy overlay. Lives as a screen-space
-      // sibling of the gameplay viewport on the same Pixi stage, so it
-      // doesn't pan/zoom with the world camera. Two construction paths:
-      //
-      //   - Worker mode: `renderer.worker.ts` constructs the layer
-      //     inside the worker (it's pure Pixi v8, no DOM access) and
-      //     uses a custom hit-test for taps (Pixi's event subsystem
-      //     isn't initialised in worker context). Selection is routed
-      //     back to the main thread via `OVERLAY_TAPPED` messages and
-      //     consumed by `setOverlayTapHandler`.
-      //   - DOM mode: construct the layer here and attach via
-      //     `addOverlayContainer`. The native Pixi event system on the
-      //     DOM-mode renderer handles `pointertap` on each hex.
-      if (useWorker) {
-        // The worker already owns its layer; just route taps + push
-        // initial state so the overlay knows which sector is "you are
-        // here" and whether it's selectable.
-        (renderer as WorkerRendererClient).setOverlayTapHandler((key) => {
-          handleEngageTransit(key);
-          useUIStore.getState().setGalaxyMapOpen(false);
-        });
-        const s0 = useUIStore.getState();
-        (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
-        (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
-        (renderer as WorkerRendererClient).setLayerVisible(s0.isGalaxyMapOpen);
-      } else {
-        const galaxyLayer = new GalaxyMapLayer({
-          onSelect: (key) => {
-            handleEngageTransit(key);
-            // Auto-close the additive overlay on warp-tap; the user explicitly
-            // asked for tap-to-warp to dismiss the map (otherwise it stays
-            // visible during SPOOLING and feels stuck).
-            useUIStore.getState().setGalaxyMapOpen(false);
-          },
-        });
-        renderer.addOverlayContainer(galaxyLayer);
-        const s0 = useUIStore.getState();
-        galaxyLayer.setCurrentSector(s0.currentSectorKey);
-        galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
-        galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
-        galaxyLayer.setVisible(s0.isGalaxyMapOpen);
-        galaxyLayerRef.current = galaxyLayer;
-      }
-
-      let lastFrameTime = 0;
-      // Probe 3 (mobile-perf-investigation, 2026-05-24) — `?fpscap=N`
-      // URL override for DEFAULT_MIN_FRAME_INTERVAL_MS. Default 15 ms
-      // throttles 90 Hz devices to 45 fps (the documented intent of
-      // commit `9e23436`); Probe 0/1/2 evidence on a Pixel 6 with 1 ms
-      // per-RAF work shows that throttle is the dominant source of
-      // user-felt unplayability and the original 86×-stalls-at-90 Hz
-      // concern no longer applies (per-RAF work dropped ~10×). Lets
-      // the user A/B test before committing a permanent change.
-      // `?fpscap=10` allows 90 Hz through (still caps 120 Hz to ~91).
-      // `?fpscap=0` removes the cap entirely.
-      const fpsCapParam = new URLSearchParams(window.location.search).get('fpscap');
-      const fpsCapOverride = fpsCapParam !== null ? Math.max(0, parseFloat(fpsCapParam)) : null;
-      const effectiveCapMs = fpsCapOverride !== null && !Number.isNaN(fpsCapOverride)
-        ? fpsCapOverride
-        : DEFAULT_MIN_FRAME_INTERVAL_MS;
-      if (fpsCapOverride !== null) {
-        logEvent('fps_cap_override', { fpsCapParam, effectiveCapMs });
-      }
-      // E2E-inspection dataset writes are throttled to every 5th frame
-      // (12 Hz) — at 60 Hz they were producing 21+ DOM mutations per
-      // frame including multiple `JSON.stringify(...)` calls, which
-      // measurably blocked the main thread and broke Playwright's
-      // "stable click target" detection (drawer-toggle clicks took
-      // 2.8–4 s instead of <100 ms). 12 Hz is still plenty for any
-      // poll-based E2E spec; specs that need higher cadence can
-      // override via the existing `__eqxClient.stats` path.
-      let frameCounter = 0;
-      // MIRROR_UPDATE throttle for the worker-renderer path. The
-      // structured-clone cost of `mirror` (containing Maps of ships +
-      // swarm + projectiles + beams) is paid by the main thread on
-      // every postMessage. At 60 Hz with ~hundreds of drones this
-      // measurably eats CDP roundtrip budget (drawer-cdp-starvation
-      // probe p95 climbed to 2.5 s under the worker after the
-      // architecture flip — main thread fine, marshaling costly).
-      // 30 Hz is well above visual flicker threshold and halves the
-      // marshaling cost. Skipped when useWorker is false — the
-      // main-thread renderer is a direct call, no postMessage.
-      let workerUpdateCounter = 0;
-      const loop = (now: number): void => {
-        if (!disposed) {
-          const isFirstFrame = lastFrameTime === 0;
-          const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
-          // Internal 60 Hz work-loop cap. On 90/120 Hz native displays
-          // we skip alternate RAFs and leave `lastFrameTime` stale so
-          // the next RAF's `deltaMs` reflects the full wall-clock gap.
-          // See `src/client/perf/frameRateCap.ts` for the rationale
-          // (captures `q4wtht` vs `d3cprl`, 2026-05-21) and
-          // `src/client/CLAUDE.md` for the load-bearing rule.
-          if (shouldSkipFrame(deltaMs, effectiveCapMs, isFirstFrame)) {
-            animFrameRef.current = requestAnimationFrame(loop);
-            return;
-          }
-          lastFrameTime = now;
-          // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
-          // The 2026-05-24 mg5rpe capture showed 99 % of RAFs land at
-          // exactly 22 ms = 1/45 Hz vsync, with the user reporting
-          // unplayable feel even at 0.354 % stalls. This says either
-          // (a) per-RAF cost is approaching 16.67 ms so Chrome aligns
-          // vsync to 45 Hz to give us breathing room, or (b) the 45 Hz
-          // floor is OS/thermal-imposed and unfixable from JS. The
-          // breakdown distinguishes the two: if physics+mirror+render
-          // sums to >12 ms steady-state, (a); if it sits comfortably
-          // <8 ms, (b). Logged every RAF (~45/s) into perf.ndjson via
-          // the rafWork tag — same order-of-magnitude as rafTick.
-          const physicsStart = performance.now();
-          gameClient.tickPhysics(deltaMs);
-          const mirrorStart = performance.now();
-          gameClient.updateMirror();
-          const renderStart = performance.now();
-          const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
-          if (shouldRender) renderer.update(gameClient.mirror);
-          const renderEnd = performance.now();
-          logEvent('rafWork', {
-            physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
-            mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
-            renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
-            shouldRender,
-            totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
-            deltaMs: parseFloat(deltaMs.toFixed(2)),
-          });
-          // Clear one-frame triggers ONLY after the renderer has actually
-          // consumed them. The clear MUST be gated on the same condition
-          // as the renderer-update — see `consumeOneFrameTriggers` for the
-          // contract and `perFrameTriggers.test.ts` for the regression lock.
-          consumeOneFrameTriggers(gameClient.mirror, shouldRender);
-
-          // F-transit-instrument — bounded post-reveal frame burst.
-          // `wantsFrame()` is false (single boolean read, zero cost)
-          // unless a transit curtain just dropped AND fewer than the
-          // hard cap (40) of frames have been recorded; it self-
-          // disables and emits `settled` exactly once. This makes the
-          // ts≈17546 stall (~2 s post-arrival, curtain down, settled)
-          // fall INSIDE a numbered `transit_frame` with elapsed-ms
-          // context — the black box the handoff calls out. `elapsedMs`
-          // is the frame's full wall delta (incl. this render).
-          // `spriteCount` is a CHEAP mirror-entity proxy (O(1) Map
-          // .size sum) — NOT a renderer-internal count (the
-          // RendererFeedback closed-set is deliberately untouched per
-          // the task constraint); it surfaces a first-render upload
-          // delta when entity count jumps post-reveal.
-          if (gameClient.transitInstr.wantsFrame()) {
-            const m = gameClient.mirror;
-            const spriteCount =
-              m.ships.size + (m.swarm?.size ?? 0) + (m.projectiles?.size ?? 0);
-            gameClient.transitInstr.frame(deltaMs, spriteCount);
-          }
-
-          // Join-render readiness: latch the moment the renderer first
-          // paints a frame with the local player visible. Drives the
-          // `gameReady` Zustand selector + WarpScreen fade-out. Read on
-          // EVERY frame (not gated to writeDataset) because the
-          // transition we care about happens once per session and we
-          // mustn't miss it.
-          if (!firstFramePixiLogged) {
-            const fb = renderer.getFeedback();
-            if (fb.firstFrameRendered) {
-              firstFramePixiLogged = true;
-              const lid = gameClient.mirror.localPlayerId;
-              const localEntry = lid ? gameClient.mirror.ships.get(lid) : null;
-              logEvent('pixi_first_frame', {
-                msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
-                shipsInMirror: gameClient.mirror.ships.size,
-                hasLocal: lid !== null,
-                localX: localEntry?.x ?? null,
-                localY: localEntry?.y ?? null,
-              });
-              useUIStore.getState().setRendererFirstFrameRendered(true);
-            }
-          }
-          const localId = gameClient.mirror.localPlayerId;
-          const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
-          const writeDataset = (++frameCounter % 5) === 0;
-          // Phase 2 of OffscreenCanvas migration: single batched
-          // renderer-feedback read per frame. Replaces per-attribute
-          // `renderer.mountCountForShip()` / `renderer.getDebugHaloArrowCount()`
-          // calls so the future worker-renderer (where each read is a
-          // postMessage) lands at a single cached-snapshot lookup site.
-          const feedback = writeDataset ? renderer.getFeedback() : null;
-          if (localShip && writeDataset && feedback) {
-            el.dataset['shipX'] = localShip.x.toFixed(3);
-            el.dataset['shipY'] = localShip.y.toFixed(3);
-            el.dataset['shipAngle'] = localShip.angle.toFixed(4);
-            // Multi-mount/turret refactor (Phase 3): expose the local ship's
-            // mount count so E2E specs can assert the new interceptor /
-            // gunship kinds wire visible turret sprites. Legacy single-mount
-            // fighter/scout/heavy report 1.
-            el.dataset['mountCount'] = String(feedback.mountCounts.get(localId!) ?? 0);
-          }
-          if (writeDataset && feedback) {
-          // Expose all ship positions for E2E cross-client position assertions.
-          const posMap: Record<string, { x: number; y: number }> = {};
-          for (const [id, s] of gameClient.mirror.ships) {
-            posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
-          }
-          el.dataset['shipPositions'] = JSON.stringify(posMap);
-          el.dataset['localPlayerId'] = localId ?? '';
-          el.dataset['predStats'] = JSON.stringify(gameClient.stats);
-          // Expose combat state for E2E assertions.
-          const uiState = useUIStore.getState();
-          el.dataset['hullPct'] = String(uiState.hullPct);
-          el.dataset['shieldPct'] = String(uiState.shieldPct);
-          el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';
-          // Phase 6 — TiDi observables for the swarm-tidi / tidi-overlay E2E specs.
-          el.dataset['clockRate'] = uiState.clockRate.toFixed(4);
-          el.dataset['swarmSize'] = String(gameClient.mirror.swarm?.size ?? 0);
-          el.dataset['projectileCount'] = String(gameClient.mirror.projectiles?.size ?? 0);
-          el.dataset['haloArrowCount'] = String(feedback.haloArrowCount);
-          // Multi-mount/turret refactor (Phase 2c): `liveBeam` became
-          // `liveBeams: Map<mountId, ...>`. For legacy single-mount fighter/
-          // scout/heavy there is exactly one entry keyed by `'forward'`, so
-          // the existing E2E surface (`beamActive`, `beamFromX/Y`, `beamDist`)
-          // picks that entry as the "primary" beam. Multi-mount kinds expose
-          // every barrel via the same attribute names, separated by commas,
-          // so a Phase-3 spec can split on `','` if it wants per-mount data.
-          const liveBeams = gameClient.mirror.liveBeams;
-          const beamCount = liveBeams?.size ?? 0;
-          el.dataset['beamActive'] = beamCount > 0 ? '1' : '0';
-          el.dataset['beamCount']  = String(beamCount);
-          if (liveBeams && beamCount > 0 && localShip) {
-            const xs: string[] = [];
-            const ys: string[] = [];
-            const ds: string[] = [];
-            for (const beam of liveBeams.values()) {
-              // The exact mount-local geometry lives in PixiRenderer; the
-              // testid surface reports the ship-origin path (where the beam
-              // "comes from" semantically) so existing assertions keep
-              // working. Phase 3+ may extend this with per-mount world origin.
-              const fwdX = -Math.sin(localShip.angle);
-              const fwdY =  Math.cos(localShip.angle);
-              xs.push((localShip.x + fwdX * 20).toFixed(3));
-              ys.push((localShip.y + fwdY * 20).toFixed(3));
-              ds.push(beam.dist.toFixed(3));
-            }
-            el.dataset['beamFromX'] = xs.join(',');
-            el.dataset['beamFromY'] = ys.join(',');
-            el.dataset['beamDist']  = ds.join(',');
-          } else {
-            delete el.dataset['beamFromX'];
-            delete el.dataset['beamFromY'];
-            delete el.dataset['beamDist'];
-          }
-          // Multi-mount/turret refactor (Phase 2c): `remoteLasers` is now
-          // `Map<shooterId, Map<mountId, beam>>`. The E2E surface flattens
-          // across mounts — `remoteLaserCount` counts shooters (matches the
-          // pre-2c semantic), and `remoteLaserRanges` exposes the maximum
-          // beam range per shooter so legacy assertions still work for
-          // single-mount ships.
-          el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
-          const remoteHitTargetIds: string[] = [];
-          const remoteLaserRanges: Record<string, number> = {};
-          if (gameClient.mirror.remoteLasers) {
-            for (const [shooterId, perShooter] of gameClient.mirror.remoteLasers) {
-              let maxRange = 0;
-              for (const l of perShooter.values()) {
-                if (l.targetId) remoteHitTargetIds.push(l.targetId);
-                if (l.range > maxRange) maxRange = l.range;
-              }
-              remoteLaserRanges[shooterId] = parseFloat(maxRange.toFixed(2));
-            }
-          }
-          el.dataset['remoteHitTargets'] = JSON.stringify(remoteHitTargetIds);
-          el.dataset['remoteLaserRanges'] = JSON.stringify(remoteLaserRanges);
-          // Phase 5e: per-entity sleeping flags for the sleep-handshake E2E.
-          // Map of entityId → boolean. Empty when there's no swarm in view.
-          if (gameClient.mirror.swarm) {
-            const sleepMap: Record<string, boolean> = {};
-            for (const [entityId, s] of gameClient.mirror.swarm) {
-              sleepMap[String(entityId)] = !!s.sleeping;
-            }
-            el.dataset['swarmSleeping'] = JSON.stringify(sleepMap);
-          } else {
-            delete el.dataset['swarmSleeping'];
-          }
-          // Expose swarm positions (asteroids/drones) for E2E collision stability
-          // assertions. The string-keyed `data-obstacle-positions` attribute is
-          // preserved so existing E2E tests keep working: each swarm entityId is
-          // serialised as `swarm-${entityId}` to differentiate from the old
-          // hand-rolled `asteroid-N` ids the legacy MapSchema used.
-          if (gameClient.mirror.swarm) {
-            const swarmMap: Record<string, { x: number; y: number }> = {};
-            const swarmDetail: Record<string, { x: number; y: number; angle: number; kind: number; sleeping: boolean; lastUpdateTick: number; radius: number }> = {};
-            for (const [entityId, entry] of gameClient.mirror.swarm.entries()) {
-              const key = `swarm-${entityId}`;
-              swarmMap[key] = { x: parseFloat(entry.x.toFixed(3)), y: parseFloat(entry.y.toFixed(3)) };
-              swarmDetail[key] = {
-                x: parseFloat(entry.x.toFixed(3)),
-                y: parseFloat(entry.y.toFixed(3)),
-                angle: parseFloat(entry.angle.toFixed(4)),
-                kind: entry.kind,
-                sleeping: entry.sleeping,
-                lastUpdateTick: entry.lastUpdateTick,
-                radius: entry.radius,
-              };
-            }
-            el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
-            el.dataset['swarmDetail'] = JSON.stringify(swarmDetail);
-          }
-          } // end if (writeDataset)
-          animFrameRef.current = requestAnimationFrame(loop);
-        }
-      };
-      animFrameRef.current = requestAnimationFrame(loop);
-
-      const storedId = loadStoredPlayerId();
-      const urlParams = new URLSearchParams(window.location.search);
-      // Phase 8 — precedence: lobby-chosen override → ?room= (engineering /
-      // legacy) → ?galaxy= (deep link to a galaxy sector) → default 'sector'.
-      const galaxyParam = urlParams.get('galaxy');
-      const roomName =
-        roomNameOverride
-        ?? urlParams.get('room')
-        ?? (galaxyParam ? `galaxy-${galaxyParam}` : 'sector');
-      const extraJoinOptions: Record<string, unknown> = { ...(joinOptionsOverride ?? {}) };
-      if (urlParams.has('spawnX')) extraJoinOptions['spawnX'] = parseFloat(urlParams.get('spawnX')!);
-      if (urlParams.has('spawnY')) extraJoinOptions['spawnY'] = parseFloat(urlParams.get('spawnY')!);
-      // Test-only HP overrides for E2E specs (server-side gated to
-      // testMode rooms). See JoinOptionsSchema in SectorRoom.ts.
-      if (urlParams.has('initialHull'))
-        extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
-      if (urlParams.has('initialShield'))
-        extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
-      // Per-test room isolation. The test rooms (`test-sector`,
-      // `test-sector-fast`) use Colyseus `filterBy(['testId'])` so each
-      // unique value routes to its own room instance. Tests with
-      // multiple clients use the SAME testId so they share a room.
-      if (urlParams.has('testId'))
-        extraJoinOptions['testId'] = urlParams.get('testId')!;
-      // Phase 5e: E2E tests pass tunables via URL — `?swarmCount=500` etc.
-      if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);
-      if (urlParams.has('swarmRatio')) extraJoinOptions['swarmRatio'] = parseFloat(urlParams.get('swarmRatio')!);
-      if (urlParams.has('swarmRadius')) extraJoinOptions['swarmRadius'] = parseFloat(urlParams.get('swarmRadius')!);
-      if (urlParams.has('singleAsteroid')) extraJoinOptions['singleAsteroid'] = urlParams.get('singleAsteroid') === '1';
-      if (urlParams.has('tickBurnMs')) extraJoinOptions['tickBurnMs'] = parseFloat(urlParams.get('tickBurnMs')!);
-
-      await gameClient.connect(SERVER_URL, storedId, keyboard, {
-        onConnectionStatus: setConnectionStatus,
-        onPlayerId: (id) => {
-          persistPlayerId(id);
-          setPlayerId(id);
-        },
-      }, roomName, extraJoinOptions, touchInputRef.current ?? undefined);
-
-      // Show the actual room name in the HUD. Previously hardcoded to
-      // "Sector Alpha" for any room ≠ test-sector, which made it impossible
-      // to tell at a glance whether `?room=swarm-tidi` etc. had actually
-      // taken effect.
-      const prettyName: Record<string, string> = {
-        'sector': 'Sector Alpha',
-        'test-sector': 'Test Sector',
-        'feel-test': 'Feel Test (10)',
-        'swarm-soak': 'Swarm Soak (500)',
-        'swarm-tidi': 'Swarm TiDi (4000)',
-        'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
-      };
-      // Phase 8 — galaxy room names are `galaxy-${key}`; resolve the display
-      // name from the graph rather than maintaining a parallel map here.
-      if (!prettyName[roomName] && roomName.startsWith('galaxy-')) {
-        const sec = getSector(roomName.slice('galaxy-'.length));
-        if (sec) prettyName[roomName] = sec.name;
-      }
-      setSectorName(prettyName[roomName] ?? roomName);
-    })().catch((err: unknown) => {
+    runGameSurfaceConnectFlow({
+      el,
+      renderer,
+      useWorker,
+      gameClient,
+      keyboard,
+      touchInput: touchInputRef.current,
+      phaseEnterPerfNow,
+      isDisposed: () => disposed,
+      galaxyLayerRef,
+      animFrameRef,
+      roomNameOverride,
+      joinOptionsOverride,
+      onEngageTransit: handleEngageTransit,
+      onConnectionStatus: setConnectionStatus,
+      onPlayerId: setPlayerId,
+      onSectorName: setSectorName,
+    }).catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');
     });
@@ -773,30 +329,13 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // mode the layer lives inside the worker; state crosses via the
   // `WorkerRendererClient.setLayer*` postMessages.
   useEffect(() => {
-    galaxyLayerRef.current?.setVisible(galaxyMapOpen);
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerVisible(galaxyMapOpen);
-    }
-    // Diagnostic + E2E hook: proves the MAP-button tap reached the
-    // renderer (worker-hosted layer or DOM layer). Regression-locked
-    // by tests/e2e/galaxy-map-toggle.spec.ts — the worker-hosting fix
-    // is exactly "this message now reaches the worker".
-    logEvent('galaxy_map_toggle', {
-      open: galaxyMapOpen,
-      worker: rendererRef.current instanceof WorkerRendererClient,
-    });
+    syncGalaxyVisibility(galaxyLayerRef.current, rendererRef.current, galaxyMapOpen);
   }, [galaxyMapOpen]);
   useEffect(() => {
-    galaxyLayerRef.current?.setCurrentSector(galaxyLayerCurrentSectorKey);
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerCurrentSector(galaxyLayerCurrentSectorKey);
-    }
+    syncGalaxyCurrentSector(galaxyLayerRef.current, rendererRef.current, galaxyLayerCurrentSectorKey);
   }, [galaxyLayerCurrentSectorKey]);
   useEffect(() => {
-    galaxyLayerRef.current?.setTransitDocked(galaxyLayerTransitState === 'DOCKED');
-    if (rendererRef.current instanceof WorkerRendererClient) {
-      rendererRef.current.setLayerTransitDocked(galaxyLayerTransitState === 'DOCKED');
-    }
+    syncGalaxyTransitDocked(galaxyLayerRef.current, rendererRef.current, galaxyLayerTransitState === 'DOCKED');
   }, [galaxyLayerTransitState]);
 
   // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the
@@ -904,70 +443,6 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   );
 }
 
-function LocalSurface(): JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const clientRef = useRef<LocalGameClient | null>(null);
-  const rendererRef = useRef<PixiRenderer | null>(null);
-  const keyboardRef = useRef<Keyboard | null>(null);
-  const animFrameRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const el = containerRef.current;
-    let disposed = false;
-
-    const keyboard = new Keyboard();
-    keyboardRef.current = keyboard;
-
-    const renderer = new PixiRenderer();
-    rendererRef.current = renderer;
-
-    const gameClient = new LocalGameClient();
-    clientRef.current = gameClient;
-
-    (async () => {
-      await renderer.init(el);
-      if (disposed) {
-        renderer.dispose();
-        return;
-      }
-      await gameClient.start(keyboard);
-
-      const loop = (_now: number): void => {
-        if (!disposed) {
-          gameClient.updateMirror();
-          renderer.update(gameClient.mirror);
-          animFrameRef.current = requestAnimationFrame(loop);
-        }
-      };
-      animFrameRef.current = requestAnimationFrame(loop);
-    })().catch((err: unknown) => {
-      console.error('[LocalSurface] start failed', err);
-    });
-
-    return () => {
-      disposed = true;
-      cancelAnimationFrame(animFrameRef.current);
-      keyboard.dispose();
-      gameClient.dispose();
-      renderer.dispose();
-    };
-  }, []);
-
-  return (
-    <Box sx={{ position: 'relative', width: '100vw', height: '100vh', overflow: 'hidden', bgcolor: '#05070f' }}>
-      <div ref={containerRef} data-testid="game-surface" style={{ width: '100%', height: '100%' }} />
-      <Box sx={{ position: 'absolute', top: 16, left: 16, zIndex: 10, pointerEvents: 'none' }}>
-        <Typography variant="overline" sx={{ color: '#ff8800' }}>
-          Single-Player Diagnostic — no network
-        </Typography>
-        <Typography variant="caption" sx={{ display: 'block', color: '#888' }}>
-          WASD to move. Three asteroids spawned nearby. If this jitters, the sim itself is bad.
-        </Typography>
-      </Box>
-    </Box>
-  );
-}
 
 export function App(): JSX.Element {
   // Phase 8 — autoJoin escape hatch: ?room= or ?galaxy= bypasses meta + auth
@@ -1014,72 +489,16 @@ export function App(): JSX.Element {
     if (autoJoinRef.current) setPhase('game');
   }, [setPhase]);
 
-  // If the auth token expires while the user is on the galaxy-map screen
-  // (which requires a logged-in user to function), bump them back to the
-  // meta landing. Game and local are NOT auto-redirected — let the player
-  // finish their round; auth phase is unaffected (already logged out).
-  useEffect(() => {
-    if (!user && phase === 'galaxy-map') {
-      setPhase('meta');
-    }
-  }, [user, phase, setPhase]);
-
-  // Re-hydrate per-user preferences (settings + selected ship kind) when
-  // auth resolves or the active account changes. Anonymous slot is also
-  // applied on logout so a stale account's prefs don't leak across.
-  useEffect(() => {
-    applyUserPrefs(user?.id ?? null);
-  }, [user?.id]);
-
+  useAuthExpiryRedirect();
+  useUserPrefsHydration();
   // App-level diagnostic logging (2026-05-13). Mount lifecycle + phase
   // transitions + serverHealth transitions go into the same ring buffer
   // the diag capture exports. Logs are cheap (~80 bytes each) and
   // fire at most a handful of times per session, so the perf impact
   // is well below the noise floor.
   useMountLog('App');
-
-  useEffect(() => {
-    logEvent('phase_change', { phase });
-    // F-transit-instrument — phase machine back to 'game'. For PURE
-    // inter-sector transit (the user's warp-out) GameSurface stays
-    // mounted and phase never leaves 'game', so this is a no-op there
-    // (documented expectation). It only emits if a transit-initiated
-    // flow also crosses a phase→'game' transition; `mark` itself is a
-    // no-op unless an `engage()` t0 is live, so the roster-swap path
-    // (which never calls engage) can't produce a spurious row.
-    if (phase === 'game') getGameClient()?.transitInstr.mark('phase_game');
-  }, [phase]);
-
-  // Server-health poll loop. Runs for the whole app lifetime — the
-  // landing-screen banner + Join-button gate are the primary consumers,
-  // but the value also drives the hype-number on `MetaLandingScreen`,
-  // so keep polling even after the player joins. The poller is cheap
-  // (one HTTP GET every ~8 s in steady state).
-  useEffect(() => {
-    const setServerHealth = useUIStore.getState().setServerHealth;
-    let lastState: string = useUIStore.getState().serverHealth;
-    const poller = createServerHealthPoller({
-      url: `${SERVER_URL}/healthz`,
-      onChange: (snapshot) => {
-        const next = snapshot.state === 'healthy'
-          ? (snapshot.data?.ready ? 'healthy' : 'warming')
-          : snapshot.state; // 'unreachable' | 'unknown'
-        // Log only on transitions so we don't fill the ring buffer
-        // with steady-state healthy polls (1 every 8s = 7.5/min).
-        if (next !== lastState) {
-          logEvent('server_health_change', {
-            from: lastState,
-            to: next,
-            playersOnline: snapshot.data?.playersOnline ?? null,
-          });
-          lastState = next;
-        }
-        setServerHealth(next, snapshot.data?.playersOnline ?? null);
-      },
-    });
-    poller.start();
-    return () => poller.stop();
-  }, []);
+  usePhaseChangeLog(phase);
+  useServerHealthPoll();
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);
@@ -1095,42 +514,7 @@ export function App(): JSX.Element {
     setPhase('game');
   }, [setPhase]);
 
-  // Phase 5 — in-game roster swap. Dispatched by `GalaxyTab` via the
-  // Zustand `pendingShipSwap` field; we run a `game → connecting → game`
-  // phase cycle so GameSurface unmounts (closing the current room) and
-  // remounts cleanly with the new `roomNameOverride` + `joinOptionsOverride`.
-  // The 'connecting' beat is what the player sees as the loading spinner.
-  // NO transit machinery: no spool-up, no neighbour-only check — the
-  // player explicitly picked a hull they own and wants to fly it.
-  const pendingShipSwap = useUIStore((s) => s.pendingShipSwap);
-  const setPendingShipSwap = useUIStore((s) => s.setPendingShipSwap);
-  const setCurrentSectorKey = useUIStore((s) => s.setCurrentSectorKey);
-  useEffect(() => {
-    if (!pendingShipSwap) return;
-    const { shipId, sectorKey } = pendingShipSwap;
-    logEvent('ship_swap_dispatch', { shipId, sectorKey, fromPhase: phase });
-    // Update room overrides before the phase flip so when GameSurface
-    // remounts it sees the new values immediately.
-    setRoomNameOverride(`galaxy-${sectorKey}`);
-    setJoinOptionsOverride({ shipId });
-    // Clear the current-sector chrome so the brief galaxy-map glimpse
-    // (if any) and post-arrival HUD start from the new sector identity.
-    setCurrentSectorKey(null);
-    // game → connecting unmounts GameSurface (which cleans up the old
-    // Colyseus room). After a microtask the connecting → game flip
-    // remounts GameSurface, triggering a fresh joinOrCreate with the
-    // shipId override.
-    setPhase('connecting');
-    const timer = setTimeout(() => {
-      setPhase('game');
-      setPendingShipSwap(null);
-      logEvent('ship_swap_completed', { shipId, sectorKey });
-    }, 200);
-    return () => clearTimeout(timer);
-    // Note: `phase` is intentionally omitted from the deps list — it
-    // changes inside this effect (setPhase('connecting' then 'game'))
-    // which would re-trigger; the value at dispatch time is sufficient.
-  }, [pendingShipSwap, setPhase, setPendingShipSwap, setCurrentSectorKey]);
+  useShipSwapDispatcher(setRoomNameOverride, setJoinOptionsOverride);
 
   const handleSpawnNewShip = useCallback((_kind: unknown, sectorKey: string) => {
     // ShipKind already lives in Zustand `selectedShipKind` (the picker
@@ -1157,100 +541,34 @@ export function App(): JSX.Element {
     setPhase(user ? 'galaxy-map' : 'auth');
   }, [user, setPhase]);
 
-  // Compute the per-phase content as a variable so we can wrap the whole
-  // tree in a single LayoutProvider + render the FullscreenToggle once.
-  // The toggle previously only appeared during the 'game' phase, which meant
-  // mobile users couldn't enter fullscreen from the meta landing, login, or
-  // galaxy-map screens. Now it persists everywhere on touch devices.
-  let phaseContent: JSX.Element;
-  if (phase === 'game') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <GameSurface roomNameOverride={roomNameOverride} joinOptionsOverride={joinOptionsOverride} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else if (phase === 'local') {
-    phaseContent = <LocalSurface />;
-  } else if (phase === 'meta') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <MetaLandingScreen
-          onJoin={handleJoinFromMeta}
-          onSelectLocal={user ? handleSelectLocal : undefined}
-        />
-        <MobileAvatarBadge onClick={() => setProfileOpen(true)} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else if (phase === 'auth') {
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => {}}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        <LoginPage onSuccess={handleAuthSuccess} onSkip={handleAuthSuccess} />
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  } else {
-    // 'galaxy-map' (or transient 'connecting') — visual hex galaxy.
-    phaseContent = (
-      <>
-        <AppHeader
-          onLoginClick={() => setPhase('auth')}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
-        {phase === 'connecting' ? (
-          // Phase === 'connecting' is the brief 200 ms ship-swap window.
-          // The visible content is the `<WarpScreen>` mounted globally
-          // below (in LayoutProvider) — this branch just renders a
-          // black background underneath so the warp streaks have a
-          // contrast surface to paint on.
-          <Box
-            sx={{
-              height: '100vh',
-              pt: 'var(--app-bar-h, 48px)',
-              bgcolor: '#05070f',
-            }}
-          />
-        ) : (
-          <GalaxyOverviewScreen
-            mode="spawn"
-            /* activeLimboSectorKey omitted on purpose so the screen runs its
-               own /dev/limbo lookup and renders the saved-ship card. */
-            onSelectRoom={handleSelectRoom}
-            onSpawnExistingShip={handleSpawnExistingShip}
-            onSpawnNewShip={handleSpawnNewShip}
-            onSelectLocal={handleSelectLocal}
-          />
-        )}
-        <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-        <SettingsModal open={settingsOpen} onClose={closeSettings} />
-      </>
-    );
-  }
-
+  // Per-phase content composition lives in PhaseRouter — the App
+  // wraps it in LayoutProvider + ErrorBoundary so the
+  // TopRightToolbar / WarpScreen persist across phase transitions.
   return (
     <ErrorBoundary>
       <LayoutProvider>
-        {phaseContent}
+        <PhaseRouter
+          phase={phase}
+          user={user}
+          profileOpen={profileOpen}
+          setProfileOpen={setProfileOpen}
+          settingsOpen={settingsOpen}
+          openSettings={openSettings}
+          closeSettings={closeSettings}
+          setPhase={setPhase}
+          gameSurface={
+            <GameSurface
+              roomNameOverride={roomNameOverride}
+              joinOptionsOverride={joinOptionsOverride}
+            />
+          }
+          onJoinFromMeta={handleJoinFromMeta}
+          onSelectLocal={handleSelectLocal}
+          onAuthSuccess={handleAuthSuccess}
+          onSelectRoom={handleSelectRoom}
+          onSpawnExistingShip={handleSpawnExistingShip}
+          onSpawnNewShip={handleSpawnNewShip}
+        />
         <TopRightToolbar />
         {/* Unified warp-screen overlay. Internally null when phase !==
             'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted
