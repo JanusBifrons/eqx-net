@@ -38,6 +38,7 @@ import {
   type DropDetector,
 } from './snapshotDropDetector';
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
+import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, getRingEntries } from '../debug/ClientLogger';
 import {
@@ -257,95 +258,25 @@ export class ColyseusGameClient {
    *  with the playerId namespace. Despawned when removed from the
    *  schema's `state.wrecks` map. */
   private predWreckIds = new Set<string>();
-  /** Phase 6b — lingering hulls currently spawned in predWorld so the
-   *  local player ship can collide with parked hulls (and so the local
-   *  projectile sweep registers hits on them — server-side projectile
-   *  sweep handles authoritative damage, but the predicted ghost
-   *  projectiles need a body to test against). Stored with the
-   *  `linger-` prefix so they can't collide with the playerId or
-   *  wreck namespaces. Despawned when removed from mirror.lingeringShips. */
-  private predLingeringIds = new Set<string>();
+  /** Phase 6b lingering-hull predWorld bridge. Owns:
+   *   - `predLingeringIds` Set (which `linger-${...}` bodies are spawned)
+   *   - `_lingeringShipOffsets` Map (per-frame visual lerp toward
+   *     authoritative pose; avoids the visible teleport when a
+   *     free-running pred body gets reconciled).
+   *   - `ensure` (formerly `tryEnsureLingerPredBody`) — called from
+   *     handleSnapshot AND syncMirror; no-op when the mirror entry
+   *     isn't fully populated.
+   *  Extracted to `colyseus/LingeringPredBodyManager.ts`. */
+  private readonly lingerBodies = new LingeringPredBodyManager();
 
-  /**
-   * Spawn / update the predWorld body for a lingering hull, given that
-   * both `kind` and pose have been populated in the mirror. Called from
-   * two sites:
-   *
-   *  1. `handleSnapshot` after writing pose from the snapshot.
-   *  2. `syncMirror` after writing `kind` from the Colyseus schema diff.
-   *
-   * Either site can race ahead of the other on a flaky network. The
-   * helper handles both orderings by being a no-op when the mirror
-   * entry isn't fully populated — and the OTHER site re-fires it
-   * once its piece arrives. Closes the "colliding through my hulk"
-   * regression where the predWorld body was deferred a full snapshot
-   * tick after the schema diff (2026-05-13 smoke-test feedback).
-   */
   private tryEnsureLingerPredBody(shipInstanceId: string): void {
     if (!this.predWorld) return;
-    const entry = this.mirror.lingeringShips?.get(shipInstanceId);
-    if (!entry || !entry.kind) return;
-    const bodyId = `linger-${shipInstanceId}`;
-    const isFresh = !this.predWorld.hasShip(bodyId);
-    if (isFresh) {
-      this.predWorld.spawnShip(bodyId, entry.x, entry.y, entry.kind);
-      this.predLingeringIds.add(bodyId);
-    }
-    // Phase 6b reconciliation (2026-05-13): capture the body's
-    // current predicted pose BEFORE we teleport it to the
-    // server-authoritative snapshot pose, so we can store the diff
-    // as a spring-decayed sprite offset and avoid a visible
-    // teleport. Same pattern as the remote-ship reconciler at line
-    // ~1676. On the body's first spawn there's no prior pose to
-    // diff against — skip the offset capture.
-    if (!isFresh) {
-      const before = this.predWorld.getShipState(bodyId);
-      this.predWorld.setShipState(bodyId, {
-        x: entry.x, y: entry.y, angle: entry.angle,
-        vx: entry.vx, vy: entry.vy,
-        angvel: 0,
-      });
-      if (before) {
-        const ox = before.x - entry.x;
-        const oy = before.y - entry.y;
-        const dist = Math.hypot(ox, oy);
-        if (dist > 1) {
-          const halfLifeMs = remoteOffsetHalfLifeForDrift(dist);
-          const existing = this._lingeringShipOffsets.get(shipInstanceId);
-          if (existing) {
-            existing.sx.x = ox; existing.sx.v = 0;
-            existing.sy.x = oy; existing.sy.v = 0;
-            existing.halfLifeMs = halfLifeMs;
-          } else {
-            this._lingeringShipOffsets.set(shipInstanceId, {
-              sx: { x: ox, v: 0 },
-              sy: { x: oy, v: 0 },
-              halfLifeMs,
-            });
-          }
-        }
-      }
-    } else {
-      this.predWorld.setShipState(bodyId, {
-        x: entry.x, y: entry.y, angle: entry.angle,
-        vx: entry.vx, vy: entry.vy,
-        angvel: 0,
-      });
-    }
+    this.lingerBodies.ensure(shipInstanceId, this.predWorld, this.mirror);
   }
   /** Per-remote-ship render lerp offsets — applied in updateMirror() to smooth server corrections.
    *  Stage 1: each entry holds two critically-damped spring states (one per axis)
    *  decaying toward zero. Half-life per drift magnitude matches Reconciler. */
   private readonly _remoteShipOffsets = new Map<
-    string,
-    { sx: SpringState; sy: SpringState; halfLifeMs: number }
-  >();
-  /** Phase 6b (2026-05-13) — per-lingering-hull render lerp offsets.
-   *  Same shape as `_remoteShipOffsets`. Set in `tryEnsureLingerPredBody`
-   *  when the snapshot's setShipState would otherwise teleport the body;
-   *  decayed in `updateMirror`. Keyed by `shipInstanceId` (matches the
-   *  mirror.lingeringShips key). */
-  private readonly _lingeringShipOffsets = new Map<
     string,
     { sx: SpringState; sy: SpringState; halfLifeMs: number }
   >();
@@ -1873,11 +1804,7 @@ export class ColyseusGameClient {
     }
     for (const id of toEvict) {
       this.mirror.lingeringShips.delete(id);
-      const bodyId = `linger-${id}`;
-      if (this.predLingeringIds.has(bodyId)) {
-        this.predWorld?.despawnShip(bodyId);
-        this.predLingeringIds.delete(bodyId);
-      }
+      if (this.predWorld) this.lingerBodies.despawn(id, this.predWorld);
     }
     // Probe 8 — mutate snap.states in place rather than spreading into
     // a new object. `snap` is the parameter from `room.onMessage` and
@@ -3134,32 +3061,8 @@ export class ColyseusGameClient {
     //     server reality; offset smooths the visual after each
     //     reconcile so the user doesn't see the teleport directly.
     //     Exactly how remote ships have always worked.
-    if (this.predWorld && this.mirror.lingeringShips) {
-      for (const [shipInstanceId, entry] of this.mirror.lingeringShips) {
-        const bodyId = `linger-${shipInstanceId}`;
-        if (!this.predWorld.hasShip(bodyId)) continue;
-        const pose = this.predWorld.getShipState(bodyId);
-        if (!pose) continue;
-        const off = this._lingeringShipOffsets.get(shipInstanceId);
-        let ox = 0, oy = 0;
-        if (off) {
-          springStep(off.sx, 0, off.halfLifeMs, this.lastFrameMs);
-          springStep(off.sy, 0, off.halfLifeMs, this.lastFrameMs);
-          ox = off.sx.x;
-          oy = off.sy.x;
-          const stillMoving =
-            Math.abs(off.sx.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sy.x) > REMOTE_SPRING_POS_END ||
-            Math.abs(off.sx.v) > REMOTE_SPRING_VEL_END_MS ||
-            Math.abs(off.sy.v) > REMOTE_SPRING_VEL_END_MS;
-          if (!stillMoving) this._lingeringShipOffsets.delete(shipInstanceId);
-        }
-        entry.x = pose.x + ox;
-        entry.y = pose.y + oy;
-        entry.angle = pose.angle;
-        entry.vx = pose.vx;
-        entry.vy = pose.vy;
-      }
+    if (this.predWorld) {
+      this.lingerBodies.applyPerFrameOffsets(this.predWorld, this.mirror, this.lastFrameMs);
     }
 
     // Ghost projectiles — advance and write to mirror.projectiles.

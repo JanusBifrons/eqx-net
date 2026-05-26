@@ -27,7 +27,7 @@ import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
 import { pickRespawnSector, sectorEdgePose, type Rng } from './population.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
-import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
+import { HunterBotPool, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotDistribution } from './director/HunterBotDistribution.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
 
