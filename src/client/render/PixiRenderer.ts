@@ -3,6 +3,8 @@ import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
+import { fillHitTargetSets } from './pixi/hitTargetSets.js';
+import { updateShipSprites } from './pixi/shipSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
 import { HaloRadar } from './HaloRadar';
@@ -19,8 +21,6 @@ import {
   buildShipGfxFromShape,
   shapeForKind,
   desaturate,
-  buildThrustFlameGfx,
-  buildBoostFlameGfx,
   buildAsteroidGfx,
   buildDroneGfx,
   buildGhostGfx,
@@ -486,108 +486,23 @@ export class PixiRenderer implements IRenderer {
     const seen = this._updateSeenScratch;
     seen.clear();
 
-    // Precompute the sets of entities hit by any active beam this frame —
-    // remote (other shooters' beams) and local (any mount on the local
-    // player's ship). Multi-mount/turret refactor (Phase 2c): both
-    // `mirror.remoteLasers` and `mirror.liveBeams` are now per-mount, so we
-    // flatten across all mounts to drive the damage-flash tint logic.
+    // Per-frame hit-target sets — see pixi/hitTargetSets.ts.
     const remoteHitTargets = this._updateRemoteHitTargetsScratch;
-    remoteHitTargets.clear();
-    if (mirror.remoteLasers) {
-      for (const perShooter of mirror.remoteLasers.values()) {
-        for (const laser of perShooter.values()) {
-          if (laser.targetId) remoteHitTargets.add(laser.targetId);
-        }
-      }
-    }
     const localHitTargets = this._updateLocalHitTargetsScratch;
-    localHitTargets.clear();
-    if (mirror.liveBeams) {
-      for (const beam of mirror.liveBeams.values()) {
-        if (beam.hitId) localHitTargets.add(beam.hitId);
-      }
-    }
+    fillHitTargetSets(mirror, remoteHitTargets, localHitTargets);
 
-    for (const [playerId, ship] of mirror.ships) {
-      seen.add(playerId);
-
-      let sprite = this.sprites.get(playerId);
-      if (!sprite) {
-        // Sprite is built once per ship from the catalogue's polygon + colour.
-        // Local-vs-remote is communicated by the camera-follow rather than a
-        // colour override, so all three kinds stay visually distinct.
-        sprite = buildShipGfxFromShape(shapeForKind(ship.kind));
-        this.shipContainer.addChild(sprite);
-        this.sprites.set(playerId, sprite);
-      }
-      // Multi-mount/turret refactor (Phase 3): attach turret sprites + aim
-      // lines per mount in this ship's catalogue entry. Idempotent — re-uses
-      // the existing cluster if `ship.kind` hasn't changed. Legacy single-
-      // mount ships render an invisible 0-offset 0-baseAngle stub that sits
-      // beneath the body silhouette.
-      this.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
-      // Phase 4b.2: apply this ship's current mount-rotation angles. The
-      // local player's `tickLocalMountAim` populated `mirror.ships
-      // .get(localId).mountAngles` last tick; remote players leave it
-      // undefined (until Phase 4b.3 ships the snapshot anchor) and the
-      // helper falls back to baseAngle, i.e. static barrels.
-      const shipKind = getShipKind(ship.kind ?? null);
-      const shipMounts = shipKind.mounts ?? [];
-      if (shipMounts.length > 0) {
-        this.mountVisuals.applyMountAngles(playerId, shipMounts, ship.mountAngles);
-      }
-
-      sprite.x = ship.x;
-      sprite.y = -ship.y;
-      sprite.rotation = -ship.angle;
-
-      // Damage flash takes priority; beam hit tint is secondary.
-      if (mirror.damagedShips?.has(playerId)) {
-        sprite.tint = DAMAGE_FLASH_COLOR;
-      } else if (localHitTargets.has(playerId) || remoteHitTargets.has(playerId)) {
-        sprite.tint = 0xff2222;
-      } else {
-        sprite.tint = 0xffffff;
-      }
-
-      // Thrust flame — baseline, shown for ANY acceleration. Child of the
-      // ship sprite so it inherits rotation. Lazy-created on first thrust.
-      // Added BEFORE the boost flame so the boost plume layers visually on top.
-      const isThrusting = mirror.thrustingShips?.has(playerId) ?? false;
-      let thrustFlame = this.thrustFlames.get(playerId);
-      if (isThrusting) {
-        if (!thrustFlame) {
-          thrustFlame = buildThrustFlameGfx();
-          sprite.addChild(thrustFlame);
-          this.thrustFlames.set(playerId, thrustFlame);
-        }
-        thrustFlame.visible = true;
-        // Per-frame flicker so the plume reads as fire, not a static arrow.
-        thrustFlame.scale.y = 0.85 + Math.random() * 0.4;
-        thrustFlame.alpha   = 0.75 + Math.random() * 0.25;
-      } else if (thrustFlame) {
-        thrustFlame.visible = false;
-      }
-
-      // Boost flame — layered ON TOP of thrust when both are active. Lazily
-      // created on first boost; left as a hidden child afterwards so toggling
-      // shift doesn't churn the scene graph.
-      const isBoosting = mirror.boostingShips?.has(playerId) ?? false;
-      let flame = this.boostFlames.get(playerId);
-      if (isBoosting) {
-        if (!flame) {
-          flame = buildBoostFlameGfx();
-          sprite.addChild(flame);
-          this.boostFlames.set(playerId, flame);
-        }
-        flame.visible = true;
-        // Slightly stronger flicker range than baseline thrust for "intensity".
-        flame.scale.y = 0.9 + Math.random() * 0.5;
-        flame.alpha   = 0.8 + Math.random() * 0.2;
-      } else if (flame) {
-        flame.visible = false;
-      }
-    }
+    // Active-ship sprite update — sprite creation, pose, tint, thrust
+    // + boost flames. See pixi/shipSpriteUpdater.ts.
+    updateShipSprites(mirror, {
+      shipContainer: this.shipContainer,
+      sprites: this.sprites,
+      thrustFlames: this.thrustFlames,
+      boostFlames: this.boostFlames,
+      mountVisuals: this.mountVisuals,
+      remoteHitTargets,
+      localHitTargets,
+      seenScratch: seen,
+    });
 
     // Explosion sprites spawned this frame for destroyed ships.
     // 2026-05-13 — look up the targetId across ALL three sprite maps

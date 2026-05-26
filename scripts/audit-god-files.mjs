@@ -60,7 +60,7 @@ const ALLOWLIST = {
       'SnapshotApplier, MirrorUpdater, etc.); orchestrator target ~350 LOC.',
   },
   'src/client/render/PixiRenderer.ts': {
-    cap: 1369,
+    cap: 1290,
     target: 340,
     reason:
       'v3 plan commits 10-14 split this into 15 collaborators (PixiAppLifecycle, ' +
