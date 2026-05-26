@@ -1,4 +1,9 @@
 import type { Container } from 'pixi.js';
+import { DragGesture } from './camera/dragGesture.js';
+import { PinchGesture } from './camera/pinchGesture.js';
+import { MomentumDecay } from './camera/momentumDecay.js';
+import { classifyTap } from './camera/tapVsDrag.js';
+import { zoomAround, wheelZoomFactor } from './camera/zoomAround.js';
 
 /**
  * Pure camera math, designed to be a drop-in replacement for the
@@ -15,27 +20,21 @@ import type { Container } from 'pixi.js';
  *
  * Features (feature-parity with the subset of `pixi-viewport` we used):
  *
- *   - `drag` — single-pointer pan with momentum decay after release.
- *   - `pinch` — two-finger zoom around the pinch midpoint.
- *   - `wheel` — zoom around the pointer position with smooth ramp.
+ *   - `drag` — single-pointer pan with momentum decay after release
+ *     (`camera/dragGesture.ts` + `camera/momentumDecay.ts`).
+ *   - `pinch` — two-finger zoom around the pinch midpoint
+ *     (`camera/pinchGesture.ts`).
+ *   - `wheel` — zoom around the pointer position with smooth ramp
+ *     (`camera/zoomAround.ts`).
  *   - `clampZoom` — `minScale` / `maxScale` bounds.
- *   - `decelerate` — exponential velocity decay each tick.
- *   - `clicked` — tap-vs-drag detection via distance + duration
- *     thresholds. The caller receives the world-space position at the
- *     end of a confirmed tap and hit-tests against its own geometry.
- *   - `moveCenter` — position the camera so a given world point sits at
- *     screen-centre.
- *   - `follow` — per-tick lerp toward a moving target (gameplay camera
- *     tracking the local ship).
+ *   - `clicked` — tap-vs-drag detection (`camera/tapVsDrag.ts`).
+ *   - `moveCenter` — position the camera so a given world point sits
+ *     at screen-centre.
+ *   - `follow` — per-tick lerp toward a moving target.
  *   - `screenToWorld` — coord conversion for hit-testing.
  *
- * NOT included (intentionally) — pixi-viewport features we don't use:
- * `mouseEdges`, `bounce`, `snap`, `snapZoom`, `animate`, `world*` sizing
- * helpers. Add if a future surface needs them.
- *
  * No DOM access. No postMessage. Pure state machine driven by forwarded
- * pointer/wheel events. Migrating from `pixi-viewport` to this should
- * be observably indistinguishable for in-use cases on desktop + mobile.
+ * pointer/wheel events.
  */
 
 /**
@@ -52,15 +51,6 @@ export interface CameraTarget {
     set(s: number): void;
   };
 }
-
-/**
- * Camera provides a pixi-viewport-compatible surface (center,
- * worldScreenWidth/Height, screenWidth/Height, scale, getVisibleBounds,
- * toScreen, addChild, parent) so renderer sub-managers can be ported
- * one-to-one — `pixi-viewport`'s `Viewport` is replaced by `Camera`,
- * not abstracted behind an interface. This is the single camera
- * implementation across both main-thread and worker contexts.
- */
 
 export interface CameraOptions {
   /** Minimum scale (zoom-out limit). Default 0.4. */
@@ -130,20 +120,9 @@ interface PointerState {
 export class Camera {
   private readonly opts: ResolvedOpts;
   private readonly pointers = new Map<number, PointerState>();
-
-  // Pan state
-  private isPanning = false;
-  private panStartX = 0;
-  private panStartY = 0;
-  private lastX = 0;
-  private lastY = 0;
-  private vx = 0;
-  private vy = 0;
-  private panStartStamp = 0;
-
-  // Pinch state
-  private pinchInitialDistance = 0;
-  private pinchInitialScale = 1;
+  private readonly drag = new DragGesture();
+  private readonly pinch = new PinchGesture();
+  private readonly momentum: MomentumDecay;
 
   // Follow state
   private followTarget: { x: number; y: number } | null = null;
@@ -157,6 +136,10 @@ export class Camera {
     opts: CameraOptions = {},
   ) {
     this.opts = { ...DEFAULTS, ...opts };
+    this.momentum = new MomentumDecay({
+      decelFactor: this.opts.decelFactor,
+      epsilon: this.opts.momentumEpsilon,
+    });
   }
 
   // ---------- Screen size ----------
@@ -193,11 +176,13 @@ export class Camera {
     this.pointers.set(pointerId, { x: screenX, y: screenY });
 
     if (this.pointers.size === 1) {
-      this.startPan(screenX, screenY, stamp);
+      this.drag.begin(screenX, screenY, stamp);
+      this.momentum.clear();
     } else if (this.pointers.size === 2) {
-      this.startPinch();
+      const [a, b] = [...this.pointers.values()];
+      if (a && b) this.pinch.begin(a, b, this.target.scale.x);
       // Pan is suspended during pinch.
-      this.isPanning = false;
+      this.drag.suspend();
     }
   }
 
@@ -208,16 +193,18 @@ export class Camera {
     prev.y = screenY;
 
     if (this.pointers.size === 2) {
-      this.updatePinch();
-    } else if (this.isPanning && this.pointers.size === 1) {
-      const dx = screenX - this.lastX;
-      const dy = screenY - this.lastY;
+      const [a, b] = [...this.pointers.values()];
+      if (!a || !b) return;
+      const step = this.pinch.step(a, b);
+      if (step) {
+        const newScale = this.clampScale(this.pinch.startScale() * step.ratio);
+        zoomAround(this.target, step.midX, step.midY, newScale);
+      }
+    } else if (this.drag.isPanning() && this.pointers.size === 1) {
+      const { dx, dy } = this.drag.step(screenX, screenY);
       this.target.x += dx;
       this.target.y += dy;
-      this.vx = dx;
-      this.vy = dy;
-      this.lastX = screenX;
-      this.lastY = screenY;
+      this.momentum.seed(dx, dy);
     }
   }
 
@@ -226,17 +213,21 @@ export class Camera {
     this.pointers.delete(pointerId);
 
     // Was this a single-pointer tap?
-    if (sizeBefore === 1 && this.isPanning) {
-      const ddx = screenX - this.panStartX;
-      const ddy = screenY - this.panStartY;
-      const dist = Math.hypot(ddx, ddy);
-      const elapsed = stamp - this.panStartStamp;
+    if (sizeBefore === 1 && this.drag.isPanning()) {
+      const start = this.drag.startState();
+      const cls = classifyTap(
+        start.x,
+        start.y,
+        screenX,
+        screenY,
+        start.stamp,
+        stamp,
+        { tapThresholdPx: this.opts.tapThresholdPx, tapThresholdMs: this.opts.tapThresholdMs },
+      );
+      this.drag.end();
 
-      this.isPanning = false;
-
-      if (dist < this.opts.tapThresholdPx && elapsed < this.opts.tapThresholdMs) {
-        this.vx = 0;
-        this.vy = 0;
+      if (cls.isTap) {
+        this.momentum.clear();
         const { x: worldX, y: worldY } = this.screenToWorld(screenX, screenY);
         return { wasTap: true, worldX, worldY };
       }
@@ -250,7 +241,8 @@ export class Camera {
     if (sizeBefore === 2 && this.pointers.size === 1) {
       const [remaining] = [...this.pointers.values()];
       if (remaining) {
-        this.startPan(remaining.x, remaining.y, stamp);
+        this.drag.begin(remaining.x, remaining.y, stamp);
+        this.momentum.clear();
       }
     }
 
@@ -260,16 +252,14 @@ export class Camera {
   onPointerCancel(pointerId: number): void {
     this.pointers.delete(pointerId);
     if (this.pointers.size === 0) {
-      this.isPanning = false;
-      this.vx = 0;
-      this.vy = 0;
+      this.drag.end();
+      this.momentum.clear();
     }
   }
 
   /**
    * Wheel scroll → zoom. `deltaY > 0` (wheel down) = zoom out;
-   * `deltaY < 0` = zoom in. The 0.9 / 1.1 step factor matches
-   * pixi-viewport's default `wheel({ smooth: 4 })` roughly.
+   * `deltaY < 0` = zoom in.
    *
    * Anchor behaviour: if a follow target is set (gameplay camera
    * tracking the ship), zoom around screen-centre — the ship stays
@@ -278,12 +268,11 @@ export class Camera {
    * point under the cursor stays fixed.
    */
   onWheel(deltaY: number, screenX: number, screenY: number): void {
-    const factor = deltaY > 0 ? 0.9 : 1.1;
-    const newScale = this.clampScale(this.target.scale.x * factor);
+    const newScale = this.clampScale(this.target.scale.x * wheelZoomFactor(deltaY));
     if (this.followTarget) {
-      this.zoomAround(this.screenW / 2, this.screenH / 2, newScale);
+      zoomAround(this.target, this.screenW / 2, this.screenH / 2, newScale);
     } else {
-      this.zoomAround(screenX, screenY, newScale);
+      zoomAround(this.target, screenX, screenY, newScale);
     }
   }
 
@@ -297,16 +286,8 @@ export class Camera {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   tick(_dtMs: number = 16.67): void {
     // Momentum coasts only when no pointer is active.
-    if (!this.isPanning && this.pointers.size === 0) {
-      if (Math.abs(this.vx) > this.opts.momentumEpsilon || Math.abs(this.vy) > this.opts.momentumEpsilon) {
-        this.target.x += this.vx;
-        this.target.y += this.vy;
-        this.vx *= this.opts.decelFactor;
-        this.vy *= this.opts.decelFactor;
-      } else {
-        this.vx = 0;
-        this.vy = 0;
-      }
+    if (!this.drag.isPanning() && this.pointers.size === 0) {
+      this.momentum.step(this.target);
     }
 
     // Follow — lerp toward target, regardless of momentum state.
@@ -409,12 +390,12 @@ export class Camera {
 
   /** Test-only — current panning state. */
   isPanningNow(): boolean {
-    return this.isPanning;
+    return this.drag.isPanning();
   }
 
   /** Test-only — current velocity (for momentum tests). */
   getVelocity(): { vx: number; vy: number } {
-    return { vx: this.vx, vy: this.vy };
+    return this.momentum.velocity();
   }
 
   /** Test-only — active pointer count. */
@@ -424,47 +405,7 @@ export class Camera {
 
   // ---------- Internal ----------
 
-  private startPan(screenX: number, screenY: number, stamp: number): void {
-    this.isPanning = true;
-    this.panStartX = screenX;
-    this.panStartY = screenY;
-    this.lastX = screenX;
-    this.lastY = screenY;
-    this.vx = 0;
-    this.vy = 0;
-    this.panStartStamp = stamp;
-  }
-
-  private startPinch(): void {
-    const [a, b] = [...this.pointers.values()];
-    if (!a || !b) return;
-    this.pinchInitialDistance = Math.hypot(b.x - a.x, b.y - a.y);
-    this.pinchInitialScale = this.target.scale.x;
-  }
-
-  private updatePinch(): void {
-    const [a, b] = [...this.pointers.values()];
-    if (!a || !b) return;
-    const dist = Math.hypot(b.x - a.x, b.y - a.y);
-    if (this.pinchInitialDistance === 0) return;
-    const ratio = dist / this.pinchInitialDistance;
-    const newScale = this.clampScale(this.pinchInitialScale * ratio);
-    const midX = (a.x + b.x) / 2;
-    const midY = (a.y + b.y) / 2;
-    this.zoomAround(midX, midY, newScale);
-  }
-
   private clampScale(s: number): number {
     return Math.max(this.opts.minScale, Math.min(this.opts.maxScale, s));
-  }
-
-  private zoomAround(screenX: number, screenY: number, newScale: number): void {
-    // Standard "zoom around point" — keep the world point currently
-    // under (screenX, screenY) fixed in screen space as we change scale.
-    const worldX = (screenX - this.target.x) / this.target.scale.x;
-    const worldY = (screenY - this.target.y) / this.target.scale.y;
-    this.target.scale.set(newScale);
-    this.target.x = screenX - worldX * newScale;
-    this.target.y = screenY - worldY * newScale;
   }
 }
