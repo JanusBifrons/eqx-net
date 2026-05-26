@@ -147,6 +147,13 @@ function nextShotId(): string {
  *  drop on idle. */
 const INPUT_HEARTBEAT_MS = 250;
 
+// Pure rounding helpers used in the per-snapshot replay-grade capture
+// block. Pre-fix these were declared as `const px = (n) => ...` closures
+// inside `handleSnapshot`, allocating a function pair per snapshot
+// (20 Hz). Both capture nothing — safe to hoist to module scope.
+function _px3(n: number): number { return parseFloat(n.toFixed(3)); }
+function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
+
 export class ColyseusGameClient {
   /**
    * Wall-clock source. Production code uses `REAL_CLOCK` (default —
@@ -443,6 +450,25 @@ export class ColyseusGameClient {
    *  pay zero Zustand-notification cost on no-op updates. Extracted to
    *  `HudDispatcher.ts`. */
   private readonly hudDispatcher = new HudDispatcher();
+  /** 2026-05-26 heap-growth gate step 11 — pooled `{hit, targetId, damage}`
+   *  literal for the per-hit_ack reconcileAckToFeedback call. Same shape
+   *  as `_damageReconcileScratch`: `PredictedAck` consumer reads the
+   *  fields synchronously inside `HitPredictionLedger.reconcileAck` and
+   *  never retains the reference (verified at HitPrediction.ts:142). */
+  private readonly _hitAckReconcileScratch: { hit: boolean; targetId?: string; damage?: number } = { hit: false, targetId: undefined, damage: undefined };
+  /** 2026-05-26 heap-growth gate step 11 — pooled per-snapshot replay-
+   *  grade serverState capture. Pre-fix `recPositions` was a 10-field
+   *  object literal allocated per snapshot (20 Hz). Both consumers
+   *  (`logEvent('correction', ...)` and `logEvent('snapshot', ...)`)
+   *  spread the fields out by value, so the scratch identity does not
+   *  matter — the LogEntry's `data` ends up with copied numbers. */
+  private readonly _recPositionsScratch = {
+    serverX: 0, serverY: 0,
+    serverVx: 0, serverVy: 0,
+    serverAngle: 0, serverAngvel: 0,
+    beforeX: 0, beforeY: 0,
+    afterX: 0, afterY: 0,
+  };
   /** 2026-05-25 heap-growth gate step 1 — persistent Set scratch for
    *  tracking lingering shipInstanceIds seen in the current snapshot.
    *  Pre-fix allocated `new Set<string>()` per snapshot (20 Hz).
@@ -1020,10 +1046,18 @@ export class ColyseusGameClient {
       // mispredicted number is hard-cancelled the same frame the ghost
       // fades. resolve() itself is unchanged (still fades the ghost salvo
       // by clientShotId on the wire ack).
+      // 2026-05-26 heap-growth gate step 11: pooled scratch instead of
+      // a fresh `{hit, targetId, damage}` literal per hit_ack. Same
+      // pattern as `_damageReconcileScratch` (step 8) — the consumer
+      // (`HitPredictionLedger.reconcileAck`, HitPrediction.ts:142)
+      // reads fields synchronously and never retains the reference.
+      this._hitAckReconcileScratch.hit = ack.hit;
+      this._hitAckReconcileScratch.targetId = ack.targetId;
+      this._hitAckReconcileScratch.damage = ack.damage;
       reconcileAckToFeedback(
         this._hitLedger,
         ack.clientShotId,
-        { hit: ack.hit, targetId: ack.targetId, damage: ack.damage },
+        this._hitAckReconcileScratch,
         this._reconcileSink,
         this.clock.now(),
       );
@@ -1884,24 +1918,29 @@ export class ColyseusGameClient {
         ? this._recentCorrFlags.reduce((a, b) => a + b, 0) / this._recentCorrFlags.length
         : 0;
       const rec = this.reconciler;
-      const px = (n: number): number => parseFloat(n.toFixed(3));
-      const pa = (n: number): number => parseFloat(n.toFixed(5));
       // Replay-grade serverState capture (plan: capture-driven replay
       // Phase A.1, 2026-05-21). The reconciler's `lastServerState` is
       // the authoritative pose for the LOCAL player at this snapshot.
       // Captured here so the replay harness can synthesize a minimal
       // SnapshotMessage and drive `handleSnapshot()` deterministically.
+      // 2026-05-26 heap-growth gate step 11: mutate the persistent
+      // `_recPositionsScratch` instead of allocating a fresh literal
+      // per snapshot. Both `logEvent` consumers spread the fields out
+      // by value, so identity does not matter. Rounding helpers are
+      // module-level (`_px3`/`_pa5`) — capture nothing, no closure
+      // allocation per snapshot.
       const _ss = rec.lastServerState as { x: number; y: number; vx?: number; vy?: number; angle?: number; angvel?: number };
-      const recPositions = {
-        serverX:      px(_ss.x),
-        serverY:      px(_ss.y),
-        serverVx:     px(_ss.vx ?? 0),
-        serverVy:     px(_ss.vy ?? 0),
-        serverAngle:  pa(_ss.angle ?? 0),
-        serverAngvel: pa(_ss.angvel ?? 0),
-        beforeX: px(rec.lastBeforePos.x),   beforeY: px(rec.lastBeforePos.y),
-        afterX:  px(rec.lastAfterPos.x),    afterY:  px(rec.lastAfterPos.y),
-      };
+      const recPositions = this._recPositionsScratch;
+      recPositions.serverX      = _px3(_ss.x);
+      recPositions.serverY      = _px3(_ss.y);
+      recPositions.serverVx     = _px3(_ss.vx ?? 0);
+      recPositions.serverVy     = _px3(_ss.vy ?? 0);
+      recPositions.serverAngle  = _pa5(_ss.angle ?? 0);
+      recPositions.serverAngvel = _pa5(_ss.angvel ?? 0);
+      recPositions.beforeX      = _px3(rec.lastBeforePos.x);
+      recPositions.beforeY      = _px3(rec.lastBeforePos.y);
+      recPositions.afterX       = _px3(rec.lastAfterPos.x);
+      recPositions.afterY       = _px3(rec.lastAfterPos.y);
 
       if (posCorrection || angCorrection) {
         logEvent('correction', {
@@ -1949,28 +1988,41 @@ export class ColyseusGameClient {
         ...recPositions,
       });
 
-      useUIStore.getState().setDevData({
-        rtt: this.stats.rttMs,
-        drift: drift,
-        angleDrift: angleDrift,
-        lerping: this.reconciler.isLerping,
-        snapshotIntervalMs: intervalMs,
-        ticksAhead: this.stats.ticksAhead,
-        snapshotCount: this.stats.snapshotCount,
-        significantCorrectionCount: this.stats.significantCorrectionCount,
-        significantAngleCorrectionCount: this.stats.significantAngleCorrectionCount,
-        maxDriftUnits: this.stats.maxDriftUnits,
-        maxAngleDriftRad: this.stats.maxAngleDriftRad,
-        ackedTick: ackedTick,
-        inputTick: this.inputTick,
-        serverTick: snap.serverTick,
-        serverX: this.reconciler.lastServerState.x,
-        serverY: this.reconciler.lastServerState.y,
-        beforeX: this.reconciler.lastBeforePos.x,
-        beforeY: this.reconciler.lastBeforePos.y,
-        afterX: this.reconciler.lastAfterPos.x,
-        afterY: this.reconciler.lastAfterPos.y,
-      });
+      // 2026-05-26 heap-growth gate step 11: gate the per-snapshot
+      // setDevData dispatch on the Debug tab actually being mounted.
+      // The sole reader (`ConnectionDiagnostics`) lives inside
+      // `DebugTab`, which returns `null` when `!isDrawerOpen` (see
+      // `src/client/layout/Drawer/tabs/DebugTab.tsx:43`). With the
+      // drawer closed OR on a non-debug tab, no subscriber exists, so
+      // pushing a fresh 19-field object into Zustand at 20 Hz pays
+      // allocation + diff-check cost for nothing. Reading the gate
+      // via `getState()` (non-subscribing, sync) is the established
+      // pattern in this file (see clientSingleton.ts).
+      const _ui = useUIStore.getState();
+      if (_ui.isDrawerOpen && _ui.drawerTab === 'debug') {
+        _ui.setDevData({
+          rtt: this.stats.rttMs,
+          drift: drift,
+          angleDrift: angleDrift,
+          lerping: this.reconciler.isLerping,
+          snapshotIntervalMs: intervalMs,
+          ticksAhead: this.stats.ticksAhead,
+          snapshotCount: this.stats.snapshotCount,
+          significantCorrectionCount: this.stats.significantCorrectionCount,
+          significantAngleCorrectionCount: this.stats.significantAngleCorrectionCount,
+          maxDriftUnits: this.stats.maxDriftUnits,
+          maxAngleDriftRad: this.stats.maxAngleDriftRad,
+          ackedTick: ackedTick,
+          inputTick: this.inputTick,
+          serverTick: snap.serverTick,
+          serverX: this.reconciler.lastServerState.x,
+          serverY: this.reconciler.lastServerState.y,
+          beforeX: this.reconciler.lastBeforePos.x,
+          beforeY: this.reconciler.lastBeforePos.y,
+          afterX: this.reconciler.lastAfterPos.x,
+          afterY: this.reconciler.lastAfterPos.y,
+        });
+      }
     }
   }
 

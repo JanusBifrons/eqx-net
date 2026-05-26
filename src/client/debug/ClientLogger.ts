@@ -81,11 +81,16 @@ export function logEvent(tag: string, data: Record<string, unknown>): void {
   if (_maxEntries < 0) {
     _maxEntries = isDiagEnabled() ? DIAG_MAX_ENTRIES : PROD_MAX_ENTRIES;
   }
-  // Probe 5 — `?diag=light` mode suppresses the highest-cardinality
-  // per-RAF tags to cut capture size by ~60-70 %. Resolved once via
-  // cached `_diagLight`; subsequent calls are a single boolean check.
-  if (_diagLight === null) isDiagLightMode(); // populates _diagLight
-  if (_diagLight === true && HIGH_VOLUME_TAGS.has(tag)) return;
+  // HIGH_VOLUME_TAGS gate (inverted 2026-05-26 — heap-growth gate
+  // step 11). Per-tick / per-RAF tags fire 60–360× per second and
+  // dominate the residual allocation slope under combat — see the
+  // d54fne capture analysis. Production gameplay no longer needs them
+  // in the ring; full diag (`?diag=1` or webdriver-auto-enable) and
+  // the replay harness still get them. `?diag=light` continues to
+  // drop them (pre-existing behaviour). `?diag=0` drops them too
+  // (production-parity opt-out). Resolved via cached predicates —
+  // hot-path cost is two boolean reads.
+  if (HIGH_VOLUME_TAGS.has(tag) && !isFullDiagMode()) return;
   const entry: LogEntry = { ts: performance.now(), tag, data };
   entries.push(entry);
   if (entries.length > _maxEntries) entries.shift();
@@ -148,15 +153,20 @@ export function drainPendingStream(): readonly LogEntry[] {
  *   3. `?diag=1` — explicit opt-in on a normal browser session.
  *   4. otherwise off — **zero cost on a normal player session**.
  *
- * This gates ONLY the *new* expensive diagnostic work that F1 adds:
+ * This gates the *new* expensive diagnostic work that F1 adds:
  *   - the worker's `FRAME_MARKERS` postMessage (via `SET_DIAG_MARKERS`),
  *   - `WorkerRendererClient`'s `mirror_clone` `JSON.stringify(mirror)`,
  *   - `ColyseusClient`'s `mirror_rebuild` bracket.
  *
- * It deliberately does **NOT** gate `logEvent` itself — the existing
- * always-on producers (`rafTick`, `snapshot`, `correction`, …) and the
- * E2E consumers of `window.__eqxLogs` must keep working unchanged. A
- * blanket gate would regress every spec that reads the ring.
+ * It ALSO gates the `HIGH_VOLUME_TAGS` set inside `logEvent` (2026-05-26
+ * heap-growth gate step 11) via the `isFullDiagMode()` predicate
+ * below — `rafTick`/`input_intent`/`local_pose_predicted`/
+ * `local_pose_rendered`/`inputSent` only enter the ring under full
+ * diag (`?diag=1` or webdriver). Production gameplay (no flag) and
+ * `?diag=light` drop them, eliminating ~360 per-tick + per-RAF allocs/s.
+ * Lower-cardinality always-on producers (`snapshot`, `correction`,
+ * `damage_number_*`, `raf_gap`, `longtask`, etc.) keep firing on
+ * every code path so E2E + capture-driven debugging keep working.
  *
  * Cached at first read; the URL/webdriver state is fixed for the
  * document's lifetime so re-evaluating per frame would be waste. Tests
@@ -236,6 +246,20 @@ const HIGH_VOLUME_TAGS = new Set<string>([
   'local_pose_rendered',
   'inputSent',
 ]);
+
+/**
+ * "Full diag" — `?diag=1` or webdriver-auto-enable, but NOT `?diag=light`
+ * and NOT `?diag=0` / no flag. The single predicate that gates the
+ * HIGH_VOLUME_TAGS retention in `logEvent` (2026-05-26 heap-growth
+ * gate step 11). Replay harnesses run under webdriver and so receive
+ * full per-tick / per-RAF events; manual device captures opt in via
+ * `?diag=1`; production gameplay (no flag) and explicit `?diag=0` /
+ * `?diag=light` all drop the high-volume tags. Same cache lifetime as
+ * its constituent predicates (cleared by `__resetDiagCache`).
+ */
+export function isFullDiagMode(): boolean {
+  return isDiagEnabled() && !isDiagLightMode();
+}
 
 /**
  * Streaming auto-capture mode — `?autocapture=1`. Mirror of the

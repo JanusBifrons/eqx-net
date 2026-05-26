@@ -25,6 +25,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
+import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 
 /** The server's `assignPlayerId` rejects non-UUID join options for security.
  *  Tests use real UUIDs and assert against the same value end-to-end. */
@@ -131,7 +132,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     // Phase 6b cleanup contract: the ownerlessShips map is keyed by the
     // hull's shipInstanceId (not playerId). Reach into the private field
     // to lock the keying — the rest of the suite covers the side-effects.
-    const ownerless = (room as unknown as { ownerlessShips: Map<string, unknown> }).ownerlessShips;
+    const ownerless = (room as unknown as SectorRoom)._internals.ownerlessShips;
     expect(ownerless.has(originalShipId)).toBe(false); // no timer pre-disconnect
 
     await harness.disconnectClient(client);
@@ -153,7 +154,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     const room = harness.getServerRoom()!;
     const state = room.state as SectorState;
     const [originalShipId] = [...state.ships.entries()][0]!;
-    const ownerless = (room as unknown as { ownerlessShips: Map<string, unknown> }).ownerlessShips;
+    const ownerless = (room as unknown as SectorRoom)._internals.ownerlessShips;
 
     await harness.disconnectClient(client1);
     await harness.advance(300);
