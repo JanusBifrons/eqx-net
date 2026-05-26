@@ -42,6 +42,18 @@ const REMOTE_LASER_COLOR = 0xff6600;
 const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
 
+// Per-frame Pixi stroke-style scratches. The renderer redraws beams
+// every RAF (60–90 Hz) via clear() + moveTo + lineTo + stroke(...). Pre-
+// fix the style literals were allocated per stroke call (2 strokes/mount
+// × N mounts × per RAF); Pixi consumes the style synchronously and never
+// retains the reference, so a single reusable object per style is safe.
+// Mutate `alpha` for remote beams (TTL-based fade); local glow/core
+// styles are constant.
+const _liveBeamGlowStyle: { color: number; width: number; alpha: number } = { color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 };
+const _liveBeamCoreStyle: { color: number; width: number; alpha: number } = { color: LASER_CORE_COLOR, width: 1, alpha: 1 };
+const _remoteBeamGlowStyle: { color: number; width: number; alpha: number } = { color: REMOTE_LASER_COLOR, width: 3, alpha: 0.4 };
+const _remoteBeamCoreStyle: { color: number; width: number; alpha: number } = { color: 0xffaa44, width: 1, alpha: 1 };
+
 /**
  * Load-curtain tween constants. The curtain rises quickly (so the
  * canvas doesn't briefly leak through during the transition into
@@ -974,12 +986,14 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Outer glow
+          // Outer glow + bright core. Styles hoisted to module-level
+          // scratches; mutate `alpha` per beam (TTL fade) before stroke.
+          _remoteBeamGlowStyle.alpha = alpha * 0.4;
           this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-          this.remoteBeamGfx.stroke({ color: REMOTE_LASER_COLOR, width: 3, alpha: alpha * 0.4 });
-          // Bright core
+          this.remoteBeamGfx.stroke(_remoteBeamGlowStyle);
+          _remoteBeamCoreStyle.alpha = alpha;
           this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-          this.remoteBeamGfx.stroke({ color: 0xffaa44, width: 1, alpha });
+          this.remoteBeamGfx.stroke(_remoteBeamCoreStyle);
         }
       }
       this.remoteBeamGfx.visible = true;
@@ -1020,12 +1034,12 @@ export class PixiRenderer implements IRenderer {
         const fromY = origin.y + fwdY * 20;
         const toX = fromX + fwdX * beam.dist;
         const toY = fromY + fwdY * beam.dist;
-        // Outer glow
+        // Outer glow (style literal hoisted to `_liveBeamGlowStyle`).
         this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke({ color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 });
-        // Bright core
+        this.liveBeamGfx.stroke(_liveBeamGlowStyle);
+        // Bright core (style literal hoisted to `_liveBeamCoreStyle`).
         this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke({ color: LASER_CORE_COLOR, width: 1, alpha: 1 });
+        this.liveBeamGfx.stroke(_liveBeamCoreStyle);
       }
       this.liveBeamGfx.visible = true;
     } else {

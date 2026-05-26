@@ -20,6 +20,16 @@ function healthColor(pct: number): number {
   return 0xff3333;
 }
 
+// Per-frame Pixi fill-style scratches. Each active bar fires two
+// `gfx.fill({ ... })` calls per frame; without these the literal
+// objects were allocated 2× per bar per frame. Mutate the colour /
+// alpha fields in place and reuse the same object identity — Pixi v8's
+// `fill` consumes the style synchronously and does not retain the
+// reference. Module-level (not instance) because the manager is a
+// singleton per renderer.
+const _bgFillStyle: { color: number; alpha: number } = { color: 0x222222, alpha: 0.7 };
+const _fgFillStyle: { color: number; alpha: number } = { color: 0x44ff44, alpha: 1 };
+
 export class HealthBarManager {
   private readonly container: Container;
   private readonly bars = new Map<string, HealthBarEntry>();
@@ -102,15 +112,18 @@ export class HealthBarManager {
       const barX = ex - BAR_WIDTH / 2;
       const barY = -ey - BAR_OFFSET_Y; // Y-flip + offset upward
 
-      // Background.
+      // Background. Reuse the module-level scratch style — Pixi consumes
+      // the literal synchronously, so mutating one object across frames is
+      // safe and saves 2 alloc/frame/bar.
       entry.gfx.rect(barX, barY, BAR_WIDTH, BAR_HEIGHT);
-      entry.gfx.fill({ color: 0x222222, alpha: 0.7 });
+      entry.gfx.fill(_bgFillStyle);
 
       // Foreground.
       const fgWidth = BAR_WIDTH * Math.max(0, Math.min(1, entry.healthPct));
       if (fgWidth > 0) {
         entry.gfx.rect(barX, barY, fgWidth, BAR_HEIGHT);
-        entry.gfx.fill({ color: healthColor(entry.healthPct) });
+        _fgFillStyle.color = healthColor(entry.healthPct);
+        entry.gfx.fill(_fgFillStyle);
       }
     }
   }

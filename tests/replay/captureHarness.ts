@@ -134,6 +134,14 @@ export interface ReplayOptions {
   /** Hard cap on synthesised rafTicks per inter-snapshot gap so a
    *  multi-second pause doesn't try to spin millions of frames. */
   maxRafsPerGap?: number;
+  /** Optional per-event probe — invoked AFTER each event is processed.
+   *  Used by the d54fne heap-spike measurement test to sample
+   *  `process.memoryUsage().heapUsed` at intervals during the replay.
+   *  Pure observation; must not mutate harness state. Returning a
+   *  promise is supported but not awaited (perf-sensitive in tight
+   *  inner loops — callers should keep the probe synchronous).
+   *  `eventIndex` is 0-based across the entire timeline. */
+  onEvent?: (eventIndex: number, ev: TimelineEvent) => void;
 }
 
 /**
@@ -233,6 +241,8 @@ export async function replayCapture(
   // (Capture cadence: one input_intent per inner tick, so the harness's
   // keyboard always reflects the captured user intent at the moment of
   // the production code's keyboard.read() call.)
+  const onEventProbe = _opts.onEvent;
+  let eventIndex = 0;
   for (const ev of cap.events) {
     clock.set(ev.ts);
 
@@ -348,6 +358,8 @@ export async function replayCapture(
         // diagnostic comparison if Phase E needs it.
         break;
     }
+    if (onEventProbe !== undefined) onEventProbe(eventIndex, ev);
+    eventIndex++;
   }
 
   // 7. Capture sent messages from MockRoom into the trace.
