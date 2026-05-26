@@ -50,6 +50,7 @@ import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
+import { AiFireResolver } from './AiFireResolver.js';
 import {
   SEQLOCK_IDX,
   TICK_IDX,
@@ -94,8 +95,6 @@ import {
   projectileSweepCircle,
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
-  HITSCAN_DAMAGE,
-  HITSCAN_RANGE,
   WEAPON_COOLDOWN_TICKS,
   SHIP_COLLISION_RADIUS,
   SHIP_MAX_HEALTH,
@@ -445,6 +444,9 @@ export class SectorRoom extends Room<SectorState> {
    *  `this.liveProjectiles.size` keep the same Map identity. */
   private projectiles!: ProjectilePipeline;
   private get liveProjectiles(): Map<string, ProjectileRecord> { return this.projectiles.liveProjectiles; }
+  /** AI drone weapon-fire resolver (per-mount hitscan + laser_fired
+   *  broadcast). Extracted to `AiFireResolver.ts` (commit 21 partial). */
+  private aiFireResolver!: AiFireResolver;
   /** Two-layer shield/hull damage + regen routing. Owns the swarm-side
    *  shield/hull state (swarmHealth, swarmShield, swarmShieldLastDmg) +
    *  the three layered-damage methods. Extracted to
@@ -682,6 +684,25 @@ export class SectorRoom extends Room<SectorState> {
       sectorKey: () => this.sectorKey,
       logger,
       serverLogEvent,
+    });
+
+    // AI drone weapon-fire resolver. Composes the per-mount hitscan +
+    // laser_fired broadcast path that mirrors the player handleFire.
+    this.aiFireResolver = new AiFireResolver({
+      lastFireClientTick: this.lastFireClientTick,
+      swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
+      swarmRegistry: this.swarmRegistry,
+      resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+      mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
+      droneMountAngles: this.mountTicker.droneMountAngles,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipPoseCache: this.shipPoseCache,
+      playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
+        this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
+      applyDamage: (targetId, shooterId, damage) =>
+        this.applyDamage(targetId, shooterId, damage),
+      broadcast: (type, msg) => this.broadcast(type, msg),
     });
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
@@ -1424,83 +1445,7 @@ export class SectorRoom extends Room<SectorState> {
    * preview the duplication is contained to this single method.
    */
   private handleAiFire(shooterId: string, dirX: number, dirY: number, tick: number): void {
-    const lastFireCt = this.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) return;
-    this.lastFireClientTick.set(shooterId, tick);
-
-    const len = Math.hypot(dirX, dirY);
-    if (len < 0.001) return;
-    const dirNdx = dirX / len;
-    const dirNdy = dirY / len;
-
-    // Drone fires from its own pose, offset 16u along the firing direction so
-    // it doesn't self-hit on the next-tick ray. Phase 2a: iterate mounts in
-    // the drone's primary slot — for legacy single-mount drones this loops
-    // once and produces identical behaviour to the pre-refactor path.
-    const self = this.swarmEntitySnapshot(shooterId);
-    if (!self) return;
-    const shooterRec = this.swarmRegistry.get(shooterId);
-    const droneKindId = shooterRec?.shipKind ?? DEFAULT_SHIP_KIND;
-    const droneKind = getShipKind(droneKindId);
-    const slotMounts = this.resolveSlotMounts(droneKind);
-    if (slotMounts.length === 0) return;
-
-    // The fire direction the AI computed (`dirX, dirY`) is the drone's body
-    // intent. Re-express as an angle so mount.baseAngle can be added per
-    // mount (mirroring the player path's `dirAngle + mount.baseAngle`).
-    // Phase 4c: for drones with rotating mounts, also add the per-mount
-    // slewed angle from `droneMountAngles` so hits land where the visible
-    // barrel points (and so the broadcast `laser_fired` carries the same
-    // direction observers see the turret aimed at). Legacy single-mount
-    // drones have `droneMountAngles` un-entry → currentMountAngle = 0,
-    // preserving the pre-4c behaviour bit-for-bit.
-    const fireAngle = Math.atan2(-dirNdx, dirNdy);
-    const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
-    const droneAngles = this.droneMountAngles.get(shooterId);
-
-    for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
-      const mount = slotMounts[mIdx]!;
-      const mountWorld = this.mountWorldOrigin(self.x, self.y, self.angle, mount);
-      const currentMountAngle = droneAngles?.[mIdx] ?? 0;
-      const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
-      const ndx = -Math.sin(mountFireAngle);
-      const ndy = Math.cos(mountFireAngle);
-      const rayFromX = mountWorld.x + ndx * 16;
-      const rayFromY = mountWorld.y + ndy * 16;
-
-      let hitId: string | null = null;
-      let hitDist = Infinity;
-      for (const [targetId] of this.playerToSlot) {
-        const targetShip = this.getActiveShip(targetId);
-        if (!targetShip || !targetShip.alive) continue;
-        const pose = this.shipPoseCache.get(targetId);
-        if (!pose) continue;
-        const dist = this.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, pose.angle);
-        if (dist !== null && dist < hitDist) {
-          hitDist = dist;
-          hitId = targetId;
-        }
-      }
-
-      if (hitId) {
-        this.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
-      }
-
-      const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-      const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-
-      this.broadcast('laser_fired', {
-        type: 'laser_fired',
-        shooterId: wireShooterId,
-        mountId: mount.id,
-        fromX: rayFromX,
-        fromY: rayFromY,
-        toX: beamEndX,
-        toY: beamEndY,
-        hit: !!hitId,
-        targetId: hitId ?? undefined,
-      } satisfies LaserFiredEvent);
-    }
+    this.aiFireResolver.resolve(shooterId, dirX, dirY, tick);
   }
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
