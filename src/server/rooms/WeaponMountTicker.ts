@@ -110,10 +110,52 @@ export class WeaponMountTicker {
   readonly playerSlotTargets = new Map<string, string | null>();
   readonly droneSlotTargets = new Map<string, string | null>();
 
-  /** Pooled per-tick target lists — drone candidates (rebuilt by tickPlayer). */
+  /** Pooled per-tick target lists — drone candidates (rebuilt by tickPlayer).
+   *  Logical-length-over-physical-slot pattern (plan: quirky-rabbit,
+   *  Phase 5): pre-fix `targets.push({ id, x, y, vx, vy })` minted a
+   *  fresh 5-field literal per swarm entity per tick. Now we reuse the
+   *  array's slot instances and `targets.length = i` to truncate
+   *  logically. Safe per WeaponMountController.pickTarget — it returns
+   *  the MountTargetView reference but the caller (tickPlayer below)
+   *  only reads `target?.id` (a string), never retaining the view past
+   *  the tick. */
   private readonly mountTargetsScratch: MountTargetView[] = [];
-  /** Pooled per-tick player candidates (rebuilt by tickDrone). */
+  /** Pooled per-tick player candidates (rebuilt by tickDrone). Same
+   *  logical-length pattern as `mountTargetsScratch`. */
   private readonly droneMountTargetsScratch: MountTargetView[] = [];
+
+  /** Acquire-or-create a MountTargetView slot. Subsequent calls
+   *  overwrite the SAME instance, eliminating per-tick literal allocs.
+   *
+   *  The MountTargetView contract (`src/core/ai/WeaponMountController.ts`)
+   *  declares its fields `readonly` so consumers can't mutate the
+   *  shared view between picks. We violate that at THIS write site
+   *  ONLY — the cast to `MutableMountTargetView` is local; downstream
+   *  readers (`pickTarget`) still see the readonly interface and can't
+   *  mutate. The consumers also don't retain references past the
+   *  tick (verified: `pickTarget` returns `target?.id` upstream of
+   *  storage), so the reuse is invisible to them. */
+  private static writeTargetSlot(
+    arr: MountTargetView[],
+    i: number,
+    id: string,
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+  ): void {
+    type MutableMountTargetView = { -readonly [K in keyof MountTargetView]: MountTargetView[K] };
+    const slot = arr[i] as MutableMountTargetView | undefined;
+    if (!slot) {
+      arr[i] = { id, x, y, vx, vy };
+      return;
+    }
+    slot.id = id;
+    slot.x = x;
+    slot.y = y;
+    slot.vx = vx;
+    slot.vy = vy;
+  }
 
   constructor(private readonly deps: WeaponMountTickerDeps) {}
 
@@ -128,20 +170,23 @@ export class WeaponMountTicker {
     if (d.playerToSlot.size === 0) return;
 
     // Build the drone candidate list once per tick — same list re-used
-    // for every player's pickTarget call.
+    // for every player's pickTarget call. Logical-length over physical
+    // slot: reuse view instances across ticks (Phase 5 — invariant #14).
     const targets = this.mountTargetsScratch;
-    targets.length = 0;
+    let count = 0;
     for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1) continue;
       const b = slotBase(rec.slot);
-      targets.push({
-        id: rec.id,
-        x: d.sabF32[b + SLOT_X_OFF]!,
-        y: d.sabF32[b + SLOT_Y_OFF]!,
-        vx: d.sabF32[b + SLOT_VX_OFF]!,
-        vy: d.sabF32[b + SLOT_VY_OFF]!,
-      });
+      WeaponMountTicker.writeTargetSlot(
+        targets, count, rec.id,
+        d.sabF32[b + SLOT_X_OFF]!,
+        d.sabF32[b + SLOT_Y_OFF]!,
+        d.sabF32[b + SLOT_VX_OFF]!,
+        d.sabF32[b + SLOT_VY_OFF]!,
+      );
+      count++;
     }
+    targets.length = count;
 
     for (const [playerId] of d.playerToSlot) {
       const ship = d.getActiveShip(playerId);
@@ -213,16 +258,18 @@ export class WeaponMountTicker {
     if (d.swarmRegistry.size() === 0) return;
 
     // Build the player candidate list once per tick (shared across all
-    // drones).
+    // drones). Logical-length over physical slot as above.
     const targets = this.droneMountTargetsScratch;
-    targets.length = 0;
+    let count = 0;
     for (const [pid] of d.playerToSlot) {
       const ship = d.getActiveShip(pid);
       if (!ship?.alive) continue;
       const pose = d.shipPoseCache.get(pid);
       if (!pose) continue;
-      targets.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
+      WeaponMountTicker.writeTargetSlot(targets, count, pid, pose.x, pose.y, pose.vx, pose.vy);
+      count++;
     }
+    targets.length = count;
 
     for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1) continue; // asteroids: no turrets
