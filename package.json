@@ -20,6 +20,7 @@
     "coverage": "vitest run --coverage --exclude \"**/*.integration.test.ts\"",
     "bench": "vitest bench --run",
     "bench:check": "tsx benchmarks/run-bench-check.ts",
+    "bench:gc": "tsx --expose-gc scripts/run-gc-bench.ts",
     "e2e": "playwright test --project=smoke --project=feature",
     "e2e:smoke": "playwright test --project=smoke",
     "e2e:feature": "playwright test --project=feature",

@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "capturedAt": "2026-05-27T14:37:42.195Z",
+  "sample": {
+    "workload": "broadcaster-20hz-30s",
+    "durationSec": 30.01,
+    "majorGcCount": 0,
+    "gcPauseTotalMs": 0,
+    "gcPauseMaxMs": 0
+  }
+}
