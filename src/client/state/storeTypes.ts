@@ -98,6 +98,21 @@ export interface DevData {
   afterY: number;
 }
 
+/** Rolling-30 s health stats — paradigm plan (quirky-rabbit) Phase 6.
+ *  Published once per second from `src/client/debug/healthStats.ts`'s
+ *  publisher. The DevOverlay surfaces both windows; consumers should
+ *  treat 0 as "no recent events" not "metric unavailable". */
+export interface UIHealthStats {
+  /** Server major-GC pauses received via the `gc_pause` Colyseus
+   *  broadcast. Only MSC pauses cross the 5 ms threshold; Scavenge is
+   *  filtered out server-side. */
+  serverGc: { count30s: number; maxMs30s: number };
+  /** Browser longtask events (>50 ms) from `PerformanceObserver`.
+   *  Includes GC pauses on the JS thread, but also any other blocking
+   *  work — honest about what it measures (not "allocation rate"). */
+  longtask: { count30s: number; maxMs30s: number };
+}
+
 export interface UIStore {
   connectionStatus: ConnectionStatus;
   sectorName: string;
@@ -126,6 +141,9 @@ export interface UIStore {
    *  running over budget, which is a different failure mode than TiDi. */
   serverTickHz: number;
   devData: DevData;
+  /** Paradigm plan (quirky-rabbit) Phase 6 — rolling 30 s GC/longtask
+   *  stats, published once per second from `healthStats.ts`. */
+  healthStats: UIHealthStats;
   /** Fraction 0–1 of snapshots that triggered a significant correction. Always-visible HUD stat. */
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
@@ -204,6 +222,7 @@ export interface UIStore {
   setClockRate: (n: number) => void;
   setServerTickHz: (n: number) => void;
   setDevData: (d: DevData) => void;
+  setHealthStats: (s: UIHealthStats) => void;
   setDead: (dead: boolean) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;

@@ -60,3 +60,6 @@ export type { BotAggroEvent } from './messages/livingWorldMessages.js';
 
 // Multi-ship roster (server → client)
 export type { ShipRosterEntry, ShipRosterMessage } from './messages/rosterMessages.js';
+
+// Server → client diagnostic broadcasts (paradigm plan: quirky-rabbit, Phase 6).
+export type { GcPauseEventMessage } from './messages/diagMessages.js';

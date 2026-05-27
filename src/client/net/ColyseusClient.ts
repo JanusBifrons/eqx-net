@@ -2,7 +2,7 @@ import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
-import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage } from '@shared-types/messages';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -50,6 +50,7 @@ import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
+import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
@@ -821,6 +822,12 @@ export class ColyseusGameClient {
     // client-receive gaps with the server emitting cleanly throughout).
     // Idempotent; safe to call again on reconnect.
     installLongtaskObserver();
+    // Paradigm plan (quirky-rabbit) Phase 6 — kick the rolling-30 s
+    // health-stats publisher. Idempotent at the function-level: the
+    // setInterval is set per call, but every connect() call is in fact
+    // a fresh ColyseusClient instance via clientSingleton, so it lands
+    // exactly once per session.
+    startHealthStatsPublisher((s) => useUIStore.getState().setHealthStats(s));
 
     // Init client-side prediction world before joining so it is ready as soon as
     // we receive our playerId.
@@ -1072,6 +1079,13 @@ export class ColyseusGameClient {
 
     room.onMessage('shield', (evt: ShieldEventMessage) => {
       this.handleShield(evt);
+    });
+
+    // Paradigm plan (quirky-rabbit) Phase 6 — server `gc_pause` events
+    // feed the rolling 30 s health stats ring; the publisher pushes
+    // the aggregate to Zustand at 1 Hz for the DevOverlay.
+    room.onMessage('gc_pause', (evt: GcPauseEventMessage) => {
+      recordServerGcPause(evt.durationMs);
     });
     room.onMessage('destroy', (evt: DestroyEvent) => {
       this.handleDestroy(evt);
