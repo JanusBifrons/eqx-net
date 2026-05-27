@@ -46,7 +46,7 @@ import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { preResetRemoteShips, applyDroneMountAngles, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
@@ -2530,15 +2530,21 @@ export class ColyseusGameClient {
         // lerpOffset. The GROUND TRUTH for the on-device user experience
         // and the basis for `assertFramePacingSmooth` (plan: render-
         // jitter-fix Phase 0a) and `assertNoTeleport`.
-        logEvent('local_pose_rendered', {
-          inputTick: this.inputTick,
-          x: Math.round((drX + ox) * 1000) / 1000,
-          y: Math.round((drY + oy) * 1000) / 1000,
-          angle: Math.round((drAngle + oa) * 10000) / 10000,
-          lerpOffsetX: Math.round(ox * 1000) / 1000,
-          lerpOffsetY: Math.round(oy * 1000) / 1000,
-          lerpAngleOffset: Math.round(oa * 10000) / 10000,
-        });
+        // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). `logEvent`
+        // would discard this in production but the object literal was
+        // being built per-RAF regardless. Gate at the callsite so the
+        // literal is never even allocated on a production session.
+        if (isFullDiagMode()) {
+          logEvent('local_pose_rendered', {
+            inputTick: this.inputTick,
+            x: Math.round((drX + ox) * 1000) / 1000,
+            y: Math.round((drY + oy) * 1000) / 1000,
+            angle: Math.round((drAngle + oa) * 10000) / 10000,
+            lerpOffsetX: Math.round(ox * 1000) / 1000,
+            lerpOffsetY: Math.round(oy * 1000) / 1000,
+            lerpAngleOffset: Math.round(oa * 10000) / 10000,
+          });
+        }
 
         // Diagnostic — track swarm entities entering/leaving overlap range.
         // The user reported "overlapping with enemy ships" (drones, since
@@ -2928,18 +2934,22 @@ export class ColyseusGameClient {
       // is the ground truth of what the loop SAW). Joystick vector pulled
       // raw via `getJoystickVector()` so the replay can reconstruct
       // analog stick motion (not just the booleans it resolved to).
-      const _jv = this.touchInput?.getJoystickVector() ?? null;
-      logEvent('input_intent', {
-        tick,
-        thrust,
-        turnLeft,
-        turnRight,
-        boost,
-        reverse,
-        fireHeld,
-        joystickX: _jv ? Math.round(_jv.x * 1000) / 1000 : null,
-        joystickY: _jv ? Math.round(_jv.y * 1000) / 1000 : null,
-      });
+      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
+      // joystick-vector read + object literal when not in diag mode.
+      if (isFullDiagMode()) {
+        const _jv = this.touchInput?.getJoystickVector() ?? null;
+        logEvent('input_intent', {
+          tick,
+          thrust,
+          turnLeft,
+          turnRight,
+          boost,
+          reverse,
+          fireHeld,
+          joystickX: _jv ? Math.round(_jv.x * 1000) / 1000 : null,
+          joystickY: _jv ? Math.round(_jv.y * 1000) / 1000 : null,
+        });
+      }
 
       // No client-side drone AI tick (drone-snapshot-interpolation pivot,
       // 2026-05-18). Drones are pure snapshot-interpolated from the binary
@@ -2976,7 +2986,7 @@ export class ColyseusGameClient {
           this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
           this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
           this.lastSentInputAtMs = nowMs;
-          if (stateChanged || (tick % 60) === 0) {
+          if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
             logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
           }
         }
@@ -3020,7 +3030,9 @@ export class ColyseusGameClient {
       // (the ground-truth check that makes the harness a faithful
       // surrogate for on-device behaviour). Skip-safe when localDead /
       // pre-init: predWorld may not have a ship body yet.
-      if (!this.localDead && this.predWorld && this.mirror.localPlayerId) {
+      // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Skip the
+      // predWorld read + object literal when not in diag mode.
+      if (!this.localDead && this.predWorld && this.mirror.localPlayerId && isFullDiagMode()) {
         const _ps = this.predWorld.getShipState(this.mirror.localPlayerId);
         if (_ps) {
           logEvent('local_pose_predicted', {
@@ -3133,8 +3145,11 @@ export class ColyseusGameClient {
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
         // `assertInputFlowMaintained` sees the per-RAF cadence during a
         // sustained cap engagement — this is the explicit anti-regression
-        // for the 6e4d9c2 class.
-        logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
+        // for the 6e4d9c2 class. Gated by full-diag-mode at the callsite
+        // (Phase 5e — invariant #14); the assertion only runs under diag.
+        if (isFullDiagMode()) {
+          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
+        }
       }
     }
 
@@ -3145,18 +3160,23 @@ export class ColyseusGameClient {
     // identically. Cost: ~60/s extra entries; accommodated by the
     // PROD_MAX_ENTRIES bump in ClientLogger.ts (25000). Added
     // `clockAnchorPerfNow` for replay-side time-base reconstruction.
-    logEvent('rafTick', {
-      elapsedMs: Math.round(elapsedMs * 100) / 100,
-      targetTick,
-      inputTick: this.inputTick,
-      deficitBefore: tickDeficitBefore,
-      stepsThisFrame,
-      capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
-      overPredictionCapped: capEngaged,
-      anchorServerTick: this.clockAnchorServerTick,
-      anchorPerfNow: Math.round(this.clockAnchorPerfNow * 100) / 100,
-      leadTicks: this.leadTicks,
-    });
+    // HIGH_VOLUME_TAGS gate (Phase 5e — invariant #14). Fires per-RAF
+    // (60-90 fps on a typical client). Object literal skipped in
+    // production where logEvent would drop the entry anyway.
+    if (isFullDiagMode()) {
+      logEvent('rafTick', {
+        elapsedMs: Math.round(elapsedMs * 100) / 100,
+        targetTick,
+        inputTick: this.inputTick,
+        deficitBefore: tickDeficitBefore,
+        stepsThisFrame,
+        capped: stepsThisFrame >= MAX_CATCH_UP_TICKS && this.inputTick < targetTick,
+        overPredictionCapped: capEngaged,
+        anchorServerTick: this.clockAnchorServerTick,
+        anchorPerfNow: Math.round(this.clockAnchorPerfNow * 100) / 100,
+        leadTicks: this.leadTicks,
+      });
+    }
   }
 
   /**
