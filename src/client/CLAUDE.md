@@ -281,3 +281,16 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 - Static-analysis evidence the library is worker-safe (M0.5 spike): zero references to `document.` / `window.` / `addEventListener` / `navigator.` / `location.` / `requestAnimationFrame` in `node_modules/@pixi/particle-emitter/lib/particle-emitter.es.js`. Live OffscreenCanvas probe at `__offscreen-spike__/particle-emitter-probe.html`.
 
 **Escape hatch:** `?effects=0` URL param skips `EffectsService` construction entirely — falls back to today's inline Graphics paths for destruction + flames. Mirrors `?worker=0`.
+
+**Warp re-enable (M3, 2026-05-27) — supersedes 2026-05-21 disable.** The warp filter chain at `pixi/WarpFilterChain.ts` was disabled on 2026-05-21 ("Render-jitter-fix Phase 1b" — captures confirmed filters were not load-bearing for playability; the disable avoided duty-cycle cost on mobile). M3 re-enables it WITH a budget tier dial:
+
+- `DEFAULT_WARP_PARAMS` (in `worker/protocol/warpParams.ts`) toned down: `spoolCount` 4→2 (half the shader passes), `spoolAmplitude` 18→10, `climaxAmplitude` 220→70 (third), `bloomStrengthMax` 6→1.5 (quarter), `flashAlphaMax` 0.85→0.55.
+- `WarpFilterChain.applyQuality(level)` is the budget hook (ONE ownership site for warp filter attach/detach — `IFilterEffects` deliberately does NOT duplicate the surface, per Invariant #12). Dials:
+  - `high`    : full chain (shockwaves + zoom-blur + bloom + burst)
+  - `medium`  : drop bloom (the heaviest shader pass)
+  - `low`     : drop bloom AND zoom-blur (shockwaves only)
+  - `minimal` : detach all filters (matches the 2026-05-21 safe state)
+- **Touch-device default is `medium`** (pinned in M9 alongside the `PerfMonitor` wiring). The bloom shader pass — the most expensive single contributor — is never attached on touch in production by default. EffectsBudget can still drop further on EMA pressure.
+- The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
+
+**Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
