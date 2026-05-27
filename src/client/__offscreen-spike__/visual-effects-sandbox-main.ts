@@ -482,6 +482,136 @@ async function main(): Promise<void> {
       },
     );
   });
+
+  // ── M10 (plan wiggly-puppy): radio-driven per-effect scenarios ─────
+
+  // Effect-picker radio change → swap visible panel + scenario.
+  const panels = ['warp', 'explosion', 'impact', 'shield', 'thruster'];
+  for (const p of panels) {
+    document.getElementById(`effect-${p}`)?.addEventListener('change', () => {
+      for (const q of panels) {
+        const panel = document.getElementById(`${q}-panel`);
+        if (panel) panel.classList.toggle('active', q === p);
+      }
+      setStatus(`Switched to effect: ${p}.`);
+    });
+  }
+
+  // Quality dropdown — pushes via SET_EFFECT_QUALITY through the worker
+  // protocol. The budget keeps the more-restrictive of (local, pushed).
+  const qualityEl = document.getElementById('effect-quality') as HTMLSelectElement | null;
+  qualityEl?.addEventListener('change', () => {
+    const level = qualityEl.value as 'high' | 'medium' | 'low' | 'minimal';
+    renderer?.setEffectQuality(level);
+    setStatus(`Effect quality pushed: ${level}.`);
+  });
+
+  // Explosion trigger — fires both destruction burst + shockwave.
+  document.getElementById('explosion-trigger')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    renderer?.triggerEffect('destruction', 0, 0);
+    renderer?.triggerEffect('destruction-shock', 0, 0);
+    setStatus('Explosion triggered at world (0, 0).');
+  });
+
+  // Impact spark triggers — hull vs shield tints.
+  document.getElementById('impact-hull')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    renderer?.triggerEffect('impact', 0, 0, { tint: 0xff8844 });
+    setStatus('Hull-hit impact at (0, 0).');
+  });
+  document.getElementById('impact-shield')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    renderer?.triggerEffect('impact', 0, 0, { tint: 0x88ddff });
+    setStatus('Shield-hit impact at (0, 0).');
+  });
+  let impactLoopId: number | null = null;
+  document.getElementById('impact-loop')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    if (impactLoopId !== null) {
+      clearInterval(impactLoopId);
+      impactLoopId = null;
+      setStatus('Impact loop OFF.');
+      return;
+    }
+    impactLoopId = setInterval(() => {
+      const x = (Math.random() - 0.5) * 200;
+      const y = (Math.random() - 0.5) * 200;
+      renderer?.triggerEffect('impact', x, y, {
+        tint: Math.random() < 0.5 ? 0xff8844 : 0x88ddff,
+      });
+    }, 220) as unknown as number;
+    setStatus('Impact loop ON (every 220 ms).');
+  });
+
+  // Shield aura — relies on EffectsService.setContinuous via the worker.
+  // For the sandbox we use the trigger pathway as a proxy: writing
+  // mirror.shipShields would need a real ship in the mirror, so use the
+  // visual-effects-only path (a single "ship" entry with the local pose).
+  document.getElementById('shield-on')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    if (mirror.ships) {
+      mirror.ships.set('sandbox-ship', { x: 0, y: 0, vx: 0, vy: 0, angle: 0, shieldDown: false });
+      mirror.localPlayerId = 'sandbox-ship';
+    }
+    setStatus('Shield ON (mirror entry created with shieldDown=false).');
+  });
+  document.getElementById('shield-off')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    if (mirror.ships) {
+      const s = mirror.ships.get('sandbox-ship');
+      if (s) s.shieldDown = true;
+    }
+    setStatus('Shield OFF (shieldDown=true).');
+  });
+  document.getElementById('shield-pulse')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    // Trigger via impact channel; renderer's pulse hook fires when the
+    // tint matches shield (0x88ddff) AND entityId is set.
+    if (!mirror.pendingEffectTriggers) mirror.pendingEffectTriggers = [];
+    mirror.pendingEffectTriggers.push({
+      kind: 'impact',
+      worldX: 0,
+      worldY: 0,
+      tint: 0x88ddff,
+      entityId: 'sandbox-ship',
+    });
+    setStatus('Shield pulse queued.');
+  });
+
+  // Thrust + boost — populate mirror.thrustingShips / boostingShips for
+  // the sandbox ship; PixiRenderer's syncEngineContinuousEffects diff
+  // logic picks them up.
+  function ensureSandboxShip(): void {
+    if (mirror.ships && !mirror.ships.has('sandbox-ship')) {
+      mirror.ships.set('sandbox-ship', { x: 0, y: 0, vx: 0, vy: 0, angle: 0 });
+      mirror.localPlayerId = 'sandbox-ship';
+    }
+  }
+  document.getElementById('thrust-on')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    ensureSandboxShip();
+    if (!mirror.thrustingShips) mirror.thrustingShips = new Set();
+    mirror.thrustingShips.add('sandbox-ship');
+    setStatus('Thrust ON for sandbox ship.');
+  });
+  document.getElementById('thrust-off')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    mirror.thrustingShips?.delete('sandbox-ship');
+    setStatus('Thrust OFF.');
+  });
+  document.getElementById('boost-on')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    ensureSandboxShip();
+    if (!mirror.boostingShips) mirror.boostingShips = new Set();
+    mirror.boostingShips.add('sandbox-ship');
+    setStatus('Boost ON for sandbox ship.');
+  });
+  document.getElementById('boost-off')?.addEventListener('click', () => {
+    pauseScenarioForManual();
+    mirror.boostingShips?.delete('sandbox-ship');
+    setStatus('Boost OFF.');
+  });
 }
 
 window.addEventListener('error', (e: ErrorEvent) => {

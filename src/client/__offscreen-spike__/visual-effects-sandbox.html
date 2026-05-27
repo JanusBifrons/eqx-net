@@ -123,12 +123,70 @@
     <div id="effect-picker">
       <input type="radio" id="effect-warp" name="effect" value="warp" checked>
       <label for="effect-warp">Warp</label>
-      <input type="radio" id="effect-explosion" name="effect" value="explosion" disabled>
+      <input type="radio" id="effect-explosion" name="effect" value="explosion">
       <label for="effect-explosion">Explosion</label>
-      <input type="radio" id="effect-beam" name="effect" value="beam" disabled>
-      <label for="effect-beam">Beam</label>
-      <input type="radio" id="effect-thruster" name="effect" value="thruster" disabled>
+      <input type="radio" id="effect-impact" name="effect" value="impact">
+      <label for="effect-impact">Impact</label>
+      <input type="radio" id="effect-shield" name="effect" value="shield">
+      <label for="effect-shield">Shield</label>
+      <input type="radio" id="effect-thruster" name="effect" value="thruster">
       <label for="effect-thruster">Thruster</label>
+    </div>
+
+    <!-- Effects subsystem quality dial (M10 — plan wiggly-puppy). -->
+    <h2 style="margin-top:14px;">Quality (EffectsBudget)</h2>
+    <select id="effect-quality" style="width:100%; padding:4px; background:#1a1d2e; color:#fff; border:1px solid #444;">
+      <option value="high" selected>high</option>
+      <option value="medium">medium</option>
+      <option value="low">low</option>
+      <option value="minimal">minimal</option>
+    </select>
+
+    <!-- Per-effect scenario panels (M10). Each ships its own data-testid
+         so an E2E spec can verify the radio gating shows/hides the right
+         panel + the effect runs without console errors. -->
+    <div id="explosion-panel" class="effect-panel" data-testid="explosion-panel">
+      <h2>Explosion (Ship Destruction)</h2>
+      <div class="button-row">
+        <button id="explosion-trigger" data-testid="explosion-trigger">Trigger explosion</button>
+      </div>
+      <div style="color:#9aa0b4; font-size:10px; margin-top:6px;">
+        Spawns a destruction burst + ShockwaveFilter at screen centre.
+        Toggle quality above to see the tier dial (high: 40 particles +
+        shock; minimal: legacy starburst fallback).
+      </div>
+    </div>
+
+    <div id="impact-panel" class="effect-panel" data-testid="impact-panel">
+      <h2>Impact Sparks</h2>
+      <div class="button-row">
+        <button id="impact-hull" data-testid="impact-hull">Hull hit (orange)</button>
+        <button id="impact-shield" data-testid="impact-shield-spark">Shield hit (cyan)</button>
+        <button id="impact-loop">Auto-loop ON</button>
+      </div>
+    </div>
+
+    <div id="shield-panel" class="effect-panel" data-testid="shield-panel">
+      <h2>Shield Aura</h2>
+      <div class="button-row">
+        <button id="shield-on" data-testid="shield-on">Shield ON</button>
+        <button id="shield-off" data-testid="shield-off">Shield OFF</button>
+        <button id="shield-pulse" data-testid="shield-pulse">Pulse hit</button>
+      </div>
+      <div style="color:#9aa0b4; font-size:10px; margin-top:6px;">
+        Aura is the breathing cyan ring around the ship; pulse = shield-
+        layer hit flash. GlowFilter only at "high" quality.
+      </div>
+    </div>
+
+    <div id="thruster-panel" class="effect-panel" data-testid="thruster-panel">
+      <h2>Engine Trails</h2>
+      <div class="button-row">
+        <button id="thrust-on" data-testid="thrust-on">Thrust ON</button>
+        <button id="thrust-off" data-testid="thrust-off">Thrust OFF</button>
+        <button id="boost-on" data-testid="boost-on">Boost ON</button>
+        <button id="boost-off" data-testid="boost-off">Boost OFF</button>
+      </div>
     </div>
 
     <div id="warp-panel" class="effect-panel active">
