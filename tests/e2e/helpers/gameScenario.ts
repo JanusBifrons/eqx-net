@@ -14,6 +14,11 @@ export interface TestClientOpts {
   /** Which test room to join (default 'test-sector'). Pass
    *  'test-sector-fast' for 10x physics-tick acceleration. */
   room?: 'test-sector' | 'test-sector-fast';
+  /** Mobile-perf gate test-only — bytes per RAF tick to retain on a
+   *  global array. Wires `?injectLeak=N` so the gate's
+   *  `jsHeapGrowthMb` metric can be exercised end-to-end. DEV-build
+   *  only; the hook tree-shakes from prod via `import.meta.env.DEV`. */
+  injectLeak?: number;
   /** Per-test room isolation. Pass a unique value (e.g. randomUUID) for
    *  the first client; pass the SAME value for additional clients that
    *  must share a room with the first. Omit ⇒ a fresh UUID is minted
@@ -34,6 +39,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   });
   if (opts.initialHull !== undefined) params.set('initialHull', String(opts.initialHull));
   if (opts.initialShield !== undefined) params.set('initialShield', String(opts.initialShield));
+  if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () =>

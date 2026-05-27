@@ -131,6 +131,12 @@ const JoinOptionsSchema = z
     /** Test-only initial shield override; same testMode gate. 0 lets the
      *  first beam hit hull immediately. */
     initialShield: z.number().int().min(0).optional(),
+    /** Mobile-perf gate test-only leak rate (bytes per RAF tick). Server
+     *  accepts and ignores — the value is consumed CLIENT-SIDE by
+     *  `src/client/debug/testLeakHook.ts` reading the URL param directly.
+     *  Validated here only for schema parity with the other test
+     *  primitives + so the URL → joinOption echo round-trips cleanly. */
+    injectLeak: z.number().int().min(0).max(10_000_000).optional(),
     /** Per-test room isolation knob. Combined with the test rooms'
      *  `filterBy(['testId'])` (in `src/server/index.ts`), passing a
      *  unique testId routes each Playwright spec to its own physics-
