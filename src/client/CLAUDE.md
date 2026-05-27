@@ -242,3 +242,42 @@ Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-ch
   swap site (chapter-2; a snapshot-channel variant was tried + reverted
   for a spawn-gap p50 regression — docs/LESSONS.md 2026-05-16).
 - Internals: [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
+
+## Effects subsystem (2026-05-27, plan `wiggly-puppy` M1)
+
+A first-class visual-effects subsystem lives under `src/client/effects/`. Contracts in `src/core/contracts/IEffects.ts`. The subsystem owns warp re-enable, laser glow + impact sparks, shield aura, particle ship-destruction, and particle engines. Live preview lives at `__offscreen-spike__/visual-effects-sandbox.html`.
+
+**Ownership rules (Invariant #12 — one ownership site per state surface):**
+
+- **Warp methods stay on `IRenderer`.** `setWarpMode` / `triggerWarpIn` / `setWarpCenter` / `setLoadCurtain` are NOT duplicated on `IFilterEffects`. `EffectsBudget` controls warp filter detach/attach by holding a direct reference to `WarpFilterChain` and calling its `applyQuality(level)` method (added in M3). No facade, no parallel path.
+- **`EffectsService` is constructed inside `PixiRenderer.init`** — one construction site per renderer instance, covers both the OffscreenCanvas worker path and the touch-device main-thread fallback.
+- **`ColyseusClient` never imports `EffectsService`.** Effect triggers flow through `RenderMirror.pendingEffectTriggers` (added in M2), drained by `PixiRenderer.update(mirror)` on `shouldRender` (worker every-other-RAF). Same gating pattern as `explodingShips` — extending `perFrameTriggers.ts` is mandatory for any new one-shot mirror queue.
+- **`EffectsService.tick(now, dt)` runs INSIDE `PixiRenderer.update(mirror)` at the tail, AFTER `updateSwarmSprites`** — guarantees one-pose-per-frame (the rule under "Drones are PURE snapshot-interpolated"). NEVER call `tick` from a separate Pixi ticker callback; that would resolve poses at a divergent `now` and reintroduce the 2026-05-19 jitter bug class.
+
+**Budget tiers + thresholds (lock at `src/client/effects/EffectsBudget.ts`):**
+
+| Transition | Trigger | Hold |
+|---|---|---|
+| `high → medium` | EMA(rendererUpdateMs) > 6 ms | 500 ms |
+| `medium → low` | EMA > 8 ms | 500 ms |
+| `low → minimal` | EMA > 9 ms | 250 ms |
+| `minimal → low` | EMA < 7 ms | 750 ms |
+| `low → medium` | EMA < 6 ms | 1500 ms |
+| `medium → high` | EMA < 4 ms | 1500 ms |
+
+Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× longer hold to prevent flicker. EMA alpha = 0.06 (~16-sample / ~270 ms response). Warmup = 8 samples held at `high`.
+
+**Push-vs-pull discipline:**
+
+- Per-frame metrics are fed to the budget by `EffectsService.tick`. Per-effect modules **pull** the resolved quality via `EffectsService.getQuality()` each frame (pull avoids per-transition allocations).
+- The main-thread `PerfMonitor` (M9) computes `rafGapMs` EMA separately and pushes via `SET_EFFECT_QUALITY` **only on its own tier transition** (≤ once per 500 ms). NEVER per-frame. Lock: `EffectsBudget.test.ts` "100 frames at constant load → exactly 0/1 transitions".
+- The budget keeps the more-restrictive of (locally-resolved tier, pushed tier) via `pickMoreRestrictiveQuality`. Pushed tier never weakens local resolution.
+
+**Sector handoff:** `EffectsService.resetForSectorHandoff()` is called from `ColyseusClient.resetPredictionState()` as a sibling line (NOT folded in — SRP), wiping per-entity continuous emitters + in-flight bursts. Same discipline as `rearmJoinReadiness()`. Failing-test lock added in M9.
+
+**`@pixi/particle-emitter` notes (M0.5 spike):**
+
+- v5.0.10 is the latest released version; typed against Pixi v7 (`Container<DisplayObject>`). Pixi v8 renamed the child constraint to `ContainerChild`. Runtime is compatible; types disagree. Cast at the construct site or own a typed wrapper in `effects/pools/EmitterPool.ts`.
+- Static-analysis evidence the library is worker-safe (M0.5 spike): zero references to `document.` / `window.` / `addEventListener` / `navigator.` / `location.` / `requestAnimationFrame` in `node_modules/@pixi/particle-emitter/lib/particle-emitter.es.js`. Live OffscreenCanvas probe at `__offscreen-spike__/particle-emitter-probe.html`.
+
+**Escape hatch:** `?effects=0` URL param skips `EffectsService` construction entirely — falls back to today's inline Graphics paths for destruction + flames. Mirrors `?worker=0`.
