@@ -70,6 +70,35 @@ const DIST_MIN = 1200;
 const DIST_MAX = 7500;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
 const MAX_ARROWS = 64;
+
+/** Module-scope comparator hoisted out of the per-call `.sort()` site
+ *  (Phase 5f — invariant #14). An inline arrow `(a, b) => a.dist -
+ *  b.dist` is recreated per call by V8 in some contexts; hoisting
+ *  eliminates the uncertainty. */
+function compareByDist(a: Candidate, b: Candidate): number {
+  return a.dist - b.dist;
+}
+
+/** Mutable view of Candidate for slot-reuse writes. The Candidate
+ *  interface is already non-readonly so this is a name-only cast. */
+type MutableCandidate = Candidate;
+
+function writeCandidateSlot(
+  arr: MutableCandidate[], i: number,
+  key: string, x: number, y: number, color: number, dist: number,
+  hostile: boolean,
+): void {
+  const slot = arr[i];
+  if (!slot) {
+    arr[i] = { key, x, y, color, dist, hostile };
+    return;
+  }
+  slot.key = key; slot.x = x; slot.y = y;
+  slot.color = color; slot.dist = dist; slot.hostile = hostile;
+  // grouped is the partition-step's wedge marker; reset to undefined so
+  // a stale `true` from a prior tick doesn't leak through.
+  if (slot.grouped !== undefined) slot.grouped = false;
+}
 // Cap on dead-reckoning extrapolation window. If a swarm entry hasn't
 // updated for longer than this, freeze at the last-reported pose instead
 // of letting the arrow fly off — a stale entity is more likely dead /
@@ -133,6 +162,16 @@ export class HaloRadar {
   /** Monotonic per-`update()` counter for the generation-counter
    *  sweep over `arrows`. Bumped at the top of `update()`. */
   private _radarFrameId = 0;
+  /** Per-call scratch for the rawCandidates build (Phase 5f). Reused
+   *  across update() calls; entries are mutated in place via
+   *  `writeCandidateSlot`. `arr.length = i` truncates the logical view;
+   *  slot instances persist. */
+  private readonly _rawCandidatesScratch: MutableCandidate[] = [];
+  /** Cache of `swarm:${id}` / `ship:${id}` key strings keyed by entity
+   *  id. Each lookup-or-create on a stable id is allocation-free after
+   *  the first observation. */
+  private readonly _swarmKeyCache = new Map<number, string>();
+  private readonly _shipKeyCache = new Map<string, string>();
   /** Caller-owned scratch for `partitionAndGroupCandidates` (Phase 5c).
    *  Reused across update() calls so the radar tick doesn't allocate
    *  `result`, `wedges`, or per-wedge representative literals. */
@@ -234,7 +273,9 @@ export class HaloRadar {
     const screenCornerRadius = Math.hypot(camera.screenWidth, camera.screenHeight) / 2;
     const offScreenSpawnPx = screenCornerRadius + 30;
 
-    const rawCandidates: Candidate[] = [];
+    // Pooled scratch — slot-reuse pattern (Phase 5f, invariant #14).
+    const rawCandidates = this._rawCandidatesScratch;
+    let rawCount = 0;
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
@@ -257,25 +298,33 @@ export class HaloRadar {
         const color = isDrone
           ? (hostile ? DRONE_HOSTILE_COLOR : DRONE_IDLE_COLOR)
           : ASTEROID_COLOR;
-        rawCandidates.push({
-          key: `swarm:${id}`,
-          x: xExtrap,
-          y: yExtrap,
-          color,
-          dist,
-          hostile,
-        });
+        // Cache the template-literal key so subsequent observations of
+        // the same id are allocation-free.
+        let key = this._swarmKeyCache.get(id);
+        if (key === undefined) {
+          key = `swarm:${id}`;
+          this._swarmKeyCache.set(id, key);
+        }
+        writeCandidateSlot(rawCandidates, rawCount, key, xExtrap, yExtrap, color, dist, hostile);
+        rawCount++;
       }
     }
     for (const [id, s] of mirror.ships) {
       if (id === localId) continue;
       const dist = Math.hypot(s.x - local.x, s.y - local.y);
-      rawCandidates.push({ key: `ship:${id}`, x: s.x, y: s.y, color: REMOTE_SHIP_COLOR, dist });
+      let key = this._shipKeyCache.get(id);
+      if (key === undefined) {
+        key = `ship:${id}`;
+        this._shipKeyCache.set(id, key);
+      }
+      writeCandidateSlot(rawCandidates, rawCount, key, s.x, s.y, REMOTE_SHIP_COLOR, dist, false);
+      rawCount++;
     }
+    rawCandidates.length = rawCount;
 
     // Closest-first so MAX_ARROWS truncation drops the farthest entities and
     // wedge-grouping receives a deterministic input order.
-    rawCandidates.sort((a, b) => a.dist - b.dist);
+    rawCandidates.sort(compareByDist);
     if (rawCandidates.length > MAX_ARROWS) {
       rawCandidates.length = MAX_ARROWS;
     }
