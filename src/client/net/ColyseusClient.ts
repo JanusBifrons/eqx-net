@@ -480,6 +480,15 @@ export class ColyseusGameClient {
    *  `[...this.mirror.lingeringShips.keys()]` (a per-snapshot array
    *  allocation). Cleared via `length = 0` at the eviction site. */
   private readonly _lingeringToEvictScratch: string[] = [];
+  /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
+   *  the per-call `new Set<string>()` literals at the syncMirror /
+   *  updateLiveBeam sites. Each is cleared at the top of its consumer;
+   *  population is bounded by the cache it's reconciling against (wreck
+   *  count, ship count, mount count) so allocations after warmup are zero. */
+  private readonly _syncMirrorSeenWrecksScratch = new Set<string>();
+  private readonly _syncMirrorSeenShipsScratch = new Set<string>();
+  private readonly _liveBeamMountIdsScratch = new Set<string>();
+  private readonly _syncProjectilesSeenScratch = new Set<string>();
   /** 2026-05-26 heap-growth gate step 12 — pre-bound method for
    *  `routeSnapshotShipStates` ctx. Pre-fix the call site allocated
    *  a fresh arrow `(id) => this.tryEnsureLingerPredBody(id)` per
@@ -2162,7 +2171,7 @@ export class ColyseusGameClient {
    *  removed from the mirror. Ghost projectiles (`isGhost: true`) are
    *  preserved; the GhostManager re-adds them per-frame anyway. */
   private syncProjectiles(projectiles: SnapshotMessage['projectiles']): void {
-    syncProjectiles(this.mirror, projectiles);
+    syncProjectiles(this.mirror, projectiles, this._syncProjectilesSeenScratch);
   }
 
   private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
@@ -2185,7 +2194,8 @@ export class ColyseusGameClient {
     const wreckMap = s['wrecks'] as Map<string, unknown> | undefined;
     if (!this.mirror.wrecks) this.mirror.wrecks = new Map();
     if (wreckMap) {
-      const seenWrecks = new Set<string>();
+      const seenWrecks = this._syncMirrorSeenWrecksScratch;
+      seenWrecks.clear();
       for (const [shipInstanceId, w] of wreckMap.entries()) {
         const wr = w as Record<string, unknown>;
         seenWrecks.add(shipInstanceId);
@@ -2237,7 +2247,8 @@ export class ColyseusGameClient {
 
     const localId = this.mirror.localPlayerId;
     const now = this.clock.now();
-    const seen = new Set<string>();
+    const seen = this._syncMirrorSeenShipsScratch;
+    seen.clear();
 
     // Phase 6b — state.ships is now shipInstanceId-keyed on the wire.
     // The iteration variable would be misnamed if we still called it
@@ -3304,7 +3315,8 @@ export class ColyseusGameClient {
 
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
-    const mountIds = new Set<string>();
+    const mountIds = this._liveBeamMountIdsScratch;
+    mountIds.clear();
     for (const m of mounts) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 

@@ -115,12 +115,23 @@ interface ArrowEntry {
    *  exceeds ON_SCREEN_HIDE_MS, but keeps tracking bearing/position right
    *  up to that point so a high-speed flyby doesn't flicker. */
   onScreenSinceMs: number | null;
+  /** Generation-counter stamps (invariant #14, R5). Replace the pre-
+   *  Phase-4 per-frame `presentKeys` and `renderedKeys` Sets at the
+   *  cleanup-loop seam below. `presentAtFrame === frameId` ⇒ the
+   *  candidate list still contains this key; otherwise destroy.
+   *  `renderedAtFrame === frameId` ⇒ the entry produced a visible
+   *  render this frame; otherwise hide. */
+  presentAtFrame: number;
+  renderedAtFrame: number;
 }
 
 export class HaloRadar {
   private readonly container = new Container();
   private camera: Camera | null = null;
   private readonly arrows = new Map<string, ArrowEntry>();
+  /** Monotonic per-`update()` counter for the generation-counter
+   *  sweep over `arrows`. Bumped at the top of `update()`. */
+  private _radarFrameId = 0;
   /** Wall-clock anchor for spring dt. Reset on transit cleanup so dt
    *  across a warp gap doesn't blow up the spring's first post-arrival
    *  step. */
@@ -268,17 +279,18 @@ export class HaloRadar {
       RADAR_WEDGE_COUNT,
     );
 
-    // After partitioning, `presentKeys` is derived from the post-grouping
-    // candidate set: each near-band entity keeps its own key; each wedge
-    // representative carries `wedge:N`. Pool entries not in this set are
-    // destroyed at the tail of the loop.
-    const presentKeys = new Set<string>();
-    for (const c of candidates) presentKeys.add(c.key);
+    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
+    // tick allocated `presentKeys` + `renderedKeys` Sets every RAF; the
+    // two stamp fields on each ArrowEntry now carry the same signal
+    // with zero allocation. Entry resolution stamps `presentAtFrame`
+    // unconditionally at the head; the render-tail stamps
+    // `renderedAtFrame`; the cleanup compares both at frameId.
+    const frameId = ++this._radarFrameId;
 
-    const renderedKeys = new Set<string>();
     for (const c of candidates) {
       const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
       let entry = this.arrows.get(c.key);
+      if (entry) entry.presentAtFrame = frameId;
       if (proj.hidden) {
         // Degenerate POI-overlaps-player case only. Phase O removed the
         // on-screen visibility hide and the near-cutoff: every in-range
@@ -344,6 +356,8 @@ export class HaloRadar {
           sy: { x: targetY, v: 0 },
           lastVisible: false,
           onScreenSinceMs: isInside ? now : null,
+          presentAtFrame: frameId,
+          renderedAtFrame: 0, // stamped a few lines below at the render tail
         };
         this.arrows.set(c.key, entry);
       } else if (
@@ -359,7 +373,7 @@ export class HaloRadar {
         entry.hostile = wantHostile;
         entry.grouped = wantGrouped;
       }
-      renderedKeys.add(c.key);
+      entry.renderedAtFrame = frameId;
 
       // Phase H — first-visible: snap the spring to a point just outside
       // the screen edge along the arrow's bearing, then let the spring
@@ -387,11 +401,11 @@ export class HaloRadar {
     }
 
     for (const [key, entry] of this.arrows) {
-      if (!renderedKeys.has(key)) {
+      if (entry.renderedAtFrame !== frameId) {
         entry.gfx.visible = false;
         entry.lastVisible = false;
       }
-      if (!presentKeys.has(key)) {
+      if (entry.presentAtFrame !== frameId) {
         this.container.removeChild(entry.gfx);
         entry.gfx.destroy();
         this.arrows.delete(key);

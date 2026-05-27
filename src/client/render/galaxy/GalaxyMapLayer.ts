@@ -55,6 +55,10 @@ export class GalaxyMapLayer extends Container {
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
   private readonly entries: HexEntry[] = [];
+  /** Dedup scratch for `repaintEdges` (invariant #14). Single-pass
+   *  dedup of bidirectional neighbour pairs; cleared at the top of
+   *  each repaint. */
+  private readonly _edgeDedupScratch = new Set<string>();
   private currentSectorKey: string | null = null;
   private isDocked = true;
   private pulsePhase = 0;
@@ -237,7 +241,8 @@ export class GalaxyMapLayer extends Container {
     const removed = this.edgeLayer.removeChildren();
     for (const c of removed) c.destroy();
     const edges = new Graphics();
-    const seen = new Set<string>();
+    const seen = this._edgeDedupScratch;
+    seen.clear();
     for (const entry of this.entries) {
       for (const nKey of entry.sector.neighbours) {
         const a = entry.sector.key;
