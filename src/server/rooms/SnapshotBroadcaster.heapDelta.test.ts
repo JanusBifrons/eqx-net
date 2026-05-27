@@ -118,7 +118,54 @@ describe('SnapshotBroadcaster heap-delta (Phase 2 pool migration)', () => {
     expect(growthBytes).toBeLessThan(200_000);
   });
 
-  it('broadcast() reuses _allShipsScratch instances across calls', () => {
+  it('broadcast() with N stub clients reuses per-recipient state-entry pool', () => {
+    // Phase 5d — exercises the per-recipient loop with a stub Client
+    // shape that satisfies the backpressure check + send sink. The
+    // per-recipient scratches (states value pool, projectiles/drones/
+    // wrecks arrays, snap message) should produce zero growth after
+    // warmup.
+    const playerCount = 5;
+    const clientCount = 5;
+    const { deps, broadcaster } = makeDeps(playerCount);
+    const sentMessages: unknown[] = [];
+    const clients = Array.from({ length: clientCount }, (_, i) => ({
+      sessionId: `s${i}`,
+      // The backpressure check reads `ref.bufferedAmount` (raw uWS) or
+      // falls back to `_enqueuedMessages`. We stub both to keep
+      // backpressure='ok'.
+      ref: { getBufferedAmount: () => 0 },
+      _enqueuedMessages: [] as unknown[],
+      send: (_type: string, msg: unknown) => { sentMessages.push(msg); },
+      leave: () => {},
+    }));
+    // Wire stub clients into deps + session-to-player map.
+    (deps as unknown as { clients: unknown[] }).clients = clients;
+    for (let i = 0; i < clientCount; i++) {
+      deps.sessionToPlayer.set(`s${i}`, `p${i}`);
+    }
+    // Force per-client phase offset to align so every broadcast actually sends.
+    // (shouldBroadcastFar uses a hash of playerId × broadcastCounter mod N;
+    // running enough warmup ticks samples every phase.)
+    for (let i = 0; i < 1000; i++) broadcaster.broadcast(false);
+
+    const sentBefore = sentMessages.length;
+    const before = postGcHeap();
+    for (let i = 0; i < 5000; i++) broadcaster.broadcast(false);
+    const after = postGcHeap();
+    const sentDuring = sentMessages.length - sentBefore;
+
+    // Sanity — the per-recipient block actually ran (at 5 clients × phase
+    // offsets, many broadcasts WILL have sent during 5000 calls).
+    expect(sentDuring).toBeGreaterThan(0);
+    // The unavoidable per-recipient cost is one fresh `states: {}` Record
+    // per broadcast — at 5000 × 5 clients × ~1/3 phase hits ≈ ~8000
+    // empty-object allocs. Tolerance set above that to avoid flaking on
+    // V8's hidden-class transitions, but well below the pre-pool ~MB
+    // churn the per-recipient block used to produce.
+    expect(after - before).toBeLessThan(2_000_000); // 2 MB
+  });
+
+  it('broadcast() reuses _allShipsScratch + _stateEntryPool instances across calls', () => {
     const { broadcaster, deps } = makeDeps(5);
     broadcaster.broadcast(false);
     // Access the internal field for the identity assertion. This
@@ -126,10 +173,17 @@ describe('SnapshotBroadcaster heap-delta (Phase 2 pool migration)', () => {
     // identity IS the contract we're locking.
     const after1 = (broadcaster as unknown as { _allShipsScratch: unknown[] })._allShipsScratch;
     const slot0 = after1[0];
+    // State-entry pool identity check — same instance for the same
+    // shipInstanceId across broadcasts.
+    const poolBefore = (broadcaster as unknown as { _stateEntryPool: Map<string, unknown> })._stateEntryPool;
+    const entryBefore = poolBefore.get('inst-p0');
     broadcaster.broadcast(false);
     const after2 = (broadcaster as unknown as { _allShipsScratch: unknown[] })._allShipsScratch;
     expect(after2).toBe(after1); // same array
     expect(after2[0]).toBe(slot0); // same entry instance
+    // State-entry identity preserved across broadcasts.
+    const poolAfter = (broadcaster as unknown as { _stateEntryPool: Map<string, unknown> })._stateEntryPool;
+    expect(poolAfter.get('inst-p0')).toBe(entryBefore);
     // Sanity — verify the deps loop produced 5 entries each time.
     expect(deps.playerToSlot.size).toBe(5);
     expect(after2.length).toBe(5);
