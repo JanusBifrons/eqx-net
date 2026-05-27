@@ -10,7 +10,17 @@ import { describe, expect, it } from 'vitest';
 import { EffectsService, effectsDisabledByUrl } from './EffectsService';
 
 function makeRefs(): import('./EffectsService').EffectStageRefs {
-  return { app: {}, world: {}, stage: {}, camera: {} };
+  // Minimal Pixi stubs — EffectsService construction wires DestructionFx
+  // which needs a parent container that responds to addChild/removeChild
+  // and an app whose stage.filters can be read/written.
+  const children: unknown[] = [];
+  const world = {
+    addChild(c: unknown) { children.push(c); return c; },
+    removeChild(c: unknown) { const i = children.indexOf(c); if (i >= 0) children.splice(i, 1); return c; },
+  } as never;
+  const stage = { filters: [] as unknown[] };
+  const app = { stage } as never;
+  return { app, world, stage: stage as never, camera: {} };
 }
 
 describe('EffectsService — skeleton (M1)', () => {
@@ -20,11 +30,19 @@ describe('EffectsService — skeleton (M1)', () => {
     expect(svc.getStats().activeContinuous).toBe(0);
   });
 
-  it('spawnBurst is a no-op in M1 (no throw, no observable counters)', () => {
+  it('spawnBurst routes destruction to DestructionFx (M4); other kinds are no-op for now', () => {
     const svc = new EffectsService(makeRefs());
+    // 'impact', 'shield-hit', 'warp-arrive' are M7/M8/etc. — no-op here.
     svc.spawnBurst('impact', 100, 200);
-    svc.spawnBurst('destruction', 0, 0, { intensity: 1.5 });
     expect(svc.getStats().activeBursts).toBe(0);
+    // 'destruction' is wired in M4 — produces particles. Pin to 'low' tier
+    // so the ShockwaveFilter (which touches `document.createElement`) is
+    // NOT instantiated in the node-env test. Browser-side coverage of the
+    // shock filter lives in the M4 DestructionFx.test.ts (which uses stub
+    // factories) + the M10 sandbox E2E.
+    svc.setQuality('low');
+    svc.spawnBurst('destruction', 0, 0, { intensity: 1.5 });
+    expect(svc.getStats().activeBursts).toBeGreaterThan(0);
   });
 
   it('setContinuous is re-entrant — identical (id, kind, active) is a no-op', () => {

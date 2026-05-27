@@ -13,6 +13,7 @@ import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
+import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -108,6 +109,12 @@ export class PixiRenderer implements IRenderer {
   /** Warp visual chain (shockwave + bloom + flash + load curtain).
    *  Extracted to `pixi/WarpFilterChain.ts`. Constructed in `init()`. */
   private warp!: WarpFilterChain;
+  /** Effects subsystem (plan `wiggly-puppy`). Owns destruction particles,
+   *  engine emitters, shield aura, impact sparks, etc. Constructed in
+   *  `init()` AFTER `app`, `world`, `shipContainer`, and `warp` exist.
+   *  `null` when `?effects=0` escape hatch is active — destruction +
+   *  flames then fall back to today's inline Graphics paths. */
+  private effects: EffectsService | null = null;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -349,6 +356,21 @@ export class PixiRenderer implements IRenderer {
       projSeenScratch: this._updateProjSeenScratch,
     };
 
+    // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
+    // PixiRenderer.init so the same single seam serves both the worker
+    // path (this whole file runs inside the renderer worker) AND the
+    // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
+    // hatch skips construction entirely.
+    if (!effectsDisabledByUrl()) {
+      this.effects = new EffectsService({
+        app: this.app,
+        world: this.world,
+        stage: this.app.stage,
+        camera: this.camera,
+        warpChain: this.warp,
+      });
+    }
+
     this.halo.init(this.camera);
     // Damage numbers attach to the world (pan with camera, anchored at
     // impact world coord) but counter-scale per frame so they stay
@@ -577,6 +599,11 @@ export class PixiRenderer implements IRenderer {
         lingeringPoseIdx++;
       }
       for (const targetId of mirror.explodingShips) {
+        // PRESERVE the decideExplosionPosition lookup — the 2026-05-13
+        // Phase 6b fix. Naive `mirror.ships.get(targetId)?.pose` here
+        // would regress the "explosion at (0,0)" bug when a lingering
+        // hull (mirror.lingeringShips) or a wreck (mirror.wrecks) is
+        // destroyed. The helper unifies the three sprite maps.
         const pose = decideExplosionPosition({
           targetId,
           activeShipsByPlayerId: this.sprites,
@@ -584,15 +611,28 @@ export class PixiRenderer implements IRenderer {
           wrecksByShipInstanceId: this.wreckSprites,
         });
         if (!pose) continue; // ship not in any map — skip the VFX
-        const expl = buildExplosionGfx();
-        expl.x = pose.x;
-        expl.y = pose.y;
-        this.shipContainer.addChild(expl);
-        this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+
+        // M4 (effects subsystem plan `wiggly-puppy`): dispatch to the
+        // EffectsService when present; fall back to today's inline
+        // buildExplosionGfx path under the ?effects=0 escape hatch. The
+        // pose returned by the helper is in Pixi space (Y-flipped); the
+        // effects service expects world coords, so unflip here.
+        if (this.effects) {
+          this.effects.spawnBurst('destruction', pose.x, -pose.y);
+          this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
+        } else {
+          const expl = buildExplosionGfx();
+          expl.x = pose.x;
+          expl.y = pose.y;
+          this.shipContainer.addChild(expl);
+          this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+        }
       }
     }
 
-    // Advance and remove expired explosion sprites.
+    // Advance and remove expired explosion sprites (only the legacy
+    // fallback path uses this; the EffectsService manages its own
+    // particles + shock filters in its tick).
     for (let i = this.explosionSprites.length - 1; i >= 0; i--) {
       const e = this.explosionSprites[i]!;
       e.framesLeft--;
@@ -957,8 +997,26 @@ export class PixiRenderer implements IRenderer {
       this.frameMarkers.gridLabelCount = 0;
     }
     this.frameMarkers.spriteCount = this.sprites.size;
+
+    // Effects subsystem tick. MUST run AFTER all sprite updates so per-
+    // entity effects (shield aura, engine emitters in later milestones)
+    // read the one-pose-per-frame state the sprite updaters just wrote
+    // (src/client/CLAUDE.md "Drones are PURE snapshot-interpolated"
+    // section). dtMs = wall-clock since last tick; effects use it for
+    // particle lifetime + budget EMA.
+    if (this.effects) {
+      const nowMs = performance.now();
+      const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
+      this.effects.tick(nowMs, dtMs);
+      this.lastEffectsTickNowMs = nowMs;
+    }
+
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
   }
+
+  /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
+   *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
+  private lastEffectsTickNowMs = 0;
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
    *  disconnected within the 15-min linger window OR whose ships have
@@ -1191,6 +1249,11 @@ export class PixiRenderer implements IRenderer {
     this.initialized = false;
     // Tear down the warp filter chain (removes its ticker handler).
     this.warp.destroy();
+    // Wipe effects subsystem pools (particles, shock filters, etc.).
+    if (this.effects) {
+      this.effects.resetForSectorHandoff();
+      this.effects = null;
+    }
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
     const canvas = this.app?.canvas;

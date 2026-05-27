@@ -24,6 +24,9 @@ import {
   type OneShotFilterKind,
 } from '@core/contracts/IEffects';
 import { EffectsBudget } from './EffectsBudget';
+import { DestructionFx } from './perEffect/DestructionFx';
+import { buildDestructionFactories } from './perEffect/destructionFactories';
+import type { Application, Container } from 'pixi.js';
 
 /**
  * Refs the service needs from the renderer. Passed at construct so the
@@ -34,17 +37,17 @@ import { EffectsBudget } from './EffectsBudget';
  * the rest.
  */
 export interface EffectStageRefs {
-  /** Pixi v8 `Application`. Typed as unknown here; renderer narrows it. */
-  app: unknown;
+  /** Pixi v8 `Application`. Used by one-shot filters that attach to app.stage. */
+  app: Application;
   /** World container — parent for entity-glued continuous emitters + shield rings. */
-  world: unknown;
+  world: Container;
   /** Stage container — parent for one-shot filter overlays. */
-  stage: unknown;
+  stage: Container;
   /** Camera surface — distance-cull math reads `center` + screen size. */
   camera: unknown;
   /** Optional direct reference to `WarpFilterChain` so the budget can call
    *  its `applyQuality(level)` method on tier transitions (added in M3). */
-  warpChain?: unknown;
+  warpChain?: { applyQuality: (level: EffectQuality) => void };
 }
 
 interface ContinuousEntry {
@@ -61,23 +64,39 @@ export class EffectsService implements IEffects {
   /** Reusable stats object so getStats() doesn't allocate per call. */
   private readonly statsScratch = { activeBursts: 0, activeContinuous: 0, activeFilters: 0, quality: 'high' as import('@core/contracts/IEffects').EffectQuality };
 
-  // M1 stores refs but doesn't yet touch them — per-effect modules in
-  // M3-M8 will use them.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  constructor(private readonly refs: EffectStageRefs) {}
+  private readonly destruction: DestructionFx;
+  /** Last frame's wall-clock `now` — used to derive `dtSec` for per-effect ticks. */
+  private lastTickNowMs = 0;
+
+  constructor(private readonly refs: EffectStageRefs) {
+    // Per-effect modules constructed eagerly so their pools are pre-warm.
+    // World container hosts entity-glued effects (M4 destruction particles
+    // sit here too — they're world-space, not screen-space).
+    this.destruction = new DestructionFx(
+      refs.world,
+      refs.app,
+      () => this.getQuality(),
+      buildDestructionFactories(),
+    );
+  }
 
   // ── IParticleEffects ────────────────────────────────────────────────
 
   /**
-   * M1 no-op. M4 (destruction), M7 (impact sparks) implement.
+   * M4 (destruction): routes through `DestructionFx`. Other kinds remain
+   * no-ops until M7 (impact sparks) etc. land.
    */
   spawnBurst(
-    _kind: ParticleBurstKind,
-    _worldX: number,
-    _worldY: number,
-    _opts?: ParticleBurstOpts,
+    kind: ParticleBurstKind,
+    worldX: number,
+    worldY: number,
+    opts?: ParticleBurstOpts,
   ): void {
-    // No-op until per-effect modules land.
+    if (kind === 'destruction') {
+      this.destruction.spawnBurst(worldX, worldY, opts);
+    }
+    // 'impact', 'shield-hit', 'warp-arrive' — wired in later milestones.
+    this.refreshCounters();
   }
 
   /**
@@ -105,10 +124,25 @@ export class EffectsService implements IEffects {
    * `src/client/CLAUDE.md` "Drones are PURE snapshot-interpolated"
    * section). Never call from a separate Pixi ticker.
    */
-  tick(_nowMs: number, dtMs: number): void {
-    // M1: feed the budget a synthetic 1 ms rendererUpdateMs so the EMA
-    // settles. Real value lands in M9 (PerfMonitor wiring).
+  tick(nowMs: number, dtMs: number): void {
+    // Feed the budget. M9 will replace the synthetic 1 ms with the
+    // real `frameMarkers.rendererUpdateMs` reading.
     this.budget.sample({ rendererUpdateMs: 1, dtMs });
+
+    const dtSec = dtMs / 1000;
+    this.destruction.tick(dtSec);
+    this.lastTickNowMs = nowMs;
+
+    this.refreshCounters();
+  }
+
+  /** Refresh the counters fed to the budget. Called after every spawn /
+   *  tick so `getStats()` reflects reality without per-call allocation. */
+  private refreshCounters(): void {
+    const d = this.destruction.activeCount();
+    this.counters.activeBursts = d.bursts;
+    this.counters.activeFilters = d.filters;
+    this.counters.activeContinuous = this.continuous.size;
     this.budget.recordCounts(this.counters);
   }
 
@@ -120,6 +154,7 @@ export class EffectsService implements IEffects {
    */
   resetForSectorHandoff(): void {
     this.continuous.clear();
+    this.destruction.resetForSectorHandoff();
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;
@@ -128,11 +163,15 @@ export class EffectsService implements IEffects {
   // ── IFilterEffects ──────────────────────────────────────────────────
 
   triggerOneShotFilter(
-    _kind: OneShotFilterKind,
-    _worldX: number,
-    _worldY: number,
+    kind: OneShotFilterKind,
+    worldX: number,
+    worldY: number,
   ): void {
-    // No-op until M4 (destruction shock) / M8 (shield flash) land.
+    if (kind === 'destruction-shock') {
+      this.destruction.spawnShockOnly(worldX, worldY);
+      this.refreshCounters();
+    }
+    // 'shield-flash' wired in M8.
   }
 
   // ── IEffectsBudget ──────────────────────────────────────────────────
