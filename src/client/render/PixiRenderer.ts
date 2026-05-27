@@ -904,6 +904,24 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumbers.length = 0;
     }
+    // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
+    // trigger queue and dispatch to spawnBurst / triggerOneShotFilter.
+    // The queue's length-reset is owned by `perFrameTriggers.consumeOne-
+    // FrameTriggers` on render frames only (worker every-other-RAF
+    // skip-frames must NOT silently drain — same discipline as
+    // explodingShips). DO NOT add `.length = 0` here.
+    if (this.effects && mirror.pendingEffectTriggers) {
+      for (const ev of mirror.pendingEffectTriggers) {
+        if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
+          this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
+        } else {
+          this.effects.spawnBurst(ev.kind, ev.worldX, ev.worldY, {
+            ...(ev.intensity !== undefined ? { intensity: ev.intensity } : {}),
+            ...(ev.tint !== undefined ? { tint: ev.tint } : {}),
+          });
+        }
+      }
+    }
     // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
     // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
     // rollback in the same frame nets to nothing) and BEFORE update() (a

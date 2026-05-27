@@ -30,6 +30,8 @@ import { EngineEmitter, type EnginePoseFn } from './perEffect/EngineEmitter';
 import { buildEngineFactories } from './perEffect/engineFactories';
 import { LaserGlow, type LaserGlowBeams } from './perEffect/LaserGlow';
 import { buildLaserGlowFactories } from './perEffect/laserGlowFactories';
+import { ImpactSparks } from './perEffect/ImpactSparks';
+import { buildImpactFactories } from './perEffect/impactFactories';
 import type { Application, Container } from 'pixi.js';
 
 /**
@@ -80,6 +82,7 @@ export class EffectsService implements IEffects {
   private readonly destruction: DestructionFx;
   private readonly engines: EngineEmitter;
   private readonly laserGlow: LaserGlow | null;
+  private readonly impactSparks: ImpactSparks;
   /** Tier currently applied to per-effect modules — updated each tick
    *  when getQuality changes so M3 (warp) + M6 (laser glow) propagate. */
   private lastAppliedTier: EffectQuality = 'high';
@@ -104,6 +107,11 @@ export class EffectsService implements IEffects {
     this.laserGlow = refs.beams
       ? new LaserGlow(refs.beams, buildLaserGlowFactories())
       : null;
+    this.impactSparks = new ImpactSparks(
+      refs.world,
+      () => this.getQuality(),
+      buildImpactFactories(),
+    );
   }
 
   // ── IParticleEffects ────────────────────────────────────────────────
@@ -120,8 +128,13 @@ export class EffectsService implements IEffects {
   ): void {
     if (kind === 'destruction') {
       this.destruction.spawnBurst(worldX, worldY, opts);
+    } else if (kind === 'impact' || kind === 'shield-hit') {
+      // 'shield-hit' shares the ImpactSparks visual at M7 — caller passes
+      // a cyan/white tint to distinguish. M8 may layer a dedicated shield
+      // pulse on top.
+      this.impactSparks.spawnBurst(worldX, worldY, opts);
     }
-    // 'impact', 'shield-hit', 'warp-arrive' — wired in later milestones.
+    // 'warp-arrive' — wired in M8 / M11.
     this.refreshCounters();
   }
 
@@ -173,6 +186,7 @@ export class EffectsService implements IEffects {
 
     const dtSec = dtMs / 1000;
     this.destruction.tick(dtSec);
+    this.impactSparks.tick(dtSec);
     if (this.refs.getEntityPose) {
       this.engines.tick(dtSec, this.refs.getEntityPose);
     }
@@ -186,7 +200,8 @@ export class EffectsService implements IEffects {
   private refreshCounters(): void {
     const d = this.destruction.activeCount();
     const e = this.engines.activeCount();
-    this.counters.activeBursts = d.bursts + e.particles;
+    const s = this.impactSparks.activeCount();
+    this.counters.activeBursts = d.bursts + e.particles + s;
     this.counters.activeFilters = d.filters;
     this.counters.activeContinuous = this.continuous.size;
     this.budget.recordCounts(this.counters);
@@ -202,6 +217,7 @@ export class EffectsService implements IEffects {
     this.continuous.clear();
     this.destruction.resetForSectorHandoff();
     this.engines.resetForSectorHandoff();
+    this.impactSparks.resetForSectorHandoff();
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;

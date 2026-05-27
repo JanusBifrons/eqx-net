@@ -30,19 +30,22 @@ describe('EffectsService — skeleton (M1)', () => {
     expect(svc.getStats().activeContinuous).toBe(0);
   });
 
-  it('spawnBurst routes destruction to DestructionFx (M4); other kinds are no-op for now', () => {
+  it('spawnBurst routes destruction (M4) + impact/shield-hit (M7); warp-arrive still no-op', () => {
     const svc = new EffectsService(makeRefs());
-    // 'impact', 'shield-hit', 'warp-arrive' are M7/M8/etc. — no-op here.
-    svc.spawnBurst('impact', 100, 200);
+    // 'warp-arrive' is M11 — still a no-op.
+    svc.spawnBurst('warp-arrive', 100, 200);
     expect(svc.getStats().activeBursts).toBe(0);
-    // 'destruction' is wired in M4 — produces particles. Pin to 'low' tier
-    // so the ShockwaveFilter (which touches `document.createElement`) is
-    // NOT instantiated in the node-env test. Browser-side coverage of the
-    // shock filter lives in the M4 DestructionFx.test.ts (which uses stub
-    // factories) + the M10 sandbox E2E.
+    // 'impact' wired in M7 — routes to ImpactSparks (DOM-safe at any tier).
+    svc.spawnBurst('impact', 0, 0);
+    expect(svc.getStats().activeBursts).toBeGreaterThan(0);
+    const afterImpact = svc.getStats().activeBursts;
+    // 'destruction' wired in M4. Pin to 'low' tier so the ShockwaveFilter
+    // (which touches `document.createElement`) is NOT instantiated in the
+    // node-env test. Browser-side coverage of the shock filter lives in
+    // M4 DestructionFx.test.ts (stub factories) + the M10 sandbox E2E.
     svc.setQuality('low');
     svc.spawnBurst('destruction', 0, 0, { intensity: 1.5 });
-    expect(svc.getStats().activeBursts).toBeGreaterThan(0);
+    expect(svc.getStats().activeBursts).toBeGreaterThan(afterImpact);
   });
 
   it('setContinuous is re-entrant — identical (id, kind, active) is a no-op', () => {

@@ -205,6 +205,7 @@ export class ColyseusGameClient {
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
+    pendingEffectTriggers: [],
   };
 
   /**
@@ -1524,6 +1525,26 @@ export class ColyseusGameClient {
     if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct });
+    }
+
+    // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
+    // Push to the pending queue; the renderer drains it inside update()
+    // on shouldRender frames (perFrameTriggers gate). Authoritative-only
+    // on first pass per the plan's asymmetry with damage numbers
+    // (predicted hits get the number immediately but sparks follow the
+    // server's DamageEvent — RTT/2 lag is acceptable for the decorative
+    // spark vs the load-bearing damage number).
+    if (this.mirror.pendingEffectTriggers) {
+      const targetShipForFallback = this.mirror.ships.get(evt.targetId);
+      const sparkX = evt.hitX ?? targetShipForFallback?.x ?? 0;
+      const sparkY = evt.hitY ?? targetShipForFallback?.y ?? 0;
+      const tint = evt.hitLayer === 'shield' ? 0x88ddff : 0xff8844;
+      this.mirror.pendingEffectTriggers.push({
+        kind: 'impact',
+        worldX: sparkX,
+        worldY: sparkY,
+        tint,
+      });
     }
 
     // Phase 1 AI: mirror the server's hostility-marking on every damage
