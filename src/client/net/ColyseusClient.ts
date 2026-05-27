@@ -11,7 +11,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
   shouldForwardPredict,
@@ -34,6 +34,7 @@ import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
+import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
   routeSnapshotShipStates,
@@ -205,6 +206,7 @@ export class ColyseusGameClient {
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
+    pendingMissileExplosions: [],
   };
 
   /**
@@ -1178,6 +1180,31 @@ export class ColyseusGameClient {
       this.handleRespawnAck(msg);
     });
 
+    // Missile launched — pose arrives on the snapshot's missiles[]
+    // slice (NOT this event), so we don't seed the mirror here.
+    // Defensive zod parse on receive. The discrete event currently has
+    // no client-side subscriber (SFX launch-whoosh is a future hookup);
+    // the parse + drop keeps the wire safe and ready for that hookup.
+    room.onMessage('missile_fired', (raw: unknown) => {
+      MissileFiredEventSchema.safeParse(raw);
+    });
+
+    // Missile detonated — remove from the mirror so the sprite stops
+    // drawing the next frame, and push an explosion entry into the
+    // mirror for the renderer to drain (VFX + camera shake).
+    room.onMessage('missile_detonated', (raw: unknown) => {
+      const result = MissileDetonatedEventSchema.safeParse(raw);
+      if (!result.success) return;
+      removeMissile(this.mirror, result.data.missileId);
+      const list = (this.mirror.pendingMissileExplosions ??= []);
+      list.push({
+        x: result.data.x,
+        y: result.data.y,
+        splashRadius: result.data.splashRadius,
+        missileId: result.data.missileId,
+      });
+    });
+
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
     // eliminates the ~50 ms snapshot wait for the same correction.
@@ -1762,6 +1789,10 @@ export class ColyseusGameClient {
     // per recipient. Sync into the mirror first so the rest of this handler can
     // assume the projectile map matches the snapshot's tick.
     this.syncProjectiles(snap.projectiles);
+
+    // Missiles: per-recipient AOI-filtered slice. Sliding-window apply
+    // for interpolation; stale-eviction backstop covers AOI exits.
+    applyMissileSnapshot(snap.missiles, this.mirror, snap.serverTick, now);
 
     // Phase 4 — sync wreck poses into the mirror. Identity (kind, health,
     // maxHealth) flows via the Colyseus schema diff on `state.wrecks`

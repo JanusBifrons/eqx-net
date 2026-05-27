@@ -143,6 +143,47 @@ export interface SwarmRenderState {
   lastUpdateTick: number;
 }
 
+/**
+ * Heat-seeking missile render state. Authoritative pose plus the two
+ * fields the renderer needs that aren't on `SnapshotMessage.missiles[]`
+ * directly: the previous-arrival pose (for interpolation) and the
+ * arrival timestamps (for the same `interpolateMissilePose` resolution
+ * pattern drones use — see `swarmDisplayPose.ts`).
+ *
+ * One-pose-per-frame contract: any consumer (sprite, trail emitter,
+ * camera-shake source) MUST read the resolved `x/y/angle` via
+ * `resolveMissileDisplayPose()`, not re-call `interpolateMissilePose`.
+ * Mirrors the drone one-pose rule in src/client/CLAUDE.md.
+ */
+export interface MissileRenderState {
+  /** Stable per-sector u32 id from the snapshot. */
+  id: number;
+  /** Latest authoritative pose. */
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  /** Previous authoritative pose (the snapshot before `latestArrivalMs`).
+   *  Used for inter-snapshot linear interpolation by the renderer. */
+  prevX: number;
+  prevY: number;
+  prevAngle: number;
+  /** Arrival timestamp (renderer clock) of `prev*`. */
+  prevArrivalMs: number;
+  /** Arrival timestamp (renderer clock) of the latest pose. */
+  latestArrivalMs: number;
+  /** Server tick of the latest snapshot — for stale-eviction logic. */
+  lastUpdateTick: number;
+  /** Owner shooter id (wire form). Renderer routes camera-shake
+   *  source-vector to this id if it's the local player. */
+  ownerId: string;
+  weaponId: 'heat-seeker';
+  /** Remaining life as a fraction [0..1]. Renderer fades the trail near
+   *  end-of-life. */
+  lifePct: number;
+}
+
 export interface ProjectileRenderState {
   x: number;
   y: number;
@@ -198,6 +239,13 @@ export interface RenderMirror {
   swarm?: Map<number, SwarmRenderState>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
+  /** In-flight heat-seeking missiles. Server-authoritative pose mirrored
+   *  from `SnapshotMessage.missiles[]` (per-recipient AOI-filtered).
+   *  Keyed by the stable per-sector missileId. The renderer draws the
+   *  missile sprite + trail + reads `lifePct` for end-of-life fade.
+   *  Entries are removed when (a) `missile_detonated` arrives, or (b)
+   *  the missile vanishes from a full snapshot (eviction). */
+  missiles?: Map<number, MissileRenderState>;
   localPlayerId: string | null;
   /** Floating damage numbers to spawn this frame. Drained + cleared each
    *  frame. `tag` (weapon-hit-prediction Phase 2) is the originating
@@ -220,6 +268,17 @@ export interface RenderMirror {
    *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +
    *  burst ripple for both directions. Cleared + drained each frame. */
   pendingWarpEvents?: Array<{ x: number; y: number }>;
+  /** Missile detonations to play this frame. The renderer drains the
+   *  array, spawns explosion VFX at each `(x, y)`, sizes the sprite to
+   *  `splashRadius`, and triggers a camera shake with magnitude inverse
+   *  to distance-from-camera (with a min-distance floor to prevent
+   *  divide-by-zero / point-blank shake explosion). Cleared each frame. */
+  pendingMissileExplosions?: Array<{
+    x: number;
+    y: number;
+    splashRadius: number;
+    missileId: number;
+  }>;
   /**
    * When present, the renderer draws a semi-transparent ghost at this position to
    * show the raw server snapshot position (before client-side prediction replay).

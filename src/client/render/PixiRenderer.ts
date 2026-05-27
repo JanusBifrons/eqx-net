@@ -7,6 +7,7 @@ import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
+import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
@@ -128,6 +129,15 @@ export class PixiRenderer implements IRenderer {
   private thrustFlames = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
   private projectileSprites = new Map<string, Graphics>();
+  /** Per-missile sprites, keyed by stable per-sector missileId. Pooled
+   *  via the missileSpriteUpdater's seen-set; one sprite per in-flight
+   *  missile, destroyed when the missile leaves the mirror. */
+  private missileSprites = new Map<number, Graphics>();
+  /** Active missile-detonation explosion sprites (short-lived). */
+  private missileExplosionsActive: MissileSpriteCtx['activeExplosions'] = [];
+  /** Reused per-frame seen-set for the missile sprite updater. */
+  private readonly _updateMissileSeenScratch = new Set<number>();
+  private _missileUpdaterCtx!: MissileSpriteCtx;
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
   private liveBeamGfx: Graphics | null = null;
   private remoteBeamGfx: Graphics | null = null;
@@ -347,6 +357,12 @@ export class PixiRenderer implements IRenderer {
       shipContainer: this.shipContainer,
       projectileSprites: this.projectileSprites,
       projSeenScratch: this._updateProjSeenScratch,
+    };
+    this._missileUpdaterCtx = {
+      shipContainer: this.shipContainer,
+      missileSprites: this.missileSprites,
+      missileSeenScratch: this._updateMissileSeenScratch,
+      activeExplosions: this.missileExplosionsActive,
     };
 
     this.halo.init(this.camera);
@@ -626,6 +642,10 @@ export class PixiRenderer implements IRenderer {
     // Projectile + ghost-projectile sprites — see pixi/projectileSpriteUpdater.ts.
     // Ctx pooled to `this._projectileUpdaterCtx`.
     updateProjectileSprites(mirror, this._projectileUpdaterCtx);
+
+    // Missile sprites + detonation VFX. Reads single-pose-per-frame via
+    // resolveMissileDisplayPose (one-pose-per-frame rule — same as drones).
+    updateMissileSprites(mirror, this._missileUpdaterCtx, performance.now());
 
     // Server ghost: orange diamond showing where the server's last snapshot
     // put the ship, before any client-side prediction replay.
