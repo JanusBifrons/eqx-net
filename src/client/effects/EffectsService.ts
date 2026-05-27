@@ -28,6 +28,8 @@ import { DestructionFx } from './perEffect/DestructionFx';
 import { buildDestructionFactories } from './perEffect/destructionFactories';
 import { EngineEmitter, type EnginePoseFn } from './perEffect/EngineEmitter';
 import { buildEngineFactories } from './perEffect/engineFactories';
+import { LaserGlow, type LaserGlowBeams } from './perEffect/LaserGlow';
+import { buildLaserGlowFactories } from './perEffect/laserGlowFactories';
 import type { Application, Container } from 'pixi.js';
 
 /**
@@ -55,6 +57,10 @@ export interface EffectStageRefs {
    *  by EngineEmitter to position trails at the ship's stern each tick.
    *  Callee polls inside `tick`; pose is NEVER stored between frames. */
   getEntityPose?: EnginePoseFn;
+  /** Optional beam Graphics for M6 laser glow. When present, `LaserGlow`
+   *  is constructed and attaches one `GlowFilter` per beam (live + remote).
+   *  Absent in tests / probe pages that don't render beams. */
+  beams?: LaserGlowBeams;
 }
 
 interface ContinuousEntry {
@@ -73,6 +79,10 @@ export class EffectsService implements IEffects {
 
   private readonly destruction: DestructionFx;
   private readonly engines: EngineEmitter;
+  private readonly laserGlow: LaserGlow | null;
+  /** Tier currently applied to per-effect modules — updated each tick
+   *  when getQuality changes so M3 (warp) + M6 (laser glow) propagate. */
+  private lastAppliedTier: EffectQuality = 'high';
   /** Last frame's wall-clock `now` — used to derive `dtSec` for per-effect ticks. */
   private lastTickNowMs = 0;
 
@@ -91,6 +101,9 @@ export class EffectsService implements IEffects {
       () => this.getQuality(),
       buildEngineFactories(),
     );
+    this.laserGlow = refs.beams
+      ? new LaserGlow(refs.beams, buildLaserGlowFactories())
+      : null;
   }
 
   // ── IParticleEffects ────────────────────────────────────────────────
@@ -146,6 +159,17 @@ export class EffectsService implements IEffects {
     // Feed the budget. M9 will replace the synthetic 1 ms with the
     // real `frameMarkers.rendererUpdateMs` reading.
     this.budget.sample({ rendererUpdateMs: 1, dtMs });
+
+    // Propagate tier-change to per-effect dials (warp via warpChain
+    // applyQuality, laser glow via LaserGlow.applyQuality). Only fires
+    // on actual tier transition — both applyQuality methods are
+    // idempotent but the != check saves the call overhead.
+    const tier = this.getQuality();
+    if (tier !== this.lastAppliedTier) {
+      this.lastAppliedTier = tier;
+      this.refs.warpChain?.applyQuality(tier);
+      this.laserGlow?.applyQuality(tier);
+    }
 
     const dtSec = dtMs / 1000;
     this.destruction.tick(dtSec);

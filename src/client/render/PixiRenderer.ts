@@ -362,6 +362,15 @@ export class PixiRenderer implements IRenderer {
     // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
     // hatch skips construction entirely.
     if (!effectsDisabledByUrl()) {
+      // Eagerly create the beam Graphics (M6 — laser glow). Previously
+      // lazy-created inside update() on first beam frame; we hoist them
+      // here so LaserGlow can attach a GlowFilter at construct time.
+      // Empty Graphics render as nothing — no visual change before first beam.
+      this.liveBeamGfx = new Graphics();
+      this.shipContainer.addChild(this.liveBeamGfx);
+      this.remoteBeamGfx = new Graphics();
+      this.shipContainer.addChild(this.remoteBeamGfx);
+
       this.effects = new EffectsService({
         app: this.app,
         world: this.world,
@@ -379,6 +388,7 @@ export class PixiRenderer implements IRenderer {
           if (sp) return { x: sp.x, y: -sp.y, angle: sp.rotation };
           return null;
         },
+        beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
       });
     }
 
