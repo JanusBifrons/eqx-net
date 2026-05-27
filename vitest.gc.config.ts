@@ -64,7 +64,7 @@ export default defineConfig({
     sequence: {
       concurrent: false,
     },
-    include: ['src/**/*.heapDelta.test.ts', 'tests/**/*.heapDelta.test.ts'],
+    include: ['src/**/*.heapDelta.test.ts', 'tests/**/*.heapDelta.test.ts', 'scripts/**/*.heapDelta.test.ts'],
     exclude: ['**/node_modules/**', 'dist/**', '**/.claude/**'],
   },
 });
