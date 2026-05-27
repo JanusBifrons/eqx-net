@@ -13,6 +13,7 @@ import {
   RADAR_MAX_DISTANCE,
   RADAR_WEDGE_COUNT,
   type Candidate,
+  type PartitionScratch,
 } from './halo/wedgeGrouping.js';
 import {
   paintArrowGfx,
@@ -132,6 +133,14 @@ export class HaloRadar {
   /** Monotonic per-`update()` counter for the generation-counter
    *  sweep over `arrows`. Bumped at the top of `update()`. */
   private _radarFrameId = 0;
+  /** Caller-owned scratch for `partitionAndGroupCandidates` (Phase 5c).
+   *  Reused across update() calls so the radar tick doesn't allocate
+   *  `result`, `wedges`, or per-wedge representative literals. */
+  private readonly _partitionScratch: PartitionScratch = {
+    result: [],
+    wedges: new Map<number, Candidate>(),
+    wedgeReps: [],
+  };
   /** Wall-clock anchor for spring dt. Reset on transit cleanup so dt
    *  across a warp gap doesn't blow up the spring's first post-arrival
    *  step. */
@@ -277,6 +286,7 @@ export class HaloRadar {
       RADAR_GROUPING_DISTANCE,
       RADAR_MAX_DISTANCE,
       RADAR_WEDGE_COUNT,
+      this._partitionScratch,
     );
 
     // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
