@@ -106,7 +106,52 @@ export class SnapshotBroadcaster {
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
 
+  // === Per-broadcast scratch (plan: quirky-rabbit, Phase 2 — invariant
+  // #14). Built ONCE before the per-recipient loop, referenced
+  // (read-only) by every recipient's snap. Cleared/truncated at the
+  // top of broadcast() so the next call starts from a known-empty
+  // state. Class fields persist across broadcasts so the backing
+  // buffers + AllShipEntry instances are reused — eliminates the
+  // ~6 per-broadcast allocations the inline literals used to pay.
+  //
+  // SAFETY: the per-recipient loop only READS these scratches; it
+  // never mutates them. The reference passed via `snap.boostingIds`
+  // etc. is encoded synchronously by `client.send` (Colyseus 0.16
+  // msgpack-encodes inline before returning), so the array's
+  // contents are captured into the wire bytes before the next
+  // broadcast can clear it.
+  private readonly _allShipsScratch: AllShipEntry[] = [];
+  private readonly _aliveIdsScratch = new Set<string>();
+  /** Map (not Record) so per-player set() is cheap and `.clear()`
+   *  works in-place. Telemetry build converts to a fresh Record
+   *  only when the snapshot_broadcast event actually fires (~7 Hz). */
+  private readonly _ackedTicksMapScratch = new Map<string, number>();
+  private readonly _boostingIdsScratch: string[] = [];
+  private readonly _thrustingIdsScratch: string[] = [];
+
   constructor(private readonly deps: SnapshotBroadcasterDeps) {}
+
+  /** Acquire-or-create an `AllShipEntry` slot at `index`. Used by
+   *  broadcast()'s logical-length-over-physical-slot pattern — the
+   *  array's backing buffer + entry instances persist across calls;
+   *  only the array's `.length` is truncated each broadcast. */
+  private allShipEntryAt(index: number): AllShipEntry {
+    let entry = this._allShipsScratch[index];
+    if (!entry) {
+      entry = {
+        playerId: '',
+        shipInstanceId: '',
+        isActive: true,
+        // Pose is overwritten below — initial reference is irrelevant
+        // (any ShipPhysicsState shape will do; we never read these
+        // initial zeros).
+        pose: undefined as unknown as ShipPhysicsState,
+        lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
+      };
+      this._allShipsScratch[index] = entry;
+    }
+    return entry;
+  }
 
   /** Drop per-session caches on disconnect. */
   onClientLeave(sessionId: string): void {
@@ -127,30 +172,33 @@ export class SnapshotBroadcaster {
     const serverTick = d.serverTick();
     if (serverTick <= 0 || sectorIdle) return;
 
-    const allShips: AllShipEntry[] = [];
-    const ackedTicksTelemetry: Record<string, number> = {};
-    const aliveIds = new Set<string>();
+    // Clear-and-reuse per-broadcast scratches (invariant #14).
+    this._aliveIdsScratch.clear();
+    this._ackedTicksMapScratch.clear();
+    this._boostingIdsScratch.length = 0;
+    this._thrustingIdsScratch.length = 0;
+    const allShips = this._allShipsScratch;
+    let allShipsCount = 0;
+
     for (const [playerId, slot] of d.playerToSlot) {
       const ship = d.getActiveShip(playerId);
       if (!ship || !ship.alive) continue;
       const pose = d.shipPoseCache.get(playerId);
       if (!pose) continue;
       const flags = d.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
-      allShips.push({
-        playerId,
-        shipInstanceId: ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId,
-        isActive: ship.isActive,
-        pose,
-        lastInput: {
-          thrust:    !!(flags & FLAG_INPUT_THRUST),
-          turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
-          turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
-          boost:     !!(flags & FLAG_INPUT_BOOST),
-          reverse:   !!(flags & FLAG_INPUT_REVERSE),
-        },
-      });
-      aliveIds.add(playerId);
-      ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
+      const entry = this.allShipEntryAt(allShipsCount);
+      entry.playerId = playerId;
+      entry.shipInstanceId = ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId;
+      entry.isActive = ship.isActive;
+      entry.pose = pose;
+      entry.lastInput.thrust    = !!(flags & FLAG_INPUT_THRUST);
+      entry.lastInput.turnLeft  = !!(flags & FLAG_INPUT_TURN_LEFT);
+      entry.lastInput.turnRight = !!(flags & FLAG_INPUT_TURN_RIGHT);
+      entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
+      entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
+      allShipsCount++;
+      this._aliveIdsScratch.add(playerId);
+      this._ackedTicksMapScratch.set(playerId, this.sabAppliedTicks.get(playerId) ?? 0);
     }
     // Phase 6b — append lingering hulls. Pose from lingeringPoseCache;
     // owner from state.ships entry's playerId; isActive=false. lastInput
@@ -160,23 +208,27 @@ export class SnapshotBroadcaster {
       if (!ship || !ship.alive) continue;
       const pose = d.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      allShips.push({
-        playerId: ship.playerId,
-        shipInstanceId,
-        isActive: false,
-        pose,
-        lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
-      });
+      const entry = this.allShipEntryAt(allShipsCount);
+      entry.playerId = ship.playerId;
+      entry.shipInstanceId = shipInstanceId;
+      entry.isActive = false;
+      entry.pose = pose;
+      entry.lastInput.thrust = false;
+      entry.lastInput.turnLeft = false;
+      entry.lastInput.turnRight = false;
+      entry.lastInput.boost = false;
+      entry.lastInput.reverse = false;
+      allShipsCount++;
     }
+    // Logical truncation — backing buffer + slot instances persist.
+    allShips.length = allShipsCount;
 
     // Boosting/thrusting filter — small lists, sent in every snapshot.
-    const boostingIds: string[] = [];
-    for (const id of d.boostingPlayers) if (aliveIds.has(id)) boostingIds.push(id);
-    const thrustingIds: string[] = [];
-    for (const id of d.thrustingPlayers) if (aliveIds.has(id)) thrustingIds.push(id);
-    const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
-    if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
-    if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
+    // Class-field scratches cleared at the top of broadcast().
+    const boostingIds = this._boostingIdsScratch;
+    for (const id of d.boostingPlayers) if (this._aliveIdsScratch.has(id)) boostingIds.push(id);
+    const thrustingIds = this._thrustingIdsScratch;
+    for (const id of d.thrustingPlayers) if (this._aliveIdsScratch.has(id)) thrustingIds.push(id);
 
     // 3×3 cell window radius for projectile interest.
     const interestRadius = CELL_SIZE * 1.5;
@@ -304,7 +356,8 @@ export class SnapshotBroadcaster {
         serverTick,
         states,
         ackedTick: recipientAcked,
-        ...sharedTail,
+        ...(boostingIds.length > 0 ? { boostingIds } : {}),
+        ...(thrustingIds.length > 0 ? { thrustingIds } : {}),
         ...(projectiles ? { projectiles } : {}),
         ...(drones ? { drones } : {}),
         ...(wrecks ? { wrecks } : {}),
@@ -313,20 +366,30 @@ export class SnapshotBroadcaster {
       anySnapshotSent = true;
     }
 
-    // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick).
+    // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick). Only
+    // allocate the wire Records here — the .map + Object.fromEntries
+    // chain in the pre-Phase-2 code allocated an intermediate Array,
+    // N tuples, and N inner objects on EVERY broadcast even though
+    // the event only fires every 3rd. Now they allocate at ~7 Hz, not
+    // 20 Hz, and the .map intermediate is eliminated entirely via
+    // direct loops into the Records.
     if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
+      const ackedTicks: Record<string, number> = {};
+      for (const [pid, tick] of this._ackedTicksMapScratch) ackedTicks[pid] = tick;
+      const telemetryStates: Record<string, { x: number; y: number; vx: number; vy: number }> = {};
+      for (const s of allShips) {
+        telemetryStates[s.playerId] = {
+          x: parseFloat(s.pose.x.toFixed(3)),
+          y: parseFloat(s.pose.y.toFixed(3)),
+          vx: parseFloat(s.pose.vx.toFixed(3)),
+          vy: parseFloat(s.pose.vy.toFixed(3)),
+        };
+      }
       d.serverLogEvent('snapshot_broadcast', {
         serverTick,
         playerCount: d.playerToSlot.size,
-        ackedTicks: ackedTicksTelemetry,
-        states: Object.fromEntries(
-          allShips.map((s) => [s.playerId, {
-            x: parseFloat(s.pose.x.toFixed(3)),
-            y: parseFloat(s.pose.y.toFixed(3)),
-            vx: parseFloat(s.pose.vx.toFixed(3)),
-            vy: parseFloat(s.pose.vy.toFixed(3)),
-          }]),
-        ),
+        ackedTicks,
+        states: telemetryStates,
       });
     }
   }
