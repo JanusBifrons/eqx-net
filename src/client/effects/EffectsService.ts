@@ -32,6 +32,8 @@ import { LaserGlow, type LaserGlowBeams } from './perEffect/LaserGlow';
 import { buildLaserGlowFactories } from './perEffect/laserGlowFactories';
 import { ImpactSparks } from './perEffect/ImpactSparks';
 import { buildImpactFactories } from './perEffect/impactFactories';
+import { ShieldAura } from './perEffect/ShieldAura';
+import { buildShieldFactories } from './perEffect/shieldFactories';
 import type { Application, Container } from 'pixi.js';
 
 /**
@@ -83,9 +85,16 @@ export class EffectsService implements IEffects {
   private readonly engines: EngineEmitter;
   private readonly laserGlow: LaserGlow | null;
   private readonly impactSparks: ImpactSparks;
+  private readonly shieldAura: ShieldAura;
   /** Tier currently applied to per-effect modules — updated each tick
-   *  when getQuality changes so M3 (warp) + M6 (laser glow) propagate. */
-  private lastAppliedTier: EffectQuality = 'high';
+   *  when getQuality changes so M3 (warp) + M6 (laser glow) + M8 (shield
+   *  aura) propagate. Initialised to 'minimal' (sentinel — ALWAYS
+   *  differs from the budget's default 'high') so the first tick fires
+   *  the tier-change branch and lazily constructs the per-effect filters
+   *  that touch DOM (ShieldAura's GlowFilter, LaserGlow's GlowFilter
+   *  when present). Test environments override quality before tick(),
+   *  keeping the lazy filter construction skipped. */
+  private lastAppliedTier: EffectQuality = 'minimal';
   /** Last frame's wall-clock `now` — used to derive `dtSec` for per-effect ticks. */
   private lastTickNowMs = 0;
 
@@ -111,6 +120,11 @@ export class EffectsService implements IEffects {
       refs.world,
       () => this.getQuality(),
       buildImpactFactories(),
+    );
+    this.shieldAura = new ShieldAura(
+      refs.world,
+      () => this.getQuality(),
+      buildShieldFactories(),
     );
   }
 
@@ -154,8 +168,9 @@ export class EffectsService implements IEffects {
     // Dispatch to the per-effect manager.
     if (kind === 'thrust' || kind === 'boost') {
       this.engines.setActive(entityId, kind, active);
+    } else if (kind === 'shield') {
+      this.shieldAura.setActive(entityId, active);
     }
-    // 'shield' wired in M8.
     this.counters.activeContinuous = this.continuous.size;
   }
 
@@ -174,14 +189,14 @@ export class EffectsService implements IEffects {
     this.budget.sample({ rendererUpdateMs: 1, dtMs });
 
     // Propagate tier-change to per-effect dials (warp via warpChain
-    // applyQuality, laser glow via LaserGlow.applyQuality). Only fires
-    // on actual tier transition — both applyQuality methods are
-    // idempotent but the != check saves the call overhead.
+    // applyQuality, laser glow via LaserGlow.applyQuality, shield aura
+    // attach/detach). Only fires on actual tier transition.
     const tier = this.getQuality();
     if (tier !== this.lastAppliedTier) {
       this.lastAppliedTier = tier;
       this.refs.warpChain?.applyQuality(tier);
       this.laserGlow?.applyQuality(tier);
+      this.shieldAura.applyQuality(tier);
     }
 
     const dtSec = dtMs / 1000;
@@ -189,6 +204,7 @@ export class EffectsService implements IEffects {
     this.impactSparks.tick(dtSec);
     if (this.refs.getEntityPose) {
       this.engines.tick(dtSec, this.refs.getEntityPose);
+      this.shieldAura.tick(dtMs, this.refs.getEntityPose);
     }
     this.lastTickNowMs = nowMs;
 
@@ -218,9 +234,14 @@ export class EffectsService implements IEffects {
     this.destruction.resetForSectorHandoff();
     this.engines.resetForSectorHandoff();
     this.impactSparks.resetForSectorHandoff();
+    this.shieldAura.resetForSectorHandoff();
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;
+  }
+
+  pulseShield(entityId: string): void {
+    this.shieldAura.pulse(entityId);
   }
 
   // ── IFilterEffects ──────────────────────────────────────────────────

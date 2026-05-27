@@ -1476,6 +1476,16 @@ export class ColyseusGameClient {
    * circle (authoritative; client never computes the 0-cross).
    */
   private handleShield(evt: ShieldEventMessage): void {
+    // M8 (plan wiggly-puppy): handleShield ONLY receives 'restored' /
+    // 'regen_complete' events (never 'broken' — the 0-cross is carried
+    // by DamageEvent.newShield=0 and handled in handleDamage). So any
+    // event here means the shield is back UP. Mirror the bit for ANY
+    // target so the shield aura updates remote ships too.
+    const targetEntry = this.mirror.ships.get(evt.targetId);
+    if (targetEntry && targetEntry.shieldDown !== false) {
+      targetEntry.shieldDown = false;
+    }
+
     if (evt.targetId !== this.mirror.localPlayerId) return;
     const pct = evt.shieldMax > 0 ? Math.round((evt.shield / evt.shieldMax) * 100) : 0;
     // step 10: stash for the 1Hz dispatcher; CSS bar animates between.
@@ -1544,7 +1554,25 @@ export class ColyseusGameClient {
         worldX: sparkX,
         worldY: sparkY,
         tint,
+        entityId: evt.targetId, // for shield-ring pulse on shield-layer hits
       });
+    }
+
+    // Shield-layer hit → flag the target's shield-down state in the
+    // mirror (M8 wiggly-puppy). The handleShield event is local-only
+    // (line 1479 returns when targetId !== localPlayerId), but every
+    // DamageEvent carries `newShield` for every target — so this is the
+    // single ownership site for ALL ships' shieldDown bit. The
+    // shieldDown=false case (regen back above 0) lands in handleShield
+    // for the local player; remote players' regen ramps don't broadcast,
+    // so a remote ship's ring will linger UP until its next DamageEvent
+    // — accepted limitation, documented in src/client/CLAUDE.md Effects
+    // section.
+    const targetEntry = this.mirror.ships.get(evt.targetId);
+    if (targetEntry) {
+      const wasDown = targetEntry.shieldDown === true;
+      const isDown = evt.newShield <= 0;
+      if (isDown !== wasDown) targetEntry.shieldDown = isDown;
     }
 
     // Phase 1 AI: mirror the server's hostility-marking on every damage

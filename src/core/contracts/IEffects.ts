@@ -103,6 +103,12 @@ export interface IParticleEffects {
    * `src/client/CLAUDE.md` "Sector handoff resets prediction state".
    */
   resetForSectorHandoff(): void;
+
+  /**
+   * Pulse an entity's shield ring (M8 — visible flash on a shield-layer
+   * damage hit). No-op if the entity has no active shield aura.
+   */
+  pulseShield(entityId: string): void;
 }
 
 /**

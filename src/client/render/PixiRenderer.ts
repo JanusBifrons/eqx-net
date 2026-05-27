@@ -919,6 +919,10 @@ export class PixiRenderer implements IRenderer {
             ...(ev.intensity !== undefined ? { intensity: ev.intensity } : {}),
             ...(ev.tint !== undefined ? { tint: ev.tint } : {}),
           });
+          // Shield-hit impacts also pulse the target's shield ring.
+          if (ev.kind === 'impact' && ev.tint === 0x88ddff && ev.entityId) {
+            this.effects.pulseShield(ev.entityId);
+          }
         }
       }
     }
@@ -1064,6 +1068,10 @@ export class PixiRenderer implements IRenderer {
    *  but the per-key check still wins on alloc-pressure). */
   private readonly _activeThrustIds = new Set<string>();
   private readonly _activeBoostIds = new Set<string>();
+  /** Set of entityIds (player playerIds OR drone "swarm-N" ids) currently
+   *  carrying an active shield aura. Diff'd against mirror state each
+   *  frame; transitions fire setContinuous('shield', active). */
+  private readonly _activeShieldIds = new Set<string>();
 
   /** Diff mirror.thrustingShips / boostingShips against our last frame's
    *  registration set; fire setContinuous(id, kind, true|false) only on
@@ -1109,6 +1117,51 @@ export class PixiRenderer implements IRenderer {
     } else if (this._activeBoostIds.size > 0) {
       for (const id of this._activeBoostIds) this.effects.setContinuous(id, 'boost', false);
       this._activeBoostIds.clear();
+    }
+
+    // Shield aura — M8 (plan wiggly-puppy). Drive from mirror.ships's
+    // shieldDown field (populated by handleShield + handleDamage) AND
+    // mirror.swarm's shieldDown (decoded from the binary wire's
+    // SWARM_RECORD_FLAG_SHIELD_DOWN bit). Note inversion: aura is ON
+    // when shield is UP (shieldDown=false / undefined). Drones use
+    // "swarm-<entityId>" id prefix to namespace with the player ids.
+    this.syncShieldAuraEffects(mirror);
+  }
+
+  private syncShieldAuraEffects(mirror: RenderMirror): void {
+    if (!this.effects) return;
+    const seen = this._updateSeenScratch; // already cleared at top of update()
+    seen.clear();
+
+    // Player ships: aura when shieldDown is false/undefined AND the ship
+    // has actually reported some shield state (we don't want to draw an
+    // aura for ships that just spawned and haven't taken a hit yet —
+    // defer to handleDamage to set the bit on first hit).
+    // Pragma: aura is ON only when shieldDown === false (explicit). This
+    // means ships with undefined shieldDown (no event seen yet) get NO
+    // aura. Documented limitation; acceptable until snapshot states
+    // carry shield state directly.
+    for (const [id, ship] of mirror.ships) {
+      if (ship.shieldDown === false) seen.add(id);
+    }
+    if (mirror.swarm) {
+      for (const [id, sw] of mirror.swarm) {
+        // shieldDown=false (or undefined) = shield UP for swarm too.
+        if (!sw.shieldDown && sw.kind === 1) seen.add(`swarm-${id}`);
+      }
+    }
+
+    for (const id of seen) {
+      if (!this._activeShieldIds.has(id)) {
+        this.effects.setContinuous(id, 'shield', true);
+        this._activeShieldIds.add(id);
+      }
+    }
+    for (const id of this._activeShieldIds) {
+      if (!seen.has(id)) {
+        this.effects.setContinuous(id, 'shield', false);
+        this._activeShieldIds.delete(id);
+      }
     }
   }
 

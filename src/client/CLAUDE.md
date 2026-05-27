@@ -242,6 +242,7 @@ Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-ch
   swap site (chapter-2; a snapshot-channel variant was tried + reverted
   for a spawn-gap p50 regression — docs/LESSONS.md 2026-05-16).
 - Internals: [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
+- **Visual shield aura (M8 — effects subsystem)**: `ShipRenderState.shieldDown` is the per-ship shield-up bit used by the in-world aura (`src/client/effects/perEffect/ShieldAura.ts`). Populated by `handleDamage` (broken on `newShield<=0`) + `handleShield` (cleared on `restored`/`regen_complete`). Drones use the existing `swarm[].shieldDown` decoded from the binary wire. Known limitation: remote players who joined the sector AFTER their shield broke (no DamageEvent observed) start with `shieldDown=undefined` — the aura is OFF (matches the snapshot-derived ideal). Future: lift the bit onto the snapshot's `states[*]` wire and the manager treats `undefined` as "shield up" only when the snapshot tier has been observed. The aura uses ONE single shared GlowFilter on the shield container (NOT per-entity) per hostile-review #4 — protects the 2026-05-21 warp-disable cost lesson.
 
 ## Effects subsystem (2026-05-27, plan `wiggly-puppy` M1)
 
