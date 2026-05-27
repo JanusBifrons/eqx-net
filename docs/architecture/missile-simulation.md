@@ -99,6 +99,27 @@ cross ~50 (frigate-heavy combat at scale), the right move is a
 SAB, and pose-ring infrastructure stay missile-free, and the swarm wire
 keeps its single-purpose shape.
 
+## Fire-rate enforcement
+
+Per-weapon cooldown is read from `weaponDef.cooldownTicks` in BOTH
+`PlayerFireResolver` and `AiFireResolver`. Heat-seeker = 180 ticks
+(3 s); hitscan + laser stay at 10 ticks (167 ms) as before.
+
+Pre-missile, both resolvers gated against a single
+`WEAPON_COOLDOWN_TICKS = 10` constant (the hitscan cooldown,
+re-exported from `Weapons.ts`). That worked while every weapon shared
+the same cadence, but missiles broke the assumption: a misbehaving or
+replay-attacking client could have spammed `fire` messages at the
+hitscan rate and launched ~6 missiles/sec per mount — saturating the
+256-record pool and the AOI band. Moving the gate to
+`weaponDef.cooldownTicks` closes that hole; the server enforces
+exactly the cadence the catalogue advertises.
+
+The constant `WEAPON_COOLDOWN_TICKS` is still exported from
+`Weapons.ts` for back-compat with anything that imported it for
+unrelated purposes; the two fire resolvers are the only ones that
+used it as a fire-rate ceiling, and they no longer do.
+
 ## The pool
 
 `MissileSimulation.pool` is a fixed `MissileRecord[]` of capacity 256,
@@ -226,7 +247,7 @@ transitions), and the cross-process channel is Colyseus broadcast
 | Missile detonated | `MISSILE_DETONATED` | `missile_detonated` |
 
 `MISSILE_FIRED` is broadcast to **all clients** (low cadence — at
-heat-seeker's 110-tick cooldown that's ~0.55 events/sec per mount).
+heat-seeker's 180-tick cooldown that's ~0.33 events/sec per mount).
 `missile_detonated` is **AOI-filtered server-side** so a detonation
 on the far side of the sector doesn't waste bytes on a client who
 can't see it — same shape as the existing `laser_fired` filter for

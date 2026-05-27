@@ -44,18 +44,23 @@ The Missile Frigate carries **two** heat-seeker racks:
 - `rack-r` at local (+10, -8)
 
 Both sit in the `primary` slot, so pulling the trigger fires both racks
-on the same tick (a tight stagger emerges from server-tick scheduling).
-With the missile's 110-tick cooldown that's ~0.9 s between salvos when
-both racks fire at once, or up to ~1.8 s per individual mount.
+on the same tick. Per-mount cooldown is 180 ticks (3 s at 60 Hz), so the
+frigate's salvo cadence is **one pair every 3 seconds**.
 
 ## Cooldown math
 
-Missile per-mount cooldown is 110 ticks (≈ 1.83 s at 60 Hz). With the
-frigate's two mounts firing on the same trigger pull, sustained DPS is
-~33 damage/sec at the primary target plus splash damage to bystanders.
-At single-target peak (proximity-fused direct hits), `damage` (30) +
-`directImpulseBonus` (20) = 50 per missile, so the two-rack salvo
-delivers up to 100 burst damage on a stationary target.
+Missile per-mount cooldown is 180 ticks (= 3 s at 60 Hz), enforced
+server-side from `weaponDef.cooldownTicks` (the same field the client
+uses for input pacing). With the frigate's two mounts firing on the
+same trigger pull, sustained DPS is ~20 damage/sec at the primary target
+plus splash damage to bystanders. At single-target peak (proximity-fused
+direct hits), `damage` (30) + `directImpulseBonus` (20) = 50 per missile,
+so the two-rack salvo delivers up to 100 burst damage on a stationary
+target every 3 seconds.
+
+The 3-second cadence is deliberately long enough that a previously-fired
+missile can fully engage + commit (lifetime 6 s) before the next salvo
+launches — the airspace never saturates with frigate ordnance.
 
 ## How to use one
 

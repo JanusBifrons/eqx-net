@@ -103,9 +103,12 @@ const HEAT_SEEKER_DEF: MissileWeaponDef = {
   // additive damage on top of the splash component; near-miss splash
   // damage uses the inverse-square falloff against `damage` alone.
   damage: 30,
-  // 110 ticks = ~1.83 s per mount cooldown. Frigate has 2 mounts so the
-  // pair-cooldown is ~0.92 s when staggered.
-  cooldownTicks: 110,
+  // 180 ticks = ~3 s per mount cooldown. The frigate has 2 mounts that
+  // fire on the same trigger, so the salvo cadence is one pair every 3 s.
+  // Long enough that a single in-flight missile can engage + commit
+  // before the next salvo launches, keeping the airspace from
+  // saturating; short enough that pursuit-fire is still expressive.
+  cooldownTicks: 180,
   // 400 u/s = 6.67 u/tick. Dodgeable but not slow enough to be a joke.
   speed: 400,
   // Collision radius small; missile is a point-thing visually.

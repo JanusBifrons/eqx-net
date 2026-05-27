@@ -19,7 +19,6 @@
 import {
   HITSCAN_RANGE,
   HITSCAN_DAMAGE,
-  WEAPON_COOLDOWN_TICKS,
 } from '../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { getWeapon, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
@@ -92,9 +91,6 @@ export class AiFireResolver {
    */
   resolve(shooterId: string, dirX: number, dirY: number, tick: number): void {
     const d = this.deps;
-    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) return;
-    d.lastFireClientTick.set(shooterId, tick);
 
     const len = Math.hypot(dirX, dirY);
     if (len < 0.001) return;
@@ -111,6 +107,16 @@ export class AiFireResolver {
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
 
+    // Per-weapon cooldown rate limit (matches PlayerFireResolver). For
+    // mixed-mode AI mounts (none today), the first mount's weapon sets
+    // the salvo cadence; this matches the existing one-weapon-per-ship
+    // assumption further down the function.
+    const firstAiWeaponId = slotMounts[0]?.weaponId ?? 'hitscan';
+    const firstAiWeaponDef = getWeapon(firstAiWeaponId);
+    const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
+    if (tick - lastFireCt < firstAiWeaponDef.cooldownTicks) return;
+    d.lastFireClientTick.set(shooterId, tick);
+
     // The fire direction the AI computed is the drone's body intent.
     // Re-express as an angle so mount.baseAngle can be added per mount.
     // For drones with rotating mounts, also add the per-mount slewed
@@ -126,9 +132,8 @@ export class AiFireResolver {
     // Weapon mode discriminator. AI drones today fire one weapon kind per
     // ship — the first mount's weaponId determines the mode for the whole
     // salvo. (Mixed-mode AI mounts would need a per-mount branch; punt
-    // until a kind ships with mixed mounts.)
-    const firstWeaponId = slotMounts[0]?.weaponId ?? 'hitscan';
-    const firstWeaponDef = getWeapon(firstWeaponId);
+    // until a kind ships with mixed mounts.) Reuses the same firstAiWeaponDef
+    // resolved above for the cooldown gate.
 
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
@@ -143,12 +148,12 @@ export class AiFireResolver {
       // Missile fire path: lock-on + spawn via MissileSimulation. No
       // hit resolution at fire time — the simulation owns lifecycle and
       // emits missile_fired (broadcast there, not here).
-      if (firstWeaponDef.mode === 'missile') {
+      if (firstAiWeaponDef.mode === 'missile') {
         d.spawnServerMissile(
           shooterId,
           rayFromX, rayFromY,
           ndx, ndy,
-          firstWeaponDef as MissileWeaponDef,
+          firstAiWeaponDef as MissileWeaponDef,
         );
         continue;
       }
