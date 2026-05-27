@@ -368,6 +368,17 @@ export class PixiRenderer implements IRenderer {
         stage: this.app.stage,
         camera: this.camera,
         warpChain: this.warp,
+        // Per-frame pose lookup. Reads the RENDERED sprite position so
+        // it stays in lockstep with whatever frame the engine emitter
+        // ticks on (one-pose-per-frame invariant for drones too — the
+        // sprite was just set from the resolved swarm pose by
+        // updateSwarmSprites). Returns null for entities not in the
+        // sprite map (despawned, never spawned, off-interest).
+        getEntityPose: (entityId: string) => {
+          const sp = this.sprites.get(entityId);
+          if (sp) return { x: sp.x, y: -sp.y, angle: sp.rotation };
+          return null;
+        },
       });
     }
 
@@ -1005,6 +1016,11 @@ export class PixiRenderer implements IRenderer {
     // section). dtMs = wall-clock since last tick; effects use it for
     // particle lifetime + budget EMA.
     if (this.effects) {
+      // Engine continuous emitters — drive from mirror.boostingShips /
+      // thrustingShips Sets (M5 of plan wiggly-puppy). Set diff per frame
+      // → setContinuous on transitions only (no-op on identical state).
+      this.syncEngineContinuousEffects(mirror);
+
       const nowMs = performance.now();
       const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
       this.effects.tick(nowMs, dtMs);
@@ -1012,6 +1028,60 @@ export class PixiRenderer implements IRenderer {
     }
 
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
+  }
+
+  /** Track which ships currently have an active engine emitter registered
+   *  with EffectsService — lets us detect transitions per frame and only
+   *  call setContinuous on actual changes (setContinuous is re-entrant
+   *  but the per-key check still wins on alloc-pressure). */
+  private readonly _activeThrustIds = new Set<string>();
+  private readonly _activeBoostIds = new Set<string>();
+
+  /** Diff mirror.thrustingShips / boostingShips against our last frame's
+   *  registration set; fire setContinuous(id, kind, true|false) only on
+   *  transitions. Mirrors the existing thrust/boost flame ownership in
+   *  spriteBuilders — those Graphics flames continue to render (they are
+   *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
+  private syncEngineContinuousEffects(mirror: RenderMirror): void {
+    if (!this.effects) return;
+    const thrust = mirror.thrustingShips;
+    const boost = mirror.boostingShips;
+
+    if (thrust) {
+      for (const id of thrust) {
+        if (!this._activeThrustIds.has(id)) {
+          this.effects.setContinuous(id, 'thrust', true);
+          this._activeThrustIds.add(id);
+        }
+      }
+      for (const id of this._activeThrustIds) {
+        if (!thrust.has(id)) {
+          this.effects.setContinuous(id, 'thrust', false);
+          this._activeThrustIds.delete(id);
+        }
+      }
+    } else if (this._activeThrustIds.size > 0) {
+      for (const id of this._activeThrustIds) this.effects.setContinuous(id, 'thrust', false);
+      this._activeThrustIds.clear();
+    }
+
+    if (boost) {
+      for (const id of boost) {
+        if (!this._activeBoostIds.has(id)) {
+          this.effects.setContinuous(id, 'boost', true);
+          this._activeBoostIds.add(id);
+        }
+      }
+      for (const id of this._activeBoostIds) {
+        if (!boost.has(id)) {
+          this.effects.setContinuous(id, 'boost', false);
+          this._activeBoostIds.delete(id);
+        }
+      }
+    } else if (this._activeBoostIds.size > 0) {
+      for (const id of this._activeBoostIds) this.effects.setContinuous(id, 'boost', false);
+      this._activeBoostIds.clear();
+    }
   }
 
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the

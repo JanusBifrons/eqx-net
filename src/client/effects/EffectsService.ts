@@ -26,6 +26,8 @@ import {
 import { EffectsBudget } from './EffectsBudget';
 import { DestructionFx } from './perEffect/DestructionFx';
 import { buildDestructionFactories } from './perEffect/destructionFactories';
+import { EngineEmitter, type EnginePoseFn } from './perEffect/EngineEmitter';
+import { buildEngineFactories } from './perEffect/engineFactories';
 import type { Application, Container } from 'pixi.js';
 
 /**
@@ -48,6 +50,11 @@ export interface EffectStageRefs {
   /** Optional direct reference to `WarpFilterChain` so the budget can call
    *  its `applyQuality(level)` method on tier transitions (added in M3). */
   warpChain?: { applyQuality: (level: EffectQuality) => void };
+  /** Per-frame ship-pose lookup (game-space, Y-up — emitter Y-flips on
+   *  write). Returns null if the entity is not in any mirror map. Used
+   *  by EngineEmitter to position trails at the ship's stern each tick.
+   *  Callee polls inside `tick`; pose is NEVER stored between frames. */
+  getEntityPose?: EnginePoseFn;
 }
 
 interface ContinuousEntry {
@@ -65,6 +72,7 @@ export class EffectsService implements IEffects {
   private readonly statsScratch = { activeBursts: 0, activeContinuous: 0, activeFilters: 0, quality: 'high' as import('@core/contracts/IEffects').EffectQuality };
 
   private readonly destruction: DestructionFx;
+  private readonly engines: EngineEmitter;
   /** Last frame's wall-clock `now` — used to derive `dtSec` for per-effect ticks. */
   private lastTickNowMs = 0;
 
@@ -77,6 +85,11 @@ export class EffectsService implements IEffects {
       refs.app,
       () => this.getQuality(),
       buildDestructionFactories(),
+    );
+    this.engines = new EngineEmitter(
+      refs.world,
+      () => this.getQuality(),
+      buildEngineFactories(),
     );
   }
 
@@ -112,6 +125,11 @@ export class EffectsService implements IEffects {
     } else {
       this.continuous.delete(key);
     }
+    // Dispatch to the per-effect manager.
+    if (kind === 'thrust' || kind === 'boost') {
+      this.engines.setActive(entityId, kind, active);
+    }
+    // 'shield' wired in M8.
     this.counters.activeContinuous = this.continuous.size;
   }
 
@@ -131,6 +149,9 @@ export class EffectsService implements IEffects {
 
     const dtSec = dtMs / 1000;
     this.destruction.tick(dtSec);
+    if (this.refs.getEntityPose) {
+      this.engines.tick(dtSec, this.refs.getEntityPose);
+    }
     this.lastTickNowMs = nowMs;
 
     this.refreshCounters();
@@ -140,7 +161,8 @@ export class EffectsService implements IEffects {
    *  tick so `getStats()` reflects reality without per-call allocation. */
   private refreshCounters(): void {
     const d = this.destruction.activeCount();
-    this.counters.activeBursts = d.bursts;
+    const e = this.engines.activeCount();
+    this.counters.activeBursts = d.bursts + e.particles;
     this.counters.activeFilters = d.filters;
     this.counters.activeContinuous = this.continuous.size;
     this.budget.recordCounts(this.counters);
@@ -155,6 +177,7 @@ export class EffectsService implements IEffects {
   resetForSectorHandoff(): void {
     this.continuous.clear();
     this.destruction.resetForSectorHandoff();
+    this.engines.resetForSectorHandoff();
     this.counters.activeBursts = 0;
     this.counters.activeContinuous = 0;
     this.counters.activeFilters = 0;
