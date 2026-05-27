@@ -123,6 +123,14 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_DIAG_MARKERS off', msg: { type: 'SET_DIAG_MARKERS', enabled: false } },
       { name: 'POINTER_EVENT', msg: { type: 'POINTER_EVENT', native: pointerSample } },
       { name: 'WHEEL_EVENT', msg: { type: 'WHEEL_EVENT', native: wheelSample } },
+      { name: 'TRIGGER_EFFECT impact', msg: { type: 'TRIGGER_EFFECT', effect: 'impact', worldX: 100, worldY: 200 } },
+      { name: 'TRIGGER_EFFECT destruction with opts', msg: { type: 'TRIGGER_EFFECT', effect: 'destruction', worldX: 0, worldY: 0, intensity: 0.8, tint: 0xff8800, entityId: 'ship-7' } },
+      { name: 'TRIGGER_EFFECT shield-hit', msg: { type: 'TRIGGER_EFFECT', effect: 'shield-hit', worldX: 50, worldY: -25 } },
+      { name: 'TRIGGER_EFFECT destruction-shock', msg: { type: 'TRIGGER_EFFECT', effect: 'destruction-shock', worldX: 0, worldY: 0 } },
+      { name: 'SET_EFFECT_QUALITY high', msg: { type: 'SET_EFFECT_QUALITY', level: 'high' } },
+      { name: 'SET_EFFECT_QUALITY minimal', msg: { type: 'SET_EFFECT_QUALITY', level: 'minimal' } },
+      { name: 'SET_EFFECT_PARAMS engine', msg: { type: 'SET_EFFECT_PARAMS', effect: 'engine', params: { thrustEmitRateHz: 60, boostEmitRateHz: 90 } } },
+      { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);
@@ -204,12 +212,17 @@ describe('renderer-worker protocol', () => {
           case 'SET_DIAG_MARKERS':
           case 'POINTER_EVENT':
           case 'WHEEL_EVENT':
+          case 'TRIGGER_EFFECT':
+          case 'SET_EFFECT_QUALITY':
+          case 'SET_EFFECT_PARAMS':
           case 'DISPOSE':
             return msg.type;
         }
       }
       expect(_assertExhaustive({ type: 'DISPOSE' })).toBe('DISPOSE');
       expect(_assertExhaustive({ type: 'SET_DIAG_MARKERS', enabled: true })).toBe('SET_DIAG_MARKERS');
+      expect(_assertExhaustive({ type: 'TRIGGER_EFFECT', effect: 'impact', worldX: 0, worldY: 0 })).toBe('TRIGGER_EFFECT');
+      expect(_assertExhaustive({ type: 'SET_EFFECT_QUALITY', level: 'high' })).toBe('SET_EFFECT_QUALITY');
     });
 
     it('every WorkerToMainMsg type is in the discriminated union', () => {

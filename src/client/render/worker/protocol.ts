@@ -51,6 +51,9 @@ export type {
   PointerEventMsg,
   WheelEventMsg,
   SetDiagMarkersMsg,
+  TriggerEffectMsg,
+  SetEffectQualityMsg,
+  SetEffectParamsMsg,
   DisposeMsg,
   MainToWorkerMsg,
 } from './protocol/mainToWorker.js';

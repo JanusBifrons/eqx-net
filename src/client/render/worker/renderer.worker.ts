@@ -190,6 +190,17 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'TRIGGER_EFFECT':
+      case 'SET_EFFECT_QUALITY':
+      case 'SET_EFFECT_PARAMS': {
+        // Effects subsystem (plan `wiggly-puppy` M2): protocol shape in
+        // place; the renderer-side handler (M3-M9) will wire each variant
+        // to its `EffectsService` method. M2 ships protocol + WorkerRendererClient
+        // forwarding only; the worker accepts the messages as no-ops so a
+        // pre-M3 worker against a post-M3 main thread does not throw.
+        break;
+      }
+
       case 'DISPOSE': {
         if (renderer) {
           try {
@@ -200,6 +211,17 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           renderer = null;
         }
         self.close();
+        break;
+      }
+
+      default: {
+        // Default-branch warn (plan `wiggly-puppy` M2): a deployed worker
+        // from before a new message variant lands will silently no-op
+        // unknown types. Logging it gives partial-rollout + Vite HMR mid-
+        // session visibility. The TS exhaustiveness check (compile-time)
+        // remains the primary guard; this is the runtime safety net.
+        // eslint-disable-next-line no-console
+        console.warn('[renderer-worker] unknown msg.type', (msg as { type?: string }).type);
         break;
       }
     }
