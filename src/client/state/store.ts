@@ -121,6 +121,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitTargetSectorKey: null,
   transitSpoolMs: null,
   activeWeapon: DEFAULT_WEAPON,
+  lastFireMs: null,
   isDrawerOpen: false,
   drawerTab: 'galaxy',
   phase: 'meta',
@@ -167,11 +168,12 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
   setTransitSpoolMs: (ms) => set({ transitSpoolMs: ms }),
-  setActiveWeapon: (id) => set({ activeWeapon: id }),
+  setActiveWeapon: (id) => set({ activeWeapon: id, lastFireMs: null }),
   cycleWeapon: () => set((s) => {
     const idx = WEAPON_IDS.indexOf(s.activeWeapon);
-    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]! };
+    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]!, lastFireMs: null };
   }),
+  setLastFireMs: (ms) => set({ lastFireMs: ms }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
   setDrawerTab: (id) => set({ drawerTab: id }),
   setPhase: (p) => set((prev) => {

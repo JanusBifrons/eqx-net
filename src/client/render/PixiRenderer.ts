@@ -877,7 +877,7 @@ export class PixiRenderer implements IRenderer {
 
     if (this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
-        this.healthBars.onHit(hb.entityId, hb.healthPct);
+        this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct);
       }
       mirror.pendingHealthBarHits.length = 0;
     }

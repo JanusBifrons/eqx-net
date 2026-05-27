@@ -59,10 +59,23 @@ export const MISSILE_FRIGATE: ShipKind = ShipKindSchema.parse({
     // Twin forward racks. Narrow ±15° arc so the racks visibly track but
     // can't pivot dramatically — frigate must orient toward target. Slow
     // rotation (1.5 rad/s) matches the sluggish chassis feel.
+    //
+    // localY = +12 (NOT -8 as in the first cut). The catalogue's
+    // `localX`/`localY` convention is GAME-SPACE (where +y is forward
+    // — `mountWorldOrigin` in src/server/rooms/mountGeometry.ts does a
+    // straight rotation without any Y-flip). `MountVisualManager` flips
+    // Y to render in Pixi-up sprite space. The original -8 put the
+    // racks 8 units BEHIND the ship's centre in game-space, so missile
+    // spawn (mount + 20u barrel-forward) landed inside the hull
+    // silhouette behind the bow — the "missiles appear to launch from
+    // behind my ship" smoke-test class. +12 places the racks just
+    // forward of centre, inside the hull's wider shoulders (shape
+    // points span y=-22..+22 in sprite-Pixi-up = +22..-22 in game-y),
+    // so the 20u barrel offset puts the missile out past the bow tip.
     {
       id: 'rack-l',
       localX: -10,
-      localY: -8,
+      localY: 12,
       baseAngle: 0,
       arcMin: -Math.PI / 12,
       arcMax: Math.PI / 12,
@@ -72,7 +85,7 @@ export const MISSILE_FRIGATE: ShipKind = ShipKindSchema.parse({
     {
       id: 'rack-r',
       localX: 10,
-      localY: -8,
+      localY: 12,
       baseAngle: 0,
       arcMin: -Math.PI / 12,
       arcMax: Math.PI / 12,

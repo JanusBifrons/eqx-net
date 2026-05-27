@@ -261,8 +261,15 @@ export interface RenderMirror {
    *  TTL-expiry channel, mirroring the `pendingDamageNumbers` drain
    *  pattern. Cleared + drained each frame. */
   pendingDamageNumberCancels?: string[];
-  /** Health bar hit events this frame. Drained + cleared each frame. */
-  pendingHealthBarHits?: Array<{ entityId: string; healthPct: number }>;
+  /** Health bar hit events this frame. Drained + cleared each frame.
+   *  `shieldPct` is optional — when present (and the entity has any
+   *  shield max > 0), `HealthBarManager` renders a two-segment bar
+   *  with shield ABOVE hull so shield damage is visible. Without
+   *  this, drones/bots' shield hits look like "zero damage" because
+   *  hull stays at 100% while shield absorbs (no per-entity HUD
+   *  ShieldHullBar exists for them — the on-hit bar is the only
+   *  shield-damage feedback). */
+  pendingHealthBarHits?: Array<{ entityId: string; healthPct: number; shieldPct?: number }>;
   /** Remote warp events (`warp_in` / `warp_out` broadcasts from the
    *  server) to play this frame. The renderer drains the array and
    *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +

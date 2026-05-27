@@ -132,10 +132,15 @@ export interface PendingImpulse {
   fy: number;
 }
 
-/** Narrow view of swarmRegistry the simulation reads. */
+/** Narrow view of swarmRegistry the simulation reads. `kind` is the
+ *  SwarmKind enum (0 = asteroid, 1 = drone) — exposed so missile
+ *  lock-on and sweep collision can skip asteroids by kind rather than
+ *  by string-prefix (galaxy asteroids spawn as `asteroid-N` per
+ *  `galaxy/asteroidConfigs.ts`, NOT `swarm-asteroid-N`, so any prefix-
+ *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
-  get(id: string): { entityId: number; radius: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number }>;
+  get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number }>;
 }
 
 export interface MissileSimulationDeps {
@@ -162,7 +167,16 @@ export interface MissileSimulationDeps {
   /** Local per-process bus (SFX/Pino subscribers). Cross-process is
    *  handled by the broadcast* callbacks above. */
   bus: Bus;
+  /** Diagnostic ring-buffer sink. Optional so pool unit tests can omit it.
+   *  Production wiring: `serverLogEvent` from src/server/debug/ServerEventLog.
+   *  Emits `missile_spawned` / `missile_detonated` / `missile_lock_lost`. */
+  serverLogEvent?: (tag: string, data: Record<string, unknown>) => void;
 }
+
+/** Detonation cause — surfaced into `missile_detonated` diag entries so
+ *  a capture can distinguish "homed onto target and hit" from "dumb-flight
+ *  expired". */
+export type DetonateCause = 'sweep' | 'fuse' | 'lifetime';
 
 export class MissileSimulation {
   /** Pre-allocated record pool. Indices are stable for the record's
@@ -270,11 +284,28 @@ export class MissileSimulation {
     rec.angle = Math.atan2(-ndx, ndy);
 
     // Lock-at-launch: build candidate set (players + swarm) and pickTarget.
-    const lock = this.lockOnTarget(spawnX, spawnY, ownerId, isHostile, weaponDef);
-    rec.lockedTargetId = lock?.id ?? null;
-    rec.lockedKind = lock?.kind ?? null;
+    const lockResult = this.lockOnTarget(spawnX, spawnY, ownerId, isHostile, weaponDef);
+    rec.lockedTargetId = lockResult.lock?.id ?? null;
+    rec.lockedKind = lockResult.lock?.kind ?? null;
     rec.ticksRemaining = weaponDef.lifetimeTicks;
     rec.alive = true;
+
+    // Diag — surfaces the "no lock acquired" smoke-test class. When
+    // `lockedTargetId` is null and `candidateCount` is non-zero, the
+    // hostility filter rejected all candidates; when both are zero,
+    // the sector simply had no candidates in lock range.
+    this.deps.serverLogEvent?.('missile_spawned', {
+      missileId,
+      ownerId,
+      x: spawnX,
+      y: spawnY,
+      dirX: ndx,
+      dirY: ndy,
+      lockedTargetId: rec.lockedTargetId,
+      lockedKind: rec.lockedKind,
+      candidateCount: lockResult.candidateCount,
+      hostileCandidateCount: lockResult.hostileCandidateCount,
+    });
 
     this.liveIndices.push(idx);
     if (this.liveIndices.length > this.highWater) {
@@ -327,6 +358,14 @@ export class MissileSimulation {
       if (m.lockedTargetId !== null) {
         target = this.resolveLockPose(m.lockedTargetId, m.lockedKind!);
         if (target === null) {
+          // Diag — lock dropped mid-flight (target died, despawned,
+          // or became inactive). Missile continues straight.
+          this.deps.serverLogEvent?.('missile_lock_lost', {
+            missileId: m.id,
+            previousTargetId: m.lockedTargetId,
+            previousKind: m.lockedKind,
+            ageTicks: def.lifetimeTicks - m.ticksRemaining,
+          });
           m.lockedTargetId = null;
           m.lockedKind = null;
         }
@@ -338,7 +377,7 @@ export class MissileSimulation {
         const dyp = target.y - m.y;
         const d2p = dxp * dxp + dyp * dyp;
         if (d2p <= def.proximityFuseRadius * def.proximityFuseRadius) {
-          this.detonate(m, m.x, m.y, m.lockedTargetId, m.lockedKind);
+          this.detonate(m, m.x, m.y, m.lockedTargetId, m.lockedKind, 'fuse');
           this.releaseAtPos(i);
           continue;
         }
@@ -362,7 +401,7 @@ export class MissileSimulation {
       // 5. Sweep collision — direct-hit against players + swarm.
       const hit = this.sweepCollision(m);
       if (hit !== null) {
-        this.detonate(m, hit.x, hit.y, hit.id, hit.kind);
+        this.detonate(m, hit.x, hit.y, hit.id, hit.kind, 'sweep');
         this.releaseAtPos(i);
         continue;
       }
@@ -370,7 +409,7 @@ export class MissileSimulation {
       // 6. Lifetime decrement / expiry.
       m.ticksRemaining -= 1;
       if (m.ticksRemaining <= 0) {
-        this.detonate(m, m.x, m.y, null, null);
+        this.detonate(m, m.x, m.y, null, null, 'lifetime');
         this.releaseAtPos(i);
         continue;
       }
@@ -427,7 +466,11 @@ export class MissileSimulation {
     ownerId: string,
     isHostile: (id: string) => boolean,
     def: MissileWeaponDef,
-  ): { id: string; kind: SplashKind } | null {
+  ): {
+    lock: { id: string; kind: SplashKind } | null;
+    candidateCount: number;
+    hostileCandidateCount: number;
+  } {
     const candidates: MountTargetView[] = [];
     // Players.
     for (const [playerId] of this.deps.playerToSlot) {
@@ -438,9 +481,17 @@ export class MissileSimulation {
       if (!pose) continue;
       candidates.push({ id: playerId, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
     }
-    // Swarm.
+    // Swarm — drones only. Asteroids (kind=0) are EXCLUDED at the
+    // candidate-build site (not via a string-prefix predicate, which
+    // misses galaxy-sector asteroid ids like `asteroid-0`). They have
+    // no `swarmHealth` entry so `damageSwarmLayered` short-circuits to
+    // null → broadcast is silently dropped → user sees missile hit a
+    // rock with zero damage (the "fires, tracks, aims, hits, zero
+    // damage" smoke-test class). Drones (kind=1) and Living World
+    // bots both pass this gate.
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === ownerId) continue;
+      if (rec.kind === 0) continue;
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
@@ -448,16 +499,28 @@ export class MissileSimulation {
       const vy = this.deps.sabF32[b + SLOT_VY_OFF]!;
       candidates.push({ id: rec.id, x: cx, y: cy, vx, vy });
     }
+    let hostileCount = 0;
+    for (const c of candidates) if (isHostile(c.id)) hostileCount++;
     // Range gate: missiles never lock past their full-life travel distance.
     const maxLockDistance = (def.speed * def.lifetimeTicks) / 60;
     const picked = pickTarget(spawnX, spawnY, candidates, null, isHostile, {
       maxDistance: maxLockDistance,
     });
-    if (!picked) return null;
+    if (!picked) {
+      return {
+        lock: null,
+        candidateCount: candidates.length,
+        hostileCandidateCount: hostileCount,
+      };
+    }
     const kind: SplashKind = picked.id.startsWith('swarm-') || /^lwbot-/.test(picked.id)
       ? 'swarm'
       : 'ship';
-    return { id: picked.id, kind };
+    return {
+      lock: { id: picked.id, kind },
+      candidateCount: candidates.length,
+      hostileCandidateCount: hostileCount,
+    };
   }
 
   private resolveLockPose(
@@ -516,9 +579,15 @@ export class MissileSimulation {
       }
     }
 
-    // Swarm.
+    // Swarm — drones only. Asteroids (kind=0) are excluded for the
+    // same reason as `lockOnTarget`: no `swarmHealth` entry means the
+    // damage broadcast is silently dropped. A missile sweeping past
+    // an asteroid would otherwise detonate-on-rock (explosion VFX +
+    // zero damage), which is the user's "fires/aims/hits but does
+    // nothing" symptom in any asteroid-dense galaxy sector.
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === m.ownerId) continue;
+      if (rec.kind === 0) continue;
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
@@ -546,10 +615,28 @@ export class MissileSimulation {
     dy: number,
     primaryId: string | null,
     primaryKind: SplashKind | null,
+    cause: DetonateCause,
   ): void {
     const def = m.weaponDef;
     const r2 = def.splashRadius * def.splashRadius;
     const ownerSkip = def.splashExcludeOwner ? m.ownerId : null;
+
+    // Diag — fires BEFORE the splash loop so a panicked diagnostician
+    // gets the cause + locked-vs-primary delta even if splash itself
+    // throws. `ageTicks` = lifetimeTicks - ticksRemaining at the moment
+    // of detonate (matches `advance()`'s tick accounting).
+    this.deps.serverLogEvent?.('missile_detonated', {
+      missileId: m.id,
+      cause,
+      x: dx,
+      y: dy,
+      ownerId: m.ownerId,
+      ageTicks: def.lifetimeTicks - m.ticksRemaining,
+      primaryId,
+      primaryKind,
+      lockedTargetId: m.lockedTargetId,
+      lockedKind: m.lockedKind,
+    });
 
     // Splash against players.
     for (const [playerId] of this.deps.playerToSlot) {

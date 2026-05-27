@@ -59,6 +59,7 @@ const FEATURE_SPECS: string[] = [
   '**/autocapture-observer-effect.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/combat.spec.ts',
+  '**/missile-frigate-homing.spec.ts',
   '**/collision-events.spec.ts',
   '**/configurable-arrival.spec.ts',
   '**/diag-mode-side-effect.spec.ts',

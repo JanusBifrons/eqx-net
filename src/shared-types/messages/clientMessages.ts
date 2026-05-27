@@ -29,7 +29,7 @@ export const FireMessageSchema = z
     type: z.literal('fire'),
     tick: z.number().int().nonnegative(),
     clientShotId: z.string(),
-    weapon: z.enum(['hitscan', 'laser']).default('hitscan'),
+    weapon: z.enum(['hitscan', 'laser', 'heat-seeker']).default('hitscan'),
     /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
      *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
      *  reconstructs the ray origin from the shooter's lag-compensated pose

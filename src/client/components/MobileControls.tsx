@@ -4,6 +4,7 @@ import nipplejs from 'nipplejs';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { WeaponSelector } from './WeaponSelector';
+import { FireCooldownRing } from './FireCooldownRing';
 import { useMountLog } from '../debug/useMountLog';
 import { logEvent } from '../debug/ClientLogger';
 
@@ -171,15 +172,22 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
        *  rightmost element and BOOST (order=20) is to its left. */}
       <Slot anchor="bottom-right" order={10}>
         <Box sx={{ display: 'flex', flexDirection: 'column-reverse', alignItems: 'center', gap: 0.75 }}>
-          <Box
-            component="button"
-            data-testid="mobile-fire"
-            onTouchStart={onFireStart}
-            onTouchEnd={onFireEnd}
-            onTouchCancel={onFireEnd}
-            sx={fireButtonSx}
-          >
-            FIRE
+          {/* Fire button + cooldown ring overlay. `position: relative`
+           *  is the positioning context the ring's `position: absolute`
+           *  resolves against; the ring overlays the button with
+           *  `pointerEvents: none` so touch still hits the button. */}
+          <Box sx={{ position: 'relative' }}>
+            <Box
+              component="button"
+              data-testid="mobile-fire"
+              onTouchStart={onFireStart}
+              onTouchEnd={onFireEnd}
+              onTouchCancel={onFireEnd}
+              sx={fireButtonSx}
+            >
+              FIRE
+            </Box>
+            <FireCooldownRing />
           </Box>
           <WeaponSelector />
         </Box>

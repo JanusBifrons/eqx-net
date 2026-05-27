@@ -97,7 +97,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 3;
+export const SHIP_KIND_CATALOGUE_VERSION = 4;
 
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 

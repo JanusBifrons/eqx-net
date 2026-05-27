@@ -32,6 +32,27 @@ import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessag
 export const MISSILE_DISPLAY_DELAY_MS = 100;
 
 /**
+ * Maximum velocity-extrapolation window past the latest snapshot. When
+ * the next snapshot is late (WiFi jitter, snapshot AOI roll, etc.) the
+ * renderer dead-reckons the missile forward using `vx`/`vy` from the
+ * latest snapshot so the sprite keeps moving smoothly instead of
+ * plateauing. Capped so a missile that has actually left the AOI
+ * doesn't keep flying off-screen forever (it freezes after this window,
+ * and the 1000 ms stale-eviction backstop removes the sprite).
+ *
+ * Raised 80 → 250 ms (2026-05-27, post smoke-test #N). Observed
+ * snapshot intervalMs distribution from `2026-05-27T16-33-40Z-r0r701`:
+ * 5 intervals in 100-200 ms range, 2 in ≥500 ms range. With an 80 ms
+ * cap, every gap beyond ~180 ms (DISPLAY_DELAY+CAP) froze the missile
+ * sprite — the user's "still jittery" report. 250 ms covers the entire
+ * 100-200 ms band and most of the 500 ms tail until the main thread
+ * un-stalls. At 400 u/s the cap is 100 u of forward drift; the homing
+ * curve still arrives via the next snapshot's pose stamp and the
+ * arrival correction is the same regardless of cap.
+ */
+export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
+
+/**
  * Apply a snapshot's `missiles[]` slice to `mirror.missiles`. Updates
  * existing entries (sliding prev → latest), inserts new ones, and
  * cleans up entries the snapshot omitted from a full-snapshot view —
@@ -111,14 +132,33 @@ export function removeMissile(mirror: RenderMirror, missileId: number): void {
 }
 
 /**
- * Resolve a missile's display pose at `nowMs`. Linear interpolation
- * between `prev*` and the latest pose, displaced by
- * `MISSILE_DISPLAY_DELAY_MS` so the renderer is sampling between two
- * arrived snapshots.
+ * Resolve a missile's display pose at `nowMs`.
  *
- * Returns null when the missile doesn't exist (caller should skip
- * drawing). When only one snapshot has arrived (`prevArrivalMs ===
- * latestArrivalMs`), returns the latest pose with t=1.
+ * **PURE velocity-based dead-reckoning from the latest server snapshot.**
+ * Replaces the previous lerp-between-prev-and-latest (which used wall-
+ * clock arrival times as the lerp span — observed snapshot intervalMs
+ * jitter of 29-200 ms made the visible speed CHEAT THE SAME 50 ms of
+ * server-side missile motion across varying wall-clock windows → the
+ * sprite appeared to speed up / slow down per snapshot = "jittery").
+ *
+ * The new behaviour: position = `latest + velocity × dt` where `dt` is
+ * the wall-clock distance from the latest snapshot's arrival minus the
+ * `MISSILE_DISPLAY_DELAY_MS` headroom. Because `vx`/`vy` is the server-
+ * authoritative speed, the visible motion is exactly the server's
+ * motion — immune to WS arrival jitter. Each new snapshot snaps `latest`
+ * to the fresh authoritative pose; for straight flight the snap is
+ * invisible (extrap matches actual); for homing turns the snap is at
+ * most `turnRate × snapshot_interval ≈ 1.5 × 0.05 ≈ 0.075 rad` of
+ * heading drift, far below the human curvature-detection threshold for
+ * a moving missile.
+ *
+ * Bounded BOTH directions:
+ *   - Backward by `MISSILE_DISPLAY_DELAY_MS` (the display-delay window).
+ *   - Forward by `MISSILE_EXTRAPOLATION_CAP_MS` (so a missile that has
+ *     left the AOI doesn't keep flying off-screen; the 1000 ms stale-
+ *     eviction backstop removes the sprite shortly after).
+ *
+ * Returns null when the missile doesn't exist (caller skips drawing).
  */
 export function resolveMissileDisplayPose(
   mirror: RenderMirror,
@@ -127,28 +167,25 @@ export function resolveMissileDisplayPose(
 ): { x: number; y: number; angle: number; lifePct: number } | null {
   const m = mirror.missiles?.get(missileId);
   if (!m) return null;
-  const targetMs = nowMs - MISSILE_DISPLAY_DELAY_MS;
-  const span = m.latestArrivalMs - m.prevArrivalMs;
-  if (span <= 0) {
-    return { x: m.x, y: m.y, angle: m.angle, lifePct: m.lifePct };
-  }
-  const t = (targetMs - m.prevArrivalMs) / span;
-  // Clamp into [0, 1] — extrapolation past latest is intentionally
-  // suppressed (we wait for the next snapshot rather than drift past
-  // the authoritative pose).
-  const tc = t < 0 ? 0 : (t > 1 ? 1 : t);
+  // Wall-clock distance from "now minus display delay" to the latest
+  // snapshot's arrival time. Negative ⇒ rendering BEFORE the latest
+  // snapshot landed (the display-delay buffer); positive ⇒ rendering
+  // AHEAD of latest (no newer snapshot yet, dead-reckon forward).
+  const overshootMs = nowMs - m.latestArrivalMs - MISSILE_DISPLAY_DELAY_MS;
+  const clampedMs = overshootMs < -MISSILE_DISPLAY_DELAY_MS
+    ? -MISSILE_DISPLAY_DELAY_MS
+    : (overshootMs > MISSILE_EXTRAPOLATION_CAP_MS
+        ? MISSILE_EXTRAPOLATION_CAP_MS
+        : overshootMs);
+  const dt = clampedMs / 1000;
   return {
-    x: m.prevX + (m.x - m.prevX) * tc,
-    y: m.prevY + (m.y - m.prevY) * tc,
-    // Angles can wrap; interpolate via shortest-arc.
-    angle: lerpAngle(m.prevAngle, m.angle, tc),
+    x: m.x + m.vx * dt,
+    y: m.y + m.vy * dt,
+    // Angle is held from the latest snapshot. Predicting the homing
+    // turn locally would diverge from server reality; the small lag
+    // is invisible at typical missile speeds + turn rates.
+    angle: m.angle,
     lifePct: m.lifePct,
   };
 }
 
-function lerpAngle(a: number, b: number, t: number): number {
-  let delta = b - a;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta < -Math.PI) delta += 2 * Math.PI;
-  return a + delta * t;
-}

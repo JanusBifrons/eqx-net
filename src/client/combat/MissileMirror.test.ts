@@ -16,6 +16,7 @@ import {
   removeMissile,
   resolveMissileDisplayPose,
   MISSILE_DISPLAY_DELAY_MS,
+  MISSILE_EXTRAPOLATION_CAP_MS,
 } from './MissileMirror';
 import type { RenderMirror } from '../../core/contracts/IRenderer';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages';
@@ -83,13 +84,31 @@ describe('MissileMirror.applyMissileSnapshot', () => {
     expect(pose!.x).toBeLessThanOrEqual(200);
   });
 
-  it('resolve clamps t into [0, 1] — no extrapolation past latest', () => {
+  it('past latest with no velocity: pose freezes at latest (no extrapolation)', () => {
     const mirror = makeMirror();
-    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0 }]), mirror, 1, 1000);
-    applyMissileSnapshot(makeSlice([{ id: 1, x: 100, y: 0 }]), mirror, 2, 1100);
-    // Resolve far in the future — should NOT extrapolate past x=100.
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: 0 }]), mirror, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 100, y: 0, vx: 0, vy: 0 }]), mirror, 2, 1100);
+    // Resolve far in the future with vx=0 — pose stays at latest x=100.
     const pose = resolveMissileDisplayPose(mirror, 1, 5000);
-    expect(pose!.x).toBeLessThanOrEqual(100);
+    expect(pose!.x).toBe(100);
+  });
+
+  it('past latest with velocity: dead-reckons forward, capped at MISSILE_EXTRAPOLATION_CAP_MS', () => {
+    const mirror = makeMirror();
+    // 400 u/s forward (matches heat-seeker speed).
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: 400 }]), mirror, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 20, vx: 0, vy: 400 }]), mirror, 2, 1050);
+    // nowMs that puts targetMs comfortably past latestArrivalMs.
+    // targetMs = nowMs - 100 (DISPLAY_DELAY). Latest arrived at 1050.
+    // To get overshootMs = 40 ms, set nowMs = 1050 + 100 + 40 = 1190.
+    const pose40 = resolveMissileDisplayPose(mirror, 1, 1190);
+    // Expected: latest.y (20) + vy(400) * 0.040 = 20 + 16 = 36.
+    expect(pose40!.y).toBeCloseTo(36, 1);
+
+    // Cap kicks in past 80 ms overshoot — overshootMs caps at 80, dt=0.08.
+    // Expected: 20 + 400 * 0.080 = 20 + 32 = 52.
+    const poseFarFuture = resolveMissileDisplayPose(mirror, 1, 1050 + 100 + 1000);
+    expect(poseFarFuture!.y).toBeCloseTo(20 + 400 * (MISSILE_EXTRAPOLATION_CAP_MS / 1000), 1);
   });
 
   it('stale-eviction removes entries that have not refreshed for 1 s', () => {

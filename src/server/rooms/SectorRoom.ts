@@ -774,6 +774,7 @@ export class SectorRoom extends Room<SectorState> {
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
       postToWorker: (cmd) => this.postToWorker(cmd),
       logger,
+      serverLogEvent,
     });
 
     // Roster persistence bridge — wraps the four getPlayerShipStore()
@@ -856,6 +857,7 @@ export class SectorRoom extends Room<SectorState> {
       broadcastFired: (msg) => this.broadcast('missile_fired', msg),
       broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
       bus: this.bus,
+      serverLogEvent,
     });
 
     // Per-client snapshot broadcaster. Owns broadcastCounter,
@@ -1354,21 +1356,24 @@ export class SectorRoom extends Room<SectorState> {
     this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
   }
 
-  /** Hostility predicate the missile lock-on uses. Player-fired missiles
-   *  treat every swarm entity (drones + Living World bots) as hostile —
-   *  same rule as the player hitscan path. AI-fired missiles use the
-   *  drone's `hostileTo` ledger (the existing `markHostile` channel). */
+  /** Hostility predicate the missile lock-on uses.
+   *
+   *  Player-fired missiles target any non-owner entity. Asteroid
+   *  exclusion is handled at the candidate-build site in
+   *  `MissileSimulation.lockOnTarget` (filtered by `rec.kind === 0`)
+   *  rather than here, because galaxy asteroids spawn with bare
+   *  `asteroid-N` ids — NO `swarm-` prefix — and string-prefix
+   *  filtering misses them. Kind is the source of truth.
+   *
+   *  AI-fired missiles defer to the `aiController`'s hostility ledger
+   *  (the existing `markHostile` / `bot_aggro` channel) — drones and
+   *  bots only fire at players they've already been antagonised by.
+   */
   private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
     const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
     if (isPlayerShooter) {
-      // Player → any swarm (drone or bot) is hostile.
-      return (id) => id.startsWith('swarm-') || id.startsWith('lwbot-');
+      return (id) => id !== ownerId;
     }
-    // AI shooter — consult the aiController's hostility ledger. Drones
-    // (and bots) target only players they've been marked hostile to via
-    // the existing damage / bot_aggro channels. `isEntityHostileToPlayer`
-    // takes (entityId, playerId) — for missile lock we ask "is shooter
-    // hostile to this candidate player?".
     return (id) => this.aiController.isEntityHostileToPlayer(ownerId, id);
   }
 
