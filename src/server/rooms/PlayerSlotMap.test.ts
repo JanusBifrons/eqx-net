@@ -35,7 +35,7 @@ describe('PlayerSlotMap', () => {
 
   it('bindWreck + releaseWreck round-trip preserves the free pool count', () => {
     const m = new PlayerSlotMap(2);
-    const s = m.allocSlot('p1')!;
+    m.allocSlot('p1')!;
     m.freeSlotForPlayer('p1');
     expect(m.freeSlots.length).toBe(2);
     // Convert a fresh allocation to a wreck.
