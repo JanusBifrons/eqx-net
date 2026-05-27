@@ -40,7 +40,14 @@ export type WorkerCmd =
   | { type: 'AI_INTENT';      slot: number; fx: number; fy: number; torque: number; setAngvel?: number }
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
-  | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number };
+  | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
+  /** Missile splash impulse. The server's MissileSimulation queues these on
+   *  detonate; the SectorRoom drains the queue each tick and posts them as
+   *  individual commands. The worker resolves `entityId` to a Rapier body
+   *  (same id used in player→body and drone→body maps) and applies the
+   *  impulse via `physics.applyImpulse(id, fx, fy, 0)`. Cleanly no-ops on
+   *  despawned entities. See docs/architecture/missile-simulation.md. */
+  | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number };
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message. */
 export interface ContactPayload {

@@ -42,6 +42,7 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
+import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
 import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
@@ -102,7 +103,8 @@ import {
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
-import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 
 const logger = pino({
   name: 'SectorRoom',
@@ -462,6 +464,10 @@ export class SectorRoom extends Room<SectorState> {
    *  `this.liveProjectiles.size` keep the same Map identity. */
   private projectiles!: ProjectilePipeline;
   private get liveProjectiles(): Map<string, ProjectileRecord> { return this.projectiles.liveProjectiles; }
+  /** Server-side missile simulation — pool, guidance, splash, impulse
+   *  queue. See `MissileSimulation.ts`. Wired into the per-tick `update()`
+   *  loop alongside `advanceProjectiles`. */
+  private missileSim!: MissileSimulation;
   /** AI drone weapon-fire resolver (per-mount hitscan + laser_fired
    *  broadcast). Extracted to `AiFireResolver.ts` (commit 21 partial). */
   private aiFireResolver!: AiFireResolver;
@@ -700,6 +706,8 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
+      spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
+        this.spawnServerMissile(ownerId, x, y, dx, dy, def),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -724,6 +732,8 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
+      spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
+        this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
@@ -831,6 +841,23 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
     });
 
+    // Missile subsystem — guidance, splash damage, impulse queue. The
+    // queue is drained each tick and posted to the physics worker as
+    // MISSILE_IMPULSE commands; the worker has the live Rapier world.
+    this.missileSim = new MissileSimulation({
+      sabF32: this.sabF32,
+      serverTick: () => this.serverTick,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipPoseCache: this.shipPoseCache,
+      swarmRegistry: this.swarmRegistry,
+      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      broadcastFired: (msg) => this.broadcast('missile_fired', msg),
+      broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
+      bus: this.bus,
+    });
+
     // Per-client snapshot broadcaster. Owns broadcastCounter,
     // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
     // per-client 20Hz phase-staggered loop with the global "all alive
@@ -853,6 +880,7 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
+      missileSim: this.missileSim,
       logger,
       serverLogEvent,
     });
@@ -1324,6 +1352,38 @@ export class SectorRoom extends Room<SectorState> {
 
   private spawnServerProjectile(ownerId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void {
     this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
+  }
+
+  /** Hostility predicate the missile lock-on uses. Player-fired missiles
+   *  treat every swarm entity (drones + Living World bots) as hostile —
+   *  same rule as the player hitscan path. AI-fired missiles use the
+   *  drone's `hostileTo` ledger (the existing `markHostile` channel). */
+  private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
+    const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
+    if (isPlayerShooter) {
+      // Player → any swarm (drone or bot) is hostile.
+      return (id) => id.startsWith('swarm-') || id.startsWith('lwbot-');
+    }
+    // AI shooter — consult the aiController's hostility ledger. Drones
+    // (and bots) target only players they've been marked hostile to via
+    // the existing damage / bot_aggro channels. `isEntityHostileToPlayer`
+    // takes (entityId, playerId) — for missile lock we ask "is shooter
+    // hostile to this candidate player?".
+    return (id) => this.aiController.isEntityHostileToPlayer(ownerId, id);
+  }
+
+  private spawnServerMissile(
+    ownerId: string,
+    spawnX: number,
+    spawnY: number,
+    dirX: number,
+    dirY: number,
+    def: MissileWeaponDef,
+  ): number | null {
+    return this.missileSim.spawn(
+      ownerId, spawnX, spawnY, dirX, dirY, def,
+      this.isMissileTargetHostile(ownerId),
+    );
   }
 
   /**
@@ -2355,6 +2415,19 @@ export class SectorRoom extends Room<SectorState> {
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
+    // Advance missiles (lock-verify, guidance, sweep, detonate-splash).
+    // Detonations enqueue physics impulses which are drained below and
+    // posted to the worker as MISSILE_IMPULSE commands.
+    this.missileSim.advance();
+    const impulses = this.missileSim.drainImpulses();
+    for (const imp of impulses) {
+      this.postToWorker({
+        type: 'MISSILE_IMPULSE',
+        entityId: imp.targetId,
+        fx: imp.fx,
+        fy: imp.fy,
+      });
+    }
     this.tickShieldRegen();
     phaseTime('projectiles');
 

@@ -22,6 +22,7 @@ import {
   WEAPON_COOLDOWN_TICKS,
 } from '../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { getWeapon, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -69,6 +70,14 @@ export interface AiFireResolverDeps {
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
   /** Broadcast a laser_fired event to every client. */
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
+  /** Spawn a server-side missile (delegates to MissileSimulation). Returns
+   *  the assigned missileId on success or `null` on pool overflow. */
+  spawnServerMissile: (
+    ownerId: string,
+    spawnX: number, spawnY: number,
+    dirX: number, dirY: number,
+    def: MissileWeaponDef,
+  ) => number | null;
 }
 
 export class AiFireResolver {
@@ -114,6 +123,13 @@ export class AiFireResolver {
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
     const droneAngles = d.droneMountAngles.get(shooterId);
 
+    // Weapon mode discriminator. AI drones today fire one weapon kind per
+    // ship — the first mount's weaponId determines the mode for the whole
+    // salvo. (Mixed-mode AI mounts would need a per-mount branch; punt
+    // until a kind ships with mixed mounts.)
+    const firstWeaponId = slotMounts[0]?.weaponId ?? 'hitscan';
+    const firstWeaponDef = getWeapon(firstWeaponId);
+
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
       const mountWorld = d.mountWorldOrigin(self.x, self.y, self.angle, mount);
@@ -123,6 +139,19 @@ export class AiFireResolver {
       const ndy = Math.cos(mountFireAngle);
       const rayFromX = mountWorld.x + ndx * 16;
       const rayFromY = mountWorld.y + ndy * 16;
+
+      // Missile fire path: lock-on + spawn via MissileSimulation. No
+      // hit resolution at fire time — the simulation owns lifecycle and
+      // emits missile_fired (broadcast there, not here).
+      if (firstWeaponDef.mode === 'missile') {
+        d.spawnServerMissile(
+          shooterId,
+          rayFromX, rayFromY,
+          ndx, ndy,
+          firstWeaponDef as MissileWeaponDef,
+        );
+        continue;
+      }
 
       let hitId: string | null = null;
       let hitDist = Infinity;

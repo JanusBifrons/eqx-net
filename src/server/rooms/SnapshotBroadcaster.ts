@@ -65,6 +65,22 @@ export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
 }
 
+/** Narrow view of MissileSimulation the broadcaster uses. */
+export interface MissileBroadcasterView {
+  live(): IterableIterator<{
+    id: number;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    ownerId: string;
+    weaponId: 'heat-seeker';
+    ticksRemaining: number;
+    weaponDef: { lifetimeTicks: number };
+  }>;
+}
+
 export interface SnapshotBroadcasterDeps {
   serverTick: () => number;
   sabU32: Uint32Array;
@@ -83,6 +99,8 @@ export interface SnapshotBroadcasterDeps {
   swarmRegistry: SwarmLookupByEid;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
+  /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
+  missileSim: MissileBroadcasterView;
   logger: Logger;
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
 }
@@ -247,6 +265,27 @@ export class SnapshotBroadcaster {
         }
       }
 
+      // Per-recipient missiles in the 3×3 cell window. Same AOI shape as
+      // projectiles; missile lifecycle is server-authoritative (no client
+      // prediction). The renderer interpolates between consecutive
+      // snapshots and pads with the velocity vector for sub-tick smoothness.
+      let missiles: SnapshotMessage['missiles'];
+      for (const m of d.missileSim.live()) {
+        if (Math.abs(m.x - recipientPose.x) > interestRadius) continue;
+        if (Math.abs(m.y - recipientPose.y) > interestRadius) continue;
+        const lifePct = m.weaponDef.lifetimeTicks > 0
+          ? m.ticksRemaining / m.weaponDef.lifetimeTicks
+          : 0;
+        if (!missiles) missiles = [];
+        missiles.push({
+          id: m.id,
+          x: m.x, y: m.y, vx: m.vx, vy: m.vy, angle: m.angle,
+          ownerId: m.ownerId,
+          weaponId: m.weaponId,
+          lifePct: lifePct > 0 ? lifePct : 0,
+        });
+      }
+
       // Slim per-drone turret + shield slice (drone-snapshot-interpolation
       // pivot, 2026-05-18). Drone POSE is on the binary swarm channel
       // only. For every drone in this recipient's 9-cell interest
@@ -306,6 +345,7 @@ export class SnapshotBroadcaster {
         ackedTick: recipientAcked,
         ...sharedTail,
         ...(projectiles ? { projectiles } : {}),
+        ...(missiles ? { missiles } : {}),
         ...(drones ? { drones } : {}),
         ...(wrecks ? { wrecks } : {}),
       };

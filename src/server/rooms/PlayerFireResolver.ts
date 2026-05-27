@@ -30,6 +30,7 @@ import type { Logger } from 'pino';
 import {
   HitscanWeaponDef,
   ProjectileWeaponDef,
+  MissileWeaponDef,
   WeaponId,
   getWeapon,
   isWeaponId,
@@ -137,6 +138,14 @@ export interface PlayerFireResolverDeps {
     damage: number, radius: number, maxTicks: number,
     weaponId: WeaponId,
   ) => void;
+  /** Spawn a server-side missile (delegates to MissileSimulation). Returns
+   *  the assigned missileId on success or `null` on pool overflow. */
+  spawnServerMissile: (
+    ownerId: string,
+    spawnX: number, spawnY: number,
+    dirX: number, dirY: number,
+    def: MissileWeaponDef,
+  ) => number | null;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (
     targetId: string,
@@ -258,6 +267,21 @@ export class PlayerFireResolver {
           shooterVy + ndy * projDef.speed,
           projDef.damage, projDef.radius, projDef.maxTicks,
           weaponId,
+        );
+        continue;
+      }
+
+      if (weaponDef.mode === 'missile') {
+        // Missile: lock-at-launch happens inside MissileSimulation; the
+        // spawn returns false (and we skip broadcasting laser_fired) when
+        // the pool is exhausted. No hit-resolution at fire-time — the
+        // simulation owns the lifecycle and emits missile_fired /
+        // missile_detonated.
+        d.spawnServerMissile(
+          shooterId,
+          rayFromX, rayFromY,
+          ndx, ndy,
+          weaponDef as MissileWeaponDef,
         );
         continue;
       }
