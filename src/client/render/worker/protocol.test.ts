@@ -131,6 +131,7 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_EFFECT_QUALITY minimal', msg: { type: 'SET_EFFECT_QUALITY', level: 'minimal' } },
       { name: 'SET_EFFECT_PARAMS engine', msg: { type: 'SET_EFFECT_PARAMS', effect: 'engine', params: { thrustEmitRateHz: 60, boostEmitRateHz: 90 } } },
       { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
+      { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);
@@ -215,6 +216,7 @@ describe('renderer-worker protocol', () => {
           case 'TRIGGER_EFFECT':
           case 'SET_EFFECT_QUALITY':
           case 'SET_EFFECT_PARAMS':
+          case 'RESET_EFFECTS_HANDOFF':
           case 'DISPOSE':
             return msg.type;
         }

@@ -92,8 +92,13 @@ export interface IParticleEffects {
    * and `mirror.ships.get(id).x/y` that the sprite updaters just wrote. NEVER
    * called from a separate Pixi ticker callback — that would resolve poses at
    * a divergent `now`.
+   *
+   * `rendererUpdateMs` (M9) — the previous frame's `frameMarkers.rendererUpdateMs`
+   * value fed to `EffectsBudget` for its EMA. Optional: tests that don't
+   * supply it get a synthetic 1 ms placeholder so they don't trigger
+   * spurious downshifts.
    */
-  tick(nowMs: number, dtMs: number): void;
+  tick(nowMs: number, dtMs: number, rendererUpdateMs?: number): void;
 
   /**
    * Drop all per-entity continuous emitters + in-flight bursts. Called from

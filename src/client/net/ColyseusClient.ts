@@ -85,6 +85,13 @@ import {
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
   onPlayerId: (id: string) => void;
+  /** Effects subsystem (plan `wiggly-puppy` M9). Called from
+   *  `resetPredictionState()` on sector handoff alongside
+   *  `rearmJoinReadiness()`. App.tsx wires this to
+   *  `renderer.resetEffectsForSectorHandoff()` which delegates to
+   *  `EffectsService.resetForSectorHandoff()`. Optional — callers that
+   *  don't render (LocalGameClient, headless tests) can omit. */
+  onSectorHandoff?: () => void;
 }
 
 /** Timestamped remote-ship state snapshot for 100 ms display-delay interpolation. */
@@ -797,6 +804,17 @@ export class ColyseusGameClient {
     // damage numbers at coordinates from the source pose against the
     // destination mirror.
     this._scheduledDamageSpawns.length = 0;
+
+    // Effects subsystem (M9 — plan wiggly-puppy). The pendingEffectTriggers
+    // queue holds source-sector world coords; draining them in the
+    // destination would spawn effects at the wrong place. Drop them.
+    // Per-entity continuous emitters + shield rings live in the renderer's
+    // EffectsService instance, which the renderer cleans up on its own
+    // (PixiRenderer.dispose or syncEngine/ShieldAura's diff-against-empty-
+    // mirror on the first destination frame). The mirror.ships clear that
+    // happens elsewhere will already empty the diff sets that drive the
+    // setContinuous calls, so emitters get unregistered naturally.
+    if (this.mirror.pendingEffectTriggers) this.mirror.pendingEffectTriggers.length = 0;
   }
 
   async connect(
@@ -1337,6 +1355,13 @@ export class ColyseusGameClient {
       this.transitInstr.mark('pred_reset:begin');
       this.resetPredictionState();
       this.transitInstr.mark('pred_reset:end');
+
+      // Effects subsystem (M9 plan wiggly-puppy): wipe per-entity
+      // emitters + in-flight bursts + shield rings so the destination
+      // sector starts with a clean effects pool. Sibling line to
+      // resetPredictionState + rearmJoinReadiness — separate per SRP
+      // (each method owns its zone's state).
+      callbacks.onSectorHandoff?.();
 
       // Phase G — UI-readiness analogue of the spatial reseed above.
       // A pure inter-sector transit keeps `phase==='game'`, so

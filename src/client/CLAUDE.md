@@ -274,7 +274,7 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 - The main-thread `PerfMonitor` (M9) computes `rafGapMs` EMA separately and pushes via `SET_EFFECT_QUALITY` **only on its own tier transition** (≤ once per 500 ms). NEVER per-frame. Lock: `EffectsBudget.test.ts` "100 frames at constant load → exactly 0/1 transitions".
 - The budget keeps the more-restrictive of (locally-resolved tier, pushed tier) via `pickMoreRestrictiveQuality`. Pushed tier never weakens local resolution.
 
-**Sector handoff:** `EffectsService.resetForSectorHandoff()` is called from `ColyseusClient.resetPredictionState()` as a sibling line (NOT folded in — SRP), wiping per-entity continuous emitters + in-flight bursts. Same discipline as `rearmJoinReadiness()`. Failing-test lock added in M9.
+**Sector handoff (M9 wiring landed):** `EffectsService.resetForSectorHandoff()` is called from `ColyseusClient.resetPredictionState()` via the `onSectorHandoff` callback (sibling line to `rearmJoinReadiness()` — SRP per zone). The renderer's `resetEffectsForSectorHandoff()` method wipes per-entity continuous emitters + in-flight bursts + shield rings AND clears the diff trackers (`_activeThrustIds`, `_activeBoostIds`, `_activeShieldIds`) so the destination sector's first frame re-registers cleanly. `mirror.pendingEffectTriggers.length = 0` happens inside `resetPredictionState` for source-coord trigger drainage. Lock test: `src/client/net/transitResetEffects.test.ts`.
 
 **`@pixi/particle-emitter` notes (M0.5 spike):**
 

@@ -405,6 +405,13 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_EFFECT_PARAMS', effect, params });
   }
 
+  /** Effects subsystem (plan `wiggly-puppy` M9): wipe per-entity emitters
+   *  + in-flight bursts on sector handoff. The worker forwards to
+   *  `pixiRenderer.resetEffectsForSectorHandoff()`. */
+  resetEffectsForSectorHandoff(): void {
+    this.post({ type: 'RESET_EFFECTS_HANDOFF' });
+  }
+
   /** Forward a native pointer event into the worker camera state machine. */
   postPointerEvent(native: SerialisedPointerEvent): void {
     this.post({ type: 'POINTER_EVENT', native });

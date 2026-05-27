@@ -1055,7 +1055,10 @@ export class PixiRenderer implements IRenderer {
 
       const nowMs = performance.now();
       const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
-      this.effects.tick(nowMs, dtMs);
+      // M9: feed the budget the PREVIOUS frame's rendererUpdateMs
+      // (current frame's value isn't set until line ~1062). Single-frame
+      // lag is negligible vs the 500 ms budget hysteresis hold.
+      this.effects.tick(nowMs, dtMs, this.frameMarkers.rendererUpdateMs);
       this.lastEffectsTickNowMs = nowMs;
     }
 
@@ -1391,6 +1394,21 @@ export class PixiRenderer implements IRenderer {
     return this.feedback.mountCounts.get(shipId) ?? 0;
   }
 
+  /**
+   * Effects subsystem (plan `wiggly-puppy` M9). Wipe per-entity continuous
+   * emitters + in-flight bursts + shield rings. Called from
+   * `ColyseusClient.resetPredictionState()`'s sibling-line in the
+   * `transit_ready` handler. The diff trackers are cleared too so the
+   * destination sector's first frame re-registers emitters against the
+   * fresh mirror state.
+   */
+  resetEffectsForSectorHandoff(): void {
+    this.effects?.resetForSectorHandoff();
+    this._activeThrustIds.clear();
+    this._activeBoostIds.clear();
+    this._activeShieldIds.clear();
+  }
+
   dispose(): void {
     if (!this.initialized) return;
     // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
@@ -1405,6 +1423,10 @@ export class PixiRenderer implements IRenderer {
       this.effects.resetForSectorHandoff();
       this.effects = null;
     }
+    // Clear the per-effect diff trackers so a re-init starts clean.
+    this._activeThrustIds.clear();
+    this._activeBoostIds.clear();
+    this._activeShieldIds.clear();
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
     const canvas = this.app?.canvas;

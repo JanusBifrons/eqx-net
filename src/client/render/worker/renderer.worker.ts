@@ -193,11 +193,18 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       case 'TRIGGER_EFFECT':
       case 'SET_EFFECT_QUALITY':
       case 'SET_EFFECT_PARAMS': {
-        // Effects subsystem (plan `wiggly-puppy` M2): protocol shape in
-        // place; the renderer-side handler (M3-M9) will wire each variant
-        // to its `EffectsService` method. M2 ships protocol + WorkerRendererClient
-        // forwarding only; the worker accepts the messages as no-ops so a
-        // pre-M3 worker against a post-M3 main thread does not throw.
+        // Effects subsystem (plan `wiggly-puppy` M2-M9): TRIGGER_EFFECT
+        // is delivered via mirror.pendingEffectTriggers (renderer drain
+        // path), NOT via direct postMessage in production — sandbox-only.
+        // SET_EFFECT_QUALITY / SET_EFFECT_PARAMS are sandbox-only.
+        // M11 (sandbox extension) wires these directly to the worker's
+        // EffectsService instance. M2 stub kept here so a pre-M11
+        // worker against a post-M11 main thread doesn't throw.
+        break;
+      }
+
+      case 'RESET_EFFECTS_HANDOFF': {
+        renderer?.resetEffectsForSectorHandoff();
         break;
       }
 

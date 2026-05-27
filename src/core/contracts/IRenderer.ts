@@ -450,6 +450,15 @@ export interface IRenderer {
    * between target states internally; callers just flip the bool.
    */
   setLoadCurtain(active: boolean): void;
+  /**
+   * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
+   * continuous emitters + in-flight bursts on sector handoff. Called
+   * from `ColyseusClient.resetPredictionState()`'s sibling-line in the
+   * `transit_ready` handler — same discipline as `rearmJoinReadiness`.
+   * Optional behaviour: no-op if the renderer has no `EffectsService`
+   * (e.g. when `?effects=0` is set or when running headless tests).
+   */
+  resetEffectsForSectorHandoff(): void;
   dispose(): void;
 }
 

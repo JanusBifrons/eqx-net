@@ -212,6 +212,16 @@ export interface SetEffectParamsMsg {
   params: Record<string, number | boolean>;
 }
 
+/**
+ * Sector-handoff reset for the effects subsystem (M9). Posted from the
+ * main thread when `transit_ready` fires; the worker calls
+ * `pixiRenderer.resetEffectsForSectorHandoff()` which delegates to
+ * `EffectsService.resetForSectorHandoff()`.
+ */
+export interface ResetEffectsHandoffMsg {
+  type: 'RESET_EFFECTS_HANDOFF';
+}
+
 /** Tear-down request. Worker should clean its Pixi handles then `self.close()`. */
 export interface DisposeMsg { type: 'DISPOSE' }
 
@@ -233,6 +243,7 @@ export type MainToWorkerMsg =
   | TriggerEffectMsg
   | SetEffectQualityMsg
   | SetEffectParamsMsg
+  | ResetEffectsHandoffMsg
   | PointerEventMsg
   | WheelEventMsg
   | DisposeMsg;

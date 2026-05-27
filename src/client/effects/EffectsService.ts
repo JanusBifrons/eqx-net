@@ -183,10 +183,12 @@ export class EffectsService implements IEffects {
    * `src/client/CLAUDE.md` "Drones are PURE snapshot-interpolated"
    * section). Never call from a separate Pixi ticker.
    */
-  tick(nowMs: number, dtMs: number): void {
-    // Feed the budget. M9 will replace the synthetic 1 ms with the
-    // real `frameMarkers.rendererUpdateMs` reading.
-    this.budget.sample({ rendererUpdateMs: 1, dtMs });
+  tick(nowMs: number, dtMs: number, rendererUpdateMs?: number): void {
+    // M9 (plan wiggly-puppy): feed the budget the real per-frame Pixi
+    // cost when the caller knows it (PixiRenderer passes its frame
+    // markers value), otherwise fall back to a small synthetic value so
+    // tests that don't supply a metric don't trigger spurious downshifts.
+    this.budget.sample({ rendererUpdateMs: rendererUpdateMs ?? 1, dtMs });
 
     // Propagate tier-change to per-effect dials (warp via warpChain
     // applyQuality, laser glow via LaserGlow.applyQuality, shield aura

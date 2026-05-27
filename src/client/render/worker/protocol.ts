@@ -54,6 +54,7 @@ export type {
   TriggerEffectMsg,
   SetEffectQualityMsg,
   SetEffectParamsMsg,
+  ResetEffectsHandoffMsg,
   DisposeMsg,
   MainToWorkerMsg,
 } from './protocol/mainToWorker.js';
