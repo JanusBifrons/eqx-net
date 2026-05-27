@@ -121,4 +121,26 @@ export interface SnapshotMessage {
     id: string;
     x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
   }>;
+  /** Heat-seeking missiles in flight within the recipient's spatial-interest
+   *  window. Absent when none. Per-recipient AOI-filtered server-side so
+   *  distant missiles don't pay for clients who can't see them. Each entry
+   *  is an authoritative pose snapshot at `serverTick`; the client mirrors
+   *  it into its local missile map and the renderer reads the most recent
+   *  two entries for interpolation. Pose flows on this slice (NOT on a
+   *  binary channel today — see docs/architecture/missile-simulation.md
+   *  "Future: binary promotion" for the upgrade path if wire load grows). */
+  missiles?: Array<{
+    /** Stable per-sector u32 id; matches `MissileFiredEvent.missileId`. */
+    id: number;
+    x: number; y: number; vx: number; vy: number; angle: number;
+    /** Owner shooter id (wire form). Lets the renderer route the missile
+     *  trail to the correct player/drone for camera-shake source. */
+    ownerId: string;
+    /** Catalogue weapon id. Discriminator for sprite/trail selection. */
+    weaponId: 'heat-seeker';
+    /** Remaining life as a fraction [0..1]; 0 = about to expire. Lets the
+     *  renderer fade the trail near end-of-life without round-tripping
+     *  catalogue lookups. */
+    lifePct: number;
+  }>;
 }

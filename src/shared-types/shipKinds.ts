@@ -46,6 +46,7 @@ export type {
 // Re-export individual kind constants (per-family).
 export { SCOUT, FIGHTER } from './shipKinds/fighters.js';
 export { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
+export { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 
 // Re-export the canonical-order list.
 export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
@@ -56,6 +57,7 @@ export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 // construction (golden test snapshots both in tests/unit/shipKinds.test.ts).
 import { FIGHTER, SCOUT } from './shipKinds/fighters.js';
 import { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
+import { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
 
@@ -73,6 +75,7 @@ export const SHIP_KINDS = Object.freeze({
   heavy: HEAVY,
   interceptor: INTERCEPTOR,
   gunship: GUNSHIP,
+  'missile-frigate': MISSILE_FRIGATE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**

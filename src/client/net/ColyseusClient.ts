@@ -3452,7 +3452,9 @@ export class ColyseusGameClient {
     const predMaxDist =
       weaponDef.mode === 'hitscan'
         ? HITSCAN_RANGE
-        : (weaponDef.speed * weaponDef.maxTicks) / 60;
+        : weaponDef.mode === 'projectile'
+          ? (weaponDef.speed * weaponDef.maxTicks) / 60
+          : (weaponDef.speed * weaponDef.lifetimeTicks) / 60;
     // Smooth-beam visual splitting (2026-05-22). Hitscan: split the
     // predicted damage into N small ticks spread across the cooldown
     // window so the on-screen damage feels continuous; server stays at
