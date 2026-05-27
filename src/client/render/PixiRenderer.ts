@@ -1136,27 +1136,40 @@ export class PixiRenderer implements IRenderer {
     const seen = this._updateSeenScratch; // already cleared at top of update()
     seen.clear();
 
-    // Player ships: aura when shieldDown is false/undefined AND the ship
-    // has actually reported some shield state (we don't want to draw an
-    // aura for ships that just spawned and haven't taken a hit yet —
-    // defer to handleDamage to set the bit on first hit).
-    // Pragma: aura is ON only when shieldDown === false (explicit). This
-    // means ships with undefined shieldDown (no event seen yet) get NO
-    // aura. Documented limitation; acceptable until snapshot states
-    // carry shield state directly.
+    // Aura is ON unless shieldDown is EXPLICITLY true. Default assumption
+    // is "shield up" — every fresh-spawn ship has full shield (the server
+    // initialises `ship.shield = kind.shieldMax` on spawn), and the
+    // client only learns `shieldDown=true` via the explicit SHIELD_BROKEN
+    // event. Pre-fix the aura was gated on `shieldDown === false`
+    // (explicit), so an unscathed just-spawned ship rendered no aura —
+    // user perception: "I spawn in without a shield up."
     for (const [id, ship] of mirror.ships) {
-      if (ship.shieldDown === false) seen.add(id);
+      if (ship.shieldDown !== true) seen.add(id);
     }
     if (mirror.swarm) {
       for (const [id, sw] of mirror.swarm) {
-        // shieldDown=false (or undefined) = shield UP for swarm too.
-        if (!sw.shieldDown && sw.kind === 1) seen.add(`swarm-${id}`);
+        if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
       }
     }
 
     for (const id of seen) {
       if (!this._activeShieldIds.has(id)) {
-        this.effects.setContinuous(id, 'shield', true);
+        // Look up the entity's actual hull radius so the visible aura
+        // matches the physics ball collider (both use the same
+        // `kind.radius + SHIELD_RADIUS_PAD` formula on the server).
+        // Without this, ShieldAura would fall back to its 28 u default
+        // for every ship — scout's tiny shield would render the same
+        // size as a heavy's, and neither would match the physics.
+        let auraRadius: number | undefined;
+        if (id.startsWith('swarm-')) {
+          const swarmId = parseInt(id.slice('swarm-'.length), 10);
+          const sw = mirror.swarm?.get(swarmId);
+          if (sw) auraRadius = sw.radius;
+        } else {
+          const ship = mirror.ships.get(id);
+          if (ship?.kind) auraRadius = getShipKind(ship.kind).radius;
+        }
+        this.effects.setContinuous(id, 'shield', true, auraRadius);
         this._activeShieldIds.add(id);
       }
     }

@@ -71,10 +71,20 @@ describe('World.setHullExposed — dynamic transparency', () => {
 });
 
 describe('World.setHullExposed — geometry + query-pipeline lag', () => {
-  // Scout: radius 10, nose apex at local (0,-14) which is OUTSIDE the r=10
-  // bounding circle. A vertical ray up the centre enters the CIRCLE at
-  // y≈-10 (dist≈90) but enters the POLYGON at the protruding nose y≈-14
-  // (dist≈86). That gap is the circle-vs-polygon discriminator.
+  // Scout: radius 10, nose apex at local (0,-14). Shield collider is a
+  // ball of radius `kind.radius + SHIELD_RADIUS_PAD = 10 + 10 = 20` — so
+  // the shield BUBBLE extends past the nose. Shield-down swaps to the
+  // exact polygon (nose at y=-14 in entity-local coords).
+  //
+  // A vertical ray up the centre enters:
+  //   - SHIELD-UP CIRCLE at y≈-20 → dist ≈ 80
+  //   - HULL POLYGON at the nose y≈-14 → dist ≈ 86
+  // That gap (circle hit < polygon hit by ~6 u) is the discriminator.
+  // Note this gap INVERTED on 2026-05-27 when SHIELD_RADIUS_PAD landed:
+  // pre-pad the circle was at the bare radius (r=10, dist 90) and the
+  // protruding nose at y=-14 hit FIRST. Once the shield extends past
+  // the hull, the bubble is what hits first; the polygon is the LATER
+  // hit because the hull is INSIDE the bubble.
   const RAY = { fx: 0.001, fy: -100, dx: 0, dy: 1, max: 200, excl: 'zzz' };
   const cast = (): { hitId: string; dist: number } | null =>
     world.hitscan(RAY.fx, RAY.fy, RAY.dx, RAY.dy, RAY.max, RAY.excl);
@@ -86,32 +96,37 @@ describe('World.setHullExposed — geometry + query-pipeline lag', () => {
     const circle = cast();
     expect(circle).not.toBeNull();
     expect(circle!.hitId).toBe('xgeo');
-    expect(circle!.dist).toBeGreaterThan(88);
-    expect(circle!.dist).toBeLessThan(92); // entered the r=10 circle at y≈-10
+    // Shield bubble at r=20 → ray enters at y≈-20 → dist≈80.
+    expect(circle!.dist).toBeGreaterThan(78);
+    expect(circle!.dist).toBeLessThan(82);
 
-    // Expose the hull. Rapier only refreshes scene queries inside step(), so
-    // BEFORE the next tick the polygon must NOT yet be visible (stale circle
-    // or transiently absent — never the ~86 polygon distance).
+    // Expose the hull. Rapier only refreshes scene queries inside step(),
+    // so BEFORE the next tick the polygon must NOT yet be visible — the
+    // stale circle (or transient absence) holds. We allow either: a
+    // result still at the shield-bubble distance (≈80), or null. The
+    // forbidden state is the polygon ≈86 leaking out a tick early.
     world.setHullExposed('xgeo', true, scout);
     const lag = cast();
-    expect(lag === null || lag.dist > 88).toBe(true);
+    expect(lag === null || lag.dist < 82).toBe(true);
 
-    // After one step the protruding nose is live: the ray connects ~4u
-    // earlier than the circle did.
+    // After one step the protruding nose is live: the ray connects ~6 u
+    // LATER than the shield bubble did (because the bubble extends past
+    // the hull by SHIELD_RADIUS_PAD = 10, and the nose juts only 4 u
+    // past the bare radius).
     world.tick(1 / 60);
     const poly = cast();
     expect(poly).not.toBeNull();
     expect(poly!.hitId).toBe('xgeo');
+    expect(poly!.dist).toBeGreaterThan(85);
+    expect(poly!.dist).toBeGreaterThan(circle!.dist + 1);
     expect(poly!.dist).toBeLessThan(88);
-    expect(poly!.dist).toBeLessThan(circle!.dist - 1);
-    expect(poly!.dist).toBeGreaterThan(83);
 
     // Regenerating the shield swaps back to the cheap circle.
     world.setHullExposed('xgeo', false, scout);
     world.tick(1 / 60);
     const back = cast();
     expect(back).not.toBeNull();
-    expect(back!.dist).toBeGreaterThan(88);
-    expect(back!.dist).toBeLessThan(92);
+    expect(back!.dist).toBeGreaterThan(78);
+    expect(back!.dist).toBeLessThan(82);
   });
 });

@@ -45,6 +45,8 @@ interface EngineeringRoom {
 const ENGINEERING_ROOMS: EngineeringRoom[] = [
   { roomName: 'sector',          label: 'Sector (legacy)',     description: 'Original Phase-1..7 default room. 30-drone hostile ring, no persistence.' },
   { roomName: 'test-sector',     label: 'Test Sector',         description: 'Deterministic E2E room. Zero drones, zero asteroids.' },
+  { roomName: 'shield-test',     label: 'Shield Test (5)',     description: 'Five non-hostile drones (one of each non-fighter kind) in a 200 u ring. Ram + shoot to verify shield bubble math. Drones only turn hostile after they take damage.' },
+  { roomName: 'mount-test',      label: 'Mount Test (6)',      description: 'Phase 4c turret refactor room. 6 interceptor+gunship drones in a 250 u ring for verifying rotating-mount visuals.' },
   { roomName: 'feel-test',       label: 'Feel Test (10)',      description: 'AI lockstep / network-feel test room. 10 drones in a 300 u ring around origin; player spawns at (0,0).' },
   { roomName: 'swarm-soak',      label: 'Swarm Soak (500)',    description: 'Phase 5e bandwidth + perf soak. 500 mixed entities. Stress room — server can hitch under combat.' },
   { roomName: 'swarm-tidi',      label: 'Swarm TiDi (4000)',   description: 'Phase 6 stress room. 4000 entities; TiDi rarely engages.' },

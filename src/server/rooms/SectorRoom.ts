@@ -24,12 +24,13 @@ import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
+import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
@@ -98,7 +99,9 @@ import {
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
-  SHIP_COLLISION_RADIUS,
+  // SHIP_COLLISION_RADIUS retired 2026-05-27 — hit-tests now derive per-kind
+  // bounding-circle from `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD`
+  // so the system matches the visible ShieldAura on every ship kind.
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
@@ -549,6 +552,16 @@ export class SectorRoom extends Room<SectorState> {
        *  `pickRandomShipKind`. */
       droneKinds?: ShipKindId[];
       /**
+       * 2026-05-27 — Engineering test rooms (`shield-test`) want a
+       * stationary drone gallery: ram them, shoot them, watch the
+       * shield-vs-hull collider swap, WITHOUT having them fly around
+       * pursuing + firing back. When true, drones spawn with
+       * `PassiveDroneBehaviour` (zero-impulse, never-fire) instead of
+       * `HostileDroneBehaviour`. Drones still take damage and die
+       * normally; only the COMBAT state transition (pursuit + fire)
+       * is suppressed. */
+      peacefulDrones?: boolean;
+      /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
        * transition. Suppresses every other seed path.
@@ -968,7 +981,14 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
-      droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
+      // `peacefulDrones` swaps the hostile-pursuit behaviour for the
+      // zero-impulse passive one. Used by engineering rooms (shield-test)
+      // where the player needs a stationary drone gallery for collision
+      // testing without combat noise. Drones still die normally — only
+      // the COMBAT pursue+fire path is suppressed.
+      droneBehaviour: roomOpts.peacefulDrones
+        ? () => new PassiveDroneBehaviour()
+        : (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.interestGrid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
       ...(pickDroneKind ? { pickDroneKind } : {}),
@@ -1471,19 +1491,29 @@ export class SectorRoom extends Room<SectorState> {
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ): number | null {
-    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, SHIP_COLLISION_RADIUS);
+    // Per-kind bounding circle = hull radius + SHIELD_RADIUS_PAD. Three
+    // sites share this constant (physics ball collider, this hit-test,
+    // visible ShieldAura ring) so the player's "where the shield is"
+    // intuition matches every gate. Pre-2026-05-27 used a hardcoded
+    // SHIP_COLLISION_RADIUS=12 that only matched fighter — heavy at
+    // radius 16 had ~4 u of visible hull where lasers passed through.
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
     return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionTriangles(ship.kind));
   }
 
-  /** Projectile sweep counterpart of playerHitscanDist — same cheap-
-   *  circle-first / shield-down-refine perf profile. */
+  /** Projectile sweep counterpart of playerHitscanDist — same per-kind
+   *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
+   *  shield-down split. Projectiles now impact at the visible shield
+   *  boundary on every ship kind, not just fighter. */
   private playerProjectileSweep(
     ship: ShipState,
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
     cx: number, cy: number, angle: number,
   ): { entry: number; hitX: number; hitY: number } | null {
-    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, SHIP_COLLISION_RADIUS);
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
     return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionTriangles(ship.kind));
   }

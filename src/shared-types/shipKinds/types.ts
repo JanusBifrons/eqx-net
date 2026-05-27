@@ -147,6 +147,15 @@ export const ShipKindSchema = z
     lateralGrip: z.number().min(0).max(1),
     /** Collider radius. Also drives sprite scale. */
     radius: z.number().positive(),
+    /** Optional translational mass override. Default 1 (the historical
+     *  pinned value — every legacy kind sat at mass 1 for "arcade-feel
+     *  parity"). Bumping this scales how much the body resists pushes
+     *  and ramming impulses; angular inertia is auto-scaled to the disc
+     *  formula `0.5 * mass * radius²` so heavier ships also pivot
+     *  proportionally slower under torque. Used by ships that are
+     *  semantically heavy (e.g. the huge T-shaped Crossguard variant
+     *  spawned in the engineering shield-test room). */
+    mass: z.number().positive().optional(),
     /** Initial (and `ShipState.maxHealth`) health value. */
     maxHealth: z.number().positive(),
 

@@ -49,8 +49,14 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
 }
 
 describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
-  it('catalogue version was bumped to 3', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(3);
+  it('catalogue version was bumped to 4', () => {
+    // 3 → 4 on 2026-05-27: appended `crossguard` kind (the T-ship for
+    // engineering-room collision testing). Per the bump rule in
+    // `shipKinds.ts` SHIP_KIND_CATALOGUE_VERSION docstring, ANY
+    // change to the catalogue (new kind OR numeric edit to an existing
+    // one) bumps the version so stored `player_ships` rows can clamp
+    // their `health` to the current `maxHealth` on hydrate.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(4);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

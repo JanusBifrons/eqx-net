@@ -156,7 +156,7 @@ export class EffectsService implements IEffects {
    * M1 records the entry so the test surface can observe it; M5 (engines)
    * + M8 (shields) attach real Pixi visuals.
    */
-  setContinuous(entityId: string, kind: ContinuousEffectKind, active: boolean): void {
+  setContinuous(entityId: string, kind: ContinuousEffectKind, active: boolean, radius?: number): void {
     const key = `${entityId}:${kind}`;
     const prev = this.continuous.get(key);
     if (prev?.active === active) return; // re-entrant: no-op on identical state
@@ -169,7 +169,12 @@ export class EffectsService implements IEffects {
     if (kind === 'thrust' || kind === 'boost') {
       this.engines.setActive(entityId, kind, active);
     } else if (kind === 'shield') {
-      this.shieldAura.setActive(entityId, active);
+      // Threading `radius` through is what makes the visible shield aura
+      // match the physics ball collider per-kind. Without it, ShieldAura
+      // falls back to `DEFAULT_RADIUS=28` for every entity — a heavy
+      // (kind.radius=16) gets the same aura as a scout (kind.radius=10).
+      // PixiRenderer reads from `mirror.ships.get(id).kind` / swarm equivalent.
+      this.shieldAura.setActive(entityId, active, radius);
     }
     this.counters.activeContinuous = this.continuous.size;
   }

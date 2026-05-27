@@ -260,6 +260,36 @@ gameServer.define('mount-test', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-05-27 — Shield-test engineering room. Five non-hostile drones in
+// a 200 u ring around origin so the player can ram them and fire at
+// their shields without combat noise. One of each non-fighter kind for
+// visual variety + so the player can confirm the per-kind shield
+// radius math (SHIELD_RADIUS_PAD) is correct on every silhouette.
+//
+// Drones spawn IDLE — they orbit gently around the ring. They become
+// Drones run `PassiveDroneBehaviour` (peacefulDrones: true) — they take
+// damage and die normally, but they never pursue or fire, so the player
+// can ram + beam them indefinitely without combat noise drowning out the
+// shield/hull collider-swap signal under test.
+//
+// Use `?room=shield-test` from the URL to join.
+gameServer.define('shield-test', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  // 6 drones in the gallery: 4 huge Crossguard T-ships dominate the
+  // scene + 1 fighter + 1 scout for size-contrast reference. With
+  // each Crossguard at radius 200, swarmRadius bumped to 2400 so they
+  // don't overlap-spawn (the SwarmSpawner places them uniformly inside
+  // the disc — at 200 radius each, 4 of them need ~1600+ u of headroom).
+  swarmCount: 6,
+  swarmRatio: 0,
+  swarmRadius: 2400,
+  droneKinds: ['crossguard', 'crossguard', 'crossguard', 'crossguard', 'fighter', 'scout'],
+  peacefulDrones: true,
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi
