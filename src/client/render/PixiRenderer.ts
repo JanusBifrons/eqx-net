@@ -990,6 +990,11 @@ export class PixiRenderer implements IRenderer {
    *  on an existing key is allocation-free. */
   private readonly wreckStamps = new Map<string, number>();
   private _wreckFrameId = 0;
+  /** Cache of `wreck-${shipInstanceId}` strings (Phase 5g —
+   *  invariant #14). updateWrecks builds this key per wreck per frame
+   *  to check mirror.damagedShips; cache-or-create makes subsequent
+   *  ticks allocation-free. */
+  private readonly _wreckDamageKeyCache = new Map<string, string>();
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
@@ -1068,7 +1073,12 @@ export class PixiRenderer implements IRenderer {
       // damage-flash machinery is keyed by the wire targetId (which is
       // `wreck-${shipInstanceId}` for wrecks); `mirror.damagedShips`
       // gets that id from handleDamage so we can flash here too.
-      const wreckEntityId = `wreck-${shipInstanceId}`;
+      // Phase 5g: cache the template-literal string.
+      let wreckEntityId = this._wreckDamageKeyCache.get(shipInstanceId);
+      if (wreckEntityId === undefined) {
+        wreckEntityId = `wreck-${shipInstanceId}`;
+        this._wreckDamageKeyCache.set(shipInstanceId, wreckEntityId);
+      }
       const flashing = mirror.damagedShips?.has(wreckEntityId) ?? false;
       sprite.tint = flashing ? DAMAGE_FLASH_COLOR : 0xffffff;
     }
@@ -1077,6 +1087,7 @@ export class PixiRenderer implements IRenderer {
         sprite.destroy();
         this.wreckSprites.delete(id);
         this.wreckStamps.delete(id);
+        this._wreckDamageKeyCache.delete(id);
       }
     }
   }
