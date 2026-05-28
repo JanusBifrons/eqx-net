@@ -23,6 +23,7 @@
 import type { ShipKind } from './types.js';
 import { SCOUT, FIGHTER } from './fighters.js';
 import { HEAVY, INTERCEPTOR, GUNSHIP } from './heavyClass.js';
+import { MISSILE_FRIGATE } from './missileFrigate.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -36,4 +37,5 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   HEAVY,
   INTERCEPTOR,
   GUNSHIP,
+  MISSILE_FRIGATE,
 ]);

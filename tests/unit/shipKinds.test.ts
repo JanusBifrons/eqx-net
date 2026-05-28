@@ -226,7 +226,7 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
     expect(shipKindFromIndex(-1)).toBe(DEFAULT_SHIP_KIND);
   });
 
-  it('catalogue order is fighter -> scout -> heavy -> interceptor -> gunship (wire-format-stable)', () => {
+  it('catalogue order is fighter -> scout -> heavy -> interceptor -> gunship -> missile-frigate (wire-format-stable)', () => {
     // Wire format encodes drone kinds as a u8 index into SHIP_KINDS_LIST.
     // Reordering this list breaks decode for any in-flight swarm packet, so
     // the expected order is locked in by this test. Append-only is safe.
@@ -235,6 +235,7 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
     expect(shipKindToIndex('heavy')).toBe(2);
     expect(shipKindToIndex('interceptor')).toBe(3);
     expect(shipKindToIndex('gunship')).toBe(4);
+    expect(shipKindToIndex('missile-frigate')).toBe(5);
   });
 });
 

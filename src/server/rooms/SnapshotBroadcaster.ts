@@ -65,6 +65,22 @@ export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
 }
 
+/** Narrow view of MissileSimulation the broadcaster uses. */
+export interface MissileBroadcasterView {
+  live(): IterableIterator<{
+    id: number;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    ownerId: string;
+    weaponId: 'heat-seeker';
+    ticksRemaining: number;
+    weaponDef: { lifetimeTicks: number };
+  }>;
+}
+
 export interface SnapshotBroadcasterDeps {
   serverTick: () => number;
   sabU32: Uint32Array;
@@ -83,6 +99,8 @@ export interface SnapshotBroadcasterDeps {
   swarmRegistry: SwarmLookupByEid;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
+  /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
+  missileSim: MissileBroadcasterView;
   logger: Logger;
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
 }
@@ -118,6 +136,13 @@ type MutableProjectileEntry = {
   weaponId: string;
 };
 
+type MutableMissileEntry = {
+  id: number; x: number; y: number; vx: number; vy: number; angle: number;
+  ownerId: string;
+  weaponId: 'heat-seeker';
+  lifePct: number;
+};
+
 type MutableDroneEntry = {
   id: number;
   mountAngles?: number[];
@@ -139,6 +164,7 @@ type MutableSnapshotMessage = {
   boostingIds?: string[];
   thrustingIds?: string[];
   projectiles?: SnapshotMessage['projectiles'];
+  missiles?: SnapshotMessage['missiles'];
   drones?: SnapshotMessage['drones'];
   wrecks?: SnapshotMessage['wrecks'];
 };
@@ -203,6 +229,7 @@ export class SnapshotBroadcaster {
   private readonly _stateEntryPool = new Map<string, MutableStateEntry>();
   private readonly _aliveShipInstanceIds = new Set<string>();
   private readonly _projectilesScratch: MutableProjectileEntry[] = [];
+  private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
   private readonly _wrecksScratch: MutableWreckEntry[] = [];
   private readonly _mountAnglesPool = new Map<number, number[]>();
@@ -270,6 +297,21 @@ export class SnapshotBroadcaster {
     }
     slot.id = id; slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
     slot.ownerId = ownerId; slot.weaponId = weaponId;
+  }
+
+  private static writeMissileSlot(
+    arr: MutableMissileEntry[], i: number,
+    id: number, x: number, y: number, vx: number, vy: number, angle: number,
+    ownerId: string, weaponId: 'heat-seeker', lifePct: number,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      arr[i] = { id, x, y, vx, vy, angle, ownerId, weaponId, lifePct };
+      return;
+    }
+    slot.id = id; slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
+    slot.angle = angle; slot.ownerId = ownerId; slot.weaponId = weaponId;
+    slot.lifePct = lifePct;
   }
 
   private static writeDroneSlot(
@@ -489,6 +531,28 @@ export class SnapshotBroadcaster {
       }
       projectilesScratch.length = projectilesCount;
 
+      // Per-recipient missiles in the 3×3 cell window. Same AOI shape as
+      // projectiles; missile lifecycle is server-authoritative (no client
+      // prediction). The renderer interpolates between consecutive
+      // snapshots and pads with the velocity vector for sub-tick smoothness.
+      // Pooled scratch (Invariant #14) — mirrors Phase 5d projectile pattern.
+      const missilesScratch = this._missilesScratch;
+      let missilesCount = 0;
+      for (const m of d.missileSim.live()) {
+        if (Math.abs(m.x - recipientPose.x) > interestRadius) continue;
+        if (Math.abs(m.y - recipientPose.y) > interestRadius) continue;
+        const lifePct = m.weaponDef.lifetimeTicks > 0
+          ? m.ticksRemaining / m.weaponDef.lifetimeTicks
+          : 0;
+        SnapshotBroadcaster.writeMissileSlot(
+          missilesScratch, missilesCount,
+          m.id, m.x, m.y, m.vx, m.vy, m.angle,
+          m.ownerId, m.weaponId, lifePct > 0 ? lifePct : 0,
+        );
+        missilesCount++;
+      }
+      missilesScratch.length = missilesCount;
+
       // Slim per-drone turret + shield slice (drone-snapshot-interpolation
       // pivot, 2026-05-18). Drone POSE is on the binary swarm channel
       // only. For every drone in this recipient's 9-cell interest
@@ -556,6 +620,7 @@ export class SnapshotBroadcaster {
       snap.boostingIds = boostingIds.length > 0 ? boostingIds : undefined;
       snap.thrustingIds = thrustingIds.length > 0 ? thrustingIds : undefined;
       snap.projectiles = projectilesCount > 0 ? projectilesScratch : undefined;
+      snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
       snap.drones = dronesCount > 0 ? dronesScratch : undefined;
       snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
       client.send('snapshot', snap as SnapshotMessage);

@@ -11,7 +11,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema } from '@shared-types/messages';
 import {
   createRemotePredictionGuard,
   shouldForwardPredict,
@@ -34,6 +34,7 @@ import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
+import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
   routeSnapshotShipStates,
@@ -206,6 +207,7 @@ export class ColyseusGameClient {
     pendingDamageNumberCancels: [],
     pendingHealthBarHits: [],
     pendingWarpEvents: [],
+    pendingMissileExplosions: [],
   };
 
   /**
@@ -1201,6 +1203,31 @@ export class ColyseusGameClient {
       this.handleRespawnAck(msg);
     });
 
+    // Missile launched — pose arrives on the snapshot's missiles[]
+    // slice (NOT this event), so we don't seed the mirror here.
+    // Defensive zod parse on receive. The discrete event currently has
+    // no client-side subscriber (SFX launch-whoosh is a future hookup);
+    // the parse + drop keeps the wire safe and ready for that hookup.
+    room.onMessage('missile_fired', (raw: unknown) => {
+      MissileFiredEventSchema.safeParse(raw);
+    });
+
+    // Missile detonated — remove from the mirror so the sprite stops
+    // drawing the next frame, and push an explosion entry into the
+    // mirror for the renderer to drain (VFX + camera shake).
+    room.onMessage('missile_detonated', (raw: unknown) => {
+      const result = MissileDetonatedEventSchema.safeParse(raw);
+      if (!result.success) return;
+      removeMissile(this.mirror, result.data.missileId);
+      const list = (this.mirror.pendingMissileExplosions ??= []);
+      list.push({
+        x: result.data.x,
+        y: result.data.y,
+        splashRadius: result.data.splashRadius,
+        missileId: result.data.missileId,
+      });
+    });
+
     // Stage 2 of the network-feel roadmap — server-broadcast collision
     // events. Apply post-collision velocities to predWorld immediately;
     // eliminates the ~50 ms snapshot wait for the same correction.
@@ -1544,9 +1571,15 @@ export class ColyseusGameClient {
     }
 
     // Health bar on hit — only show for targets the local player is shooting.
+    // Push BOTH hull% AND shield% so HealthBarManager can render a
+    // two-segment bar. Without the shield half, shield damage on drones
+    // looks like zero damage: the hull bar stays at 100% while shield
+    // absorbs (no-spillover) the first N hits, and drones have no other
+    // shield-feedback surface (only player ships have a HUD ShieldHullBar).
     if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
-      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct });
+      const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
+      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct });
     }
 
     // Phase 1 AI: mirror the server's hostility-marking on every damage
@@ -1785,6 +1818,10 @@ export class ColyseusGameClient {
     // per recipient. Sync into the mirror first so the rest of this handler can
     // assume the projectile map matches the snapshot's tick.
     this.syncProjectiles(snap.projectiles);
+
+    // Missiles: per-recipient AOI-filtered slice. Sliding-window apply
+    // for interpolation; stale-eviction backstop covers AOI exits.
+    applyMissileSnapshot(snap.missiles, this.mirror, snap.serverTick, now);
 
     // Phase 4 — sync wreck poses into the mirror. Identity (kind, health,
     // maxHealth) flows via the Colyseus schema diff on `state.wrecks`
@@ -3054,29 +3091,84 @@ export class ColyseusGameClient {
       // the player has no predWorld state yet.
       this.tickLocalMountAim(1 / 60);
 
-      if (fireHeld && this.mirror.localPlayerId && !this.localDead) {
-        const activeWeapon = useUIStore.getState().activeWeapon;
-        const activeWeaponDef = getWeapon(activeWeapon);
-        if (activeWeaponDef.mode === 'hitscan') {
-          this.updateLiveBeam();
-        } else {
-          // Projectile has no continuous beam — clear immediately so a
-          // mid-hold weapon switch can't leave a stale hitscan beam.
-          this.mirror.liveBeams?.clear();
-          this._lastHitscanFireMs = null;
-        }
-        if (tick - this.lastFiredAtTick >= activeWeaponDef.cooldownTicks) {
-          this.sendFire(tick);
-          this.lastFiredAtTick = tick;
-          if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
-        }
-      }
+      // (Fire dispatch HOISTED out of this loop — see below. It gates on
+      //  wall-clock cooldown so a stalled inputTick can't suppress fires
+      //  the user feels they've earned. Loop body kept lean.)
+
       // beam-attach fix (capture pe6rdt): NO hard-clear when fire isn't
       // held. The local hitscan beam persists ~LIVE_BEAM_PERSIST_MS past
       // the last shot (expired in updateMirror) and is redrawn from
       // `mirror.ships` every frame, so a tap / held burst reads as ONE
       // continuous SHIP-ATTACHED beam — server lag/correction invisible.
       // Death still clears it via killEntity's liveBeams.clear().
+    }
+
+    // ── Fire dispatch (hoisted from the catch-up loop, 2026-05-27) ──
+    //
+    // PREVIOUSLY this lived INSIDE the `while (inputTick < targetTick)`
+    // loop. When `deficitBefore` went negative (inputTick ≥ targetTick
+    // — happens whenever the lookahead controller bumps `leadTicks`
+    // or `clockAnchor` re-stabilises after a snapshot), the loop body
+    // skipped entirely → fire dispatch skipped too → fires were silently
+    // dropped on those RAFs. The smoke-test class: "if I hold the fire
+    // button it doesn't refire when the cooldown ring shows ready, I
+    // have to tap repeatedly." Diagnostic capture
+    // `2026-05-27T16-33-40Z-r0r701` + E2E spec `held fire auto-refires…`
+    // pinned it: 180-tick cooldown was taking 5-6 s wall-clock when
+    // inputTick advanced at 30-50/sec.
+    //
+    // The fix has two parts:
+    //   1. Run fire dispatch ONCE per RAF (here), not per inner loop
+    //      iteration — independent of inputTick advancement.
+    //   2. Gate on WALL-CLOCK cooldown (`cooldownMs`) so the user feels
+    //      the catalogue's promised cooldown interval regardless of
+    //      what inputTick is doing.
+    //
+    // Server compatibility: `PlayerFireResolver` rejects fires whose
+    // `tick - lastFireClientTick < cooldownTicks` (tick-based rate
+    // limit, still load-bearing for anti-spam). When the client's
+    // wall-clock gate opens BEFORE inputTick has advanced by
+    // `cooldownTicks`, we bump the `sendTick` to satisfy the server
+    // check. This keeps the temporal-plausibility CLAMP (`clampFireTick`,
+    // src/core/combat/fireTemporal.ts) happy too — futures still pass
+    // through unchanged; we're just not waiting for inputTick to ratchet
+    // up before honouring the player's held input.
+    // fireHeld combines keyboard Space + touch FIRE button. Forgetting
+    // the touch branch broke firing entirely on phone (the smoke-test
+    // class that surfaced this hoist's regression — kb.fireHeld is
+    // always false on touch devices).
+    const fireHeldHoisted = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false);
+    if (fireHeldHoisted && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
+      const activeWeapon = useUIStore.getState().activeWeapon;
+      const activeWeaponDef = getWeapon(activeWeapon);
+      if (activeWeaponDef.mode === 'hitscan') {
+        this.updateLiveBeam();
+      } else {
+        // Projectile / missile has no continuous beam — clear so a
+        // mid-hold weapon switch can't leave a stale hitscan beam.
+        this.mirror.liveBeams?.clear();
+        this._lastHitscanFireMs = null;
+      }
+      const cooldownMs = (activeWeaponDef.cooldownTicks * 1000) / 60;
+      const nowMs = this.clock.now();
+      // Use the Zustand-mirrored `lastFireMs` as the wall-clock anchor
+      // — it's set by `sendFire` and CLEARED by `setActiveWeapon` /
+      // `cycleWeapon`, so a weapon swap implicitly resets the gate
+      // (hitscan fires immediately after switching from heat-seeker —
+      // no carry-over cooldown across weapons). First-fire short-circuits
+      // when the anchor is null.
+      const lastFireMs = useUIStore.getState().lastFireMs;
+      const wallclockReady = lastFireMs === null || (nowMs - lastFireMs) >= cooldownMs;
+      if (wallclockReady) {
+        // Bump sendTick if inputTick hasn't yet caught up to the
+        // server-side cooldown floor. This is the "give the player
+        // their fire even if inputTick stalled" branch.
+        const tickFloor = this.lastFiredAtTick + activeWeaponDef.cooldownTicks;
+        const sendTick = Math.max(this.inputTick, tickFloor);
+        this.sendFire(sendTick);
+        this.lastFiredAtTick = sendTick;
+        if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
+      }
     }
 
     // Sentinel input on zero-iteration cap-engaged RAFs (plan: spiral-fix,
@@ -3397,6 +3489,32 @@ export class ColyseusGameClient {
     return out;
   }
 
+  /**
+   * Test-only fire trigger. Sets `activeWeapon` in Zustand and calls
+   * `sendFire(inputTick)` directly, sidestepping the keyboard event
+   * pipeline AND the wall-clock-anchored catch-up loop's fire
+   * dispatch (ColyseusClient.ts:3051, which is silently skipped when
+   * `inputTick > targetTick` — a Playwright headless quirk that
+   * blocks every heat-seeker fire in the E2E spec).
+   *
+   * DEV-only — exposed on `window.__eqxClient` so E2E specs can call
+   * `__eqxClient.triggerFireForTest('heat-seeker')`. Production tree-
+   * shakes the App.tsx assignment that exposes the client.
+   *
+   * Returns `true` if `sendFire` ran (predWorld + ship + room present),
+   * `false` if it bailed early. The test asserts the return value AND
+   * polls `/dev/events` for `missile_spawned` to confirm the round-trip.
+   */
+  public triggerFireForTest(weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
+    useUIStore.getState().setActiveWeapon(weaponId);
+    const localId = this.mirror.localPlayerId;
+    if (!localId || !this.predWorld || !this.room) return false;
+    if (!this.predWorld.getShipState(localId)) return false;
+    this.sendFire(this.inputTick);
+    this.lastFiredAtTick = this.inputTick;
+    return true;
+  }
+
   private sendFire(tick: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return;
@@ -3485,6 +3603,12 @@ export class ColyseusGameClient {
       dirAngle: state.angle,
     });
 
+    // Stamp the wall-clock fire time into Zustand so the fire-button
+    // cooldown ring (`<FireCooldownRing />`) can compute progress.
+    // Low-cadence — at most every cooldown interval (167 ms hitscan to
+    // 3 s heat-seeker) — so the Zustand notification cost is bounded.
+    useUIStore.getState().setLastFireMs(this.clock.now());
+
     // weapon-hit-prediction Phase 2 — predict the outcome against the pose
     // the player SEES (predWorld.hitscan, the exact seam updateLiveBeam
     // uses; NO client lag-comp ring) and show immediate tagged feedback.
@@ -3498,7 +3622,9 @@ export class ColyseusGameClient {
     const predMaxDist =
       weaponDef.mode === 'hitscan'
         ? HITSCAN_RANGE
-        : (weaponDef.speed * weaponDef.maxTicks) / 60;
+        : weaponDef.mode === 'projectile'
+          ? (weaponDef.speed * weaponDef.maxTicks) / 60
+          : (weaponDef.speed * weaponDef.lifetimeTicks) / 60;
     // Smooth-beam visual splitting (2026-05-22). Hitscan: split the
     // predicted damage into N small ticks spread across the cooldown
     // window so the on-screen damage feels continuous; server stays at

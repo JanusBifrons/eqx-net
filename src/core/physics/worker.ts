@@ -87,7 +87,12 @@ interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: strin
  *  in the command (server-authoritative) so the worker needs no per-id kind
  *  map; `getShipKind` is forgiving on unknown ids. See World.setHullExposed. */
 interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd;
+/** Missile splash impulse. MissileSimulation queues these on detonate; the
+ *  SectorRoom drains the queue and posts them; this dispatcher resolves the
+ *  entityId to a Rapier body and applies the linear impulse. Silent no-op
+ *  on despawned entities (drones killed before the impulse lands). */
+interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | MissileImpulseCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -221,6 +226,14 @@ async function main(): Promise<void> {
         // Shield 0-cross collider swap. kindId is server-authoritative
         // (carried in the command) so no per-id kind map is needed here.
         physics.setHullExposed(cmd.id, cmd.exposed, getShipKind(cmd.kindId));
+        break;
+      }
+      case 'MISSILE_IMPULSE': {
+        // Missile splash impulse. Linear-only (zero torque); the missile
+        // subsystem decides direction from the detonation-target vector.
+        // `applyImpulse` silently skips unknown ids — safe for the race
+        // where a drone died between detonate and apply.
+        physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
         break;
       }
     }

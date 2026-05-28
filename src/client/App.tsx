@@ -256,6 +256,15 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
       (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
+      // Test-only hook for E2E specs: expose enough of the UI store to
+      // set `activeWeapon` without going through the KeyQ-cycle. The
+      // Q-cycle path has surfaced Playwright keyboard-focus quirks
+      // that silently drop subsequent Space presses; setting the
+      // active weapon directly sidesteps that. Production tree-shakes.
+      (window as unknown as { __eqxSetActiveWeapon?: (id: string) => void })
+        .__eqxSetActiveWeapon = (id: string) => {
+          useUIStore.getState().setActiveWeapon(id as Parameters<ReturnType<typeof useUIStore.getState>['setActiveWeapon']>[0]);
+        };
     }
 
     const onKey = (e: KeyboardEvent): void => {

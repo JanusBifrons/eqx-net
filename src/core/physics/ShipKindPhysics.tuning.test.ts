@@ -49,8 +49,8 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
 }
 
 describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
-  it('catalogue version was bumped to 3', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(3);
+  it('catalogue version was bumped to 4', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(4);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

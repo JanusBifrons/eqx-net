@@ -133,6 +133,11 @@ export function buildJoinSpec(
   if (urlParams.has('swarmRadius')) extraJoinOptions['swarmRadius'] = parseFloat(urlParams.get('swarmRadius')!);
   if (urlParams.has('singleAsteroid')) extraJoinOptions['singleAsteroid'] = urlParams.get('singleAsteroid') === '1';
   if (urlParams.has('tickBurnMs')) extraJoinOptions['tickBurnMs'] = parseFloat(urlParams.get('tickBurnMs')!);
+  // E2E escape hatch (2026-05-27 — missile-frigate smoke): spawn directly
+  // as a given ship kind without going through the ship-picker UI. The
+  // server validates via `isShipKindId` and falls back to the catalogue
+  // default on unknown ids, so a malformed value is harmless.
+  if (urlParams.has('shipKind')) extraJoinOptions['shipKind'] = urlParams.get('shipKind')!;
 
   // Display name for the HUD.
   const builtin: Record<string, string> = {

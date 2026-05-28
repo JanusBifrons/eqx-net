@@ -91,6 +91,7 @@ function makeDeps(playerCount: number): { deps: SnapshotBroadcasterDeps; broadca
     swarmRegistry: { getByEntityId: () => null },
     playerMountAngles: new Map<string, Float32Array>(),
     droneMountAngles: new Map<string, Float32Array>(),
+    missileSim: { live: function* () { /* empty */ } },
     logger: stubLogger,
     serverLogEvent: () => {},
   };

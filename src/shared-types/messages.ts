@@ -58,6 +58,16 @@ export type {
 // Living World (server → client)
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
 
+// Missile subsystem (server → client)
+export {
+  MissileFiredEventSchema,
+  MissileDetonatedEventSchema,
+} from './messages/missileMessages.js';
+export type {
+  MissileFiredEvent,
+  MissileDetonatedEvent,
+} from './messages/missileMessages.js';
+
 // Multi-ship roster (server → client)
 export type { ShipRosterEntry, ShipRosterMessage } from './messages/rosterMessages.js';
 

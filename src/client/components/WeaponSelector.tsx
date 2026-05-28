@@ -6,11 +6,13 @@ import { isTouchDevice } from '../input/TouchInput';
 const HOTKEYS: Record<WeaponId, string> = {
   hitscan: '1',
   laser: '2',
+  'heat-seeker': '3',
 };
 
 const WEAPON_COLORS: Record<WeaponId, string> = {
   hitscan: '#00eeff',
   laser: '#ff2244',
+  'heat-seeker': '#ffaa00',
 };
 
 const IS_TOUCH = isTouchDevice();

@@ -164,6 +164,13 @@ export interface UIStore {
   transitSpoolMs: number | null;
   /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
   activeWeapon: WeaponId;
+  /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
+   *  or weapon switched since last fire). Stamped by `ColyseusClient.sendFire`.
+   *  Per-frame readers (the fire-button cooldown ring) use this with
+   *  `getWeapon(activeWeapon).cooldownTicks * 1000 / 60` to render a
+   *  circular progress indicator. Low-cadence (≤ 6 Hz for hitscan, ≤ 0.3 Hz
+   *  for heat-seeker) — safe in Zustand without trampling React. */
+  lastFireMs: number | null;
   /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
   isDrawerOpen: boolean;
   /** Currently active tab inside the advanced drawer (`profile` | `settings` | `galaxy` | `debug`). */
@@ -230,6 +237,7 @@ export interface UIStore {
   setTransitTargetSectorKey: (key: string | null) => void;
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveWeapon: (id: WeaponId) => void;
+  setLastFireMs: (ms: number | null) => void;
   cycleWeapon: () => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;
