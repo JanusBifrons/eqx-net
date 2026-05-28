@@ -54,6 +54,11 @@ interface ActiveEmitter {
 
 interface EngineParticle {
   gfx: PixiGraphics;
+  /** Tint baked into `gfx` — used to route the record back to the
+   *  right free-pool on death. The factory sets this at construction
+   *  and we never repaint it (Pixi v8 Graphics fill is finalised at
+   *  build time; cheaper to keep tint-segregated pools). */
+  tint: number;
   vx: number;
   vy: number;
   lifeS: number;
@@ -74,6 +79,16 @@ export class EngineEmitter {
   private readonly emitters = new Map<string, ActiveEmitter>();
   /** All particles across all emitters — pool-capped, oldest-out. */
   private readonly particles: EngineParticle[] = [];
+  /** Free-pool of EngineParticle records (post-2026-05-28 — capture
+   *  8y3njt). When a particle dies we push its record + the underlying
+   *  Graphics onto this stack instead of destroying; the next emit
+   *  pops a record (already detached from the parent container) and
+   *  resets its fields in place. Eliminates the per-frame
+   *  `factories.makeParticle()` + `{...}` literal that dominated client
+   *  allocation under continuous thrust. Tint is fixed per Graphics so
+   *  pools are tint-keyed (only 2 distinct tints in practice: thrust
+   *  orange + boost blue). */
+  private readonly freeByTint = new Map<number, EngineParticle[]>();
 
   constructor(
     private readonly parent: Container,
@@ -139,13 +154,19 @@ export class EngineEmitter {
     return { emitters: this.emitters.size, particles: this.particles.length };
   }
 
-  /** Wipe everything on sector handoff. */
+  /** Wipe everything on sector handoff. Destroys both live and pooled
+   *  Graphics — a sector swap is the right time to release the GPU
+   *  buffers; the destination sector will warm a fresh pool. */
   resetForSectorHandoff(): void {
     for (const p of this.particles) {
       this.parent.removeChild(p.gfx);
       p.gfx.destroy();
     }
     this.particles.length = 0;
+    for (const pool of this.freeByTint.values()) {
+      for (const p of pool) p.gfx.destroy();
+    }
+    this.freeByTint.clear();
     this.emitters.clear();
   }
 
@@ -161,21 +182,16 @@ export class EngineEmitter {
       const oldest = this.particles.shift();
       if (oldest) {
         this.parent.removeChild(oldest.gfx);
-        oldest.gfx.destroy();
+        this.releaseToFree(oldest);
       }
     }
 
-    const gfx = this.factories.makeParticle(tint);
     // Ship-relative stern offset (game-space). Ship's forward is
     // -sin(angle), cos(angle); stern is the opposite direction. We emit
     // ~25 u behind the ship's centre + some spread.
     const sternOffsetWorld = -25;
     const sx = pose.x + Math.sin(pose.angle) * (-sternOffsetWorld); // = pose.x - sin*25 = stern X
     const sy = pose.y - Math.cos(pose.angle) * (-sternOffsetWorld); // = pose.y + cos*25 = stern Y
-
-    // Apply Y-flip when writing to Pixi.
-    gfx.x = sx;
-    gfx.y = -sy;
 
     // Velocity: behind the ship with a random spread cone.
     const heading = pose.angle + Math.PI; // pointing astern
@@ -184,8 +200,49 @@ export class EngineEmitter {
     const vx = -Math.sin(spreadAngle) * speed;
     const vy = Math.cos(spreadAngle) * speed;
 
-    this.parent.addChild(gfx);
-    this.particles.push({ gfx, vx, vy, lifeS: lifetimeS, initialLifeS: lifetimeS });
+    // Pool path: pop a free record + Graphics if one exists for this
+    // tint, reset its mutable fields. Otherwise allocate (only happens
+    // until the pool is saturated). Invariant #14 — capture 8y3njt.
+    let p = this.acquireFromFree(tint);
+    if (!p) {
+      p = {
+        gfx: this.factories.makeParticle(tint),
+        tint,
+        vx, vy,
+        lifeS: lifetimeS,
+        initialLifeS: lifetimeS,
+      };
+    } else {
+      p.vx = vx;
+      p.vy = vy;
+      p.lifeS = lifetimeS;
+      p.initialLifeS = lifetimeS;
+      // Pixi v8 Graphics doesn't carry stale state we need to reset
+      // here — alpha + scale are set by tickParticles on the next frame
+      // before paint, and position is set just below.
+    }
+    // Apply Y-flip when writing to Pixi.
+    p.gfx.x = sx;
+    p.gfx.y = -sy;
+    p.gfx.alpha = 1;
+    p.gfx.scale.set(1, 1);
+    this.parent.addChild(p.gfx);
+    this.particles.push(p);
+  }
+
+  private acquireFromFree(tint: number): EngineParticle | null {
+    const pool = this.freeByTint.get(tint);
+    if (!pool || pool.length === 0) return null;
+    return pool.pop()!;
+  }
+
+  private releaseToFree(p: EngineParticle): void {
+    let pool = this.freeByTint.get(p.tint);
+    if (!pool) {
+      pool = [];
+      this.freeByTint.set(p.tint, pool);
+    }
+    pool.push(p);
   }
 
   private tickParticles(dtSec: number): void {
@@ -194,8 +251,13 @@ export class EngineEmitter {
       p.lifeS -= dtSec;
       if (p.lifeS <= 0) {
         this.parent.removeChild(p.gfx);
-        p.gfx.destroy();
+        // Capture 8y3njt — return the record + Graphics to the free
+        // pool instead of destroying so the next emit can reuse. The
+        // Graphics fill / geometry are baked at construction and stay
+        // valid; only mutable state (pos / alpha / scale) is reset on
+        // re-emit.
         this.particles.splice(i, 1);
+        this.releaseToFree(p);
         continue;
       }
       // Drift in world; Pixi Y is flipped on write.

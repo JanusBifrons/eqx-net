@@ -108,3 +108,18 @@
 {"source":"client","ts":84833.30000001192,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
 {"source":"client","ts":84867.5,"tag":"roster_fetch","data":{"stage":"ok","count":6,"kinds":["fighter","fighter","missile-frigate","scout","interceptor","interceptor"]}}
 {"source":"client","ts":88904.59999999404,"tag":"streaming_truncated_final","data":{"droppedFromHead":352,"keptCount":118,"cap":32768}}
+{"source":"client","ts":96046.5,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":96051.90000000596,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":96072,"tag":"roster_fetch","data":{"stage":"ok","count":6,"kinds":["fighter","fighter","missile-frigate","scout","interceptor","interceptor"]}}
+{"source":"client","ts":97540.69999998808,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":98540,"tag":"lost_connection_overlay_shown","data":{"connectionStatus":"disconnected"}}
+{"source":"client","ts":100536.5,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":103573.80000001192,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":106535.30000001192,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":109559.69999998808,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":112583.80000001192,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":115539.40000000596,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":116554.5,"tag":"lost_connection_overlay_auto_return","data":{}}
+{"source":"client","ts":116912.09999999404,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":116920.90000000596,"tag":"joystick_destroyed","data":{"leftoverInZone":1,"leftoverSiblings":0}}
+{"source":"client","ts":1147731.300000012,"tag":"roster_fetch","data":{"stage":"exception","message":"Failed to fetch"}}

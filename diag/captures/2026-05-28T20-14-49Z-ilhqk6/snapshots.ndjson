@@ -4112,3 +4112,9 @@
 {"source":"client","ts":92494.19999998808,"tag":"snapshot_received","data":{"serverTick":12654,"recvGapMs":71.3}}
 {"source":"client","ts":92551.80000001192,"tag":"snapshot_received","data":{"serverTick":12657,"recvGapMs":57.6}}
 {"source":"client","ts":92612.59999999404,"tag":"snapshot_received","data":{"serverTick":12660,"recvGapMs":60.8}}
+{"source":"client","ts":95327,"tag":"snapshot_received","data":{"serverTick":12777,"recvGapMs":117.8}}
+{"source":"client","ts":95437.90000000596,"tag":"snapshot_received","data":{"serverTick":12780,"recvGapMs":111}}
+{"source":"client","ts":95572.40000000596,"tag":"snapshot_received","data":{"serverTick":12783,"recvGapMs":134.5}}
+{"source":"client","ts":95698.59999999404,"tag":"snapshot_received","data":{"serverTick":12786,"recvGapMs":126.2}}
+{"source":"client","ts":95792.90000000596,"tag":"snapshot_received","data":{"serverTick":12789,"recvGapMs":94.3}}
+{"source":"client","ts":95922.69999998808,"tag":"snapshot_received","data":{"serverTick":12792,"recvGapMs":129.8}}

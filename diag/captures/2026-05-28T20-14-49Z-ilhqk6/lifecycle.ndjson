@@ -29,3 +29,12 @@
 {"source":"client","ts":17292.30000001192,"tag":"component_unmount","data":{"name":"ShipRosterPanel"}}
 {"source":"client","ts":17292.30000001192,"tag":"component_mount","data":{"name":"ShipRosterPanel","compact":false,"hasPlayerId":false}}
 {"source":"client","ts":18803,"tag":"welcome","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","serverTick":8293,"idReassigned":false}}
+{"source":"client","ts":95927,"tag":"disconnected","data":{"code":1006}}
+{"source":"client","ts":105539.59999999404,"tag":"server_health_change","data":{"from":"healthy","to":"unreachable","playersOnline":null}}
+{"source":"client","ts":116911.80000001192,"tag":"component_unmount","data":{"name":"ShipRosterPanel"}}
+{"source":"client","ts":116916.09999999404,"tag":"component_unmount","data":{"name":"MobileControls"}}
+{"source":"client","ts":116921.40000000596,"tag":"component_unmount","data":{"name":"LostConnectionOverlay"}}
+{"source":"client","ts":116923.19999998808,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":116924.30000001192,"tag":"phase_change","data":{"phase":"meta"}}
+{"source":"client","ts":116924.40000000596,"tag":"component_unmount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":116924.5,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}
