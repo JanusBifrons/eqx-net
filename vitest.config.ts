@@ -76,6 +76,10 @@ export default defineConfig({
       // *.test.ts); benchmarks/**/*.test.ts IS included (plan: perf-floor).
       // Phase A1 — integration tests run via `pnpm test:integration`.
       'tests/integration/**',
+      // GC/heap-delta tests need --expose-gc + serial execution; they
+      // live under vitest.gc.config.ts and run via `pnpm test:gc`
+      // (plan: quirky-rabbit, Phase 1).
+      '**/*.heapDelta.test.ts',
     ],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],

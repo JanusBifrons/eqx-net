@@ -8,6 +8,12 @@ import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import {
+  subscribeGcPause,
+  unsubscribeGcPause,
+  type GcPauseEvent,
+} from '../debug/GcMonitor.js';
+import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -436,6 +442,12 @@ export class SectorRoom extends Room<SectorState> {
   readonly playerToTransitInFlight = new Set<string>();
   /** Phase 8 sub-phase B — per-room transit driver, set in onCreate. */
   private transitOrchestrator: TransitOrchestrator | null = null;
+  /** Paradigm plan (quirky-rabbit) Phase 6 — fans process-wide GC pauses
+   *  out to this room's clients so the on-device dev overlay can show
+   *  the server's GC health alongside its own browser longtask stats.
+   *  Stored as a bound function reference so onDispose can unsubscribe
+   *  the exact callback. Initialised in onCreate, nulled in onDispose. */
+  private gcPauseSubscriber: ((event: GcPauseEvent) => void) | null = null;
   /** Phase 8 sub-phase B (lingering ships) — 15-min auto-evict timers for
    *  hulls whose owners have disconnected from a galaxy room but whose ships
    *  remain in the live simulation. The ship keeps its SAB slot, ShipState
@@ -1068,6 +1080,20 @@ export class SectorRoom extends Room<SectorState> {
     // it explicit guards against a future default change silently breaking
     // the contract.
     this.setSeatReservationTime(15);
+
+    // Paradigm plan (quirky-rabbit) Phase 6 — fan server GC pauses out to
+    // this room's clients. The subscriber is called synchronously inside
+    // the GC observer; the broadcast just enqueues into each WS buffer,
+    // which is the cheap operation that contract demands.
+    this.gcPauseSubscriber = (event: GcPauseEvent): void => {
+      const msg: GcPauseEventMessage = {
+        type: 'gc_pause',
+        durationMs: event.durationMs,
+        kind: event.kind,
+      };
+      this.broadcast('gc_pause', msg);
+    };
+    subscribeGcPause(this.gcPauseSubscriber);
 
     // Phase 8 sub-phase B — per-room transit driver. Engineering rooms get
     // an orchestrator too, but it'll always reject `engage_transit` because
@@ -2214,6 +2240,14 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    // Paradigm plan (quirky-rabbit) Phase 6 — unsubscribe from the GC
+    // observer so the disposed room isn't kept alive by the subscriber
+    // closure (and so the observer doesn't try to broadcast through a
+    // torn-down WebSocket transport).
+    if (this.gcPauseSubscriber) {
+      unsubscribeGcPause(this.gcPauseSubscriber);
+      this.gcPauseSubscriber = null;
+    }
     // Phase 8 sub-phase B — abort any in-flight transits so no orphan timers
     // or seat reservations linger past room teardown.
     this.transitOrchestrator?.cancelAll('manual');

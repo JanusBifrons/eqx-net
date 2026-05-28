@@ -12,6 +12,7 @@ import { useUIStore } from '../state/store';
 export function DevOverlay(): JSX.Element | null {
   const showDevOverlay = useUIStore((s) => s.showDevOverlay);
   const devData = useUIStore((s) => s.devData);
+  const healthStats = useUIStore((s) => s.healthStats);
   if (!showDevOverlay) return null;
 
   const corrRate = devData.snapshotCount > 0
@@ -50,6 +51,13 @@ export function DevOverlay(): JSX.Element | null {
       <div style={{ color: '#ff6622' }}>Server(ghost): ({f(devData.serverX)}, {f(devData.serverY)})</div>
       <div>Before: ({f(devData.beforeX)}, {f(devData.beforeY)})</div>
       <div>After:  ({f(devData.afterX)}, {f(devData.afterY)})</div>
+      <div style={{ borderTop: '1px solid #0f04', marginTop: 4, paddingTop: 4, color: '#0f8', fontWeight: 'bold' }}>── Health (30 s) ──</div>
+      <div data-testid="dev-health-server-gc" style={{ color: healthStats.serverGc.count30s > 5 ? '#ff0' : '#0f0' }}>
+        ServerGC: {healthStats.serverGc.count30s} pauses  max {healthStats.serverGc.maxMs30s.toFixed(1)} ms
+      </div>
+      <div data-testid="dev-health-longtask" style={{ color: healthStats.longtask.count30s > 10 ? '#ff0' : '#0f0' }}>
+        Longtask: {healthStats.longtask.count30s} blocks  max {healthStats.longtask.maxMs30s.toFixed(1)} ms
+      </div>
     </Box>
   );
 }

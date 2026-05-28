@@ -974,7 +974,27 @@ export class PixiRenderer implements IRenderer {
    *  hulls permanently invisible when the schema diff was late; the
    *  extracted helper makes the fallback-kind behaviour an explicit
    *  contract and prevents regression. */
-  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string }>();
+  /** Lingering hull sprites. Per-entry `stamp` field implements the
+   *  generation-counter pattern (R5 in the paradigm doc) — bump
+   *  `_lingeringFrameId` at the top of `updateLingeringShips`, stamp
+   *  every touched entry, sweep entries whose stamp lags. Replaces the
+   *  per-frame `new Set<string>()` the audit identified at this site. */
+  private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number }>();
+  private _lingeringFrameId = 0;
+  /** Parallel stamp map for wreckSprites. Pre-Phase-4 the cleanup
+   *  iterated a per-frame `new Set<string>()`; the parallel-map
+   *  generation-counter keeps `wreckSprites` value type as raw Graphics
+   *  (the `decideExplosionPosition` consumer at PixiRenderer.ts:584
+   *  reads sprite.x/.y off the Graphics, so wrapping would force a
+   *  second view). Map entries persist with wrecks; per-frame stamping
+   *  on an existing key is allocation-free. */
+  private readonly wreckStamps = new Map<string, number>();
+  private _wreckFrameId = 0;
+  /** Cache of `wreck-${shipInstanceId}` strings (Phase 5g —
+   *  invariant #14). updateWrecks builds this key per wreck per frame
+   *  to check mirror.damagedShips; cache-or-create makes subsequent
+   *  ticks allocation-free. */
+  private readonly _wreckDamageKeyCache = new Map<string, string>();
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
@@ -983,9 +1003,12 @@ export class PixiRenderer implements IRenderer {
       }
       return;
     }
-    const seen = new Set<string>();
+    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
+    // path allocated `new Set<string>()` per RAF (60-100 fps depending
+    // on device); the stamp field on each entry now carries the same
+    // signal with zero allocation.
+    const frameId = ++this._lingeringFrameId;
     for (const [shipInstanceId, ship] of mirror.lingeringShips) {
-      seen.add(shipInstanceId);
       const decision = decideLingeringSpriteAction({
         cached: this.lingeringSprites.get(shipInstanceId),
         currentKind: ship.kind,
@@ -1002,18 +1025,19 @@ export class PixiRenderer implements IRenderer {
         const sprite = buildShipGfxFromShape(shape, shape.color);
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
-        entry = { sprite, kind: decision.kind };
+        entry = { sprite, kind: decision.kind, stamp: frameId };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
       // 'skip' is reserved for wreck-kind-missing diagnostics; not
       // produced by the lingering decision today. Be defensive anyway.
       if (decision.action === 'skip' || !entry) continue;
+      entry.stamp = frameId;
       entry.sprite.x = ship.x;
       entry.sprite.y = -ship.y;
       entry.sprite.rotation = -ship.angle;
     }
     for (const [id, entry] of this.lingeringSprites) {
-      if (!seen.has(id)) {
+      if (entry.stamp !== frameId) {
         entry.sprite.destroy();
         this.lingeringSprites.delete(id);
       }
@@ -1024,11 +1048,14 @@ export class PixiRenderer implements IRenderer {
     if (!mirror.wrecks) {
       for (const g of this.wreckSprites.values()) g.destroy();
       this.wreckSprites.clear();
+      this.wreckStamps.clear();
       return;
     }
-    const seen = new Set<string>();
+    // Generation-counter sweep via the parallel `wreckStamps` map
+    // (invariant #14, R5). The wreckSprites value stays `Graphics` so
+    // `decideExplosionPosition` can keep reading sprite.x/.y directly.
+    const frameId = ++this._wreckFrameId;
     for (const [shipInstanceId, w] of mirror.wrecks) {
-      seen.add(shipInstanceId);
       let sprite = this.wreckSprites.get(shipInstanceId);
       if (!sprite) {
         const shape = shapeForKind(w.kind);
@@ -1037,6 +1064,7 @@ export class PixiRenderer implements IRenderer {
         this.shipContainer.addChild(sprite);
         this.wreckSprites.set(shipInstanceId, sprite);
       }
+      this.wreckStamps.set(shipInstanceId, frameId);
       sprite.x = w.x;
       sprite.y = -w.y;
       sprite.rotation = -w.angle;
@@ -1045,14 +1073,21 @@ export class PixiRenderer implements IRenderer {
       // damage-flash machinery is keyed by the wire targetId (which is
       // `wreck-${shipInstanceId}` for wrecks); `mirror.damagedShips`
       // gets that id from handleDamage so we can flash here too.
-      const wreckEntityId = `wreck-${shipInstanceId}`;
+      // Phase 5g: cache the template-literal string.
+      let wreckEntityId = this._wreckDamageKeyCache.get(shipInstanceId);
+      if (wreckEntityId === undefined) {
+        wreckEntityId = `wreck-${shipInstanceId}`;
+        this._wreckDamageKeyCache.set(shipInstanceId, wreckEntityId);
+      }
       const flashing = mirror.damagedShips?.has(wreckEntityId) ?? false;
       sprite.tint = flashing ? DAMAGE_FLASH_COLOR : 0xffffff;
     }
     for (const [id, sprite] of this.wreckSprites) {
-      if (!seen.has(id)) {
+      if (this.wreckStamps.get(id) !== frameId) {
         sprite.destroy();
         this.wreckSprites.delete(id);
+        this.wreckStamps.delete(id);
+        this._wreckDamageKeyCache.delete(id);
       }
     }
   }

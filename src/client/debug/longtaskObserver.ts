@@ -23,6 +23,7 @@
  * `installLongtaskObserver()` once.
  */
 import { logEvent } from './ClientLogger.js';
+import { recordLongtask } from './healthStats.js';
 
 interface LongTaskAttributionTiming extends PerformanceEntry {
   containerType?: string;
@@ -68,12 +69,16 @@ export function installLongtaskObserver(): boolean {
           containerName: a.containerName ?? null,
           containerSrc: a.containerSrc ?? null,
         }));
+        const durationMs = Math.round(entry.duration * 100) / 100;
         logEvent('longtask', {
           startTime: Math.round(entry.startTime * 100) / 100,
-          durationMs: Math.round(entry.duration * 100) / 100,
+          durationMs,
           name: entry.name,
           attribution,
         });
+        // Paradigm plan (quirky-rabbit) Phase 6 — also feed the rolling
+        // 30 s aggregator that the DevOverlay surfaces.
+        recordLongtask(durationMs);
       }
     });
     observer.observe({ entryTypes: ['longtask'], buffered: true });

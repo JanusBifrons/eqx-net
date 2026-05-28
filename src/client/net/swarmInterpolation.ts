@@ -125,6 +125,26 @@ function shortestArc(target: number, source: number): number {
 }
 
 /**
+ * Module-scope scratch for the populated-entries gather (plan:
+ * quirky-rabbit, Phase 5). Pre-Phase-5 the function allocated a fresh
+ * `PoseRingEntry[]` AND called `Array.prototype.sort` per drone per
+ * frame; at ~5-10 in-interest drones × 90 fps on a 90 Hz phone that's
+ * ~450-900 small arrays/sec plus a sort temp per call.
+ *
+ * Single-threaded JS + once-per-frame-per-drone call shape means
+ * sharing this scratch across all `interpolateSwarmPose` callers is
+ * safe — no reentrancy, no overlap. The scratch holds at most
+ * `POSE_RING_DEPTH` references; subsequent calls overwrite them in
+ * place. The referenced `PoseRingEntry` instances live on the swarm
+ * entry's `poseRing` regardless, so the scratch never retains
+ * anything that wouldn't already be live.
+ *
+ * Sized to `POSE_RING_DEPTH` (currently 10) — load-bearing if that
+ * constant changes, the scratch must grow with it (statically
+ * verified at the for-loop bound below). */
+const _populatedScratch: (PoseRingEntry | null)[] = new Array<PoseRingEntry | null>(POSE_RING_DEPTH).fill(null);
+
+/**
  * Compute the interpolated pose at wall-clock time `nowMs`, with
  * `DISPLAY_DELAY_MS` of buffering. Mutates `out` instead of allocating; pass
  * a per-renderer scratch.
@@ -143,17 +163,26 @@ export function interpolateSwarmPose(
   }
 
   const ring = entry.poseRing;
-  // Collect populated entries in arrival order. With POSE_RING_DEPTH = 3
-  // this is at most 3 items; cheap. We sort by `arrivalMs` ascending so
-  // the bracketing search is straightforward regardless of `ringHead`.
-  // Allocating a 3-slot scratch each call is fine — JIT inlines it.
-  const populated: PoseRingEntry[] = [];
+  // Collect populated entries in `arrivalMs`-ascending order via an
+  // in-place insertion sort during fill (zero allocation, beats
+  // `Array.prototype.sort` for n ≤ POSE_RING_DEPTH which uses an
+  // intermediate buffer + comparator closure).
+  let count = 0;
   for (let i = 0; i < POSE_RING_DEPTH; i++) {
     const e = ring[i];
-    if (e && !e.empty) populated.push(e);
+    if (!e || e.empty) continue;
+    // Insertion sort: shift larger arrivalMs entries right until the
+    // insertion slot is reached.
+    let j = count;
+    while (j > 0 && _populatedScratch[j - 1]!.arrivalMs > e.arrivalMs) {
+      _populatedScratch[j] = _populatedScratch[j - 1]!;
+      j--;
+    }
+    _populatedScratch[j] = e;
+    count++;
   }
 
-  if (populated.length === 0) {
+  if (count === 0) {
     // No arrivals yet — should be unreachable because the decoder seeds slot 0
     // on first sighting, but be defensive.
     out.x = entry.x;
@@ -162,15 +191,13 @@ export function interpolateSwarmPose(
     return out;
   }
 
-  populated.sort((a, b) => a.arrivalMs - b.arrivalMs);
-
   const targetMs = nowMs - _displayDelayMs;
-  const newest = populated[populated.length - 1]!;
-  const oldest = populated[0]!;
+  const newest = _populatedScratch[count - 1]!;
+  const oldest = _populatedScratch[0]!;
 
   // Single arrival or render time before our oldest sample: pin to oldest
   // pose. Same shape the legacy first-sighting / pre-window branch used.
-  if (populated.length === 1 || targetMs <= oldest.arrivalMs) {
+  if (count === 1 || targetMs <= oldest.arrivalMs) {
     out.x = oldest.x;
     out.y = oldest.y;
     out.angle = oldest.angle;
@@ -197,13 +224,14 @@ export function interpolateSwarmPose(
   }
 
   // Interpolation window — find the two adjacent populated entries `a, b`
-  // such that a.arrivalMs ≤ targetMs < b.arrivalMs. With at most 3 items
-  // a linear scan is simpler than binary search and unmeasurably faster.
+  // such that a.arrivalMs ≤ targetMs < b.arrivalMs. At most POSE_RING_DEPTH
+  // items, sorted ascending; linear scan is simpler than binary search
+  // and unmeasurably faster at this size.
   let a: PoseRingEntry = oldest;
-  let b: PoseRingEntry = populated[1]!;
-  for (let i = 0; i < populated.length - 1; i++) {
-    const lo = populated[i]!;
-    const hi = populated[i + 1]!;
+  let b: PoseRingEntry = _populatedScratch[1]!;
+  for (let i = 0; i < count - 1; i++) {
+    const lo = _populatedScratch[i]!;
+    const hi = _populatedScratch[i + 1]!;
     if (targetMs >= lo.arrivalMs && targetMs < hi.arrivalMs) {
       a = lo;
       b = hi;
