@@ -53,6 +53,10 @@ export default defineConfig({
       // Phases 2 + 5). The .spec.ts Playwright spec lives in the same
       // directory but is excluded by the .test.ts-only match.
       'tests/perf/**/*.test.ts',
+      // Mobile-perf budget pure module unit lock. Same pattern as
+      // tests/netgate and tests/perf — vitest matches *.test.ts only,
+      // Playwright matches *.spec.ts only in `playwright.mobile-perf.config.ts`.
+      'tests/mobile-perf/**/*.test.ts',
       // Capture-driven replay harness + user-contract assertions
       // (plan: capture-driven replay infra, Phases C-F, 2026-05-21).
       // Drives the REAL ColyseusGameClient through captured on-device
