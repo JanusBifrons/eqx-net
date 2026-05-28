@@ -4,7 +4,7 @@ import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
-import { SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -254,8 +254,13 @@ export class SwarmSpawner {
 }
 
 /** Default uniform-random kind picker for drones. Skews toward Fighter only
- *  by virtue of the catalogue's order — every kind has equal probability. */
-function pickRandomShipKind(): ShipKindId {
-  const idx = Math.floor(Math.random() * SHIP_KINDS_LIST.length);
-  return SHIP_KINDS_LIST[idx]!.id;
+ *  by virtue of the catalogue's order — every gameplay kind has equal
+ *  probability. Engineering-only kinds (`crossguard`, `el`) are excluded
+ *  via `GAMEPLAY_SHIP_KINDS_LIST` — they're scale-10 test fixtures and
+ *  leaked into Sol Prime in capture ilhqk6 with the "square ship bigger
+ *  than its shield" smoke report. Player-explicit `JoinOption.shipKind`
+ *  still bypasses this filter; only ambient random selection is gated. */
+export function pickRandomShipKind(): ShipKindId {
+  const idx = Math.floor(Math.random() * GAMEPLAY_SHIP_KINDS_LIST.length);
+  return GAMEPLAY_SHIP_KINDS_LIST[idx]!.id;
 }

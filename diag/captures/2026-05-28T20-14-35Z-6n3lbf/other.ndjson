@@ -1,0 +1,8 @@
+{"source":"client","ts":4267.0999999940395,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":4267.299999982119,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":4283,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":4283.199999988079,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":4283.199999988079,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":4311.399999976158,"tag":"roster_fetch","data":{"stage":"ok","count":5,"kinds":["fighter","fighter","missile-frigate","scout","interceptor"]}}
+{"source":"client","ts":7287.899999976158,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":7312,"tag":"roster_fetch","data":{"stage":"ok","count":5,"kinds":["fighter","fighter","missile-frigate","scout","interceptor"]}}

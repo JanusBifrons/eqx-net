@@ -156,6 +156,17 @@ export const ShipKindSchema = z
      *  semantically heavy (e.g. the huge T-shaped Crossguard variant
      *  spawned in the engineering shield-test room). */
     mass: z.number().positive().optional(),
+    /** Engineering-only test fixture (e.g. the scale-10 `crossguard` and
+     *  `el` chassis used by smoke-test rooms). Excluded from the galaxy
+     *  spawn pool — `GAMEPLAY_SHIP_KINDS_LIST` filters these out and
+     *  `pickRandomShipKind` / `HunterBotPool.seed` consume that filtered
+     *  list. Player ships and `JoinOption.shipKind`-driven spawns can
+     *  still pick them explicitly; this only gates the *random* picker
+     *  used by ambient drone seeding + Living World hunter bots.
+     *  Default `false`. Added 2026-05-28 (capture ilhqk6) — engineering
+     *  kinds were leaking into Sol Prime as hunter bots, producing the
+     *  "square ship bigger than its shield" smoke report. */
+    engineeringOnly: z.boolean().optional(),
     /** Initial (and `ShipState.maxHealth`) health value. */
     maxHealth: z.number().positive(),
 

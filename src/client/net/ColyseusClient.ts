@@ -2702,7 +2702,14 @@ export class ColyseusGameClient {
         //                   physics divergence, the smoking-gun
         //                   number for "I see myself inside but
         //                   physics says I'm not". Always ≥ 0.
-        if (this.mirror.swarm) {
+        //
+        // Gated on isFullDiagMode() (2026-05-28, capture ilhqk6) — the
+        // unconditional version of this block ran every frame within
+        // 1500 u of any drone and was the dominant per-frame allocation
+        // source on the client. With engineering kinds removed from the
+        // galaxy spawn pool the trigger rate dropped, but the gate
+        // ensures production never pays for this diagnostic at all.
+        if (isFullDiagMode() && this.mirror.swarm) {
           let nearestId = -1;
           let nearestDx = 0;
           let nearestDy = 0;

@@ -26,6 +26,10 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
   id: 'crossguard',
   displayName: 'Crossguard',
   description: 'Massive engineering-test variant. 10× normal size, 30× mass. Built for impact testing — slow to manoeuvre, brutal to ram.',
+  // Engineering-only — filter out of random galaxy spawn pool. Scale-10
+  // chassis is intentionally too large for ambient gameplay (it leaked
+  // into Sol Prime as a hunter bot in capture ilhqk6).
+  engineeringOnly: true,
   // Tuning for a HUGE chassis: thrust scaled up so a player who picks
   // this kind can still accelerate at all (without scaling, mass-30
   // would mean accel ≈ thrust/30 → unmovable). 2.0 × 30 = 60 keeps the

@@ -11,7 +11,7 @@
  */
 
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
-import { SHIP_KINDS_LIST, type ShipKindId } from '../../../shared-types/shipKinds.js';
+import { GAMEPLAY_SHIP_KINDS_LIST, type ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { BotTransitController } from '../BotTransitController.js';
 import type { Rng } from '../population.js';
 
@@ -66,8 +66,12 @@ export class HunterBotPool {
     const now = this.opts.nowMs();
     for (let i = 0; i < this.opts.botCount; i++) {
       const botId = `lwbot-${i}`;
+      // Engineering-only kinds (crossguard, el) are scale-10 test
+      // fixtures and must not seed into ambient hunter bots — capture
+      // ilhqk6 had them leaking into Sol Prime ("square ship bigger than
+      // its shield"). The gameplay subset is the source of truth.
       const kind =
-        SHIP_KINDS_LIST[Math.floor(this.opts.rng() * SHIP_KINDS_LIST.length)]!.id;
+        GAMEPLAY_SHIP_KINDS_LIST[Math.floor(this.opts.rng() * GAMEPLAY_SHIP_KINDS_LIST.length)]!.id;
       this.bots.set(botId, {
         botId,
         kind,

@@ -65,6 +65,26 @@ import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
 
 /**
+ * Gameplay-eligible subset of the catalogue — `SHIP_KINDS_LIST` with
+ * `engineeringOnly` kinds (currently `crossguard` and `el`) filtered
+ * out. Consumed by the random galaxy spawn pool (`pickRandomShipKind`
+ * in `src/server/spawn/SwarmSpawner.ts` and the Living World hunter-bot
+ * seeder in `src/server/livingworld/director/HunterBotPool.ts`).
+ *
+ * Player ships and explicit `JoinOption.shipKind` spawns still see the
+ * full catalogue — this filter only affects the random pickers used
+ * for ambient drone seeding.
+ *
+ * Added 2026-05-28 after capture ilhqk6 surfaced engineering-only kinds
+ * leaking into Sol Prime, producing the "square ship bigger than its
+ * shield bubble" smoke report + downstream allocation/GC pressure from
+ * heavy-chassis ramming-probe logging.
+ */
+export const GAMEPLAY_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
+  SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly),
+);
+
+/**
  * The catalogue, frozen so a typo can't mutate it at runtime. Keys are
  * the canonical ids. **The ORDER of this object literal mirrors the
  * `SHIP_KINDS_LIST` order** so `Object.values(SHIP_KINDS)` and

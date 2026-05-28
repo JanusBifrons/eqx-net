@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { SwarmSpawner, type AsteroidSpec } from './SwarmSpawner.js';
+import { SwarmSpawner, type AsteroidSpec, pickRandomShipKind } from './SwarmSpawner.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
-import { SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
@@ -164,5 +164,31 @@ describe('SwarmSpawner', () => {
     });
     expect(spawner.spawnDrone({ id: 'drone-legacy', x: 0, y: 0 })).toBe(true);
     expect(registry.get('drone-legacy')!.shipKind).toBe(hookKind);
+  });
+});
+
+describe('pickRandomShipKind — engineering kinds excluded (capture ilhqk6)', () => {
+  it('never returns an engineeringOnly kind across 5000 calls', () => {
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 5000; i++) {
+      const id = pickRandomShipKind();
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    for (const [id, n] of counts) {
+      const kind = SHIP_KINDS_LIST.find((k) => k.id === id)!;
+      expect(kind.engineeringOnly, `picked ${id} ${n}× — engineering-only kinds must not leak into galaxy spawn pool`).toBeFalsy();
+    }
+    // Specifically: crossguard + el (the two kinds that triggered the
+    // 2026-05-28 smoke-test bug — square ship rendered larger than its
+    // shield bubble, and downstream lag from heavy chassis ramming-probe
+    // logs in Sol Prime).
+    expect(counts.has('crossguard')).toBe(false);
+    expect(counts.has('el')).toBe(false);
+    // Sanity: at least one gameplay kind got picked.
+    expect(counts.size).toBeGreaterThan(0);
+    // Sanity: catalogue still has the engineering kinds — we're filtering,
+    // not deleting.
+    expect(SHIP_KINDS.crossguard.engineeringOnly).toBe(true);
+    expect(SHIP_KINDS.el.engineeringOnly).toBe(true);
   });
 });

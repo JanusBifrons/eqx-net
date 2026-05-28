@@ -25,6 +25,12 @@ export const L_SHAPE: ShipKind = ShipKindSchema.parse({
   id: 'el',
   displayName: 'L-Frame',
   description: 'Engineering chassis. L-shaped silhouette, gigantic, low-mass — the deliberate worst case for resolver vs render alignment.',
+  // Engineering-only — filter out of random galaxy spawn pool. Scale-10
+  // chassis (~2000 u square per the 2026-05-28 bisect) is intentionally
+  // unplayable for ambient drones; capture ilhqk6 caught it leaking into
+  // Sol Prime as a hunter bot, which is also where the user reported
+  // the "square ship bigger than its shield" smoke bug.
+  engineeringOnly: true,
   // Sluggish but movable. Mass 5 keeps the L a low-friction punching bag
   // for the probe test; thrust 8 is enough to spin a player around the
   // armpit if it's spawned as a player kind.
