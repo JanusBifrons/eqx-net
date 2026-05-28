@@ -1,0 +1,10 @@
+{"source":"client","ts":812.1999999880791,"tag":"renderer_path_chosen","data":{"useWorker":false,"workerParam":null,"isTouch":true,"supportsOffscreenRenderer":true}}
+{"source":"client","ts":825.2999999821186,"tag":"galaxy_map_toggle","data":{"open":false,"worker":false}}
+{"source":"client","ts":826.2999999821186,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":826.5,"tag":"renderer_path_chosen","data":{"useWorker":false,"workerParam":null,"isTouch":true,"supportsOffscreenRenderer":true}}
+{"source":"client","ts":826.5999999940395,"tag":"galaxy_map_toggle","data":{"open":false,"worker":false}}
+{"source":"client","ts":876.3999999761581,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":876.3999999761581,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}
+{"source":"client","ts":882.5999999940395,"tag":"joystick_created","data":{"zoneChildCount":1}}
+{"source":"client","ts":883,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":883,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}

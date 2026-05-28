@@ -11658,3 +11658,4 @@
 {"source":"client","ts":131966.6000000015,"tag":"longtask","data":{"startTime":131765.1,"durationMs":102,"name":"self","attribution":[{"containerType":"window","containerName":"","containerSrc":""}]}}
 {"source":"client","ts":131966.6000000015,"tag":"longtask","data":{"startTime":131872.1,"durationMs":92,"name":"self","attribution":[{"containerType":"window","containerName":"","containerSrc":""}]}}
 {"source":"client","ts":132956.5,"tag":"recv_gap_long","data":{"recvGapMs":297.6,"heapUsedMb":65.72}}
+{"source":"client","ts":165501,"tag":"longtask","data":{"startTime":165288.9,"durationMs":211,"name":"self","attribution":[{"containerType":"window","containerName":"","containerSrc":""}]}}

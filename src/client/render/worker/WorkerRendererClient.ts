@@ -29,7 +29,10 @@ import type {
   SerialisedWheelEvent,
   WarpParams,
   WarpCenter,
+  TriggerEffectMsg,
+  SetEffectParamsMsg,
 } from './protocol';
+import type { EffectQuality } from '@core/contracts/IEffects';
 import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 
@@ -363,6 +366,50 @@ export class WorkerRendererClient implements IRenderer {
    */
   setLoadCurtain(active: boolean): void {
     this.post({ type: 'SET_LOAD_CURTAIN', active });
+  }
+
+  /**
+   * Effects subsystem (plan `wiggly-puppy` M2): trigger a one-shot effect.
+   * Production code rarely calls this directly — most triggers ride
+   * `RenderMirror.pendingEffectTriggers` (drained renderer-side per
+   * frame). Sandbox + `IFilterEffects.triggerOneShotFilter` use it.
+   */
+  triggerEffect(effect: TriggerEffectMsg['effect'], worldX: number, worldY: number,
+                opts?: { intensity?: number; tint?: number; entityId?: string }): void {
+    this.post({
+      type: 'TRIGGER_EFFECT',
+      effect,
+      worldX,
+      worldY,
+      ...(opts?.intensity !== undefined ? { intensity: opts.intensity } : {}),
+      ...(opts?.tint !== undefined ? { tint: opts.tint } : {}),
+      ...(opts?.entityId !== undefined ? { entityId: opts.entityId } : {}),
+    });
+  }
+
+  /**
+   * Push an `EffectsBudget` quality tier. Called by the main-thread
+   * `PerfMonitor` only on tier transition (≤ once per 500 ms — see
+   * `EffectsBudget` hysteresis). NEVER per-frame.
+   */
+  setEffectQuality(level: EffectQuality): void {
+    this.post({ type: 'SET_EFFECT_QUALITY', level });
+  }
+
+  /**
+   * Sandbox-only live tune for a single effect's params. Mirrors
+   * `setWarpParams`. Production never calls this; per-effect defaults
+   * live in `src/client/effects/config/effectDefaults.ts`.
+   */
+  setEffectParams(effect: SetEffectParamsMsg['effect'], params: Record<string, number | boolean>): void {
+    this.post({ type: 'SET_EFFECT_PARAMS', effect, params });
+  }
+
+  /** Effects subsystem (plan `wiggly-puppy` M9): wipe per-entity emitters
+   *  + in-flight bursts on sector handoff. The worker forwards to
+   *  `pixiRenderer.resetEffectsForSectorHandoff()`. */
+  resetEffectsForSectorHandoff(): void {
+    this.post({ type: 'RESET_EFFECTS_HANDOFF' });
   }
 
   /** Forward a native pointer event into the worker camera state machine. */

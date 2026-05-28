@@ -29,11 +29,20 @@
  * unit tests in `perFrameTriggers.test.ts` exercise both code paths.
  */
 
-/** Mirror-side fields cleared as one-frame triggers. Currently just
- *  `explodingShips`; future entries here (kill-feed, screen flash etc.)
- *  must follow the same consume-after-render rule. */
+/** Mirror-side fields cleared as one-frame triggers. Currently:
+ *   - `explodingShips`         (Phase 4 / 6b destruction trigger set)
+ *   - `pendingEffectTriggers`  (effects subsystem one-shot queue, M2 —
+ *                               plan `wiggly-puppy`)
+ *
+ *  Future entries here (kill-feed, screen flash etc.) must follow the
+ *  same consume-after-render rule. */
 export interface OneFrameTriggerSurface {
   explodingShips?: Set<string>;
+  /** Effects subsystem one-shot queue. Structural type (any array-shaped
+   *  field); the concrete element shape is `RenderMirror.pendingEffectTriggers`
+   *  in `src/core/contracts/IRenderer.ts` but this helper doesn't need to
+   *  know it — we only mutate `.length = 0`. */
+  pendingEffectTriggers?: { length: number };
 }
 
 /**
@@ -52,4 +61,8 @@ export function consumeOneFrameTriggers(
 ): void {
   if (!didRender) return;
   mirror.explodingShips?.clear();
+  // pendingEffectTriggers — visual-effects subsystem one-shot queue. SAME
+  // skip-frame gate discipline as explodingShips: clearing on a skip frame
+  // silently drops every queued trigger (impact sparks, destruction bursts).
+  if (mirror.pendingEffectTriggers) mirror.pendingEffectTriggers.length = 0;
 }

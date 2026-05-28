@@ -1,0 +1,12 @@
+{"source":"client","ts":3811.7999999970198,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":3812.0999999940395,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":3826.3999999910593,"tag":"roster_panel_unmount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":3826.5999999940395,"tag":"roster_panel_mount","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","compact":false}}
+{"source":"client","ts":3826.5999999940395,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":3841.2999999970198,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["fighter","fighter","missile-frigate"]}}
+{"source":"client","ts":6826.899999991059,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":6852.399999991059,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["fighter","fighter","missile-frigate"]}}
+{"source":"client","ts":9826.79999999702,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":9854.29999999702,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["fighter","fighter","missile-frigate"]}}
+{"source":"client","ts":12827,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=56e91568-8e80-4ac5-8f37-85dea44e808c","playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c"}}
+{"source":"client","ts":12855.29999999702,"tag":"roster_fetch","data":{"stage":"ok","count":3,"kinds":["fighter","fighter","missile-frigate"]}}

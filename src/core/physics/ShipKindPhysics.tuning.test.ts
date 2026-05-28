@@ -49,8 +49,17 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
 }
 
 describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
-  it('catalogue version was bumped to 4', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(4);
+  it('catalogue version was bumped to 7', () => {
+    // 3 → 4 on 2026-05-27: appended `missile-frigate` kind (heat-seeker
+    // weapon platform).
+    // 4 → 5 on 2026-05-27: appended `crossguard` kind (the T-ship for
+    // engineering-room collision testing).
+    // 5 → 6 on 2026-05-28: bumped `crossguard.radius` 200 → 213 so the
+    // shield ball (radius + SHIELD_RADIUS_PAD = 223) fully encloses the
+    // scaled polygon's bounding circle (~213).
+    // 6 → 7 on 2026-05-28: appended `el` (L-shape) kind for the
+    // ramming-probe diagnostic harness.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(7);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

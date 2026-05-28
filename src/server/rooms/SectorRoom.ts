@@ -30,14 +30,15 @@ import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
+import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
-import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
+import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -105,7 +106,9 @@ import {
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
-  SHIP_COLLISION_RADIUS,
+  // SHIP_COLLISION_RADIUS retired 2026-05-27 — hit-tests now derive per-kind
+  // bounding-circle from `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD`
+  // so the system matches the visible ShieldAura on every ship kind.
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
@@ -144,6 +147,10 @@ const JoinOptionsSchema = z
      *  Validated here only for schema parity with the other test
      *  primitives + so the URL → joinOption echo round-trips cleanly. */
     injectLeak: z.number().int().min(0).max(10_000_000).optional(),
+    /** Test-only initial angle override (radians, standard math CCW).
+     *  Lets a spec spawn pointing at a specific target without burning
+     *  ~2 seconds rotating the ship via keyboard input. testMode gate. */
+    initialAngle: z.number().finite().optional(),
     /** Per-test room isolation knob. Combined with the test rooms'
      *  `filterBy(['testId'])` (in `src/server/index.ts`), passing a
      *  unique testId routes each Playwright spec to its own physics-
@@ -418,6 +425,7 @@ export class SectorRoom extends Room<SectorState> {
    *  `JOIN_BROADCAST_GRACE_TICKS`. */
   private forceBroadcastUntilTick = 0;
   private testMode = false;
+  private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
    *  threshold deterministically (4000 real entities only consume ~1.5 ms,
@@ -572,6 +580,16 @@ export class SectorRoom extends Room<SectorState> {
        *  `pickRandomShipKind`. */
       droneKinds?: ShipKindId[];
       /**
+       * 2026-05-27 — Engineering test rooms (`shield-test`) want a
+       * stationary drone gallery: ram them, shoot them, watch the
+       * shield-vs-hull collider swap, WITHOUT having them fly around
+       * pursuing + firing back. When true, drones spawn with
+       * `PassiveDroneBehaviour` (zero-impulse, never-fire) instead of
+       * `HostileDroneBehaviour`. Drones still take damage and die
+       * normally; only the COMBAT state transition (pursuit + fire)
+       * is suppressed. */
+      peacefulDrones?: boolean;
+      /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
        * transition. Suppresses every other seed path.
@@ -615,8 +633,43 @@ export class SectorRoom extends Room<SectorState> {
        *  report the unmultiplied `simClock.rate` so client audio pitch
        *  + TiDi UI stay honest. */
       testTimeScale?: number;
+      /**
+       * 2026-05-28 — test-only: gate the entire ramming-damage path. The
+       * existing damage formula in `core/combat/Ramming.ts` is force-
+       * gated already (`RAM_FORCE_FLOOR = 300` N below which damage is
+       * 0), but ANY meaningful ramming exceeds that floor and quickly
+       * caps the player at the per-pair `RAM_DAMAGE_MAX = 50` HP/tick.
+       * `ramming-probe-test` needs the player to ram a target repeatedly
+       * to gather visual-vs-physics frames WITHOUT dying. When this
+       * flag is true the `onContactBatch` path skips the `applyDamage`
+       * call (server still broadcasts `collision_resolved` for velocity
+       * sync; `ram_damage` is suppressed and no health changes). Ignored
+       * on non-testMode rooms.
+       */
+      disableCollisionDamage?: boolean;
+      /**
+       * 2026-05-28 — Engineering-test rooms (`hull-collision-test`) seed a
+       * deterministic gallery of drones at hand-authored poses, bypassing the
+       * uniform-disc spawner. Each entry forces the drone to a specific
+       * world `(x, y, angle)`; `hullExposed: true` immediately drops the
+       * shield + posts `SET_HULL_EXPOSED` so the hull-polygon collider is
+       * exposed at spawn (no need to ram + drain shield first).
+       *
+       * Suppresses `useBulkSeed` / asteroidRoster / legacy drone-wave seed
+       * paths — no double-spawn. Ignored on non-testMode rooms; bypasses
+       * `peacefulDrones` AI selection (the room-level option still applies
+       * to the AI factory). Drones still take damage and die normally.
+       */
+      dronePoses?: ReadonlyArray<{
+        kind: ShipKindId;
+        x: number;
+        y: number;
+        angle?: number;
+        hullExposed?: boolean;
+      }>;
     };
     this.testMode = roomOpts.testMode ?? false;
+    this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
     this.testTimeScale = this.testMode ? Math.max(1, roomOpts.testTimeScale ?? 1) : 1;
@@ -640,7 +693,9 @@ export class SectorRoom extends Room<SectorState> {
     }
     const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
-    const asteroidRoster = (useBulkSeed || useSingleAsteroid) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
+    const useDronePoses = this.testMode && Array.isArray(roomOpts.dronePoses) && roomOpts.dronePoses.length > 0;
+    const asteroidRoster =
+      (useBulkSeed || useSingleAsteroid || useDronePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -1015,7 +1070,14 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
-      droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
+      // `peacefulDrones` swaps the hostile-pursuit behaviour for the
+      // zero-impulse passive one. Used by engineering rooms (shield-test)
+      // where the player needs a stationary drone gallery for collision
+      // testing without combat noise. Drones still die normally — only
+      // the COMBAT pursue+fire path is suppressed.
+      droneBehaviour: roomOpts.peacefulDrones
+        ? () => new PassiveDroneBehaviour()
+        : (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.interestGrid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
       ...(pickDroneKind ? { pickDroneKind } : {}),
@@ -1054,6 +1116,60 @@ export class SectorRoom extends Room<SectorState> {
       // player accidentally bumping it. No drone, no AI behaviour wired.
       this.swarmSpawner.spawnAsteroid({ id: 'sleep-rock', x: 600, y: 0, vx: 0, vy: 0, radius: 24, mass: 1 });
       logger.info('Phase 5e single-asteroid sleep test seed');
+    } else if (useDronePoses) {
+      // 2026-05-28 — deterministic-pose engineering seed. Each entry forces a
+      // drone to a specific world `(x, y, angle)` (bypassing the uniform-disc
+      // spawner), and optionally drops shields immediately so the
+      // hull-polygon collider is exposed at spawn. Used by the
+      // `hull-collision-test` room to verify that a concave T-ship's
+      // polygon collider correctly leaves the gap regions empty.
+      const poses = roomOpts.dronePoses!;
+      let placed = 0;
+      for (let i = 0; i < poses.length; i++) {
+        const pose = poses[i]!;
+        const droneId = `pose-drone-${i}`;
+        const ok = this.swarmSpawner.spawnDrone({ id: droneId, x: pose.x, y: pose.y, kind: pose.kind });
+        if (!ok) {
+          logger.error({ requested: poses.length, spawned: placed }, 'dronePoses spawn truncated (slot pool exhausted)');
+          break;
+        }
+        const rec = this.swarmRegistry.get(droneId);
+        if (!rec) continue;
+        this.swarmHealth.set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
+        this.swarmShield.set(droneId, getDroneShieldMax(rec.shipKind));
+        this.swarmShieldLastDmg.set(droneId, this.serverTick);
+        // Apply rotation via SET_POSITION (SPAWN_OBSTACLE sets pos+vel only,
+        // angle defaults to 0). The worker processes this command AFTER the
+        // SPAWN_OBSTACLE that spawnDrone just enqueued, so the body exists.
+        // Also seed the registry's lastBroadcast.angle so the very first
+        // delta-detector decision uses the correct reference.
+        const angle = pose.angle ?? 0;
+        if (angle !== 0) {
+          this.postToWorker({
+            type: 'SET_POSITION',
+            entityId: droneId, x: pose.x, y: pose.y, angle, vx: 0, vy: 0, angvel: 0,
+          });
+          rec.lastBroadcast.angle = angle;
+        }
+        if (pose.hullExposed) {
+          // Force shield-down at spawn: clear the shield slot, flip the
+          // registry's wire flag, post SET_HULL_EXPOSED so Rapier swaps to
+          // the polygon collider. Mirrors `ShieldHullRouter`'s 0-cross path
+          // minus the discrete `shield_broken` broadcast (no client cares
+          // at room-boot time; subsequent regen will fire the normal events).
+          this.swarmShield.set(droneId, 0);
+          rec.shieldDown = true;
+          this.postToWorker({
+            type: 'SET_HULL_EXPOSED',
+            id: droneId,
+            exposed: true,
+            kindId: rec.shipKind ?? DEFAULT_SHIP_KIND,
+            tick: this.serverTick,
+          });
+        }
+        placed++;
+      }
+      logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
     } else if (useBulkSeed) {
       // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
       // small drone ring with a sunflower-spiral spread across a disc, sized
@@ -1567,21 +1683,31 @@ export class SectorRoom extends Room<SectorState> {
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ): number | null {
-    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, SHIP_COLLISION_RADIUS);
+    // Per-kind bounding circle = hull radius + SHIELD_RADIUS_PAD. Three
+    // sites share this constant (physics ball collider, this hit-test,
+    // visible ShieldAura ring) so the player's "where the shield is"
+    // intuition matches every gate. Pre-2026-05-27 used a hardcoded
+    // SHIP_COLLISION_RADIUS=12 that only matched fighter — heavy at
+    // radius 16 had ~4 u of visible hull where lasers passed through.
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
-    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionTriangles(ship.kind));
+    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
-  /** Projectile sweep counterpart of playerHitscanDist — same cheap-
-   *  circle-first / shield-down-refine perf profile. */
+  /** Projectile sweep counterpart of playerHitscanDist — same per-kind
+   *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
+   *  shield-down split. Projectiles now impact at the visible shield
+   *  boundary on every ship kind, not just fighter. */
   private playerProjectileSweep(
     ship: ShipState,
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
     cx: number, cy: number, angle: number,
   ): { entry: number; hitX: number; hitY: number } | null {
-    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, SHIP_COLLISION_RADIUS);
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
-    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionTriangles(ship.kind));
+    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
   private advanceProjectiles(): void {
@@ -1673,7 +1799,7 @@ export class SectorRoom extends Room<SectorState> {
           // asteroids (immune - no swarmHealth entry) while still
           // damaging the ship they hit, so "asteroids deal but do not
           // take" falls out for free. Applied once per pair per tick.
-          if (p.damage > 0) {
+          if (p.damage > 0 && !this.disableCollisionDamage) {
             serverLogEvent('ram_damage', {
               aId: p.aId,
               bId: p.bId,
@@ -2118,6 +2244,10 @@ export class SectorRoom extends Room<SectorState> {
       if (typeof parsed.data.initialShield === 'number') {
         ship.shield = Math.max(0, parsed.data.initialShield);
       }
+      // initialAngle is applied below — the angle lives in
+      // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
+      // not on the ShipState schema (per the spatial-fields-off-schema
+      // invariant at the top of `SectorState.ts`).
     }
     ship.shieldLastDamageTick = this.serverTick;
 
@@ -2133,6 +2263,23 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
+
+    // Test-only initialAngle: SPAWN creates the body at angle 0; force
+    // the requested heading immediately via SET_POSITION so the spec
+    // doesn't have to drive 2 s of keyboard rotation. Pose cache + ship
+    // schema were already populated above; this just brings the Rapier
+    // body in line with them.
+    if (this.testMode && parsed.success && typeof parsed.data.initialAngle === 'number') {
+      const a = parsed.data.initialAngle;
+      this.postToWorker({
+        type: 'SET_POSITION',
+        entityId: playerId,
+        x: spawnX, y: spawnY, angle: a,
+        vx: 0, vy: 0, angvel: 0,
+      });
+      const poseEntry = this.shipPoseCache.get(playerId);
+      if (poseEntry) poseEntry.angle = a;
+    }
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
 

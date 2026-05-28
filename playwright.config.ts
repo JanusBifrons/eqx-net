@@ -97,6 +97,8 @@ const FEATURE_SPECS: string[] = [
   '**/swarm-tidi.spec.ts',
   '**/sync-diagnostics.spec.ts',
   '**/sync-health.spec.ts',
+  '**/t-ship-no-self-collision.spec.ts',
+  '**/ramming-probe-armpit.spec.ts',
   '**/tidi-overlay.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',

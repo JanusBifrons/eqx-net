@@ -1,0 +1,1 @@
+{"source":"client","ts":11295.600000023842,"tag":"correction","data":{"n":1,"nAngle":1,"serverTick":145,"ackedTick":0,"ticksAhead":127,"driftUnits":500,"angleDriftRad":3.141593,"lerping":true,"lerpHalfLifeMs":220,"serverX":0,"serverY":500,"serverVx":0,"serverVy":0,"serverAngle":0,"serverAngvel":0,"beforeX":0,"beforeY":0,"afterX":0,"afterY":500}}

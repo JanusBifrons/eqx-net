@@ -4520,3 +4520,6 @@
 {"source":"client","ts":85266.5,"tag":"snapshot_received","data":{"serverTick":28707,"recvGapMs":54}}
 {"source":"client","ts":85322.5,"tag":"snapshot_received","data":{"serverTick":28709,"recvGapMs":56}}
 {"source":"client","ts":85380.29999995232,"tag":"snapshot_received","data":{"serverTick":28712,"recvGapMs":57.8}}
+{"source":"client","ts":87761.20000004768,"tag":"snapshot_received","data":{"serverTick":28835,"recvGapMs":48.3}}
+{"source":"client","ts":87819.20000004768,"tag":"snapshot_received","data":{"serverTick":28838,"recvGapMs":58}}
+{"source":"client","ts":87868.5,"tag":"snapshot_received","data":{"serverTick":28841,"recvGapMs":49.3}}

@@ -14,6 +14,7 @@ import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
+import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -109,6 +110,12 @@ export class PixiRenderer implements IRenderer {
   /** Warp visual chain (shockwave + bloom + flash + load curtain).
    *  Extracted to `pixi/WarpFilterChain.ts`. Constructed in `init()`. */
   private warp!: WarpFilterChain;
+  /** Effects subsystem (plan `wiggly-puppy`). Owns destruction particles,
+   *  engine emitters, shield aura, impact sparks, etc. Constructed in
+   *  `init()` AFTER `app`, `world`, `shipContainer`, and `warp` exist.
+   *  `null` when `?effects=0` escape hatch is active — destruction +
+   *  flames then fall back to today's inline Graphics paths. */
+  private effects: EffectsService | null = null;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -365,6 +372,42 @@ export class PixiRenderer implements IRenderer {
       activeExplosions: this.missileExplosionsActive,
     };
 
+    // Effects subsystem (plan `wiggly-puppy` M3+). Constructed inside
+    // PixiRenderer.init so the same single seam serves both the worker
+    // path (this whole file runs inside the renderer worker) AND the
+    // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
+    // hatch skips construction entirely.
+    if (!effectsDisabledByUrl()) {
+      // Eagerly create the beam Graphics (M6 — laser glow). Previously
+      // lazy-created inside update() on first beam frame; we hoist them
+      // here so LaserGlow can attach a GlowFilter at construct time.
+      // Empty Graphics render as nothing — no visual change before first beam.
+      this.liveBeamGfx = new Graphics();
+      this.shipContainer.addChild(this.liveBeamGfx);
+      this.remoteBeamGfx = new Graphics();
+      this.shipContainer.addChild(this.remoteBeamGfx);
+
+      this.effects = new EffectsService({
+        app: this.app,
+        world: this.world,
+        stage: this.app.stage,
+        camera: this.camera,
+        warpChain: this.warp,
+        // Per-frame pose lookup. Reads the RENDERED sprite position so
+        // it stays in lockstep with whatever frame the engine emitter
+        // ticks on (one-pose-per-frame invariant for drones too — the
+        // sprite was just set from the resolved swarm pose by
+        // updateSwarmSprites). Returns null for entities not in the
+        // sprite map (despawned, never spawned, off-interest).
+        getEntityPose: (entityId: string) => {
+          const sp = this.sprites.get(entityId);
+          if (sp) return { x: sp.x, y: -sp.y, angle: sp.rotation };
+          return null;
+        },
+        beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
+      });
+    }
+
     this.halo.init(this.camera);
     // Damage numbers attach to the world (pan with camera, anchored at
     // impact world coord) but counter-scale per frame so they stay
@@ -593,6 +636,11 @@ export class PixiRenderer implements IRenderer {
         lingeringPoseIdx++;
       }
       for (const targetId of mirror.explodingShips) {
+        // PRESERVE the decideExplosionPosition lookup — the 2026-05-13
+        // Phase 6b fix. Naive `mirror.ships.get(targetId)?.pose` here
+        // would regress the "explosion at (0,0)" bug when a lingering
+        // hull (mirror.lingeringShips) or a wreck (mirror.wrecks) is
+        // destroyed. The helper unifies the three sprite maps.
         const pose = decideExplosionPosition({
           targetId,
           activeShipsByPlayerId: this.sprites,
@@ -600,15 +648,28 @@ export class PixiRenderer implements IRenderer {
           wrecksByShipInstanceId: this.wreckSprites,
         });
         if (!pose) continue; // ship not in any map — skip the VFX
-        const expl = buildExplosionGfx();
-        expl.x = pose.x;
-        expl.y = pose.y;
-        this.shipContainer.addChild(expl);
-        this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+
+        // M4 (effects subsystem plan `wiggly-puppy`): dispatch to the
+        // EffectsService when present; fall back to today's inline
+        // buildExplosionGfx path under the ?effects=0 escape hatch. The
+        // pose returned by the helper is in Pixi space (Y-flipped); the
+        // effects service expects world coords, so unflip here.
+        if (this.effects) {
+          this.effects.spawnBurst('destruction', pose.x, -pose.y);
+          this.effects.triggerOneShotFilter('destruction-shock', pose.x, -pose.y);
+        } else {
+          const expl = buildExplosionGfx();
+          expl.x = pose.x;
+          expl.y = pose.y;
+          this.shipContainer.addChild(expl);
+          this.explosionSprites.push({ gfx: expl, framesLeft: 30 });
+        }
       }
     }
 
-    // Advance and remove expired explosion sprites.
+    // Advance and remove expired explosion sprites (only the legacy
+    // fallback path uses this; the EffectsService manages its own
+    // particles + shock filters in its tick).
     for (let i = this.explosionSprites.length - 1; i >= 0; i--) {
       const e = this.explosionSprites[i]!;
       e.framesLeft--;
@@ -863,6 +924,28 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumbers.length = 0;
     }
+    // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
+    // trigger queue and dispatch to spawnBurst / triggerOneShotFilter.
+    // The queue's length-reset is owned by `perFrameTriggers.consumeOne-
+    // FrameTriggers` on render frames only (worker every-other-RAF
+    // skip-frames must NOT silently drain — same discipline as
+    // explodingShips). DO NOT add `.length = 0` here.
+    if (this.effects && mirror.pendingEffectTriggers) {
+      for (const ev of mirror.pendingEffectTriggers) {
+        if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
+          this.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
+        } else {
+          this.effects.spawnBurst(ev.kind, ev.worldX, ev.worldY, {
+            ...(ev.intensity !== undefined ? { intensity: ev.intensity } : {}),
+            ...(ev.tint !== undefined ? { tint: ev.tint } : {}),
+          });
+          // Shield-hit impacts also pulse the target's shield ring.
+          if (ev.kind === 'impact' && ev.tint === 0x88ddff && ev.entityId) {
+            this.effects.pulseShield(ev.entityId);
+          }
+        }
+      }
+    }
     // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
     // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
     // rollback in the same frame nets to nothing) and BEFORE update() (a
@@ -977,8 +1060,150 @@ export class PixiRenderer implements IRenderer {
       this.frameMarkers.gridLabelCount = 0;
     }
     this.frameMarkers.spriteCount = this.sprites.size;
+
+    // Effects subsystem tick. MUST run AFTER all sprite updates so per-
+    // entity effects (shield aura, engine emitters in later milestones)
+    // read the one-pose-per-frame state the sprite updaters just wrote
+    // (src/client/CLAUDE.md "Drones are PURE snapshot-interpolated"
+    // section). dtMs = wall-clock since last tick; effects use it for
+    // particle lifetime + budget EMA.
+    if (this.effects) {
+      // Engine continuous emitters — drive from mirror.boostingShips /
+      // thrustingShips Sets (M5 of plan wiggly-puppy). Set diff per frame
+      // → setContinuous on transitions only (no-op on identical state).
+      this.syncEngineContinuousEffects(mirror);
+
+      const nowMs = performance.now();
+      const dtMs = this.lastEffectsTickNowMs > 0 ? nowMs - this.lastEffectsTickNowMs : 16.67;
+      // M9: feed the budget the PREVIOUS frame's rendererUpdateMs
+      // (current frame's value isn't set until line ~1062). Single-frame
+      // lag is negligible vs the 500 ms budget hysteresis hold.
+      this.effects.tick(nowMs, dtMs, this.frameMarkers.rendererUpdateMs);
+      this.lastEffectsTickNowMs = nowMs;
+    }
+
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
   }
+
+  /** Track which ships currently have an active engine emitter registered
+   *  with EffectsService — lets us detect transitions per frame and only
+   *  call setContinuous on actual changes (setContinuous is re-entrant
+   *  but the per-key check still wins on alloc-pressure). */
+  private readonly _activeThrustIds = new Set<string>();
+  private readonly _activeBoostIds = new Set<string>();
+  /** Set of entityIds (player playerIds OR drone "swarm-N" ids) currently
+   *  carrying an active shield aura. Diff'd against mirror state each
+   *  frame; transitions fire setContinuous('shield', active). */
+  private readonly _activeShieldIds = new Set<string>();
+
+  /** Diff mirror.thrustingShips / boostingShips against our last frame's
+   *  registration set; fire setContinuous(id, kind, true|false) only on
+   *  transitions. Mirrors the existing thrust/boost flame ownership in
+   *  spriteBuilders — those Graphics flames continue to render (they are
+   *  the minimal-tier fallback); EngineEmitter ADDS particle trails. */
+  private syncEngineContinuousEffects(mirror: RenderMirror): void {
+    if (!this.effects) return;
+    const thrust = mirror.thrustingShips;
+    const boost = mirror.boostingShips;
+
+    if (thrust) {
+      for (const id of thrust) {
+        if (!this._activeThrustIds.has(id)) {
+          this.effects.setContinuous(id, 'thrust', true);
+          this._activeThrustIds.add(id);
+        }
+      }
+      for (const id of this._activeThrustIds) {
+        if (!thrust.has(id)) {
+          this.effects.setContinuous(id, 'thrust', false);
+          this._activeThrustIds.delete(id);
+        }
+      }
+    } else if (this._activeThrustIds.size > 0) {
+      for (const id of this._activeThrustIds) this.effects.setContinuous(id, 'thrust', false);
+      this._activeThrustIds.clear();
+    }
+
+    if (boost) {
+      for (const id of boost) {
+        if (!this._activeBoostIds.has(id)) {
+          this.effects.setContinuous(id, 'boost', true);
+          this._activeBoostIds.add(id);
+        }
+      }
+      for (const id of this._activeBoostIds) {
+        if (!boost.has(id)) {
+          this.effects.setContinuous(id, 'boost', false);
+          this._activeBoostIds.delete(id);
+        }
+      }
+    } else if (this._activeBoostIds.size > 0) {
+      for (const id of this._activeBoostIds) this.effects.setContinuous(id, 'boost', false);
+      this._activeBoostIds.clear();
+    }
+
+    // Shield aura — M8 (plan wiggly-puppy). Drive from mirror.ships's
+    // shieldDown field (populated by handleShield + handleDamage) AND
+    // mirror.swarm's shieldDown (decoded from the binary wire's
+    // SWARM_RECORD_FLAG_SHIELD_DOWN bit). Note inversion: aura is ON
+    // when shield is UP (shieldDown=false / undefined). Drones use
+    // "swarm-<entityId>" id prefix to namespace with the player ids.
+    this.syncShieldAuraEffects(mirror);
+  }
+
+  private syncShieldAuraEffects(mirror: RenderMirror): void {
+    if (!this.effects) return;
+    const seen = this._updateSeenScratch; // already cleared at top of update()
+    seen.clear();
+
+    // Aura is ON unless shieldDown is EXPLICITLY true. Default assumption
+    // is "shield up" — every fresh-spawn ship has full shield (the server
+    // initialises `ship.shield = kind.shieldMax` on spawn), and the
+    // client only learns `shieldDown=true` via the explicit SHIELD_BROKEN
+    // event. Pre-fix the aura was gated on `shieldDown === false`
+    // (explicit), so an unscathed just-spawned ship rendered no aura —
+    // user perception: "I spawn in without a shield up."
+    for (const [id, ship] of mirror.ships) {
+      if (ship.shieldDown !== true) seen.add(id);
+    }
+    if (mirror.swarm) {
+      for (const [id, sw] of mirror.swarm) {
+        if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
+      }
+    }
+
+    for (const id of seen) {
+      if (!this._activeShieldIds.has(id)) {
+        // Look up the entity's actual hull radius so the visible aura
+        // matches the physics ball collider (both use the same
+        // `kind.radius + SHIELD_RADIUS_PAD` formula on the server).
+        // Without this, ShieldAura would fall back to its 28 u default
+        // for every ship — scout's tiny shield would render the same
+        // size as a heavy's, and neither would match the physics.
+        let auraRadius: number | undefined;
+        if (id.startsWith('swarm-')) {
+          const swarmId = parseInt(id.slice('swarm-'.length), 10);
+          const sw = mirror.swarm?.get(swarmId);
+          if (sw) auraRadius = sw.radius;
+        } else {
+          const ship = mirror.ships.get(id);
+          if (ship?.kind) auraRadius = getShipKind(ship.kind).radius;
+        }
+        this.effects.setContinuous(id, 'shield', true, auraRadius);
+        this._activeShieldIds.add(id);
+      }
+    }
+    for (const id of this._activeShieldIds) {
+      if (!seen.has(id)) {
+        this.effects.setContinuous(id, 'shield', false);
+        this._activeShieldIds.delete(id);
+      }
+    }
+  }
+
+  /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
+   *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
+  private lastEffectsTickNowMs = 0;
 
   /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
    *  disconnected within the 15-min linger window OR whose ships have
@@ -1237,6 +1462,21 @@ export class PixiRenderer implements IRenderer {
     return this.feedback.mountCounts.get(shipId) ?? 0;
   }
 
+  /**
+   * Effects subsystem (plan `wiggly-puppy` M9). Wipe per-entity continuous
+   * emitters + in-flight bursts + shield rings. Called from
+   * `ColyseusClient.resetPredictionState()`'s sibling-line in the
+   * `transit_ready` handler. The diff trackers are cleared too so the
+   * destination sector's first frame re-registers emitters against the
+   * fresh mirror state.
+   */
+  resetEffectsForSectorHandoff(): void {
+    this.effects?.resetForSectorHandoff();
+    this._activeThrustIds.clear();
+    this._activeBoostIds.clear();
+    this._activeShieldIds.clear();
+  }
+
   dispose(): void {
     if (!this.initialized) return;
     // Flip the flag FIRST so any rAF / ResizeObserver callback that fires
@@ -1246,6 +1486,15 @@ export class PixiRenderer implements IRenderer {
     this.initialized = false;
     // Tear down the warp filter chain (removes its ticker handler).
     this.warp.destroy();
+    // Wipe effects subsystem pools (particles, shock filters, etc.).
+    if (this.effects) {
+      this.effects.resetForSectorHandoff();
+      this.effects = null;
+    }
+    // Clear the per-effect diff trackers so a re-init starts clean.
+    this._activeThrustIds.clear();
+    this._activeBoostIds.clear();
+    this._activeShieldIds.clear();
     // Remove canvas pointer / wheel / touch listeners so an in-flight
     // event doesn't reach a destroyed Camera.
     const canvas = this.app?.canvas;

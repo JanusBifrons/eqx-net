@@ -25,6 +25,13 @@ export interface ShipRenderState {
    *  back to baseAngle (static barrels). Phase 4b.3 will populate it
    *  for every ship from server-authoritative snapshot data. */
   mountAngles?: number[];
+  /** Effects subsystem (plan `wiggly-puppy` M2): true ⇒ shield down (hull
+   *  exposed). Populated by `ColyseusClient.handleSnapshot` from the wire's
+   *  per-state `shieldDown` flag (or derived from `shieldPct <= 0`). Mirrors
+   *  the existing `swarm[].shieldDown` field — collapses player + drone
+   *  shield aura state to "one optional bool per render entry", one
+   *  ownership site per renderer-visible state. */
+  shieldDown?: boolean;
 }
 
 /**
@@ -286,6 +293,31 @@ export interface RenderMirror {
     splashRadius: number;
     missileId: number;
   }>;
+  /** Effects subsystem (plan `wiggly-puppy` M2): one-shot effect-trigger
+   *  drain queue, populated by `ColyseusClient` (impact sparks via
+   *  `handleDamage`, destruction via the existing `explodingShips` drain
+   *  path) and consumed by `PixiRenderer.update(mirror)` which forwards
+   *  each entry to `IEffects.spawnBurst` / `triggerOneShotFilter`.
+   *
+   *  CLEAR DISCIPLINE (load-bearing): cleared INSIDE `consumeOneFrameTriggers`
+   *  in `src/client/render/perFrameTriggers.ts`, gated on `shouldRender` —
+   *  same skip-frame gate as `explodingShips`. A clear without a preceding
+   *  `renderer.update(...)` silently drops every trigger in the queue.
+   *  Regression lock: `perFrameTriggers.test.ts`. */
+  pendingEffectTriggers?: Array<{
+    kind:
+      | 'impact'
+      | 'destruction'
+      | 'shield-hit'
+      | 'warp-arrive'
+      | 'destruction-shock'
+      | 'shield-flash';
+    worldX: number;
+    worldY: number;
+    intensity?: number;
+    tint?: number;
+    entityId?: string;
+  }>;
   /**
    * When present, the renderer draws a semi-transparent ghost at this position to
    * show the raw server snapshot position (before client-side prediction replay).
@@ -484,6 +516,15 @@ export interface IRenderer {
    * between target states internally; callers just flip the bool.
    */
   setLoadCurtain(active: boolean): void;
+  /**
+   * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
+   * continuous emitters + in-flight bursts on sector handoff. Called
+   * from `ColyseusClient.resetPredictionState()`'s sibling-line in the
+   * `transit_ready` handler — same discipline as `rearmJoinReadiness`.
+   * Optional behaviour: no-op if the renderer has no `EffectsService`
+   * (e.g. when `?effects=0` is set or when running headless tests).
+   */
+  resetEffectsForSectorHandoff(): void;
   dispose(): void;
 }
 

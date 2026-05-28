@@ -71,10 +71,23 @@ describe('World.setHullExposed — dynamic transparency', () => {
 });
 
 describe('World.setHullExposed — geometry + query-pipeline lag', () => {
-  // Scout: radius 10, nose apex at local (0,-14) which is OUTSIDE the r=10
-  // bounding circle. A vertical ray up the centre enters the CIRCLE at
-  // y≈-10 (dist≈90) but enters the POLYGON at the protruding nose y≈-14
-  // (dist≈86). That gap is the circle-vs-polygon discriminator.
+  // Scout polygon (Pixi-up authored): [(0,-14), (6,8), (0,4), (-6,8)].
+  // Post the 2026-05-28 Y-flip in `shipShapeToPolygon`, the collider sees:
+  //   nose      (0, +14)   math forward
+  //   right rear (6, -8)
+  //   tail/reflex (0, -4)  concave notch at math -Y
+  //   left rear (-6, -8)
+  // Shield ball radius = `kind.radius + SHIELD_RADIUS_PAD = 10 + 10 = 20`.
+  //
+  // A vertical ray from (0, -100) going (0, +1) enters:
+  //   - SHIELD-UP CIRCLE at y=-20 → dist 80
+  //   - HULL POLYGON: at x=0, the polygon's lowest math Y is the REFLEX
+  //     vertex at (0, -4) → ray enters at y=-4, dist = 96
+  // Polygon hit is FARTHER than circle (the bubble extends past the hull;
+  // the polygon is inside the bubble). Same semantic as pre-Y-flip, just
+  // the polygon-entry coordinate flipped from -14 (nose, Pixi-up) to -4
+  // (reflex, math-up). The 32-pixel-ish shift is the same Y-flip bug that
+  // exploded into "100% off" on Crossguard scale 10.
   const RAY = { fx: 0.001, fy: -100, dx: 0, dy: 1, max: 200, excl: 'zzz' };
   const cast = (): { hitId: string; dist: number } | null =>
     world.hitscan(RAY.fx, RAY.fy, RAY.dx, RAY.dy, RAY.max, RAY.excl);
@@ -86,32 +99,38 @@ describe('World.setHullExposed — geometry + query-pipeline lag', () => {
     const circle = cast();
     expect(circle).not.toBeNull();
     expect(circle!.hitId).toBe('xgeo');
-    expect(circle!.dist).toBeGreaterThan(88);
-    expect(circle!.dist).toBeLessThan(92); // entered the r=10 circle at y≈-10
+    // Shield bubble at r=20 → ray enters at y≈-20 → dist≈80.
+    expect(circle!.dist).toBeGreaterThan(78);
+    expect(circle!.dist).toBeLessThan(82);
 
-    // Expose the hull. Rapier only refreshes scene queries inside step(), so
-    // BEFORE the next tick the polygon must NOT yet be visible (stale circle
-    // or transiently absent — never the ~86 polygon distance).
+    // Expose the hull. Rapier only refreshes scene queries inside step(),
+    // so BEFORE the next tick the polygon must NOT yet be visible — the
+    // stale circle (or transient absence) holds. We allow either: a
+    // result still at the shield-bubble distance (≈80), or null. The
+    // forbidden state is the polygon ≈86 leaking out a tick early.
     world.setHullExposed('xgeo', true, scout);
     const lag = cast();
-    expect(lag === null || lag.dist > 88).toBe(true);
+    expect(lag === null || lag.dist < 82).toBe(true);
 
-    // After one step the protruding nose is live: the ray connects ~4u
-    // earlier than the circle did.
+    // After one step the polygon is live. Ray enters at the reflex
+    // vertex (0, -4) post-Y-flip — distance ~96 — well past the shield
+    // bubble's 80. The polygon is INSIDE the bubble (shield pad
+    // SHIELD_RADIUS_PAD = 10 extends past the bare radius 10 → ball at
+    // r=20; polygon's lowest point at x=0 is the reflex at math y=-4).
     world.tick(1 / 60);
     const poly = cast();
     expect(poly).not.toBeNull();
     expect(poly!.hitId).toBe('xgeo');
-    expect(poly!.dist).toBeLessThan(88);
-    expect(poly!.dist).toBeLessThan(circle!.dist - 1);
-    expect(poly!.dist).toBeGreaterThan(83);
+    expect(poly!.dist).toBeGreaterThan(94);
+    expect(poly!.dist).toBeGreaterThan(circle!.dist + 1);
+    expect(poly!.dist).toBeLessThan(98);
 
     // Regenerating the shield swaps back to the cheap circle.
     world.setHullExposed('xgeo', false, scout);
     world.tick(1 / 60);
     const back = cast();
     expect(back).not.toBeNull();
-    expect(back!.dist).toBeGreaterThan(88);
-    expect(back!.dist).toBeLessThan(92);
+    expect(back!.dist).toBeGreaterThan(78);
+    expect(back!.dist).toBeLessThan(82);
   });
 });
