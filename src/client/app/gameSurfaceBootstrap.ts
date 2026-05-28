@@ -124,6 +124,8 @@ export function buildJoinSpec(
     extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
   if (urlParams.has('initialShield'))
     extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+  if (urlParams.has('initialAngle'))
+    extraJoinOptions['initialAngle'] = parseFloat(urlParams.get('initialAngle')!);
   if (urlParams.has('testId'))
     extraJoinOptions['testId'] = urlParams.get('testId')!;
   if (urlParams.has('swarmCount')) extraJoinOptions['swarmCount'] = parseInt(urlParams.get('swarmCount')!, 10);

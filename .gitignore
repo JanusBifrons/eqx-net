@@ -54,3 +54,4 @@ data/
 # Netcode-health gate worktrees — created by tests/netgate/run-netgate.ts
 # (incremental — preserved across runs to keep node_modules warm; never commit).
 .claude/worktrees/
+tests/mobile-perf/screenshots/

@@ -54,3 +54,10 @@
 {"source":"client","ts":69254.5,"tag":"component_mount","data":{"name":"ShipRosterPanel","compact":false,"hasPlayerId":true}}
 {"source":"client","ts":70209.89999999851,"tag":"welcome","data":{"playerId":"56e91568-8e80-4ac5-8f37-85dea44e808c","serverTick":7458,"idReassigned":false}}
 {"source":"client","ts":132964.20000000298,"tag":"disconnected","data":{"code":1006}}
+{"source":"client","ts":165487.6000000015,"tag":"component_unmount","data":{"name":"ShipRosterPanel"}}
+{"source":"client","ts":165489.1000000015,"tag":"component_unmount","data":{"name":"MobileControls"}}
+{"source":"client","ts":165492.3999999985,"tag":"component_unmount","data":{"name":"LostConnectionOverlay"}}
+{"source":"client","ts":165493.70000000298,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":165494.5,"tag":"phase_change","data":{"phase":"meta"}}
+{"source":"client","ts":165494.5,"tag":"component_unmount","data":{"name":"MetaLandingScreen"}}
+{"source":"client","ts":165494.6000000015,"tag":"component_mount","data":{"name":"MetaLandingScreen"}}

@@ -1,0 +1,2 @@
+{"source":"client","ts":7400.5,"tag":"swarm_near_enter","data":{"entityId":0,"kind":1,"swarmPos":{"x":0,"y":0},"rendered":{"x":0,"y":0},"predWorld":{"x":0,"y":2000},"lerpOffset":{"x":0,"y":-2000},"distRendered":0}}
+{"source":"client","ts":7427.9000000059605,"tag":"swarm_near_exit","data":{"entityId":0}}

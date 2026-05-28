@@ -58,6 +58,7 @@ export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import { FIGHTER, SCOUT } from './shipKinds/fighters.js';
 import { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
 import { CROSSGUARD } from './shipKinds/crossguard.js';
+import { L_SHAPE } from './shipKinds/lShape.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
 
@@ -76,6 +77,7 @@ export const SHIP_KINDS = Object.freeze({
   interceptor: INTERCEPTOR,
   gunship: GUNSHIP,
   crossguard: CROSSGUARD,
+  el: L_SHAPE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -97,7 +99,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 4;
+export const SHIP_KIND_CATALOGUE_VERSION = 6;
 
 /** Shield bubble pad — how far PAST each kind's hull `radius` the shield
  *  bubble extends. Shared across:

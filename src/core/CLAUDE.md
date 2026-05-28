@@ -56,6 +56,7 @@ When a new phase needs a new concretion (e.g., persistence), add it as a new con
 - `world.step(1/60)` inside a `while (accumulator >= fixedDt)` accumulator loop. No variable-dt stepping, ever.
 - Rapier bodies / colliders are pooled; do not allocate per-tick.
 - Sleep callbacks are meaningful: Phase 5 uses them to drive `ENTITY_SLEPT` / `ENTITY_WOKE` — do not suppress or re-enter them without thinking about the handshake.
+- **Stiff contact resolution (2026-05-28).** `PhysicsWorld.create` sets `world.integrationParameters.numSolverIterations = 16` (default 4) and calls `switchToSmallStepsPgsSolver()` BEFORE returning. Rapier 2D defaults (`contact_erp = 0.2`, `numSolverIterations = 4`) are tuned for general gameplay and let a ship's continuous-thrust impulse press a ball collider 50-160 u into a polygon edge (capture `2026-05-28T15-13-11Z-vqm6y1` — the "I flew half-way into the drone" symptom). The stiffer params drive steady-state penetration to < 5 u median / < 30 u peak. The regression lock is [`tests/e2e/ramming-probe-armpit.spec.ts`](../../tests/e2e/ramming-probe-armpit.spec.ts) — flies a fighter into an L-shape engineering chassis at full thrust and asserts body-local penetration into the L's polygon arms. **Do NOT revert these to Rapier defaults without measuring the ramming probe** — the failing test will catch a regression but only on the ramming scenario; other gameplay surfaces (drone-drone contact, projectile-ship hit) still tolerate the looser defaults but feel WORSE under continuous force, which the user reports as "the ship goes inside the drone."
 
 ---
 
@@ -258,10 +259,24 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   the shared `HostileDroneBehaviour` brain, the client must NEVER run
   its damage/regen functions (predicting the 0-cross flaps the collider
   every RTT). It lives in core only for testability; a banner says so.
-- `src/core/geometry/triangulate.ts` ear-clips ship polygons
-  deterministically (`+ - * /` + cross-sign only, fixed ear order →
-  bit-identical Node↔Chromium). Per-kind triangles precomputed once at
-  module load — never per-tick/per-break.
+- `src/core/geometry/shipHullDecomp.ts` decomposes each ship polygon
+  into convex parts via `poly-decomp` (Bayazit's algorithm; MIT, ~3 KB,
+  deterministic). Replaced the in-house ear-clipper (`triangulate.ts`)
+  on 2026-05-28. Each part is convex by construction so `rayHitsConvex-
+  Polygon` consumers (hitscan / projectile sweep) loop them directly.
+  Per-kind parts precomputed once at module load — never per-tick.
+- **`World.setHullExposed` emits `RAPIER.ColliderDesc.triangle` (NOT
+  `convexHull`)** colliders, fan-triangulating each convex part from
+  vertex 0. Why: in Rapier 2D, `convexHull` and `cuboid` shapes DO NOT
+  fire `CONTACT_FORCE_EVENTS` for two interpenetrating bodies at zero
+  closing velocity (positional-correction impulse ≠ contact force, even
+  with threshold 0). Only `triangle` shapes emit events for static
+  overlap. Stationary-ship collision telemetry and the
+  `hull-collision-test` regression spec depend on this. The per-shape
+  contact-event comparison is locked in
+  `src/core/physics/hullCollisionNoTouch.test.ts` DIAGNOSTIC. If a
+  future PR replaces triangles with `convexHull`, the diagnostic + the
+  E2E positive-control will fail loudly.
 - `World.setHullExposed`: ALL ship/drone colliders are density 0; mass
   is a pinned `setAdditionalMassProperties`. `recomputeMassProperties-
   FromColliders()` IS called after every collider change and is

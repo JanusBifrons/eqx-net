@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { shipCollisionTriangles } from '../geometry/triangulate.js';
+import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
 import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShape.js';
 import {
   DEFAULT_SHIP_KIND,
@@ -78,6 +78,10 @@ export class PhysicsWorld {
   static async create(): Promise<PhysicsWorld> {
     await RAPIER.init();
     const world = new RAPIER.World({ x: 0, y: 0 });
+    // 2026-05-28 BISECT ARM B — Rapier defaults restored. See arm A
+    // (numSolverIterations=16 + smallStepsPgs) for the "stiff contact"
+    // tuning. If the visual overlap is the same on this arm, the bug is
+    // not solver-stiffness related.
     return new PhysicsWorld(world);
   }
 
@@ -287,11 +291,15 @@ export class PhysicsWorld {
     for (let i = 0; i < body.numColliders(); i++) cols.push(body.collider(i));
     for (const c of cols) this.world.removeCollider(c, true);
     if (exposed) {
-      for (const t of shipCollisionTriangles(kind.id)) {
-        this.world.createCollider(
-          configureShipCollider(RAPIER.ColliderDesc.triangle(t[0], t[1], t[2])),
-          body,
-        );
+      // 2026-05-28 BISECT ARM A — convexHull per convex part (single
+      // filled polygon, no internal-edge artifacts). Arm B used fan-
+      // triangulated `triangle` colliders which have a shared internal
+      // diagonal between each adjacent triangle pair.
+      for (const part of shipCollisionParts(kind.id)) {
+        const flat = verticesToFloat32(part);
+        const desc = RAPIER.ColliderDesc.convexHull(flat);
+        if (!desc) throw new Error(`convexHull rejected part for kind ${kind.id}`);
+        this.world.createCollider(configureShipCollider(desc), body);
       }
     } else {
       // Shield up — ball collider extends `SHIELD_RADIUS_PAD` past the hull
@@ -462,6 +470,67 @@ export class PhysicsWorld {
 
   hasShip(id: string): boolean {
     return this.bodies.has(id);
+  }
+
+  /**
+   * Diagnostic-only — inspect Rapier's resolved contact state for a body's
+   * colliders. Iterates every contact pair the body participates in and
+   * returns the deepest contact with the largest impulse, plus the contact
+   * normal direction. Used by the ramming probe to surface why the resolver
+   * is settling at non-zero penetration under continuous thrust.
+   *
+   * Returns null if the body has no contacts this step.
+   */
+  queryContactState(id: string): {
+    normal: { x: number; y: number };
+    penetration: number;
+    impulse: number;
+    contactCount: number;
+    otherBodyId: string | null;
+  } | null {
+    const rec = this.bodies.get(id);
+    if (!rec) return null;
+    const np = this.world.narrowPhase;
+    let bestNormal = { x: 0, y: 0 };
+    let bestPenetration = 0;
+    let bestImpulse = 0;
+    let totalContacts = 0;
+    let bestOtherId: string | null = null;
+    const numCol = rec.body.numColliders();
+    for (let ci = 0; ci < numCol; ci++) {
+      const col = rec.body.collider(ci);
+      if (!col) continue;
+      np.contactPairsWith(col.handle, (otherHandle) => {
+        np.contactPair(col.handle, otherHandle, (manifold, flipped) => {
+          const n = manifold.normal();
+          const count = manifold.numContacts();
+          totalContacts += count;
+          for (let i = 0; i < count; i++) {
+            const dist = manifold.contactDist(i);
+            const imp = manifold.contactImpulse(i);
+            const pen = -dist;
+            if (pen > bestPenetration) {
+              bestPenetration = pen;
+              bestNormal = flipped ? { x: -n.x, y: -n.y } : { x: n.x, y: n.y };
+              bestImpulse = imp;
+              const otherCol = this.world.getCollider(otherHandle);
+              const otherParent = otherCol?.parent();
+              if (otherParent) {
+                bestOtherId = this.handleToId.get(otherParent.handle) ?? null;
+              }
+            }
+          }
+        });
+      });
+    }
+    if (totalContacts === 0) return null;
+    return {
+      normal: bestNormal,
+      penetration: bestPenetration,
+      impulse: bestImpulse,
+      contactCount: totalContacts,
+      otherBodyId: bestOtherId,
+    };
   }
 
   /**

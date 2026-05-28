@@ -1,10 +1,15 @@
 /**
  * CROSSGUARD — the T-shape (2026-05-27). Wide bow crossbar atop a
  * long stem. Concave polygon (two reflex vertices where the stem
- * meets the underside of the crossbar); the ear-clipping triangulator
- * in `src/core/geometry/triangulate.ts` handles simple concave
- * polygons, so the shield-down compound collider matches the rendered
- * silhouette exactly. See shipKinds/types.ts for the schemas.
+ * meets the underside of the crossbar). `poly-decomp.quickDecomp`
+ * in `src/core/geometry/shipHullDecomp.ts` splits this into two
+ * convex parts (crossbar + stem); `World.setHullExposed` then fan-
+ * triangulates each part into `RAPIER.ColliderDesc.triangle` colliders
+ * (triangle shapes are the ONLY 2D Rapier shape that fires
+ * `CONTACT_FORCE_EVENTS` for static overlap — `cuboid`/`convexHull`
+ * don't). Net result: the shield-down compound collider matches the
+ * rendered silhouette exactly AND fires contact telemetry even for
+ * two parked T-ships. See shipKinds/types.ts for the schemas.
  *
  * Tactical role: medium chassis, twin forward mounts at the tips of
  * the crossbar — wider firing baseline than the interceptor's wing
@@ -38,11 +43,21 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
   linearDamping: 0.3,
   angularDamping: 0,
   lateralGrip: 0.02,
-  // Huge collider — radius 200 is roughly the polygon's scaled
-  // bounding circle: sqrt(140² + 160²) ≈ 213. 200 is a snug bubble
-  // (slightly tighter than the visual silhouette tips). SHIELD_RADIUS_
-  // PAD adds 10 u so the shield ball sits at 210, just past the hull.
-  radius: 200,
+  // Huge collider — radius 213 matches the polygon's scaled bounding
+  // circle exactly: max vertex distance from origin is
+  // sqrt(140² + 160²) ≈ 212.6 (crossbar tips at (±140, -160) post-scale).
+  // Was 200 prior to 2026-05-28 (tighter than the visible silhouette,
+  // which made the shield ball collider sit INSIDE the rendered polygon —
+  // the 2026-05-27 "I could go a little ways into the render area" smoke
+  // bug). The visual ShieldAura ring derives from `kind.radius +
+  // SHIELD_RADIUS_PAD`, so bumping to 213 sized BOTH the physical and
+  // visual shield bubble to fully enclose the rendered hull (213 + 10 pad
+  // = 223 ≥ 213 bounding circle). Mass + inertia formulas read
+  // `kind.radius` too, so the angular inertia rises from
+  // 0.5·30·200² = 600 000 to 0.5·30·213² = 680 535 (~13 % more sluggish
+  // yaw — acceptable for a 10× chassis). Catalogue version bump (4→5)
+  // signals the per-kind drift-clamp to refresh stored player health.
+  radius: 213,
   // Heavy translational mass override (vs the default 1 every other
   // kind uses). 30× makes ramming impulses 30× weaker — the player
   // bounces off rather than punting the T-ship across the screen.
@@ -105,14 +120,24 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
     ],
   },
   mounts: [
-    // Twin crossbar-tip mounts at the SCALED visual positions
-    // (polygon is `scale: 10` so crossbar tips are at world ±140;
-    // mounts at ±120 sit just inside the tips, on the underside).
+    // Twin crossbar-tip mounts at the SCALED visual positions.
+    // **`mount.localY` is in MATH-UP convention** (Y > 0 = forward of
+    // body center = top of sprite after the renderer's
+    // `turret.y = -mount.localY` flip in `MountVisualManager.ts`). So
+    // for the visual crossbar tips (at the TOP of the sprite, where the
+    // polygon's Y < 0 in Pixi-up authoring) the mount's localY is
+    // POSITIVE. Polygon scale is 10, crossbar tips at scaled vertex
+    // (±140, ±160) — mounts at (±120, +120) sit just inside the tips,
+    // on the underside. Pre-2026-05-28 these were authored as
+    // (±120, -120) under the (wrong) belief that mount and polygon
+    // shared the same Y convention — they don't (polygon is Pixi-up
+    // authored, mount is math-up). Net visual position was at the STEM
+    // TAIL, not the crossbar — the smoke "way off" report.
     // Narrow ±22.5° arc — the player aims with the body, not the turret.
     {
       id: 'cross-l',
       localX: -120,
-      localY: -120,
+      localY: 120,
       baseAngle: 0,
       arcMin: -Math.PI / 8,
       arcMax: Math.PI / 8,
@@ -122,7 +147,7 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
     {
       id: 'cross-r',
       localX: 120,
-      localY: -120,
+      localY: 120,
       baseAngle: 0,
       arcMin: -Math.PI / 8,
       arcMax: Math.PI / 8,

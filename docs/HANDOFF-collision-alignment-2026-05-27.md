@@ -300,3 +300,75 @@ moment the next ramming/collision bug appears.
 - **Don't bump SHIELD_RADIUS_PAD or kind.radius to "make it look right"
   on Crossguard.** The visual and physical have to agree by construction,
   not by tuning.
+
+---
+
+## Resolution (2026-05-28, plan `lively-patterson`)
+
+Three changes shipped on `claude/game-visuals-particles-gdWgc`:
+
+1. **Crossguard `radius` 200 → 213** (matches the scaled polygon's
+   bounding circle exactly). Catalogue version 4 → 5. This is the H1
+   fix from the hypothesis table — the shield ball collider now fully
+   encloses the rendered silhouette. The Don't above (don't tune to
+   make it look right) holds: 213 isn't a feel-tuned number, it's the
+   bounding circle.
+
+2. **Concave decomposition pivoted from in-house ear-clipping to
+   `poly-decomp`** (NPM). `src/core/geometry/triangulate.ts` deleted;
+   replaced by `src/core/geometry/shipHullDecomp.ts`. Each kind's
+   polygon is now decomposed into convex parts (Crossguard T → 2 parts:
+   crossbar rectangle + stem rectangle). Verified geometrically correct
+   in unit + integration + E2E tests.
+
+3. **`World.setHullExposed` continues to emit `RAPIER.ColliderDesc.triangle`
+   colliders**, NOT `convexHull` — fan-triangulating each convex part.
+   The 2026-05-28 investigation found that `convexHull` and `cuboid`
+   shapes do NOT fire `CONTACT_FORCE_EVENTS` for static interpenetration
+   in Rapier 2D (positional-correction impulse ≠ contact force); only
+   `triangle` shapes do. Locked by
+   `src/core/physics/hullCollisionNoTouch.test.ts` DIAGNOSTIC + the
+   E2E positive-control case.
+
+Regression locks:
+- `tests/e2e/t-ship-no-self-collision.spec.ts` — negative + positive
+  control. NEGATIVE: two crossguards with 20 u gap → 0
+  `collision_resolved`. POSITIVE: two crossguards stacked → 30+
+  `collision_resolved` + `ram_damage` per ~30 snapshots.
+- `src/core/physics/hullCollisionNoTouch.test.ts` — direct physics
+  layer; bare-Rapier shape comparison + ship-spawn + obstacle-spawn.
+- `src/core/geometry/shipHullDecomp.test.ts` — per-kind convexity,
+  CCW winding, area conservation, Crossguard ≥ 2 parts, fighter
+  notch honoured.
+
+Critical caveat — **`data-pred-stats.collisionEventsApplied` is NOT a
+valid signal for drone-vs-drone collisions.** The client's `applyCollision-
+Resolved` only counts events when both bodies are in the client's
+predWorld, and drones are keyed `swarm-${entityId}` there while the
+server broadcasts the drone's `id` string. They never match. The E2E
+spec uses `/dev/events` (server log) instead — the unfiltered source
+of truth. Any future drone-vs-drone collision spec must do the same.
+
+Verification:
+- `pnpm typecheck && pnpm test` — green for everything touched (pre-
+  existing TickBudgetTelemetry / spiral-ondevice-replay / 2 lint errors
+  in mirrorToEngineEmitter + PlayerSlotMap are unchanged baseline).
+- `pnpm playwright test --project=feature tests/e2e/collision-events.spec.ts tests/e2e/t-ship-no-self-collision.spec.ts` — 3/3 green.
+
+What this work DOES and DOES NOT resolve:
+
+- DOES — concave hull geometry is provably correct. The negative
+  control (two T-ships with a 20 u stem-tip gap) emits zero
+  `collision_resolved` events; the positive control (two stacked)
+  emits 30+ per ~30 snapshots. The polygon collider matches the
+  rendered silhouette.
+- DOES — shield ball collider now encloses the rendered silhouette
+  (radius 213 ≥ polygon bounding 213; with `SHIELD_RADIUS_PAD = 10`
+  the ball sits at 223 ≥ silhouette).
+- DOES NOT — on-device verification of the user's smoke-test
+  "way off collisions" report. The user disputed the shield-up
+  framing; the hull-down concave geometry is now locked-in correct
+  but a separate test on-device is still required before the original
+  smoke-test bug can be considered resolved. Per the standing
+  no-handoff-mid-work rule, do that ONLY after merge to main + a
+  clean working tree.

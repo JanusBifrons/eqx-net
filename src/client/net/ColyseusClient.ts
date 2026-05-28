@@ -2157,22 +2157,34 @@ export class ColyseusGameClient {
         const vertices = entry.kind === 0
           ? generateAsteroidVertices(entityId, entry.radius)
           : undefined;
-        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, 3, vertices);
+        // 2026-05-28 fix — for drones, use `kind.mass` so the client's
+        // predWorld body matches the server's mass (and therefore the
+        // resolver impulse distribution against the player's ship is
+        // identical). Pre-fix the hardcoded `3` meant a Crossguard
+        // drone (catalogue mass = 30) had a 1:3 player/drone mass ratio
+        // on the client but 1:30 on the server, so the player's local
+        // prediction had drones move much further per impulse than the
+        // server actually allowed — every snapshot fed a big drift
+        // correction. Asteroids stay at 3 (their server-side mass via
+        // ASTEROID_DEFAULT_MASS or per-roster override matches; this
+        // doesn't apply because asteroids use `convexHull` and area-
+        // density, not the additional-mass pin path).
+        const mass = entry.kind === 1
+          ? (getShipKind(entry.shipKind ?? null).mass ?? 3)
+          : 3;
+        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, mass, vertices);
         // Lock asteroids (kind=0) only — they're static on the server and
         // locking them stops the player from pushing them out of pose
-        // during reconciler replay. Drones (kind=1) carry non-zero
-        // velocity from the server's AI and are unlocked so the client
-        // simulates the same dynamic-vs-dynamic collision response the
-        // server resolves.
+        // during reconciler replay. Drones (kind=1) stay UNLOCKED so the
+        // client predicts drone-vs-player collision lockstep with the
+        // server: both sides run dynamic-vs-dynamic collision, both with
+        // the kind's authored mass, both reach the same equilibrium.
+        // Locking drones client-only would diverge the client from the
+        // server (player bounces off locked drone client-side, server says
+        // drone moves), so the reconciler would constantly snap.
         if (entry.kind === 0) {
           this.predWorld.lockBody(key);
         } else {
-          // kind=1 (drone): register a HostileDroneBehaviour with the
-          // client's AiController. Same module the server runs, same
-          // ship-kind tuning, so given identical (self, view) inputs
-          // both sides produce identical (fx, fy, torque) intents.
-          // `slot` is the numeric entityId — the sink uses it as the
-          // predWorld key suffix (`swarm-${slot}`).
           const kind = getShipKind(entry.shipKind ?? null);
           this._aiController.register(`${entityId}`, entityId, new HostileDroneBehaviour(kind));
           this._aiRegisteredIds.add(entityId);
@@ -2588,6 +2600,124 @@ export class ColyseusGameClient {
           lerpOffsetY: Math.round(oy * 1000) / 1000,
           lerpAngleOffset: Math.round(oa * 10000) / 10000,
         });
+
+        // 2026-05-28 — Ramming probe: per-frame snapshot of all the
+        // pose surfaces that could contribute to visual-vs-physics
+        // divergence during a player ↔ drone collision. Logged ONLY
+        // when the player is within 400 u of the nearest drone (the
+        // only situation where the gap matters — otherwise this
+        // would flood the diag at 60 Hz). Used by
+        // `tests/e2e/ramming-probe-armpit.spec.ts` and on-device
+        // smoke captures to diagnose the 2026-05-28 "fly inside the
+        // T-ship" report (user observation: speed-dependent visible
+        // penetration into the rendered hull silhouette).
+        //
+        // Captured surfaces:
+        //   - physPos     : local player predWorld position (collider).
+        //   - physVel/Spd : predWorld velocity (drives dead-reckon).
+        //   - visPos      : what the renderer DRAWS (= drX + ox).
+        //   - drOffset    : dead-reckon contribution = vel × dtSec.
+        //   - lerpOffset  : reconciliation smoothing residue (ox, oy).
+        //   - dronePos    : drone's interpolated/rendered position
+        //                   (same value the kinematic-follower will
+        //                   write to predWorld this frame).
+        //   - physDist    : center-to-center physics distance.
+        //   - visDist     : center-to-center visual distance.
+        //   - visVsPhys   : |visDist − physDist| — pure visual vs
+        //                   physics divergence, the smoking-gun
+        //                   number for "I see myself inside but
+        //                   physics says I'm not". Always ≥ 0.
+        if (this.mirror.swarm) {
+          let nearestId = -1;
+          let nearestDx = 0;
+          let nearestDy = 0;
+          let nearestDistSq = Infinity;
+          for (const [entityId, entry] of this.mirror.swarm) {
+            if (entry.kind !== 1) continue;
+            const dx = entry.x - state.x;
+            const dy = entry.y - state.y;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < nearestDistSq) {
+              nearestDistSq = distSq;
+              nearestId = entityId;
+              nearestDx = dx;
+              nearestDy = dy;
+            }
+          }
+          // 1500 u threshold accommodates gigantic test ships like the
+          // L-shape (polygon extent ~2000 from body center). For normal
+          // gameplay this still filters out most far-off drones — only
+          // ones the player could plausibly collide with get logged.
+          if (nearestId >= 0 && nearestDistSq < 1500 * 1500) {
+            const droneEntry = this.mirror.swarm.get(nearestId);
+            if (droneEntry) {
+              const physDist = Math.sqrt(nearestDistSq);
+              const visDx = (drX + ox) - droneEntry.x;
+              const visDy = (drY + oy) - droneEntry.y;
+              const visDist = Math.sqrt(visDx * visDx + visDy * visDy);
+              const physSpd = Math.sqrt(state.vx * state.vx + state.vy * state.vy);
+              void nearestDx; void nearestDy; // diagnostics: relative direction kept here for callsites that need it
+              logEvent('ramming_probe', {
+                inputTick: this.inputTick,
+                physPos: {
+                  x: Math.round(state.x * 1000) / 1000,
+                  y: Math.round(state.y * 1000) / 1000,
+                },
+                physVel: {
+                  x: Math.round(state.vx * 1000) / 1000,
+                  y: Math.round(state.vy * 1000) / 1000,
+                },
+                physSpd: Math.round(physSpd * 10) / 10,
+                visPos: {
+                  x: Math.round((drX + ox) * 1000) / 1000,
+                  y: Math.round((drY + oy) * 1000) / 1000,
+                },
+                drOffset: {
+                  x: Math.round((drX - state.x) * 1000) / 1000,
+                  y: Math.round((drY - state.y) * 1000) / 1000,
+                },
+                lerpOffset: {
+                  x: Math.round(ox * 1000) / 1000,
+                  y: Math.round(oy * 1000) / 1000,
+                },
+                droneId: nearestId,
+                dronePos: {
+                  x: Math.round(droneEntry.x * 1000) / 1000,
+                  y: Math.round(droneEntry.y * 1000) / 1000,
+                },
+                droneShieldDown: droneEntry.shieldDown ?? false,
+                droneKind: droneEntry.shipKind ?? null,
+                physDist: Math.round(physDist * 100) / 100,
+                visDist: Math.round(visDist * 100) / 100,
+                visVsPhys: Math.round(Math.abs(visDist - physDist) * 100) / 100,
+                // 2026-05-28 contact-state probe — directly ask Rapier what
+                // the resolver produced THIS tick for the player ball:
+                //   - normal       : world-space normal the resolver chose
+                //                    to push the player along (should point
+                //                    AWAY from the polygon edge).
+                //   - penetration  : Rapier's own measured overlap (negative
+                //                    contactDist, in world units). If this
+                //                    matches the body-local penetration we
+                //                    compute geometrically, the resolver is
+                //                    SEEING the overlap correctly. If the
+                //                    resolver reports 0 while we measure 20u
+                //                    geometrically, the contact isn't even
+                //                    being generated → polygon decomposition
+                //                    seam problem.
+                //   - impulse      : the impulse magnitude applied this step.
+                //                    If thrust = 9000 N and impulse < 9000,
+                //                    the resolver is under-pushing → param /
+                //                    iteration count too low.
+                //   - contactCount : number of contact points (multi-edge =
+                //                    concave-corner contact).
+                //   - otherBodyId  : which body the player is contacting
+                //                    (sanity-check it's a swarm drone, not
+                //                    something else).
+                contactState: this.predWorld.queryContactState(localId) ?? null,
+              });
+            }
+          }
+        }
 
         // Diagnostic — track swarm entities entering/leaving overlap range.
         // The user reported "overlapping with enemy ships" (drones, since

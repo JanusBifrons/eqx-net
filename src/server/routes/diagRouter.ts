@@ -115,6 +115,10 @@ const BUCKETS: Record<string, string> = {
   fire_received: 'combat',
   swarm_near_enter: 'combat',
   swarm_near_exit: 'combat',
+  // 2026-05-28 — Per-frame visual-vs-physics divergence probe. Logged
+  // every frame the local player is within 400 u of a drone. Lives in
+  // the combat bucket alongside the other near-drone diagnostics.
+  ramming_probe: 'combat',
   // 2026-05-09 — physics-side collisions surfaced into the diag stream
   // so we can correlate combat-phase correction bursts with actual
   // drone-vs-player contacts. See SectorRoom.ts CONTACT_BATCH handler.
