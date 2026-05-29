@@ -105,6 +105,7 @@ const FEATURE_SPECS: string[] = [
   '**/tidi-overlay.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
+  '**/webrtc-vs-ws-recv-gap-comparison.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];

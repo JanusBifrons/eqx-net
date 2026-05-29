@@ -32,6 +32,7 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
+import { DataChannelTransport } from './dataChannelTransport.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
 import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
@@ -646,7 +647,7 @@ export class ColyseusGameClient {
   /** Phase 2 swift-otter — lifecycle-managed DC transport. Created in
    *  the welcome handler when `_webrtcEnabled === true`, closed on
    *  room leave / sector handoff. */
-  private _dataChannelTransport: import('./dataChannelTransport.js').DataChannelTransport | null = null;
+  private _dataChannelTransport: DataChannelTransport | null = null;
 
   // Snapshot timing
   private lastSnapshotAt = 0;
@@ -1013,32 +1014,40 @@ export class ColyseusGameClient {
       }
     });
 
-    // Phase 2 swift-otter — instantiate the DataChannel transport before
-    // the welcome handler fires so the answer/ice handlers below can
-    // route into it cleanly. Construction is cheap (no RTCPeerConnection
-    // until start() is called) so it's safe to do unconditionally when
-    // the flag is set.
+    // Phase 2/4 swift-otter — instantiate the DataChannel transport
+    // SYNCHRONOUSLY before any room handlers so the welcome handler is
+    // guaranteed to have a non-null `_dataChannelTransport` when it
+    // fires. The first Phase 4 E2E run failed because a dynamic
+    // `import('./dataChannelTransport.js')` left the field null past
+    // welcome; start() never ran; DC never opened. Static import has
+    // no native-binding cost on the client (RTCPeerConnection is a
+    // browser global; @colyseus/msgpackr is already in the Colyseus
+    // import graph) so the only cost paid by non-opted-in sessions is
+    // a few KB of dead JS — acceptable for measurement parity.
     if (this._webrtcEnabled) {
-      void import('./dataChannelTransport.js').then(({ DataChannelTransport }) => {
-        this._dataChannelTransport = new DataChannelTransport({
-          send: (type, payload) => room.send(type, payload),
-          onSnapshot: (snap) => {
-            // Mirror the WS-path coalescer behaviour: queue when enabled,
-            // otherwise apply immediately. Both paths converge at
-            // applySnapshotNow → handleSnapshot.
-            if (this.snapshotCoalescer.isEnabled()) {
-              this.snapshotCoalescer.enqueue(snap);
-            } else {
-              this.applySnapshotNow(snap);
-            }
-          },
-          onDiag: (tag, data) => logEvent(tag, data),
-        });
-      }).catch((err) => {
-        logEvent('webrtc_module_import_error', { error: (err as Error).message });
+      this._dataChannelTransport = new DataChannelTransport({
+        send: (type, payload) => room.send(type, payload),
+        onSnapshot: (snap) => {
+          // Phase 4 swift-otter — log transport-tagged recv telemetry
+          // BEFORE the coalescer enqueue so the measurement reflects DC
+          // arrival (not apply). Mirrors the WS-path call above.
+          this.logSnapshotRecvTelemetry(snap, 'dc');
+          // Mirror the WS-path coalescer behaviour: queue when enabled,
+          // otherwise apply immediately. Both paths converge at
+          // applySnapshotNow → handleSnapshot.
+          if (this.snapshotCoalescer.isEnabled()) {
+            this.snapshotCoalescer.enqueue(snap);
+          } else {
+            this.applySnapshotNow(snap);
+          }
+        },
+        onDiag: (tag, data) => logEvent(tag, data),
       });
     }
 
+    // Signaling handlers are registered regardless of opt-in. The server
+    // won't emit these messages to non-opted-in clients (the manager has
+    // no entry for them), so the handlers are no-ops in that case.
     room.onMessage('webrtc_answer', (msg: { sdp?: string }) => {
       if (!this._dataChannelTransport || typeof msg?.sdp !== 'string') return;
       void this._dataChannelTransport.handleAnswer(msg.sdp);
@@ -1053,63 +1062,12 @@ export class ColyseusGameClient {
     });
 
     room.onMessage('snapshot', (snap: SnapshotMessage) => {
-      // Render-jitter-fix Phase 1b: log WS-receive timing + handler
-      // duration BEFORE/AFTER handleSnapshot. The pre-existing
-      // 'snapshot' log fires INSIDE handleSnapshot and only carries
-      // post-processing state — it cannot distinguish "snapshot
-      // arrived 800ms late" from "snapshot arrived on time but
-      // handleSnapshot took 800ms to apply". This pair of events
-      // makes both observable.
-      const recvAtMs = this.clock.now();
-      const recvGapMs = this._lastSnapshotRecvAtMs >= 0
-        ? recvAtMs - this._lastSnapshotRecvAtMs
-        : -1;
-      this._lastSnapshotRecvAtMs = recvAtMs;
-      // plan: imperative-taco-r2 — server-send timestamp lets us compute
-      // (recvAtMs - serverSendPerfNow) which is constant for a given
-      // session up to clock skew. Spikes in this delta during a
-      // recv_gap_long event isolate **network in-transit delay**;
-      // constant delta isolates **server-side silence**. Optional field
-      // (server may be pre-r2 build) — back-fills as null in the log.
-      const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
-      const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes;
-      logEvent('snapshot_received', {
-        serverTick: snap.serverTick,
-        recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
-        serverSendPerfNow: typeof serverSendPerfNow === 'number'
-          ? Math.round(serverSendPerfNow * 100) / 100
-          : null,
-        clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
-        wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
-      });
-      // Probe 5 — flag large receive gaps (>200 ms = ≥4 missed
-      // 20 Hz cadence ticks) with heap context. The y0eo1h capture
-      // showed 15 such gaps in 184 s, each 250-633 ms long, while
-      // p50 recvGapMs stayed at 49 ms — these are CLIENT-side main-
-      // thread blocks (snapshots queue, then fire onMessage in burst).
-      // Heap dump alongside lets us correlate with GC pauses. Rare
-      // event (~0.5 % of snapshots) — negligible diag-stream volume.
-      //
-      // r2 addition: include server-send time + delta-to-recv so
-      // network-vs-server is directly readable at the gap site.
-      if (recvGapMs > 200) {
-        const heap = readHeapUsedMb();
-        const serverToClientDeltaMs = typeof serverSendPerfNow === 'number'
-          ? Math.round((recvAtMs - serverSendPerfNow) * 100) / 100
-          : null;
-        logEvent('recv_gap_long', {
-          recvGapMs: Math.round(recvGapMs * 100) / 100,
-          heapUsedMb: heap !== undefined ? parseFloat(heap.toFixed(2)) : null,
-          serverSendPerfNow: typeof serverSendPerfNow === 'number'
-            ? Math.round(serverSendPerfNow * 100) / 100
-            : null,
-          clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
-          serverToClientDeltaMs,
-          // r2 — non-zero amount means laptop's WS layer is the one queueing;
-          // zero means buffering is downstream (router/AP/phone WiFi).
-          wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
-        });
-      }
+      // Phase 4 swift-otter — transport-tagged recv telemetry.
+      // Was inlined here pre-Phase-4; lifted to `logSnapshotRecvTelemetry`
+      // so the DC path can call the same code with `via='dc'`. Comparing
+      // recv_gap_long between transports is only valid if both paths log
+      // identically (modulo the `via` discriminator).
+      this.logSnapshotRecvTelemetry(snap, 'ws');
 
       // Probe 6 — coalesce branch: store pending, defer apply to next
       // tickPhysics. If a prior pending snapshot exists, it's discarded
@@ -1953,6 +1911,55 @@ export class ColyseusGameClient {
    *   - From `processPendingSnapshot()` at the top of tickPhysics
    *     (default coalesced mode).
    */
+  /**
+   * Phase 4 swift-otter — transport-aware recv telemetry. Called from BOTH
+   * the WS `room.onMessage('snapshot', ...)` handler AND the DataChannel
+   * transport's onSnapshot callback BEFORE the coalescer enqueue, so the
+   * measurement counts arrival not apply. Was inlined in the WS handler
+   * pre-Phase-4 — moving it here was the fix for the "DC arm shows fewer
+   * snapshot_received events" measurement bug surfaced by the first
+   * Phase 4 E2E run.
+   *
+   * The `via` field distinguishes which transport delivered the frame;
+   * the test code uses it to gate on dc-route fraction.
+   */
+  private logSnapshotRecvTelemetry(snap: SnapshotMessage, via: 'ws' | 'dc'): void {
+    const recvAtMs = this.clock.now();
+    const recvGapMs = this._lastSnapshotRecvAtMs >= 0
+      ? recvAtMs - this._lastSnapshotRecvAtMs
+      : -1;
+    this._lastSnapshotRecvAtMs = recvAtMs;
+    const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
+    const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes;
+    logEvent('snapshot_received', {
+      serverTick: snap.serverTick,
+      via,
+      recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
+      serverSendPerfNow: typeof serverSendPerfNow === 'number'
+        ? Math.round(serverSendPerfNow * 100) / 100
+        : null,
+      clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
+      wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
+    });
+    if (recvGapMs > 200) {
+      const heap = readHeapUsedMb();
+      const serverToClientDeltaMs = typeof serverSendPerfNow === 'number'
+        ? Math.round((recvAtMs - serverSendPerfNow) * 100) / 100
+        : null;
+      logEvent('recv_gap_long', {
+        via,
+        recvGapMs: Math.round(recvGapMs * 100) / 100,
+        heapUsedMb: heap !== undefined ? parseFloat(heap.toFixed(2)) : null,
+        serverSendPerfNow: typeof serverSendPerfNow === 'number'
+          ? Math.round(serverSendPerfNow * 100) / 100
+          : null,
+        clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
+        serverToClientDeltaMs,
+        wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
+      });
+    }
+  }
+
   private applySnapshotNow(snap: SnapshotMessage): void {
     const bw = bwStats();
     const snapJson = bw ? JSON.stringify(snap) : null;

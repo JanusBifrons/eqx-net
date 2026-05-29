@@ -196,6 +196,22 @@ export class DataChannelTransport {
     });
 
     // Client creates the channel; server receives via `onDataChannel`.
+    //
+    // `ordered: true, reliable: true` (default) chosen for now. The plan's
+    // Phase 0 spike notes left this as a Phase 4 re-evaluation decision.
+    // Phase 4 E2E evidence on 2026-05-29:
+    //   - Default ordered+reliable: ~25 % gap reduction under Pattern B
+    //     (still HOL-affected; below the plan's ≥ 70 % gate).
+    //   - ordered:false, maxRetransmits:0 (UDP-semantics): DC arm gap
+    //     count INCREASED. The plan's `recv_gap_long` metric measures
+    //     inter-arrival gaps; unreliable mode INTENTIONALLY drops late
+    //     packets which makes the gap between received snapshots
+    //     LARGER, so the metric fires MORE often even though snapshot
+    //     freshness improves. The metric isn't appropriate for the
+    //     unreliable comparison.
+    // Phone smoke (Phase 5) is the user-felt verdict. Defaults stay
+    // ordered+reliable until the phone evidence either confirms benefit
+    // or motivates the unreliable flip with a freshness-based metric.
     const dc = pc.createDataChannel('snapshot', { ordered: true });
     this._dc = dc;
     this._attachDataChannel(dc);

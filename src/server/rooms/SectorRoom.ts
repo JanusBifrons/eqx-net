@@ -958,32 +958,35 @@ export class SectorRoom extends Room<SectorState> {
 
     // Phase 1 swift-otter — instantiate the per-room WebRTC channel
     // manager BEFORE the SnapshotBroadcaster so the manager reference
-    // can be captured into the sendSnapshot DI seam below. Engineering
-    // rooms (sectorKey === null) skip the native binding entirely; they
-    // never see real clients and the test harness exercises the WS path
-    // directly. The peerConnectionFactory `require`s node-datachannel
-    // lazily, so unit tests of subsystems that don't go through this
-    // path still don't pay the native-binding load cost.
-    if (this.sectorKey !== null) {
-      this.webrtcChannelManager = new WebRtcChannelManager({
-        peerConnectionFactory: nodeDataChannelPeerConnectionFactory({
-          // STUN URL defaults to Google's freebie — works LAN + open
-          // internet without TURN. TURN deployment for NAT-restricted
-          // clients is scoped as a separate plan (hostile review #14).
-          iceServers: ['stun:stun.l.google.com:19302'],
-        }),
-        sendAnswer: (sessionId, sdp) => {
-          const client = this.clients.find((c) => c.sessionId === sessionId);
-          if (client) client.send('webrtc_answer', { type: 'webrtc_answer', sdp });
-        },
-        sendCandidate: (sessionId, candidate, mid) => {
-          const client = this.clients.find((c) => c.sessionId === sessionId);
-          if (client) client.send('webrtc_ice', { type: 'webrtc_ice', candidate, mid });
-        },
-        serverLogEvent,
-        logger,
-      });
-    }
+    // can be captured into the sendSnapshot DI seam below.
+    //
+    // 2026-05-29 — gate removed (was: `if (this.sectorKey !== null)`).
+    // Phase 4 E2E uses engineering rooms (`?room=feel-test-25`,
+    // `sectorKey === null`) so gating on sectorKey meant the server
+    // silently ignored every `webrtc_offer`, the client timed out, and
+    // the measurement showed `dc_connected=false` across the board.
+    // The PeerConnection isn't constructed until an offer actually
+    // arrives (factory runs on `handleOffer`), so the cost on rooms
+    // that never see a `?webrtc=1` client is zero — fine to create on
+    // every room and let opt-in drive the actual binding load.
+    this.webrtcChannelManager = new WebRtcChannelManager({
+      peerConnectionFactory: nodeDataChannelPeerConnectionFactory({
+        // STUN URL defaults to Google's freebie — works LAN + open
+        // internet without TURN. TURN deployment for NAT-restricted
+        // clients is scoped as a separate plan (hostile review #14).
+        iceServers: ['stun:stun.l.google.com:19302'],
+      }),
+      sendAnswer: (sessionId, sdp) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        if (client) client.send('webrtc_answer', { type: 'webrtc_answer', sdp });
+      },
+      sendCandidate: (sessionId, candidate, mid) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        if (client) client.send('webrtc_ice', { type: 'webrtc_ice', candidate, mid });
+      },
+      serverLogEvent,
+      logger,
+    });
 
     // Per-client snapshot broadcaster. Owns broadcastCounter,
     // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
@@ -1013,18 +1016,19 @@ export class SectorRoom extends Room<SectorState> {
       // Phase 1 swift-otter DI seam — when the WebRtc manager is live
       // (galaxy rooms), route via DC with WS fallback; on engineering
       // rooms the seam stays undefined and the legacy WS-only path runs.
-      sendSnapshot: this.webrtcChannelManager
-        ? (client, snap) => {
-            // The manager owns the routing decision (sendable + degraded
-            // + buffered + try/catch). `onFallback` is the WS path; the
-            // manager invokes it synchronously when DC is unavailable.
-            this.webrtcChannelManager!.sendSnapshot(
-              client.sessionId,
-              snap,
-              () => { client.send('snapshot', snap); },
-            );
-          }
-        : undefined,
+      sendSnapshot: (client, snap) => {
+        // The manager owns the routing decision (sendable + degraded
+        // + buffered + try/catch). `onFallback` is the WS path; the
+        // manager invokes it synchronously when DC is unavailable.
+        // Non-null assertion is safe here — the manager is always
+        // constructed above (the previous `sectorKey === null` gate
+        // was removed 2026-05-29).
+        this.webrtcChannelManager!.sendSnapshot(
+          client.sessionId,
+          snap,
+          () => { client.send('snapshot', snap); },
+        );
+      },
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-

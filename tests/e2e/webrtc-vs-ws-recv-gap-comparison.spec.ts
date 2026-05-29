@@ -42,9 +42,10 @@ async function readDiagSince(
 /**
  * One measurement run: boot the page with the supplied URL params,
  * warmup, inject pattern B (3× 400 ms bursts with 2 s gaps), and count
- * `recv_gap_long` events fired during the burst window. Returns the
- * count plus the count of `snap_route` events tagged via=dc (so we
- * can confirm the DC path actually was taken in the webrtc=1 arm).
+ * `recv_gap_long` events fired during the burst window. Uses the
+ * `via` field on the Phase-4-corrected `snapshot_received` /
+ * `recv_gap_long` logs (added 2026-05-29 after the first E2E showed
+ * the WS-only logging path was systematically biased against DC).
  */
 async function runOneBurst(
   arm: 'ws' | 'dc',
@@ -52,9 +53,11 @@ async function runOneBurst(
   page: import('@playwright/test').Page,
 ): Promise<{
   recvGapLong: number;
-  snapRouteDc: number;
-  snapRouteWs: number;
-  snapshotsTotal: number;
+  recvGapLongDc: number;
+  recvGapLongWs: number;
+  snapshotsDc: number;
+  snapshotsWs: number;
+  webrtcConnected: boolean;
 }> {
   // Mark the window start AFTER warmup but BEFORE the bursts so the
   // measurement is symmetric across arms.
@@ -74,14 +77,21 @@ async function runOneBurst(
   await page.waitForTimeout(1000);
 
   const gaps = await readDiagSince(page, start, 'recv_gap_long');
-  const routeEvents = await readDiagSince(page, start, 'snap_route');
   const snapshots = await readDiagSince(page, start, 'snapshot_received');
+  // `webrtc_connected` may fire BEFORE the burst window starts (during
+  // warmup) — read across the whole session.
+  const connected = await page.evaluate(() => {
+    const logs = (window as unknown as { __eqxLogs?: { tag: string }[] }).__eqxLogs ?? [];
+    return logs.some((e) => e.tag === 'webrtc_connected');
+  });
 
   return {
     recvGapLong: gaps.length,
-    snapRouteDc: routeEvents.filter((e) => e.data['via'] === 'dc').length,
-    snapRouteWs: routeEvents.filter((e) => e.data['via'] === 'ws').length,
-    snapshotsTotal: snapshots.length,
+    recvGapLongDc: gaps.filter((e) => e.data['via'] === 'dc').length,
+    recvGapLongWs: gaps.filter((e) => e.data['via'] === 'ws').length,
+    snapshotsDc: snapshots.filter((e) => e.data['via'] === 'dc').length,
+    snapshotsWs: snapshots.filter((e) => e.data['via'] === 'ws').length,
+    webrtcConnected: connected,
   };
 }
 
@@ -139,6 +149,7 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
 
   const wsCounts: number[] = [];
   const dcCounts: number[] = [];
+  const dcConnectedFlags: boolean[] = [];
   const dcRouteFractions: number[] = [];
 
   for (let i = 0; i < REPS_PER_ARM; i++) {
@@ -147,7 +158,10 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
       const result = await runOneBurst('ws', cdp, page);
       wsCounts.push(result.recvGapLong);
       // eslint-disable-next-line no-console
-      console.log(`[ws rep ${i}] recv_gap_long=${result.recvGapLong} snaps=${result.snapshotsTotal}`);
+      console.log(
+        `[ws rep ${i}] recv_gap_long=${result.recvGapLong} ` +
+        `snaps_ws=${result.snapshotsWs} snaps_dc=${result.snapshotsDc}`,
+      );
     } finally {
       await ctx.close();
       await browser.close();
@@ -159,13 +173,16 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
     try {
       const result = await runOneBurst('dc', cdp, page);
       dcCounts.push(result.recvGapLong);
-      const totalRoute = result.snapRouteDc + result.snapRouteWs;
-      const dcFrac = totalRoute > 0 ? result.snapRouteDc / totalRoute : 0;
+      dcConnectedFlags.push(result.webrtcConnected);
+      const totalSnaps = result.snapshotsDc + result.snapshotsWs;
+      const dcFrac = totalSnaps > 0 ? result.snapshotsDc / totalSnaps : 0;
       dcRouteFractions.push(dcFrac);
       // eslint-disable-next-line no-console
       console.log(
-        `[dc rep ${i}] recv_gap_long=${result.recvGapLong} snaps=${result.snapshotsTotal} ` +
-        `dc_route=${result.snapRouteDc} ws_route=${result.snapRouteWs} dc_frac=${dcFrac.toFixed(3)}`,
+        `[dc rep ${i}] recv_gap_long=${result.recvGapLong} ` +
+        `(ws=${result.recvGapLongWs} dc=${result.recvGapLongDc}) ` +
+        `snaps_dc=${result.snapshotsDc} snaps_ws=${result.snapshotsWs} ` +
+        `dc_frac=${dcFrac.toFixed(3)} dc_connected=${result.webrtcConnected}`,
       );
     } finally {
       await ctx.close();
@@ -178,6 +195,7 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
   const wsIqr: [number, number] = [quartile(wsCounts, 0.25), quartile(wsCounts, 0.75)];
   const dcIqr: [number, number] = [quartile(dcCounts, 0.25), quartile(dcCounts, 0.75)];
   const dcRouteMedian = median(dcRouteFractions);
+  const allConnected = dcConnectedFlags.every((c) => c);
 
   // eslint-disable-next-line no-console
   console.log(JSON.stringify({
@@ -186,17 +204,12 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
   // eslint-disable-next-line no-console
   console.log(JSON.stringify({
     arm: 'dc', counts: dcCounts, median: dcMedian, iqr: dcIqr,
-    dc_route_median: dcRouteMedian,
+    dc_route_median: dcRouteMedian, all_connected: allConnected,
   }));
 
-  // Liveness gate — if the DC path never actually took, the comparison
-  // is meaningless. We want >= 50 % of snapshots routed via DC in the
-  // dc arm; below that, the test is measuring a no-op.
-  expect(dcRouteMedian, 'DC path was actually exercised (>= 50% of snapshots routed via DC)').toBeGreaterThan(0.5);
-
-  // Liveness gate — Pattern B must produce gaps in the WS arm. If the
-  // host is too quiet for the network injection to register, the
-  // comparison is invalid.
+  // Liveness gates — both must hold for the comparison to be meaningful.
+  expect(allConnected, 'DC opened in every dc-arm rep (webrtc_connected fired)').toBe(true);
+  expect(dcRouteMedian, 'DC path delivered the majority of snapshots in the dc arm').toBeGreaterThan(0.5);
   expect(wsMedian, 'WS arm produced gaps under Pattern B').toBeGreaterThan(0);
 
   // Phase 4 exit gate.
@@ -219,15 +232,20 @@ test('Phase 4 control — ?webrtc=1 under no network injection: recv_gap_long sh
     await page.waitForTimeout(10_000);
     const gaps = await readDiagSince(page, start, 'recv_gap_long');
     const snaps = await readDiagSince(page, start, 'snapshot_received');
-    const routes = await readDiagSince(page, start, 'snap_route');
-    const dcRoute = routes.filter((e) => e.data['via'] === 'dc').length;
-    const wsRoute = routes.filter((e) => e.data['via'] === 'ws').length;
+    const dcConnected = await page.evaluate(() => {
+      const logs = (window as unknown as { __eqxLogs?: { tag: string }[] }).__eqxLogs ?? [];
+      return logs.some((e) => e.tag === 'webrtc_connected');
+    });
+    const snapsDc = snaps.filter((e) => e.data['via'] === 'dc').length;
+    const snapsWs = snaps.filter((e) => e.data['via'] === 'ws').length;
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({
       arm: 'dc-control', recv_gap_long: gaps.length, snapshots: snaps.length,
-      snap_route_dc: dcRoute, snap_route_ws: wsRoute,
+      snapshots_dc: snapsDc, snapshots_ws: snapsWs, webrtc_connected: dcConnected,
     }));
+    expect(dcConnected, 'DC opened in the control run').toBe(true);
     expect(snaps.length, 'control run produced snapshots').toBeGreaterThan(50);
+    expect(snapsDc, 'control run delivered snapshots via DC').toBeGreaterThan(0);
     // DC must not produce gaps under healthy network. Allow 1 transient
     // (e.g. the very first snapshot's gap measurement) — anything beyond
     // that means DC is introducing buffering.
