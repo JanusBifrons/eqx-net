@@ -1,0 +1,46 @@
+name: node-datachannel probe
+
+# Phase 0 step 1 of swift-otter WebRTC plan: verify node-datachannel installs
+# cleanly via pnpm on every CI runner we care about. If the prebuild matrix is
+# missing a platform, the install step will fall back to source compilation —
+# we want that signal here, not on a developer's first checkout.
+
+on:
+  push:
+    branches:
+      - integration/four-branches
+      - main
+    paths:
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/node-datachannel-probe.yml'
+  workflow_dispatch:
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+
+      - name: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Probe — require('node-datachannel') loads
+        # The native binding must resolve at runtime, not just present in
+        # node_modules. If a platform falls back to a source build that
+        # silently emits a stub, this require() will throw.
+        run: node -e "const ndc = require('node-datachannel'); console.log('node-datachannel loaded:', typeof ndc.PeerConnection); if (typeof ndc.PeerConnection !== 'function') process.exit(1);"

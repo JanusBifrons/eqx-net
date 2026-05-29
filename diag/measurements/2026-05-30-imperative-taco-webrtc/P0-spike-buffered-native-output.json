@@ -1,0 +1,102 @@
+{
+  "startedAt": "2026-05-29T18:51:16.586Z",
+  "ok": true,
+  "sendsAttempted": 1000,
+  "sendsReturnedTrue": 1000,
+  "sendsReturnedFalse": 0,
+  "threwOnSend": false,
+  "throwIndex": null,
+  "throwMessage": null,
+  "bufferedAmountSamples": [
+    {
+      "i": 0,
+      "ba": 0
+    },
+    {
+      "i": 50,
+      "ba": 0
+    },
+    {
+      "i": 100,
+      "ba": 0
+    },
+    {
+      "i": 150,
+      "ba": 0
+    },
+    {
+      "i": 200,
+      "ba": 0
+    },
+    {
+      "i": 250,
+      "ba": 0
+    },
+    {
+      "i": 300,
+      "ba": 0
+    },
+    {
+      "i": 350,
+      "ba": 0
+    },
+    {
+      "i": 400,
+      "ba": 0
+    },
+    {
+      "i": 450,
+      "ba": 0
+    },
+    {
+      "i": 500,
+      "ba": 0
+    },
+    {
+      "i": 550,
+      "ba": 0
+    },
+    {
+      "i": 600,
+      "ba": 0
+    },
+    {
+      "i": 650,
+      "ba": 0
+    },
+    {
+      "i": 700,
+      "ba": 0
+    },
+    {
+      "i": 750,
+      "ba": 0
+    },
+    {
+      "i": 800,
+      "ba": 0
+    },
+    {
+      "i": 850,
+      "ba": 0
+    },
+    {
+      "i": 900,
+      "ba": 0
+    },
+    {
+      "i": 950,
+      "ba": 0
+    },
+    {
+      "i": 999,
+      "ba": 0
+    }
+  ],
+  "maxBufferedAmount": 0,
+  "receivedCount": 1000,
+  "totalBytesSent": 1024000,
+  "sendLoopMs": 37,
+  "drainMs": 30,
+  "notes": "maxBufferedAmount stayed 0 across native + polyfill burst — loopback drains synchronously. Production code must NOT rely on bufferedAmount as the sole back-pressure signal. Use try/catch + send-latency timing per Phase 1 hardening."
+}
