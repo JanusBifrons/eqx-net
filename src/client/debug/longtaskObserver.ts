@@ -155,12 +155,20 @@ export function installLongtaskObserver(): boolean {
  * Caps `scripts[]` to the top-5 by duration. A single LoAF can fire on
  * a frame that ran tens of small scripts; the top-5 captures the bulk
  * cost without flooding the diag stream.
+ *
+ * plan: imperative-taco-r2 fix — the previous round used
+ * `supportedEntryTypes.includes('long-animation-frame')` as a feature
+ * gate. Phone smoke `5vjj4e` (Android Chrome 148) recorded ZERO loaf
+ * events despite 44 longtasks >100ms, meaning the gate falsely returned
+ * false on a device that DOES support LoAF (per the W3C registry,
+ * Chrome 123+ ships it). We now skip the supportedEntryTypes check and
+ * rely on the try/catch around `observe()` instead — older browsers
+ * throw on the unknown type, which is the actually-reliable signal.
+ * Also emits a `loaf_installed` diagnostic event so the next capture
+ * confirms install success vs silent failure.
  */
 function installLoafObserver(): void {
   if (typeof PerformanceObserver === 'undefined') return;
-  const supported = (PerformanceObserver as unknown as { supportedEntryTypes?: readonly string[] })
-    .supportedEntryTypes;
-  if (supported && !supported.includes('long-animation-frame')) return;
   try {
     const loafObserver = new PerformanceObserver((list) => {
       for (const raw of list.getEntries()) {
@@ -196,9 +204,15 @@ function installLoafObserver(): void {
       }
     });
     loafObserver.observe({ type: 'long-animation-frame', buffered: true } as PerformanceObserverInit);
-  } catch {
+    logEvent('loaf_installed', { supported: true });
+  } catch (err) {
     // Older Chrome / non-Chromium browsers don't accept the type; the
-    // longtask observer above keeps providing the basic signal.
+    // longtask observer above keeps providing the basic signal. Emit a
+    // marker so next capture shows install-failure vs zero-events-fired.
+    logEvent('loaf_installed', {
+      supported: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
