@@ -262,6 +262,47 @@ export function isFullDiagMode(): boolean {
 }
 
 /**
+ * Ramming-probe diagnostic gate — `?probe=ram` (plan: lazy-mochi, 2026-05-29).
+ *
+ * Narrower than `isFullDiagMode()`: gates JUST the per-frame
+ * ramming_probe block in `ColyseusClient.updateMirror` which builds a
+ * ~12-field NESTED object literal per RAF for every drone within 1500 u
+ * of the player. Captures ilhqk6 + lazy-mochi P2 confirmed this was
+ * dominating client allocation under Playwright (webdriver
+ * auto-enables `isDiagEnabled()` so even the `isFullDiagMode()` gate
+ * the block previously had still fired on every E2E run that touches
+ * drones, confounding the combat-heap-growth + heap-growth-gate
+ * measurements). `updateMirror`'s share of sampled allocation went from
+ * 4.6 % on main to 15.1 % on integration HEAD almost entirely because
+ * of this one block.
+ *
+ * Opt-in via `?probe=ram` URL param. **Webdriver does NOT auto-enable**
+ * — only the ramming-probe-armpit.spec.ts and any future ramming-
+ * investigation surface should set this. Production gameplay (no flag),
+ * the heap gates, the netgate, and all unrelated E2E specs pay zero
+ * cost.
+ *
+ * Cached at first read; reset by `__resetDiagCache()` for the netgate
+ * harness arms that flip params between reps.
+ */
+let _rammingProbeEnabled: boolean | null = null;
+export function isRammingProbeEnabled(): boolean {
+  if (_rammingProbeEnabled !== null) return _rammingProbeEnabled;
+  let enabled = false;
+  try {
+    const q =
+      typeof window !== 'undefined' && window.location?.search
+        ? new URLSearchParams(window.location.search).get('probe')
+        : null;
+    enabled = q === 'ram';
+  } catch {
+    enabled = false;
+  }
+  _rammingProbeEnabled = enabled;
+  return enabled;
+}
+
+/**
  * Streaming auto-capture mode — `?autocapture=1`. Mirror of the
  * `isDiagEnabled()` predicate above, distinct latch + window flag.
  *
@@ -312,6 +353,7 @@ export function __resetDiagCache(): void {
   _diagLightCached = null;
   _maxEntries = -1;
   _autoCaptureEnabled = null;
+  _rammingProbeEnabled = null;
 }
 
 /**
@@ -337,4 +379,9 @@ export function installWindowLogger(): void {
   // `?autocapture=1` in a gate URL doesn't silently regress
   // measurement (plan: streaming auto-capture, Phase 1).
   w['__eqxAutoCaptureEnabled'] = isAutoCaptureEnabled();
+  // Ramming-probe opt-in (plan: lazy-mochi). The combat-heap-growth +
+  // heap-growth-gate specs assert this is `false` so a future accidental
+  // `?probe=ram` in a gate URL doesn't silently re-introduce the alloc-
+  // confound from capture ilhqk6 / lazy-mochi P2.
+  w['__eqxRammingProbeEnabled'] = isRammingProbeEnabled();
 }

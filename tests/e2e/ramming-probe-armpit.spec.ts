@@ -79,9 +79,12 @@ test('@diag ramming probe — fly into L-shape armpit at full thrust', async ({ 
   // initialAngle = π → forward is math -Y → thrust takes the player
   // straight down (in math) into the armpit at (400, -600).
   // `autocapture=1` streams the diag NDJSON to disk so we can post-mortem
-  // any future regression from the server-side trail too.
+  // any future regression from the server-side trail too. `probe=ram`
+  // opts into the ramming-probe block in ColyseusClient.updateMirror
+  // (2026-05-29, plan: lazy-mochi — webdriver auto-on of `isFullDiagMode`
+  // was confounding the heap gates, so the probe is opt-in only now).
   await page.goto(
-    `${BASE_URL}?room=ramming-probe-test&testId=${testId}&initialAngle=${Math.PI}&autocapture=1`,
+    `${BASE_URL}?room=ramming-probe-test&testId=${testId}&initialAngle=${Math.PI}&autocapture=1&probe=ram`,
   );
 
   // Wait for the L to be live and for the player to be on the map.

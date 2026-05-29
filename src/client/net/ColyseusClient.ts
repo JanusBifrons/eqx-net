@@ -47,7 +47,7 @@ import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { preResetRemoteShips, applyDroneMountAngles, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
@@ -2703,13 +2703,19 @@ export class ColyseusGameClient {
         //                   number for "I see myself inside but
         //                   physics says I'm not". Always ≥ 0.
         //
-        // Gated on isFullDiagMode() (2026-05-28, capture ilhqk6) — the
-        // unconditional version of this block ran every frame within
-        // 1500 u of any drone and was the dominant per-frame allocation
-        // source on the client. With engineering kinds removed from the
-        // galaxy spawn pool the trigger rate dropped, but the gate
-        // ensures production never pays for this diagnostic at all.
-        if (isFullDiagMode() && this.mirror.swarm) {
+        // Gated on isRammingProbeEnabled() (2026-05-29, plan: lazy-mochi
+        // — supersedes the 2026-05-28 isFullDiagMode() gate). Capture
+        // ilhqk6 surfaced the unconditional alloc cost; b7b18d1 gated it
+        // on isFullDiagMode but Playwright auto-enables diag via
+        // navigator.webdriver, so every E2E spec that touches drones
+        // (combat-heap-growth, heap-growth-gate, every netgate rep,
+        // every smoke spec) still paid the ~12-field nested literal
+        // per RAF — driving updateMirror's share of CDP-sampled
+        // allocation from 4.6 % on main to 15.1 % on integration HEAD
+        // (lazy-mochi P2). Opt-in via `?probe=ram` only; the ramming-
+        // probe-armpit.spec.ts sets it explicitly. No E2E that isn't
+        // investigating ramming behaviour pays anything now.
+        if (isRammingProbeEnabled() && this.mirror.swarm) {
           let nearestId = -1;
           let nearestDx = 0;
           let nearestDy = 0;
