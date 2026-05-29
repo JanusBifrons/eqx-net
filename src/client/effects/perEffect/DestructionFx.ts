@@ -92,6 +92,18 @@ export class DestructionFx {
   private readonly active: DestructionParticle[] = [];
   private readonly shocks: ActiveShock[] = [];
   private readonly fallbacks: FallbackExplosion[] = [];
+  /** Free-pool of DestructionParticle records (plan: lazy-mochi P3,
+   *  2026-05-29). When a particle dies we push its record + the
+   *  underlying Graphics onto this stack instead of destroying; the
+   *  next spawn pops a record (already detached from the parent
+   *  container) and resets its mutable fields in place. Eliminates the
+   *  per-kill `factories.makeParticleGfx()` + `{...}` literal that
+   *  dominated the destruction-burst alloc spike at the centre of the
+   *  major-GC events causing the rafGap regression. Tint is fixed per
+   *  Graphics so pools are tint-keyed (different ship kinds give
+   *  different tints; ~5-10 distinct tints in practice). Mirrors
+   *  EngineEmitter + ImpactSparks. */
+  private readonly freeByTint = new Map<number, DestructionParticle[]>();
 
   constructor(
     private readonly parent: Container,
@@ -155,13 +167,20 @@ export class DestructionFx {
     return { bursts: this.active.length + this.fallbacks.length, filters: this.shocks.length };
   }
 
-  /** Reset for sector handoff: wipe everything, no animation. */
+  /** Reset for sector handoff: wipe everything, no animation. Destroys
+   *  both live AND pooled Graphics — a sector swap is the right time to
+   *  release GPU buffers; the destination sector will warm a fresh pool.
+   *  Mirrors EngineEmitter + ImpactSparks. */
   resetForSectorHandoff(): void {
     for (const p of this.active) {
       this.parent.removeChild(p.gfx);
       p.gfx.destroy();
     }
     this.active.length = 0;
+    for (const pool of this.freeByTint.values()) {
+      for (const p of pool) p.gfx.destroy();
+    }
+    this.freeByTint.clear();
     for (const s of this.shocks) {
       const filters = this.app.stage.filters;
       if (Array.isArray(filters)) {
@@ -181,33 +200,68 @@ export class DestructionFx {
   // ── Private helpers ──────────────────────────────────────────────────
 
   private spawnParticle(x: number, y: number, lifetimeS: number, tint: number): void {
-    // Pool cap: evict oldest first.
+    // Pool cap: evict oldest first. plan: lazy-mochi — recycle the
+    // evicted particle's record + Graphics back to the free pool so a
+    // burst at cap doesn't burn an allocation later.
     if (this.active.length >= PARTICLE_POOL_CAP) {
       const oldest = this.active.shift();
       if (oldest) {
         this.parent.removeChild(oldest.gfx);
-        oldest.gfx.destroy();
+        this.releaseToFree(oldest);
       }
     }
-
-    const gfx = this.factories.makeParticleGfx(tint);
-
-    gfx.x = x;
-    // World->Pixi Y flip (src/client/CLAUDE.md "Game-space coords ... MUST flip Y").
-    gfx.y = -y;
 
     // Random direction + speed: radial spread, magnitude ~80-160 u/s.
     const angle = Math.random() * Math.PI * 2;
     const speed = 80 + Math.random() * 80;
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
+
+    // Pool path (plan: lazy-mochi): pop a free record + Graphics if one
+    // exists for this tint, reset its mutable fields. Otherwise allocate
+    // (only happens until the pool is saturated). Invariant #14.
+    let p = this.acquireFromFree(tint);
+    if (!p) {
+      p = {
+        gfx: this.factories.makeParticleGfx(tint),
+        vx, vy,
+        lifeS: lifetimeS,
+        initialLifeS: lifetimeS,
+        tint,
+      };
+    } else {
+      p.vx = vx;
+      p.vy = vy;
+      p.lifeS = lifetimeS;
+      p.initialLifeS = lifetimeS;
+    }
+    p.gfx.x = x;
+    // World->Pixi Y flip (src/client/CLAUDE.md "Game-space coords ... MUST flip Y").
+    p.gfx.y = -y;
+    p.gfx.alpha = 1;
+    p.gfx.scale.set(1);
     // Particle heading lines up with its velocity so the triangle "points
     // outward". atan2 + Pixi-Y-flip-quirk: same convention as
     // projectileSpriteUpdater (heading = -atan2(vy, vx) + π/2).
-    gfx.rotation = -Math.atan2(vy, vx) + Math.PI / 2;
+    p.gfx.rotation = -Math.atan2(vy, vx) + Math.PI / 2;
 
-    this.parent.addChild(gfx);
-    this.active.push({ gfx, vx, vy, lifeS: lifetimeS, initialLifeS: lifetimeS, tint });
+    this.parent.addChild(p.gfx);
+    this.active.push(p);
+  }
+
+  private acquireFromFree(tint: number): DestructionParticle | null {
+    const pool = this.freeByTint.get(tint);
+    if (!pool || pool.length === 0) return null;
+    return pool.pop()!;
+  }
+
+  private releaseToFree(p: DestructionParticle): void {
+    let pool = this.freeByTint.get(p.tint);
+    if (!pool) {
+      pool = [];
+      this.freeByTint.set(p.tint, pool);
+    }
+    pool.push(p);
   }
 
   private tickParticles(dtSec: number): void {
@@ -216,8 +270,12 @@ export class DestructionFx {
       p.lifeS -= dtSec;
       if (p.lifeS <= 0) {
         this.parent.removeChild(p.gfx);
-        p.gfx.destroy();
+        // plan: lazy-mochi — return the record + Graphics to the free
+        // pool instead of destroying so the next burst can reuse. The
+        // Graphics fill/geometry are baked at construction and stay
+        // valid; only mutable state is reset on re-spawn.
         this.active.splice(i, 1);
+        this.releaseToFree(p);
         continue;
       }
       // Drift outward in world units (CLAUDE.md Y-flip: world +y → pixi -y).
