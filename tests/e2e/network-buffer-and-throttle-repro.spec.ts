@@ -103,6 +103,9 @@ test('CDP network latency burst reproduces recv_gap_long with serverToClientDelt
   expect(firstGap.data, 'recv_gap_long carries clientRecvPerfNow').toHaveProperty('clientRecvPerfNow');
   expect(firstGap.data, 'recv_gap_long carries serverToClientDeltaMs').toHaveProperty('serverToClientDeltaMs');
   expect(typeof firstGap.data['serverToClientDeltaMs']).toBe('number');
+  // r2 evidence pass — wsBufferedAmountBytes lets us tell whether the
+  // server's WS layer is the buffer (laptop side) vs downstream.
+  expect(firstGap.data, 'recv_gap_long carries wsBufferedAmountBytes').toHaveProperty('wsBufferedAmountBytes');
 
   // ── Verify snapshot_received events around the gap also carry the fields ─
   const snapRecv = await readDiagSince(page, injectionStartTs, 'snapshot_received');
@@ -186,6 +189,158 @@ test('CDP CPU throttling drops effectiveHz in heap_sample events', async () => {
   // captures showed 90 Hz → 38 Hz (58 % drop). Desktop Chrome under
   // 6× throttle should be at least as dramatic.
   expect(throttledHz, 'throttled effectiveHz is < 0.7× baseline').toBeLessThan(baselineHz * 0.7);
+
+  await ctx.close();
+  await browser.close();
+});
+
+test('multi-pattern network reproduction: steady degraded vs periodic bursts', async () => {
+  test.setTimeout(90_000);
+
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+  await cdp.send('Network.enable');
+
+  const params = new URLSearchParams({
+    room: 'feel-test-25',
+    diag: '1',
+    testId: `multi-net-repro-${Date.now()}`,
+    spawnX: '0', spawnY: '0',
+    startHostile: '1',
+  });
+  await page.goto(`${BASE_URL}?${params}`);
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-testid="ship-count"]');
+      return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+    },
+    { timeout: 15_000 },
+  );
+  await page.waitForTimeout(3000); // warmup
+
+  // ── Pattern A: steady 250 ms latency (simulates marginal WiFi) ─────
+  const patternAStart = await page.evaluate(() => performance.now());
+  await cdp.send('Network.emulateNetworkConditions', {
+    offline: false, latency: 250, downloadThroughput: -1, uploadThroughput: -1,
+  });
+  await page.waitForTimeout(4000);
+  await cdp.send('Network.emulateNetworkConditions', {
+    offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+  });
+  const patternASnaps = await readDiagSince(page, patternAStart, 'snapshot_received');
+
+  // ── Pattern B: periodic 400 ms bursts (3 bursts, 2 s apart) ────────
+  // Mimics the phone-capture pattern of "calm play then sudden gap then
+  // calm then sudden gap" — repeating gaps with calm in between.
+  const patternBStart = await page.evaluate(() => performance.now());
+  for (let i = 0; i < 3; i++) {
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false, latency: 400, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    await page.waitForTimeout(1000);
+    await cdp.send('Network.emulateNetworkConditions', {
+      offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+    });
+    await page.waitForTimeout(2000);
+  }
+  const patternBGaps = await readDiagSince(page, patternBStart, 'recv_gap_long');
+
+  // ── Pattern C: Chrome's built-in "Slow 4G" preset ──────────────────
+  // Simulates real degraded-mobile-network. Different from raw latency
+  // because it also caps throughput, which affects when packets queue.
+  const patternCStart = await page.evaluate(() => performance.now());
+  await cdp.send('Network.emulateNetworkConditions', {
+    offline: false,
+    latency: 400,            // matches Chrome's 'Slow 4G' RTT
+    downloadThroughput: 400 * 1024 / 8,  // 400 kbps
+    uploadThroughput: 400 * 1024 / 8,
+  });
+  await page.waitForTimeout(4000);
+  await cdp.send('Network.emulateNetworkConditions', {
+    offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+  });
+  const patternCSnaps = await readDiagSince(page, patternCStart, 'snapshot_received');
+
+  // ── Sanity assertions: all three patterns produced data, with the
+  // new fields populated. We DON'T assert specific values per pattern —
+  // that's characterisation, not regression. The point is: the
+  // instrumentation produces useful data across each scenario so a
+  // future fix can be iterated against any of them.
+
+  expect(patternASnaps.length, 'pattern A produced snapshots').toBeGreaterThan(10);
+  expect(patternBGaps.length, 'pattern B (bursts) produced at least 1 recv_gap_long').toBeGreaterThanOrEqual(1);
+  expect(patternCSnaps.length, 'pattern C produced snapshots').toBeGreaterThan(10);
+
+  // Every snapshot_received from these patterns should carry the new
+  // evidence fields (server-send timestamp + WS buffered amount).
+  const totalSnaps = [...patternASnaps, ...patternCSnaps];
+  const withEvidence = totalSnaps.filter((e) =>
+    typeof e.data['serverSendPerfNow'] === 'number' &&
+    'wsBufferedAmountBytes' in e.data,
+  );
+  expect(withEvidence.length / totalSnaps.length, 'most snapshots carry serverSendPerfNow + wsBufferedAmountBytes').toBeGreaterThan(0.9);
+
+  // eslint-disable-next-line no-console
+  console.log(`pattern A snaps: ${patternASnaps.length}, pattern B gaps: ${patternBGaps.length}, pattern C snaps: ${patternCSnaps.length}`);
+
+  await ctx.close();
+  await browser.close();
+});
+
+test('lifecycle observer captures visibility + connection changes', async () => {
+  test.setTimeout(45_000);
+
+  const browser = await chromium.launch();
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const cdp = await ctx.newCDPSession(page);
+
+  const params = new URLSearchParams({
+    room: 'feel-test-25',
+    diag: '1',
+    testId: `lifecycle-repro-${Date.now()}`,
+    spawnX: '0', spawnY: '0',
+    startHostile: '1',
+  });
+  await page.goto(`${BASE_URL}?${params}`);
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('[data-testid="ship-count"]');
+      return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) > 0;
+    },
+    { timeout: 15_000 },
+  );
+  await page.waitForTimeout(1500);
+
+  // Initial event should have fired at boot.
+  const initialEvents = await page.evaluate(() => {
+    const logs = (window as unknown as { __eqxLogs?: DiagEntry[] }).__eqxLogs ?? [];
+    return logs.filter((e: DiagEntry) => e.tag === 'lifecycle_event' && e.data['kind'] === 'initial');
+  });
+  expect(initialEvents.length, 'lifecycle_event initial fired at boot').toBeGreaterThanOrEqual(1);
+  expect(initialEvents[0]!.data['visibilityState']).toBe('visible');
+
+  // Drive a visibilitychange event from CDP by emulating page hidden.
+  // Need to mark a timestamp first so we filter to the new event.
+  const visChangeStart = await page.evaluate(() => performance.now());
+  await cdp.send('Emulation.setEmitTouchEventsForMouse', { enabled: false }); // no-op, just to keep cdp alive
+  // The simplest way to trigger visibility change is to dispatch the
+  // event directly via page.evaluate; CDP's `Page.setWebLifecycleState`
+  // changes lifecycle but may not always trip the visibilitychange
+  // listener depending on Chrome version.
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.waitForTimeout(200);
+
+  const visEvents = await readDiagSince(page, visChangeStart, 'lifecycle_event');
+  const visChange = visEvents.find((e) => e.data['kind'] === 'visibilitychange');
+  expect(visChange, 'visibilitychange lifecycle_event fired').toBeDefined();
+  expect(visChange!.data['hidden']).toBe(true);
 
   await ctx.close();
   await browser.close();

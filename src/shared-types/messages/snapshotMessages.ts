@@ -40,6 +40,17 @@ export interface SnapshotMessage {
    *  plan: imperative-taco-r2 §evidence-instrumentation. Optional for back-
    *  compat (back-fills to 0 on the client's read path). */
   serverSendPerfNow?: number;
+  /** Server-side underlying WebSocket `bufferedAmount` (bytes queued at
+   *  the WS layer but not yet handed to the OS network stack), sampled
+   *  IMMEDIATELY BEFORE `client.send(...)` is called. Diagnostic for the
+   *  router-vs-phone question raised after capture 5vjj4e: a non-zero
+   *  value during a recv_gap_long event = laptop's WS layer is queueing
+   *  (TCP send blocked or slow), so the bottleneck includes the path
+   *  from the laptop's network adapter onwards. A zero value during the
+   *  same event = packets left the laptop fine, the buffering is
+   *  DOWNSTREAM (router/AP/phone). Cheap single-integer field; back-
+   *  fills to 0 if absent. */
+  wsBufferedAmountBytes?: number;
   /** Authoritative ship states at the time the snapshot was taken.
    *
    *  **Phase 6a: outer key is `shipInstanceId`** (was `playerId` pre-6a).

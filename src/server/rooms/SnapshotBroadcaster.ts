@@ -160,6 +160,7 @@ type MutableSnapshotMessage = {
   type: 'snapshot';
   serverTick: number;
   serverSendPerfNow?: number;
+  wsBufferedAmountBytes?: number;
   states: SnapshotMessage['states'];
   ackedTick: number;
   boostingIds?: string[];
@@ -629,6 +630,17 @@ export class SnapshotBroadcaster {
       // during recv_gap_long events. `performance.now()` is a primitive
       // number; notepack encodes it as 8 bytes. Zero per-tick alloc.
       snap.serverSendPerfNow = performance.now();
+      // r2 evidence pass — read the underlying WebSocket bufferedAmount
+      // BEFORE send and ship it ON the snapshot itself so the client's
+      // diag stream captures the per-snapshot buffer state without
+      // needing a separate channel back from the server. Non-zero
+      // amount = laptop's WS layer is queueing (TCP send blocked or
+      // slow); zero amount during a recv_gap_long = packets left the
+      // laptop fine, buffering is downstream. Diagnostic for the
+      // "router/AP vs phone WiFi modem" question raised after capture
+      // 5vjj4e. Single integer; back-fills to 0 on the client read.
+      const sockWithBuffer = (client as unknown as { socket?: { bufferedAmount?: number } }).socket;
+      snap.wsBufferedAmountBytes = sockWithBuffer?.bufferedAmount ?? 0;
       client.send('snapshot', snap as SnapshotMessage);
       anySnapshotSent = true;
     }

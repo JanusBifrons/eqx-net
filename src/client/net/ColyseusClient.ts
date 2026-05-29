@@ -51,6 +51,7 @@ import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled } from '
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
+import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
@@ -843,6 +844,10 @@ export class ColyseusGameClient {
     // client-receive gaps with the server emitting cleanly throughout).
     // Idempotent; safe to call again on reconnect.
     installLongtaskObserver();
+    // r2 evidence pass — visibility / freeze / resume / connection
+    // change listeners. Distinguishes "page backgrounded" throttle
+    // from "phone CPU throttle" in effectiveHz drops.
+    installPageLifecycleObserver();
     // Paradigm plan (quirky-rabbit) Phase 6 — kick the rolling-30 s
     // health-stats publisher. Idempotent at the function-level: the
     // setInterval is set per call, but every connect() call is in fact
@@ -991,6 +996,7 @@ export class ColyseusGameClient {
       // constant delta isolates **server-side silence**. Optional field
       // (server may be pre-r2 build) — back-fills as null in the log.
       const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
+      const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes;
       logEvent('snapshot_received', {
         serverTick: snap.serverTick,
         recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
@@ -998,6 +1004,7 @@ export class ColyseusGameClient {
           ? Math.round(serverSendPerfNow * 100) / 100
           : null,
         clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
+        wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
       });
       // Probe 5 — flag large receive gaps (>200 ms = ≥4 missed
       // 20 Hz cadence ticks) with heap context. The y0eo1h capture
@@ -1022,6 +1029,9 @@ export class ColyseusGameClient {
             : null,
           clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
           serverToClientDeltaMs,
+          // r2 — non-zero amount means laptop's WS layer is the one queueing;
+          // zero means buffering is downstream (router/AP/phone WiFi).
+          wsBufferedAmountBytes: typeof wsBufferedAmountBytes === 'number' ? wsBufferedAmountBytes : null,
         });
       }
 
