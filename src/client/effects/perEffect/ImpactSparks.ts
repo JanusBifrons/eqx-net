@@ -36,6 +36,11 @@ export interface ImpactFactories {
 
 interface SparkParticle {
   gfx: PixiGraphics;
+  /** Tint baked into `gfx` — used to route the record back to the
+   *  right free-pool on death. Pixi v8 Graphics fill is finalised at
+   *  build time; cheaper to keep tint-segregated pools (matches the
+   *  EngineEmitter pattern). */
+  tint: number;
   vx: number;
   vy: number;
   lifeS: number;
@@ -54,6 +59,17 @@ const QUALITY_DIAL: Record<EffectQuality, number | null> = {
 
 export class ImpactSparks {
   private readonly active: SparkParticle[] = [];
+  /** Free-pool of SparkParticle records (plan: lazy-mochi P3, 2026-05-29).
+   *  When a spark dies we push its record + the underlying Graphics
+   *  onto this stack instead of destroying; the next spawn pops a
+   *  record (already detached from the parent container) and resets
+   *  its mutable fields in place. Eliminates the per-hit
+   *  `factories.makeSpark()` + `{...}` literal that dominated client
+   *  allocation in combat (24 sparks per hit × every hit). Tint is
+   *  fixed per Graphics so pools are tint-keyed (two distinct tints
+   *  in practice: shield-hit cyan + hull-hit orange). Mirrors
+   *  EngineEmitter's freeByTint pool. */
+  private readonly freeByTint = new Map<number, SparkParticle[]>();
 
   constructor(
     private readonly parent: Container,
@@ -87,8 +103,13 @@ export class ImpactSparks {
       p.lifeS -= dtSec;
       if (p.lifeS <= 0) {
         this.parent.removeChild(p.gfx);
-        p.gfx.destroy();
+        // plan: lazy-mochi — return the record + Graphics to the free
+        // pool instead of destroying so the next burst can reuse. The
+        // Graphics fill/geometry are baked at construction and stay
+        // valid; only mutable state (pos / alpha / scale / vx / vy /
+        // lifeS) is reset on re-spawn.
         this.active.splice(i, 1);
+        this.releaseToFree(p);
         continue;
       }
       p.gfx.x += p.vx * dtSec;
@@ -106,12 +127,20 @@ export class ImpactSparks {
     return this.active.length;
   }
 
+  /** Wipe everything on sector handoff. Destroys both live and pooled
+   *  Graphics — a sector swap is the right time to release the GPU
+   *  buffers; the destination sector will warm a fresh pool. Mirrors
+   *  EngineEmitter.resetForSectorHandoff. */
   resetForSectorHandoff(): void {
     for (const p of this.active) {
       this.parent.removeChild(p.gfx);
       p.gfx.destroy();
     }
     this.active.length = 0;
+    for (const pool of this.freeByTint.values()) {
+      for (const p of pool) p.gfx.destroy();
+    }
+    this.freeByTint.clear();
   }
 
   // ── Private ──────────────────────────────────────────────────────────
@@ -121,17 +150,52 @@ export class ImpactSparks {
       const oldest = this.active.shift();
       if (oldest) {
         this.parent.removeChild(oldest.gfx);
-        oldest.gfx.destroy();
+        this.releaseToFree(oldest);
       }
     }
-    const gfx = this.factories.makeSpark(tint);
-    gfx.x = x;
-    gfx.y = -y; // CLAUDE.md Y-flip
     const angle = Math.random() * Math.PI * 2;
     const speed = 120 + Math.random() * 80; // sparks are fast
     const vx = Math.cos(angle) * speed;
     const vy = Math.sin(angle) * speed;
-    this.parent.addChild(gfx);
-    this.active.push({ gfx, vx, vy, lifeS: lifetimeS, initialLifeS: lifetimeS });
+
+    // Pool path (plan: lazy-mochi): pop a free record + Graphics if one
+    // exists for this tint, reset its mutable fields. Otherwise allocate
+    // (only happens until the pool is saturated). Invariant #14.
+    let p = this.acquireFromFree(tint);
+    if (!p) {
+      p = {
+        gfx: this.factories.makeSpark(tint),
+        tint,
+        vx, vy,
+        lifeS: lifetimeS,
+        initialLifeS: lifetimeS,
+      };
+    } else {
+      p.vx = vx;
+      p.vy = vy;
+      p.lifeS = lifetimeS;
+      p.initialLifeS = lifetimeS;
+    }
+    p.gfx.x = x;
+    p.gfx.y = -y; // CLAUDE.md Y-flip
+    p.gfx.alpha = 1;
+    p.gfx.scale.set(1, 1);
+    this.parent.addChild(p.gfx);
+    this.active.push(p);
+  }
+
+  private acquireFromFree(tint: number): SparkParticle | null {
+    const pool = this.freeByTint.get(tint);
+    if (!pool || pool.length === 0) return null;
+    return pool.pop()!;
+  }
+
+  private releaseToFree(p: SparkParticle): void {
+    let pool = this.freeByTint.get(p.tint);
+    if (!pool) {
+      pool = [];
+      this.freeByTint.set(p.tint, pool);
+    }
+    pool.push(p);
   }
 }
