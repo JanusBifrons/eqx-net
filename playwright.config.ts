@@ -66,6 +66,7 @@ const FEATURE_SPECS: string[] = [
   '**/heap-growth-gate.spec.ts',
   '**/combat-heap-growth.spec.ts',
   '**/combat-allocation-profile.spec.ts',
+  '**/combat-allocation-profile-hostile.spec.ts',
   '**/drawer-galaxy-map-open-close.spec.ts',
   '**/drawer-galaxy-overview-spawn.spec.ts',
   '**/drone-destruction.spec.ts',

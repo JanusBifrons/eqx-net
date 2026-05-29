@@ -124,6 +124,12 @@ export function buildJoinSpec(
     extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
   if (urlParams.has('initialShield'))
     extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+  // plan: imperative-taco — `?startHostile=1` pre-marks every drone
+  // hostile to the joining player at spawn, so a CDP allocation profile
+  // hits steady-state combat without an IDLE→COMBAT warmup tail.
+  // testMode-gated server-side; harmless on galaxy rooms.
+  if (urlParams.has('startHostile'))
+    extraJoinOptions['startHostile'] = urlParams.get('startHostile') === '1';
   if (urlParams.has('injectLeak'))
     extraJoinOptions['injectLeak'] = parseInt(urlParams.get('injectLeak')!, 10);
   if (urlParams.has('initialAngle'))

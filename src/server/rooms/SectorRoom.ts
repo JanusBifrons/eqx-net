@@ -178,6 +178,13 @@ const JoinOptionsSchema = z
      *  reusing the most-recent roster row, which would mean clicking a
      *  fresh sector silently resumed the player's old ship. */
     isNewShip: z.boolean().optional(),
+    /** Test-only: pre-mark every drone in this sector hostile to the
+     *  joining player at spawn time. Lets a 20-25 s CDP allocation
+     *  profile (or any combat-shaped E2E) measure steady-state combat
+     *  without the IDLE→COMBAT transition tail polluting the window.
+     *  testMode-gated; ignored on galaxy rooms so a malicious client
+     *  can't force-aggro a live sector. plan: imperative-taco. */
+    startHostile: z.boolean().optional(),
   })
   .passthrough();
 
@@ -2250,6 +2257,26 @@ export class SectorRoom extends Room<SectorState> {
       // invariant at the top of `SectorState.ts`).
     }
     ship.shieldLastDamageTick = this.serverTick;
+
+    // plan: imperative-taco — pre-mark every drone hostile to this player
+    // so a CDP allocation profile (combat-allocation-profile-hostile.spec.ts)
+    // measures steady-state combat instead of the IDLE→COMBAT transition.
+    // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
+    // `aiController.markHostile` + `bot_aggro` broadcast so the client's
+    // hostility ledger stays in lockstep. testMode-gated for safety.
+    if (this.testMode && parsed.success && parsed.data.startHostile === true) {
+      const tick = this.serverTick;
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind !== 1) continue; // drones only — asteroids stay inert
+        this.aiController.markHostile(rec.id, playerId, tick);
+        this.broadcast('bot_aggro', {
+          type: 'bot_aggro',
+          botEntityId: `swarm-${rec.entityId}`,
+          targetPlayerId: playerId,
+          tick,
+        });
+      }
+    }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
