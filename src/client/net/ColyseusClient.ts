@@ -1105,8 +1105,15 @@ export class ColyseusGameClient {
     // Paradigm plan (quirky-rabbit) Phase 6 — server `gc_pause` events
     // feed the rolling 30 s health stats ring; the publisher pushes
     // the aggregate to Zustand at 1 Hz for the DevOverlay.
+    //
+    // plan: imperative-taco-r2 — also log to client diag so phone-smoke
+    // captures can correlate server gc_pause events with client
+    // recv_gap_long events. Without this, the phone capture saw 6
+    // recv_gap_long events with ZERO local longtask overlap and we
+    // had no direct evidence of the server-side root cause.
     room.onMessage('gc_pause', (evt: GcPauseEventMessage) => {
       recordServerGcPause(evt.durationMs);
+      logEvent('gc_pause', { durationMs: evt.durationMs, kind: evt.kind });
     });
     room.onMessage('destroy', (evt: DestroyEvent) => {
       this.handleDestroy(evt);
