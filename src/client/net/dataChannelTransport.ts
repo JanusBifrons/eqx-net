@@ -66,7 +66,20 @@ export class DataChannelSnapshotReceiver {
       return;
     }
     const snap = decoded as SnapshotMessage;
-    if (snap.serverTick <= this._lastSeenServerTick) {
+    // Phase 4 swift-otter — strict `<` (was `<=`). The main thread can
+    // broadcast 0 ticks of physics when the worker SAB tick hasn't
+    // advanced since the last `update()` (root CLAUDE.md acknowledges
+    // the 60 Hz / 60 Hz drift). Those duplicate-tick frames are
+    // semantically equivalent (the worker hasn't moved any entity) and
+    // the WS path harmlessly re-applies them as idempotent state. The
+    // pre-Phase-4 `<=` guard was treating these as duplicates to drop
+    // (50-150 ms of warmup `snap_dropped_old` per session under load),
+    // which made the Phase 4 measurement look like the DC was dropping
+    // 30 % of snapshots when really the broadcaster was sending them
+    // redundantly and the receiver was over-eager. The `<` guard still
+    // catches genuinely OLD snapshots (the case for `ordered: false`
+    // unreliable mode); it accepts equal ticks as harmless re-applies.
+    if (snap.serverTick < this._lastSeenServerTick) {
       this._opts.onDiag?.('snap_dropped_old', {
         serverTick: snap.serverTick,
         lastSeenServerTick: this._lastSeenServerTick,

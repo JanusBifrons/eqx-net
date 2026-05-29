@@ -4115,6 +4115,22 @@ export class ColyseusGameClient {
     useUIStore.getState().setDead(false);
     this.keyboard = null;
     this.touchInput = null;
+    // Phase 4 swift-otter — close the DC transport BEFORE the room leave
+    // so the PeerConnection's signaling channel is shut down before the
+    // WS closes. In React 18 StrictMode dev mode the useEffect cleanup
+    // → re-mount cycle was creating two ColyseusClients per page load,
+    // each with its own DataChannelTransport / PeerConnection. The
+    // first instance's PC stayed open (the original dispose() didn't
+    // touch it) and continued receiving the brief window of snapshots
+    // that landed between its DC opening and the WS-level room.leave()
+    // taking effect on the server — those snapshots logged with via=dc
+    // alongside the second instance's, and any tick races between the
+    // two receivers' `_lastSeenServerTick` produced `snap_dropped_old`
+    // events the test surfaced as the integration bug.
+    if (this._dataChannelTransport) {
+      this._dataChannelTransport.close('client-dispose');
+      this._dataChannelTransport = null;
+    }
     this.room?.leave();
     this.room = null;
     this.predWorld?.dispose();

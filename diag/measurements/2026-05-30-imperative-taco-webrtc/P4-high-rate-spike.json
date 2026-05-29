@@ -1,0 +1,39 @@
+{
+  "reliable": {
+    "startedAt": "2026-05-29T20:34:35.315Z",
+    "config": {
+      "sendRateHz": 20,
+      "durationMs": 10000,
+      "expectedMessages": 200,
+      "ordered": true,
+      "maxRetransmits": null,
+      "snapBytes": 869
+    },
+    "serverSentTotal": 200,
+    "serverSendReturnedFalse": 0,
+    "serverSendThrew": 0,
+    "serverMaxBufferedAmount": 0,
+    "clientReceivedTotal": 200,
+    "lossPct": 0,
+    "notes": "OK — wire delivers"
+  },
+  "unreliable": {
+    "startedAt": "2026-05-29T20:34:47.719Z",
+    "config": {
+      "sendRateHz": 20,
+      "durationMs": 10000,
+      "expectedMessages": 200,
+      "ordered": false,
+      "maxRetransmits": 0,
+      "snapBytes": 869
+    },
+    "serverSentTotal": 200,
+    "serverSendReturnedFalse": 0,
+    "serverSendThrew": 0,
+    "serverMaxBufferedAmount": 0,
+    "clientReceivedTotal": 200,
+    "lossPct": 0,
+    "notes": "OK — wire delivers"
+  },
+  "diagnosis": "WIRE OK — loss in Phase 4 must be in our integration (SectorRoom / SnapshotBroadcaster / routing / decode pipeline)."
+}

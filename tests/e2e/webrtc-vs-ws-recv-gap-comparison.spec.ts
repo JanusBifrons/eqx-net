@@ -78,12 +78,20 @@ async function runOneBurst(
 
   const gaps = await readDiagSince(page, start, 'recv_gap_long');
   const snapshots = await readDiagSince(page, start, 'snapshot_received');
+  const dropOld = await readDiagSince(page, start, 'snap_dropped_old');
+  const dropDecode = await readDiagSince(page, start, 'snap_dropped_decode');
+  const dropShape = await readDiagSince(page, start, 'snap_dropped_shape');
   // `webrtc_connected` may fire BEFORE the burst window starts (during
   // warmup) — read across the whole session.
   const connected = await page.evaluate(() => {
     const logs = (window as unknown as { __eqxLogs?: { tag: string }[] }).__eqxLogs ?? [];
     return logs.some((e) => e.tag === 'webrtc_connected');
   });
+  // Server-side snap_route events fire once per (recipient, broadcast).
+  // We log them via serverLogEvent — they appear in the WebServer stdout
+  // captured by Playwright but NOT in __eqxLogs (server side, not client).
+  // Read directly from snapshots delivered — distinguish what arrived at
+  // the wire from what was logged after validation.
 
   return {
     recvGapLong: gaps.length,
@@ -91,6 +99,9 @@ async function runOneBurst(
     recvGapLongWs: gaps.filter((e) => e.data['via'] === 'ws').length,
     snapshotsDc: snapshots.filter((e) => e.data['via'] === 'dc').length,
     snapshotsWs: snapshots.filter((e) => e.data['via'] === 'ws').length,
+    snapDroppedOld: dropOld.length,
+    snapDroppedDecode: dropDecode.length,
+    snapDroppedShape: dropShape.length,
     webrtcConnected: connected,
   };
 }
@@ -182,6 +193,7 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         `[dc rep ${i}] recv_gap_long=${result.recvGapLong} ` +
         `(ws=${result.recvGapLongWs} dc=${result.recvGapLongDc}) ` +
         `snaps_dc=${result.snapshotsDc} snaps_ws=${result.snapshotsWs} ` +
+        `drop_old=${result.snapDroppedOld} drop_dec=${result.snapDroppedDecode} drop_shape=${result.snapDroppedShape} ` +
         `dc_frac=${dcFrac.toFixed(3)} dc_connected=${result.webrtcConnected}`,
       );
     } finally {

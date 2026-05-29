@@ -67,13 +67,30 @@ describe('DataChannelSnapshotReceiver', () => {
     expect((dropCalls[0]![1] as { serverTick: number }).serverTick).toBe(11);
   });
 
-  it('drops duplicate serverTick (10, 10)', () => {
+  it('accepts duplicate serverTick (10, 10) — Phase 4 swift-otter strict-less-than guard', () => {
+    // Worker SAB tick can stall while the main thread broadcasts at
+    // 60 Hz, producing duplicate-tick frames that are semantically
+    // idempotent. The receiver passes them through; the apply pipeline
+    // is the same idempotent state-set the WS path runs.
     const onSnapshot = vi.fn();
     const onDiag = vi.fn();
     const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
 
     receiver.handleBinary(packSnap(10));
     receiver.handleBinary(packSnap(10));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    const dropCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+    expect(dropCalls.length).toBe(0);
+  });
+
+  it('still drops a strictly-older serverTick (10, then 9)', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    receiver.handleBinary(packSnap(10));
+    receiver.handleBinary(packSnap(9));
 
     expect(onSnapshot).toHaveBeenCalledTimes(1);
     const dropCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
