@@ -58,6 +58,12 @@ import { RespawnHandler } from './RespawnHandler.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
+import { WebRtcChannelManager } from '../transport/webrtcChannel.js';
+import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
+import {
+  WebRtcOfferMessageSchema,
+  WebRtcIceMessageSchema,
+} from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
@@ -332,6 +338,16 @@ export class SectorRoom extends Room<SectorState> {
   private get interestScratch(): Map<string, Set<number>> { return this.snapshotBroadcaster.interestScratch; }
   /** Per-client snapshot broadcaster. Extracted to `SnapshotBroadcaster.ts`. */
   private snapshotBroadcaster!: SnapshotBroadcaster;
+  /**
+   * Phase 1 of swift-otter — per-room WebRTC DataChannel transport. Owns
+   * one PeerConnection per sessionId. Snapshot routing is wired through
+   * `SnapshotBroadcaster.sendSnapshot` to call `webrtcChannelManager
+   * .sendSnapshot(sessionId, snap, () => client.send('snapshot', snap))`.
+   *
+   * Null on engineering rooms (`sectorKey === null`) — those rooms are
+   * test fixtures and don't need the additional native-binding init cost.
+   */
+  private webrtcChannelManager: WebRtcChannelManager | null = null;
   /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
   private swarmBroadcaster!: SwarmBroadcaster;
   /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
@@ -939,6 +955,35 @@ export class SectorRoom extends Room<SectorState> {
       serverLogEvent,
     });
 
+    // Phase 1 swift-otter — instantiate the per-room WebRTC channel
+    // manager BEFORE the SnapshotBroadcaster so the manager reference
+    // can be captured into the sendSnapshot DI seam below. Engineering
+    // rooms (sectorKey === null) skip the native binding entirely; they
+    // never see real clients and the test harness exercises the WS path
+    // directly. The peerConnectionFactory `require`s node-datachannel
+    // lazily, so unit tests of subsystems that don't go through this
+    // path still don't pay the native-binding load cost.
+    if (this.sectorKey !== null) {
+      this.webrtcChannelManager = new WebRtcChannelManager({
+        peerConnectionFactory: nodeDataChannelPeerConnectionFactory({
+          // STUN URL defaults to Google's freebie — works LAN + open
+          // internet without TURN. TURN deployment for NAT-restricted
+          // clients is scoped as a separate plan (hostile review #14).
+          iceServers: ['stun:stun.l.google.com:19302'],
+        }),
+        sendAnswer: (sessionId, sdp) => {
+          const client = this.clients.find((c) => c.sessionId === sessionId);
+          if (client) client.send('webrtc_answer', { type: 'webrtc_answer', sdp });
+        },
+        sendCandidate: (sessionId, candidate, mid) => {
+          const client = this.clients.find((c) => c.sessionId === sessionId);
+          if (client) client.send('webrtc_ice', { type: 'webrtc_ice', candidate, mid });
+        },
+        serverLogEvent,
+        logger,
+      });
+    }
+
     // Per-client snapshot broadcaster. Owns broadcastCounter,
     // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
     // per-client 20Hz phase-staggered loop with the global "all alive
@@ -964,6 +1009,21 @@ export class SectorRoom extends Room<SectorState> {
       missileSim: this.missileSim,
       logger,
       serverLogEvent,
+      // Phase 1 swift-otter DI seam — when the WebRtc manager is live
+      // (galaxy rooms), route via DC with WS fallback; on engineering
+      // rooms the seam stays undefined and the legacy WS-only path runs.
+      sendSnapshot: this.webrtcChannelManager
+        ? (client, snap) => {
+            // The manager owns the routing decision (sendable + degraded
+            // + buffered + try/catch). `onFallback` is the WS path; the
+            // manager invokes it synchronously when DC is unavailable.
+            this.webrtcChannelManager!.sendSnapshot(
+              client.sessionId,
+              snap,
+              () => { client.send('snapshot', snap); },
+            );
+          }
+        : undefined,
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -1303,6 +1363,35 @@ export class SectorRoom extends Room<SectorState> {
 
     this.onMessage('respawn', (client: Client) => {
       this.handleRespawn(client);
+    });
+
+    // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
+    //
+    // Client is the offerer; server is the answerer. Drop silently on
+    // schema failure per the validation contract — sampled warn so a
+    // malicious client can't flood the log. The manager handles
+    // out-of-order ICE (counts iceDroppedBeforeOffer if a candidate
+    // arrives before the offer).
+    this.onMessage('webrtc_offer', (client: Client, raw: unknown) => {
+      const parsed = WebRtcOfferMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_offer');
+        return;
+      }
+      this.webrtcChannelManager?.handleOffer(client.sessionId, parsed.data.sdp);
+    });
+
+    this.onMessage('webrtc_ice', (client: Client, raw: unknown) => {
+      const parsed = WebRtcIceMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_ice');
+        return;
+      }
+      this.webrtcChannelManager?.handleIce(
+        client.sessionId,
+        parsed.data.candidate,
+        parsed.data.mid,
+      );
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {
@@ -2374,6 +2463,13 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onLeave(client: Client, consented: boolean): void {
+    // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
+    // running the existing leave handler. The leaveHandler does the
+    // player-state cleanup (lingering / transit / despawn); the DC
+    // teardown is independent and must happen even on lingering paths
+    // (no point holding a PeerConnection alive against a disconnected
+    // session). Idempotent: cleanup() is a no-op when no entry exists.
+    this.webrtcChannelManager?.cleanup(client.sessionId);
     this.leaveHandler.handle(client, consented);
   }
 
@@ -2500,6 +2596,10 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null) {
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
+    // Phase 1 swift-otter — close every PeerConnection so the libdatachannel
+    // worker threads exit cleanly before the process / room teardown.
+    this.webrtcChannelManager?.cleanupAll();
+    this.webrtcChannelManager = null;
     this.physicsWorkerProxy?.terminate();
     logger.info({ sectorKey: this.sectorKey }, 'SectorRoom disposed');
   }
@@ -2718,6 +2818,14 @@ export class SectorRoom extends Room<SectorState> {
     // purely main-thread and so is monotonic with update() calls.
     this.snapshotBroadcaster.broadcast(sectorIdle);
     phaseTime('snapshotBroadcast');
+
+    // Phase 1 swift-otter — once per second, expire any WebRTC sessions
+    // whose ICE deadline has elapsed without `onConnected`. Gated to
+    // 1 Hz because the call iterates a (small) Map and the deadline is
+    // 5 s anyway. broadcastCounter is the 60 Hz main-thread monotonic.
+    if (this.webrtcChannelManager !== null && this.broadcastCounter % 60 === 0) {
+      this.webrtcChannelManager.expireStale();
+    }
 
     // Tick AI AT THE END of update() so posted impulses reach the
     // worker BEFORE the next SAB read. See aiTickRunner.ts.

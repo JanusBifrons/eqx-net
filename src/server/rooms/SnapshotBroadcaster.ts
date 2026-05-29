@@ -103,6 +103,19 @@ export interface SnapshotBroadcasterDeps {
   missileSim: MissileBroadcasterView;
   logger: Logger;
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
+  /**
+   * Phase 1 of the swift-otter WebRTC plan — DI seam for per-recipient
+   * snapshot delivery. When absent, the broadcaster falls back to the
+   * legacy `client.send('snapshot', snap)` path. SectorRoom wires this
+   * to `WebRtcChannelManager.sendSnapshot(...)` with WS fallback baked
+   * in, so the broadcaster never has to know whether a given client is
+   * on DataChannel or WebSocket.
+   *
+   * Hot-path contract: callback MUST NOT throw into the loop. The
+   * broadcaster wraps each call in try/catch as a belt-and-braces
+   * guard, but degraded routing is the manager's job.
+   */
+  sendSnapshot?: (client: Client, snap: SnapshotMessage) => void;
 }
 
 interface AllShipEntry {
@@ -252,7 +265,20 @@ export class SnapshotBroadcaster {
   private readonly _boostingIdsScratch: string[] = [];
   private readonly _thrustingIdsScratch: string[] = [];
 
-  constructor(private readonly deps: SnapshotBroadcasterDeps) {}
+  /**
+   * Pre-bound per-recipient send. Phase 1 of swift-otter: SectorRoom
+   * supplies a WebRtcChannelManager-backed implementation; absence of
+   * the dep keeps the pre-Phase-1 `client.send('snapshot', snap)` path.
+   * Hoisted to a class field so the per-recipient hot loop pays for one
+   * function-call indirection, not a per-tick `??` allocation check.
+   */
+  private readonly _sendSnapshotFn: (client: Client, snap: SnapshotMessage) => void;
+
+  constructor(private readonly deps: SnapshotBroadcasterDeps) {
+    this._sendSnapshotFn =
+      deps.sendSnapshot ??
+      ((client, snap) => { client.send('snapshot', snap); });
+  }
 
   // ── Slot-reuse helpers for the per-recipient pools (Phase 5d).
 
@@ -641,7 +667,20 @@ export class SnapshotBroadcaster {
       // 5vjj4e. Single integer; back-fills to 0 on the client read.
       const sockWithBuffer = (client as unknown as { socket?: { bufferedAmount?: number } }).socket;
       snap.wsBufferedAmountBytes = sockWithBuffer?.bufferedAmount ?? 0;
-      client.send('snapshot', snap as SnapshotMessage);
+      // Phase 1 swift-otter routing seam — _sendSnapshotFn is either the
+      // legacy WS-send default or a WebRtcChannelManager-backed router
+      // wired in by SectorRoom. Try/catch is a belt-and-braces guard so
+      // an exception inside the routing decision (e.g. a malformed PC
+      // closing mid-broadcast) doesn't crash the per-tick loop and skip
+      // every subsequent recipient.
+      try {
+        this._sendSnapshotFn(client, snap as SnapshotMessage);
+      } catch (err) {
+        d.serverLogEvent('snapshot_send_error', {
+          sessionId: client.sessionId,
+          error: (err as Error).message,
+        });
+      }
       anySnapshotSent = true;
     }
 
