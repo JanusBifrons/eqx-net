@@ -34,6 +34,15 @@ export class RafStallDetector {
   private swarmDecodeCount = 0;
   private lastRafStallAtMs = -1;
   private lastRafStallHeapMb = -1;
+  // plan: imperative-taco-r2 — RAF-rate window tracker. Per `detectGap`
+  // call (= once per RAF) we accumulate count + total elapsed; on
+  // sampleHeapIfDue we emit `effectiveHz` over the window. This is the
+  // direct evidence for whether a CPU/GPU is throttling under sustained
+  // load: a phone that reports "90 Hz native" but is delivering 22 Hz
+  // for the past second is throttled (whether thermal or display power).
+  private rafCountSinceSample = 0;
+  private rafElapsedTotalMsSinceSample = 0;
+  private rafElapsedMaxMsSinceSample = 0;
 
   recordSwarmDecode(decodeMs: number): void {
     this.swarmDecodeTotalMs += decodeMs;
@@ -45,6 +54,12 @@ export class RafStallDetector {
    * Run every RAF. Emits `heap_sample` at ~10 Hz (every 6th call)
    * with the rolling swarm-decode window since the last sample, then
    * resets the window so the next sample reports cost-since-last.
+   *
+   * plan: imperative-taco-r2 — also reports the effective RAF rate over
+   * the window (so throttling is directly visible) and re-samples
+   * `navigator.connection.rtt` / `downlink` / `effectiveType` (so
+   * network-condition changes during the session are visible — the
+   * existing `device_info` event captures these ONCE at boot).
    */
   sampleHeapIfDue(): void {
     this.rafSampleCounter++;
@@ -52,6 +67,17 @@ export class RafStallDetector {
     this.rafSampleCounter = 0;
     const heap = readHeapUsedMb();
     if (heap === undefined) return;
+    // r2 — effective RAF rate over the window. 1000 / (avg interval ms)
+    // gives the realized Hz. A 90 Hz phone in steady state reports ~90;
+    // a thermally-throttled phone delivering 22 Hz reports ~22.
+    const effectiveHz = this.rafElapsedTotalMsSinceSample > 0
+      ? Math.round((this.rafCountSinceSample * 1000) / this.rafElapsedTotalMsSinceSample * 10) / 10
+      : null;
+    const meanRafIntervalMs = this.rafCountSinceSample > 0
+      ? Math.round((this.rafElapsedTotalMsSinceSample / this.rafCountSinceSample) * 100) / 100
+      : null;
+    // r2 — re-sample network condition each tick. cheap (browser caches it).
+    const connection = (navigator as { connection?: { rtt?: number; downlink?: number; effectiveType?: string } }).connection;
     logEvent('heap_sample', {
       heapUsedMb: parseFloat(heap.toFixed(2)),
       swarmDecodeMaxMs: this.swarmDecodeMaxMs > 0
@@ -61,17 +87,38 @@ export class RafStallDetector {
         ? parseFloat((this.swarmDecodeTotalMs / this.swarmDecodeCount).toFixed(2))
         : undefined,
       swarmDecodeCount: this.swarmDecodeCount,
+      effectiveHz,
+      meanRafIntervalMs,
+      maxRafIntervalMs: this.rafElapsedMaxMsSinceSample > 0
+        ? parseFloat(this.rafElapsedMaxMsSinceSample.toFixed(2))
+        : null,
+      rafCount: this.rafCountSinceSample,
+      connRtt: typeof connection?.rtt === 'number' ? connection.rtt : null,
+      connDownlink: typeof connection?.downlink === 'number' ? connection.downlink : null,
+      connEffectiveType: connection?.effectiveType ?? null,
     });
     this.swarmDecodeMaxMs = 0;
     this.swarmDecodeTotalMs = 0;
     this.swarmDecodeCount = 0;
+    this.rafCountSinceSample = 0;
+    this.rafElapsedTotalMsSinceSample = 0;
+    this.rafElapsedMaxMsSinceSample = 0;
   }
 
   /**
    * Inspect the just-observed RAF gap. Emits `raf_stutter` for 30-100 ms
    * intervals; `raf_gap` for > 100 ms with heap + delta-since-last-stall.
+   *
+   * plan: imperative-taco-r2 — also accumulates count + elapsed total so
+   * `sampleHeapIfDue` can compute effective RAF rate over the window.
    */
   detectGap(elapsedMs: number, inputTickBefore: number, nowMs: number): void {
+    // r2 — accumulate window stats every RAF.
+    this.rafCountSinceSample += 1;
+    this.rafElapsedTotalMsSinceSample += elapsedMs;
+    if (elapsedMs > this.rafElapsedMaxMsSinceSample) {
+      this.rafElapsedMaxMsSinceSample = elapsedMs;
+    }
     if (elapsedMs > 30 && elapsedMs <= 100) {
       logEvent('raf_stutter', {
         elapsedMs: Math.round(elapsedMs * 100) / 100,

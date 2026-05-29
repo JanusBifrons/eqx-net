@@ -23,6 +23,23 @@ export interface WelcomeMessage {
 export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
+  /** Server-side `performance.now()` at the moment `client.send('snapshot', ...)`
+   *  is called. Client logs this alongside its own `performance.now()` at recv
+   *  time so we can directly compute:
+   *
+   *    networkInTransitMs = clientRecvPerfNow - serverSendPerfNow - clockSkewMs
+   *
+   *  where `clockSkewMs` is constant per session (uncalibrated but stable).
+   *  During a `recv_gap_long` window the right diagnostic question is whether
+   *  the gap is **network in-transit** (server kept sending, packets were held
+   *  somewhere — WiFi, TCP buffer, OS) or **server side** (server didn't send
+   *  for the duration of the gap, then resumed). A burst of post-gap packets
+   *  with monotonically-decreasing latencies is network buffering; a single
+   *  packet with constant latency after the gap is server-side silence.
+   *
+   *  plan: imperative-taco-r2 §evidence-instrumentation. Optional for back-
+   *  compat (back-fills to 0 on the client's read path). */
+  serverSendPerfNow?: number;
   /** Authoritative ship states at the time the snapshot was taken.
    *
    *  **Phase 6a: outer key is `shipInstanceId`** (was `playerId` pre-6a).

@@ -984,9 +984,20 @@ export class ColyseusGameClient {
         ? recvAtMs - this._lastSnapshotRecvAtMs
         : -1;
       this._lastSnapshotRecvAtMs = recvAtMs;
+      // plan: imperative-taco-r2 — server-send timestamp lets us compute
+      // (recvAtMs - serverSendPerfNow) which is constant for a given
+      // session up to clock skew. Spikes in this delta during a
+      // recv_gap_long event isolate **network in-transit delay**;
+      // constant delta isolates **server-side silence**. Optional field
+      // (server may be pre-r2 build) — back-fills as null in the log.
+      const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
       logEvent('snapshot_received', {
         serverTick: snap.serverTick,
         recvGapMs: recvGapMs >= 0 ? Math.round(recvGapMs * 100) / 100 : -1,
+        serverSendPerfNow: typeof serverSendPerfNow === 'number'
+          ? Math.round(serverSendPerfNow * 100) / 100
+          : null,
+        clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
       });
       // Probe 5 — flag large receive gaps (>200 ms = ≥4 missed
       // 20 Hz cadence ticks) with heap context. The y0eo1h capture
@@ -995,11 +1006,22 @@ export class ColyseusGameClient {
       // thread blocks (snapshots queue, then fire onMessage in burst).
       // Heap dump alongside lets us correlate with GC pauses. Rare
       // event (~0.5 % of snapshots) — negligible diag-stream volume.
+      //
+      // r2 addition: include server-send time + delta-to-recv so
+      // network-vs-server is directly readable at the gap site.
       if (recvGapMs > 200) {
         const heap = readHeapUsedMb();
+        const serverToClientDeltaMs = typeof serverSendPerfNow === 'number'
+          ? Math.round((recvAtMs - serverSendPerfNow) * 100) / 100
+          : null;
         logEvent('recv_gap_long', {
           recvGapMs: Math.round(recvGapMs * 100) / 100,
           heapUsedMb: heap !== undefined ? parseFloat(heap.toFixed(2)) : null,
+          serverSendPerfNow: typeof serverSendPerfNow === 'number'
+            ? Math.round(serverSendPerfNow * 100) / 100
+            : null,
+          clientRecvPerfNow: Math.round(recvAtMs * 100) / 100,
+          serverToClientDeltaMs,
         });
       }
 

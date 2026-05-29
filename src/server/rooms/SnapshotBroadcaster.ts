@@ -159,6 +159,7 @@ type MutableWreckEntry = {
 type MutableSnapshotMessage = {
   type: 'snapshot';
   serverTick: number;
+  serverSendPerfNow?: number;
   states: SnapshotMessage['states'];
   ackedTick: number;
   boostingIds?: string[];
@@ -623,6 +624,11 @@ export class SnapshotBroadcaster {
       snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
       snap.drones = dronesCount > 0 ? dronesScratch : undefined;
       snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
+      // plan: imperative-taco-r2 — stamp server-send time so the client
+      // can separate network in-transit delay from server-side silence
+      // during recv_gap_long events. `performance.now()` is a primitive
+      // number; notepack encodes it as 8 bytes. Zero per-tick alloc.
+      snap.serverSendPerfNow = performance.now();
       client.send('snapshot', snap as SnapshotMessage);
       anySnapshotSent = true;
     }
