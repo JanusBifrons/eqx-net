@@ -40,6 +40,28 @@ export const WebRtcIceMessageSchema = z
   })
   .strict();
 
+/**
+ * Client sends this when it has given up on the DataChannel handshake (5 s
+ * connect deadline elapsed without `dc-open`, ICE failed, etc.) and is
+ * declaring fallback to WebSocket. Server cleans up its entry + replies
+ * with `webrtc_fallback_ack` so the client knows the server has stopped
+ * trying to route through DC. Hostile review #9.
+ */
+export const WebRtcFallbackMessageSchema = z
+  .object({
+    type: z.literal('webrtc_fallback'),
+    reason: z.string().max(64).optional(),
+  })
+  .strict();
+
+export const WebRtcFallbackAckMessageSchema = z
+  .object({
+    type: z.literal('webrtc_fallback_ack'),
+  })
+  .strict();
+
 export type WebRtcOfferMessage = z.infer<typeof WebRtcOfferMessageSchema>;
 export type WebRtcAnswerMessage = z.infer<typeof WebRtcAnswerMessageSchema>;
 export type WebRtcIceMessage = z.infer<typeof WebRtcIceMessageSchema>;
+export type WebRtcFallbackMessage = z.infer<typeof WebRtcFallbackMessageSchema>;
+export type WebRtcFallbackAckMessage = z.infer<typeof WebRtcFallbackAckMessageSchema>;

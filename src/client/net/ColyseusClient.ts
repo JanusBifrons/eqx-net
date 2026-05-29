@@ -194,6 +194,19 @@ export class ColyseusGameClient {
       // Non-browser context — keep default.
     }
     this.snapshotCoalescer = new SnapshotCoalescer(coalesceParam !== '0');
+    // Phase 2 swift-otter — `?webrtc=1` opts the client into the
+    // WebRTC DataChannel snapshot transport. Default OFF in Phase 2;
+    // Phase 4 E2E evidence will determine whether to flip the default
+    // (see `plans/i-d-like-you-to-swift-otter.md`).
+    let webrtcParam: string | null = null;
+    try {
+      if (typeof window !== 'undefined' && window.location?.search) {
+        webrtcParam = new URLSearchParams(window.location.search).get('webrtc');
+      }
+    } catch {
+      // Non-browser context — keep default OFF.
+    }
+    this._webrtcEnabled = webrtcParam === '1';
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
@@ -626,6 +639,14 @@ export class ColyseusGameClient {
    *
    *  Default ON. URL override: `?coalesce=0` disables for A/B testing. */
   private readonly snapshotCoalescer: SnapshotCoalescer;
+  /** Phase 2 swift-otter — opt-in flag for the DataChannel transport.
+   *  URL `?webrtc=1` enables. Default OFF — Phase 4 E2E evidence is
+   *  required before flipping the default. */
+  private readonly _webrtcEnabled: boolean;
+  /** Phase 2 swift-otter — lifecycle-managed DC transport. Created in
+   *  the welcome handler when `_webrtcEnabled === true`, closed on
+   *  room leave / sector handoff. */
+  private _dataChannelTransport: import('./dataChannelTransport.js').DataChannelTransport | null = null;
 
   // Snapshot timing
   private lastSnapshotAt = 0;
@@ -812,6 +833,16 @@ export class ColyseusGameClient {
     // next physics tick post-transit re-stamps it.
     this._lastLocalTickAtMs = -1;
 
+    // Phase 2 swift-otter — close the DataChannel transport on sector
+    // handoff. The source room's PeerConnection is torn down; the
+    // destination room's welcome handler will start a fresh one when
+    // the `_webrtcEnabled` flag is set. Reset the reordering guard so
+    // the destination's serverTick is accepted.
+    if (this._dataChannelTransport) {
+      this._dataChannelTransport.close('sector-handoff');
+      this._dataChannelTransport = null;
+    }
+
     // Smooth-beam (2026-05-22): drop scheduled visual splits. The source
     // sector's prediction state is dead; any pending splits would spawn
     // damage numbers at coordinates from the source pose against the
@@ -974,6 +1005,51 @@ export class ColyseusGameClient {
       ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
+      // Phase 2 swift-otter — kick off the DC handshake after welcome.
+      // The transport's start() is idempotent so a stale call from a
+      // pre-welcome retry is safe.
+      if (this._webrtcEnabled && this._dataChannelTransport) {
+        void this._dataChannelTransport.start();
+      }
+    });
+
+    // Phase 2 swift-otter — instantiate the DataChannel transport before
+    // the welcome handler fires so the answer/ice handlers below can
+    // route into it cleanly. Construction is cheap (no RTCPeerConnection
+    // until start() is called) so it's safe to do unconditionally when
+    // the flag is set.
+    if (this._webrtcEnabled) {
+      void import('./dataChannelTransport.js').then(({ DataChannelTransport }) => {
+        this._dataChannelTransport = new DataChannelTransport({
+          send: (type, payload) => room.send(type, payload),
+          onSnapshot: (snap) => {
+            // Mirror the WS-path coalescer behaviour: queue when enabled,
+            // otherwise apply immediately. Both paths converge at
+            // applySnapshotNow → handleSnapshot.
+            if (this.snapshotCoalescer.isEnabled()) {
+              this.snapshotCoalescer.enqueue(snap);
+            } else {
+              this.applySnapshotNow(snap);
+            }
+          },
+          onDiag: (tag, data) => logEvent(tag, data),
+        });
+      }).catch((err) => {
+        logEvent('webrtc_module_import_error', { error: (err as Error).message });
+      });
+    }
+
+    room.onMessage('webrtc_answer', (msg: { sdp?: string }) => {
+      if (!this._dataChannelTransport || typeof msg?.sdp !== 'string') return;
+      void this._dataChannelTransport.handleAnswer(msg.sdp);
+    });
+    room.onMessage('webrtc_ice', (msg: { candidate?: string; mid?: string }) => {
+      if (!this._dataChannelTransport) return;
+      if (typeof msg?.candidate !== 'string') return;
+      void this._dataChannelTransport.handleIce(msg.candidate, msg.mid ?? '');
+    });
+    room.onMessage('webrtc_fallback_ack', () => {
+      this._dataChannelTransport?.handleFallbackAck();
     });
 
     room.onMessage('snapshot', (snap: SnapshotMessage) => {
@@ -1554,12 +1630,22 @@ export class ColyseusGameClient {
     room.onLeave((code) => {
       console.warn('[ColyseusClient] left room, code:', code);
       logEvent('disconnected', { code });
+      // Phase 2 swift-otter — close the DataChannel on every onLeave.
+      // Sector handoffs short-circuit below, so the transport teardown
+      // there is `resetPredictionState` (called by the transit-arrival
+      // path); this is the non-transit disconnect path.
+      const cur = useUIStore.getState();
+      if (cur.transitState !== 'IN_TRANSIT' && cur.transitState !== 'SPOOLING') {
+        if (this._dataChannelTransport) {
+          this._dataChannelTransport.close('room-leave');
+          this._dataChannelTransport = null;
+        }
+      }
       // During transit `consumeSeatReservation` we'll see an onLeave on the
       // source room as the WS is replaced. Don't flip status to disconnected
       // when a transit is mid-flight — the destination is already being
       // bound. The post-consume rebind sets connected status implicitly via
       // the new room's flow.
-      const cur = useUIStore.getState();
       if (cur.transitState === 'IN_TRANSIT' || cur.transitState === 'SPOOLING') return;
       callbacks.onConnectionStatus('disconnected');
       this.keyboard = null;

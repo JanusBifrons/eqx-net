@@ -63,6 +63,7 @@ import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannel
 import {
   WebRtcOfferMessageSchema,
   WebRtcIceMessageSchema,
+  WebRtcFallbackMessageSchema,
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { SectorPersistence } from './SectorPersistence.js';
@@ -1392,6 +1393,23 @@ export class SectorRoom extends Room<SectorState> {
         parsed.data.candidate,
         parsed.data.mid,
       );
+    });
+
+    // Hostile #9 — client declares fallback explicitly. We clean up the
+    // PC immediately (no waiting for ICE-deadline expiry) and ACK so the
+    // client knows it can stop sending signaling.
+    this.onMessage('webrtc_fallback', (client: Client, raw: unknown) => {
+      const parsed = WebRtcFallbackMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_fallback');
+        return;
+      }
+      serverLogEvent('webrtc_client_fallback', {
+        sessionId: client.sessionId,
+        reason: parsed.data.reason ?? 'unspecified',
+      });
+      this.webrtcChannelManager?.cleanup(client.sessionId);
+      client.send('webrtc_fallback_ack', { type: 'webrtc_fallback_ack' });
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {
