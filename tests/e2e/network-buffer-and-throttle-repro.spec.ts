@@ -25,7 +25,6 @@
  * cadence) is absent under the same injected conditions.
  */
 import { test, expect, chromium } from '@playwright/test';
-import type { CDPSession } from '@playwright/test';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 

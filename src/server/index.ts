@@ -158,6 +158,32 @@ if (process.env['NODE_ENV'] !== 'production') {
 
 const httpServer = createServer(app);
 
+// plan: imperative-taco-r2 webrtc, Phase -1 — explicit TCP_NODELAY belt-
+// and-braces. The `ws` library already calls `socket.setNoDelay()` on every
+// WebSocket connection (node_modules/ws/lib/websocket.js:242), so Nagle's
+// algorithm should be disabled by default. We re-apply at the TCP-level
+// `connection` event for two reasons:
+//   1. Guards against future `ws` version changes that drop the default.
+//   2. Logs that setNoDelay was applied so phone-smoke captures contain
+//      runtime confirmation. Node's `net.Socket` doesn't expose a read-
+//      back getter for the TCP_NODELAY state (only the `setNoDelay()`
+//      setter), so we record that the call succeeded — not the value.
+let _tcpNoDelayLoggedOnce = false;
+httpServer.on('connection', (socket) => {
+  try {
+    socket.setNoDelay(true);
+    if (!_tcpNoDelayLoggedOnce) {
+      _tcpNoDelayLoggedOnce = true;
+      logger.info(
+        { applied: true, kind: 'tcp_nodelay_first_connection' },
+        'TCP_NODELAY applied to first inbound connection',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, 'setNoDelay failed on inbound connection');
+  }
+});
+
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
 });
