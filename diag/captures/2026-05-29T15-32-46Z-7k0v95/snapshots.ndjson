@@ -5647,3 +5647,10 @@
 {"source":"client","ts":110354.29999998212,"tag":"snapshot_received","data":{"serverTick":8279,"recvGapMs":65.4}}
 {"source":"client","ts":110432.09999999404,"tag":"snapshot_received","data":{"serverTick":8282,"recvGapMs":77.7}}
 {"source":"client","ts":110490.40000000596,"tag":"snapshot_received","data":{"serverTick":8285,"recvGapMs":58.4}}
+{"source":"client","ts":113401.5,"tag":"snapshot_received","data":{"serverTick":8407,"recvGapMs":146.7}}
+{"source":"client","ts":113454.79999998212,"tag":"snapshot_received","data":{"serverTick":8410,"recvGapMs":53.2}}
+{"source":"client","ts":113515.90000000596,"tag":"snapshot_received","data":{"serverTick":8413,"recvGapMs":61.2}}
+{"source":"client","ts":113594.90000000596,"tag":"snapshot_received","data":{"serverTick":8417,"recvGapMs":79}}
+{"source":"client","ts":113734.19999998808,"tag":"snapshot_received","data":{"serverTick":8420,"recvGapMs":139.3}}
+{"source":"client","ts":113846,"tag":"snapshot_received","data":{"serverTick":8423,"recvGapMs":111.8}}
+{"source":"client","ts":113965.79999998212,"tag":"snapshot_received","data":{"serverTick":8426,"recvGapMs":119.7}}
