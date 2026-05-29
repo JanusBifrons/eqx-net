@@ -24,10 +24,21 @@
 
 import { consumeOneFrameTriggers } from '../render/perFrameTriggers.js';
 import { shouldSkipFrame } from '../perf/frameRateCap.js';
-import { logEvent } from '../debug/ClientLogger.js';
+import { logEvent, isFullDiagMode } from '../debug/ClientLogger.js';
 import { useUIStore } from '../state/store.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
+
+// plan: imperative-taco — Playwright sets `navigator.webdriver=true`;
+// a real player's browser leaves it undefined/false. The heavy E2E
+// instrumentation in `writeE2EDataset` (JSON.stringify of shipPositions,
+// swarmDetail, predStats, etc. every 5th frame) exists purely so specs
+// can poll DOM state — production phones pay the allocation cost for
+// no observer. Cached at module load: a single boolean read in the hot
+// loop. The P1 hostile profile measured the per-5-frame slice at the
+// rank-1 allocator's top (`gameRafLoop.loop` 55 KB / 6.8 %).
+const E2E_DATASET_ENABLED: boolean =
+  typeof navigator !== 'undefined' && (navigator as { webdriver?: boolean }).webdriver === true;
 
 export interface GameRafLoopDeps {
   /** The DOM container the renderer was attached to (data-* writes target it). */
@@ -84,14 +95,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);
     const renderEnd = performance.now();
-    logEvent('rafWork', {
-      physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
-      mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
-      renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
-      shouldRender,
-      totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
-      deltaMs: parseFloat(deltaMs.toFixed(2)),
-    });
+    // plan: imperative-taco — gate the rafWork builder at the call site.
+    // `logEvent` has an internal HIGH_VOLUME_TAGS early-return but by then
+    // the caller has already paid for the `{...}` literal + 5 `toFixed(2)`
+    // strings. The hot-path cost is one cached boolean read.
+    if (isFullDiagMode()) {
+      logEvent('rafWork', {
+        physicsMs: parseFloat((mirrorStart - physicsStart).toFixed(2)),
+        mirrorMs: parseFloat((renderStart - mirrorStart).toFixed(2)),
+        renderMs: shouldRender ? parseFloat((renderEnd - renderStart).toFixed(2)) : 0,
+        shouldRender,
+        totalMs: parseFloat((renderEnd - physicsStart).toFixed(2)),
+        deltaMs: parseFloat(deltaMs.toFixed(2)),
+      });
+    }
 
     // Clear one-frame triggers ONLY after the renderer has actually
     // consumed them. Gate on the same shouldRender condition.
@@ -127,15 +144,25 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const localId = gameClient.mirror.localPlayerId;
     const localShip = localId ? gameClient.mirror.ships.get(localId) : null;
     const writeDataset = (++frameCounter % 5) === 0;
-    // Single batched renderer-feedback read per frame.
-    const feedback = writeDataset ? renderer.getFeedback() : null;
-    if (localShip && writeDataset && feedback) {
+    // plan: imperative-taco — the whole E2E dataset surface (cheap
+    // single-field writes + heavy `writeE2EDataset` map/JSON.stringify)
+    // exists purely so Playwright specs can poll DOM state. Production
+    // phones leave `navigator.webdriver === undefined` and pay zero cost.
+    // Each toFixed string + each dataset property mutation is a discrete
+    // small allocation (a DOMStringMap stores property refs); skipping
+    // them on prod halves the rank-1 allocator P1 named
+    // (`gameRafLoop.loop` 55 KB / 6.8 %).
+    const writeE2E = writeDataset && E2E_DATASET_ENABLED;
+    // Single batched renderer-feedback read per frame — only when we
+    // intend to use it (skips a `getFeedback()` call entirely in prod).
+    const feedback = writeE2E ? renderer.getFeedback() : null;
+    if (localShip && writeE2E && feedback) {
       el.dataset['shipX'] = localShip.x.toFixed(3);
       el.dataset['shipY'] = localShip.y.toFixed(3);
       el.dataset['shipAngle'] = localShip.angle.toFixed(4);
       el.dataset['mountCount'] = String(feedback.mountCounts.get(localId!) ?? 0);
     }
-    if (writeDataset && feedback) {
+    if (writeE2E && feedback) {
       writeE2EDataset(el, gameClient, feedback, localId, localShip ?? null);
     }
     animFrameRef.current = requestAnimationFrame(loop);
