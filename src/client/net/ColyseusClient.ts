@@ -3728,8 +3728,30 @@ export class ColyseusGameClient {
       const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
       const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
       if (!throttle) {
-        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
-        this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+        // Pooled send payload — reuses the same scratch as the per-tick
+        // path. cap-engaged sentinel fires at-most-once per RAF (60-120
+        // /sec) so the alloc rate here is lower than the per-tick path,
+        // but the pattern duplicates — keep the pool consistent.
+        const sendArg = this._sendInputScratch;
+        sendArg.tick = tick;
+        sendArg.thrust = thrust;
+        sendArg.turnLeft = turnLeft;
+        sendArg.turnRight = turnRight;
+        sendArg.boost = boost;
+        sendArg.reverse = reverse;
+        this.room.send('input', sendArg);
+        // lastSentInputState retains state across ticks — mutate in
+        // place to avoid aliasing the per-tick scratch.
+        const stored = this.lastSentInputState;
+        if (stored) {
+          stored.thrust = thrust;
+          stored.turnLeft = turnLeft;
+          stored.turnRight = turnRight;
+          stored.boost = boost;
+          stored.reverse = reverse;
+        } else {
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+        }
         this.lastSentInputAtMs = nowMs;
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
         // `assertInputFlowMaintained` sees the per-RAF cadence during a
