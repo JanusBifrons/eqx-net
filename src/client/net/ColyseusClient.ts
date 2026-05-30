@@ -513,6 +513,13 @@ export class ColyseusGameClient {
    *  count, ship count, mount count) so allocations after warmup are zero. */
   private readonly _syncMirrorSeenWrecksScratch = new Set<string>();
   private readonly _syncMirrorSeenShipsScratch = new Set<string>();
+  /**
+   * Phase 4 iteration 3 swift-otter (2026-05-30) — pending state ref
+   * for deferred `syncMirror`. Captured by the `onStateChange` listener
+   * and drained at the top of `tickPhysics`. Null when nothing pending.
+   * See the `onStateChange` registration site for the rationale.
+   */
+  private _pendingStateForSync: unknown = null;
   private readonly _liveBeamMountIdsScratch = new Set<string>();
   private readonly _syncProjectilesSeenScratch = new Set<string>();
   /** 2026-05-26 heap-growth gate step 12 — pre-bound method for
@@ -1580,9 +1587,28 @@ export class ColyseusGameClient {
       // DESTINATION room. This handler is bound on both rooms and fires
       // ~60 Hz; `markOnce` is inert until `arm('first_state')` runs at
       // the room swap, so a source-room tick during spool can't steal
-      // it. Captures exactly the new sector's first state patch.
+      // it. Captures exactly the new sector's first state patch. MUST
+      // stay synchronous (instrumentation correctness depends on it
+      // firing on the actual state-change message).
       this.transitInstr.markOnce('first_state');
-      this.syncMirror(state);
+      // Phase 4 iteration 3 swift-otter (2026-05-30) — defer syncMirror
+      // to the RAF tick instead of running synchronously inside
+      // Colyseus's onMessageCallback. Pattern B burst recovery delivers
+      // multiple schema-diff messages into the JS event loop in a
+      // single frame; each one was firing syncMirror, which walks
+      // state.ships + state.wrecks and is ~30 ms on a moderately
+      // populated sector. The diagnostic attributed the resulting
+      // 218-289 ms loafs to `onMessageCallback` (Colyseus library
+      // frame). The state object is mutated in place by Colyseus
+      // upstream, so capturing the reference and processing on the
+      // next RAF reads the freshest state without re-applying for
+      // every intermediate tick — same latest-wins semantics as the
+      // snapshot coalescer. `setShipCount` (Zustand HUD), predWorld
+      // spawn/despawn, and lingering-hull identity all run at most
+      // one frame later — under 16 ms latency, indistinguishable from
+      // the inline path under normal conditions, dramatically cheaper
+      // under burst recovery.
+      this._pendingStateForSync = state;
     });
 
     room.onLeave((code) => {
@@ -3242,6 +3268,14 @@ export class ColyseusGameClient {
     // a single frame. The decoded snap flows into the same
     // snapshotCoalescer pipeline the WS path uses.
     this._dataChannelTransport?.drainPending();
+    // Phase 4 iteration 3 swift-otter (2026-05-30) — drain deferred
+    // syncMirror. Burst recovery delivers N schema-diff messages in
+    // one frame; deferring collapses N×syncMirror to 1 here.
+    if (this._pendingStateForSync !== null) {
+      const pending = this._pendingStateForSync;
+      this._pendingStateForSync = null;
+      this.syncMirror(pending);
+    }
     // Probe 6 — drain the coalesced-pending snapshot before any
     // per-RAF physics work. Snapshots queued in the WebSocket event
     // queue during a stall collapse to one here.
