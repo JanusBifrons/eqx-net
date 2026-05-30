@@ -514,11 +514,19 @@ export class ColyseusGameClient {
   private readonly _syncMirrorSeenWrecksScratch = new Set<string>();
   private readonly _syncMirrorSeenShipsScratch = new Set<string>();
   /**
-   * Phase 4 iteration 3 swift-otter (2026-05-30) — pending state ref
-   * for deferred `syncMirror`. Captured by the `onStateChange` listener
-   * and drained at the top of `tickPhysics`. Null when nothing pending.
-   * See the `onStateChange` registration site for the rationale.
+   * Phase 4 iteration 3 swift-otter HYBRID (2026-05-30):
+   * - `_syncMirrorRanThisRaf`: cleared at the top of `tickPhysics`,
+   *   set when the inline first-onStateChange-per-frame fires
+   *   syncMirror. Once true, subsequent onStateChange events in the
+   *   same RAF window go through `_pendingStateForSync` instead.
+   * - `_pendingStateForSync`: latest state ref from any deferred
+   *   (non-first) onStateChange events. Drained at start of next
+   *   `tickPhysics`.
+   * Together they cap syncMirror calls at MAX 2 per RAF (one inline +
+   * one drain) while preserving the synchronous-first-call semantics
+   * the reconciler's drift baseline depends on.
    */
+  private _syncMirrorRanThisRaf = false;
   private _pendingStateForSync: unknown = null;
   private readonly _liveBeamMountIdsScratch = new Set<string>();
   private readonly _syncProjectilesSeenScratch = new Set<string>();
@@ -1591,24 +1599,29 @@ export class ColyseusGameClient {
       // stay synchronous (instrumentation correctness depends on it
       // firing on the actual state-change message).
       this.transitInstr.markOnce('first_state');
-      // Phase 4 iteration 3 swift-otter (2026-05-30) — defer syncMirror
-      // to the RAF tick instead of running synchronously inside
-      // Colyseus's onMessageCallback. Pattern B burst recovery delivers
-      // multiple schema-diff messages into the JS event loop in a
-      // single frame; each one was firing syncMirror, which walks
-      // state.ships + state.wrecks and is ~30 ms on a moderately
-      // populated sector. The diagnostic attributed the resulting
-      // 218-289 ms loafs to `onMessageCallback` (Colyseus library
-      // frame). The state object is mutated in place by Colyseus
-      // upstream, so capturing the reference and processing on the
-      // next RAF reads the freshest state without re-applying for
-      // every intermediate tick — same latest-wins semantics as the
-      // snapshot coalescer. `setShipCount` (Zustand HUD), predWorld
-      // spawn/despawn, and lingering-hull identity all run at most
-      // one frame later — under 16 ms latency, indistinguishable from
-      // the inline path under normal conditions, dramatically cheaper
-      // under burst recovery.
-      this._pendingStateForSync = state;
+      // Phase 4 iteration 3 swift-otter HYBRID (2026-05-30):
+      //   - Run syncMirror INLINE on the FIRST onStateChange per RAF
+      //     window — preserves the synchronous semantics that the
+      //     reconciler's drift-noise floor depends on. Single-call
+      //     under steady-state cadence (no burst) is what the
+      //     pre-fix path always was.
+      //   - DEFER subsequent state changes within the same RAF window
+      //     to the next tick. Pattern B burst recovery delivers N
+      //     state-diff messages in one frame; the first runs inline
+      //     (one syncMirror, sub-ms), the next N-1 just store the
+      //     latest state ref. The next RAF drains the latest.
+      // Net effect: per RAF, max 2 syncMirror calls (first-inline +
+      // drain), down from N per RAF in the all-inline mode. The 5-rep
+      // netgate showed that all-defer caused maxDriftUnits 36 vs
+      // baseline 12 — the inline-first hybrid keeps the reconciler
+      // baseline behaviour while still collapsing burst overhead.
+      if (this._syncMirrorRanThisRaf) {
+        // Already synced this RAF window — store latest, drain on next tick.
+        this._pendingStateForSync = state;
+      } else {
+        this._syncMirrorRanThisRaf = true;
+        this.syncMirror(state);
+      }
     });
 
     room.onLeave((code) => {
@@ -3277,14 +3290,17 @@ export class ColyseusGameClient {
     // a single frame. The decoded snap flows into the same
     // snapshotCoalescer pipeline the WS path uses.
     this._dataChannelTransport?.drainPending();
-    // Phase 4 iteration 3 swift-otter (2026-05-30) — drain deferred
-    // syncMirror. Burst recovery delivers N schema-diff messages in
-    // one frame; deferring collapses N×syncMirror to 1 here.
+    // Phase 4 iteration 3 swift-otter HYBRID (2026-05-30) — drain any
+    // state changes that came AFTER the first-inline call within this
+    // RAF window, then clear the inline-ran flag for the next window.
+    // See the `onStateChange` registration site for the hybrid
+    // rationale.
     if (this._pendingStateForSync !== null) {
       const pending = this._pendingStateForSync;
       this._pendingStateForSync = null;
       this.syncMirror(pending);
     }
+    this._syncMirrorRanThisRaf = false;
     // Probe 6 — drain the coalesced-pending snapshot before any
     // per-RAF physics work. Snapshots queued in the WebSocket event
     // queue during a stall collapse to one here.
