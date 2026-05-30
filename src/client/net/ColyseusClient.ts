@@ -590,6 +590,51 @@ export class ColyseusGameClient {
    *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
   private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean } | null = null;
   private lastSentInputAtMs = 0;
+  /**
+   * Per-tick scratch literals — pool everything tickPhysics's inner
+   * loop builds at 60 Hz. Pre-pool the CDP allocation profile (2026-
+   * 05-30) ranked `tickPhysics` rank-2 at 81 KB / 7.5 %; the bulk of
+   * that was these four object literals × 60 Hz × test duration. All
+   * downstream consumers (Reconciler, predWorld, room.send) read the
+   * values out of the literal immediately so passing the same scratch
+   * reference per tick is safe — Reconciler.recordInput copies the
+   * fields into its own ring buffer; predWorld.applyInput reads them
+   * into Rapier; colyseus.js room.send serialises the literal before
+   * returning. Initialised once, mutated per tick.
+   */
+  private readonly _inputRecScratch: InputRecord = {
+    tick: 0,
+    thrust: false,
+    turnLeft: false,
+    turnRight: false,
+    boost: false,
+    reverse: false,
+    sentAt: 0,
+  };
+  private readonly _applyInputScratch: {
+    thrust: boolean;
+    turnLeft: boolean;
+    turnRight: boolean;
+    boost: boolean;
+    reverse: boolean;
+  } = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
+  private readonly _sendInputScratch: {
+    type: 'input';
+    tick: number;
+    thrust: boolean;
+    turnLeft: boolean;
+    turnRight: boolean;
+    boost: boolean;
+    reverse: boolean;
+  } = {
+    type: 'input',
+    tick: 0,
+    thrust: false,
+    turnLeft: false,
+    turnRight: false,
+    boost: false,
+    reverse: false,
+  };
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
   private lastFrameMs = 1000 / 60;
 
@@ -3407,8 +3452,25 @@ export class ColyseusGameClient {
       // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = this.clock.now();
-        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
-        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost, reverse });
+        // Pooled per-tick scratches (data-driven from the 2026-05-30 CDP
+        // profile — `tickPhysics` was rank-2 at 81 KB / 7.5 %). The
+        // Reconciler copies `rec` into its own ring buffer; predWorld
+        // applyInput reads the fields into Rapier. Both safe to reuse.
+        const rec = this._inputRecScratch;
+        rec.tick = tick;
+        rec.thrust = thrust;
+        rec.turnLeft = turnLeft;
+        rec.turnRight = turnRight;
+        rec.boost = boost;
+        rec.reverse = reverse;
+        rec.sentAt = nowMs;
+        const applyArg = this._applyInputScratch;
+        applyArg.thrust = thrust;
+        applyArg.turnLeft = turnLeft;
+        applyArg.turnRight = turnRight;
+        applyArg.boost = boost;
+        applyArg.reverse = reverse;
+        this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
         this.reconciler.recordInput(rec);
         // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
         // AND last-sent state are both fully idle (all-false). Why: when ANY
@@ -3433,8 +3495,30 @@ export class ColyseusGameClient {
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
         if (!throttle) {
-          this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+          // Pooled send payload — colyseus.js serialises the literal
+          // before returning so reusing the scratch ref is safe.
+          const sendArg = this._sendInputScratch;
+          sendArg.tick = tick;
+          sendArg.thrust = thrust;
+          sendArg.turnLeft = turnLeft;
+          sendArg.turnRight = turnRight;
+          sendArg.boost = boost;
+          sendArg.reverse = reverse;
+          this.room.send('input', sendArg);
+          // lastSentInputState retains state ACROSS ticks — must NOT
+          // alias the per-tick scratch (would mutate the stored
+          // last-state on the next tick). Reuse the existing record if
+          // present (first-tick falls through to fresh alloc).
+          const stored = this.lastSentInputState;
+          if (stored) {
+            stored.thrust = thrust;
+            stored.turnLeft = turnLeft;
+            stored.turnRight = turnRight;
+            stored.boost = boost;
+            stored.reverse = reverse;
+          } else {
+            this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+          }
           this.lastSentInputAtMs = nowMs;
           if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
             logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
