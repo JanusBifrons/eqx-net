@@ -13,6 +13,7 @@ import {
   RADAR_MAX_DISTANCE,
   RADAR_WEDGE_COUNT,
   type Candidate,
+  type PartitionScratch,
 } from './halo/wedgeGrouping.js';
 import {
   paintArrowGfx,
@@ -69,6 +70,35 @@ const DIST_MIN = 1200;
 const DIST_MAX = 7500;
 // Hard cap so a swarm of 200 drones doesn't render 200 arrows. Closest first.
 const MAX_ARROWS = 64;
+
+/** Module-scope comparator hoisted out of the per-call `.sort()` site
+ *  (Phase 5f — invariant #14). An inline arrow `(a, b) => a.dist -
+ *  b.dist` is recreated per call by V8 in some contexts; hoisting
+ *  eliminates the uncertainty. */
+function compareByDist(a: Candidate, b: Candidate): number {
+  return a.dist - b.dist;
+}
+
+/** Mutable view of Candidate for slot-reuse writes. The Candidate
+ *  interface is already non-readonly so this is a name-only cast. */
+type MutableCandidate = Candidate;
+
+function writeCandidateSlot(
+  arr: MutableCandidate[], i: number,
+  key: string, x: number, y: number, color: number, dist: number,
+  hostile: boolean,
+): void {
+  const slot = arr[i];
+  if (!slot) {
+    arr[i] = { key, x, y, color, dist, hostile };
+    return;
+  }
+  slot.key = key; slot.x = x; slot.y = y;
+  slot.color = color; slot.dist = dist; slot.hostile = hostile;
+  // grouped is the partition-step's wedge marker; reset to undefined so
+  // a stale `true` from a prior tick doesn't leak through.
+  if (slot.grouped !== undefined) slot.grouped = false;
+}
 // Cap on dead-reckoning extrapolation window. If a swarm entry hasn't
 // updated for longer than this, freeze at the last-reported pose instead
 // of letting the arrow fly off — a stale entity is more likely dead /
@@ -115,12 +145,41 @@ interface ArrowEntry {
    *  exceeds ON_SCREEN_HIDE_MS, but keeps tracking bearing/position right
    *  up to that point so a high-speed flyby doesn't flicker. */
   onScreenSinceMs: number | null;
+  /** Generation-counter stamps (invariant #14, R5). Replace the pre-
+   *  Phase-4 per-frame `presentKeys` and `renderedKeys` Sets at the
+   *  cleanup-loop seam below. `presentAtFrame === frameId` ⇒ the
+   *  candidate list still contains this key; otherwise destroy.
+   *  `renderedAtFrame === frameId` ⇒ the entry produced a visible
+   *  render this frame; otherwise hide. */
+  presentAtFrame: number;
+  renderedAtFrame: number;
 }
 
 export class HaloRadar {
   private readonly container = new Container();
   private camera: Camera | null = null;
   private readonly arrows = new Map<string, ArrowEntry>();
+  /** Monotonic per-`update()` counter for the generation-counter
+   *  sweep over `arrows`. Bumped at the top of `update()`. */
+  private _radarFrameId = 0;
+  /** Per-call scratch for the rawCandidates build (Phase 5f). Reused
+   *  across update() calls; entries are mutated in place via
+   *  `writeCandidateSlot`. `arr.length = i` truncates the logical view;
+   *  slot instances persist. */
+  private readonly _rawCandidatesScratch: MutableCandidate[] = [];
+  /** Cache of `swarm:${id}` / `ship:${id}` key strings keyed by entity
+   *  id. Each lookup-or-create on a stable id is allocation-free after
+   *  the first observation. */
+  private readonly _swarmKeyCache = new Map<number, string>();
+  private readonly _shipKeyCache = new Map<string, string>();
+  /** Caller-owned scratch for `partitionAndGroupCandidates` (Phase 5c).
+   *  Reused across update() calls so the radar tick doesn't allocate
+   *  `result`, `wedges`, or per-wedge representative literals. */
+  private readonly _partitionScratch: PartitionScratch = {
+    result: [],
+    wedges: new Map<number, Candidate>(),
+    wedgeReps: [],
+  };
   /** Wall-clock anchor for spring dt. Reset on transit cleanup so dt
    *  across a warp gap doesn't blow up the spring's first post-arrival
    *  step. */
@@ -214,7 +273,9 @@ export class HaloRadar {
     const screenCornerRadius = Math.hypot(camera.screenWidth, camera.screenHeight) / 2;
     const offScreenSpawnPx = screenCornerRadius + 30;
 
-    const rawCandidates: Candidate[] = [];
+    // Pooled scratch — slot-reuse pattern (Phase 5f, invariant #14).
+    const rawCandidates = this._rawCandidatesScratch;
+    let rawCount = 0;
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
@@ -237,25 +298,33 @@ export class HaloRadar {
         const color = isDrone
           ? (hostile ? DRONE_HOSTILE_COLOR : DRONE_IDLE_COLOR)
           : ASTEROID_COLOR;
-        rawCandidates.push({
-          key: `swarm:${id}`,
-          x: xExtrap,
-          y: yExtrap,
-          color,
-          dist,
-          hostile,
-        });
+        // Cache the template-literal key so subsequent observations of
+        // the same id are allocation-free.
+        let key = this._swarmKeyCache.get(id);
+        if (key === undefined) {
+          key = `swarm:${id}`;
+          this._swarmKeyCache.set(id, key);
+        }
+        writeCandidateSlot(rawCandidates, rawCount, key, xExtrap, yExtrap, color, dist, hostile);
+        rawCount++;
       }
     }
     for (const [id, s] of mirror.ships) {
       if (id === localId) continue;
       const dist = Math.hypot(s.x - local.x, s.y - local.y);
-      rawCandidates.push({ key: `ship:${id}`, x: s.x, y: s.y, color: REMOTE_SHIP_COLOR, dist });
+      let key = this._shipKeyCache.get(id);
+      if (key === undefined) {
+        key = `ship:${id}`;
+        this._shipKeyCache.set(id, key);
+      }
+      writeCandidateSlot(rawCandidates, rawCount, key, s.x, s.y, REMOTE_SHIP_COLOR, dist, false);
+      rawCount++;
     }
+    rawCandidates.length = rawCount;
 
     // Closest-first so MAX_ARROWS truncation drops the farthest entities and
     // wedge-grouping receives a deterministic input order.
-    rawCandidates.sort((a, b) => a.dist - b.dist);
+    rawCandidates.sort(compareByDist);
     if (rawCandidates.length > MAX_ARROWS) {
       rawCandidates.length = MAX_ARROWS;
     }
@@ -266,19 +335,21 @@ export class HaloRadar {
       RADAR_GROUPING_DISTANCE,
       RADAR_MAX_DISTANCE,
       RADAR_WEDGE_COUNT,
+      this._partitionScratch,
     );
 
-    // After partitioning, `presentKeys` is derived from the post-grouping
-    // candidate set: each near-band entity keeps its own key; each wedge
-    // representative carries `wedge:N`. Pool entries not in this set are
-    // destroyed at the tail of the loop.
-    const presentKeys = new Set<string>();
-    for (const c of candidates) presentKeys.add(c.key);
+    // Generation-counter sweep (invariant #14, R5). Pre-Phase-4 this
+    // tick allocated `presentKeys` + `renderedKeys` Sets every RAF; the
+    // two stamp fields on each ArrowEntry now carry the same signal
+    // with zero allocation. Entry resolution stamps `presentAtFrame`
+    // unconditionally at the head; the render-tail stamps
+    // `renderedAtFrame`; the cleanup compares both at frameId.
+    const frameId = ++this._radarFrameId;
 
-    const renderedKeys = new Set<string>();
     for (const c of candidates) {
       const proj = projectArrow({ x: local.x, y: local.y }, { x: c.x, y: c.y }, params);
       let entry = this.arrows.get(c.key);
+      if (entry) entry.presentAtFrame = frameId;
       if (proj.hidden) {
         // Degenerate POI-overlaps-player case only. Phase O removed the
         // on-screen visibility hide and the near-cutoff: every in-range
@@ -344,6 +415,8 @@ export class HaloRadar {
           sy: { x: targetY, v: 0 },
           lastVisible: false,
           onScreenSinceMs: isInside ? now : null,
+          presentAtFrame: frameId,
+          renderedAtFrame: 0, // stamped a few lines below at the render tail
         };
         this.arrows.set(c.key, entry);
       } else if (
@@ -359,7 +432,7 @@ export class HaloRadar {
         entry.hostile = wantHostile;
         entry.grouped = wantGrouped;
       }
-      renderedKeys.add(c.key);
+      entry.renderedAtFrame = frameId;
 
       // Phase H — first-visible: snap the spring to a point just outside
       // the screen edge along the arrow's bearing, then let the spring
@@ -387,11 +460,11 @@ export class HaloRadar {
     }
 
     for (const [key, entry] of this.arrows) {
-      if (!renderedKeys.has(key)) {
+      if (entry.renderedAtFrame !== frameId) {
         entry.gfx.visible = false;
         entry.lastVisible = false;
       }
-      if (!presentKeys.has(key)) {
+      if (entry.presentAtFrame !== frameId) {
         this.container.removeChild(entry.gfx);
         entry.gfx.destroy();
         this.arrows.delete(key);

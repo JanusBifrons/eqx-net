@@ -46,6 +46,8 @@ export type {
 // Re-export individual kind constants (per-family).
 export { SCOUT, FIGHTER } from './shipKinds/fighters.js';
 export { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
+export { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
+export { CROSSGUARD } from './shipKinds/crossguard.js';
 
 // Re-export the canonical-order list.
 export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
@@ -56,8 +58,31 @@ export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 // construction (golden test snapshots both in tests/unit/shipKinds.test.ts).
 import { FIGHTER, SCOUT } from './shipKinds/fighters.js';
 import { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
+import { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
+import { CROSSGUARD } from './shipKinds/crossguard.js';
+import { L_SHAPE } from './shipKinds/lShape.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
+
+/**
+ * Gameplay-eligible subset of the catalogue — `SHIP_KINDS_LIST` with
+ * `engineeringOnly` kinds (currently `crossguard` and `el`) filtered
+ * out. Consumed by the random galaxy spawn pool (`pickRandomShipKind`
+ * in `src/server/spawn/SwarmSpawner.ts` and the Living World hunter-bot
+ * seeder in `src/server/livingworld/director/HunterBotPool.ts`).
+ *
+ * Player ships and explicit `JoinOption.shipKind` spawns still see the
+ * full catalogue — this filter only affects the random pickers used
+ * for ambient drone seeding.
+ *
+ * Added 2026-05-28 after capture ilhqk6 surfaced engineering-only kinds
+ * leaking into Sol Prime, producing the "square ship bigger than its
+ * shield bubble" smoke report + downstream allocation/GC pressure from
+ * heavy-chassis ramming-probe logging.
+ */
+export const GAMEPLAY_SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze(
+  SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly),
+);
 
 /**
  * The catalogue, frozen so a typo can't mutate it at runtime. Keys are
@@ -73,6 +98,9 @@ export const SHIP_KINDS = Object.freeze({
   heavy: HEAVY,
   interceptor: INTERCEPTOR,
   gunship: GUNSHIP,
+  'missile-frigate': MISSILE_FRIGATE,
+  crossguard: CROSSGUARD,
+  el: L_SHAPE,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -94,7 +122,25 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 3;
+export const SHIP_KIND_CATALOGUE_VERSION = 7;
+
+/** Shield bubble pad — how far PAST each kind's hull `radius` the shield
+ *  bubble extends. Shared across:
+ *   - physics shield collider (`World.spawnShip` / `setHullExposed`) so the
+ *     rapier ball matches the visible bubble
+ *   - server hit-tests (`SectorRoom.playerHitscanDist` /
+ *     `playerProjectileSweep`) so lasers/projectiles impact at the visible
+ *     bubble edge instead of pre-2026-05-27's hardcoded `SHIP_COLLISION_RADIUS=12`
+ *     (which only matched fighter and made every other kind's shield
+ *     under- or over-sized for hit detection)
+ *   - visual aura (`ShieldAura` `ringPad` in `effectDefaults.ts`)
+ *
+ *  Keeping a SINGLE source of truth here means a future tuning pass moves
+ *  one number and the whole shield system stays internally consistent.
+ *
+ *  Tuning history: started at 4 u (subtle), bumped to 10 u (2026-05-27)
+ *  for a clearer "bubble" silhouette per smoke feedback. */
+export const SHIELD_RADIUS_PAD = 10;
 
 export const DEFAULT_SHIP_KIND: ShipKindId = 'fighter';
 

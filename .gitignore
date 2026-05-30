@@ -47,6 +47,10 @@ data/
 # sessions. Never belong in commits.
 *.log
 *.stackdump
+# heap snapshots from `tests/e2e/heap-snapshot-diff.spec.ts` are 30-60 MB
+# each (full JS-heap dump). Triage docs (P2-snapshot-diff*.md) extract
+# the actionable ranking + are committed instead.
+*.heapsnapshot
 
 # Claude Code session-local state
 .claude/settings.local.json
@@ -54,3 +58,4 @@ data/
 # Netcode-health gate worktrees — created by tests/netgate/run-netgate.ts
 # (incremental — preserved across runs to keep node_modules warm; never commit).
 .claude/worktrees/
+tests/mobile-perf/screenshots/

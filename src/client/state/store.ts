@@ -113,6 +113,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   clockRate: 1.0,
   serverTickHz: 60,
   devData: { rtt: 0, drift: 0, angleDrift: 0, lerping: false, snapshotIntervalMs: 0, ticksAhead: 0, snapshotCount: 0, significantCorrectionCount: 0, significantAngleCorrectionCount: 0, maxDriftUnits: 0, maxAngleDriftRad: 0, ackedTick: 0, inputTick: 0, serverTick: 0, serverX: 0, serverY: 0, beforeX: 0, beforeY: 0, afterX: 0, afterY: 0 },
+  healthStats: { serverGc: { count30s: 0, maxMs30s: 0 }, longtask: { count30s: 0, maxMs30s: 0 } },
   correctionRate: 0,
   isDead: false,
   currentSectorKey: null,
@@ -121,6 +122,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitTargetSectorKey: null,
   transitSpoolMs: null,
   activeWeapon: DEFAULT_WEAPON,
+  lastFireMs: null,
   isDrawerOpen: false,
   drawerTab: 'galaxy',
   phase: 'meta',
@@ -161,17 +163,19 @@ export const useUIStore = create<UIStore>((set, get) => ({
     devData: d,
     correctionRate: d.snapshotCount > 0 ? d.significantCorrectionCount / d.snapshotCount : 0,
   }),
+  setHealthStats: (s) => set({ healthStats: s }),
   setDead: (dead) => set({ isDead: dead }),
   setCurrentSectorKey: (key) => set({ currentSectorKey: key }),
   setTransitState: (s) => set({ transitState: s }),
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
   setTransitSpoolMs: (ms) => set({ transitSpoolMs: ms }),
-  setActiveWeapon: (id) => set({ activeWeapon: id }),
+  setActiveWeapon: (id) => set({ activeWeapon: id, lastFireMs: null }),
   cycleWeapon: () => set((s) => {
     const idx = WEAPON_IDS.indexOf(s.activeWeapon);
-    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]! };
+    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]!, lastFireMs: null };
   }),
+  setLastFireMs: (ms) => set({ lastFireMs: ms }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
   setDrawerTab: (id) => set({ drawerTab: id }),
   setPhase: (p) => set((prev) => {

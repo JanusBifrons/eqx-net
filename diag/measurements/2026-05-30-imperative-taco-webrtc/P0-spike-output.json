@@ -1,0 +1,116 @@
+{
+  "startedAt": "2026-05-29T18:45:43.442Z",
+  "nodeVersion": "v22.16.0",
+  "platform": "win32",
+  "arch": "x64",
+  "ndcVersion": "unknown",
+  "inProcessSpike": {
+    "ok": true,
+    "connectionStateA": "connected",
+    "connectionStateB": "connected",
+    "dataChannelStateB": "open",
+    "payloadBytesSent": 1024,
+    "payloadBytesReceived": 1024,
+    "payloadMatches": true,
+    "handshakeMs": 1033,
+    "roundTripMs": 17.324
+  },
+  "bufferedAmountProbe": {
+    "ok": true,
+    "sends": 1000,
+    "threwOnSend": false,
+    "throwIndex": null,
+    "throwMessage": null,
+    "maxBufferedAmount": 0,
+    "bufferedAmountSamples": [
+      {
+        "i": 0,
+        "ba": 0
+      },
+      {
+        "i": 50,
+        "ba": 0
+      },
+      {
+        "i": 100,
+        "ba": 0
+      },
+      {
+        "i": 150,
+        "ba": 0
+      },
+      {
+        "i": 200,
+        "ba": 0
+      },
+      {
+        "i": 250,
+        "ba": 0
+      },
+      {
+        "i": 300,
+        "ba": 0
+      },
+      {
+        "i": 350,
+        "ba": 0
+      },
+      {
+        "i": 400,
+        "ba": 0
+      },
+      {
+        "i": 450,
+        "ba": 0
+      },
+      {
+        "i": 500,
+        "ba": 0
+      },
+      {
+        "i": 550,
+        "ba": 0
+      },
+      {
+        "i": 600,
+        "ba": 0
+      },
+      {
+        "i": 650,
+        "ba": 0
+      },
+      {
+        "i": 700,
+        "ba": 0
+      },
+      {
+        "i": 750,
+        "ba": 0
+      },
+      {
+        "i": 800,
+        "ba": 0
+      },
+      {
+        "i": 850,
+        "ba": 0
+      },
+      {
+        "i": 900,
+        "ba": 0
+      },
+      {
+        "i": 950,
+        "ba": 0
+      },
+      {
+        "i": 999,
+        "ba": 0
+      }
+    ],
+    "totalBytesSent": 1024000,
+    "drainMs": 38,
+    "sendLoopMs": 31,
+    "receivedCount": 1000
+  }
+}

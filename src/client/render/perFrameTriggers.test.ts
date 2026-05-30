@@ -124,3 +124,59 @@ describe('consumeOneFrameTriggers: clear-gate matches renderer-update gate', () 
     expect(mirror.explodingShips.size).toBe(0);
   });
 });
+
+describe('consumeOneFrameTriggers: pendingEffectTriggers (M2 — wiggly-puppy)', () => {
+  // Same skip-frame gate discipline as explodingShips, applied to the
+  // effects-subsystem one-shot queue. A drain without a preceding
+  // renderer.update would silently lose every impact spark / destruction
+  // burst in the queue.
+  it('clears pendingEffectTriggers after a render frame', () => {
+    const mirror = {
+      pendingEffectTriggers: [
+        { kind: 'impact' as const, worldX: 0, worldY: 0 },
+        { kind: 'destruction' as const, worldX: 1, worldY: 2 },
+      ],
+    };
+    const arrRef = mirror.pendingEffectTriggers;
+    consumeOneFrameTriggers(mirror, /* didRender */ true);
+    expect(mirror.pendingEffectTriggers.length).toBe(0);
+    expect(mirror.pendingEffectTriggers).toBe(arrRef); // identity preserved (length = 0, not new array)
+  });
+
+  it('preserves pendingEffectTriggers on a skip frame', () => {
+    const mirror = {
+      pendingEffectTriggers: [{ kind: 'impact' as const, worldX: 0, worldY: 0 }],
+    };
+    consumeOneFrameTriggers(mirror, /* didRender */ false);
+    expect(mirror.pendingEffectTriggers.length).toBe(1);
+  });
+
+  it('accumulates pendingEffectTriggers across skip frames + drains on next render', () => {
+    const mirror = {
+      pendingEffectTriggers: [] as Array<{ kind: 'impact'; worldX: number; worldY: number }>,
+    };
+    mirror.pendingEffectTriggers.push({ kind: 'impact', worldX: 0, worldY: 0 });
+    consumeOneFrameTriggers(mirror, false);
+    mirror.pendingEffectTriggers.push({ kind: 'impact', worldX: 5, worldY: 5 });
+    consumeOneFrameTriggers(mirror, false);
+    expect(mirror.pendingEffectTriggers.length).toBe(2);
+
+    consumeOneFrameTriggers(mirror, true);
+    expect(mirror.pendingEffectTriggers.length).toBe(0);
+  });
+
+  it('handles both surfaces together (the production case)', () => {
+    const mirror = {
+      explodingShips: new Set<string>(['drone-1']),
+      pendingEffectTriggers: [{ kind: 'destruction' as const, worldX: 0, worldY: 0 }],
+    };
+    consumeOneFrameTriggers(mirror, true);
+    expect(mirror.explodingShips.size).toBe(0);
+    expect(mirror.pendingEffectTriggers.length).toBe(0);
+  });
+
+  it('is a no-op when pendingEffectTriggers is undefined', () => {
+    const mirror = {};
+    expect(() => consumeOneFrameTriggers(mirror, true)).not.toThrow();
+  });
+});

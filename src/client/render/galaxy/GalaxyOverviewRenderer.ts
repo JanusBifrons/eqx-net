@@ -80,6 +80,8 @@ export class GalaxyOverviewRenderer {
   private onPick: (sectorKey: string) => void;
   private resumePulsePhase = 0;
   private initialized = false;
+  /** Dedup scratch for `repaintEdges` (invariant #14). */
+  private readonly _edgeDedupScratch = new Set<string>();
 
   constructor(opts: { onPick: (sectorKey: string) => void }) {
     this.onPick = opts.onPick;
@@ -445,7 +447,8 @@ export class GalaxyOverviewRenderer {
     const removed = this.edgeLayer.removeChildren();
     for (const c of removed) c.destroy();
     const edges = new Graphics();
-    const seen = new Set<string>();
+    const seen = this._edgeDedupScratch;
+    seen.clear();
     const isWarp = this.mode === 'warp';
     const isSelect = this.mode === 'select';
     for (const entry of this.entries) {

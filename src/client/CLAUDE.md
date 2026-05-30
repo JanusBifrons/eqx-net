@@ -140,6 +140,20 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 
 ---
 
+## Snapshot transport — DataChannel + WebSocket coalescing (2026-05-30, swift-otter Phase 4 iteration 3)
+
+Full architecture story: [docs/architecture/webrtc-datachannel-snapshot-transport.md](../../docs/architecture/webrtc-datachannel-snapshot-transport.md). Three load-bearing rules below — if you touch any of these surfaces, all three apply.
+
+- **Snapshot APPLY happens at RAF tick, never inline in `onMessage`.** Both transports converge at the same `snapshotCoalescer` (`src/client/net/SnapshotCoalescer.ts`), which drains in `tickPhysics → processPendingSnapshot`. The WS handler `room.onMessage('snapshot', ...)` calls `snapshotCoalescer.enqueue(snap)` and returns; the DC path calls `_receiver.enqueueBinary(rawBytes)` and returns. Inline apply via `?coalesce=0` is the legacy A/B mode — production gameplay must never run that way (it serialises decode + reconcile inside the message dispatch frame and produces the loaf class iteration 3 was built to remove).
+
+- **Byte-level coalescer on the DC path.** `dc.message` listener in `DataChannelTransport` MUST call `_receiver.enqueueBinary(buf)` (stores latest raw bytes, no decode), NEVER `_receiver.handleBinary(buf)` (decode + dispatch). `_receiver.drain()` is called once per RAF from `tickPhysics`. The reason: Pattern B network bursts deliver N queued snapshot frames into the JS event loop in a single frame; decoding all N synchronously produced 235 ms `dataChannelTransport.ts` loafs. SCTP `ordered: true` (the default) guarantees no reordering, so "latest enqueued = freshest" is sound. `handleBinary` is preserved as the direct-dispatch path for unit / integration tests; production code never calls it. Lock: 6 cases in [`net/dataChannelTransport.test.ts`](net/dataChannelTransport.test.ts) under the "raw-bytes coalescer" describe.
+
+- **`intervalMs` MUST be wire-arrival time, not RAF apply time.** [`snapshotPerfStats.ts`](net/snapshotPerfStats.ts) `applySnapshotPerfStats` takes a `wireArrivalAtMs` arg (from `_lastSnapshotRecvAtMs`, the snapshot's recv time set inside `logSnapshotRecvTelemetry`). `intervalMs = wireArrivalAtMs - lastSnapshotAt` (also wire time of previous apply). Why: the snapshot coalescer makes apply cadence RAF-bound (~16–33 ms); the downstream [`rttLookaheadUpdater.ts`](net/rttLookaheadUpdater.ts) REJECTS RTT samples outside the 35–75 ms `STEADY_STATE_INTERVAL_*` band — apply-bound samples saturated the rejection filter, Welford starved, `leadTicks` inflated, `ticksAhead` regressed. Wire cadence is ~50 ms at 20 Hz → in-band → healthy. **The rule generalises: anywhere we use APPLY timing to estimate a NETWORK characteristic, that's a latent bug — use the wire-arrival timestamp.** Lock: [`tests/unit/snapshotPerfStats.intervalMs.test.ts`](../../tests/unit/snapshotPerfStats.intervalMs.test.ts) (3 cases).
+
+- **`onStateChange` (Colyseus schema diff) uses HYBRID inline-first / defer-rest.** First `onStateChange` per RAF window runs `syncMirror` inline (preserves reconciler drift baseline behaviour); subsequent within same window go through `_pendingStateForSync`, drained at top of next `tickPhysics`. Cap of 2 syncMirror calls per RAF (one inline + one drain). Full-defer (always defer, never inline) was tried and reverted: caused `maxDriftUnits` regression in 5-rep netgate median (12 → 36) — mechanism specific to the netgate latency proxy's per-byte TCP jitter pattern, not reproducible under CDP-emulated jitter, so we cannot localise without proxy-level instrumentation. **General pattern for backpressure-tolerant work inside Colyseus message handlers**: keep the first call per frame synchronous (existing assumptions about callback ordering hold); defer only redundant work the burst would otherwise duplicate.
+
+---
+
 ## Input Throttling Discipline (2026-05-06)
 
 The client may suppress redundant input sends ONLY when both the current and previously-sent input states are **fully idle** (every control bit false). Any held key — thrust, turn, boost — must be re-sent every tick, with an additional 250 ms heartbeat in idle to keep the server's session alive.
@@ -242,3 +256,56 @@ Tests: `src/client/render/spriteUpdateDecisions.test.ts` (12 cases incl. fast-ch
   swap site (chapter-2; a snapshot-channel variant was tried + reverted
   for a spawn-gap p50 regression — docs/LESSONS.md 2026-05-16).
 - Internals: [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
+- **Visual shield aura (M8 — effects subsystem)**: `ShipRenderState.shieldDown` is the per-ship shield-up bit used by the in-world aura (`src/client/effects/perEffect/ShieldAura.ts`). Populated by `handleDamage` (broken on `newShield<=0`) + `handleShield` (cleared on `restored`/`regen_complete`). Drones use the existing `swarm[].shieldDown` decoded from the binary wire. Known limitation: remote players who joined the sector AFTER their shield broke (no DamageEvent observed) start with `shieldDown=undefined` — the aura is OFF (matches the snapshot-derived ideal). Future: lift the bit onto the snapshot's `states[*]` wire and the manager treats `undefined` as "shield up" only when the snapshot tier has been observed. The aura uses ONE single shared GlowFilter on the shield container (NOT per-entity) per hostile-review #4 — protects the 2026-05-21 warp-disable cost lesson.
+
+## Effects subsystem (2026-05-27, plan `wiggly-puppy` M1)
+
+A first-class visual-effects subsystem lives under `src/client/effects/`. Contracts in `src/core/contracts/IEffects.ts`. The subsystem owns warp re-enable, laser glow + impact sparks, shield aura, particle ship-destruction, and particle engines. Live preview lives at `__offscreen-spike__/visual-effects-sandbox.html`.
+
+**Ownership rules (Invariant #12 — one ownership site per state surface):**
+
+- **Warp methods stay on `IRenderer`.** `setWarpMode` / `triggerWarpIn` / `setWarpCenter` / `setLoadCurtain` are NOT duplicated on `IFilterEffects`. `EffectsBudget` controls warp filter detach/attach by holding a direct reference to `WarpFilterChain` and calling its `applyQuality(level)` method (added in M3). No facade, no parallel path.
+- **`EffectsService` is constructed inside `PixiRenderer.init`** — one construction site per renderer instance, covers both the OffscreenCanvas worker path and the touch-device main-thread fallback.
+- **`ColyseusClient` never imports `EffectsService`.** Effect triggers flow through `RenderMirror.pendingEffectTriggers` (added in M2), drained by `PixiRenderer.update(mirror)` on `shouldRender` (worker every-other-RAF). Same gating pattern as `explodingShips` — extending `perFrameTriggers.ts` is mandatory for any new one-shot mirror queue.
+- **`EffectsService.tick(now, dt)` runs INSIDE `PixiRenderer.update(mirror)` at the tail, AFTER `updateSwarmSprites`** — guarantees one-pose-per-frame (the rule under "Drones are PURE snapshot-interpolated"). NEVER call `tick` from a separate Pixi ticker callback; that would resolve poses at a divergent `now` and reintroduce the 2026-05-19 jitter bug class.
+
+**Budget tiers + thresholds (lock at `src/client/effects/EffectsBudget.ts`):**
+
+| Transition | Trigger | Hold |
+|---|---|---|
+| `high → medium` | EMA(rendererUpdateMs) > 6 ms | 500 ms |
+| `medium → low` | EMA > 8 ms | 500 ms |
+| `low → minimal` | EMA > 9 ms | 250 ms |
+| `minimal → low` | EMA < 7 ms | 750 ms |
+| `low → medium` | EMA < 6 ms | 1500 ms |
+| `medium → high` | EMA < 4 ms | 1500 ms |
+
+Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× longer hold to prevent flicker. EMA alpha = 0.06 (~16-sample / ~270 ms response). Warmup = 8 samples held at `high`.
+
+**Push-vs-pull discipline:**
+
+- Per-frame metrics are fed to the budget by `EffectsService.tick`. Per-effect modules **pull** the resolved quality via `EffectsService.getQuality()` each frame (pull avoids per-transition allocations).
+- The main-thread `PerfMonitor` (M9) computes `rafGapMs` EMA separately and pushes via `SET_EFFECT_QUALITY` **only on its own tier transition** (≤ once per 500 ms). NEVER per-frame. Lock: `EffectsBudget.test.ts` "100 frames at constant load → exactly 0/1 transitions".
+- The budget keeps the more-restrictive of (locally-resolved tier, pushed tier) via `pickMoreRestrictiveQuality`. Pushed tier never weakens local resolution.
+
+**Sector handoff (M9 wiring landed):** `EffectsService.resetForSectorHandoff()` is called from `ColyseusClient.resetPredictionState()` via the `onSectorHandoff` callback (sibling line to `rearmJoinReadiness()` — SRP per zone). The renderer's `resetEffectsForSectorHandoff()` method wipes per-entity continuous emitters + in-flight bursts + shield rings AND clears the diff trackers (`_activeThrustIds`, `_activeBoostIds`, `_activeShieldIds`) so the destination sector's first frame re-registers cleanly. `mirror.pendingEffectTriggers.length = 0` happens inside `resetPredictionState` for source-coord trigger drainage. Lock test: `src/client/net/transitResetEffects.test.ts`.
+
+**`@pixi/particle-emitter` notes (M0.5 spike):**
+
+- v5.0.10 is the latest released version; typed against Pixi v7 (`Container<DisplayObject>`). Pixi v8 renamed the child constraint to `ContainerChild`. Runtime is compatible; types disagree. Cast at the construct site or own a typed wrapper in `effects/pools/EmitterPool.ts`.
+- Static-analysis evidence the library is worker-safe (M0.5 spike): zero references to `document.` / `window.` / `addEventListener` / `navigator.` / `location.` / `requestAnimationFrame` in `node_modules/@pixi/particle-emitter/lib/particle-emitter.es.js`. Live OffscreenCanvas probe at `__offscreen-spike__/particle-emitter-probe.html`.
+
+**Escape hatch:** `?effects=0` URL param skips `EffectsService` construction entirely — falls back to today's inline Graphics paths for destruction + flames. Mirrors `?worker=0`.
+
+**Warp re-enable (M3, 2026-05-27) — supersedes 2026-05-21 disable.** The warp filter chain at `pixi/WarpFilterChain.ts` was disabled on 2026-05-21 ("Render-jitter-fix Phase 1b" — captures confirmed filters were not load-bearing for playability; the disable avoided duty-cycle cost on mobile). M3 re-enables it WITH a budget tier dial:
+
+- `DEFAULT_WARP_PARAMS` (in `worker/protocol/warpParams.ts`) toned down: `spoolCount` 4→2 (half the shader passes), `spoolAmplitude` 18→10, `climaxAmplitude` 220→70 (third), `bloomStrengthMax` 6→1.5 (quarter), `flashAlphaMax` 0.85→0.55.
+- `WarpFilterChain.applyQuality(level)` is the budget hook (ONE ownership site for warp filter attach/detach — `IFilterEffects` deliberately does NOT duplicate the surface, per Invariant #12). Dials:
+  - `high`    : full chain (shockwaves + zoom-blur + bloom + burst)
+  - `medium`  : drop bloom (the heaviest shader pass)
+  - `low`     : drop bloom AND zoom-blur (shockwaves only)
+  - `minimal` : detach all filters (matches the 2026-05-21 safe state)
+- **Touch-device default is `medium`** (pinned in M9 alongside the `PerfMonitor` wiring). The bloom shader pass — the most expensive single contributor — is never attached on touch in production by default. EffectsBudget can still drop further on EMA pressure.
+- The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
+
+**Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.

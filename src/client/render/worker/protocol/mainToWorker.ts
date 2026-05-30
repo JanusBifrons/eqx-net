@@ -5,6 +5,7 @@
  */
 
 import type { RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
+import type { EffectQuality } from '@core/contracts/IEffects';
 import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 
@@ -160,6 +161,67 @@ export interface SetDiagMarkersMsg {
   enabled: boolean;
 }
 
+/**
+ * Trigger a one-shot effect at a world point. Visual-effects subsystem
+ * (plan `wiggly-puppy` M2). Production code rarely posts this directly —
+ * most triggers ride `RenderMirror.pendingEffectTriggers` (drained by
+ * the renderer each frame). Direct post is used by the sandbox + by
+ * `IFilterEffects.triggerOneShotFilter` to attach a one-shot
+ * ShockwaveFilter / flash overlay.
+ */
+export interface TriggerEffectMsg {
+  type: 'TRIGGER_EFFECT';
+  effect:
+    | 'impact'
+    | 'destruction'
+    | 'shield-hit'
+    | 'warp-arrive'
+    | 'destruction-shock'
+    | 'shield-flash';
+  worldX: number;
+  worldY: number;
+  /** 0..1 multiplier on default count + lifetime. Defaults to 1. */
+  intensity?: number;
+  /** Optional tint override. RGB hex like 0xff66aa. */
+  tint?: number;
+  /** Optional entity id (currently unused; reserved for entity-glued
+   *  one-shots like the destruction position lookup). */
+  entityId?: string;
+}
+
+/**
+ * External quality push. Posted by the main-thread `PerfMonitor` ONLY on
+ * tier transition (≤ once per 500 ms by hysteresis construction), NEVER
+ * per-frame. The worker's `EffectsBudget` keeps the more-restrictive of
+ * (locally-resolved tier, pushed tier).
+ */
+export interface SetEffectQualityMsg {
+  type: 'SET_EFFECT_QUALITY';
+  level: EffectQuality;
+}
+
+/**
+ * Sandbox-only: live-tune a single effect's params. Production code never
+ * posts this; per-effect defaults live in
+ * `src/client/effects/config/effectDefaults.ts`. Mirrors the
+ * `SET_WARP_PARAMS` pattern.
+ */
+export interface SetEffectParamsMsg {
+  type: 'SET_EFFECT_PARAMS';
+  effect: 'engine' | 'laser' | 'shield' | 'impact' | 'destruction';
+  params: Record<string, number | boolean>;
+}
+
+/**
+ * Sector-handoff reset for the effects subsystem (M9). Posted from the
+ * main thread when `transit_ready` fires; the worker calls
+ * `pixiRenderer.resetEffectsForSectorHandoff()` which delegates to
+ * `EffectsService.resetForSectorHandoff()`.
+ */
+export interface ResetEffectsHandoffMsg {
+  type: 'RESET_EFFECTS_HANDOFF';
+}
+
 /** Tear-down request. Worker should clean its Pixi handles then `self.close()`. */
 export interface DisposeMsg { type: 'DISPOSE' }
 
@@ -178,6 +240,10 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetDiagMarkersMsg
+  | TriggerEffectMsg
+  | SetEffectQualityMsg
+  | SetEffectParamsMsg
+  | ResetEffectsHandoffMsg
   | PointerEventMsg
   | WheelEventMsg
   | DisposeMsg;

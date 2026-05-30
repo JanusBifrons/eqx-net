@@ -246,6 +246,40 @@ export function devResetRosterHandler(req: Request, res: Response): void {
 }
 
 /**
+ * GET /dev/webrtc-counters?roomId=<colyseus-roomId> — Phase 4 iteration 3
+ * swift-otter diagnostic. Returns the room's per-session WebRTC counter
+ * snapshot via `matchMaker.remoteRoomCall`, used by the Phase 4 E2E to
+ * compare server-side `sentViaDc` against client-side `snapshot_received`
+ * via='dc' counts. Localises whether DC throughput variance is server-
+ * side, libdatachannel-wire-side, or browser-side.
+ *
+ * Single roomId variant (preferred for the E2E): the test captures
+ * `gameClient.room.id` and asks for that room's counters directly. Errors
+ * with 404 when the room is unknown (e.g. already disposed) — the test
+ * treats that as "no diagnostic data, log only" rather than failing.
+ */
+export async function devWebrtcCountersHandler(
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const roomId = String(req.query['roomId'] ?? '');
+  if (!roomId) {
+    res.status(400).json({ error: 'roomId required' });
+    return;
+  }
+  try {
+    const result = await matchMaker.remoteRoomCall(roomId, 'getWebRtcCounters');
+    if (result === null || result === undefined) {
+      res.status(404).json({ error: 'room has no webrtc manager', roomId });
+      return;
+    }
+    res.json(result);
+  } catch (err) {
+    res.status(404).json({ error: 'room not found or call failed', roomId, detail: (err as Error).message });
+  }
+}
+
+/**
  * GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster.
  * Returns the player's full roster (up to 10 entries). Empty array if the
  * player has never spawned. Read-only; mutations flow through gameplay

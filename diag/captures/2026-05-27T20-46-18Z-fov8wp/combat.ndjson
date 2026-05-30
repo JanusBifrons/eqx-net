@@ -1,0 +1,17 @@
+{"source":"client","ts":23056.40000000596,"tag":"swarm_near_enter","data":{"entityId":7,"kind":0,"swarmPos":{"x":-440,"y":-59.9},"rendered":{"x":-358.75,"y":-117.73},"predWorld":{"x":-358.75,"y":-117.73},"lerpOffset":{"x":0,"y":0},"distRendered":99.73}}
+{"source":"client","ts":24491.90000000596,"tag":"swarm_near_exit","data":{"entityId":7}}
+{"source":"client","ts":25604.90000000596,"tag":"swarm_near_enter","data":{"entityId":12,"kind":1,"swarmPos":{"x":-269.51,"y":16.99},"rendered":{"x":-307.87,"y":-70.79},"predWorld":{"x":-307.87,"y":-70.79},"lerpOffset":{"x":0,"y":0},"distRendered":95.8}}
+{"source":"client","ts":25611.20000000298,"tag":"swarm_near_exit","data":{"entityId":12}}
+{"source":"client","ts":25623.29999999702,"tag":"swarm_near_enter","data":{"entityId":12,"kind":1,"swarmPos":{"x":-265.25,"y":14.77},"rendered":{"x":-307.11,"y":-68.59},"predWorld":{"x":-307.11,"y":-68.59},"lerpOffset":{"x":0,"y":0},"distRendered":93.28}}
+{"source":"client","ts":25866.59999999404,"tag":"swarm_near_exit","data":{"entityId":12}}
+{"source":"client","ts":25880,"tag":"swarm_near_enter","data":{"entityId":12,"kind":1,"swarmPos":{"x":-225.33,"y":-6.11},"rendered":{"x":-302.01,"y":-33.86},"predWorld":{"x":-302.01,"y":-33.86},"lerpOffset":{"x":0,"y":0},"distRendered":81.55}}
+{"source":"client","ts":25888.20000000298,"tag":"swarm_near_exit","data":{"entityId":12}}
+{"source":"client","ts":25911.5,"tag":"swarm_near_enter","data":{"entityId":12,"kind":1,"swarmPos":{"x":-216.9,"y":-10.55},"rendered":{"x":-302.39,"y":-29.23},"predWorld":{"x":-302.39,"y":-29.23},"lerpOffset":{"x":0,"y":0},"distRendered":87.5}}
+{"source":"client","ts":25921.90000000596,"tag":"swarm_near_exit","data":{"entityId":12}}
+{"source":"client","ts":25943.79999999702,"tag":"swarm_near_enter","data":{"entityId":12,"kind":1,"swarmPos":{"x":-208.97,"y":-14.74},"rendered":{"x":-302.99,"y":-24.62},"predWorld":{"x":-302.99,"y":-24.62},"lerpOffset":{"x":0,"y":0},"distRendered":94.54}}
+{"source":"client","ts":25960.70000000298,"tag":"swarm_near_exit","data":{"entityId":12}}
+{"source":"client","ts":26998.29999999702,"tag":"swarm_near_enter","data":{"entityId":1,"kind":0,"swarmPos":{"x":-379.4,"y":239.6},"rendered":{"x":-389.08,"y":140.07},"predWorld":{"x":-389.08,"y":140.07},"lerpOffset":{"x":0,"y":0},"distRendered":100}}
+{"source":"client","ts":27529.79999999702,"tag":"swarm_near_exit","data":{"entityId":1}}
+{"source":"client","ts":52465.70000000298,"tag":"swarm_near_enter","data":{"entityId":3,"kind":0,"swarmPos":{"x":-232.51,"y":-356.84},"rendered":{"x":-311.91,"y":-411.09},"predWorld":{"x":-312.95,"y":-411.63},"lerpOffset":{"x":1.04,"y":0.54},"distRendered":96.16}}
+{"source":"client","ts":53133.5,"tag":"swarm_near_exit","data":{"entityId":3}}
+{"source":"client","ts":55219.5,"tag":"swarm_near_enter","data":{"entityId":3,"kind":0,"swarmPos":{"x":-228.4,"y":-356.49},"rendered":{"x":-278.81,"y":-442.38},"predWorld":{"x":-278.81,"y":-442.38},"lerpOffset":{"x":0,"y":0},"distRendered":99.59}}

@@ -1,5 +1,5 @@
-export type WeaponMode = 'hitscan' | 'projectile';
-export type WeaponId = 'hitscan' | 'laser';
+export type WeaponMode = 'hitscan' | 'projectile' | 'missile';
+export type WeaponId = 'hitscan' | 'laser' | 'heat-seeker';
 
 interface WeaponDefBase {
   id: WeaponId;
@@ -21,7 +21,44 @@ export interface ProjectileWeaponDef extends WeaponDefBase {
   maxTicks: number;
 }
 
-export type WeaponDef = HitscanWeaponDef | ProjectileWeaponDef;
+/** Heat-seeking missile weapon. Locked at launch via `pickTarget`, chases the
+ *  target until it dies/leaves range or the missile expires. Slow speed +
+ *  wide turn radius so players can dodge. On impact: inverse-square splash
+ *  damage + kinetic impulse via the physics worker's `MISSILE_IMPULSE`
+ *  command. See docs/architecture/missile-simulation.md. */
+export interface MissileWeaponDef extends WeaponDefBase {
+  mode: 'missile';
+  /** Linear speed (units/sec). Slow enough to be dodgeable — 400 at 60Hz
+   *  ≈ 6.67 u/tick, well below ship-radius 12 so no tunneling. */
+  speed: number;
+  /** Collision radius for direct-hit sweep. */
+  radius: number;
+  /** Lifetime in physics ticks; on expiry the missile detonates in-place
+   *  (no `primaryTarget`, splash-only). */
+  lifetimeTicks: number;
+  /** Maximum homing yaw clamp (rad/sec). Wider turn radius = dodgeable. */
+  turnRate: number;
+  /** Splash damage falloff radius. Damage falls off as `(splashFalloffMin/dist)²`
+   *  inside this radius; zero outside. */
+  splashRadius: number;
+  /** Inner clamp on `dist` so the inverse-square doesn't divide by zero
+   *  at point-blank. Damage at `dist <= splashFalloffMin` is exactly `damage`. */
+  splashFalloffMin: number;
+  /** Peak kinetic impulse magnitude (at `splashFalloffMin`). Falls off with
+   *  the same inverse-square as damage. */
+  splashImpulse: number;
+  /** Extra damage applied to a primary (directly-struck or proximity-fused)
+   *  target on top of the splash component. */
+  directImpulseBonus: number;
+  /** Skip the owner ship during splash damage/impulse (defaults true). */
+  splashExcludeOwner: boolean;
+  /** Detonate when within this radius of the locked target. Allows near-miss
+   *  detonations to feel meaningful (dodgeable but not useless). Set to 0 to
+   *  disable proximity-fusing (direct-hit-only behaviour). */
+  proximityFuseRadius: number;
+}
+
+export type WeaponDef = HitscanWeaponDef | ProjectileWeaponDef | MissileWeaponDef;
 
 const HITSCAN_DEF: HitscanWeaponDef = {
   id: 'hitscan',
@@ -58,12 +95,50 @@ const LASER_DEF: ProjectileWeaponDef = {
   maxTicks: 90,
 };
 
+const HEAT_SEEKER_DEF: MissileWeaponDef = {
+  id: 'heat-seeker',
+  displayName: 'Heat-Seeker',
+  mode: 'missile',
+  // Direct-hit damage. The primary target also gets `directImpulseBonus`
+  // additive damage on top of the splash component; near-miss splash
+  // damage uses the inverse-square falloff against `damage` alone.
+  damage: 30,
+  // 180 ticks = ~3 s per mount cooldown. The frigate has 2 mounts that
+  // fire on the same trigger, so the salvo cadence is one pair every 3 s.
+  // Long enough that a single in-flight missile can engage + commit
+  // before the next salvo launches, keeping the airspace from
+  // saturating; short enough that pursuit-fire is still expressive.
+  cooldownTicks: 180,
+  // 400 u/s = 6.67 u/tick. Dodgeable but not slow enough to be a joke.
+  speed: 400,
+  // Collision radius small; missile is a point-thing visually.
+  radius: 4,
+  // 360 ticks = 6 s lifetime. Range at top speed ≈ 2400 u (well past
+  // hitscan beam range of 500). Long enough to make dumb-mode missiles
+  // a meaningful waste-of-shot.
+  lifetimeTicks: 360,
+  // 1.5 rad/s yaw clamp. A target moving perpendicular at 600 u/s needs
+  // the missile to turn ~60°/s at 500u distance — 1.5 rad/s ≈ 86°/s,
+  // so it CAN catch a target but a sustained dodge wins.
+  turnRate: 1.5,
+  splashRadius: 60,
+  splashFalloffMin: 10,
+  splashImpulse: 30,
+  directImpulseBonus: 20,
+  splashExcludeOwner: true,
+  // Detonate when within ~60% of the splash radius of the locked target.
+  // Lets dodged missiles still deliver a felt explosion rather than
+  // sailing past uselessly.
+  proximityFuseRadius: 36,
+};
+
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([
   ['hitscan', HITSCAN_DEF],
   ['laser', LASER_DEF],
+  ['heat-seeker', HEAT_SEEKER_DEF],
 ]);
 
-export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser'] as const;
+export const WEAPON_IDS: readonly WeaponId[] = ['hitscan', 'laser', 'heat-seeker'] as const;
 
 export const DEFAULT_WEAPON: WeaponId = 'hitscan';
 
@@ -72,5 +147,5 @@ export function getWeapon(id: WeaponId): WeaponDef {
 }
 
 export function isWeaponId(v: unknown): v is WeaponId {
-  return v === 'hitscan' || v === 'laser';
+  return v === 'hitscan' || v === 'laser' || v === 'heat-seeker';
 }

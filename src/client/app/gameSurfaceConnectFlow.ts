@@ -124,6 +124,15 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
       persistPlayerId(id);
       onPlayerId(id);
     },
+    // Effects subsystem (M9 — plan wiggly-puppy). Wipe the renderer's
+    // per-entity emitters + in-flight bursts on sector handoff so dead-
+    // entity-id state doesn't leak across the warp gap. The diff-against-
+    // empty-mirror passes in syncEngineContinuousEffects /
+    // syncShieldAuraEffects would unregister continuous emitters
+    // naturally on the destination's first frame, but in-flight bursts
+    // (destruction particles, impact sparks) live at source-sector
+    // world coords and would render in the wrong place — so we wipe.
+    onSectorHandoff: () => renderer.resetEffectsForSectorHandoff(),
   }, roomName, extraJoinOptions, touchInput ?? undefined);
 
   onSectorName(prettyName);

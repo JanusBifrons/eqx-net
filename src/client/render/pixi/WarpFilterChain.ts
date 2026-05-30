@@ -236,12 +236,59 @@ export class WarpFilterChain {
 
   private attachFilters(): void {
     if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
-    // Render-jitter-fix Phase 1b (2026-05-21) — warp filter chain
-    // DISABLED. Captures confirmed filters are not load-bearing for
-    // playability; keeping them off avoids duty-cycle cost on mobile.
-    // Re-enable by uncommenting the assignment below.
-    // this.app.stage.filters = [...this.warpShockwaves, this.warpBurst, this.warpZoomBlur, this.warpBloom];
+    // Re-enabled 2026-05-27 (M3 of effects-subsystem plan wiggly-puppy)
+    // after being disabled 2026-05-21 (commit `Render-jitter-fix Phase 1b`).
+    // The disable rationale was duty-cycle cost on mobile — the re-enable
+    // is paired with toned-down DEFAULT_WARP_PARAMS (spoolCount 4→2,
+    // climaxAmplitude 220→70, bloomStrengthMax 6→1.5) AND a budget tier
+    // dial via `applyQuality` below (medium drops bloom; low drops zoom
+    // blur; minimal detaches the chain entirely, matching the 2026-05-21
+    // safe state). Mobile-default `medium` (touch-device pin) means the
+    // bloom shader pass — the most expensive single contributor — is
+    // never attached on touch in production.
+    const filters: import('pixi.js').Filter[] = [];
+    for (const sw of this.warpShockwaves) filters.push(sw);
+    filters.push(this.warpBurst);
+    if (this.qualityIncludesZoomBlur()) filters.push(this.warpZoomBlur);
+    if (this.qualityIncludesBloom()) filters.push(this.warpBloom);
+    this.app.stage.filters = filters;
   }
+
+  /**
+   * EffectsBudget hook (plan `wiggly-puppy` M3). `EffectsBudget` holds a
+   * direct reference to this chain and calls `applyQuality` on tier
+   * transition. Single ownership site for warp filter detach/attach
+   * (Invariant #12) — IFilterEffects deliberately does NOT duplicate the
+   * warp surface.
+   *
+   * Dials per tier:
+   *  - high    : full chain (shockwaves + zoom-blur + bloom + burst)
+   *  - medium  : drop bloom (the heaviest shader pass)
+   *  - low     : drop bloom AND zoom-blur (keep shockwaves only)
+   *  - minimal : detach all filters (matches the 2026-05-21 safe state)
+   *
+   * The chain is re-built lazily by ensureStage()/buildShockwaveStack;
+   * applyQuality only changes what attaches NEXT — the running tween
+   * keeps animating with whatever was attached when it started. The
+   * next phase transition (spool→climax, burst arrival) re-applies via
+   * attachFilters(), picking up the new tier.
+   */
+  applyQuality(level: 'high' | 'medium' | 'low' | 'minimal'): void {
+    this.qualityLevel = level;
+    if (level === 'minimal') {
+      // Detach immediately — caller wants the safe state right now.
+      if (Array.isArray(this.app.stage.filters) && (this.app.stage.filters as unknown[]).length > 0) {
+        this.app.stage.filters = [];
+      }
+    } else if (this.warpShockwaves) {
+      // Re-apply for high/medium/low so the next render uses the new chain.
+      this.attachFilters();
+    }
+  }
+
+  private qualityLevel: 'high' | 'medium' | 'low' | 'minimal' = 'high';
+  private qualityIncludesBloom(): boolean { return this.qualityLevel === 'high'; }
+  private qualityIncludesZoomBlur(): boolean { return this.qualityLevel === 'high' || this.qualityLevel === 'medium'; }
 
   /** Ticker callback (arrow form so `this` is bound). */
   private readonly tick = (): void => {

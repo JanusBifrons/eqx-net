@@ -29,6 +29,45 @@ const GC_PAUSE_THRESHOLD_MS = 5;
 
 let installed = false;
 
+/**
+ * Subscriber surface for clients that want a live `gc_pause` feed (the
+ * paradigm-plan Phase 6 client diagnostic surface uses this — each
+ * `SectorRoom` registers in `onCreate` and broadcasts the event to its
+ * own clients).
+ *
+ * Subscribers are called synchronously inside the `PerformanceObserver`
+ * callback. Keep them cheap; the observer fires on the JS-thread GC
+ * tail and a slow subscriber is added directly to the pause we just
+ * measured. The room broadcast path satisfies this by design — it
+ * enqueues the message into the WebSocket buffer and returns.
+ *
+ * The subscriber set is module-scoped, not per-monitor — there is only
+ * one GC monitor per process, mirroring `GC` itself.
+ */
+export interface GcPauseEvent {
+  /** Pause duration in ms, rounded to 3 decimals. */
+  readonly durationMs: number;
+  /** Human-readable GC kind. Same labels `serverLogEvent('gc_pause')`
+   *  emits — 'scavenge', 'mark-sweep-compact', 'incremental', 'weakcb',
+   *  'mixed:<bits>', or 'unknown'. */
+  readonly kind: string;
+}
+type GcPauseSubscriber = (event: GcPauseEvent) => void;
+const gcSubscribers = new Set<GcPauseSubscriber>();
+
+export function subscribeGcPause(fn: GcPauseSubscriber): void {
+  gcSubscribers.add(fn);
+}
+
+export function unsubscribeGcPause(fn: GcPauseSubscriber): void {
+  gcSubscribers.delete(fn);
+}
+
+/** Test-only: drop every subscriber. */
+export function _resetGcPauseSubscribersForTests(): void {
+  gcSubscribers.clear();
+}
+
 interface NodeGcEntry extends PerformanceEntry {
   /** Bitfield: 1=scavenge, 2=mark-sweep-compact, 4=incremental, 8=weakcb */
   readonly kind?: number;
@@ -57,9 +96,11 @@ export function installGcMonitor(): void {
     for (const entry of list.getEntries() as NodeGcEntry[]) {
       if (entry.duration < GC_PAUSE_THRESHOLD_MS) continue;
       const kind = entry.kind ?? entry.detail?.kind;
+      const durationMs = parseFloat(entry.duration.toFixed(3));
+      const kindStr = kindLabel(kind);
       serverLogEvent('gc_pause', {
-        durationMs: parseFloat(entry.duration.toFixed(3)),
-        kind: kindLabel(kind),
+        durationMs,
+        kind: kindStr,
         kindBits: kind,
         // startTime is from process performance.now(). tick_hitch
         // events carry the same clock implicitly via Date.now() in
@@ -67,6 +108,15 @@ export function installGcMonitor(): void {
         // by comparing nearby timestamps within ~10 ms.
         startTime: parseFloat(entry.startTime.toFixed(3)),
       });
+      // Fan out to subscribers (paradigm plan: quirky-rabbit, Phase 6 —
+      // SectorRoom registers a broadcaster). Synchronous; subscribers
+      // must be cheap (just enqueue into a wire buffer).
+      if (gcSubscribers.size > 0) {
+        const evt: GcPauseEvent = { durationMs, kind: kindStr };
+        for (const fn of gcSubscribers) {
+          try { fn(evt); } catch { /* swallow — never throw from the GC observer */ }
+        }
+      }
     }
   });
   // `gc` is the entry type for V8 GC stats. `buffered: true` flushes

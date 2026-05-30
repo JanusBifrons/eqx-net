@@ -63,6 +63,31 @@ export interface BusEventPayloads {
   /** Shield regenerated back above 0 after the Halo delay (Phase: shield).
    *  Drives the collider->circle swap + shield-up SFX. */
   SHIELD_RESTORED: { type: 'SHIELD_RESTORED'; entityId: string };
+  /** Missile launched. Discrete; subscribers: SFX (launch whoosh), Pino
+   *  (sampled). NOT the cross-process wire — the server broadcasts
+   *  `missile_fired` Colyseus messages to clients, which re-emit on
+   *  their local bus. */
+  MISSILE_FIRED: {
+    type: 'MISSILE_FIRED';
+    missileId: number;
+    ownerId: string;
+    x: number;
+    y: number;
+    angle: number;
+    weaponId: 'heat-seeker';
+  };
+  /** Missile detonated (collision, proximity-fuse, or lifetime expiry).
+   *  Discrete; subscribers: VFX (explosion sprite), camera shake (client),
+   *  SFX (boom), Pino (sampled). Cross-process via `missile_detonated`
+   *  Colyseus broadcast (AOI-filtered server-side). */
+  MISSILE_DETONATED: {
+    type: 'MISSILE_DETONATED';
+    missileId: number;
+    x: number;
+    y: number;
+    splashRadius: number;
+    weaponId: 'heat-seeker';
+  };
 }
 
 export type BusEventType = keyof BusEventPayloads;

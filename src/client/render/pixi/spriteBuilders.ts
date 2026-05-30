@@ -244,6 +244,43 @@ export function applyMountOffset(
   };
 }
 
+/** Heat-seeking missile sprite. Orange triangular dart shape so it reads
+ *  visibly different from the slim laser bolt. Drawn pointing up (-y);
+ *  the renderer rotates to align with `MissileRenderState.angle`. */
+export function buildMissileGfx(): Graphics {
+  const g = new Graphics();
+  // Body — slim orange dart, ~10×4 units.
+  g.moveTo(0, -8).lineTo(3, 4).lineTo(0, 2).lineTo(-3, 4).lineTo(0, -8);
+  g.fill({ color: 0xff8800, alpha: 1 });
+  g.stroke({ color: 0xffcc55, width: 1, alpha: 0.9 });
+  // Tail glow — small orange smudge at the back.
+  g.circle(0, 4, 2.5);
+  g.fill({ color: 0xff5500, alpha: 0.7 });
+  return g;
+}
+
+/** Missile detonation sprite — bigger / brighter than the standard
+ *  explosion. Sized to the splash radius via sprite.scale at draw time. */
+export function buildMissileExplosionGfx(): Graphics {
+  const g = new Graphics();
+  // Inner core — bright yellow.
+  g.circle(0, 0, 16);
+  g.fill({ color: 0xffee88, alpha: 0.95 });
+  // Mid ring — orange.
+  g.circle(0, 0, 28);
+  g.stroke({ color: 0xff7700, width: 4, alpha: 0.85 });
+  // Outer fragments — radiating lines.
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const inner = 18;
+    const outer = 36;
+    g.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
+      .lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+  }
+  g.stroke({ color: 0xffaa00, width: 2, alpha: 0.9 });
+  return g;
+}
+
 export function buildExplosionGfx(): Graphics {
   const g = new Graphics();
   // Simple starburst: 8 lines radiating from center.

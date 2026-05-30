@@ -1,0 +1,215 @@
+/**
+ * Phase 2 client-side WebRTC DataChannel transport — failing-first unit test.
+ *
+ * The Phase 2 RTCPeerConnection plumbing is NOT unit-testable in a plain
+ * vitest worker (no DOM RTC). The reordering guard + decode pipeline IS,
+ * and that's what this file covers via the pure `DataChannelSnapshotReceiver`
+ * helper.
+ *
+ * Coverage matches the plan's stated cases:
+ *   - In-order snapshots [10, 11, 12] all pass through.
+ *   - Out-of-order [10, 12, 11] drops the late 11.
+ *   - Duplicate (10, 10) drops the second.
+ *   - Garbage payload that doesn't decode is dropped silently (no crash).
+ *   - `snap_dropped_old` event is emitted on each drop with the drop reason.
+ *
+ * Plan: swift-otter (Phase 2).
+ */
+
+import { describe, expect, it, vi } from 'vitest';
+import { Packr } from '@colyseus/msgpackr';
+import { DataChannelSnapshotReceiver } from './dataChannelTransport.js';
+import type { SnapshotMessage } from '../../shared-types/messages.js';
+
+const packr = new Packr({ encodeUndefinedAsNil: true });
+
+function packSnap(serverTick: number): Uint8Array {
+  const snap: SnapshotMessage = {
+    type: 'snapshot',
+    serverTick,
+    states: {},
+    ackedTick: 0,
+  } as SnapshotMessage;
+  return packr.pack(snap);
+}
+
+describe('DataChannelSnapshotReceiver', () => {
+  it('forwards in-order snapshots [10, 11, 12]', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    receiver.handleBinary(packSnap(10));
+    receiver.handleBinary(packSnap(11));
+    receiver.handleBinary(packSnap(12));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(3);
+    expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(10);
+    expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(11);
+    expect((onSnapshot.mock.calls[2]?.[0] as SnapshotMessage).serverTick).toBe(12);
+    expect(onDiag).not.toHaveBeenCalled();
+  });
+
+  it('drops out-of-order snapshot in [10, 12, 11]', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    receiver.handleBinary(packSnap(10));
+    receiver.handleBinary(packSnap(12));
+    receiver.handleBinary(packSnap(11));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(10);
+    expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(12);
+    const dropCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+    expect(dropCalls.length).toBe(1);
+    expect((dropCalls[0]![1] as { serverTick: number }).serverTick).toBe(11);
+  });
+
+  it('accepts duplicate serverTick (10, 10) — Phase 4 swift-otter strict-less-than guard', () => {
+    // Worker SAB tick can stall while the main thread broadcasts at
+    // 60 Hz, producing duplicate-tick frames that are semantically
+    // idempotent. The receiver passes them through; the apply pipeline
+    // is the same idempotent state-set the WS path runs.
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    receiver.handleBinary(packSnap(10));
+    receiver.handleBinary(packSnap(10));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    const dropCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+    expect(dropCalls.length).toBe(0);
+  });
+
+  it('still drops a strictly-older serverTick (10, then 9)', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    receiver.handleBinary(packSnap(10));
+    receiver.handleBinary(packSnap(9));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(1);
+    const dropCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+    expect(dropCalls.length).toBe(1);
+  });
+
+  it('drops a payload that cannot be decoded and never crashes', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    expect(() => receiver.handleBinary(new Uint8Array([0xff, 0xff, 0xff, 0xff]))).not.toThrow();
+    expect(onSnapshot).not.toHaveBeenCalled();
+    const errCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_decode');
+    expect(errCalls.length).toBe(1);
+  });
+
+  it('drops a payload that is missing the snapshot type field', () => {
+    const onSnapshot = vi.fn();
+    const onDiag = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+    const otherShape = packr.pack({ type: 'not-a-snapshot', foo: 'bar' });
+    receiver.handleBinary(otherShape);
+
+    expect(onSnapshot).not.toHaveBeenCalled();
+    const errCalls = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_shape');
+    expect(errCalls.length).toBe(1);
+  });
+
+  it('reset() clears the last-seen tick (used on sector handoff)', () => {
+    const onSnapshot = vi.fn();
+    const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+    receiver.handleBinary(packSnap(500));
+    receiver.reset();
+    receiver.handleBinary(packSnap(10));
+
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(10);
+  });
+
+  describe('Phase 4 iteration 3 — raw-bytes coalescer (enqueueBinary + drain)', () => {
+    it('enqueueBinary stores latest buffer without decoding (no dispatch until drain)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(10));
+      receiver.enqueueBinary(packSnap(11));
+      receiver.enqueueBinary(packSnap(12));
+      expect(onSnapshot, 'no dispatch until drain').not.toHaveBeenCalled();
+
+      receiver.drain();
+      expect(onSnapshot, 'one dispatch after drain').toHaveBeenCalledTimes(1);
+      expect(
+        (onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick,
+        'drain dispatches the latest enqueued',
+      ).toBe(12);
+    });
+
+    it('drain is a no-op when nothing pending', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.drain();
+      expect(onSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('drain clears the pending slot (subsequent drain is no-op)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(10));
+      receiver.drain();
+      receiver.drain();
+      expect(onSnapshot, 'second drain after the first is no-op').toHaveBeenCalledTimes(1);
+    });
+
+    it('enqueueBinary collapses N back-to-back arrivals to 1 decode + dispatch — the burst-recovery case', () => {
+      const onSnapshot = vi.fn();
+      const onDiag = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+      // Simulate the Pattern B burst-recovery scenario: 10 snapshots
+      // arrive into the JS event loop before the next RAF drains.
+      for (let i = 0; i < 10; i++) receiver.enqueueBinary(packSnap(100 + i));
+      receiver.drain();
+
+      expect(onSnapshot, 'N×enqueue + 1×drain → 1 dispatch (the latest)').toHaveBeenCalledTimes(1);
+      expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(109);
+      // No drops are logged — intermediate frames silently superseded.
+      const droppedCalls = onDiag.mock.calls.filter((c) => (c[0] as string).startsWith('snap_dropped'));
+      expect(droppedCalls.length, 'no drop telemetry for byte-level coalescing').toBe(0);
+    });
+
+    it('reset() clears the pending raw buffer (so a stale buffer doesnt drain post-handoff)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(500));
+      receiver.reset();
+      receiver.drain();
+      expect(onSnapshot, 'drain after reset dispatches nothing').not.toHaveBeenCalled();
+    });
+
+    it('handleBinary (legacy direct dispatch) still works alongside the coalescer', () => {
+      const onSnapshot = vi.fn();
+      const onDiag = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+      receiver.handleBinary(packSnap(10));      // dispatches 10
+      receiver.enqueueBinary(packSnap(11));     // pending
+      receiver.handleBinary(packSnap(12));      // dispatches 12
+      receiver.drain();                          // decodes pending(11); reorder-guard drops (11 < 12)
+      expect(onSnapshot, 'direct dispatches 10 and 12; drained 11 dropped').toHaveBeenCalledTimes(2);
+      expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(10);
+      expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(12);
+      const dropOld = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+      expect(dropOld.length, 'drained-then-stale 11 logged as snap_dropped_old').toBe(1);
+    });
+  });
+});

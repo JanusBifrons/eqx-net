@@ -4,7 +4,7 @@ import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
-import { SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -169,7 +169,14 @@ export class SwarmSpawner {
     // Explicit per-spawn `radius` / `mass` still wins; otherwise fall back to
     // the kind's tuning values so each kind has its own physical footprint.
     const radius = d.radius ?? kind.radius ?? DRONE_DEFAULT_RADIUS;
-    const mass = d.mass ?? DRONE_DEFAULT_MASS;
+    // 2026-05-28 fix: respect `kind.mass`. Pre-fix this fell straight through
+    // to `DRONE_DEFAULT_MASS` (= 2), so a Crossguard drone (kind.mass = 30)
+    // spawned at mass 2 — the player could push it across the sector with
+    // basic thrust. Symmetric server↔client: the binary swarm wire doesn't
+    // carry per-drone mass; both sides re-derive it from `entry.shipKind`
+    // → catalogue lookup, so this fix lands on both. Player ships
+    // (`spawnShip`) already use `kind.mass` (see World.ts:161).
+    const mass = d.mass ?? kind.mass ?? DRONE_DEFAULT_MASS;
     const spec: AsteroidSpec = {
       id: d.id, x: d.x, y: d.y, vx: d.vx ?? 0, vy: d.vy ?? 0, radius, mass,
     };
@@ -247,8 +254,13 @@ export class SwarmSpawner {
 }
 
 /** Default uniform-random kind picker for drones. Skews toward Fighter only
- *  by virtue of the catalogue's order — every kind has equal probability. */
-function pickRandomShipKind(): ShipKindId {
-  const idx = Math.floor(Math.random() * SHIP_KINDS_LIST.length);
-  return SHIP_KINDS_LIST[idx]!.id;
+ *  by virtue of the catalogue's order — every gameplay kind has equal
+ *  probability. Engineering-only kinds (`crossguard`, `el`) are excluded
+ *  via `GAMEPLAY_SHIP_KINDS_LIST` — they're scale-10 test fixtures and
+ *  leaked into Sol Prime in capture ilhqk6 with the "square ship bigger
+ *  than its shield" smoke report. Player-explicit `JoinOption.shipKind`
+ *  still bypasses this filter; only ambient random selection is gated. */
+export function pickRandomShipKind(): ShipKindId {
+  const idx = Math.floor(Math.random() * GAMEPLAY_SHIP_KINDS_LIST.length);
+  return GAMEPLAY_SHIP_KINDS_LIST[idx]!.id;
 }

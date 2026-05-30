@@ -8,6 +8,12 @@ import { pino } from 'pino';
 import { Bus } from '../../core/events/Bus.js';
 import { SimulationClock } from '../../core/clock/SimulationClock.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import {
+  subscribeGcPause,
+  unsubscribeGcPause,
+  type GcPauseEvent,
+} from '../debug/GcMonitor.js';
+import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -24,14 +30,15 @@ import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
 import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
+import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
 import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
-import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
-import { shipCollisionTriangles } from '../../core/geometry/triangulate.js';
+import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -42,6 +49,7 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
+import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
 import { AiFireResolver } from './AiFireResolver.js';
 import { PlayerFireResolver } from './PlayerFireResolver.js';
@@ -50,6 +58,13 @@ import { RespawnHandler } from './RespawnHandler.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
+import { WebRtcChannelManager, type WebRtcEntryCounters } from '../transport/webrtcChannel.js';
+import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
+import {
+  WebRtcOfferMessageSchema,
+  WebRtcIceMessageSchema,
+  WebRtcFallbackMessageSchema,
+} from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
@@ -98,11 +113,13 @@ import {
   rayHitsShipPolygon,
   sweptSegmentHitsShipPolygon,
   // WEAPON_COOLDOWN_TICKS now used inside PlayerFireResolver + AiFireResolver
-  SHIP_COLLISION_RADIUS,
+  // SHIP_COLLISION_RADIUS retired 2026-05-27 — hit-tests now derive per-kind
+  // bounding-circle from `getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD`
+  // so the system matches the visible ShieldAura on every ship kind.
   SHIP_MAX_HEALTH,
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
-import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 
 const logger = pino({
   name: 'SectorRoom',
@@ -131,6 +148,16 @@ const JoinOptionsSchema = z
     /** Test-only initial shield override; same testMode gate. 0 lets the
      *  first beam hit hull immediately. */
     initialShield: z.number().int().min(0).optional(),
+    /** Mobile-perf gate test-only leak rate (bytes per RAF tick). Server
+     *  accepts and ignores — the value is consumed CLIENT-SIDE by
+     *  `src/client/debug/testLeakHook.ts` reading the URL param directly.
+     *  Validated here only for schema parity with the other test
+     *  primitives + so the URL → joinOption echo round-trips cleanly. */
+    injectLeak: z.number().int().min(0).max(10_000_000).optional(),
+    /** Test-only initial angle override (radians, standard math CCW).
+     *  Lets a spec spawn pointing at a specific target without burning
+     *  ~2 seconds rotating the ship via keyboard input. testMode gate. */
+    initialAngle: z.number().finite().optional(),
     /** Per-test room isolation knob. Combined with the test rooms'
      *  `filterBy(['testId'])` (in `src/server/index.ts`), passing a
      *  unique testId routes each Playwright spec to its own physics-
@@ -158,6 +185,13 @@ const JoinOptionsSchema = z
      *  reusing the most-recent roster row, which would mean clicking a
      *  fresh sector silently resumed the player's old ship. */
     isNewShip: z.boolean().optional(),
+    /** Test-only: pre-mark every drone in this sector hostile to the
+     *  joining player at spawn time. Lets a 20-25 s CDP allocation
+     *  profile (or any combat-shaped E2E) measure steady-state combat
+     *  without the IDLE→COMBAT transition tail polluting the window.
+     *  testMode-gated; ignored on galaxy rooms so a malicious client
+     *  can't force-aggro a live sector. plan: imperative-taco. */
+    startHostile: z.boolean().optional(),
   })
   .passthrough();
 
@@ -305,6 +339,16 @@ export class SectorRoom extends Room<SectorState> {
   private get interestScratch(): Map<string, Set<number>> { return this.snapshotBroadcaster.interestScratch; }
   /** Per-client snapshot broadcaster. Extracted to `SnapshotBroadcaster.ts`. */
   private snapshotBroadcaster!: SnapshotBroadcaster;
+  /**
+   * Phase 1 of swift-otter — per-room WebRTC DataChannel transport. Owns
+   * one PeerConnection per sessionId. Snapshot routing is wired through
+   * `SnapshotBroadcaster.sendSnapshot` to call `webrtcChannelManager
+   * .sendSnapshot(sessionId, snap, () => client.send('snapshot', snap))`.
+   *
+   * Null on engineering rooms (`sectorKey === null`) — those rooms are
+   * test fixtures and don't need the additional native-binding init cost.
+   */
+  private webrtcChannelManager: WebRtcChannelManager | null = null;
   /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
   private swarmBroadcaster!: SwarmBroadcaster;
   /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
@@ -405,6 +449,7 @@ export class SectorRoom extends Room<SectorState> {
    *  `JOIN_BROADCAST_GRACE_TICKS`. */
   private forceBroadcastUntilTick = 0;
   private testMode = false;
+  private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
    *  Set via the `tickBurnMs` room option to push tick budget over the TiDi
    *  threshold deterministically (4000 real entities only consume ~1.5 ms,
@@ -430,6 +475,12 @@ export class SectorRoom extends Room<SectorState> {
   readonly playerToTransitInFlight = new Set<string>();
   /** Phase 8 sub-phase B — per-room transit driver, set in onCreate. */
   private transitOrchestrator: TransitOrchestrator | null = null;
+  /** Paradigm plan (quirky-rabbit) Phase 6 — fans process-wide GC pauses
+   *  out to this room's clients so the on-device dev overlay can show
+   *  the server's GC health alongside its own browser longtask stats.
+   *  Stored as a bound function reference so onDispose can unsubscribe
+   *  the exact callback. Initialised in onCreate, nulled in onDispose. */
+  private gcPauseSubscriber: ((event: GcPauseEvent) => void) | null = null;
   /** Phase 8 sub-phase B (lingering ships) — 15-min auto-evict timers for
    *  hulls whose owners have disconnected from a galaxy room but whose ships
    *  remain in the live simulation. The ship keeps its SAB slot, ShipState
@@ -462,6 +513,10 @@ export class SectorRoom extends Room<SectorState> {
    *  `this.liveProjectiles.size` keep the same Map identity. */
   private projectiles!: ProjectilePipeline;
   private get liveProjectiles(): Map<string, ProjectileRecord> { return this.projectiles.liveProjectiles; }
+  /** Server-side missile simulation — pool, guidance, splash, impulse
+   *  queue. See `MissileSimulation.ts`. Wired into the per-tick `update()`
+   *  loop alongside `advanceProjectiles`. */
+  private missileSim!: MissileSimulation;
   /** AI drone weapon-fire resolver (per-mount hitscan + laser_fired
    *  broadcast). Extracted to `AiFireResolver.ts` (commit 21 partial). */
   private aiFireResolver!: AiFireResolver;
@@ -549,6 +604,16 @@ export class SectorRoom extends Room<SectorState> {
        *  `pickRandomShipKind`. */
       droneKinds?: ShipKindId[];
       /**
+       * 2026-05-27 — Engineering test rooms (`shield-test`) want a
+       * stationary drone gallery: ram them, shoot them, watch the
+       * shield-vs-hull collider swap, WITHOUT having them fly around
+       * pursuing + firing back. When true, drones spawn with
+       * `PassiveDroneBehaviour` (zero-impulse, never-fire) instead of
+       * `HostileDroneBehaviour`. Drones still take damage and die
+       * normally; only the COMBAT state transition (pursuit + fire)
+       * is suppressed. */
+      peacefulDrones?: boolean;
+      /**
        * Phase 5e sleep handshake test mode. Spawns exactly one stationary
        * asteroid at a known position so the test can observe its sleep
        * transition. Suppresses every other seed path.
@@ -592,8 +657,43 @@ export class SectorRoom extends Room<SectorState> {
        *  report the unmultiplied `simClock.rate` so client audio pitch
        *  + TiDi UI stay honest. */
       testTimeScale?: number;
+      /**
+       * 2026-05-28 — test-only: gate the entire ramming-damage path. The
+       * existing damage formula in `core/combat/Ramming.ts` is force-
+       * gated already (`RAM_FORCE_FLOOR = 300` N below which damage is
+       * 0), but ANY meaningful ramming exceeds that floor and quickly
+       * caps the player at the per-pair `RAM_DAMAGE_MAX = 50` HP/tick.
+       * `ramming-probe-test` needs the player to ram a target repeatedly
+       * to gather visual-vs-physics frames WITHOUT dying. When this
+       * flag is true the `onContactBatch` path skips the `applyDamage`
+       * call (server still broadcasts `collision_resolved` for velocity
+       * sync; `ram_damage` is suppressed and no health changes). Ignored
+       * on non-testMode rooms.
+       */
+      disableCollisionDamage?: boolean;
+      /**
+       * 2026-05-28 — Engineering-test rooms (`hull-collision-test`) seed a
+       * deterministic gallery of drones at hand-authored poses, bypassing the
+       * uniform-disc spawner. Each entry forces the drone to a specific
+       * world `(x, y, angle)`; `hullExposed: true` immediately drops the
+       * shield + posts `SET_HULL_EXPOSED` so the hull-polygon collider is
+       * exposed at spawn (no need to ram + drain shield first).
+       *
+       * Suppresses `useBulkSeed` / asteroidRoster / legacy drone-wave seed
+       * paths — no double-spawn. Ignored on non-testMode rooms; bypasses
+       * `peacefulDrones` AI selection (the room-level option still applies
+       * to the AI factory). Drones still take damage and die normally.
+       */
+      dronePoses?: ReadonlyArray<{
+        kind: ShipKindId;
+        x: number;
+        y: number;
+        angle?: number;
+        hullExposed?: boolean;
+      }>;
     };
     this.testMode = roomOpts.testMode ?? false;
+    this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
     this.testTimeScale = this.testMode ? Math.max(1, roomOpts.testTimeScale ?? 1) : 1;
@@ -617,7 +717,9 @@ export class SectorRoom extends Room<SectorState> {
     }
     const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
-    const asteroidRoster = (useBulkSeed || useSingleAsteroid) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
+    const useDronePoses = this.testMode && Array.isArray(roomOpts.dronePoses) && roomOpts.dronePoses.length > 0;
+    const asteroidRoster =
+      (useBulkSeed || useSingleAsteroid || useDronePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -700,6 +802,8 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
+      spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
+        this.spawnServerMissile(ownerId, x, y, dx, dy, def),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       broadcast: (type, msg) => this.broadcast(type, msg),
@@ -724,6 +828,8 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
+      spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
+        this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });
 
     // Two-layer shield/hull damage + regen routing. Owns the swarm-side
@@ -764,6 +870,7 @@ export class SectorRoom extends Room<SectorState> {
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
       postToWorker: (cmd) => this.postToWorker(cmd),
       logger,
+      serverLogEvent,
     });
 
     // Roster persistence bridge — wraps the four getPlayerShipStore()
@@ -831,6 +938,56 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
     });
 
+    // Missile subsystem — guidance, splash damage, impulse queue. The
+    // queue is drained each tick and posted to the physics worker as
+    // MISSILE_IMPULSE commands; the worker has the live Rapier world.
+    this.missileSim = new MissileSimulation({
+      sabF32: this.sabF32,
+      serverTick: () => this.serverTick,
+      playerToSlot: this.playerToSlot,
+      getActiveShip: (pid) => this.getActiveShip(pid),
+      shipPoseCache: this.shipPoseCache,
+      swarmRegistry: this.swarmRegistry,
+      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      broadcastFired: (msg) => this.broadcast('missile_fired', msg),
+      broadcastDetonated: (msg) => this.broadcast('missile_detonated', msg),
+      bus: this.bus,
+      serverLogEvent,
+    });
+
+    // Phase 1 swift-otter — instantiate the per-room WebRTC channel
+    // manager BEFORE the SnapshotBroadcaster so the manager reference
+    // can be captured into the sendSnapshot DI seam below.
+    //
+    // 2026-05-29 — gate removed (was: `if (this.sectorKey !== null)`).
+    // Phase 4 E2E uses engineering rooms (`?room=feel-test-25`,
+    // `sectorKey === null`) so gating on sectorKey meant the server
+    // silently ignored every `webrtc_offer`, the client timed out, and
+    // the measurement showed `dc_connected=false` across the board.
+    // The PeerConnection isn't constructed until an offer actually
+    // arrives (factory runs on `handleOffer`), so the cost on rooms
+    // that never see a `?webrtc=1` client is zero — fine to create on
+    // every room and let opt-in drive the actual binding load.
+    this.webrtcChannelManager = new WebRtcChannelManager({
+      peerConnectionFactory: nodeDataChannelPeerConnectionFactory({
+        // STUN URL defaults to Google's freebie — works LAN + open
+        // internet without TURN. TURN deployment for NAT-restricted
+        // clients is scoped as a separate plan (hostile review #14).
+        iceServers: ['stun:stun.l.google.com:19302'],
+      }),
+      sendAnswer: (sessionId, sdp) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        if (client) client.send('webrtc_answer', { type: 'webrtc_answer', sdp });
+      },
+      sendCandidate: (sessionId, candidate, mid) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        if (client) client.send('webrtc_ice', { type: 'webrtc_ice', candidate, mid });
+      },
+      serverLogEvent,
+      logger,
+    });
+
     // Per-client snapshot broadcaster. Owns broadcastCounter,
     // sabAppliedTicks, lastInputCaches, interestScratch. Composes the
     // per-client 20Hz phase-staggered loop with the global "all alive
@@ -853,8 +1010,25 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
+      missileSim: this.missileSim,
       logger,
       serverLogEvent,
+      // Phase 1 swift-otter DI seam — when the WebRtc manager is live
+      // (galaxy rooms), route via DC with WS fallback; on engineering
+      // rooms the seam stays undefined and the legacy WS-only path runs.
+      sendSnapshot: (client, snap) => {
+        // The manager owns the routing decision (sendable + degraded
+        // + buffered + try/catch). `onFallback` is the WS path; the
+        // manager invokes it synchronously when DC is unavailable.
+        // Non-null assertion is safe here — the manager is always
+        // constructed above (the previous `sectorKey === null` gate
+        // was removed 2026-05-29).
+        this.webrtcChannelManager!.sendSnapshot(
+          client.sessionId,
+          snap,
+          () => { client.send('snapshot', snap); },
+        );
+      },
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -968,7 +1142,14 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
-      droneBehaviour: (kind) => new HostileDroneBehaviour(kind),
+      // `peacefulDrones` swaps the hostile-pursuit behaviour for the
+      // zero-impulse passive one. Used by engineering rooms (shield-test)
+      // where the player needs a stationary drone gallery for collision
+      // testing without combat noise. Drones still die normally — only
+      // the COMBAT pursue+fire path is suppressed.
+      droneBehaviour: roomOpts.peacefulDrones
+        ? () => new PassiveDroneBehaviour()
+        : (kind) => new HostileDroneBehaviour(kind),
       interestGrid: this.interestGrid,
       registerLagComp: (id) => this.snapshotRing.registerEntity(id),
       ...(pickDroneKind ? { pickDroneKind } : {}),
@@ -1007,6 +1188,60 @@ export class SectorRoom extends Room<SectorState> {
       // player accidentally bumping it. No drone, no AI behaviour wired.
       this.swarmSpawner.spawnAsteroid({ id: 'sleep-rock', x: 600, y: 0, vx: 0, vy: 0, radius: 24, mass: 1 });
       logger.info('Phase 5e single-asteroid sleep test seed');
+    } else if (useDronePoses) {
+      // 2026-05-28 — deterministic-pose engineering seed. Each entry forces a
+      // drone to a specific world `(x, y, angle)` (bypassing the uniform-disc
+      // spawner), and optionally drops shields immediately so the
+      // hull-polygon collider is exposed at spawn. Used by the
+      // `hull-collision-test` room to verify that a concave T-ship's
+      // polygon collider correctly leaves the gap regions empty.
+      const poses = roomOpts.dronePoses!;
+      let placed = 0;
+      for (let i = 0; i < poses.length; i++) {
+        const pose = poses[i]!;
+        const droneId = `pose-drone-${i}`;
+        const ok = this.swarmSpawner.spawnDrone({ id: droneId, x: pose.x, y: pose.y, kind: pose.kind });
+        if (!ok) {
+          logger.error({ requested: poses.length, spawned: placed }, 'dronePoses spawn truncated (slot pool exhausted)');
+          break;
+        }
+        const rec = this.swarmRegistry.get(droneId);
+        if (!rec) continue;
+        this.swarmHealth.set(droneId, getDroneMaxHealth(rec.shipKind) ?? 40);
+        this.swarmShield.set(droneId, getDroneShieldMax(rec.shipKind));
+        this.swarmShieldLastDmg.set(droneId, this.serverTick);
+        // Apply rotation via SET_POSITION (SPAWN_OBSTACLE sets pos+vel only,
+        // angle defaults to 0). The worker processes this command AFTER the
+        // SPAWN_OBSTACLE that spawnDrone just enqueued, so the body exists.
+        // Also seed the registry's lastBroadcast.angle so the very first
+        // delta-detector decision uses the correct reference.
+        const angle = pose.angle ?? 0;
+        if (angle !== 0) {
+          this.postToWorker({
+            type: 'SET_POSITION',
+            entityId: droneId, x: pose.x, y: pose.y, angle, vx: 0, vy: 0, angvel: 0,
+          });
+          rec.lastBroadcast.angle = angle;
+        }
+        if (pose.hullExposed) {
+          // Force shield-down at spawn: clear the shield slot, flip the
+          // registry's wire flag, post SET_HULL_EXPOSED so Rapier swaps to
+          // the polygon collider. Mirrors `ShieldHullRouter`'s 0-cross path
+          // minus the discrete `shield_broken` broadcast (no client cares
+          // at room-boot time; subsequent regen will fire the normal events).
+          this.swarmShield.set(droneId, 0);
+          rec.shieldDown = true;
+          this.postToWorker({
+            type: 'SET_HULL_EXPOSED',
+            id: droneId,
+            exposed: true,
+            kindId: rec.shipKind ?? DEFAULT_SHIP_KIND,
+            tick: this.serverTick,
+          });
+        }
+        placed++;
+      }
+      logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
     } else if (useBulkSeed) {
       // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
       // small drone ring with a sunflower-spiral spread across a disc, sized
@@ -1062,6 +1297,20 @@ export class SectorRoom extends Room<SectorState> {
     // it explicit guards against a future default change silently breaking
     // the contract.
     this.setSeatReservationTime(15);
+
+    // Paradigm plan (quirky-rabbit) Phase 6 — fan server GC pauses out to
+    // this room's clients. The subscriber is called synchronously inside
+    // the GC observer; the broadcast just enqueues into each WS buffer,
+    // which is the cheap operation that contract demands.
+    this.gcPauseSubscriber = (event: GcPauseEvent): void => {
+      const msg: GcPauseEventMessage = {
+        type: 'gc_pause',
+        durationMs: event.durationMs,
+        kind: event.kind,
+      };
+      this.broadcast('gc_pause', msg);
+    };
+    subscribeGcPause(this.gcPauseSubscriber);
 
     // Phase 8 sub-phase B — per-room transit driver. Engineering rooms get
     // an orchestrator too, but it'll always reject `engage_transit` because
@@ -1119,6 +1368,52 @@ export class SectorRoom extends Room<SectorState> {
 
     this.onMessage('respawn', (client: Client) => {
       this.handleRespawn(client);
+    });
+
+    // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
+    //
+    // Client is the offerer; server is the answerer. Drop silently on
+    // schema failure per the validation contract — sampled warn so a
+    // malicious client can't flood the log. The manager handles
+    // out-of-order ICE (counts iceDroppedBeforeOffer if a candidate
+    // arrives before the offer).
+    this.onMessage('webrtc_offer', (client: Client, raw: unknown) => {
+      const parsed = WebRtcOfferMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_offer');
+        return;
+      }
+      this.webrtcChannelManager?.handleOffer(client.sessionId, parsed.data.sdp);
+    });
+
+    this.onMessage('webrtc_ice', (client: Client, raw: unknown) => {
+      const parsed = WebRtcIceMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_ice');
+        return;
+      }
+      this.webrtcChannelManager?.handleIce(
+        client.sessionId,
+        parsed.data.candidate,
+        parsed.data.mid,
+      );
+    });
+
+    // Hostile #9 — client declares fallback explicitly. We clean up the
+    // PC immediately (no waiting for ICE-deadline expiry) and ACK so the
+    // client knows it can stop sending signaling.
+    this.onMessage('webrtc_fallback', (client: Client, raw: unknown) => {
+      const parsed = WebRtcFallbackMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed webrtc_fallback');
+        return;
+      }
+      serverLogEvent('webrtc_client_fallback', {
+        sessionId: client.sessionId,
+        reason: parsed.data.reason ?? 'unspecified',
+      });
+      this.webrtcChannelManager?.cleanup(client.sessionId);
+      client.send('webrtc_fallback_ack', { type: 'webrtc_fallback_ack' });
     });
 
     this.bus.on('SHIP_DESTROYED', (evt) => {
@@ -1326,6 +1621,41 @@ export class SectorRoom extends Room<SectorState> {
     this.projectiles.spawn(ownerId, x, y, vx, vy, damage, radius, maxTicks, weaponId);
   }
 
+  /** Hostility predicate the missile lock-on uses.
+   *
+   *  Player-fired missiles target any non-owner entity. Asteroid
+   *  exclusion is handled at the candidate-build site in
+   *  `MissileSimulation.lockOnTarget` (filtered by `rec.kind === 0`)
+   *  rather than here, because galaxy asteroids spawn with bare
+   *  `asteroid-N` ids — NO `swarm-` prefix — and string-prefix
+   *  filtering misses them. Kind is the source of truth.
+   *
+   *  AI-fired missiles defer to the `aiController`'s hostility ledger
+   *  (the existing `markHostile` / `bot_aggro` channel) — drones and
+   *  bots only fire at players they've already been antagonised by.
+   */
+  private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
+    const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
+    if (isPlayerShooter) {
+      return (id) => id !== ownerId;
+    }
+    return (id) => this.aiController.isEntityHostileToPlayer(ownerId, id);
+  }
+
+  private spawnServerMissile(
+    ownerId: string,
+    spawnX: number,
+    spawnY: number,
+    dirX: number,
+    dirY: number,
+    def: MissileWeaponDef,
+  ): number | null {
+    return this.missileSim.spawn(
+      ownerId, spawnX, spawnY, dirX, dirY, def,
+      this.isMissileTargetHostile(ownerId),
+    );
+  }
+
   /**
    * Shield->hull layered damage for a schema ShipState (active or
    * lingering). Mutates ship.health (hull) + ship.shield +
@@ -1471,21 +1801,31 @@ export class SectorRoom extends Room<SectorState> {
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     cx: number, cy: number, angle: number,
   ): number | null {
-    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, SHIP_COLLISION_RADIUS);
+    // Per-kind bounding circle = hull radius + SHIELD_RADIUS_PAD. Three
+    // sites share this constant (physics ball collider, this hit-test,
+    // visible ShieldAura ring) so the player's "where the shield is"
+    // intuition matches every gate. Pre-2026-05-27 used a hardcoded
+    // SHIP_COLLISION_RADIUS=12 that only matched fighter — heavy at
+    // radius 16 had ~4 u of visible hull where lasers passed through.
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = rayHitsSphere(fx, fy, dx, dy, maxDist, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
-    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionTriangles(ship.kind));
+    return rayHitsShipPolygon(fx, fy, dx, dy, maxDist, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
-  /** Projectile sweep counterpart of playerHitscanDist — same cheap-
-   *  circle-first / shield-down-refine perf profile. */
+  /** Projectile sweep counterpart of playerHitscanDist — same per-kind
+   *  bounding-circle (kind.radius + SHIELD_RADIUS_PAD), same shield-up /
+   *  shield-down split. Projectiles now impact at the visible shield
+   *  boundary on every ship kind, not just fighter. */
   private playerProjectileSweep(
     ship: ShipState,
     fromX: number, fromY: number, stepX: number, stepY: number, projRadius: number,
     cx: number, cy: number, angle: number,
   ): { entry: number; hitX: number; hitY: number } | null {
-    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, SHIP_COLLISION_RADIUS);
+    const r = getShipKind(ship.kind).radius + SHIELD_RADIUS_PAD;
+    const circle = projectileSweepCircle(fromX, fromY, stepX, stepY, projRadius, cx, cy, r);
     if (circle === null || ship.shield > 0) return circle;
-    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionTriangles(ship.kind));
+    return sweptSegmentHitsShipPolygon(fromX, fromY, stepX, stepY, cx, cy, angle, shipCollisionParts(ship.kind));
   }
 
   private advanceProjectiles(): void {
@@ -1577,7 +1917,7 @@ export class SectorRoom extends Room<SectorState> {
           // asteroids (immune - no swarmHealth entry) while still
           // damaging the ship they hit, so "asteroids deal but do not
           // take" falls out for free. Applied once per pair per tick.
-          if (p.damage > 0) {
+          if (p.damage > 0 && !this.disableCollisionDamage) {
             serverLogEvent('ram_damage', {
               aId: p.aId,
               bId: p.bId,
@@ -2022,8 +2362,32 @@ export class SectorRoom extends Room<SectorState> {
       if (typeof parsed.data.initialShield === 'number') {
         ship.shield = Math.max(0, parsed.data.initialShield);
       }
+      // initialAngle is applied below — the angle lives in
+      // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
+      // not on the ShipState schema (per the spatial-fields-off-schema
+      // invariant at the top of `SectorState.ts`).
     }
     ship.shieldLastDamageTick = this.serverTick;
+
+    // plan: imperative-taco — pre-mark every drone hostile to this player
+    // so a CDP allocation profile (combat-allocation-profile-hostile.spec.ts)
+    // measures steady-state combat instead of the IDLE→COMBAT transition.
+    // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
+    // `aiController.markHostile` + `bot_aggro` broadcast so the client's
+    // hostility ledger stays in lockstep. testMode-gated for safety.
+    if (this.testMode && parsed.success && parsed.data.startHostile === true) {
+      const tick = this.serverTick;
+      for (const rec of this.swarmRegistry.all()) {
+        if (rec.kind !== 1) continue; // drones only — asteroids stay inert
+        this.aiController.markHostile(rec.id, playerId, tick);
+        this.broadcast('bot_aggro', {
+          type: 'bot_aggro',
+          botEntityId: `swarm-${rec.entityId}`,
+          targetPlayerId: playerId,
+          tick,
+        });
+      }
+    }
 
     // Seed the pose cache with the spawn pose so any pre-update read sees a
     // sane value (e.g. a fire request resolved on this same client.send turn).
@@ -2037,6 +2401,23 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
+
+    // Test-only initialAngle: SPAWN creates the body at angle 0; force
+    // the requested heading immediately via SET_POSITION so the spec
+    // doesn't have to drive 2 s of keyboard rotation. Pose cache + ship
+    // schema were already populated above; this just brings the Rapier
+    // body in line with them.
+    if (this.testMode && parsed.success && typeof parsed.data.initialAngle === 'number') {
+      const a = parsed.data.initialAngle;
+      this.postToWorker({
+        type: 'SET_POSITION',
+        entityId: playerId,
+        x: spawnX, y: spawnY, angle: a,
+        vx: 0, vy: 0, angvel: 0,
+      });
+      const poseEntry = this.shipPoseCache.get(playerId);
+      if (poseEntry) poseEntry.angle = a;
+    }
 
     const currentServerTick = Atomics.load(this.sabU32, TICK_IDX);
 
@@ -2104,6 +2485,13 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   override onLeave(client: Client, consented: boolean): void {
+    // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
+    // running the existing leave handler. The leaveHandler does the
+    // player-state cleanup (lingering / transit / despawn); the DC
+    // teardown is independent and must happen even on lingering paths
+    // (no point holding a PeerConnection alive against a disconnected
+    // session). Idempotent: cleanup() is a no-op when no entry exists.
+    this.webrtcChannelManager?.cleanup(client.sessionId);
     this.leaveHandler.handle(client, consented);
   }
 
@@ -2208,6 +2596,14 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    // Paradigm plan (quirky-rabbit) Phase 6 — unsubscribe from the GC
+    // observer so the disposed room isn't kept alive by the subscriber
+    // closure (and so the observer doesn't try to broadcast through a
+    // torn-down WebSocket transport).
+    if (this.gcPauseSubscriber) {
+      unsubscribeGcPause(this.gcPauseSubscriber);
+      this.gcPauseSubscriber = null;
+    }
     // Phase 8 sub-phase B — abort any in-flight transits so no orphan timers
     // or seat reservations linger past room teardown.
     this.transitOrchestrator?.cancelAll('manual');
@@ -2222,8 +2618,36 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null) {
       try { this.persistSectorSnapshot(); } catch { /* non-critical */ }
     }
+    // Phase 1 swift-otter — close every PeerConnection so the libdatachannel
+    // worker threads exit cleanly before the process / room teardown.
+    this.webrtcChannelManager?.cleanupAll();
+    this.webrtcChannelManager = null;
     this.physicsWorkerProxy?.terminate();
     logger.info({ sectorKey: this.sectorKey }, 'SectorRoom disposed');
+  }
+
+  // ── Phase 4 iteration 3 swift-otter — WebRTC diagnostic surface ─────────
+
+  /**
+   * Invoked via `matchMaker.remoteRoomCall(roomId, 'getWebRtcCounters')`
+   * from the `/dev/webrtc-counters` dev endpoint. Returns a JSON-safe
+   * snapshot of per-session counters so the Phase 4 E2E can compare
+   * server-side `sentViaDc` against client-side `snapshot_received`
+   * via='dc' counts to localise where DC throughput variance lives.
+   * Null when the room has no manager (defensive — every room currently
+   * constructs one).
+   */
+  getWebRtcCounters(): {
+    roomId: string;
+    sectorKey: string | null;
+    sessions: WebRtcEntryCounters[];
+  } | null {
+    if (!this.webrtcChannelManager) return null;
+    return {
+      roomId: this.roomId,
+      sectorKey: this.sectorKey,
+      sessions: this.webrtcChannelManager.getCounters(),
+    };
   }
 
   // ── Phase 8 sub-phase B — TransitOrchestrator host adapter ──────────────
@@ -2355,6 +2779,19 @@ export class SectorRoom extends Room<SectorState> {
 
     // Advance physical projectiles and check for collisions.
     this.advanceProjectiles();
+    // Advance missiles (lock-verify, guidance, sweep, detonate-splash).
+    // Detonations enqueue physics impulses which are drained below and
+    // posted to the worker as MISSILE_IMPULSE commands.
+    this.missileSim.advance();
+    const impulses = this.missileSim.drainImpulses();
+    for (const imp of impulses) {
+      this.postToWorker({
+        type: 'MISSILE_IMPULSE',
+        entityId: imp.targetId,
+        fx: imp.fx,
+        fy: imp.fy,
+      });
+    }
     this.tickShieldRegen();
     phaseTime('projectiles');
 
@@ -2427,6 +2864,14 @@ export class SectorRoom extends Room<SectorState> {
     // purely main-thread and so is monotonic with update() calls.
     this.snapshotBroadcaster.broadcast(sectorIdle);
     phaseTime('snapshotBroadcast');
+
+    // Phase 1 swift-otter — once per second, expire any WebRTC sessions
+    // whose ICE deadline has elapsed without `onConnected`. Gated to
+    // 1 Hz because the call iterates a (small) Map and the deadline is
+    // 5 s anyway. broadcastCounter is the 60 Hz main-thread monotonic.
+    if (this.webrtcChannelManager !== null && this.broadcastCounter % 60 === 0) {
+      this.webrtcChannelManager.expireStale();
+    }
 
     // Tick AI AT THE END of update() so posted impulses reach the
     // worker BEFORE the next SAB read. See aiTickRunner.ts.

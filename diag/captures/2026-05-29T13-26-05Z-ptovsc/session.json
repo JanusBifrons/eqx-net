@@ -1,0 +1,14 @@
+{
+  "sessionId": "2026-05-29T13-26-05Z-ptovsc",
+  "streaming": true,
+  "hasFinalized": false,
+  "lastAppliedSeq": 0,
+  "lastBatchAtMs": 1780061168898,
+  "startedAtMs": 1780061168895,
+  "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Mobile Safari/537.36",
+  "viewport": {
+    "w": 411,
+    "h": 809
+  },
+  "clientEpochMs": 1780061167644
+}

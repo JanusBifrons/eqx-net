@@ -98,6 +98,21 @@ export interface DevData {
   afterY: number;
 }
 
+/** Rolling-30 s health stats — paradigm plan (quirky-rabbit) Phase 6.
+ *  Published once per second from `src/client/debug/healthStats.ts`'s
+ *  publisher. The DevOverlay surfaces both windows; consumers should
+ *  treat 0 as "no recent events" not "metric unavailable". */
+export interface UIHealthStats {
+  /** Server major-GC pauses received via the `gc_pause` Colyseus
+   *  broadcast. Only MSC pauses cross the 5 ms threshold; Scavenge is
+   *  filtered out server-side. */
+  serverGc: { count30s: number; maxMs30s: number };
+  /** Browser longtask events (>50 ms) from `PerformanceObserver`.
+   *  Includes GC pauses on the JS thread, but also any other blocking
+   *  work — honest about what it measures (not "allocation rate"). */
+  longtask: { count30s: number; maxMs30s: number };
+}
+
 export interface UIStore {
   connectionStatus: ConnectionStatus;
   sectorName: string;
@@ -126,6 +141,9 @@ export interface UIStore {
    *  running over budget, which is a different failure mode than TiDi. */
   serverTickHz: number;
   devData: DevData;
+  /** Paradigm plan (quirky-rabbit) Phase 6 — rolling 30 s GC/longtask
+   *  stats, published once per second from `healthStats.ts`. */
+  healthStats: UIHealthStats;
   /** Fraction 0–1 of snapshots that triggered a significant correction. Always-visible HUD stat. */
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
@@ -146,6 +164,13 @@ export interface UIStore {
   transitSpoolMs: number | null;
   /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
   activeWeapon: WeaponId;
+  /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
+   *  or weapon switched since last fire). Stamped by `ColyseusClient.sendFire`.
+   *  Per-frame readers (the fire-button cooldown ring) use this with
+   *  `getWeapon(activeWeapon).cooldownTicks * 1000 / 60` to render a
+   *  circular progress indicator. Low-cadence (≤ 6 Hz for hitscan, ≤ 0.3 Hz
+   *  for heat-seeker) — safe in Zustand without trampling React. */
+  lastFireMs: number | null;
   /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
   isDrawerOpen: boolean;
   /** Currently active tab inside the advanced drawer (`profile` | `settings` | `galaxy` | `debug`). */
@@ -204,6 +229,7 @@ export interface UIStore {
   setClockRate: (n: number) => void;
   setServerTickHz: (n: number) => void;
   setDevData: (d: DevData) => void;
+  setHealthStats: (s: UIHealthStats) => void;
   setDead: (dead: boolean) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;
@@ -211,6 +237,7 @@ export interface UIStore {
   setTransitTargetSectorKey: (key: string | null) => void;
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveWeapon: (id: WeaponId) => void;
+  setLastFireMs: (ms: number | null) => void;
   cycleWeapon: () => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;

@@ -113,8 +113,31 @@ const BUCKETS: Record<string, string> = {
   fire: 'combat',
   fireRejected: 'combat',
   fire_received: 'combat',
+  // Missile lifecycle diagnostics (2026-05-27 — missile-frigate smoke).
+  // `missile_spawned` carries the lock-at-launch result (lockedTargetId
+  // null vs hostileCandidateCount distinguishes "no candidates in range"
+  // from "candidates rejected by hostility filter" — the latter being
+  // the "didn't lock on" smoke-test signature). `missile_detonated`
+  // carries a `cause` ('sweep'|'fuse'|'lifetime') so a capture can
+  // distinguish "homed onto target and hit" from "dumb-flight expired".
+  // `missile_lock_lost` fires when the locked target despawns mid-flight.
+  missile_spawned: 'combat',
+  missile_detonated: 'combat',
+  missile_lock_lost: 'combat',
+  // Damage-routing telemetry (2026-05-27 — added alongside the missile
+  // asteroid-lock fix). Currently emitted ONLY for swarm hits (the
+  // class where the user's "zero damage" smoke kept firing — missiles
+  // were locking onto galaxy asteroids whose IDs don't have the
+  // `swarm-` prefix, so they cleared the hostility predicate but had
+  // no `swarmHealth` entry → silent no-op). E2E specs poll for this
+  // tag with `kind === 'swarm'` to confirm non-zero damage landed.
+  damage_applied: 'combat',
   swarm_near_enter: 'combat',
   swarm_near_exit: 'combat',
+  // 2026-05-28 — Per-frame visual-vs-physics divergence probe. Logged
+  // every frame the local player is within 400 u of a drone. Lives in
+  // the combat bucket alongside the other near-drone diagnostics.
+  ramming_probe: 'combat',
   // 2026-05-09 — physics-side collisions surfaced into the diag stream
   // so we can correlate combat-phase correction bursts with actual
   // drone-vs-player contacts. See SectorRoom.ts CONTACT_BATCH handler.
@@ -512,4 +535,5 @@ export {
   devPlayerShipsAbandonHandler,
   devResetRosterHandler,
   devPlayerShipsHandler,
+  devWebrtcCountersHandler,
 } from './diag/devHandlers.js';

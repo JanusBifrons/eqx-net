@@ -4,13 +4,26 @@ import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpo
 
 const BAR_WIDTH = 40;
 const BAR_HEIGHT = 4;
+const SHIELD_GAP = 1; // px between shield (above) and hull (below)
 const BAR_OFFSET_Y = 20; // pixels above entity in Pixi coords
 const FADE_AFTER_MS = 2000;
 const FADE_DURATION_MS = 500;
+const SHIELD_COLOR = 0x44ccff;
 
 interface HealthBarEntry {
   gfx: Graphics;
   healthPct: number;
+  /** Optional — when set (and > 0 or shieldEverNonZero), renders a
+   *  thin shield bar ABOVE the hull bar so shield-only damage on
+   *  drones is visible (the bug class: "missile hits scout, shield
+   *  absorbs, hull bar shows 100%, user sees zero damage"). */
+  shieldPct: number;
+  /** Sticky bit — once we see a non-zero shieldPct for this entry we
+   *  keep rendering the shield segment until the bar fades, so a hit
+   *  that reduces shield from non-zero to zero still SHOWS the
+   *  reduction-to-zero visually (vs. a kind with no shield at all,
+   *  where we never set this true and skip the shield bar entirely). */
+  shieldEverNonZero: boolean;
   lastHitTime: number;
 }
 
@@ -40,15 +53,23 @@ export class HealthBarManager {
     parent.addChild(this.container);
   }
 
-  onHit(entityId: string, healthPct: number): void {
+  onHit(entityId: string, healthPct: number, shieldPct: number = 0): void {
     let entry = this.bars.get(entityId);
     if (!entry) {
       const gfx = new Graphics();
       this.container.addChild(gfx);
-      entry = { gfx, healthPct, lastHitTime: performance.now() };
+      entry = {
+        gfx,
+        healthPct,
+        shieldPct,
+        shieldEverNonZero: shieldPct > 0,
+        lastHitTime: performance.now(),
+      };
       this.bars.set(entityId, entry);
     }
     entry.healthPct = healthPct;
+    entry.shieldPct = shieldPct;
+    if (shieldPct > 0) entry.shieldEverNonZero = true;
     entry.lastHitTime = performance.now();
     entry.gfx.alpha = 1;
   }
@@ -110,18 +131,34 @@ export class HealthBarManager {
       // Position and draw.
       entry.gfx.clear();
       const barX = ex - BAR_WIDTH / 2;
-      const barY = -ey - BAR_OFFSET_Y; // Y-flip + offset upward
+      const hullBarY = -ey - BAR_OFFSET_Y; // Y-flip + offset upward
+      const hasShield = entry.shieldEverNonZero;
+      // When the entity has a shield, stack the shield segment ABOVE
+      // the hull segment so shield damage is visible AT ALL (drones
+      // don't have a HUD ShieldHullBar; the on-hit bar is their only
+      // shield-feedback surface). When there's no shield (legacy /
+      // shield-less kinds) we keep the single-bar layout exactly as
+      // before — no regression to existing behaviour.
+      const shieldBarY = hasShield ? hullBarY - BAR_HEIGHT - SHIELD_GAP : hullBarY;
 
-      // Background. Reuse the module-level scratch style — Pixi consumes
-      // the literal synchronously, so mutating one object across frames is
-      // safe and saves 2 alloc/frame/bar.
-      entry.gfx.rect(barX, barY, BAR_WIDTH, BAR_HEIGHT);
+      // Shield background + foreground.
+      if (hasShield) {
+        entry.gfx.rect(barX, shieldBarY, BAR_WIDTH, BAR_HEIGHT);
+        entry.gfx.fill(_bgFillStyle);
+        const shieldFg = BAR_WIDTH * Math.max(0, Math.min(1, entry.shieldPct));
+        if (shieldFg > 0) {
+          entry.gfx.rect(barX, shieldBarY, shieldFg, BAR_HEIGHT);
+          _fgFillStyle.color = SHIELD_COLOR;
+          entry.gfx.fill(_fgFillStyle);
+        }
+      }
+
+      // Hull background + foreground.
+      entry.gfx.rect(barX, hullBarY, BAR_WIDTH, BAR_HEIGHT);
       entry.gfx.fill(_bgFillStyle);
-
-      // Foreground.
       const fgWidth = BAR_WIDTH * Math.max(0, Math.min(1, entry.healthPct));
       if (fgWidth > 0) {
-        entry.gfx.rect(barX, barY, fgWidth, BAR_HEIGHT);
+        entry.gfx.rect(barX, hullBarY, fgWidth, BAR_HEIGHT);
         _fgFillStyle.color = healthColor(entry.healthPct);
         entry.gfx.fill(_fgFillStyle);
       }

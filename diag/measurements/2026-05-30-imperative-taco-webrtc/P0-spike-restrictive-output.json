@@ -1,0 +1,13 @@
+{
+  "startedAt": "2026-05-29T18:50:11.356Z",
+  "ok": true,
+  "iceSuppressionScenario": {
+    "elapsedMs": 5007,
+    "connectionStateA": "connecting",
+    "connectionStateB": "n/a-no-peer",
+    "iceConnectionStateA": "checking",
+    "dcStateA": "connecting",
+    "reachedConnected": false
+  },
+  "notes": "Single-peer hanging-offer simulation — no answer is ever provided. This is what a client sees when UDP is blocked or the server is unreachable. The 5 s app-level deadline is the sufficient fallback signal; the underlying connectionState is expected to stay in \"new\"/\"connecting\"."
+}

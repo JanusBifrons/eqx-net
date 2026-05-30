@@ -41,6 +41,10 @@ export interface SwarmDmgRecord {
   id: string;
   slot: number;
   entityId: number;
+  /** SwarmKind enum (0 = asteroid, 1 = drone). Surfaced into the
+   *  `damage_applied` diag entry so a capture can distinguish drone
+   *  hits from the (now-impossible) asteroid hits. */
+  kind: number;
   shipKind?: string | null;
   shieldDown?: boolean;
 }
@@ -93,6 +97,9 @@ export interface DamageRouterDeps {
   postToWorker: (cmd: WorkerCmd) => void;
   /** Pino logger for the lifecycle log line. */
   logger: Logger;
+  /** Diagnostic ring-buffer sink — emits `damage_applied` on swarm
+   *  hits. */
+  serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
 }
 
 export class DamageRouter {
@@ -228,6 +235,22 @@ export class DamageRouter {
       shieldMax: sf.shieldMax,
       hullMax: sf.hullMax,
       hitLayer: sf.hitLayer,
+    });
+    // Diag — emits ONLY for swarm hits (the user's missile-vs-asteroid
+    // smoke class). Player/lingering/wreck branches return early above;
+    // a separate `damage_applied` log per branch would be noise. The
+    // E2E missile-vs-drone spec polls `/dev/events` for this tag with
+    // `kind === 'swarm'` to assert non-zero damage actually landed.
+    d.serverLogEvent('damage_applied', {
+      targetId: rec.id,
+      wireTargetId,
+      shooterId,
+      damage,
+      newHealth,
+      newShield: sf.newShield,
+      hitLayer: sf.hitLayer,
+      kind: 'swarm',
+      swarmKind: rec.kind,
     });
 
     // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and

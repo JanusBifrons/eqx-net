@@ -23,6 +23,34 @@ export interface WelcomeMessage {
 export interface SnapshotMessage {
   type: 'snapshot';
   serverTick: number;
+  /** Server-side `performance.now()` at the moment `client.send('snapshot', ...)`
+   *  is called. Client logs this alongside its own `performance.now()` at recv
+   *  time so we can directly compute:
+   *
+   *    networkInTransitMs = clientRecvPerfNow - serverSendPerfNow - clockSkewMs
+   *
+   *  where `clockSkewMs` is constant per session (uncalibrated but stable).
+   *  During a `recv_gap_long` window the right diagnostic question is whether
+   *  the gap is **network in-transit** (server kept sending, packets were held
+   *  somewhere — WiFi, TCP buffer, OS) or **server side** (server didn't send
+   *  for the duration of the gap, then resumed). A burst of post-gap packets
+   *  with monotonically-decreasing latencies is network buffering; a single
+   *  packet with constant latency after the gap is server-side silence.
+   *
+   *  plan: imperative-taco-r2 §evidence-instrumentation. Optional for back-
+   *  compat (back-fills to 0 on the client's read path). */
+  serverSendPerfNow?: number;
+  /** Server-side underlying WebSocket `bufferedAmount` (bytes queued at
+   *  the WS layer but not yet handed to the OS network stack), sampled
+   *  IMMEDIATELY BEFORE `client.send(...)` is called. Diagnostic for the
+   *  router-vs-phone question raised after capture 5vjj4e: a non-zero
+   *  value during a recv_gap_long event = laptop's WS layer is queueing
+   *  (TCP send blocked or slow), so the bottleneck includes the path
+   *  from the laptop's network adapter onwards. A zero value during the
+   *  same event = packets left the laptop fine, the buffering is
+   *  DOWNSTREAM (router/AP/phone). Cheap single-integer field; back-
+   *  fills to 0 if absent. */
+  wsBufferedAmountBytes?: number;
   /** Authoritative ship states at the time the snapshot was taken.
    *
    *  **Phase 6a: outer key is `shipInstanceId`** (was `playerId` pre-6a).
@@ -120,5 +148,27 @@ export interface SnapshotMessage {
     /** shipInstanceId UUID — matches the key in `SectorState.wrecks`. */
     id: string;
     x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+  }>;
+  /** Heat-seeking missiles in flight within the recipient's spatial-interest
+   *  window. Absent when none. Per-recipient AOI-filtered server-side so
+   *  distant missiles don't pay for clients who can't see them. Each entry
+   *  is an authoritative pose snapshot at `serverTick`; the client mirrors
+   *  it into its local missile map and the renderer reads the most recent
+   *  two entries for interpolation. Pose flows on this slice (NOT on a
+   *  binary channel today — see docs/architecture/missile-simulation.md
+   *  "Future: binary promotion" for the upgrade path if wire load grows). */
+  missiles?: Array<{
+    /** Stable per-sector u32 id; matches `MissileFiredEvent.missileId`. */
+    id: number;
+    x: number; y: number; vx: number; vy: number; angle: number;
+    /** Owner shooter id (wire form). Lets the renderer route the missile
+     *  trail to the correct player/drone for camera-shake source. */
+    ownerId: string;
+    /** Catalogue weapon id. Discriminator for sprite/trail selection. */
+    weaponId: 'heat-seeker';
+    /** Remaining life as a fraction [0..1]; 0 = about to expire. Lets the
+     *  renderer fade the trail near end-of-life without round-tripping
+     *  catalogue lookups. */
+    lifePct: number;
   }>;
 }

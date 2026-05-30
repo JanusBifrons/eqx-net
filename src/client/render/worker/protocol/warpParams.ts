@@ -97,38 +97,40 @@ export const DEFAULT_WARP_PARAMS: WarpParams = {
   zoomBlurInnerRadius: 80,
   fadeOutMs: 700,
 
-  // Spool: 4 small short-lived ripples for ~3.75 s
+  // Spool: toned down 2026-05-27 (M3 of effects-subsystem plan
+  // wiggly-puppy): spoolCount 4→2 (half the filter passes), amplitude
+  // 18→10, brightness 1.05→1.03. The 2026-05-21 disable rationale was
+  // duty-cycle cost on mobile — halving spoolCount halves the per-frame
+  // shader cost of this phase. EffectsBudget.applyQuality further dials
+  // at runtime (medium drops to 1 spool filter; minimal detaches).
   spoolDurationMs: 3750,
-  spoolCount: 4,
+  spoolCount: 2,
   spoolWavePeriodMs: 700,
   spoolRadius: 320,
-  spoolAmplitude: 18,
-  spoolBrightness: 1.05,
+  spoolAmplitude: 10,
+  spoolBrightness: 1.03,
   spoolZoomBlur: 0.04,
 
-  // Climax: 1 big pulse for ~1.25 s — the "amazing" moment, cranked to
-  // near-max so the wave is legible. Dial back via sliders.
+  // Climax: toned down 2026-05-27 (M3): amplitude 220→70 (third), brightness
+  // 2.0→1.4, zoomBlur 0.7→0.35. The disable note said filters were not
+  // load-bearing for playability — keep the dramatic shape (single big
+  // ripple) but bring the intensity in.
   climaxDurationMs: 1100,
   climaxWavePeriodMs: 5000,
-  climaxAmplitude: 220,
-  climaxBrightness: 2.0,
-  climaxZoomBlur: 0.7,
+  climaxAmplitude: 70,
+  climaxBrightness: 1.4,
+  climaxZoomBlur: 0.35,
 
-  // Burst + flash: the despawn / arrival pulse. Defaults sized for
-  // "drive-by visibility" — a viewer can be far from the burst centre
-  // and still catch the wavefront before it fades.
-  //   - amplitude 440 + wavelength 520: dramatic, fat displacement
-  //   - speed 2800 × duration 1500 ms: wave reaches ~4200 px from
-  //     centre, well past most screens at zoom 1
-  //   - amplitude curve sqrt(1 - t) in the renderer: slow tail-off so
-  //     the wavefront stays visible at the perimeter
+  // Burst + flash: toned down 2026-05-27 (M3): amplitude 440→220, bloom
+  // 6→1.5, flashAlpha 0.85→0.55. Still legible at perimeter (speed/range
+  // unchanged) but no longer dominates the screen.
   burstDurationMs: 1500,
-  burstAmplitude: 440,
+  burstAmplitude: 220,
   burstSpeed: 2800,
   burstWavelength: 520,
-  burstBrightness: 2.6,
-  flashAlphaMax: 0.85,
+  burstBrightness: 1.6,
+  flashAlphaMax: 0.55,
   flashDurationMs: 380,
   flashRangeMax: 2500,
-  bloomStrengthMax: 6,
+  bloomStrengthMax: 1.5,
 };

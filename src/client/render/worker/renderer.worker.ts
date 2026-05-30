@@ -190,6 +190,24 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'TRIGGER_EFFECT':
+      case 'SET_EFFECT_QUALITY':
+      case 'SET_EFFECT_PARAMS': {
+        // Effects subsystem (plan `wiggly-puppy` M2-M9): TRIGGER_EFFECT
+        // is delivered via mirror.pendingEffectTriggers (renderer drain
+        // path), NOT via direct postMessage in production — sandbox-only.
+        // SET_EFFECT_QUALITY / SET_EFFECT_PARAMS are sandbox-only.
+        // M11 (sandbox extension) wires these directly to the worker's
+        // EffectsService instance. M2 stub kept here so a pre-M11
+        // worker against a post-M11 main thread doesn't throw.
+        break;
+      }
+
+      case 'RESET_EFFECTS_HANDOFF': {
+        renderer?.resetEffectsForSectorHandoff();
+        break;
+      }
+
       case 'DISPOSE': {
         if (renderer) {
           try {
@@ -200,6 +218,17 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           renderer = null;
         }
         self.close();
+        break;
+      }
+
+      default: {
+        // Default-branch warn (plan `wiggly-puppy` M2): a deployed worker
+        // from before a new message variant lands will silently no-op
+        // unknown types. Logging it gives partial-rollout + Vite HMR mid-
+        // session visibility. The TS exhaustiveness check (compile-time)
+        // remains the primary guard; this is the runtime safety net.
+        // eslint-disable-next-line no-console
+        console.warn('[renderer-worker] unknown msg.type', (msg as { type?: string }).type);
         break;
       }
     }

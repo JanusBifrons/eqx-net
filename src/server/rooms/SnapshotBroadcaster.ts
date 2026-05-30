@@ -65,6 +65,22 @@ export interface SwarmLookupByEid {
   getByEntityId(entityId: number): SwarmDroneRec | null | undefined;
 }
 
+/** Narrow view of MissileSimulation the broadcaster uses. */
+export interface MissileBroadcasterView {
+  live(): IterableIterator<{
+    id: number;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    angle: number;
+    ownerId: string;
+    weaponId: 'heat-seeker';
+    ticksRemaining: number;
+    weaponDef: { lifetimeTicks: number };
+  }>;
+}
+
 export interface SnapshotBroadcasterDeps {
   serverTick: () => number;
   sabU32: Uint32Array;
@@ -83,8 +99,23 @@ export interface SnapshotBroadcasterDeps {
   swarmRegistry: SwarmLookupByEid;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
+  /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
+  missileSim: MissileBroadcasterView;
   logger: Logger;
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
+  /**
+   * Phase 1 of the swift-otter WebRTC plan — DI seam for per-recipient
+   * snapshot delivery. When absent, the broadcaster falls back to the
+   * legacy `client.send('snapshot', snap)` path. SectorRoom wires this
+   * to `WebRtcChannelManager.sendSnapshot(...)` with WS fallback baked
+   * in, so the broadcaster never has to know whether a given client is
+   * on DataChannel or WebSocket.
+   *
+   * Hot-path contract: callback MUST NOT throw into the loop. The
+   * broadcaster wraps each call in try/catch as a belt-and-braces
+   * guard, but degraded routing is the manager's job.
+   */
+  sendSnapshot?: (client: Client, snap: SnapshotMessage) => void;
 }
 
 interface AllShipEntry {
@@ -94,6 +125,64 @@ interface AllShipEntry {
   pose: ShipPhysicsState;
   lastInput: ShipInputBits;
 }
+
+// ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
+// Inline-literal pre-fix; mutable-in-place post-fix. The wire shape is
+// preserved because notepack.io encodes plain Objects synchronously
+// inside `client.send()` and discards the reference; reusing the same
+// instance across recipients does not corrupt prior sends. The fields
+// are typed loose (`number/string`) so the helpers can assign without
+// the readonly constraint at the wire-type level.
+
+type MutableStateEntry = {
+  x: number; y: number; vx: number; vy: number;
+  angle: number; angvel: number;
+  playerId: string;
+  isActive: boolean;
+  lastInput?: ShipInputBits;
+  mountAngles?: number[];
+};
+
+type MutableProjectileEntry = {
+  id: string; x: number; y: number; vx: number; vy: number;
+  ownerId: string;
+  weaponId: string;
+};
+
+type MutableMissileEntry = {
+  id: number; x: number; y: number; vx: number; vy: number; angle: number;
+  ownerId: string;
+  weaponId: 'heat-seeker';
+  lifePct: number;
+};
+
+type MutableDroneEntry = {
+  id: number;
+  mountAngles?: number[];
+  shieldDown?: boolean;
+};
+
+type MutableWreckEntry = {
+  id: string; x: number; y: number; vx: number; vy: number;
+  angle: number; angvel: number;
+};
+
+/** Mutable view of the SnapshotMessage so we can poke optional fields
+ *  in place. Cast back to `SnapshotMessage` at the `client.send` site. */
+type MutableSnapshotMessage = {
+  type: 'snapshot';
+  serverTick: number;
+  serverSendPerfNow?: number;
+  wsBufferedAmountBytes?: number;
+  states: SnapshotMessage['states'];
+  ackedTick: number;
+  boostingIds?: string[];
+  thrustingIds?: string[];
+  projectiles?: SnapshotMessage['projectiles'];
+  missiles?: SnapshotMessage['missiles'];
+  drones?: SnapshotMessage['drones'];
+  wrecks?: SnapshotMessage['wrecks'];
+};
 
 export class SnapshotBroadcaster {
   /** Main-thread monotonic counter — incremented every `update()` call. */
@@ -106,7 +195,207 @@ export class SnapshotBroadcaster {
    *  swarm-broadcast block earlier in update()). */
   readonly interestScratch = new Map<string, Set<number>>();
 
-  constructor(private readonly deps: SnapshotBroadcasterDeps) {}
+  // === Per-broadcast scratch (plan: quirky-rabbit, Phase 2 — invariant
+  // #14). Built ONCE before the per-recipient loop, referenced
+  // (read-only) by every recipient's snap. Cleared/truncated at the
+  // top of broadcast() so the next call starts from a known-empty
+  // state. Class fields persist across broadcasts so the backing
+  // buffers + AllShipEntry instances are reused — eliminates the
+  // ~6 per-broadcast allocations the inline literals used to pay.
+  //
+  // SAFETY: the per-recipient loop only READS these scratches; it
+  // never mutates them. The reference passed via `snap.boostingIds`
+  // etc. is encoded synchronously by `client.send` (Colyseus 0.16
+  // msgpack-encodes inline before returning), so the array's
+  // contents are captured into the wire bytes before the next
+  // broadcast can clear it.
+  private readonly _allShipsScratch: AllShipEntry[] = [];
+  private readonly _aliveIdsScratch = new Set<string>();
+
+  // ── Per-recipient scratch (Phase 5d).
+  //
+  // Pre-Phase-5d the per-recipient loop allocated:
+  //   - `states: {}`                        — 1 per recipient
+  //   - per-ship state literal              — N ships per recipient
+  //   - mountAnglesArr `new Array(len)`     — per ship/drone with non-zero mounts
+  //   - `projectiles[]`/`drones[]`/`wrecks[]` arrays — per recipient
+  //   - per-projectile/drone/wreck literal  — per entity per recipient
+  //   - `snap: {}` SnapshotMessage literal  — 1 per recipient (plus the
+  //     spread-empty `...({} : {})` quirk that allocates extra empty
+  //     literals for absent optional fields)
+  //
+  // Post-fix:
+  //   - state-entry instances live in `_stateEntryPool` keyed by
+  //     shipInstanceId, mutated in place. Sweep stale entries at the
+  //     top of broadcast() via `_aliveShipInstanceIds`.
+  //   - projectile/drone/wreck arrays + entry instances reuse the
+  //     same slot-reuse pattern Phase 5b landed for WeaponMountTicker.
+  //   - mountAngles arrays come from `_mountAnglesPool` keyed by length
+  //     (a small finite set — mount counts 1..MAX_MOUNTS).
+  //   - snap is a class-field `MutableSnapshotMessage` mutated per
+  //     recipient and cast back to SnapshotMessage at send time. The
+  //     spread-empty quirk goes away — optional fields are set to
+  //     `undefined` when absent, which notepack.io's encoder skips.
+  //
+  // Wire safety: client.send synchronously msgpack-encodes the message
+  // before returning (verified Phase 2). Reusing the same shapes
+  // across recipients is wire-safe; the encoded buffer holds the bytes,
+  // not the reference.
+  private readonly _stateEntryPool = new Map<string, MutableStateEntry>();
+  private readonly _aliveShipInstanceIds = new Set<string>();
+  private readonly _projectilesScratch: MutableProjectileEntry[] = [];
+  private readonly _missilesScratch: MutableMissileEntry[] = [];
+  private readonly _dronesScratch: MutableDroneEntry[] = [];
+  private readonly _wrecksScratch: MutableWreckEntry[] = [];
+  private readonly _mountAnglesPool = new Map<number, number[]>();
+  /** Fresh Record per recipient is unavoidable — notepack.io would
+   *  encode stale keys from a reused Record into the wire. The VALUES
+   *  inside are pooled via `_stateEntryPool` though, which is the
+   *  larger cost. */
+  private readonly _snapScratch: MutableSnapshotMessage = {
+    type: 'snapshot',
+    serverTick: 0,
+    states: {},
+    ackedTick: 0,
+  };
+  /** Map (not Record) so per-player set() is cheap and `.clear()`
+   *  works in-place. Telemetry build converts to a fresh Record
+   *  only when the snapshot_broadcast event actually fires (~7 Hz). */
+  private readonly _ackedTicksMapScratch = new Map<string, number>();
+  private readonly _boostingIdsScratch: string[] = [];
+  private readonly _thrustingIdsScratch: string[] = [];
+
+  /**
+   * Pre-bound per-recipient send. Phase 1 of swift-otter: SectorRoom
+   * supplies a WebRtcChannelManager-backed implementation; absence of
+   * the dep keeps the pre-Phase-1 `client.send('snapshot', snap)` path.
+   * Hoisted to a class field so the per-recipient hot loop pays for one
+   * function-call indirection, not a per-tick `??` allocation check.
+   */
+  private readonly _sendSnapshotFn: (client: Client, snap: SnapshotMessage) => void;
+
+  constructor(private readonly deps: SnapshotBroadcasterDeps) {
+    this._sendSnapshotFn =
+      deps.sendSnapshot ??
+      ((client, snap) => { client.send('snapshot', snap); });
+  }
+
+  // ── Slot-reuse helpers for the per-recipient pools (Phase 5d).
+
+  /** Acquire-or-create the state-entry for a shipInstanceId. The
+   *  instance is retained in `_stateEntryPool` across broadcasts and
+   *  swept by `_aliveShipInstanceIds` membership at the top of
+   *  broadcast(). */
+  private acquireStateEntry(shipInstanceId: string): MutableStateEntry {
+    let entry = this._stateEntryPool.get(shipInstanceId);
+    if (!entry) {
+      entry = {
+        x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+        playerId: '', isActive: true,
+      };
+      this._stateEntryPool.set(shipInstanceId, entry);
+    }
+    return entry;
+  }
+
+  /** Acquire a number[] of the requested length from `_mountAnglesPool`.
+   *  The same instance is reused across broadcasts; consumers must
+   *  treat the array as ephemeral (good only until the next acquire
+   *  for the same length). */
+  private acquireMountAngles(len: number): number[] {
+    let arr = this._mountAnglesPool.get(len);
+    if (!arr) {
+      arr = new Array<number>(len);
+      this._mountAnglesPool.set(len, arr);
+    }
+    return arr;
+  }
+
+  /** Slot-reuse helpers for the per-entity arrays. Mirror the Phase 5b
+   *  WeaponMountTicker.writeTargetSlot pattern. */
+  private static writeProjectileSlot(
+    arr: MutableProjectileEntry[], i: number,
+    id: string, x: number, y: number, vx: number, vy: number,
+    ownerId: string, weaponId: string,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      arr[i] = { id, x, y, vx, vy, ownerId, weaponId };
+      return;
+    }
+    slot.id = id; slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
+    slot.ownerId = ownerId; slot.weaponId = weaponId;
+  }
+
+  private static writeMissileSlot(
+    arr: MutableMissileEntry[], i: number,
+    id: number, x: number, y: number, vx: number, vy: number, angle: number,
+    ownerId: string, weaponId: 'heat-seeker', lifePct: number,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      arr[i] = { id, x, y, vx, vy, angle, ownerId, weaponId, lifePct };
+      return;
+    }
+    slot.id = id; slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
+    slot.angle = angle; slot.ownerId = ownerId; slot.weaponId = weaponId;
+    slot.lifePct = lifePct;
+  }
+
+  private static writeDroneSlot(
+    arr: MutableDroneEntry[], i: number,
+    id: number, mountAngles: number[] | undefined, shieldDown: boolean,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      arr[i] = shieldDown
+        ? { id, mountAngles, shieldDown: true }
+        : { id, mountAngles };
+      return;
+    }
+    slot.id = id;
+    // Always assign; undefined means "drop the field on the wire" via
+    // notepack.io's encoder which skips undefined values.
+    slot.mountAngles = mountAngles;
+    if (shieldDown) slot.shieldDown = true;
+    else delete slot.shieldDown;
+  }
+
+  private static writeWreckSlot(
+    arr: MutableWreckEntry[], i: number,
+    id: string, x: number, y: number, vx: number, vy: number,
+    angle: number, angvel: number,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      arr[i] = { id, x, y, vx, vy, angle, angvel };
+      return;
+    }
+    slot.id = id; slot.x = x; slot.y = y;
+    slot.vx = vx; slot.vy = vy; slot.angle = angle; slot.angvel = angvel;
+  }
+
+  /** Acquire-or-create an `AllShipEntry` slot at `index`. Used by
+   *  broadcast()'s logical-length-over-physical-slot pattern — the
+   *  array's backing buffer + entry instances persist across calls;
+   *  only the array's `.length` is truncated each broadcast. */
+  private allShipEntryAt(index: number): AllShipEntry {
+    let entry = this._allShipsScratch[index];
+    if (!entry) {
+      entry = {
+        playerId: '',
+        shipInstanceId: '',
+        isActive: true,
+        // Pose is overwritten below — initial reference is irrelevant
+        // (any ShipPhysicsState shape will do; we never read these
+        // initial zeros).
+        pose: undefined as unknown as ShipPhysicsState,
+        lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
+      };
+      this._allShipsScratch[index] = entry;
+    }
+    return entry;
+  }
 
   /** Drop per-session caches on disconnect. */
   onClientLeave(sessionId: string): void {
@@ -127,30 +416,35 @@ export class SnapshotBroadcaster {
     const serverTick = d.serverTick();
     if (serverTick <= 0 || sectorIdle) return;
 
-    const allShips: AllShipEntry[] = [];
-    const ackedTicksTelemetry: Record<string, number> = {};
-    const aliveIds = new Set<string>();
+    // Clear-and-reuse per-broadcast scratches (invariant #14).
+    this._aliveIdsScratch.clear();
+    this._ackedTicksMapScratch.clear();
+    this._boostingIdsScratch.length = 0;
+    this._thrustingIdsScratch.length = 0;
+    this._aliveShipInstanceIds.clear();
+    const allShips = this._allShipsScratch;
+    let allShipsCount = 0;
+
     for (const [playerId, slot] of d.playerToSlot) {
       const ship = d.getActiveShip(playerId);
       if (!ship || !ship.alive) continue;
       const pose = d.shipPoseCache.get(playerId);
       if (!pose) continue;
       const flags = d.sabU32[slotBase(slot) + SLOT_FLAGS_OFF] ?? 0;
-      allShips.push({
-        playerId,
-        shipInstanceId: ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId,
-        isActive: ship.isActive,
-        pose,
-        lastInput: {
-          thrust:    !!(flags & FLAG_INPUT_THRUST),
-          turnLeft:  !!(flags & FLAG_INPUT_TURN_LEFT),
-          turnRight: !!(flags & FLAG_INPUT_TURN_RIGHT),
-          boost:     !!(flags & FLAG_INPUT_BOOST),
-          reverse:   !!(flags & FLAG_INPUT_REVERSE),
-        },
-      });
-      aliveIds.add(playerId);
-      ackedTicksTelemetry[playerId] = this.sabAppliedTicks.get(playerId) ?? 0;
+      const entry = this.allShipEntryAt(allShipsCount);
+      entry.playerId = playerId;
+      entry.shipInstanceId = ship.shipInstanceId !== '' ? ship.shipInstanceId : playerId;
+      entry.isActive = ship.isActive;
+      entry.pose = pose;
+      entry.lastInput.thrust    = !!(flags & FLAG_INPUT_THRUST);
+      entry.lastInput.turnLeft  = !!(flags & FLAG_INPUT_TURN_LEFT);
+      entry.lastInput.turnRight = !!(flags & FLAG_INPUT_TURN_RIGHT);
+      entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
+      entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
+      allShipsCount++;
+      this._aliveIdsScratch.add(playerId);
+      this._aliveShipInstanceIds.add(entry.shipInstanceId);
+      this._ackedTicksMapScratch.set(playerId, this.sabAppliedTicks.get(playerId) ?? 0);
     }
     // Phase 6b — append lingering hulls. Pose from lingeringPoseCache;
     // owner from state.ships entry's playerId; isActive=false. lastInput
@@ -160,23 +454,28 @@ export class SnapshotBroadcaster {
       if (!ship || !ship.alive) continue;
       const pose = d.lingeringPoseCache.get(shipInstanceId);
       if (!pose) continue;
-      allShips.push({
-        playerId: ship.playerId,
-        shipInstanceId,
-        isActive: false,
-        pose,
-        lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
-      });
+      const entry = this.allShipEntryAt(allShipsCount);
+      entry.playerId = ship.playerId;
+      entry.shipInstanceId = shipInstanceId;
+      entry.isActive = false;
+      entry.pose = pose;
+      entry.lastInput.thrust = false;
+      entry.lastInput.turnLeft = false;
+      entry.lastInput.turnRight = false;
+      entry.lastInput.boost = false;
+      entry.lastInput.reverse = false;
+      allShipsCount++;
+      this._aliveShipInstanceIds.add(shipInstanceId);
     }
+    // Logical truncation — backing buffer + slot instances persist.
+    allShips.length = allShipsCount;
 
     // Boosting/thrusting filter — small lists, sent in every snapshot.
-    const boostingIds: string[] = [];
-    for (const id of d.boostingPlayers) if (aliveIds.has(id)) boostingIds.push(id);
-    const thrustingIds: string[] = [];
-    for (const id of d.thrustingPlayers) if (aliveIds.has(id)) thrustingIds.push(id);
-    const sharedTail: { boostingIds?: string[]; thrustingIds?: string[] } = {};
-    if (boostingIds.length > 0) sharedTail.boostingIds = boostingIds;
-    if (thrustingIds.length > 0) sharedTail.thrustingIds = thrustingIds;
+    // Class-field scratches cleared at the top of broadcast().
+    const boostingIds = this._boostingIdsScratch;
+    for (const id of d.boostingPlayers) if (this._aliveIdsScratch.has(id)) boostingIds.push(id);
+    const thrustingIds = this._thrustingIdsScratch;
+    for (const id of d.thrustingPlayers) if (this._aliveIdsScratch.has(id)) thrustingIds.push(id);
 
     // 3×3 cell window radius for projectile interest.
     const interestRadius = CELL_SIZE * 1.5;
@@ -203,7 +502,10 @@ export class SnapshotBroadcaster {
         this.lastInputCaches.set(client.sessionId, lastInputCache);
       }
 
-      // Build per-recipient states map.
+      // Build per-recipient states map. The Record itself MUST be
+      // freshly allocated (notepack.io would encode stale keys from a
+      // reused Record). The VALUES inside are pooled in
+      // `_stateEntryPool` keyed by shipInstanceId.
       const states: SnapshotMessage['states'] = {};
       for (const ship of allShips) {
         const includeLastInput = shouldIncludeLastInput(lastInputCache, ship.playerId, ship.lastInput);
@@ -215,44 +517,77 @@ export class SnapshotBroadcaster {
             if (angles[i] !== 0) { anyNonZero = true; break; }
           }
           if (anyNonZero) {
-            mountAnglesArr = new Array<number>(angles.length);
+            mountAnglesArr = this.acquireMountAngles(angles.length);
             for (let i = 0; i < angles.length; i++) {
               mountAnglesArr[i] = Math.round(angles[i]! * 10_000) / 10_000;
             }
           }
         }
-        states[ship.shipInstanceId] = {
-          x: ship.pose.x, y: ship.pose.y, vx: ship.pose.vx, vy: ship.pose.vy,
-          angle: ship.pose.angle, angvel: ship.pose.angvel ?? 0,
-          playerId: ship.playerId,
-          isActive: ship.isActive,
-          ...(includeLastInput ? { lastInput: ship.lastInput } : {}),
-          ...(mountAnglesArr ? { mountAngles: mountAnglesArr } : {}),
-        };
+        const entry = this.acquireStateEntry(ship.shipInstanceId);
+        entry.x = ship.pose.x;
+        entry.y = ship.pose.y;
+        entry.vx = ship.pose.vx;
+        entry.vy = ship.pose.vy;
+        entry.angle = ship.pose.angle;
+        entry.angvel = ship.pose.angvel ?? 0;
+        entry.playerId = ship.playerId;
+        entry.isActive = ship.isActive;
+        // Always assign — notepack.io's encoder skips undefined values,
+        // so this is wire-equivalent to the legacy spread-when-truthy
+        // pattern and avoids the per-ship `{ lastInput }` literal alloc.
+        entry.lastInput = includeLastInput ? ship.lastInput : undefined;
+        entry.mountAngles = mountAnglesArr;
+        states[ship.shipInstanceId] = entry;
       }
 
-      // Per-recipient projectiles in the 3×3 cell window.
-      let projectiles: SnapshotMessage['projectiles'];
+      // Per-recipient projectiles in the 3×3 cell window. Slot-reuse
+      // pattern: the array's slot instances persist across calls;
+      // `arr.length = count` truncates the logical view.
+      const projectilesScratch = this._projectilesScratch;
+      let projectilesCount = 0;
       if (d.liveProjectiles.size > 0) {
         for (const [projId, proj] of d.liveProjectiles) {
           if (Math.abs(proj.x - recipientPose.x) > interestRadius) continue;
           if (Math.abs(proj.y - recipientPose.y) > interestRadius) continue;
-          if (!projectiles) projectiles = [];
-          projectiles.push({
-            id: projId,
-            x: proj.x, y: proj.y, vx: proj.vx, vy: proj.vy,
-            ownerId: proj.ownerId,
-            weaponId: proj.weaponId,
-          });
+          SnapshotBroadcaster.writeProjectileSlot(
+            projectilesScratch, projectilesCount,
+            projId, proj.x, proj.y, proj.vx, proj.vy,
+            proj.ownerId, proj.weaponId,
+          );
+          projectilesCount++;
         }
       }
+      projectilesScratch.length = projectilesCount;
+
+      // Per-recipient missiles in the 3×3 cell window. Same AOI shape as
+      // projectiles; missile lifecycle is server-authoritative (no client
+      // prediction). The renderer interpolates between consecutive
+      // snapshots and pads with the velocity vector for sub-tick smoothness.
+      // Pooled scratch (Invariant #14) — mirrors Phase 5d projectile pattern.
+      const missilesScratch = this._missilesScratch;
+      let missilesCount = 0;
+      for (const m of d.missileSim.live()) {
+        if (Math.abs(m.x - recipientPose.x) > interestRadius) continue;
+        if (Math.abs(m.y - recipientPose.y) > interestRadius) continue;
+        const lifePct = m.weaponDef.lifetimeTicks > 0
+          ? m.ticksRemaining / m.weaponDef.lifetimeTicks
+          : 0;
+        SnapshotBroadcaster.writeMissileSlot(
+          missilesScratch, missilesCount,
+          m.id, m.x, m.y, m.vx, m.vy, m.angle,
+          m.ownerId, m.weaponId, lifePct > 0 ? lifePct : 0,
+        );
+        missilesCount++;
+      }
+      missilesScratch.length = missilesCount;
 
       // Slim per-drone turret + shield slice (drone-snapshot-interpolation
       // pivot, 2026-05-18). Drone POSE is on the binary swarm channel
       // only. For every drone in this recipient's 9-cell interest
       // window emit ONLY the non-pose fields: per-mount turret angles +
       // shield-down flag, AND only when there is something to carry.
-      let drones: SnapshotMessage['drones'];
+      const dronesScratch = this._dronesScratch;
+      let dronesCount = 0;
       const interest = this.interestScratch.get(client.sessionId);
       if (interest && interest.size > 0) {
         for (const eid of interest) {
@@ -266,67 +601,122 @@ export class SnapshotBroadcaster {
               if (droneAngles[i] !== 0) { anyNonZero = true; break; }
             }
             if (anyNonZero) {
-              droneMountAnglesArr = new Array<number>(droneAngles.length);
+              droneMountAnglesArr = this.acquireMountAngles(droneAngles.length);
               for (let i = 0; i < droneAngles.length; i++) {
                 droneMountAnglesArr[i] = Math.round(droneAngles[i]! * 10_000) / 10_000;
               }
             }
           }
           if (!droneMountAnglesArr && !rec.shieldDown) continue;
-          if (!drones) drones = [];
-          drones.push({
-            id: eid,
-            ...(droneMountAnglesArr ? { mountAngles: droneMountAnglesArr } : {}),
-            ...(rec.shieldDown ? { shieldDown: true } : {}),
-          });
+          SnapshotBroadcaster.writeDroneSlot(
+            dronesScratch, dronesCount,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false,
+          );
+          dronesCount++;
         }
       }
+      dronesScratch.length = dronesCount;
 
       const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
       // Phase 4 — wreck poses for every wreck in the sector. No
       // interest filtering: wreck count per sector is bounded (one per
       // abandoned ship; players are 10-capped). Phase 5 can add
       // interest culling if rosters grow.
-      let wrecks: SnapshotMessage['wrecks'];
+      const wrecksScratch = this._wrecksScratch;
+      let wrecksCount = 0;
       if (d.wreckPoseCache.size > 0) {
-        wrecks = [];
         for (const [shipInstanceId, pose] of d.wreckPoseCache) {
-          wrecks.push({
-            id: shipInstanceId,
-            x: pose.x, y: pose.y,
-            vx: pose.vx, vy: pose.vy,
-            angle: pose.angle, angvel: pose.angvel ?? 0,
-          });
+          SnapshotBroadcaster.writeWreckSlot(
+            wrecksScratch, wrecksCount,
+            shipInstanceId, pose.x, pose.y, pose.vx, pose.vy,
+            pose.angle, pose.angvel ?? 0,
+          );
+          wrecksCount++;
         }
       }
-      const snap: SnapshotMessage = {
-        type: 'snapshot',
-        serverTick,
-        states,
-        ackedTick: recipientAcked,
-        ...sharedTail,
-        ...(projectiles ? { projectiles } : {}),
-        ...(drones ? { drones } : {}),
-        ...(wrecks ? { wrecks } : {}),
-      };
-      client.send('snapshot', snap);
+      wrecksScratch.length = wrecksCount;
+
+      // Class-field SnapshotMessage scratch — mutated per recipient.
+      // notepack.io's encoder skips undefined values, so the
+      // conditional `field = cond ? value : undefined` lines below
+      // produce a byte-identical wire shape to the legacy spread.
+      const snap = this._snapScratch;
+      snap.type = 'snapshot';
+      snap.serverTick = serverTick;
+      snap.states = states;
+      snap.ackedTick = recipientAcked;
+      snap.boostingIds = boostingIds.length > 0 ? boostingIds : undefined;
+      snap.thrustingIds = thrustingIds.length > 0 ? thrustingIds : undefined;
+      snap.projectiles = projectilesCount > 0 ? projectilesScratch : undefined;
+      snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
+      snap.drones = dronesCount > 0 ? dronesScratch : undefined;
+      snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
+      // plan: imperative-taco-r2 — stamp server-send time so the client
+      // can separate network in-transit delay from server-side silence
+      // during recv_gap_long events. `performance.now()` is a primitive
+      // number; notepack encodes it as 8 bytes. Zero per-tick alloc.
+      snap.serverSendPerfNow = performance.now();
+      // r2 evidence pass — read the underlying WebSocket bufferedAmount
+      // BEFORE send and ship it ON the snapshot itself so the client's
+      // diag stream captures the per-snapshot buffer state without
+      // needing a separate channel back from the server. Non-zero
+      // amount = laptop's WS layer is queueing (TCP send blocked or
+      // slow); zero amount during a recv_gap_long = packets left the
+      // laptop fine, buffering is downstream. Diagnostic for the
+      // "router/AP vs phone WiFi modem" question raised after capture
+      // 5vjj4e. Single integer; back-fills to 0 on the client read.
+      const sockWithBuffer = (client as unknown as { socket?: { bufferedAmount?: number } }).socket;
+      snap.wsBufferedAmountBytes = sockWithBuffer?.bufferedAmount ?? 0;
+      // Phase 1 swift-otter routing seam — _sendSnapshotFn is either the
+      // legacy WS-send default or a WebRtcChannelManager-backed router
+      // wired in by SectorRoom. Try/catch is a belt-and-braces guard so
+      // an exception inside the routing decision (e.g. a malformed PC
+      // closing mid-broadcast) doesn't crash the per-tick loop and skip
+      // every subsequent recipient.
+      try {
+        this._sendSnapshotFn(client, snap as SnapshotMessage);
+      } catch (err) {
+        d.serverLogEvent('snapshot_send_error', {
+          sessionId: client.sessionId,
+          error: (err as Error).message,
+        });
+      }
       anySnapshotSent = true;
     }
 
-    // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick).
+    // Sweep state-entry pool — drop entries for shipInstanceIds that
+    // are no longer alive this broadcast. Without this the pool grows
+    // unbounded as players join + leave across the sector's lifetime.
+    if (this._stateEntryPool.size > this._aliveShipInstanceIds.size) {
+      for (const id of this._stateEntryPool.keys()) {
+        if (!this._aliveShipInstanceIds.has(id)) this._stateEntryPool.delete(id);
+      }
+    }
+
+    // Snapshot-broadcast log: gate to ~20 Hz (every 3rd tick). Only
+    // allocate the wire Records here — the .map + Object.fromEntries
+    // chain in the pre-Phase-2 code allocated an intermediate Array,
+    // N tuples, and N inner objects on EVERY broadcast even though
+    // the event only fires every 3rd. Now they allocate at ~7 Hz, not
+    // 20 Hz, and the .map intermediate is eliminated entirely via
+    // direct loops into the Records.
     if (anySnapshotSent && this.broadcastCounter % 3 === 0) {
+      const ackedTicks: Record<string, number> = {};
+      for (const [pid, tick] of this._ackedTicksMapScratch) ackedTicks[pid] = tick;
+      const telemetryStates: Record<string, { x: number; y: number; vx: number; vy: number }> = {};
+      for (const s of allShips) {
+        telemetryStates[s.playerId] = {
+          x: parseFloat(s.pose.x.toFixed(3)),
+          y: parseFloat(s.pose.y.toFixed(3)),
+          vx: parseFloat(s.pose.vx.toFixed(3)),
+          vy: parseFloat(s.pose.vy.toFixed(3)),
+        };
+      }
       d.serverLogEvent('snapshot_broadcast', {
         serverTick,
         playerCount: d.playerToSlot.size,
-        ackedTicks: ackedTicksTelemetry,
-        states: Object.fromEntries(
-          allShips.map((s) => [s.playerId, {
-            x: parseFloat(s.pose.x.toFixed(3)),
-            y: parseFloat(s.pose.y.toFixed(3)),
-            vx: parseFloat(s.pose.vx.toFixed(3)),
-            vy: parseFloat(s.pose.vy.toFixed(3)),
-          }]),
-        ),
+        ackedTicks,
+        states: telemetryStates,
       });
     }
   }

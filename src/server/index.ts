@@ -9,7 +9,7 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -128,6 +128,14 @@ if (process.env['NODE_ENV'] !== 'production') {
   // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
   app.get('/dev/limbo', devLimboHandler);
 
+  // GET /dev/webrtc-counters?roomId=<colyseus-roomId> — Phase 4 iteration 3
+  // swift-otter diagnostic. Returns the room's per-session WebRTC counters
+  // (sentViaDc / sentViaWs / degraded / dcThrows / etc) so the Phase 4
+  // E2E can localise DC throughput variance.
+  app.get('/dev/webrtc-counters', (req, res) => {
+    void devWebrtcCountersHandler(req, res);
+  });
+
   // GET /dev/population — Living World director snapshot (per-sector
   // players/bots, totals, in-transit/respawning) for E2E + diagnostics.
   // Read-only; mirrors /dev/limbo's inspection-only shape.
@@ -157,6 +165,32 @@ if (process.env['NODE_ENV'] !== 'production') {
 }
 
 const httpServer = createServer(app);
+
+// plan: imperative-taco-r2 webrtc, Phase -1 — explicit TCP_NODELAY belt-
+// and-braces. The `ws` library already calls `socket.setNoDelay()` on every
+// WebSocket connection (node_modules/ws/lib/websocket.js:242), so Nagle's
+// algorithm should be disabled by default. We re-apply at the TCP-level
+// `connection` event for two reasons:
+//   1. Guards against future `ws` version changes that drop the default.
+//   2. Logs that setNoDelay was applied so phone-smoke captures contain
+//      runtime confirmation. Node's `net.Socket` doesn't expose a read-
+//      back getter for the TCP_NODELAY state (only the `setNoDelay()`
+//      setter), so we record that the call succeeded — not the value.
+let _tcpNoDelayLoggedOnce = false;
+httpServer.on('connection', (socket) => {
+  try {
+    socket.setNoDelay(true);
+    if (!_tcpNoDelayLoggedOnce) {
+      _tcpNoDelayLoggedOnce = true;
+      logger.info(
+        { applied: true, kind: 'tcp_nodelay_first_connection' },
+        'TCP_NODELAY applied to first inbound connection',
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, 'setNoDelay failed on inbound connection');
+  }
+});
 
 const gameServer = new Server({
   transport: new WebSocketTransport({ server: httpServer }),
@@ -260,6 +294,181 @@ gameServer.define('mount-test', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-05-27 — Shield-test engineering room. Five non-hostile drones in
+// a 200 u ring around origin so the player can ram them and fire at
+// their shields without combat noise. One of each non-fighter kind for
+// visual variety + so the player can confirm the per-kind shield
+// radius math (SHIELD_RADIUS_PAD) is correct on every silhouette.
+//
+// Drones spawn IDLE — they orbit gently around the ring. They become
+// Drones run `PassiveDroneBehaviour` (peacefulDrones: true) — they take
+// damage and die normally, but they never pursue or fire, so the player
+// can ram + beam them indefinitely without combat noise drowning out the
+// shield/hull collider-swap signal under test.
+//
+// Use `?room=shield-test` from the URL to join.
+gameServer.define('shield-test', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  // 6 drones in the gallery: 4 huge Crossguard T-ships dominate the
+  // scene + 1 fighter + 1 scout for size-contrast reference. With
+  // each Crossguard at radius 200, swarmRadius bumped to 2400 so they
+  // don't overlap-spawn (the SwarmSpawner places them uniformly inside
+  // the disc — at 200 radius each, 4 of them need ~1600+ u of headroom).
+  swarmCount: 6,
+  swarmRatio: 0,
+  swarmRadius: 2400,
+  droneKinds: ['crossguard', 'crossguard', 'crossguard', 'crossguard', 'fighter', 'scout'],
+  peacefulDrones: true,
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
+// 2026-05-28 — Hull-collision engineering room. "I-beam" deterministic
+// scenario: two stationary Crossguards positioned so their stems run
+// SIDE-BY-SIDE (parallel, vertical, 1 u gap) while one crossbar sits at
+// the top of the figure and the other at the bottom, each 1 u away from
+// touching the OTHER ship's stem.
+//
+// Polygon convention (post the 2026-05-28 Y-flip in
+// `shipShapeToPolygon`): the Crossguard polygon (post Y-flip + scale 10)
+// in body-local math frame is:
+//   - Crossbar: x ∈ [-140, +140], y ∈ [+100, +160]
+//   - Stem:     x ∈ [-40,  +40], y ∈ [-120, +80]
+// "Forward" (math +Y) = direction of the crossbar.
+//
+// Symmetric I-beam geometry. Note: the Crossguard polygon has a SLOPED
+// crossbar underside — at body-local x = ±40 (where the stem meets the
+// crossbar) the polygon's lower edge is at y=+80 (the inner reflex), but
+// at x = ±140 (crossbar outer tip) it's at y=+100. The closest approach
+// between T1's crossbar and T2's stem is at T1's INNER REFLEX (body-local
+// (40, +80)) versus T2's stem top (body-local (-40, -120) post π
+// rotation → (40, +120)). For a 1 u gap at the reflex, body_y must be
+// ±20.5 (not ±10.5 — the latter only accounts for the outer crossbar
+// at y=+100):
+//   - T1 (regular T)  at (-40.5, +20.5), angle 0
+//       stem world:    x ∈ [-80.5, -0.5], y ∈ [-99.5, +100.5]
+//       reflex world:  (-0.5, +100.5)   ← closest to T2's stem
+//   - T2 (inverted T) at (+40.5, -20.5), angle π
+//       stem world:    x ∈ [+0.5, +80.5], y ∈ [-100.5, +99.5]
+//       stem-top world: y = +99.5         ← 1 u below T1 reflex
+//
+// All three 1 u minimum gaps:
+//   - Stems  (x): T1 right edge -0.5 to T2 left edge +0.5 → 1 u
+//   - T1 reflex (+100.5) to T2 stem top (+99.5) → 1 u
+//   - T2 reflex (-100.5) to T1 stem bottom (-99.5) → 1 u
+//
+// Shield bubbles (radius 223 each) still overlap massively; the polygon
+// collider's correctness is what's under test. Any spurious contact at
+// 1 u proximity (because of a wrong-winding triangle filling a gap, or
+// a Y-axis convention mismatch) fires `collision_resolved` and the
+// `tests/e2e/t-ship-no-self-collision.spec.ts` negative-control fails.
+//
+// Use `?room=hull-collision-test&testId=<uuid>` from a browser to load
+// the scenario. `filterBy(['testId'])` so parallel specs each get their
+// own physics-worker-backed room.
+gameServer
+  .define('hull-collision-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: [
+      { kind: 'crossguard', x: -40.5, y:  20.5, angle: 0,         hullExposed: true },
+      { kind: 'crossguard', x:  40.5, y: -20.5, angle: Math.PI,   hullExposed: true },
+    ],
+    // Spawn the player NEAR the test scene (not at 1500u away) so the
+    // initial predWorld-vs-server lerp doesn't visually drag the
+    // player through the drones during the spawn-correction window.
+    // Smoke 2026-05-28 (capture 40uesb) showed `lerpOffset: (-1500, 0)`
+    // for 5+ seconds after join — visually the player appeared at (0,0)
+    // overlapping the drones while predWorld was at (1500, 0) and no
+    // collision could fire. 600 u east-of-scene keeps the player clear
+    // of the I-beam (which is x ∈ [-180.5, +180.5]) so they spawn outside
+    // the drones, and close enough that the welcome → first-snapshot
+    // pose-reconcile is <1 s of perceived drift.
+    defaultSpawnX: 600,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
+// 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
+// at exactly the same world position (0, 0), hull-exposed. The polygons
+// MUST interpenetrate → Rapier MUST emit contact events → server MUST
+// broadcast collision_resolved → client MUST increment
+// collisionEventsApplied. If this room ever reports 0, the test
+// infrastructure is broken (data-pred-stats not populated, contacts not
+// propagating, or the drones aren't actually spawning) — NOT a concave-
+// hull defect. Used by the second case in
+// `tests/e2e/t-ship-no-self-collision.spec.ts` to lock the assertion
+// surface itself, so the no-collision case is meaningful.
+gameServer
+  .define('hull-collision-overlap-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: [
+      { kind: 'crossguard', x: 0, y: 0, angle: 0,         hullExposed: true },
+      { kind: 'crossguard', x: 0, y: 0, angle: Math.PI,   hullExposed: true },
+    ],
+    // Same predWorld-lerp consideration as `hull-collision-test`: park
+    // the player close to the test scene so the spawn-correction window
+    // doesn't visually drag them through the drones.
+    defaultSpawnX: 600,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
+// 2026-05-28 — Ramming probe room: a deliberate visual-vs-physics
+// stress test. Spawns one gigantic L-shape drone at math (0, 0) angle
+// 0 (post Y-flip in `shipShapeToPolygon` the L's vertical arm sits at
+// x ∈ [0, 400], y ∈ [-600, 1000]; the horizontal arm at x ∈ [0, 1600],
+// y ∈ [-1000, -600]; armpit at math (400, -600)). The local player
+// spawns at math (500, 500), facing math -Y (`initialAngle = π`), so
+// they thrust straight INTO the armpit and hit the horizontal arm's
+// top edge at math y = -600. The `ramming_probe` diag logs every
+// frame the player is within 400 u of the L; the
+// `tests/e2e/ramming-probe-armpit.spec.ts` test asserts the visual-
+// vs-physics gap (`visVsPhys`) stays bounded.
+//
+// L mass = 5 — heavy enough not to scatter on contact, light enough
+// for the player to push it noticeably (so the probe captures both
+// the player-side AND the drone-side response). Hull-down on spawn
+// (`hullExposed: true`) so the polygon collider is active immediately
+// without waiting for shield regen.
+gameServer
+  .define('ramming-probe-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    // Disable the ramming-damage path entirely — collision_resolved
+    // still broadcasts (velocity sync stays lockstep) but applyDamage
+    // doesn't fire. Player can ram the L all day without dying;
+    // probe gets a clean signal.
+    disableCollisionDamage: true,
+    // L at math (0, 0), rotated π/4 (45° CCW math). With the symmetric
+    // L's reflex at body-local math (-600, -600), the rotation maps it
+    // to world (0, -848.5) — directly south of the player spawn.
+    // Combined with URL `?initialAngle=3.14159` (= π), forward thrust
+    // sends the player straight at the armpit along x=0.
+    dronePoses: [
+      // 2026-05-28 BISECT — angle 0 (axis-aligned). The L's π/4 rotation
+      // put the rectangle's pointy corner directly in the player's path
+      // → glancing impact, slide off the corner, escape. With angle 0 the
+      // rectangle is axis-aligned: player at (0, 2000) thrusting -Y hits
+      // the FLAT top edge at world y = 1000 perpendicular. No sliding —
+      // sustained pressure against a flat wall.
+      { kind: 'el', x: 0, y: 0, angle: 0, hullExposed: true },
+    ],
+    defaultSpawnX: 0,
+    // 2026-05-28 BISECT — spawn at +2000 so the player starts CLEAR of
+    // the scale-10 rectangle test shape. Body-local rectangle spans
+    // ±1000, rotated π/4 = world bounding box ~±1414, so spawn at
+    // y=500 would be INSIDE the rectangle. Player at y=2000 with
+    // `initialAngle=π` thrusts straight down at the rectangle.
+    defaultSpawnY: 2000,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

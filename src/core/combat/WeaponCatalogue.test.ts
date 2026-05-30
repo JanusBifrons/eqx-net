@@ -47,4 +47,33 @@ describe('WeaponCatalogue', () => {
       expect(w.cooldownTicks).toBeGreaterThan(0);
     }
   });
+
+  it('getWeapon returns the heat-seeker definition', () => {
+    const w = getWeapon('heat-seeker');
+    expect(w.id).toBe('heat-seeker');
+    expect(w.mode).toBe('missile');
+    if (w.mode === 'missile') {
+      // Slow + dodgeable speed (one of the load-bearing tuning numbers).
+      expect(w.speed).toBe(400);
+      expect(w.turnRate).toBe(1.5);
+      // Long enough that dumb-mode missiles waste shots — not a near-miss
+      // toy weapon.
+      expect(w.lifetimeTicks).toBe(360);
+      // Splash falloff geometry — splashFalloffMin must be > 0 to keep
+      // the inverse-square clamp safe.
+      expect(w.splashFalloffMin).toBeGreaterThan(0);
+      expect(w.splashRadius).toBeGreaterThan(w.splashFalloffMin);
+      // Owner exclusion ON by default (prevents self-splash on
+      // point-blank detonations near launch).
+      expect(w.splashExcludeOwner).toBe(true);
+      // Proximity-fuse smaller than splash radius (near-misses feel
+      // meaningful but the explosion still hits the target).
+      expect(w.proximityFuseRadius).toBeGreaterThan(0);
+      expect(w.proximityFuseRadius).toBeLessThan(w.splashRadius);
+    }
+  });
+
+  it('isWeaponId accepts heat-seeker', () => {
+    expect(isWeaponId('heat-seeker')).toBe(true);
+  });
 });

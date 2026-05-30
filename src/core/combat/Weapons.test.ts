@@ -187,8 +187,12 @@ describe('hitscanRaycast (real Rapier world)', () => {
     const result = hitscanRaycast(world, 0, 0, 1, 0, HITSCAN_RANGE, 'shooter');
     expect(result).not.toBeNull();
     expect(result!.hitId).toBe('target');
-    expect(result!.dist).toBeGreaterThan(80);
-    expect(result!.dist).toBeLessThan(100);
+    // Default kind = fighter (radius 12) + SHIELD_RADIUS_PAD (10) = ball
+    // collider radius 22. Ray from origin toward +x hits ball at x=78
+    // (target at x=100, dist = 100 - 22 = 78). Bumped from > 80 on
+    // 2026-05-27 when SHIELD_RADIUS_PAD shifted to 10 (was implicitly 0).
+    expect(result!.dist).toBeGreaterThan(75);
+    expect(result!.dist).toBeLessThan(82);
   });
 
   it('returns null when ray misses all bodies', () => {

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SHIP_KINDS,
   SHIP_KINDS_LIST,
+  GAMEPLAY_SHIP_KINDS_LIST,
   DEFAULT_SHIP_KIND,
   ShipKindSchema,
   WeaponMountSchema,
@@ -226,7 +227,7 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
     expect(shipKindFromIndex(-1)).toBe(DEFAULT_SHIP_KIND);
   });
 
-  it('catalogue order is fighter -> scout -> heavy -> interceptor -> gunship (wire-format-stable)', () => {
+  it('catalogue order is fighter -> scout -> heavy -> interceptor -> gunship -> missile-frigate (wire-format-stable)', () => {
     // Wire format encodes drone kinds as a u8 index into SHIP_KINDS_LIST.
     // Reordering this list breaks decode for any in-flight swarm packet, so
     // the expected order is locked in by this test. Append-only is safe.
@@ -235,6 +236,7 @@ describe('shipKindToIndex / shipKindFromIndex round-trip (swarm wire format)', (
     expect(shipKindToIndex('heavy')).toBe(2);
     expect(shipKindToIndex('interceptor')).toBe(3);
     expect(shipKindToIndex('gunship')).toBe(4);
+    expect(shipKindToIndex('missile-frigate')).toBe(5);
   });
 });
 
@@ -289,5 +291,37 @@ describe('multi-mount kinds (Phase 3, 2026-05-11)', () => {
     expect(SHIP_KINDS.gunship.maxHealth).toBeGreaterThan(SHIP_KINDS.fighter.maxHealth);
     expect(SHIP_KINDS.fighter.maxHealth).toBeGreaterThan(SHIP_KINDS.interceptor.maxHealth);
     expect(SHIP_KINDS.interceptor.maxHealth).toBeGreaterThan(SHIP_KINDS.scout.maxHealth);
+  });
+});
+
+describe('engineeringOnly flag — keep test fixtures out of galaxy spawn pool (capture ilhqk6)', () => {
+  it('crossguard is marked engineeringOnly', () => {
+    expect(SHIP_KINDS.crossguard.engineeringOnly).toBe(true);
+  });
+
+  it('el (L-Frame) is marked engineeringOnly', () => {
+    expect(SHIP_KINDS.el.engineeringOnly).toBe(true);
+  });
+
+  it('regular gameplay kinds are NOT engineeringOnly', () => {
+    for (const id of ['fighter', 'scout', 'heavy', 'interceptor', 'gunship', 'missile-frigate'] as const) {
+      expect(SHIP_KINDS[id].engineeringOnly).toBeFalsy();
+    }
+  });
+
+  it('GAMEPLAY_SHIP_KINDS_LIST excludes every engineeringOnly kind', () => {
+    for (const k of GAMEPLAY_SHIP_KINDS_LIST) {
+      expect(k.engineeringOnly).toBeFalsy();
+    }
+    for (const k of SHIP_KINDS_LIST) {
+      if (k.engineeringOnly) {
+        expect(GAMEPLAY_SHIP_KINDS_LIST.find((g) => g.id === k.id)).toBeUndefined();
+      }
+    }
+  });
+
+  it('GAMEPLAY_SHIP_KINDS_LIST is non-empty and contains fighter (the default)', () => {
+    expect(GAMEPLAY_SHIP_KINDS_LIST.length).toBeGreaterThan(0);
+    expect(GAMEPLAY_SHIP_KINDS_LIST.find((k) => k.id === DEFAULT_SHIP_KIND)).toBeDefined();
   });
 });

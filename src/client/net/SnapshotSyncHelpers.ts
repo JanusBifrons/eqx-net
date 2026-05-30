@@ -28,13 +28,21 @@ import type { PhysicsWorld } from '@core/physics/World';
  * Probe 8 (2026-05-24) — mutate-in-place pattern: new entries get a
  * fresh ProjectileRenderState once, subsequent updates mutate the
  * existing object. Saves allocations during sustained projectile flight.
+ *
+ * Phase 4 (plan: quirky-rabbit) — `seenScratch` is caller-injected so
+ * this pure helper doesn't allocate per snapshot. ColyseusClient owns
+ * the field; this function clears it at the head, populates, and reads
+ * back for the cleanup loop. Pure-function-preservation: same inputs →
+ * same return value (void); only the injected scratch is mutated.
  */
 export function syncProjectiles(
   mirror: RenderMirror,
   projectiles: SnapshotMessage['projectiles'],
+  seenScratch: Set<string>,
 ): void {
   if (!mirror.projectiles) return;
-  const seen = new Set<string>();
+  const seen = seenScratch;
+  seen.clear();
   if (projectiles) {
     for (const p of projectiles) {
       seen.add(p.id);

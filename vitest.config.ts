@@ -53,6 +53,10 @@ export default defineConfig({
       // Phases 2 + 5). The .spec.ts Playwright spec lives in the same
       // directory but is excluded by the .test.ts-only match.
       'tests/perf/**/*.test.ts',
+      // Mobile-perf budget pure module unit lock. Same pattern as
+      // tests/netgate and tests/perf — vitest matches *.test.ts only,
+      // Playwright matches *.spec.ts only in `playwright.mobile-perf.config.ts`.
+      'tests/mobile-perf/**/*.test.ts',
       // Capture-driven replay harness + user-contract assertions
       // (plan: capture-driven replay infra, Phases C-F, 2026-05-21).
       // Drives the REAL ColyseusGameClient through captured on-device
@@ -72,6 +76,10 @@ export default defineConfig({
       // *.test.ts); benchmarks/**/*.test.ts IS included (plan: perf-floor).
       // Phase A1 — integration tests run via `pnpm test:integration`.
       'tests/integration/**',
+      // GC/heap-delta tests need --expose-gc + serial execution; they
+      // live under vitest.gc.config.ts and run via `pnpm test:gc`
+      // (plan: quirky-rabbit, Phase 1).
+      '**/*.heapDelta.test.ts',
     ],
     benchmark: {
       include: ['benchmarks/**/*.bench.ts'],

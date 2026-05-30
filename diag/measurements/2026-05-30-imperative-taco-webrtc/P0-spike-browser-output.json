@@ -1,0 +1,14 @@
+{
+  "startedAt": "2026-05-29T18:47:27.661Z",
+  "ok": true,
+  "step": "wait-browser-rtt",
+  "signalingPort": 35711,
+  "iceGatheringMsServer": 50,
+  "handshakeMs": 631,
+  "roundTripMs": 15.9,
+  "payloadBytes": 1024,
+  "payloadMatches": true,
+  "selectedCandidateTypeServer": "?/?",
+  "selectedCandidateTypeBrowser": "prflx/host",
+  "errors": []
+}

@@ -30,6 +30,7 @@ import type { Logger } from 'pino';
 import {
   HitscanWeaponDef,
   ProjectileWeaponDef,
+  MissileWeaponDef,
   WeaponId,
   getWeapon,
   isWeaponId,
@@ -38,7 +39,6 @@ import {
   rayHitsSphere,
   rayHitsConvexPolygon,
   SHIP_COLLISION_RADIUS,
-  WEAPON_COOLDOWN_TICKS,
 } from '../../core/combat/Weapons.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import {
@@ -137,6 +137,14 @@ export interface PlayerFireResolverDeps {
     damage: number, radius: number, maxTicks: number,
     weaponId: WeaponId,
   ) => void;
+  /** Spawn a server-side missile (delegates to MissileSimulation). Returns
+   *  the assigned missileId on success or `null` on pool overflow. */
+  spawnServerMissile: (
+    ownerId: string,
+    spawnX: number, spawnY: number,
+    dirX: number, dirY: number,
+    def: MissileWeaponDef,
+  ) => number | null;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (
     targetId: string,
@@ -185,9 +193,17 @@ export class PlayerFireResolver {
     const serverTick = d.serverTick();
     const effTick = clampFireTick(tick, serverTick, LAG_COMP_WINDOW);
 
-    // Cooldown rate limit.
+    // Per-weapon cooldown rate limit. The catalogue's cooldownTicks is
+    // the source of truth — hitscan/laser at 10 ticks (167 ms),
+    // heat-seeker at 180 ticks (3 s). WEAPON_COOLDOWN_TICKS (= hitscan
+    // cooldownTicks) was the global floor pre-missile; switching to a
+    // per-weapon read closes the anti-spam hole that would otherwise
+    // let a misbehaving client launch 6 missiles/sec at the global
+    // hitscan rate.
+    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
+    const weaponDef = getWeapon(weaponId);
     const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < WEAPON_COOLDOWN_TICKS) {
+    if (tick - lastFireCt < weaponDef.cooldownTicks) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
       return;
@@ -207,9 +223,6 @@ export class PlayerFireResolver {
     const shipKind = getShipKind(ship.kind);
     const slotMounts = d.resolveSlotMounts(shipKind, slotId);
     if (slotMounts.length === 0) return;
-
-    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
-    const weaponDef = getWeapon(weaponId);
 
     // Per-mount fire result accumulator.
     let bestHitId: string | null = null;
@@ -258,6 +271,21 @@ export class PlayerFireResolver {
           shooterVy + ndy * projDef.speed,
           projDef.damage, projDef.radius, projDef.maxTicks,
           weaponId,
+        );
+        continue;
+      }
+
+      if (weaponDef.mode === 'missile') {
+        // Missile: lock-at-launch happens inside MissileSimulation; the
+        // spawn returns false (and we skip broadcasting laser_fired) when
+        // the pool is exhausted. No hit-resolution at fire-time — the
+        // simulation owns the lifecycle and emits missile_fired /
+        // missile_detonated.
+        d.spawnServerMissile(
+          shooterId,
+          rayFromX, rayFromY,
+          ndx, ndy,
+          weaponDef as MissileWeaponDef,
         );
         continue;
       }

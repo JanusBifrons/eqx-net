@@ -37,6 +37,37 @@ export interface Candidate {
   grouped?: boolean;
 }
 
+/** Caller-owned scratch for `partitionAndGroupCandidates` — paradigm
+ *  plan (quirky-rabbit) Phase 5c. Pre-fix the function allocated
+ *  `result`, `wedges`, and one wedge-representative literal per emitted
+ *  wedge on every call (radar tick @ 60-90 fps). When `scratch` is
+ *  supplied, all three reuse caller-owned instances; pure-function
+ *  contract preserved (same inputs → same return value; only the
+ *  injected scratch is mutated).
+ *
+ *  Call site (`HaloRadar`) holds this as a class field. */
+export interface PartitionScratch {
+  /** Reused across calls; cleared on entry. */
+  readonly result: Candidate[];
+  /** Reused across calls; cleared on entry. */
+  readonly wedges: Map<number, Candidate>;
+  /** Pool of mutable wedge-representative Candidate instances. Acquired
+   *  by index as wedges are emitted; subsequent calls reuse the same
+   *  instances. */
+  readonly wedgeReps: Candidate[];
+}
+
+/** Pre-allocated wedge-key strings indexed by wedge index. Avoids the
+ *  `` `wedge:${idx}` `` template-literal alloc per emitted wedge — at
+ *  RADAR_WEDGE_COUNT = 24 we cap at 64 to cover any reasonable future
+ *  re-tuning. */
+const _wedgeKeys: string[] = [];
+for (let i = 0; i < 64; i++) _wedgeKeys.push(`wedge:${i}`);
+
+function wedgeKey(idx: number): string {
+  return _wedgeKeys[idx] ?? `wedge:${idx}`;
+}
+
 /**
  * Pure helper. Maps a world-space offset `(dx, dy)` to a wedge index in
  * `[0, wedgeCount)`. Wedge 0 starts at theta = -π (due west) and increases
@@ -60,6 +91,12 @@ export function wedgeIndex(dx: number, dy: number, wedgeCount: number = RADAR_WE
  * representative inherits all member fields except `key`, which becomes
  * `wedge:${idx}` so the renderer can pool a single Graphics across whatever
  * entity currently leads that wedge.
+ *
+ * `scratch` (Phase 5c): when supplied, mutates the caller-owned scratch
+ * instead of allocating per-call. Pure-function contract preserved:
+ * same inputs → same returned reference (the scratch's `result` array);
+ * absent `scratch` falls back to a fresh allocation per the legacy
+ * shape so the unit tests (and any non-radar caller) don't need to know.
  */
 export function partitionAndGroupCandidates(
   local: { x: number; y: number },
@@ -67,9 +104,14 @@ export function partitionAndGroupCandidates(
   groupingDistance: number = RADAR_GROUPING_DISTANCE,
   maxDistance: number = RADAR_MAX_DISTANCE,
   wedgeCount: number = RADAR_WEDGE_COUNT,
+  scratch?: PartitionScratch,
 ): Candidate[] {
-  const result: Candidate[] = [];
-  const wedges = new Map<number, Candidate>();
+  const result = scratch ? scratch.result : [];
+  const wedges = scratch ? scratch.wedges : new Map<number, Candidate>();
+  if (scratch) {
+    result.length = 0;
+    wedges.clear();
+  }
   for (const c of candidates) {
     if (c.dist > maxDistance) continue;
     if (c.dist <= groupingDistance) {
@@ -82,16 +124,41 @@ export function partitionAndGroupCandidates(
       wedges.set(idx, c);
     }
   }
+  // Emit wedge representatives — these are NEW Candidates (separate
+  // from the input `c` so the caller's `c.key` isn't mutated). With
+  // `scratch.wedgeReps` available, reuse pool instances; otherwise
+  // allocate fresh literals.
+  let repIdx = 0;
   for (const [idx, c] of wedges) {
-    result.push({
-      key: `wedge:${idx}`,
-      x: c.x,
-      y: c.y,
-      color: c.color,
-      dist: c.dist,
-      hostile: c.hostile,
-      grouped: true,
-    });
+    if (scratch) {
+      let rep = scratch.wedgeReps[repIdx];
+      if (!rep) {
+        rep = { key: wedgeKey(idx), x: c.x, y: c.y, color: c.color, dist: c.dist, grouped: true };
+        scratch.wedgeReps[repIdx] = rep;
+      } else {
+        rep.key = wedgeKey(idx);
+        rep.x = c.x;
+        rep.y = c.y;
+        rep.color = c.color;
+        rep.dist = c.dist;
+        rep.grouped = true;
+      }
+      // hostile is optional — assign directly (set to false when absent
+      // so a stale `true` from a prior tick doesn't leak through).
+      rep.hostile = c.hostile ?? false;
+      result.push(rep);
+      repIdx++;
+    } else {
+      result.push({
+        key: wedgeKey(idx),
+        x: c.x,
+        y: c.y,
+        color: c.color,
+        dist: c.dist,
+        hostile: c.hostile,
+        grouped: true,
+      });
+    }
   }
   return result;
 }
