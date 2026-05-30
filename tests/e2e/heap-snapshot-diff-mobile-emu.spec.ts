@@ -51,7 +51,21 @@ async function takeHeapSnapshot(cdp: CDPSession): Promise<string> {
 test('heap snapshot diff (mobile emu): 180s hostile combat under 4x CPU throttle', async () => {
   test.setTimeout(360_000);
 
-  const browser = await chromium.launch({ args: ['--enable-precise-memory-info'] });
+  // V8 heap-size constraints simulate the GC-pressure threshold that
+  // mobile Chrome hits on wb1al4-class workloads (user reframe 2026-
+  // 05-30: "Is it possible it's simply too much stuff happening for
+  // the phone?"). Mid-range Android Chrome typically allocates
+  // ~256-512 MB per tab for V8; we constrain to 128 MB old space + 8
+  // MB young space (semi-space) so the renderer is forced into
+  // mobile-like GC pressure under sustained combat. The young-space
+  // shrink is the key knob — frequent minor GCs at smaller capacity
+  // is what produces the threshold cascade.
+  const browser = await chromium.launch({
+    args: [
+      '--enable-precise-memory-info',
+      '--js-flags=--max-old-space-size=128 --max-semi-space-size=8',
+    ],
+  });
   // Mobile-shaped context: viewport + DPR. CPU throttle applied via CDP
   // after page creation (must be applied per-page).
   const ctx = await browser.newContext({
