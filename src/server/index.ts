@@ -9,7 +9,7 @@ import { SectorRoom } from './rooms/SectorRoom.js';
 import { getRecentEvents, clearEvents } from './debug/ServerEventLog.js';
 import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
-import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler } from './routes/diagRouter.js';
+import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
@@ -127,6 +127,14 @@ if (process.env['NODE_ENV'] !== 'production') {
 
   // GET /dev/limbo?playerId=foo — Phase 8 sub-phase B Limbo inspection.
   app.get('/dev/limbo', devLimboHandler);
+
+  // GET /dev/webrtc-counters?roomId=<colyseus-roomId> — Phase 4 iteration 3
+  // swift-otter diagnostic. Returns the room's per-session WebRTC counters
+  // (sentViaDc / sentViaWs / degraded / dcThrows / etc) so the Phase 4
+  // E2E can localise DC throughput variance.
+  app.get('/dev/webrtc-counters', (req, res) => {
+    void devWebrtcCountersHandler(req, res);
+  });
 
   // GET /dev/population — Living World director snapshot (per-sector
   // players/bots, totals, in-transit/respawning) for E2E + diagnostics.

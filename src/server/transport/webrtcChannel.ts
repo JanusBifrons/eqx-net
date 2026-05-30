@@ -53,6 +53,25 @@ export interface WebRtcDataChannel {
 
 export type PeerConnectionFactory = (sessionId: string) => WebRtcPeerConnection;
 
+/**
+ * Pure-data snapshot of a single session's counters. Returned by
+ * `WebRtcChannelManager.getCounters()` and shipped JSON-as-is over the
+ * `/dev/webrtc-counters` endpoint. Phase 4 iteration 3 diagnosis: pair
+ * `sentViaDc` (server's authoritative send count) against the client's
+ * `snapshot_received via=='dc'` count from `__eqxLogs` to localise where
+ * a DC arm's snapshot-throughput variance lives — server-side send,
+ * libdatachannel wire, or browser-side decode.
+ */
+export interface WebRtcEntryCounters {
+  sessionId: string;
+  sentViaDc: number;
+  sentViaWs: number;
+  dcThrows: number;
+  dcBackpressureHits: number;
+  dcSlowSends: number;
+  degraded: boolean;
+}
+
 export interface WebRtcChannelManagerOptions {
   peerConnectionFactory: PeerConnectionFactory;
   /** Send an SDP answer back over the signaling channel (WS / Colyseus message). */
@@ -249,6 +268,28 @@ export class WebRtcChannelManager {
 
   cleanupAll(): void {
     for (const sessionId of [...this._entries.keys()]) this.cleanup(sessionId);
+  }
+
+  /**
+   * Snapshot the per-session counters. Pure data — no live refs into the
+   * internal entry map — so callers can serialise / persist / compare
+   * without risk of mutating internal state. Called from the
+   * `/dev/webrtc-counters` endpoint (not a hot-loop site, allocation OK).
+   */
+  getCounters(): WebRtcEntryCounters[] {
+    const out: WebRtcEntryCounters[] = [];
+    for (const [sessionId, entry] of this._entries) {
+      out.push({
+        sessionId,
+        sentViaDc: entry.sentViaDc,
+        sentViaWs: entry.sentViaWs,
+        dcThrows: entry.dcThrows,
+        dcBackpressureHits: entry.dcBackpressureHits,
+        dcSlowSends: entry.dcSlowSends,
+        degraded: entry.degraded,
+      });
+    }
+    return out;
   }
 
   // ── internals ────────────────────────────────────────────────────────────

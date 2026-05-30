@@ -535,4 +535,5 @@ export {
   devPlayerShipsAbandonHandler,
   devResetRosterHandler,
   devPlayerShipsHandler,
+  devWebrtcCountersHandler,
 } from './diag/devHandlers.js';

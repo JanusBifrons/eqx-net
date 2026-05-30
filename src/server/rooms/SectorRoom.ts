@@ -58,7 +58,7 @@ import { RespawnHandler } from './RespawnHandler.js';
 import { SwarmEvictor } from './SwarmEvictor.js';
 import { RosterPersistence } from './RosterPersistence.js';
 import { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
-import { WebRtcChannelManager } from '../transport/webrtcChannel.js';
+import { WebRtcChannelManager, type WebRtcEntryCounters } from '../transport/webrtcChannel.js';
 import { nodeDataChannelPeerConnectionFactory } from '../transport/webrtcChannelFactory.js';
 import {
   WebRtcOfferMessageSchema,
@@ -2624,6 +2624,30 @@ export class SectorRoom extends Room<SectorState> {
     this.webrtcChannelManager = null;
     this.physicsWorkerProxy?.terminate();
     logger.info({ sectorKey: this.sectorKey }, 'SectorRoom disposed');
+  }
+
+  // ── Phase 4 iteration 3 swift-otter — WebRTC diagnostic surface ─────────
+
+  /**
+   * Invoked via `matchMaker.remoteRoomCall(roomId, 'getWebRtcCounters')`
+   * from the `/dev/webrtc-counters` dev endpoint. Returns a JSON-safe
+   * snapshot of per-session counters so the Phase 4 E2E can compare
+   * server-side `sentViaDc` against client-side `snapshot_received`
+   * via='dc' counts to localise where DC throughput variance lives.
+   * Null when the room has no manager (defensive — every room currently
+   * constructs one).
+   */
+  getWebRtcCounters(): {
+    roomId: string;
+    sectorKey: string | null;
+    sessions: WebRtcEntryCounters[];
+  } | null {
+    if (!this.webrtcChannelManager) return null;
+    return {
+      roomId: this.roomId,
+      sectorKey: this.sectorKey,
+      sessions: this.webrtcChannelManager.getCounters(),
+    };
   }
 
   // ── Phase 8 sub-phase B — TransitOrchestrator host adapter ──────────────

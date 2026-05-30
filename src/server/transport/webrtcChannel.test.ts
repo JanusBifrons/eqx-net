@@ -287,6 +287,98 @@ describe('WebRtcChannelManager', () => {
     expect(manager.isDcSendable('s3')).toBe(false);
   });
 
+  describe('getCounters — Phase 4 iteration 3 diagnostic surface', () => {
+    it('returns empty array before any session is opened', () => {
+      const { manager } = makeManager();
+      expect(manager.getCounters()).toEqual([]);
+    });
+
+    it('reports per-session sentViaDc / sentViaWs / degraded after a mixed send sequence', () => {
+      const { manager, pcs } = makeManager();
+      // Session 1: DC opens + 3 successful DC sends.
+      manager.handleOffer('s1', 'sdp');
+      const dc1 = makeFakeDataChannel();
+      pcs.get('s1')!._emitDataChannel(dc1);
+      dc1._emitOpen();
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+
+      // Session 2: DC opens, 1 successful DC send, then sendMessageBinary
+      // throws — degraded — next send falls back to WS.
+      manager.handleOffer('s2', 'sdp');
+      const dc2 = makeFakeDataChannel();
+      pcs.get('s2')!._emitDataChannel(dc2);
+      dc2._emitOpen();
+      manager.sendSnapshot('s2', fakeSnap(), vi.fn());
+      dc2._sendThrows = new Error('SCTP fail');
+      manager.sendSnapshot('s2', fakeSnap(), vi.fn());
+      // After degrade, further calls route via WS without re-throwing.
+      manager.sendSnapshot('s2', fakeSnap(), vi.fn());
+
+      // Session 3: never sendable — every snapshot routes via WS.
+      const onFb3 = vi.fn();
+      manager.sendSnapshot('s3', fakeSnap(), onFb3);
+      manager.sendSnapshot('s3', fakeSnap(), onFb3);
+
+      const counters = manager.getCounters();
+      const bySession = new Map(counters.map((c) => [c.sessionId, c]));
+
+      expect(bySession.get('s1')).toEqual({
+        sessionId: 's1',
+        sentViaDc: 3,
+        sentViaWs: 0,
+        dcThrows: 0,
+        dcBackpressureHits: 0,
+        dcSlowSends: 0,
+        degraded: false,
+      });
+      expect(bySession.get('s2')).toEqual({
+        sessionId: 's2',
+        sentViaDc: 1,
+        // The throw + post-degrade send + final routing call all count as WS.
+        sentViaWs: 2,
+        dcThrows: 1,
+        dcBackpressureHits: 0,
+        dcSlowSends: 0,
+        degraded: true,
+      });
+      // s3 never handled an offer so no entry exists.
+      expect(bySession.has('s3')).toBe(false);
+    });
+
+    it('reports dcBackpressureHits after a bufferedAmount-over-threshold send', () => {
+      const { manager, pcs } = makeManager();
+      manager.handleOffer('s1', 'sdp');
+      const dc = makeFakeDataChannel();
+      pcs.get('s1')!._emitDataChannel(dc);
+      dc._emitOpen();
+      dc._setBufferedAmount(8 * 1024 + 1);
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+      const [c] = manager.getCounters();
+      expect(c?.dcBackpressureHits).toBe(1);
+      expect(c?.sentViaDc).toBe(0);
+      expect(c?.sentViaWs).toBe(1);
+      expect(c?.degraded).toBe(true);
+    });
+
+    it('returns an array snapshot — mutating it does not affect internal state', () => {
+      const { manager, pcs } = makeManager();
+      manager.handleOffer('s1', 'sdp');
+      const dc = makeFakeDataChannel();
+      pcs.get('s1')!._emitDataChannel(dc);
+      dc._emitOpen();
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+
+      const snap1 = manager.getCounters();
+      // Mutate the returned array + element — should not leak back.
+      snap1.length = 0;
+      manager.sendSnapshot('s1', fakeSnap(), vi.fn());
+      const snap2 = manager.getCounters();
+      expect(snap2[0]?.sentViaDc).toBe(2);
+    });
+  });
+
   describe('hardening — hostile review #11 (send latency)', () => {
     let nowSeq = 0;
     let nextDtMs = 0;
