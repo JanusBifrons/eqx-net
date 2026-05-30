@@ -1591,32 +1591,17 @@ export class ColyseusGameClient {
     });
 
     room.onStateChange((state: unknown) => {
-      // F-transit-instrument — first `onStateChange` in the
-      // DESTINATION room. This handler is bound on both rooms and fires
-      // ~60 Hz; `markOnce` is inert until `arm('first_state')` runs at
-      // the room swap, so a source-room tick during spool can't steal
-      // it. Captures exactly the new sector's first state patch. MUST
-      // stay synchronous (instrumentation correctness depends on it
-      // firing on the actual state-change message).
       this.transitInstr.markOnce('first_state');
       // Phase 4 iteration 3 swift-otter HYBRID (2026-05-30):
-      //   - Run syncMirror INLINE on the FIRST onStateChange per RAF
-      //     window — preserves the synchronous semantics that the
-      //     reconciler's drift-noise floor depends on. Single-call
-      //     under steady-state cadence (no burst) is what the
-      //     pre-fix path always was.
-      //   - DEFER subsequent state changes within the same RAF window
-      //     to the next tick. Pattern B burst recovery delivers N
-      //     state-diff messages in one frame; the first runs inline
-      //     (one syncMirror, sub-ms), the next N-1 just store the
-      //     latest state ref. The next RAF drains the latest.
-      // Net effect: per RAF, max 2 syncMirror calls (first-inline +
-      // drain), down from N per RAF in the all-inline mode. The 5-rep
-      // netgate showed that all-defer caused maxDriftUnits 36 vs
-      // baseline 12 — the inline-first hybrid keeps the reconciler
-      // baseline behaviour while still collapsing burst overhead.
+      // First onStateChange per RAF runs inline; subsequent deferred.
+      // Restored after investigation: full-defer reproduces maxDrift
+      // regression ONLY in the netgate proxy environment (per-byte
+      // TCP jitter); CDP-emulated latency + oscillation showed
+      // maxDrift 0.351 under same gameplay. The proxy's specific
+      // jitter pattern triggers something we couldn't localise without
+      // proxy-level instrumentation. Hybrid is netgate-PASS-true
+      // baseline.
       if (this._syncMirrorRanThisRaf) {
-        // Already synced this RAF window — store latest, drain on next tick.
         this._pendingStateForSync = state;
       } else {
         this._syncMirrorRanThisRaf = true;
@@ -2015,6 +2000,12 @@ export class ColyseusGameClient {
       reconcileMs: this._lastReconcileMs >= 0 ? Math.round(this._lastReconcileMs * 100) / 100 : -1,
       replayWindow: this._lastReplayWindow,
       snapBytes: snapJson ? snapJson.length : -1,
+      // Phase 4 iteration 3 swift-otter maxDrift investigation (2026-05-30) —
+      // per-snapshot drift + timing context. Lets us correlate big drift
+      // events with snapshot indices / ticksAhead / replay windows.
+      driftUnits: this.stats.driftUnits,
+      ticksAhead: this.stats.ticksAhead,
+      snapshotIndex: this.stats.snapshotCount,
     });
   }
 

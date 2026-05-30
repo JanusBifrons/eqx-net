@@ -108,6 +108,7 @@ const FEATURE_SPECS: string[] = [
   '**/webrtc-vs-ws-recv-gap-comparison.spec.ts',
   '**/webrtc-mobile-emulation-stutter.spec.ts',
   '**/webrtc-mobile-emulation-control.spec.ts',
+  '**/maxdrift-investigation.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];

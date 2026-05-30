@@ -157,6 +157,11 @@ async function runOneBurst(
   loafTotal: number;
   loafByInvoker: Record<string, number>;
   loafWsOnMessage: number;
+  wsLoafScripts: Array<{
+    durationMs: number;
+    blockingMs: number;
+    scripts: Array<{ d: number; fn: string; url: string }>;
+  }>;
 }> {
   // Mark the window start AFTER warmup but BEFORE the bursts so the
   // measurement is symmetric across arms.
@@ -237,6 +242,30 @@ async function runOneBurst(
     loafByInvoker[invoker] = (loafByInvoker[invoker] ?? 0) + 1;
   }
   const loafWsOnMessage = loafByInvoker['DOMWebSocket.onmessage'] ?? 0;
+  // Top-5 longest WS-onmessage loafs with full topScripts attribution —
+  // tells us WHICH source function inside Colyseus's onMessageCallback
+  // is heavy. Use for targeted-fix localisation.
+  const wsLoafScripts = loafs
+    .filter((e) => {
+      const ts = e.data as { topScripts?: Array<{ invoker?: string }> };
+      return ts.topScripts?.some((s) => s.invoker === 'DOMWebSocket.onmessage');
+    })
+    .map((e) => e.data as {
+      durationMs: number;
+      blockingDurationMs?: number;
+      topScripts?: Array<{ duration: number; invoker?: string; sourceFunctionName?: string; sourceURL?: string }>;
+    })
+    .sort((a, b) => (b.durationMs ?? 0) - (a.durationMs ?? 0))
+    .slice(0, 5)
+    .map((e) => ({
+      durationMs: e.durationMs,
+      blockingMs: e.blockingDurationMs ?? 0,
+      scripts: (e.topScripts ?? []).map((s) => ({
+        d: s.duration,
+        fn: s.sourceFunctionName ?? '',
+        url: (s.sourceURL ?? '').split('/').slice(-2).join('/').split('?')[0],
+      })),
+    }));
 
   return {
     recvGapLong: gaps.length,
@@ -263,6 +292,7 @@ async function runOneBurst(
     loafTotal: loafs.length,
     loafByInvoker,
     loafWsOnMessage,
+    wsLoafScripts,
   };
 }
 
@@ -339,6 +369,7 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         // phone-finding repro check.
         `loaf_total=${result.loafTotal} ws_onmessage=${result.loafWsOnMessage} ` +
         `loaf_by_invoker=${JSON.stringify(result.loafByInvoker)} ` +
+        `ws_top_scripts=${JSON.stringify(result.wsLoafScripts)} ` +
         `err=${result.serverFetchError}`,
       );
     } finally {
@@ -377,6 +408,7 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         // phone-finding repro check.
         `loaf_total=${result.loafTotal} ws_onmessage=${result.loafWsOnMessage} ` +
         `loaf_by_invoker=${JSON.stringify(result.loafByInvoker)} ` +
+        `ws_top_scripts=${JSON.stringify(result.wsLoafScripts)} ` +
         `err=${result.serverFetchError}`,
       );
     } finally {
