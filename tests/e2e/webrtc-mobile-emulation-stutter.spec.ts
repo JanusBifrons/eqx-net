@@ -69,7 +69,12 @@ interface ArmResult {
 }
 
 async function runOneArm(arm: 'ws' | 'dc'): Promise<ArmResult> {
-  const browser = await chromium.launch();
+  // `channel: 'chromium'` — full Chrome (hardware WebGL) instead of
+  // Playwright's bundled chromium-headless-shell. The shell uses
+  // SwiftShader software WebGL under mobile emulation which throttles
+  // render to ~10 Hz and starves the snapshot pipeline. Validated by
+  // webrtc-mobile-emulation-control.spec.ts (v4 commit a6bf982).
+  const browser = await chromium.launch({ channel: 'chromium' });
   const ctx = await browser.newContext({ ...devices['Pixel 4a (5G)'] });
   const page = await ctx.newPage();
   const cdp = await ctx.newCDPSession(page);
@@ -109,12 +114,13 @@ async function runOneArm(arm: 'ws' | 'dc'): Promise<ArmResult> {
     );
   }
 
-  // v3: no CPU/network throttle, just device emulation. Get the
-  // scaffolding working first — v1 and v2 both produced 0 snapshots
-  // in both arms despite waitForFunction(ship-count > 0) passing.
-  // If this v3 sees snapshots, the throttle was the cause of the
-  // zero-snapshot mystery and we add it back in v4 at a lower
-  // intensity (2× CPU, modest network).
+  // v5 (channel: chromium working): apply 4× CPU throttle to stress
+  // the main thread so loaf events actually fire. v4 with no throttle
+  // produced 0 loafs in BOTH arms because full Chrome + Pixel
+  // emulation is fast enough on this dev box that nothing blocks
+  // >50ms. Phones have slower CPU → loafs. The phone-finding requires
+  // an emulator stressed enough to surface main-thread blockers.
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
   await page.waitForTimeout(3_000);
 
   const startPerf = await page.evaluate(() => performance.now());

@@ -147,6 +147,16 @@ async function runOneBurst(
   serverDcBackpressureHits: number;
   serverDcSlowSends: number;
   serverDegraded: boolean;
+  // Phase 4 iteration 3 follow-on (2026-05-30) — loaf-invoker dump.
+  // Phone captures showed DOMWebSocket.onmessage loafs 10-25× higher
+  // per second when WebRTC was enabled. The mobile-emulator spec with
+  // CPU throttle reproduced loafs but only from setInterval/RAF/
+  // MessagePort, not the WS handler. Adding the histogram here so the
+  // existing Pattern B test (which produces realistic bursty WS
+  // arrivals) can serve as the synthetic reproduction surface.
+  loafTotal: number;
+  loafByInvoker: Record<string, number>;
+  loafWsOnMessage: number;
 }> {
   // Mark the window start AFTER warmup but BEFORE the bursts so the
   // measurement is symmetric across arms.
@@ -213,6 +223,21 @@ async function runOneBurst(
   }
   void arm; // arm is kept in the signature for future per-arm handling.
 
+  // Phase 4 iteration 3 follow-on — loaf-invoker histogram in the
+  // measurement window. The phone captures showed
+  // `DOMWebSocket.onmessage` (Colyseus's WS handler) as the dominant
+  // loaf invoker, 10-25× more frequent per second when WebRTC was
+  // enabled. This dump lets the existing Pattern B test confirm or
+  // refute that pattern synthetically.
+  const loafs = await readDiagSince(page, start, 'loaf');
+  const loafByInvoker: Record<string, number> = {};
+  for (const e of loafs) {
+    const ts = e.data as { topScripts?: Array<{ invoker?: string }> };
+    const invoker = ts.topScripts?.[0]?.invoker ?? '(no-script)';
+    loafByInvoker[invoker] = (loafByInvoker[invoker] ?? 0) + 1;
+  }
+  const loafWsOnMessage = loafByInvoker['DOMWebSocket.onmessage'] ?? 0;
+
   return {
     recvGapLong: gaps.length,
     recvGapLongDc: gaps.filter((e) => e.data['via'] === 'dc').length,
@@ -235,6 +260,9 @@ async function runOneBurst(
     serverDcBackpressureHits,
     serverDcSlowSends,
     serverDegraded,
+    loafTotal: loafs.length,
+    loafByInvoker,
+    loafWsOnMessage,
   };
 }
 
@@ -307,6 +335,10 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         `roomId=${result.roomId} fetch_ok=${result.serverFetchOk} ` +
         `http=${result.serverHttpStatus} sessions=${result.serverSessionCount} ` +
         `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs} ` +
+        // Loaf histogram — comparing ws_onmessage across arms is the
+        // phone-finding repro check.
+        `loaf_total=${result.loafTotal} ws_onmessage=${result.loafWsOnMessage} ` +
+        `loaf_by_invoker=${JSON.stringify(result.loafByInvoker)} ` +
         `err=${result.serverFetchError}`,
       );
     } finally {
@@ -341,6 +373,10 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs} ` +
         `server_throws=${result.serverDcThrows} server_bp=${result.serverDcBackpressureHits} ` +
         `server_slow=${result.serverDcSlowSends} server_degraded=${result.serverDegraded} ` +
+        // Loaf histogram — comparing ws_onmessage across arms is the
+        // phone-finding repro check.
+        `loaf_total=${result.loafTotal} ws_onmessage=${result.loafWsOnMessage} ` +
+        `loaf_by_invoker=${JSON.stringify(result.loafByInvoker)} ` +
         `err=${result.serverFetchError}`,
       );
     } finally {
