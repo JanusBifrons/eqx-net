@@ -52,14 +52,27 @@ export interface SnapshotPerfStatsCtx {
  * Updates `ctx.stats` for one snapshot. Returns the computed
  * intervalMs so the caller can feed it into RTT-band filtering /
  * Welford. Mutates `ctx.recentIntervals` in place (push + shift).
+ *
+ * Phase 4 iteration 3 swift-otter (2026-05-30) — `intervalMs` is now
+ * computed from `wireArrivalAtMs`, the wire-recv time of the snapshot
+ * (set by `logSnapshotRecvTelemetry` in `ColyseusClient`), not from
+ * the RAF `now`. The snapshot coalescer + deferred-syncMirror both
+ * make the APPLY cadence RAF-bound (~16-33 ms) regardless of WIRE
+ * cadence (still ~50 ms at 20 Hz). The downstream RTT updater
+ * (`rttLookaheadUpdater.ts`) drops samples outside the 35-75 ms
+ * steady-state band — feeding it apply-bound intervals saturated
+ * the rejection filter, starved the RTT Welford, and inflated
+ * `leadTicks` (`ticksAhead` 30→74 in netgate). Using the wire time
+ * keeps the interval signal honest to the actual network cadence.
  */
 export function applySnapshotPerfStats(
   snap: SnapshotMessage,
   now: number,
   lastSnapshotAt: number,
+  wireArrivalAtMs: number,
   ctx: SnapshotPerfStatsCtx,
 ): number {
-  const intervalMs = lastSnapshotAt > 0 ? now - lastSnapshotAt : 0;
+  const intervalMs = lastSnapshotAt > 0 ? wireArrivalAtMs - lastSnapshotAt : 0;
   ctx.stats.snapshotCount++;
   ctx.stats.snapshotIntervalMs = intervalMs;
   ctx.stats.lastServerTick = snap.serverTick;

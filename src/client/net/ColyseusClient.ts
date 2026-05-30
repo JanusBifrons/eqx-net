@@ -2071,14 +2071,23 @@ export class ColyseusGameClient {
     // Per-snapshot perf stats (rolling RAF/longtask/heap, server-tick
     // EWMA, jitter, swarm display-delay sizing, collision stale-guard).
     // See snapshotPerfStats.ts.
-    const intervalMs = applySnapshotPerfStats(snap, now, this.lastSnapshotAt, {
+    // Phase 4 iteration 3 swift-otter — pass `_lastSnapshotRecvAtMs`
+    // (wire-recv time) so `intervalMs` reflects the WIRE cadence not the
+    // RAF apply cadence. Without this, the coalescer + deferred
+    // syncMirror push apply timing to RAF boundaries, the RTT updater's
+    // steady-state band rejects most samples, and lookahead inflates.
+    // See applySnapshotPerfStats jsdoc for the netgate evidence.
+    const wireArrivalAtMs = this._lastSnapshotRecvAtMs >= 0
+      ? this._lastSnapshotRecvAtMs
+      : now;
+    const intervalMs = applySnapshotPerfStats(snap, now, this.lastSnapshotAt, wireArrivalAtMs, {
       stats: this.stats,
       recentIntervals: this._recentIntervals,
       collisionGuard: this._collisionGuard,
       dropDetector: this._dropDetector,
       swarmBinaryEwma: this._swarmBinaryEwma,
     });
-    this.lastSnapshotAt = now;
+    this.lastSnapshotAt = wireArrivalAtMs;
 
     // Re-anchor the input clock against this snapshot. Phase 6.5 Sub-phase B
     // EWMA-smooths the anchor instead of snapping on every packet — a 30 ms-
