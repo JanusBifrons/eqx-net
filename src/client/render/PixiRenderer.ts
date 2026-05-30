@@ -930,7 +930,7 @@ export class PixiRenderer implements IRenderer {
     // tick every frame to advance lifetime + counter-scale.
     if (this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
-        this.damageNumbers.spawn(dn.x, dn.y, dn.damage, dn.tag);
+        this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
       }
       mirror.pendingDamageNumbers.length = 0;
     }

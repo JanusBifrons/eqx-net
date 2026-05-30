@@ -83,8 +83,8 @@ async function main(): Promise<void> {
   }
 
   window.__damageProbe = {
-    pushDamage: (x: number, y: number, damage: number): void => {
-      mirror.pendingDamageNumbers!.push({ x, y, damage });
+    pushDamage: (x: number, y: number, damage: number, targetId = 'probe-target'): void => {
+      mirror.pendingDamageNumbers!.push({ targetId, x, y, damage });
     },
     postFrame: (): void => {
       renderer.update(mirror);

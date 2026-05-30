@@ -32,15 +32,15 @@ function fakeWorld(byFromX: Record<number, { hitId: string; dist: number } | nul
 }
 
 function recordingSink(): PredictedFeedbackSink & {
-  numbers: Array<{ x: number; y: number; damage: number; tag: string }>;
+  numbers: Array<{ targetId: string; x: number; y: number; damage: number; tag: string }>;
   flashes: string[];
 } {
-  const numbers: Array<{ x: number; y: number; damage: number; tag: string }> = [];
+  const numbers: Array<{ targetId: string; x: number; y: number; damage: number; tag: string }> = [];
   const flashes: string[] = [];
   return {
     numbers,
     flashes,
-    pushDamageNumber: (x, y, damage, tag) => numbers.push({ x, y, damage, tag }),
+    pushDamageNumber: (targetId, x, y, damage, tag) => numbers.push({ targetId, x, y, damage, tag }),
     flashTarget: (id) => flashes.push(id),
   };
 }
@@ -99,7 +99,7 @@ describe('predictShotOutcome — ledger.predict + immediate tagged feedback', ()
       nowMs: 1000,
     });
     expect(ret).toBe('swarm-7');
-    expect(sink.numbers).toEqual([{ x: 35, y: 0, damage: 20, tag: 'shot-1' }]);
+    expect(sink.numbers).toEqual([{ targetId: 'swarm-7', x: 35, y: 0, damage: 20, tag: 'shot-1' }]);
     expect(sink.flashes).toEqual(['swarm-7']);
     // The ledger now holds a confirmable hitscan prediction for swarm-7.
     expect(ledger.reconcileAck('shot-1', { hit: true, targetId: 'swarm-7', damage: 20 }, 1100)).toEqual({
@@ -150,7 +150,7 @@ describe('predictShotOutcome — ledger.predict + immediate tagged feedback', ()
       excludeId: 'me',
       nowMs: 1000,
     });
-    expect(sink.numbers).toEqual([{ x: 65, y: 0, damage: 10, tag: 'proj-1' }]);
+    expect(sink.numbers).toEqual([{ targetId: 'swarm-9', x: 65, y: 0, damage: 10, tag: 'proj-1' }]);
     // Projectile: the (always hit:false) server ack must NOT roll it back.
     expect(ledger.reconcileAck('proj-1', { hit: false }, 1050)).toEqual({ kind: 'noop', clientShotId: 'proj-1' });
     expect(ledger.size()).toBe(1);
@@ -181,7 +181,7 @@ describe('predictShotOutcome — ledger.predict + immediate tagged feedback', ()
       nowMs: 1000,
     });
     expect(ret).toBe('swarm-near');
-    expect(sink.numbers).toEqual([{ x: 50, y: 0, damage: 20, tag: 'shot-3' }]);
+    expect(sink.numbers).toEqual([{ targetId: 'swarm-near', x: 50, y: 0, damage: 20, tag: 'shot-3' }]);
     expect(sink.flashes).toEqual(['swarm-near']);
   });
 });

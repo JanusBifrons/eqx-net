@@ -695,7 +695,7 @@ export class ColyseusGameClient {
    *  load) stays at the original 6 Hz. Splits share one `clientShotId`
    *  so existing `cancelByTag` / `reconcileDamageToFeedback` handle
    *  rollback / confirmation unchanged. */
-  private _scheduledDamageSpawns: Array<{ atMs: number; x: number; y: number; damage: number; tag: string }> = [];
+  private _scheduledDamageSpawns: Array<{ atMs: number; targetId: string; x: number; y: number; damage: number; tag: string }> = [];
   /** weapon-hit-prediction — client favor-the-shooter hit-prediction ledger.
    *  Phase 2 records a prediction on every fire (presentation-only) and
    *  TTL-expires it; Phase 3 wires the hit_ack / DamageEvent reconcile so
@@ -1710,7 +1710,7 @@ export class ColyseusGameClient {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
-      this.mirror.pendingDamageNumbers.push({ x, y, damage: evt.damage });
+      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
     }
 
     // Health bar on hit — only show for targets the local player is shooting.
@@ -2724,7 +2724,7 @@ export class ColyseusGameClient {
       for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
         const s = this._scheduledDamageSpawns[i]!;
         if (s.atMs <= now) {
-          pending?.push({ x: s.x, y: s.y, damage: s.damage, tag: s.tag });
+          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
           this._scheduledDamageSpawns.splice(i, 1);
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — log spawn
           // separately from schedule. Previously `damage_number_predicted`
@@ -4053,9 +4053,9 @@ export class ColyseusGameClient {
     const scheduledRef = this._scheduledDamageSpawns;
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
-      pushDamageNumber: (x, y, damage, tag) => {
+      pushDamageNumber: (targetId, x, y, damage, tag) => {
         if (!isHitscan || damage <= 0) {
-          this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+          this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
           // five-events-at-the-same-ts pattern with one event per shot
           // (schedule) + one event per actual spawn (damage_number_spawned
@@ -4085,10 +4085,11 @@ export class ColyseusGameClient {
           if (i === 0) {
             // First tick spawns immediately so the player feels the
             // first hit without any latency.
-            this.mirror.pendingDamageNumbers?.push({ x, y, damage: tickDamage, tag });
+            this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage: tickDamage, tag });
           } else {
             scheduledRef.push({
               atMs: clockNow + i * splitIntervalMs,
+              targetId,
               x, y,
               damage: tickDamage,
               tag,
