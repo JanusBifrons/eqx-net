@@ -17,8 +17,36 @@
  * Output is a side-by-side table (slope, peak heap, rafGapCount,
  * maxStallMs). This spec is a MEASUREMENT EXPERIMENT, not a gate — the
  * existing combat-heap-growth.spec.ts stays the regression lock per
- * Invariant #13. Decision tree branches in the plan based on the
- * relative slope drops:
+ * Invariant #13.
+ *
+ * **2026-05-30 findings (plan: melodic-engelbart Step 3 verdict):**
+ * Two runs in opposite variant orders revealed a strong run-order
+ * confound:
+ *
+ *   Run 1 (control → nofilters → noparticles):
+ *     control 0.228, nofilters 0.738, noparticles 0.733 MB/s
+ *   Run 2 (noparticles → nofilters → control):
+ *     noparticles 0.057, nofilters 0.883, control 0.856 MB/s
+ *
+ * The FIRST variant in each run has a 4-15× lower slope than the
+ * second + third regardless of which variant it is. The CONTROL arm
+ * itself swings from 0.228 → 0.856 purely on run order. nofilters and
+ * noparticles never separate from control — the FX hypothesis is
+ * **FALSIFIED** in this spec.
+ *
+ * Plausible run-order causes (not yet localised): browser JIT warmup
+ * across launches, server-side state accumulation between joins,
+ * Vite HMR cache effects. The 20 s window is also too short to see
+ * the wb1al4 threshold cascade at ~120 s; and the feel-test-25 drones
+ * don't reliably stand in the player's beam (0 damage numbers in 5/6
+ * runs), so the wb1al4 combat workload isn't being replicated.
+ *
+ * Next plan step (Step 4): pivot off FX, target damage_number_spawned
+ * + a workload that actually drives the 815-events/240s rate
+ * wb1al4 captured.
+ *
+ * Decision tree branches in the plan based on the relative slope
+ * drops:
  *
  *   - both drop ≥40 % → both subsystems contribute; localise both
  *   - only nofilters drops ≥40 % → filters dominate; bisect per-filter
@@ -195,19 +223,26 @@ test('combat heap-growth FX bisect (control / nofilters / noparticles)', async (
   test.setTimeout(300_000);
 
   const results: VariantStats[] = [];
-  results.push(await measureVariant('control', ''));
-  results.push(await measureVariant('nofilters', '&nofilters=1'));
+  // Reverse order to disambiguate run-order variance: first measurement
+  // was 3× cleaner than the second + third regardless of variant in the
+  // initial run. Running noparticles → nofilters → control here proves
+  // whether the FX subsystem matters or whether warmup/host-state
+  // variance dominates.
   results.push(await measureVariant('noparticles', '&noparticles=1'));
+  results.push(await measureVariant('nofilters', '&nofilters=1'));
+  results.push(await measureVariant('control', ''));
 
   // eslint-disable-next-line no-console
   console.log('\n=== Combat heap-growth FX bisect ===');
   // eslint-disable-next-line no-console
   console.log(JSON.stringify(results, null, 2));
 
-  // Side-by-side table for at-a-glance reading.
-  const control = results[0]!;
-  const noFilters = results[1]!;
-  const noParticles = results[2]!;
+  // Side-by-side table for at-a-glance reading. Lookup is variant-keyed
+  // so the table stays correct when the run order changes (see the
+  // run-order variance finding documented below).
+  const control = results.find((r) => r.variant === 'control')!;
+  const noFilters = results.find((r) => r.variant === 'nofilters')!;
+  const noParticles = results.find((r) => r.variant === 'noparticles')!;
   const slopeDeltaFiltersPct =
     control.heap.slopeMbPerSec === 0
       ? 0
