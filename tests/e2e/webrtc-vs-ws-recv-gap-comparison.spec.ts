@@ -41,34 +41,68 @@ async function readDiagSince(
 
 /**
  * Phase 4 iteration 3 diagnostic — pull the Colyseus roomId off
- * `window.__eqxClient.room.id`. TypeScript visibility (`private room`)
- * is compile-time only; at runtime in the browser the field is just a
- * JS property. Returns null if the client hasn't joined yet.
+ * `window.__eqxClient.room.roomId`. The colyseus.js client Room
+ * uses `roomId` (not `id` — that's the server-side Room API). The
+ * first iteration of this helper read `.id` and silently returned
+ * null, which is why every per-rep line showed fetch_ok=false in
+ * the initial Step C run. TypeScript visibility (`private room`)
+ * is compile-time only; at runtime the property is plain JS.
  */
 async function readRoomId(page: import('@playwright/test').Page): Promise<string | null> {
   return await page.evaluate(() => {
-    const client = (window as unknown as { __eqxClient?: { room?: { id?: string } } }).__eqxClient;
-    return client?.room?.id ?? null;
+    const client = (window as unknown as { __eqxClient?: { room?: { roomId?: string } } }).__eqxClient;
+    return client?.room?.roomId ?? null;
   });
 }
 
 /**
  * Phase 4 iteration 3 diagnostic — fetch server-side per-session WebRTC
  * counters via the `/dev/webrtc-counters` endpoint (Vite proxies `/dev/*`
- * to the dev server on :2567). Returns null on any failure so the spec
- * can keep running even if the dev endpoint is unavailable in this env.
+ * to the dev server on :2567). Returns a status-tagged result so we can
+ * distinguish "fetch worked, no sessions" (200/[]) from "fetch failed"
+ * (404/throw). The 2026-05-30 iteration 3 first run showed every per-rep
+ * line as fetch=false; this surface is the fix for that ambiguity.
  */
+interface ServerCountersFetch {
+  ok: boolean;
+  httpStatus: number;
+  errorMessage: string | null;
+  sessions: Array<{
+    sessionId: string;
+    sentViaDc: number;
+    sentViaWs: number;
+    dcThrows: number;
+    dcBackpressureHits: number;
+    dcSlowSends: number;
+    degraded: boolean;
+  }>;
+}
 async function readServerCounters(
   page: import('@playwright/test').Page,
   roomId: string,
-): Promise<{ sessions: Array<{ sessionId: string; sentViaDc: number; sentViaWs: number; dcThrows: number; dcBackpressureHits: number; dcSlowSends: number; degraded: boolean }> } | null> {
+): Promise<ServerCountersFetch> {
   return await page.evaluate(async (rid) => {
     try {
       const r = await fetch(`/dev/webrtc-counters?roomId=${encodeURIComponent(rid)}`);
-      if (!r.ok) return null;
-      return await r.json();
-    } catch {
-      return null;
+      let body: unknown = null;
+      try { body = await r.json(); } catch { /* empty body */ }
+      if (!r.ok) {
+        return { ok: false, httpStatus: r.status, errorMessage: JSON.stringify(body), sessions: [] };
+      }
+      const parsed = body as { sessions?: ServerCountersFetch['sessions'] } | null;
+      return {
+        ok: true,
+        httpStatus: r.status,
+        errorMessage: null,
+        sessions: Array.isArray(parsed?.sessions) ? parsed!.sessions : [],
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        httpStatus: 0,
+        errorMessage: (err as Error).message,
+        sessions: [],
+      };
     }
   }, roomId);
 }
@@ -96,11 +130,16 @@ async function runOneBurst(
   snapDroppedShape: number;
   webrtcConnected: boolean;
   // Phase 4 iteration 3 — server-side counter snapshot for the room
-  // we're attached to. `serverFetchOk` flags whether the /dev fetch
-  // returned data (false = endpoint unreachable or room unknown).
-  // `serverSessionId` is captured to confirm we read the right entry.
+  // we're attached to. `serverFetchOk` is true when the endpoint
+  // returned 200 (regardless of session count); `serverSessionCount`
+  // separately tells whether the manager has an entry for this room.
+  // `serverHttpStatus` + `serverFetchError` are populated when ok=false
+  // so the operator can localise endpoint failures (404/proxy/throw).
   roomId: string | null;
   serverFetchOk: boolean;
+  serverHttpStatus: number;
+  serverFetchError: string | null;
+  serverSessionCount: number;
   serverSessionId: string | null;
   serverSentDc: number;
   serverSentWs: number;
@@ -146,6 +185,9 @@ async function runOneBurst(
   // above) and localise where DC throughput variance lives.
   const roomId = await readRoomId(page);
   let serverFetchOk = false;
+  let serverHttpStatus = 0;
+  let serverFetchError: string | null = null;
+  let serverSessionCount = 0;
   let serverSessionId: string | null = null;
   let serverSentDc = 0;
   let serverSentWs = 0;
@@ -154,21 +196,19 @@ async function runOneBurst(
   let serverDcSlowSends = 0;
   let serverDegraded = false;
   if (roomId !== null) {
-    const counters = await readServerCounters(page, roomId);
-    if (counters !== null && Array.isArray(counters.sessions) && counters.sessions.length > 0) {
-      // The Phase 4 spec joins one client per rep so we expect exactly
-      // one session; if there are more (unlikely — single feel-test-25
-      // room per rep), sum across them rather than pick arbitrarily.
-      serverFetchOk = true;
-      for (const s of counters.sessions) {
-        serverSessionId = serverSessionId ?? s.sessionId;
-        serverSentDc += s.sentViaDc;
-        serverSentWs += s.sentViaWs;
-        serverDcThrows += s.dcThrows;
-        serverDcBackpressureHits += s.dcBackpressureHits;
-        serverDcSlowSends += s.dcSlowSends;
-        serverDegraded = serverDegraded || s.degraded;
-      }
+    const fetched = await readServerCounters(page, roomId);
+    serverFetchOk = fetched.ok;
+    serverHttpStatus = fetched.httpStatus;
+    serverFetchError = fetched.errorMessage;
+    serverSessionCount = fetched.sessions.length;
+    for (const s of fetched.sessions) {
+      serverSessionId = serverSessionId ?? s.sessionId;
+      serverSentDc += s.sentViaDc;
+      serverSentWs += s.sentViaWs;
+      serverDcThrows += s.dcThrows;
+      serverDcBackpressureHits += s.dcBackpressureHits;
+      serverDcSlowSends += s.dcSlowSends;
+      serverDegraded = serverDegraded || s.degraded;
     }
   }
   void arm; // arm is kept in the signature for future per-arm handling.
@@ -185,6 +225,9 @@ async function runOneBurst(
     webrtcConnected: connected,
     roomId,
     serverFetchOk,
+    serverHttpStatus,
+    serverFetchError,
+    serverSessionCount,
     serverSessionId,
     serverSentDc,
     serverSentWs,
@@ -261,8 +304,10 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
       console.log(
         `[ws rep ${i}] recv_gap_long=${result.recvGapLong} ` +
         `snaps_ws=${result.snapshotsWs} snaps_dc=${result.snapshotsDc} ` +
-        `server_fetch=${result.serverFetchOk} ` +
-        `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs}`,
+        `roomId=${result.roomId} fetch_ok=${result.serverFetchOk} ` +
+        `http=${result.serverHttpStatus} sessions=${result.serverSessionCount} ` +
+        `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs} ` +
+        `err=${result.serverFetchError}`,
       );
     } finally {
       await ctx.close();
@@ -291,10 +336,12 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         // (client's snapshot_received via='dc') to localise variance:
         // server_dc≈snaps_dc → wire+integration clean; server_dc>>snaps_dc
         // → browser-side gap; server_dc<<200 → server-side gap.
-        `server_fetch=${result.serverFetchOk} server_dc=${result.serverSentDc} ` +
-        `server_ws=${result.serverSentWs} server_throws=${result.serverDcThrows} ` +
-        `server_bp=${result.serverDcBackpressureHits} server_slow=${result.serverDcSlowSends} ` +
-        `server_degraded=${result.serverDegraded}`,
+        `roomId=${result.roomId} fetch_ok=${result.serverFetchOk} ` +
+        `http=${result.serverHttpStatus} sessions=${result.serverSessionCount} ` +
+        `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs} ` +
+        `server_throws=${result.serverDcThrows} server_bp=${result.serverDcBackpressureHits} ` +
+        `server_slow=${result.serverDcSlowSends} server_degraded=${result.serverDegraded} ` +
+        `err=${result.serverFetchError}`,
       );
     } finally {
       await ctx.close();
@@ -354,16 +401,23 @@ test('Phase 4 control — ?webrtc=1 under no network injection: recv_gap_long sh
     // window too; if snapsDc < server_dc here we know the gap is browser-
     // side even WITHOUT network injection.
     const roomId = await readRoomId(page);
-    const serverCounters = roomId !== null ? await readServerCounters(page, roomId) : null;
-    const serverSession = serverCounters?.sessions?.[0];
+    const fetched = roomId !== null
+      ? await readServerCounters(page, roomId)
+      : { ok: false, httpStatus: 0, errorMessage: 'roomId=null', sessions: [] };
+    const serverSession = fetched.sessions[0];
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({
       arm: 'dc-control', recv_gap_long: gaps.length, snapshots: snaps.length,
       snapshots_dc: snapsDc, snapshots_ws: snapsWs, webrtc_connected: dcConnected,
-      server_fetch_ok: serverSession !== undefined,
+      roomId,
+      fetch_ok: fetched.ok,
+      http_status: fetched.httpStatus,
+      session_count: fetched.sessions.length,
+      server_session_id: serverSession?.sessionId ?? null,
       server_dc: serverSession?.sentViaDc ?? 0,
       server_ws: serverSession?.sentViaWs ?? 0,
       server_degraded: serverSession?.degraded ?? false,
+      fetch_err: fetched.errorMessage,
     }));
     expect(dcConnected, 'DC opened in the control run').toBe(true);
     expect(snaps.length, 'control run produced snapshots').toBeGreaterThan(50);
