@@ -70,15 +70,6 @@ async function waitForShipCount(page: import('@playwright/test').Page): Promise<
   );
 }
 
-async function waitForFirstSnapshot(page: import('@playwright/test').Page): Promise<void> {
-  await page.waitForFunction(
-    () => {
-      const logs = (window as unknown as { __eqxLogs?: { tag: string }[] }).__eqxLogs ?? [];
-      return logs.filter((e) => e.tag === 'snapshot_received').length > 0;
-    },
-    { timeout: 10_000 },
-  );
-}
 
 async function dumpDiagState(page: import('@playwright/test').Page): Promise<unknown> {
   return await page.evaluate(() => {
