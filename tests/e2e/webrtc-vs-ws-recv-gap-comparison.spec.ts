@@ -40,6 +40,40 @@ async function readDiagSince(
 }
 
 /**
+ * Phase 4 iteration 3 diagnostic — pull the Colyseus roomId off
+ * `window.__eqxClient.room.id`. TypeScript visibility (`private room`)
+ * is compile-time only; at runtime in the browser the field is just a
+ * JS property. Returns null if the client hasn't joined yet.
+ */
+async function readRoomId(page: import('@playwright/test').Page): Promise<string | null> {
+  return await page.evaluate(() => {
+    const client = (window as unknown as { __eqxClient?: { room?: { id?: string } } }).__eqxClient;
+    return client?.room?.id ?? null;
+  });
+}
+
+/**
+ * Phase 4 iteration 3 diagnostic — fetch server-side per-session WebRTC
+ * counters via the `/dev/webrtc-counters` endpoint (Vite proxies `/dev/*`
+ * to the dev server on :2567). Returns null on any failure so the spec
+ * can keep running even if the dev endpoint is unavailable in this env.
+ */
+async function readServerCounters(
+  page: import('@playwright/test').Page,
+  roomId: string,
+): Promise<{ sessions: Array<{ sessionId: string; sentViaDc: number; sentViaWs: number; dcThrows: number; dcBackpressureHits: number; dcSlowSends: number; degraded: boolean }> } | null> {
+  return await page.evaluate(async (rid) => {
+    try {
+      const r = await fetch(`/dev/webrtc-counters?roomId=${encodeURIComponent(rid)}`);
+      if (!r.ok) return null;
+      return await r.json();
+    } catch {
+      return null;
+    }
+  }, roomId);
+}
+
+/**
  * One measurement run: boot the page with the supplied URL params,
  * warmup, inject pattern B (3× 400 ms bursts with 2 s gaps), and count
  * `recv_gap_long` events fired during the burst window. Uses the
@@ -57,7 +91,23 @@ async function runOneBurst(
   recvGapLongWs: number;
   snapshotsDc: number;
   snapshotsWs: number;
+  snapDroppedOld: number;
+  snapDroppedDecode: number;
+  snapDroppedShape: number;
   webrtcConnected: boolean;
+  // Phase 4 iteration 3 — server-side counter snapshot for the room
+  // we're attached to. `serverFetchOk` flags whether the /dev fetch
+  // returned data (false = endpoint unreachable or room unknown).
+  // `serverSessionId` is captured to confirm we read the right entry.
+  roomId: string | null;
+  serverFetchOk: boolean;
+  serverSessionId: string | null;
+  serverSentDc: number;
+  serverSentWs: number;
+  serverDcThrows: number;
+  serverDcBackpressureHits: number;
+  serverDcSlowSends: number;
+  serverDegraded: boolean;
 }> {
   // Mark the window start AFTER warmup but BEFORE the bursts so the
   // measurement is symmetric across arms.
@@ -87,11 +137,41 @@ async function runOneBurst(
     const logs = (window as unknown as { __eqxLogs?: { tag: string }[] }).__eqxLogs ?? [];
     return logs.some((e) => e.tag === 'webrtc_connected');
   });
-  // Server-side snap_route events fire once per (recipient, broadcast).
-  // We log them via serverLogEvent — they appear in the WebServer stdout
-  // captured by Playwright but NOT in __eqxLogs (server side, not client).
-  // Read directly from snapshots delivered — distinguish what arrived at
-  // the wire from what was logged after validation.
+
+  // Phase 4 iteration 3 swift-otter — server-side counter fetch.
+  // `snap_route` events fire server-side via serverLogEvent — they
+  // don't reach __eqxLogs. The /dev/webrtc-counters endpoint exposes
+  // the WebRtcChannelManager's per-session counters so we can compare
+  // server-sent-N against client-received-M (the snapshots/dc count
+  // above) and localise where DC throughput variance lives.
+  const roomId = await readRoomId(page);
+  let serverFetchOk = false;
+  let serverSessionId: string | null = null;
+  let serverSentDc = 0;
+  let serverSentWs = 0;
+  let serverDcThrows = 0;
+  let serverDcBackpressureHits = 0;
+  let serverDcSlowSends = 0;
+  let serverDegraded = false;
+  if (roomId !== null) {
+    const counters = await readServerCounters(page, roomId);
+    if (counters !== null && Array.isArray(counters.sessions) && counters.sessions.length > 0) {
+      // The Phase 4 spec joins one client per rep so we expect exactly
+      // one session; if there are more (unlikely — single feel-test-25
+      // room per rep), sum across them rather than pick arbitrarily.
+      serverFetchOk = true;
+      for (const s of counters.sessions) {
+        serverSessionId = serverSessionId ?? s.sessionId;
+        serverSentDc += s.sentViaDc;
+        serverSentWs += s.sentViaWs;
+        serverDcThrows += s.dcThrows;
+        serverDcBackpressureHits += s.dcBackpressureHits;
+        serverDcSlowSends += s.dcSlowSends;
+        serverDegraded = serverDegraded || s.degraded;
+      }
+    }
+  }
+  void arm; // arm is kept in the signature for future per-arm handling.
 
   return {
     recvGapLong: gaps.length,
@@ -103,6 +183,15 @@ async function runOneBurst(
     snapDroppedDecode: dropDecode.length,
     snapDroppedShape: dropShape.length,
     webrtcConnected: connected,
+    roomId,
+    serverFetchOk,
+    serverSessionId,
+    serverSentDc,
+    serverSentWs,
+    serverDcThrows,
+    serverDcBackpressureHits,
+    serverDcSlowSends,
+    serverDegraded,
   };
 }
 
@@ -171,7 +260,9 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
       // eslint-disable-next-line no-console
       console.log(
         `[ws rep ${i}] recv_gap_long=${result.recvGapLong} ` +
-        `snaps_ws=${result.snapshotsWs} snaps_dc=${result.snapshotsDc}`,
+        `snaps_ws=${result.snapshotsWs} snaps_dc=${result.snapshotsDc} ` +
+        `server_fetch=${result.serverFetchOk} ` +
+        `server_dc=${result.serverSentDc} server_ws=${result.serverSentWs}`,
       );
     } finally {
       await ctx.close();
@@ -194,7 +285,16 @@ test('Phase 4 — recv_gap_long under Pattern B: ?webrtc=1 vs ?webrtc=0 (3 reps 
         `(ws=${result.recvGapLongWs} dc=${result.recvGapLongDc}) ` +
         `snaps_dc=${result.snapshotsDc} snaps_ws=${result.snapshotsWs} ` +
         `drop_old=${result.snapDroppedOld} drop_dec=${result.snapDroppedDecode} drop_shape=${result.snapDroppedShape} ` +
-        `dc_frac=${dcFrac.toFixed(3)} dc_connected=${result.webrtcConnected}`,
+        `dc_frac=${dcFrac.toFixed(3)} dc_connected=${result.webrtcConnected} ` +
+        // Phase 4 iteration 3: server-side authoritative counters.
+        // Compare server_dc (server's sentViaDc) against snaps_dc
+        // (client's snapshot_received via='dc') to localise variance:
+        // server_dc≈snaps_dc → wire+integration clean; server_dc>>snaps_dc
+        // → browser-side gap; server_dc<<200 → server-side gap.
+        `server_fetch=${result.serverFetchOk} server_dc=${result.serverSentDc} ` +
+        `server_ws=${result.serverSentWs} server_throws=${result.serverDcThrows} ` +
+        `server_bp=${result.serverDcBackpressureHits} server_slow=${result.serverDcSlowSends} ` +
+        `server_degraded=${result.serverDegraded}`,
       );
     } finally {
       await ctx.close();
@@ -250,10 +350,20 @@ test('Phase 4 control — ?webrtc=1 under no network injection: recv_gap_long sh
     });
     const snapsDc = snaps.filter((e) => e.data['via'] === 'dc').length;
     const snapsWs = snaps.filter((e) => e.data['via'] === 'ws').length;
+    // Phase 4 iteration 3 — fetch server-side counters for the control
+    // window too; if snapsDc < server_dc here we know the gap is browser-
+    // side even WITHOUT network injection.
+    const roomId = await readRoomId(page);
+    const serverCounters = roomId !== null ? await readServerCounters(page, roomId) : null;
+    const serverSession = serverCounters?.sessions?.[0];
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({
       arm: 'dc-control', recv_gap_long: gaps.length, snapshots: snaps.length,
       snapshots_dc: snapsDc, snapshots_ws: snapsWs, webrtc_connected: dcConnected,
+      server_fetch_ok: serverSession !== undefined,
+      server_dc: serverSession?.sentViaDc ?? 0,
+      server_ws: serverSession?.sentViaWs ?? 0,
+      server_degraded: serverSession?.degraded ?? false,
     }));
     expect(dcConnected, 'DC opened in the control run').toBe(true);
     expect(snaps.length, 'control run produced snapshots').toBeGreaterThan(50);
