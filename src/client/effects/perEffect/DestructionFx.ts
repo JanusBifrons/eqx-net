@@ -88,6 +88,15 @@ const QUALITY_DIAL: Record<EffectQuality, { particles: number; lifetimeMs: numbe
   minimal: null, // → fallback to buildExplosionGfx
 };
 
+export interface DestructionFxOptions {
+  /** When true, skip the per-burst ShockwaveFilter attach (kill switch
+   *  plan: melodic-engelbart Step 2b). Particles still spawn. */
+  filtersDisabled?: boolean;
+  /** When true, skip the per-burst particle spawn loop. Shockwave filter
+   *  still attaches (subject to filtersDisabled). */
+  particlesDisabled?: boolean;
+}
+
 export class DestructionFx {
   private readonly active: DestructionParticle[] = [];
   private readonly shocks: ActiveShock[] = [];
@@ -104,13 +113,19 @@ export class DestructionFx {
    *  different tints; ~5-10 distinct tints in practice). Mirrors
    *  EngineEmitter + ImpactSparks. */
   private readonly freeByTint = new Map<number, DestructionParticle[]>();
+  private readonly filtersDisabled: boolean;
+  private readonly particlesDisabled: boolean;
 
   constructor(
     private readonly parent: Container,
     private readonly app: Application,
     private readonly getQuality: () => EffectQuality,
     private readonly factories: DestructionFactories,
-  ) {}
+    options: DestructionFxOptions = {},
+  ) {
+    this.filtersDisabled = options.filtersDisabled === true;
+    this.particlesDisabled = options.particlesDisabled === true;
+  }
 
   /**
    * Spawn a destruction burst at the world coord (x, y). Caller has already
@@ -135,11 +150,13 @@ export class DestructionFx {
     const count = Math.max(1, Math.round(dial.particles * intensity));
     const lifetimeS = (dial.lifetimeMs / 1000) * Math.max(0.5, intensity);
 
-    for (let i = 0; i < count; i++) {
-      this.spawnParticle(worldX, worldY, lifetimeS, tint);
+    if (!this.particlesDisabled) {
+      for (let i = 0; i < count; i++) {
+        this.spawnParticle(worldX, worldY, lifetimeS, tint);
+      }
     }
 
-    if (dial.shockMs !== null) {
+    if (dial.shockMs !== null && !this.filtersDisabled) {
       this.spawnShock(worldX, worldY, dial.shockMs / 1000);
     }
   }
@@ -151,6 +168,7 @@ export class DestructionFx {
    * burst (e.g. the sandbox tuning panel).
    */
   spawnShockOnly(worldX: number, worldY: number, durationMs?: number): void {
+    if (this.filtersDisabled) return;
     const ms = durationMs ?? DEFAULT_DESTRUCTION_PARAMS.shockwaveDurationMs;
     this.spawnShock(worldX, worldY, ms / 1000);
   }

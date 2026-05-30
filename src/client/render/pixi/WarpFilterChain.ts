@@ -235,6 +235,7 @@ export class WarpFilterChain {
   }
 
   private attachFilters(): void {
+    if (this.forcedDisabled) return; // kill switch (plan: melodic-engelbart Step 2c)
     if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
     // Re-enabled 2026-05-27 (M3 of effects-subsystem plan wiggly-puppy)
     // after being disabled 2026-05-21 (commit `Render-jitter-fix Phase 1b`).
@@ -274,8 +275,12 @@ export class WarpFilterChain {
    * attachFilters(), picking up the new tier.
    */
   applyQuality(level: 'high' | 'medium' | 'low' | 'minimal'): void {
-    this.qualityLevel = level;
-    if (level === 'minimal') {
+    // Force-disabled by ?nofilters=1 (plan: melodic-engelbart Step 2c) —
+    // pin to minimal and ignore the requested level. Subsequent budget
+    // tier promotions can't re-attach because attachFilters() is gated.
+    const effective = this.forcedDisabled ? 'minimal' : level;
+    this.qualityLevel = effective;
+    if (effective === 'minimal') {
       // Detach immediately — caller wants the safe state right now.
       if (Array.isArray(this.app.stage.filters) && (this.app.stage.filters as unknown[]).length > 0) {
         this.app.stage.filters = [];
@@ -286,6 +291,25 @@ export class WarpFilterChain {
     }
   }
 
+  /**
+   * Kill switch for the heap-bisect measurement (plan: melodic-engelbart
+   * Step 2c). When invoked, future applyQuality() calls treat any level
+   * as minimal and attachFilters() short-circuits — the chain stays
+   * detached regardless of warp lifecycle. The load curtain still
+   * operates (it's not part of the filter chain). One-way: there's no
+   * forceEnable; toggling the flag mid-session is out of scope.
+   */
+  forceDisable(): void {
+    this.forcedDisabled = true;
+    this.applyQuality('minimal');
+  }
+
+  /** Test surface — true after forceDisable was called. */
+  isForceDisabled(): boolean {
+    return this.forcedDisabled;
+  }
+
+  private forcedDisabled = false;
   private qualityLevel: 'high' | 'medium' | 'low' | 'minimal' = 'high';
   private qualityIncludesBloom(): boolean { return this.qualityLevel === 'high'; }
   private qualityIncludesZoomBlur(): boolean { return this.qualityLevel === 'high' || this.qualityLevel === 'medium'; }

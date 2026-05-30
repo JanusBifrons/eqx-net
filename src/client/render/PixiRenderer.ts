@@ -15,6 +15,7 @@ import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
+import { readFxKillSwitches } from './fxKillSwitches';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -315,6 +316,11 @@ export class PixiRenderer implements IRenderer {
     });
     this.camera.setScreenSize(initialW, initialH);
 
+    // Read the bisected FX kill switches once at init. Threaded into the
+    // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
+    // Plan: melodic-engelbart Step 2.
+    const fxKillSwitches = readFxKillSwitches();
+
     // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
     // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
     this.warp = new WarpFilterChain(
@@ -327,6 +333,9 @@ export class PixiRenderer implements IRenderer {
       },
       this.frameMarkers,
     );
+    if (fxKillSwitches.filtersDisabled) {
+      this.warp.forceDisable();
+    }
 
     this.backgroundGrid = new BackgroundGrid();
     this.backgroundGrid.attach(this.camera);
@@ -405,6 +414,7 @@ export class PixiRenderer implements IRenderer {
           return null;
         },
         beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
+        fxKillSwitches,
       });
     }
 

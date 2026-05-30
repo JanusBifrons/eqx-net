@@ -57,6 +57,12 @@ const QUALITY_DIAL: Record<EffectQuality, number | null> = {
   minimal: null, // skip
 };
 
+export interface ImpactSparksOptions {
+  /** When true, spawnBurst is a no-op (plan: melodic-engelbart Step 2b
+   *  kill switch). */
+  particlesDisabled?: boolean;
+}
+
 export class ImpactSparks {
   private readonly active: SparkParticle[] = [];
   /** Free-pool of SparkParticle records (plan: lazy-mochi P3, 2026-05-29).
@@ -70,12 +76,16 @@ export class ImpactSparks {
    *  in practice: shield-hit cyan + hull-hit orange). Mirrors
    *  EngineEmitter's freeByTint pool. */
   private readonly freeByTint = new Map<number, SparkParticle[]>();
+  private readonly particlesDisabled: boolean;
 
   constructor(
     private readonly parent: Container,
     private readonly getQuality: () => EffectQuality,
     private readonly factories: ImpactFactories,
-  ) {}
+    options: ImpactSparksOptions = {},
+  ) {
+    this.particlesDisabled = options.particlesDisabled === true;
+  }
 
   /**
    * Spawn a spark burst at the given world coord. Tint defaults to a
@@ -83,6 +93,7 @@ export class ImpactSparks {
    * the hull-hit orange they've derived from the `DamageEvent.hitLayer`.
    */
   spawnBurst(worldX: number, worldY: number, opts?: ParticleBurstOpts): void {
+    if (this.particlesDisabled) return;
     const q = this.getQuality();
     const count = QUALITY_DIAL[q];
     if (count === null) return; // minimal: skip

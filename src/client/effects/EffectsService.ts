@@ -34,6 +34,7 @@ import { ImpactSparks } from './perEffect/ImpactSparks';
 import { buildImpactFactories } from './perEffect/impactFactories';
 import { ShieldAura } from './perEffect/ShieldAura';
 import { buildShieldFactories } from './perEffect/shieldFactories';
+import type { FxKillSwitches } from '../render/fxKillSwitches';
 import type { Application, Container } from 'pixi.js';
 
 /**
@@ -65,6 +66,12 @@ export interface EffectStageRefs {
    *  is constructed and attaches one `GlowFilter` per beam (live + remote).
    *  Absent in tests / probe pages that don't render beams. */
   beams?: LaserGlowBeams;
+  /** Bisected FX kill switches (plan: melodic-engelbart, Step 2) — when
+   *  `filtersDisabled` is true, LaserGlow / ShieldAura / DestructionFx skip
+   *  every GPU-filter attach; when `particlesDisabled` is true, the
+   *  particle emitters (engines, impact sparks, destruction particles)
+   *  skip every spawn. Both default to false (today's behaviour). */
+  fxKillSwitches?: FxKillSwitches;
 }
 
 interface ContinuousEntry {
@@ -102,29 +109,35 @@ export class EffectsService implements IEffects {
     // Per-effect modules constructed eagerly so their pools are pre-warm.
     // World container hosts entity-glued effects (M4 destruction particles
     // sit here too — they're world-space, not screen-space).
+    const filtersDisabled = refs.fxKillSwitches?.filtersDisabled === true;
+    const particlesDisabled = refs.fxKillSwitches?.particlesDisabled === true;
     this.destruction = new DestructionFx(
       refs.world,
       refs.app,
       () => this.getQuality(),
       buildDestructionFactories(),
+      { filtersDisabled, particlesDisabled },
     );
     this.engines = new EngineEmitter(
       refs.world,
       () => this.getQuality(),
       buildEngineFactories(),
+      { particlesDisabled },
     );
     this.laserGlow = refs.beams
-      ? new LaserGlow(refs.beams, buildLaserGlowFactories())
+      ? new LaserGlow(refs.beams, buildLaserGlowFactories(), { filtersDisabled })
       : null;
     this.impactSparks = new ImpactSparks(
       refs.world,
       () => this.getQuality(),
       buildImpactFactories(),
+      { particlesDisabled },
     );
     this.shieldAura = new ShieldAura(
       refs.world,
       () => this.getQuality(),
       buildShieldFactories(),
+      { filtersDisabled },
     );
   }
 

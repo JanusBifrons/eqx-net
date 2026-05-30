@@ -74,6 +74,14 @@ const QUALITY_DIAL: Record<EffectQuality, { thrustRateMul: number; boostEnabled:
   minimal: { thrustRateMul: 0.0, boostEnabled: false },
 };
 
+export interface EngineEmitterOptions {
+  /** When true, tick() skips all particle emission. Registration
+   *  (setActive) still tracks active emitters cheaply so toggling the
+   *  flag off mid-session would resume emission. Plan: melodic-engelbart
+   *  Step 2b kill switch. */
+  particlesDisabled?: boolean;
+}
+
 export class EngineEmitter {
   /** Active emitters keyed by `${entityId}:${kind}`. */
   private readonly emitters = new Map<string, ActiveEmitter>();
@@ -89,12 +97,16 @@ export class EngineEmitter {
    *  pools are tint-keyed (only 2 distinct tints in practice: thrust
    *  orange + boost blue). */
   private readonly freeByTint = new Map<number, EngineParticle[]>();
+  private readonly particlesDisabled: boolean;
 
   constructor(
     private readonly parent: Container,
     private readonly getQuality: () => EffectQuality,
     private readonly factories: EngineFactories,
-  ) {}
+    options: EngineEmitterOptions = {},
+  ) {
+    this.particlesDisabled = options.particlesDisabled === true;
+  }
 
   /**
    * Register or unregister a continuous emitter. Re-entrant: calling with
@@ -121,6 +133,13 @@ export class EngineEmitter {
    * stern, then drift independently. NEVER stores pose between frames.
    */
   tick(dtSec: number, getPose: EnginePoseFn): void {
+    if (this.particlesDisabled) {
+      // Still advance live particles so any in-flight pooling cleans up,
+      // but skip every emit. With the flag set from boot, there are no
+      // live particles so this is effectively a no-op.
+      this.tickParticles(dtSec);
+      return;
+    }
     const q = this.getQuality();
     const dial = QUALITY_DIAL[q];
 

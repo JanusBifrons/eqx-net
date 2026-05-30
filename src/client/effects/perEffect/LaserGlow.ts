@@ -53,15 +53,24 @@ const QUALITY_DIAL: Record<EffectQuality, QualityDial | null> = {
   minimal: null, // both detached
 };
 
+export interface LaserGlowOptions {
+  /** When true, applyQuality always detaches both filters regardless of
+   *  tier — the bisect kill switch (plan: melodic-engelbart Step 2b). */
+  filtersDisabled?: boolean;
+}
+
 export class LaserGlow {
   private readonly liveFilter: GlowLike;
   private readonly remoteFilter: GlowLike;
   private currentLevel: EffectQuality = 'high';
+  private readonly filtersDisabled: boolean;
 
   constructor(
     private readonly beams: LaserGlowBeams,
     factories: LaserGlowFactories,
+    options: LaserGlowOptions = {},
   ) {
+    this.filtersDisabled = options.filtersDisabled === true;
     this.liveFilter = factories.makeGlowFilter(COLOUR_LIVE);
     this.remoteFilter = factories.makeGlowFilter(COLOUR_REMOTE);
     // Initial state = high tier (matches the budget's initial localTier).
@@ -73,7 +82,7 @@ export class LaserGlow {
    *  discipline: this never destroys or recreates filters. */
   applyQuality(level: EffectQuality): void {
     this.currentLevel = level;
-    const dial = QUALITY_DIAL[level];
+    const dial = this.filtersDisabled ? null : QUALITY_DIAL[level];
 
     if (dial === null) {
       this.detachLive();
