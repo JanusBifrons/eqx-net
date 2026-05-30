@@ -132,4 +132,84 @@ describe('DataChannelSnapshotReceiver', () => {
     expect(onSnapshot).toHaveBeenCalledTimes(2);
     expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(10);
   });
+
+  describe('Phase 4 iteration 3 — raw-bytes coalescer (enqueueBinary + drain)', () => {
+    it('enqueueBinary stores latest buffer without decoding (no dispatch until drain)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(10));
+      receiver.enqueueBinary(packSnap(11));
+      receiver.enqueueBinary(packSnap(12));
+      expect(onSnapshot, 'no dispatch until drain').not.toHaveBeenCalled();
+
+      receiver.drain();
+      expect(onSnapshot, 'one dispatch after drain').toHaveBeenCalledTimes(1);
+      expect(
+        (onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick,
+        'drain dispatches the latest enqueued',
+      ).toBe(12);
+    });
+
+    it('drain is a no-op when nothing pending', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.drain();
+      expect(onSnapshot).not.toHaveBeenCalled();
+    });
+
+    it('drain clears the pending slot (subsequent drain is no-op)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(10));
+      receiver.drain();
+      receiver.drain();
+      expect(onSnapshot, 'second drain after the first is no-op').toHaveBeenCalledTimes(1);
+    });
+
+    it('enqueueBinary collapses N back-to-back arrivals to 1 decode + dispatch — the burst-recovery case', () => {
+      const onSnapshot = vi.fn();
+      const onDiag = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+      // Simulate the Pattern B burst-recovery scenario: 10 snapshots
+      // arrive into the JS event loop before the next RAF drains.
+      for (let i = 0; i < 10; i++) receiver.enqueueBinary(packSnap(100 + i));
+      receiver.drain();
+
+      expect(onSnapshot, 'N×enqueue + 1×drain → 1 dispatch (the latest)').toHaveBeenCalledTimes(1);
+      expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(109);
+      // No drops are logged — intermediate frames silently superseded.
+      const droppedCalls = onDiag.mock.calls.filter((c) => (c[0] as string).startsWith('snap_dropped'));
+      expect(droppedCalls.length, 'no drop telemetry for byte-level coalescing').toBe(0);
+    });
+
+    it('reset() clears the pending raw buffer (so a stale buffer doesnt drain post-handoff)', () => {
+      const onSnapshot = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot });
+
+      receiver.enqueueBinary(packSnap(500));
+      receiver.reset();
+      receiver.drain();
+      expect(onSnapshot, 'drain after reset dispatches nothing').not.toHaveBeenCalled();
+    });
+
+    it('handleBinary (legacy direct dispatch) still works alongside the coalescer', () => {
+      const onSnapshot = vi.fn();
+      const onDiag = vi.fn();
+      const receiver = new DataChannelSnapshotReceiver({ onSnapshot, onDiag });
+
+      receiver.handleBinary(packSnap(10));      // dispatches 10
+      receiver.enqueueBinary(packSnap(11));     // pending
+      receiver.handleBinary(packSnap(12));      // dispatches 12
+      receiver.drain();                          // decodes pending(11); reorder-guard drops (11 < 12)
+      expect(onSnapshot, 'direct dispatches 10 and 12; drained 11 dropped').toHaveBeenCalledTimes(2);
+      expect((onSnapshot.mock.calls[0]?.[0] as SnapshotMessage).serverTick).toBe(10);
+      expect((onSnapshot.mock.calls[1]?.[0] as SnapshotMessage).serverTick).toBe(12);
+      const dropOld = onDiag.mock.calls.filter((c) => (c[0] as string) === 'snap_dropped_old');
+      expect(dropOld.length, 'drained-then-stale 11 logged as snap_dropped_old').toBe(1);
+    });
+  });
 });

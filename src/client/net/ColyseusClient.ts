@@ -3235,6 +3235,13 @@ export class ColyseusGameClient {
     if (!this.room || !this.keyboard) return;
     this.lastFrameMs = elapsedMs;
     if (this.welcomePerfNow === 0) return; // welcome not yet received
+    // Phase 4 iteration 3 swift-otter (2026-05-30) — drain pending DC
+    // raw bytes BEFORE `processPendingSnapshot`. The DC `dc.onmessage`
+    // listener now only stores the latest raw frame; decode + dispatch
+    // happens here so Pattern B burst recovery doesn't pay N×decode in
+    // a single frame. The decoded snap flows into the same
+    // snapshotCoalescer pipeline the WS path uses.
+    this._dataChannelTransport?.drainPending();
     // Probe 6 — drain the coalesced-pending snapshot before any
     // per-RAF physics work. Snapshots queued in the WebSocket event
     // queue during a stall collapse to one here.

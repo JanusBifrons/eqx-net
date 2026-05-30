@@ -41,13 +41,69 @@ const unpackr = new Unpackr({});
 export class DataChannelSnapshotReceiver {
   private _lastSeenServerTick = -1;
   private readonly _opts: DataChannelSnapshotReceiverOpts;
+  /**
+   * Phase 4 iteration 3 (2026-05-30) — raw-bytes coalescer.
+   *
+   * `enqueueBinary(buf)` stores the latest raw frame in `_pendingBytes`
+   * (cheap pointer swap, no decode). `drain()` — called from the RAF
+   * tick — decodes + dispatches that one buffer.
+   *
+   * Problem this solves: Pattern B network bursts deliver N snapshots
+   * into the JS event loop in a single frame (post-latency-burst
+   * recovery). The old `handleBinary` path decoded EVERY one
+   * synchronously on receipt — N × msgpackr unpack on the main thread
+   * inside `dc.onmessage`, producing 235 ms loafs in the diagnostic
+   * `webrtc-pattern-b-with-scripts` run. The WS path didn't have this
+   * problem because Colyseus's frame dispatch combined with our
+   * `snapshotCoalescer` made the apply latest-wins; the DC path was
+   * paying full decode per frame regardless. Now both transports
+   * coalesce at the byte level, eliminating the redundant decodes.
+   *
+   * SCTP `ordered: true` (our default) guarantees no reordering, so
+   * "latest enqueued = freshest" is sound. The reorder guard inside
+   * `_decodeAndDispatch` is now defensive only.
+   *
+   * `handleBinary` is preserved as the direct-dispatch path for unit
+   * tests and integration tests that pump frames synchronously.
+   */
+  private _pendingBytes: Uint8Array | ArrayBuffer | null = null;
 
   constructor(opts: DataChannelSnapshotReceiverOpts) {
     this._opts = opts;
   }
 
-  /** Decode + reorder-guard + dispatch. Never throws. */
+  /**
+   * Store the latest raw DC frame for deferred decode. Constant work
+   * (one pointer assign), no allocations. The production `dc.onmessage`
+   * listener calls this; the RAF tick calls `drain()` to actually
+   * process the pending buffer.
+   */
+  enqueueBinary(buf: Uint8Array | ArrayBuffer): void {
+    this._pendingBytes = buf;
+  }
+
+  /**
+   * Drain the latest pending buffer. Called once per RAF from
+   * `ColyseusClient.tickPhysics`. Decodes + reorder-guards + dispatches.
+   * No-op when nothing pending.
+   */
+  drain(): void {
+    const buf = this._pendingBytes;
+    if (buf === null) return;
+    this._pendingBytes = null;
+    this._decodeAndDispatch(buf);
+  }
+
+  /**
+   * Direct decode + dispatch (legacy synchronous path). Preserved for
+   * unit/integration tests that pump frames in a fully deterministic
+   * order. Production code paths go through `enqueueBinary` + `drain`.
+   */
   handleBinary(buf: Uint8Array | ArrayBuffer): void {
+    this._decodeAndDispatch(buf);
+  }
+
+  private _decodeAndDispatch(buf: Uint8Array | ArrayBuffer): void {
     const view = buf instanceof ArrayBuffer ? new Uint8Array(buf) : buf;
     let decoded: unknown;
     try {
@@ -93,6 +149,7 @@ export class DataChannelSnapshotReceiver {
   /** Used on sector handoff — server tick resets to 0 at the destination. */
   reset(): void {
     this._lastSeenServerTick = -1;
+    this._pendingBytes = null;
   }
 }
 
@@ -331,10 +388,25 @@ export class DataChannelTransport {
       // artefact; ignore.
       if (this._phase !== 'dc-open') return;
       const data = e.data;
-      if (data instanceof ArrayBuffer) this._receiver.handleBinary(data);
-      else if (data instanceof Uint8Array) this._receiver.handleBinary(data);
+      // Phase 4 iteration 3 (2026-05-30) — `enqueueBinary` swaps the
+      // pending raw-bytes slot (cheap), `drainPending` (called per RAF
+      // from ColyseusClient.tickPhysics) does the expensive decode +
+      // dispatch. Eliminates the per-burst N×decode cost the diagnostic
+      // attributed to 235 ms loafs inside dataChannelTransport.ts.
+      if (data instanceof ArrayBuffer) this._receiver.enqueueBinary(data);
+      else if (data instanceof Uint8Array) this._receiver.enqueueBinary(data);
       // The server only sends binary; ignore string frames.
     });
+  }
+
+  /**
+   * Phase 4 iteration 3 follow-on — drain the pending DC raw buffer.
+   * Called once per RAF from `ColyseusClient.tickPhysics`, BEFORE
+   * `processPendingSnapshot()` so the decoded snap can flow into the
+   * existing `snapshotCoalescer.drain` path.
+   */
+  drainPending(): void {
+    this._receiver.drain();
   }
 
   private _fallback(reason: string): void {
