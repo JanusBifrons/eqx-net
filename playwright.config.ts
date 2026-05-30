@@ -106,6 +106,8 @@ const FEATURE_SPECS: string[] = [
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
   '**/webrtc-vs-ws-recv-gap-comparison.spec.ts',
+  '**/webrtc-mobile-emulation-stutter.spec.ts',
+  '**/webrtc-mobile-emulation-control.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
