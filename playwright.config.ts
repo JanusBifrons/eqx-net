@@ -65,6 +65,7 @@ const FEATURE_SPECS: string[] = [
   '**/diag-mode-side-effect.spec.ts',
   '**/heap-growth-gate.spec.ts',
   '**/combat-heap-growth.spec.ts',
+  '**/heap-snapshot-diff-mobile-emu.spec.ts',
   '**/combat-heap-growth-fx-bisect.spec.ts',
   '**/combat-allocation-profile.spec.ts',
   '**/combat-allocation-profile-hostile.spec.ts',
