@@ -14,6 +14,37 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-05-30 — swift-otter Phase 4 iteration 3 — DC + WS coalescer + the wire-time intervalMs rule
+Commits: `7f9a9cb` `f38ccc4` `34c86a4` `a6bf982` `88d3792` `2f9b647` `77e20a7` `71ab8c4` `3b2ed1f` and reverts in between.
+
+Five hard-won findings from a day of localising a phone-felt "got laggy" report:
+
+1. **Pattern B + LongAnimationFrame `topScripts` attribution is the canonical workflow for localising heavy main-thread code.** Original signal was "DC enable causes WS-handler loaf spike on phone, 10–25× rate." Three hypotheses (Playwright drops, CPU throttle, schema diff burst) each refuted by data. The breakthrough was extending [`webrtc-vs-ws-recv-gap-comparison.spec.ts`](../tests/e2e/webrtc-vs-ws-recv-gap-comparison.spec.ts) to dump the top-5 longest `loaf` events with their `topScripts[]` (function name + source URL per script invocation). That immediately attributed a 235 ms loaf to `net/dataChannelTransport.ts` — the per-message msgpackr decode in the `dc.onmessage` listener. Future heavy-frame investigations should reach for this dump first.
+
+2. **The WS path's snapshot coalescer was load-bearing in a way I didn't see.** Pre-iteration-3, the DC path decoded EVERY incoming snapshot synchronously on receipt — N msgpackr decodes per Pattern B burst recovery. The WS path didn't have this problem because Colyseus's frame dispatch + our [`snapshotCoalescer`](../src/client/net/SnapshotCoalescer.ts) makes the apply latest-wins; intermediate snapshots discard before decode-and-apply. Fix: byte-level coalescer in `DataChannelSnapshotReceiver` (`enqueueBinary` stores latest buffer, `drain()` decodes once per RAF). The pattern is "coalesce as early as possible — at bytes, not after decode."
+
+3. **`intervalMs` for RTT estimation MUST be WIRE-arrival time, not RAF apply time.** Long-standing latent bug. `applySnapshotPerfStats` used `now - lastSnapshotAt` where both are RAF-tick timestamps. The snapshot coalescer (alone, even without any deferred-syncMirror) makes apply cadence RAF-bound (~16–33 ms). The downstream [`rttLookaheadUpdater.ts`](../src/client/net/rttLookaheadUpdater.ts) REJECTS RTT samples outside the 35–75 ms `STEADY_STATE_INTERVAL_*` band — so most apply-bound samples were rejected, Welford starved, `leadTicks` inflated, `ticksAhead` regressed (74 vs baseline 30 when deferred-syncMirror also shipped, but the bug was latent before that). Fix: take a separate `wireArrivalAtMs` param (the snapshot's wire-recv time from `_lastSnapshotRecvAtMs`, set inside `logSnapshotRecvTelemetry`), use that for the interval computation. Locked by [`tests/unit/snapshotPerfStats.intervalMs.test.ts`](../tests/unit/snapshotPerfStats.intervalMs.test.ts). **Anywhere else we use timing of an APPLY to estimate a NETWORK characteristic, the same rule applies — use the wire-arrival timestamp.**
+
+4. **The netgate latency proxy injects per-byte TCP-level jitter that CDP CANNOT reproduce.** Full-defer syncMirror (defer every `onStateChange` to RAF) showed a `maxDriftUnits` regression in 5-rep netgate median (12 → 36). Investigation with [`maxdrift-investigation.spec.ts`](../tests/e2e/maxdrift-investigation.spec.ts) under:
+   - Clean network: maxDrift 1.42
+   - CDP `Network.emulateNetworkConditions` 120 ms fixed: maxDrift 0.00
+   - CDP oscillating 60↔180 ms + same gameplay as netgate: maxDrift 0.351
+   - Netgate (via per-byte TCP jitter proxy): maxDrift 36
+   
+   The mechanism is specific to the proxy's per-byte delay pattern. Without proxy-level instrumentation we can't localise it. **Heuristic for future "regression only reproducible under netgate proxy" investigations:** instrument the proxy itself (`tests/netgate/eqxLatencyProxy.ts`) before assuming it's a deep client bug. The CDP/proxy difference is real.
+
+5. **Hybrid inline-first + defer-rest is the safer pattern for backpressure-tolerant work inside Colyseus's onStateChange.** Full-defer broke the proxy-specific maxDrift; full-inline causes the loaf spike under burst recovery. Hybrid (first per RAF inline, rest deferred) preserves the reconciler's drift baseline AND collapses burst overhead. The MAX-2-syncMirror-per-RAF guarantee is the load-bearing property. **General pattern for similar deferral choices**: keep the first call per frame synchronous so existing assumptions about callback ordering hold; defer only the redundant work the burst would otherwise duplicate.
+
+Side findings from the day:
+
+6. **The colyseus.js client `Room` exposes `roomId`, NOT `id`.** Server-side Room has `roomId` too but TypeScript reading `client.room.id` (which is undefined at runtime) returned `undefined`-via-optional-chaining and silently broke the Phase 4 server-counter fetch for 4 hours of investigation. Lesson: when TypeScript field access via `as unknown as { ... }` cast returns `undefined`, log the value before trusting the cast.
+
+7. **`channel: 'chromium'` (full Chrome) is the right Playwright config for mobile emulation specs.** The bundled `chromium-headless-shell` falls back to SwiftShader software WebGL under mobile device emulation, throttling render to ~10 Hz and starving the snapshot pipeline. Three iterations of `webrtc-mobile-emulation-*.spec.ts` produced 0 snapshots before this fix; the v4 with `channel: 'chromium'` worked. Lesson for any future mobile-emulator spec: start with full Chrome.
+
+8. **Long phone captures (≥ 4 min) surface heap-leak cascade thresholds that shorter captures hide.** The user's `wb1al4` capture went 4 min and showed heap monotonically growing 50 → 95 MB; around 65 MB, RAF Hz collapsed 90 → 58 Hz and raf_stutter exploded from <10/30s to 100–278/30s. Earlier 70–90s captures showed early growth but never crossed the threshold. **For "felt laggy as time went on" reports, ASK for a captures ≥ 3 min** — sub-2-min captures cannot reproduce threshold-cascade behaviour.
+
+---
+
 ## 2026-05-26 — god-file refactor v3 (continued) — SectorRoom 4322 → 3437 LOC (−20.5%)
 
 Continuation of the same-day session. The earlier checkpoint (below) reported
