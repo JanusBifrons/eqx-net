@@ -107,6 +107,13 @@ async function measureVariant(
     testId: `combat-heap-${variant}-${Date.now()}`,
     spawnX: '0',
     spawnY: '0',
+    // startHostile=1 (imperative-taco primitive) flips every drone to
+    // hostile-to-the-joining-player at spawn — bots converge on the
+    // player immediately so 20-30 s of held-fire actually lands hits +
+    // drives damage_number_spawned (the wb1al4 leak suspect path).
+    // Without this the bots patrol and shots usually miss (5/6 prior
+    // runs had 0 damage numbers).
+    startHostile: '1',
   });
   const url = `${BASE_URL}?${params}${urlSuffix}`;
 
@@ -132,9 +139,11 @@ async function measureVariant(
       (window as unknown as { __eqxClearLogs?: () => void }).__eqxClearLogs?.(),
     );
 
-    // 20 s held-fire — same workload as the existing combat-heap-growth spec.
+    // 30 s held-fire — slightly longer than the existing 20 s window so
+    // the per-variant allocation signal accumulates above the
+    // first-run-cleanest noise floor surfaced in the 2026-05-30 bisect.
     await page.keyboard.down('Space');
-    await page.waitForTimeout(20_000);
+    await page.waitForTimeout(30_000);
     await page.keyboard.up('Space');
 
     // Drain one final RAF before reading.
@@ -218,19 +227,24 @@ function fmt(n: number, digits = 3): string {
 }
 
 test('combat heap-growth FX bisect (control / nofilters / noparticles)', async () => {
-  // Each variant: 3 s warmup + 20 s held-fire + browser launch overhead ≈ 30-40 s.
-  // Three variants sequentially + result printing → ~2-3 min wall-clock.
-  test.setTimeout(300_000);
+  // Each variant: 3 s warmup + 30 s held-fire + browser launch overhead ≈ 45-55 s.
+  // Three variants sequentially + result printing → ~3-4 min wall-clock.
+  // A throwaway warmup variant runs first to absorb the cold-server +
+  // cold-JIT cost the 2026-05-30 bisect surfaced (first-variant-clean
+  // pattern).
+  test.setTimeout(420_000);
+
+  // Cold-state absorber: the 2026-05-30 bisect found the FIRST variant
+  // in a fresh server session always has 4-15× lower slope than the
+  // 2nd/3rd. Burn one throwaway run to absorb that cost so the three
+  // measured variants below all run on a "warm" server. Result is
+  // discarded.
+  await measureVariant('control', '');
 
   const results: VariantStats[] = [];
-  // Reverse order to disambiguate run-order variance: first measurement
-  // was 3× cleaner than the second + third regardless of variant in the
-  // initial run. Running noparticles → nofilters → control here proves
-  // whether the FX subsystem matters or whether warmup/host-state
-  // variance dominates.
-  results.push(await measureVariant('noparticles', '&noparticles=1'));
-  results.push(await measureVariant('nofilters', '&nofilters=1'));
   results.push(await measureVariant('control', ''));
+  results.push(await measureVariant('nofilters', '&nofilters=1'));
+  results.push(await measureVariant('noparticles', '&noparticles=1'));
 
   // eslint-disable-next-line no-console
   console.log('\n=== Combat heap-growth FX bisect ===');
