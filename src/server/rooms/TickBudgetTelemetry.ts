@@ -34,8 +34,9 @@
 
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 
-const TICK_HITCH_THRESHOLD_MS = 12;
-const TICK_HITCH_MIN_INTERVAL_MS = 250;
+export const TICK_HITCH_THRESHOLD_MS = 12;
+export const TICK_HITCH_MIN_INTERVAL_MS = 250;
+export const SAMPLE_EMIT_CADENCE = 60;
 
 export interface TickEndContext {
   serverTick: number;
@@ -135,7 +136,7 @@ export class TickBudgetTelemetry {
     if (this.tickHistoryRing.length > 3) this.tickHistoryRing.shift();
 
     // Aggregated tick_budget once per ~60 ticks (= 1 s @ 60 Hz).
-    if (this.tickBudgetSampleCount >= 60) {
+    if (this.tickBudgetSampleCount >= SAMPLE_EMIT_CADENCE) {
       const avg: Record<string, number> = {};
       for (const k of Object.keys(this.tickBudgetSums)) {
         avg[k] = parseFloat((this.tickBudgetSums[k]! / this.tickBudgetSampleCount).toFixed(3));
