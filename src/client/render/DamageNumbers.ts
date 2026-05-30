@@ -102,10 +102,29 @@ const STYLE = new TextStyle({
  * per frame so visual size is constant regardless of zoom. The
  * accumulated-damage size factor multiplies on top of that.
  */
+/**
+ * Free-list cap. A bucket destruction returns its Text to this list
+ * instead of calling `text.destroy()`; a fresh bucket pops from this
+ * list instead of `new Text(...)`. Sized to POOL_CAP * 2 so the worst-
+ * case bucket-churn workload (rollback storm — 5000 predict-then-
+ * cancel cycles) reuses Text instances rather than thrashing Pixi's
+ * geometry allocator. Above the cap, excess Texts are actually
+ * destroyed (defensive — keeps memory bounded if the workload
+ * pathologically dwarfs POOL_CAP).
+ */
+const FREE_POOL_CAP = POOL_CAP * 2;
+
 export class DamageNumberManager {
   private readonly container: Container;
   private readonly camera: Camera;
   private readonly byTarget = new Map<string, DamageNumberEntry>();
+  /**
+   * Free list of Text instances available for reuse. Bucket destruction
+   * pushes; bucket creation pops. Sprites stay in the same Pixi
+   * geometry buffers (which the v8 allocator caches) across the
+   * push/pop cycle — no `new Text()` call, no `destroy()` call.
+   */
+  private readonly freeTexts: Text[] = [];
 
   constructor(worldParent: Container, camera: Camera) {
     this.container = new Container();
@@ -141,10 +160,13 @@ export class DamageNumberManager {
       this.evictOldest();
     }
 
-    const text = new Text({ text: `-${damage}`, style: STYLE });
-    text.anchor.set(0.5, 0.5);
+    // Reuse a pooled Text if available, else allocate. Either way the
+    // text content + transform are mutated to this bucket's state — the
+    // Pixi v8 vertex/texture buffers are kept hot across cycles.
+    const text = this.acquireText(`-${damage}`);
     text.x = x;
     text.y = -y;
+    text.alpha = 1;
     this.container.addChild(text);
     const fresh: DamageNumberEntry = {
       text,
@@ -225,13 +247,48 @@ export class DamageNumberManager {
       entry.text.destroy();
     }
     this.byTarget.clear();
+    // The free-list's Texts are children of `this.container`, which
+    // `destroy({ children: true })` walks + destroys recursively. Free
+    // list itself doesn't need explicit clearing.
+    this.freeTexts.length = 0;
     this.container.destroy({ children: true });
   }
 
+  /**
+   * Recycle a bucket's Text instead of destroying it. The Text comes
+   * off the container's child list but stays alive — its Pixi v8
+   * vertex/texture buffers persist for the next acquireText() call.
+   */
   private destroyEntry(id: string, entry: DamageNumberEntry): void {
     this.container.removeChild(entry.text);
-    entry.text.destroy();
+    this.releaseText(entry.text);
     this.byTarget.delete(id);
+  }
+
+  private acquireText(initialText: string): Text {
+    const recycled = this.freeTexts.pop();
+    if (recycled) {
+      recycled.text = initialText;
+      // Reset transform fields the previous bucket may have mutated.
+      // scale.set + alpha are re-applied each `update()`, but reset
+      // here so a spawn-then-zero-ticks bucket renders correctly.
+      recycled.scale.set(1, 1);
+      return recycled;
+    }
+    const fresh = new Text({ text: initialText, style: STYLE });
+    fresh.anchor.set(0.5, 0.5);
+    return fresh;
+  }
+
+  private releaseText(text: Text): void {
+    if (this.freeTexts.length >= FREE_POOL_CAP) {
+      // Overflow — defensive bound. Above POOL_CAP × 2 reusable Texts
+      // there's no real-world workload that would consume them; drop
+      // the excess so memory stays bounded.
+      text.destroy();
+      return;
+    }
+    this.freeTexts.push(text);
   }
 
   /**

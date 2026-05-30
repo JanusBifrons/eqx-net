@@ -161,18 +161,21 @@ describe('DamageNumberManager heap-delta — per-target accumulator avoids per-h
     expect(growthBytes).toBeLessThan(200_000);
   });
 
-  it('worst-case rollback storm — every-shot-mispredicts workload — heap turnover bounded by Pixi Text cost', () => {
+  it('rollback storm — Text instances are POOLED across destroy/recreate cycles', () => {
     const parent = new Container();
     const camera = makeMockCamera(1);
     const mgr = new DamageNumberManager(parent, camera);
 
-    // 5000 predicted hits where every shot is rolled back immediately
-    // — the worst-case mispredict storm. The accumulator design does
-    // NOT optimise this scenario (the bucket gets destroyed each
-    // cycle so the next spawn re-allocates Text + Map + entry); it
-    // optimises the COMMON case where predictions confirm and
-    // accumulate. This test measures the pathological worst case so
-    // we have an upper bound to detect regressions.
+    // 5000 predict-then-immediately-cancel cycles across 3 targetIds.
+    // Each cycle destroys the bucket (returns Text to free-list) then
+    // re-creates it (pops Text from free-list). With the free-list
+    // pool, the maximum number of Pixi Text allocations is bounded by
+    // POOL_CAP × 2 — NOT by the cycle count.
+    //
+    // Without the pool (pre-2026-05-30): every cycle did
+    // `text.destroy()` + `new Text(...)` → 5000 Text allocations.
+    // With the pool: ~3 Text allocations (one per concurrent
+    // targetId, then steady-state reuse).
     const before = postGcHeap();
     for (let i = 0; i < 5000; i++) {
       const tag = `shot-${i}`;
@@ -181,20 +184,15 @@ describe('DamageNumberManager heap-delta — per-target accumulator avoids per-h
     }
     const after = postGcHeap();
 
-    // Realistic budget: ~7 MB for 5000 spawn+cancel cycles. The
-    // dominant cost is `new Text(...)` per cycle (~700–1500 bytes
-    // each, depending on V8 string interning + Pixi internal mesh
-    // buffers). Pre-accumulator the same workload would still alloc
-    // a Text per spawn (different code path, same per-hit alloc); the
-    // accumulator does not improve this case but does not regress
-    // it either.
-    //
-    // Future improvement: a Text free-list pool would let this case
-    // approach the steady-state numbers in the previous tests, but
-    // that is a separate refactor — and given this scenario is rare
-    // in production (predictions usually CONFIRM), the bigger win
-    // already shipped is the common-case accumulator.
+    // Budget: 1 MB for 5000 cycles. The per-cycle dominant cost is
+    // now the tag-tracking Map (allocated fresh each spawn — the
+    // accumulator bucket dies on cancel, taking its Map with it; the
+    // next spawn for the same targetId allocates a fresh bucket +
+    // Map). Map churn at ~200 bytes/cycle × 5000 = 1 MB; budget gives
+    // a 0 % cushion intentionally to catch any regression in either
+    // (a) Text pooling, or (b) per-cycle alloc overhead. If this fails
+    // future work: bucket+Map pooling, not just Text pooling.
     const growthBytes = after - before;
-    expect(growthBytes).toBeLessThan(10_000_000);
+    expect(growthBytes).toBeLessThan(1_000_000);
   });
 });
