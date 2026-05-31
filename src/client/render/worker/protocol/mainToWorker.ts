@@ -20,11 +20,19 @@ export interface BootMsg {
   width: number;
   height: number;
   /**
-   * Device pixel ratio at boot. The main thread sizes the canvas to
-   * physical pixels before transfer; the worker uses `resolution: 1`
-   * + `autoDensity: false`. DPR changes at runtime arrive via RESIZE.
+   * Device pixel ratio at boot. `width`/`height` above are LOGICAL (CSS)
+   * px; the worker passes `resolution: dpr` to Pixi (HiDPI contract:
+   * backing buffer = width × resolution) with `autoDensity: false`
+   * (the transferred OffscreenCanvas has no CSS box for Pixi to write).
+   * DPR changes at runtime arrive via RESIZE.
    */
   dpr: number;
+  /**
+   * Optional `?zoom=` override (on-device crispness/framing A/B). Absent
+   * → renderer uses its DEFAULT_GAMEPLAY_ZOOM. The worker has no `window`,
+   * so the main thread reads the URL param and forwards it here.
+   */
+  zoom?: number;
 }
 
 /**
@@ -46,8 +54,10 @@ export interface SetCurrentSectorMsg { type: 'SET_CURRENT_SECTOR'; sectorKey: st
 export interface SetTransitDockedMsg { type: 'SET_TRANSIT_DOCKED'; docked: boolean }
 
 /**
- * Canvas resize. Width/height in physical pixels (main thread already
- * applied DPR). The worker resizes the renderer and any layer overlays.
+ * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
+ * current devicePixelRatio so the worker re-applies it as the renderer
+ * resolution (buffer = width × dpr). The worker resizes the renderer and
+ * any layer overlays.
  */
 export interface ResizeMsg {
   type: 'RESIZE';
