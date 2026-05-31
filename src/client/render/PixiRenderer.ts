@@ -153,6 +153,41 @@ export class PixiRenderer implements IRenderer {
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
   private liveBeamGfx: Graphics | null = null;
   private remoteBeamGfx: Graphics | null = null;
+  /**
+   * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
+   * dirty-flag check on the per-frame Graphics rebuild path.
+   * `liveBeamGfx.clear() + moveTo + lineTo + stroke` ran every frame
+   * while held-fire was active even when the ship hadn't moved or
+   * rotated past visual threshold. Same pattern as HealthBars and
+   * BackgroundGrid — Pixi v8 allocates fresh ShapePath /
+   * GpuGraphicsContext per `stroke()` call. Cached per-mount endpoints
+   * + alpha; epsilon 0.5 world units (sub-pixel at typical zoom).
+   * `_liveBeamCacheCount` is the number of valid entries — used so we
+   * can rebuild from cache without depending on Map size invariants.
+   */
+  private readonly _liveBeamCache: Array<{
+    mountId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+  }> = [];
+  private _liveBeamCacheCount = 0;
+  /** Same dirty-flag cache for remote shooters' beams (per-shooter +
+   *  per-mount keyed). With multiple drones firing at once the rebuild
+   *  cost was per-frame × per-beam — the cache compounds. Flat array
+   *  matches liveBeam pattern; iteration order is stable across frames
+   *  (JS Map preserves insertion order). */
+  private readonly _remoteBeamCache: Array<{
+    shooterId: string;
+    mountId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    alpha: number;
+  }> = [];
+  private _remoteBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -823,8 +858,18 @@ export class PixiRenderer implements IRenderer {
         this.remoteBeamGfx = new Graphics();
         this.shipContainer.addChild(this.remoteBeamGfx);
       }
-      this.remoteBeamGfx.clear();
+
+      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache, same
+      // shape as liveBeam. Flat pooled slot array; count + per-beam
+      // endpoint/alpha comparison. Sub-pixel drift (epsilon 0.5 world
+      // units, 0.05 alpha) hits the cache; visible motion / new
+      // shooters / fade transitions trigger rebuild.
+      const BEAM_EPSILON = 0.5;
+      const ALPHA_EPSILON = 0.05;
       const now = performance.now();
+      let slotIdx = 0;
+      let dirty = false;
+
       for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
         // ship's rotation between fire events. AI shooters track their
@@ -921,19 +966,52 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Outer glow + bright core. Styles hoisted to module-level
-          // scratches; mutate `alpha` per beam (TTL fade) before stroke.
-          _remoteBeamGlowStyle.alpha = alpha * 0.4;
-          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+          // Compare against cache slot — mark dirty if mismatch.
+          let slot = this._remoteBeamCache[slotIdx];
+          if (!slot) {
+            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
+            this._remoteBeamCache[slotIdx] = slot;
+            dirty = true;
+          } else if (!dirty) {
+            if (slot.shooterId !== shooterId
+              || slot.mountId !== mountId
+              || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
+              || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
+              || Math.abs(slot.toX - toX) > BEAM_EPSILON
+              || Math.abs(slot.toY - toY) > BEAM_EPSILON
+              || Math.abs(slot.alpha - alpha) > ALPHA_EPSILON) {
+              dirty = true;
+            }
+          }
+          slot.shooterId = shooterId;
+          slot.mountId = mountId;
+          slot.fromX = fromX;
+          slot.fromY = fromY;
+          slot.toX = toX;
+          slot.toY = toY;
+          slot.alpha = alpha;
+          slotIdx++;
+        }
+      }
+      if (slotIdx !== this._remoteBeamCacheCount) dirty = true;
+      this._remoteBeamCacheCount = slotIdx;
+
+      if (dirty) {
+        this.remoteBeamGfx.clear();
+        for (let i = 0; i < slotIdx; i++) {
+          const s = this._remoteBeamCache[i]!;
+          _remoteBeamGlowStyle.alpha = s.alpha * 0.4;
+          this.remoteBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
           this.remoteBeamGfx.stroke(_remoteBeamGlowStyle);
-          _remoteBeamCoreStyle.alpha = alpha;
-          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
+          _remoteBeamCoreStyle.alpha = s.alpha;
+          this.remoteBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
           this.remoteBeamGfx.stroke(_remoteBeamCoreStyle);
         }
       }
       this.remoteBeamGfx.visible = true;
     } else if (this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
+      this._remoteBeamCacheCount = 0;
     }
 
     // Live hitscan beams — one per mount in the local ship's active slot.
@@ -952,14 +1030,28 @@ export class PixiRenderer implements IRenderer {
         this.liveBeamGfx = new Graphics();
         this.shipContainer.addChild(this.liveBeamGfx);
       }
-      this.liveBeamGfx.clear();
       const localKind = getShipKind(localShip.kind ?? null);
       const localMounts = localKind.mounts ?? [];
+
+      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache. Compute
+      // all current-frame beam endpoints into the cache slot array
+      // and compare against the prior frame's. If every beam's
+      // endpoints are within `BEAM_EPSILON` (0.5 world units) AND the
+      // beam-count is identical, skip the entire `clear() + moveTo +
+      // lineTo + stroke ×2` cycle. Sub-pixel motion (no rotation, no
+      // movement) hits the cache; rotation > ~0.0007 rad still
+      // triggers a rebuild (at the 700u beam endpoint, 0.0007 rad
+      // sweeps 0.5u).
+      const BEAM_EPSILON = 0.5;
+      const incomingCount = mirror.liveBeams.size;
+      let dirty = incomingCount !== this._liveBeamCacheCount;
+
+      // First pass: compute new endpoints; compare to cache. Reuse
+      // pooled slots so we don't allocate per-mount each frame.
+      let slotIdx = 0;
       for (const [mountId, beam] of mirror.liveBeams) {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
         const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
-        // Phase 4b.2: add the per-mount slewed angle so the beam emerges
-        // in the same direction as the visibly-rotated barrel sprite.
         const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
         const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
         const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
@@ -969,16 +1061,45 @@ export class PixiRenderer implements IRenderer {
         const fromY = origin.y + fwdY * 20;
         const toX = fromX + fwdX * beam.dist;
         const toY = fromY + fwdY * beam.dist;
-        // Outer glow (style literal hoisted to `_liveBeamGlowStyle`).
-        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke(_liveBeamGlowStyle);
-        // Bright core (style literal hoisted to `_liveBeamCoreStyle`).
-        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke(_liveBeamCoreStyle);
+        let slot = this._liveBeamCache[slotIdx];
+        if (!slot) {
+          slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
+          this._liveBeamCache[slotIdx] = slot;
+        }
+        if (!dirty) {
+          if (slot.mountId !== mountId
+            || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
+            || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
+            || Math.abs(slot.toX - toX) > BEAM_EPSILON
+            || Math.abs(slot.toY - toY) > BEAM_EPSILON) {
+            dirty = true;
+          }
+        }
+        slot.mountId = mountId;
+        slot.fromX = fromX;
+        slot.fromY = fromY;
+        slot.toX = toX;
+        slot.toY = toY;
+        slotIdx++;
+      }
+      this._liveBeamCacheCount = slotIdx;
+
+      if (dirty) {
+        this.liveBeamGfx.clear();
+        for (let i = 0; i < slotIdx; i++) {
+          const s = this._liveBeamCache[i]!;
+          // Outer glow.
+          this.liveBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
+          this.liveBeamGfx.stroke(_liveBeamGlowStyle);
+          // Bright core.
+          this.liveBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
+          this.liveBeamGfx.stroke(_liveBeamCoreStyle);
+        }
       }
       this.liveBeamGfx.visible = true;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
+      this._liveBeamCacheCount = 0;
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
