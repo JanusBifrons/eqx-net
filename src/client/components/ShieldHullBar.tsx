@@ -1,5 +1,5 @@
 import { Box } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 
 /**
  * Tiny top-left shield + hull readout (Phase 8, plan: clever-wombat).
@@ -80,9 +80,12 @@ function Bar({ pct, color }: { pct: number; color: string }): JSX.Element {
   );
 }
 
-export function ShieldHullBar(): JSX.Element {
+export function ShieldHullBar(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const shieldPct = useUIStore((s) => s.shieldPct);
   const hullPct = useUIStore((s) => s.hullPct);
+  if (!shouldRender) return null;
   return (
     <Box
       data-testid="shield-hull-bar"

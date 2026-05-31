@@ -1,5 +1,5 @@
 import { Box } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 
 /**
  * HUD toggle for the in-game additive galaxy overlay (Map B). Bottom-center
@@ -11,10 +11,13 @@ import { useUIStore } from '../state/store';
  * Hidden while the player is dead (mirrors `WeaponSelector`).
  */
 export function GalaxyMapToggleButton(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const open = useUIStore((s) => s.isGalaxyMapOpen);
   const isDead = useUIStore((s) => s.isDead);
   const toggle = useUIStore((s) => s.toggleGalaxyMapOpen);
 
+  if (!shouldRender) return null;
   if (isDead) return null;
 
   return (

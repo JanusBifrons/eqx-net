@@ -1,6 +1,6 @@
 import { Box } from '@mui/material';
 import { useEffect, useState } from 'react';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 
 /**
@@ -58,6 +58,10 @@ const VALUE_SX = {
 };
 
 export function SectorInfoPanel(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  // All hooks called unconditionally per React's Rules of Hooks; the
+  // early-return is placed AFTER every hook below.
+  const shouldRender = useShouldRenderHud();
   const sectorName = useUIStore((s) => s.sectorName);
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
   const [coord, setCoord] = useState<{ gx: number; gy: number } | null>(null);
@@ -80,6 +84,8 @@ export function SectorInfoPanel(): JSX.Element | null {
     const handle = window.setInterval(tick, POLL_MS);
     return () => window.clearInterval(handle);
   }, []);
+
+  if (!shouldRender) return null;
 
   const sectorLabel = sectorName !== '' ? sectorName : (currentSectorKey === null ? 'Test arena' : '—');
   const gridLabel = coord ? `${coord.gx}, ${coord.gy}` : '—';

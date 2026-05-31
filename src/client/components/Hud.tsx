@@ -1,5 +1,5 @@
 import { Alert } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 
 /**
  * Top-left HUD: sector alert only. The sector-name readout moved into
@@ -11,8 +11,11 @@ import { useUIStore } from '../state/store';
  * `<Slot anchor="top-left">` host — never set here.
  */
 export function Hud(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const sectorAlert = useUIStore((s) => s.sectorAlert);
 
+  if (!shouldRender) return null;
   if (!sectorAlert) return null;
 
   return (

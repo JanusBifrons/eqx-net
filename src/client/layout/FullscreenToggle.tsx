@@ -7,6 +7,7 @@ import AddToHomeScreenIcon from '@mui/icons-material/AddToHomeScreen';
 import { useFullscreen } from './useFullscreen';
 import { isIOS, useStandalone } from './useStandalone';
 import { isTouchDevice } from '../input/TouchInput';
+import { useShouldRenderHud } from '../state/store';
 
 /**
  * Persistent fullscreen control. Hidden on desktop (where there's no
@@ -22,12 +23,15 @@ import { isTouchDevice } from '../input/TouchInput';
  * Returns `null` when not applicable so the toolbar lays out cleanly.
  */
 export function FullscreenToggle(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const { isFullscreen, enterFullscreen, exitFullscreen } = useFullscreen();
   const standalone = useStandalone();
   const [installOpen, setInstallOpen] = useState(false);
 
   const visible = !standalone && isTouchDevice();
   if (!visible) return null;
+  if (!shouldRender) return null;
 
   const onClick = async (): Promise<void> => {
     if (isFullscreen) {

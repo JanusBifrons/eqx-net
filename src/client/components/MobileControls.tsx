@@ -7,6 +7,7 @@ import { WeaponSelector } from './WeaponSelector';
 import { FireCooldownRing } from './FireCooldownRing';
 import { useMountLog } from '../debug/useMountLog';
 import { logEvent } from '../debug/ClientLogger';
+import { useShouldRenderHud } from '../state/store';
 
 interface Props {
   touchInput: TouchInput;
@@ -27,8 +28,12 @@ interface Props {
  * that moved into the AdvancedDrawer's Galaxy tab in Phase 2 of the layout
  * rework. The `M` keyboard shortcut still toggles the map.
  */
-export function MobileControls({ touchInput }: Props): JSX.Element {
+export function MobileControls({ touchInput }: Props): JSX.Element | null {
   useMountLog('MobileControls');
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  // Hook called before the late return so all subsequent hooks see a
+  // stable order on every render.
+  const shouldRender = useShouldRenderHud();
   // The joystick zone lives inside a `<Slot>` portal whose host doesn't
   // exist on the first render — `useRef` would observe `null` at the time
   // the effect first runs and skip nipplejs setup forever. A state-backed
@@ -144,6 +149,8 @@ export function MobileControls({ touchInput }: Props): JSX.Element {
     e.preventDefault();
     touchInput.setBoostHeld(false);
   };
+
+  if (!shouldRender) return null;
 
   return (
     <>

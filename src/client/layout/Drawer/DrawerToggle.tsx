@@ -1,6 +1,6 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
-import { useUIStore } from '../../state/store';
+import { useUIStore, useShouldRenderHud } from '../../state/store';
 import { RosterCountBadge } from '../../components/RosterCountBadge';
 
 /**
@@ -13,8 +13,11 @@ import { RosterCountBadge } from '../../components/RosterCountBadge';
  * reads from the same Zustand singleton the drawer Galaxy tab uses, so
  * abandon / spawn pushes update both surfaces in lockstep.
  */
-export function DrawerToggle(): JSX.Element {
+export function DrawerToggle(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  if (!shouldRender) return null;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
       <RosterCountBadge />

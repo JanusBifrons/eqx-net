@@ -1,7 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 import { Box } from '@mui/material';
 import type { ShipRenderState } from '../../core/index.js';
-import { useUIStore } from '../state/store.js';
+import { useUIStore, useShouldRenderHud } from '../state/store.js';
 
 export interface ShipStatsCardProps {
   /** Returns the local player's render-mirror entry, or null if not yet available.
@@ -30,7 +30,9 @@ function angleToHeading(angleRad: number): number {
   return deg < 0 ? deg + 360 : deg;
 }
 
-export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element {
+export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const hullPct = useUIStore((s) => s.hullPct);
   const ammo = useUIStore((s) => s.ammo);
 
@@ -66,6 +68,8 @@ export function ShipStatsCard({ getLocalShip }: ShipStatsCardProps): JSX.Element
     const id = window.setInterval(tick, 1000 / SAMPLE_HZ);
     return () => window.clearInterval(id);
   }, [getLocalShip]);
+
+  if (!shouldRender) return null;
 
   return (
     <Box

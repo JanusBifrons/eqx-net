@@ -1,4 +1,4 @@
-import { useUIStore } from '../state/store';
+import { useUIStore, useIsLoadingActive } from '../state/store';
 
 /**
  * Hidden, plain-DOM mirror of the always-required HUD `data-testid`s.
@@ -18,8 +18,20 @@ import { useUIStore } from '../state/store';
  * affected leaf when its slice changes.
  */
 export function HudTestAttributes(): JSX.Element {
+  // Plan: crispy-kazoo, Commit 5 — positive-signal pause-boundary
+  // surface for E2E specs. Stays mounted (contract), exposes the
+  // current `useIsLoadingActive` value as `data-loading-active="0|1"`.
+  // Specs can `waitForSelector('[data-loading-active="0"]')` to know
+  // the curtain has dropped without polling for the WarpScreen
+  // disappearance.
+  const isLoadingActive = useIsLoadingActive();
   return (
-    <div data-testid="hud-test-attributes" style={{ display: 'none' }} aria-hidden>
+    <div
+      data-testid="hud-test-attributes"
+      data-loading-active={isLoadingActive ? '1' : '0'}
+      style={{ display: 'none' }}
+      aria-hidden
+    >
       <ShipCount />
       <SwarmCount />
       <ClockRate />

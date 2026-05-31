@@ -12,11 +12,14 @@
  *  - `full`   (N === 10):  red, draws attention to abandon-to-make-room
  */
 import { Box } from '@mui/material';
-import { useUIStore } from '../state/store.js';
+import { useUIStore, useShouldRenderHud } from '../state/store.js';
 import { ROSTER_CAP } from './rosterConstants';
 
-export function RosterCountBadge(): JSX.Element {
+export function RosterCountBadge(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const count = useUIStore((s) => s.shipRoster.length);
+  if (!shouldRender) return null;
   const state: 'empty' | 'normal' | 'full' =
     count === 0 ? 'empty' : count >= ROSTER_CAP ? 'full' : 'normal';
   const color =
