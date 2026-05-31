@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   useUIStore,
+  computeBootstrapReadyFromState,
   computeGameReadyFromState,
   computeIsLoadingActive,
   computeWarpProgress,
@@ -39,17 +40,26 @@ function resetForTest(): void {
 
 beforeEach(resetForTest);
 
-describe('computeGameReadyFromState — 5-gate predicate (Commit 1 set)', () => {
-  it('all 5 gates true → ready', () => {
-    expect(
-      computeGameReadyFromState({
-        connectionStatus: 'connected',
-        localShipInstanceId: 'ship-1',
-        rendererFirstFrameRendered: true,
-        firstSnapshotApplied: true,
-        joinMinimumElapsed: true,
-      }),
-    ).toBe(true);
+// Plan: crispy-kazoo, Commit 2 — `computeGameReadyFromState` is now the
+// 9-gate predicate (legacy 5 + localPoseResolved + clientReadySent +
+// arrivalTickFromServer !== null + arrivalAcked). The bootstrap-ready
+// 6-gate predicate (legacy 5 + localPoseResolved) drives the
+// `sendClientReady` trigger but NOT the curtain visibility.
+const FULL_READY_STATE = {
+  connectionStatus: 'connected' as const,
+  localShipInstanceId: 'ship-1' as string | null,
+  rendererFirstFrameRendered: true,
+  firstSnapshotApplied: true,
+  joinMinimumElapsed: true,
+  localPoseResolved: true,
+  clientReadySent: true,
+  arrivalTickFromServer: 123 as number | null,
+  arrivalAcked: true,
+};
+
+describe('computeBootstrapReadyFromState — 6-gate predicate (sendClientReady trigger)', () => {
+  it('all 6 bootstrap gates true → ready', () => {
+    expect(computeBootstrapReadyFromState(FULL_READY_STATE)).toBe(true);
   });
 
   it.each([
@@ -58,15 +68,38 @@ describe('computeGameReadyFromState — 5-gate predicate (Commit 1 set)', () => 
     ['rendererFirstFrameRendered', { rendererFirstFrameRendered: false }],
     ['firstSnapshotApplied', { firstSnapshotApplied: false }],
     ['joinMinimumElapsed', { joinMinimumElapsed: false }],
+    ['localPoseResolved', { localPoseResolved: false }],
   ])('not ready when %s gate is open', (_name, partial) => {
-    const base = {
-      connectionStatus: 'connected' as const,
-      localShipInstanceId: 'ship-1' as string | null,
-      rendererFirstFrameRendered: true,
-      firstSnapshotApplied: true,
-      joinMinimumElapsed: true,
-    };
-    expect(computeGameReadyFromState({ ...base, ...partial })).toBe(false);
+    expect(computeBootstrapReadyFromState({ ...FULL_READY_STATE, ...partial })).toBe(false);
+  });
+
+  it('does NOT require the handshake gates (clientReadySent etc.)', () => {
+    expect(computeBootstrapReadyFromState({
+      ...FULL_READY_STATE,
+      clientReadySent: false,
+      arrivalTickFromServer: null,
+      arrivalAcked: false,
+    })).toBe(true);
+  });
+});
+
+describe('computeGameReadyFromState — 9-gate predicate (curtain visibility)', () => {
+  it('all 9 gates true → ready', () => {
+    expect(computeGameReadyFromState(FULL_READY_STATE)).toBe(true);
+  });
+
+  it.each([
+    ['connectionStatus', { connectionStatus: 'connecting' as const }],
+    ['localShipInstanceId', { localShipInstanceId: null }],
+    ['rendererFirstFrameRendered', { rendererFirstFrameRendered: false }],
+    ['firstSnapshotApplied', { firstSnapshotApplied: false }],
+    ['joinMinimumElapsed', { joinMinimumElapsed: false }],
+    ['localPoseResolved', { localPoseResolved: false }],
+    ['clientReadySent', { clientReadySent: false }],
+    ['arrivalTickFromServer', { arrivalTickFromServer: null }],
+    ['arrivalAcked', { arrivalAcked: false }],
+  ])('not ready when %s gate is open', (_name, partial) => {
+    expect(computeGameReadyFromState({ ...FULL_READY_STATE, ...partial })).toBe(false);
   });
 });
 
@@ -86,16 +119,23 @@ describe('computeIsLoadingActive — phase × ready × kill switch decision matr
     expect(computeIsLoadingActive(useUIStore.getState())).toBe(true);
   });
 
-  it('phase==="game" && ready → loading NOT active', () => {
+  it('phase==="game" && fully ready (incl. handshake) → loading NOT active', () => {
     useUIStore.setState({
       phase: 'game',
-      connectionStatus: 'connected',
-      localShipInstanceId: 'ship-1',
-      rendererFirstFrameRendered: true,
-      firstSnapshotApplied: true,
-      joinMinimumElapsed: true,
+      ...FULL_READY_STATE,
     });
     expect(computeIsLoadingActive(useUIStore.getState())).toBe(false);
+  });
+
+  it('phase==="game" && bootstrap-ready but handshake pending → loading STILL active', () => {
+    useUIStore.setState({
+      phase: 'game',
+      ...FULL_READY_STATE,
+      clientReadySent: false, // bootstrap done, sendClientReady not yet fired
+      arrivalTickFromServer: null,
+      arrivalAcked: false,
+    });
+    expect(computeIsLoadingActive(useUIStore.getState())).toBe(true);
   });
 
   it.each(['meta', 'auth', 'galaxy-map', 'local'] as const)(

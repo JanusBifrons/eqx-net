@@ -1416,11 +1416,44 @@ export class ColyseusGameClient {
       // these every few seconds; if the per-event renderer cost is what
       // builds the spiral, each event will line up with the next slow
       // RAF in the trace.
+      const arrivalTick = (msg as WarpInEvent).arrivalTick;
       logEvent('warp_event', {
         kind,
         x: Math.round(msg.x * 100) / 100,
         y: Math.round(msg.y * 100) / 100,
+        arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
+        isLocal: msg.playerId === this.mirror.localPlayerId,
       });
+      // Plan: crispy-kazoo, Commit 2 — synchronised arrival flash.
+      // OWN warp-in (kind === 'warp_in' AND playerId === local AND
+      // arrivalTick is present): capture arrivalTick + defer the
+      // pendingWarpEvents push until the local clock reaches it.
+      // At arrivalTick: curtain drops (via arrivalAcked Zustand flip)
+      // AND the warp-in animation fires in the renderer. Observers'
+      // own animation timing is the existing push-immediately path
+      // (the flash lands ~100 ms before the snapshot diff carries the
+      // newly-active ship — same temporal shape as transit-arrival
+      // warp-in today).
+      if (
+        kind === 'warp_in'
+        && msg.playerId === this.mirror.localPlayerId
+        && typeof arrivalTick === 'number'
+      ) {
+        useUIStore.getState().setArrivalTickFromServer(arrivalTick);
+        const ticksUntil = Math.max(0, arrivalTick - this.inputTick);
+        const msUntil = ticksUntil * (1000 / 60);
+        setTimeout(() => {
+          if (this.disposed) return;
+          useUIStore.getState().setArrivalAcked(true);
+          this.mirror.pendingWarpEvents?.push({ x: msg.x, y: msg.y });
+          logEvent('arrival_acked', {
+            arrivalTick,
+            msUntil: Math.round(msUntil),
+          });
+        }, msUntil);
+        return;
+      }
+      // Remote warp event: push immediately (legacy path).
       if (!this.mirror.pendingWarpEvents) return;
       this.mirror.pendingWarpEvents.push({ x: msg.x, y: msg.y });
     };
@@ -1920,6 +1953,30 @@ export class ColyseusGameClient {
     this.room.send('respawn', { type: 'respawn' });
   }
 
+  /**
+   * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+   *
+   * Tells the server "I have finished bootstrapping; please activate
+   * my ship and broadcast the warp-in". Idempotent: a second call
+   * (e.g. from the per-RAF trigger in gameRafLoop after the first
+   * fire) is a no-op. The Zustand `clientReadySent` flag flips here
+   * so future callers also short-circuit.
+   *
+   * Called from the per-RAF check in `gameRafLoop` once all
+   * bootstrap gates pass (`computeBootstrapReadyFromState === true`).
+   */
+  sendClientReady(): void {
+    if (!this.room || this.disposed) return;
+    const state = useUIStore.getState();
+    if (state.clientReadySent) return;
+    state.setClientReadySent(true);
+    this.room.send('client_ready', { type: 'client_ready' });
+    const msSinceWelcome = this.welcomePerfNow > 0
+      ? Math.round(this.clock.now() - this.welcomePerfNow)
+      : -1;
+    logEvent('client_ready_sent', { msSinceWelcome });
+  }
+
   // ── Prediction bootstrap ────────────────────────────────────────────────
 
   private tryInitPredWorld(playerId: string): void {
@@ -1955,6 +2012,11 @@ export class ColyseusGameClient {
         msSinceWelcome,
       });
     }
+    // Plan: crispy-kazoo, Commit 2 — surface the localPoseResolved
+    // gate to Zustand so `computeBootstrapReadyFromState` flips true
+    // when the predWorld + reconciler are live. Idempotent; the
+    // setter is a no-op if already true.
+    useUIStore.getState().setLocalPoseResolved(true);
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
     // Retrospectively spawn any remote ships that arrived in the initial Colyseus
     // state patch (before localId was set, so syncMirror skipped predWorld spawn).

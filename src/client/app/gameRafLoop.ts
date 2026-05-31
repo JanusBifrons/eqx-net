@@ -25,7 +25,7 @@
 import { consumeOneFrameTriggers } from '../render/perFrameTriggers.js';
 import { shouldSkipFrame } from '../perf/frameRateCap.js';
 import { logEvent, isFullDiagMode } from '../debug/ClientLogger.js';
-import { useUIStore } from '../state/store.js';
+import { useUIStore, computeBootstrapReadyFromState } from '../state/store.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
@@ -75,6 +75,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
 
   const loop = (now: number): void => {
     if (isDisposed()) return;
+
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Fire `sendClientReady` once the bootstrap gates all flip true.
+    // The method itself is idempotent (the Zustand `clientReadySent`
+    // flag short-circuits a second call). This check sits BEFORE the
+    // cap / pause early-returns so the handshake completes even when
+    // game-work is skipped (Commit 4 adds the loading-pause early-
+    // return that gates the body below; this check must run during
+    // loading too, since that's exactly when bootstrap-ready flips).
+    const ui = useUIStore.getState();
+    if (!ui.clientReadySent && computeBootstrapReadyFromState(ui)) {
+      gameClient.sendClientReady();
+    }
+
     const isFirstFrame = lastFrameTime === 0;
     const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
     // Internal 60 Hz work-loop cap. On 90/120 Hz native displays we

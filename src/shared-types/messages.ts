@@ -16,6 +16,7 @@ export {
   FireMessageSchema,
   EngageTransitSchema,
   CancelTransitSchema,
+  ClientReadyMessageSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -24,6 +25,7 @@ export type {
   FireMessage,
   EngageTransitMessage,
   CancelTransitMessage,
+  ClientReadyMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 

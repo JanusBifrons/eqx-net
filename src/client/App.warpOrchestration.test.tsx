@@ -66,7 +66,9 @@ function Harness({ rr }: { rr: RefObject<IRenderer | null> }): null {
   return null;
 }
 
-/** Steady "post-arrival, fully ready, docked" baseline. */
+/** Steady "post-arrival, fully ready, docked" baseline.
+ *  Plan: crispy-kazoo, Commit 2 — `useGameReady()` is now the 9-gate
+ *  predicate; the handshake gates must be true for the steady state. */
 function settle(): void {
   useUIStore.setState({
     phase: 'game',
@@ -75,6 +77,10 @@ function settle(): void {
     firstSnapshotApplied: true,
     rendererFirstFrameRendered: true,
     joinMinimumElapsed: true,
+    localPoseResolved: true,
+    clientReadySent: true,
+    arrivalTickFromServer: 123,
+    arrivalAcked: true,
     transitState: 'DOCKED',
   });
 }
@@ -119,9 +125,19 @@ describe('useWarpOrchestration — single arrival flash (Phase G, Bug A)', () =>
     expect(lastCurtainBefore(burstIdx)).toBe(true); // curtain opaque when burst fires
 
     // Arrival completes → single flash on the loading→ready edge.
+    // Plan: crispy-kazoo, Commit 2 — handshake gates must also flip
+    // for the curtain to drop. The bootstrap gates (firstSnapshotApplied,
+    // joinMinimumElapsed) flip first, then sendClientReady fires, then
+    // warp_in arrives with arrivalTick, then arrivalAcked. Drive the
+    // post-handshake terminal state here so the test asserts the
+    // curtain-drop and single-flash invariants.
     act(() => {
       useUIStore.getState().setFirstSnapshotApplied(true);
       useUIStore.getState().setJoinMinimumElapsed(true);
+      useUIStore.getState().setLocalPoseResolved(true);
+      useUIStore.getState().setClientReadySent(true);
+      useUIStore.getState().setArrivalTickFromServer(123);
+      useUIStore.getState().setArrivalAcked(true);
       useUIStore.getState().setTransitState('DOCKED');
     });
     expect(calls.filter((c) => c.fn === 'triggerWarpIn')).toHaveLength(1);

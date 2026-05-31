@@ -258,23 +258,60 @@ export const useUIStore = create<UIStore>((set, get) => ({
 }));
 
 /**
- * Pure helper: join-render readiness predicate against any state
- * snapshot. Exported so non-React callers (the loading-active /
- * progress-bar helpers below, and direct `useUIStore.getState()`
- * consumers in net code) can ask the same question `useGameReady`
- * answers, without re-wiring the gate list at every call site.
+ * Pure helper: BOOTSTRAP-ready predicate.
  *
- * Composed from five sub-flags — ALL must be true:
+ * Plan: crispy-kazoo, Commit 2 — true when the client has finished
+ * its local setup AND should fire `client_ready` to the server:
  *   - `connectionStatus === 'connected'` — WebSocket up.
  *   - `localShipInstanceId !== null` — server welcomed us.
- *   - `rendererFirstFrameRendered` — Pixi has painted a frame.
  *   - `firstSnapshotApplied` — first state snapshot has landed.
- *   - `joinMinimumElapsed` — the 5-second minimum-display floor.
+ *   - `localPoseResolved` — `tryInitPredWorld` succeeded.
+ *   - `rendererFirstFrameRendered` — Pixi has painted a frame.
+ *   - `joinMinimumElapsed` — the 3-5 s minimum-display floor.
  *
- * Plan: crispy-kazoo — Commit 2 extends this with the handshake
- * gates (`clientReadySent`, `arrivalTickFromServer !== null`,
- * `arrivalAcked`, `localPoseResolved`). Commit 1 keeps the 5-gate
- * set so the curtain visibility is byte-equivalent to today.
+ * This is the bootstrap-only predicate; the FULL game-ready (which
+ * gates the curtain) additionally requires the handshake's
+ * `clientReadySent` + `arrivalTickFromServer` + `arrivalAcked`. See
+ * `computeGameReadyFromState` below.
+ */
+export function computeBootstrapReadyFromState(
+  s: Pick<
+    UIStore,
+    | 'connectionStatus'
+    | 'localShipInstanceId'
+    | 'rendererFirstFrameRendered'
+    | 'firstSnapshotApplied'
+    | 'joinMinimumElapsed'
+    | 'localPoseResolved'
+  >,
+): boolean {
+  return (
+    s.connectionStatus === 'connected'
+    && s.localShipInstanceId !== null
+    && s.rendererFirstFrameRendered
+    && s.firstSnapshotApplied
+    && s.joinMinimumElapsed
+    && s.localPoseResolved
+  );
+}
+
+/**
+ * Pure helper: join-render readiness predicate — true when the
+ * player can safely see the game canvas AND interact with the
+ * world. The curtain (`computeIsLoadingActive`) is up exactly when
+ * this is false in the game phase.
+ *
+ * Plan: crispy-kazoo, Commit 2 — extends the bootstrap predicate
+ * with the synchronised warp-in handshake gates:
+ *   - `clientReadySent` — bootstrap reported "I'm loaded".
+ *   - `arrivalTickFromServer !== null` — server returned an
+ *     arrival tick.
+ *   - `arrivalAcked` — local clock reached the arrival tick;
+ *     curtain drops + warp-in animation fires.
+ *
+ * Drop the handshake gates from this predicate (or `?loading=cosmetic`
+ * the kill switch) to restore the legacy behaviour where the curtain
+ * lifts as soon as the bootstrap completes.
  */
 export function computeGameReadyFromState(
   s: Pick<
@@ -284,14 +321,17 @@ export function computeGameReadyFromState(
     | 'rendererFirstFrameRendered'
     | 'firstSnapshotApplied'
     | 'joinMinimumElapsed'
+    | 'localPoseResolved'
+    | 'clientReadySent'
+    | 'arrivalTickFromServer'
+    | 'arrivalAcked'
   >,
 ): boolean {
   return (
-    s.connectionStatus === 'connected'
-    && s.localShipInstanceId !== null
-    && s.rendererFirstFrameRendered
-    && s.firstSnapshotApplied
-    && s.joinMinimumElapsed
+    computeBootstrapReadyFromState(s)
+    && s.clientReadySent
+    && s.arrivalTickFromServer !== null
+    && s.arrivalAcked
   );
 }
 

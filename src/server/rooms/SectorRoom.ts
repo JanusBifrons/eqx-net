@@ -105,7 +105,7 @@ import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
-import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
+import { EngageTransitSchema, CancelTransitSchema, ClientReadyMessageSchema } from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
   // rayHitsConvexPolygon now used inside PlayerFireResolver.ts
@@ -225,6 +225,47 @@ const IDLE_THRESHOLD_TICKS = 60;
  *  so subsequent idle-suppression is harmless. 5 s also matches the
  *  client's `joinMinimumElapsed` curtain floor. */
 const JOIN_BROADCAST_GRACE_TICKS = 300;
+
+/**
+ * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+ *
+ * After `client_ready` arrives, the server picks
+ * `arrivalTick = serverTick + ARRIVAL_OFFSET_TICKS` and broadcasts
+ * `warp_in` with that tick to all clients in the sector (including
+ * the joiner). The offset gives the broadcast time to propagate so
+ * every observer schedules the warp-in animation at the same logical
+ * instant. At `arrivalTick` the server flips `ship.isActive = true`
+ * and the snapshot diff carries the ship into broadcasts for the
+ * first time. 6 ticks at 60 Hz = 100 ms; bump to 12 ticks (~200 ms)
+ * if a smoke shows late observers.
+ */
+const ARRIVAL_OFFSET_TICKS = 6;
+
+/**
+ * Plan: crispy-kazoo, Commit 2 — `client_ready` watchdog.
+ *
+ * If the client never sends `client_ready` (broken bootstrap, network
+ * drop mid-load) the watchdog force-activates the ship at this tick
+ * so the player appears even if their client is wedged. 30 s at
+ * 60 Hz = 1800 ticks. Better than an invisible ghost; the Limbo
+ * 15 min TTL eventually catches truly-dead sessions.
+ */
+const CLIENT_READY_TIMEOUT_TICKS = 1800;
+
+/**
+ * Per-pending-join record. Lives in `pendingJoin: Map<playerId, ...>`
+ * on the room. Removed when the ship activates (normal or watchdog).
+ */
+interface PendingJoinRecord {
+  joinTick: number;
+  watchdogTick: number;
+  /** Set when `client_ready` is received and the server picks the
+   *  activation tick. `null` while waiting for client_ready. */
+  arrivalTick: number | null;
+  spawnX: number;
+  spawnY: number;
+  sessionId: string;
+}
 
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
  *  squared exceeds this. 0.05 u/s²  → ~0.22 u/s actual speed; below
@@ -448,6 +489,20 @@ export class SectorRoom extends Room<SectorState> {
    *  bypassing idle-suppression. Set on every player join/spawn — see
    *  `JOIN_BROADCAST_GRACE_TICKS`. */
   private forceBroadcastUntilTick = 0;
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — pending-join handshake registry.
+   *
+   * `onJoin` (and `RespawnHandler.handle`) sets the joining ship's
+   * `isActive=false` and adds an entry here. The client bootstraps,
+   * calls `client_ready`, the handler picks `arrivalTick` and
+   * broadcasts `warp_in`. The per-tick drain in `update()` flips
+   * `isActive=true` at `arrivalTick` and removes the entry. A
+   * watchdog force-activates after `CLIENT_READY_TIMEOUT_TICKS`.
+   *
+   * Keyed by playerId for symmetry with `playerToSlot` / `lastFireClientTick`.
+   */
+  private pendingJoin = new Map<string, PendingJoinRecord>();
   private testMode = false;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
@@ -1370,6 +1425,20 @@ export class SectorRoom extends Room<SectorState> {
       this.handleRespawn(client);
     });
 
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Client signals it has finished bootstrapping; server picks an
+    // `arrivalTick` and broadcasts `warp_in` to ALL clients (including
+    // the joiner) so the curtain drop + warp-in animation fires in
+    // sync everywhere. Idempotent — duplicate sends are dropped.
+    this.onMessage('client_ready', (client: Client, raw: unknown) => {
+      const parsed = ClientReadyMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed client_ready');
+        return;
+      }
+      this.handleClientReady(client);
+    });
+
     // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
     //
     // Client is the offerer; server is the answerer. Drop silently on
@@ -1785,6 +1854,109 @@ export class SectorRoom extends Room<SectorState> {
 
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
+  }
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — `client_ready` handler.
+   *
+   * Picks `arrivalTick = serverTick + ARRIVAL_OFFSET_TICKS`, stamps it
+   * on the pending-join record, and broadcasts `warp_in { playerId,
+   * x, y, arrivalTick }` to ALL occupants (no `except: client`).
+   *
+   * Idempotent: a second send when the player is already activated
+   * or already has an arrivalTick is silently dropped + logged for
+   * diag.
+   */
+  private handleClientReady(client: Client): void {
+    const playerId = this.sessionToPlayer.get(client.sessionId);
+    if (!playerId) {
+      serverLogEvent('client_ready_no_session', { sessionId: client.sessionId });
+      return;
+    }
+    const pending = this.pendingJoin.get(playerId);
+    if (!pending) {
+      // Already activated (handshake completed) or never registered.
+      serverLogEvent('client_ready_no_pending', { playerId, sessionId: client.sessionId });
+      return;
+    }
+    if (pending.arrivalTick !== null) {
+      // Second client_ready before arrival fires — idempotent no-op.
+      serverLogEvent('client_ready_duplicate', { playerId, arrivalTick: pending.arrivalTick });
+      return;
+    }
+    const currentTick = Atomics.load(this.sabU32, TICK_IDX);
+    const arrivalTick = currentTick + ARRIVAL_OFFSET_TICKS;
+    pending.arrivalTick = arrivalTick;
+
+    this.broadcast('warp_in', {
+      type: 'warp_in',
+      playerId,
+      x: pending.spawnX,
+      y: pending.spawnY,
+      arrivalTick,
+    });
+
+    serverLogEvent('client_ready_received', {
+      playerId,
+      sessionId: client.sessionId,
+      msSinceJoin: (currentTick - pending.joinTick) * (1000 / 60),
+      arrivalTick,
+    });
+  }
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — per-tick pending-join drain.
+   *
+   * Called from `update()` after `this.serverTick` is refreshed.
+   *
+   *   - For entries whose `arrivalTick` has been reached: flip
+   *     `ship.isActive = true` and remove from the map. The schema
+   *     diff broadcasts the new state on the next snapshot tick.
+   *   - For entries past `watchdogTick` whose client_ready never
+   *     arrived: synthesise an arrival (pick `arrivalTick =
+   *     currentTick + ARRIVAL_OFFSET_TICKS`, broadcast `warp_in`,
+   *     leave in map for normal drain). Player appears even if
+   *     their client is wedged — better than an invisible ghost.
+   */
+  private drainPendingJoin(): void {
+    if (this.pendingJoin.size === 0) return;
+    const currentTick = this.serverTick;
+    for (const [playerId, rec] of this.pendingJoin) {
+      // Activation branch: arrivalTick set and reached.
+      if (rec.arrivalTick !== null && currentTick >= rec.arrivalTick) {
+        const ship = this.getActiveShip(playerId);
+        if (ship) {
+          ship.isActive = true;
+          serverLogEvent('ship_activated', {
+            playerId,
+            entityId: ship.shipInstanceId,
+            arrivalTick: rec.arrivalTick,
+            currentTick,
+          });
+        }
+        this.pendingJoin.delete(playerId);
+        continue;
+      }
+      // Watchdog branch: client_ready never arrived.
+      if (rec.arrivalTick === null && currentTick >= rec.watchdogTick) {
+        const arrivalTick = currentTick + ARRIVAL_OFFSET_TICKS;
+        rec.arrivalTick = arrivalTick;
+        this.broadcast('warp_in', {
+          type: 'warp_in',
+          playerId,
+          x: rec.spawnX,
+          y: rec.spawnY,
+          arrivalTick,
+        });
+        serverLogEvent('client_ready_timeout', {
+          playerId,
+          sessionId: rec.sessionId,
+          joinTick: rec.joinTick,
+          watchdogTick: rec.watchdogTick,
+          arrivalTick,
+        });
+      }
+    }
   }
 
   /**
@@ -2473,18 +2645,52 @@ export class SectorRoom extends Room<SectorState> {
       'player joined',
     );
 
-    // Broadcast the arrival to existing room occupants so their renderer
-    // fires a one-shot flash + burst ripple at the spawn point. The
-    // joiner is excluded — their own welcome / first-snapshot flow drives
-    // their local-arrival visual through different machinery.
-    this.broadcast(
-      'warp_in',
-      { type: 'warp_in', playerId, x: spawnX, y: spawnY },
-      { except: client },
-    );
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Ship enters the sector INVISIBLY (isActive=false). Drones won't
+    // target it (aiTickRunner / LivingWorldBotHooks both filter on
+    // `ship.isActive`); the snapshot translator on remote clients
+    // skips isActive=false entries; the client snapshot apply on the
+    // joining player ignores their own ship (predWorld is authoritative
+    // for the local pose anyway). The ship becomes visible to all
+    // observers — including the joiner — at the synchronised
+    // `arrivalTick` once the client has called `client_ready`.
+    //
+    // Note: the LOCAL CLIENT's `mirror.ships[playerId]` is populated
+    // from the bootstrap path (welcome → predWorld), so the joiner
+    // still has a ship to predict / render — but the loading curtain
+    // (Commit 1's `useIsLoadingActive`) hides it until the curtain
+    // drops at `arrivalTick`.
+    ship.isActive = false;
+    this.pendingJoin.set(playerId, {
+      joinTick: currentServerTick,
+      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
+      arrivalTick: null,
+      spawnX,
+      spawnY,
+      sessionId: client.sessionId,
+    });
+    serverLogEvent('pending_join_registered', {
+      playerId,
+      sessionId: client.sessionId,
+      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
+    });
+
+    // NOTE: the previous immediate `warp_in` broadcast (to other
+    // occupants, with `except: client`) is REMOVED. The unified
+    // handshake broadcasts `warp_in` from the `client_ready` handler
+    // (or the watchdog) to ALL clients with an `arrivalTick`, so the
+    // flash fires in sync everywhere.
   }
 
   override onLeave(client: Client, consented: boolean): void {
+    // Plan: crispy-kazoo, Commit 2 — drop any in-flight handshake
+    // entry. A disconnected client can't complete the handshake;
+    // its ship stays `isActive=false` for the standard leave flow
+    // (linger / despawn) to handle, but we don't want a watchdog
+    // to fire warp_in on a ghost session.
+    const leavingPlayerId = this.sessionToPlayer.get(client.sessionId);
+    if (leavingPlayerId) this.pendingJoin.delete(leavingPlayerId);
+
     // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
     // running the existing leave handler. The leaveHandler does the
     // player-state cleanup (lingering / transit / despawn); the DC
@@ -2747,6 +2953,14 @@ export class SectorRoom extends Room<SectorState> {
 
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
+
+    // Plan: crispy-kazoo, Commit 2 — drain handshake activations.
+    // Flip pending-join ships' `isActive=true` at arrivalTick, and
+    // fire the watchdog for any ship whose client_ready hasn't
+    // arrived in CLIENT_READY_TIMEOUT_TICKS. Cheap when the map
+    // is empty (most ticks); short-circuits at the top of the
+    // method.
+    this.drainPendingJoin();
 
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.
