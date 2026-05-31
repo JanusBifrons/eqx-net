@@ -143,6 +143,26 @@ export class BackgroundGrid {
   private readonly labelContainer = new Container();
   private readonly labels = new Map<string, Text>();
   private readonly seen = new Set<string>();
+  /**
+   * Plan: combat-fx-hunt (2026-05-31) — last-built grid-bounds cache.
+   * Pre-fix `update(camera)` cleared + rebuilt micro + macro lines
+   * every frame regardless of whether the camera moved past a cell
+   * boundary. With ~30 lines × 3 Pixi ops × 60 Hz = ~5400 graphics
+   * ops/sec — the #2 per-frame allocator after HealthBars.
+   *
+   * Grid bounds snap to multiples of `CELL_SIZE` / `MACRO_SIZE`, so
+   * for a stationary or slowly-moving camera the bounds stay
+   * identical for many frames. Sentinels (NaN) force the first
+   * paint after attach.
+   */
+  private prevMicroXMin = Number.NaN;
+  private prevMicroXMax = Number.NaN;
+  private prevMicroYMin = Number.NaN;
+  private prevMicroYMax = Number.NaN;
+  private prevMacroXMin = Number.NaN;
+  private prevMacroXMax = Number.NaN;
+  private prevMacroYMin = Number.NaN;
+  private prevMacroYMax = Number.NaN;
 
   /**
    * F1 instrumentation — last frame's label-churn sub-costs. Mutated in
@@ -182,18 +202,37 @@ export class BackgroundGrid {
     // history but the trailing stroke applies only to current. Visible
     // on the micro grid (400 lines, only the last rendered → looked
     // empty); less visible on the macro grid (16 lines). 2026-05-14.
-    this.microLines.clear();
-    for (let x = xMinMicro; x <= xMaxMicro; x += CELL_SIZE) {
-      this.microLines
-        .moveTo(x, yMinMicro)
-        .lineTo(x, yMaxMicro)
-        .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
-    }
-    for (let y = yMinMicro; y <= yMaxMicro; y += CELL_SIZE) {
-      this.microLines
-        .moveTo(xMinMicro, y)
-        .lineTo(xMaxMicro, y)
-        .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
+    //
+    // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache. Rebuild
+    // ONLY when the snapped bounds change. The bounds snap to
+    // CELL_SIZE multiples, so a stationary camera (held-fire combat)
+    // skips the rebuild every frame after the first. Each rebuild
+    // was ~30 lines × 3 Pixi ops in v8 = fresh ShapePath /
+    // GpuGraphicsContext per line, the #2 source of GC pressure
+    // under combat after HealthBars.
+    const microBoundsChanged =
+      xMinMicro !== this.prevMicroXMin
+      || xMaxMicro !== this.prevMicroXMax
+      || yMinMicro !== this.prevMicroYMin
+      || yMaxMicro !== this.prevMicroYMax;
+    if (microBoundsChanged) {
+      this.microLines.clear();
+      for (let x = xMinMicro; x <= xMaxMicro; x += CELL_SIZE) {
+        this.microLines
+          .moveTo(x, yMinMicro)
+          .lineTo(x, yMaxMicro)
+          .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
+      }
+      for (let y = yMinMicro; y <= yMaxMicro; y += CELL_SIZE) {
+        this.microLines
+          .moveTo(xMinMicro, y)
+          .lineTo(xMaxMicro, y)
+          .stroke({ color: MICRO_COLOR, width: 1, alpha: MICRO_ALPHA });
+      }
+      this.prevMicroXMin = xMinMicro;
+      this.prevMicroXMax = xMaxMicro;
+      this.prevMicroYMin = yMinMicro;
+      this.prevMicroYMax = yMaxMicro;
     }
 
     const xMinMacro = Math.floor((cx - halfW) / MACRO_SIZE) * MACRO_SIZE;
@@ -201,18 +240,29 @@ export class BackgroundGrid {
     const yMinMacro = Math.floor((cy - halfH) / MACRO_SIZE) * MACRO_SIZE;
     const yMaxMacro = Math.ceil ((cy + halfH) / MACRO_SIZE) * MACRO_SIZE;
 
-    this.macroLines.clear();
-    for (let x = xMinMacro; x <= xMaxMacro; x += MACRO_SIZE) {
-      this.macroLines
-        .moveTo(x, yMinMacro)
-        .lineTo(x, yMaxMacro)
-        .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
-    }
-    for (let y = yMinMacro; y <= yMaxMacro; y += MACRO_SIZE) {
-      this.macroLines
-        .moveTo(xMinMacro, y)
-        .lineTo(xMaxMacro, y)
-        .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
+    const macroBoundsChanged =
+      xMinMacro !== this.prevMacroXMin
+      || xMaxMacro !== this.prevMacroXMax
+      || yMinMacro !== this.prevMacroYMin
+      || yMaxMacro !== this.prevMacroYMax;
+    if (macroBoundsChanged) {
+      this.macroLines.clear();
+      for (let x = xMinMacro; x <= xMaxMacro; x += MACRO_SIZE) {
+        this.macroLines
+          .moveTo(x, yMinMacro)
+          .lineTo(x, yMaxMacro)
+          .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
+      }
+      for (let y = yMinMacro; y <= yMaxMacro; y += MACRO_SIZE) {
+        this.macroLines
+          .moveTo(xMinMacro, y)
+          .lineTo(xMaxMacro, y)
+          .stroke({ color: MACRO_COLOR, width: 1, alpha: MACRO_ALPHA });
+      }
+      this.prevMacroXMin = xMinMacro;
+      this.prevMacroXMax = xMaxMacro;
+      this.prevMacroYMin = yMinMacro;
+      this.prevMacroYMax = yMaxMacro;
     }
 
     // Labels at EVERY micro intersection (500u) so each visible micro
