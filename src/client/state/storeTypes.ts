@@ -211,6 +211,39 @@ export interface UIStore {
    *  hasn't replied yet or the last reply was malformed. Drives the
    *  hype-number above the Join CTA. */
   playersOnline: number | null;
+  // ── Spawn handshake (plan: crispy-kazoo Commit 1) ─────────────────
+  /** Set true once the client has sent the `client_ready` Colyseus
+   *  message after the bootstrap gates pass (firstSnapshot + first
+   *  frame + minDisplay + localPose). Idempotent — the sender guards.
+   *  Reset by `commonReadinessRearm` (every sector entry/transit). */
+  clientReadySent: boolean;
+  /** Server-picked tick at which the joining ship becomes visible to
+   *  all observers. Populated by the `warp_in` handler when the
+   *  message's entityId matches the local ship. `null` until the
+   *  handshake completes. */
+  arrivalTickFromServer: number | null;
+  /** Flips true when `serverTick >= arrivalTickFromServer` — the
+   *  moment the curtain drops. Sole writer is the per-RAF check in
+   *  ColyseusClient (Commit 2); WarpScreen reads it via
+   *  `useIsLoadingActive`. Reset by `commonReadinessRearm`. */
+  arrivalAcked: boolean;
+  /** Set true the first time `tryInitPredWorld` succeeds (the local
+   *  predWorld ship body exists). Discrete UI flag — purity-clean. */
+  localPoseResolved: boolean;
+  /** Monotonic latch for the warp-screen progress bar — prevents the
+   *  displayed percentage from regressing on a transient gate flip. */
+  maxProgressSeen: number;
+  /** Set ONCE at boot from `?loading=cosmetic` URL param. When true,
+   *  the loading curtain renders cosmetically but `computeIsLoadingActive`
+   *  returns false — restores legacy "no pause" behaviour as a
+   *  pre-rollout safety net. Immutable after boot. */
+  loadingCosmeticOnly: boolean;
+  /** Double-click guard for both the in-game Respawn button and the
+   *  galaxy-screen sector-pick hex. Set true at the first click,
+   *  cleared on `gameReady=true` at the destination. Prevents a
+   *  second click from racing through the leave/rejoin pipeline
+   *  twice. */
+  sectorReentryInFlight: boolean;
 
   setConnectionStatus: (s: ConnectionStatus) => void;
   setSectorName: (name: string) => void;
@@ -319,4 +352,12 @@ export interface UIStore {
    *  state and the cached `playersOnline` in one set so subscribers see
    *  a consistent pair. */
   setServerHealth: (health: ServerHealth, playersOnline?: number | null) => void;
+  // ── Spawn handshake setters (plan: crispy-kazoo Commit 1) ─────────
+  setClientReadySent: (v: boolean) => void;
+  setArrivalTickFromServer: (tick: number | null) => void;
+  setArrivalAcked: (v: boolean) => void;
+  setLocalPoseResolved: (v: boolean) => void;
+  setMaxProgressSeen: (p: number) => void;
+  setLoadingCosmeticOnly: (v: boolean) => void;
+  setSectorReentryInFlight: (v: boolean) => void;
 }

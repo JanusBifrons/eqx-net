@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Box, Typography } from '@mui/material';
-import { useGameReady, useUIStore } from '../state/store';
+import { useIsLoadingActive, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 
 /**
@@ -91,17 +91,14 @@ export function WarpScreen(): JSX.Element | null {
   const rendererFirstFrameRendered = useUIStore((s) => s.rendererFirstFrameRendered);
 
   const joinMinimumElapsed = useUIStore((s) => s.joinMinimumElapsed);
-  const isConnecting = phase === 'connecting';
-  // Single source of truth: `useGameReady()` IS the 5-gate readiness
-  // predicate (incl. `firstSnapshotApplied`). A prior local copy here
-  // listed only 4 gates (omitted `firstSnapshotApplied`) and silently
-  // drifted from `useGameReady`; calling it directly makes `visible`
-  // provably equal the load-curtain's `!gameReady` driver and kills
-  // the drift permanently. The individual sub-flag selectors above
-  // stay — the status text below reports WHICH gate is still open.
-  const ready = useGameReady();
-  const inGameNotReady = phase === 'game' && !ready;
-  const visible = isConnecting || inGameNotReady;
+  // Plan: crispy-kazoo Commit 1 — single source of truth is now
+  // `useIsLoadingActive()` (which delegates to `computeGameReadyFromState`
+  // and honours the `?loading=cosmetic` kill switch). Behaviour-equal
+  // to the old `isConnecting || (phase==='game' && !useGameReady())`
+  // composition; switching here so Commit 2's handshake gates land in
+  // one place. The individual sub-flag selectors above stay — the
+  // status text below still reports WHICH gate is still open.
+  const visible = useIsLoadingActive();
 
   // Status text follows the ordered readiness chain — first NOT-ready
   // sub-flag wins. The 5 s minimum-display floor surfaces as

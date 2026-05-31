@@ -14,6 +14,25 @@ if (typeof window !== 'undefined') {
   (window as unknown as { __eqxStore?: typeof useUIStore }).__eqxStore = useUIStore;
 }
 
+// Plan: crispy-kazoo Commit 1 — pre-rollout safety net for the
+// loaded-then-visible spawn handshake. `?loading=cosmetic` restores
+// legacy "no pause boundary" behaviour: the curtain renders
+// cosmetically, but `computeIsLoadingActive` returns false so input,
+// audio, and the RAF game-work keep running. Set ONCE at boot — the
+// flag is intentionally not reactive.
+if (typeof window !== 'undefined') {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('loading') === 'cosmetic') {
+      useUIStore.getState().setLoadingCosmeticOnly(true);
+      // eslint-disable-next-line no-console
+      console.warn('[loading-kill-switch] ?loading=cosmetic active — curtain is cosmetic only, no pause boundary');
+    }
+  } catch {
+    // URL parse should never throw; if it does, fall through to default false.
+  }
+}
+
 const theme = createTheme({
   palette: {
     mode: 'dark',

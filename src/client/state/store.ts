@@ -87,13 +87,32 @@ function persistSettings(
  * renderer, so that flag stays truthfully true there. This is the
  * UI-readiness analogue of `resetPredictionState()` — the one
  * spatial-seed site, invoked by connect + the `transit_ready` handler.
+ *
+ * Plan: crispy-kazoo Commit 1 — extends the reset to also cover the new
+ * spawn-handshake fields (`clientReadySent`, `arrivalTickFromServer`,
+ * `arrivalAcked`, `localPoseResolved`, `maxProgressSeen`). These are
+ * the "no arrival yet" defaults — every new join must re-handshake.
  */
 function commonReadinessRearm(prevGen: number): {
   firstSnapshotApplied: false;
   joinMinimumElapsed: false;
   joinGeneration: number;
+  clientReadySent: false;
+  arrivalTickFromServer: null;
+  arrivalAcked: false;
+  localPoseResolved: false;
+  maxProgressSeen: 0;
 } {
-  return { firstSnapshotApplied: false, joinMinimumElapsed: false, joinGeneration: prevGen + 1 };
+  return {
+    firstSnapshotApplied: false,
+    joinMinimumElapsed: false,
+    joinGeneration: prevGen + 1,
+    clientReadySent: false,
+    arrivalTickFromServer: null,
+    arrivalAcked: false,
+    localPoseResolved: false,
+    maxProgressSeen: 0,
+  };
 }
 
 export const useUIStore = create<UIStore>((set, get) => ({
@@ -142,6 +161,14 @@ export const useUIStore = create<UIStore>((set, get) => ({
   joinGeneration: 0,
   serverHealth: 'unknown',
   playersOnline: null,
+  // ── Spawn handshake (plan: crispy-kazoo Commit 1) ─────────────────
+  clientReadySent: false,
+  arrivalTickFromServer: null,
+  arrivalAcked: false,
+  localPoseResolved: false,
+  maxProgressSeen: 0,
+  loadingCosmeticOnly: false,
+  sectorReentryInFlight: false,
 
   setConnectionStatus: (s) => set({ connectionStatus: s }),
   setSectorName: (name) => set({ sectorName: name }),
@@ -220,7 +247,53 @@ export const useUIStore = create<UIStore>((set, get) => ({
     // Pass `null` explicitly to clear.
     playersOnline: playersOnline === undefined ? prev.playersOnline : playersOnline,
   })),
+  // ── Spawn handshake setters (plan: crispy-kazoo Commit 1) ─────────
+  setClientReadySent: (v) => set({ clientReadySent: v }),
+  setArrivalTickFromServer: (tick) => set({ arrivalTickFromServer: tick }),
+  setArrivalAcked: (v) => set({ arrivalAcked: v }),
+  setLocalPoseResolved: (v) => set({ localPoseResolved: v }),
+  setMaxProgressSeen: (p) => set({ maxProgressSeen: p }),
+  setLoadingCosmeticOnly: (v) => set({ loadingCosmeticOnly: v }),
+  setSectorReentryInFlight: (v) => set({ sectorReentryInFlight: v }),
 }));
+
+/**
+ * Pure helper: join-render readiness predicate against any state
+ * snapshot. Exported so non-React callers (the loading-active /
+ * progress-bar helpers below, and direct `useUIStore.getState()`
+ * consumers in net code) can ask the same question `useGameReady`
+ * answers, without re-wiring the gate list at every call site.
+ *
+ * Composed from five sub-flags — ALL must be true:
+ *   - `connectionStatus === 'connected'` — WebSocket up.
+ *   - `localShipInstanceId !== null` — server welcomed us.
+ *   - `rendererFirstFrameRendered` — Pixi has painted a frame.
+ *   - `firstSnapshotApplied` — first state snapshot has landed.
+ *   - `joinMinimumElapsed` — the 5-second minimum-display floor.
+ *
+ * Plan: crispy-kazoo — Commit 2 extends this with the handshake
+ * gates (`clientReadySent`, `arrivalTickFromServer !== null`,
+ * `arrivalAcked`, `localPoseResolved`). Commit 1 keeps the 5-gate
+ * set so the curtain visibility is byte-equivalent to today.
+ */
+export function computeGameReadyFromState(
+  s: Pick<
+    UIStore,
+    | 'connectionStatus'
+    | 'localShipInstanceId'
+    | 'rendererFirstFrameRendered'
+    | 'firstSnapshotApplied'
+    | 'joinMinimumElapsed'
+  >,
+): boolean {
+  return (
+    s.connectionStatus === 'connected'
+    && s.localShipInstanceId !== null
+    && s.rendererFirstFrameRendered
+    && s.firstSnapshotApplied
+    && s.joinMinimumElapsed
+  );
+}
 
 /**
  * Join-render readiness selector — true when the player can safely see
@@ -228,31 +301,67 @@ export const useUIStore = create<UIStore>((set, get) => ({
  * WarpScreen overlay is visible exactly when this is `false` (in game
  * phase) and hides when it flips `true`.
  *
- * Composed from four sub-flags — ALL must be true:
- *   - `connectionStatus === 'connected'` — WebSocket up.
- *   - `localShipInstanceId !== null` — server welcomed us; we have an
- *     identity to render.
- *   - `rendererFirstFrameRendered` — Pixi has painted a frame with the
- *     LOCAL player's mirror entry visible.
- *   - `joinMinimumElapsed` — the 5-second minimum-display floor (set
- *     by GameSurface's mount-time setTimeout) has elapsed. Reconciler
- *     has had time to apply its first correction before the player
- *     sees the canvas, so the first-move teleport (user-reported
- *     2026-05-14: "the first time you move. It teleports you to where
- *     you actually are") is absorbed under the warp visual.
- *
- * `setPhase` resets the readiness flags on every entry into game
- * phase so subsequent room transitions retrigger the overlay.
+ * Delegates to `computeGameReadyFromState`.
  */
 export function useGameReady(): boolean {
-  return useUIStore(
-    (s) =>
-      s.connectionStatus === 'connected'
-      && s.localShipInstanceId !== null
-      && s.rendererFirstFrameRendered
-      && s.firstSnapshotApplied
-      && s.joinMinimumElapsed,
-  );
+  return useUIStore(computeGameReadyFromState);
+}
+
+/**
+ * Pure helper: should the loading curtain be raised right now?
+ *
+ *   - `loadingCosmeticOnly` kill switch wins above everything → false.
+ *   - `phase === 'connecting'` (initial connect, ship swap) → true.
+ *   - In game phase but not yet ready → true.
+ *   - All other phases (meta / auth / galaxy-map / local) → false.
+ *
+ * Plan: crispy-kazoo — Commit 4 wires this into the gameRafLoop
+ * pause boundary + the App.tsx input/audio gates. Commit 5 wires
+ * `useShouldRenderHud` into per-component renders.
+ */
+export function computeIsLoadingActive(s: UIStore): boolean {
+  if (s.loadingCosmeticOnly) return false;
+  if (s.phase === 'connecting') return true;
+  if (s.phase !== 'game') return false;
+  return !computeGameReadyFromState(s);
+}
+
+export function useIsLoadingActive(): boolean {
+  return useUIStore(computeIsLoadingActive);
+}
+
+/** Convenience: HUD components return `null` when this is false. */
+export function useShouldRenderHud(): boolean {
+  return useUIStore((s) => !computeIsLoadingActive(s));
+}
+
+/**
+ * Pure helper: progress 0–100 for the warp-screen progress bar.
+ *
+ * Weights chosen so the bar advances monotonically across the gate
+ * sequence. `maxProgressSeen` is the latch — once the bar reaches a
+ * given percentage it cannot regress on a transient gate flip.
+ *
+ * Plan: crispy-kazoo Commit 1 — the new spawn-handshake gates
+ * (`localPoseResolved`, `clientReadySent`, `arrivalTickFromServer`,
+ * `arrivalAcked`) are wired into the weight table; until Commit 2
+ * actually flips them, the raw progress caps at ~65 for the legacy
+ * 5-gate path. Existing `WarpScreen` still drives its visual fill
+ * from elapsed-ms; `computeWarpProgress` is a parallel source the
+ * future progress bar will consume.
+ */
+export function computeWarpProgress(s: UIStore): number {
+  let p = 0;
+  if (s.connectionStatus === 'connected') p += 10;
+  if (s.localShipInstanceId !== null) p += 15;
+  if (s.firstSnapshotApplied) p += 15;
+  if (s.localPoseResolved) p += 10;
+  if (s.rendererFirstFrameRendered) p += 15;
+  if (s.joinMinimumElapsed) p += 10;
+  if (s.clientReadySent) p += 10;
+  if (s.arrivalTickFromServer !== null) p += 10;
+  if (s.arrivalAcked) p += 5;
+  return Math.max(s.maxProgressSeen, p);
 }
 
 /**
