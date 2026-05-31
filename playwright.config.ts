@@ -70,6 +70,7 @@ const FEATURE_SPECS: string[] = [
   '**/combat-heap-growth-fx-bisect.spec.ts',
   '**/combat-allocation-profile.spec.ts',
   '**/combat-allocation-profile-hostile.spec.ts',
+  '**/heap-snapshot-diff-worker-off.spec.ts',
   '**/heap-snapshot-diff.spec.ts',
   '**/network-buffer-and-throttle-repro.spec.ts',
   '**/drawer-galaxy-map-open-close.spec.ts',
