@@ -121,12 +121,15 @@ export class WorkerRendererClient implements IRenderer {
       this.initResolve = resolve;
     });
 
+    const zoomParam = new URLSearchParams(window.location.search).get('zoom');
+    const zoom = zoomParam !== null ? parseFloat(zoomParam) : undefined;
     this.post({
       type: 'BOOT',
       canvas: offscreen,
       width: cssW,
       height: cssH,
       dpr,
+      ...(zoom !== undefined ? { zoom } : {}),
     }, [offscreen]);
 
     // F1 — tell the worker once whether to emit per-frame markers.

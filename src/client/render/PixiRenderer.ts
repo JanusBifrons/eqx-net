@@ -34,6 +34,9 @@ import {
 // the constants below are PixiRenderer-specific (background tint,
 // remote-laser colour used by inline beam draw in update()).
 const BACKGROUND_COLOR = 0x05070f;
+// Default gameplay camera zoom (world Container scale). 1.0 preserves the
+// historical framing; tune here once the `?zoom=` on-device A/B settles.
+const DEFAULT_GAMEPLAY_ZOOM = 1.0;
 const REMOTE_LASER_COLOR = 0xff6600;
 const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
@@ -249,19 +252,28 @@ export class PixiRenderer implements IRenderer {
     let initialDpr: number;
     let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
     let domContainer: HTMLElement | null = null;
+    // Optional `?zoom=` override (on-device crispness/framing A/B). DOM mode
+    // reads the URL directly; worker mode receives it on the BOOT bag (the
+    // worker has no `window`), forwarded by WorkerRendererClient.
+    let zoom: number | undefined;
 
     if (isDom) {
       domContainer = rawContainer as HTMLElement;
       initialW = domContainer.clientWidth || window.innerWidth;
       initialH = domContainer.clientHeight || window.innerHeight;
       initialDpr = window.devicePixelRatio ?? 1;
+      const z = new URLSearchParams(window.location.search).get('zoom');
+      if (z !== null) zoom = parseFloat(z);
       // No `canvas:` option — Pixi creates one and we append it.
     } else {
-      const bag = rawContainer as { canvas: OffscreenCanvas; width: number; height: number; dpr: number };
+      const bag = rawContainer as {
+        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number;
+      };
       canvas = bag.canvas;
       initialW = bag.width;
       initialH = bag.height;
       initialDpr = bag.dpr;
+      zoom = bag.zoom;
     }
 
     this.app = new Application();
@@ -320,6 +332,19 @@ export class PixiRenderer implements IRenderer {
       followLerpFactor: 1,
     });
     this.camera.setScreenSize(initialW, initialH);
+
+    // Default gameplay zoom. Historically the gameplay camera ran at the
+    // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
+    // which only ever `moveCenter`d the gameplay world — it never set a
+    // zoom; cf. GalaxyOverviewRenderer's setZoom(0.7), a separate map).
+    // `DEFAULT_GAMEPLAY_ZOOM` makes that explicit + one-line tunable, and
+    // the `?zoom=` URL override lets us A/B the sweet spot on-device
+    // before baking a new default in. (plan: zazzy-engelbart, Phase 2.)
+    const resolvedZoom =
+      zoom !== undefined && Number.isFinite(zoom) && zoom > 0
+        ? zoom
+        : DEFAULT_GAMEPLAY_ZOOM;
+    this.camera.setZoom(resolvedZoom);
 
     // Frame diagnostic (gated). The decisive crispness metric: the
     // backing buffer (`app.canvas.width`) MUST equal round(CSS px × dpr)

@@ -35,9 +35,10 @@ export function zoomAround(
 }
 
 /**
- * Wheel-zoom step factor. `deltaY > 0` (wheel down) = zoom out;
- * `deltaY < 0` = zoom in. The 0.9 / 1.1 factor matches pixi-viewport's
- * default `wheel({ smooth: 4 })` roughly.
+ * Wheel-zoom step factor per wheel tick. `deltaY > 0` (wheel down) =
+ * zoom out; `deltaY < 0` = zoom in. This is the per-tick *target* step;
+ * the visible smoothing (the `wheel({ smooth: 4 })` analogue) lives in
+ * `Camera.tick`, which eases the live scale toward the accumulated target.
  */
 export function wheelZoomFactor(deltaY: number): number {
   return deltaY > 0 ? 0.9 : 1.1;

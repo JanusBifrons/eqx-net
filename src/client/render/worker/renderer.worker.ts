@@ -60,6 +60,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
           width: msg.width,
           height: msg.height,
           dpr: msg.dpr,
+          ...(msg.zoom !== undefined ? { zoom: msg.zoom } : {}),
         });
         // Construct the in-game galaxy-map overlay worker-side. Its
         // hex `pointertap` listeners don't fire here (no Pixi event
