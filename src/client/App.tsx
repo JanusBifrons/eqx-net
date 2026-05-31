@@ -25,7 +25,7 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, useGameReady } from './state/store';
+import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { MobileControls } from './components/MobileControls';
 import { ErrorBoundary } from './components/ErrorOverlay';
@@ -94,13 +94,41 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   const touchInputRef = useRef<TouchInput | null>(
     isTouchRef.current ? new TouchInput() : null,
   );
+  // Plan: crispy-kazoo, Commit 4 — pause boundary needs audio handle
+  // for suspendAll / resumeAll on loading transitions.
+  const audioRef = useRef<HowlerAudioService | null>(null);
   // Join-render diagnostic anchor — captured once per GameSurface mount.
   // Used by the `join_chain_complete` event below + by the rAF loop's
   // `pixi_first_frame` payload.
   const gameSurfaceMountedAtRef = useRef<number>(performance.now());
   const joinChainCompleteLoggedRef = useRef<boolean>(false);
   const gameReady = useGameReady();
+  // Plan: crispy-kazoo, Commit 4 — pause boundary: gate audio + input
+  // off the curtain visibility (`useIsLoadingActive`). Honours the
+  // `?loading=cosmetic` URL kill switch via the underlying selector.
+  const isLoadingActive = useIsLoadingActive();
   const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
+
+  // Plan: crispy-kazoo, Commit 4 — on loading transitions, suspend the
+  // audio context + disable Keyboard / TouchInput so input events the
+  // user fires "during the curtain" don't reach the server. Held keys
+  // are zeroed on disable so a key still held at the moment the
+  // curtain drops doesn't auto-thrust on resume — the user must
+  // re-press to act.
+  useEffect(() => {
+    const audio = audioRef.current;
+    const keyboard = keyboardRef.current;
+    const touch = touchInputRef.current;
+    if (isLoadingActive) {
+      audio?.suspendAll();
+      keyboard?.setEnabled(false);
+      touch?.setEnabled(false);
+    } else {
+      audio?.resumeAll();
+      keyboard?.setEnabled(true);
+      touch?.setEnabled(true);
+    }
+  }, [isLoadingActive]);
 
   // Fire `join_chain_complete` exactly once per GameSurface mount, when
   // all four readiness gates (connected + welcomed + first-snapshot OR
@@ -271,7 +299,9 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     installProfileWindow();
 
     const gameClient = new ColyseusGameClient();
-    gameClient.setAudio(new HowlerAudioService());
+    const audio = new HowlerAudioService();
+    audioRef.current = audio;
+    gameClient.setAudio(audio);
     clientRef.current = gameClient;
     // Module-level singleton so low-cadence React reads (e.g. the Galaxy
     // tab's 5 s arrival-snapshot poll) can reach `mirror` without prop
