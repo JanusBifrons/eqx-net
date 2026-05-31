@@ -1667,20 +1667,41 @@ export class SectorRoom extends Room<SectorState> {
   /**
    * Build a read-only AiEntity snapshot for the given swarm id by reading SAB.
    * Used by AiController to feed live poses to behaviours each tick.
+   *
+   * 2026-05-31: pooled scratch (Invariant #14). Pre-fix this allocated a
+   * fresh literal per drone per server tick (~15 × 60 = 900 allocs/sec).
+   * Combined with HostileDroneBehaviour's per-tick AiIntent literals,
+   * the V8 GC was firing major collections every ~1 s → 100-334 ms
+   * stop-the-world pauses → `aiTick` phase blocking the snapshot
+   * dispatch loop → user-reported chronic `recv_gap_long` 227-461 ms.
+   * Capture `hlqxy6` + dispatch probe `tests/diag/server-dispatch-gap-probe.ts`.
+   *
+   * The caller (`AiController.runEntity` → `behaviour.tick(self, view)`)
+   * reads the fields immediately and does not retain the reference, so
+   * mutating a single shared object across calls is safe.
    */
+  // `AiEntity` fields are typed `readonly` in the IAiBehaviour contract
+  // — that's a contract-level read-only (callers must not mutate),
+  // not a structural-level immutability. The pool writes through a
+  // `Mutable<AiEntity>` view; consumers (`AiController.runEntity` →
+  // `behaviour.tick(self, view)`) still see the original `readonly`
+  // surface and treat fields as immutable.
+  private readonly _aiEntityScratch: { -readonly [K in keyof AiEntity]: AiEntity[K] } = {
+    id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+  };
   private swarmEntitySnapshot(id: string): AiEntity | null {
     const rec = this.swarmRegistry.get(id);
     if (!rec) return null;
     const b = slotBase(rec.slot);
-    return {
-      id,
-      x: this.sabF32[b + SLOT_X_OFF]!,
-      y: this.sabF32[b + SLOT_Y_OFF]!,
-      vx: this.sabF32[b + SLOT_VX_OFF]!,
-      vy: this.sabF32[b + SLOT_VY_OFF]!,
-      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-    };
+    const s = this._aiEntityScratch;
+    s.id = id;
+    s.x = this.sabF32[b + SLOT_X_OFF]!;
+    s.y = this.sabF32[b + SLOT_Y_OFF]!;
+    s.vx = this.sabF32[b + SLOT_VX_OFF]!;
+    s.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+    s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    return s;
   }
 
   /**
