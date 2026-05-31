@@ -145,4 +145,23 @@ export class RafStallDetector {
       if (heap !== undefined) this.lastRafStallHeapMb = heap;
     }
   }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — reset every accumulator so a
+   * GameSurface remount sees a clean detector. No RAF / observer is
+   * outstanding here (the detector is pure-pull from caller frames),
+   * so dispose is field-zero — kept as a method for the dispose-audit
+   * test to confirm the subsystem participates in cleanup.
+   */
+  dispose(): void {
+    this.rafSampleCounter = 0;
+    this.swarmDecodeMaxMs = 0;
+    this.swarmDecodeTotalMs = 0;
+    this.swarmDecodeCount = 0;
+    this.lastRafStallAtMs = -1;
+    this.lastRafStallHeapMb = -1;
+    this.rafCountSinceSample = 0;
+    this.rafElapsedTotalMsSinceSample = 0;
+    this.rafElapsedMaxMsSinceSample = 0;
+  }
 }

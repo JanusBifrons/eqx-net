@@ -376,14 +376,25 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener('keydown', onKey);
       layerRO.disconnect();
-      keyboard.dispose();
-      gameClient.dispose();
+      // Plan: crispy-kazoo, Commit 6 — cleanup ordering.
+      // 1. Null the singleton FIRST so consumers reaching for the client
+      //    via `getGameClient()` get null, not a half-disposed ref.
+      // 2. Tear down input next (it doesn't depend on renderer / audio).
+      // 3. Renderer BEFORE audio — effects subsystem fires audio events
+      //    during shutdown; audio must still be alive for that handoff.
+      // 4. Audio AFTER renderer.
+      // 5. Client dispose LAST (carries the reflection-based mirror
+      //    clear + every subsystem dispose).
       setGameClient(null);
+      keyboard.dispose();
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
       // subscriptions short-circuit on the post-unmount tail.
       galaxyLayerRef.current = null;
       renderer.dispose();
+      audioRef.current?.dispose();
+      audioRef.current = null;
+      gameClient.dispose();
     };
   }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit]);
 

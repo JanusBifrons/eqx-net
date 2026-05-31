@@ -73,4 +73,13 @@ export class SnapshotCoalescer {
   peekDroppedCount(): number {
     return this.droppedSinceLastDrain;
   }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — drop any pending snapshot so a
+   * GameSurface remount doesn't inherit stale state.
+   */
+  dispose(): void {
+    this.pending = null;
+    this.droppedSinceLastDrain = 0;
+  }
 }

@@ -168,6 +168,21 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 export class ColyseusGameClient {
   /**
+   * Plan: crispy-kazoo, Commit 6 — live-instance counter. Bumped in
+   * the constructor, decremented in dispose. The respawn-memory
+   * stability spec asserts this stays at 1 across N death/respawn
+   * cycles — a regression to dispose ordering / leak would surface
+   * as N > 1 after cycle N.
+   */
+  private static _liveInstanceN = 0;
+
+  /** Plan: crispy-kazoo, Commit 6 — test surface for the
+   *  respawn-memory stability assertion. Production code never reads it. */
+  static getLiveInstanceCount(): number {
+    return ColyseusGameClient._liveInstanceN;
+  }
+
+  /**
    * Wall-clock source. Production code uses `REAL_CLOCK` (default —
    * `this.clock.now()`). Tests / the replay harness inject a `MockClock`
    * to step time deterministically. Plan: capture-driven replay infra,
@@ -183,6 +198,8 @@ export class ColyseusGameClient {
    */
   constructor(clock: Clock = REAL_CLOCK) {
     this.clock = clock;
+    ColyseusGameClient._liveInstanceN += 1;
+    logEvent('client_constructed', { liveInstanceN: ColyseusGameClient._liveInstanceN });
     // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
     // testing. Default ON. Tests construct with the mock URL absent →
     // coalesce defaults ON, matching production behaviour.
@@ -4361,9 +4378,30 @@ export class ColyseusGameClient {
     });
   }
 
+  /**
+   * Plan: crispy-kazoo, Commit 6 — reflection-based mirror clear.
+   *
+   * Walks every property on `mirror` and clears Maps / Sets / Arrays
+   * generically. The plan's prophylactic against future mirror
+   * additions: adding a new field to `RenderMirror` does NOT require
+   * touching dispose — the walk picks it up automatically. The
+   * disposeAudit test populates every field with a sentinel value
+   * and asserts they're empty post-dispose.
+   */
+  private clearMirror(): void {
+    const m = this.mirror as unknown as Record<string, unknown>;
+    for (const k of Object.keys(m)) {
+      const v = m[k];
+      if (v instanceof Map) v.clear();
+      else if (v instanceof Set) v.clear();
+      else if (Array.isArray(v)) v.length = 0;
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.localDead = false;
+    this.diedAtMs = 0;
     useUIStore.getState().setDead(false);
     this.keyboard = null;
     this.touchInput = null;
@@ -4385,6 +4423,19 @@ export class ColyseusGameClient {
     }
     this.room?.leave();
     this.room = null;
+
+    // Plan: crispy-kazoo, Commit 6 — subsystem disposes.
+    // The pre-Commit-6 dispose covered ~14 fields and missed 20+
+    // surfaces, which is the proximate cascade-trigger root cause: a
+    // stale ColyseusGameClient retained via uncleared subscriptions /
+    // timers / Maps. Each subsystem's dispose is idempotent.
+    this.snapshotCoalescer.dispose();
+    this.transitInstr.dispose();
+    this.rafStallDetector.dispose();
+    this.hudDispatcher.dispose();
+    this.ghostManager.dispose();
+    this._aiController.clear();
+
     this.predWorld?.dispose();
     this.predWorld = null;
     this.reconciler = null;
@@ -4392,8 +4443,32 @@ export class ColyseusGameClient {
     this.predRemoteShipIds.clear();
     this._remoteShipOffsets.clear();
     this.predSwarmKeys.clear();
-    this.mirror.swarm?.clear();
-    this.mirror.projectiles?.clear();
-    this.mirror.remoteLasers?.clear();
+
+    // Maps + sets on the client itself (combat surfaces).
+    this._damageFlashFrames.clear();
+    this._scheduledDamageSpawns.length = 0;
+
+    // Reflection-based clear: every Map / Set / Array on `mirror` empties.
+    this.clearMirror();
+
+    // Stats + per-connection accumulators — reset to freshly-constructed
+    // (non-nullable types) so a re-mount sees a clean baseline.
+    this._rttWelford = createWelford();
+    this._lookaheadCtrl = createLookaheadController(6);
+    this._dropDetector = createDropDetector();
+    this._anchorInitialised = false;
+    this._localPoseResolvedLogged = false;
+    this.lastSentInputAtMs = 0;
+    this.lastSentInputState = null;
+
+    // Audio reference released — GameSurface owns the lifecycle.
+    this.audio = null;
+
+    ColyseusGameClient._liveInstanceN = Math.max(0, ColyseusGameClient._liveInstanceN - 1);
+    logEvent('dispose_complete', {
+      liveInstanceN: ColyseusGameClient._liveInstanceN,
+      mirrorShipsRemaining: this.mirror.ships.size,
+      mirrorSwarmRemaining: this.mirror.swarm?.size ?? 0,
+    });
   }
 }

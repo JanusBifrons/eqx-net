@@ -180,4 +180,13 @@ export class GhostManager {
   get pendingCount(): number {
     return this.ghosts.size;
   }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — full teardown.
+   * Drops every pending ghost. Idempotent; safe to call after dispose
+   * (the ghosts Map is just emptied on the second call).
+   */
+  dispose(): void {
+    this.ghosts.clear();
+  }
 }

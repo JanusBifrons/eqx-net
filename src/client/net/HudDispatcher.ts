@@ -73,4 +73,20 @@ export class HudDispatcher {
       useUIStore.getState().setShieldPct(this.pendingShieldPct);
     }
   }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — reset every state surface so a
+   * GameSurface remount sees a clean dispatcher. No RAF / timeout is
+   * outstanding here (the dispatcher is pure-pull), so dispose is a
+   * simple field-zero — but kept as a method so the dispose-audit
+   * test can mark this subsystem cleared without inspecting fields.
+   */
+  dispose(): void {
+    this.pendingHullPct = -1;
+    this.pendingShieldPct = -1;
+    this.lastPushedHullPct = -1;
+    this.lastPushedShieldPct = -1;
+    this.lastDispatchAtMs = -1;
+    this.lastPushedSwarmCount = -1;
+  }
 }

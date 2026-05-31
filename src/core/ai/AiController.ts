@@ -100,6 +100,16 @@ export class AiController {
   }
 
   /**
+   * Plan: crispy-kazoo, Commit 6 — full teardown for the dispose audit.
+   * Drops every registered entity (the AI controller is owned by
+   * ColyseusGameClient on the client; a fresh GameSurface mount
+   * reconstructs it). Idempotent.
+   */
+  clear(): void {
+    this.entities.clear();
+  }
+
+  /**
    * Render-side query: is the given entity's behaviour currently treating
    * `playerId` as a hostile target? Returns false if the entity isn't
    * registered or its behaviour doesn't implement the optional query (e.g.
