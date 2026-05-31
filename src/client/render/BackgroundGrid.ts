@@ -137,11 +137,32 @@ export interface GridFrameMarkers {
   labelCount: number;
 }
 
+/** Pool cap for the free-list of grid-label Texts. Sized to cover
+ *  the worst-case "camera turns 180° quickly" scenario where every
+ *  visible label leaves frame in one update + the next set comes in.
+ *  ~30 labels visible × 2 = 60 covers a full visual frame's worth. */
+const LABEL_FREE_POOL_CAP = 60;
+
 export class BackgroundGrid {
+  /** 2026-05-31 diagnostic — per-class label churn counters. Exposed
+   *  via window for heap-leak probes. */
+  static debugCounters = { textCreate: 0, textReuse: 0, textRelease: 0, textDestroy: 0 };
+  static {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __backgroundGridDebug?: typeof BackgroundGrid.debugCounters })
+        .__backgroundGridDebug = BackgroundGrid.debugCounters;
+    }
+  }
+
   private readonly microLines = new Graphics();
   private readonly macroLines = new Graphics();
   private readonly labelContainer = new Container();
   private readonly labels = new Map<string, Text>();
+  /** Free-list of Text instances available for reuse when a new cell
+   *  pops into view. Mutating `text.text` reuses Pixi's internal glyph
+   *  atlas rather than allocating a fresh Texture + TextureSource +
+   *  WebGLTexture chain. See update() for the pool flow. */
+  private readonly freeLabels: Text[] = [];
   private readonly seen = new Set<string>();
   /**
    * Plan: combat-fx-hunt (2026-05-31) — last-built grid-bounds cache.
@@ -292,7 +313,28 @@ export class BackgroundGrid {
       for (const spec of specs) {
         this.seen.add(spec.key);
         if (!this.labels.has(spec.key)) {
-          const text = new Text({ text: `${spec.gx},${spec.gy}`, style: LABEL_STYLE });
+          // 2026-05-31: pool Text instances. Pre-fix the grid created
+          // a fresh Text per unseen cell. With held-thrust the camera
+          // moves continuously → new cells stream in → 12+ Text/sec
+          // allocated, 9+/sec destroyed (active-combat-heap-diff
+          // probe: textCreate=761 / textDestroy=566 over 60 s of
+          // thrust). NET +195 Text retained per minute, multiplied by
+          // the underlying Texture + TextureSource + WebGLTexture
+          // chain each owns.
+          //
+          // Pool: pop a free Text and mutate `.text` instead of
+          // allocating. Pixi v8 regenerates the glyph atlas on
+          // `text.text = newValue` automatically, so visual is
+          // identical. Worst-case alloc only when free pool is empty
+          // (first ~10 s of camera motion until churn saturates).
+          let text = this.freeLabels.pop();
+          if (!text) {
+            BackgroundGrid.debugCounters.textCreate++;
+            text = new Text({ text: `${spec.gx},${spec.gy}`, style: LABEL_STYLE });
+          } else {
+            BackgroundGrid.debugCounters.textReuse++;
+            text.text = `${spec.gx},${spec.gy}`;
+          }
           text.alpha = LABEL_ALPHA;
           text.position.set(spec.x + LABEL_OFFSET_X, spec.y + LABEL_OFFSET_Y);
           this.labelContainer.addChild(text);
@@ -305,10 +347,21 @@ export class BackgroundGrid {
     const cleanupStart = performance.now();
     for (const [key, text] of this.labels) {
       if (!this.seen.has(key)) {
-        // Pixi v8 Text owns its dynamic glyph atlas (Texture +
-        // TextureSource + WebGLTexture). Plain `.destroy()` leaks all
-        // three — confirmed by 2026-05-31 heap snapshot diff.
-        text.destroy({ texture: true, textureSource: true });
+        // Pool the Text instead of destroying. Pixi v8 keeps the glyph
+        // atlas tied to the Text instance — by mutating `.text` later
+        // we reuse the same Pixi internals. Container removal alone is
+        // sufficient to drop it from the scene graph; the Text stays
+        // alive in `freeLabels` for the next cell-pop-in.
+        BackgroundGrid.debugCounters.textRelease++;
+        this.labelContainer.removeChild(text);
+        if (this.freeLabels.length < LABEL_FREE_POOL_CAP) {
+          this.freeLabels.push(text);
+        } else {
+          // Defensive overflow — drop the excess fully so the pool
+          // doesn't grow unbounded under pathological scenarios.
+          BackgroundGrid.debugCounters.textDestroy++;
+          text.destroy({ texture: true, textureSource: true });
+        }
         this.labels.delete(key);
       }
     }
@@ -325,6 +378,11 @@ export class BackgroundGrid {
       text.destroy({ texture: true, textureSource: true });
     }
     this.labels.clear();
+    // Pooled free-list Texts also need full GPU disposal on teardown.
+    for (const text of this.freeLabels) {
+      text.destroy({ texture: true, textureSource: true });
+    }
+    this.freeLabels.length = 0;
     this.labelContainer.destroy({ children: true });
     this.microLines.destroy();
     this.macroLines.destroy();

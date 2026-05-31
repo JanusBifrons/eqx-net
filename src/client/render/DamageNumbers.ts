@@ -269,9 +269,20 @@ export class DamageNumberManager {
     this.byTarget.delete(id);
   }
 
+  /** 2026-05-31 diagnostic: count fresh allocs vs pool reuses. Exposed
+   *  via window for the active-combat-heap-diff probe to inspect. */
+  static debugCounters = { acquireFresh: 0, acquireFromPool: 0, releaseToPool: 0, releaseDestroy: 0 };
+  static {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __damageNumberDebug?: typeof DamageNumberManager.debugCounters })
+        .__damageNumberDebug = DamageNumberManager.debugCounters;
+    }
+  }
+
   private acquireText(initialText: string): Text {
     const recycled = this.freeTexts.pop();
     if (recycled) {
+      DamageNumberManager.debugCounters.acquireFromPool++;
       recycled.text = initialText;
       // Reset transform fields the previous bucket may have mutated.
       // scale.set + alpha are re-applied each `update()`, but reset
@@ -279,6 +290,7 @@ export class DamageNumberManager {
       recycled.scale.set(1, 1);
       return recycled;
     }
+    DamageNumberManager.debugCounters.acquireFresh++;
     const fresh = new Text({ text: initialText, style: STYLE });
     fresh.anchor.set(0.5, 0.5);
     return fresh;
@@ -286,6 +298,7 @@ export class DamageNumberManager {
 
   private releaseText(text: Text): void {
     if (this.freeTexts.length >= FREE_POOL_CAP) {
+      DamageNumberManager.debugCounters.releaseDestroy++;
       // Overflow — defensive bound. Above POOL_CAP × 2 reusable Texts
       // there's no real-world workload that would consume them; drop
       // the excess so memory stays bounded.
@@ -298,6 +311,7 @@ export class DamageNumberManager {
       text.destroy({ texture: true, textureSource: true });
       return;
     }
+    DamageNumberManager.debugCounters.releaseToPool++;
     this.freeTexts.push(text);
   }
 
