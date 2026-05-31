@@ -44,6 +44,14 @@ export function ShipPickerModal({ open, onClose, selectedKind, onSelect, title, 
       fullWidth
       data-testid="ship-picker-modal"
       PaperProps={{ sx: { bgcolor: '#0c1020', border: '1px solid #2a2f40', m: 1 } }}
+      // Plan: crispy-kazoo, Commit 7 — drop the MUI Grow transition
+      // (~225 ms default) for sector-pick responsiveness. Combined
+      // with the existing `PICKER_OPEN_DELAY_MS = 200` touch-bleed
+      // guard (load-bearing, do NOT touch), the modal goes from
+      // ~430 ms to ~230 ms click-to-visible. The transition was
+      // unjustified polish; the modal contents are still informative
+      // without the eased-in feel.
+      transitionDuration={{ enter: 0, exit: 0 }}
     >
       <DialogTitle sx={{ bgcolor: '#0c1020', color: '#00ff88', fontSize: 14, py: 1, px: 1.5 }}>
         {title ?? 'Select your ship'}
