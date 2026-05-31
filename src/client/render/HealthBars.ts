@@ -56,8 +56,23 @@ const _bgFillStyle: { color: number; alpha: number } = { color: 0x222222, alpha:
 const _fgFillStyle: { color: number; alpha: number } = { color: 0x44ff44, alpha: 1 };
 
 export class HealthBarManager {
+  /** 2026-05-31 diagnostic + pool counters. Exposed via window for the
+   *  heap-leak probe. */
+  static debugCounters = { gfxCreate: 0, gfxReuse: 0, gfxRelease: 0 };
+  static {
+    if (typeof window !== 'undefined') {
+      (window as unknown as { __healthBarsDebug?: typeof HealthBarManager.debugCounters })
+        .__healthBarsDebug = HealthBarManager.debugCounters;
+    }
+  }
+
   private readonly container: Container;
   private readonly bars = new Map<string, HealthBarEntry>();
+  /** Free-list of Graphics instances released by faded/removed bars.
+   *  Reused when a new entity gets hit — avoids the
+   *  destroy-then-allocate cycle that drove _Graphics +212 / 60 s in
+   *  the active-combat heap-snapshot diff. */
+  private readonly freeGfx: Graphics[] = [];
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 
   constructor(parent: Container) {
@@ -68,7 +83,14 @@ export class HealthBarManager {
   onHit(entityId: string, healthPct: number, shieldPct: number = 0): void {
     let entry = this.bars.get(entityId);
     if (!entry) {
-      const gfx = new Graphics();
+      let gfx = this.freeGfx.pop();
+      if (!gfx) {
+        HealthBarManager.debugCounters.gfxCreate++;
+        gfx = new Graphics();
+      } else {
+        HealthBarManager.debugCounters.gfxReuse++;
+        gfx.clear();
+      }
       this.container.addChild(gfx);
       entry = {
         gfx,
@@ -124,9 +146,12 @@ export class HealthBarManager {
       }
 
       if (ex === undefined || ey === undefined) {
-        // Entity gone — remove bar.
+        // Entity gone — return Graphics to pool instead of destroying.
+        // The Graphics carries no per-entity state (geometry is rebuilt
+        // on next onHit via the dirty-flag cache).
+        HealthBarManager.debugCounters.gfxRelease++;
         this.container.removeChild(entry.gfx);
-        entry.gfx.destroy();
+        this.freeGfx.push(entry.gfx);
         this.bars.delete(entityId);
         continue;
       }
@@ -134,8 +159,9 @@ export class HealthBarManager {
       // Fade logic.
       const timeSinceHit = now - entry.lastHitTime;
       if (timeSinceHit > FADE_AFTER_MS + FADE_DURATION_MS) {
+        HealthBarManager.debugCounters.gfxRelease++;
         this.container.removeChild(entry.gfx);
-        entry.gfx.destroy();
+        this.freeGfx.push(entry.gfx);
         this.bars.delete(entityId);
         continue;
       }
@@ -209,6 +235,9 @@ export class HealthBarManager {
       entry.gfx.destroy();
     }
     this.bars.clear();
+    // Pooled free-list Graphics still need full disposal on teardown.
+    for (const gfx of this.freeGfx) gfx.destroy();
+    this.freeGfx.length = 0;
     this.container.destroy({ children: true });
   }
 }

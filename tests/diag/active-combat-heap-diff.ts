@@ -86,16 +86,18 @@ async function main(): Promise<void> {
   await page.keyboard.up('w');
   await page.keyboard.up('Space');
 
-  // Read the DamageNumberManager + BackgroundGrid debug counters.
+  // Read the DamageNumberManager + BackgroundGrid + HealthBars counters.
   const debugCounters = await page.evaluate(() => {
     type W = {
       __damageNumberDebug?: Record<string, number>;
       __backgroundGridDebug?: Record<string, number>;
+      __healthBarsDebug?: Record<string, number>;
     };
     const w = window as unknown as W;
     return {
       damageNumber: w.__damageNumberDebug ?? null,
       backgroundGrid: w.__backgroundGridDebug ?? null,
+      healthBars: w.__healthBarsDebug ?? null,
     };
   });
   console.log('\n[probe] Debug counters:', JSON.stringify(debugCounters, null, 2));
