@@ -92,17 +92,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       gameClient.sendClientReady();
     }
 
-    // Plan: crispy-kazoo, Commit 4 — pause boundary.
-    // During loading (curtain up): skip the game-work below but keep
-    // the RAF chain alive AND keep `lastFrameTime` unchanged (so the
-    // post-resume `deltaMs` doesn't anchor to a five-second-ago value).
-    // The Pixi ticker keeps running on its own clock so the curtain
-    // animation continues to peak alpha. The handshake check above
-    // still runs, so `sendClientReady` fires during loading too.
-    if (computeIsLoadingActive(ui)) {
-      animFrameRef.current = requestAnimationFrame(loop);
-      return;
-    }
+    // Plan: crispy-kazoo, Commit 4/8 — pause boundary.
+    // During loading (curtain up): skip the INPUT + PHYSICS step
+    // (`tickPhysics`) so input is gated and the predWorld doesn't drift
+    // ahead of the server. KEEP `tickInbound` + `updateMirror` +
+    // `renderer.update` running so:
+    //   1. Snapshots can DRAIN (tickInbound → processPendingSnapshot →
+    //      handleSnapshot → firstSnapshotApplied=true).
+    //   2. firstFrameRendered can flip (renderer.update paints sprites).
+    // Skipping either creates a circular dependency where bootstrap-
+    // ready can never flip true → loading-active stays true → ...
+    // The Pixi ticker independently drives the curtain animation; this
+    // loop drives snapshot drain + sprite positions + the bootstrap
+    // gate latches.
+    const isLoadingActive = computeIsLoadingActive(ui);
 
     const isFirstFrame = lastFrameTime === 0;
     const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
@@ -115,9 +118,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     }
     lastFrameTime = now;
 
+    // Plan: crispy-kazoo, Commit 8 — inbound-message drain ALWAYS runs
+    // (incl. during loading). DC raw-bytes decode + Colyseus state-diff
+    // hybrid drain + snapshot coalescer drain — these are the message-
+    // arrival paths the bootstrap gates depend on (firstSnapshotApplied).
+    gameClient.tickInbound(deltaMs);
+
     // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
     const physicsStart = performance.now();
-    gameClient.tickPhysics(deltaMs);
+    // Plan: crispy-kazoo, Commit 8 — gate ONLY `tickPhysics` during
+    // loading. Input is already zero'd by Keyboard/TouchInput
+    // setEnabled(false) so a runaway-input concern is already covered;
+    // skipping the physics step here additionally prevents predWorld
+    // drift during the curtain window.
+    if (!isLoadingActive) gameClient.tickPhysics(deltaMs);
     const mirrorStart = performance.now();
     gameClient.updateMirror();
     const renderStart = performance.now();

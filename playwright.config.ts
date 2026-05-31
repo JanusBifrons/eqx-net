@@ -51,6 +51,7 @@ const SMOKE_SPECS: string[] = [
   '**/sector-alpha.spec.ts',
   '**/shield-hud.spec.ts',
   '**/ship-selection.spec.ts',
+  '**/spawn-handshake.spec.ts',
   '**/spawn-select-flow.spec.ts',
   '**/weapon-switching.spec.ts',
 ];

@@ -1088,6 +1088,37 @@ export class ColyseusGameClient {
       // to drive the "Piloting" disabled state and the switch-confirm.
       // Empty string from engineering rooms or pre-Phase-5 servers ⇒ null.
       ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
+
+      // Plan: crispy-kazoo, Commit 8 — rescue own ship from lingeringShips.
+      // Pre-welcome our own ship is `isActive=false` (server's spawn-
+      // handshake design) and the snapshot translator + syncMirror both
+      // route isActive=false → mirror.lingeringShips because they don't
+      // yet know our localPlayerId. Now that welcome has arrived, lift
+      // our ship out so `tryInitPredWorld` can find it.
+      if (this.mirror.lingeringShips && this.mirror.lingeringShips.size > 0) {
+        const ownShipInstanceId = msg.shipInstanceId;
+        for (const [shipInstanceId, lEntry] of this.mirror.lingeringShips) {
+          const matchesByInstance = ownShipInstanceId !== '' && shipInstanceId === ownShipInstanceId;
+          const matchesByPlayer = lEntry.ownerPlayerId === msg.playerId;
+          if (matchesByInstance || matchesByPlayer) {
+            const mirrorEntry: ShipRenderState = {
+              x: lEntry.x, y: lEntry.y, vx: lEntry.vx, vy: lEntry.vy, angle: lEntry.angle,
+            };
+            if (lEntry.kind !== undefined) mirrorEntry.kind = lEntry.kind;
+            if (lEntry.displayName !== undefined) mirrorEntry.displayName = lEntry.displayName;
+            this.mirror.ships.set(msg.playerId, mirrorEntry);
+            this.mirror.lingeringShips.delete(shipInstanceId);
+            logEvent('rescued_own_ship_from_lingering', {
+              shipInstanceId,
+              playerId: msg.playerId,
+              x: lEntry.x,
+              y: lEntry.y,
+            });
+            break;
+          }
+        }
+      }
+
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
       // Phase 2 swift-otter — kick off the DC handshake after welcome.
@@ -2728,7 +2759,12 @@ export class ColyseusGameClient {
       const playerId = sh['playerId'] as string | undefined;
       if (!playerId) continue;
       const isActive = (sh['isActive'] as boolean | undefined) !== false;
-      if (!isActive) {
+      // Plan: crispy-kazoo, Commit 8 — local-self exemption.
+      // Joiner's OWN ship MUST stay in `mirror.ships` during the
+      // pending-join handshake. Matching exemption lives in
+      // `snapshotShipRouter.routeSnapshotShipStates`.
+      const isOwnShip = playerId === this.mirror.localPlayerId;
+      if (!isActive && !isOwnShip) {
         // Phase 6b — populate identity for the lingering hull. Pose
         // arrives separately in the snapshot's `states` slice and is
         // mirrored in handleSnapshot. We only set kind / displayName /
@@ -3420,35 +3456,43 @@ export class ColyseusGameClient {
    * window small. `MAX_CATCH_UP_TICKS = 4` per RAF still bounds CPU after a
    * long background-tab pause.
    */
-  tickPhysics(elapsedMs: number): void {
-    if (!this.room || !this.keyboard) return;
-    this.lastFrameMs = elapsedMs;
-    if (this.welcomePerfNow === 0) return; // welcome not yet received
-    // Phase 4 iteration 3 swift-otter (2026-05-30) — drain pending DC
-    // raw bytes BEFORE `processPendingSnapshot`. The DC `dc.onmessage`
-    // listener now only stores the latest raw frame; decode + dispatch
-    // happens here so Pattern B burst recovery doesn't pay N×decode in
-    // a single frame. The decoded snap flows into the same
-    // snapshotCoalescer pipeline the WS path uses.
+  /**
+   * Plan: crispy-kazoo, Commit 8 — inbound-drain prelude extracted so
+   * it can run every RAF EVEN WHILE LOADING (the pause boundary in
+   * gameRafLoop gates only `tickPhysics`, not this). Without this
+   * extraction, `processPendingSnapshot` wouldn't fire during the
+   * curtain window, the joiner's first snapshot would queue
+   * indefinitely, `firstSnapshotApplied` never flips, and the
+   * bootstrap chain stalls forever (the 2026-05-31 second-order bug
+   * surfaced by spawn-handshake.spec.ts).
+   *
+   * Idempotent + cheap when nothing's pending. Calls:
+   *   - DataChannel raw-bytes drain (decode + dispatch latest frame).
+   *   - Hybrid syncMirror pending-state drain (Phase 4 iteration 3).
+   *   - Snapshot coalescer drain (queues snapshots → handleSnapshot).
+   *   - RAF stall detector probes (heap + frame-gap).
+   */
+  tickInbound(elapsedMs: number): void {
+    if (!this.room) return;
     this._dataChannelTransport?.drainPending();
-    // Phase 4 iteration 3 swift-otter HYBRID (2026-05-30) — drain any
-    // state changes that came AFTER the first-inline call within this
-    // RAF window, then clear the inline-ran flag for the next window.
-    // See the `onStateChange` registration site for the hybrid
-    // rationale.
     if (this._pendingStateForSync !== null) {
       const pending = this._pendingStateForSync;
       this._pendingStateForSync = null;
       this.syncMirror(pending);
     }
     this._syncMirrorRanThisRaf = false;
-    // Probe 6 — drain the coalesced-pending snapshot before any
-    // per-RAF physics work. Snapshots queued in the WebSocket event
-    // queue during a stall collapse to one here.
     this.processPendingSnapshot();
-    // RAF heap + frame-gap diagnostics — see RafStallDetector.ts.
     this.rafStallDetector.sampleHeapIfDue();
     this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
+  }
+
+  tickPhysics(elapsedMs: number): void {
+    if (!this.room || !this.keyboard) return;
+    this.lastFrameMs = elapsedMs;
+    if (this.welcomePerfNow === 0) return; // welcome not yet received
+    // Inbound-drain is now done by `tickInbound` (called from
+    // gameRafLoop above the loading pause boundary). tickPhysics is
+    // the input-loop + physics-step portion only.
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction

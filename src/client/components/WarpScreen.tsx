@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
-import { Box, Typography } from '@mui/material';
+import { useEffect, useRef, useState } from 'react';
+import { Box, Button, Typography } from '@mui/material';
 import { useIsLoadingActive, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
+import { logEvent } from '../debug/ClientLogger';
 
 /**
  * Thin in-game-language HUD over the warping Pixi canvas. NOT an
@@ -83,12 +84,51 @@ const TIMER_SX = {
 const BOX_SX_HIDDEN = { ...BOX_SX_STATIC, opacity: 0 };
 const BOX_SX_VISIBLE = { ...BOX_SX_STATIC, opacity: 1 };
 
+// Plan: crispy-kazoo, Commit 8 — robustness.
+// If `useIsLoadingActive` stays true past this floor, fire the soft-fail
+// path (toast + back to galaxy-map). 20 s gives healthy bootstraps with
+// 5 s minDisplay + ~300 ms handshake comfortable margin; anything past
+// that is a real stall and the user should NOT be trapped.
+const LOADING_STALL_TIMEOUT_MS = 20_000;
+
+// Cancel button is pointer-active even though the surrounding Slot
+// disables pointer events (the curtain is otherwise a pass-through
+// for in-game touches on mobile — we re-enable the button alone).
+const CANCEL_BUTTON_SX = {
+  pointerEvents: 'auto' as const,
+  mt: 2,
+  px: 2,
+  py: 0.5,
+  fontSize: 10,
+  letterSpacing: 1,
+  color: '#ff6677',
+  borderColor: 'rgba(255, 102, 119, 0.55)',
+  '&:hover': {
+    borderColor: '#ff6677',
+    bgcolor: 'rgba(255, 102, 119, 0.08)',
+  },
+};
+const STALL_TEXT_SX = {
+  color: '#ffaa55',
+  fontFamily: 'ui-monospace, "Roboto Mono", monospace',
+  fontSize: 11,
+  letterSpacing: 2,
+  textTransform: 'uppercase' as const,
+  mt: 1,
+  maxWidth: 280,
+  textAlign: 'center' as const,
+  pointerEvents: 'auto' as const,
+};
+
 export function WarpScreen(): JSX.Element | null {
   const phase = useUIStore((s) => s.phase);
   const connectionStatus = useUIStore((s) => s.connectionStatus);
   const localShipInstanceId = useUIStore((s) => s.localShipInstanceId);
   const firstSnapshotApplied = useUIStore((s) => s.firstSnapshotApplied);
   const rendererFirstFrameRendered = useUIStore((s) => s.rendererFirstFrameRendered);
+  const clientReadySent = useUIStore((s) => s.clientReadySent);
+  const arrivalTickFromServer = useUIStore((s) => s.arrivalTickFromServer);
+  const arrivalAcked = useUIStore((s) => s.arrivalAcked);
 
   const joinMinimumElapsed = useUIStore((s) => s.joinMinimumElapsed);
   // Plan: crispy-kazoo Commit 1 — single source of truth is now
@@ -99,6 +139,60 @@ export function WarpScreen(): JSX.Element | null {
   // one place. The individual sub-flag selectors above stay — the
   // status text below still reports WHICH gate is still open.
   const visible = useIsLoadingActive();
+
+  // Plan: crispy-kazoo, Commit 8 — stall detection. After
+  // LOADING_STALL_TIMEOUT_MS of continuous loading-active, surface the
+  // Cancel CTA + an explanatory line. Pure UI state — clicking Cancel
+  // (or the timeout firing) routes the user back to galaxy-map via
+  // App.tsx's setPhase. No more user-trapped-on-loading.
+  //
+  // Timer depends ONLY on `visible`. Mid-load gate transitions (e.g.
+  // firstSnapshotApplied flipping true at t=10s) do NOT re-arm the
+  // 20s window — the timer measures "continuous loading-active",
+  // not "continuous no-state-change". Gate snapshots for the
+  // diagnostic event are read at fire time via store.getState()
+  // (live read, not closed-over from this effect).
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!visible) {
+      setStalled(false);
+      return undefined;
+    }
+    const handle = window.setTimeout(() => {
+      setStalled(true);
+      const s = useUIStore.getState();
+      logEvent('respawn_loading_stall_detected', {
+        stuckAtGate:
+          s.connectionStatus !== 'connected' ? 'connection'
+          : s.localShipInstanceId === null ? 'welcome'
+          : !s.rendererFirstFrameRendered ? 'first-frame'
+          : !s.firstSnapshotApplied ? 'first-snapshot'
+          : !s.joinMinimumElapsed ? 'min-display'
+          : !s.clientReadySent ? 'client-ready'
+          : s.arrivalTickFromServer === null ? 'warp-in-broadcast'
+          : !s.arrivalAcked ? 'arrival-tick-reached'
+          : 'unknown',
+      });
+    }, LOADING_STALL_TIMEOUT_MS);
+    return () => window.clearTimeout(handle);
+  }, [visible]);
+
+  const handleCancel = (): void => {
+    logEvent('respawn_loading_cancelled', { stalled });
+    const ui = useUIStore.getState();
+    // Soft-fail back to galaxy-map. Mirrors App.tsx handleRespawn —
+    // the user gets the spawn screen to retry without a full reload.
+    ui.setLocalShipInstanceId(null);
+    ui.setCurrentSectorKey(null);
+    ui.setDead(false);
+    ui.setGalaxyOverviewOpen(false);
+    ui.setGalaxyMapOpen(false);
+    ui.setDrawerOpen(false);
+    ui.setPendingShipSwap(null);
+    ui.setSectorAlert('Connection issue — please retry');
+    ui.setPhase('galaxy-map');
+    window.setTimeout(() => ui.setSectorAlert(null), 4000);
+  };
 
   // Status text follows the ordered readiness chain — first NOT-ready
   // sub-flag wins. The 5 s minimum-display floor surfaces as
@@ -111,10 +205,16 @@ export function WarpScreen(): JSX.Element | null {
     statusText = 'AWAITING NAVIGATION FIX';
   } else if (!rendererFirstFrameRendered) {
     statusText = 'INITIALISING DISPLAY';
+  } else if (!firstSnapshotApplied) {
+    statusText = 'SYNCING SECTOR TELEMETRY';
   } else if (!joinMinimumElapsed) {
-    statusText = firstSnapshotApplied
-      ? 'STABILISING TRAJECTORY'
-      : 'SYNCING SECTOR TELEMETRY';
+    statusText = 'STABILISING TRAJECTORY';
+  } else if (!clientReadySent) {
+    statusText = 'NEGOTIATING ARRIVAL';
+  } else if (arrivalTickFromServer === null) {
+    statusText = 'AWAITING ARRIVAL CLEARANCE';
+  } else if (!arrivalAcked) {
+    statusText = 'WARP IN T-MINUS';
   } else {
     statusText = 'WARP COMPLETE';
   }
@@ -161,6 +261,7 @@ export function WarpScreen(): JSX.Element | null {
       <Box
         data-testid="warp-screen"
         data-warp-visible={visible ? '1' : '0'}
+        data-warp-stalled={stalled ? '1' : '0'}
         sx={visible ? BOX_SX_VISIBLE : BOX_SX_HIDDEN}
       >
         <Typography data-testid="warp-screen-status" sx={STATUS_SX}>
@@ -174,6 +275,23 @@ export function WarpScreen(): JSX.Element | null {
         >
           WARP STABILISATION 0%
         </Typography>
+        {stalled && visible && (
+          <>
+            <Typography data-testid="warp-screen-stall-msg" sx={STALL_TEXT_SX}>
+              Taking longer than expected.<br />
+              Check your connection or pick a different sector.
+            </Typography>
+            <Button
+              data-testid="warp-screen-cancel"
+              variant="outlined"
+              size="small"
+              onClick={handleCancel}
+              sx={CANCEL_BUTTON_SX}
+            >
+              Cancel
+            </Button>
+          </>
+        )}
       </Box>
     </Slot>
   );

@@ -38,6 +38,18 @@ export interface ShipRouterCtx {
  * into `mirror.lingeringShips`. Mutates `snap.states` in place
  * (Probe 8 alloc-saver — Colyseus parses the message fresh, no
  * aliasing risk).
+ *
+ * Plan: crispy-kazoo, Commit 8 — local-self exemption.
+ * The joiner's OWN ship lands in `snap.states` with `isActive=false`
+ * during the pending-join handshake window. Without the exemption,
+ * own ship gets routed to `lingeringShips` and the bootstrap chain
+ * (tryInitPredWorld → firstFrameRendered → sendClientReady) stalls
+ * forever because `mirror.ships.has(localPlayerId)` stays false.
+ * Routing the OWN ship to `mirror.ships` regardless of `isActive` keeps
+ * the local player's predWorld + render path intact; other clients
+ * still filter the same entry out for THEIR own translators (it's
+ * just not THEIR localPlayerId). See `tests/e2e/spawn-handshake.spec.ts`
+ * for the regression lock.
  */
 export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCtx): void {
   const { mirror, predWorld, lingerBodies, tryEnsureLingerPredBody,
@@ -48,11 +60,16 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   // instead of `new Set<string>()` per snapshot.
   const lingeringSeen = lingeringSeenScratch;
   lingeringSeen.clear();
+  const localPlayerId = mirror.localPlayerId;
   // 2026-05-25 heap-growth gate step 4: `for…in` instead of
   // `Object.entries` — saves the per-snapshot [key,value] tuple array.
   for (const shipInstanceId in snap.states) {
     const entry = snap.states[shipInstanceId]!;
-    if (entry.isActive === false) {
+    // Local-self exemption: own ship MUST stay in `mirror.ships` even
+    // while pending-join (isActive=false on server). Without this the
+    // bootstrap chain stalls on rendererFirstFrameRendered.
+    const isOwnShip = localPlayerId !== null && entry.playerId === localPlayerId;
+    if (entry.isActive === false && !isOwnShip) {
       // Route to the lingering map. We update pose every snapshot;
       // identity fields come from the schema diff and are preserved.
       // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the

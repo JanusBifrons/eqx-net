@@ -1,20 +1,27 @@
 /**
  * @vitest-environment jsdom
  *
- * Plan: crispy-kazoo, Commit 4 — gameRafLoop pause-boundary lock.
+ * Plan: crispy-kazoo, Commit 4/8 — gameRafLoop pause-boundary lock.
  *
- *   - When `computeIsLoadingActive(state)` is true, the loop early-returns
- *     BEFORE doing game work AND BEFORE updating `lastFrameTime` (so the
- *     post-resume `deltaMs` doesn't anchor to a stale value).
- *   - The handshake trigger (sendClientReady) runs ABOVE the pause early-
- *     return so it fires during the loading window (when bootstrap-ready
- *     flips true).
+ *   - When `computeIsLoadingActive(state)` is true, `tickPhysics` is
+ *     SKIPPED but `updateMirror` + `renderer.update` STILL RUN — those
+ *     paint paths must keep firing so `firstFrameRendered` can flip
+ *     (its check lives inside `PixiRenderer.update`). Skipping render
+ *     during loading created a circular dependency: rendererFirstFrame
+ *     never flipped → bootstrap stuck → loading-active never falsed →
+ *     render never ran. The 2026-05-31 stall.
+ *   - Input is already gated upstream by Keyboard/TouchInput setEnabled
+ *     so skipping tickPhysics on top is belt-and-braces against predWorld
+ *     drift during the curtain window.
+ *   - The handshake trigger (sendClientReady) runs ABOVE the gate so it
+ *     fires during the loading window (when bootstrap-ready flips true).
  *   - The RAF chain stays alive (the loop re-arms itself via
  *     `animFrameRef.current = requestAnimationFrame(loop)`).
  *
  * Strategy: stub the store + ClientLogger, build a fake renderer / client,
- * call the loop directly with synthetic `now` values, observe whether the
- * game-work methods (tickPhysics, updateMirror, renderer.update) are called.
+ * call the loop directly with synthetic `now` values, observe which
+ * game-work methods (tickPhysics, updateMirror, renderer.update) are
+ * called.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -81,6 +88,7 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 
 interface Fake {
   tickPhysics: ReturnType<typeof vi.fn>;
+  tickInbound: ReturnType<typeof vi.fn>;
   updateMirror: ReturnType<typeof vi.fn>;
   rendererUpdate: ReturnType<typeof vi.fn>;
   sendClientReady: ReturnType<typeof vi.fn>;
@@ -89,6 +97,7 @@ interface Fake {
 function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { current: number } } {
   const mockClient = {
     tickPhysics: fake.tickPhysics,
+    tickInbound: fake.tickInbound,
     updateMirror: fake.updateMirror,
     sendClientReady: fake.sendClientReady,
     mirror: {
@@ -124,6 +133,7 @@ let rafSpy: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   fake = {
     tickPhysics: vi.fn(),
+    tickInbound: vi.fn(),
     updateMirror: vi.fn(),
     rendererUpdate: vi.fn(),
     sendClientReady: vi.fn(),
@@ -157,24 +167,35 @@ describe('gameRafLoop — pause boundary (Commit 4)', () => {
     expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('phase==="connecting" → loading active → game-work SKIPPED', () => {
+  it('phase==="connecting" → loading active → tickPhysics SKIPPED, inbound+mirror+render RUN', () => {
     storeState.phase = 'connecting';
     const { loop } = buildLoop(fake);
     loop(16.67);
+    // Input + physics is gated.
     expect(fake.tickPhysics).not.toHaveBeenCalled();
-    expect(fake.updateMirror).not.toHaveBeenCalled();
-    expect(fake.rendererUpdate).not.toHaveBeenCalled();
+    // Inbound drain (snapshot coalescer + DC bytes + state-diff
+    // pending) MUST run during loading — without it the snapshot
+    // never applies, firstSnapshotApplied never flips, bootstrap-ready
+    // can't fire (Commit 8 fix: split tickInbound from tickPhysics).
+    expect(fake.tickInbound).toHaveBeenCalledTimes(1);
+    // Mirror compose + renderer paint MUST still run so
+    // firstFrameRendered can flip.
+    expect(fake.updateMirror).toHaveBeenCalledTimes(1);
+    expect(fake.rendererUpdate).toHaveBeenCalledTimes(1);
     // RAF chain stays alive.
     expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('phase==="game" + handshake pending → loading active → game-work SKIPPED', () => {
+  it('phase==="game" + handshake pending → loading active → tickPhysics SKIPPED, inbound+mirror+render RUN', () => {
     storeState.arrivalAcked = false;
     storeState.arrivalTickFromServer = null;
     storeState.clientReadySent = false;
     const { loop } = buildLoop(fake);
     loop(16.67);
     expect(fake.tickPhysics).not.toHaveBeenCalled();
+    expect(fake.tickInbound).toHaveBeenCalledTimes(1);
+    expect(fake.updateMirror).toHaveBeenCalledTimes(1);
+    expect(fake.rendererUpdate).toHaveBeenCalledTimes(1);
     expect(rafSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -196,8 +217,11 @@ describe('gameRafLoop — pause boundary (Commit 4)', () => {
     const { loop } = buildLoop(fake);
     loop(16.67);
     expect(fake.sendClientReady).toHaveBeenCalledTimes(1);
-    // Game-work still skipped (we're still loading).
+    // tickPhysics still skipped (input + physics gated during loading),
+    // but mirror + renderer continue so firstFrameRendered can flip.
     expect(fake.tickPhysics).not.toHaveBeenCalled();
+    expect(fake.updateMirror).toHaveBeenCalledTimes(1);
+    expect(fake.rendererUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('sendClientReady does NOT fire when clientReadySent is already true', () => {
@@ -207,10 +231,13 @@ describe('gameRafLoop — pause boundary (Commit 4)', () => {
     expect(fake.sendClientReady).not.toHaveBeenCalled();
   });
 
-  it('lastFrameTime stays at 0 across a pause then resumes fresh', () => {
-    // Drive a loading-active frame at t=1000, then a not-loading frame at
-    // t=1016 (16ms later). The active-path delta should reflect the FRESH
-    // boundary, not the 1016ms gap from the first call.
+  it('post-resume deltaMs reflects only the last frame gap, not a huge stall', () => {
+    // Plan: crispy-kazoo, Commit 8 — the loop body runs every frame
+    // (only tickPhysics is gated), so lastFrameTime advances normally
+    // through the loading window. Post-resume the FIRST active-path
+    // tickPhysics call receives the typical 16 ms delta, NOT a
+    // multi-second anchor. This is the same outcome as Commit 4's
+    // "don't update lastFrameTime" approach, just achieved differently.
     storeState.arrivalAcked = false;
     storeState.arrivalTickFromServer = null;
     storeState.clientReadySent = false;
@@ -224,12 +251,8 @@ describe('gameRafLoop — pause boundary (Commit 4)', () => {
     storeState.arrivalTickFromServer = 123;
     loop(1_016);
     expect(fake.tickPhysics).toHaveBeenCalledTimes(1);
-    // The deltaMs argument is the second positional arg; for the first
-    // active-path call it falls back to 1000/60 (lastFrameTime was 0).
     const [deltaMs] = fake.tickPhysics.mock.calls[0]!;
-    // Either the firstFrame fallback (1000/60 ≈ 16.67) OR the 16ms gap
-    // — but NOT 1016ms (which would have happened if lastFrameTime had
-    // been updated on the paused call).
+    // 16 ms (1016 - 1000) — NOT 1016 ms.
     expect(deltaMs).toBeLessThanOrEqual(20);
   });
 });
