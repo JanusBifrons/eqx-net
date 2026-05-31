@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { Graphics } from 'pixi.js';
 import type { Camera } from './worker/Camera';
 
 /**
@@ -14,19 +14,20 @@ import type { Camera } from './worker/Camera';
  * drawn on top, subtle but visible. This is the primary spatial reference
  * the player navigates by.
  *
- * Coord labels are placed at every macro intersection in `gx,gy` form
- * where the unit is one *micro* cell — matching the HUD's "Grid x, y"
- * readout. Labels are keyed by world-space intersection so panning
- * incurs no `text.text` churn (Pixi atlas re-upload is the expensive
- * part). They're suppressed when zoomed out past `LABEL_HIDE_ZOOM`
- * since the dense text would just be noise.
- *
  * Y-flip note: the grid math runs entirely in viewport (Pixi screen)
  * space, which is Y-down. Game logic is Y-up; the renderer flips with
  * `sprite.y = -entity.y` for all viewport-attached content. The lines
- * themselves are symmetric in Y so no flip is needed for geometry, but
- * the *displayed* label digits must invert Y so a label drawn at
- * Pixi-Y = -1000 reads `gy = +5` (matching game-space Y up).
+ * themselves are symmetric in Y so no flip is needed for geometry.
+ *
+ * 2026-05-31: coordinate label rendering REMOVED. User-driven removal
+ * after heap-leak hunt confirmed grid labels were the dominant Text
+ * churn source under combat (761 fresh / 566 destroyed Text instances
+ * per 60 s of held-thrust). The `computeGridLabels` pure helper +
+ * `GridLabelSpec` interface + `GRID_LABEL_STEP` constant stay
+ * exported because `BackgroundGrid.labels.test.ts` locks the
+ * label-spec geometry — keeping the function alive preserves the
+ * regression lock even though `update()` no longer instantiates Text
+ * nodes from the specs.
  */
 
 /**
@@ -56,11 +57,6 @@ const MICRO_COLOR = 0x1a2040;
 const MICRO_ALPHA = 0.34;
 const MACRO_COLOR = 0x3a4a80;
 const MACRO_ALPHA = 0.55;
-
-const LABEL_ALPHA = 0.30;
-const LABEL_HIDE_ZOOM = 0.5;
-const LABEL_OFFSET_X = 4;
-const LABEL_OFFSET_Y = 2;
 
 /** One coordinate label: where to draw it (Pixi space) + the
  *  game-space grid numbers to show. */
@@ -106,12 +102,6 @@ export function computeGridLabels(args: {
   return out;
 }
 
-const LABEL_STYLE = new TextStyle({
-  fontFamily: 'system-ui, sans-serif',
-  fontSize: 11,
-  fill: 0xffffff,
-});
-
 /**
  * Per-frame label-churn sub-costs (F1 of the warp-spool perf
  * investigation — `docs/HANDOFF-warp-spool-perf-followup.md`). Written
@@ -137,33 +127,9 @@ export interface GridFrameMarkers {
   labelCount: number;
 }
 
-/** Pool cap for the free-list of grid-label Texts. Sized to cover
- *  the worst-case "camera turns 180° quickly" scenario where every
- *  visible label leaves frame in one update + the next set comes in.
- *  ~30 labels visible × 2 = 60 covers a full visual frame's worth. */
-const LABEL_FREE_POOL_CAP = 60;
-
 export class BackgroundGrid {
-  /** 2026-05-31 diagnostic — per-class label churn counters. Exposed
-   *  via window for heap-leak probes. */
-  static debugCounters = { textCreate: 0, textReuse: 0, textRelease: 0, textDestroy: 0 };
-  static {
-    if (typeof window !== 'undefined') {
-      (window as unknown as { __backgroundGridDebug?: typeof BackgroundGrid.debugCounters })
-        .__backgroundGridDebug = BackgroundGrid.debugCounters;
-    }
-  }
-
   private readonly microLines = new Graphics();
   private readonly macroLines = new Graphics();
-  private readonly labelContainer = new Container();
-  private readonly labels = new Map<string, Text>();
-  /** Free-list of Text instances available for reuse when a new cell
-   *  pops into view. Mutating `text.text` reuses Pixi's internal glyph
-   *  atlas rather than allocating a fresh Texture + TextureSource +
-   *  WebGLTexture chain. See update() for the pool flow. */
-  private readonly freeLabels: Text[] = [];
-  private readonly seen = new Set<string>();
   /**
    * Plan: combat-fx-hunt (2026-05-31) — last-built grid-bounds cache.
    * Pre-fix `update(camera)` cleared + rebuilt micro + macro lines
@@ -201,7 +167,6 @@ export class BackgroundGrid {
   attach(camera: Camera): void {
     camera.addChild(this.microLines);
     camera.addChild(this.macroLines);
-    camera.addChild(this.labelContainer);
   }
 
   update(camera: Camera): void {
@@ -286,104 +251,19 @@ export class BackgroundGrid {
       this.prevMacroYMax = yMaxMacro;
     }
 
-    // Labels at EVERY micro intersection (500u) so each visible micro
-    // line carries its number and the HUD's ÷500 readout always lands
-    // on a labelled line. Still gated by zoom so 11px text stays
-    // legible (and the label count stays bounded when zoomed out).
-    this.seen.clear();
-    // F1 brackets — split label-spec enumeration vs Text-create vs the
-    // off-screen cleanup sweep so the analyzer can attribute the
-    // sandbox-vs-game differential. performance.now() is sub-µs +
-    // uniform; unconditional is fine (markers-off baseline = prod cost).
-    let labelSpecMs = 0;
-    let textCreateMs = 0;
-    if (camera.scale.x >= LABEL_HIDE_ZOOM) {
-      const specStart = performance.now();
-      const specs = computeGridLabels({
-        xMin: xMinMicro,
-        xMax: xMaxMicro,
-        yMin: yMinMicro,
-        yMax: yMaxMicro,
-        step: GRID_LABEL_STEP,
-        cell: GRID_CELL_SIZE,
-      });
-      labelSpecMs = performance.now() - specStart;
-
-      const createStart = performance.now();
-      for (const spec of specs) {
-        this.seen.add(spec.key);
-        if (!this.labels.has(spec.key)) {
-          // 2026-05-31: pool Text instances. Pre-fix the grid created
-          // a fresh Text per unseen cell. With held-thrust the camera
-          // moves continuously → new cells stream in → 12+ Text/sec
-          // allocated, 9+/sec destroyed (active-combat-heap-diff
-          // probe: textCreate=761 / textDestroy=566 over 60 s of
-          // thrust). NET +195 Text retained per minute, multiplied by
-          // the underlying Texture + TextureSource + WebGLTexture
-          // chain each owns.
-          //
-          // Pool: pop a free Text and mutate `.text` instead of
-          // allocating. Pixi v8 regenerates the glyph atlas on
-          // `text.text = newValue` automatically, so visual is
-          // identical. Worst-case alloc only when free pool is empty
-          // (first ~10 s of camera motion until churn saturates).
-          let text = this.freeLabels.pop();
-          if (!text) {
-            BackgroundGrid.debugCounters.textCreate++;
-            text = new Text({ text: `${spec.gx},${spec.gy}`, style: LABEL_STYLE });
-          } else {
-            BackgroundGrid.debugCounters.textReuse++;
-            text.text = `${spec.gx},${spec.gy}`;
-          }
-          text.alpha = LABEL_ALPHA;
-          text.position.set(spec.x + LABEL_OFFSET_X, spec.y + LABEL_OFFSET_Y);
-          this.labelContainer.addChild(text);
-          this.labels.set(spec.key, text);
-        }
-      }
-      textCreateMs = performance.now() - createStart;
-    }
-
-    const cleanupStart = performance.now();
-    for (const [key, text] of this.labels) {
-      if (!this.seen.has(key)) {
-        // Pool the Text instead of destroying. Pixi v8 keeps the glyph
-        // atlas tied to the Text instance — by mutating `.text` later
-        // we reuse the same Pixi internals. Container removal alone is
-        // sufficient to drop it from the scene graph; the Text stays
-        // alive in `freeLabels` for the next cell-pop-in.
-        BackgroundGrid.debugCounters.textRelease++;
-        this.labelContainer.removeChild(text);
-        if (this.freeLabels.length < LABEL_FREE_POOL_CAP) {
-          this.freeLabels.push(text);
-        } else {
-          // Defensive overflow — drop the excess fully so the pool
-          // doesn't grow unbounded under pathological scenarios.
-          BackgroundGrid.debugCounters.textDestroy++;
-          text.destroy({ texture: true, textureSource: true });
-        }
-        this.labels.delete(key);
-      }
-    }
-    const cleanupMs = performance.now() - cleanupStart;
-
-    this.lastFrameMarkers.labelSpecMs = labelSpecMs;
-    this.lastFrameMarkers.textCreateMs = textCreateMs;
-    this.lastFrameMarkers.cleanupMs = cleanupMs;
-    this.lastFrameMarkers.labelCount = this.labels.size;
+    // Label rendering REMOVED 2026-05-31 (user direction post heap-leak
+    // hunt). Coordinate text labels were the dominant Text + Texture
+    // churn source under combat. The `lastFrameMarkers` fields are
+    // zeroed so the F1 instrumentation consumer in PixiRenderer still
+    // reads stable values; the `GridFrameMarkers` interface stays for
+    // back-compat with that consumer.
+    this.lastFrameMarkers.labelSpecMs = 0;
+    this.lastFrameMarkers.textCreateMs = 0;
+    this.lastFrameMarkers.cleanupMs = 0;
+    this.lastFrameMarkers.labelCount = 0;
   }
 
   destroy(): void {
-    for (const text of this.labels.values()) {
-      text.destroy({ texture: true, textureSource: true });
-    }
-    this.labels.clear();
-    // Pooled free-list Texts also need full GPU disposal on teardown.
-    for (const text of this.freeLabels) {
-      text.destroy({ texture: true, textureSource: true });
-    }
-    this.freeLabels.length = 0;
-    this.labelContainer.destroy({ children: true });
     this.microLines.destroy();
     this.macroLines.destroy();
   }
