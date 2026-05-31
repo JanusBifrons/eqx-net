@@ -387,6 +387,13 @@ export class ColyseusGameClient {
    */
   private welcomePerfNow = 0;
   /**
+   * Plan: crispy-kazoo, Commit 3 — `local_died` timestamp anchor.
+   * Set by `killEntity` when the local ship dies; consumed by
+   * `respawn_clicked` (App.tsx handleRespawn + galaxy sector-pick)
+   * to compute `msFromDied`. Reset to 0 on respawn.
+   */
+  public diedAtMs = 0;
+  /**
    * Server tick recorded at `clockAnchorPerfNow` — the live reference frame
    * the client uses to compute `targetTick`. Updated on every snapshot so a
    * server that's running below 60 Hz (overloaded) drags the client's tick
@@ -1870,6 +1877,16 @@ export class ColyseusGameClient {
 
     if (id === this.mirror.localPlayerId) {
       this.localDead = true;
+      this.diedAtMs = this.clock.now();
+      // Plan: crispy-kazoo, Commit 3 — death is the cascade trigger.
+      // Pre-Commit 3 the capture lifecycle.ndjson had ZERO local_died
+      // events; we reconstructed death from indirect breadcrumbs
+      // (GalaxyOverviewScreen mount in 'spawn' mode). This event lets
+      // future captures measure death-to-respawn directly.
+      const msSinceWelcome = this.welcomePerfNow > 0
+        ? Math.round(this.diedAtMs - this.welcomePerfNow)
+        : -1;
+      logEvent('local_died', { playerId: id, msSinceWelcome });
       this.mirror.liveBeams?.clear();
       this._localSlotTarget = null;
       this.ghostManager.clearForShip(id);
@@ -2145,6 +2162,15 @@ export class ColyseusGameClient {
     // arrives before welcome).
     if (localId !== null && !useUIStore.getState().firstSnapshotApplied) {
       useUIStore.getState().setFirstSnapshotApplied(true);
+      // Plan: crispy-kazoo, Commit 3 — first-snapshot edge log lets a
+      // diag capture pinpoint when the join's bootstrap reaches the
+      // "I have the world state" gate. Fires exactly once per
+      // (re)connect — `commonReadinessRearm` flips the flag back on
+      // every phase change / transit.
+      const msSinceWelcome = this.welcomePerfNow > 0
+        ? Math.round(this.clock.now() - this.welcomePerfNow)
+        : -1;
+      logEvent('respawn_first_snapshot', { msSinceWelcome });
     }
 
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format

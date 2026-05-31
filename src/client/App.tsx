@@ -111,9 +111,22 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   useEffect(() => {
     if (gameReady && !joinChainCompleteLoggedRef.current) {
       joinChainCompleteLoggedRef.current = true;
+      const msFromPhaseEnter = Math.round(performance.now() - gameSurfaceMountedAtRef.current);
       logEvent('join_chain_complete', {
-        msFromPhaseEnter: Math.round(performance.now() - gameSurfaceMountedAtRef.current),
+        msFromPhaseEnter,
       });
+      // Plan: crispy-kazoo, Commit 3 — terminal "ready, curtain dropped"
+      // event for the death→respawn lifecycle. The earlier
+      // `local_died` / `respawn_clicked` / `respawn_first_snapshot` /
+      // `client_ready_sent` / `arrival_acked` events form the chain;
+      // this is the closing marker. `msFromClicked` is derived against
+      // the most-recent diedAtMs (clientRef may be null in non-game
+      // phases, so the field is omitted in that branch).
+      const client = clientRef.current;
+      const msFromDied = client && client.diedAtMs > 0
+        ? Math.round(performance.now() - client.diedAtMs)
+        : null;
+      logEvent('respawn_ready', { msFromPhaseEnter, msFromDied });
     }
   }, [gameReady]);
 
@@ -170,6 +183,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // open left `isGalaxyOverviewOpen=true` in the store; the next spawn
   // saw the overview pop back open immediately on top of the fresh game.
   const handleRespawn = useCallback(() => {
+    // Plan: crispy-kazoo, Commit 3 — log the respawn click so the
+    // diag-capture timeline names WHICH path triggered the cycle.
+    // 'button' = in-game Respawn button (this handler); the
+    // 'sector-pick' counterpart logs from GalaxyOverviewScreen on
+    // the spawn-mode sector tap. Both lead to the galaxy-map phase
+    // + leave-room + rejoin flow (per the user's "same flow" decision).
+    const client = clientRef.current;
+    const msFromDied = client && client.diedAtMs > 0
+      ? Math.round(performance.now() - client.diedAtMs)
+      : -1;
+    logEvent('respawn_clicked', { source: 'button', msFromDied });
+
     const ui = useUIStore.getState();
     ui.setLocalShipInstanceId(null);
     ui.setCurrentSectorKey(null);
