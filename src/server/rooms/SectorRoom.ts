@@ -2246,11 +2246,24 @@ export class SectorRoom extends Room<SectorState> {
         if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
         const existingSlot = this.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
-        // Phase 6b — flip the lingering flag back. The hull is being
-        // re-bound to a live session; isActive=true means the snapshot
-        // anchor + render tint + (Phase 6c) drone targeting all treat
-        // it as fully alive again.
-        existingShip.isActive = true;
+        // Plan: crispy-kazoo, Commit 2 — invariant: every join goes
+        // through the synchronised handshake (`pendingJoin` →
+        // `client_ready` → `warp_in` → arrivalTick → isActive=true).
+        // The rebind path used to flip `isActive = true` directly,
+        // skipping the handshake — works for the player (the ship is
+        // already alive) but BREAKS the client's bootstrap which sits
+        // waiting for `warp_in` to flip `arrival_acked`. Repro: phone
+        // smoke capture 2026-05-31T15-36-08Z-7eqj1a + the React
+        // StrictMode dev-mount cycle.
+        //
+        // The fix is to register the rebind in `pendingJoin` exactly
+        // as a fresh spawn does: isActive=false initially, watchdog
+        // armed, waiting for the client's `client_ready` to broadcast
+        // `warp_in`. `drainPendingJoin` flips `isActive=true` at the
+        // arrivalTick. The hull stays at its current live pose (we
+        // don't move it); only the visibility + handshake state are
+        // re-driven through the unified path.
+        existingShip.isActive = false;
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
@@ -2312,6 +2325,26 @@ export class SectorRoom extends Room<SectorState> {
           { playerId, sessionId: client.sessionId, x: liveX, y: liveY, health: existingShip.health, alive: existingShip.alive },
           'player rebound to lingering ship',
         );
+
+        // Plan: crispy-kazoo invariant — register the rebind in
+        // `pendingJoin` so `client_ready` → `warp_in` → arrivalTick →
+        // isActive=true follows the same path as a fresh spawn. The
+        // hull pose stays live (no SAB reset); only the visibility +
+        // handshake state are re-driven through the unified path.
+        this.pendingJoin.set(playerId, {
+          joinTick: tickAtRebind,
+          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
+          arrivalTick: null,
+          spawnX: liveX,
+          spawnY: liveY,
+          sessionId: client.sessionId,
+        });
+        serverLogEvent('pending_join_registered', {
+          playerId,
+          sessionId: client.sessionId,
+          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
+          source: 'rebind',
+        });
         return;
       }
         // Stale entry: ownerlessShips had this player but the slot/ShipState

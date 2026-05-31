@@ -320,6 +320,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
         .__eqxSetActiveWeapon = (id: string) => {
           useUIStore.getState().setActiveWeapon(id as Parameters<ReturnType<typeof useUIStore.getState>['setActiveWeapon']>[0]);
         };
+      // Test-only hook for the respawn-cascade E2E spec
+      // (`respawn-cascade-input-routing.spec.ts`). Drives a
+      // game → connecting → game phase cycle that unmounts GameSurface
+      // (running the dispose cleanup we just instrumented) and remounts
+      // it with a fresh ColyseusGameClient. This is the SAME cascade
+      // a galaxy-map sector-pick triggers, but reachable from a
+      // Playwright test without clicking the Pixi-rendered map.
+      // Production tree-shakes.
+      (window as unknown as { __eqxTriggerRespawnCascade?: () => void })
+        .__eqxTriggerRespawnCascade = () => {
+          const ui = useUIStore.getState();
+          ui.setPhase('connecting');
+          setTimeout(() => useUIStore.getState().setPhase('game'), 100);
+        };
     }
 
     const onKey = (e: KeyboardEvent): void => {
@@ -385,16 +399,31 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       // 4. Audio AFTER renderer.
       // 5. Client dispose LAST (carries the reflection-based mirror
       //    clear + every subsystem dispose).
-      setGameClient(null);
-      keyboard.dispose();
+      //
+      // 2026-05-31: each dispose step wrapped so a throw doesn't silently
+      // skip later steps (the orphaned ColyseusGameClient pattern in
+      // capture `hlqxy6` — 4 client_constructed / 3 dispose_complete —
+      // is consistent with `renderer.dispose()` throwing partway through
+      // and skipping `gameClient.dispose()`). Each failure becomes a
+      // discrete `cleanup_step_failed` event that survives `?diag=0`.
+      const stepLog = (step: string, err: unknown): void => {
+        const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.error(`[GameSurface cleanup] ${step} threw:`, err);
+        try {
+          logEvent('cleanup_step_failed', { step, error: msg });
+        } catch { /* ignore — logger may be torn down */ }
+      };
+      try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
+      try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
       // subscriptions short-circuit on the post-unmount tail.
       galaxyLayerRef.current = null;
-      renderer.dispose();
-      audioRef.current?.dispose();
+      try { renderer.dispose(); } catch (e) { stepLog('renderer.dispose', e); }
+      try { audioRef.current?.dispose(); } catch (e) { stepLog('audio.dispose', e); }
       audioRef.current = null;
-      gameClient.dispose();
+      try { gameClient.dispose(); } catch (e) { stepLog('gameClient.dispose', e); }
     };
   }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit]);
 
