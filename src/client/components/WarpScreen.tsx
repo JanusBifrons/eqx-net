@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Box, Button, Typography } from '@mui/material';
 import { useIsLoadingActive, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
@@ -8,43 +8,24 @@ import { logEvent } from '../debug/ClientLogger';
  * Thin in-game-language HUD over the warping Pixi canvas. NOT an
  * overlay screen — the warp visual itself is a render state of the
  * gameplay `PixiRenderer` (`setWarpMode(true)`), painted on the same
- * canvas as gameplay. This component just adds a small status
- * caption + elapsed-time readout on top of that, transparent
- * everywhere except for the text.
+ * canvas as gameplay.
  *
- * Visible when:
- *   - phase === 'connecting'                  (in-game ship swap window)
- *   - phase === 'game' && !gameReady          (initial join / transit /
- *                                              ship-swap arrival)
+ * Visible when `useIsLoadingActive()` is true (curtain up — initial
+ * join / respawn / transit arrival). Shows a single short status
+ * label + a CSS-animated 3-dot pulse. Three labels:
  *
- * Status text drives off the three readiness sub-flags so the player
- * sees which gate is open / closed:
+ *   CONNECTING       — pre-welcome (WS + initial state-diff)
+ *   LOADING SECTOR   — bootstrap gates pending (snapshot, first frame,
+ *                       minDisplay floor, client_ready handshake)
+ *   WARPING IN       — handshake done, waiting for the synchronised
+ *                       flash at server-picked `arrivalTick`
+ *   WARP COMPLETE    — terminal (curtain mid-fade)
  *
- *   ESTABLISHING SUBSPACE LINK   — WS not connected yet
- *   AWAITING NAVIGATION FIX      — connected but no welcome
- *   INITIALISING DISPLAY         — welcomed but renderer hasn't
- *                                   painted with the local ship yet
- *   WARP COMPLETE                — all gates clear (during 200 ms
- *                                   fade-out before unmount)
+ * Stall escape hatch: if the curtain stays up for 20 s, surfaces a
+ * Cancel button that routes back to galaxy-map with a toast.
  *
- * The elapsed timer (`T+X.Xs`) ticks at rAF via `<span>.textContent`
- * write — no React re-renders for the digit changes. Resets on each
- * mount.
- *
- * Allocation discipline (plan: melodic-engelbart Step 4):
- * - The RAF tick allocates a string ONLY when `pct` changes (clamped
- *   to int) — at 60 Hz over the 5 s warp window that's ≤ 101 strings,
- *   not 300+ identical "WARP STABILISATION 100%" allocations.
- * - The RAF SELF-TERMINATES once `pct` reaches 100 — without this the
- *   component stays mounted during steady-state gameplay (returns null
- *   only on phase change, useEffect cleanup never fires while alive)
- *   and the loop runs forever, allocating + setting the same text every
- *   frame. Surfaced by the hostile CDP profile as rank-2 / 28 KB.
- * - `sx={{...}}` literals are HOISTED to module-level constants below
- *   so the React render path doesn't reconstruct + diff them each pass.
- *   The one dynamic property (`opacity`) is composed at render time via
- *   a tiny inline `{ ...staticSx, opacity }` so the rest of the object
- *   tree is reused.
+ * `sx={{...}}` literals are HOISTED to module-level constants below
+ * so the React render path doesn't reconstruct + diff them each pass.
  */
 
 // Static sx objects — module-level so each render reuses the same
@@ -70,13 +51,30 @@ const STATUS_SX = {
   textShadow:
     '0 0 12px rgba(0, 255, 136, 0.65), 0 0 24px rgba(0, 255, 136, 0.35)',
 };
-const TIMER_SX = {
-  color: '#9aa0b4',
-  fontFamily: 'ui-monospace, "Roboto Mono", monospace',
-  fontSize: 11,
-  letterSpacing: 2,
-  minHeight: 12,
-  textShadow: '0 0 8px rgba(0, 0, 0, 0.6)',
+// Plan: crispy-kazoo, Commit 9 — animated 3-dot ellipsis replaces
+// the jittery `WARP STABILISATION X%` RAF counter. Pure CSS keyframes
+// driven; zero JS allocation per frame.
+const DOT_SX_BASE = {
+  display: 'inline-block',
+  width: 6,
+  height: 6,
+  mx: 0.4,
+  borderRadius: '50%',
+  bgcolor: '#9aa0b4',
+  animation: 'eqx-warp-dot 1.2s ease-in-out infinite',
+  '@keyframes eqx-warp-dot': {
+    '0%, 80%, 100%': { opacity: 0.25, transform: 'scale(0.85)' },
+    '40%': { opacity: 1, transform: 'scale(1)' },
+  },
+};
+const DOT_SX_1 = { ...DOT_SX_BASE, animationDelay: '0s' };
+const DOT_SX_2 = { ...DOT_SX_BASE, animationDelay: '0.18s' };
+const DOT_SX_3 = { ...DOT_SX_BASE, animationDelay: '0.36s' };
+const DOT_ROW_SX = {
+  minHeight: 10,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
 };
 // Pre-cache the two opacity-bearing variants so the most-common render
 // path (opacity 0 in steady state, opacity 1 during warp) reuses a
@@ -194,65 +192,41 @@ export function WarpScreen(): JSX.Element | null {
     window.setTimeout(() => ui.setSectorAlert(null), 4000);
   };
 
-  // Status text follows the ordered readiness chain — first NOT-ready
-  // sub-flag wins. The 5 s minimum-display floor surfaces as
-  // "STABILISING TRAJECTORY" while the reconciler settles below the
-  // warp visual.
+  // Plan: crispy-kazoo, Commit 9 — collapsed the per-gate cascade to
+  // three states that each persist long enough to be readable. The
+  // prior 8-state cascade flashed by faster than the eye could parse
+  // and produced the user-reported "jittery loading text" symptom
+  // (most states ran for ~30-100ms). The three visible windows are:
+  //   - CONNECTING:    pre-welcome + initial state-diff (~200-500ms)
+  //   - LOADING SECTOR: minDisplay floor + first snapshot (~2.5s)
+  //   - WARPING IN:    after handshake, before the synchronised flash
+  //                    (~600ms, including the 380ms curtain fade-out)
+  //   - WARP COMPLETE: terminal, opacity-0 already
   let statusText: string;
-  if (connectionStatus !== 'connected') {
-    statusText = 'ESTABLISHING SUBSPACE LINK';
-  } else if (localShipInstanceId === null) {
-    statusText = 'AWAITING NAVIGATION FIX';
-  } else if (!rendererFirstFrameRendered) {
-    statusText = 'INITIALISING DISPLAY';
-  } else if (!firstSnapshotApplied) {
-    statusText = 'SYNCING SECTOR TELEMETRY';
-  } else if (!joinMinimumElapsed) {
-    statusText = 'STABILISING TRAJECTORY';
-  } else if (!clientReadySent) {
-    statusText = 'NEGOTIATING ARRIVAL';
-  } else if (arrivalTickFromServer === null) {
-    statusText = 'AWAITING ARRIVAL CLEARANCE';
+  if (connectionStatus !== 'connected' || localShipInstanceId === null) {
+    statusText = 'CONNECTING';
+  } else if (
+    !rendererFirstFrameRendered
+    || !firstSnapshotApplied
+    || !joinMinimumElapsed
+    || !clientReadySent
+    || arrivalTickFromServer === null
+  ) {
+    statusText = 'LOADING SECTOR';
   } else if (!arrivalAcked) {
-    statusText = 'WARP IN T-MINUS';
+    statusText = 'WARPING IN';
   } else {
     statusText = 'WARP COMPLETE';
   }
 
-  const progressRef = useRef<HTMLSpanElement | null>(null);
-  const mountedAtRef = useRef<number>(performance.now());
-  const lastPctRef = useRef<number>(-1);
-  useEffect(() => {
-    mountedAtRef.current = performance.now();
-    lastPctRef.current = -1;
-    let raf = 0;
-    const tick = (): void => {
-      const el = progressRef.current;
-      if (el !== null) {
-        const ms = performance.now() - mountedAtRef.current;
-        const pct = Math.min(100, Math.round((ms / 5000) * 100));
-        // Only allocate + write when pct actually changes — at 60 Hz
-        // most adjacent frames share the same int.
-        if (pct !== lastPctRef.current) {
-          lastPctRef.current = pct;
-          el.textContent = `WARP STABILISATION ${pct}%`;
-        }
-      }
-      // Self-terminate at 100 % — the visual job is done and the
-      // component may stay mounted indefinitely during gameplay (its
-      // useEffect cleanup only fires on actual unmount). Without this
-      // the loop runs forever allocating a stale template literal.
-      if (lastPctRef.current < 100) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        raf = 0;
-      }
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      if (raf !== 0) cancelAnimationFrame(raf);
-    };
-  }, []);
+  // Plan: crispy-kazoo, Commit 9 — replaced the `WARP STABILISATION X%`
+  // 60Hz RAF counter with a CSS-animated 3-dot ellipsis. The X%
+  // counter was the source of the user-reported "jittery loading
+  // text" — it allocated a fresh string for every percentage change
+  // AND was misleading once the loading window dropped to ~3s (it'd
+  // only reach ~60% before curtain drop, leaving an "incomplete"
+  // visual). The ellipsis is purely cosmetic (animation lives in the
+  // sx below), zero JS work per frame.
 
   if (phase !== 'game' && phase !== 'connecting') return null;
 
@@ -267,14 +241,11 @@ export function WarpScreen(): JSX.Element | null {
         <Typography data-testid="warp-screen-status" sx={STATUS_SX}>
           {statusText}
         </Typography>
-        <Typography
-          component="span"
-          data-testid="warp-screen-timer"
-          ref={progressRef}
-          sx={TIMER_SX}
-        >
-          WARP STABILISATION 0%
-        </Typography>
+        <Box data-testid="warp-screen-timer" sx={DOT_ROW_SX}>
+          <Box component="span" sx={DOT_SX_1} />
+          <Box component="span" sx={DOT_SX_2} />
+          <Box component="span" sx={DOT_SX_3} />
+        </Box>
         {stalled && visible && (
           <>
             <Typography data-testid="warp-screen-stall-msg" sx={STALL_TEXT_SX}>

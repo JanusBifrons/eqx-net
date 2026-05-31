@@ -1479,33 +1479,59 @@ export class ColyseusGameClient {
         arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
         isLocal: msg.playerId === this.mirror.localPlayerId,
       });
-      // Plan: crispy-kazoo, Commit 2 — synchronised arrival flash.
-      // OWN warp-in (kind === 'warp_in' AND playerId === local AND
-      // arrivalTick is present): capture arrivalTick + defer the
-      // pendingWarpEvents push until the local clock reaches it.
-      // At arrivalTick: curtain drops (via arrivalAcked Zustand flip)
-      // AND the warp-in animation fires in the renderer. Observers'
-      // own animation timing is the existing push-immediately path
-      // (the flash lands ~100 ms before the snapshot diff carries the
-      // newly-active ship — same temporal shape as transit-arrival
-      // warp-in today).
+      // Plan: crispy-kazoo, Commit 9 — synchronised arrival, split
+      // curtain-drop from warp-in flash.
+      //
+      // SEQUENCE for the joiner:
+      //   T0      receive `warp_in { arrivalTick }`
+      //   T0+~150ms (= arrivalTick - 450ms): curtain starts fading
+      //                                     (`setArrivalAcked(true)`
+      //                                     → useIsLoadingActive → false
+      //                                     → useWarpOrchestration calls
+      //                                     `renderer.setLoadCurtain(false)`,
+      //                                     a 380 ms fade)
+      //   T0+~600ms (= arrivalTick):       warp-in flash fires
+      //                                     (pendingWarpEvents push;
+      //                                     curtain is gone by now)
+      //
+      // The wall-clock-anchored server-tick estimate is mandatory:
+      // `this.inputTick` is stuck at welcome's serverTick because
+      // `tickPhysics` is gated by the loading-active pause boundary,
+      // so it never advances. Using inputTick as the reference gives
+      // a ~5 s wait instead of ~600 ms — the 2026-05-31 smoke bug.
       if (
         kind === 'warp_in'
         && msg.playerId === this.mirror.localPlayerId
         && typeof arrivalTick === 'number'
       ) {
         useUIStore.getState().setArrivalTickFromServer(arrivalTick);
-        const ticksUntil = Math.max(0, arrivalTick - this.inputTick);
-        const msUntil = ticksUntil * (1000 / 60);
+        // Wall-clock-anchored estimate of CURRENT server tick. Welcome
+        // gave us a perfect anchor (`serverTickAtWelcome` +
+        // `welcomePerfNow`); 60 ticks/sec wall-clock advance keeps the
+        // estimate accurate independent of any input-loop gating.
+        const wallClockMsSinceWelcome = this.clock.now() - this.welcomePerfNow;
+        const serverTickEstimate =
+          this.serverTickAtWelcome + Math.floor(wallClockMsSinceWelcome * 60 / 1000);
+        const ticksUntilArrival = Math.max(0, arrivalTick - serverTickEstimate);
+        const msUntilArrival = ticksUntilArrival * (1000 / 60);
+        // 450 ms before arrival → curtain fade-out starts (380 ms fade
+        // + 70 ms slack to ensure it's fully gone before the flash).
+        const CURTAIN_LEAD_MS = 450;
+        const msUntilCurtainDrop = Math.max(0, msUntilArrival - CURTAIN_LEAD_MS);
         setTimeout(() => {
           if (this.disposed) return;
           useUIStore.getState().setArrivalAcked(true);
-          this.mirror.pendingWarpEvents?.push({ x: msg.x, y: msg.y });
           logEvent('arrival_acked', {
             arrivalTick,
-            msUntil: Math.round(msUntil),
+            msUntilCurtainDrop: Math.round(msUntilCurtainDrop),
+            msUntilArrival: Math.round(msUntilArrival),
           });
-        }, msUntil);
+        }, msUntilCurtainDrop);
+        setTimeout(() => {
+          if (this.disposed) return;
+          this.mirror.pendingWarpEvents?.push({ x: msg.x, y: msg.y });
+          logEvent('warp_in_flash_fired', { arrivalTick });
+        }, msUntilArrival);
         return;
       }
       // Remote warp event: push immediately (legacy path).

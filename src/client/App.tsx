@@ -158,13 +158,15 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     }
   }, [gameReady]);
 
-  // Minimum-display-time floor for the WarpScreen. 5 s gives the
-  // reconciler enough wall-clock to receive its first snapshot, apply
-  // its first server→client correction, and settle BEFORE the user
-  // sees the canvas. Without this floor, the warp hides at the spawn
-  // pose and the first-move-teleport user symptom resurfaces
-  // (2026-05-14 capture `2026-05-14T21-39-07-346Z-tkc6ad` showed a
-  // 311-unit drift correction landing pre-capture-window).
+  // Minimum-display-time floor for the WarpScreen. Plan crispy-kazoo
+  // Commit 9 — lowered from 5 s to 2.5 s. The reconciler's first
+  // correction-apply window is what the floor protected (the
+  // 2026-05-14 311-unit pre-curtain-drop drift). Post-handshake the
+  // first correction lands during the curtain phase too (server's
+  // 5-s join-broadcast grace pushes snapshots immediately), so 2.5 s
+  // is comfortable margin — and 2.5 s + the 600 ms arrival-handshake
+  // budget puts total click-to-playable around ~3-3.5 s, which is the
+  // shortest the user's "natural pause" request tolerates.
   //
   // Keyed on `joinGeneration` (Phase G): a pure inter-sector transit
   // keeps `phase==='game'` so GameSurface does NOT remount — a
@@ -172,14 +174,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // session and never again, so the 2nd+ transit had no floor and the
   // WarpScreen never re-showed. `rearmJoinReadiness()` (from the
   // `transit_ready` handler) bumps `joinGeneration`; the dep change
-  // tears down the stale timer (cleanup) and re-runs a fresh 5 s
-  // floor. The literal `setTimeout(…, 5000)` is unchanged — the floor
-  // is NOT weakened, it now re-runs instead of never.
+  // tears down the stale timer (cleanup) and re-runs a fresh floor.
   const joinGeneration = useUIStore((s) => s.joinGeneration);
   useEffect(() => {
     const timer = setTimeout(() => {
       useUIStore.getState().setJoinMinimumElapsed(true);
-    }, 5000);
+    }, 2500);
     return () => clearTimeout(timer);
   }, [joinGeneration]);
 

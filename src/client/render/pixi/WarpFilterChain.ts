@@ -62,7 +62,14 @@ export interface WarpFrameMarkers {
 }
 
 const BACKGROUND_COLOR = 0x05070f;
-const CURTAIN_PEAK_ALPHA = 0.97;
+// Plan: crispy-kazoo, Commit 9 — was 0.97, bumped to 1.0.
+// The 3% see-through let bright VFX (laser bolts, missile explosions,
+// remote-player warp-in flashes) bleed through the curtain — the
+// 2026-05-31 smoke "I saw some effects happen behind/on the curtain"
+// report. Full opacity hides them completely. The curtain colour
+// matches the background so a black opaque overlay reads as "starfield
+// dimmed", same visual intent as the 0.97 variant.
+const CURTAIN_PEAK_ALPHA = 1.0;
 const CURTAIN_RISE_MS = 200;
 const CURTAIN_FADE_MS = 380;
 

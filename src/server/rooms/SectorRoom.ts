@@ -227,19 +227,30 @@ const IDLE_THRESHOLD_TICKS = 60;
 const JOIN_BROADCAST_GRACE_TICKS = 300;
 
 /**
- * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+ * Plan: crispy-kazoo, Commit 9 — synchronised warp-in handshake.
  *
  * After `client_ready` arrives, the server picks
  * `arrivalTick = serverTick + ARRIVAL_OFFSET_TICKS` and broadcasts
  * `warp_in` with that tick to all clients in the sector (including
- * the joiner). The offset gives the broadcast time to propagate so
- * every observer schedules the warp-in animation at the same logical
- * instant. At `arrivalTick` the server flips `ship.isActive = true`
+ * the joiner). At `arrivalTick` the server flips `ship.isActive = true`
  * and the snapshot diff carries the ship into broadcasts for the
- * first time. 6 ticks at 60 Hz = 100 ms; bump to 12 ticks (~200 ms)
- * if a smoke shows late observers.
+ * first time.
+ *
+ * 36 ticks @ 60 Hz = 600 ms. Budget breakdown for the joiner:
+ *   - ~50 ms broadcast propagation
+ *   - ~150 ms loading-active "world emerges" window (curtain held)
+ *   - 380 ms curtain fade-out (`WarpFilterChain.setLoadCurtain(false)`)
+ *   - 20 ms safety
+ *   = curtain visibly drops → user sees the world → warp-in flash
+ *
+ * The 2026-05-31 smoke (capture `w5wihn`) at 6 ticks (100 ms) had two
+ * problems: (a) the client used a stale `inputTick` for the setTimeout
+ * math and waited 5 s instead of 100 ms — fixed client-side, but
+ * (b) even with the math right, 100 ms is too short to fade the
+ * 380 ms curtain before the warp-in flash fires; the two events
+ * overlapped and the user "never saw the warp-in".
  */
-const ARRIVAL_OFFSET_TICKS = 6;
+const ARRIVAL_OFFSET_TICKS = 36;
 
 /**
  * Plan: crispy-kazoo, Commit 2 — `client_ready` watchdog.

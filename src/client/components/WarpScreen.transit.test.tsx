@@ -100,13 +100,17 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: stays '0' (action absent)
-    expect(statusText()).toBe('SYNCING SECTOR TELEMETRY');
+    // Plan: crispy-kazoo, Commit 9 — collapsed status cascade to 3
+    // user-visible states. Pre-rearm intermediate states all read as
+    // 'LOADING SECTOR' (was the 5-state cascade SYNCING SECTOR
+    // TELEMETRY / STABILISING TRAJECTORY etc.). Less jitter.
+    expect(statusText()).toBe('LOADING SECTOR');
 
     // readiness gates flip true in arrival order → hides again
     useUIStore.getState().setFirstSnapshotApplied(true);
     rerender();
-    expect(visible()).toBe('1'); // still gated by the 5 s floor
-    expect(statusText()).toBe('STABILISING TRAJECTORY');
+    expect(visible()).toBe('1'); // still gated by the minDisplay floor
+    expect(statusText()).toBe('LOADING SECTOR');
     useUIStore.getState().setJoinMinimumElapsed(true);
     // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake
     // gates must also flip for the curtain to drop. In production these
@@ -127,7 +131,7 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: 2nd+ transit never re-shows
-    expect(statusText()).toBe('SYNCING SECTOR TELEMETRY');
+    expect(statusText()).toBe('LOADING SECTOR');
   });
 
   it('gate-drift lock: still shown when only firstSnapshotApplied is unmet (4-vs-5)', () => {
@@ -161,10 +165,12 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     // The visibility gate is the contract under test here.)
   });
 
-  it('5 s minimum-display floor stays load-bearing (R2)', () => {
+  it('minimum-display floor stays load-bearing (R2)', () => {
     // All gates satisfied EXCEPT the joinMinimumElapsed floor → the warp
     // visual must remain shown. Guards against a future regression that
     // drops the floor from the readiness gate.
+    // (Floor reduced 5 s → 2.5 s in crispy-kazoo Commit 9; this test
+    // doesn't assert the duration, only that the gate keeps the curtain.)
     useUIStore.setState({
       phase: 'game',
       connectionStatus: 'connected',
@@ -172,8 +178,6 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
       firstSnapshotApplied: true,
       rendererFirstFrameRendered: true,
       joinMinimumElapsed: false,
-      // Commit 2 handshake gates set true so the legacy floor is
-      // isolated as the single open gate under test.
       localPoseResolved: true,
       clientReadySent: true,
       arrivalTickFromServer: 123,
@@ -181,6 +185,8 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     });
     renderWarp();
     expect(visible()).toBe('1');
-    expect(statusText()).toBe('STABILISING TRAJECTORY');
+    // Status cascade collapsed: any pending bootstrap gate (including
+    // joinMinimumElapsed) reads as 'LOADING SECTOR' per Commit 9.
+    expect(statusText()).toBe('LOADING SECTOR');
   });
 });
