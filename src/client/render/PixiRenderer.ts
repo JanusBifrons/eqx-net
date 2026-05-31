@@ -18,6 +18,7 @@ import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService'
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
+import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
 import {
   DAMAGE_FLASH_COLOR,
@@ -272,6 +273,11 @@ export class PixiRenderer implements IRenderer {
       antialias: true,
       resolution: initialDpr,
       autoDensity: isDom,
+      // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
+      // pinning guarantees the worker can never silently select WebGPU
+      // (whose Graphics MSAA path differs from the main-thread fallback's
+      // WebGL), keeping crispness identical across both renderer paths.
+      preference: 'webgl',
     });
     if (domContainer) {
       domContainer.appendChild(this.app.canvas);
@@ -314,6 +320,25 @@ export class PixiRenderer implements IRenderer {
       followLerpFactor: 1,
     });
     this.camera.setScreenSize(initialW, initialH);
+
+    // Frame diagnostic (gated). The decisive crispness metric: the
+    // backing buffer (`app.canvas.width`) MUST equal round(CSS px × dpr)
+    // for true 1:1 HiDPI. Pre-fix the worker path double-applied dpr.
+    // Captured on-device via `?diag=1` (plan: zazzy-engelbart, Phase 0).
+    if (isDiagEnabled()) {
+      logEvent('render_frame_diag', {
+        phase: 'init',
+        mode: isDom ? 'dom' : 'worker',
+        appResolution: this.app.renderer.resolution,
+        rendererType: (this.app.renderer as unknown as { type?: number }).type ?? -1,
+        canvasW: this.app.canvas.width,
+        canvasH: this.app.canvas.height,
+        inW: initialW,
+        inH: initialH,
+        dpr: initialDpr,
+        worldScaleX: this.world.scale.x,
+      });
+    }
 
     // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
     // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
@@ -419,7 +444,9 @@ export class PixiRenderer implements IRenderer {
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
-      this.camera.tick();
+      // deltaMS keeps the Camera's zoom-ease framerate-independent
+      // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
+      this.camera.tick(this.app.ticker.deltaMS);
     });
 
     if (isDom && domContainer) {
@@ -444,7 +471,10 @@ export class PixiRenderer implements IRenderer {
         // !this.initialized is enough — dispose() flips that flag.
         if (!this.initialized || !this.app?.renderer) return;
         const { w, h } = measureSize();
-        this.app.renderer.resize(w, h);
+        // Re-apply DPR so browser-zoom / monitor-move updates resolution
+        // on the main-thread path too (parity with the worker resize).
+        const dpr = window.devicePixelRatio ?? 1;
+        this.app.renderer.resize(w, h, dpr);
         this.camera.setScreenSize(w, h);
         this.starfield?.resize(w, h);
       };
@@ -470,11 +500,28 @@ export class PixiRenderer implements IRenderer {
    * receives a RESIZE message — replicates the DOM resize() handler for
    * the OffscreenCanvas path.
    */
-  resize(width: number, height: number): void {
+  resize(width: number, height: number, dpr?: number): void {
     if (!this.initialized || !this.app?.renderer) return;
-    this.app.renderer.resize(width, height);
+    // Pass resolution through so a DPR change (monitor move / browser
+    // zoom / some rotations) re-derives the backing buffer. Omitting it
+    // (the old behaviour) kept the stale init resolution → blur after
+    // such a change. `width`/`height` are LOGICAL (CSS) px.
+    this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
     this.camera.setScreenSize(width, height);
     this.starfield?.resize(width, height);
+    if (isDiagEnabled()) {
+      logEvent('render_frame_diag', {
+        phase: 'resize',
+        mode: 'worker',
+        appResolution: this.app.renderer.resolution,
+        canvasW: this.app.canvas.width,
+        canvasH: this.app.canvas.height,
+        inW: width,
+        inH: height,
+        dpr: dpr ?? -1,
+        worldScaleX: this.world.scale.x,
+      });
+    }
   }
 
   /**

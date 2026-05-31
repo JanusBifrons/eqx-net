@@ -90,8 +90,18 @@ export class WorkerRendererClient implements IRenderer {
     container.appendChild(this.canvas);
 
     const dpr = window.devicePixelRatio ?? 1;
-    this.canvas.width = Math.floor(container.clientWidth * dpr);
-    this.canvas.height = Math.floor(container.clientHeight * dpr);
+    const cssW = container.clientWidth;
+    const cssH = container.clientHeight;
+    // The OffscreenCanvas backing buffer is PHYSICAL px; Pixi re-derives
+    // it as `cssW * resolution` at init/resize, so this pre-size is just
+    // a sensible initial allocation. The BOOT message (below) carries
+    // LOGICAL (CSS) px + dpr — Pixi's HiDPI contract is buffer =
+    // width * resolution. Previously BOOT sent PHYSICAL px AND
+    // `resolution: dpr`, double-applying dpr → a ~dpr² oversized buffer
+    // (blurry downsample + an oversized compositor-commit every drain on
+    // high-DPR devices). See plan: zazzy-engelbart, Phase 1.
+    this.canvas.width = Math.floor(cssW * dpr);
+    this.canvas.height = Math.floor(cssH * dpr);
 
     const offscreen = this.canvas.transferControlToOffscreen();
 
@@ -114,8 +124,8 @@ export class WorkerRendererClient implements IRenderer {
     this.post({
       type: 'BOOT',
       canvas: offscreen,
-      width: this.canvas.width,
-      height: this.canvas.height,
+      width: cssW,
+      height: cssH,
       dpr,
     }, [offscreen]);
 

@@ -82,6 +82,15 @@ export interface CameraOptions {
    * Default 0.1.
    */
   momentumEpsilon?: number;
+  /**
+   * Exponential time-constant (ms) for the wheel-zoom ease applied in
+   * `tick()`. Lower = snappier, higher = floatier. Default 90. Pinch is
+   * exempt (direct manipulation stays 1:1); follow is a separate path and
+   * is unaffected. This decoupling is what lets the zoom feel smooth
+   * without reintroducing the zoom-vs-follow vibration that pinned
+   * `followLerpFactor` to 1 in production.
+   */
+  zoomSmoothTimeMs?: number;
 }
 
 interface ResolvedOpts {
@@ -92,7 +101,11 @@ interface ResolvedOpts {
   tapThresholdMs: number;
   followLerpFactor: number;
   momentumEpsilon: number;
+  zoomSmoothTimeMs: number;
 }
+
+/** Below this absolute scale-delta the zoom ease snaps to target + clears. */
+const ZOOM_SNAP_EPSILON = 0.001;
 
 const DEFAULTS: ResolvedOpts = {
   minScale: 0.4,
@@ -102,6 +115,7 @@ const DEFAULTS: ResolvedOpts = {
   tapThresholdMs: 250,
   followLerpFactor: 0.15,
   momentumEpsilon: 0.1,
+  zoomSmoothTimeMs: 90,
 };
 
 /** Result of `onPointerUp`. Caller hit-tests `worldX/Y` when `wasTap`. */
@@ -131,6 +145,14 @@ export class Camera {
   private screenW = 0;
   private screenH = 0;
 
+  // Smoothed zoom — onWheel sets targetScale + the anchor; tick() eases
+  // the live scale toward it via zoomAround. Decoupled from follow, so it
+  // cannot reintroduce the zoom-vs-follow vibration (followLerpFactor:1).
+  private targetScale = 1;
+  private zoomAnchorX = 0;
+  private zoomAnchorY = 0;
+  private hasZoomTarget = false;
+
   constructor(
     private readonly target: CameraTarget,
     opts: CameraOptions = {},
@@ -140,6 +162,7 @@ export class Camera {
       decelFactor: this.opts.decelFactor,
       epsilon: this.opts.momentumEpsilon,
     });
+    this.targetScale = this.target.scale.x;
   }
 
   // ---------- Screen size ----------
@@ -158,6 +181,18 @@ export class Camera {
   moveCenter(worldX: number, worldY: number): void {
     this.target.x = this.screenW / 2 - worldX * this.target.scale.x;
     this.target.y = this.screenH / 2 - worldY * this.target.scale.y;
+  }
+
+  /**
+   * Set the zoom level immediately (no ease), keeping the world point at
+   * screen-centre fixed. For the bootstrap default-gameplay-zoom and any
+   * programmatic caller. Clamped to [minScale, maxScale].
+   */
+  setZoom(scale: number): void {
+    const s = this.clampScale(scale);
+    zoomAround(this.target, this.screenW / 2, this.screenH / 2, s);
+    this.targetScale = s;
+    this.hasZoomTarget = false;
   }
 
   /**
@@ -199,6 +234,10 @@ export class Camera {
       if (step) {
         const newScale = this.clampScale(this.pinch.startScale() * step.ratio);
         zoomAround(this.target, step.midX, step.midY, newScale);
+        // Pinch is direct (no ease). Keep targetScale synced + cancel any
+        // in-flight wheel ease so the two don't fight.
+        this.targetScale = newScale;
+        this.hasZoomTarget = false;
       }
     } else if (this.drag.isPanning() && this.pointers.size === 1) {
       const { dx, dy } = this.drag.step(screenX, screenY);
@@ -268,23 +307,44 @@ export class Camera {
    * point under the cursor stays fixed.
    */
   onWheel(deltaY: number, screenX: number, screenY: number): void {
-    const newScale = this.clampScale(this.target.scale.x * wheelZoomFactor(deltaY));
+    // Set a target scale + anchor; the zoom itself eases in tick() so the
+    // wheel feels smooth instead of stepping. Accumulate off targetScale
+    // (not the live scale) so rapid wheel ticks compound mid-ease.
+    this.targetScale = this.clampScale(this.targetScale * wheelZoomFactor(deltaY));
     if (this.followTarget) {
-      zoomAround(this.target, this.screenW / 2, this.screenH / 2, newScale);
+      // Following: zoom around screen-centre (the ship stays centred).
+      this.zoomAnchorX = this.screenW / 2;
+      this.zoomAnchorY = this.screenH / 2;
     } else {
-      zoomAround(this.target, screenX, screenY, newScale);
+      // Free camera: keep the world point under the cursor fixed.
+      this.zoomAnchorX = screenX;
+      this.zoomAnchorY = screenY;
     }
+    this.hasZoomTarget = true;
   }
 
   // ---------- Per-tick update ----------
 
   /**
-   * Apply momentum + follow. Called by the Pixi ticker each frame.
-   * `dtMs` is currently unused — the decel and lerp factors are
-   * implicitly per-frame at 60 Hz. Pass dtMs for future adaptive timing.
+   * Apply zoom-ease + momentum + follow. Called by the Pixi ticker each
+   * frame. `dtMs` drives the framerate-independent zoom ease; momentum +
+   * follow remain per-frame factors (unchanged behaviour).
    */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  tick(_dtMs: number = 16.67): void {
+  tick(dtMs: number = 16.67): void {
+    // Zoom ease toward targetScale (framerate-independent via dtMs). Runs
+    // first so the follow/momentum below use this frame's scale. zoomAround
+    // keeps the stored anchor's world point fixed as the scale changes.
+    if (this.hasZoomTarget) {
+      const current = this.target.scale.x;
+      const k = 1 - Math.exp(-dtMs / this.opts.zoomSmoothTimeMs);
+      let next = current + (this.targetScale - current) * k;
+      if (Math.abs(this.targetScale - next) < ZOOM_SNAP_EPSILON) {
+        next = this.targetScale;
+        this.hasZoomTarget = false;
+      }
+      zoomAround(this.target, this.zoomAnchorX, this.zoomAnchorY, next);
+    }
+
     // Momentum coasts only when no pointer is active.
     if (!this.drag.isPanning() && this.pointers.size === 0) {
       this.momentum.step(this.target);

@@ -122,7 +122,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
 
       case 'RESIZE': {
         if (!renderer) return;
-        renderer.resize(msg.width, msg.height);
+        renderer.resize(msg.width, msg.height, msg.dpr);
         galaxyLayer?.resize(msg.width, msg.height);
         break;
       }

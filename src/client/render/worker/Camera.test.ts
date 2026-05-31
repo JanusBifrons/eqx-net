@@ -114,57 +114,112 @@ describe('Camera — tap vs drag', () => {
   });
 });
 
-describe('Camera — wheel zoom', () => {
-  it('wheel up zooms in (scale increases)', () => {
+describe('Camera — wheel zoom (eased)', () => {
+  // Helper: drive enough ticks for the exp-ease to converge to target.
+  const settle = (cam: Camera): void => {
+    for (let i = 0; i < 200; i++) cam.tick(16.67);
+  };
+
+  it('onWheel sets a target but leaves the live scale unchanged until tick()', () => {
     const target = makeTarget();
     const cam = new Camera(target);
-
     cam.onWheel(-100, 400, 300);
+    expect(target.scale.x).toBe(1);
+    cam.tick(16.67);
+    expect(target.scale.x).toBeGreaterThan(1);
+  });
 
+  it('wheel up eases in toward 1.1 (scale increases)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+    cam.onWheel(-100, 400, 300);
+    settle(cam);
     expect(target.scale.x).toBeCloseTo(1.1, 5);
   });
 
-  it('wheel down zooms out (scale decreases)', () => {
+  it('wheel down eases out toward 0.9 (scale decreases)', () => {
     const target = makeTarget();
     const cam = new Camera(target);
-
     cam.onWheel(100, 400, 300);
-
+    settle(cam);
     expect(target.scale.x).toBeCloseTo(0.9, 5);
   });
 
-  it('zoom keeps the world point under the pointer fixed', () => {
+  it('the ease is monotonic toward the target on each tick', () => {
     const target = makeTarget();
     const cam = new Camera(target);
-
-    // World point at screen (100, 50) at scale 1 = world (100, 50).
-    cam.onWheel(-100, 100, 50);
-
-    // After zoom, world point (100, 50) should still be at screen (100, 50).
-    const screenX = target.x + 100 * target.scale.x;
-    const screenY = target.y + 50 * target.scale.y;
-    expect(screenX).toBeCloseTo(100, 5);
-    expect(screenY).toBeCloseTo(50, 5);
+    cam.onWheel(-100, 400, 300);
+    let prev = target.scale.x;
+    for (let i = 0; i < 20; i++) {
+      cam.tick(16.67);
+      expect(target.scale.x).toBeGreaterThanOrEqual(prev - 1e-12);
+      expect(target.scale.x).toBeLessThanOrEqual(1.1 + 1e-9);
+      prev = target.scale.x;
+    }
   });
 
-  it('scale clamps to maxScale', () => {
+  it('the ease is framerate-independent (one 33.34ms tick ≈ two 16.67ms ticks)', () => {
+    const a = makeTarget();
+    const camA = new Camera(a);
+    camA.onWheel(-100, 400, 300);
+    camA.tick(33.34);
+
+    const b = makeTarget();
+    const camB = new Camera(b);
+    camB.onWheel(-100, 400, 300);
+    camB.tick(16.67);
+    camB.tick(16.67);
+
+    expect(a.scale.x).toBeCloseTo(b.scale.x, 3);
+  });
+
+  it('keeps the world point under the pointer fixed at every tick of the ease', () => {
+    const target = makeTarget();
+    const cam = new Camera(target); // free camera (no follow) → anchor at cursor
+    const worldXBefore = (100 - target.x) / target.scale.x;
+    const worldYBefore = (50 - target.y) / target.scale.y;
+    cam.onWheel(-100, 100, 50);
+    for (let i = 0; i < 30; i++) {
+      cam.tick(16.67);
+      const screenX = target.x + worldXBefore * target.scale.x;
+      const screenY = target.y + worldYBefore * target.scale.y;
+      expect(screenX).toBeCloseTo(100, 5);
+      expect(screenY).toBeCloseTo(50, 5);
+    }
+  });
+
+  it('scale clamps to maxScale after the ease', () => {
     const target = makeTarget();
     const cam = new Camera(target, { maxScale: 1.05 });
-
-    cam.onWheel(-100, 0, 0); // would scale to 1.1
     cam.onWheel(-100, 0, 0);
-
-    expect(target.scale.x).toBeLessThanOrEqual(1.05);
+    cam.onWheel(-100, 0, 0);
+    settle(cam);
+    expect(target.scale.x).toBeLessThanOrEqual(1.05 + 1e-9);
+    expect(target.scale.x).toBeCloseTo(1.05);
   });
 
-  it('scale clamps to minScale', () => {
+  it('scale clamps to minScale after the ease', () => {
     const target = makeTarget();
     const cam = new Camera(target, { minScale: 0.95 });
-
     cam.onWheel(100, 0, 0);
     cam.onWheel(100, 0, 0);
+    settle(cam);
+    expect(target.scale.x).toBeGreaterThanOrEqual(0.95 - 1e-9);
+    expect(target.scale.x).toBeCloseTo(0.95);
+  });
+});
 
-    expect(target.scale.x).toBeGreaterThanOrEqual(0.95);
+describe('Camera — setZoom', () => {
+  it('sets the scale immediately and clamps to [min,max]', () => {
+    const target = makeTarget();
+    const cam = new Camera(target, { minScale: 0.4, maxScale: 3 });
+    cam.setScreenSize(800, 600);
+    cam.setZoom(0.7);
+    expect(target.scale.x).toBeCloseTo(0.7);
+    cam.setZoom(99);
+    expect(target.scale.x).toBeCloseTo(3);
+    cam.setZoom(0.01);
+    expect(target.scale.x).toBeCloseTo(0.4);
   });
 });
 
