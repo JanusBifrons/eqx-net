@@ -70,6 +70,15 @@ export function updateMissileSprites(
   }
 
   // 2. Drain pending explosions — one sprite per detonation.
+  // Plan combat-fx-hunt (2026-05-31): clearing the array here was
+  // INSUFFICIENT in worker-renderer mode. Each RENDER message clones
+  // the mirror via structured-clone; clearing the clone's array left
+  // the MAIN THREAD's `pendingMissileExplosions` populated, so the
+  // next frame re-shipped + re-spawned the same explosion sprites,
+  // stacking forever. Clearing now lives in `consumeOneFrameTriggers`
+  // (called on the main-thread mirror per gameRafLoop frame, gated on
+  // `shouldRender` for the worker-skip-frame contract). This loop
+  // ONLY reads the events; clearing is the caller's job.
   const explosions = mirror.pendingMissileExplosions;
   if (explosions && explosions.length > 0) {
     for (const evt of explosions) {
@@ -82,7 +91,9 @@ export function updateMissileSprites(
       ctx.shipContainer.addChild(g);
       ctx.activeExplosions.push({ g, spawnMs: nowMs, lifeMs: EXPLOSION_LIFE_MS });
     }
-    explosions.length = 0;
+    // DELIBERATELY NOT clearing `explosions.length = 0` here — that was
+    // the worker-mode bug. Caller (gameRafLoop via consumeOneFrameTriggers)
+    // owns the clear on the main-thread mirror.
   }
 
   // 3. Advance + reap active explosions (fade out over EXPLOSION_LIFE_MS).

@@ -180,3 +180,88 @@ describe('consumeOneFrameTriggers: pendingEffectTriggers (M2 — wiggly-puppy)',
     expect(() => consumeOneFrameTriggers(mirror, true)).not.toThrow();
   });
 });
+
+describe('consumeOneFrameTriggers: pendingMissileExplosions (combat-fx-hunt — worker mirror-clone bug)', () => {
+  // Regression lock for the 2026-05-31 user-reported bug: "the missile
+  // explosions stay on the screen permanently."
+  //
+  // Pre-fix: missileSpriteUpdater.ts cleared `mirror.pendingMissileExplosions.length = 0`
+  // inside the per-frame spawn loop. In worker-renderer mode this loop ran on
+  // the STRUCTURED-CLONED mirror copy passed via postMessage — clearing the
+  // clone left the main thread's array populated, and every subsequent RENDER
+  // message re-shipped + re-spawned the same explosion sprites at 60 Hz,
+  // forever.
+  //
+  // Post-fix: the clear lives here (consumed by gameRafLoop on the
+  // main-thread mirror) gated by `didRender` (same skip-frame discipline as
+  // explodingShips + pendingEffectTriggers).
+  it('clears pendingMissileExplosions after a render frame', () => {
+    const mirror = {
+      pendingMissileExplosions: [
+        { x: 100, y: 200, splashRadius: 36 },
+        { x: 150, y: 250, splashRadius: 50 },
+      ],
+    };
+    const arrRef = mirror.pendingMissileExplosions;
+    consumeOneFrameTriggers(mirror, /* didRender */ true);
+    expect(mirror.pendingMissileExplosions.length).toBe(0);
+    expect(mirror.pendingMissileExplosions).toBe(arrRef); // identity preserved (no realloc)
+  });
+
+  it('preserves pendingMissileExplosions on a skip frame', () => {
+    const mirror = {
+      pendingMissileExplosions: [{ x: 0, y: 0, splashRadius: 36 }],
+    };
+    consumeOneFrameTriggers(mirror, /* didRender */ false);
+    expect(mirror.pendingMissileExplosions.length).toBe(1);
+  });
+
+  it('accumulates pendingMissileExplosions across skip frames + drains on next render', () => {
+    const mirror = {
+      pendingMissileExplosions: [] as Array<{ x: number; y: number; splashRadius: number }>,
+    };
+    mirror.pendingMissileExplosions.push({ x: 0, y: 0, splashRadius: 36 });
+    consumeOneFrameTriggers(mirror, false);
+    mirror.pendingMissileExplosions.push({ x: 5, y: 5, splashRadius: 36 });
+    consumeOneFrameTriggers(mirror, false);
+    expect(mirror.pendingMissileExplosions.length).toBe(2);
+
+    consumeOneFrameTriggers(mirror, true);
+    expect(mirror.pendingMissileExplosions.length).toBe(0);
+  });
+
+  it('handles all three surfaces together (the production case)', () => {
+    const mirror = {
+      explodingShips: new Set<string>(['drone-1']),
+      pendingEffectTriggers: [{ kind: 'destruction' as const, worldX: 0, worldY: 0 }],
+      pendingMissileExplosions: [{ x: 100, y: 200, splashRadius: 36 }],
+    };
+    consumeOneFrameTriggers(mirror, true);
+    expect(mirror.explodingShips.size).toBe(0);
+    expect(mirror.pendingEffectTriggers.length).toBe(0);
+    expect(mirror.pendingMissileExplosions.length).toBe(0);
+  });
+
+  it('is a no-op when pendingMissileExplosions is undefined', () => {
+    const mirror = {};
+    expect(() => consumeOneFrameTriggers(mirror, true)).not.toThrow();
+    expect(() => consumeOneFrameTriggers(mirror, false)).not.toThrow();
+  });
+
+  it('does NOT clear pendingMissileExplosions on a skip frame even when populated', () => {
+    // The worker-mirror-clone bug had a sibling failure mode in
+    // main-thread-renderer mode: the missileSpriteUpdater clear was
+    // unconditional and would silently drop explosions queued during a
+    // skip frame. Both modes now route through consumeOneFrameTriggers
+    // with the same `didRender` gate.
+    const mirror = {
+      pendingMissileExplosions: [
+        { x: 1, y: 2, splashRadius: 36 },
+        { x: 3, y: 4, splashRadius: 36 },
+        { x: 5, y: 6, splashRadius: 36 },
+      ],
+    };
+    consumeOneFrameTriggers(mirror, false);
+    expect(mirror.pendingMissileExplosions.length).toBe(3);
+  });
+});

@@ -19,7 +19,7 @@
  * is scheduled by WarpScreen at all. The strongest version of the
  * original concern.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render } from '@testing-library/react';
 import { LayoutContext } from '../layout/useLayout.js';
 import { WarpScreen } from './WarpScreen.js';
