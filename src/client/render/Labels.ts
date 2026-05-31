@@ -107,7 +107,14 @@ export class LabelManager {
     // Sweep: drop labels whose entity has left the frame this update.
     for (const [k, e] of this.labels) {
       if (!this.seen.has(k)) {
-        e.text.destroy();
+        // Pixi v8 Text owns its own dynamic glyph atlas (a Texture +
+        // TextureSource + WebGLTexture chain). `.destroy()` without
+        // `{ texture: true, textureSource: true }` tears down the
+        // container but LEAKS the GPU resources. Heap snapshot diff
+        // 2026-05-31 showed 84 unleaked Texture chains over 60 s of
+        // combat, with `swarm_near_exit: 41` + damage-number bucket
+        // evictions matching the count 1:1. Pass full disposal here.
+        e.text.destroy({ texture: true, textureSource: true });
         this.labels.delete(k);
       }
     }
@@ -138,7 +145,7 @@ export class LabelManager {
 
   destroy(): void {
     for (const entry of this.labels.values()) {
-      entry.text.destroy();
+      entry.text.destroy({ texture: true, textureSource: true });
     }
     this.labels.clear();
     this.container.destroy({ children: true });

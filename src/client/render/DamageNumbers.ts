@@ -244,14 +244,18 @@ export class DamageNumberManager {
 
   destroy(): void {
     for (const [, entry] of this.byTarget) {
-      entry.text.destroy();
+      // Pixi v8 Text owns its own glyph atlas (Texture + TextureSource
+      // + WebGLTexture chain). `.destroy()` without
+      // `{ texture: true, textureSource: true }` leaks the GPU
+      // resources. Heap diff 2026-05-31 confirmed.
+      entry.text.destroy({ texture: true, textureSource: true });
     }
     this.byTarget.clear();
-    // The free-list's Texts are children of `this.container`, which
-    // `destroy({ children: true })` walks + destroys recursively. Free
-    // list itself doesn't need explicit clearing.
+    // Free-list Texts are children of `this.container`; the
+    // `destroy({ children: true, texture: true, textureSource: true })`
+    // call below cascades full disposal to them.
     this.freeTexts.length = 0;
-    this.container.destroy({ children: true });
+    this.container.destroy({ children: true, texture: true, textureSource: true });
   }
 
   /**
@@ -285,7 +289,13 @@ export class DamageNumberManager {
       // Overflow — defensive bound. Above POOL_CAP × 2 reusable Texts
       // there's no real-world workload that would consume them; drop
       // the excess so memory stays bounded.
-      text.destroy();
+      //
+      // Full GPU-resource disposal: Pixi v8 Text owns its own glyph
+      // atlas (Texture + TextureSource + WebGLTexture). `.destroy()`
+      // without `{ texture: true, textureSource: true }` leaks them.
+      // Heap diff 2026-05-31 showed +84 untracked Texture chains over
+      // 60 s of combat.
+      text.destroy({ texture: true, textureSource: true });
       return;
     }
     this.freeTexts.push(text);

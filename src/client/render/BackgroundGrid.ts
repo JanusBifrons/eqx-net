@@ -305,7 +305,10 @@ export class BackgroundGrid {
     const cleanupStart = performance.now();
     for (const [key, text] of this.labels) {
       if (!this.seen.has(key)) {
-        text.destroy();
+        // Pixi v8 Text owns its dynamic glyph atlas (Texture +
+        // TextureSource + WebGLTexture). Plain `.destroy()` leaks all
+        // three — confirmed by 2026-05-31 heap snapshot diff.
+        text.destroy({ texture: true, textureSource: true });
         this.labels.delete(key);
       }
     }
@@ -318,7 +321,9 @@ export class BackgroundGrid {
   }
 
   destroy(): void {
-    for (const text of this.labels.values()) text.destroy();
+    for (const text of this.labels.values()) {
+      text.destroy({ texture: true, textureSource: true });
+    }
     this.labels.clear();
     this.labelContainer.destroy({ children: true });
     this.microLines.destroy();
