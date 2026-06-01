@@ -30,6 +30,13 @@ export interface IdleEvalCtx {
   serverTick: number;
   shipPoseCache: Map<string, PoseRecord>;
   liveProjectiles: { size: number };
+  /** Drone (swarm-entity) count in the sector. Drones aren't in
+   *  `shipPoseCache` and their hitscan beams aren't in
+   *  `liveProjectiles`, so without this signal a sector with bots
+   *  attacking a momentarily-stationary player can enter idle
+   *  suppression — the 2026-06-01 phone-stall repro mechanism (see
+   *  `tests/mobile-perf/phone-galaxy-stall-repro.spec.ts`). */
+  swarmEntityCount: number;
   forceBroadcastUntilTick: number;
   idleMotionEpsilonSq: number;
   idleThresholdTicks: number;
@@ -40,7 +47,13 @@ export function evaluateSectorIdle(ctx: IdleEvalCtx): boolean {
   // projectile-in-flight signals; when no activity in
   // IDLE_THRESHOLD_TICKS (= 1 s at 60 Hz), the snapshot broadcast
   // block short-circuits.
-  if (ctx.liveProjectiles.size > 0) {
+  if (ctx.swarmEntityCount > 0) {
+    // Drones present → sector is meaningfully active for any
+    // connected client (player sees them in the binary swarm wire and
+    // expects snapshot-rate updates of their interactions with the
+    // player's hull / shield). Skip motion + projectile checks.
+    noteSectorEvent(ctx.idleTracker, ctx.serverTick);
+  } else if (ctx.liveProjectiles.size > 0) {
     noteSectorEvent(ctx.idleTracker, ctx.serverTick);
   } else {
     for (const [, pose] of ctx.shipPoseCache) {

@@ -182,6 +182,23 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
     );
 
     // Drift in 8-direction rotation throughout the run — keeps ship moving.
+    // Capture mid-game screenshot BEFORE we start touching things so
+    // we can confirm UI mount state (e.g., joystick double-mount issue
+    // the user reported 2026-06-01).
+    await conn.page.screenshot({
+      path: 'tests/mobile-perf/screenshots/phone-stall-precapture.png',
+      fullPage: false,
+    });
+    // Count joystick / fire-button DOM elements to detect double-mount.
+    const mountCounts = await conn.page.evaluate(() => ({
+      joystick: document.querySelectorAll('[data-testid="mobile-joystick"]').length,
+      fire: document.querySelectorAll('[data-testid="mobile-fire"]').length,
+      boost: document.querySelectorAll('[data-testid="mobile-boost"]').length,
+      joystickHandle: document.querySelectorAll('.joystick').length,
+    }));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] mount counts: ${JSON.stringify(mountCounts)}`);
+
     const joy = await joyDown(conn.cdp, joyX, joyY);
     await joyMove(joy, 35, -35); // start: up-right
     // eslint-disable-next-line no-console
@@ -234,6 +251,20 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
     }
 
     await joyUp(joy);
+
+    // Post-drive screenshot + mount count — has the joystick double-mounted by now?
+    await conn.page.screenshot({
+      path: 'tests/mobile-perf/screenshots/phone-stall-postdrive.png',
+      fullPage: false,
+    });
+    const postMountCounts = await conn.page.evaluate(() => ({
+      joystick: document.querySelectorAll('[data-testid="mobile-joystick"]').length,
+      fire: document.querySelectorAll('[data-testid="mobile-fire"]').length,
+      boost: document.querySelectorAll('[data-testid="mobile-boost"]').length,
+      joystickHandle: document.querySelectorAll('.joystick').length,
+    }));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] mount counts (post-drive): ${JSON.stringify(postMountCounts)}`);
 
     const elapsed = (Date.now() - startTime) / 1000;
     // eslint-disable-next-line no-console
