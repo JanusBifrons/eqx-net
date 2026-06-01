@@ -60,6 +60,12 @@ async function main(): Promise<void> {
 
   const hitches = json.events.filter((e) => e.tag === 'tick_hitch');
   const budgets = json.events.filter((e) => e.tag === 'tick_budget');
+  const gcPauses = json.events.filter((e) => e.tag === 'gc_pause');
+
+  console.log(`\n=== gc_pause count: ${gcPauses.length} (> threshold) ===\n`);
+  for (const gc of gcPauses.slice(0, 15)) {
+    console.log(`kind=${gc.data['kind']} durationMs=${gc.data['durationMs']}`);
+  }
   const sortedHitches = [...hitches].sort(
     (a, b) => (b.data['totalMs'] as number) - (a.data['totalMs'] as number),
   );
