@@ -16,6 +16,7 @@ import { LabelManager } from './Labels';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
+import { BeamSpritePool } from './BeamSpritePool';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -49,14 +50,9 @@ const LASER_CORE_COLOR = 0xffffff;
 // retains the reference, so a single reusable object per style is safe.
 // Mutate `alpha` for remote beams (TTL-based fade); local glow/core
 // styles are constant.
-// 2026-06-01 — collapsed glow + core into a single visible stroke per
-// beam type. Original 2-stroke (glow w3 a0.4 + core w1 a1) was the
-// dominant raf_stutter cause under 35-drone hostile combat (-81 %
-// when beams disabled entirely; isolation evidence in commit e66c5ca).
-// Single stroke at width 2 keeps the beam visible without the
-// expensive second triangulation pass.
-const _liveBeamStrokeStyle: { color: number; width: number; alpha: number } = { color: LASER_CORE_COLOR, width: 2, alpha: 1 };
-const _remoteBeamStrokeStyle: { color: number; width: number; alpha: number } = { color: 0xffaa44, width: 2, alpha: 1 };
+// Beam rendering moved to `BeamSpritePool` (post-2026-06-01) — no
+// per-frame `clear() + moveTo + lineTo + stroke()` cycle. Sprite tint
+// + width are passed at pool construct time; see `init()`.
 
 /**
  * Load-curtain tween constants. The curtain rises quickly (so the
@@ -162,8 +158,14 @@ export class PixiRenderer implements IRenderer {
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
-  private liveBeamGfx: Graphics | null = null;
-  private remoteBeamGfx: Graphics | null = null;
+  // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
+  // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
+  // fields are kept as Container types — same surface LaserGlow uses
+  // to attach filters. Pools own the actual sprite lifecycle.
+  private liveBeamGfx: Container | null = null;
+  private remoteBeamGfx: Container | null = null;
+  private _liveBeamPool: BeamSpritePool | null = null;
+  private _remoteBeamPool: BeamSpritePool | null = null;
   /**
    * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
    * dirty-flag check on the per-frame Graphics rebuild path.
@@ -486,13 +488,16 @@ export class PixiRenderer implements IRenderer {
     // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
     // hatch skips construction entirely.
     if (!effectsDisabledByUrl()) {
-      // Eagerly create the beam Graphics (M6 — laser glow). Previously
-      // lazy-created inside update() on first beam frame; we hoist them
-      // here so LaserGlow can attach a GlowFilter at construct time.
-      // Empty Graphics render as nothing — no visual change before first beam.
-      this.liveBeamGfx = new Graphics();
+      // Eagerly create the beam sprite pools (post-2026-06-01 — was
+      // Pixi Graphics). Each pool's Container is exposed as
+      // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
+      // GlowFilter to it at construct time. Empty pools render as
+      // nothing — no visual change before first beam.
+      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1 });
+      this.liveBeamGfx = this._liveBeamPool.container;
       this.shipContainer.addChild(this.liveBeamGfx);
-      this.remoteBeamGfx = new Graphics();
+      this._remoteBeamPool = new BeamSpritePool({ tint: 0xffaa44, width: 2, alpha: 1 });
+      this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx);
 
       this.effects = new EffectsService({
@@ -867,11 +872,7 @@ export class PixiRenderer implements IRenderer {
     // (not all stacked at the ship centre). Legacy single-mount ships have
     // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
     // the pre-refactor "ship.pos + 20 u forward" path.
-    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0) {
-      if (!this.remoteBeamGfx) {
-        this.remoteBeamGfx = new Graphics();
-        this.shipContainer.addChild(this.remoteBeamGfx);
-      }
+    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
       // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache, same
       // shape as liveBeam. Flat pooled slot array; count + per-beam
@@ -1010,23 +1011,15 @@ export class PixiRenderer implements IRenderer {
       if (slotIdx !== this._remoteBeamCacheCount) dirty = true;
       this._remoteBeamCacheCount = slotIdx;
 
-      if (dirty) {
-        // Single-stroke batched draw: build all line segments into one
-        // path, then stroke ONCE. Cuts per-redraw triangulation from
-        // 2N to 1 (was 2 strokes × N beams; now 1 stroke for all).
-        // Per-beam alpha fade dropped — beams just blink off at end
-        // of life; the saving is worth the visual simplification (user
-        // approved 2026-06-01).
-        this.remoteBeamGfx.clear();
-        for (let i = 0; i < slotIdx; i++) {
-          const s = this._remoteBeamCache[i]!;
-          this.remoteBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-        }
-        this.remoteBeamGfx.stroke(_remoteBeamStrokeStyle);
-      }
-      this.remoteBeamGfx.visible = true;
-    } else if (this.remoteBeamGfx) {
+      // Sprite-pool driven render — no clear/redraw, just transforms.
+      // Pool handles its own pooling + visibility; dirty-flag still
+      // gates the call so a totally-static set of beams doesn't
+      // touch the sprite transforms.
+      if (dirty) this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      this.remoteBeamGfx!.visible = true;
+    } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
+      this._remoteBeamPool.hideAll();
       this._remoteBeamCacheCount = 0;
     }
 
@@ -1041,11 +1034,7 @@ export class PixiRenderer implements IRenderer {
     // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
     // per barrel and each draws independently.
     const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip) {
-      if (!this.liveBeamGfx) {
-        this.liveBeamGfx = new Graphics();
-        this.shipContainer.addChild(this.liveBeamGfx);
-      }
+    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip && this._liveBeamPool) {
       const localKind = getShipKind(localShip.kind ?? null);
       const localMounts = localKind.mounts ?? [];
 
@@ -1100,19 +1089,12 @@ export class PixiRenderer implements IRenderer {
       }
       this._liveBeamCacheCount = slotIdx;
 
-      if (dirty) {
-        // Single-stroke batched draw (same pattern as remoteBeamGfx
-        // above) — one path, one stroke for all live-beam mounts.
-        this.liveBeamGfx.clear();
-        for (let i = 0; i < slotIdx; i++) {
-          const s = this._liveBeamCache[i]!;
-          this.liveBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-        }
-        this.liveBeamGfx.stroke(_liveBeamStrokeStyle);
-      }
-      this.liveBeamGfx.visible = true;
+      // Sprite-pool driven render (matches remoteBeam path).
+      if (dirty) this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      this.liveBeamGfx!.visible = true;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
+      this._liveBeamPool?.hideAll();
       this._liveBeamCacheCount = 0;
     }
 
