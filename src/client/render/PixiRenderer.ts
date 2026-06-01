@@ -49,10 +49,14 @@ const LASER_CORE_COLOR = 0xffffff;
 // retains the reference, so a single reusable object per style is safe.
 // Mutate `alpha` for remote beams (TTL-based fade); local glow/core
 // styles are constant.
-const _liveBeamGlowStyle: { color: number; width: number; alpha: number } = { color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 };
-const _liveBeamCoreStyle: { color: number; width: number; alpha: number } = { color: LASER_CORE_COLOR, width: 1, alpha: 1 };
-const _remoteBeamGlowStyle: { color: number; width: number; alpha: number } = { color: REMOTE_LASER_COLOR, width: 3, alpha: 0.4 };
-const _remoteBeamCoreStyle: { color: number; width: number; alpha: number } = { color: 0xffaa44, width: 1, alpha: 1 };
+// 2026-06-01 — collapsed glow + core into a single visible stroke per
+// beam type. Original 2-stroke (glow w3 a0.4 + core w1 a1) was the
+// dominant raf_stutter cause under 35-drone hostile combat (-81 %
+// when beams disabled entirely; isolation evidence in commit e66c5ca).
+// Single stroke at width 2 keeps the beam visible without the
+// expensive second triangulation pass.
+const _liveBeamStrokeStyle: { color: number; width: number; alpha: number } = { color: LASER_CORE_COLOR, width: 2, alpha: 1 };
+const _remoteBeamStrokeStyle: { color: number; width: number; alpha: number } = { color: 0xffaa44, width: 2, alpha: 1 };
 
 /**
  * Load-curtain tween constants. The curtain rises quickly (so the
@@ -874,7 +878,7 @@ export class PixiRenderer implements IRenderer {
       // endpoint/alpha comparison. Sub-pixel drift (epsilon 0.5 world
       // units, 0.05 alpha) hits the cache; visible motion / new
       // shooters / fade transitions trigger rebuild.
-      const BEAM_EPSILON = 0.5;
+      const BEAM_EPSILON = 4.0;
       const ALPHA_EPSILON = 0.05;
       const now = performance.now();
       let slotIdx = 0;
@@ -1007,16 +1011,18 @@ export class PixiRenderer implements IRenderer {
       this._remoteBeamCacheCount = slotIdx;
 
       if (dirty) {
+        // Single-stroke batched draw: build all line segments into one
+        // path, then stroke ONCE. Cuts per-redraw triangulation from
+        // 2N to 1 (was 2 strokes × N beams; now 1 stroke for all).
+        // Per-beam alpha fade dropped — beams just blink off at end
+        // of life; the saving is worth the visual simplification (user
+        // approved 2026-06-01).
         this.remoteBeamGfx.clear();
         for (let i = 0; i < slotIdx; i++) {
           const s = this._remoteBeamCache[i]!;
-          _remoteBeamGlowStyle.alpha = s.alpha * 0.4;
           this.remoteBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-          this.remoteBeamGfx.stroke(_remoteBeamGlowStyle);
-          _remoteBeamCoreStyle.alpha = s.alpha;
-          this.remoteBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-          this.remoteBeamGfx.stroke(_remoteBeamCoreStyle);
         }
+        this.remoteBeamGfx.stroke(_remoteBeamStrokeStyle);
       }
       this.remoteBeamGfx.visible = true;
     } else if (this.remoteBeamGfx) {
@@ -1052,7 +1058,7 @@ export class PixiRenderer implements IRenderer {
       // movement) hits the cache; rotation > ~0.0007 rad still
       // triggers a rebuild (at the 700u beam endpoint, 0.0007 rad
       // sweeps 0.5u).
-      const BEAM_EPSILON = 0.5;
+      const BEAM_EPSILON = 4.0;
       const incomingCount = mirror.liveBeams.size;
       let dirty = incomingCount !== this._liveBeamCacheCount;
 
@@ -1095,16 +1101,14 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamCacheCount = slotIdx;
 
       if (dirty) {
+        // Single-stroke batched draw (same pattern as remoteBeamGfx
+        // above) — one path, one stroke for all live-beam mounts.
         this.liveBeamGfx.clear();
         for (let i = 0; i < slotIdx; i++) {
           const s = this._liveBeamCache[i]!;
-          // Outer glow.
           this.liveBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-          this.liveBeamGfx.stroke(_liveBeamGlowStyle);
-          // Bright core.
-          this.liveBeamGfx.moveTo(s.fromX, -s.fromY).lineTo(s.toX, -s.toY);
-          this.liveBeamGfx.stroke(_liveBeamCoreStyle);
         }
+        this.liveBeamGfx.stroke(_liveBeamStrokeStyle);
       }
       this.liveBeamGfx.visible = true;
     } else {
