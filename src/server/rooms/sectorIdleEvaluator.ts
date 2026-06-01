@@ -30,12 +30,17 @@ export interface IdleEvalCtx {
   serverTick: number;
   shipPoseCache: Map<string, PoseRecord>;
   liveProjectiles: { size: number };
-  /** Drone (swarm-entity) count in the sector. Drones aren't in
-   *  `shipPoseCache` and their hitscan beams aren't in
-   *  `liveProjectiles`, so without this signal a sector with bots
-   *  attacking a momentarily-stationary player can enter idle
-   *  suppression — the 2026-06-01 phone-stall repro mechanism (see
-   *  `tests/mobile-perf/phone-galaxy-stall-repro.spec.ts`). */
+  /** Number of connected clients. When > 0 the sector is ALWAYS
+   *  non-idle: an active observer expects steady snapshot cadence
+   *  for prediction reconcile + scene update, and the marginal CPU
+   *  savings of suppressing broadcasts to an AFK observer don't
+   *  justify the 250-1184 ms recv_gap_long freezes the suppression
+   *  produces during natural play lulls (user smoke 2026-06-01,
+   *  capture `2026-06-01T16-07-35Z-0bboym`). Empty-sector broadcast
+   *  skipping is still handled by the room-level
+   *  `clients.length === 0` short-circuit upstream. */
+  connectedClientCount: number;
+  /** Drone (swarm-entity) count in the sector. */
   swarmEntityCount: number;
   forceBroadcastUntilTick: number;
   idleMotionEpsilonSq: number;
@@ -43,15 +48,16 @@ export interface IdleEvalCtx {
 }
 
 export function evaluateSectorIdle(ctx: IdleEvalCtx): boolean {
-  // Stage 5 — sector idle tracking. Updated every tick from motion +
-  // projectile-in-flight signals; when no activity in
-  // IDLE_THRESHOLD_TICKS (= 1 s at 60 Hz), the snapshot broadcast
-  // block short-circuits.
-  if (ctx.swarmEntityCount > 0) {
-    // Drones present → sector is meaningfully active for any
-    // connected client (player sees them in the binary swarm wire and
-    // expects snapshot-rate updates of their interactions with the
-    // player's hull / shield). Skip motion + projectile checks.
+  // 2026-06-01 — any connected client forces non-idle. See doc on
+  // `connectedClientCount` above. The lower checks (swarm / motion /
+  // projectiles) remain as a fallback for sectors that simulate
+  // headlessly (galaxy rooms tick even with zero clients) so that
+  // their idle tracker stays correctly frozen when nobody's
+  // observing — kept for future broadcast paths that might pull state
+  // from the idle tracker (e.g. presence-driven cost gating).
+  if (ctx.connectedClientCount > 0) {
+    noteSectorEvent(ctx.idleTracker, ctx.serverTick);
+  } else if (ctx.swarmEntityCount > 0) {
     noteSectorEvent(ctx.idleTracker, ctx.serverTick);
   } else if (ctx.liveProjectiles.size > 0) {
     noteSectorEvent(ctx.idleTracker, ctx.serverTick);

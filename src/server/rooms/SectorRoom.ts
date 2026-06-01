@@ -3115,6 +3115,7 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: this.serverTick,
       shipPoseCache: this.shipPoseCache,
       liveProjectiles: this.liveProjectiles,
+      connectedClientCount: this.clients.length,
       swarmEntityCount: this.swarmRegistry.size(),
       forceBroadcastUntilTick: this.forceBroadcastUntilTick,
       idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
