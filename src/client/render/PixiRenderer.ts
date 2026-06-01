@@ -121,6 +121,13 @@ export class PixiRenderer implements IRenderer {
    *  `null` when `?effects=0` escape hatch is active — destruction +
    *  flames then fall back to today's inline Graphics paths. */
   private effects: EffectsService | null = null;
+  // Phone-stall thermal-isolation switches. Read once at init via
+  // `readFxKillSwitches`; gated at render-time call sites to attribute
+  // GPU heat to specific subsystems (beams / damage numbers / health
+  // bars). Same pattern as `filtersDisabled` / `particlesDisabled`.
+  private _beamsDisabled = false;
+  private _dmgNumbersDisabled = false;
+  private _healthBarsDisabled = false;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -373,6 +380,9 @@ export class PixiRenderer implements IRenderer {
     // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
     // Plan: melodic-engelbart Step 2.
     const fxKillSwitches = readFxKillSwitches();
+    this._beamsDisabled = fxKillSwitches.beamsDisabled;
+    this._dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
+    this._healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
 
     // Default gameplay zoom. Historically the gameplay camera ran at the
     // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
@@ -853,7 +863,7 @@ export class PixiRenderer implements IRenderer {
     // (not all stacked at the ship centre). Legacy single-mount ships have
     // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
     // the pre-refactor "ship.pos + 20 u forward" path.
-    if (mirror.remoteLasers && mirror.remoteLasers.size > 0) {
+    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0) {
       if (!this.remoteBeamGfx) {
         this.remoteBeamGfx = new Graphics();
         this.shipContainer.addChild(this.remoteBeamGfx);
@@ -1025,7 +1035,7 @@ export class PixiRenderer implements IRenderer {
     // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
     // per barrel and each draws independently.
     const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (mirror.liveBeams && mirror.liveBeams.size > 0 && localShip) {
+    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip) {
       if (!this.liveBeamGfx) {
         this.liveBeamGfx = new Graphics();
         this.shipContainer.addChild(this.liveBeamGfx);
@@ -1121,10 +1131,13 @@ export class PixiRenderer implements IRenderer {
     // Drain pending damage numbers and spawn floating text. update()
     // must be OUTSIDE the spawn-drain block — sub-managers need to
     // tick every frame to advance lifetime + counter-scale.
-    if (this.damageNumbers && mirror.pendingDamageNumbers) {
+    if (!this._dmgNumbersDisabled && this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
         this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
       }
+      mirror.pendingDamageNumbers.length = 0;
+    } else if (this._dmgNumbersDisabled && mirror.pendingDamageNumbers) {
+      // Drain even when disabled — don't let the queue grow unbounded.
       mirror.pendingDamageNumbers.length = 0;
     }
     // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
@@ -1159,15 +1172,17 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumberCancels.length = 0;
     }
-    this.damageNumbers?.update();
+    if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
 
-    if (this.healthBars && mirror.pendingHealthBarHits) {
+    if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
         this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct);
       }
       mirror.pendingHealthBarHits.length = 0;
+    } else if (this._healthBarsDisabled && mirror.pendingHealthBarHits) {
+      mirror.pendingHealthBarHits.length = 0;
     }
-    this.healthBars?.update(mirror);
+    if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
 
     // Drain remote-warp events (warp_in / warp_out broadcasts from the
     // server). Each entry fires the same direction-agnostic one-shot

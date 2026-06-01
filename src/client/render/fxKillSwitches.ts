@@ -22,6 +22,13 @@
 export interface FxKillSwitches {
   filtersDisabled: boolean;
   particlesDisabled: boolean;
+  /** `?nobeams=1` — skip beam (live + remote) Graphics draws. Used by
+   *  the phone-stall thermal-isolation A/B to attribute GPU heat. */
+  beamsDisabled: boolean;
+  /** `?nodmgnumbers=1` — skip damage-number Text rendering. */
+  dmgNumbersDisabled: boolean;
+  /** `?nohealthbars=1` — skip health-bar Graphics draws. */
+  healthBarsDisabled: boolean;
 }
 
 export function readFxKillSwitches(
@@ -30,5 +37,8 @@ export function readFxKillSwitches(
   return {
     filtersDisabled: /\bnofilters=1\b/.test(search),
     particlesDisabled: /\bnoparticles=1\b/.test(search),
+    beamsDisabled: /\bnobeams=1\b/.test(search),
+    dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
+    healthBarsDisabled: /\bnohealthbars=1\b/.test(search),
   };
 }

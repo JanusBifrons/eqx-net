@@ -199,9 +199,19 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
   // the per-5-frame JSON.stringify x 6 dump is pure overhead that
   // masks real per-frame cost.
   const noE2EDataset = process.env['STALL_E2E_DATASET'] === '1' ? '' : '&noE2EDataset=1';
+  // Render-subsystem isolation switches. Each one drops a major Pixi
+  // call site so we can attribute GPU thermal load to a specific
+  // subsystem. Run with NO_BEAMS=1 / NO_DMG_NUMBERS=1 / NO_HEALTH_BARS=1
+  // and compare thermal Δ against baseline.
+  const noBeams = process.env['NO_BEAMS'] === '1' ? '&nobeams=1' : '';
+  const noDmgNumbers = process.env['NO_DMG_NUMBERS'] === '1' ? '&nodmgnumbers=1' : '';
+  const noHealthBars = process.env['NO_HEALTH_BARS'] === '1' ? '&nohealthbars=1' : '';
+  const noFilters = process.env['NO_FILTERS'] === '1' ? '&nofilters=1' : '';
+  const noParticles = process.env['NO_PARTICLES'] === '1' ? '&noparticles=1' : '';
+  const renderGates = `${noBeams}${noDmgNumbers}${noHealthBars}${noFilters}${noParticles}`;
   const url =
     `${lanOrigin}/?room=${room}&worker=0${autocapture}${diag}` +
-    `${startHostile}${noE2EDataset}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
+    `${startHostile}${noE2EDataset}${renderGates}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
   // eslint-disable-next-line no-console
   console.log(`[phone-stall] DRIVE_MS=${DRIVE_MS} startHostile=${startHostile !== ''} autocapture=${autocapture !== ''} diag=${diag === '' ? 'auto' : '0'}`);
   // eslint-disable-next-line no-console
