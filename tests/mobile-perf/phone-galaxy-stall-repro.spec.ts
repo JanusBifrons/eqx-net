@@ -166,8 +166,10 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
   console.log(`[phone-stall] LAN IP: ${lanIp} (candidates: ${JSON.stringify(listLanCandidates())})`);
 
   const testId = `galaxy-stall-${Date.now()}`;
+  const autocapture = process.env['STALL_AUTOCAPTURE'] === '0' ? '' : '&autocapture=1';
+  const diag = process.env['STALL_DIAG'] === '0' ? '&diag=0' : '';
   const url =
-    `${lanOrigin}/?room=galaxy-sol-prime&worker=0&autocapture=1` +
+    `${lanOrigin}/?room=galaxy-sol-prime&worker=0${autocapture}${diag}` +
     `&startHostile=1&testId=${testId}`;
   // eslint-disable-next-line no-console
   console.log(`[phone-stall] navigating phone to: ${url}`);
@@ -386,29 +388,64 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
     // Allow autocapture stream to flush.
     await conn.page.waitForTimeout(3_000);
 
-    const captureDir = findNewestCaptureSince(before);
-    // eslint-disable-next-line no-console
-    console.log(`[phone-stall] new capture dir: ${captureDir}`);
-
-    // Verify FIRE actually fired — count sendFire-like events on the client side.
-    const combatEvents = readNdjson(join(captureDir, 'combat.ndjson'));
-    const fireTags = ['sendFire', 'fire_sent', 'local_fire', 'fire'];
-    const fireEvents = combatEvents.filter((e) => fireTags.includes(e.tag));
-    // eslint-disable-next-line no-console
-    console.log(
-      `[phone-stall] client-side fire events in combat.ndjson: ${fireEvents.length} (taps attempted: ${tapCount})`,
-    );
-    if (fireEvents.length === 0 && tapCount > 0) {
-      // Surface what tags ARE in combat.ndjson — helps diagnose
-      // whether touchscreen.tap is doing nothing or just landing
-      // off-target.
-      const combatTags = new Map<string, number>();
-      for (const e of combatEvents) combatTags.set(e.tag, (combatTags.get(e.tag) ?? 0) + 1);
+    const autocaptureOn = autocapture !== '';
+    let captureDir = '';
+    if (autocaptureOn) {
+      captureDir = findNewestCaptureSince(before);
       // eslint-disable-next-line no-console
-      console.log(`[phone-stall] combat.ndjson tag census: ${JSON.stringify([...combatTags])}`);
+      console.log(`[phone-stall] new capture dir: ${captureDir}`);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] autocapture OFF — reading recv_gap_long from window.__eqxLogs directly`);
     }
 
-    const stalls = findRecvGapLongs(captureDir, STALL_MIN_MS);
+    // Verify FIRE actually fired — count sendFire-like events on the client side.
+    if (autocaptureOn) {
+      const combatEvents = readNdjson(join(captureDir, 'combat.ndjson'));
+      const fireTags = ['sendFire', 'fire_sent', 'local_fire', 'fire'];
+      const fireEvents = combatEvents.filter((e) => fireTags.includes(e.tag));
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] client-side fire events in combat.ndjson: ${fireEvents.length} (taps attempted: ${tapCount})`,
+      );
+    }
+
+    const stalls: ReturnType<typeof findRecvGapLongs> = autocaptureOn
+      ? findRecvGapLongs(captureDir, STALL_MIN_MS)
+      : await conn.page.evaluate((minMs) => {
+          interface RingEntry {
+            ts: number;
+            tag: string;
+            data: Record<string, unknown>;
+          }
+          const ring = (window as unknown as { __eqxLogs?: RingEntry[] }).__eqxLogs ?? [];
+          const out: Array<{
+            ts: number;
+            via: string;
+            recvGapMs: number;
+            heapUsedMb: number;
+            serverSendPerfNow: number;
+            clientRecvPerfNow: number;
+            serverToClientDeltaMs: number;
+            wsBufferedAmountBytes: number;
+          }> = [];
+          for (const e of ring) {
+            if (e.tag !== 'recv_gap_long') continue;
+            const gap = Number(e.data['recvGapMs']);
+            if (!Number.isFinite(gap) || gap < minMs) continue;
+            out.push({
+              ts: e.ts,
+              via: String(e.data['via'] ?? 'unknown'),
+              recvGapMs: gap,
+              heapUsedMb: Number(e.data['heapUsedMb'] ?? 0),
+              serverSendPerfNow: Number(e.data['serverSendPerfNow'] ?? 0),
+              clientRecvPerfNow: Number(e.data['clientRecvPerfNow'] ?? 0),
+              serverToClientDeltaMs: Number(e.data['serverToClientDeltaMs'] ?? 0),
+              wsBufferedAmountBytes: Number(e.data['wsBufferedAmountBytes'] ?? 0),
+            });
+          }
+          return out;
+        }, STALL_MIN_MS);
     // eslint-disable-next-line no-console
     console.log(
       `[phone-stall] recv_gap_long > ${STALL_MIN_MS} ms event count: ${stalls.length}`,
@@ -512,14 +549,15 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
         `[verify] expected ZERO recv_gap_long > ${STALL_MIN_MS} ms in ${DRIVE_MS / 1000} s drive`,
       ).toBe(0);
     } else {
-      // Diagnostic mode: pass as long as the test infrastructure ran
-      // (capture appeared, joystick produced some input). Tap success
-      // is informational; the main signal lives in stalls + heap +
-      // server events.
-      expect(
-        captureDir,
-        '[repro] expected a fresh capture dir from the autocapture stream',
-      ).toBeTruthy();
+      // Diagnostic mode: pass as long as the test infrastructure ran.
+      // Tap success is informational; the main signal lives in stalls
+      // + heap + server events.
+      if (autocaptureOn) {
+        expect(
+          captureDir,
+          '[repro] expected a fresh capture dir from the autocapture stream',
+        ).toBeTruthy();
+      }
     }
   } finally {
     await conn.cleanup();
