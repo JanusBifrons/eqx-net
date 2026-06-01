@@ -208,7 +208,8 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
   const noHealthBars = process.env['NO_HEALTH_BARS'] === '1' ? '&nohealthbars=1' : '';
   const noFilters = process.env['NO_FILTERS'] === '1' ? '&nofilters=1' : '';
   const noParticles = process.env['NO_PARTICLES'] === '1' ? '&noparticles=1' : '';
-  const renderGates = `${noBeams}${noDmgNumbers}${noHealthBars}${noFilters}${noParticles}`;
+  const noHitscan = process.env['NO_HITSCAN'] === '1' ? '&nohitscan=1' : '';
+  const renderGates = `${noBeams}${noDmgNumbers}${noHealthBars}${noFilters}${noParticles}${noHitscan}`;
   const url =
     `${lanOrigin}/?room=${room}&worker=0${autocapture}${diag}` +
     `${startHostile}${noE2EDataset}${renderGates}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;

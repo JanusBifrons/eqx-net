@@ -182,6 +182,17 @@ export class ColyseusGameClient {
     return ColyseusGameClient._liveInstanceN;
   }
 
+  /** A/B test switch: `?nohitscan=1` skips the per-mount-per-frame
+   *  Rapier ray cast in updateLiveBeam. Read once at module load. */
+  private static readonly SKIP_HITSCAN_VISUAL_FLAG = (() => {
+    try {
+      if (typeof window === 'undefined' || !window.location?.search) return false;
+      return new URLSearchParams(window.location.search).get('nohitscan') === '1';
+    } catch {
+      return false;
+    }
+  })();
+
   /**
    * Wall-clock source. Production code uses `REAL_CLOCK` (default —
    * `this.clock.now()`). Tests / the replay harness inject a `MockClock`
@@ -4133,6 +4144,14 @@ export class ColyseusGameClient {
       return;
     }
 
+    // ?nohitscan=1 — A/B switch to bypass the per-mount-per-frame Rapier
+    // ray cast against predWorld. Beam length defaults to full
+    // HITSCAN_RANGE (beams visually shoot through everything). The
+    // hitscan is suspected of being a non-trivial per-frame cost under
+    // heavy combat (35 drones × 1 cast against 40+ bodies). PURE
+    // VISUAL test; server-authoritative hit resolution is unaffected.
+    const skipHitscan = ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG;
+
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
     const mountIds = this._liveBeamMountIdsScratch;
@@ -4153,7 +4172,7 @@ export class ColyseusGameClient {
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
       const fromY = mountWorldY + fwdY * 20;
-      const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
       liveBeams.set(mount.id, {
         dist: hit ? hit.dist : HITSCAN_RANGE,
         hitId: hit?.hitId,
