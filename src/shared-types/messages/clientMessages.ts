@@ -95,12 +95,26 @@ export const CancelTransitSchema = z
   })
   .strict();
 
+/** Client → server (plan: crispy-kazoo, Commit 2): "I have finished
+ *  bootstrapping (first snapshot applied, predWorld initialised,
+ *  renderer first-frame painted, minimum display floor elapsed) — you
+ *  may now activate my ship and broadcast the synchronised warp-in."
+ *
+ *  Idempotent: a second send is silently ignored server-side. No
+ *  payload — context (sessionId → playerId) is enough. */
+export const ClientReadyMessageSchema = z
+  .object({
+    type: z.literal('client_ready'),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
   FireMessageSchema,
   EngageTransitSchema,
   CancelTransitSchema,
+  ClientReadyMessageSchema,
 ]);
 
 export type InputMessage = z.infer<typeof InputMessageSchema>;
@@ -108,4 +122,5 @@ export type IdentifyMessage = z.infer<typeof IdentifyMessageSchema>;
 export type FireMessage = z.infer<typeof FireMessageSchema>;
 export type EngageTransitMessage = z.infer<typeof EngageTransitSchema>;
 export type CancelTransitMessage = z.infer<typeof CancelTransitSchema>;
+export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

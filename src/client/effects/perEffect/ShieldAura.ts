@@ -54,6 +54,13 @@ const RING_POOL_CAP = 32;
 /** Default ship-kind radius when the renderer doesn't know it yet. */
 const DEFAULT_RADIUS = 28;
 
+export interface ShieldAuraOptions {
+  /** When true, applyQuality never attaches the shared GlowFilter — rings
+   *  + breathe still render. The bisect kill switch (plan: melodic-engelbart
+   *  Step 2b) isolating filter cost from particle cost. */
+  filtersDisabled?: boolean;
+}
+
 export class ShieldAura {
   private readonly auraContainer: Container | null;
   /** Lazily constructed on first applyQuality('high') — the GlowFilter
@@ -64,12 +71,15 @@ export class ShieldAura {
   private currentLevel: EffectQuality = 'high';
   /** Wall-clock accumulator for the breathe wave. */
   private elapsedMs = 0;
+  private readonly filtersDisabled: boolean;
 
   constructor(
     private readonly parent: Container,
     private readonly getQuality: () => EffectQuality,
     private readonly factories: ShieldFactories,
+    options: ShieldAuraOptions = {},
   ) {
+    this.filtersDisabled = options.filtersDisabled === true;
     this.auraContainer = factories.makeContainer();
     parent.addChild(this.auraContainer);
     // Initial state = minimal — container hidden, no filter constructed.
@@ -147,7 +157,7 @@ export class ShieldAura {
     this.auraContainer.visible = true;
     const dial = this.qualityDial(level);
     if (!dial) return;
-    if (dial.glow) {
+    if (dial.glow && !this.filtersDisabled) {
       // Lazily build the filter on first need — keeps node tests DOM-free.
       if (!this.glowFilter) this.glowFilter = this.factories.makeGlowFilter();
       this.auraContainer.filters = [this.glowFilter as Filter] as never;

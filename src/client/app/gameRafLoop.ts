@@ -25,7 +25,11 @@
 import { consumeOneFrameTriggers } from '../render/perFrameTriggers.js';
 import { shouldSkipFrame } from '../perf/frameRateCap.js';
 import { logEvent, isFullDiagMode } from '../debug/ClientLogger.js';
-import { useUIStore } from '../state/store.js';
+import {
+  useUIStore,
+  computeBootstrapReadyFromState,
+  computeIsLoadingActive,
+} from '../state/store.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
@@ -37,8 +41,27 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 // no observer. Cached at module load: a single boolean read in the hot
 // loop. The P1 hostile profile measured the per-5-frame slice at the
 // rank-1 allocator's top (`gameRafLoop.loop` 55 KB / 6.8 %).
-const E2E_DATASET_ENABLED: boolean =
-  typeof navigator !== 'undefined' && (navigator as { webdriver?: boolean }).webdriver === true;
+//
+// 2026-06-01: `?noE2EDataset=1` URL escape lets specs that don't read
+// the dataset (e.g. `phone-galaxy-stall-repro.spec.ts` reads via
+// `window.__eqxLogs`) opt out of the per-5-frame JSON.stringify x 6
+// dump under heavy combat. Measured saving: ~40 % of in-game loaf
+// duration in the 35-hostile-drone repro.
+function resolveE2EDatasetEnabled(): boolean {
+  if (typeof navigator === 'undefined' || (navigator as { webdriver?: boolean }).webdriver !== true) {
+    return false;
+  }
+  try {
+    const q = typeof window !== 'undefined' && window.location?.search
+      ? new URLSearchParams(window.location.search).get('noE2EDataset')
+      : null;
+    if (q === '1') return false;
+  } catch {
+    // window/URLSearchParams unavailable — fall through, keep enabled.
+  }
+  return true;
+}
+const E2E_DATASET_ENABLED: boolean = resolveE2EDatasetEnabled();
 
 export interface GameRafLoopDeps {
   /** The DOM container the renderer was attached to (data-* writes target it). */
@@ -75,6 +98,34 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
 
   const loop = (now: number): void => {
     if (isDisposed()) return;
+
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Fire `sendClientReady` once the bootstrap gates all flip true.
+    // The method itself is idempotent (the Zustand `clientReadySent`
+    // flag short-circuits a second call). This check sits BEFORE the
+    // cap / pause early-returns so the handshake completes even when
+    // game-work is skipped — loading is exactly when bootstrap-ready
+    // flips, so the trigger must run during the pause.
+    const ui = useUIStore.getState();
+    if (!ui.clientReadySent && computeBootstrapReadyFromState(ui)) {
+      gameClient.sendClientReady();
+    }
+
+    // Plan: crispy-kazoo, Commit 4/8 — pause boundary.
+    // During loading (curtain up): skip the INPUT + PHYSICS step
+    // (`tickPhysics`) so input is gated and the predWorld doesn't drift
+    // ahead of the server. KEEP `tickInbound` + `updateMirror` +
+    // `renderer.update` running so:
+    //   1. Snapshots can DRAIN (tickInbound → processPendingSnapshot →
+    //      handleSnapshot → firstSnapshotApplied=true).
+    //   2. firstFrameRendered can flip (renderer.update paints sprites).
+    // Skipping either creates a circular dependency where bootstrap-
+    // ready can never flip true → loading-active stays true → ...
+    // The Pixi ticker independently drives the curtain animation; this
+    // loop drives snapshot drain + sprite positions + the bootstrap
+    // gate latches.
+    const isLoadingActive = computeIsLoadingActive(ui);
+
     const isFirstFrame = lastFrameTime === 0;
     const deltaMs = isFirstFrame ? 1000 / 60 : now - lastFrameTime;
     // Internal 60 Hz work-loop cap. On 90/120 Hz native displays we
@@ -86,9 +137,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     }
     lastFrameTime = now;
 
+    // Plan: crispy-kazoo, Commit 8 — inbound-message drain ALWAYS runs
+    // (incl. during loading). DC raw-bytes decode + Colyseus state-diff
+    // hybrid drain + snapshot coalescer drain — these are the message-
+    // arrival paths the bootstrap gates depend on (firstSnapshotApplied).
+    gameClient.tickInbound(deltaMs);
+
     // Probe 1 (mobile-perf-investigation): per-RAF work breakdown.
     const physicsStart = performance.now();
-    gameClient.tickPhysics(deltaMs);
+    // Plan: crispy-kazoo, Commit 8 — gate ONLY `tickPhysics` during
+    // loading. Input is already zero'd by Keyboard/TouchInput
+    // setEnabled(false) so a runaway-input concern is already covered;
+    // skipping the physics step here additionally prevents predWorld
+    // drift during the curtain window.
+    if (!isLoadingActive) gameClient.tickPhysics(deltaMs);
     const mirrorStart = performance.now();
     gameClient.updateMirror();
     const renderStart = performance.now();

@@ -107,12 +107,38 @@ export class Reconciler {
     this.world = world;
     this.playerId = playerId;
     this.clock = clock;
-    this.buffer = new Array<InputRecord | undefined>(BUFFER_SIZE).fill(undefined);
+    // Pre-allocate BUFFER_SIZE InputRecord slots so `recordInput` can
+    // mutate fields in place (zero per-call allocation). Callers may
+    // pass a reused scratch InputRecord — we copy its fields into our
+    // own slot, so the scratch can be re-mutated next tick without
+    // poisoning the historical entries the replay path reads.
+    this.buffer = new Array<InputRecord>(BUFFER_SIZE);
+    for (let i = 0; i < BUFFER_SIZE; i++) {
+      this.buffer[i] = {
+        tick: -1,
+        thrust: false,
+        turnLeft: false,
+        turnRight: false,
+        boost: false,
+        reverse: false,
+        sentAt: 0,
+      };
+    }
   }
 
-  /** Store an outbound input in the ring buffer so it can be replayed during reconciliation. */
+  /** Store an outbound input in the ring buffer so it can be replayed during reconciliation.
+   *  Copies the caller's fields into our pre-allocated slot — callers may safely reuse a
+   *  scratch InputRecord across ticks without aliasing historical entries.
+   *  `tick === -1` in a slot means "never written"; the replay path skips those. */
   recordInput(input: InputRecord): void {
-    this.buffer[input.tick % BUFFER_SIZE] = input;
+    const slot = this.buffer[input.tick % BUFFER_SIZE]!;
+    slot.tick = input.tick;
+    slot.thrust = input.thrust;
+    slot.turnLeft = input.turnLeft;
+    slot.turnRight = input.turnRight;
+    slot.boost = input.boost;
+    slot.reverse = input.reverse;
+    slot.sentAt = input.sentAt;
   }
 
   /** Returns true while a visual lerp correction is in progress. */

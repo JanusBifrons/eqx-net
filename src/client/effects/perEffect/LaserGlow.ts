@@ -20,7 +20,7 @@
  * LaserGlow instance matches its parent renderer.
  */
 
-import type { Filter, Graphics as PixiGraphics } from 'pixi.js';
+import type { Container, Filter } from 'pixi.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 
 /** Minimal shape LaserGlow uses on a `GlowFilter`. */
@@ -37,8 +37,11 @@ export interface LaserGlowFactories {
 }
 
 export interface LaserGlowBeams {
-  liveBeamGfx: PixiGraphics;
-  remoteBeamGfx: PixiGraphics;
+  // Both are Containers (post-2026-06-01 sprite-pool refactor — was
+  // Pixi Graphics under the same field names). Filter API works
+  // identically on Container.
+  liveBeamGfx: Container;
+  remoteBeamGfx: Container;
 }
 
 const COLOUR_LIVE = 0x00eeff;
@@ -53,15 +56,24 @@ const QUALITY_DIAL: Record<EffectQuality, QualityDial | null> = {
   minimal: null, // both detached
 };
 
+export interface LaserGlowOptions {
+  /** When true, applyQuality always detaches both filters regardless of
+   *  tier — the bisect kill switch (plan: melodic-engelbart Step 2b). */
+  filtersDisabled?: boolean;
+}
+
 export class LaserGlow {
   private readonly liveFilter: GlowLike;
   private readonly remoteFilter: GlowLike;
   private currentLevel: EffectQuality = 'high';
+  private readonly filtersDisabled: boolean;
 
   constructor(
     private readonly beams: LaserGlowBeams,
     factories: LaserGlowFactories,
+    options: LaserGlowOptions = {},
   ) {
+    this.filtersDisabled = options.filtersDisabled === true;
     this.liveFilter = factories.makeGlowFilter(COLOUR_LIVE);
     this.remoteFilter = factories.makeGlowFilter(COLOUR_REMOTE);
     // Initial state = high tier (matches the budget's initial localTier).
@@ -73,7 +85,7 @@ export class LaserGlow {
    *  discipline: this never destroys or recreates filters. */
   applyQuality(level: EffectQuality): void {
     this.currentLevel = level;
-    const dial = QUALITY_DIAL[level];
+    const dial = this.filtersDisabled ? null : QUALITY_DIAL[level];
 
     if (dial === null) {
       this.detachLive();
@@ -128,14 +140,14 @@ export class LaserGlow {
     this.detachOnce(this.beams.remoteBeamGfx, this.remoteFilter);
   }
 
-  private attachOnce(gfx: PixiGraphics, f: Filter): void {
+  private attachOnce(gfx: Container, f: Filter): void {
     const existing = Array.isArray(gfx.filters) ? (gfx.filters as Filter[]) : [];
     if (existing.indexOf(f) >= 0) return; // already attached
     const next = [...existing, f];
     gfx.filters = next as never;
   }
 
-  private detachOnce(gfx: PixiGraphics, f: Filter): void {
+  private detachOnce(gfx: Container, f: Filter): void {
     const existing = Array.isArray(gfx.filters) ? (gfx.filters as Filter[]) : [];
     const idx = existing.indexOf(f);
     if (idx < 0) return; // not attached
@@ -144,7 +156,7 @@ export class LaserGlow {
     gfx.filters = (next.length > 0 ? next : null) as never;
   }
 
-  private isFilterAttached(gfx: PixiGraphics, f: Filter): boolean {
+  private isFilterAttached(gfx: Container, f: Filter): boolean {
     return Array.isArray(gfx.filters) && (gfx.filters as Filter[]).indexOf(f) >= 0;
   }
 }

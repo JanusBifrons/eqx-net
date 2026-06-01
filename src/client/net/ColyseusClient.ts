@@ -168,6 +168,32 @@ function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
 
 export class ColyseusGameClient {
   /**
+   * Plan: crispy-kazoo, Commit 6 — live-instance counter. Bumped in
+   * the constructor, decremented in dispose. The respawn-memory
+   * stability spec asserts this stays at 1 across N death/respawn
+   * cycles — a regression to dispose ordering / leak would surface
+   * as N > 1 after cycle N.
+   */
+  private static _liveInstanceN = 0;
+
+  /** Plan: crispy-kazoo, Commit 6 — test surface for the
+   *  respawn-memory stability assertion. Production code never reads it. */
+  static getLiveInstanceCount(): number {
+    return ColyseusGameClient._liveInstanceN;
+  }
+
+  /** A/B test switch: `?nohitscan=1` skips the per-mount-per-frame
+   *  Rapier ray cast in updateLiveBeam. Read once at module load. */
+  private static readonly SKIP_HITSCAN_VISUAL_FLAG = (() => {
+    try {
+      if (typeof window === 'undefined' || !window.location?.search) return false;
+      return new URLSearchParams(window.location.search).get('nohitscan') === '1';
+    } catch {
+      return false;
+    }
+  })();
+
+  /**
    * Wall-clock source. Production code uses `REAL_CLOCK` (default —
    * `this.clock.now()`). Tests / the replay harness inject a `MockClock`
    * to step time deterministically. Plan: capture-driven replay infra,
@@ -183,6 +209,8 @@ export class ColyseusGameClient {
    */
   constructor(clock: Clock = REAL_CLOCK) {
     this.clock = clock;
+    ColyseusGameClient._liveInstanceN += 1;
+    logEvent('client_constructed', { liveInstanceN: ColyseusGameClient._liveInstanceN });
     // Probe 6 — `?coalesce=0` disables snapshot coalescing for A/B
     // testing. Default ON. Tests construct with the mock URL absent →
     // coalesce defaults ON, matching production behaviour.
@@ -387,6 +415,13 @@ export class ColyseusGameClient {
    */
   private welcomePerfNow = 0;
   /**
+   * Plan: crispy-kazoo, Commit 3 — `local_died` timestamp anchor.
+   * Set by `killEntity` when the local ship dies; consumed by
+   * `respawn_clicked` (App.tsx handleRespawn + galaxy sector-pick)
+   * to compute `msFromDied`. Reset to 0 on respawn.
+   */
+  public diedAtMs = 0;
+  /**
    * Server tick recorded at `clockAnchorPerfNow` — the live reference frame
    * the client uses to compute `targetTick`. Updated on every snapshot so a
    * server that's running below 60 Hz (overloaded) drags the client's tick
@@ -590,6 +625,51 @@ export class ColyseusGameClient {
    *  recorded locally (still 60 Hz), so the prediction model is unaffected. */
   private lastSentInputState: { thrust: boolean; turnLeft: boolean; turnRight: boolean; boost: boolean; reverse: boolean } | null = null;
   private lastSentInputAtMs = 0;
+  /**
+   * Per-tick scratch literals — pool everything tickPhysics's inner
+   * loop builds at 60 Hz. Pre-pool the CDP allocation profile (2026-
+   * 05-30) ranked `tickPhysics` rank-2 at 81 KB / 7.5 %; the bulk of
+   * that was these four object literals × 60 Hz × test duration. All
+   * downstream consumers (Reconciler, predWorld, room.send) read the
+   * values out of the literal immediately so passing the same scratch
+   * reference per tick is safe — Reconciler.recordInput copies the
+   * fields into its own ring buffer; predWorld.applyInput reads them
+   * into Rapier; colyseus.js room.send serialises the literal before
+   * returning. Initialised once, mutated per tick.
+   */
+  private readonly _inputRecScratch: InputRecord = {
+    tick: 0,
+    thrust: false,
+    turnLeft: false,
+    turnRight: false,
+    boost: false,
+    reverse: false,
+    sentAt: 0,
+  };
+  private readonly _applyInputScratch: {
+    thrust: boolean;
+    turnLeft: boolean;
+    turnRight: boolean;
+    boost: boolean;
+    reverse: boolean;
+  } = { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false };
+  private readonly _sendInputScratch: {
+    type: 'input';
+    tick: number;
+    thrust: boolean;
+    turnLeft: boolean;
+    turnRight: boolean;
+    boost: boolean;
+    reverse: boolean;
+  } = {
+    type: 'input',
+    tick: 0,
+    thrust: false,
+    turnLeft: false,
+    turnRight: false,
+    boost: false,
+    reverse: false,
+  };
   /** Elapsed ms of the last frame — used by updateMirror() for ghost advancement. */
   private lastFrameMs = 1000 / 60;
 
@@ -695,7 +775,7 @@ export class ColyseusGameClient {
    *  load) stays at the original 6 Hz. Splits share one `clientShotId`
    *  so existing `cancelByTag` / `reconcileDamageToFeedback` handle
    *  rollback / confirmation unchanged. */
-  private _scheduledDamageSpawns: Array<{ atMs: number; x: number; y: number; damage: number; tag: string }> = [];
+  private _scheduledDamageSpawns: Array<{ atMs: number; targetId: string; x: number; y: number; damage: number; tag: string }> = [];
   /** weapon-hit-prediction — client favor-the-shooter hit-prediction ledger.
    *  Phase 2 records a prediction on every fire (presentation-only) and
    *  TTL-expires it; Phase 3 wires the hit_ack / DamageEvent reconcile so
@@ -1019,6 +1099,37 @@ export class ColyseusGameClient {
       // to drive the "Piloting" disabled state and the switch-confirm.
       // Empty string from engineering rooms or pre-Phase-5 servers ⇒ null.
       ui.setLocalShipInstanceId(msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null);
+
+      // Plan: crispy-kazoo, Commit 8 — rescue own ship from lingeringShips.
+      // Pre-welcome our own ship is `isActive=false` (server's spawn-
+      // handshake design) and the snapshot translator + syncMirror both
+      // route isActive=false → mirror.lingeringShips because they don't
+      // yet know our localPlayerId. Now that welcome has arrived, lift
+      // our ship out so `tryInitPredWorld` can find it.
+      if (this.mirror.lingeringShips && this.mirror.lingeringShips.size > 0) {
+        const ownShipInstanceId = msg.shipInstanceId;
+        for (const [shipInstanceId, lEntry] of this.mirror.lingeringShips) {
+          const matchesByInstance = ownShipInstanceId !== '' && shipInstanceId === ownShipInstanceId;
+          const matchesByPlayer = lEntry.ownerPlayerId === msg.playerId;
+          if (matchesByInstance || matchesByPlayer) {
+            const mirrorEntry: ShipRenderState = {
+              x: lEntry.x, y: lEntry.y, vx: lEntry.vx, vy: lEntry.vy, angle: lEntry.angle,
+            };
+            if (lEntry.kind !== undefined) mirrorEntry.kind = lEntry.kind;
+            if (lEntry.displayName !== undefined) mirrorEntry.displayName = lEntry.displayName;
+            this.mirror.ships.set(msg.playerId, mirrorEntry);
+            this.mirror.lingeringShips.delete(shipInstanceId);
+            logEvent('rescued_own_ship_from_lingering', {
+              shipInstanceId,
+              playerId: msg.playerId,
+              x: lEntry.x,
+              y: lEntry.y,
+            });
+            break;
+          }
+        }
+      }
+
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
       // Phase 2 swift-otter — kick off the DC handshake after welcome.
@@ -1371,11 +1482,70 @@ export class ColyseusGameClient {
       // these every few seconds; if the per-event renderer cost is what
       // builds the spiral, each event will line up with the next slow
       // RAF in the trace.
+      const arrivalTick = (msg as WarpInEvent).arrivalTick;
       logEvent('warp_event', {
         kind,
         x: Math.round(msg.x * 100) / 100,
         y: Math.round(msg.y * 100) / 100,
+        arrivalTick: typeof arrivalTick === 'number' ? arrivalTick : null,
+        isLocal: msg.playerId === this.mirror.localPlayerId,
       });
+      // Plan: crispy-kazoo, Commit 9 — synchronised arrival, split
+      // curtain-drop from warp-in flash.
+      //
+      // SEQUENCE for the joiner:
+      //   T0      receive `warp_in { arrivalTick }`
+      //   T0+~150ms (= arrivalTick - 450ms): curtain starts fading
+      //                                     (`setArrivalAcked(true)`
+      //                                     → useIsLoadingActive → false
+      //                                     → useWarpOrchestration calls
+      //                                     `renderer.setLoadCurtain(false)`,
+      //                                     a 380 ms fade)
+      //   T0+~600ms (= arrivalTick):       warp-in flash fires
+      //                                     (pendingWarpEvents push;
+      //                                     curtain is gone by now)
+      //
+      // The wall-clock-anchored server-tick estimate is mandatory:
+      // `this.inputTick` is stuck at welcome's serverTick because
+      // `tickPhysics` is gated by the loading-active pause boundary,
+      // so it never advances. Using inputTick as the reference gives
+      // a ~5 s wait instead of ~600 ms — the 2026-05-31 smoke bug.
+      if (
+        kind === 'warp_in'
+        && msg.playerId === this.mirror.localPlayerId
+        && typeof arrivalTick === 'number'
+      ) {
+        useUIStore.getState().setArrivalTickFromServer(arrivalTick);
+        // Wall-clock-anchored estimate of CURRENT server tick. Welcome
+        // gave us a perfect anchor (`serverTickAtWelcome` +
+        // `welcomePerfNow`); 60 ticks/sec wall-clock advance keeps the
+        // estimate accurate independent of any input-loop gating.
+        const wallClockMsSinceWelcome = this.clock.now() - this.welcomePerfNow;
+        const serverTickEstimate =
+          this.serverTickAtWelcome + Math.floor(wallClockMsSinceWelcome * 60 / 1000);
+        const ticksUntilArrival = Math.max(0, arrivalTick - serverTickEstimate);
+        const msUntilArrival = ticksUntilArrival * (1000 / 60);
+        // 450 ms before arrival → curtain fade-out starts (380 ms fade
+        // + 70 ms slack to ensure it's fully gone before the flash).
+        const CURTAIN_LEAD_MS = 450;
+        const msUntilCurtainDrop = Math.max(0, msUntilArrival - CURTAIN_LEAD_MS);
+        setTimeout(() => {
+          if (this.disposed) return;
+          useUIStore.getState().setArrivalAcked(true);
+          logEvent('arrival_acked', {
+            arrivalTick,
+            msUntilCurtainDrop: Math.round(msUntilCurtainDrop),
+            msUntilArrival: Math.round(msUntilArrival),
+          });
+        }, msUntilCurtainDrop);
+        setTimeout(() => {
+          if (this.disposed) return;
+          this.mirror.pendingWarpEvents?.push({ x: msg.x, y: msg.y });
+          logEvent('warp_in_flash_fired', { arrivalTick });
+        }, msUntilArrival);
+        return;
+      }
+      // Remote warp event: push immediately (legacy path).
       if (!this.mirror.pendingWarpEvents) return;
       this.mirror.pendingWarpEvents.push({ x: msg.x, y: msg.y });
     };
@@ -1710,7 +1880,7 @@ export class ColyseusGameClient {
       const targetShip = this.mirror.ships.get(evt.targetId);
       const x = evt.hitX ?? targetShip?.x ?? 0;
       const y = evt.hitY ?? targetShip?.y ?? 0;
-      this.mirror.pendingDamageNumbers.push({ x, y, damage: evt.damage });
+      this.mirror.pendingDamageNumbers.push({ targetId: evt.targetId, x, y, damage: evt.damage });
     }
 
     // Health bar on hit — only show for targets the local player is shooting.
@@ -1792,6 +1962,16 @@ export class ColyseusGameClient {
 
     if (id === this.mirror.localPlayerId) {
       this.localDead = true;
+      this.diedAtMs = this.clock.now();
+      // Plan: crispy-kazoo, Commit 3 — death is the cascade trigger.
+      // Pre-Commit 3 the capture lifecycle.ndjson had ZERO local_died
+      // events; we reconstructed death from indirect breadcrumbs
+      // (GalaxyOverviewScreen mount in 'spawn' mode). This event lets
+      // future captures measure death-to-respawn directly.
+      const msSinceWelcome = this.welcomePerfNow > 0
+        ? Math.round(this.diedAtMs - this.welcomePerfNow)
+        : -1;
+      logEvent('local_died', { playerId: id, msSinceWelcome });
       this.mirror.liveBeams?.clear();
       this._localSlotTarget = null;
       this.ghostManager.clearForShip(id);
@@ -1875,6 +2055,30 @@ export class ColyseusGameClient {
     this.room.send('respawn', { type: 'respawn' });
   }
 
+  /**
+   * Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+   *
+   * Tells the server "I have finished bootstrapping; please activate
+   * my ship and broadcast the warp-in". Idempotent: a second call
+   * (e.g. from the per-RAF trigger in gameRafLoop after the first
+   * fire) is a no-op. The Zustand `clientReadySent` flag flips here
+   * so future callers also short-circuit.
+   *
+   * Called from the per-RAF check in `gameRafLoop` once all
+   * bootstrap gates pass (`computeBootstrapReadyFromState === true`).
+   */
+  sendClientReady(): void {
+    if (!this.room || this.disposed) return;
+    const state = useUIStore.getState();
+    if (state.clientReadySent) return;
+    state.setClientReadySent(true);
+    this.room.send('client_ready', { type: 'client_ready' });
+    const msSinceWelcome = this.welcomePerfNow > 0
+      ? Math.round(this.clock.now() - this.welcomePerfNow)
+      : -1;
+    logEvent('client_ready_sent', { msSinceWelcome });
+  }
+
   // ── Prediction bootstrap ────────────────────────────────────────────────
 
   private tryInitPredWorld(playerId: string): void {
@@ -1910,6 +2114,11 @@ export class ColyseusGameClient {
         msSinceWelcome,
       });
     }
+    // Plan: crispy-kazoo, Commit 2 — surface the localPoseResolved
+    // gate to Zustand so `computeBootstrapReadyFromState` flips true
+    // when the predWorld + reconciler are live. Idempotent; the
+    // setter is a no-op if already true.
+    useUIStore.getState().setLocalPoseResolved(true);
     console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
     // Retrospectively spawn any remote ships that arrived in the initial Colyseus
     // state patch (before localId was set, so syncMirror skipped predWorld spawn).
@@ -2038,6 +2247,15 @@ export class ColyseusGameClient {
     // arrives before welcome).
     if (localId !== null && !useUIStore.getState().firstSnapshotApplied) {
       useUIStore.getState().setFirstSnapshotApplied(true);
+      // Plan: crispy-kazoo, Commit 3 — first-snapshot edge log lets a
+      // diag capture pinpoint when the join's bootstrap reaches the
+      // "I have the world state" gate. Fires exactly once per
+      // (re)connect — `commonReadinessRearm` flips the flag back on
+      // every phase change / transit.
+      const msSinceWelcome = this.welcomePerfNow > 0
+        ? Math.round(this.clock.now() - this.welcomePerfNow)
+        : -1;
+      logEvent('respawn_first_snapshot', { msSinceWelcome });
     }
 
     // Phase 6a / 6b — translate the shipInstanceId-keyed wire format
@@ -2578,7 +2796,12 @@ export class ColyseusGameClient {
       const playerId = sh['playerId'] as string | undefined;
       if (!playerId) continue;
       const isActive = (sh['isActive'] as boolean | undefined) !== false;
-      if (!isActive) {
+      // Plan: crispy-kazoo, Commit 8 — local-self exemption.
+      // Joiner's OWN ship MUST stay in `mirror.ships` during the
+      // pending-join handshake. Matching exemption lives in
+      // `snapshotShipRouter.routeSnapshotShipStates`.
+      const isOwnShip = playerId === this.mirror.localPlayerId;
+      if (!isActive && !isOwnShip) {
         // Phase 6b — populate identity for the lingering hull. Pose
         // arrives separately in the snapshot's `states` slice and is
         // mirrored in handleSnapshot. We only set kind / displayName /
@@ -2724,7 +2947,7 @@ export class ColyseusGameClient {
       for (let i = this._scheduledDamageSpawns.length - 1; i >= 0; i--) {
         const s = this._scheduledDamageSpawns[i]!;
         if (s.atMs <= now) {
-          pending?.push({ x: s.x, y: s.y, damage: s.damage, tag: s.tag });
+          pending?.push({ targetId: s.targetId, x: s.x, y: s.y, damage: s.damage, tag: s.tag });
           this._scheduledDamageSpawns.splice(i, 1);
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — log spawn
           // separately from schedule. Previously `damage_number_predicted`
@@ -3270,35 +3493,43 @@ export class ColyseusGameClient {
    * window small. `MAX_CATCH_UP_TICKS = 4` per RAF still bounds CPU after a
    * long background-tab pause.
    */
-  tickPhysics(elapsedMs: number): void {
-    if (!this.room || !this.keyboard) return;
-    this.lastFrameMs = elapsedMs;
-    if (this.welcomePerfNow === 0) return; // welcome not yet received
-    // Phase 4 iteration 3 swift-otter (2026-05-30) — drain pending DC
-    // raw bytes BEFORE `processPendingSnapshot`. The DC `dc.onmessage`
-    // listener now only stores the latest raw frame; decode + dispatch
-    // happens here so Pattern B burst recovery doesn't pay N×decode in
-    // a single frame. The decoded snap flows into the same
-    // snapshotCoalescer pipeline the WS path uses.
+  /**
+   * Plan: crispy-kazoo, Commit 8 — inbound-drain prelude extracted so
+   * it can run every RAF EVEN WHILE LOADING (the pause boundary in
+   * gameRafLoop gates only `tickPhysics`, not this). Without this
+   * extraction, `processPendingSnapshot` wouldn't fire during the
+   * curtain window, the joiner's first snapshot would queue
+   * indefinitely, `firstSnapshotApplied` never flips, and the
+   * bootstrap chain stalls forever (the 2026-05-31 second-order bug
+   * surfaced by spawn-handshake.spec.ts).
+   *
+   * Idempotent + cheap when nothing's pending. Calls:
+   *   - DataChannel raw-bytes drain (decode + dispatch latest frame).
+   *   - Hybrid syncMirror pending-state drain (Phase 4 iteration 3).
+   *   - Snapshot coalescer drain (queues snapshots → handleSnapshot).
+   *   - RAF stall detector probes (heap + frame-gap).
+   */
+  tickInbound(elapsedMs: number): void {
+    if (!this.room) return;
     this._dataChannelTransport?.drainPending();
-    // Phase 4 iteration 3 swift-otter HYBRID (2026-05-30) — drain any
-    // state changes that came AFTER the first-inline call within this
-    // RAF window, then clear the inline-ran flag for the next window.
-    // See the `onStateChange` registration site for the hybrid
-    // rationale.
     if (this._pendingStateForSync !== null) {
       const pending = this._pendingStateForSync;
       this._pendingStateForSync = null;
       this.syncMirror(pending);
     }
     this._syncMirrorRanThisRaf = false;
-    // Probe 6 — drain the coalesced-pending snapshot before any
-    // per-RAF physics work. Snapshots queued in the WebSocket event
-    // queue during a stall collapse to one here.
     this.processPendingSnapshot();
-    // RAF heap + frame-gap diagnostics — see RafStallDetector.ts.
     this.rafStallDetector.sampleHeapIfDue();
     this.rafStallDetector.detectGap(elapsedMs, this.inputTick, this.clock.now());
+  }
+
+  tickPhysics(elapsedMs: number): void {
+    if (!this.room || !this.keyboard) return;
+    this.lastFrameMs = elapsedMs;
+    if (this.welcomePerfNow === 0) return; // welcome not yet received
+    // Inbound-drain is now done by `tickInbound` (called from
+    // gameRafLoop above the loading pause boundary). tickPhysics is
+    // the input-loop + physics-step portion only.
     const FIXED_MS = 1000 / 60;
     const MAX_CATCH_UP_TICKS = 4;
     // Spiral fix (plan: spiral-fix, Phase 2): cap inputTick over-prediction
@@ -3407,8 +3638,25 @@ export class ColyseusGameClient {
       // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = this.clock.now();
-        const rec: InputRecord = { tick, thrust, turnLeft, turnRight, boost, reverse, sentAt: nowMs };
-        this.predWorld.applyInput(this.mirror.localPlayerId, { thrust, turnLeft, turnRight, boost, reverse });
+        // Pooled per-tick scratches (data-driven from the 2026-05-30 CDP
+        // profile — `tickPhysics` was rank-2 at 81 KB / 7.5 %). The
+        // Reconciler copies `rec` into its own ring buffer; predWorld
+        // applyInput reads the fields into Rapier. Both safe to reuse.
+        const rec = this._inputRecScratch;
+        rec.tick = tick;
+        rec.thrust = thrust;
+        rec.turnLeft = turnLeft;
+        rec.turnRight = turnRight;
+        rec.boost = boost;
+        rec.reverse = reverse;
+        rec.sentAt = nowMs;
+        const applyArg = this._applyInputScratch;
+        applyArg.thrust = thrust;
+        applyArg.turnLeft = turnLeft;
+        applyArg.turnRight = turnRight;
+        applyArg.boost = boost;
+        applyArg.reverse = reverse;
+        this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
         this.reconciler.recordInput(rec);
         // Idle-suppression — narrowed (2026-05-06): throttle ONLY when current
         // AND last-sent state are both fully idle (all-false). Why: when ANY
@@ -3433,8 +3681,30 @@ export class ColyseusGameClient {
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
         if (!throttle) {
-          this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+          // Pooled send payload — colyseus.js serialises the literal
+          // before returning so reusing the scratch ref is safe.
+          const sendArg = this._sendInputScratch;
+          sendArg.tick = tick;
+          sendArg.thrust = thrust;
+          sendArg.turnLeft = turnLeft;
+          sendArg.turnRight = turnRight;
+          sendArg.boost = boost;
+          sendArg.reverse = reverse;
+          this.room.send('input', sendArg);
+          // lastSentInputState retains state ACROSS ticks — must NOT
+          // alias the per-tick scratch (would mutate the stored
+          // last-state on the next tick). Reuse the existing record if
+          // present (first-tick falls through to fresh alloc).
+          const stored = this.lastSentInputState;
+          if (stored) {
+            stored.thrust = thrust;
+            stored.turnLeft = turnLeft;
+            stored.turnRight = turnRight;
+            stored.boost = boost;
+            stored.reverse = reverse;
+          } else {
+            this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+          }
           this.lastSentInputAtMs = nowMs;
           if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
             logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
@@ -3644,8 +3914,30 @@ export class ColyseusGameClient {
       const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
       const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
       if (!throttle) {
-        this.room.send('input', { type: 'input', tick, thrust, turnLeft, turnRight, boost, reverse });
-        this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+        // Pooled send payload — reuses the same scratch as the per-tick
+        // path. cap-engaged sentinel fires at-most-once per RAF (60-120
+        // /sec) so the alloc rate here is lower than the per-tick path,
+        // but the pattern duplicates — keep the pool consistent.
+        const sendArg = this._sendInputScratch;
+        sendArg.tick = tick;
+        sendArg.thrust = thrust;
+        sendArg.turnLeft = turnLeft;
+        sendArg.turnRight = turnRight;
+        sendArg.boost = boost;
+        sendArg.reverse = reverse;
+        this.room.send('input', sendArg);
+        // lastSentInputState retains state across ticks — mutate in
+        // place to avoid aliasing the per-tick scratch.
+        const stored = this.lastSentInputState;
+        if (stored) {
+          stored.thrust = thrust;
+          stored.turnLeft = turnLeft;
+          stored.turnRight = turnRight;
+          stored.boost = boost;
+          stored.reverse = reverse;
+        } else {
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+        }
         this.lastSentInputAtMs = nowMs;
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
         // `assertInputFlowMaintained` sees the per-RAF cadence during a
@@ -3852,6 +4144,14 @@ export class ColyseusGameClient {
       return;
     }
 
+    // ?nohitscan=1 — A/B switch to bypass the per-mount-per-frame Rapier
+    // ray cast against predWorld. Beam length defaults to full
+    // HITSCAN_RANGE (beams visually shoot through everything). The
+    // hitscan is suspected of being a non-trivial per-frame cost under
+    // heavy combat (35 drones × 1 cast against 40+ bodies). PURE
+    // VISUAL test; server-authoritative hit resolution is unaffected.
+    const skipHitscan = ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG;
+
     // Drop entries for mounts no longer present (e.g. ship-kind changed
     // mid-life — currently impossible but cheap to guard).
     const mountIds = this._liveBeamMountIdsScratch;
@@ -3872,7 +4172,7 @@ export class ColyseusGameClient {
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
       const fromY = mountWorldY + fwdY * 20;
-      const hit = this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
       liveBeams.set(mount.id, {
         dist: hit ? hit.dist : HITSCAN_RANGE,
         hitId: hit?.hitId,
@@ -4053,9 +4353,9 @@ export class ColyseusGameClient {
     const scheduledRef = this._scheduledDamageSpawns;
     const clockNow = this.clock.now();
     const predSink: PredictedFeedbackSink = {
-      pushDamageNumber: (x, y, damage, tag) => {
+      pushDamageNumber: (targetId, x, y, damage, tag) => {
         if (!isHitscan || damage <= 0) {
-          this.mirror.pendingDamageNumbers?.push({ x, y, damage, tag });
+          this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage, tag });
           // Probe 4 (mobile-perf-investigation, 2026-05-24) — replaced the
           // five-events-at-the-same-ts pattern with one event per shot
           // (schedule) + one event per actual spawn (damage_number_spawned
@@ -4085,10 +4385,11 @@ export class ColyseusGameClient {
           if (i === 0) {
             // First tick spawns immediately so the player feels the
             // first hit without any latency.
-            this.mirror.pendingDamageNumbers?.push({ x, y, damage: tickDamage, tag });
+            this.mirror.pendingDamageNumbers?.push({ targetId, x, y, damage: tickDamage, tag });
           } else {
             scheduledRef.push({
               atMs: clockNow + i * splitIntervalMs,
+              targetId,
               x, y,
               damage: tickDamage,
               tag,
@@ -4166,9 +4467,30 @@ export class ColyseusGameClient {
     });
   }
 
+  /**
+   * Plan: crispy-kazoo, Commit 6 — reflection-based mirror clear.
+   *
+   * Walks every property on `mirror` and clears Maps / Sets / Arrays
+   * generically. The plan's prophylactic against future mirror
+   * additions: adding a new field to `RenderMirror` does NOT require
+   * touching dispose — the walk picks it up automatically. The
+   * disposeAudit test populates every field with a sentinel value
+   * and asserts they're empty post-dispose.
+   */
+  private clearMirror(): void {
+    const m = this.mirror as unknown as Record<string, unknown>;
+    for (const k of Object.keys(m)) {
+      const v = m[k];
+      if (v instanceof Map) v.clear();
+      else if (v instanceof Set) v.clear();
+      else if (Array.isArray(v)) v.length = 0;
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.localDead = false;
+    this.diedAtMs = 0;
     useUIStore.getState().setDead(false);
     this.keyboard = null;
     this.touchInput = null;
@@ -4190,6 +4512,19 @@ export class ColyseusGameClient {
     }
     this.room?.leave();
     this.room = null;
+
+    // Plan: crispy-kazoo, Commit 6 — subsystem disposes.
+    // The pre-Commit-6 dispose covered ~14 fields and missed 20+
+    // surfaces, which is the proximate cascade-trigger root cause: a
+    // stale ColyseusGameClient retained via uncleared subscriptions /
+    // timers / Maps. Each subsystem's dispose is idempotent.
+    this.snapshotCoalescer.dispose();
+    this.transitInstr.dispose();
+    this.rafStallDetector.dispose();
+    this.hudDispatcher.dispose();
+    this.ghostManager.dispose();
+    this._aiController.clear();
+
     this.predWorld?.dispose();
     this.predWorld = null;
     this.reconciler = null;
@@ -4197,8 +4532,32 @@ export class ColyseusGameClient {
     this.predRemoteShipIds.clear();
     this._remoteShipOffsets.clear();
     this.predSwarmKeys.clear();
-    this.mirror.swarm?.clear();
-    this.mirror.projectiles?.clear();
-    this.mirror.remoteLasers?.clear();
+
+    // Maps + sets on the client itself (combat surfaces).
+    this._damageFlashFrames.clear();
+    this._scheduledDamageSpawns.length = 0;
+
+    // Reflection-based clear: every Map / Set / Array on `mirror` empties.
+    this.clearMirror();
+
+    // Stats + per-connection accumulators — reset to freshly-constructed
+    // (non-nullable types) so a re-mount sees a clean baseline.
+    this._rttWelford = createWelford();
+    this._lookaheadCtrl = createLookaheadController(6);
+    this._dropDetector = createDropDetector();
+    this._anchorInitialised = false;
+    this._localPoseResolvedLogged = false;
+    this.lastSentInputAtMs = 0;
+    this.lastSentInputState = null;
+
+    // Audio reference released — GameSurface owns the lifecycle.
+    this.audio = null;
+
+    ColyseusGameClient._liveInstanceN = Math.max(0, ColyseusGameClient._liveInstanceN - 1);
+    logEvent('dispose_complete', {
+      liveInstanceN: ColyseusGameClient._liveInstanceN,
+      mirrorShipsRemaining: this.mirror.ships.size,
+      mirrorSwarmRemaining: this.mirror.swarm?.size ?? 0,
+    });
   }
 }

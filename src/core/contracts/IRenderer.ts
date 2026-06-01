@@ -255,13 +255,16 @@ export interface RenderMirror {
   missiles?: Map<number, MissileRenderState>;
   localPlayerId: string | null;
   /** Floating damage numbers to spawn this frame. Drained + cleared each
-   *  frame. `tag` (weapon-hit-prediction Phase 2) is the originating
+   *  frame. `targetId` groups hits to the same entity so the renderer's
+   *  accumulator can sum them into one floating number (plan: melodic-
+   *  engelbart Step 4 — was N parallel numbers, now 1-per-target
+   *  growing). `tag` (weapon-hit-prediction Phase 2) is the originating
    *  `clientShotId` for client-PREDICTED numbers, so a later mispredict /
-   *  rollback / TTL-expiry can hard-cancel exactly that number via
-   *  `pendingDamageNumberCancels`. Authoritative (server `DamageEvent`)
-   *  numbers leave it undefined. Plain string ⇒ structured-clone-safe
-   *  across the renderer→worker boundary. */
-  pendingDamageNumbers?: Array<{ x: number; y: number; damage: number; tag?: string }>;
+   *  rollback / TTL-expiry can hard-cancel exactly that number's
+   *  contribution via `pendingDamageNumberCancels`. Authoritative (server
+   *  `DamageEvent`) numbers leave `tag` undefined. Plain strings ⇒
+   *  structured-clone-safe across the renderer→worker boundary. */
+  pendingDamageNumbers?: Array<{ targetId: string; x: number; y: number; damage: number; tag?: string }>;
   /** Predicted damage-number tags to hard-cancel this frame (weapon-hit-
    *  prediction Phase 2). The renderer drains it and calls
    *  `DamageNumberManager.cancelByTag(tag)` for each — the rollback /

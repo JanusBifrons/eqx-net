@@ -1,0 +1,681 @@
+/**
+ * Phone-driven repro for the 2.2-s server-side dispatch stalls + the
+ * ~10 MB/min heap leak.
+ *
+ * IMPORTANT NOTE (2026-06-01): the earlier version of this spec had
+ * `locator.tap()` failing 100 % silently — the player's ship never
+ * fired, sat stationary, and died fast. That produces stalls of
+ * 20-24 s purely from the BROADCAST IDLE-SUPPRESSION path firing on
+ * a stationary corpse. Those stalls are NOT the same mechanism the
+ * user reports during active play (where they saw ~2.2 s gaps in
+ * capture `jfd81u`). This rewrite uses `page.touchscreen.tap` with
+ * bounding-box coords for FIRE + a CDP-driven held-and-rotating
+ * joystick for movement, and SAMPLES HEAP throughout. The goal is
+ * realistic combat-loaded play, not the corpse pathology.
+ *
+ * Run: `pnpm e2e:phone:stall`
+ * Expected wall-clock: ~110-130 s (90 s drive + boot + cleanup).
+ */
+import { test, expect, type CDPSession } from '@playwright/test';
+import { join } from 'node:path';
+import { connectAndroidOrFallback } from './helpers/androidConnect';
+import { pickLanIp, listLanCandidates } from './helpers/lanIp';
+import { assertPhoneAwakeAndUnlocked } from './helpers/adbPreflight';
+import {
+  snapshotCaptures,
+  findNewestCaptureSince,
+  findRecvGapLongs,
+  fetchDevEvents,
+  readNdjson,
+} from './helpers/captureFetcher';
+import {
+  captureDeviceState,
+  formatDeviceState,
+  diffDeviceState,
+} from './helpers/deviceThermal';
+
+// 30 s default — at 35 hostile drones the raf_stutter density is
+// ~9-10 events/sec, so 30 s produces ~280 stutters and ~100 corrections,
+// plenty of signal to compare runs. DRIVE_MS env overrides (e.g. 90 s
+// for closer wb1al4 parity, 300 s for cascade observation).
+const DRIVE_MS = Number(process.env['DRIVE_MS'] ?? 30_000);
+const FIRE_INTERVAL_MS = 500;
+const JOY_ROTATE_INTERVAL_MS = 2_000;
+const HEAP_SAMPLE_INTERVAL_MS = 5_000;
+const STALL_MIN_MS = 1000;
+const MODE = process.env['STALL_REPRO_MODE'] ?? 'repro';
+const TEST_TIMEOUT_MS = Math.max(180_000, DRIVE_MS + 90_000);
+
+test.setTimeout(TEST_TIMEOUT_MS);
+
+interface JoystickHold {
+  active: boolean;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+  cdp: CDPSession;
+}
+
+async function joyDown(cdp: CDPSession, x: number, y: number): Promise<JoystickHold> {
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x, y, id: 0 }],
+  });
+  return { active: true, startX: x, startY: y, currentX: x, currentY: y, cdp };
+}
+
+async function joyMove(hold: JoystickHold, dx: number, dy: number): Promise<void> {
+  if (!hold.active) return;
+  hold.currentX = hold.startX + dx;
+  hold.currentY = hold.startY + dy;
+  await hold.cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: hold.currentX, y: hold.currentY, id: 0 }],
+  });
+}
+
+async function joyUp(hold: JoystickHold): Promise<void> {
+  if (!hold.active) return;
+  // Pass touchEnd with the joystick touchPoint that's RELEASING.
+  // (Empty touchPoints releases all — fine if we know nothing else is held.)
+  await hold.cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [{ x: hold.currentX, y: hold.currentY, id: 0 }],
+  });
+  hold.active = false;
+}
+
+// CDP-driven multi-touch tap. While the joystick is held, EVERY
+// touch event must list the still-active joystick touch in
+// touchPoints (otherwise Chrome treats it as released). Fire uses
+// touch id 1; joystick id 0.
+async function cdpTapWithJoystick(hold: JoystickHold, fireX: number, fireY: number): Promise<void> {
+  if (!hold.active) {
+    // Just a standalone tap.
+    await hold.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: fireX, y: fireY, id: 1 }],
+    });
+    await hold.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchEnd',
+      touchPoints: [{ x: fireX, y: fireY, id: 1 }],
+    });
+    return;
+  }
+  // Joystick is held — keep it in touchPoints alongside the new fire touch.
+  await hold.cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [
+      { x: hold.currentX, y: hold.currentY, id: 0 },
+      { x: fireX, y: fireY, id: 1 },
+    ],
+  });
+  // Release ONLY the fire touch; joystick stays in touchPoints.
+  await hold.cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: [{ x: hold.currentX, y: hold.currentY, id: 0 }],
+  });
+}
+
+async function readHeapMb(page: Awaited<ReturnType<typeof connectAndroidOrFallback>>['page']): Promise<number> {
+  return page.evaluate(() => {
+    const mem = (performance as unknown as { memory?: { usedJSHeapSize?: number } }).memory;
+    return mem?.usedJSHeapSize ? mem.usedJSHeapSize / 1024 / 1024 : 0;
+  });
+}
+
+interface SamplingNode {
+  callFrame: { functionName?: string; url?: string; lineNumber?: number };
+  selfSize: number;
+  children?: SamplingNode[];
+}
+
+interface RankedFrame {
+  fn: string;
+  url: string;
+  line: number;
+  selfBytes: number;
+}
+
+function rankSamplingProfile(root: SamplingNode): RankedFrame[] {
+  const flat: RankedFrame[] = [];
+  function walk(node: SamplingNode): void {
+    if (node.selfSize > 0) {
+      flat.push({
+        fn: node.callFrame.functionName ?? '(anonymous)',
+        url: node.callFrame.url ?? '(unknown)',
+        line: node.callFrame.lineNumber ?? -1,
+        selfBytes: node.selfSize,
+      });
+    }
+    if (node.children) {
+      for (const c of node.children) walk(c);
+    }
+  }
+  walk(root);
+  // Group by (fn, url, line) — sum self bytes across all stack instances.
+  const grouped = new Map<string, RankedFrame>();
+  for (const f of flat) {
+    const key = `${f.fn}::${f.url}::${f.line}`;
+    const existing = grouped.get(key);
+    if (existing) existing.selfBytes += f.selfBytes;
+    else grouped.set(key, { ...f });
+  }
+  return [...grouped.values()].sort((a, b) => b.selfBytes - a.selfBytes);
+}
+
+test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, async () => {
+  const phoneState = assertPhoneAwakeAndUnlocked();
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] phone state: ${JSON.stringify(phoneState)}`);
+
+  const lanIp = pickLanIp();
+  const lanOrigin = `http://${lanIp}:5173`;
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] LAN IP: ${lanIp} (candidates: ${JSON.stringify(listLanCandidates())})`);
+
+  const testId = `galaxy-stall-${Date.now()}`;
+  const autocapture = process.env['STALL_AUTOCAPTURE'] === '0' ? '' : '&autocapture=1';
+  // Default `?diag=0` — Playwright sets navigator.webdriver=true which
+  // would otherwise auto-enable full diag and capture the
+  // HIGH_VOLUME_TAGS (rafTick, input_intent, inputSent, ...) that the
+  // user's real phone smoke (no webdriver) drops by default. Override
+  // with STALL_DIAG=1 to opt back into full diag.
+  const diag = process.env['STALL_DIAG'] === '1' ? '' : '&diag=0';
+  const startHostile = process.env['STALL_STARTHOSTILE'] === '0' ? '' : '&startHostile=1';
+  // Near-invulnerable hull + shield so the test ship survives the full
+  // drive and produces realistic per-player snapshot workload. Works in
+  // `phone-stall-test` (testMode) natively; no dev-override env var
+  // needed.
+  const initialHull = process.env['STALL_INITIAL_HULL'] ?? '1000000';
+  const initialShield = process.env['STALL_INITIAL_SHIELD'] ?? '1000000';
+  // phone-stall-test: testMode room with 35 hostile drones in a ring at
+  // radius 800. No Living World warp-in wait; doesn't pollute live
+  // galaxy rooms. Defined in src/server/index.ts 2026-06-01.
+  const room = process.env['STALL_ROOM'] ?? 'phone-stall-test';
+  // Disable the webdriver-only E2E dataset write path — this spec reads
+  // signals via window.__eqxLogs, not via DOM `data-*` attributes, so
+  // the per-5-frame JSON.stringify x 6 dump is pure overhead that
+  // masks real per-frame cost.
+  const noE2EDataset = process.env['STALL_E2E_DATASET'] === '1' ? '' : '&noE2EDataset=1';
+  // Render-subsystem isolation switches. Each one drops a major Pixi
+  // call site so we can attribute GPU thermal load to a specific
+  // subsystem. Run with NO_BEAMS=1 / NO_DMG_NUMBERS=1 / NO_HEALTH_BARS=1
+  // and compare thermal Δ against baseline.
+  const noBeams = process.env['NO_BEAMS'] === '1' ? '&nobeams=1' : '';
+  const noDmgNumbers = process.env['NO_DMG_NUMBERS'] === '1' ? '&nodmgnumbers=1' : '';
+  const noHealthBars = process.env['NO_HEALTH_BARS'] === '1' ? '&nohealthbars=1' : '';
+  const noFilters = process.env['NO_FILTERS'] === '1' ? '&nofilters=1' : '';
+  const noParticles = process.env['NO_PARTICLES'] === '1' ? '&noparticles=1' : '';
+  const noHitscan = process.env['NO_HITSCAN'] === '1' ? '&nohitscan=1' : '';
+  const renderGates = `${noBeams}${noDmgNumbers}${noHealthBars}${noFilters}${noParticles}${noHitscan}`;
+  const url =
+    `${lanOrigin}/?room=${room}&worker=0${autocapture}${diag}` +
+    `${startHostile}${noE2EDataset}${renderGates}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] DRIVE_MS=${DRIVE_MS} startHostile=${startHostile !== ''} autocapture=${autocapture !== ''} diag=${diag === '' ? 'auto' : '0'}`);
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] navigating phone to: ${url}`);
+
+  const before = snapshotCaptures();
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] capture dir count (before): ${before.size}`);
+
+  try {
+    const clearRes = await fetch('http://localhost:2567/dev/events/clear', { method: 'POST' });
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] /dev/events cleared: ${clearRes.status}`);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] /dev/events clear failed (continuing): ${(err as Error).message}`);
+  }
+
+  const conn = await connectAndroidOrFallback({
+    mode: 'force-device',
+    baseURL: url,
+    extraOrigins: [lanOrigin],
+  });
+
+  try {
+    expect(conn.kind, 'connected via _android (not desktop fallback)').toBe('android');
+
+    await conn.page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
+    await conn.page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-hull-pct]');
+        return el !== null && Number(el.getAttribute('data-hull-pct')) > 0;
+      },
+      undefined,
+      { timeout: 30_000 },
+    );
+    await conn.page.waitForSelector('[data-testid="mobile-fire"]', { timeout: 15_000 });
+    await conn.page.waitForSelector('[data-testid="mobile-joystick"]', { timeout: 5_000 });
+
+    const fireBox = await conn.page.locator('[data-testid="mobile-fire"]').boundingBox();
+    const joyBox = await conn.page.locator('[data-testid="mobile-joystick"]').boundingBox();
+    if (!fireBox || !joyBox) {
+      throw new Error('Mobile control bounding boxes not found (fire or joystick)');
+    }
+    const fireX = fireBox.x + fireBox.width / 2;
+    const fireY = fireBox.y + fireBox.height / 2;
+    const joyX = joyBox.x + joyBox.width / 2;
+    const joyY = joyBox.y + joyBox.height / 2;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[phone-stall] FIRE center: (${fireX.toFixed(0)}, ${fireY.toFixed(0)}); ` +
+        `JOY center: (${joyX.toFixed(0)}, ${joyY.toFixed(0)})`,
+    );
+
+    // Drift in 8-direction rotation throughout the run — keeps ship moving.
+    // Capture mid-game screenshot BEFORE we start touching things so
+    // we can confirm UI mount state (e.g., joystick double-mount issue
+    // the user reported 2026-06-01).
+    await conn.page.screenshot({
+      path: 'tests/mobile-perf/screenshots/phone-stall-precapture.png',
+      fullPage: false,
+    });
+    // Count joystick / fire-button DOM elements to detect double-mount.
+    const mountCounts = await conn.page.evaluate(() => ({
+      joystick: document.querySelectorAll('[data-testid="mobile-joystick"]').length,
+      fire: document.querySelectorAll('[data-testid="mobile-fire"]').length,
+      boost: document.querySelectorAll('[data-testid="mobile-boost"]').length,
+      joystickHandle: document.querySelectorAll('.joystick').length,
+    }));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] mount counts: ${JSON.stringify(mountCounts)}`);
+
+    // Start allocation sampling — captures per-stack allocation rates
+    // across the 90 s drive. 32 KB interval = light overhead, good
+    // resolution for MB-scale leaks.
+    try {
+      await conn.cdp.send('HeapProfiler.enable');
+      await conn.cdp.send('HeapProfiler.startSampling', { samplingInterval: 32_768 });
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] HeapProfiler.startSampling active (32 KB interval)`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] startSampling failed: ${(err as Error).message}`);
+    }
+
+    // Capture kernel-level device state BEFORE the drive. Direct
+    // evidence (via `adb shell dumpsys thermalservice`) of the phone's
+    // thermal status + per-cluster temps + Chrome/total CPU%. The
+    // post-drive snapshot + diff tells us if the phone heated up
+    // during the test (the variance signal).
+    const deviceStateBefore = captureDeviceState();
+    // eslint-disable-next-line no-console
+    console.log(formatDeviceState('phone-stall device-before', deviceStateBefore));
+
+    const joy = await joyDown(conn.cdp, joyX, joyY);
+    await joyMove(joy, 35, -35); // start: up-right
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] joystick held — starting active combat drive`);
+
+    const startTime = Date.now();
+    let tapCount = 0;
+    let tapErrors = 0;
+    let lastFireMs = -FIRE_INTERVAL_MS;
+    let lastJoyRotateMs = 0;
+    let lastHeapMs = -HEAP_SAMPLE_INTERVAL_MS;
+    const heapSamples: Array<{ tMs: number; mb: number }> = [];
+
+    while (Date.now() - startTime < DRIVE_MS) {
+      const elapsedMs = Date.now() - startTime;
+
+      if (elapsedMs - lastFireMs >= FIRE_INTERVAL_MS) {
+        try {
+          await cdpTapWithJoystick(joy, fireX, fireY);
+          tapCount++;
+        } catch (err) {
+          tapErrors++;
+          if (tapErrors === 1) {
+            // eslint-disable-next-line no-console
+            console.log(`[phone-stall] first fire tap error: ${(err as Error).message}`);
+          }
+        }
+        lastFireMs = elapsedMs;
+      }
+
+      if (elapsedMs - lastJoyRotateMs >= JOY_ROTATE_INTERVAL_MS) {
+        const angle = (elapsedMs / JOY_ROTATE_INTERVAL_MS) * (Math.PI / 4);
+        const dx = Math.cos(angle) * 40;
+        const dy = Math.sin(angle) * 40;
+        await joyMove(joy, dx, dy).catch(() => undefined);
+        lastJoyRotateMs = elapsedMs;
+      }
+
+      if (elapsedMs - lastHeapMs >= HEAP_SAMPLE_INTERVAL_MS) {
+        try {
+          const mb = await readHeapMb(conn.page);
+          heapSamples.push({ tMs: elapsedMs, mb });
+        } catch {
+          // skip — heap api may be unavailable briefly
+        }
+        lastHeapMs = elapsedMs;
+      }
+
+      await conn.page.waitForTimeout(80);
+    }
+
+    await joyUp(joy);
+
+    // Capture device state AFTER the drive and diff.
+    const deviceStateAfter = captureDeviceState();
+    // eslint-disable-next-line no-console
+    console.log(formatDeviceState('phone-stall device-after', deviceStateAfter));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] ${diffDeviceState(deviceStateBefore, deviceStateAfter)}`);
+
+    // Post-drive screenshot + mount count — has the joystick double-mounted by now?
+    await conn.page.screenshot({
+      path: 'tests/mobile-perf/screenshots/phone-stall-postdrive.png',
+      fullPage: false,
+    });
+    const postMountCounts = await conn.page.evaluate(() => ({
+      joystick: document.querySelectorAll('[data-testid="mobile-joystick"]').length,
+      fire: document.querySelectorAll('[data-testid="mobile-fire"]').length,
+      boost: document.querySelectorAll('[data-testid="mobile-boost"]').length,
+      joystickHandle: document.querySelectorAll('.joystick').length,
+    }));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] mount counts (post-drive): ${JSON.stringify(postMountCounts)}`);
+
+    const elapsed = (Date.now() - startTime) / 1000;
+    // eslint-disable-next-line no-console
+    console.log(
+      `[phone-stall] drive complete: ${tapCount} fire-taps, ${tapErrors} errors, ${elapsed.toFixed(1)} s elapsed`,
+    );
+
+    // Heap timeline + slope estimate
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] heap samples (${heapSamples.length}):`);
+    for (const s of heapSamples) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall]   t=${(s.tMs / 1000).toFixed(1)}s heap=${s.mb.toFixed(1)} MB`);
+    }
+    if (heapSamples.length >= 2) {
+      const first = heapSamples[0];
+      const last = heapSamples[heapSamples.length - 1];
+      const deltaMb = last.mb - first.mb;
+      const slope = deltaMb / (last.tMs / 60_000);
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] heap delta: +${deltaMb.toFixed(1)} MB over ${(last.tMs / 1000).toFixed(1)} s = ${slope.toFixed(2)} MB/min`,
+      );
+    }
+
+    // Stop allocation sampling + dump top callstacks by total allocation.
+    try {
+      const profile = (await conn.cdp.send('HeapProfiler.stopSampling')) as {
+        profile: { head: SamplingNode; samples?: unknown[] };
+      };
+      const ranked = rankSamplingProfile(profile.profile.head);
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] top 20 allocation callstacks (by self-size MB):`);
+      for (const r of ranked.slice(0, 20)) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[phone-stall]   ${(r.selfBytes / 1024 / 1024).toFixed(2)} MB — ${r.fn} (${r.url}:${r.line})`,
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] stopSampling failed: ${(err as Error).message}`);
+    }
+
+    // Force GC + measure post-GC heap. If post-GC heap is near baseline,
+    // we have GC pressure (transient allocations) but NO leak. If it
+    // stays high, there's a retention bug somewhere.
+    try {
+      // Run collectGarbage twice — first pass may leave eden survivors.
+      await conn.cdp.send('HeapProfiler.collectGarbage');
+      await conn.page.waitForTimeout(500);
+      await conn.cdp.send('HeapProfiler.collectGarbage');
+      await conn.page.waitForTimeout(500);
+      const postGcHeap = await readHeapMb(conn.page);
+      const baselineHeap = heapSamples.length > 0 ? heapSamples[0].mb : 0;
+      const retainedDelta = postGcHeap - baselineHeap;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] post-GC heap: ${postGcHeap.toFixed(1)} MB (baseline: ${baselineHeap.toFixed(1)} MB, retained delta: ${retainedDelta >= 0 ? '+' : ''}${retainedDelta.toFixed(1)} MB)`,
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] force-GC failed: ${(err as Error).message}`);
+    }
+
+    // Allow autocapture stream to flush.
+    await conn.page.waitForTimeout(3_000);
+
+    const autocaptureOn = autocapture !== '';
+    let captureDir = '';
+    if (autocaptureOn) {
+      captureDir = findNewestCaptureSince(before);
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] new capture dir: ${captureDir}`);
+    } else {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] autocapture OFF — reading recv_gap_long from window.__eqxLogs directly`);
+    }
+
+    // Verify FIRE actually fired — count sendFire-like events on the client side.
+    if (autocaptureOn) {
+      const combatEvents = readNdjson(join(captureDir, 'combat.ndjson'));
+      const fireTags = ['sendFire', 'fire_sent', 'local_fire', 'fire'];
+      const fireEvents = combatEvents.filter((e) => fireTags.includes(e.tag));
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] client-side fire events in combat.ndjson: ${fireEvents.length} (taps attempted: ${tapCount})`,
+      );
+    }
+
+    // effectiveHz from heap_sample is the phone's REAL frame-rate
+    // ceiling, sampled every 6 RAFs. A degraded run will show low
+    // effectiveHz (thermal throttle, background process, etc.) and
+    // its raf_stutter count won't be comparable to a fresh-phone run.
+    // Surface min/p50/mean here so consecutive runs can be ranked by
+    // phone state alongside the optimization being measured.
+    if (autocaptureOn) {
+      const perfEvents = readNdjson(join(captureDir, 'perf.ndjson'));
+      const hzVals: number[] = [];
+      for (const e of perfEvents) {
+        if (e.tag !== 'heap_sample') continue;
+        const hz = Number(e.data['effectiveHz']);
+        if (Number.isFinite(hz)) hzVals.push(hz);
+      }
+      hzVals.sort((a, b) => a - b);
+      if (hzVals.length > 0) {
+        const sum = hzVals.reduce((s, v) => s + v, 0);
+        const mean = sum / hzVals.length;
+        const p50 = hzVals[Math.floor(hzVals.length / 2)];
+        const p10 = hzVals[Math.floor(hzVals.length * 0.1)];
+        // eslint-disable-next-line no-console
+        console.log(
+          `[phone-stall] effectiveHz: min=${hzVals[0].toFixed(1)} p10=${p10.toFixed(1)} p50=${p50.toFixed(1)} mean=${mean.toFixed(1)} max=${hzVals[hzVals.length - 1].toFixed(1)} (n=${hzVals.length})`,
+        );
+        if (mean < 45) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[phone-stall] ⚠ effectiveHz mean=${mean.toFixed(1)} suggests phone is throttled — raf_stutter results not comparable to fresh-phone runs`,
+          );
+        }
+      }
+    }
+
+    // Tag census on the capture (only when autocapture is on — these
+    // counts match user's bad captures: jfd81u had raf_stutter=6,
+    // longtask=7, loaf=8, correction=52, damage_number_spawned=108).
+    if (autocaptureOn) {
+      const allEvents = [
+        ...readNdjson(join(captureDir, 'perf.ndjson')),
+        ...readNdjson(join(captureDir, 'corrections.ndjson')),
+        ...readNdjson(join(captureDir, 'combat.ndjson')),
+        ...readNdjson(join(captureDir, 'other.ndjson')),
+        ...readNdjson(join(captureDir, 'lifecycle.ndjson')),
+      ];
+      const interesting = ['raf_stutter', 'raf_gap', 'longtask', 'loaf', 'correction', 'damage_number_spawned', 'damage_number_scheduled', 'damage_number_cancelled', 'snapshot_received', 'snapshot_applied', 'snapshot_coalesced', 'snapshot', 'heap_sample', 'fire', 'warp_event', 'swarm_decode_slow'];
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] capture event census (matching user-capture signals):`);
+      for (const tag of interesting) {
+        const count = allEvents.filter((e) => e.tag === tag).length;
+        if (count > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[phone-stall]   ${tag}: ${count}`);
+        }
+      }
+    }
+
+    const stalls: ReturnType<typeof findRecvGapLongs> = autocaptureOn
+      ? findRecvGapLongs(captureDir, STALL_MIN_MS)
+      : await conn.page.evaluate((minMs) => {
+          interface RingEntry {
+            ts: number;
+            tag: string;
+            data: Record<string, unknown>;
+          }
+          const ring = (window as unknown as { __eqxLogs?: RingEntry[] }).__eqxLogs ?? [];
+          const out: Array<{
+            ts: number;
+            via: string;
+            recvGapMs: number;
+            heapUsedMb: number;
+            serverSendPerfNow: number;
+            clientRecvPerfNow: number;
+            serverToClientDeltaMs: number;
+            wsBufferedAmountBytes: number;
+          }> = [];
+          for (const e of ring) {
+            if (e.tag !== 'recv_gap_long') continue;
+            const gap = Number(e.data['recvGapMs']);
+            if (!Number.isFinite(gap) || gap < minMs) continue;
+            out.push({
+              ts: e.ts,
+              via: String(e.data['via'] ?? 'unknown'),
+              recvGapMs: gap,
+              heapUsedMb: Number(e.data['heapUsedMb'] ?? 0),
+              serverSendPerfNow: Number(e.data['serverSendPerfNow'] ?? 0),
+              clientRecvPerfNow: Number(e.data['clientRecvPerfNow'] ?? 0),
+              serverToClientDeltaMs: Number(e.data['serverToClientDeltaMs'] ?? 0),
+              wsBufferedAmountBytes: Number(e.data['wsBufferedAmountBytes'] ?? 0),
+            });
+          }
+          return out;
+        }, STALL_MIN_MS);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[phone-stall] recv_gap_long > ${STALL_MIN_MS} ms event count: ${stalls.length}`,
+    );
+    for (const e of stalls) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall]   ts=${e.ts.toFixed(1)} via=${e.via} recvGapMs=${e.recvGapMs.toFixed(1)} ` +
+          `heapUsedMb=${e.heapUsedMb.toFixed(1)} serverSendPerfNow=${e.serverSendPerfNow.toFixed(1)} ` +
+          `wsBufferedAmountBytes=${e.wsBufferedAmountBytes}`,
+      );
+    }
+
+    const serverEvents = await fetchDevEvents('http://localhost:2567', 20_000);
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] /dev/events count: ${serverEvents.length}`);
+
+    const tagCounts = new Map<string, number>();
+    for (const e of serverEvents) tagCounts.set(e.tag, (tagCounts.get(e.tag) ?? 0) + 1);
+    const sortedTags = [...tagCounts.entries()].sort((a, b) => b[1] - a[1]);
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] tag census (${sortedTags.length} distinct):`);
+    for (const [tag, count] of sortedTags) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall]   ${tag}: ${count}`);
+    }
+
+    if (serverEvents.length > 0) {
+      const first = serverEvents[0];
+      const last = serverEvents[serverEvents.length - 1];
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] events span: ${((last.ts - first.ts) / 1000).toFixed(1)} s`,
+      );
+    }
+
+    const tickHitches = serverEvents.filter((e) => e.tag === 'tick_hitch');
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] tick_hitch count: ${tickHitches.length}`);
+    const sortedHitches = [...tickHitches].sort(
+      (a, b) => Number(b.data['totalMs'] ?? 0) - Number(a.data['totalMs'] ?? 0),
+    );
+    for (const h of sortedHitches.slice(0, 5)) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall]   tick_hitch: ts=${h.ts} totalMs=${h.data['totalMs']} phases=${JSON.stringify(h.data['phasesSnapshot'] ?? h.data['phases'] ?? {})}`,
+      );
+    }
+
+    const sortedEvents = [...serverEvents].sort((a, b) => a.ts - b.ts);
+    const gaps: Array<{ from: number; to: number; deltaMs: number; beforeTag: string; afterTag: string }> = [];
+    for (let i = 1; i < sortedEvents.length; i++) {
+      const delta = sortedEvents[i].ts - sortedEvents[i - 1].ts;
+      if (delta > 500) {
+        gaps.push({
+          from: sortedEvents[i - 1].ts,
+          to: sortedEvents[i].ts,
+          deltaMs: delta,
+          beforeTag: sortedEvents[i - 1].tag,
+          afterTag: sortedEvents[i].tag,
+        });
+      }
+    }
+    gaps.sort((a, b) => b.deltaMs - a.deltaMs);
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] inter-event gaps > 500 ms in server stream: ${gaps.length}`);
+    for (const g of gaps.slice(0, 5)) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall]   gap: from=${g.from} (${g.beforeTag}) → to=${g.to} (${g.afterTag}) deltaMs=${g.deltaMs} (${(g.deltaMs / 1000).toFixed(1)} s)`,
+      );
+    }
+
+    const broadcasts = sortedEvents.filter((e) => e.tag === 'snapshot_broadcast');
+    if (broadcasts.length > 1) {
+      const bcastGaps: Array<{ deltaMs: number; from: number; serverTickBefore: unknown }> = [];
+      for (let i = 1; i < broadcasts.length; i++) {
+        const delta = broadcasts[i].ts - broadcasts[i - 1].ts;
+        if (delta > 500) {
+          bcastGaps.push({
+            deltaMs: delta,
+            from: broadcasts[i - 1].ts,
+            serverTickBefore: broadcasts[i - 1].data['serverTick'],
+          });
+        }
+      }
+      bcastGaps.sort((a, b) => b.deltaMs - a.deltaMs);
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] snapshot_broadcast gaps > 500 ms: ${bcastGaps.length}`);
+      for (const g of bcastGaps.slice(0, 5)) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[phone-stall]   bcast gap: from=${g.from} (serverTick=${g.serverTickBefore}) deltaMs=${g.deltaMs} (${(g.deltaMs / 1000).toFixed(1)} s)`,
+        );
+      }
+    }
+
+    if (MODE === 'verify') {
+      expect(
+        stalls.length,
+        `[verify] expected ZERO recv_gap_long > ${STALL_MIN_MS} ms in ${DRIVE_MS / 1000} s drive`,
+      ).toBe(0);
+    } else {
+      // Diagnostic mode: pass as long as the test infrastructure ran.
+      // Tap success is informational; the main signal lives in stalls
+      // + heap + server events.
+      if (autocaptureOn) {
+        expect(
+          captureDir,
+          '[repro] expected a fresh capture dir from the autocapture stream',
+        ).toBeTruthy();
+      }
+    }
+  } finally {
+    await conn.cleanup();
+  }
+});

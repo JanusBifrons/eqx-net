@@ -70,6 +70,26 @@ export const IDLE_INPUT_STATE: JoystickInputState = {
 };
 
 /**
+ * Module-level scratch for engaged-state returns (plan: melodic-
+ * engelbart, Step 4 follow-on — phone-overwhelmed hypothesis,
+ * 2026-05-30). Pre-pool, every engaged return allocated a fresh
+ * {engaged, turnLeft, turnRight, thrust} literal — at 60 Hz with the
+ * joystick held, that's 4.8 KB/sec of phone-side allocation (touch-
+ * only; desktop branch in tickPhysics never enters this code).
+ *
+ * The caller stores the returned ref as `this._joystickInputState`
+ * across ticks. Reusing the same scratch is safe because each
+ * engaged return fully overwrites all four fields. The IDLE return
+ * path (separate singleton) handles release/dead-zone transitions.
+ */
+const _ENGAGED_SCRATCH: JoystickInputState = {
+  engaged: true,
+  turnLeft: false,
+  turnRight: false,
+  thrust: false,
+};
+
+/**
  * Compute the next joystick boolean state given the raw stick vector,
  * the ship's current angle (radians), and the previous boolean state.
  * Pure function: same args → same result.
@@ -142,5 +162,13 @@ export function joystickToInput(
     thrust = absDelta < THRUST_ON_CONE_RAD && mag > THRUST_ON_MAG;
   }
 
-  return { engaged: true, turnLeft, turnRight, thrust };
+  // Mutate the pooled scratch — caller stores the ref as
+  // `this._joystickInputState` which IS this scratch, so subsequent
+  // reads of `prev.engaged/turnLeft/etc.` see the previous tick's
+  // computed values (we fully overwrite all fields each engaged
+  // return, so there's no stale-field leak).
+  _ENGAGED_SCRATCH.turnLeft = turnLeft;
+  _ENGAGED_SCRATCH.turnRight = turnRight;
+  _ENGAGED_SCRATCH.thrust = thrust;
+  return _ENGAGED_SCRATCH;
 }

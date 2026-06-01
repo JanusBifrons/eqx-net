@@ -227,4 +227,18 @@ export class TransitInstrumentation {
       this.curtainDownAt = -1;
     }
   }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — reset every per-transit latch + the
+   * one-shot ledger so a GameSurface remount sees a clean instance.
+   */
+  dispose(): void {
+    this.engageAt = -1;
+    this.lastMarkAt = -1;
+    this.curtainDownAt = -1;
+    this.frameIdx = 0;
+    this.burstClosed = false;
+    this.firedOnce.clear();
+    this.armed.clear();
+  }
 }

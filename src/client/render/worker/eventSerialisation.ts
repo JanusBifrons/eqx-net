@@ -4,14 +4,15 @@
  * monolithic `WorkerRendererClient.ts` per the god-file refactor plan
  * (`docs/plans/refactor-god-files.md`, commit 8).
  *
- * Why DPR scaling: the worker-side `Camera` operates in the renderer's
- * internal pixel frame, which in worker mode is PHYSICAL pixels (Pixi's
- * resolution-aware sizing). DOM-mode pointer events arrive in CSS
- * pixels — multiplying by `window.devicePixelRatio` ahead of the
- * postMessage means the worker's Camera reads coordinates in the same
- * frame regardless of DPR. Without it, pinch zoom pivots toward the
- * top-left on high-DPR phones (the Camera thinks the user is in the
- * left quarter of the canvas).
+ * Coordinate frame: CSS (logical) pixels — NO DPR scaling. The worker
+ * `Camera`, its `setScreenSize`, and the Pixi `screen` all operate in
+ * CSS px (HiDPI handled by `resolution: dpr`, Pixi's standard contract).
+ * Forwarded pointer/wheel `offset*` therefore stay raw so every consumer
+ * shares one frame. A previous version multiplied by
+ * `window.devicePixelRatio` to match a (buggy) physical-px worker frame;
+ * that frame was removed when BOOT switched to sending CSS px — keeping
+ * the multiply would now make pinch/wheel pivot drift by the DPR factor
+ * on high-DPR devices. (plan: zazzy-engelbart, Phase 1.)
  *
  * Stateless — call from anywhere. The `stamp` field is filled in via
  * `Date.now()` so the worker can correlate events with its own clock
@@ -21,17 +22,16 @@
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './protocol.js';
 
 export function serialisePointerEvent(e: PointerEvent): SerialisedPointerEvent {
-  const dpr = window.devicePixelRatio ?? 1;
   return {
     type: e.type,
     pointerId: e.pointerId,
     pointerType: e.pointerType,
     button: e.button,
     buttons: e.buttons,
-    clientX: e.clientX * dpr,
-    clientY: e.clientY * dpr,
-    offsetX: e.offsetX * dpr,
-    offsetY: e.offsetY * dpr,
+    clientX: e.clientX,
+    clientY: e.clientY,
+    offsetX: e.offsetX,
+    offsetY: e.offsetY,
     ctrlKey: e.ctrlKey,
     shiftKey: e.shiftKey,
     altKey: e.altKey,
@@ -48,18 +48,17 @@ export function serialisePointerEvent(e: PointerEvent): SerialisedPointerEvent {
 }
 
 export function serialiseWheelEvent(e: WheelEvent): SerialisedWheelEvent {
-  // Same DPR scaling as `serialisePointerEvent` — wheel zoom pivots on
-  // (offsetX, offsetY) so the coord frame must match the Camera's.
-  const dpr = window.devicePixelRatio ?? 1;
+  // CSS px, no DPR scaling — wheel zoom pivots on (offsetX, offsetY) and
+  // the Camera frame is CSS px (see header note).
   return {
     deltaX: e.deltaX,
     deltaY: e.deltaY,
     deltaZ: e.deltaZ,
     deltaMode: e.deltaMode,
-    clientX: e.clientX * dpr,
-    clientY: e.clientY * dpr,
-    offsetX: e.offsetX * dpr,
-    offsetY: e.offsetY * dpr,
+    clientX: e.clientX,
+    clientY: e.clientY,
+    offsetX: e.offsetX,
+    offsetY: e.offsetY,
     ctrlKey: e.ctrlKey,
     shiftKey: e.shiftKey,
     altKey: e.altKey,

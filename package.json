@@ -27,6 +27,8 @@
     "e2e:gate": "playwright test --project=gate",
     "e2e:perf": "playwright test --config=playwright.perf.config.ts",
     "e2e:mobile-perf": "playwright test --config=playwright.mobile-perf.config.ts",
+    "e2e:phone": "cross-env MOBILE_PERF_MODE=force-device playwright test --config=playwright.mobile-perf.config.ts tests/mobile-perf/phone-poc.spec.ts",
+    "e2e:phone:stall": "cross-env MOBILE_PERF_MODE=force-device MOBILE_PERF_TIMEOUT_MS=420000 EQX_DEV_EVENTS_MAX=20000 EQX_ALLOW_DEV_OVERRIDES=1 playwright test --config=playwright.mobile-perf.config.ts tests/mobile-perf/phone-galaxy-stall-repro.spec.ts",
     "e2e:headed": "cross-env PWHEADED=1 playwright test --project=smoke --project=feature",
     "e2e:scenarios": "playwright test --project=smoke tests/e2e/scenarios/",
     "e2e:netgate": "tsx tests/netgate/run-netgate.ts",

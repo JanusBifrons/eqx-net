@@ -1,5 +1,5 @@
 import { Box, Typography } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 import { WEAPON_IDS, getWeapon, type WeaponId } from '../../core/combat/WeaponCatalogue';
 import { isTouchDevice } from '../input/TouchInput';
 
@@ -18,11 +18,14 @@ const WEAPON_COLORS: Record<WeaponId, string> = {
 const IS_TOUCH = isTouchDevice();
 
 export function WeaponSelector(): JSX.Element {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  const shouldRender = useShouldRenderHud();
   const activeWeapon = useUIStore((s) => s.activeWeapon);
   const isDead = useUIStore((s) => s.isDead);
   const setActiveWeapon = useUIStore((s) => s.setActiveWeapon);
   const cycleWeapon = useUIStore((s) => s.cycleWeapon);
 
+  if (!shouldRender) return <></>;
   if (isDead) return <></>;
 
   if (IS_TOUCH) {

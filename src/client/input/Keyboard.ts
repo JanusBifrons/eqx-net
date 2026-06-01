@@ -19,8 +19,36 @@ export class Keyboard {
   boost = false;
   reverse = false;
   private spaceDown = false;
+  /**
+   * Plan: crispy-kazoo, Commit 4 — pause boundary.
+   * When false, `read()` returns IDLE and keydown/keyup are masked.
+   * DOM listeners stay attached so the user re-pressing a key after
+   * re-enable starts fresh (the disabled-window keypresses are
+   * silently swallowed). Toggled by App.tsx GameSurface's
+   * useIsLoadingActive effect.
+   */
+  private enabled = true;
+
+  /** Zero every held-key bool. Called on disable so the joiner can't
+   *  "auto-thrust on curtain lift" if they were holding W when they
+   *  died and held it through the respawn. */
+  private clearHeldKeys(): void {
+    this.thrust = false;
+    this.turnLeft = false;
+    this.turnRight = false;
+    this.boost = false;
+    this.reverse = false;
+    this.spaceDown = false;
+  }
+
+  setEnabled(v: boolean): void {
+    if (this.enabled === v) return;
+    this.enabled = v;
+    if (!v) this.clearHeldKeys();
+  }
 
   private onKeyDown = (e: KeyboardEvent): void => {
+    if (!this.enabled) return;
     switch (e.code) {
       case 'ArrowUp':
       case 'KeyW':
@@ -60,6 +88,7 @@ export class Keyboard {
   };
 
   private onKeyUp = (e: KeyboardEvent): void => {
+    if (!this.enabled) return;
     switch (e.code) {
       case 'ArrowUp':
       case 'KeyW':
@@ -98,6 +127,16 @@ export class Keyboard {
   }
 
   read(): InputState {
+    if (!this.enabled) {
+      return {
+        thrust: false,
+        turnLeft: false,
+        turnRight: false,
+        fireHeld: false,
+        boost: false,
+        reverse: false,
+      };
+    }
     return {
       thrust: this.thrust,
       turnLeft: this.turnLeft,

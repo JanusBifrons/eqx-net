@@ -15,9 +15,12 @@ import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
+import { readFxKillSwitches } from './fxKillSwitches';
+import { BeamSpritePool } from './BeamSpritePool';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
+import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
 import {
   DAMAGE_FLASH_COLOR,
@@ -33,6 +36,9 @@ import {
 // the constants below are PixiRenderer-specific (background tint,
 // remote-laser colour used by inline beam draw in update()).
 const BACKGROUND_COLOR = 0x05070f;
+// Default gameplay camera zoom (world Container scale). 1.0 preserves the
+// historical framing; tune here once the `?zoom=` on-device A/B settles.
+const DEFAULT_GAMEPLAY_ZOOM = 1.0;
 const REMOTE_LASER_COLOR = 0xff6600;
 const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
@@ -44,10 +50,9 @@ const LASER_CORE_COLOR = 0xffffff;
 // retains the reference, so a single reusable object per style is safe.
 // Mutate `alpha` for remote beams (TTL-based fade); local glow/core
 // styles are constant.
-const _liveBeamGlowStyle: { color: number; width: number; alpha: number } = { color: LASER_BEAM_COLOR, width: 3, alpha: 0.4 };
-const _liveBeamCoreStyle: { color: number; width: number; alpha: number } = { color: LASER_CORE_COLOR, width: 1, alpha: 1 };
-const _remoteBeamGlowStyle: { color: number; width: number; alpha: number } = { color: REMOTE_LASER_COLOR, width: 3, alpha: 0.4 };
-const _remoteBeamCoreStyle: { color: number; width: number; alpha: number } = { color: 0xffaa44, width: 1, alpha: 1 };
+// Beam rendering moved to `BeamSpritePool` (post-2026-06-01) — no
+// per-frame `clear() + moveTo + lineTo + stroke()` cycle. Sprite tint
+// + width are passed at pool construct time; see `init()`.
 
 /**
  * Load-curtain tween constants. The curtain rises quickly (so the
@@ -116,6 +121,13 @@ export class PixiRenderer implements IRenderer {
    *  `null` when `?effects=0` escape hatch is active — destruction +
    *  flames then fall back to today's inline Graphics paths. */
   private effects: EffectsService | null = null;
+  // Phone-stall thermal-isolation switches. Read once at init via
+  // `readFxKillSwitches`; gated at render-time call sites to attribute
+  // GPU heat to specific subsystems (beams / damage numbers / health
+  // bars). Same pattern as `filtersDisabled` / `particlesDisabled`.
+  private _beamsDisabled = false;
+  private _dmgNumbersDisabled = false;
+  private _healthBarsDisabled = false;
   private sprites = new Map<string, Graphics>();
   /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
    *  Drawn with a desaturated kind colour; updated each frame from
@@ -146,8 +158,49 @@ export class PixiRenderer implements IRenderer {
   private readonly _updateMissileSeenScratch = new Set<number>();
   private _missileUpdaterCtx!: MissileSpriteCtx;
   private explosionSprites: Array<{ gfx: Graphics; framesLeft: number }> = [];
-  private liveBeamGfx: Graphics | null = null;
-  private remoteBeamGfx: Graphics | null = null;
+  // Post-2026-06-01: beams now rendered via sprite pools (no Graphics
+  // clear/redraw cycle). The `liveBeamGfx` / `remoteBeamGfx` accessor
+  // fields are kept as Container types — same surface LaserGlow uses
+  // to attach filters. Pools own the actual sprite lifecycle.
+  private liveBeamGfx: Container | null = null;
+  private remoteBeamGfx: Container | null = null;
+  private _liveBeamPool: BeamSpritePool | null = null;
+  private _remoteBeamPool: BeamSpritePool | null = null;
+  /**
+   * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
+   * dirty-flag check on the per-frame Graphics rebuild path.
+   * `liveBeamGfx.clear() + moveTo + lineTo + stroke` ran every frame
+   * while held-fire was active even when the ship hadn't moved or
+   * rotated past visual threshold. Same pattern as HealthBars and
+   * BackgroundGrid — Pixi v8 allocates fresh ShapePath /
+   * GpuGraphicsContext per `stroke()` call. Cached per-mount endpoints
+   * + alpha; epsilon 0.5 world units (sub-pixel at typical zoom).
+   * `_liveBeamCacheCount` is the number of valid entries — used so we
+   * can rebuild from cache without depending on Map size invariants.
+   */
+  private readonly _liveBeamCache: Array<{
+    mountId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+  }> = [];
+  private _liveBeamCacheCount = 0;
+  /** Same dirty-flag cache for remote shooters' beams (per-shooter +
+   *  per-mount keyed). With multiple drones firing at once the rebuild
+   *  cost was per-frame × per-beam — the cache compounds. Flat array
+   *  matches liveBeam pattern; iteration order is stable across frames
+   *  (JS Map preserves insertion order). */
+  private readonly _remoteBeamCache: Array<{
+    shooterId: string;
+    mountId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    alpha: number;
+  }> = [];
+  private _remoteBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -248,19 +301,28 @@ export class PixiRenderer implements IRenderer {
     let initialDpr: number;
     let canvas: HTMLCanvasElement | OffscreenCanvas | undefined;
     let domContainer: HTMLElement | null = null;
+    // Optional `?zoom=` override (on-device crispness/framing A/B). DOM mode
+    // reads the URL directly; worker mode receives it on the BOOT bag (the
+    // worker has no `window`), forwarded by WorkerRendererClient.
+    let zoom: number | undefined;
 
     if (isDom) {
       domContainer = rawContainer as HTMLElement;
       initialW = domContainer.clientWidth || window.innerWidth;
       initialH = domContainer.clientHeight || window.innerHeight;
       initialDpr = window.devicePixelRatio ?? 1;
+      const z = new URLSearchParams(window.location.search).get('zoom');
+      if (z !== null) zoom = parseFloat(z);
       // No `canvas:` option — Pixi creates one and we append it.
     } else {
-      const bag = rawContainer as { canvas: OffscreenCanvas; width: number; height: number; dpr: number };
+      const bag = rawContainer as {
+        canvas: OffscreenCanvas; width: number; height: number; dpr: number; zoom?: number;
+      };
       canvas = bag.canvas;
       initialW = bag.width;
       initialH = bag.height;
       initialDpr = bag.dpr;
+      zoom = bag.zoom;
     }
 
     this.app = new Application();
@@ -272,6 +334,11 @@ export class PixiRenderer implements IRenderer {
       antialias: true,
       resolution: initialDpr,
       autoDensity: isDom,
+      // Pin WebGL: Pixi v8.1+ already defaults autoDetect to WebGL, but
+      // pinning guarantees the worker can never silently select WebGPU
+      // (whose Graphics MSAA path differs from the main-thread fallback's
+      // WebGL), keeping crispness identical across both renderer paths.
+      preference: 'webgl',
     });
     if (domContainer) {
       domContainer.appendChild(this.app.canvas);
@@ -315,6 +382,46 @@ export class PixiRenderer implements IRenderer {
     });
     this.camera.setScreenSize(initialW, initialH);
 
+    // Read the bisected FX kill switches once at init. Threaded into the
+    // warp chain (forceDisable) + EffectsService refs (per-effect bypasses).
+    // Plan: melodic-engelbart Step 2.
+    const fxKillSwitches = readFxKillSwitches();
+    this._beamsDisabled = fxKillSwitches.beamsDisabled;
+    this._dmgNumbersDisabled = fxKillSwitches.dmgNumbersDisabled;
+    this._healthBarsDisabled = fxKillSwitches.healthBarsDisabled;
+
+    // Default gameplay zoom. Historically the gameplay camera ran at the
+    // Pixi default scale 1.0 (the worker Camera replaced pixi-viewport,
+    // which only ever `moveCenter`d the gameplay world — it never set a
+    // zoom; cf. GalaxyOverviewRenderer's setZoom(0.7), a separate map).
+    // `DEFAULT_GAMEPLAY_ZOOM` makes that explicit + one-line tunable, and
+    // the `?zoom=` URL override lets us A/B the sweet spot on-device
+    // before baking a new default in. (plan: zazzy-engelbart, Phase 2.)
+    const resolvedZoom =
+      zoom !== undefined && Number.isFinite(zoom) && zoom > 0
+        ? zoom
+        : DEFAULT_GAMEPLAY_ZOOM;
+    this.camera.setZoom(resolvedZoom);
+
+    // Frame diagnostic (gated). The decisive crispness metric: the
+    // backing buffer (`app.canvas.width`) MUST equal round(CSS px × dpr)
+    // for true 1:1 HiDPI. Pre-fix the worker path double-applied dpr.
+    // Captured on-device via `?diag=1` (plan: zazzy-engelbart, Phase 0).
+    if (isDiagEnabled()) {
+      logEvent('render_frame_diag', {
+        phase: 'init',
+        mode: isDom ? 'dom' : 'worker',
+        appResolution: this.app.renderer.resolution,
+        rendererType: (this.app.renderer as unknown as { type?: number }).type ?? -1,
+        canvasW: this.app.canvas.width,
+        canvasH: this.app.canvas.height,
+        inW: initialW,
+        inH: initialH,
+        dpr: initialDpr,
+        worldScaleX: this.world.scale.x,
+      });
+    }
+
     // Warp visual chain — extracted to `pixi/WarpFilterChain.ts`.
     // Lazy-builds its stage on first setWarpMode/triggerWarpIn/setLoadCurtain.
     this.warp = new WarpFilterChain(
@@ -327,6 +434,9 @@ export class PixiRenderer implements IRenderer {
       },
       this.frameMarkers,
     );
+    if (fxKillSwitches.filtersDisabled) {
+      this.warp.forceDisable();
+    }
 
     this.backgroundGrid = new BackgroundGrid();
     this.backgroundGrid.attach(this.camera);
@@ -378,13 +488,16 @@ export class PixiRenderer implements IRenderer {
     // main-thread fallback (touch devices, Safari < 17). ?effects=0 URL
     // hatch skips construction entirely.
     if (!effectsDisabledByUrl()) {
-      // Eagerly create the beam Graphics (M6 — laser glow). Previously
-      // lazy-created inside update() on first beam frame; we hoist them
-      // here so LaserGlow can attach a GlowFilter at construct time.
-      // Empty Graphics render as nothing — no visual change before first beam.
-      this.liveBeamGfx = new Graphics();
+      // Eagerly create the beam sprite pools (post-2026-06-01 — was
+      // Pixi Graphics). Each pool's Container is exposed as
+      // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
+      // GlowFilter to it at construct time. Empty pools render as
+      // nothing — no visual change before first beam.
+      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1 });
+      this.liveBeamGfx = this._liveBeamPool.container;
       this.shipContainer.addChild(this.liveBeamGfx);
-      this.remoteBeamGfx = new Graphics();
+      this._remoteBeamPool = new BeamSpritePool({ tint: 0xffaa44, width: 2, alpha: 1 });
+      this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx);
 
       this.effects = new EffectsService({
@@ -405,6 +518,7 @@ export class PixiRenderer implements IRenderer {
           return null;
         },
         beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
+        fxKillSwitches,
       });
     }
 
@@ -419,7 +533,9 @@ export class PixiRenderer implements IRenderer {
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
-      this.camera.tick();
+      // deltaMS keeps the Camera's zoom-ease framerate-independent
+      // (60 / 90 / 120 Hz devices ease at the same wall-clock rate).
+      this.camera.tick(this.app.ticker.deltaMS);
     });
 
     if (isDom && domContainer) {
@@ -444,7 +560,10 @@ export class PixiRenderer implements IRenderer {
         // !this.initialized is enough — dispose() flips that flag.
         if (!this.initialized || !this.app?.renderer) return;
         const { w, h } = measureSize();
-        this.app.renderer.resize(w, h);
+        // Re-apply DPR so browser-zoom / monitor-move updates resolution
+        // on the main-thread path too (parity with the worker resize).
+        const dpr = window.devicePixelRatio ?? 1;
+        this.app.renderer.resize(w, h, dpr);
         this.camera.setScreenSize(w, h);
         this.starfield?.resize(w, h);
       };
@@ -470,11 +589,28 @@ export class PixiRenderer implements IRenderer {
    * receives a RESIZE message — replicates the DOM resize() handler for
    * the OffscreenCanvas path.
    */
-  resize(width: number, height: number): void {
+  resize(width: number, height: number, dpr?: number): void {
     if (!this.initialized || !this.app?.renderer) return;
-    this.app.renderer.resize(width, height);
+    // Pass resolution through so a DPR change (monitor move / browser
+    // zoom / some rotations) re-derives the backing buffer. Omitting it
+    // (the old behaviour) kept the stale init resolution → blur after
+    // such a change. `width`/`height` are LOGICAL (CSS) px.
+    this.app.renderer.resize(width, height, dpr ?? this.app.renderer.resolution);
     this.camera.setScreenSize(width, height);
     this.starfield?.resize(width, height);
+    if (isDiagEnabled()) {
+      logEvent('render_frame_diag', {
+        phase: 'resize',
+        mode: 'worker',
+        appResolution: this.app.renderer.resolution,
+        canvasW: this.app.canvas.width,
+        canvasH: this.app.canvas.height,
+        inW: width,
+        inH: height,
+        dpr: dpr ?? -1,
+        worldScaleX: this.world.scale.x,
+      });
+    }
   }
 
   /**
@@ -736,13 +872,19 @@ export class PixiRenderer implements IRenderer {
     // (not all stacked at the ship centre). Legacy single-mount ships have
     // mount.localX/Y = (0, 0) and baseAngle = 0, so the geometry collapses to
     // the pre-refactor "ship.pos + 20 u forward" path.
-    if (mirror.remoteLasers && mirror.remoteLasers.size > 0) {
-      if (!this.remoteBeamGfx) {
-        this.remoteBeamGfx = new Graphics();
-        this.shipContainer.addChild(this.remoteBeamGfx);
-      }
-      this.remoteBeamGfx.clear();
+    if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
+
+      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache, same
+      // shape as liveBeam. Flat pooled slot array; count + per-beam
+      // endpoint/alpha comparison. Sub-pixel drift (epsilon 0.5 world
+      // units, 0.05 alpha) hits the cache; visible motion / new
+      // shooters / fade transitions trigger rebuild.
+      const BEAM_EPSILON = 4.0;
+      const ALPHA_EPSILON = 0.05;
       const now = performance.now();
+      let slotIdx = 0;
+      let dirty = false;
+
       for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
         // ship's rotation between fire events. AI shooters track their
@@ -839,19 +981,46 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Outer glow + bright core. Styles hoisted to module-level
-          // scratches; mutate `alpha` per beam (TTL fade) before stroke.
-          _remoteBeamGlowStyle.alpha = alpha * 0.4;
-          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-          this.remoteBeamGfx.stroke(_remoteBeamGlowStyle);
-          _remoteBeamCoreStyle.alpha = alpha;
-          this.remoteBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-          this.remoteBeamGfx.stroke(_remoteBeamCoreStyle);
+          // Compare against cache slot — mark dirty if mismatch.
+          let slot = this._remoteBeamCache[slotIdx];
+          if (!slot) {
+            slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
+            this._remoteBeamCache[slotIdx] = slot;
+            dirty = true;
+          } else if (!dirty) {
+            if (slot.shooterId !== shooterId
+              || slot.mountId !== mountId
+              || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
+              || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
+              || Math.abs(slot.toX - toX) > BEAM_EPSILON
+              || Math.abs(slot.toY - toY) > BEAM_EPSILON
+              || Math.abs(slot.alpha - alpha) > ALPHA_EPSILON) {
+              dirty = true;
+            }
+          }
+          slot.shooterId = shooterId;
+          slot.mountId = mountId;
+          slot.fromX = fromX;
+          slot.fromY = fromY;
+          slot.toX = toX;
+          slot.toY = toY;
+          slot.alpha = alpha;
+          slotIdx++;
         }
       }
-      this.remoteBeamGfx.visible = true;
-    } else if (this.remoteBeamGfx) {
+      if (slotIdx !== this._remoteBeamCacheCount) dirty = true;
+      this._remoteBeamCacheCount = slotIdx;
+
+      // Sprite-pool driven render — no clear/redraw, just transforms.
+      // Pool handles its own pooling + visibility; dirty-flag still
+      // gates the call so a totally-static set of beams doesn't
+      // touch the sprite transforms.
+      if (dirty) this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      this.remoteBeamGfx!.visible = true;
+    } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
+      this._remoteBeamPool.hideAll();
+      this._remoteBeamCacheCount = 0;
     }
 
     // Live hitscan beams — one per mount in the local ship's active slot.
@@ -865,19 +1034,29 @@ export class PixiRenderer implements IRenderer {
     // entry keyed by `'forward'`; multi-mount kinds (Phase 3) get one entry
     // per barrel and each draws independently.
     const localShip = mirror.localPlayerId ? mirror.ships.get(mirror.localPlayerId) : null;
-    if (mirror.liveBeams && mirror.liveBeams.size > 0 && localShip) {
-      if (!this.liveBeamGfx) {
-        this.liveBeamGfx = new Graphics();
-        this.shipContainer.addChild(this.liveBeamGfx);
-      }
-      this.liveBeamGfx.clear();
+    if (!this._beamsDisabled && mirror.liveBeams && mirror.liveBeams.size > 0 && localShip && this._liveBeamPool) {
       const localKind = getShipKind(localShip.kind ?? null);
       const localMounts = localKind.mounts ?? [];
+
+      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache. Compute
+      // all current-frame beam endpoints into the cache slot array
+      // and compare against the prior frame's. If every beam's
+      // endpoints are within `BEAM_EPSILON` (0.5 world units) AND the
+      // beam-count is identical, skip the entire `clear() + moveTo +
+      // lineTo + stroke ×2` cycle. Sub-pixel motion (no rotation, no
+      // movement) hits the cache; rotation > ~0.0007 rad still
+      // triggers a rebuild (at the 700u beam endpoint, 0.0007 rad
+      // sweeps 0.5u).
+      const BEAM_EPSILON = 4.0;
+      const incomingCount = mirror.liveBeams.size;
+      let dirty = incomingCount !== this._liveBeamCacheCount;
+
+      // First pass: compute new endpoints; compare to cache. Reuse
+      // pooled slots so we don't allocate per-mount each frame.
+      let slotIdx = 0;
       for (const [mountId, beam] of mirror.liveBeams) {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
         const mount = mountIdx >= 0 ? localMounts[mountIdx] : undefined;
-        // Phase 4b.2: add the per-mount slewed angle so the beam emerges
-        // in the same direction as the visibly-rotated barrel sprite.
         const currentMountAngle = mountIdx >= 0 ? (localShip.mountAngles?.[mountIdx] ?? 0) : 0;
         const origin = applyMountOffset(localShip.x, localShip.y, localShip.angle, mount);
         const fireAngle = localShip.angle + (mount?.baseAngle ?? 0) + currentMountAngle;
@@ -887,16 +1066,36 @@ export class PixiRenderer implements IRenderer {
         const fromY = origin.y + fwdY * 20;
         const toX = fromX + fwdX * beam.dist;
         const toY = fromY + fwdY * beam.dist;
-        // Outer glow (style literal hoisted to `_liveBeamGlowStyle`).
-        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke(_liveBeamGlowStyle);
-        // Bright core (style literal hoisted to `_liveBeamCoreStyle`).
-        this.liveBeamGfx.moveTo(fromX, -fromY).lineTo(toX, -toY);
-        this.liveBeamGfx.stroke(_liveBeamCoreStyle);
+        let slot = this._liveBeamCache[slotIdx];
+        if (!slot) {
+          slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
+          this._liveBeamCache[slotIdx] = slot;
+        }
+        if (!dirty) {
+          if (slot.mountId !== mountId
+            || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
+            || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
+            || Math.abs(slot.toX - toX) > BEAM_EPSILON
+            || Math.abs(slot.toY - toY) > BEAM_EPSILON) {
+            dirty = true;
+          }
+        }
+        slot.mountId = mountId;
+        slot.fromX = fromX;
+        slot.fromY = fromY;
+        slot.toX = toX;
+        slot.toY = toY;
+        slotIdx++;
       }
-      this.liveBeamGfx.visible = true;
+      this._liveBeamCacheCount = slotIdx;
+
+      // Sprite-pool driven render (matches remoteBeam path).
+      if (dirty) this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      this.liveBeamGfx!.visible = true;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
+      this._liveBeamPool?.hideAll();
+      this._liveBeamCacheCount = 0;
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
@@ -918,10 +1117,13 @@ export class PixiRenderer implements IRenderer {
     // Drain pending damage numbers and spawn floating text. update()
     // must be OUTSIDE the spawn-drain block — sub-managers need to
     // tick every frame to advance lifetime + counter-scale.
-    if (this.damageNumbers && mirror.pendingDamageNumbers) {
+    if (!this._dmgNumbersDisabled && this.damageNumbers && mirror.pendingDamageNumbers) {
       for (const dn of mirror.pendingDamageNumbers) {
-        this.damageNumbers.spawn(dn.x, dn.y, dn.damage, dn.tag);
+        this.damageNumbers.spawn(dn.targetId, dn.x, dn.y, dn.damage, dn.tag);
       }
+      mirror.pendingDamageNumbers.length = 0;
+    } else if (this._dmgNumbersDisabled && mirror.pendingDamageNumbers) {
+      // Drain even when disabled — don't let the queue grow unbounded.
       mirror.pendingDamageNumbers.length = 0;
     }
     // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
@@ -956,15 +1158,17 @@ export class PixiRenderer implements IRenderer {
       }
       mirror.pendingDamageNumberCancels.length = 0;
     }
-    this.damageNumbers?.update();
+    if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
 
-    if (this.healthBars && mirror.pendingHealthBarHits) {
+    if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
         this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct);
       }
       mirror.pendingHealthBarHits.length = 0;
+    } else if (this._healthBarsDisabled && mirror.pendingHealthBarHits) {
+      mirror.pendingHealthBarHits.length = 0;
     }
-    this.healthBars?.update(mirror);
+    if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
 
     // Drain remote-warp events (warp_in / warp_out broadcasts from the
     // server). Each entry fires the same direction-agnostic one-shot

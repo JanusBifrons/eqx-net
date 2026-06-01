@@ -42,14 +42,30 @@ export interface WarpOutEvent {
 
 /**
  * Server → client (broadcast): a ship just warped INTO this sector.
- * Sent to every existing occupant EXCEPT the joining player themselves
- * (the joiner gets their own arrival visual from the welcome /
- * snapshot flow). The client fires `triggerWarpIn` at the spawn world
- * point so observers see the arrival pulse.
+ *
+ * Pre-handshake (plan: crispy-kazoo, Commit 2): sent to every existing
+ * occupant EXCEPT the joining player themselves; the joiner's own
+ * arrival visual came from a different code path.
+ *
+ * Post-handshake: sent to ALL occupants of the destination sector
+ * INCLUDING the joiner. The joiner uses `arrivalTick` to schedule
+ * their curtain drop + local warp-in animation in sync with every
+ * other observer. Observers fire `triggerWarpIn` at `arrivalTick`
+ * (not on receipt) so the flash lands at the same logical instant
+ * everywhere. `ARRIVAL_OFFSET_TICKS = 6` (100 ms @ 60 Hz) gives the
+ * broadcast time to propagate before the activation tick.
+ *
+ * `arrivalTick` is optional for back-compat with older servers that
+ * pre-date the handshake; pre-handshake clients ignore it harmlessly,
+ * pre-handshake servers (the existing transit-arrival fast path) keep
+ * working without it. New handshake call sites MUST populate it.
  */
 export interface WarpInEvent {
   type: 'warp_in';
   playerId: string;
   x: number;
   y: number;
+  /** Server tick at which the ship becomes visible. Present on
+   *  spawn-handshake commits + new transit-arrival commits. */
+  arrivalTick?: number;
 }

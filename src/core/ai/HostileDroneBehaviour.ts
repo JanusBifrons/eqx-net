@@ -105,6 +105,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  0 and the gate collapses to the pre-4c body-only tolerance. */
   private readonly maxTurretHalfArc: number;
 
+  /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
+   *  this class returned a fresh AiIntent literal per tick (~15 drones ×
+   *  60 Hz = 900 allocs/sec from the AI brain alone); combined with the
+   *  parallel `swarmEntitySnapshot` literal, V8 was running major GC
+   *  every ~1 s for 100-334 ms stop-the-world pauses, blocking the
+   *  server's `update()` loop → user-reported `recv_gap_long` 227-461 ms.
+   *  Capture `hlqxy6` + `tests/diag/server-dispatch-gap-probe.ts`.
+   *  Caller (AiController.runEntity) reads fields immediately + does not
+   *  retain the reference, so mutating a single per-instance scratch
+   *  across every `tick` call is safe. `fire` sub-object is its own
+   *  pooled slot; we re-attach by reference each tick when firing. */
+  private readonly _intentScratch: AiIntent = {
+    fx: 0, fy: 0, torque: 0, setAngvel: undefined, fire: undefined,
+  };
+  private readonly _fireScratch: { dirX: number; dirY: number } = { dirX: 0, dirY: 0 };
+
   constructor(kind?: ShipKind | string) {
     // Accept the kind as either a `ShipKind` record or a kind id (string), so
     // tests that don't care about kind tuning can still construct with no
@@ -243,7 +259,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
     const thrustMag = this.kind.ai.thrust * PATROL_THRUST_SCALE;
-    return { fx: fwdX * thrustMag, fy: fwdY * thrustMag, torque: 0, setAngvel };
+    const out = this._intentScratch;
+    out.fx = fwdX * thrustMag;
+    out.fy = fwdY * thrustMag;
+    out.torque = 0;
+    out.setAngvel = setAngvel;
+    out.fire = undefined;
+    return out;
   }
 
   // ── Combat ──────────────────────────────────────────────────────────
@@ -258,7 +280,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const rawDy = target.y - self.y;
     const dist = Math.hypot(rawDx, rawDy);
     if (dist < 1e-3) {
-      return { fx: 0, fy: 0, torque: 0 };
+      const zero = this._intentScratch;
+      zero.fx = 0;
+      zero.fy = 0;
+      zero.torque = 0;
+      zero.setAngvel = undefined;
+      zero.fire = undefined;
+      return zero;
     }
 
     // Lead-aim: estimate where the target will be when our shot lands.
@@ -282,13 +310,39 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // than fought with damping. See `angvelTarget` for the ramp.
     const setAngvel = this.angvelTarget(bearingError);
 
-    // Distance-based boost: when the target is far the drone gets a kick
-    // to close engagement; per-kind `maxSpeed` (enforced by physics drag)
-    // still bounds the cruise velocity so the boost can't run away.
+    // 2026-06-01 — arrival-style standoff. Before this change, the drone
+    // thrusted forward at `baseThrust` whenever it was within fire range,
+    // which meant a fast-closing drone would sail through the target and
+    // overshoot by hundreds of units before turning around — the
+    // user-reported "flies past way too quickly… never approaches"
+    // behaviour. The drone now targets a stopping distance of ~60 % of
+    // fire range and BRAKES (reverse thrust along its forward axis) when
+    // it's closing too fast for that distance. Inside the stopping
+    // distance, it idles or backpedals to maintain spacing.
+    //
+    // The closing speed = (self.vel · dir_to_target). Positive = drone
+    // is approaching; the cap scales with remaining distance so the
+    // drone arrives at near-zero relative speed.
     const baseThrust = this.kind.ai.thrust;
-    const thrustMag = dist > DRONE_FIRE_RANGE * ENGAGE_DISTANCE_RATIO
-      ? baseThrust * ENGAGE_BOOST
-      : baseThrust;
+    const STOP_DIST = DRONE_FIRE_RANGE * 0.6;
+    const closingSpeed = (self.vx * rawDx + self.vy * rawDy) / dist;
+
+    let thrustMag: number;
+    if (dist > DRONE_FIRE_RANGE * ENGAGE_DISTANCE_RATIO) {
+      // Far engagement — boost in (unchanged from pre-fix behaviour).
+      thrustMag = baseThrust * ENGAGE_BOOST;
+    } else if (dist > STOP_DIST) {
+      // Approach window. Cap closing speed so we can arrive at near-
+      // zero relative velocity. The cap grows linearly with the gap to
+      // the stopping distance; 1.5× the gap (units/sec per unit) gives
+      // ~1 s to bleed off speed for typical maxSpeed values.
+      const maxClosing = Math.min(120, (dist - STOP_DIST) * 1.5 + 20);
+      thrustMag = closingSpeed > maxClosing ? -baseThrust * 0.7 : baseThrust;
+    } else {
+      // Inside stopping distance — actively decelerate. If we're still
+      // closing, hard brake; otherwise hover (let damping settle).
+      thrustMag = closingSpeed > 5 ? -baseThrust : 0;
+    }
 
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
@@ -312,17 +366,25 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       : DRONE_AIM_TOLERANCE;
     const aimTolerance = baseTolerance + this.maxTurretHalfArc;
 
-    let fire: { dirX: number; dirY: number } | undefined;
     const aimed = Math.abs(bearingError) <= aimTolerance;
     const inRange = dist <= DRONE_FIRE_RANGE;
     const offCooldown = view.tick - this.lastFireTick >= WEAPON_COOLDOWN_TICKS;
-    if (aimed && inRange && offCooldown) {
-      fire = { dirX: fwdX, dirY: fwdY };
-      this.lastFireTick = view.tick;
-    }
+    const willFire = aimed && inRange && offCooldown;
+    if (willFire) this.lastFireTick = view.tick;
 
-    const intent: AiIntent = { fx, fy, torque: 0, setAngvel };
-    if (fire) intent.fire = fire;
+    const intent = this._intentScratch;
+    intent.fx = fx;
+    intent.fy = fy;
+    intent.torque = 0;
+    intent.setAngvel = setAngvel;
+    if (willFire) {
+      const f = this._fireScratch;
+      f.dirX = fwdX;
+      f.dirY = fwdY;
+      intent.fire = f;
+    } else {
+      intent.fire = undefined;
+    }
     return intent;
   }
 

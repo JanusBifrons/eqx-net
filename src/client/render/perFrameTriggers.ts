@@ -33,6 +33,14 @@
  *   - `explodingShips`         (Phase 4 / 6b destruction trigger set)
  *   - `pendingEffectTriggers`  (effects subsystem one-shot queue, M2 —
  *                               plan `wiggly-puppy`)
+ *   - `pendingMissileExplosions` (missile-detonation VFX queue, plan
+ *                                 combat-fx-hunt 2026-05-31; user-
+ *                                 reported "missile explosions stay
+ *                                 on screen permanently" — was only
+ *                                 cleared inside the worker's cloned
+ *                                 mirror, so the main thread re-sent
+ *                                 the same events every frame in
+ *                                 worker mode, stacking sprites)
  *
  *  Future entries here (kill-feed, screen flash etc.) must follow the
  *  same consume-after-render rule. */
@@ -43,6 +51,9 @@ export interface OneFrameTriggerSurface {
    *  in `src/core/contracts/IRenderer.ts` but this helper doesn't need to
    *  know it — we only mutate `.length = 0`. */
   pendingEffectTriggers?: { length: number };
+  /** Missile detonation queue. Same shape contract — array-like with
+   *  `.length`. The concrete element type is in `RenderMirror`. */
+  pendingMissileExplosions?: { length: number };
 }
 
 /**
@@ -65,4 +76,12 @@ export function consumeOneFrameTriggers(
   // skip-frame gate discipline as explodingShips: clearing on a skip frame
   // silently drops every queued trigger (impact sparks, destruction bursts).
   if (mirror.pendingEffectTriggers) mirror.pendingEffectTriggers.length = 0;
+  // pendingMissileExplosions — Plan combat-fx-hunt (2026-05-31). The
+  // missile detonation queue MUST be cleared on the MAIN THREAD's mirror
+  // (not the worker's clone) so the next RENDER message doesn't re-ship
+  // the same events. The redundant clear inside missileSpriteUpdater.ts
+  // was removed in the same commit — it operated on the worker's clone
+  // in worker mode (no-op on the main thread) and on the main mirror
+  // in main-thread mode (already correct, now centralised here).
+  if (mirror.pendingMissileExplosions) mirror.pendingMissileExplosions.length = 0;
 }

@@ -1,0 +1,6 @@
+{"source":"client","ts":1914.2000000029802,"tag":"roster_panel_mount","data":{"playerId":"3653ec8b-9e95-4611-a25a-b7401d8db92b","compact":false}}
+{"source":"client","ts":1914.300000011921,"tag":"roster_fetch","data":{"stage":"start","url":"/dev/player-ships?playerId=3653ec8b-9e95-4611-a25a-b7401d8db92b","playerId":"3653ec8b-9e95-4611-a25a-b7401d8db92b"}}
+{"source":"client","ts":1919.6000000089407,"tag":"roster_panel_unmount","data":{"playerId":"3653ec8b-9e95-4611-a25a-b7401d8db92b"}}
+{"source":"client","ts":1919.7000000029802,"tag":"roster_panel_mount","data":{"playerId":"3653ec8b-9e95-4611-a25a-b7401d8db92b","compact":false}}
+{"source":"client","ts":1919.7000000029802,"tag":"roster_fetch","data":{"stage":"skip","reason":"in-flight"}}
+{"source":"client","ts":1921.4000000059605,"tag":"roster_fetch","data":{"stage":"ok","count":0,"kinds":[]}}

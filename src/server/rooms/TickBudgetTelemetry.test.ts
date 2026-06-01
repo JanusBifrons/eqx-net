@@ -1,15 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  TickBudgetTelemetry,
+  TICK_HITCH_THRESHOLD_MS,
+  SAMPLE_EMIT_CADENCE,
+} from './TickBudgetTelemetry.js';
+import { serverLogEvent } from '../debug/ServerEventLog.js';
+
+vi.mock('../debug/ServerEventLog.js', () => ({
+  serverLogEvent: vi.fn(),
+  getRecentEvents: vi.fn(() => []),
+  clearEvents: vi.fn(),
+}));
+
+const mockedLog = serverLogEvent as unknown as ReturnType<typeof vi.fn>;
 
 describe('TickBudgetTelemetry', () => {
-  function makeRecorder() {
-    const events: Array<{ event: string; payload: Record<string, unknown> }> = [];
-    const logEvent = (event: string, payload: Record<string, unknown>): void => {
-      events.push({ event, payload });
-    };
-    return { events, logEvent };
-  }
-
   function ctx(serverTick = 1, workerTickMs = 1) {
     return {
       serverTick,
@@ -21,110 +26,109 @@ describe('TickBudgetTelemetry', () => {
     };
   }
 
-  it('mark() accumulates per-phase elapsed time', () => {
-    const { events, logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
-    t.startTick();
-    busyWait(2); // 2 ms in sabRead
-    t.mark('sabRead');
-    busyWait(1); // 1 ms in projectiles
-    t.mark('projectiles');
-    const m = t.finishMeasurement(ctx());
-    expect(m.totalMs).toBeGreaterThanOrEqual(2.5);
-    expect(m.busiestMs).toBeGreaterThanOrEqual(m.totalMs);
-    expect(events).toHaveLength(0); // no hitch on a 3 ms tick, no aggregated emit yet
+  function busyWait(ms: number): void {
+    const deadline = performance.now() + ms;
+    while (performance.now() < deadline) {
+      /* spin */
+    }
+  }
+
+  beforeEach(() => {
+    mockedLog.mockClear();
   });
 
-  it('finishMeasurement returns busiestMs = max(totalMs, workerTickMs)', () => {
-    const { logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
-    t.startTick();
+  it('phaseTime accumulates per-phase elapsed time without emitting events', () => {
+    const t = new TickBudgetTelemetry();
+    t.beginTick(performance.now());
+    busyWait(2);
+    t.phaseTime('sabRead');
     busyWait(1);
-    const m1 = t.finishMeasurement(ctx(1, 50)); // worker dominates
-    expect(m1.busiestMs).toBe(50);
-    expect(m1.busiestMs).toBeGreaterThan(m1.totalMs);
-
-    t.startTick();
-    busyWait(1);
-    const m2 = t.finishMeasurement(ctx(2, 0)); // server dominates
-    expect(m2.busiestMs).toBe(m2.totalMs);
+    t.phaseTime('projectiles');
+    const totalMs = t.endTick(ctx());
+    expect(totalMs).toBeGreaterThanOrEqual(2.5);
+    expect(mockedLog).not.toHaveBeenCalled();
   });
 
-  it('fires tick_hitch when totalMs exceeds threshold', () => {
-    const { events, logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
-    t.startTick();
-    busyWait(TickBudgetTelemetry.TICK_HITCH_THRESHOLD_MS + 2);
-    t.mark('sabRead');
-    t.finishMeasurement(ctx(42));
-    expect(events).toHaveLength(1);
-    expect(events[0]!.event).toBe('tick_hitch');
-    expect(events[0]!.payload['serverTick']).toBe(42);
-    expect((events[0]!.payload['phases'] as Record<string, number>)['sabRead']).toBeGreaterThan(0);
+  it('endTick returns totalMs measured from beginTick', () => {
+    const t = new TickBudgetTelemetry();
+    t.beginTick(performance.now());
+    busyWait(3);
+    const totalMs = t.endTick(ctx());
+    expect(totalMs).toBeGreaterThanOrEqual(3);
+    expect(mockedLog).not.toHaveBeenCalled();
   });
 
-  it('rate-limits tick_hitch events via TICK_HITCH_MIN_INTERVAL_MS', () => {
-    const { events, logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
+  it('fires tick_hitch when totalMs exceeds the threshold', () => {
+    const t = new TickBudgetTelemetry();
+    t.beginTick(performance.now());
+    busyWait(TICK_HITCH_THRESHOLD_MS + 2);
+    t.phaseTime('sabRead');
+    t.endTick(ctx(42));
+
+    const hitchCalls = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_hitch');
+    expect(hitchCalls).toHaveLength(1);
+    const payload = hitchCalls[0]![1] as Record<string, unknown>;
+    expect(payload['serverTick']).toBe(42);
+    expect((payload['phases'] as Record<string, number>)['sabRead']).toBeGreaterThan(0);
+  });
+
+  it('rate-limits tick_hitch events via the cooldown window', () => {
+    const t = new TickBudgetTelemetry();
     // First hitch fires.
-    t.startTick();
-    busyWait(TickBudgetTelemetry.TICK_HITCH_THRESHOLD_MS + 2);
-    t.finishMeasurement(ctx(1));
-    expect(events).toHaveLength(1);
-    // Immediate second hitch (under the rate-limit window) is suppressed.
-    t.startTick();
-    busyWait(TickBudgetTelemetry.TICK_HITCH_THRESHOLD_MS + 2);
-    t.finishMeasurement(ctx(2));
-    expect(events).toHaveLength(1);
+    t.beginTick(performance.now());
+    busyWait(TICK_HITCH_THRESHOLD_MS + 2);
+    t.endTick(ctx(1));
+    let hitches = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_hitch');
+    expect(hitches).toHaveLength(1);
+
+    // Immediate second hitch (well under TICK_HITCH_MIN_INTERVAL_MS) is suppressed.
+    t.beginTick(performance.now());
+    busyWait(TICK_HITCH_THRESHOLD_MS + 2);
+    t.endTick(ctx(2));
+    hitches = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_hitch');
+    expect(hitches).toHaveLength(1);
+    expect((hitches[0]![1] as Record<string, unknown>)['serverTick']).toBe(1);
   });
 
-  it('emits tick_budget only after SAMPLE_EMIT_CADENCE samples accumulate', () => {
-    const { events, logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
-    for (let i = 0; i < TickBudgetTelemetry.SAMPLE_EMIT_CADENCE - 1; i++) {
-      t.startTick();
-      t.mark('sabRead');
-      t.finishMeasurement(ctx(i));
-      t.recordSample({ serverTick: i, playerCount: 1, swarmCount: 0, aiSize: 0 });
+  it('emits tick_budget once SAMPLE_EMIT_CADENCE samples accumulate', () => {
+    const t = new TickBudgetTelemetry();
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE - 1; i++) {
+      t.beginTick(performance.now());
+      t.phaseTime('sabRead');
+      t.endTick(ctx(i));
     }
-    expect(events).toHaveLength(0);
+    expect(mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget')).toHaveLength(0);
 
-    // 60th sample: emits.
-    t.startTick();
-    t.mark('sabRead');
-    t.finishMeasurement(ctx(60));
-    t.recordSample({ serverTick: 60, playerCount: 1, swarmCount: 0, aiSize: 0 });
-    expect(events).toHaveLength(1);
-    expect(events[0]!.event).toBe('tick_budget');
-    expect(events[0]!.payload['sampleCount']).toBe(TickBudgetTelemetry.SAMPLE_EMIT_CADENCE);
+    // 60th sample crosses the cadence and emits.
+    t.beginTick(performance.now());
+    t.phaseTime('sabRead');
+    t.endTick(ctx(SAMPLE_EMIT_CADENCE));
+    const budgetCalls = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget');
+    expect(budgetCalls).toHaveLength(1);
+    expect((budgetCalls[0]![1] as Record<string, unknown>)['sampleCount']).toBe(SAMPLE_EMIT_CADENCE);
   });
 
-  it('recordSample resets sums after emit', () => {
-    const { events, logEvent } = makeRecorder();
-    const t = new TickBudgetTelemetry(logEvent);
-    for (let i = 0; i < TickBudgetTelemetry.SAMPLE_EMIT_CADENCE; i++) {
-      t.startTick();
+  it('resets sums after the aggregated tick_budget emit', () => {
+    const t = new TickBudgetTelemetry();
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
       busyWait(0.5);
-      t.mark('sabRead');
-      t.finishMeasurement(ctx(i));
-      t.recordSample({ serverTick: i, playerCount: 1, swarmCount: 0, aiSize: 0 });
+      t.phaseTime('sabRead');
+      t.endTick(ctx(i));
     }
-    const first = events[0]!.payload['avgMs'] as Record<string, number>;
-    expect(first['sabRead']).toBeGreaterThan(0);
-    // Run another 60 ticks of much-smaller phases; averages should reset between emits.
-    for (let i = 0; i < TickBudgetTelemetry.SAMPLE_EMIT_CADENCE; i++) {
-      t.startTick();
-      t.mark('sabRead');
-      t.finishMeasurement(ctx(60 + i));
-      t.recordSample({ serverTick: 60 + i, playerCount: 1, swarmCount: 0, aiSize: 0 });
+    const firstBudget = mockedLog.mock.calls.find(([tag]) => tag === 'tick_budget')!;
+    const firstAvg = firstBudget[1]['avgMs'] as Record<string, number>;
+    expect(firstAvg['sabRead']).toBeGreaterThan(0);
+
+    // Run another 60 ticks with much smaller phases; averages must reset between emits.
+    for (let i = 0; i < SAMPLE_EMIT_CADENCE; i++) {
+      t.beginTick(performance.now());
+      t.phaseTime('sabRead');
+      t.endTick(ctx(SAMPLE_EMIT_CADENCE + i));
     }
-    expect(events).toHaveLength(2);
-    const second = events[1]!.payload['avgMs'] as Record<string, number>;
-    expect(second['sabRead']).toBeLessThan(first['sabRead']!);
+    const budgetCalls = mockedLog.mock.calls.filter(([tag]) => tag === 'tick_budget');
+    expect(budgetCalls).toHaveLength(2);
+    const secondAvg = budgetCalls[1]![1]['avgMs'] as Record<string, number>;
+    expect(secondAvg['sabRead']).toBeLessThan(firstAvg['sabRead']!);
   });
 });
-
-function busyWait(ms: number): void {
-  const deadline = performance.now() + ms;
-  while (performance.now() < deadline) { /* spin */ }
-}

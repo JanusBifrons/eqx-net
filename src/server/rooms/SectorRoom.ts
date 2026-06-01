@@ -105,7 +105,7 @@ import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
-import { EngageTransitSchema, CancelTransitSchema } from '../../shared-types/messages.js';
+import { EngageTransitSchema, CancelTransitSchema, ClientReadyMessageSchema } from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
   // rayHitsConvexPolygon now used inside PlayerFireResolver.ts
@@ -132,6 +132,14 @@ const logger = pino({
 const WORKER_TS_PATH = fileURLToPath(
   new URL('../../core/physics/worker.ts', import.meta.url),
 );
+
+// Dev-only override gate. When set, `testMode`-only join options
+// (`initialHull`, `initialShield`, `startHostile`) ALSO apply on
+// galaxy rooms — required by the phone-stall repro spec
+// (tests/mobile-perf/phone-galaxy-stall-repro.spec.ts) to harden test
+// conditions (near-invulnerable ship under heavy combat). Off in
+// production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
+const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
 
 const JoinOptionsSchema = z
   .object({
@@ -225,6 +233,58 @@ const IDLE_THRESHOLD_TICKS = 60;
  *  so subsequent idle-suppression is harmless. 5 s also matches the
  *  client's `joinMinimumElapsed` curtain floor. */
 const JOIN_BROADCAST_GRACE_TICKS = 300;
+
+/**
+ * Plan: crispy-kazoo, Commit 9 — synchronised warp-in handshake.
+ *
+ * After `client_ready` arrives, the server picks
+ * `arrivalTick = serverTick + ARRIVAL_OFFSET_TICKS` and broadcasts
+ * `warp_in` with that tick to all clients in the sector (including
+ * the joiner). At `arrivalTick` the server flips `ship.isActive = true`
+ * and the snapshot diff carries the ship into broadcasts for the
+ * first time.
+ *
+ * 36 ticks @ 60 Hz = 600 ms. Budget breakdown for the joiner:
+ *   - ~50 ms broadcast propagation
+ *   - ~150 ms loading-active "world emerges" window (curtain held)
+ *   - 380 ms curtain fade-out (`WarpFilterChain.setLoadCurtain(false)`)
+ *   - 20 ms safety
+ *   = curtain visibly drops → user sees the world → warp-in flash
+ *
+ * The 2026-05-31 smoke (capture `w5wihn`) at 6 ticks (100 ms) had two
+ * problems: (a) the client used a stale `inputTick` for the setTimeout
+ * math and waited 5 s instead of 100 ms — fixed client-side, but
+ * (b) even with the math right, 100 ms is too short to fade the
+ * 380 ms curtain before the warp-in flash fires; the two events
+ * overlapped and the user "never saw the warp-in".
+ */
+const ARRIVAL_OFFSET_TICKS = 36;
+
+/**
+ * Plan: crispy-kazoo, Commit 2 — `client_ready` watchdog.
+ *
+ * If the client never sends `client_ready` (broken bootstrap, network
+ * drop mid-load) the watchdog force-activates the ship at this tick
+ * so the player appears even if their client is wedged. 30 s at
+ * 60 Hz = 1800 ticks. Better than an invisible ghost; the Limbo
+ * 15 min TTL eventually catches truly-dead sessions.
+ */
+const CLIENT_READY_TIMEOUT_TICKS = 1800;
+
+/**
+ * Per-pending-join record. Lives in `pendingJoin: Map<playerId, ...>`
+ * on the room. Removed when the ship activates (normal or watchdog).
+ */
+interface PendingJoinRecord {
+  joinTick: number;
+  watchdogTick: number;
+  /** Set when `client_ready` is received and the server picks the
+   *  activation tick. `null` while waiting for client_ready. */
+  arrivalTick: number | null;
+  spawnX: number;
+  spawnY: number;
+  sessionId: string;
+}
 
 /** Stage 5 — motion epsilon. A ship is considered "moving" if its speed
  *  squared exceeds this. 0.05 u/s²  → ~0.22 u/s actual speed; below
@@ -448,6 +508,20 @@ export class SectorRoom extends Room<SectorState> {
    *  bypassing idle-suppression. Set on every player join/spawn — see
    *  `JOIN_BROADCAST_GRACE_TICKS`. */
   private forceBroadcastUntilTick = 0;
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — pending-join handshake registry.
+   *
+   * `onJoin` (and `RespawnHandler.handle`) sets the joining ship's
+   * `isActive=false` and adds an entry here. The client bootstraps,
+   * calls `client_ready`, the handler picks `arrivalTick` and
+   * broadcasts `warp_in`. The per-tick drain in `update()` flips
+   * `isActive=true` at `arrivalTick` and removes the entry. A
+   * watchdog force-activates after `CLIENT_READY_TIMEOUT_TICKS`.
+   *
+   * Keyed by playerId for symmetry with `playerToSlot` / `lastFireClientTick`.
+   */
+  private pendingJoin = new Map<string, PendingJoinRecord>();
   private testMode = false;
   private disableCollisionDamage = false;
   /** Phase 6 synthetic-load knob — extra ms of CPU burn per server update().
@@ -1370,6 +1444,20 @@ export class SectorRoom extends Room<SectorState> {
       this.handleRespawn(client);
     });
 
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Client signals it has finished bootstrapping; server picks an
+    // `arrivalTick` and broadcasts `warp_in` to ALL clients (including
+    // the joiner) so the curtain drop + warp-in animation fires in
+    // sync everywhere. Idempotent — duplicate sends are dropped.
+    this.onMessage('client_ready', (client: Client, raw: unknown) => {
+      const parsed = ClientReadyMessageSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed client_ready');
+        return;
+      }
+      this.handleClientReady(client);
+    });
+
     // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
     //
     // Client is the offerer; server is the answerer. Drop silently on
@@ -1587,20 +1675,41 @@ export class SectorRoom extends Room<SectorState> {
   /**
    * Build a read-only AiEntity snapshot for the given swarm id by reading SAB.
    * Used by AiController to feed live poses to behaviours each tick.
+   *
+   * 2026-05-31: pooled scratch (Invariant #14). Pre-fix this allocated a
+   * fresh literal per drone per server tick (~15 × 60 = 900 allocs/sec).
+   * Combined with HostileDroneBehaviour's per-tick AiIntent literals,
+   * the V8 GC was firing major collections every ~1 s → 100-334 ms
+   * stop-the-world pauses → `aiTick` phase blocking the snapshot
+   * dispatch loop → user-reported chronic `recv_gap_long` 227-461 ms.
+   * Capture `hlqxy6` + dispatch probe `tests/diag/server-dispatch-gap-probe.ts`.
+   *
+   * The caller (`AiController.runEntity` → `behaviour.tick(self, view)`)
+   * reads the fields immediately and does not retain the reference, so
+   * mutating a single shared object across calls is safe.
    */
+  // `AiEntity` fields are typed `readonly` in the IAiBehaviour contract
+  // — that's a contract-level read-only (callers must not mutate),
+  // not a structural-level immutability. The pool writes through a
+  // `Mutable<AiEntity>` view; consumers (`AiController.runEntity` →
+  // `behaviour.tick(self, view)`) still see the original `readonly`
+  // surface and treat fields as immutable.
+  private readonly _aiEntityScratch: { -readonly [K in keyof AiEntity]: AiEntity[K] } = {
+    id: '', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
+  };
   private swarmEntitySnapshot(id: string): AiEntity | null {
     const rec = this.swarmRegistry.get(id);
     if (!rec) return null;
     const b = slotBase(rec.slot);
-    return {
-      id,
-      x: this.sabF32[b + SLOT_X_OFF]!,
-      y: this.sabF32[b + SLOT_Y_OFF]!,
-      vx: this.sabF32[b + SLOT_VX_OFF]!,
-      vy: this.sabF32[b + SLOT_VY_OFF]!,
-      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
-      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
-    };
+    const s = this._aiEntityScratch;
+    s.id = id;
+    s.x = this.sabF32[b + SLOT_X_OFF]!;
+    s.y = this.sabF32[b + SLOT_Y_OFF]!;
+    s.vx = this.sabF32[b + SLOT_VX_OFF]!;
+    s.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+    s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    return s;
   }
 
   /**
@@ -1785,6 +1894,109 @@ export class SectorRoom extends Room<SectorState> {
 
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
+  }
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — `client_ready` handler.
+   *
+   * Picks `arrivalTick = serverTick + ARRIVAL_OFFSET_TICKS`, stamps it
+   * on the pending-join record, and broadcasts `warp_in { playerId,
+   * x, y, arrivalTick }` to ALL occupants (no `except: client`).
+   *
+   * Idempotent: a second send when the player is already activated
+   * or already has an arrivalTick is silently dropped + logged for
+   * diag.
+   */
+  private handleClientReady(client: Client): void {
+    const playerId = this.sessionToPlayer.get(client.sessionId);
+    if (!playerId) {
+      serverLogEvent('client_ready_no_session', { sessionId: client.sessionId });
+      return;
+    }
+    const pending = this.pendingJoin.get(playerId);
+    if (!pending) {
+      // Already activated (handshake completed) or never registered.
+      serverLogEvent('client_ready_no_pending', { playerId, sessionId: client.sessionId });
+      return;
+    }
+    if (pending.arrivalTick !== null) {
+      // Second client_ready before arrival fires — idempotent no-op.
+      serverLogEvent('client_ready_duplicate', { playerId, arrivalTick: pending.arrivalTick });
+      return;
+    }
+    const currentTick = Atomics.load(this.sabU32, TICK_IDX);
+    const arrivalTick = currentTick + ARRIVAL_OFFSET_TICKS;
+    pending.arrivalTick = arrivalTick;
+
+    this.broadcast('warp_in', {
+      type: 'warp_in',
+      playerId,
+      x: pending.spawnX,
+      y: pending.spawnY,
+      arrivalTick,
+    });
+
+    serverLogEvent('client_ready_received', {
+      playerId,
+      sessionId: client.sessionId,
+      msSinceJoin: (currentTick - pending.joinTick) * (1000 / 60),
+      arrivalTick,
+    });
+  }
+
+  /**
+   * Plan: crispy-kazoo, Commit 2 — per-tick pending-join drain.
+   *
+   * Called from `update()` after `this.serverTick` is refreshed.
+   *
+   *   - For entries whose `arrivalTick` has been reached: flip
+   *     `ship.isActive = true` and remove from the map. The schema
+   *     diff broadcasts the new state on the next snapshot tick.
+   *   - For entries past `watchdogTick` whose client_ready never
+   *     arrived: synthesise an arrival (pick `arrivalTick =
+   *     currentTick + ARRIVAL_OFFSET_TICKS`, broadcast `warp_in`,
+   *     leave in map for normal drain). Player appears even if
+   *     their client is wedged — better than an invisible ghost.
+   */
+  private drainPendingJoin(): void {
+    if (this.pendingJoin.size === 0) return;
+    const currentTick = this.serverTick;
+    for (const [playerId, rec] of this.pendingJoin) {
+      // Activation branch: arrivalTick set and reached.
+      if (rec.arrivalTick !== null && currentTick >= rec.arrivalTick) {
+        const ship = this.getActiveShip(playerId);
+        if (ship) {
+          ship.isActive = true;
+          serverLogEvent('ship_activated', {
+            playerId,
+            entityId: ship.shipInstanceId,
+            arrivalTick: rec.arrivalTick,
+            currentTick,
+          });
+        }
+        this.pendingJoin.delete(playerId);
+        continue;
+      }
+      // Watchdog branch: client_ready never arrived.
+      if (rec.arrivalTick === null && currentTick >= rec.watchdogTick) {
+        const arrivalTick = currentTick + ARRIVAL_OFFSET_TICKS;
+        rec.arrivalTick = arrivalTick;
+        this.broadcast('warp_in', {
+          type: 'warp_in',
+          playerId,
+          x: rec.spawnX,
+          y: rec.spawnY,
+          arrivalTick,
+        });
+        serverLogEvent('client_ready_timeout', {
+          playerId,
+          sessionId: rec.sessionId,
+          joinTick: rec.joinTick,
+          watchdogTick: rec.watchdogTick,
+          arrivalTick,
+        });
+      }
+    }
   }
 
   /**
@@ -2063,11 +2275,24 @@ export class SectorRoom extends Room<SectorState> {
         if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
         const existingSlot = this.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
-        // Phase 6b — flip the lingering flag back. The hull is being
-        // re-bound to a live session; isActive=true means the snapshot
-        // anchor + render tint + (Phase 6c) drone targeting all treat
-        // it as fully alive again.
-        existingShip.isActive = true;
+        // Plan: crispy-kazoo, Commit 2 — invariant: every join goes
+        // through the synchronised handshake (`pendingJoin` →
+        // `client_ready` → `warp_in` → arrivalTick → isActive=true).
+        // The rebind path used to flip `isActive = true` directly,
+        // skipping the handshake — works for the player (the ship is
+        // already alive) but BREAKS the client's bootstrap which sits
+        // waiting for `warp_in` to flip `arrival_acked`. Repro: phone
+        // smoke capture 2026-05-31T15-36-08Z-7eqj1a + the React
+        // StrictMode dev-mount cycle.
+        //
+        // The fix is to register the rebind in `pendingJoin` exactly
+        // as a fresh spawn does: isActive=false initially, watchdog
+        // armed, waiting for the client's `client_ready` to broadcast
+        // `warp_in`. `drainPendingJoin` flips `isActive=true` at the
+        // arrivalTick. The hull stays at its current live pose (we
+        // don't move it); only the visibility + handshake state are
+        // re-driven through the unified path.
+        existingShip.isActive = false;
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
@@ -2129,6 +2354,26 @@ export class SectorRoom extends Room<SectorState> {
           { playerId, sessionId: client.sessionId, x: liveX, y: liveY, health: existingShip.health, alive: existingShip.alive },
           'player rebound to lingering ship',
         );
+
+        // Plan: crispy-kazoo invariant — register the rebind in
+        // `pendingJoin` so `client_ready` → `warp_in` → arrivalTick →
+        // isActive=true follows the same path as a fresh spawn. The
+        // hull pose stays live (no SAB reset); only the visibility +
+        // handshake state are re-driven through the unified path.
+        this.pendingJoin.set(playerId, {
+          joinTick: tickAtRebind,
+          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
+          arrivalTick: null,
+          spawnX: liveX,
+          spawnY: liveY,
+          sessionId: client.sessionId,
+        });
+        serverLogEvent('pending_join_registered', {
+          playerId,
+          sessionId: client.sessionId,
+          watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
+          source: 'rebind',
+        });
         return;
       }
         // Stale entry: ownerlessShips had this player but the slot/ShipState
@@ -2355,7 +2600,7 @@ export class SectorRoom extends Room<SectorState> {
     // installed so the test spec gets the exact override it asked for.
     // E2E specs that just need "do they die when shot?" spawn with
     // initialHull=1, initialShield=0 → one beam tick kills.
-    if (this.testMode && parsed.success) {
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) {
       if (typeof parsed.data.initialHull === 'number') {
         ship.health = Math.max(1, parsed.data.initialHull);
       }
@@ -2375,7 +2620,7 @@ export class SectorRoom extends Room<SectorState> {
     // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
     // `aiController.markHostile` + `bot_aggro` broadcast so the client's
     // hostility ledger stays in lockstep. testMode-gated for safety.
-    if (this.testMode && parsed.success && parsed.data.startHostile === true) {
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       const tick = this.serverTick;
       for (const rec of this.swarmRegistry.all()) {
         if (rec.kind !== 1) continue; // drones only — asteroids stay inert
@@ -2473,18 +2718,52 @@ export class SectorRoom extends Room<SectorState> {
       'player joined',
     );
 
-    // Broadcast the arrival to existing room occupants so their renderer
-    // fires a one-shot flash + burst ripple at the spawn point. The
-    // joiner is excluded — their own welcome / first-snapshot flow drives
-    // their local-arrival visual through different machinery.
-    this.broadcast(
-      'warp_in',
-      { type: 'warp_in', playerId, x: spawnX, y: spawnY },
-      { except: client },
-    );
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake.
+    // Ship enters the sector INVISIBLY (isActive=false). Drones won't
+    // target it (aiTickRunner / LivingWorldBotHooks both filter on
+    // `ship.isActive`); the snapshot translator on remote clients
+    // skips isActive=false entries; the client snapshot apply on the
+    // joining player ignores their own ship (predWorld is authoritative
+    // for the local pose anyway). The ship becomes visible to all
+    // observers — including the joiner — at the synchronised
+    // `arrivalTick` once the client has called `client_ready`.
+    //
+    // Note: the LOCAL CLIENT's `mirror.ships[playerId]` is populated
+    // from the bootstrap path (welcome → predWorld), so the joiner
+    // still has a ship to predict / render — but the loading curtain
+    // (Commit 1's `useIsLoadingActive`) hides it until the curtain
+    // drops at `arrivalTick`.
+    ship.isActive = false;
+    this.pendingJoin.set(playerId, {
+      joinTick: currentServerTick,
+      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
+      arrivalTick: null,
+      spawnX,
+      spawnY,
+      sessionId: client.sessionId,
+    });
+    serverLogEvent('pending_join_registered', {
+      playerId,
+      sessionId: client.sessionId,
+      watchdogTick: currentServerTick + CLIENT_READY_TIMEOUT_TICKS,
+    });
+
+    // NOTE: the previous immediate `warp_in` broadcast (to other
+    // occupants, with `except: client`) is REMOVED. The unified
+    // handshake broadcasts `warp_in` from the `client_ready` handler
+    // (or the watchdog) to ALL clients with an `arrivalTick`, so the
+    // flash fires in sync everywhere.
   }
 
   override onLeave(client: Client, consented: boolean): void {
+    // Plan: crispy-kazoo, Commit 2 — drop any in-flight handshake
+    // entry. A disconnected client can't complete the handshake;
+    // its ship stays `isActive=false` for the standard leave flow
+    // (linger / despawn) to handle, but we don't want a watchdog
+    // to fire warp_in on a ghost session.
+    const leavingPlayerId = this.sessionToPlayer.get(client.sessionId);
+    if (leavingPlayerId) this.pendingJoin.delete(leavingPlayerId);
+
     // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
     // running the existing leave handler. The leaveHandler does the
     // player-state cleanup (lingering / transit / despawn); the DC
@@ -2748,6 +3027,14 @@ export class SectorRoom extends Room<SectorState> {
     this.serverTick = Atomics.load(this.sabU32, TICK_IDX);
     this.state.tick = this.serverTick;
 
+    // Plan: crispy-kazoo, Commit 2 — drain handshake activations.
+    // Flip pending-join ships' `isActive=true` at arrivalTick, and
+    // fire the watchdog for any ship whose client_ready hasn't
+    // arrived in CLIENT_READY_TIMEOUT_TICKS. Cheap when the map
+    // is empty (most ticks); short-circuits at the top of the
+    // method.
+    this.drainPendingJoin();
+
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
@@ -2828,6 +3115,8 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: this.serverTick,
       shipPoseCache: this.shipPoseCache,
       liveProjectiles: this.liveProjectiles,
+      connectedClientCount: this.clients.length,
+      swarmEntityCount: this.swarmRegistry.size(),
       forceBroadcastUntilTick: this.forceBroadcastUntilTick,
       idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
       idleThresholdTicks: IDLE_THRESHOLD_TICKS,

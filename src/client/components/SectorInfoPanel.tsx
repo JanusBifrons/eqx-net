@@ -1,6 +1,6 @@
 import { Box } from '@mui/material';
 import { useEffect, useState } from 'react';
-import { useUIStore } from '../state/store';
+import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 
 /**
@@ -29,7 +29,39 @@ import { getGameClient } from '../net/clientSingleton';
 const GRID_CELL = 500;
 const POLL_MS = 100;
 
+// Module-level sx — re-using the same object reference across renders
+// short-circuits the MUI styled-component diff path (plan: melodic-
+// engelbart Step 4 — wb1al4 heap-leak hunt). The component re-renders
+// at 10 Hz via the polling tick; without hoisting each render produced
+// 9 fresh sx literals (1 grid + 4 labels + 4 values) → ~90 sx allocs/s.
+const GRID_SX = {
+  display: 'grid',
+  gridTemplateColumns: 'auto 1fr',
+  columnGap: 1,
+  rowGap: '2px',
+  color: '#dde',
+  pointerEvents: 'none' as const,
+  userSelect: 'none' as const,
+  fontFamily: 'system-ui, sans-serif',
+};
+const LABEL_SX = {
+  fontSize: 9,
+  letterSpacing: 0.5,
+  color: 'rgba(255,255,255,0.45)',
+  textTransform: 'uppercase' as const,
+  alignSelf: 'baseline',
+};
+const VALUE_SX = {
+  fontSize: 11,
+  color: '#dde',
+  alignSelf: 'baseline',
+};
+
 export function SectorInfoPanel(): JSX.Element | null {
+  // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
+  // All hooks called unconditionally per React's Rules of Hooks; the
+  // early-return is placed AFTER every hook below.
+  const shouldRender = useShouldRenderHud();
   const sectorName = useUIStore((s) => s.sectorName);
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
   const [coord, setCoord] = useState<{ gx: number; gy: number } | null>(null);
@@ -53,23 +85,13 @@ export function SectorInfoPanel(): JSX.Element | null {
     return () => window.clearInterval(handle);
   }, []);
 
+  if (!shouldRender) return null;
+
   const sectorLabel = sectorName !== '' ? sectorName : (currentSectorKey === null ? 'Test arena' : '—');
   const gridLabel = coord ? `${coord.gx}, ${coord.gy}` : '—';
 
   return (
-    <Box
-      data-testid="sector-info-panel"
-      sx={{
-        display: 'grid',
-        gridTemplateColumns: 'auto 1fr',
-        columnGap: 1,
-        rowGap: '2px',
-        color: '#dde',
-        pointerEvents: 'none',
-        userSelect: 'none',
-        fontFamily: 'system-ui, sans-serif',
-      }}
-    >
+    <Box data-testid="sector-info-panel" sx={GRID_SX}>
       <Label>Current sector</Label>
       <Value testid="sector-info-current">{sectorLabel}</Value>
 
@@ -87,16 +109,7 @@ export function SectorInfoPanel(): JSX.Element | null {
 
 function Label({ children }: { children: string }): JSX.Element {
   return (
-    <Box
-      component="span"
-      sx={{
-        fontSize: 9,
-        letterSpacing: 0.5,
-        color: 'rgba(255,255,255,0.45)',
-        textTransform: 'uppercase',
-        alignSelf: 'baseline',
-      }}
-    >
+    <Box component="span" sx={LABEL_SX}>
       {children}
     </Box>
   );
@@ -104,15 +117,7 @@ function Label({ children }: { children: string }): JSX.Element {
 
 function Value({ testid, children }: { testid: string; children: string }): JSX.Element {
   return (
-    <Box
-      component="span"
-      data-testid={testid}
-      sx={{
-        fontSize: 11,
-        color: '#dde',
-        alignSelf: 'baseline',
-      }}
-    >
+    <Box component="span" data-testid={testid} sx={VALUE_SX}>
       {children}
     </Box>
   );

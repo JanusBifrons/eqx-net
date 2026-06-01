@@ -1,0 +1,16 @@
+{"source":"client","ts":3109.2000000476837,"tag":"renderer_path_chosen","data":{"useWorker":false,"workerParam":"0","isTouch":true,"supportsOffscreenRenderer":true}}
+{"source":"client","ts":3111.900000035763,"tag":"client_constructed","data":{"liveInstanceN":1}}
+{"source":"client","ts":3120.2000000476837,"tag":"galaxy_map_toggle","data":{"open":false,"worker":false}}
+{"source":"client","ts":3121.2000000476837,"tag":"dispose_complete","data":{"liveInstanceN":0,"mirrorShipsRemaining":0,"mirrorSwarmRemaining":0}}
+{"source":"client","ts":3121.400000035763,"tag":"load_curtain_change","data":{"active":true}}
+{"source":"client","ts":3121.5,"tag":"renderer_path_chosen","data":{"useWorker":false,"workerParam":"0","isTouch":true,"supportsOffscreenRenderer":true}}
+{"source":"client","ts":3121.600000023842,"tag":"client_constructed","data":{"liveInstanceN":1}}
+{"source":"client","ts":3121.7000000476837,"tag":"galaxy_map_toggle","data":{"open":false,"worker":false}}
+{"source":"client","ts":3159.400000035763,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":3159.400000035763,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}
+{"source":"client","ts":3163.5,"tag":"roster_panel_mount","data":{"playerId":"","compact":false}}
+{"source":"client","ts":3163.5,"tag":"roster_panel_mount","data":{"stage":"no-pid"}}
+{"source":"client","ts":3391.100000023842,"tag":"renderer_init_complete","data":{"rendererInitMs":268,"msFromPhaseEnter":270}}
+{"source":"client","ts":3395.5,"tag":"loaf_installed","data":{"supported":true}}
+{"source":"client","ts":3395.600000023842,"tag":"lifecycle_event","data":{"kind":"initial","visibilityState":"visible","hidden":false}}
+{"source":"client","ts":5205.300000011921,"tag":"loaf","data":{"startTime":2789.6,"durationMs":205.4,"blockingDurationMs":155.28,"renderStart":2994.9,"styleAndLayoutStart":2995,"scriptCount":1,"topScripts":[{"duration":204,"invoker":"http://192.168.1.96:5173/main.tsx","invokerType":"module-script","sourceFunctionName":"","sourceURL":"http://192.168.1.96:5173/main.tsx","forcedStyleAndLayoutDuration":0}]}}

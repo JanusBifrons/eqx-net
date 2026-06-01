@@ -241,6 +241,15 @@ export function GalaxyOverviewScreen({
   onPickBodyRef.current = (key: string): void => {
     const t0 = performance.now();
     logEvent('galaxy_sector_click', { key, mode, ts: t0 });
+    // Plan: crispy-kazoo, Commit 3 — mode==='spawn' on this overview
+    // is the user respawning (or first-spawning) into the galaxy. Log
+    // a `respawn_clicked` with source='sector-pick' so the death-to-
+    // respawn timing is reconstructible alongside the in-game-button
+    // path. `msFromDied` is left to the consumer to compute from the
+    // adjacent local_died event — no shared client ref is in scope here.
+    if (mode === 'spawn') {
+      logEvent('respawn_clicked', { source: 'sector-pick', sectorKey: key });
+    }
     if (mode === 'spawn') {
       // Defer the picker open so the originating touchend finishes
       // bubbling before the modal mounts. Otherwise the same touch

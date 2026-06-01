@@ -131,16 +131,42 @@ export class GhostManager {
       ghost.x += ghost.vx * dtSec;
       ghost.y += ghost.vy * dtSec;
 
-      out.set(id, {
-        x: ghost.x,
-        y: ghost.y,
-        vx: ghost.vx,
-        vy: ghost.vy,
-        ownerId: ghost.ownerId,
-        isGhost: true,
-        beam: ghost.beam,
-        weaponId: ghost.weaponId,
-      });
+      // Mutate the existing render-state entry if present; allocate a
+      // fresh one only on first sight. Pre-pool the lazy-mochi handoff
+      // (line 204) flagged this `out.set(id, {...})` per-frame literal
+      // as a top non-FX allocator under held-fire; with ~5-15 ghosts
+      // active at steady state × 60 RAF/s, the old path produced
+      // 300-900 fresh ProjectileRenderState literals per second.
+      let entry = out.get(id);
+      if (!entry) {
+        entry = {
+          x: ghost.x,
+          y: ghost.y,
+          vx: ghost.vx,
+          vy: ghost.vy,
+          ownerId: ghost.ownerId,
+          isGhost: true,
+          ...(ghost.beam !== undefined ? { beam: ghost.beam } : {}),
+          ...(ghost.weaponId !== undefined ? { weaponId: ghost.weaponId } : {}),
+        };
+        out.set(id, entry);
+      } else {
+        entry.x = ghost.x;
+        entry.y = ghost.y;
+        entry.vx = ghost.vx;
+        entry.vy = ghost.vy;
+        entry.ownerId = ghost.ownerId;
+        entry.isGhost = true;
+        // `ghost.beam` and `ghost.weaponId` are stamped on spawn and
+        // never mutate during the ghost's lifetime — reuse the same
+        // refs. The `delete` arms cover the case where a later spawn
+        // for the same id (key reuse impossible per `${shotId}:${mountId}`,
+        // but defensive) flips the optional fields off.
+        if (ghost.beam !== undefined) entry.beam = ghost.beam;
+        else delete entry.beam;
+        if (ghost.weaponId !== undefined) entry.weaponId = ghost.weaponId;
+        else delete entry.weaponId;
+      }
     }
   }
 
@@ -153,5 +179,14 @@ export class GhostManager {
 
   get pendingCount(): number {
     return this.ghosts.size;
+  }
+
+  /**
+   * Plan: crispy-kazoo, Commit 6 — full teardown.
+   * Drops every pending ghost. Idempotent; safe to call after dispose
+   * (the ghosts Map is just emptied on the second call).
+   */
+  dispose(): void {
+    this.ghosts.clear();
   }
 }

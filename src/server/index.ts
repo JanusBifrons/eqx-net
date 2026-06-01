@@ -24,7 +24,9 @@ const logger = pino({
 });
 
 const PORT = Number(process.env['PORT'] ?? 2567);
-const MAX_DEV_EVENTS = 500;
+// Default 500; bump via `EQX_DEV_EVENTS_MAX` to match the ring's actual size
+// when ServerEventLog is configured larger (e.g. diagnostic captures).
+const MAX_DEV_EVENTS = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 const app = express();
 
@@ -274,6 +276,25 @@ gameServer.define('feel-test-25', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-06-01 — phone-stall-test: heavy-combat repro environment for
+// `tests/mobile-perf/phone-galaxy-stall-repro.spec.ts`. 35 drones in
+// a tight ring (matches the user's wb1al4/jfd81u swarm count) so the
+// load is immediate (no Living World warp-in wait) and the test
+// doesn't pollute live galaxy rooms. testMode-true → accepts
+// `initialHull` / `initialShield` / `startHostile` JoinOptions
+// (near-invulnerable ship at full hostile-from-spawn aggro).
+gameServer
+  .define('phone-stall-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    swarmCount: 35,
+    swarmRatio: 0,
+    swarmRadius: 800,
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // 2026-05-11 — Phase 4c (multi-mount / turret refactor) engineering room.
 // Deterministic spawn of 6 multi-mount drones (alternating interceptor +
 // gunship) in a tight ring 250 u from origin, so the player spawns into

@@ -183,6 +183,20 @@ export class DamageRouter {
     const ship = d.getActiveShip(targetId);
     if (ship) {
       if (!ship.alive) return;
+      // Plan: crispy-kazoo, Commit 2 — defence-in-depth for the
+      // spawn-handshake's pending-join window. A ship that hasn't
+      // completed the handshake (isActive=false) is invisible to
+      // drones (aiTickRunner filters) and remote-player snapshots
+      // (translator filters), but a stray damage event from an
+      // edge-case path is dropped here. The lingering-hull branch
+      // above has its own `isActive===false` semantics (lingering
+      // == disconnected piloted hull, distinct concept) — leave
+      // untouched. Spawn-handshake gating reaches the active branch
+      // only.
+      if (!ship.isActive) {
+        d.serverLogEvent('damage_skipped_pending_join', { targetId, shooterId, damage });
+        return;
+      }
       // Active branch: targetId is the playerId, which is also the
       // worker body id for the player ship (SPAWN used playerId).
       const f = d.shieldHullRouter.damageShipLayered(ship, damage, targetId);

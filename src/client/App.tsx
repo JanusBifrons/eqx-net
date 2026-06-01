@@ -25,7 +25,7 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, useGameReady } from './state/store';
+import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { MobileControls } from './components/MobileControls';
 import { ErrorBoundary } from './components/ErrorOverlay';
@@ -94,13 +94,41 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   const touchInputRef = useRef<TouchInput | null>(
     isTouchRef.current ? new TouchInput() : null,
   );
+  // Plan: crispy-kazoo, Commit 4 — pause boundary needs audio handle
+  // for suspendAll / resumeAll on loading transitions.
+  const audioRef = useRef<HowlerAudioService | null>(null);
   // Join-render diagnostic anchor — captured once per GameSurface mount.
   // Used by the `join_chain_complete` event below + by the rAF loop's
   // `pixi_first_frame` payload.
   const gameSurfaceMountedAtRef = useRef<number>(performance.now());
   const joinChainCompleteLoggedRef = useRef<boolean>(false);
   const gameReady = useGameReady();
+  // Plan: crispy-kazoo, Commit 4 — pause boundary: gate audio + input
+  // off the curtain visibility (`useIsLoadingActive`). Honours the
+  // `?loading=cosmetic` URL kill switch via the underlying selector.
+  const isLoadingActive = useIsLoadingActive();
   const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
+
+  // Plan: crispy-kazoo, Commit 4 — on loading transitions, suspend the
+  // audio context + disable Keyboard / TouchInput so input events the
+  // user fires "during the curtain" don't reach the server. Held keys
+  // are zeroed on disable so a key still held at the moment the
+  // curtain drops doesn't auto-thrust on resume — the user must
+  // re-press to act.
+  useEffect(() => {
+    const audio = audioRef.current;
+    const keyboard = keyboardRef.current;
+    const touch = touchInputRef.current;
+    if (isLoadingActive) {
+      audio?.suspendAll();
+      keyboard?.setEnabled(false);
+      touch?.setEnabled(false);
+    } else {
+      audio?.resumeAll();
+      keyboard?.setEnabled(true);
+      touch?.setEnabled(true);
+    }
+  }, [isLoadingActive]);
 
   // Fire `join_chain_complete` exactly once per GameSurface mount, when
   // all four readiness gates (connected + welcomed + first-snapshot OR
@@ -111,19 +139,34 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   useEffect(() => {
     if (gameReady && !joinChainCompleteLoggedRef.current) {
       joinChainCompleteLoggedRef.current = true;
+      const msFromPhaseEnter = Math.round(performance.now() - gameSurfaceMountedAtRef.current);
       logEvent('join_chain_complete', {
-        msFromPhaseEnter: Math.round(performance.now() - gameSurfaceMountedAtRef.current),
+        msFromPhaseEnter,
       });
+      // Plan: crispy-kazoo, Commit 3 — terminal "ready, curtain dropped"
+      // event for the death→respawn lifecycle. The earlier
+      // `local_died` / `respawn_clicked` / `respawn_first_snapshot` /
+      // `client_ready_sent` / `arrival_acked` events form the chain;
+      // this is the closing marker. `msFromClicked` is derived against
+      // the most-recent diedAtMs (clientRef may be null in non-game
+      // phases, so the field is omitted in that branch).
+      const client = clientRef.current;
+      const msFromDied = client && client.diedAtMs > 0
+        ? Math.round(performance.now() - client.diedAtMs)
+        : null;
+      logEvent('respawn_ready', { msFromPhaseEnter, msFromDied });
     }
   }, [gameReady]);
 
-  // Minimum-display-time floor for the WarpScreen. 5 s gives the
-  // reconciler enough wall-clock to receive its first snapshot, apply
-  // its first server→client correction, and settle BEFORE the user
-  // sees the canvas. Without this floor, the warp hides at the spawn
-  // pose and the first-move-teleport user symptom resurfaces
-  // (2026-05-14 capture `2026-05-14T21-39-07-346Z-tkc6ad` showed a
-  // 311-unit drift correction landing pre-capture-window).
+  // Minimum-display-time floor for the WarpScreen. Plan crispy-kazoo
+  // Commit 9 — lowered from 5 s to 2.5 s. The reconciler's first
+  // correction-apply window is what the floor protected (the
+  // 2026-05-14 311-unit pre-curtain-drop drift). Post-handshake the
+  // first correction lands during the curtain phase too (server's
+  // 5-s join-broadcast grace pushes snapshots immediately), so 2.5 s
+  // is comfortable margin — and 2.5 s + the 600 ms arrival-handshake
+  // budget puts total click-to-playable around ~3-3.5 s, which is the
+  // shortest the user's "natural pause" request tolerates.
   //
   // Keyed on `joinGeneration` (Phase G): a pure inter-sector transit
   // keeps `phase==='game'` so GameSurface does NOT remount — a
@@ -131,14 +174,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // session and never again, so the 2nd+ transit had no floor and the
   // WarpScreen never re-showed. `rearmJoinReadiness()` (from the
   // `transit_ready` handler) bumps `joinGeneration`; the dep change
-  // tears down the stale timer (cleanup) and re-runs a fresh 5 s
-  // floor. The literal `setTimeout(…, 5000)` is unchanged — the floor
-  // is NOT weakened, it now re-runs instead of never.
+  // tears down the stale timer (cleanup) and re-runs a fresh floor.
   const joinGeneration = useUIStore((s) => s.joinGeneration);
   useEffect(() => {
     const timer = setTimeout(() => {
       useUIStore.getState().setJoinMinimumElapsed(true);
-    }, 5000);
+    }, 2500);
     return () => clearTimeout(timer);
   }, [joinGeneration]);
 
@@ -170,6 +211,18 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // open left `isGalaxyOverviewOpen=true` in the store; the next spawn
   // saw the overview pop back open immediately on top of the fresh game.
   const handleRespawn = useCallback(() => {
+    // Plan: crispy-kazoo, Commit 3 — log the respawn click so the
+    // diag-capture timeline names WHICH path triggered the cycle.
+    // 'button' = in-game Respawn button (this handler); the
+    // 'sector-pick' counterpart logs from GalaxyOverviewScreen on
+    // the spawn-mode sector tap. Both lead to the galaxy-map phase
+    // + leave-room + rejoin flow (per the user's "same flow" decision).
+    const client = clientRef.current;
+    const msFromDied = client && client.diedAtMs > 0
+      ? Math.round(performance.now() - client.diedAtMs)
+      : -1;
+    logEvent('respawn_clicked', { source: 'button', msFromDied });
+
     const ui = useUIStore.getState();
     ui.setLocalShipInstanceId(null);
     ui.setCurrentSectorKey(null);
@@ -246,7 +299,9 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     installProfileWindow();
 
     const gameClient = new ColyseusGameClient();
-    gameClient.setAudio(new HowlerAudioService());
+    const audio = new HowlerAudioService();
+    audioRef.current = audio;
+    gameClient.setAudio(audio);
     clientRef.current = gameClient;
     // Module-level singleton so low-cadence React reads (e.g. the Galaxy
     // tab's 5 s arrival-snapshot poll) can reach `mirror` without prop
@@ -264,6 +319,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       (window as unknown as { __eqxSetActiveWeapon?: (id: string) => void })
         .__eqxSetActiveWeapon = (id: string) => {
           useUIStore.getState().setActiveWeapon(id as Parameters<ReturnType<typeof useUIStore.getState>['setActiveWeapon']>[0]);
+        };
+      // Test-only hook for the respawn-cascade E2E spec
+      // (`respawn-cascade-input-routing.spec.ts`). Drives a
+      // game → connecting → game phase cycle that unmounts GameSurface
+      // (running the dispose cleanup we just instrumented) and remounts
+      // it with a fresh ColyseusGameClient. This is the SAME cascade
+      // a galaxy-map sector-pick triggers, but reachable from a
+      // Playwright test without clicking the Pixi-rendered map.
+      // Production tree-shakes.
+      (window as unknown as { __eqxTriggerRespawnCascade?: () => void })
+        .__eqxTriggerRespawnCascade = () => {
+          const ui = useUIStore.getState();
+          ui.setPhase('connecting');
+          setTimeout(() => useUIStore.getState().setPhase('game'), 100);
         };
     }
 
@@ -321,14 +390,40 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener('keydown', onKey);
       layerRO.disconnect();
-      keyboard.dispose();
-      gameClient.dispose();
-      setGameClient(null);
+      // Plan: crispy-kazoo, Commit 6 — cleanup ordering.
+      // 1. Null the singleton FIRST so consumers reaching for the client
+      //    via `getGameClient()` get null, not a half-disposed ref.
+      // 2. Tear down input next (it doesn't depend on renderer / audio).
+      // 3. Renderer BEFORE audio — effects subsystem fires audio events
+      //    during shutdown; audio must still be alive for that handoff.
+      // 4. Audio AFTER renderer.
+      // 5. Client dispose LAST (carries the reflection-based mirror
+      //    clear + every subsystem dispose).
+      //
+      // 2026-05-31: each dispose step wrapped so a throw doesn't silently
+      // skip later steps (the orphaned ColyseusGameClient pattern in
+      // capture `hlqxy6` — 4 client_constructed / 3 dispose_complete —
+      // is consistent with `renderer.dispose()` throwing partway through
+      // and skipping `gameClient.dispose()`). Each failure becomes a
+      // discrete `cleanup_step_failed` event that survives `?diag=0`.
+      const stepLog = (step: string, err: unknown): void => {
+        const msg = err instanceof Error ? err.message : String(err);
+        // eslint-disable-next-line no-console
+        console.error(`[GameSurface cleanup] ${step} threw:`, err);
+        try {
+          logEvent('cleanup_step_failed', { step, error: msg });
+        } catch { /* ignore — logger may be torn down */ }
+      };
+      try { setGameClient(null); } catch (e) { stepLog('setGameClient(null)', e); }
+      try { keyboard.dispose(); } catch (e) { stepLog('keyboard.dispose', e); }
       // Layer is a child of renderer.app.stage — the renderer's destroy({
       // children: true }) frees it. Nulling the ref so the React-side
       // subscriptions short-circuit on the post-unmount tail.
       galaxyLayerRef.current = null;
-      renderer.dispose();
+      try { renderer.dispose(); } catch (e) { stepLog('renderer.dispose', e); }
+      try { audioRef.current?.dispose(); } catch (e) { stepLog('audio.dispose', e); }
+      audioRef.current = null;
+      try { gameClient.dispose(); } catch (e) { stepLog('gameClient.dispose', e); }
     };
   }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit]);
 

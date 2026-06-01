@@ -1,0 +1,3 @@
+{"source":"client","ts":95482.19999992847,"tag":"swarm_near_enter","data":{"entityId":33,"kind":1,"swarmPos":{"x":71.74,"y":-161.27},"rendered":{"x":-26.71,"y":-166.97},"predWorld":{"x":-26.71,"y":-166.97},"lerpOffset":{"x":0,"y":0},"distRendered":98.61}}
+{"source":"client","ts":95516.5,"tag":"swarm_near_exit","data":{"entityId":33}}
+{"source":"client","ts":95537,"tag":"swarm_near_enter","data":{"entityId":33,"kind":1,"swarmPos":{"x":71.21,"y":-156.64},"rendered":{"x":-26.71,"y":-166.97},"predWorld":{"x":-26.71,"y":-166.97},"lerpOffset":{"x":0,"y":0},"distRendered":98.46}}

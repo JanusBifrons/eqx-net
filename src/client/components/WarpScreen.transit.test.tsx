@@ -53,7 +53,11 @@ const visible = (): string | null =>
 const statusText = (): string =>
   screen.getByTestId('warp-screen-status').textContent ?? '';
 
-/** Drive the store to the steady "post-arrival, fully ready" baseline. */
+/** Drive the store to the steady "post-arrival, fully ready" baseline.
+ *  Plan: crispy-kazoo, Commit 2 — `useGameReady()` is now the 9-gate
+ *  predicate including the synchronised warp-in handshake. The legacy
+ *  5-gate test fixtures here set ALL 9 to true to recover the
+ *  "fully-arrived steady state" semantics. */
 function settle(): void {
   useUIStore.setState({
     phase: 'game',
@@ -62,6 +66,10 @@ function settle(): void {
     firstSnapshotApplied: true,
     rendererFirstFrameRendered: true,
     joinMinimumElapsed: true,
+    localPoseResolved: true,
+    clientReadySent: true,
+    arrivalTickFromServer: 123,
+    arrivalAcked: true,
   });
 }
 
@@ -92,14 +100,29 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: stays '0' (action absent)
-    expect(statusText()).toBe('SYNCING SECTOR TELEMETRY');
+    // Plan: crispy-kazoo, Commit 9 — collapsed status cascade to 3
+    // user-visible states. Pre-rearm intermediate states all read as
+    // 'LOADING SECTOR' (was the 5-state cascade SYNCING SECTOR
+    // TELEMETRY / STABILISING TRAJECTORY etc.). Less jitter.
+    expect(statusText()).toBe('LOADING SECTOR');
 
     // readiness gates flip true in arrival order → hides again
     useUIStore.getState().setFirstSnapshotApplied(true);
     rerender();
-    expect(visible()).toBe('1'); // still gated by the 5 s floor
-    expect(statusText()).toBe('STABILISING TRAJECTORY');
+    expect(visible()).toBe('1'); // still gated by the minDisplay floor
+    expect(statusText()).toBe('LOADING SECTOR');
     useUIStore.getState().setJoinMinimumElapsed(true);
+    // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake
+    // gates must also flip for the curtain to drop. In production these
+    // flip via: localPoseResolved (tryInitPredWorld success) →
+    // clientReadySent (sendClientReady) → arrivalTickFromServer (warp_in
+    // received) → arrivalAcked (local clock reached arrivalTick). The
+    // status-text-during-handshake transitions are out of scope for this
+    // spec — it locks the FINAL "curtain off, WARP COMPLETE" state.
+    useUIStore.getState().setLocalPoseResolved(true);
+    useUIStore.getState().setClientReadySent(true);
+    useUIStore.getState().setArrivalTickFromServer(123);
+    useUIStore.getState().setArrivalAcked(true);
     rerender();
     expect(visible()).toBe('0');
     expect(statusText()).toBe('WARP COMPLETE');
@@ -108,11 +131,11 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     api().rearmJoinReadiness?.();
     rerender();
     expect(visible()).toBe('1'); // RED pre-fix: 2nd+ transit never re-shows
-    expect(statusText()).toBe('SYNCING SECTOR TELEMETRY');
+    expect(statusText()).toBe('LOADING SECTOR');
   });
 
   it('gate-drift lock: still shown when only firstSnapshotApplied is unmet (4-vs-5)', () => {
-    // useGameReady() has 5 gates incl. firstSnapshotApplied; WarpScreen's
+    // useGameReady() has 5+ gates incl. firstSnapshotApplied; WarpScreen's
     // pre-fix local `ready` had only 4 (omitted it) → it would HIDE here.
     useUIStore.setState({
       phase: 'game',
@@ -121,6 +144,12 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
       firstSnapshotApplied: false,
       rendererFirstFrameRendered: true,
       joinMinimumElapsed: true,
+      // Commit 2 handshake gates all true so this case isolates
+      // firstSnapshotApplied as the single open gate.
+      localPoseResolved: true,
+      clientReadySent: true,
+      arrivalTickFromServer: 123,
+      arrivalAcked: true,
     });
     renderWarp();
     // The discriminating assertion: with only firstSnapshotApplied
@@ -136,10 +165,12 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     // The visibility gate is the contract under test here.)
   });
 
-  it('5 s minimum-display floor stays load-bearing (R2)', () => {
+  it('minimum-display floor stays load-bearing (R2)', () => {
     // All gates satisfied EXCEPT the joinMinimumElapsed floor → the warp
     // visual must remain shown. Guards against a future regression that
     // drops the floor from the readiness gate.
+    // (Floor reduced 5 s → 2.5 s in crispy-kazoo Commit 9; this test
+    // doesn't assert the duration, only that the gate keeps the curtain.)
     useUIStore.setState({
       phase: 'game',
       connectionStatus: 'connected',
@@ -147,9 +178,15 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
       firstSnapshotApplied: true,
       rendererFirstFrameRendered: true,
       joinMinimumElapsed: false,
+      localPoseResolved: true,
+      clientReadySent: true,
+      arrivalTickFromServer: 123,
+      arrivalAcked: true,
     });
     renderWarp();
     expect(visible()).toBe('1');
-    expect(statusText()).toBe('STABILISING TRAJECTORY');
+    // Status cascade collapsed: any pending bootstrap gate (including
+    // joinMinimumElapsed) reads as 'LOADING SECTOR' per Commit 9.
+    expect(statusText()).toBe('LOADING SECTOR');
   });
 });

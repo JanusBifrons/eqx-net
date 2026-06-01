@@ -62,7 +62,7 @@ export interface ClosestHit {
  *  (decision #3: NO predicted healthbar/kills — those need authoritative
  *  health and stay driven by the real DamageEvent). */
 export interface PredictedFeedbackSink {
-  pushDamageNumber(x: number, y: number, damage: number, tag: string): void;
+  pushDamageNumber(targetId: string, x: number, y: number, damage: number, tag: string): void;
   flashTarget(targetId: string): void;
 }
 
@@ -123,7 +123,7 @@ export function predictShotOutcome(p: PredictShotParams): string | null {
   const targetId = hit ? hit.hitId : null;
   p.ledger.predict(p.clientShotId, p.mode, targetId, p.damage, p.nowMs);
   if (hit) {
-    p.sink.pushDamageNumber(hit.hitX, hit.hitY, p.damage, p.clientShotId);
+    p.sink.pushDamageNumber(hit.hitId, hit.hitX, hit.hitY, p.damage, p.clientShotId);
     p.sink.flashTarget(hit.hitId);
   }
   return targetId;

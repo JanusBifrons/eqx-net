@@ -68,6 +68,16 @@ export interface ConnectOptions {
    *  value `tests/perf/perf-baseline.spec.ts` uses for the
    *  "mobile-shaped" arm. */
   cpuThrottleRate?: number;
+  /** Extra origins to seed with the storage-state's localStorage
+   *  entries. `tests/e2e/global-setup.ts` mints the JWT scoped to
+   *  `http://localhost:5173`; when the phone navigates to
+   *  `http://<LAN-IP>:5173`, that origin won't match the seed's
+   *  origin gate. Pass `[`http://<LAN-IP>:5173`]` here to seed the
+   *  same JWT under the LAN-IP origin too. JWT itself is
+   *  origin-agnostic (no `aud`/`iss` claim). Only honoured on the
+   *  Android branch; the desktop fallback always navigates to
+   *  `localhost:5173` and uses Playwright's native storageState. */
+  extraOrigins?: readonly string[];
 }
 
 interface StorageState {
@@ -96,18 +106,32 @@ function readStorageState(path: string): StorageState | null {
   }
 }
 
-async function applyStorageState(context: BrowserContext, state: StorageState | null): Promise<void> {
+async function applyStorageState(
+  context: BrowserContext,
+  state: StorageState | null,
+  extraOrigins: readonly string[] = [],
+): Promise<void> {
   if (!state) return;
   if (state.cookies && state.cookies.length > 0) {
     await context.addCookies(state.cookies);
   }
-  if (state.origins && state.origins.length > 0) {
+  const recordedOrigins = state.origins ?? [];
+  if (recordedOrigins.length > 0) {
     // Mirror what Playwright's storageState restore does for localStorage:
     // emit an init script that seeds each origin's localStorage. We don't
     // know which origin the device will load first, so seed every
     // origin's entries unconditionally — the matching origin wins at
     // runtime, the rest are inert.
-    const seeds = state.origins.flatMap((o) =>
+    //
+    // For `extraOrigins`, replicate every recorded origin's localStorage
+    // entries under each extra origin too. Use case: storage-state.json
+    // is for http://localhost:5173 but the phone navigates to
+    // http://<LAN-IP>:5173; same JWT, different origin gate.
+    const synthesized = extraOrigins.flatMap((extraOrigin) =>
+      recordedOrigins.map((o) => ({ origin: extraOrigin, localStorage: o.localStorage })),
+    );
+    const allSeedOrigins = [...recordedOrigins, ...synthesized];
+    const seeds = allSeedOrigins.flatMap((o) =>
       o.localStorage.map((kv) => `if (location.origin === ${JSON.stringify(o.origin)}) localStorage.setItem(${JSON.stringify(kv.name)}, ${JSON.stringify(kv.value)});`),
     );
     if (seeds.length > 0) {
@@ -133,9 +157,32 @@ async function connectAndroid(opts: Required<ConnectOptions>): Promise<MobilePer
     throw new Error('playwright._android.devices() returned no devices — is `adb` on PATH and is a device connected with USB debugging enabled?');
   }
   const device = devices[0];
-  const context = await device.launchBrowser();
+  // device.launchBrowser() fails with an unhelpful error when the
+  // required Chrome flag is off, or when an unsupported browser is
+  // the system default. Translate to an actionable message — the #1
+  // first-run footgun on this harness.
+  let context: BrowserContext;
+  try {
+    context = await device.launchBrowser();
+  } catch (err) {
+    const orig = (err as Error).message ?? String(err);
+    throw new Error(
+      `[phone-poc] Chrome on the phone failed to launch via _android.\n` +
+        `The #1 cause is that the required Chrome flag is OFF. To fix:\n` +
+        `  1. On the phone, open Chrome and navigate to:\n` +
+        `       chrome://flags/#enable-command-line-on-non-rooted-devices\n` +
+        `  2. Set "Enable command line on non-rooted devices" to Enabled.\n` +
+        `  3. Tap "Relaunch" at the bottom.\n` +
+        `  4. Re-run this test.\n` +
+        `If the flag is already enabled, also check:\n` +
+        `  - \`adb devices\` shows the phone as 'device' (not 'unauthorized').\n` +
+        `  - Chrome is installed on the phone (not Chromium / Brave / Firefox; _android drives Chrome only).\n` +
+        `  - The phone screen is unlocked (Chrome won't start under lockscreen on some OEMs).\n` +
+        `Original error: ${orig}`,
+    );
+  }
   const storage = readStorageState(opts.storageStatePath);
-  await applyStorageState(context, storage);
+  await applyStorageState(context, storage, opts.extraOrigins);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   await page.goto(opts.baseURL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -200,7 +247,8 @@ export async function connectAndroidOrFallback(
   const baseURL = opts.baseURL ?? process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
   const storageStatePath = opts.storageStatePath ?? resolve(process.cwd(), 'tests/e2e/.auth/storage-state.json');
   const cpuThrottleRate = opts.cpuThrottleRate ?? 4;
-  const resolved: Required<ConnectOptions> = { mode, baseURL, storageStatePath, cpuThrottleRate };
+  const extraOrigins: readonly string[] = opts.extraOrigins ?? [];
+  const resolved: Required<ConnectOptions> = { mode, baseURL, storageStatePath, cpuThrottleRate, extraOrigins };
 
   if (mode === 'force-device') {
     return connectAndroid(resolved);

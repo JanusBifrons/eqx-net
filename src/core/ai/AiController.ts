@@ -100,6 +100,16 @@ export class AiController {
   }
 
   /**
+   * Plan: crispy-kazoo, Commit 6 — full teardown for the dispose audit.
+   * Drops every registered entity (the AI controller is owned by
+   * ColyseusGameClient on the client; a fresh GameSurface mount
+   * reconstructs it). Idempotent.
+   */
+  clear(): void {
+    this.entities.clear();
+  }
+
+  /**
    * Render-side query: is the given entity's behaviour currently treating
    * `playerId` as a hostile target? Returns false if the entity isn't
    * registered or its behaviour doesn't implement the optional query (e.g.
@@ -131,6 +141,15 @@ export class AiController {
     entitySnapshot: (id: string) => AiEntity | null,
   ): void {
     if (this.entities.size === 0) return;
+    // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
+    // per-tick alloc in the AI path (60/sec). The bigger fish — the
+    // per-drone `swarmEntitySnapshot` literal (900/sec) + the per-tick
+    // `AiIntent` in `HostileDroneBehaviour` (900/sec) — are pooled.
+    // Pooling this one would require making `AiWorldView.players`
+    // mutable, which changes the public type signature and ripples to
+    // every behaviour. The 60/sec rate is negligible vs the rest of
+    // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
+    // full GC-pressure story.
     const view: AiWorldView = { players, tick, dtSec };
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
