@@ -34,8 +34,22 @@ export interface FxKillSwitches {
 export function readFxKillSwitches(
   search: string = typeof window !== 'undefined' ? window.location.search : '',
 ): FxKillSwitches {
+  // Touch devices auto-disable filters (2026-06-01 isolation
+  // evidence: LaserGlow + ShieldAura GPU shader passes are 92 % of
+  // raf_stutter under 35-drone hostile combat — raf_stutter 93 → 7,
+  // GPU Δ +30°C → +11°C, no thermal throttling). `?nofilters=0`
+  // explicit URL param opts a touch device BACK IN to filters; the
+  // explicit `?nofilters=1` keeps working as before. Desktop /
+  // non-touch contexts (jsdom tests, dev) are unaffected — filters
+  // stay opt-in via `?nofilters=1`.
+  const urlExplicitOff = /\bnofilters=1\b/.test(search);
+  const urlExplicitOn = /\bnofilters=0\b/.test(search);
+  const isTouch =
+    typeof navigator !== 'undefined' &&
+    ((navigator as { maxTouchPoints?: number }).maxTouchPoints ?? 0) > 0;
+  const filtersDisabled = urlExplicitOff || (isTouch && !urlExplicitOn);
   return {
-    filtersDisabled: /\bnofilters=1\b/.test(search),
+    filtersDisabled,
     particlesDisabled: /\bnoparticles=1\b/.test(search),
     beamsDisabled: /\bnobeams=1\b/.test(search),
     dmgNumbersDisabled: /\bnodmgnumbers=1\b/.test(search),
