@@ -115,6 +115,46 @@ async function readHeapMb(page: Awaited<ReturnType<typeof connectAndroidOrFallba
   });
 }
 
+interface SamplingNode {
+  callFrame: { functionName?: string; url?: string; lineNumber?: number };
+  selfSize: number;
+  children?: SamplingNode[];
+}
+
+interface RankedFrame {
+  fn: string;
+  url: string;
+  line: number;
+  selfBytes: number;
+}
+
+function rankSamplingProfile(root: SamplingNode): RankedFrame[] {
+  const flat: RankedFrame[] = [];
+  function walk(node: SamplingNode): void {
+    if (node.selfSize > 0) {
+      flat.push({
+        fn: node.callFrame.functionName ?? '(anonymous)',
+        url: node.callFrame.url ?? '(unknown)',
+        line: node.callFrame.lineNumber ?? -1,
+        selfBytes: node.selfSize,
+      });
+    }
+    if (node.children) {
+      for (const c of node.children) walk(c);
+    }
+  }
+  walk(root);
+  // Group by (fn, url, line) — sum self bytes across all stack instances.
+  const grouped = new Map<string, RankedFrame>();
+  for (const f of flat) {
+    const key = `${f.fn}::${f.url}::${f.line}`;
+    const existing = grouped.get(key);
+    if (existing) existing.selfBytes += f.selfBytes;
+    else grouped.set(key, { ...f });
+  }
+  return [...grouped.values()].sort((a, b) => b.selfBytes - a.selfBytes);
+}
+
 test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, async () => {
   const phoneState = assertPhoneAwakeAndUnlocked();
   // eslint-disable-next-line no-console
@@ -198,6 +238,19 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
     }));
     // eslint-disable-next-line no-console
     console.log(`[phone-stall] mount counts: ${JSON.stringify(mountCounts)}`);
+
+    // Start allocation sampling — captures per-stack allocation rates
+    // across the 90 s drive. 32 KB interval = light overhead, good
+    // resolution for MB-scale leaks.
+    try {
+      await conn.cdp.send('HeapProfiler.enable');
+      await conn.cdp.send('HeapProfiler.startSampling', { samplingInterval: 32_768 });
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] HeapProfiler.startSampling active (32 KB interval)`);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] startSampling failed: ${(err as Error).message}`);
+    }
 
     const joy = await joyDown(conn.cdp, joyX, joyY);
     await joyMove(joy, 35, -35); // start: up-right
@@ -288,6 +341,46 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
       console.log(
         `[phone-stall] heap delta: +${deltaMb.toFixed(1)} MB over ${(last.tMs / 1000).toFixed(1)} s = ${slope.toFixed(2)} MB/min`,
       );
+    }
+
+    // Stop allocation sampling + dump top callstacks by total allocation.
+    try {
+      const profile = (await conn.cdp.send('HeapProfiler.stopSampling')) as {
+        profile: { head: SamplingNode; samples?: unknown[] };
+      };
+      const ranked = rankSamplingProfile(profile.profile.head);
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] top 20 allocation callstacks (by self-size MB):`);
+      for (const r of ranked.slice(0, 20)) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[phone-stall]   ${(r.selfBytes / 1024 / 1024).toFixed(2)} MB — ${r.fn} (${r.url}:${r.line})`,
+        );
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] stopSampling failed: ${(err as Error).message}`);
+    }
+
+    // Force GC + measure post-GC heap. If post-GC heap is near baseline,
+    // we have GC pressure (transient allocations) but NO leak. If it
+    // stays high, there's a retention bug somewhere.
+    try {
+      // Run collectGarbage twice — first pass may leave eden survivors.
+      await conn.cdp.send('HeapProfiler.collectGarbage');
+      await conn.page.waitForTimeout(500);
+      await conn.cdp.send('HeapProfiler.collectGarbage');
+      await conn.page.waitForTimeout(500);
+      const postGcHeap = await readHeapMb(conn.page);
+      const baselineHeap = heapSamples.length > 0 ? heapSamples[0].mb : 0;
+      const retainedDelta = postGcHeap - baselineHeap;
+      // eslint-disable-next-line no-console
+      console.log(
+        `[phone-stall] post-GC heap: ${postGcHeap.toFixed(1)} MB (baseline: ${baselineHeap.toFixed(1)} MB, retained delta: ${retainedDelta >= 0 ? '+' : ''}${retainedDelta.toFixed(1)} MB)`,
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] force-GC failed: ${(err as Error).message}`);
     }
 
     // Allow autocapture stream to flush.
