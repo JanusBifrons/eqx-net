@@ -28,6 +28,11 @@ import {
   fetchDevEvents,
   readNdjson,
 } from './helpers/captureFetcher';
+import {
+  captureDeviceState,
+  formatDeviceState,
+  diffDeviceState,
+} from './helpers/deviceThermal';
 
 // 30 s default — at 35 hostile drones the raf_stutter density is
 // ~9-10 events/sec, so 30 s produces ~280 stutters and ~100 corrections,
@@ -282,6 +287,15 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
       console.log(`[phone-stall] startSampling failed: ${(err as Error).message}`);
     }
 
+    // Capture kernel-level device state BEFORE the drive. Direct
+    // evidence (via `adb shell dumpsys thermalservice`) of the phone's
+    // thermal status + per-cluster temps + Chrome/total CPU%. The
+    // post-drive snapshot + diff tells us if the phone heated up
+    // during the test (the variance signal).
+    const deviceStateBefore = captureDeviceState();
+    // eslint-disable-next-line no-console
+    console.log(formatDeviceState('phone-stall device-before', deviceStateBefore));
+
     const joy = await joyDown(conn.cdp, joyX, joyY);
     await joyMove(joy, 35, -35); // start: up-right
     // eslint-disable-next-line no-console
@@ -334,6 +348,13 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
     }
 
     await joyUp(joy);
+
+    // Capture device state AFTER the drive and diff.
+    const deviceStateAfter = captureDeviceState();
+    // eslint-disable-next-line no-console
+    console.log(formatDeviceState('phone-stall device-after', deviceStateAfter));
+    // eslint-disable-next-line no-console
+    console.log(`[phone-stall] ${diffDeviceState(deviceStateBefore, deviceStateAfter)}`);
 
     // Post-drive screenshot + mount count — has the joystick double-mounted by now?
     await conn.page.screenshot({
