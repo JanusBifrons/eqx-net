@@ -133,6 +133,14 @@ const WORKER_TS_PATH = fileURLToPath(
   new URL('../../core/physics/worker.ts', import.meta.url),
 );
 
+// Dev-only override gate. When set, `testMode`-only join options
+// (`initialHull`, `initialShield`, `startHostile`) ALSO apply on
+// galaxy rooms — required by the phone-stall repro spec
+// (tests/mobile-perf/phone-galaxy-stall-repro.spec.ts) to harden test
+// conditions (near-invulnerable ship under heavy combat). Off in
+// production; set via `EQX_ALLOW_DEV_OVERRIDES=1` for E2E only.
+const ALLOW_DEV_OVERRIDES = process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1';
+
 const JoinOptionsSchema = z
   .object({
     playerId: z.string().nullable().optional(),
@@ -2592,7 +2600,7 @@ export class SectorRoom extends Room<SectorState> {
     // installed so the test spec gets the exact override it asked for.
     // E2E specs that just need "do they die when shot?" spawn with
     // initialHull=1, initialShield=0 → one beam tick kills.
-    if (this.testMode && parsed.success) {
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) {
       if (typeof parsed.data.initialHull === 'number') {
         ship.health = Math.max(1, parsed.data.initialHull);
       }
@@ -2612,7 +2620,7 @@ export class SectorRoom extends Room<SectorState> {
     // Mirrors the `markBotHostile` pattern in LivingWorldBotHooks: per-player
     // `aiController.markHostile` + `bot_aggro` broadcast so the client's
     // hostility ledger stays in lockstep. testMode-gated for safety.
-    if (this.testMode && parsed.success && parsed.data.startHostile === true) {
+    if ((this.testMode || ALLOW_DEV_OVERRIDES) && parsed.success && parsed.data.startHostile === true) {
       const tick = this.serverTick;
       for (const rec of this.swarmRegistry.all()) {
         if (rec.kind !== 1) continue; // drones only — asteroids stay inert

@@ -310,13 +310,39 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // than fought with damping. See `angvelTarget` for the ramp.
     const setAngvel = this.angvelTarget(bearingError);
 
-    // Distance-based boost: when the target is far the drone gets a kick
-    // to close engagement; per-kind `maxSpeed` (enforced by physics drag)
-    // still bounds the cruise velocity so the boost can't run away.
+    // 2026-06-01 — arrival-style standoff. Before this change, the drone
+    // thrusted forward at `baseThrust` whenever it was within fire range,
+    // which meant a fast-closing drone would sail through the target and
+    // overshoot by hundreds of units before turning around — the
+    // user-reported "flies past way too quickly… never approaches"
+    // behaviour. The drone now targets a stopping distance of ~60 % of
+    // fire range and BRAKES (reverse thrust along its forward axis) when
+    // it's closing too fast for that distance. Inside the stopping
+    // distance, it idles or backpedals to maintain spacing.
+    //
+    // The closing speed = (self.vel · dir_to_target). Positive = drone
+    // is approaching; the cap scales with remaining distance so the
+    // drone arrives at near-zero relative speed.
     const baseThrust = this.kind.ai.thrust;
-    const thrustMag = dist > DRONE_FIRE_RANGE * ENGAGE_DISTANCE_RATIO
-      ? baseThrust * ENGAGE_BOOST
-      : baseThrust;
+    const STOP_DIST = DRONE_FIRE_RANGE * 0.6;
+    const closingSpeed = (self.vx * rawDx + self.vy * rawDy) / dist;
+
+    let thrustMag: number;
+    if (dist > DRONE_FIRE_RANGE * ENGAGE_DISTANCE_RATIO) {
+      // Far engagement — boost in (unchanged from pre-fix behaviour).
+      thrustMag = baseThrust * ENGAGE_BOOST;
+    } else if (dist > STOP_DIST) {
+      // Approach window. Cap closing speed so we can arrive at near-
+      // zero relative velocity. The cap grows linearly with the gap to
+      // the stopping distance; 1.5× the gap (units/sec per unit) gives
+      // ~1 s to bleed off speed for typical maxSpeed values.
+      const maxClosing = Math.min(120, (dist - STOP_DIST) * 1.5 + 20);
+      thrustMag = closingSpeed > maxClosing ? -baseThrust * 0.7 : baseThrust;
+    } else {
+      // Inside stopping distance — actively decelerate. If we're still
+      // closing, hard brake; otherwise hover (let damping settle).
+      thrustMag = closingSpeed > 5 ? -baseThrust : 0;
+    }
 
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);

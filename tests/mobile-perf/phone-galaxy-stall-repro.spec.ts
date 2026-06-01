@@ -29,14 +29,15 @@ import {
   readNdjson,
 } from './helpers/captureFetcher';
 
-const DRIVE_MS = 90_000;
+const DRIVE_MS = Number(process.env['DRIVE_MS'] ?? 90_000);
 const FIRE_INTERVAL_MS = 500;
 const JOY_ROTATE_INTERVAL_MS = 2_000;
 const HEAP_SAMPLE_INTERVAL_MS = 5_000;
 const STALL_MIN_MS = 1000;
 const MODE = process.env['STALL_REPRO_MODE'] ?? 'repro';
+const TEST_TIMEOUT_MS = Math.max(180_000, DRIVE_MS + 90_000);
 
-test.setTimeout(180_000);
+test.setTimeout(TEST_TIMEOUT_MS);
 
 interface JoystickHold {
   active: boolean;
@@ -168,9 +169,22 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
   const testId = `galaxy-stall-${Date.now()}`;
   const autocapture = process.env['STALL_AUTOCAPTURE'] === '0' ? '' : '&autocapture=1';
   const diag = process.env['STALL_DIAG'] === '0' ? '&diag=0' : '';
+  const startHostile = process.env['STALL_STARTHOSTILE'] === '0' ? '' : '&startHostile=1';
+  // Near-invulnerable hull + shield so the test ship survives the full
+  // drive and produces realistic per-player snapshot workload. Works in
+  // `phone-stall-test` (testMode) natively; no dev-override env var
+  // needed.
+  const initialHull = process.env['STALL_INITIAL_HULL'] ?? '1000000';
+  const initialShield = process.env['STALL_INITIAL_SHIELD'] ?? '1000000';
+  // phone-stall-test: testMode room with 35 hostile drones in a ring at
+  // radius 800. No Living World warp-in wait; doesn't pollute live
+  // galaxy rooms. Defined in src/server/index.ts 2026-06-01.
+  const room = process.env['STALL_ROOM'] ?? 'phone-stall-test';
   const url =
-    `${lanOrigin}/?room=galaxy-sol-prime&worker=0${autocapture}${diag}` +
-    `&startHostile=1&testId=${testId}`;
+    `${lanOrigin}/?room=${room}&worker=0${autocapture}${diag}` +
+    `${startHostile}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
+  // eslint-disable-next-line no-console
+  console.log(`[phone-stall] DRIVE_MS=${DRIVE_MS} startHostile=${startHostile !== ''} autocapture=${autocapture !== ''} diag=${diag === '' ? 'auto' : '0'}`);
   // eslint-disable-next-line no-console
   console.log(`[phone-stall] navigating phone to: ${url}`);
 
@@ -408,6 +422,29 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
       console.log(
         `[phone-stall] client-side fire events in combat.ndjson: ${fireEvents.length} (taps attempted: ${tapCount})`,
       );
+    }
+
+    // Tag census on the capture (only when autocapture is on — these
+    // counts match user's bad captures: jfd81u had raf_stutter=6,
+    // longtask=7, loaf=8, correction=52, damage_number_spawned=108).
+    if (autocaptureOn) {
+      const allEvents = [
+        ...readNdjson(join(captureDir, 'perf.ndjson')),
+        ...readNdjson(join(captureDir, 'corrections.ndjson')),
+        ...readNdjson(join(captureDir, 'combat.ndjson')),
+        ...readNdjson(join(captureDir, 'other.ndjson')),
+        ...readNdjson(join(captureDir, 'lifecycle.ndjson')),
+      ];
+      const interesting = ['raf_stutter', 'raf_gap', 'longtask', 'loaf', 'correction', 'damage_number_spawned', 'damage_number_scheduled', 'damage_number_cancelled', 'snapshot_received', 'snapshot_applied', 'snapshot_coalesced', 'snapshot', 'heap_sample', 'fire', 'warp_event', 'swarm_decode_slow'];
+      // eslint-disable-next-line no-console
+      console.log(`[phone-stall] capture event census (matching user-capture signals):`);
+      for (const tag of interesting) {
+        const count = allEvents.filter((e) => e.tag === tag).length;
+        if (count > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[phone-stall]   ${tag}: ${count}`);
+        }
+      }
     }
 
     const stalls: ReturnType<typeof findRecvGapLongs> = autocaptureOn
