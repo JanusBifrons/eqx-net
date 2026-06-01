@@ -438,6 +438,39 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
       );
     }
 
+    // effectiveHz from heap_sample is the phone's REAL frame-rate
+    // ceiling, sampled every 6 RAFs. A degraded run will show low
+    // effectiveHz (thermal throttle, background process, etc.) and
+    // its raf_stutter count won't be comparable to a fresh-phone run.
+    // Surface min/p50/mean here so consecutive runs can be ranked by
+    // phone state alongside the optimization being measured.
+    if (autocaptureOn) {
+      const perfEvents = readNdjson(join(captureDir, 'perf.ndjson'));
+      const hzVals: number[] = [];
+      for (const e of perfEvents) {
+        if (e.tag !== 'heap_sample') continue;
+        const hz = Number(e.data['effectiveHz']);
+        if (Number.isFinite(hz)) hzVals.push(hz);
+      }
+      hzVals.sort((a, b) => a - b);
+      if (hzVals.length > 0) {
+        const sum = hzVals.reduce((s, v) => s + v, 0);
+        const mean = sum / hzVals.length;
+        const p50 = hzVals[Math.floor(hzVals.length / 2)];
+        const p10 = hzVals[Math.floor(hzVals.length * 0.1)];
+        // eslint-disable-next-line no-console
+        console.log(
+          `[phone-stall] effectiveHz: min=${hzVals[0].toFixed(1)} p10=${p10.toFixed(1)} p50=${p50.toFixed(1)} mean=${mean.toFixed(1)} max=${hzVals[hzVals.length - 1].toFixed(1)} (n=${hzVals.length})`,
+        );
+        if (mean < 45) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[phone-stall] ⚠ effectiveHz mean=${mean.toFixed(1)} suggests phone is throttled — raf_stutter results not comparable to fresh-phone runs`,
+          );
+        }
+      }
+    }
+
     // Tag census on the capture (only when autocapture is on — these
     // counts match user's bad captures: jfd81u had raf_stutter=6,
     // longtask=7, loaf=8, correction=52, damage_number_spawned=108).
