@@ -29,7 +29,11 @@ import {
   readNdjson,
 } from './helpers/captureFetcher';
 
-const DRIVE_MS = Number(process.env['DRIVE_MS'] ?? 90_000);
+// 30 s default — at 35 hostile drones the raf_stutter density is
+// ~9-10 events/sec, so 30 s produces ~280 stutters and ~100 corrections,
+// plenty of signal to compare runs. DRIVE_MS env overrides (e.g. 90 s
+// for closer wb1al4 parity, 300 s for cascade observation).
+const DRIVE_MS = Number(process.env['DRIVE_MS'] ?? 30_000);
 const FIRE_INTERVAL_MS = 500;
 const JOY_ROTATE_INTERVAL_MS = 2_000;
 const HEAP_SAMPLE_INTERVAL_MS = 5_000;
@@ -168,7 +172,12 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
 
   const testId = `galaxy-stall-${Date.now()}`;
   const autocapture = process.env['STALL_AUTOCAPTURE'] === '0' ? '' : '&autocapture=1';
-  const diag = process.env['STALL_DIAG'] === '0' ? '&diag=0' : '';
+  // Default `?diag=0` — Playwright sets navigator.webdriver=true which
+  // would otherwise auto-enable full diag and capture the
+  // HIGH_VOLUME_TAGS (rafTick, input_intent, inputSent, ...) that the
+  // user's real phone smoke (no webdriver) drops by default. Override
+  // with STALL_DIAG=1 to opt back into full diag.
+  const diag = process.env['STALL_DIAG'] === '1' ? '' : '&diag=0';
   const startHostile = process.env['STALL_STARTHOSTILE'] === '0' ? '' : '&startHostile=1';
   // Near-invulnerable hull + shield so the test ship survives the full
   // drive and produces realistic per-player snapshot workload. Works in
