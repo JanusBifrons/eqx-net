@@ -35,13 +35,14 @@ If a screenshot of the game running on the phone appears at `tests/mobile-perf/s
 ### On the phone
 
 1. **Enable USB debugging.** Settings → About phone → tap "Build number" 7 times to unlock Developer Options → Developer Options → toggle "USB debugging" ON. When the cable is plugged in, accept the host's RSA fingerprint prompt ("Always allow from this computer").
-2. **Enable the required Chrome flag.** Open Chrome on the phone, navigate to:
+2. **Phone must be UNLOCKED (past the keyguard) for each test run.** Empirically verified 2026-06-01: with the phone Dozing (screen off) OR Awake-but-on-lockscreen (`mDreamingLockscreen=true`), `device.launchBrowser()` succeeds and Chrome opens — but the subsequent `page.goto(...)` fails with `net::ERR_CONNECTION_ABORTED`. Android Doze suppresses background-app networking, and the keyguard restricts foreground networking similarly. The PIN/pattern can't be bypassed via ADB, so YOU must unlock the phone before `pnpm e2e:phone`. The spec runs a preflight (`adbPreflight.ts`) and fails loudly with "unlock your phone" rather than the cryptic ERR_CONNECTION_ABORTED if the keyguard is up. If your phone re-locks between runs (default screen-timeout), bump screen-timeout in Settings → Display or briefly tap the screen between runs.
+3. **Enable the required Chrome flag.** Open Chrome on the phone, navigate to:
    ```
    chrome://flags/#enable-command-line-on-non-rooted-devices
    ```
    Set "Enable command line on non-rooted devices" to **Enabled**, then tap **Relaunch** at the bottom. Without this, `playwright._android.launchBrowser()` throws — the helper translates the failure to an actionable error, but you still need the flag to be ON to run the test.
-3. **Phone is on the same Wi-Fi as the host PC.** USB carries the ADB control channel; the page fetch itself goes over Wi-Fi to `http://<host-LAN-IP>:5173`.
-4. **Chrome (not Chromium / Brave / Firefox)** must be the system Chrome. `_android` only drives the official Chrome.
+4. **Phone is on the same Wi-Fi as the host PC.** USB carries the ADB control channel; the page fetch itself goes over Wi-Fi to `http://<host-LAN-IP>:5173`.
+5. **Chrome (not Chromium / Brave / Firefox)** must be the system Chrome. `_android` only drives the official Chrome.
 
 ### On the host (Windows)
 
@@ -74,8 +75,14 @@ Fix: the PoC spec passes `extraOrigins: ['http://<LAN-IP>:5173']` to `connectAnd
 **`playwright._android.devices() returned no devices`**
 → Run `adb devices` from PowerShell. If empty: vendor USB driver missing, cable broken, or USB debugging off. If `unauthorized`: accept the RSA prompt on the phone.
 
+**`The phone is on the lockscreen (mDreamingLockscreen=true)` (preflight error)**
+→ Unlock the phone (PIN/pattern/biometric). The preflight detected the keyguard via `adb shell dumpsys window` and stopped before launching Chrome (because launching behind the keyguard reliably fails with the unactionable `net::ERR_CONNECTION_ABORTED` at `page.goto`).
+
+**`The phone is not awake (wakefulness=Dozing, ...)` (preflight error)**
+→ Press the power button to wake the phone, then unlock.
+
 **`Chrome on the phone failed to launch via _android` (with the chrome://flags message)**
-→ The Chrome flag is off OR the phone is locked. Unlock the phone first; if the flag was already enabled, force-stop Chrome (`adb shell am force-stop com.android.chrome`) and re-run.
+→ The Chrome flag is off (or somehow flipped back to default). Re-enable the flag, relaunch Chrome on the phone, force-stop it (`adb shell am force-stop com.android.chrome`), and re-run.
 
 **`connected via _android (not desktop fallback)` assertion fails**
 → The harness silently fell back to desktop. Cause: the device probe threw and `mode` was `auto` instead of `force-device`. Check the env: `MOBILE_PERF_MODE=force-device pnpm e2e:phone`.

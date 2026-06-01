@@ -37,8 +37,17 @@
 import { test, expect } from '@playwright/test';
 import { connectAndroidOrFallback } from './helpers/androidConnect';
 import { pickLanIp, listLanCandidates } from './helpers/lanIp';
+import { assertPhoneAwakeAndUnlocked } from './helpers/adbPreflight';
 
 test('phone PoC — game boots on real Android device + DOM telemetry live', async () => {
+  // Preflight: ADB-detect Awake + not-on-lockscreen. The phone needs
+  // BOTH for Chrome's network to work past the keyguard / Doze gate
+  // — empirically verified on 2026-06-01 (locked or dozing → page.goto
+  // fails with net::ERR_CONNECTION_ABORTED, an unactionable error).
+  const phoneState = assertPhoneAwakeAndUnlocked();
+  // eslint-disable-next-line no-console
+  console.log(`[phone-poc] phone state: ${JSON.stringify(phoneState)}`);
+
   const lanIp = pickLanIp();
   const lanOrigin = `http://${lanIp}:5173`;
   // eslint-disable-next-line no-console
