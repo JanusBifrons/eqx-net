@@ -9,7 +9,10 @@
  *   const broadcasts = events.filter(e => e.tag === 'snapshot_broadcast');
  */
 
-const MAX_ENTRIES = 500;
+// Default 500; tests can opt into a larger ring via `EQX_DEV_EVENTS_MAX`
+// to retain longer windows for cross-correlation against client captures
+// (see tests/mobile-perf/phone-galaxy-stall-repro.spec.ts).
+const MAX_ENTRIES = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 export interface ServerLogEntry {
   ts: number;

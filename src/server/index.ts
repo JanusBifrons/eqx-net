@@ -24,7 +24,9 @@ const logger = pino({
 });
 
 const PORT = Number(process.env['PORT'] ?? 2567);
-const MAX_DEV_EVENTS = 500;
+// Default 500; bump via `EQX_DEV_EVENTS_MAX` to match the ring's actual size
+// when ServerEventLog is configured larger (e.g. diagnostic captures).
+const MAX_DEV_EVENTS = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 const app = express();
 
