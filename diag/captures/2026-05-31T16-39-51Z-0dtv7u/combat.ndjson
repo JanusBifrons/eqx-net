@@ -1,0 +1,10 @@
+{"source":"client","ts":73960.30000007153,"tag":"swarm_near_enter","data":{"entityId":13,"kind":1,"swarmPos":{"x":157.37,"y":579.43},"rendered":{"x":66.31,"y":552.66},"predWorld":{"x":66.31,"y":552.66},"lerpOffset":{"x":0,"y":0},"distRendered":94.92}}
+{"source":"client","ts":74005.60000002384,"tag":"swarm_near_exit","data":{"entityId":13}}
+{"source":"client","ts":74019.80000007153,"tag":"swarm_near_enter","data":{"entityId":13,"kind":1,"swarmPos":{"x":158.37,"y":581.1},"rendered":{"x":66.31,"y":552.66},"predWorld":{"x":66.31,"y":552.66},"lerpOffset":{"x":0,"y":0},"distRendered":96.36}}
+{"source":"client","ts":74584.5,"tag":"swarm_near_exit","data":{"entityId":13}}
+{"source":"client","ts":74620.30000007153,"tag":"swarm_near_enter","data":{"entityId":13,"kind":1,"swarmPos":{"x":86.2,"y":462.54},"rendered":{"x":66.31,"y":552.66},"predWorld":{"x":66.31,"y":552.66},"lerpOffset":{"x":0,"y":0},"distRendered":92.29}}
+{"source":"client","ts":74634,"tag":"swarm_near_exit","data":{"entityId":13}}
+{"source":"client","ts":74683.30000007153,"tag":"swarm_near_enter","data":{"entityId":16,"kind":1,"swarmPos":{"x":-29.84,"y":536.28},"rendered":{"x":66.31,"y":552.66},"predWorld":{"x":66.31,"y":552.66},"lerpOffset":{"x":0,"y":0},"distRendered":97.53}}
+{"source":"client","ts":75236.80000007153,"tag":"swarm_near_exit","data":{"entityId":16}}
+{"source":"client","ts":75357.80000007153,"tag":"swarm_near_enter","data":{"entityId":16,"kind":1,"swarmPos":{"x":14.13,"y":637.83},"rendered":{"x":66.31,"y":552.66},"predWorld":{"x":66.31,"y":552.66},"lerpOffset":{"x":0,"y":0},"distRendered":99.89}}
+{"source":"client","ts":75373.70000004768,"tag":"swarm_near_exit","data":{"entityId":16}}

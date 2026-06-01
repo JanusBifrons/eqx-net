@@ -1,0 +1,8 @@
+{
+  "sessionId": "2026-06-01T13-56-04Z-ckuyls",
+  "streaming": true,
+  "hasFinalized": true,
+  "lastAppliedSeq": 20,
+  "lastBatchAtMs": 1780322212381,
+  "startedAtMs": 1780322165928
+}

@@ -1,0 +1,8 @@
+{
+  "sessionId": "2026-06-01T13-20-40Z-warz48",
+  "streaming": true,
+  "hasFinalized": true,
+  "lastAppliedSeq": 30,
+  "lastBatchAtMs": 1780320248131,
+  "startedAtMs": 1780320042555
+}

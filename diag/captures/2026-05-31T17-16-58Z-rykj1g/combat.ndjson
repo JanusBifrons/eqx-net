@@ -1,0 +1,13 @@
+{"source":"client","ts":66997.30000007153,"tag":"swarm_near_enter","data":{"entityId":17,"kind":1,"swarmPos":{"x":-189.29,"y":12.29},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":89.48}}
+{"source":"client","ts":67004.10000002384,"tag":"swarm_near_exit","data":{"entityId":17}}
+{"source":"client","ts":67164.5,"tag":"swarm_near_enter","data":{"entityId":17,"kind":1,"swarmPos":{"x":-189.8,"y":8.01},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":86.87}}
+{"source":"client","ts":67166.39999997616,"tag":"swarm_near_exit","data":{"entityId":17}}
+{"source":"client","ts":67182.89999997616,"tag":"swarm_near_enter","data":{"entityId":17,"kind":1,"swarmPos":{"x":-190.32,"y":3.75},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":84.42}}
+{"source":"client","ts":67240.20000004768,"tag":"swarm_near_exit","data":{"entityId":17}}
+{"source":"client","ts":67272.60000002384,"tag":"swarm_near_enter","data":{"entityId":17,"kind":1,"swarmPos":{"x":-188.95,"y":14.92},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":91.13}}
+{"source":"client","ts":68435.89999997616,"tag":"swarm_near_exit","data":{"entityId":17}}
+{"source":"client","ts":85084.10000002384,"tag":"swarm_near_enter","data":{"entityId":32,"kind":1,"swarmPos":{"x":-224.66,"y":-44.3},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":98.66}}
+{"source":"client","ts":85440.20000004768,"tag":"swarm_near_exit","data":{"entityId":32}}
+{"source":"client","ts":85473.10000002384,"tag":"swarm_near_enter","data":{"entityId":32,"kind":1,"swarmPos":{"x":-222.8,"y":-44.64},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":96.78}}
+{"source":"client","ts":85539.39999997616,"tag":"swarm_near_exit","data":{"entityId":32}}
+{"source":"client","ts":85589.5,"tag":"swarm_near_enter","data":{"entityId":32,"kind":1,"swarmPos":{"x":-221.47,"y":-44.89},"rendered":{"x":-126.25,"y":-51.22},"predWorld":{"x":-126.25,"y":-51.22},"lerpOffset":{"x":0,"y":0},"distRendered":95.44}}
