@@ -41,8 +41,27 @@ import type { IRenderer } from '@core/contracts/IRenderer';
 // no observer. Cached at module load: a single boolean read in the hot
 // loop. The P1 hostile profile measured the per-5-frame slice at the
 // rank-1 allocator's top (`gameRafLoop.loop` 55 KB / 6.8 %).
-const E2E_DATASET_ENABLED: boolean =
-  typeof navigator !== 'undefined' && (navigator as { webdriver?: boolean }).webdriver === true;
+//
+// 2026-06-01: `?noE2EDataset=1` URL escape lets specs that don't read
+// the dataset (e.g. `phone-galaxy-stall-repro.spec.ts` reads via
+// `window.__eqxLogs`) opt out of the per-5-frame JSON.stringify x 6
+// dump under heavy combat. Measured saving: ~40 % of in-game loaf
+// duration in the 35-hostile-drone repro.
+function resolveE2EDatasetEnabled(): boolean {
+  if (typeof navigator === 'undefined' || (navigator as { webdriver?: boolean }).webdriver !== true) {
+    return false;
+  }
+  try {
+    const q = typeof window !== 'undefined' && window.location?.search
+      ? new URLSearchParams(window.location.search).get('noE2EDataset')
+      : null;
+    if (q === '1') return false;
+  } catch {
+    // window/URLSearchParams unavailable — fall through, keep enabled.
+  }
+  return true;
+}
+const E2E_DATASET_ENABLED: boolean = resolveE2EDatasetEnabled();
 
 export interface GameRafLoopDeps {
   /** The DOM container the renderer was attached to (data-* writes target it). */

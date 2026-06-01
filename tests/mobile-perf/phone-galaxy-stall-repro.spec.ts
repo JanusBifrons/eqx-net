@@ -189,9 +189,14 @@ test(`phone galaxy-sol-prime — ${MODE} stalls + heap under realistic combat`, 
   // radius 800. No Living World warp-in wait; doesn't pollute live
   // galaxy rooms. Defined in src/server/index.ts 2026-06-01.
   const room = process.env['STALL_ROOM'] ?? 'phone-stall-test';
+  // Disable the webdriver-only E2E dataset write path — this spec reads
+  // signals via window.__eqxLogs, not via DOM `data-*` attributes, so
+  // the per-5-frame JSON.stringify x 6 dump is pure overhead that
+  // masks real per-frame cost.
+  const noE2EDataset = process.env['STALL_E2E_DATASET'] === '1' ? '' : '&noE2EDataset=1';
   const url =
     `${lanOrigin}/?room=${room}&worker=0${autocapture}${diag}` +
-    `${startHostile}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
+    `${startHostile}${noE2EDataset}&initialHull=${initialHull}&initialShield=${initialShield}&testId=${testId}`;
   // eslint-disable-next-line no-console
   console.log(`[phone-stall] DRIVE_MS=${DRIVE_MS} startHostile=${startHostile !== ''} autocapture=${autocapture !== ''} diag=${diag === '' ? 'auto' : '0'}`);
   // eslint-disable-next-line no-console
