@@ -57,6 +57,8 @@ import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthS
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
+import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
+import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
@@ -823,6 +825,14 @@ export class ColyseusGameClient {
   };
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
+
+  /** Predicted energy pool for the local ship (weapons/energy/AI overhaul
+   *  §3.2). Driven entirely by the player's OWN fire/boost input, so it's
+   *  predictable like position: regen + boost drain in `tickPhysics`, fire
+   *  drain in `sendFire`, hard-reconciled from `snap.states[localId].energy`
+   *  each snapshot. NOT in Zustand — it changes per frame; the top-center
+   *  EnergyBar reads it via a RAF loop + direct-DOM write. */
+  private predEnergy = 0;
 
   /** Inject the audio sink before `connect()`. Wired by `App.tsx`'s bootstrap. */
   setAudio(audio: IAudio): void {
@@ -2389,6 +2399,17 @@ export class ColyseusGameClient {
 
       this.lastSnapshotPos = { x: serverState.x, y: serverState.y };
 
+      // Energy reconcile (weapons/energy/AI overhaul §3.2): hard-set the
+      // predicted pool from the authoritative own-ship value. A 1-frame snap
+      // on a 0-100 bar is invisible. Also (re)seed the Zustand `energyMax`
+      // denominator from the local kind — cheap + idempotent.
+      if (typeof serverState.energy === 'number') {
+        this.predEnergy = serverState.energy;
+        const localKind = getShipKind(this.mirror.ships.get(localId)?.kind ?? null);
+        const max = localKind.energyMax ?? 100;
+        if (useUIStore.getState().energyMax !== max) useUIStore.getState().setEnergyMax(max);
+      }
+
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts.
       applyDroneMountAngles(snap, this.mirror);
@@ -3822,35 +3843,66 @@ export class ColyseusGameClient {
     // always false on touch devices).
     const fireHeldHoisted = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false);
     if (fireHeldHoisted && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
-      const activeWeapon = useUIStore.getState().activeWeapon;
-      const activeWeaponDef = getWeapon(activeWeapon);
-      if (activeWeaponDef.mode === 'hitscan') {
+      // Weapons/energy/AI overhaul (§5.2): the firing weapon is the active
+      // SLOT's bound weapon, not a per-weapon picker. Slot cooldown = max
+      // over the slot's mounts (mirrors the server gate); the energy gate
+      // mirrors the server's so a depleted pool stops local ghost spam.
+      const localKind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null);
+      const activeSlotId = useUIStore.getState().activeSlotId;
+      const slotMounts = resolveSlotMounts(localKind, activeSlotId);
+      const slotWeaponDef = getWeapon(slotMounts[0]?.weaponId ?? 'hitscan');
+      let slotCooldownTicks = 0;
+      for (let i = 0; i < slotMounts.length; i++) {
+        const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
+        if (c > slotCooldownTicks) slotCooldownTicks = c;
+      }
+      if (slotCooldownTicks === 0) slotCooldownTicks = slotWeaponDef.cooldownTicks;
+      if (slotWeaponDef.mode === 'hitscan') {
         this.updateLiveBeam();
       } else {
         // Projectile / missile has no continuous beam — clear so a
-        // mid-hold weapon switch can't leave a stale hitscan beam.
+        // mid-hold slot switch can't leave a stale hitscan beam.
         this.mirror.liveBeams?.clear();
         this._lastHitscanFireMs = null;
       }
-      const cooldownMs = (activeWeaponDef.cooldownTicks * 1000) / 60;
+      const cooldownMs = (slotCooldownTicks * 1000) / 60;
       const nowMs = this.clock.now();
       // Use the Zustand-mirrored `lastFireMs` as the wall-clock anchor
-      // — it's set by `sendFire` and CLEARED by `setActiveWeapon` /
-      // `cycleWeapon`, so a weapon swap implicitly resets the gate
-      // (hitscan fires immediately after switching from heat-seeker —
-      // no carry-over cooldown across weapons). First-fire short-circuits
-      // when the anchor is null.
+      // — set by `sendFire`, cleared by `setActiveSlotId`, so a slot swap
+      // implicitly resets the gate. First-fire short-circuits when null.
       const lastFireMs = useUIStore.getState().lastFireMs;
       const wallclockReady = lastFireMs === null || (nowMs - lastFireMs) >= cooldownMs;
-      if (wallclockReady) {
+      // Energy gate (predicted) — don't fire a ghost the server would reject.
+      const energyReady = canAfford(this.predEnergy, resolveSlotEnergyCost(localKind, activeSlotId));
+      if (wallclockReady && energyReady) {
         // Bump sendTick if inputTick hasn't yet caught up to the
         // server-side cooldown floor. This is the "give the player
         // their fire even if inputTick stalled" branch.
-        const tickFloor = this.lastFiredAtTick + activeWeaponDef.cooldownTicks;
+        const tickFloor = this.lastFiredAtTick + slotCooldownTicks;
         const sendTick = Math.max(this.inputTick, tickFloor);
         this.sendFire(sendTick);
         this.lastFiredAtTick = sendTick;
-        if (activeWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
+        if (slotWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
+      } else if (!energyReady && slotWeaponDef.mode === 'hitscan') {
+        // Out of energy mid-hold: drop the continuous beam too.
+        this.mirror.liveBeams?.clear();
+        this._lastHitscanFireMs = null;
+      }
+    }
+
+    // Predict the energy pool for the frame (weapons/energy/AI overhaul
+    // §3.2): regen every stepped tick + drain a boost tick while boosting,
+    // mirroring the server's tickEnergy. Fire drain happens in sendFire. The
+    // snapshot reconcile hard-sets the value, so this only smooths the bar
+    // between snapshots. Scalar core helpers ⇒ no allocation.
+    if (this.mirror.localPlayerId && stepsThisFrame > 0) {
+      const ek = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null);
+      const emax = ek.energyMax ?? 100;
+      const eregen = ek.energyRegenRate ?? 0.25;
+      const boosting = this.mirror.boostingShips?.has(this.mirror.localPlayerId) ?? false;
+      for (let s = 0; s < stepsThisFrame; s++) {
+        this.predEnergy = regenEnergyStep(this.predEnergy, emax, eregen);
+        if (boosting) this.predEnergy = spendEnergy(this.predEnergy, BOOST_TICK_COST);
       }
     }
 
@@ -4187,19 +4239,11 @@ export class ColyseusGameClient {
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
     if (!localId) return [];
-    const shipRender = this.mirror.ships.get(localId);
-    const kindId = shipRender?.kind ?? null;
-    const kind = getShipKind(kindId);
-    const mounts = kind.mounts;
-    const slots = kind.slots;
-    if (!mounts || !slots || slots.length === 0) return [];
-    const slot = slots[0]!;
-    const out: WeaponMount[] = [];
-    for (const mid of slot.mountIds) {
-      const m = mounts.find((mm) => mm.id === mid);
-      if (m) out.push(m);
-    }
-    return out;
+    const kindId = this.mirror.ships.get(localId)?.kind ?? null;
+    // Active-slot mounts (weapons/energy/AI overhaul §5.2). The pilot selects
+    // the slot; the server fires each mount's bound weapon. Same shared
+    // resolver the server uses so client ghost geometry matches.
+    return resolveSlotMounts(getShipKind(kindId), useUIStore.getState().activeSlotId);
   }
 
   /**
@@ -4218,8 +4262,19 @@ export class ColyseusGameClient {
    * `false` if it bailed early. The test asserts the return value AND
    * polls `/dev/events` for `missile_spawned` to confirm the round-trip.
    */
+  /** Current predicted energy pool for the local ship (weapons/energy/AI
+   *  overhaul §3.2). Read per-frame by the top-center `<EnergyBar />` RAF
+   *  loop + direct-DOM write — never via Zustand (it changes every frame). */
+  public getPredictedEnergy(): number {
+    return this.predEnergy;
+  }
+
   public triggerFireForTest(weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
-    useUIStore.getState().setActiveWeapon(weaponId);
+    // Post weapons/energy/AI overhaul the weapon is bound to the ship's
+    // loadout (the server ignores any claimed weapon), so `weaponId` no
+    // longer selects — the spec must spawn the matching ship-kind. Kept in
+    // the signature for back-compat with existing E2E call sites.
+    void weaponId;
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld || !this.room) return false;
     if (!this.predWorld.getShipState(localId)) return false;
@@ -4233,7 +4288,7 @@ export class ColyseusGameClient {
     if (!localId || !this.predWorld || !this.room) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const activeWeapon = useUIStore.getState().activeWeapon;
+    const activeSlotId = useUIStore.getState().activeSlotId;
     const shotId = nextShotId();
 
     // Multi-mount/turret refactor (Phase 3 fix-up): spawn one ghost per mount
@@ -4245,6 +4300,10 @@ export class ColyseusGameClient {
     // `clientShotId` (shotGroup) so the single `hit_ack` fades the whole
     // salvo together.
     const mounts = this.localShipMounts();
+    // Each barrel fires its catalogue-bound weapon (slots are homogeneous
+    // today, so the first mount's weapon sets the salvo's ghost sprite + the
+    // hitscan/projectile branch). Replaces the removed client weapon picker.
+    const slotWeapon = mounts[0]?.weaponId ?? 'hitscan';
     const cosA = Math.cos(state.angle);
     const sinA = Math.sin(state.angle);
     const localShip = this.mirror.ships.get(localId);
@@ -4263,7 +4322,7 @@ export class ColyseusGameClient {
     // detached from the ship under lag. Projectiles still ghost — the
     // bolt actually travels. `mountGeom` is collected regardless (the
     // predicted-hit resolver still needs every mount's ray).
-    const spawnGhost = localFireSpawnsGhost(getWeapon(activeWeapon).mode);
+    const spawnGhost = localFireSpawnsGhost(getWeapon(slotWeapon).mode);
     if (mounts.length === 0) {
       // Defensive fallback: no mounts → (projectile only) spawn the
       // legacy single ghost at ship centre. Should not happen for any
@@ -4273,7 +4332,7 @@ export class ColyseusGameClient {
       const fromX = state.x + fwdX * 20;
       const fromY = state.y + fwdY * 20;
       if (spawnGhost) {
-        this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, activeWeapon, state.vx, state.vy);
+        this.ghostManager.spawn(shotId, localId, fromX, fromY, fwdX, fwdY, slotWeapon, state.vx, state.vy);
       }
       mountGeom.push({ fromX, fromY, fwdX, fwdY });
     } else {
@@ -4298,7 +4357,7 @@ export class ColyseusGameClient {
             fromY,
             fwdX,
             fwdY,
-            activeWeapon,
+            mount.weaponId,
             state.vx,
             state.vy,
             mount.id,
@@ -4312,9 +4371,19 @@ export class ColyseusGameClient {
       type: 'fire',
       tick,
       clientShotId: shotId,
-      weapon: activeWeapon,
+      weapon: slotWeapon,
+      slotId: activeSlotId,
       dirAngle: state.angle,
     });
+
+    // Predict the slot's energy drain (weapons/energy/AI overhaul §3.2):
+    // drain ONCE per trigger (not per mount), matching the server. The
+    // snapshot reconcile hard-sets predEnergy each frame, so a small
+    // mispredict is invisible.
+    this.predEnergy = spendEnergy(
+      this.predEnergy,
+      resolveSlotEnergyCost(getShipKind(this.mirror.ships.get(localId)?.kind ?? null), activeSlotId),
+    );
 
     // Stamp the wall-clock fire time into Zustand so the fire-button
     // cooldown ring (`<FireCooldownRing />`) can compute progress.
@@ -4331,7 +4400,7 @@ export class ColyseusGameClient {
     // catalogue def (no weapon-id branch). Projectile uses the same ray as
     // a straight-flight proxy for the predicted target (decision #2: the
     // bolt itself is untouched and reconciles via the eventual DamageEvent).
-    const weaponDef = getWeapon(activeWeapon);
+    const weaponDef = getWeapon(slotWeapon);
     const predMaxDist =
       weaponDef.mode === 'hitscan'
         ? HITSCAN_RANGE
@@ -4442,7 +4511,7 @@ export class ColyseusGameClient {
     logEvent('fire', {
       tick,
       shotId,
-      weapon: activeWeapon,
+      weapon: slotWeapon,
       mountCount: mounts.length,
       predState: {
         x: parseFloat(state.x.toFixed(3)),

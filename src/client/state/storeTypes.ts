@@ -14,7 +14,6 @@
 
 import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -162,14 +161,24 @@ export interface UIStore {
    *  countdown alongside the progress fill. Cleared back to null on
    *  DOCKED / ARRIVED. */
   transitSpoolMs: number | null;
-  /** Currently selected weapon. UI-only discrete selection — NOT spatial. */
-  activeWeapon: WeaponId;
+  /** Currently selected weapon SLOT id (weapons/energy/AI overhaul §5.2).
+   *  UI-only discrete selection — NOT spatial. Replaces the old per-weapon
+   *  `activeWeapon`: each ship now fires its catalogue-bound loadout, and the
+   *  pilot picks which *slot* is hot (today every ship has exactly one slot,
+   *  so the selector shows a single toggle; forward-compatible with multi-slot
+   *  ships). Threaded to the server as `FireMessage.slotId`. */
+  activeSlotId: string;
+  /** The local ship's full energy pool — the denominator for the top-center
+   *  EnergyBar (the fill comes per-frame from
+   *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
+   *  ship-kind catalogue; constant per kind, so it lives safely in Zustand
+   *  (no per-frame churn). */
+  energyMax: number;
   /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
-   *  or weapon switched since last fire). Stamped by `ColyseusClient.sendFire`.
-   *  Per-frame readers (the fire-button cooldown ring) use this with
-   *  `getWeapon(activeWeapon).cooldownTicks * 1000 / 60` to render a
-   *  circular progress indicator. Low-cadence (≤ 6 Hz for hitscan, ≤ 0.3 Hz
-   *  for heat-seeker) — safe in Zustand without trampling React. */
+   *  or slot switched since last fire). Stamped by `ColyseusClient.sendFire`.
+   *  Per-frame readers (the fire-button cooldown ring) use this with the
+   *  active slot's cooldown to render a circular progress indicator.
+   *  Low-cadence — safe in Zustand without trampling React. */
   lastFireMs: number | null;
   /** Right-edge advanced drawer open state. Discrete UI flag — purity-clean. */
   isDrawerOpen: boolean;
@@ -269,9 +278,9 @@ export interface UIStore {
   setTransitProgress: (p: number) => void;
   setTransitTargetSectorKey: (key: string | null) => void;
   setTransitSpoolMs: (ms: number | null) => void;
-  setActiveWeapon: (id: WeaponId) => void;
+  setActiveSlotId: (id: string) => void;
+  setEnergyMax: (max: number) => void;
   setLastFireMs: (ms: number | null) => void;
-  cycleWeapon: () => void;
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;
   setPhase: (p: Phase) => void;

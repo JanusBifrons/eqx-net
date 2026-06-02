@@ -39,7 +39,8 @@ import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
-import { WeaponSelector } from './components/WeaponSelector';
+import { SlotSelector } from './components/SlotSelector';
+import { EnergyBar } from './components/EnergyBar';
 import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
@@ -311,14 +312,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
       (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
-      // Test-only hook for E2E specs: expose enough of the UI store to
-      // set `activeWeapon` without going through the KeyQ-cycle. The
-      // Q-cycle path has surfaced Playwright keyboard-focus quirks
-      // that silently drop subsequent Space presses; setting the
-      // active weapon directly sidesteps that. Production tree-shakes.
-      (window as unknown as { __eqxSetActiveWeapon?: (id: string) => void })
-        .__eqxSetActiveWeapon = (id: string) => {
-          useUIStore.getState().setActiveWeapon(id as Parameters<ReturnType<typeof useUIStore.getState>['setActiveWeapon']>[0]);
+      // Test-only hook for E2E specs: set the active weapon SLOT directly
+      // (weapons/energy/AI overhaul §5.2 — the per-weapon picker is gone;
+      // each ship fires its catalogue-bound loadout). Production tree-shakes.
+      (window as unknown as { __eqxSetActiveSlot?: (id: string) => void })
+        .__eqxSetActiveSlot = (id: string) => {
+          useUIStore.getState().setActiveSlotId(id);
         };
       // Test-only hook for the respawn-cascade E2E spec
       // (`respawn-cascade-input-routing.spec.ts`). Drives a
@@ -516,19 +515,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
       <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
+      <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
       <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
       <DeathOverlay onRespawn={handleRespawn} />
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
-      {/* WeaponSelector and the MAP toggle live in different anchors on
-       *  touch vs. desktop. On touch, MobileControls renders WeaponSelector
+      {/* SlotSelector and the MAP toggle live in different anchors on
+       *  touch vs. desktop. On touch, MobileControls renders SlotSelector
        *  inline above FIRE in the bottom-right thumb cluster, and the MAP
        *  toggle goes above the joystick in bottom-left. On desktop both
        *  stay at bottom-center where the player is more likely looking. */}
       {!isTouchRef.current && (
-        <Slot anchor="bottom-center" order={5}><WeaponSelector /></Slot>
+        <Slot anchor="bottom-center" order={5}><SlotSelector /></Slot>
       )}
       {isTouchRef.current ? (
         <Slot anchor="bottom-left" order={10}><GalaxyMapToggleButton /></Slot>
