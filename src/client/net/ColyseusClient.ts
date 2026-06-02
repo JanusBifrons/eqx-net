@@ -4187,9 +4187,19 @@ export class ColyseusGameClient {
   private updateLiveBeam(): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
-    const state = this.predWorld.getShipState(localId);
-    if (!state) return;
+    // Cast the visual beam from the SAME rendered (mirror) pose the
+    // renderer draws it from (PixiRenderer `applyMountOffset(ship.x/y/angle)`
+    // + `mirror.liveBeams[mount].dist`), NOT the raw predWorld pose. The
+    // predicted pose lags the mirror by the reconciler lerp offset (up to
+    // ~45 u during a correction), so casting `dist` from predWorld made it
+    // belong to a different ray than the one drawn — the far endpoint
+    // popped frame-to-frame (laser detach/jitter; on-device capture
+    // 2026-06-02T15-04-54Z-e628gi). Locked by
+    // ColyseusClient.liveBeamPose.test.ts.
     const ship = this.mirror.ships.get(localId);
+    // The predWorld body is the collision world the ray is cast INTO; it
+    // must still exist, but its POSE is not used for the beam geometry.
+    if (!ship || !this.predWorld.getShipState(localId)) return;
 
     const liveBeams = (this.mirror.liveBeams ??= new Map());
     const mounts = this.localShipMounts();
@@ -4214,15 +4224,15 @@ export class ColyseusGameClient {
     for (const m of mounts) mountIds.add(m.id);
     for (const id of liveBeams.keys()) if (!mountIds.has(id)) liveBeams.delete(id);
 
-    const cosA = Math.cos(state.angle);
-    const sinA = Math.sin(state.angle);
-    const mountAngles = ship?.mountAngles;
+    const cosA = Math.cos(ship.angle);
+    const sinA = Math.sin(ship.angle);
+    const mountAngles = ship.mountAngles;
     for (let i = 0; i < mounts.length; i++) {
       const mount = mounts[i]!;
-      const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
-      const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
+      const mountWorldX = ship.x + (mount.localX * cosA - mount.localY * sinA);
+      const mountWorldY = ship.y + (mount.localX * sinA + mount.localY * cosA);
       const currentMountAngle = mountAngles?.[i] ?? 0;
-      const mountAngle = state.angle + mount.baseAngle + currentMountAngle;
+      const mountAngle = ship.angle + mount.baseAngle + currentMountAngle;
       const fwdX = -Math.sin(mountAngle);
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
