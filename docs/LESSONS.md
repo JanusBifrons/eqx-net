@@ -14,6 +14,42 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-02 — weapons-energy-ai-overhaul — per-ship loadouts, energy pool, weapon-aware drones
+Commits: `cac0dbb` `53b924a` `56fd3ce` `e4f8a3c` `3e6ae1b` `3341f93` `3f0500f`
+
+Shipped per-ship weapon loadouts (bind weapon→mount; server ignores the
+client's claimed `weapon`), slot-gated firing, a shared-brain energy pool,
+weapon-aware drone engagement ranges, a top-center energy bar, and an MUI slot
+selector replacing the weapon picker. Non-obvious findings:
+
+- **"Drains once per slot, not per mount" needs a MAX, not a SUM.**
+  `resolveSlotEnergyCost` takes the max `energyCost` over the slot's mounts
+  (or the per-slot override) so the interceptor's twin beams / frigate's twin
+  racks cost ONE trigger, not 2×. Same shape as the slot COOLDOWN gate.
+- **Energy is a SHARED brain, ShieldHull is server-only.** Both live in
+  `src/core/combat`, but energy is driven by the player's own input ⇒
+  predictable like position (client `predEnergy` calls the same `Energy.ts`
+  helpers + hard-reconciles from the own-ship snapshot slice). Shield's
+  0-cross flaps the collider if predicted, so it stays authority-only.
+- **`resolveSlotMounts` allocates; the energy-cost path must not.**
+  `resolveSlotEnergyCost` runs on the server fire path AND the client
+  per-frame fire gate, so it inlines `mount.find` instead of building an
+  array (Invariant #14).
+- **Changing `HITSCAN_RANGE`/`damage` ripples into the drone unit test across
+  steps.** `DRONE_FIRE_RANGE` derived from `HITSCAN_RANGE`; Step 1 (range
+  500→250) and Step 6 (per-weapon `fireRange`, bolt ≈560) both moved the
+  hardcoded distances. Expressing them relative to a `getFireRange()`
+  accessor (added in Step 6) is the durable fix.
+- **Sandbox caveat:** the physics-worker integration harness crashes
+  ("physics worker exited unexpectedly") in this CI sandbox — verified
+  identical on the pre-change tree, affects unrelated specs
+  (`ramming`/`shieldHull`) — and the production `vite build` is pre-broken by
+  a `worker.format "iife"` Rollup error in `WorkerRendererClient.ts`. The
+  deterministic inner loop (typecheck + lint + 1738 unit + 8 s boot) plus the
+  passing `weaponBoundToMount` integration test were the green signal.
+
+---
+
 ## 2026-05-30 — swift-otter Phase 4 iteration 3 — DC + WS coalescer + the wire-time intervalMs rule
 Commits: `7f9a9cb` `f38ccc4` `34c86a4` `a6bf982` `88d3792` `2f9b647` `77e20a7` `71ab8c4` `3b2ed1f` and reverts in between.
 

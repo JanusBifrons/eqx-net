@@ -1,9 +1,20 @@
 # Per-Ship Weapon Loadouts, Slot-Based Firing, Energy System & Weapon-Aware AI
 
 > Plan authored 2026-06-01 (`id-like-you-now-mutable-noodle`). Status:
-> approved-for-implementation design. This is the executable roadmap for the
-> weapons/energy/AI overhaul; update the relevant CLAUDE.md files + this doc
-> as steps land (Phase-Gate Ritual).
+> **IMPLEMENTED 2026-06-02** (branch `claude/energy-weapons-ai-plan-P43r3`).
+> All 7 steps landed green on the deterministic inner loop (typecheck + lint
+> + unit + 8 s server boot). Caveat: the physics-worker-backed integration
+> harness and the production `vite build` are pre-existing-broken in the CI
+> sandbox the work was done in (verified identical on the pre-change tree),
+> so the worker integration specs (`slotFiringAndEnergy`, the reworked
+> `hitAckContract`) and the E2E specs (`energy-bar`, `weapon-switching`) ship
+> as CI artifacts validated by inner-loop + the passing `weaponBoundToMount`
+> integration test. On-device smoke (§10) is the remaining manual gate.
+>
+> Step ledger: §8.1 catalogue+version ✓ · §8.2 pure Energy core ✓ · §8.3
+> weapon-bound fire path + slot cooldown ✓ · §8.4 server energy authority ✓ ·
+> §8.5 client prediction + bar + slot selector ✓ · §8.6 AI per-weapon
+> steering ✓ · §8.7 allocation guard + balance artifacts ✓.
 
 ## Context
 
