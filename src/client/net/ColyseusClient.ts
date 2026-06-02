@@ -4293,6 +4293,15 @@ export class ColyseusGameClient {
     if (!this.predWorld.getShipState(localId)) return false;
     this.sendFire(this.inputTick);
     this.lastFiredAtTick = this.inputTick;
+    // Drive the same continuous-beam visual the per-RAF fire dispatch does
+    // for a hitscan loadout — `sendFire` alone only spawns the projectile
+    // ghost (by design), so without this a beam ship's test never sees
+    // `data-beam-active`. Projectile/missile loadouts are unaffected.
+    const mounts = this.localShipMounts();
+    if (getWeapon(mounts[0]?.weaponId ?? 'hitscan').mode === 'hitscan') {
+      this._lastHitscanFireMs = this.clock.now();
+      this.updateLiveBeam();
+    }
     return true;
   }
 

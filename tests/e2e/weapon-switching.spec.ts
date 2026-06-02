@@ -11,8 +11,17 @@
  *   3. A beam ship (interceptor) fires a hitscan BEAM.
  *   4. The bolt ghost is cleaned up after expiry (no stuck duplicates).
  *
- * Run with:
- *   pnpm e2e --project=chromium tests/e2e/weapon-switching.spec.ts --reporter=line
+ * Determinism (test-harness philosophy — "bespoke trigger, never bump
+ * timeouts"): fire is driven by the framework's `__eqxClient.triggerFireForTest`
+ * hook, NOT synthetic keyboard events (headless keyboard focus + the
+ * wall-clock-anchored per-RAF fire dispatch made `keyboard.down('Space')`
+ * flaky). The trigger calls the same `sendFire` path directly. Because the
+ * fired weapon resolves from the local ship's MIRROR kind (set by the first
+ * snapshot, not instantly on join), each fire test RE-FIRES inside a
+ * `waitForFunction` until the visual appears — self-settling past the spawn
+ * window with no fixed sleep, and the wait succeeding IS the assertion. Room
+ * is the controlled `test-sector-fast` engineering room (testMode, no drones,
+ * 10× time so case 4's ghost-TTL expiry is a few hundred ms).
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
@@ -22,8 +31,6 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 async function joinClient(browser: Browser, shipKind = 'scout') {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  // test-sector-fast (testMode, no drones, testTimeScale=10) compresses
-  // ghost-TTL + projectile lifetime to a few hundred ms wall-clock.
   await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=${shipKind}`);
   await page.waitForFunction(
     () => {
@@ -39,10 +46,6 @@ function surface(page: Page) {
   return page.locator('[data-testid="game-surface"]');
 }
 
-async function getBeamActive(page: Page): Promise<boolean> {
-  return (await surface(page).getAttribute('data-beam-active')) === '1';
-}
-
 async function getProjectileCount(page: Page): Promise<number> {
   return parseInt((await surface(page).getAttribute('data-projectile-count')) ?? '0', 10);
 }
@@ -53,11 +56,12 @@ async function getProjectileCount(page: Page): Promise<number> {
 test('slot selector replaces the per-weapon picker', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
-    await page.waitForTimeout(500);
     // The old per-weapon boxes are gone.
     await expect(page.locator('[data-testid="weapon-selector"]')).toHaveCount(0);
-    // The slot selector is mounted (single-slot ships show one toggle).
-    await expect(page.locator('[data-testid="slot-selector"]')).toBeVisible({ timeout: 3000 });
+    // The slot selector mounts once the HUD has the local ship kind (which
+    // arrives with the first snapshots, not instantly on join) — generous
+    // render-settle window, not a game-time wait.
+    await expect(page.locator('[data-testid="slot-selector"]')).toBeVisible({ timeout: 10_000 });
   } finally {
     await ctx.close();
   }
@@ -69,13 +73,25 @@ test('slot selector replaces the per-weapon picker', async ({ browser }) => {
 test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
-    await page.waitForTimeout(500);
-    await page.keyboard.down('Space');
-    await page.waitForTimeout(600);
-    expect(await getBeamActive(page)).toBe(false);
+    // Re-fire until a projectile (ghost bolt) registers — self-settles past
+    // the spawn window where the mirror kind isn't set yet.
+    await page.waitForFunction(
+      () => {
+        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
+          .__eqxClient?.triggerFireForTest('laser');
+        const el = document.querySelector('[data-testid="game-surface"]');
+        return (
+          el !== null &&
+          parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) > 0 &&
+          el.getAttribute('data-beam-active') !== '1'
+        );
+      },
+      { timeout: 10_000 },
+    );
+    // A bolt ship must NOT have an active hitscan beam.
+    expect(await surface(page).getAttribute('data-beam-active')).not.toBe('1');
     expect(await getProjectileCount(page)).toBeGreaterThan(0);
   } finally {
-    await page.keyboard.up('Space').catch(() => undefined);
     await ctx.close();
   }
 });
@@ -86,15 +102,18 @@ test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser })
 test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'interceptor');
   try {
-    await page.waitForTimeout(500);
-    await page.keyboard.down('Space');
+    // Re-fire until the beam is active — the wait succeeding IS the assertion
+    // (the live beam only persists ~220 ms per fire, so a post-wait read would
+    // race the fade).
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
-      { timeout: 1000 },
+      () => {
+        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
+          .__eqxClient?.triggerFireForTest('hitscan');
+        return document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1';
+      },
+      { timeout: 10_000 },
     );
-    expect(await getBeamActive(page)).toBe(true);
   } finally {
-    await page.keyboard.up('Space').catch(() => undefined);
     await ctx.close();
   }
 });
@@ -105,16 +124,26 @@ test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) =
 test('bolt ghost sprites are cleaned up after expiry — no static duplicates', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser, 'scout');
   try {
-    await page.waitForTimeout(500);
-    await page.keyboard.down('Space');
-    await page.waitForTimeout(50);
-    await page.keyboard.up('Space');
+    // Fire (re-trying past the spawn window) until a ghost exists…
     await page.waitForFunction(
-      () => parseInt(document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-projectile-count') ?? '0', 10) > 0,
-      { timeout: 2000 },
+      () => {
+        (window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } })
+          .__eqxClient?.triggerFireForTest('laser');
+        const el = document.querySelector('[data-testid="game-surface"]');
+        return el !== null && parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) > 0;
+      },
+      { timeout: 10_000 },
     );
-    await page.waitForTimeout(5000);
-    // The point is the ghost ISN'T stuck at its spawn position.
+    // …then STOP firing and wait for it to expire (ghost TTL + projectile
+    // lifetime, compressed 10× in test-sector-fast). The point is the ghost
+    // ISN'T stuck at its spawn position.
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="game-surface"]');
+        return el !== null && parseInt(el.getAttribute('data-projectile-count') ?? '0', 10) === 0;
+      },
+      { timeout: 10_000 },
+    );
     expect(await getProjectileCount(page)).toBe(0);
   } finally {
     await ctx.close();

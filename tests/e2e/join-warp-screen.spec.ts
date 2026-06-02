@@ -193,7 +193,12 @@ test('viewport rotation forwards a resize to the worker (no stretched aspect)', 
   // resize listener picked up the rotation and posted a RESIZE
   // message to the worker.
   test.setTimeout(45_000);
-  await page.goto(`${BASE_URL}/?galaxy=sol-prime`, {
+  // Force the WorkerRendererClient path with ?worker=1: the worker_resize
+  // logEvent asserted below is ONLY emitted by the worker renderer. Touch
+  // devices (this spec sets hasTouch) default to the main-thread PixiRenderer
+  // (2026-05-22), which never emits it — so without ?worker=1 this test runs
+  // the wrong renderer and sees 0 events.
+  await page.goto(`${BASE_URL}/?galaxy=sol-prime&worker=1`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });
