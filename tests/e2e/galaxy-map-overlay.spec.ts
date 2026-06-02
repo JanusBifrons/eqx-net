@@ -71,14 +71,16 @@ test.describe('galaxy-map overlay (Map B)', () => {
     await ctx.close();
   });
 
-  test('mobile: MAP toggle button sits in the bottom-center slot alongside WeaponSelector', async ({ browser }) => {
+  test('mobile: MAP toggle button sits in the bottom-center slot alongside the slot selector', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
     const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-    const weaponBtn = page.locator('[data-testid="weapon-selector"]');
+    // weapons/energy/AI overhaul (§5.2): the per-weapon picker is now the
+    // SlotSelector (`slot-selector`), rendered in the same mobile cluster.
+    const weaponBtn = page.locator('[data-testid="slot-selector"]');
     await expect(mapBtn).toBeVisible();
     await expect(weaponBtn).toBeVisible();
 
@@ -87,7 +89,7 @@ test.describe('galaxy-map overlay (Map B)', () => {
     const weaponBox = await weaponBtn.boundingBox();
     expect(mapBox).not.toBeNull();
     expect(weaponBox).not.toBeNull();
-    // Sanity: the MAP button is not literally on top of WeaponSelector.
+    // Sanity: the MAP button is not literally on top of the slot selector.
     if (mapBox && weaponBox) {
       const overlap =
         Math.max(0, Math.min(mapBox.x + mapBox.width, weaponBox.x + weaponBox.width) - Math.max(mapBox.x, weaponBox.x))
