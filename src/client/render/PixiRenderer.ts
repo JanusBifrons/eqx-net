@@ -39,8 +39,6 @@ const BACKGROUND_COLOR = 0x05070f;
 // Default gameplay camera zoom (world Container scale). 1.0 preserves the
 // historical framing; tune here once the `?zoom=` on-device A/B settles.
 const DEFAULT_GAMEPLAY_ZOOM = 1.0;
-const REMOTE_LASER_COLOR = 0xff6600;
-const LASER_BEAM_COLOR = 0x00eeff;
 const LASER_CORE_COLOR = 0xffffff;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
