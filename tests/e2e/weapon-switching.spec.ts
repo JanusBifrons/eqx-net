@@ -1,6 +1,15 @@
 /**
- * Weapon switching E2E suite — verifies weapon selector UI, keyboard hotkeys,
- * and that the laser weapon fires projectiles (not hitscan beams).
+ * Weapon loadout E2E suite (weapons/energy/AI overhaul §5.2 — reworked from
+ * the old per-weapon-picker suite).
+ *
+ * The per-weapon picker (Beam/Laser boxes + 1/2/Q hotkeys) is GONE. Each ship
+ * fires its catalogue-bound loadout (scout/fighter/heavy/gunship → bolts,
+ * interceptor → beams, missile-frigate → missiles) and the pilot selects the
+ * active SLOT via the MUI SlotSelector. This suite asserts:
+ *   1. No per-weapon picker; a single-slot toggle is present.
+ *   2. A bolt ship (scout) fires PROJECTILES, never a hitscan beam.
+ *   3. A beam ship (interceptor) fires a hitscan BEAM.
+ *   4. The bolt ghost is cleaned up after expiry (no stuck duplicates).
  *
  * Run with:
  *   pnpm e2e --project=chromium tests/e2e/weapon-switching.spec.ts --reporter=line
@@ -10,17 +19,12 @@ import type { Browser, Page } from '@playwright/test';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
-async function joinClient(browser: Browser) {
+async function joinClient(browser: Browser, shipKind = 'scout') {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
-  // test-sector-fast (testMode=true, no drones, no asteroids,
-  // testTimeScale=10): physics ticks 10x faster so ghost-TTL (500 ms)
-  // and server-projectile lifetime (4 s) compress to 50 ms + 400 ms
-  // wall-clock. The waitForTimeout(5000) below at the original 1x rate
-  // is now ~500 ms equivalent game-time. Switched from `?room=sector`
-  // (30 drones — laser would be resolved by hit_ack within ~167 ms and
-  // the ghost would be destroyed before the test could observe it).
-  await page.goto(`${BASE_URL}?room=test-sector-fast`);
+  // test-sector-fast (testMode, no drones, testTimeScale=10) compresses
+  // ghost-TTL + projectile lifetime to a few hundred ms wall-clock.
+  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=${shipKind}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -44,44 +48,32 @@ async function getProjectileCount(page: Page): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Weapon selector is visible in game
+// 1. No per-weapon picker; the slot selector is present
 // ---------------------------------------------------------------------------
-test('weapon selector boxes are visible', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
+test('slot selector replaces the per-weapon picker', async ({ browser }) => {
+  const { ctx, page } = await joinClient(browser, 'scout');
   try {
     await page.waitForTimeout(500);
-    // WeaponSelector renders two boxes with text 'Beam' and 'Laser'.
-    const beam = page.getByText('Beam');
-    const laser = page.getByText('Laser');
-    await expect(beam).toBeVisible({ timeout: 3000 });
-    await expect(laser).toBeVisible({ timeout: 3000 });
+    // The old per-weapon boxes are gone.
+    await expect(page.locator('[data-testid="weapon-selector"]')).toHaveCount(0);
+    // The slot selector is mounted (single-slot ships show one toggle).
+    await expect(page.locator('[data-testid="slot-selector"]')).toBeVisible({ timeout: 3000 });
   } finally {
     await ctx.close();
   }
 });
 
 // ---------------------------------------------------------------------------
-// 2. Pressing 2 switches to laser and fires projectiles (no hitscan beam)
+// 2. A bolt ship fires PROJECTILES, never a hitscan beam
 // ---------------------------------------------------------------------------
-test('pressing 2 switches to laser — fire produces projectiles, not beam', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
+test('a scout (bolt loadout) fires projectiles, not a beam', async ({ browser }) => {
+  const { ctx, page } = await joinClient(browser, 'scout');
   try {
     await page.waitForTimeout(500);
-
-    // Switch to laser.
-    await page.keyboard.press('Digit2');
-    await page.waitForTimeout(100);
-
-    // Hold fire.
     await page.keyboard.down('Space');
-    await page.waitForTimeout(600); // enough for cooldown + ghost spawn
-
-    // Beam should NOT be active (laser is projectile mode).
+    await page.waitForTimeout(600);
     expect(await getBeamActive(page)).toBe(false);
-
-    // At least one projectile should have spawned (ghost or server-authoritative).
-    const count = await getProjectileCount(page);
-    expect(count).toBeGreaterThan(0);
+    expect(await getProjectileCount(page)).toBeGreaterThan(0);
   } finally {
     await page.keyboard.up('Space').catch(() => undefined);
     await ctx.close();
@@ -89,20 +81,12 @@ test('pressing 2 switches to laser — fire produces projectiles, not beam', asy
 });
 
 // ---------------------------------------------------------------------------
-// 3. Pressing 1 switches back to hitscan — beam reappears
+// 3. A beam ship fires a hitscan BEAM
 // ---------------------------------------------------------------------------
-test('pressing 1 switches back to hitscan beam', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
+test('an interceptor (beam loadout) fires a hitscan beam', async ({ browser }) => {
+  const { ctx, page } = await joinClient(browser, 'interceptor');
   try {
     await page.waitForTimeout(500);
-
-    // Switch to laser then back to hitscan.
-    await page.keyboard.press('Digit2');
-    await page.waitForTimeout(100);
-    await page.keyboard.press('Digit1');
-    await page.waitForTimeout(100);
-
-    // Hold fire — beam should appear.
     await page.keyboard.down('Space');
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
@@ -116,100 +100,23 @@ test('pressing 1 switches back to hitscan beam', async ({ browser }) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. Regression: laser ghost sprites do not persist after expiry
+// 4. Regression: bolt ghost sprites are cleaned up after expiry
 // ---------------------------------------------------------------------------
-test('laser ghost sprites are cleaned up after expiry — no static duplicates', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
+test('bolt ghost sprites are cleaned up after expiry — no static duplicates', async ({ browser }) => {
+  const { ctx, page } = await joinClient(browser, 'scout');
   try {
     await page.waitForTimeout(500);
-
-    // Switch to laser.
-    await page.keyboard.press('Digit2');
-    await page.waitForTimeout(100);
-
-    // Tap fire once (single shot).
     await page.keyboard.down('Space');
     await page.waitForTimeout(50);
     await page.keyboard.up('Space');
-
-    // Wait for ghost to spawn.
     await page.waitForFunction(
       () => parseInt(document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-projectile-count') ?? '0', 10) > 0,
       { timeout: 2000 },
     );
-
-    // Wait for the ghost TTL + server projectile lifetime to elapse.
-    // Ghost TTL is 500ms; server projectile maxTicks=240 (4s at 60Hz).
-    // 5s ensures both are fully cleaned up regardless of interest-range timing.
     await page.waitForTimeout(5000);
-
-    // All projectiles should be gone (ghost cleaned up, server proj out of range).
-    const count = await getProjectileCount(page);
-    // Allow 0 — the point is the ghost ISN'T stuck at its spawn position.
-    // If the old bug were present, count would be ≥ 1 (the stale ghost).
-    expect(count).toBe(0);
+    // The point is the ghost ISN'T stuck at its spawn position.
+    expect(await getProjectileCount(page)).toBe(0);
   } finally {
-    await ctx.close();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 5. Regression: switching from hitscan to laser clears the beam
-// ---------------------------------------------------------------------------
-test('switching weapon while firing clears the hitscan beam', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
-  try {
-    await page.waitForTimeout(500);
-
-    // Start firing hitscan.
-    await page.keyboard.down('Space');
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
-      { timeout: 1000 },
-    );
-    expect(await getBeamActive(page)).toBe(true);
-
-    // Switch to laser while still holding space.
-    await page.keyboard.press('Digit2');
-    await page.waitForTimeout(200);
-
-    // Beam must be gone — laser is projectile mode.
-    expect(await getBeamActive(page)).toBe(false);
-  } finally {
-    await page.keyboard.up('Space').catch(() => undefined);
-    await ctx.close();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 6. Q cycles weapons
-// ---------------------------------------------------------------------------
-test('Q cycles weapon forward', async ({ browser }) => {
-  const { ctx, page } = await joinClient(browser);
-  try {
-    await page.waitForTimeout(500);
-
-    // Default is hitscan. Q should switch to laser.
-    await page.keyboard.press('KeyQ');
-    await page.waitForTimeout(100);
-
-    // Fire — should NOT produce hitscan beam.
-    await page.keyboard.down('Space');
-    await page.waitForTimeout(400);
-    expect(await getBeamActive(page)).toBe(false);
-    await page.keyboard.up('Space');
-
-    // Q again → back to hitscan.
-    await page.keyboard.press('KeyQ');
-    await page.waitForTimeout(100);
-    await page.keyboard.down('Space');
-    await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
-      { timeout: 1000 },
-    );
-    expect(await getBeamActive(page)).toBe(true);
-  } finally {
-    await page.keyboard.up('Space').catch(() => undefined);
     await ctx.close();
   }
 });

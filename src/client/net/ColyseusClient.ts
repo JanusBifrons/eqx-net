@@ -3849,6 +3849,9 @@ export class ColyseusGameClient {
       // mirrors the server's so a depleted pool stops local ghost spam.
       const localKind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null);
       const activeSlotId = useUIStore.getState().activeSlotId;
+      // TODO: alloc-debt — resolveSlotMounts builds a small array per fire-held
+      // frame (same pre-existing pattern as localShipMounts in
+      // buildLocalAimTargets). resolveSlotEnergyCost below is alloc-free.
       const slotMounts = resolveSlotMounts(localKind, activeSlotId);
       const slotWeaponDef = getWeapon(slotMounts[0]?.weaponId ?? 'hitscan');
       let slotCooldownTicks = 0;

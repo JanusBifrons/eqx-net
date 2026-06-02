@@ -28,7 +28,7 @@
  */
 
 import { getWeapon } from './WeaponCatalogue.js';
-import { resolveSlot, resolveSlotMounts } from '../../shared-types/shipKinds/slots.js';
+import { resolveSlot } from '../../shared-types/shipKinds/slots.js';
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 
 /** Per-tick energy drained while boost is held AND the ship is thrusting.
@@ -79,12 +79,20 @@ export function regenEnergyStep(energy: number, energyMax: number, energyRegenRa
  */
 export function resolveSlotEnergyCost(kind: ShipKind, slotId?: string): number {
   const slot = resolveSlot(kind, slotId);
-  if (slot?.energyCost !== undefined) return slot.energyCost;
-  const mounts = resolveSlotMounts(kind, slotId);
+  if (!slot) return 0;
+  if (slot.energyCost !== undefined) return slot.energyCost;
+  // Allocation-free (Invariant #14 — this is called on the server fire path
+  // AND the client per-frame fire gate): iterate the slot's mount ids and
+  // `find` each mount in place, never building an intermediate array.
+  const mounts = kind.mounts;
+  if (!mounts) return 0;
   let cost = 0;
-  for (let i = 0; i < mounts.length; i++) {
-    const c = getWeapon(mounts[i]!.weaponId).energyCost;
-    if (c > cost) cost = c;
+  for (const mid of slot.mountIds) {
+    const m = mounts.find((mm) => mm.id === mid);
+    if (m) {
+      const c = getWeapon(m.weaponId).energyCost;
+      if (c > cost) cost = c;
+    }
   }
   return cost;
 }
