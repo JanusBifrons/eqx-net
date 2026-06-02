@@ -44,6 +44,7 @@
     "mutation": "stryker run"
   },
   "dependencies": {
+    "@colyseus/msgpackr": "^1.11.2",
     "@colyseus/schema": "^3.0.0",
     "@colyseus/ws-transport": "^0.16.0",
     "@dimforge/rapier2d-compat": "^0.14.0",
