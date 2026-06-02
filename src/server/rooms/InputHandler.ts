@@ -20,6 +20,7 @@
 import type { Client } from 'colyseus';
 import { InputMessageSchema } from '../../shared-types/messages.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { canAfford, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 import type pino from 'pino';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 
@@ -32,6 +33,12 @@ export interface InputHandlerCtx {
   thrustingPlayers: Set<string>;
   postToWorker: (cmd: WorkerCmd) => void;
   serverTick: () => number;
+  /** Energy-gate for boost (weapons/energy/AI overhaul §3.1). Returns the
+   *  player's current energy pool, or `undefined` if the ship is gone. The
+   *  handler strips the boost bit BEFORE forwarding to the worker when the
+   *  pool can't afford a tick of boost — the worker stays oblivious (no new
+   *  command, no SAB field). */
+  shipEnergyOf: (playerId: string) => number | undefined;
   logger: pino.Logger;
 }
 
@@ -52,8 +59,15 @@ export function makeInputHandler(
       return;
     }
     const { tick, thrust, turnLeft, turnRight } = result.data;
-    const boost = result.data.boost ?? false;
+    let boost = result.data.boost ?? false;
     const reverse = result.data.reverse ?? false;
+    // Energy-gate boost: strip the bit before it reaches the worker when the
+    // ship can't afford a tick of boost. One owner / two sites, same tick —
+    // this gate prevents applying a boost the drain (tickEnergy) would make
+    // negative (Invariant #12). The worker is unchanged.
+    if (boost && !canAfford(ctx.shipEnergyOf(playerId) ?? 0, BOOST_TICK_COST)) {
+      boost = false;
+    }
     const slot = ctx.playerToSlot.get(playerId);
     if (slot !== undefined) {
       ctx.postToWorker({

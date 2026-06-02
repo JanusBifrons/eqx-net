@@ -40,6 +40,7 @@ import {
   SHIP_COLLISION_RADIUS,
 } from '../../core/combat/Weapons.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
+import { canAfford, spendEnergy, resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -219,7 +220,19 @@ export class PlayerFireResolver {
       client.send('hit_ack', ack);
       return;
     }
+
+    // Energy gate (weapons/energy/AI overhaul §3.1). The slot trigger drains
+    // its cost ONCE (not per mount). Reject — WITHOUT consuming the cooldown,
+    // so a depleted ship keeps trying and fires the instant it can afford —
+    // when the pool is short. Drain atomically on a successful gate.
+    const slotEnergyCost = resolveSlotEnergyCost(shipKind, slotId);
+    if (!canAfford(ship.energy, slotEnergyCost)) {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
+      client.send('hit_ack', ack);
+      return;
+    }
     d.lastFireClientTick.set(shooterId, tick);
+    ship.energy = spendEnergy(ship.energy, slotEnergyCost);
 
     // Lag-comp rewind → fallback → angle anchor.
     const rewoundShooter = d.snapshotRing.getPoseAt(shooterId, effTick);

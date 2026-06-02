@@ -50,6 +50,17 @@ export class ShipState extends Schema {
   // (polygon collision). Seeded to kind.shieldMax on spawn/respawn.
   shield = 0;
   shieldLastDamageTick = 0;
+
+  // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: the
+  // authoritative energy value reaches the OWNING client via the
+  // per-recipient SnapshotMessage.states[id].energy slice (own-ship only),
+  // NEVER the Colyseus diff (it changes every tick — same reason shield is
+  // off the diff). Seeded to kind.energyMax on spawn/respawn. Transient like
+  // shield (respawns full, never persisted ⇒ exempt from the catalogue
+  // hull-drift clamp). Drained per slot-fire trigger + per boost tick;
+  // regenerated every tick by SectorRoom.tickEnergy.
+  energy = 0;
 }
 
 // Phase 5c: ObstacleState removed. Asteroids and drones now flow through the
