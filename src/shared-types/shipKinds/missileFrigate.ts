@@ -36,6 +36,13 @@ export const MISSILE_FRIGATE: ShipKind = ShipKindSchema.parse({
   shieldMax: 400,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 400 / 120,
+  // Missile pool (plan §3.4): energyMax 240 ≈ a 4-salvo opening burst
+  // (slot cost 60), then steady regen (0.67/tick × 90-tick cooldown ≈ one
+  // slot cost per cooldown window) paces throughput to ~8 missiles in
+  // flight over the 6 s TTL. Boost shares this pool — boosting the frigate
+  // temporarily starves missile output (the intended tradeoff).
+  energyMax: 240,
+  energyRegenRate: 0.67,
   ai: { thrust: 0.12, turnKp: 3.0, maxTorque: 1.2 },
   shape: {
     kind: 'polygon',

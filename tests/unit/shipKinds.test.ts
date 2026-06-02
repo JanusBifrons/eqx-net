@@ -99,7 +99,11 @@ describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
     }
   });
 
-  it('legacy kinds (fighter/scout/heavy) carry the canonical forward mount + primary slot', () => {
+  it('legacy kinds (fighter/scout/heavy) carry the canonical forward mount + primary slot, now firing bolts', () => {
+    // Weapons/energy/AI overhaul (2026-06-01 §2): scout/fighter/heavy keep
+    // the single forward mount geometry but fire the `laser` (bolt) — an
+    // inline clone of LEGACY_FORWARD_MOUNT with the weapon swapped (the
+    // frozen const itself stays `hitscan` for engineering kinds/tests).
     for (const id of ['fighter', 'scout', 'heavy'] as const) {
       const kind = SHIP_KINDS[id];
       expect(kind.mounts).toHaveLength(1);
@@ -112,12 +116,34 @@ describe('weapon mounts + slots (Phase 1, 2026-05-11)', () => {
         arcMin: 0,
         arcMax: 0,
         rotationSpeed: 0,
-        weaponId: 'hitscan',
+        weaponId: 'laser',
       });
       expect(kind.slots).toHaveLength(1);
       const slot = kind.slots![0]!;
       expect(slot.id).toBe('primary');
       expect(slot.mountIds).toEqual(['forward']);
+    }
+  });
+
+  it('per-kind weapon assignment matches the loadout design (§2)', () => {
+    // The single source of truth for "which ship fires what". Every mount in
+    // a gameplay kind fires its bound weapon; the server ignores the client's
+    // requested weapon (locked at the fire-path level by the integration test).
+    const weaponOf = (id: keyof typeof SHIP_KINDS): Set<string> =>
+      new Set((SHIP_KINDS[id].mounts ?? []).map((m) => m.weaponId));
+    expect(weaponOf('scout')).toEqual(new Set(['laser']));
+    expect(weaponOf('fighter')).toEqual(new Set(['laser']));
+    expect(weaponOf('heavy')).toEqual(new Set(['laser']));
+    expect(weaponOf('gunship')).toEqual(new Set(['laser']));
+    expect(weaponOf('interceptor')).toEqual(new Set(['hitscan']));
+    expect(weaponOf('missile-frigate')).toEqual(new Set(['heat-seeker']));
+  });
+
+  it('every gameplay kind defines a positive energy pool + regen rate (§3)', () => {
+    for (const id of ['fighter', 'scout', 'heavy', 'interceptor', 'gunship', 'missile-frigate'] as const) {
+      const k = SHIP_KINDS[id];
+      expect(k.energyMax, `${id} energyMax`).toBeGreaterThan(0);
+      expect(k.energyRegenRate, `${id} energyRegenRate`).toBeGreaterThan(0);
     }
   });
 

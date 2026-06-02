@@ -72,6 +72,10 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
   shieldMax: 1500,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 1500 / 120,
+  // Engineering-only fixture — energy is present (so a player who spawns it
+  // explicitly isn't fire-locked) but never tuned for live play.
+  energyMax: 1500,
+  energyRegenRate: 5,
   // AI tuning kept conservative — Crossguard is spawned in `shield-test`
   // under `peacefulDrones: true` (the AI is `PassiveDroneBehaviour`,
   // which ignores the tuning entirely). The numbers below are only

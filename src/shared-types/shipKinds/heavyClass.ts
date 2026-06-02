@@ -34,6 +34,10 @@ export const HEAVY: ShipKind = ShipKindSchema.parse({
   shieldMax: 270,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 270 / 120,
+  // Bolt tank: deepest bolt pool, ~15 s continuous fire (180 / (2 × 6 Hz)).
+  // (plan §3.3)
+  energyMax: 180,
+  energyRegenRate: 0.3,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 1.4`.
   ai: { thrust: 0.175, turnKp: 4.0, maxTorque: 2.1 },
   shape: {
@@ -49,7 +53,9 @@ export const HEAVY: ShipKind = ShipKindSchema.parse({
       [-12, -2],
     ],
   },
-  mounts: [LEGACY_FORWARD_MOUNT],
+  // Bolts (weapons/energy/AI overhaul §2) — inline clone, see SCOUT note
+  // in fighters.ts.
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
@@ -96,6 +102,11 @@ export const INTERCEPTOR: ShipKind = ShipKindSchema.parse({
   shieldMax: 120,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 120 / 120,
+  // Twin beams: glass cannon with the deepest pool to feed its high DPS,
+  // but the costliest slot trigger (5) → only ~6 s continuous fire
+  // (180 / (5 × 6 Hz)), and the fastest regen. (plan §3.3)
+  energyMax: 180,
+  energyRegenRate: 0.4,
   // AI tuning sized to the new maxAngvel: maxTorque = maxAngvel * 1.5 = 3.75.
   ai: { thrust: 0.3, turnKp: 7.0, maxTorque: 3.75 },
   shape: {
@@ -165,6 +176,12 @@ export const GUNSHIP: ShipKind = ShipKindSchema.parse({
   shieldMax: 210,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 210 / 120,
+  // Twin-bolt platform: ~8 s continuous fire on its two-barrel slot
+  // (150 / (3 × 6 Hz)); the slot trigger costs 3 (a touch more than the
+  // single-barrel bolt ships' 2) to reflect the fore-and-aft volume —
+  // expressed as a per-slot `energyCost` override below. (plan §3.3)
+  energyMax: 150,
+  energyRegenRate: 0.3,
   ai: { thrust: 0.2, turnKp: 5.0, maxTorque: 2.4 },
   shape: {
     kind: 'polygon',
@@ -191,7 +208,9 @@ export const GUNSHIP: ShipKind = ShipKindSchema.parse({
       arcMin: -Math.PI / 4,
       arcMax: Math.PI / 4,
       rotationSpeed: 3,
-      weaponId: 'hitscan',
+      // Bolts (weapons/energy/AI overhaul §2): gunship swaps its fore-and-aft
+      // beams for projectile bolts.
+      weaponId: 'laser',
     },
     // Rear mount: ±90° arc, 3 rad/s. Wider sweep so the rear turret can
     // cover the gunship's blind sides while the body keeps moving forward.
@@ -203,10 +222,12 @@ export const GUNSHIP: ShipKind = ShipKindSchema.parse({
       arcMin: -Math.PI / 2,
       arcMax: Math.PI / 2,
       rotationSpeed: 3,
-      weaponId: 'hitscan',
+      weaponId: 'laser',
     },
   ],
   slots: [
-    { id: 'primary', displayName: 'Primary', mountIds: ['forward', 'rear'] },
+    // energyCost override (3) — the two-barrel slot costs a touch more than
+    // a single-barrel bolt ship's weapon-derived 2. (plan §3.3)
+    { id: 'primary', displayName: 'Primary', mountIds: ['forward', 'rear'], energyCost: 3 },
   ],
 });

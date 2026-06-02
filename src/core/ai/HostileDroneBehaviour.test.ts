@@ -150,14 +150,19 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   // (which targets only marked-hostile players, not "any nearest").
 
   it('targets the nearest hostile when two players are present', () => {
-    // Far player at (200, 0); near (and hostile) at (0, 50). Drone at
-    // origin facing +y already aims at the near player.
+    // Far player at (0, 300); near (and hostile) at (0, 120). Drone at
+    // origin facing +y already aims at the near player. The near target sits
+    // in the approach window (beyond the arrival-standoff STOP_DIST so the
+    // drone thrusts forward toward it rather than braking — the 2026-06-01
+    // standoff logic hovers inside STOP_DIST, so a too-close target would
+    // correctly produce zero forward thrust). Both targets are straight
+    // ahead so "nearest" is unambiguous and the aim stays centred.
     const b = new HostileDroneBehaviour();
     b.markHostile('near', 0);
     b.markHostile('far', 0);
     const intent = b.tick(
       droneAt(0, 0, 0, 0),
-      viewWith([{ id: 'far', x: 200, y: 0 }, { id: 'near', x: 0, y: 50 }]),
+      viewWith([{ id: 'far', x: 0, y: 300 }, { id: 'near', x: 0, y: 120 }]),
     );
     // Already aimed at near → bearing error ≈ 0 → setAngvel drops into
     // the dead zone and is 0 (or undefined).
@@ -268,15 +273,17 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   });
 
   it('uses the wider point-blank fire arc when the target is very close', () => {
-    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE = 120. At normal
+    // Point-blank threshold is 0.4 × DRONE_FIRE_RANGE. After the
+    // weapons/energy/AI overhaul (2026-06-01) the beam range dropped to 250
+    // ⇒ DRONE_FIRE_RANGE = 150 ⇒ point-blank threshold = 60. At normal
     // distance and a 0.3 rad bearing error the drone would be off-cone
     // (tolerance 0.25); at point-blank (tolerance 0.45) it fires.
-    // Drone at (0,0,0): forward = +y. Player at distance 80 along an
+    // Drone at (0,0,0): forward = +y. Player at distance 40 (< 60) along an
     // angle ~0.3 off the nose.
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
     const angle = 0.3; // bearing error
-    const dist = 80;
+    const dist = 40;
     const px = -Math.sin(angle) * dist;  // mirrors the forward derivation
     const py = Math.cos(angle) * dist;
     const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: px, y: py }], 100));
