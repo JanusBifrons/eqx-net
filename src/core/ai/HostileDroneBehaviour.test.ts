@@ -150,19 +150,16 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   // (which targets only marked-hostile players, not "any nearest").
 
   it('targets the nearest hostile when two players are present', () => {
-    // Far player at (0, 300); near (and hostile) at (0, 120). Drone at
-    // origin facing +y already aims at the near player. The near target sits
-    // in the approach window (beyond the arrival-standoff STOP_DIST so the
-    // drone thrusts forward toward it rather than braking — the 2026-06-01
-    // standoff logic hovers inside STOP_DIST, so a too-close target would
-    // correctly produce zero forward thrust). Both targets are straight
-    // ahead so "nearest" is unambiguous and the aim stays centred.
+    // Default kind = fighter (bolt), fireRange ≈ 560 ⇒ STOP_DIST ≈ 336. The
+    // near target sits in the approach window (> STOP_DIST so the drone
+    // thrusts forward toward it; the standoff logic hovers inside STOP_DIST).
+    // Both targets straight ahead so "nearest" is unambiguous + aim centred.
     const b = new HostileDroneBehaviour();
     b.markHostile('near', 0);
     b.markHostile('far', 0);
     const intent = b.tick(
       droneAt(0, 0, 0, 0),
-      viewWith([{ id: 'far', x: 0, y: 300 }, { id: 'near', x: 0, y: 120 }]),
+      viewWith([{ id: 'far', x: 0, y: 700 }, { id: 'near', x: 0, y: 400 }]),
     );
     // Already aimed at near → bearing error ≈ 0 → setAngvel drops into
     // the dead zone and is 0 (or undefined).
@@ -194,10 +191,13 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   });
 
   it('thrust is along the drone\'s current forward, not toward the target', () => {
-    // Drone at angle=π/2 → forward = (-sin(π/2), cos(π/2)) = (-1, 0).
+    // Drone at angle=π/2 → forward = (-sin(π/2), cos(π/2)) = (-1, 0). Target
+    // placed in the approach window (> STOP_DIST ≈ 336 for the fighter bolt)
+    // so the drone thrusts forward (−x) rather than hovering inside the stop
+    // distance — proving thrust follows the body's facing, not the bearing.
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
-    const intent = b.tick(droneAt(0, 0, Math.PI / 2, 0), viewWith([{ id: 'p', x: 100, y: 0 }]));
+    const intent = b.tick(droneAt(0, 0, Math.PI / 2, 0), viewWith([{ id: 'p', x: 400, y: 0 }]));
     expect(intent.fx).toBeLessThan(0);
     expect(intent.fy).toBeCloseTo(0, 5);
   });
@@ -212,9 +212,10 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   });
 
   it('does not fire when out of range', () => {
+    // fighter (bolt) fireRange ≈ 560; place the target well beyond it.
     const b = new HostileDroneBehaviour();
     b.markHostile('p', 0);
-    const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 500 }], 100));
+    const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 900 }], 100));
     expect(intent.fire).toBeUndefined();
   });
 
@@ -259,15 +260,15 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
   });
 
   it('boosts forward thrust when the hostile target is far', () => {
-    // Engagement-distance threshold is 1.5 × DRONE_FIRE_RANGE = 450.
-    // Drone facing +y; target along +y at 600 (boosted) vs 200 (no boost).
+    // fighter (bolt) fireRange ≈ 560 ⇒ engage-boost threshold = 1.5× ≈ 840.
+    // Target at 1000 (> 840 → boosted) vs 400 (approach window → base thrust).
     const b1 = new HostileDroneBehaviour();
     b1.markHostile('p', 0);
-    const farIntent = b1.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 600 }]));
+    const farIntent = b1.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 1000 }]));
 
     const b2 = new HostileDroneBehaviour();
     b2.markHostile('p', 0);
-    const nearIntent = b2.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 200 }]));
+    const nearIntent = b2.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 400 }]));
 
     expect(farIntent.fy).toBeGreaterThan(nearIntent.fy);
   });
@@ -288,5 +289,67 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     const py = Math.cos(angle) * dist;
     const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: px, y: py }], 100));
     expect(intent.fire).toBeDefined();
+  });
+});
+
+describe('HostileDroneBehaviour — weapon-aware engagement (overhaul §4)', () => {
+  it('per-weapon fire ranges: beam very close, bolt medium, missile long', () => {
+    const beam = new HostileDroneBehaviour('interceptor'); // hitscan
+    const bolt = new HostileDroneBehaviour('fighter');     // laser
+    const missile = new HostileDroneBehaviour('missile-frigate'); // heat-seeker
+    expect(beam.getWeaponMode()).toBe('hitscan');
+    expect(bolt.getWeaponMode()).toBe('projectile');
+    expect(missile.getWeaponMode()).toBe('missile');
+    // Ordering is the load-bearing intent (knife-fight < dogfight < artillery).
+    expect(beam.getFireRange()).toBeLessThan(bolt.getFireRange());
+    expect(bolt.getFireRange()).toBeLessThan(missile.getFireRange());
+    // Beam is genuinely close (a few hundred u), missile is genuinely long.
+    expect(beam.getFireRange()).toBeLessThan(300);
+    expect(missile.getFireRange()).toBeGreaterThan(1000);
+  });
+
+  it('a missile drone backs AWAY when the target closes inside its fire range', () => {
+    const b = new HostileDroneBehaviour('missile-frigate');
+    b.markHostile('p', 0);
+    const range = b.getFireRange();
+    // Drone at origin facing +y; target straight ahead well inside the
+    // back-off band (fireRange × 0.4). It must thrust in REVERSE (−y) to kite.
+    const close = 0.2 * range;
+    const intent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: close }], 100));
+    expect(intent.fy).toBeLessThan(0);
+  });
+
+  it('a missile drone only fires from long range (out of range up close)', () => {
+    const b = new HostileDroneBehaviour('missile-frigate');
+    b.markHostile('p', 0);
+    const range = b.getFireRange();
+    // Aligned + long range → fires.
+    const far = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: 0.8 * range }], 100));
+    expect(far.fire).toBeDefined();
+  });
+
+  it('a beam drone bores in to short range (does not fire from afar)', () => {
+    const b = new HostileDroneBehaviour('interceptor');
+    b.markHostile('p', 0);
+    const range = b.getFireRange();
+    // Beyond the (short) beam range → no fire, and it thrusts forward to close.
+    const farIntent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: range * 3 }], 100));
+    expect(farIntent.fire).toBeUndefined();
+    expect(farIntent.fy).toBeGreaterThan(0); // boring in
+    // In close range + aligned → fires.
+    const closeIntent = b.tick(droneAt(0, 0, 0, 0), viewWith([{ id: 'p', x: 0, y: range * 0.8 }], 200));
+    expect(closeIntent.fire).toBeDefined();
+  });
+
+  it('determinism: same inputs ⇒ same intent for a missile drone', () => {
+    const a = new HostileDroneBehaviour('missile-frigate');
+    const b = new HostileDroneBehaviour('missile-frigate');
+    a.markHostile('p', 0);
+    b.markHostile('p', 0);
+    const ia = a.tick(droneAt(10, 20, 0.3, 0), viewWith([{ id: 'p', x: 300, y: 800 }], 100));
+    const ib = b.tick(droneAt(10, 20, 0.3, 0), viewWith([{ id: 'p', x: 300, y: 800 }], 100));
+    expect(ia.fx).toBeCloseTo(ib.fx, 10);
+    expect(ia.fy).toBeCloseTo(ib.fy, 10);
+    expect(ia.setAngvel ?? 0).toBeCloseTo(ib.setAngvel ?? 0, 10);
   });
 });
