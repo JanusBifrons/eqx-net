@@ -2566,6 +2566,16 @@ export class SectorRoom extends Room<SectorState> {
       this.sabF32[base + SLOT_VY_OFF]     = resumedVy;
       this.sabF32[base + SLOT_ANGLE_OFF]  = resumedAngle;
       this.sabF32[base + SLOT_ANGVEL_OFF] = resumedAngvel;
+    } else {
+      // Fresh spawn: zero the velocity/angle fields. This SAB slot may hold
+      // STALE values from a previous occupant of the slot; the physics worker
+      // would otherwise read them and drift the just-spawned ship (~30 u over
+      // the first 500 ms — the spawn-position E2E regression). Position is set
+      // unconditionally above; velocity must be too.
+      this.sabF32[base + SLOT_VX_OFF]     = 0;
+      this.sabF32[base + SLOT_VY_OFF]     = 0;
+      this.sabF32[base + SLOT_ANGLE_OFF]  = 0;
+      this.sabF32[base + SLOT_ANGVEL_OFF] = 0;
     }
 
     // Create Colyseus schema entry. The schema only carries identity +
