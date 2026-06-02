@@ -902,6 +902,8 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
+      spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
+        this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });

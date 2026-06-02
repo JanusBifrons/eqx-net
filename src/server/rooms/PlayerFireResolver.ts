@@ -33,7 +33,6 @@ import {
   MissileWeaponDef,
   WeaponId,
   getWeapon,
-  isWeaponId,
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
@@ -193,17 +192,29 @@ export class PlayerFireResolver {
     const serverTick = d.serverTick();
     const effTick = clampFireTick(tick, serverTick, LAG_COMP_WINDOW);
 
-    // Per-weapon cooldown rate limit. The catalogue's cooldownTicks is
-    // the source of truth — hitscan/laser at 10 ticks (167 ms),
-    // heat-seeker at 180 ticks (3 s). WEAPON_COOLDOWN_TICKS (= hitscan
-    // cooldownTicks) was the global floor pre-missile; switching to a
-    // per-weapon read closes the anti-spam hole that would otherwise
-    // let a misbehaving client launch 6 missiles/sec at the global
-    // hitscan rate.
-    const weaponId: WeaponId = isWeaponId(weapon) ? weapon : 'hitscan';
-    const weaponDef = getWeapon(weaponId);
+    // Resolve the active slot's mounts up-front. Weapons/energy/AI overhaul
+    // (2026-06-01 §1): the server fires each mount's BOUND weapon
+    // (`mount.weaponId`) and STOPS TRUSTING the client's claimed `weapon`
+    // field (kept on the wire for back-compat but ignored for selection).
+    const shipKind = getShipKind(ship.kind);
+    const slotMounts = d.resolveSlotMounts(shipKind, slotId);
+    if (slotMounts.length === 0) return;
+
+    // Slot-level cooldown gate. The slot fires as ONE synchronised trigger,
+    // so the whole trigger is rejected unless the slot is off cooldown — the
+    // slot cooldown is the MAX over its mounts' weapons (so parallel lasers
+    // never desync, and a mixed slot can't fire its fast barrel while its
+    // slow barrel is still cooling). For today's single-slot ships the
+    // per-shooter scalar `lastFireClientTick` IS the slot-fire tick (with one
+    // slot there is no slot-switching exploit); when multi-slot ships ship,
+    // track fire time per-(shooter, slotId).
+    let slotCooldown = 0;
+    for (let i = 0; i < slotMounts.length; i++) {
+      const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
+      if (c > slotCooldown) slotCooldown = c;
+    }
     const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < weaponDef.cooldownTicks) {
+    if (tick - lastFireCt < slotCooldown) {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false, rejected: true };
       client.send('hit_ack', ack);
       return;
@@ -220,10 +231,6 @@ export class PlayerFireResolver {
     const shooterVy = rewoundShooter?.vy ?? fallbackShooter?.vy ?? 0;
     const shipAngleAtFireTick = rewoundShooter?.angle ?? fallbackShooter?.angle ?? dirAngle;
 
-    const shipKind = getShipKind(ship.kind);
-    const slotMounts = d.resolveSlotMounts(shipKind, slotId);
-    if (slotMounts.length === 0) return;
-
     // Per-mount fire result accumulator.
     let bestHitId: string | null = null;
     let bestHitDist = Infinity;
@@ -236,6 +243,9 @@ export class PlayerFireResolver {
     const playerAngles = d.playerMountAngles.get(shooterId);
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
+      // Each barrel fires its own catalogue weapon (data-driven loadout).
+      const weaponId: WeaponId = mount.weaponId;
+      const weaponDef = getWeapon(weaponId);
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
       const currentMountAngle = playerAngles?.[mIdx] ?? 0;
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
@@ -251,7 +261,8 @@ export class PlayerFireResolver {
         serverTick,
         tickDelta: serverTick - tick,
         effTick,
-        weapon,
+        claimedWeapon: weapon,
+        firedWeapon: weaponId,
         rewoundFromRing: rewoundShooter != null,
         shooter: { x: parseFloat(sx.toFixed(3)), y: parseFloat(sy.toFixed(3)) },
         ray: {
