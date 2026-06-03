@@ -76,29 +76,9 @@ test('W-thrust: correction rate stays under 15% after 3 s continuous thrust', as
   expect(stats.ticksAhead).toBeLessThan(30);
 });
 
-// ---------------------------------------------------------------------------
-// Idle correction rate (guard: regression back to variable-dt)
-// ---------------------------------------------------------------------------
-test('idle: correction rate stays near-zero with no inputs', async ({
-  eqxPage,
-  getPredStats,
-}) => {
-  // 3 s idle after connection stabilises.
-  await eqxPage.waitForTimeout(500);
-  const before = await getPredStats();
-  await eqxPage.waitForTimeout(3000);
-  const after = await getPredStats();
-
-  const newSnaps = after.snapshotCount - before.snapshotCount;
-  const newCorrections = after.significantCorrectionCount - before.significantCorrectionCount;
-  const rate = newSnaps > 0 ? newCorrections / newSnaps : 0;
-
-  console.log('\n=== Idle correction rate ===');
-  console.log(`Snapshots (window): ${newSnaps}`);
-  console.log(`Corrections:        ${newCorrections}  (${(rate * 100).toFixed(1)}%)`);
-  console.log(`Max drift:          ${after.maxDriftUnits.toFixed(4)} u`);
-  console.log('============================\n');
-
-  expect(newSnaps).toBeGreaterThan(10);
-  expect(rate).toBeLessThan(0.05);
-});
+// 2026-06-03 (test-coverage-audit Phase 3): the former "idle: correction rate
+// near-zero" test was removed — the idle correction-rate floor is locked
+// deterministically by `prediction-idle-bounded.spec.ts`. The W-thrust
+// continuous-hold corrRate<0.15 + ticksAhead<30 lock above is the unique
+// coverage that lives nowhere else (the netgate uses combat-strafe with a
+// relative∧absolute gate and can't enforce the 15% absolute), so it stays.

@@ -81,7 +81,6 @@ const FEATURE_SPECS: string[] = [
   '**/input-throttle-drift.spec.ts',
   '**/laser-smoothness.spec.ts',
   '**/living-world.spec.ts',
-  '**/prediction-diagnostics.spec.ts',
   '**/prediction-idle-bounded.spec.ts',
   '**/renderer-worker-probe.spec.ts',
   '**/robustness.spec.ts',
