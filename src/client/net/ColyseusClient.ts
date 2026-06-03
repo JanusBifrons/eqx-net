@@ -48,14 +48,14 @@ import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { preResetRemoteShips, applyDroneMountAngles, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
-import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled } from '../debug/ClientLogger';
+import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
 import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
@@ -81,7 +81,7 @@ import { getSector } from '@core/galaxy/galaxy';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
-import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
+import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
 import {
   pickTarget,
   rotateMountToward,
@@ -2843,25 +2843,28 @@ export class ColyseusGameClient {
         }
         if (kind !== undefined) lEntry.kind = kind;
         if (displayName !== undefined) lEntry.displayName = displayName;
-        // Phase 6b cleanup (2026-05-13) — spawn the predWorld body
-        // here too, in case the schema diff arrived BEFORE the first
-        // snapshot. Without this, the predWorld body was deferred a
-        // full snapshot tick, letting the local player fly through
-        // their own freshly-displaced hulk on flaky networks.
+        // Laser-"ghost-at-(0,0)" fix (2026-06-03). This path is now
+        // IDENTITY-ONLY — it does NOT spawn the predWorld body. The
+        // snapshot path (snapshotShipRouter.routeSnapshotShipStates →
+        // tryEnsureLingerPredBody) is the SOLE spawn site, exactly like
+        // wrecks (SnapshotSyncHelpers.syncWreckPoses spawns the wreck
+        // body only from the snapshot pose). Removed: the old Phase-6b
+        // race-fallback spawn here.
         //
-        // Jitter-fix (2026-05-13) — but ONLY spawn on first observation.
-        // `onStateChange` fires on every schema mutation (~60 Hz when
-        // `state.tick` updates), so an unconditional call would teleport
-        // the body back to the last-snapshot pose every tick — the
-        // dual-correction-path jitter bug, same shape as the AI lockstep
-        // chapter-2 dual-path fight. The snapshot path
-        // (`handleSnapshot`) is the canonical correction path for
-        // lingering hull poses; this path is identity-only (kind,
-        // displayName, ownerPlayerId).
-        const bodyId = `linger-${shipInstanceId}`;
-        if (this.predWorld && !this.predWorld.hasShip(bodyId)) {
-          this.tryEnsureLingerPredBody(shipInstanceId);
-        }
+        // Why removed: this entry is seeded at (0,0) above (the schema
+        // diff carries no pose). The old race-fallback spawned the body
+        // from that seed, parking an invisible, shootable body at world
+        // ORIGIN whenever the schema diff beat the first snapshot — the
+        // on-device "live beam stops short at (0,0), no damage" ghost
+        // (intermittent: the schema-diff-before-first-snapshot window).
+        // The fallback never even met its own "don't fly through my
+        // freshly-displaced hulk" goal: it spawned the body at (0,0),
+        // NOT at the hull. Deferring the body to the first snapshot is
+        // both correct (a hull with no authoritative pose has no known
+        // position to collide with) and bounded — ships are not
+        // interest-filtered and snapshots flow at 20 Hz while a client
+        // is connected, so the no-body window is one ~50 ms interval.
+        // Regression lock: ColyseusClient.lingeringJitter.test.ts.
         continue;
       }
 
@@ -4239,11 +4242,61 @@ export class ColyseusGameClient {
       const fromX = mountWorldX + fwdX * 20;
       const fromY = mountWorldY + fwdY * 20;
       const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
+      // 2026-06-03). When the beam stops on a body whose pose is within
+      // ε of world origin, log the hitId — its namespace prefix names the
+      // culprit class (`linger-`/`swarm-`/`wreck-`/raw playerId). Gate is
+      // cached + webdriver-OFF, so production / E2E / netgate allocate
+      // nothing here; the object literal is only built on a rare actual
+      // origin-hit while the probe is on. Confirms the lingering-hull fix
+      // on-device (and would surface any OTHER origin-body path).
+      if (isGhostProbeEnabled() && hit) {
+        const hitPose = this.predWorld.getShipState(hit.hitId);
+        if (hitPose && Math.abs(hitPose.x) < 2 && Math.abs(hitPose.y) < 2) {
+          logEvent('beam_hit_origin', { hitId: hit.hitId, x: hitPose.x, y: hitPose.y });
+        }
+      }
       liveBeams.set(mount.id, {
-        dist: hit ? hit.dist : HITSCAN_RANGE,
+        dist: hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY) : HITSCAN_RANGE,
         hitId: hit?.hitId,
       });
     }
+  }
+
+  /**
+   * Snap the visible beam endpoint to the rendered SHIELD ring when the
+   * ray stops on a shield-up target (2026-06-03). The shield collider IS
+   * `targetRadius + SHIELD_RADIUS_PAD` — the same radius the cyan aura is
+   * drawn at — but the predWorld collider can lag the shield by one
+   * physics step right after a shield 0-cross or a drone's first
+   * in-interest tick (Rapier query-pipeline lag), so the raw
+   * `timeOfImpact` makes the endpoint pop slightly off the aura edge.
+   * Recomputing the distance to the shield sphere ANALYTICALLY guarantees
+   * the beam terminates exactly on the ring. Returns the predWorld dist
+   * unchanged for a shield-DOWN/hull hit, an asteroid, or a miss.
+   * Allocation-free — `rayHitsSphere` is pure scalar (Invariant #14).
+   */
+  private shieldEdgeDist(
+    hit: { hitId: string; dist: number },
+    fromX: number, fromY: number, fwdX: number, fwdY: number,
+  ): number {
+    const hitId = hit.hitId;
+    if (hitId.startsWith('swarm-')) {
+      const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
+      // Drones only (kind===1); asteroids (kind===0) have no shield.
+      if (sw && sw.kind === 1 && sw.shieldDown !== true) {
+        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, sw.x, sw.y, sw.radius + SHIELD_RADIUS_PAD);
+        if (d !== null) return d;
+      }
+      return hit.dist;
+    }
+    const ship = this.mirror.ships.get(hitId);
+    if (ship && ship.shieldDown !== true) {
+      const r = getShipKind(ship.kind ?? null).radius + SHIELD_RADIUS_PAD;
+      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, ship.x, ship.y, r);
+      if (d !== null) return d;
+    }
+    return hit.dist;
   }
 
   /** Resolve the local player's currently-active slot's mount list. Returns

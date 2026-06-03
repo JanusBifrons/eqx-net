@@ -303,6 +303,39 @@ export function isRammingProbeEnabled(): boolean {
 }
 
 /**
+ * Ghost-at-origin probe gate — `?probe=ghost` (laser "ghost at (0,0)"
+ * investigation, 2026-06-03). When on, `ColyseusClient.updateLiveBeam`
+ * emits a `beam_hit_origin { hitId, x, y }` event whenever the live-beam
+ * hitscan resolves a hit whose body pose is within ε of world origin —
+ * the hitId namespace prefix (`linger-` / `swarm-` / `wreck-` / a raw
+ * playerId) names the entity class the beam stops on.
+ *
+ * Opt-in ONLY — **webdriver does NOT auto-enable** (same discipline as
+ * the ramming probe): production gameplay, the heap gates, the netgate,
+ * and unrelated E2E specs pay zero cost and `__eqxGhostProbeEnabled`
+ * stays false so a future accidental `?probe=ghost` in a gate URL fails
+ * the gate's liveness precondition loudly. `?probe` is single-valued, so
+ * `ghost` and `ram` are mutually exclusive. Cached at first read; reset
+ * by `__resetDiagCache()`.
+ */
+let _ghostProbeEnabled: boolean | null = null;
+export function isGhostProbeEnabled(): boolean {
+  if (_ghostProbeEnabled !== null) return _ghostProbeEnabled;
+  let enabled = false;
+  try {
+    const q =
+      typeof window !== 'undefined' && window.location?.search
+        ? new URLSearchParams(window.location.search).get('probe')
+        : null;
+    enabled = q === 'ghost';
+  } catch {
+    enabled = false;
+  }
+  _ghostProbeEnabled = enabled;
+  return enabled;
+}
+
+/**
  * Streaming auto-capture mode — `?autocapture=1`. Mirror of the
  * `isDiagEnabled()` predicate above, distinct latch + window flag.
  *
@@ -354,6 +387,7 @@ export function __resetDiagCache(): void {
   _maxEntries = -1;
   _autoCaptureEnabled = null;
   _rammingProbeEnabled = null;
+  _ghostProbeEnabled = null;
 }
 
 /**
@@ -384,4 +418,8 @@ export function installWindowLogger(): void {
   // `?probe=ram` in a gate URL doesn't silently re-introduce the alloc-
   // confound from capture ilhqk6 / lazy-mochi P2.
   w['__eqxRammingProbeEnabled'] = isRammingProbeEnabled();
+  // Ghost-at-origin probe opt-in (`?probe=ghost`, 2026-06-03). Mirrored
+  // so the netgate/E2E liveness precondition can assert it is `false`,
+  // catching a future accidental `?probe=ghost` leak into a gate URL.
+  w['__eqxGhostProbeEnabled'] = isGhostProbeEnabled();
 }

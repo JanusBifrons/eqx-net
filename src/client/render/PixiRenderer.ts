@@ -38,7 +38,12 @@ import {
 const BACKGROUND_COLOR = 0x05070f;
 // Default gameplay camera zoom (world Container scale). 1.0 preserves the
 // historical framing; tune here once the `?zoom=` on-device A/B settles.
-const DEFAULT_GAMEPLAY_ZOOM = 1.0;
+// 2026-06-03 zoom-range tweak: the gameplay camera now allows zooming
+// much further OUT (clampZoom minScale 0.4 → 0.15 below) so the player can
+// take in the wider battlefield. The DEFAULT start zoom moved from 1.0 to
+// 0.5 — close to the OLD max zoom-out (0.4), raised slightly — so you spawn
+// seeing more of the sector. `?zoom=` still overrides for on-device A/B.
+const DEFAULT_GAMEPLAY_ZOOM = 0.5;
 const LASER_CORE_COLOR = 0xffffff;
 
 // Per-frame Pixi stroke-style scratches. The renderer redraws beams
@@ -374,7 +379,10 @@ export class PixiRenderer implements IRenderer {
     // (camera was snapping between zoom-target and centered position
     // every other frame).
     this.camera = new Camera(this.world, {
-      minScale: 0.4,
+      // minScale lowered 0.4 → 0.15 (2026-06-03) so the player can zoom
+      // much further out to read the wider battlefield. maxScale (zoom-in)
+      // unchanged.
+      minScale: 0.15,
       maxScale: 3,
       followLerpFactor: 1,
     });

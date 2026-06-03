@@ -133,6 +133,19 @@ async function visitArm(
       `[${arm.name}] __eqxAutoCaptureEnabled must be false (streaming changes the program under measurement)`,
     ).toBe(false);
 
+    // Ghost-at-origin probe symmetric assertion (laser "ghost at (0,0)"
+    // investigation, 2026-06-03). `?probe=ghost` adds a per-origin-hit
+    // logEvent inside updateLiveBeam; assert OFF so a future accidental
+    // leak into the gate URL fails LOUDLY here rather than perturbing the
+    // measured program. Webdriver does NOT auto-enable it (opt-in only).
+    const preGhostProbe = await page.evaluate(
+      () => (window as unknown as { __eqxGhostProbeEnabled?: boolean }).__eqxGhostProbeEnabled === true,
+    );
+    expect(
+      preGhostProbe,
+      `[${arm.name}] __eqxGhostProbeEnabled must be false (probe changes the program under measurement)`,
+    ).toBe(false);
+
     await runScenario(page);
 
     const s = await page.evaluate(() => {
