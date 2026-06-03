@@ -2,9 +2,10 @@
  * FX kill-switch URL params for heap-bisect measurements
  * (plan: melodic-engelbart, Step 2).
  *
- * Used by the Pixi-heap-bisect spec (`tests/e2e/combat-heap-growth-fx-bisect`)
- * to A/B/C the FX subsystem against the pre-existing heap leak surfaced
- * in capture `wb1al4` (heap 50→95 MB across 5 min, RAF cascade at ~120 s).
+ * Used by perf heap-bisect investigations (the `tests/perf/` combat-heap
+ * specs and manual `?nofilters=1` / `?noparticles=1` A/B runs) to A/B/C the
+ * FX subsystem against the pre-existing heap leak surfaced in capture
+ * `wb1al4` (heap 50→95 MB across 5 min, RAF cascade at ~120 s).
  *
  * - `?nofilters=1` detaches all GPU filters (WarpFilterChain → minimal,
  *   LaserGlow / ShieldAura / DestructionFx skip their filter attaches).

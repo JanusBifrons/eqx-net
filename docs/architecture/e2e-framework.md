@@ -2,6 +2,21 @@
 
 **Status:** Phase 0b of the e2e-rebuild plan (`C:\Users\alecv\.claude\plans\i-want-you-to-lively-tulip.md`). Phase 2 acts on this doc — tagging specs into Playwright projects, moving `@diag` specs out of CI, replacing `waitForTimeout` settles with state predicates, raising the suite timeout.
 
+> **⚠️ The per-spec triage table + verdict roll-up below are PARTIALLY STALE** (they predate the measurement-spec proliferation and the weapons/energy work). The authoritative current state is the **Determinism refactor** section immediately below; the full table refresh is the final commit of `docs/refactors/test-coverage-audit.md`.
+
+## Determinism refactor (2026-06-03, `docs/refactors/test-coverage-audit.md`)
+
+Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one agent per delete/relocate/merge candidate, adversarially verifying each "superseded by X" claim) preceded every change. It caught **4 plan errors** where literal execution would have deleted unique coverage — those specs were preserved (see below).
+
+**Phase 1 — DONE.** Relocate fixed-window measurement specs → `tests/perf/` (run via `pnpm e2e:perf`, never in the per-PR `pnpm e2e`), delete one-off investigation captures.
+
+- **Relocated to `tests/perf/` (13):** `heap-growth-gate`, `combat-heap-growth` (keeps slope<0.4 / rafGap<10 / maxStall<150 budgets), `combat-allocation-profile`, `combat-allocation-profile-hostile`, `heap-snapshot-diff`(+`-worker-off`,`-mobile-emu`), `swarm-bandwidth` (keeps 60/90 KB/s budgets), `worker-ab-perf`(+`-mobile-emu`), `diag-mode-side-effect`, `mobile-perf-probe4`, **`webrtc-vs-ws-recv-gap-comparison`** (audit-corrected from DELETE→RELOCATE — carries the WebRTC exit-gate: DC cuts recv_gap_long ≥70% under bursts, lives nowhere else). Imports needed zero rewrites (all `@playwright/test`-only or `../../scripts/...`, which resolves identically from `tests/perf/`).
+- **Deleted (8 one-off captures):** `autocapture-observer-effect`, `combat-heap-growth-fx-bisect`, `network-buffer-and-throttle-repro`, `spiral-in-pack-density`, `spiral-joystick-flicker`, `webrtc-mobile-emulation-stutter`, `webrtc-mobile-emulation-control`, `maxdrift-investigation`. (Stale code comments in `fxKillSwitches.ts` / `joystickToInput.ts` / `ColyseusClient.ts` that named deleted specs were repointed to the surviving locks.)
+- **Audit coverage-corrections — KEPT despite the plan saying delete/merge** (each holds an assertion that lives NOWHERE else): `spiral-disconnect-reconnect` (post-reconnect ticksAhead/corr bound — the 2026-05-20 unplayable `9hj9sl` lock), `prediction-diagnostics` (T3 sub-snapshot prediction-running lock; doc's own line 69 calls it the *source* of the netgate ceilings), `laser-smoothness` (local-beam origin-attachment ≠ the drone leak-guard; zero overlap). Their surgical trim/fold is deferred to Phase 3.
+- **`energy-bar.spec.ts`** was orphaned (in no project's `testMatch`, so never ran) — registered into `FEATURE_SPECS`.
+
+**Counts after Phase 1:** `tests/e2e/` **55** spec files (54 `@smoke`+`@feature` + 1 `@gate`); `tests/perf/` **14**. `FEATURE_SPECS` 59→39.
+
 ## Why this doc exists
 
 On 2026-05-19 a 6-commit wrap-up shipped with the full deterministic suite green (typecheck 0 / lint 0 / 1031 unit / integration / boot / bench) and was unplayable on-device. Phase 1 of the e2e-rebuild plan built the netcode-health gate (`pnpm e2e:netgate`) to answer the playability question the deterministic suite was never trying to answer; this doc Phase-0b — the prerequisite for Phase 2's framework restructure — classifies every existing E2E spec so the runner can ship a coherent four-tier story instead of one unsorted bag of `tests/e2e/*.spec.ts`.

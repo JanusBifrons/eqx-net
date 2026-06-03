@@ -56,26 +56,21 @@ const SMOKE_SPECS: string[] = [
   '**/weapon-switching.spec.ts',
 ];
 
+// NOTE: fixed-window measurement specs (heap/alloc/bandwidth/worker-ab/diag-mode/
+// mobile-perf-probe4 + the WebRTC-vs-WS recv-gap gate) were relocated to
+// `tests/perf/` (run via `pnpm e2e:perf`, playwright.perf.config.ts) by the
+// test-coverage determinism refactor (2026-06-03) — they hold a wall-clock
+// window to gather a number and don't belong in the per-PR e2e suite. One-off
+// investigation/bisect/repro captures were deleted. See
+// docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
-  '**/autocapture-observer-effect.spec.ts',
   '**/asteroid-shape.spec.ts',
   '**/combat.spec.ts',
   '**/missile-frigate-homing.spec.ts',
   '**/collision-events.spec.ts',
   '**/configurable-arrival.spec.ts',
-  '**/diag-mode-side-effect.spec.ts',
-  '**/heap-growth-gate.spec.ts',
-  '**/combat-heap-growth.spec.ts',
-  '**/heap-snapshot-diff-mobile-emu.spec.ts',
-  '**/combat-heap-growth-fx-bisect.spec.ts',
-  '**/combat-allocation-profile.spec.ts',
-  '**/combat-allocation-profile-hostile.spec.ts',
-  '**/heap-snapshot-diff-worker-off.spec.ts',
-  '**/heap-snapshot-diff.spec.ts',
-  '**/worker-ab-perf.spec.ts',
-  '**/worker-ab-perf-mobile-emu.spec.ts',
+  '**/energy-bar.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
-  '**/network-buffer-and-throttle-repro.spec.ts',
   '**/drawer-galaxy-map-open-close.spec.ts',
   '**/drawer-galaxy-overview-spawn.spec.ts',
   '**/drone-destruction.spec.ts',
@@ -89,7 +84,6 @@ const FEATURE_SPECS: string[] = [
   '**/input-throttle-drift.spec.ts',
   '**/laser-smoothness.spec.ts',
   '**/living-world.spec.ts',
-  '**/mobile-perf-probe4.spec.ts',
   '**/network-feel-combat.spec.ts',
   '**/prediction-diagnostics.spec.ts',
   '**/prediction-idle-bounded.spec.ts',
@@ -98,9 +92,6 @@ const FEATURE_SPECS: string[] = [
   '**/rotate-jitter.spec.ts',
   '**/ship-roster-panel.spec.ts',
   '**/spiral-disconnect-reconnect.spec.ts',
-  '**/spiral-in-pack-density.spec.ts',
-  '**/spiral-joystick-flicker.spec.ts',
-  '**/swarm-bandwidth.spec.ts',
   '**/swarm-jitter.spec.ts',
   '**/swarm-sleep.spec.ts',
   '**/swarm-stationary-stability.spec.ts',
@@ -112,10 +103,6 @@ const FEATURE_SPECS: string[] = [
   '**/tidi-overlay.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
-  '**/webrtc-vs-ws-recv-gap-comparison.spec.ts',
-  '**/webrtc-mobile-emulation-stutter.spec.ts',
-  '**/webrtc-mobile-emulation-control.spec.ts',
-  '**/maxdrift-investigation.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];

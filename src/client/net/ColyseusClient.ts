@@ -3573,8 +3573,9 @@ export class ColyseusGameClient {
     // per-iteration `localShip.angle` (which advances via `predWorld.tick`
     // each step) and its hysteresis bands (TURN_OFF_RAD=0.04, …) track those
     // rotation-induced threshold crossings. Hoisting joystick would cause
-    // phantom over-rotation on held-stick inputs; regression-guarded by
-    // `tests/e2e/spiral-joystick-flicker.spec.ts`.
+    // phantom over-rotation on held-stick inputs; the hysteresis mechanism is
+    // locked by `joystickToInput.test.ts` and a resulting corr-rate spiral
+    // would trip the netcode-health gate (`pnpm e2e:netgate`).
     const kb = this.keyboard.read();
     while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
       // Over-prediction cap. `lastAckedTick > 0` excludes the
