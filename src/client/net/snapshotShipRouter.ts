@@ -61,15 +61,31 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   const lingeringSeen = lingeringSeenScratch;
   lingeringSeen.clear();
   const localPlayerId = mirror.localPlayerId;
+  const localShipInstanceId = mirror.localShipInstanceId ?? null;
   // 2026-05-25 heap-growth gate step 4: `for…in` instead of
   // `Object.entries` — saves the per-snapshot [key,value] tuple array.
   for (const shipInstanceId in snap.states) {
     const entry = snap.states[shipInstanceId]!;
-    // Local-self exemption: own ship MUST stay in `mirror.ships` even
-    // while pending-join (isActive=false on server). Without this the
-    // bootstrap chain stalls on rendererFirstFrameRendered.
-    const isOwnShip = localPlayerId !== null && entry.playerId === localPlayerId;
-    if (entry.isActive === false && !isOwnShip) {
+    // Own-ship identification keys on shipInstanceId, NOT playerId: a
+    // displaced player owns BOTH a lingering hull and a fresh active ship
+    // under one playerId. Only the welcome ship (matching localShipInstanceId)
+    // keeps the pending-join active exemption; the player's DISPLACED hulls
+    // route to lingeringShips like any other parked hull — so the OWNER SEES
+    // their pool in-world (2026-06-03 "I can't see the lingering ships") and
+    // they never clobber the active ship at statesByPlayerId[playerId] (the
+    // 2026-06-03 "pinned in my old interceptor" bug was the playerId-only
+    // exemption letting a displaced hull win that key).
+    const isOwnPlayer = localPlayerId !== null && entry.playerId === localPlayerId;
+    const isOwnActiveShip =
+      isOwnPlayer && localShipInstanceId !== null && shipInstanceId === localShipInstanceId;
+    if (entry.isActive === false && isOwnActiveShip) {
+      // Own joining ship MUST stay in `mirror.ships` even while pending-join
+      // (isActive=false on server). Without this the bootstrap chain stalls
+      // on rendererFirstFrameRendered.
+      statesByPlayerId[entry.playerId] = entry;
+      continue;
+    }
+    if (entry.isActive === false) {
       // Route to the lingering map. We update pose every snapshot;
       // identity fields come from the schema diff and are preserved.
       // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the

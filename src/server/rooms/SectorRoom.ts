@@ -76,7 +76,7 @@ import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import {
   evaluateSectorIdle,
-  findAbandonedPlayers,
+  findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
 import { makeInputHandler } from './InputHandler.js';
@@ -205,6 +205,16 @@ const JoinOptionsSchema = z
      *  testMode-gated; ignored on galaxy rooms so a malicious client
      *  can't force-aggro a live sector. plan: imperative-taco. */
     startHostile: z.boolean().optional(),
+    /** Test-only: override the disconnect-linger TTL (ms) for THIS player.
+     *  On disconnect the room normally lingers the hull for
+     *  `LIMBO_DISCONNECT_TTL_MS` (15 min) before the ownerless-evict timer
+     *  returns it to the virtual pool. That's far too long for an E2E to
+     *  observe the despawn→return-to-pool transition, so the linger E2E
+     *  suite passes e.g. `?lingerMs=2000` to make the evict fire in ~2 s.
+     *  testMode-gated (honoured only on `galaxy-test` / engineering rooms);
+     *  ignored on live galaxy rooms so a malicious client can't force a
+     *  short or huge linger window. */
+    lingerMs: z.number().int().min(1).max(900_000).optional(),
   })
   .passthrough();
 
@@ -579,6 +589,43 @@ export class SectorRoom extends Room<SectorState> {
    *  re-bound or fresh-spawned in the meantime. */
   private readonly ownerlessShips = new Map<string, ReturnType<typeof setTimeout>>();
 
+  /** Test-only per-player disconnect-linger TTL override (ms), captured
+   *  from the `lingerMs` JoinOption in testMode rooms. LeaveHandler reads
+   *  it to shorten the linger window so the despawn→return-to-pool E2E
+   *  runs in ~2 s instead of 15 min. Cleared on leave. */
+  private readonly playerToLingerMs = new Map<string, number>();
+
+  /**
+   * Test-only piercing surface (see src/server/CLAUDE.md "Testing
+   * patterns"). Exposes private collaborators that integration tests
+   * assert against without each declaring a local cast interface. NOT used
+   * in production. Restored 2026-06-03 after the v3 subsystem extraction
+   * dropped it (it was still referenced by 4 integration files, leaving
+   * them RED). Each access reads through to the live field/method.
+   */
+  get _internals(): {
+    serverTick: number;
+    ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+    aiPlayerScratch: AiPlayerView[];
+    postToWorker: (cmd: WorkerCmd) => void;
+    applyDamage: (
+      targetId: string,
+      shooterId: string,
+      damage: number,
+      hitX?: number,
+      hitY?: number,
+    ) => void;
+  } {
+    return {
+      serverTick: this.serverTick,
+      ownerlessShips: this.ownerlessShips,
+      aiPlayerScratch: this.aiPlayerScratch,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+    };
+  }
+
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
 
@@ -839,6 +886,9 @@ export class SectorRoom extends Room<SectorState> {
       state: this.state,
       sabF32: this.sabF32,
       shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
+      ownerlessShips: this.ownerlessShips,
       playerToSlot: this.playerToSlot,
       slotToPlayer: this.slotToPlayer,
       freeSlots: this.freeSlots,
@@ -1130,6 +1180,8 @@ export class SectorRoom extends Room<SectorState> {
       playerToActiveShipInstance: this.playerToActiveShipInstance,
       playerToTransitInFlight: this.playerToTransitInFlight,
       ownerlessShips: this.ownerlessShips,
+      lingerMs: (pid) => this.playerToLingerMs.get(pid),
+      clearLingerMs: (pid) => { this.playerToLingerMs.delete(pid); },
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
       snapshotBroadcaster: this.snapshotBroadcaster,
@@ -2661,6 +2713,12 @@ export class SectorRoom extends Room<SectorState> {
       // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
       // not on the ShipState schema (per the spatial-fields-off-schema
       // invariant at the top of `SectorState.ts`).
+      // lingerMs override — captured per-player so the NEXT onLeave uses a
+      // short linger TTL (lets the despawn→return-to-pool E2E observe the
+      // evict without waiting out the 15-min production window).
+      if (typeof parsed.data.lingerMs === 'number') {
+        this.playerToLingerMs.set(playerId, parsed.data.lingerMs);
+      }
     }
     ship.shieldLastDamageTick = this.serverTick;
 
@@ -3088,8 +3146,11 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
-      const abandoned = findAbandonedPlayers(this.state.ships, getPlayerShipStore());
-      for (const playerId of abandoned) this.convertShipToWreck(playerId);
+      const abandoned = findAbandonedShips(this.state.ships, getPlayerShipStore());
+      for (const a of abandoned) {
+        if (a.lingering) this.wreckCoordinator.convertLingeringHullToWreck(a.shipInstanceId);
+        else this.convertShipToWreck(a.playerId);
+      }
     }
 
     // Phase 5d spatial-grid update + Phase 1 AI runaway-bounds clamp.

@@ -43,7 +43,7 @@ describe('SectorRoom integration — lingering hull pose preserved across fresh-
   it('lingering hull stays at abandon pose, not (0, 0) or fresh-spawn pose', async () => {
     // Spawn at a clearly non-origin point so a (0, 0) regression is
     // obvious in the assertion failure.
-    const client1 = await harness.connectAs(PID, {
+    const client1 = await harness.connectActive(PID, {
       spawnX: ABANDON_X,
       spawnY: ABANDON_Y,
       shipKind: 'fighter',
@@ -70,7 +70,7 @@ describe('SectorRoom integration — lingering hull pose preserved across fresh-
     const FRESH_X = 50;
     const FRESH_Y = 50;
     const lingeringPoses: Array<{ x: number; y: number; isActive: boolean }> = [];
-    const client2 = await harness.connectAs(PID, {
+    const client2 = await harness.connectActive(PID, {
       isNewShip: true,
       shipKind: 'fighter',
       spawnX: FRESH_X,

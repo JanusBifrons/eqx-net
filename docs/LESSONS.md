@@ -14,6 +14,65 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-03 — lingering-hull / wreck / ship-pool review + E2E (plan: splendid-wigderson)
+Commits: `b030360` `73a5068` `a987b8c` (+ E2E specs)
+
+Reviewed the lingering-hull + wreck + ship-pool flows, fixed one spec
+divergence, and built the first browser-level E2E coverage for them. Non-obvious
+findings:
+
+- **Abandoning a LINGERING hull produced no wreck — a real spec divergence.**
+  `findAbandonedPlayers` skipped `!ship.isActive`, and `convertShipToWreck` is
+  playerId-keyed (can't target a specific lingering hull — the owner may pilot a
+  different active hull). So an abandoned lingering hull silently lingered out
+  its 15-min TTL instead of becoming a wreck, contradicting "a wreck if it's
+  still in the game world." Fix: `findAbandonedShips` returns active AND
+  lingering abandoned ships with a `lingering` flag; a new shipInstanceId-keyed
+  `convertLingeringHullToWreck` (reads `lingeringSlots`/`lingeringPoseCache`,
+  rekeys `linger-${id}`→`wreck-${id}`, cancels the evict timer, never touches
+  playerId-keyed state). Test-first per Invariant #13.
+
+- **The integration lingering/wreck suite was PRE-EXISTING RED on main.** The
+  bare `colyseus.js` harness client never sends `client_ready`, so the join
+  handshake never completes and `ship.isActive` stays `false` until the 30-s
+  watchdog — every `expect(ship.isActive).toBe(true)` (and the active-abandon
+  cases) failed. The browser doesn't have this problem (it sends `client_ready`
+  after bootstrap). Fix: `harness.connectActive()` sends `client_ready` + polls
+  until active. Applied the same `connectActive`/`client_ready` repair to the
+  whole lingering + wreck + pool suite (`abandonToWreck`, `wreckDamage`,
+  `lingering`, `lingeringPosePreserved`, `lingeringNearOrigin`) — all green.
+  Separately, the documented `SectorRoom._internals` test-getter had been
+  dropped by the v3 subsystem extraction (erroring `hitAckContract`,
+  `droneTargetActiveOnly`, `ramming`, `lingering` with `_internals` undefined);
+  **restored** it (exposes serverTick / ownerlessShips / aiPlayerScratch /
+  postToWorker / applyDamage). The three combat/AI files still need
+  `connectActive` for their active-ship spawns — a mechanical follow-up outside
+  this scope. New tests assert against public `room.state.*` where possible.
+
+- **Lingering is galaxy-only; the E2E helper only reached engineering rooms.**
+  `LeaveHandler` only lingers when `sectorKey !== null`; `test-sector` rooms are
+  `sectorKey===null` and fully despawn. Real galaxy rooms have living-world
+  hunter bots that would *attack and destroy* the lingering hull mid-test. So a
+  bespoke isolated `galaxy-test` room was required (real sectorKey, droneCount 0,
+  excluded from the director, `filterBy(['testId'])`).
+
+- **Owners never see their OWN displaced lingering hull.** Both snapshot routing
+  sites exempt own-ship and the welcome handler *rescues* own ship out of
+  `mirror.lingeringShips` into `mirror.ships`. Every "lingering hull visible"
+  assertion therefore needs a 2nd observer client — the single biggest E2E
+  design constraint here.
+
+- **Screenshots need `?worker=0`.** The default OffscreenCanvas-in-worker
+  renderer composites to a transferred canvas that Playwright captures as BLACK;
+  forcing the main-thread Pixi renderer (`?worker=0`) yields real pixels. The
+  committed observer screenshots (`diag/e2e-screenshots/linger-wreck/`) show the
+  lingering hull / wreck where the position data-attrs assert it is.
+
+- **The despawn→return-to-pool path was never tested** (15-min wall-clock
+  `setTimeout`, not tick-based, so `testTimeScale` can't shorten it). Added the
+  `lingerMs` testMode JoinOption (threads into both the Limbo window and the
+  evict timer) so the eviction + `markStored` return-to-pool runs in ~2 s.
+
 ## 2026-06-02 — weapons-energy-ai-overhaul — per-ship loadouts, energy pool, weapon-aware drones
 Commits: `cac0dbb` `53b924a` `56fd3ce` `e4f8a3c` `3e6ae1b` `3341f93` `3f0500f`
 

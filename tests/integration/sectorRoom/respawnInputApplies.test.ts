@@ -195,4 +195,59 @@ describe('SectorRoom respawn — input must move ship after rejoin', () => {
 
     await harness.disconnectClient(client2);
   });
+
+  it('REBIND: thrust moves the ship after disconnect + rejoin WITHOUT isNewShip', async () => {
+    // User smoke report (2026-06-03): "Spawned as an interceptor in Sol.
+    // Went back to menu. Spawned in as another interceptor... Instead
+    // respawned me in that same interceptor and I couldn't move."
+    //
+    // The galaxy-map "resume / rejoin same sector" path (no isNewShip)
+    // rebinds the player to their lingering hull via the SectorRoom `else`
+    // branch (pendingJoin → client_ready → warp_in → arrivalTick). This
+    // exercises the SERVER side of that rebind: after the handshake the
+    // ship must accept input and move. If the server is clean here, the
+    // "can't move" bug lives client-side (the rebound ship stuck in the
+    // lingering-hull mirror / predWorld not re-seeded).
+    const pid = randomUUID();
+
+    const client1 = await harness.connectAs(pid, { shipKind: 'interceptor', spawnX: 0, spawnY: 0 });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
+    client1.send('client_ready', { type: 'client_ready' });
+    await harness.events.waitFor({ tag: 'ship_activated', where: (d) => d['playerId'] === pid });
+    harness.events.clear();
+
+    await harness.disconnectClient(client1);
+    await harness.events.waitFor({ tag: 'player_lingered', where: (d) => d['playerId'] === pid });
+
+    // Rejoin WITHOUT isNewShip → the server's rebind (else) branch.
+    const client2 = await harness.connectAs(pid, { shipKind: 'interceptor' });
+    // The rebind path emits `player_rebind`, NOT `player_join`.
+    await harness.events.waitFor({ tag: 'player_rebind', where: (d) => d['playerId'] === pid });
+    const poses: PoseSample[] = [];
+    collectPoses(client2, poses);
+
+    client2.send('client_ready', { type: 'client_ready' });
+    await harness.events.waitFor({ tag: 'ship_activated', where: (d) => d['playerId'] === pid });
+
+    for (let i = 0; i < 20; i++) {
+      harness.sendThrust(client2);
+      await harness.advance(50);
+    }
+
+    const myActivePoses = poses.filter((p) => p.playerId === pid && p.isActive);
+    expect(myActivePoses.length, 'after rebind, must receive active-ship snapshots').toBeGreaterThan(5);
+    const first = myActivePoses[0]!;
+    const last = myActivePoses[myActivePoses.length - 1]!;
+    const distMoved = Math.hypot(last.x - first.x, last.y - first.y);
+    expect(
+      distMoved,
+      [
+        'After disconnect + rebind (no isNewShip), thrust must move the ship.',
+        `Movement observed: ${distMoved.toFixed(3)} u (expected > 1 u).`,
+        `First: (${first.x.toFixed(3)}, ${first.y.toFixed(3)}) Last: (${last.x.toFixed(3)}, ${last.y.toFixed(3)})`,
+      ].join('\n'),
+    ).toBeGreaterThan(1);
+
+    await harness.disconnectClient(client2);
+  });
 });

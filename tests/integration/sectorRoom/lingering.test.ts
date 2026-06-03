@@ -51,7 +51,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
   }, 10_000);
 
   it('after onJoin, state.ships has the active hull with isActive=true', async () => {
-    const client = await harness.connectAs(PID_A, { shipKind: 'fighter' });
+    const client = await harness.connectActive(PID_A, { shipKind: 'fighter' });
     await harness.advance(150);
     const room = harness.getServerRoom();
     expect(room).not.toBeNull();
@@ -67,7 +67,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
   });
 
   it('the schema map key matches each entry\'s shipInstanceId (rekey lock)', async () => {
-    const client = await harness.connectAs(PID_B);
+    const client = await harness.connectActive(PID_B);
     await harness.advance(150);
     const state = harness.getServerRoom()!.state as SectorState;
     for (const [key, ship] of state.ships.entries()) {
@@ -77,7 +77,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
   });
 
   it('after disconnect from galaxy room, ship lingers with isActive=false', async () => {
-    const client = await harness.connectAs(PID_C, { shipKind: 'scout' });
+    const client = await harness.connectActive(PID_C, { shipKind: 'scout' });
     // Event-driven wait: `player_join` is logged synchronously inside
     // onJoin, so by the time `connectAs` resolves it's already in the
     // buffer. No blind `advance(N)` needed.
@@ -101,7 +101,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
   });
 
   it('snapshot wire format: keys are shipInstanceId; entries carry playerId + isActive', async () => {
-    const client = await harness.connectAs(PID_D, { shipKind: 'scout' });
+    const client = await harness.connectActive(PID_D, { shipKind: 'scout' });
     // Wake the sector — broadcasts are suppressed while idle. Thrust
     // applies an impulse → shipPoseCache shows motion → noteSectorEvent
     // → sectorIdle=false → broadcast loop fires.
@@ -123,7 +123,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
   });
 
   it('disconnect schedules a shipInstanceId-keyed auto-evict timer', async () => {
-    const client = await harness.connectAs(PID_A, { shipKind: 'fighter' });
+    const client = await harness.connectActive(PID_A, { shipKind: 'fighter' });
     await harness.advance(150);
     const room = harness.getServerRoom()!;
     const state = room.state as SectorState;
@@ -149,7 +149,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     // leaked displaced hulls forever. The cleanup rekeys the map to
     // shipInstanceId so the timer can keep pointing at the displaced hull;
     // this test fails if a future change re-introduces the cancel.
-    const client1 = await harness.connectAs(PID_B, { shipKind: 'fighter' });
+    const client1 = await harness.connectActive(PID_B, { shipKind: 'fighter' });
     await harness.advance(150);
     const room = harness.getServerRoom()!;
     const state = room.state as SectorState;
@@ -162,7 +162,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
 
     // Fresh-spawn displaces the lingering hull into lingeringSlots. The
     // timer for the ORIGINAL ship must survive this transition.
-    const client2 = await harness.connectAs(PID_B, { isNewShip: true, shipKind: 'scout' });
+    const client2 = await harness.connectActive(PID_B, { isNewShip: true, shipKind: 'scout' });
     await harness.advance(200);
 
     expect(state.ships.size).toBe(2);
@@ -172,7 +172,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
 
   it('after fresh-spawn (isNewShip), original ship lingers + new ship is active', async () => {
     // Step 1: spawn the original ship.
-    const client1 = await harness.connectAs(PID_E, { shipKind: 'fighter' });
+    const client1 = await harness.connectActive(PID_E, { shipKind: 'fighter' });
     await harness.advance(150);
     const state = harness.getServerRoom()!.state as SectorState;
     expect(state.ships.size).toBe(1);
@@ -187,7 +187,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
 
     // Step 3: reconnect with isNewShip — should add a new active hull
     // alongside the existing lingering one.
-    const client2 = await harness.connectAs(PID_E, {
+    const client2 = await harness.connectActive(PID_E, {
       isNewShip: true,
       shipKind: 'scout',
     });

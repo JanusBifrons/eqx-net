@@ -76,6 +76,10 @@ describe('SectorRoom integration — wreck damage + destruction', () => {
       spawnY: 200,
     });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === abandonedPid });
+    // Complete the join handshake so the hull activates (the bare client
+    // must send client_ready; the browser does this after bootstrap).
+    ship.send('client_ready', { type: 'client_ready' });
+    await harness.advance(800);
 
     const state = getRoomById(ship.roomId).state as SectorState;
     let wreckId = '';
