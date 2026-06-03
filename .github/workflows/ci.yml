@@ -73,8 +73,12 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
+      # Call Playwright directly (NOT `pnpm run e2e:smoke -- --shard=…`) — pnpm
+      # forwards the `--` separator literally, so playwright received "--" and
+      # "--shard=1/2" as positional path filters and matched zero tests
+      # ("No tests found"). `pnpm exec` passes --shard as a real flag.
       - name: Playwright E2E (smoke, shard ${{ matrix.shard }}/2)
-        run: pnpm run e2e:smoke -- --shard=${{ matrix.shard }}/2
+        run: pnpm exec playwright test --project=smoke --shard=${{ matrix.shard }}/2
         env:
           CI: 'true'
           PLAYWRIGHT_RETRIES: '2'
