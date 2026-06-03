@@ -259,6 +259,41 @@ describe('HostileDroneBehaviour — COMBAT pursuit', () => {
     expect(intent.setAngvel ?? 0).not.toBe(0);
   });
 
+  it('FIRES along the lead vector (intercept point), not straight at the target', () => {
+    // Regression lock for the 2026-06-03 "AI bolts miss moving targets"
+    // fix. Pre-fix the lead was computed for body STEERING only and the
+    // shot fired along body-forward — so a drone aligned to a target that
+    // is sliding sideways still shot at where the target IS, and the bolt
+    // (with travel time) missed. The fired direction must now point at the
+    // intercept point.
+    const b = new HostileDroneBehaviour(); // fighter (bolt), muzzle 1600
+    b.markHostile('p', 0);
+    // Drone at origin facing +y; target dead ahead at (0,200) moving +x.
+    // Intercept is to the RIGHT, so fire.dirX must be positive (it would
+    // be exactly 0 — straight up the body-forward axis — pre-fix).
+    const movingRight: AiWorldView = {
+      players: [{ id: 'p', x: 0, y: 200, vx: 200, vy: 0 }],
+      tick: 100,
+      dtSec: 1 / 60,
+    };
+    const intent = b.tick(droneAt(0, 0, 0, 0), movingRight);
+    expect(intent.fire).toBeDefined();
+    expect(intent.fire!.dirX).toBeGreaterThan(0.05); // leads +x, not (0,1)
+    expect(Math.hypot(intent.fire!.dirX, intent.fire!.dirY)).toBeCloseTo(1, 5);
+
+    // Stationary target → no lead → fires straight at it (dirX ≈ 0).
+    const b2 = new HostileDroneBehaviour();
+    b2.markHostile('p', 0);
+    const stationary: AiWorldView = {
+      players: [{ id: 'p', x: 0, y: 200, vx: 0, vy: 0 }],
+      tick: 100,
+      dtSec: 1 / 60,
+    };
+    const intent2 = b2.tick(droneAt(0, 0, 0, 0), stationary);
+    expect(intent2.fire).toBeDefined();
+    expect(Math.abs(intent2.fire!.dirX)).toBeLessThan(0.01);
+  });
+
   it('boosts forward thrust when the hostile target is far', () => {
     // fighter (bolt) fireRange ≈ 560 ⇒ engage-boost threshold = 1.5× ≈ 840.
     // Target at 1000 (> 840 → boosted) vs 400 (approach window → base thrust).

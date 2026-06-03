@@ -37,6 +37,7 @@ import {
   LIFETIME_FRAMES,
   POOL_CAP,
   fontScaleForTotal,
+  colorForTotal,
 } from './DamageNumbers.js';
 import type { Camera } from './worker/Camera.js';
 
@@ -78,7 +79,8 @@ describe('DamageNumberManager — accumulator spawn', () => {
     const text = inner.children[0] as Text;
     expect(text.x).toBe(100);
     expect(text.y).toBe(-50);
-    expect(text.text).toBe('-42');
+    // 2026-06-03: no leading sign — raw magnitude only.
+    expect(text.text).toBe('42');
   });
 
   it('two hits to DIFFERENT targets open two buckets (one Text each)', () => {
@@ -108,18 +110,24 @@ describe('DamageNumberManager — accumulation on same target', () => {
     const inner = innerContainer(parent);
     expect(inner.children.length).toBe(1);
     const text = inner.children[0] as Text;
-    expect(text.text).toBe('-17');
+    expect(text.text).toBe('17');
   });
 
-  it('second hit re-anchors the text at the new hit position', () => {
+  it('second hit GLIDES toward the new hit position (no snap)', () => {
     mgr.spawn('drone-1', 100, 50, 10);
     const inner = innerContainer(parent);
     const text = inner.children[0] as Text;
     expect(text.x).toBe(100);
     expect(text.y).toBe(-50);
+    // 2026-06-03: the second hit retargets the glide but does NOT snap
+    // the rendered text — snapping per hit was the "jolts/resets" bug.
     mgr.spawn('drone-1', 200, 75, 5);
-    expect(text.x).toBe(200);
-    expect(text.y).toBe(-75);
+    expect(text.x).toBe(100); // no instant jump
+    // Glides toward (200, -75) over several frames, no overshoot.
+    for (let i = 0; i < 30; i++) mgr.update();
+    expect(text.x).toBeGreaterThan(195);
+    expect(text.x).toBeLessThanOrEqual(200);
+    expect(text.y).toBeLessThan(-70); // eased toward -75
   });
 
   it('font scale grows monotonically with accumulated total', () => {
@@ -148,7 +156,32 @@ describe('DamageNumberManager — accumulation on same target', () => {
     mgr.spawn('drone-1', 0, 0, 0);
     expect(mgr.getActiveCount()).toBe(1);
     const text = innerContainer(parent).children[0] as Text;
-    expect(text.text).toBe('-10');
+    expect(text.text).toBe('10');
+  });
+});
+
+describe('colorForTotal — light→deep colour ramp (no sign)', () => {
+  const green = (c: number): number => (c >> 8) & 0xff;
+  const red = (c: number): number => (c >> 16) & 0xff;
+  const blue = (c: number): number => c & 0xff;
+
+  it('damage starts light red and deepens (green/blue channels drop) as total grows', () => {
+    const small = colorForTotal(5);
+    const big = colorForTotal(500);
+    // Red channel pinned high at both ends; "redder" = less green + blue.
+    expect(red(small)).toBe(0xff);
+    expect(red(big)).toBe(0xff);
+    expect(green(big)).toBeLessThan(green(small));
+    expect(blue(big)).toBeLessThan(blue(small));
+  });
+
+  it('saturates to pure red for very large totals', () => {
+    expect(colorForTotal(1_000_000)).toBe(0xff0000);
+  });
+
+  it('heal flavour is green-dominant (green channel exceeds red)', () => {
+    const heal = colorForTotal(50, true);
+    expect(green(heal)).toBeGreaterThan(red(heal));
   });
 });
 
@@ -199,23 +232,28 @@ describe('DamageNumberManager — per-frame update is unconditional', () => {
     mgr = new DamageNumberManager(parent, camera);
   });
 
-  it('drifts upward 1 unit per update (at camera.scale.x = 1)', () => {
+  it('holds steady on the target while damage is landing (no drift during stay)', () => {
+    // 2026-06-03: the number sits on the target while hits land; it only
+    // floats up during the fade-out. So during the stay window text.y is
+    // stable (no per-frame upward drift).
     mgr.spawn('drone-1', 0, 0, 10);
     const text = innerContainer(parent).children[0] as Text;
     const yAtSpawn = text.y;
     mgr.update();
-    expect(text.y).toBe(yAtSpawn - 1);
+    expect(text.y).toBeCloseTo(yAtSpawn, 5);
     mgr.update();
-    expect(text.y).toBe(yAtSpawn - 2);
+    expect(text.y).toBeCloseTo(yAtSpawn, 5);
   });
 
-  it('drift rate scales by 1/camera.scale so screen-pixel speed is constant', () => {
-    setScale(camera, 2);
+  it('floats up during the fade-out, rate scaled by 1/camera.scale', () => {
     mgr.spawn('drone-1', 0, 0, 10);
     const text = innerContainer(parent).children[0] as Text;
-    const yAtSpawn = text.y;
+    // Burn through the stay window so subsequent updates are in fade.
+    for (let i = 0; i < STAY_FRAMES; i++) mgr.update();
+    const yAtFadeStart = text.y;
+    setScale(camera, 2); // invScale = 0.5 → rise 0.5 u/frame (FADE_RISE_RATE=1)
     mgr.update();
-    expect(text.y).toBeCloseTo(yAtSpawn - 0.5, 5);
+    expect(text.y).toBeCloseTo(yAtFadeStart - 0.5, 5);
   });
 
   it('text.scale counter-scales to neutralise the world-container zoom', () => {
@@ -279,7 +317,7 @@ describe('DamageNumberManager — lifetime expiry', () => {
     for (let i = 0; i < LIFETIME_FRAMES - offset; i++) mgr.update();
     expect(mgr.getActiveCount()).toBe(1);
     const remaining = innerContainer(parent).children[0] as Text;
-    expect(remaining.text).toBe('-20');
+    expect(remaining.text).toBe('20');
 
     // After `offset` more frames, drone-2 also expires.
     for (let i = 0; i < offset; i++) mgr.update();
@@ -330,11 +368,11 @@ describe('DamageNumberManager — cancelByTag (predicted-hit rollback)', () => {
     mgr.spawn('drone-1', 0, 0, 25); // authoritative, no tag — sticks
     expect(mgr.getActiveCount()).toBe(1);
     const text = innerContainer(parent).children[0] as Text;
-    expect(text.text).toBe('-35');
+    expect(text.text).toBe('35');
 
     mgr.cancelByTag('shot-1');
     expect(mgr.getActiveCount()).toBe(1);
-    expect(text.text).toBe('-25');
+    expect(text.text).toBe('25');
   });
 
   it('cancels every bucket that recorded a contribution from the tag', () => {

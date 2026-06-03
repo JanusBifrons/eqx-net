@@ -161,12 +161,48 @@ describe('lingering hull: snapshot is the sole correction path (no dual-path jit
     expect(poseAfterSync.y).toBeCloseTo(50, 1);
   });
 
-  it('syncMirror still spawns the body if it arrives BEFORE the first snapshot (race fallback)', async () => {
-    // Race scenario: Colyseus state patch arrives before the first
-    // snapshot. syncMirror should spawn a body so the local player can
-    // collide with it even in this window. Pose is best-effort (whatever
-    // prev?.x/y has — usually (0, 0)); the first snapshot will reconcile.
+  it('syncMirror does NOT spawn a lingering body at origin before the first snapshot (no (0,0) ghost); the snapshot path spawns it at the real pose', async () => {
+    // INVERTED 2026-06-03 (laser "ghost at (0,0)" smoke bug). The
+    // lingering mirror entry is seeded at (0,0) by the schema-diff path
+    // (ColyseusClient.syncMirror) until a snapshot fills the real pose.
+    // The OLD behaviour spawned the predWorld body immediately from that
+    // (0,0) seed as a "race fallback", parking an invisible, shootable
+    // body at world origin — the on-device "laser beam stops short at
+    // (0,0), no damage" ghost. It is INTERMITTENT because it only exists
+    // in the schema-diff-before-first-snapshot window.
+    //
+    // NEW contract — the body spawns ONLY from the snapshot path
+    // (snapshotShipRouter.routeSnapshotShipStates), which always carries
+    // the authoritative pose; syncMirror is identity-only. This mirrors
+    // the wreck single-spawn-site pattern (SnapshotSyncHelpers.syncWreckPoses).
+    // Why this is safe: ships are NOT interest-filtered and snapshots flow
+    // at 20 Hz while a client is connected, so the no-body window is one
+    // ~50 ms snapshot interval; AND a hull with no authoritative pose has
+    // no known position to collide with anyway. The old race-fallback
+    // spawned the body at ORIGIN, not at the hull, so it never even
+    // achieved its stated "don't fly through my freshly-displaced hulk"
+    // goal — it just created the (0,0) ghost.
+
+    // 1. Schema diff arrives (kind known) but no snapshot pose yet.
     internals.syncMirror(stateWithLingering('SHIP_X'));
+    expect(
+      internals.predWorld!.hasShip('linger-SHIP_X'),
+      [
+        'syncMirror spawned a lingering predWorld body before any snapshot',
+        'pose arrived — it sits at the seeded (0,0), an invisible body the',
+        'local live-beam ray stops on (the "laser ghost at origin" bug).',
+        'Fix: remove syncMirror\'s tryEnsureLingerPredBody spawn and let the',
+        'snapshot path (which carries the real pose) be the SOLE spawn site,',
+        'exactly like wrecks.',
+      ].join('\n'),
+    ).toBe(false);
+
+    // 2. First snapshot carries the authoritative pose → body spawns
+    //    there, never at origin.
+    internals.handleSnapshot(snapshotWithLingering('SHIP_X', 120, 80));
     expect(internals.predWorld!.hasShip('linger-SHIP_X')).toBe(true);
+    const pose = internals.predWorld!.getShipState('linger-SHIP_X')!;
+    expect(pose.x).toBeCloseTo(120, 1);
+    expect(pose.y).toBeCloseTo(80, 1);
   });
 });

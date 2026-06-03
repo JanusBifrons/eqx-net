@@ -26,11 +26,6 @@ const ENGAGE_DISTANCE_RATIO = 1.5;
  *  beyond `ENGAGE_DISTANCE_RATIO * DRONE_FIRE_RANGE`. Rapier damping +
  *  per-kind `maxSpeed` keep this from running away. */
 const ENGAGE_BOOST = 1.6;
-/** Estimated muzzle speed used for lead-aim time-to-target. Hitscan is
- *  effectively instantaneous; this constant approximates "how far ahead
- *  to aim per unit of distance" — picking a finite speed works for both
- *  hitscan (small `t`) and the slower projectile fallback. */
-const LEAD_AIM_MUZZLE_SPEED = 800;
 /** Bearing-error magnitude (radians) below which the drone snaps to
  *  zero angular velocity instead of pegging at `±maxAngvel`. ~3° dead
  *  zone — wide enough that a finished turn doesn't oscillate around
@@ -123,6 +118,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  fireRange × this (artillery "stay away when engaging"). 0 for
    *  beam/bolt. */
   private readonly backoffInsideFactor: number;
+  /** Muzzle speed used for the lead-aim time-to-target (`t = dist /
+   *  leadMuzzleSpeed`). The bound weapon's REAL projectile speed for
+   *  bolts/missiles (so the bolt is actually aimed at the intercept
+   *  point); a huge value for hitscan so `t ≈ 0` (instantaneous beams
+   *  need no lead). 2026-06-03 — replaces the single hardcoded
+   *  LEAD_AIM_MUZZLE_SPEED, which 2×-over-led the 1600 u/s bolt. */
+  private readonly leadMuzzleSpeed: number;
 
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
@@ -165,6 +167,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const firstWeapon = getWeapon(this.kind.mounts?.[0]?.weaponId ?? 'hitscan');
     this.weaponMode = firstWeapon.mode;
     this.fireCooldownTicks = firstWeapon.cooldownTicks;
+    // Lead-aim muzzle speed: real projectile speed for bolts/missiles,
+    // ~instant for hitscan (no lead). Drives the intercept in tickCombat.
+    this.leadMuzzleSpeed = firstWeapon.mode === 'hitscan' ? 1e6 : firstWeapon.speed;
     if (firstWeapon.mode === 'hitscan') {
       // Beam: very close range — bore in to ~90 % of the beam's reach.
       this.fireRange = firstWeapon.range * 0.9;
@@ -339,9 +344,13 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // muzzle speed (rather than per-weapon) so the same code path covers
     // both projectile and hitscan modes — the worst case is a small
     // over-lead on hitscan, well within the aim tolerance.
-    const t = dist / LEAD_AIM_MUZZLE_SPEED;
-    const aimX = target.x + target.vx * t;
-    const aimY = target.y + target.vy * t;
+    // First-order intercept in the SHOOTER's frame. The bolt inherits the
+    // shooter's velocity at spawn (self.v + dir·speed), so the lead must
+    // use the target's velocity RELATIVE to the shooter and the weapon's
+    // real muzzle speed (hitscan → leadMuzzleSpeed huge → t≈0 → no lead).
+    const t = dist / this.leadMuzzleSpeed;
+    const aimX = target.x + (target.vx - self.vx) * t;
+    const aimY = target.y + (target.vy - self.vy) * t;
     const aimDx = aimX - self.x;
     const aimDy = aimY - self.y;
 
@@ -433,8 +442,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     intent.setAngvel = setAngvel;
     if (willFire) {
       const f = this._fireScratch;
-      f.dirX = fwdX;
-      f.dirY = fwdY;
+      // Fire along the EXACT lead vector, NOT the body-forward axis. The
+      // body only turns toward the lead at a rate-limited angvel and is
+      // allowed to fire anywhere inside the (wide) aim cone, so body-forward
+      // ≈ lead but off by up to the tolerance — enough to miss a moving
+      // target at range. Aiming the shot itself at the intercept point
+      // decouples accuracy from the imperfect body aim. The fix that makes
+      // bolts actually connect (2026-06-03). Hitscan: leadMuzzleSpeed huge
+      // → aim ≈ straight at the target, so beams are unchanged.
+      const aimLen = Math.hypot(aimDx, aimDy);
+      if (aimLen > 1e-6) {
+        f.dirX = aimDx / aimLen;
+        f.dirY = aimDy / aimLen;
+      } else {
+        f.dirX = fwdX;
+        f.dirY = fwdY;
+      }
       intent.fire = f;
     } else {
       intent.fire = undefined;
