@@ -535,6 +535,27 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// 2026-06-03 — isolated, bot-free, LINGER-CAPABLE test room for the
+// lingering-hull / wreck / ship-pool E2E suite (tests/e2e/linger/).
+// Unlike every other test room it carries a real `sectorKey`, so the
+// galaxy-only linger + abandon-poll paths (LeaveHandler `shouldLinger`,
+// SectorRoom abandon detection) actually fire — engineering rooms
+// (sectorKey===null) fully despawn on leave and never linger. It is NOT
+// in GALAXY_SECTORS and is NOT eagerly created, so the
+// LivingWorldDirector (built from the eager `galaxy-*` map) never routes
+// hunter bots here; `droneCount: 0` + `asteroidConfig: []` keep the
+// scene deterministic for screenshots. `filterBy(['testId'])` gives
+// per-test room isolation. Snapshot persistence writes only benign
+// empty-swarm rows (droneCount 0), so no DB guard is needed.
+gameServer
+  .define('galaxy-test', SectorRoom, {
+    sectorKey: 'galaxy-test',
+    testMode: true,
+    droneCount: 0,
+    asteroidConfig: [],
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

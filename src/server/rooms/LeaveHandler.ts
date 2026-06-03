@@ -78,6 +78,12 @@ export interface LeaveHandlerDeps {
   cancelTransit: (playerId: string, reason: 'manual') => void;
   /** Used to schedule the lingering TTL eviction. */
   evictOwnerlessShip: (shipInstanceId: string) => void;
+  /** Test-only per-player disconnect-linger TTL override (ms). Returns
+   *  undefined when the player passed no `lingerMs` JoinOption, in which
+   *  case the production `LIMBO_DISCONNECT_TTL_MS` (15 min) is used. */
+  lingerMs: (playerId: string) => number | undefined;
+  /** Drop the captured lingerMs override for a player (called on leave). */
+  clearLingerMs: (playerId: string) => void;
   postToWorker: (cmd: WorkerCmd) => void;
   bus: Bus;
   logger: Logger;
@@ -128,6 +134,10 @@ export class LeaveHandler {
 
     if (shouldLinger) {
       const sectorKey = d.sectorKey()!;
+      // Test rooms may shorten the linger window via the `lingerMs`
+      // JoinOption; production uses the 15-min LIMBO_DISCONNECT_TTL_MS for
+      // both the Limbo reconnect window AND the ownerless-evict timer.
+      const ttlMs = d.lingerMs(playerId) ?? LIMBO_DISCONNECT_TTL_MS;
       const b = slotBase(slot!);
       const payload: LimboPayload = {
         x:      d.sabF32[b + SLOT_X_OFF]!,
@@ -143,7 +153,7 @@ export class LeaveHandler {
         kind: ship!.kind,
       };
       try {
-        getLimboStore().put(playerId, payload, LIMBO_DISCONNECT_TTL_MS);
+        getLimboStore().put(playerId, payload, ttlMs);
       } catch (err) {
         d.logger.warn({ err, playerId }, 'Limbo put on leave failed');
       }
@@ -159,7 +169,7 @@ export class LeaveHandler {
       const shipInstanceId = ship!.shipInstanceId;
       const evictTimer = setTimeout(() => {
         d.evictOwnerlessShip(shipInstanceId);
-      }, LIMBO_DISCONNECT_TTL_MS);
+      }, ttlMs);
       if (typeof evictTimer === 'object' && evictTimer !== null && 'unref' in evictTimer) {
         (evictTimer as { unref: () => void }).unref();
       }
@@ -169,6 +179,9 @@ export class LeaveHandler {
       // playerToSlot for rebind. lingeringSlots fills only on
       // fresh-spawn-displaces in onJoin.
       ship.isActive = false;
+      // Override consumed for this disconnect; drop it so a later rejoin
+      // without lingerMs reverts to the production TTL.
+      d.clearLingerMs(playerId);
 
       d.serverLogEvent('player_lingered', { playerId });
       d.logger.info(
@@ -184,6 +197,7 @@ export class LeaveHandler {
     d.initialSpawnPositions.delete(playerId);
     d.snapshotRing.unregisterEntity(playerId);
     d.playerToActiveShipInstance.delete(playerId);
+    d.clearLingerMs(playerId);
 
     if (slot !== undefined) {
       d.playerToSlot.delete(playerId);

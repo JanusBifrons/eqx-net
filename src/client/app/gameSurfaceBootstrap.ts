@@ -124,6 +124,10 @@ export function buildJoinSpec(
     extraJoinOptions['initialHull'] = parseInt(urlParams.get('initialHull')!, 10);
   if (urlParams.has('initialShield'))
     extraJoinOptions['initialShield'] = parseInt(urlParams.get('initialShield')!, 10);
+  // Test-only disconnect-linger TTL override (ms). Lets the linger E2E suite
+  // observe despawn→return-to-pool in ~2 s. Server-side testMode-gated.
+  if (urlParams.has('lingerMs'))
+    extraJoinOptions['lingerMs'] = parseInt(urlParams.get('lingerMs')!, 10);
   // plan: imperative-taco — `?startHostile=1` pre-marks every drone
   // hostile to the joining player at spawn, so a CDP allocation profile
   // hits steady-state combat without an IDLE→COMBAT warmup tail.
