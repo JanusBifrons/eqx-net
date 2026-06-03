@@ -595,6 +595,37 @@ export class SectorRoom extends Room<SectorState> {
    *  runs in ~2 s instead of 15 min. Cleared on leave. */
   private readonly playerToLingerMs = new Map<string, number>();
 
+  /**
+   * Test-only piercing surface (see src/server/CLAUDE.md "Testing
+   * patterns"). Exposes private collaborators that integration tests
+   * assert against without each declaring a local cast interface. NOT used
+   * in production. Restored 2026-06-03 after the v3 subsystem extraction
+   * dropped it (it was still referenced by 4 integration files, leaving
+   * them RED). Each access reads through to the live field/method.
+   */
+  get _internals(): {
+    serverTick: number;
+    ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+    aiPlayerScratch: AiPlayerView[];
+    postToWorker: (cmd: WorkerCmd) => void;
+    applyDamage: (
+      targetId: string,
+      shooterId: string,
+      damage: number,
+      hitX?: number,
+      hitY?: number,
+    ) => void;
+  } {
+    return {
+      serverTick: this.serverTick,
+      ownerlessShips: this.ownerlessShips,
+      aiPlayerScratch: this.aiPlayerScratch,
+      postToWorker: (cmd) => this.postToWorker(cmd),
+      applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
+        this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+    };
+  }
+
   // Auth — maps playerId → userId (null for anonymous)
   private readonly playerToUser = new Map<string, string | null>();
 

@@ -38,11 +38,16 @@ findings:
   watchdog — every `expect(ship.isActive).toBe(true)` (and the active-abandon
   cases) failed. The browser doesn't have this problem (it sends `client_ready`
   after bootstrap). Fix: `harness.connectActive()` sends `client_ready` + polls
-  until active. Separately, a documented `SectorRoom._internals` test-getter is
-  **missing from the current SectorRoom**, erroring 5 integration files
-  (`hitAckContract`, `droneTargetActiveOnly`, `ramming`, `lingering`,
-  `missileLifecycle` references it in a comment) — flagged, not fixed here
-  (spans unrelated test domains). New tests assert against public `room.state.*`.
+  until active. Applied the same `connectActive`/`client_ready` repair to the
+  whole lingering + wreck + pool suite (`abandonToWreck`, `wreckDamage`,
+  `lingering`, `lingeringPosePreserved`, `lingeringNearOrigin`) — all green.
+  Separately, the documented `SectorRoom._internals` test-getter had been
+  dropped by the v3 subsystem extraction (erroring `hitAckContract`,
+  `droneTargetActiveOnly`, `ramming`, `lingering` with `_internals` undefined);
+  **restored** it (exposes serverTick / ownerlessShips / aiPlayerScratch /
+  postToWorker / applyDamage). The three combat/AI files still need
+  `connectActive` for their active-ship spawns — a mechanical follow-up outside
+  this scope. New tests assert against public `room.state.*` where possible.
 
 - **Lingering is galaxy-only; the E2E helper only reached engineering rooms.**
   `LeaveHandler` only lingers when `sectorKey !== null`; `test-sector` rooms are

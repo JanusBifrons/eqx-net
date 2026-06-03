@@ -46,7 +46,7 @@ describe('SectorRoom integration — lingering hull near origin keeps its pose',
   }, 10_000);
 
   it('abandon near origin, return-to-menu, fresh-spawn — lingering hull stays at abandon pose, not (0,0,0)', async () => {
-    const client1 = await harness.connectAs(PID, {
+    const client1 = await harness.connectActive(PID, {
       spawnX: ABANDON_X,
       spawnY: ABANDON_Y,
       shipKind: 'fighter',
@@ -77,7 +77,7 @@ describe('SectorRoom integration — lingering hull near origin keeps its pose',
     const FRESH_X = -120;
     const FRESH_Y = 80;
     const samples: Array<{ x: number; y: number; angle: number; isActive: boolean }> = [];
-    const client2 = await harness.connectAs(PID, {
+    const client2 = await harness.connectActive(PID, {
       isNewShip: true,
       shipKind: 'fighter',
       spawnX: FRESH_X,
