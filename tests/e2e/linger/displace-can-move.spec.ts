@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { test, expect, type Page } from '@playwright/test';
-import { getShipX, getShipY } from '../helpers/gameScenario';
+import { getShipX, getShipY, getLingeringPositions } from '../helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -93,6 +93,20 @@ test('displace: spawning a new ship over a lingering hull binds + moves the NEW 
     await thrustDisplacement(page),
     'after spawning a new ship over a lingering hull, thrust must move the NEW ship',
   ).toBeGreaterThan(1);
+
+  // The OWNER must SEE their own displaced hull as a lingering ship in the
+  // world — "be able to see their own ship there" (2026-06-03 "I can't see
+  // the lingering ships" report). Owners used to be excluded from their own
+  // lingering hulls; now they render for the owner too.
+  await expect
+    .poll(
+      async () => {
+        const lingers = await getLingeringPositions(page);
+        return Object.values(lingers).some((l) => l.ownerPlayerId === pid);
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
 
   await ctx.close();
 });

@@ -74,8 +74,15 @@ describe('routeSnapshotShipStates — own active ship binds by shipInstanceId, n
       ].join('\n'),
     ).toBe(500);
 
-    // The own displaced hull must NOT render as a lingering hull for the owner.
-    expect(ctx.mirror.lingeringShips!.has('OLD')).toBe(false);
+    // The owner MUST see their own displaced hull as a lingering hull — the
+    // player's pool is visible in-world (2026-06-03 "I can't see the lingering
+    // ships" report; the original requirement is "see their own ship there").
+    // It is routed to lingeringShips (rendered) WITHOUT clobbering the active
+    // ship at statesByPlayerId[playerId].
+    const ownLinger = ctx.mirror.lingeringShips!.get('OLD');
+    expect(ownLinger, 'owner must see their own displaced hull as a lingering hull').toBeTruthy();
+    expect(ownLinger!.ownerPlayerId).toBe('P');
+    expect(ownLinger!.x).toBe(10);
   });
 
   it('keeps the own pending-join ship active during the handshake (isActive=false but it IS the welcome ship)', () => {
