@@ -106,4 +106,15 @@ export default defineConfig({
     sourcemap: true,
     target: 'es2022',
   },
+  // The OffscreenCanvas render worker (`render/worker/WorkerRendererClient.ts`)
+  // is instantiated as an ES-module worker (`new Worker(url, { type: 'module' })`)
+  // and pulls in pixi.js, so its production bundle requires code-splitting.
+  // Vite's default `worker.format` is `iife`, which rejects code-splitting
+  // ("UMD and IIFE output formats are not supported for code-splitting
+  // builds") and also mismatches the `type: 'module'` runtime. `es` matches
+  // the runtime and supports the shared chunks. Dev already serves the worker
+  // as ESM, so this only affects `pnpm run build`.
+  worker: {
+    format: 'es',
+  },
 });

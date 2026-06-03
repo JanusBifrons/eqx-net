@@ -92,6 +92,15 @@ export interface SnapshotMessage {
        *  rotation. Absent for ship-kinds with no rotating mounts (the
        *  legacy single-mount fighter/scout/heavy emit nothing). */
       mountAngles?: number[];
+      /** Weapons/energy/AI overhaul (2026-06-01 §3.2). The ship's current
+       *  energy pool, emitted ONLY on the recipient's OWN ship entry (energy
+       *  is the local player's predicted resource — remote ships never need
+       *  it). Integer-quantised. Absent on every other ship + all remote
+       *  recipients (notepack skips `undefined`, same trick as `lastInput` /
+       *  `mountAngles`). The client hard-sets `predEnergy` from this on each
+       *  snapshot; `energyMax` (the bar denominator) is read from the kind
+       *  catalogue client-side, never on the wire. */
+      energy?: number;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

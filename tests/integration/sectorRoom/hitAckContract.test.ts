@@ -67,14 +67,19 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
 
     // Shooter at origin, angle 0 → forward = +Y.
     const shooter = (await harness.connectAs(shooterPid, {
-      shipKind: 'fighter',
+      // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
+      // BOLTS (projectiles), which ack hit:false. This contract is about the
+      // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
+      // interceptor (twin beams) — the gameplay kind that still fires
+      // hitscan. The wire `weapon` field is ignored either way.
+      shipKind: 'interceptor',
       spawnX: 0,
       spawnY: 0,
     })) as ClientRoom<SectorState>;
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === shooterPid });
 
-    // Target squarely on the +Y ray, well inside HITSCAN_RANGE (500) and
-    // clear of the 20 u barrel + self radius.
+    // Target squarely on the +Y ray, well inside the beam range (250 after
+    // the 2026-06-01 rebalance) and clear of the 20 u barrel + self radius.
     await harness.connectAs(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
 
@@ -124,7 +129,12 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
   it('a miss fire: hit_ack.hit === false, NO damage field, NO DamageEvent (damage rides only hit:true)', async () => {
     const shooterPid = randomUUID();
     const shooter = (await harness.connectAs(shooterPid, {
-      shipKind: 'fighter',
+      // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
+      // BOLTS (projectiles), which ack hit:false. This contract is about the
+      // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
+      // interceptor (twin beams) — the gameplay kind that still fires
+      // hitscan. The wire `weapon` field is ignored either way.
+      shipKind: 'interceptor',
       spawnX: 0,
       spawnY: 0,
     })) as ClientRoom<SectorState>;
@@ -168,7 +178,12 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     const shooterPid = randomUUID();
     const targetPid = randomUUID();
     const shooter = (await harness.connectAs(shooterPid, {
-      shipKind: 'fighter',
+      // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
+      // BOLTS (projectiles), which ack hit:false. This contract is about the
+      // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
+      // interceptor (twin beams) — the gameplay kind that still fires
+      // hitscan. The wire `weapon` field is ignored either way.
+      shipKind: 'interceptor',
       spawnX: 0,
       spawnY: 0,
     })) as ClientRoom<SectorState>;

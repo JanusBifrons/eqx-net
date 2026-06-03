@@ -5,12 +5,10 @@ import {
   type AiWorldView,
   type IAiBehaviour,
 } from '../contracts/IAiBehaviour.js';
-import { HITSCAN_RANGE, WEAPON_COOLDOWN_TICKS } from '../combat/Weapons.js';
+import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import { pickTarget } from './WeaponMountController.js';
 
-/** Drone fires when within this fraction of full hitscan range. */
-const DRONE_FIRE_RANGE = HITSCAN_RANGE * 0.6;
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
 /** Wider fire arc used when the target is at point-blank (`< 0.4 ×
@@ -105,6 +103,27 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  0 and the gate collapses to the pre-4c body-only tolerance. */
   private readonly maxTurretHalfArc: number;
 
+  // ── Weapon-aware engagement (weapons/energy/AI overhaul §4) ───────────
+  // Computed once in the constructor from this drone's bound weapon (no
+  // per-tick allocation, no wire divergence — all derived from `this.kind`).
+  /** Mode of the drone's bound weapon (first mount). Drives the steering
+   *  branch in tickCombat. */
+  private readonly weaponMode: WeaponMode;
+  /** Distance (world units) at/under which the drone fires. Beam → very
+   *  close (~225); bolt → medium (~560); missile → long (~1400). */
+  private readonly fireRange: number;
+  /** Cooldown of the bound weapon in ticks (beam/bolt 10, missile 90).
+   *  Replaces the global WEAPON_COOLDOWN_TICKS so missile drones don't
+   *  spam at the hitscan rate. */
+  private readonly fireCooldownTicks: number;
+  /** STOP_DIST = fireRange × this. Beam bores in (0.5); bolt dogfights
+   *  (0.6); missile kites far (0.9). */
+  private readonly stopDistFactor: number;
+  /** Missile only: actively thrust AWAY when the target closes inside
+   *  fireRange × this (artillery "stay away when engaging"). 0 for
+   *  beam/bolt. */
+  private readonly backoffInsideFactor: number;
+
   /** 2026-05-31 — pooled per-instance scratches (Invariant #14). Pre-fix
    *  this class returned a fresh AiIntent literal per tick (~15 drones ×
    *  60 Hz = 900 allocs/sec from the AI brain alone); combined with the
@@ -141,7 +160,32 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (half > maxHalf) maxHalf = half;
     }
     this.maxTurretHalfArc = maxHalf;
+
+    // Weapon-aware engagement profile (weapons/energy/AI overhaul §4).
+    const firstWeapon = getWeapon(this.kind.mounts?.[0]?.weaponId ?? 'hitscan');
+    this.weaponMode = firstWeapon.mode;
+    this.fireCooldownTicks = firstWeapon.cooldownTicks;
+    if (firstWeapon.mode === 'hitscan') {
+      // Beam: very close range — bore in to ~90 % of the beam's reach.
+      this.fireRange = firstWeapon.range * 0.9;
+      this.stopDistFactor = 0.5;
+      this.backoffInsideFactor = 0;
+    } else if (firstWeapon.mode === 'projectile') {
+      // Bolt: medium dogfight range ≈ half the projectile's max travel.
+      this.fireRange = (firstWeapon.speed * firstWeapon.maxTicks / 60) * 0.5;
+      this.stopDistFactor = 0.6;
+      this.backoffInsideFactor = 0;
+    } else {
+      // Missile: long-range artillery; kite the target, fire from afar.
+      this.fireRange = 1400;
+      this.stopDistFactor = 0.9;
+      this.backoffInsideFactor = 0.4;
+    }
   }
+
+  /** Test-visible engagement profile. */
+  getFireRange(): number { return this.fireRange; }
+  getWeaponMode(): WeaponMode { return this.weaponMode; }
 
   /** Test-visible peek at the current state. */
   getState(): DroneState {
@@ -323,13 +367,23 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // The closing speed = (self.vel · dir_to_target). Positive = drone
     // is approaching; the cap scales with remaining distance so the
     // drone arrives at near-zero relative speed.
+    // Weapon-aware standoff (weapons/energy/AI overhaul §4). STOP_DIST and
+    // the engagement profile are derived per-weapon in the constructor:
+    // beam bores to ~50 % of its (short) fire range, bolt keeps the mid-range
+    // dogfight, missile kites at ~90 % of its (long) fire range and actively
+    // backs off if the target closes inside `fireRange × backoffInsideFactor`.
     const baseThrust = this.kind.ai.thrust;
-    const STOP_DIST = DRONE_FIRE_RANGE * 0.6;
+    const STOP_DIST = this.fireRange * this.stopDistFactor;
     const closingSpeed = (self.vx * rawDx + self.vy * rawDy) / dist;
 
     let thrustMag: number;
-    if (dist > DRONE_FIRE_RANGE * ENGAGE_DISTANCE_RATIO) {
-      // Far engagement — boost in (unchanged from pre-fix behaviour).
+    if (this.backoffInsideFactor > 0 && dist < this.fireRange * this.backoffInsideFactor) {
+      // Missile kite — the target is too close for comfortable artillery
+      // fire; thrust AWAY (reverse along the forward axis, which currently
+      // points at the target) to re-open the gap.
+      thrustMag = -baseThrust;
+    } else if (dist > this.fireRange * ENGAGE_DISTANCE_RATIO) {
+      // Far engagement — boost in.
       thrustMag = baseThrust * ENGAGE_BOOST;
     } else if (dist > STOP_DIST) {
       // Approach window. Cap closing speed so we can arrive at near-
@@ -361,14 +415,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // almost directly behind). Without this, the drone's body-aim gate
     // suppressed fires that the turret AI would otherwise resolve as
     // hits — the "AI doesn't shoot sometimes when I'm in range" symptom.
-    const baseTolerance = dist < DRONE_FIRE_RANGE * POINT_BLANK_RATIO
+    const baseTolerance = dist < this.fireRange * POINT_BLANK_RATIO
       ? DRONE_AIM_TOLERANCE_CLOSE
       : DRONE_AIM_TOLERANCE;
     const aimTolerance = baseTolerance + this.maxTurretHalfArc;
 
     const aimed = Math.abs(bearingError) <= aimTolerance;
-    const inRange = dist <= DRONE_FIRE_RANGE;
-    const offCooldown = view.tick - this.lastFireTick >= WEAPON_COOLDOWN_TICKS;
+    const inRange = dist <= this.fireRange;
+    const offCooldown = view.tick - this.lastFireTick >= this.fireCooldownTicks;
     const willFire = aimed && inRange && offCooldown;
     if (willFire) this.lastFireTick = view.tick;
 

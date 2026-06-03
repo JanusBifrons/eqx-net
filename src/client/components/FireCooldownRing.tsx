@@ -24,6 +24,21 @@
 import { useEffect, useRef } from 'react';
 import { useUIStore } from '../state/store';
 import { getWeapon } from '../../core/combat/WeaponCatalogue';
+import { getShipKind } from '@shared-types/shipKinds';
+import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
+
+/** Active-slot cooldown in ticks = max over the slot's mounts' weapons.
+ *  Weapons/energy/AI overhaul §5.2 — replaces the per-weapon `activeWeapon`
+ *  cooldown read. */
+function activeSlotCooldownTicks(shipKindId: string, slotId: string): number {
+  const mounts = resolveSlotMounts(getShipKind(shipKindId), slotId);
+  let ticks = 0;
+  for (let i = 0; i < mounts.length; i++) {
+    const c = getWeapon(mounts[i]!.weaponId).cooldownTicks;
+    if (c > ticks) ticks = c;
+  }
+  return ticks;
+}
 
 const SIZE = 84;          // px — slightly larger than the 76 px fire button so the ring sits OUTSIDE
 const STROKE = 3;         // ring stroke width
@@ -32,12 +47,13 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
 export function FireCooldownRing(): JSX.Element | null {
   const lastFireMs = useUIStore((s) => s.lastFireMs);
-  const activeWeapon = useUIStore((s) => s.activeWeapon);
+  const activeSlotId = useUIStore((s) => s.activeSlotId);
+  const shipKindId = useUIStore((s) => s.selectedShipKind);
   const ringRef = useRef<SVGCircleElement | null>(null);
 
   useEffect(() => {
     if (lastFireMs === null) return;
-    const cooldownTicks = getWeapon(activeWeapon).cooldownTicks;
+    const cooldownTicks = activeSlotCooldownTicks(shipKindId, activeSlotId);
     const cooldownMs = (cooldownTicks * 1000) / 60;
     if (cooldownMs <= 0) return;
     let rafId = 0;
@@ -61,7 +77,7 @@ export function FireCooldownRing(): JSX.Element | null {
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [lastFireMs, activeWeapon]);
+  }, [lastFireMs, activeSlotId, shipKindId]);
 
   // First render before any fire: render nothing (the wrapper would
   // otherwise paint at full ring with no animation).

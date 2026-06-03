@@ -3,7 +3,7 @@ import Box from '@mui/material/Box';
 import nipplejs from 'nipplejs';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
-import { WeaponSelector } from './WeaponSelector';
+import { SlotSelector } from './SlotSelector';
 import { FireCooldownRing } from './FireCooldownRing';
 import { useMountLog } from '../debug/useMountLog';
 import { logEvent } from '../debug/ClientLogger';
@@ -196,7 +196,7 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
             </Box>
             <FireCooldownRing />
           </Box>
-          <WeaponSelector />
+          <SlotSelector />
         </Box>
       </Slot>
 

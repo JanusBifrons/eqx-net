@@ -12,33 +12,14 @@
  * lands.
  */
 
-import type { ShipKind, WeaponMount } from '../../shared-types/shipKinds.js';
+import type { WeaponMount } from '../../shared-types/shipKinds.js';
 
-/**
- * Resolve a ship's active slot to the ordered mount list it covers.
- * Returns an empty array when the ship-kind has no mounts/slots
- * (defensive — every shipped kind has them, but a malformed catalogue
- * shouldn't crash the room).
- *
- * When `slotId` is undefined, falls back to the first slot in catalogue
- * order. When the named slot isn't found, also falls back to the first
- * slot — matches the pre-2c "primary == default" semantics.
- */
-export function resolveSlotMounts(
-  kind: ShipKind,
-  slotId?: string,
-): ReadonlyArray<WeaponMount> {
-  const mounts = kind.mounts;
-  const slots = kind.slots;
-  if (!mounts || !slots || slots.length === 0) return [];
-  const slot = slotId ? slots.find((s) => s.id === slotId) ?? slots[0]! : slots[0]!;
-  const out: WeaponMount[] = [];
-  for (const mid of slot.mountIds) {
-    const m = mounts.find((mm) => mm.id === mid);
-    if (m) out.push(m);
-  }
-  return out;
-}
+// `resolveSlotMounts` moved to `src/shared-types/shipKinds/slots.ts` so
+// `src/core`'s energy-cost math can share the SAME slot-resolution policy
+// without importing from `src/server` (boundary invariant #1). Re-exported
+// here so existing server call sites (`PlayerFireResolver`, `AiFireResolver`,
+// the room) keep their import path unchanged.
+export { resolveSlotMounts } from '../../shared-types/shipKinds/slots.js';
 
 /**
  * Compute the per-mount world origin given a ship's pose and the mount's

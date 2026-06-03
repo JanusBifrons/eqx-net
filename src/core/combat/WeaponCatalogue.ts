@@ -7,6 +7,14 @@ interface WeaponDefBase {
   mode: WeaponMode;
   damage: number;
   cooldownTicks: number;
+  /** Energy drained from the firing ship's pool per SLOT trigger (NOT per
+   *  mount). A slot's effective cost is the MAX of its mounts' `energyCost`
+   *  (homogeneous slots collapse to a single value; the interceptor's twin
+   *  beams cost one beam-slot's energy, not 2×). Drones are NOT energy-gated
+   *  — this field is read only on the player fire path. See
+   *  `src/core/combat/Energy.ts` and `docs/plans/weapons-energy-ai-overhaul.md`
+   *  §3. */
+  energyCost: number;
 }
 
 export interface HitscanWeaponDef extends WeaponDefBase {
@@ -79,20 +87,41 @@ const HITSCAN_DEF: HitscanWeaponDef = {
   // `reconcileDamageToFeedback` / `cancelByTag` handle the
   // confirmation / rollback unchanged). Wire load = baseline. Feel =
   // smooth. Drones + players use the same code path.
-  damage: 20,
+  //
+  // Weapons/energy/AI overhaul (2026-06-01, plan:
+  // weapons-energy-ai-overhaul §2): the BEAM is now the interceptor's
+  // very-close-range duellist. Range dropped 500 → 250 (knife-fight
+  // distance); per-beam damage 20 → 13 so a single-beam ship would kill
+  // a 300-HP fighter in ~4 s at 6 Hz while the interceptor's TWIN beams
+  // (two mounts, one slot trigger) land that in ~2 s — its "high DPS,
+  // low hull" identity. NOTE: drones share this catalogue, and the
+  // weapon-aware drone fire range in `HostileDroneBehaviour` derives
+  // from this `range` for beam drones (close-in attackers).
+  damage: 13,
   cooldownTicks: 10,
-  range: 500,
+  range: 250,
+  // Beam slot trigger cost — interceptor full-pool sustain ≈ 6 s
+  // (energyMax 180 / (5 × 6 Hz)). One slot trigger drains 5 regardless
+  // of the twin mounts.
+  energyCost: 5,
 };
 
 const LASER_DEF: ProjectileWeaponDef = {
   id: 'laser',
-  displayName: 'Laser',
+  displayName: 'Bolt',
   mode: 'projectile',
-  damage: 10,
+  // Weapons/energy/AI overhaul (2026-06-01, §2): BOLTS are the workhorse
+  // for scout / fighter / heavy / gunship. Medium range, dodgeable, ~4 s
+  // kill on a 300-HP fighter at 6 shots/s ⇒ ~25 hits ⇒ damage 12. Range
+  // = speed × maxTicks / 60 = 1600 × 42 / 60 ≈ 1120 u (medium; was 2400).
+  damage: 12,
   cooldownTicks: 10,
   speed: 1600,
   radius: 3,
-  maxTicks: 90,
+  maxTicks: 42,
+  // Bolt slot trigger cost — full-pool sustain 10-15 s for bolt ships
+  // (e.g. scout energyMax 120 / (2 × 6 Hz) = 10 s).
+  energyCost: 2,
 };
 
 const HEAT_SEEKER_DEF: MissileWeaponDef = {
@@ -102,13 +131,24 @@ const HEAT_SEEKER_DEF: MissileWeaponDef = {
   // Direct-hit damage. The primary target also gets `directImpulseBonus`
   // additive damage on top of the splash component; near-miss splash
   // damage uses the inverse-square falloff against `damage` alone.
-  damage: 30,
-  // 180 ticks = ~3 s per mount cooldown. The frigate has 2 mounts that
-  // fire on the same trigger, so the salvo cadence is one pair every 3 s.
-  // Long enough that a single in-flight missile can engage + commit
-  // before the next salvo launches, keeping the airspace from
-  // saturating; short enough that pursuit-fire is still expressive.
-  cooldownTicks: 180,
+  //
+  // Weapons/energy/AI overhaul (2026-06-01, §2): MISSILES kill most ships
+  // in 1-2 hits. A salvo = 2 missiles (one slot trigger). With no-spillover
+  // shields, one 150-damage missile is fully absorbed by a ≤150 shield
+  // (dropping it to 0); the second lands on hull — so a 2-missile salvo
+  // kills the common ≤300-HP ships (scout/fighter/interceptor). Was 30.
+  damage: 150,
+  // 90 ticks = ~1.5 s per mount cooldown (was 180/3 s). Sized so the
+  // salvo cadence sustains ~8 missiles in flight over the 6 s TTL
+  // (≈4 salvos / 6 s), the reverse-engineered "8 in flight" target
+  // (plan §3.4). The frigate's energy pool + steady regen pace the real
+  // throughput; cooldown is the floor.
+  cooldownTicks: 90,
+  // Missile slot trigger cost — frigate energyMax 240 / 60 = ~4-salvo
+  // opening burst, then regen-paced (energyRegenRate 0.67 × 90 ticks ≈
+  // one slot cost per cooldown window). Costs once at launch; no refund,
+  // no in-flight cap (plan §3.4).
+  energyCost: 60,
   // 400 u/s = 6.67 u/tick. Dodgeable but not slow enough to be a joke.
   speed: 400,
   // Collision radius small; missile is a point-thing visually.

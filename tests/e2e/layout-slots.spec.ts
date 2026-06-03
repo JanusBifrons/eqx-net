@@ -57,13 +57,21 @@ test.describe('layout-slots', () => {
     expect(joyBox).not.toBeNull();
     expect(fireBox).not.toBeNull();
 
+    // Quadrant placement is asserted on each control's CENTRE, not its top-left
+    // corner — the joystick is a 120 px disc, so its top edge sits above the
+    // viewport midline even when the control is firmly in the bottom-left thumb
+    // zone (centre y ≈ 215 in a 375 px viewport). Top-edge checks are an
+    // over-strict proxy for "is it in this quadrant".
+    const cx = (b: NonNullable<typeof joyBox>) => b.x + b.width / 2;
+    const cy = (b: NonNullable<typeof joyBox>) => b.y + b.height / 2;
+
     // Joystick is in the bottom-left quadrant.
-    expect(joyBox!.x).toBeLessThan(667 / 2);
-    expect(joyBox!.y).toBeGreaterThan(375 / 2);
+    expect(cx(joyBox!)).toBeLessThan(667 / 2);
+    expect(cy(joyBox!)).toBeGreaterThan(375 / 2);
 
     // Fire is in the bottom-right quadrant.
-    expect(fireBox!.x).toBeGreaterThan(667 / 2);
-    expect(fireBox!.y).toBeGreaterThan(375 / 2);
+    expect(cx(fireBox!)).toBeGreaterThan(667 / 2);
+    expect(cy(fireBox!)).toBeGreaterThan(375 / 2);
 
     // The two thumb zones don't overlap horizontally.
     expect(joyBox!.x + joyBox!.width).toBeLessThan(fireBox!.x);

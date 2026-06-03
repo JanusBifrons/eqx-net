@@ -98,6 +98,12 @@ export const WeaponSlotSchema = z
      *  first, etc.) for any future serial-fire effects; today all mounts in
      *  a slot fire on the same tick so the order is presentation-only. */
     mountIds: z.array(z.string()).min(1),
+    /** Optional override for the energy drained per trigger of THIS slot.
+     *  When absent, the slot cost defaults to the MAX `energyCost` of its
+     *  mounts' weapons (see `resolveSlotEnergyCost`). Present only where a
+     *  kind wants a per-chassis tweak — e.g. the gunship's two-barrel slot
+     *  costs slightly more than a single-barrel bolt ship. (plan §3.3) */
+    energyCost: z.number().nonnegative().optional(),
   })
   .strict();
 export type WeaponSlot = z.infer<typeof WeaponSlotSchema>;
@@ -185,6 +191,22 @@ export const ShipKindSchema = z
     /** Shield HP restored per tick once regen is active. Authored as
      *  shieldMax / 120 so a fully-broken shield refills in ~2 s at 60 Hz. */
     shieldRegenRate: z.number().positive(),
+
+    // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
+    /** Full energy pool. ALL weapon slot triggers AND boosting drain from
+     *  this single pool; it regenerates at a steady rate every tick (no
+     *  post-spend delay, unlike shield — so the bar feels alive). Like
+     *  shield, energy is TRANSIENT: always (re)spawns full, never persisted,
+     *  so it is exempt from the catalogue-version hull-drift clamp despite
+     *  being a numeric stat. Optional in the schema for backward-compat with
+     *  any external snapshot that pre-dates the energy system; every kind
+     *  shipped in `SHIP_KINDS` carries it. See
+     *  `docs/plans/weapons-energy-ai-overhaul.md` §3. */
+    energyMax: z.number().positive().optional(),
+    /** Energy restored per tick (60 Hz). Authored per-kind to hit the
+     *  continuous-fire-duration targets in plan §3.3 (beams 5-10 s, bolts
+     *  10-20 s on a full pool; regen extends real-world sustain). */
+    energyRegenRate: z.number().positive().optional(),
 
     // -- AI tuning (for drones spawning AS this kind) -----------------------
     ai: z

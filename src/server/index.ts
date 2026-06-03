@@ -237,6 +237,24 @@ gameServer
     testTimeScale: 10,
   })
   .filterBy(['testId']);
+// 2026-06-03 — deterministic respawn-cascade environment (test-coverage-audit
+// Phase 3). A test-sector with 4 drones so a client joining `?startHostile=1`
+// reproduces the BOT-PRESSURE conditions the original
+// `respawn-cascade-input-routing.spec.ts` needed (the orphaned-client bug
+// "only repros under bot pressure" — it passed in the no-hostility feel-test).
+// The spec pairs this with a huge `initialHull` so the player SURVIVES the
+// pressure (hostile fire still drives the damage/aggro state-churn that the
+// cascade cleanup must tolerate, but the player never dies → the thrust-moves-
+// the-ship assertion stays deterministic). Replaces the old spec's live
+// `galaxy-sol-prime` + `diag=1` join.
+gameServer
+  .define('cascade-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    droneCount: 4,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Phase 5e soak room. swarmCount can be overridden per join via room
 // options, but the default of 500 is the master plan's acceptance gate.
 gameServer.define('swarm-soak', SectorRoom, {
@@ -487,6 +505,33 @@ gameServer
     // y=500 would be INSIDE the rectangle. Player at y=2000 with
     // `initialAngle=π` thrusts straight down at the rectangle.
     defaultSpawnY: 2000,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
+// 2026-06-03 — deterministic combat target room (test-coverage-audit Phase 3).
+// One PEACEFUL, hull-exposed heavy parked at (0, 200) — directly +y of the
+// player's (0,0) spawn. A player joining `?room=combat-drone-test&shipKind=
+// interceptor` (initialAngle 0 ⇒ faces +y) fires a hitscan beam straight up
+// the x=0 line and is GUARANTEED to hit the drone (200u < 250u beam range).
+// Used by `tests/e2e/combat/swarm-hit-detected.spec.ts` (observer sees the
+// shooter's swarm-N hit) and the rewritten `tests/e2e/drone-destruction.spec.ts`
+// (hold fire → drone count drops by exactly 1). peacefulDrones (Passive
+// behaviour = stationary) keeps it on the beam line; hullExposed drops its
+// shield so the first beam tick lands on hull. Kind 'heavy' (540 HP) is chosen
+// so the swarm-hit observer has a ~3.5s window to catch the hit broadcast
+// before the drone dies (a 180-HP scout died in ~1.2s and flaked the
+// observation on the determinism repeat-pass); the interceptor still destroys
+// it well inside drone-destruction's 8s deadline.
+gameServer
+  .define('combat-drone-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: [
+      { kind: 'heavy', x: 0, y: 200, angle: 0, hullExposed: true },
+    ],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
     maxClients: 4,
   })
   .filterBy(['testId']);

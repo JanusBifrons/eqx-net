@@ -75,6 +75,10 @@ export const L_SHAPE: ShipKind = ShipKindSchema.parse({
   shieldMax: 1,
   shieldRegenDelayTicks: 60_000,
   shieldRegenRate: 0.01,
+  // Engineering-only fixture — generous energy so explicit spawns aren't
+  // fire-locked; never tuned for live play.
+  energyMax: 1000,
+  energyRegenRate: 5,
   ai: { thrust: 3.0, turnKp: 3.0, maxTorque: 8.0 },
   shape: {
     kind: 'polygon',

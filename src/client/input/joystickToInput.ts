@@ -9,7 +9,7 @@
  * nudges delta back across — toggle again. Empirical 10 Hz state-change
  * rate under steady stick use. Each toggle drives a fresh input
  * message + reconcile-replay event on the server, producing a 3-second
- * drift transient per toggle (`spiral-in-pack-density.spec.ts` shows
+ * drift transient per toggle (the 2026-05-20 mobile-spiral triage measured
  * 8-27 corrections in the first 3s of held W). Repeated state-changes
  * at 10 Hz keep the prediction state perpetually un-converged.
  *

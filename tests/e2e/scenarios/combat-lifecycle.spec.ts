@@ -48,12 +48,14 @@ test('test-sector has no asteroids', async ({ browser }) => {
 test('ship spawns at the position specified in URL params', async ({ browser }) => {
   const { ctx, page } = await launchTestClient(browser, { spawnX: 0, spawnY: -200 });
   try {
-    // Allow one physics update cycle to populate data attributes.
-    await page.waitForTimeout(500);
+    // Poll until client prediction converges on the authoritative spawn pose.
+    // predWorld initialises at (0,0) and reconciles to the server spawn on the
+    // first snapshot; reading a fixed 500 ms in catches it mid-lerp. State-wait
+    // on the value being asserted, not a fixed sleep.
+    await expect.poll(() => getShipX(page), { timeout: 6_000 }).toBeCloseTo(0, 0);   // within ±0.5
+    await expect.poll(() => getShipY(page), { timeout: 6_000 }).toBeCloseTo(-200, 0);
     const x = await getShipX(page);
     const y = await getShipY(page);
-    expect(x).toBeCloseTo(0, 0);   // within ±0.5
-    expect(y).toBeCloseTo(-200, 0);
     console.log(`\nDeterministic spawn: x=${x.toFixed(2)}, y=${y.toFixed(2)} ✓\n`);
   } finally {
     await ctx.close();
@@ -184,6 +186,11 @@ test('shooter sees target hull decrease in shared ship positions', async ({ brow
   // burst, leaving hull at 100 — the test would pass trivially at
   // hull<100 only via a multi-second drain). We keep default hull so the
   // damage-magnitude check (< 100) is meaningful.
+  // Two browser contexts cold-boot + each joins Colyseus — that's
+  // infrastructural latency (not game-time), and on a loaded box the pair
+  // can crowd the 30 s default. Budget for the infra per the harness rules
+  // (the game-time portion below stays tight).
+  test.setTimeout(60_000);
   const testId = randomUUID();
   const [p1, p2] = await Promise.all([
     launchTestClient(browser, { spawnX: 0, spawnY: -200, testId }),
@@ -194,22 +201,21 @@ test('shooter sees target hull decrease in shared ship positions', async ({ brow
 
     const hullBefore = await getHullPct(p2.page);
 
-    // One burst (400 ms) is enough now that shield = 0 — the first beam
-    // tick lands hull damage.
-    await p1.page.keyboard.down('Space');
-    await p1.page.waitForTimeout(400);
-    await p1.page.keyboard.up('Space');
-
-    // Wait for damage to propagate (default 3 s budget).
-    await p2.page.waitForFunction(
-      () => parseInt(
-        document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-hull-pct') ?? '100',
-        10,
-      ) < 100,
-      { timeout: 3_000 },
-    );
-
-    const hullAfter = await getHullPct(p2.page);
+    // Fire P1's loadout at P2 via the framework trigger (deterministic — no
+    // keyboard focus / per-RAF dispatch flakiness). Re-fire past the spawn /
+    // cooldown window — the fired weapon resolves from P1's mirror kind, which
+    // the first snapshot sets shortly after join — until P2's hull drops.
+    let hullAfter = hullBefore;
+    for (let i = 0; i < 40 && hullAfter >= hullBefore; i++) {
+      await p1.page.evaluate(
+        () =>
+          (
+            window as unknown as { __eqxClient?: { triggerFireForTest(id: string): boolean } }
+          ).__eqxClient?.triggerFireForTest('hitscan'),
+      );
+      await p1.page.waitForTimeout(100);
+      hullAfter = await getHullPct(p2.page);
+    }
     expect(hullAfter).toBeLessThan(hullBefore);
     console.log(`\nDamage propagated: hull ${hullBefore} → ${hullAfter} ✓\n`);
   } finally {

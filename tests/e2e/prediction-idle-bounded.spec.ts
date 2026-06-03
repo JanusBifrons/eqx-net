@@ -92,3 +92,70 @@ test('idle prediction stays sub-pixel under no input in feel-test-25', async ({ 
 
   await ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Sub-snapshot prediction-running lock.
+//
+// Folded here 2026-06-03 (test-coverage-audit Phase 3) from the deleted
+// prediction-diagnostics.spec.ts (its "local prediction runs independently"
+// test, T3). That whole spec was DEAD — it joined via a stale
+// `getByRole('button', {name:/enter sector alpha/i})` flow removed months ago —
+// so this unique lock (predWorld must coast between server snapshots, not just
+// mirror them) was providing no live coverage. Rehomed onto the deterministic
+// feel-test-25 engineering room. (T1 drift-ceilings are covered by the idle
+// floor above + the netcode-health gate; T2 two-client view-agreement by
+// robustness.spec.ts's p2p cases.)
+// ---------------------------------------------------------------------------
+test('prediction runs sub-snapshot: many distinct poses while coasting (feel-test-25)', async ({
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+
+  await page.goto(`${BASE_URL}/?room=feel-test-25&spawnX=0&spawnY=0&diag=0`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30_000,
+  });
+  await page.waitForSelector('[data-testid="game-surface"]', { timeout: 15_000 });
+  await expect(page.locator('[data-testid="warp-screen"]')).toHaveAttribute(
+    'data-warp-visible',
+    '0',
+    { timeout: 30_000 },
+  );
+
+  // Brief thrust, then coast. Spawn angle is 0 ⇒ W-thrust is pure +y, so a
+  // combined (x,y) key is needed (x alone never changes).
+  await page.keyboard.down('w');
+  await page.waitForTimeout(300);
+  await page.keyboard.up('w');
+  await page.waitForTimeout(200);
+
+  const samples = await page.evaluate(
+    () =>
+      new Promise<{ x: number; y: number }[]>((resolve) => {
+        const results: { x: number; y: number }[] = [];
+        const iv = setInterval(() => {
+          const el = document.querySelector('[data-testid="game-surface"]');
+          results.push({
+            x: parseFloat(el?.getAttribute('data-ship-x') ?? 'NaN'),
+            y: parseFloat(el?.getAttribute('data-ship-y') ?? 'NaN'),
+          });
+          if (results.length >= 30) {
+            clearInterval(iv);
+            resolve(results);
+          }
+        }, 16);
+      }),
+  );
+
+  // At 60 Hz prediction, 30 samples over ~480 ms while coasting show many
+  // distinct poses. If prediction were broken (only server snapshots at 20 Hz),
+  // we'd see ~10. >5 proves predWorld is advancing between snapshots.
+  const uniquePos = new Set(samples.map((s) => `${s.x.toFixed(3)},${s.y.toFixed(3)}`)).size;
+  // eslint-disable-next-line no-console
+  console.log(`[sub-snapshot] unique poses: ${uniquePos} / ${samples.length} (>5 = sub-snapshot prediction)`);
+  expect(uniquePos).toBeGreaterThan(5);
+
+  await ctx.close();
+});

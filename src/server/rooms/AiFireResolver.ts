@@ -16,12 +16,14 @@
  * "Multi-mount fire path" section).
  */
 
-import {
-  HITSCAN_RANGE,
-  HITSCAN_DAMAGE,
-} from '../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
-import { getWeapon, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import {
+  getWeapon,
+  type MissileWeaponDef,
+  type ProjectileWeaponDef,
+  type HitscanWeaponDef,
+  type WeaponId,
+} from '../../core/combat/WeaponCatalogue.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -69,6 +71,15 @@ export interface AiFireResolverDeps {
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
   /** Broadcast a laser_fired event to every client. */
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
+  /** Spawn a server-side projectile (delegates to ProjectilePipeline). Bolt
+   *  drones (scout/fighter/heavy/gunship after the weapons overhaul) fire
+   *  through this. */
+  spawnServerProjectile: (
+    ownerId: string,
+    x: number, y: number, vx: number, vy: number,
+    damage: number, radius: number, maxTicks: number,
+    weaponId: WeaponId,
+  ) => void;
   /** Spawn a server-side missile (delegates to MissileSimulation). Returns
    *  the assigned missileId on success or `null` on pool overflow. */
   spawnServerMissile: (
@@ -107,14 +118,16 @@ export class AiFireResolver {
     const slotMounts = d.resolveSlotMounts(droneKind);
     if (slotMounts.length === 0) return;
 
-    // Per-weapon cooldown rate limit (matches PlayerFireResolver). For
-    // mixed-mode AI mounts (none today), the first mount's weapon sets
-    // the salvo cadence; this matches the existing one-weapon-per-ship
-    // assumption further down the function.
-    const firstAiWeaponId = slotMounts[0]?.weaponId ?? 'hitscan';
-    const firstAiWeaponDef = getWeapon(firstAiWeaponId);
+    // Slot-level cooldown gate (mirrors PlayerFireResolver). The slot fires
+    // as one trigger; its cooldown is the MAX over its mounts' weapons.
+    // Single-slot drones reuse the per-shooter scalar `lastFireClientTick`.
+    let slotCooldown = 0;
+    for (let i = 0; i < slotMounts.length; i++) {
+      const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
+      if (c > slotCooldown) slotCooldown = c;
+    }
     const lastFireCt = d.lastFireClientTick.get(shooterId) ?? -999;
-    if (tick - lastFireCt < firstAiWeaponDef.cooldownTicks) return;
+    if (tick - lastFireCt < slotCooldown) return;
     d.lastFireClientTick.set(shooterId, tick);
 
     // The fire direction the AI computed is the drone's body intent.
@@ -129,14 +142,14 @@ export class AiFireResolver {
     const wireShooterId = shooterRec ? `swarm-${shooterRec.entityId}` : shooterId;
     const droneAngles = d.droneMountAngles.get(shooterId);
 
-    // Weapon mode discriminator. AI drones today fire one weapon kind per
-    // ship — the first mount's weaponId determines the mode for the whole
-    // salvo. (Mixed-mode AI mounts would need a per-mount branch; punt
-    // until a kind ships with mixed mounts.) Reuses the same firstAiWeaponDef
-    // resolved above for the cooldown gate.
-
+    // Per-mount weapon resolution (weapons/energy/AI overhaul §1). Each
+    // barrel fires its OWN catalogue weapon, with range/damage read off the
+    // resolved def — fixing the latent bug where the hitscan branch used the
+    // hardcoded HITSCAN_RANGE / HITSCAN_DAMAGE instead of the def (which also
+    // meant bolt drones had no projectile path at all).
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
+      const weaponDef = getWeapon(mount.weaponId);
       const mountWorld = d.mountWorldOrigin(self.x, self.y, self.angle, mount);
       const currentMountAngle = droneAngles?.[mIdx] ?? 0;
       const mountFireAngle = fireAngle + mount.baseAngle + currentMountAngle;
@@ -148,16 +161,37 @@ export class AiFireResolver {
       // Missile fire path: lock-on + spawn via MissileSimulation. No
       // hit resolution at fire time — the simulation owns lifecycle and
       // emits missile_fired (broadcast there, not here).
-      if (firstAiWeaponDef.mode === 'missile') {
+      if (weaponDef.mode === 'missile') {
         d.spawnServerMissile(
           shooterId,
           rayFromX, rayFromY,
           ndx, ndy,
-          firstAiWeaponDef as MissileWeaponDef,
+          weaponDef as MissileWeaponDef,
         );
         continue;
       }
 
+      // Projectile (bolt) fire path: spawn a server projectile that rides the
+      // snapshot projectiles[] slice. Like the player path, no laser_fired
+      // broadcast and no fire-time hit resolution — the projectile pipeline
+      // owns collision. Inherits the drone's own velocity so bolts lead
+      // correctly while it strafes.
+      if (weaponDef.mode === 'projectile') {
+        const projDef = weaponDef as ProjectileWeaponDef;
+        d.spawnServerProjectile(
+          shooterId,
+          rayFromX, rayFromY,
+          self.vx + ndx * projDef.speed,
+          self.vy + ndy * projDef.speed,
+          projDef.damage, projDef.radius, projDef.maxTicks,
+          mount.weaponId,
+        );
+        continue;
+      }
+
+      // Hitscan (beam) fire path: instant lag-comp-free hit test against the
+      // live player poses; range/damage off the resolved def.
+      const hitscanDef = weaponDef as HitscanWeaponDef;
       let hitId: string | null = null;
       let hitDist = Infinity;
       for (const [targetId] of d.playerToSlot) {
@@ -165,7 +199,7 @@ export class AiFireResolver {
         if (!targetShip || !targetShip.alive) continue;
         const pose = d.shipPoseCache.get(targetId);
         if (!pose) continue;
-        const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, HITSCAN_RANGE, pose.x, pose.y, pose.angle);
+        const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, hitscanDef.range, pose.x, pose.y, pose.angle);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;
           hitId = targetId;
@@ -173,11 +207,11 @@ export class AiFireResolver {
       }
 
       if (hitId) {
-        d.applyDamage(hitId, shooterId, HITSCAN_DAMAGE);
+        d.applyDamage(hitId, shooterId, hitscanDef.damage);
       }
 
-      const beamEndX = rayFromX + ndx * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
-      const beamEndY = rayFromY + ndy * (hitDist === Infinity ? HITSCAN_RANGE : hitDist);
+      const beamEndX = rayFromX + ndx * (hitDist === Infinity ? hitscanDef.range : hitDist);
+      const beamEndY = rayFromY + ndy * (hitDist === Infinity ? hitscanDef.range : hitDist);
 
       d.broadcast('laser_fired', {
         type: 'laser_fired',

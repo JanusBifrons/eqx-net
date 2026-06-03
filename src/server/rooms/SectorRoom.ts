@@ -120,6 +120,7 @@ import {
 } from '../../core/combat/Weapons.js';
 // getWeapon/isWeaponId/HitscanWeaponDef/ProjectileWeaponDef now used inside PlayerFireResolver.ts
 import type { WeaponId, MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
+import { regenEnergyStep, spendEnergy, BOOST_TICK_COST } from '../../core/combat/Energy.js';
 
 const logger = pino({
   name: 'SectorRoom',
@@ -156,6 +157,10 @@ const JoinOptionsSchema = z
     /** Test-only initial shield override; same testMode gate. 0 lets the
      *  first beam hit hull immediately. */
     initialShield: z.number().int().min(0).optional(),
+    /** Test-only initial energy override; same testMode gate. Lets energy
+     *  specs start near-empty so the fire-gate / regen flow resolves in a
+     *  few ticks. (weapons/energy/AI overhaul §3) */
+    initialEnergy: z.number().int().min(0).optional(),
     /** Mobile-perf gate test-only leak rate (bytes per RAF tick). Server
      *  accepts and ignores — the value is consumed CLIENT-SIDE by
      *  `src/client/debug/testLeakHook.ts` reading the URL param directly.
@@ -902,6 +907,8 @@ export class SectorRoom extends Room<SectorState> {
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
+      spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
+        this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
       spawnServerMissile: (ownerId, x, y, dx, dy, def) =>
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
     });
@@ -1433,6 +1440,7 @@ export class SectorRoom extends Room<SectorState> {
       thrustingPlayers: this.thrustingPlayers,
       postToWorker: (cmd) => this.postToWorker(cmd),
       serverTick: () => this.serverTick,
+      shipEnergyOf: (playerId) => this.getActiveShip(playerId)?.energy,
       logger,
     }));
 
@@ -1790,6 +1798,30 @@ export class SectorRoom extends Room<SectorState> {
 
   private tickShieldRegen(): void {
     this.shieldHullRouter.tickShieldRegen();
+  }
+
+  /**
+   * Energy authority (weapons/energy/AI overhaul §3.1). The single owner of
+   * the energy pool lives on the main thread, alongside shield regen + the
+   * fire-path drain. Each tick: regen every active ship's pool (no
+   * post-spend delay — the bar always feels alive), then drain one boost
+   * tick for every player currently boosting (`boostingPlayers` is already
+   * "boost && thrust"). The boost bit was stripped in the input handler when
+   * the pool couldn't afford a tick, so this drain can't drive it negative;
+   * `spendEnergy` clamps at 0 anyway. Scalar core helpers ⇒ zero per-tick
+   * allocation (Invariant #14).
+   */
+  private tickEnergy(): void {
+    for (const [, ship] of this.state.ships) {
+      if (!ship.isActive || !ship.alive) continue;
+      const kind = getShipKind(ship.kind);
+      ship.energy = regenEnergyStep(ship.energy, kind.energyMax ?? 100, kind.energyRegenRate ?? 0.25);
+    }
+    for (const playerId of this.boostingPlayers) {
+      const ship = this.getActiveShip(playerId);
+      if (!ship) continue;
+      ship.energy = spendEnergy(ship.energy, BOOST_TICK_COST);
+    }
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
@@ -2534,6 +2566,16 @@ export class SectorRoom extends Room<SectorState> {
       this.sabF32[base + SLOT_VY_OFF]     = resumedVy;
       this.sabF32[base + SLOT_ANGLE_OFF]  = resumedAngle;
       this.sabF32[base + SLOT_ANGVEL_OFF] = resumedAngvel;
+    } else {
+      // Fresh spawn: zero the velocity/angle fields. This SAB slot may hold
+      // STALE values from a previous occupant of the slot; the physics worker
+      // would otherwise read them and drift the just-spawned ship (~30 u over
+      // the first 500 ms — the spawn-position E2E regression). Position is set
+      // unconditionally above; velocity must be too.
+      this.sabF32[base + SLOT_VX_OFF]     = 0;
+      this.sabF32[base + SLOT_VY_OFF]     = 0;
+      this.sabF32[base + SLOT_ANGLE_OFF]  = 0;
+      this.sabF32[base + SLOT_ANGVEL_OFF] = 0;
     }
 
     // Create Colyseus schema entry. The schema only carries identity +
@@ -2594,6 +2636,9 @@ export class SectorRoom extends Room<SectorState> {
     // Shield seeds full on spawn (transient - never persisted; only hull
     // persists). Body spawns circle (exposed:false in spawnShip).
     ship.shield = getShipKind(ship.kind).shieldMax;
+    // Energy seeds full on spawn (transient like shield; weapons/energy/AI
+    // overhaul §3). Fallback covers any kind that pre-dates the energy field.
+    ship.energy = getShipKind(ship.kind).energyMax ?? 100;
     // Test-only initialHull / initialShield overrides. Gated to testMode
     // rooms (engineering, never galaxy) so live gameplay can't be nerfed
     // via the wire. Applied AFTER the kind-default hull/shield are
@@ -2606,6 +2651,11 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (typeof parsed.data.initialShield === 'number') {
         ship.shield = Math.max(0, parsed.data.initialShield);
+      }
+      // initialEnergy override — lets energy specs start near-empty so the
+      // gate/regen flow is testable in a few ticks instead of seconds.
+      if (typeof parsed.data.initialEnergy === 'number') {
+        ship.energy = Math.max(0, parsed.data.initialEnergy);
       }
       // initialAngle is applied below — the angle lives in
       // `shipPoseCache` + the Rapier body (via SET_POSITION post-SPAWN),
@@ -3080,6 +3130,7 @@ export class SectorRoom extends Room<SectorState> {
       });
     }
     this.tickShieldRegen();
+    this.tickEnergy();
     phaseTime('projectiles');
 
     // Phase 8 — sector persistence. Galaxy rooms snapshot their volatile

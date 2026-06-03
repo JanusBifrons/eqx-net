@@ -33,6 +33,21 @@ async function shipCount(page: import('@playwright/test').Page): Promise<number>
   return parseInt(text?.replace('Ships: ', '') ?? '0', 10);
 }
 
+/** State-wait until the page sees at least `n` ships. Replaces fixed
+ *  `waitForTimeout` sleeps before two-client `shipCount >= 2` assertions —
+ *  the second joiner's broadcast crosses network + Colyseus state-diff +
+ *  syncMirror, whose latency varies and made the fixed waits flaky. */
+async function waitForShipCount(page: import('@playwright/test').Page, n = 2): Promise<void> {
+  await page.waitForFunction(
+    (min) => {
+      const el = document.querySelector('[data-testid="ship-count"]');
+      return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) >= min;
+    },
+    n,
+    { timeout: 10_000 },
+  );
+}
+
 function getShipPos(page: import('@playwright/test').Page): Promise<{ x: number; y: number }> {
   return page.evaluate(() => {
     const el = document.querySelector('[data-testid="game-surface"]');
@@ -122,7 +137,8 @@ test.describe('two-client isolation', () => {
     // runs so there may be leftover ships; the important invariant is ≥ 2 distinct
     // ships exist and the two new joiners have different identities.
     // Let the server broadcast stabilise.
-    await page1.waitForTimeout(1000);
+    await waitForShipCount(page1);
+    await waitForShipCount(page2);
     expect(await shipCount(page1)).toBeGreaterThanOrEqual(2);
     expect(await shipCount(page2)).toBeGreaterThanOrEqual(2);
 
@@ -139,7 +155,8 @@ test.describe('two-client isolation', () => {
     await joinSector(page1);
     await joinSector(page2);
 
-    await page1.waitForTimeout(500);
+    await waitForShipCount(page1);
+    await waitForShipCount(page2);
     expect(await shipCount(page1)).toBeGreaterThanOrEqual(2);
     expect(await shipCount(page2)).toBeGreaterThanOrEqual(2);
 
@@ -232,7 +249,7 @@ test.describe('movement', () => {
     await joinSector(page1);
     await joinSector(page2);
 
-    await page1.waitForTimeout(500);
+    await waitForShipCount(page1);
     expect(await shipCount(page1)).toBeGreaterThanOrEqual(2);
 
     await page1.keyboard.down('w');
@@ -250,6 +267,7 @@ test.describe('movement', () => {
     expect(
       await page2.locator('[data-testid="game-surface"]').getAttribute('data-local-player-id'),
     ).toBeTruthy();
+    await waitForShipCount(page2);
     expect(await shipCount(page2)).toBeGreaterThanOrEqual(2);
 
     await ctx1.close();
@@ -419,8 +437,19 @@ test.describe('identity', () => {
     // The server must have assigned a different ID to the second joiner.
     expect(id1).not.toBe(id2);
 
-    // Both ships should be visible (≥ 2 since the server is shared across test runs).
-    await page1.waitForTimeout(500);
+    // Both ships should be visible (≥ 2). Wait on the actual state (ship-count
+    // reaching 2) rather than a fixed timeout — the second ship's broadcast
+    // crosses network + Colyseus state-diff + syncMirror, whose latency varies.
+    const bothVisible = (p: typeof page1) =>
+      p.waitForFunction(
+        () => {
+          const el = document.querySelector('[data-testid="ship-count"]');
+          return el !== null && parseInt(el.textContent?.replace('Ships: ', '') ?? '0', 10) >= 2;
+        },
+        { timeout: 10_000 },
+      );
+    await bothVisible(page1);
+    await bothVisible(page2);
     expect(await shipCount(page1)).toBeGreaterThanOrEqual(2);
     expect(await shipCount(page2)).toBeGreaterThanOrEqual(2);
 

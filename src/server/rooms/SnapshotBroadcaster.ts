@@ -124,6 +124,9 @@ interface AllShipEntry {
   isActive: boolean;
   pose: ShipPhysicsState;
   lastInput: ShipInputBits;
+  /** Current energy pool (weapons/energy/AI overhaul §3.2). Emitted on the
+   *  wire ONLY for the recipient's own active ship. 0 for lingering hulls. */
+  energy: number;
 }
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
@@ -141,6 +144,7 @@ type MutableStateEntry = {
   isActive: boolean;
   lastInput?: ShipInputBits;
   mountAngles?: number[];
+  energy?: number;
 };
 
 type MutableProjectileEntry = {
@@ -391,6 +395,7 @@ export class SnapshotBroadcaster {
         // initial zeros).
         pose: undefined as unknown as ShipPhysicsState,
         lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
+        energy: 0,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -441,6 +446,7 @@ export class SnapshotBroadcaster {
       entry.lastInput.turnRight = !!(flags & FLAG_INPUT_TURN_RIGHT);
       entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
+      entry.energy = ship.energy;
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -464,6 +470,7 @@ export class SnapshotBroadcaster {
       entry.lastInput.turnRight = false;
       entry.lastInput.boost = false;
       entry.lastInput.reverse = false;
+      entry.energy = 0;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -537,6 +544,13 @@ export class SnapshotBroadcaster {
         // pattern and avoids the per-ship `{ lastInput }` literal alloc.
         entry.lastInput = includeLastInput ? ship.lastInput : undefined;
         entry.mountAngles = mountAnglesArr;
+        // Energy: own ACTIVE ship only (the local player's predicted
+        // resource). Always assign — undefined for every other ship and
+        // every remote recipient (notepack skips undefined). Integer-
+        // quantised. Reused pooled entry → must clear for non-owners.
+        entry.energy = (ship.playerId === recipientPlayerId && ship.isActive)
+          ? Math.round(ship.energy)
+          : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

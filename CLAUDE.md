@@ -187,6 +187,8 @@ Do not change `reuseExistingServer` to `false` casually — that breaks the live
 
 Playwright runs are slow (a single spec can take 30–120 s; the full suite is multi-minute). The original concern was that a synchronous `pnpm e2e` call would appear to "stall" the harness — that's still true if you run the *whole suite* in foreground, but targeted runs are fine and you have permission to do them.
 
+> **Measurement specs live in `tests/perf/`, never in `pnpm e2e`.** Fixed-window heap/allocation/bandwidth/worker-A-B specs that hold a wall-clock window to gather a number (and are inherently host-load-variance-prone) run **only** via `pnpm e2e:perf` (`playwright.perf.config.ts`, 150 s per-test cap) — they are NOT part of the per-PR `pnpm e2e` regression suite. Adding a spec that waits out a fixed window for a measurement? It belongs in `tests/perf/`, not `tests/e2e/`. See `docs/refactors/test-coverage-audit.md` + the Determinism-refactor section of `docs/architecture/e2e-framework.md`.
+
 **Default playbook:**
 
 1. **Tell the user before you start, with the expected duration and Bash timeout.** Format: `> Running tests/e2e/foo.spec.ts — expect ~60 s, Bash timeout 90 s.` Do NOT fabricate wall-clock times (e.g. "17:02 → 17:04"); the model has no real clock and inventing one is dishonest. Announce duration + cap; the user has their own clock. Mandatory for any operation whose worst-case runtime is over 2 minutes.

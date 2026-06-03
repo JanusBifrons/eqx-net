@@ -3,7 +3,7 @@ import { loadSettings, saveSettings } from '../settings/settingsStorage.js';
 import { loadShipKind, saveShipKind } from '../settings/shipSelectionStorage.js';
 import type { UserId } from '../settings/userPrefs.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
-import { DEFAULT_WEAPON, WEAPON_IDS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import type {
   ConnectionStatus,
   ServerHealth,
@@ -140,7 +140,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitProgress: 0,
   transitTargetSectorKey: null,
   transitSpoolMs: null,
-  activeWeapon: DEFAULT_WEAPON,
+  activeSlotId: 'primary',
+  energyMax: 100,
   lastFireMs: null,
   isDrawerOpen: false,
   drawerTab: 'galaxy',
@@ -197,11 +198,10 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setTransitProgress: (p) => set({ transitProgress: p }),
   setTransitTargetSectorKey: (key) => set({ transitTargetSectorKey: key }),
   setTransitSpoolMs: (ms) => set({ transitSpoolMs: ms }),
-  setActiveWeapon: (id) => set({ activeWeapon: id, lastFireMs: null }),
-  cycleWeapon: () => set((s) => {
-    const idx = WEAPON_IDS.indexOf(s.activeWeapon);
-    return { activeWeapon: WEAPON_IDS[(idx + 1) % WEAPON_IDS.length]!, lastFireMs: null };
-  }),
+  // Switching slot resets the wall-clock cooldown anchor so a fresh slot
+  // fires immediately (no carry-over cooldown across slots).
+  setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
+  setEnergyMax: (max) => set({ energyMax: max }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
   setDrawerTab: (id) => set({ drawerTab: id }),

@@ -62,6 +62,10 @@ export const SCOUT: ShipKind = ShipKindSchema.parse({
   shieldMax: 90,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 90 / 120,
+  // Bolt boat: small pool, ~10 s continuous fire (120 / (2 × 6 Hz)),
+  // empty→full regen ~10 s. (plan §3.3)
+  energyMax: 120,
+  energyRegenRate: 0.2,
   // Phase-1 agility uplift (2026-05-10): drone terminal angvel
   // = maxTorque / ANGVEL_DAMPING (1.5). To match the player's
   // `maxAngvel = 3.0` we need `maxTorque ≈ 4.5`. `turnKp` bumped from
@@ -80,7 +84,11 @@ export const SCOUT: ShipKind = ShipKindSchema.parse({
       [-6, 8],
     ],
   },
-  mounts: [LEGACY_FORWARD_MOUNT],
+  // Bolts (weapons/energy/AI overhaul §2): scout fires the catalogue
+  // `laser` (projectile bolt), not the legacy beam. Inline clone of the
+  // shared forward mount with the weapon swapped — the frozen
+  // LEGACY_FORWARD_MOUNT const stays `hitscan` for engineering kinds/tests.
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
   slots: [LEGACY_PRIMARY_SLOT],
 });
 
@@ -106,6 +114,9 @@ export const FIGHTER: ShipKind = ShipKindSchema.parse({
   shieldMax: 150,
   shieldRegenDelayTicks: 300,
   shieldRegenRate: 150 / 120,
+  // Bolt boat: ~12.5 s continuous fire (150 / (2 × 6 Hz)). (plan §3.3)
+  energyMax: 150,
+  energyRegenRate: 0.25,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 2.0`
   // — terminal angvel = maxTorque / 1.5, so maxTorque = 3.0.
   ai: { thrust: 0.25, turnKp: 6.0, maxTorque: 3.0 },
@@ -122,6 +133,7 @@ export const FIGHTER: ShipKind = ShipKindSchema.parse({
       [10, 10],
     ],
   },
-  mounts: [LEGACY_FORWARD_MOUNT],
+  // Bolts (weapons/energy/AI overhaul §2) — see SCOUT note.
+  mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
   slots: [LEGACY_PRIMARY_SLOT],
 });

@@ -49,7 +49,7 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
 }
 
 describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
-  it('catalogue version was bumped to 7', () => {
+  it('catalogue version was bumped to 8', () => {
     // 3 → 4 on 2026-05-27: appended `missile-frigate` kind (heat-seeker
     // weapon platform).
     // 4 → 5 on 2026-05-27: appended `crossguard` kind (the T-ship for
@@ -59,7 +59,10 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // scaled polygon's bounding circle (~213).
     // 6 → 7 on 2026-05-28: appended `el` (L-shape) kind for the
     // ramming-probe diagnostic harness.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(7);
+    // 7 → 8 on 2026-06-01: weapons/energy/AI overhaul — per-kind mount
+    // weapon reassignment (bolts/beams/missiles), weapon stat rebalance,
+    // and new per-kind energyMax / energyRegenRate fields.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(8);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

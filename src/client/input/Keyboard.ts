@@ -1,4 +1,3 @@
-import { useUIStore } from '../state/store.js';
 
 export interface InputState {
   thrust: boolean;
@@ -73,17 +72,9 @@ export class Keyboard {
       case 'ShiftRight':
         this.boost = true;
         break;
-      case 'Digit1':
-      case 'Numpad1':
-        useUIStore.getState().setActiveWeapon('hitscan');
-        break;
-      case 'Digit2':
-      case 'Numpad2':
-        useUIStore.getState().setActiveWeapon('laser');
-        break;
-      case 'KeyQ':
-        useUIStore.getState().cycleWeapon();
-        break;
+      // Weapon-type hotkeys (1/2/Q) removed in the weapons/energy/AI overhaul
+      // (§5.2): each ship fires its catalogue-bound loadout, so there is no
+      // per-weapon selection. Slot selection is via the MUI SlotSelector.
     }
   };
 
