@@ -255,6 +255,34 @@ function writeE2EDataset(
     posMap[id] = { x: parseFloat(s.x.toFixed(3)), y: parseFloat(s.y.toFixed(3)) };
   }
   el.dataset['shipPositions'] = JSON.stringify(posMap);
+  // Lingering hulls (disconnected / displaced, isActive=false). These are
+  // NOT in mirror.ships (they route to mirror.lingeringShips), so the linger
+  // E2E suite reads this to assert a remote observer SEES a player's parked
+  // hull. Keyed by shipInstanceId; carries the owning playerId.
+  const lingerMap: Record<string, { x: number; y: number; ownerPlayerId: string }> = {};
+  if (gameClient.mirror.lingeringShips) {
+    for (const [id, l] of gameClient.mirror.lingeringShips) {
+      lingerMap[id] = {
+        x: parseFloat(l.x.toFixed(3)),
+        y: parseFloat(l.y.toFixed(3)),
+        ownerPlayerId: l.ownerPlayerId,
+      };
+    }
+  }
+  el.dataset['lingeringPositions'] = JSON.stringify(lingerMap);
+  // Wrecks (abandoned-in-world husks). Keyed by shipInstanceId.
+  const wreckMap: Record<string, { x: number; y: number; kind: string; health: number }> = {};
+  if (gameClient.mirror.wrecks) {
+    for (const [id, w] of gameClient.mirror.wrecks) {
+      wreckMap[id] = {
+        x: parseFloat(w.x.toFixed(3)),
+        y: parseFloat(w.y.toFixed(3)),
+        kind: w.kind,
+        health: parseFloat(w.health.toFixed(1)),
+      };
+    }
+  }
+  el.dataset['wreckPositions'] = JSON.stringify(wreckMap);
   el.dataset['localPlayerId'] = localId ?? '';
   el.dataset['predStats'] = JSON.stringify(gameClient.stats);
   // Combat state.

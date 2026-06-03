@@ -94,6 +94,7 @@ const FEATURE_SPECS: string[] = [
   '**/ramming-probe-armpit.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
+  '**/linger/*.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
