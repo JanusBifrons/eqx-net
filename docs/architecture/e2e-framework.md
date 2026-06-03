@@ -17,6 +17,15 @@ Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one
 
 **Counts after Phase 1:** `tests/e2e/` **55** spec files (54 `@smoke`+`@feature` + 1 `@gate`); `tests/perf/` **14**. `FEATURE_SPECS` 59→39.
 
+**Phase 2a — DONE.** Delete specs whose coverage is genuinely owned elsewhere.
+
+- **Deleted (5):** `happy-path-ui-switch` (a `test.fixme` — zero live coverage; the room-swap-render path is covered by `happy-path-switch-ship`. NOTE: the real-UI Spawn-button-click-to-swap leg is now formally uncovered — it was already inert via fixme), `sync-diagnostics` + `rotate-jitter` + `network-feel-combat` (drift/correction-rate owned by the netcode-health gate; `rotate-jitter`'s rotate-only angle-correction also by `robustness.spec.ts` #4; `network-feel-combat`'s unique stuck-offset anomaly by `tests/scenarios/welfordPostGapPollution.test.ts`), `held-fire-continuous-damage` (a `test.skip`; cadence locked by the `damageNumberEvents`/`LocalBeam`/`WeaponCatalogue` unit canaries).
+- **Audit-corrected — KEPT despite the plan saying delete** (trim deferred to Phase 3): `feel-test-lockstep` (sole live >12-drone client+server+wire smoke; the repo's own table below + `src/client/CLAUDE.md` call it KEEP), `feel-tuning` (Test 2 = slow-down displacement lock, lives nowhere else), `sync-health` (W-thrust continuous-3s corrRate<0.15 lock, nowhere else).
+
+**Phase 2b — merges (next):** `tidi-overlay`→`swarm-tidi` (pure delete — Stage 1 is a superset), `swarm-stationary-stability`→`swarm-jitter` (fold in kind=0 asteroid cumulative drift <0.5u), drawer pair→new `drawer-galaxy.spec.ts`.
+
+> The per-spec triage table below still lists several now-deleted specs (`sync-diagnostics`, `rotate-jitter`, `network-feel-combat`, `happy-path-ui-switch`) as KEEP — those rows are superseded by this section pending the full table refresh (final refactor commit).
+
 ## Why this doc exists
 
 On 2026-05-19 a 6-commit wrap-up shipped with the full deterministic suite green (typecheck 0 / lint 0 / 1031 unit / integration / boot / bench) and was unplayable on-device. Phase 1 of the e2e-rebuild plan built the netcode-health gate (`pnpm e2e:netgate`) to answer the playability question the deterministic suite was never trying to answer; this doc Phase-0b — the prerequisite for Phase 2's framework restructure — classifies every existing E2E spec so the runner can ship a coherent four-tier story instead of one unsorted bag of `tests/e2e/*.spec.ts`.

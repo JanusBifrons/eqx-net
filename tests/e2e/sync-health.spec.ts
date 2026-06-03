@@ -67,7 +67,8 @@ test('W-thrust: correction rate stays under 15% after 3 s continuous thrust', as
   // Pre-fix regression thresholds for reference:
   //   - setInterval at 70 Hz + overwrite-latest input model: ~93% corrections
   //   - rAF-fixed + overwrite-latest:                        ~59% corrections
-  // If this regresses to >15%, re-run sync-diagnostics.spec.ts to isolate.
+  // If this regresses to >15%, run `pnpm e2e:netgate` to isolate the
+  // correction-rate regression against a baseline ref.
   expect(corrRate).toBeLessThan(0.15);
 
   // ticksAhead should stay bounded (~18-20 for ~300 ms RTT). A runaway
