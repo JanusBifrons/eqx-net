@@ -490,6 +490,33 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// 2026-06-03 — deterministic combat target room (test-coverage-audit Phase 3).
+// One PEACEFUL, hull-exposed heavy parked at (0, 200) — directly +y of the
+// player's (0,0) spawn. A player joining `?room=combat-drone-test&shipKind=
+// interceptor` (initialAngle 0 ⇒ faces +y) fires a hitscan beam straight up
+// the x=0 line and is GUARANTEED to hit the drone (200u < 250u beam range).
+// Used by `tests/e2e/combat/swarm-hit-detected.spec.ts` (observer sees the
+// shooter's swarm-N hit) and the rewritten `tests/e2e/drone-destruction.spec.ts`
+// (hold fire → drone count drops by exactly 1). peacefulDrones (Passive
+// behaviour = stationary) keeps it on the beam line; hullExposed drops its
+// shield so the first beam tick lands on hull. Kind 'heavy' (540 HP) is chosen
+// so the swarm-hit observer has a ~3.5s window to catch the hit broadcast
+// before the drone dies (a 180-HP scout died in ~1.2s and flaked the
+// observation on the determinism repeat-pass); the interceptor still destroys
+// it well inside drone-destruction's 8s deadline.
+gameServer
+  .define('combat-drone-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    dronePoses: [
+      { kind: 'heavy', x: 0, y: 200, angle: 0, hullExposed: true },
+    ],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // Phase 6 TiDi acceptance gate. 4000 entities (3200 asteroids + 800 active
 // drones at the 0.8 ratio). Diagnostic captures show this only consumes
 // ~1.5 ms/tick on a typical dev machine — well under the 14 ms TiDi

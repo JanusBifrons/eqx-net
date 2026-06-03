@@ -64,7 +64,7 @@ const SMOKE_SPECS: string[] = [
 // docs/refactors/test-coverage-audit.md.
 const FEATURE_SPECS: string[] = [
   '**/asteroid-shape.spec.ts',
-  '**/combat.spec.ts',
+  '**/combat/*.spec.ts',
   '**/missile-frigate-homing.spec.ts',
   '**/collision-events.spec.ts',
   '**/configurable-arrival.spec.ts',
