@@ -55,7 +55,7 @@ import { installLongtaskObserver } from '../debug/longtaskObserver';
 import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
-import { HITSCAN_RANGE } from '@core/combat/Weapons';
+import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
@@ -81,7 +81,7 @@ import { getSector } from '@core/galaxy/galaxy';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
-import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
+import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
 import {
   pickTarget,
   rotateMountToward,
@@ -4257,10 +4257,46 @@ export class ColyseusGameClient {
         }
       }
       liveBeams.set(mount.id, {
-        dist: hit ? hit.dist : HITSCAN_RANGE,
+        dist: hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY) : HITSCAN_RANGE,
         hitId: hit?.hitId,
       });
     }
+  }
+
+  /**
+   * Snap the visible beam endpoint to the rendered SHIELD ring when the
+   * ray stops on a shield-up target (2026-06-03). The shield collider IS
+   * `targetRadius + SHIELD_RADIUS_PAD` — the same radius the cyan aura is
+   * drawn at — but the predWorld collider can lag the shield by one
+   * physics step right after a shield 0-cross or a drone's first
+   * in-interest tick (Rapier query-pipeline lag), so the raw
+   * `timeOfImpact` makes the endpoint pop slightly off the aura edge.
+   * Recomputing the distance to the shield sphere ANALYTICALLY guarantees
+   * the beam terminates exactly on the ring. Returns the predWorld dist
+   * unchanged for a shield-DOWN/hull hit, an asteroid, or a miss.
+   * Allocation-free — `rayHitsSphere` is pure scalar (Invariant #14).
+   */
+  private shieldEdgeDist(
+    hit: { hitId: string; dist: number },
+    fromX: number, fromY: number, fwdX: number, fwdY: number,
+  ): number {
+    const hitId = hit.hitId;
+    if (hitId.startsWith('swarm-')) {
+      const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
+      // Drones only (kind===1); asteroids (kind===0) have no shield.
+      if (sw && sw.kind === 1 && sw.shieldDown !== true) {
+        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, sw.x, sw.y, sw.radius + SHIELD_RADIUS_PAD);
+        if (d !== null) return d;
+      }
+      return hit.dist;
+    }
+    const ship = this.mirror.ships.get(hitId);
+    if (ship && ship.shieldDown !== true) {
+      const r = getShipKind(ship.kind ?? null).radius + SHIELD_RADIUS_PAD;
+      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, ship.x, ship.y, r);
+      if (d !== null) return d;
+    }
+    return hit.dist;
   }
 
   /** Resolve the local player's currently-active slot's mount list. Returns
