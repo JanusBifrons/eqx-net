@@ -24,6 +24,21 @@ export const FADE_FRAMES = 30;
 export const LIFETIME_FRAMES = STAY_FRAMES + FADE_FRAMES;
 
 /**
+ * Per-frame easing (0..1) the rendered position uses to GLIDE toward the
+ * latest hit coord instead of snapping. 0.2 ≈ reaches the target in ~10
+ * frames — smooth but keeps up with a moving target under sustained fire.
+ * (2026-06-03 smoothness tweak.)
+ */
+const POSITION_GLIDE = 0.2;
+
+/**
+ * Upward float speed (× invScale, world u/frame) applied ONLY during the
+ * fade-out so the number lifts off as it disappears. While damage is
+ * still landing the number holds steady on the target.
+ */
+const FADE_RISE_RATE = 1.0;
+
+/**
  * Base font size for the first hit. The displayed text counter-scales
  * 1/camera.scale so it reads constant-size on screen at any zoom AND
  * multiplies a `fontScaleForTotal(total)` factor so the number grows
@@ -88,6 +103,20 @@ interface DamageNumberEntry {
   stayLeft: number;
   fadeLeft: number;
   /**
+   * Smooth-motion state (2026-06-03). `targetX/targetY` is the latest
+   * hit world-coord (Y-flipped); `curX/curY` is the actually-rendered
+   * position that GLIDES toward the target each frame instead of
+   * snapping (snapping per hit was the "jolts around / resets position"
+   * bug). `riseY` is the extra upward float applied ONLY during the
+   * fade-out so the number sits steady on the target while damage is
+   * landing, then drifts off as it fades.
+   */
+  targetX: number;
+  targetY: number;
+  curX: number;
+  curY: number;
+  riseY: number;
+  /**
    * Per-tag predicted contributions, lazily allocated only when at
    * least one tagged add() happens against this bucket. Auth-only
    * buckets (the dominant case) never allocate this map. Lets
@@ -106,8 +135,14 @@ function makeNumberStyle(): TextStyle {
     fontSize: 14,
     fontWeight: 'bold',
     fill: DMG_LIGHT,
-    stroke: { color: '#ffffff', width: 3 },
-    dropShadow: { color: '#000000', blur: 2, distance: 1, angle: Math.PI / 2, alpha: 0.5 },
+    // Two-layer outline (2026-06-03): a crisp BLACK stroke hugging the
+    // glyph, then a WHITE halo just outside it via a zero-distance white
+    // drop-shadow. Reads as "red number → black border → white border"
+    // without the cost of stacking a second Text per bucket. (Pixi v8
+    // TextStyle supports only one `stroke`, so the outer ring is the
+    // shadow.)
+    stroke: { color: '#000000', width: 4 },
+    dropShadow: { color: '#ffffff', alpha: 1, blur: 3, distance: 0, angle: 0 },
   });
 }
 
@@ -189,8 +224,12 @@ export class DamageNumberManager {
       entry.stayLeft = STAY_FRAMES;
       entry.fadeLeft = FADE_FRAMES;
       entry.text.alpha = 1;
-      entry.text.x = x;
-      entry.text.y = -y;
+      // Don't SNAP to the new hit coord — that was the jolt. Update the
+      // glide target and reset any fade-rise so the number eases back
+      // onto the target while fresh damage lands.
+      entry.targetX = x;
+      entry.targetY = -y;
+      entry.riseY = 0;
       this.applyDisplay(entry);
       if (tag !== undefined) {
         if (!entry.pendingByTag) entry.pendingByTag = new Map();
@@ -218,6 +257,13 @@ export class DamageNumberManager {
       heal,
       stayLeft: STAY_FRAMES,
       fadeLeft: FADE_FRAMES,
+      // Fresh number appears AT the hit (cur == target), no glide-in from
+      // a stale position. text.x/y set above so it's visible pre-update.
+      targetX: x,
+      targetY: -y,
+      curX: x,
+      curY: -y,
+      riseY: 0,
     };
     this.applyDisplay(fresh);
     if (tag !== undefined) {
@@ -254,23 +300,40 @@ export class DamageNumberManager {
   }
 
   /**
-   * Tick every active bucket: drift upward, counter-scale + total-
-   * scale, advance the stay/fade countdown, destroy on expiry.
+   * Tick every active bucket: glide toward the latest hit coord (no
+   * snap), float up only while fading, counter-scale + total-scale,
+   * advance the stay/fade countdown, destroy on expiry.
    */
   update(): void {
     const invScale = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
     for (const [id, entry] of this.byTarget) {
-      entry.text.y -= invScale;
+      // Smoothly glide the rendered position toward the latest hit
+      // anchor. GLIDE is a per-frame easing factor — small enough to
+      // read as motion, large enough to keep up with a moving target
+      // under sustained fire. Removes the per-hit position snap.
+      entry.curX += (entry.targetX - entry.curX) * POSITION_GLIDE;
+      entry.curY += (entry.targetY - entry.curY) * POSITION_GLIDE;
+
       const visualScale = invScale * fontScaleForTotal(entry.total);
       entry.text.scale.set(visualScale);
 
       if (entry.stayLeft > 0) {
         entry.stayLeft--;
         entry.text.alpha = 1;
+        // Hold steady on the target while damage is landing — ease any
+        // residual fade-rise back to zero so a renewed combo re-seats
+        // the number on the target rather than leaving it drifted up.
+        entry.riseY += (0 - entry.riseY) * POSITION_GLIDE;
       } else if (entry.fadeLeft > 0) {
         entry.fadeLeft--;
         entry.text.alpha = entry.fadeLeft / FADE_FRAMES;
+        // Now drift up as it fades out (the classic float-off).
+        entry.riseY -= invScale * FADE_RISE_RATE;
       }
+
+      entry.text.x = entry.curX;
+      entry.text.y = entry.curY + entry.riseY;
+
       if (entry.stayLeft === 0 && entry.fadeLeft === 0) {
         this.destroyEntry(id, entry);
       }
