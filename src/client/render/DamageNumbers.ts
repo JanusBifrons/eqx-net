@@ -46,10 +46,45 @@ export function fontScaleForTotal(total: number): number {
   return grown > MAX_FONT_SCALE ? MAX_FONT_SCALE : grown;
 }
 
+// Colour ramp (2026-06-03 visual tweak). No leading "-" sign — the
+// floating number reads as raw magnitude. Damage starts light red and
+// deepens toward saturated red as the running total grows; healing
+// (`heal: true` — not yet emitted by gameplay, wired ahead) starts light
+// green and deepens. White outline gives contrast over any background.
+const DMG_LIGHT = 0xff8c8c; // light red — small hit
+const DMG_DEEP = 0xff0000; // saturated red — big hit
+const HEAL_LIGHT = 0x9cff9c; // light green — small heal
+const HEAL_DEEP = 0x00c400; // saturated green — big heal
+
+/** Channel-wise lerp between two 0xRRGGBB ints. `t` clamped to [0,1]. */
+function lerpColor(a: number, b: number, t: number): number {
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * k);
+  const g = Math.round(ag + (bg - ag) * k);
+  const bl = Math.round(ab + (bb - ab) * k);
+  return (r << 16) | (g << 8) | bl;
+}
+
+/**
+ * `colorForTotal(total, heal)` — pure, exported for tests. Maps the
+ * accumulated magnitude to a fill colour: light→deep red for damage,
+ * light→deep green for heal. Uses the same log curve shape as
+ * `fontScaleForTotal` so size and colour intensify together; saturates
+ * (full deep colour) around a total of ~400.
+ */
+export function colorForTotal(total: number, heal = false): number {
+  const t = Math.min(1, Math.log10(1 + Math.max(0, total) / 25) * 0.85);
+  return heal ? lerpColor(HEAL_LIGHT, HEAL_DEEP, t) : lerpColor(DMG_LIGHT, DMG_DEEP, t);
+}
+
 interface DamageNumberEntry {
   text: Text;
   targetId: string;
   total: number;
+  /** True for a healing number (green ramp) vs damage (red ramp). */
+  heal: boolean;
   stayLeft: number;
   fadeLeft: number;
   /**
@@ -62,18 +97,19 @@ interface DamageNumberEntry {
   pendingByTag?: Map<string, number>;
 }
 
-const STYLE = new TextStyle({
-  fontFamily: 'monospace',
-  fontSize: 14,
-  fontWeight: 'bold',
-  fill: '#ffffff',
-  dropShadow: {
-    color: '#ff0000',
-    blur: 2,
-    distance: 1,
-    angle: Math.PI / 2,
-  },
-});
+/** Fresh per-Text style. Each Text owns its style so its `fill` can be
+ *  set independently (the colour ramp is per-bucket). White outline +
+ *  subtle dark drop-shadow for legibility over bright FX. */
+function makeNumberStyle(): TextStyle {
+  return new TextStyle({
+    fontFamily: 'monospace',
+    fontSize: 14,
+    fontWeight: 'bold',
+    fill: DMG_LIGHT,
+    stroke: { color: '#ffffff', width: 3 },
+    dropShadow: { color: '#000000', blur: 2, distance: 1, angle: Math.PI / 2, alpha: 0.5 },
+  });
+}
 
 /**
  * Floating damage-number manager — accumulator model (plan:
@@ -132,13 +168,20 @@ export class DamageNumberManager {
     this.camera = camera;
   }
 
+  /** Set the visible text (rounded magnitude, no sign) + ramp colour. */
+  private applyDisplay(entry: DamageNumberEntry): void {
+    entry.text.text = `${Math.round(entry.total)}`;
+    entry.text.style.fill = colorForTotal(entry.total, entry.heal);
+  }
+
   /**
-   * Apply a damage hit. If a bucket for `targetId` already exists,
-   * accumulate; otherwise spawn a fresh bucket (evicting the oldest
-   * if at cap). `tag` (a `clientShotId`) is recorded per-contribution
-   * so a later `cancelByTag` can subtract precisely.
+   * Apply a damage (or, with `heal`, healing) hit. If a bucket for
+   * `targetId` already exists, accumulate; otherwise spawn a fresh
+   * bucket (evicting the oldest if at cap). `tag` (a `clientShotId`) is
+   * recorded per-contribution so a later `cancelByTag` can subtract
+   * precisely. A bucket's heal/damage flavour is set on first creation.
    */
-  spawn(targetId: string, x: number, y: number, damage: number, tag?: string): void {
+  spawn(targetId: string, x: number, y: number, damage: number, tag?: string, heal = false): void {
     if (damage <= 0) return;
     let entry = this.byTarget.get(targetId);
     if (entry) {
@@ -148,7 +191,7 @@ export class DamageNumberManager {
       entry.text.alpha = 1;
       entry.text.x = x;
       entry.text.y = -y;
-      entry.text.text = `-${entry.total}`;
+      this.applyDisplay(entry);
       if (tag !== undefined) {
         if (!entry.pendingByTag) entry.pendingByTag = new Map();
         entry.pendingByTag.set(tag, (entry.pendingByTag.get(tag) ?? 0) + damage);
@@ -163,7 +206,7 @@ export class DamageNumberManager {
     // Reuse a pooled Text if available, else allocate. Either way the
     // text content + transform are mutated to this bucket's state — the
     // Pixi v8 vertex/texture buffers are kept hot across cycles.
-    const text = this.acquireText(`-${damage}`);
+    const text = this.acquireText();
     text.x = x;
     text.y = -y;
     text.alpha = 1;
@@ -172,9 +215,11 @@ export class DamageNumberManager {
       text,
       targetId,
       total: damage,
+      heal,
       stayLeft: STAY_FRAMES,
       fadeLeft: FADE_FRAMES,
     };
+    this.applyDisplay(fresh);
     if (tag !== undefined) {
       fresh.pendingByTag = new Map();
       fresh.pendingByTag.set(tag, damage);
@@ -202,7 +247,7 @@ export class DamageNumberManager {
       if (entry.total <= 0) {
         this.destroyEntry(id, entry);
       } else {
-        entry.text.text = `-${entry.total}`;
+        this.applyDisplay(entry);
       }
     }
     return removed;
@@ -279,19 +324,19 @@ export class DamageNumberManager {
     }
   }
 
-  private acquireText(initialText: string): Text {
+  private acquireText(): Text {
     const recycled = this.freeTexts.pop();
     if (recycled) {
       DamageNumberManager.debugCounters.acquireFromPool++;
-      recycled.text = initialText;
       // Reset transform fields the previous bucket may have mutated.
+      // text + fill are set by applyDisplay() right after acquire;
       // scale.set + alpha are re-applied each `update()`, but reset
       // here so a spawn-then-zero-ticks bucket renders correctly.
       recycled.scale.set(1, 1);
       return recycled;
     }
     DamageNumberManager.debugCounters.acquireFresh++;
-    const fresh = new Text({ text: initialText, style: STYLE });
+    const fresh = new Text({ text: '', style: makeNumberStyle() });
     fresh.anchor.set(0.5, 0.5);
     return fresh;
   }
