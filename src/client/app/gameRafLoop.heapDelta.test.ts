@@ -54,8 +54,15 @@ vi.mock('../state/store.js', () => ({
       shieldPct: 1,
       sectorAlert: null,
       clockRate: 1.0,
+      // clientReadySent=true short-circuits the bootstrap-ready check so the
+      // loop never calls gameClient.sendClientReady() (not on the stub).
+      clientReadySent: true,
     }),
   },
+  // gameRafLoop imports these alongside useUIStore; the mock must provide
+  // them or module load fails (stale-mock regression, 2026-06-03).
+  computeBootstrapReadyFromState: () => false,
+  computeIsLoadingActive: () => false,
 }));
 
 // Per-frame triggers — pure no-op stub.
@@ -81,6 +88,7 @@ function makeDeps(): GameRafLoopDeps {
     el,
     gameClient: {
       tickPhysics: () => {},
+      tickInbound: () => {},
       updateMirror: () => {},
       mirror: {
         ships: new Map(),
