@@ -237,6 +237,24 @@ gameServer
     testTimeScale: 10,
   })
   .filterBy(['testId']);
+// 2026-06-03 — deterministic respawn-cascade environment (test-coverage-audit
+// Phase 3). A test-sector with 4 drones so a client joining `?startHostile=1`
+// reproduces the BOT-PRESSURE conditions the original
+// `respawn-cascade-input-routing.spec.ts` needed (the orphaned-client bug
+// "only repros under bot pressure" — it passed in the no-hostility feel-test).
+// The spec pairs this with a huge `initialHull` so the player SURVIVES the
+// pressure (hostile fire still drives the damage/aggro state-churn that the
+// cascade cleanup must tolerate, but the player never dies → the thrust-moves-
+// the-ship assertion stays deterministic). Replaces the old spec's live
+// `galaxy-sol-prime` + `diag=1` join.
+gameServer
+  .define('cascade-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    droneCount: 4,
+    maxClients: 8,
+  })
+  .filterBy(['testId']);
 // Phase 5e soak room. swarmCount can be overridden per join via room
 // options, but the default of 500 is the master plan's acceptance gate.
 gameServer.define('swarm-soak', SectorRoom, {
