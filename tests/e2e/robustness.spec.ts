@@ -182,8 +182,12 @@ test('two clients thrust simultaneously — both stay within bounds', async ({ b
   async function joinClient() {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto(BASE_URL);
-    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    // 2026-06-03: the old "Enter Sector Alpha" button is gone (post-auth flow
+    // refactor). Use the ?room=sector auto-join escape hatch — the same one the
+    // test-with-logs fixture + the single-client tests above use — so both
+    // clients land in the SAME shared room (asteroids + p2p) without driving the
+    // multi-step galaxy-map UI twice.
+    await page.goto(`${BASE_URL}?room=sector`);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
@@ -343,8 +347,12 @@ test('p2p: rolling correction rate stays bounded during sustained two-client thr
   async function joinClient() {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto(BASE_URL);
-    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    // 2026-06-03: the old "Enter Sector Alpha" button is gone (post-auth flow
+    // refactor). Use the ?room=sector auto-join escape hatch — the same one the
+    // test-with-logs fixture + the single-client tests above use — so both
+    // clients land in the SAME shared room (asteroids + p2p) without driving the
+    // multi-step galaxy-map UI twice.
+    await page.goto(`${BASE_URL}?room=sector`);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
@@ -398,8 +406,12 @@ test('p2p: ships do not significantly overlap during close approach', async ({ b
   async function joinClient() {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto(BASE_URL);
-    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    // 2026-06-03: the old "Enter Sector Alpha" button is gone (post-auth flow
+    // refactor). Use the ?room=sector auto-join escape hatch — the same one the
+    // test-with-logs fixture + the single-client tests above use — so both
+    // clients land in the SAME shared room (asteroids + p2p) without driving the
+    // multi-step galaxy-map UI twice.
+    await page.goto(`${BASE_URL}?room=sector`);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
@@ -487,8 +499,12 @@ test('two clients agree on asteroid position after collision (< 8u)', async ({ b
   async function joinClient() {
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
-    await page.goto(BASE_URL);
-    await page.getByRole('button', { name: /enter sector alpha/i }).click();
+    // 2026-06-03: the old "Enter Sector Alpha" button is gone (post-auth flow
+    // refactor). Use the ?room=sector auto-join escape hatch — the same one the
+    // test-with-logs fixture + the single-client tests above use — so both
+    // clients land in the SAME shared room (asteroids + p2p) without driving the
+    // multi-step galaxy-map UI twice.
+    await page.goto(`${BASE_URL}?room=sector`);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');

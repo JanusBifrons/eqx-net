@@ -7,43 +7,74 @@ on:
     branches: [main]
 
 jobs:
+  # Deterministic gates — run once. typecheck + lint (boundary enforcement) +
+  # unit/integration tests + the production build. These are fast and never
+  # flaky, so they stay a single job.
   verify:
     runs-on: ubuntu-latest
-    # Matches playwright.config.ts:globalTimeout (25 min). e2e-rebuild
-    # Phase 2d / hostile M4: previously 15 min would abort the whole job
-    # before Playwright's own globalTimeout could fire on a slow runner.
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.0
-
       - uses: actions/setup-node@v4
         with:
           node-version: '22.x'
           cache: 'pnpm'
-
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-
       - name: Typecheck
         run: pnpm run typecheck
-
       - name: Lint (boundary enforcement)
         run: pnpm run lint
-
       - name: Unit tests
         run: pnpm run test
-
       - name: Build
         run: pnpm run build
 
+  # E2E gate — the @smoke tier ONLY (deterministic critical-path locks).
+  #
+  # Scope (2026-06-03): CI gates on @smoke, NOT @smoke+@feature. The @feature
+  # tier carries pre-existing flaky locks (two-client room-sharing races, tight
+  # host-load-sensitive correction-rate timing) that predate the determinism
+  # refactor and are a separate de-flake project; gating PR merges on them
+  # would make CI red on environment noise. @feature stays runnable via
+  # `pnpm e2e` locally and is incrementally de-flaked + promoted. See
+  # docs/architecture/e2e-framework.md "CI scope".
+  #
+  # Parallelism: a `shard` MATRIX runs N independent jobs, each with its OWN
+  # dev:server:nowatch + vite (the `workers:1` shared-server contention that
+  # blocks in-process parallelism does not apply ACROSS jobs). Playwright splits
+  # the @smoke files by `--shard=i/N`; per-test rooms (`filterBy(['testId'])`)
+  # keep each shard isolated.
+  #
+  # Reruns: PLAYWRIGHT_RETRIES=2 absorbs the occasional transient two-client /
+  # timing flake so a single environment hiccup doesn't fail a PR. (Local dev
+  # stays 0 retries per the repo's anti-flake policy — this override is the
+  # documented "known-flaky environment" escape hatch in playwright.config.ts.)
+  e2e-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Install Playwright browsers
         run: pnpm exec playwright install --with-deps chromium
-
-      - name: Playwright E2E
-        run: pnpm run e2e
+      - name: Playwright E2E (smoke, shard ${{ matrix.shard }}/2)
+        run: pnpm run e2e:smoke -- --shard=${{ matrix.shard }}/2
         env:
           CI: 'true'
+          PLAYWRIGHT_RETRIES: '2'

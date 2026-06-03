@@ -36,6 +36,20 @@ Executing on branch `claude/test-coverage-refactor-exec`. A read-only audit (one
 
 > The per-spec triage table below still lists several now-deleted specs (`sync-diagnostics`, `rotate-jitter`, `network-feel-combat`, `happy-path-ui-switch`) as KEEP — those rows are superseded by this section pending the full table refresh (final refactor commit).
 
+## CI scope — @smoke only, sharded + reruns (2026-06-03)
+
+**`.github/workflows/ci.yml` gates PR merges on the `@smoke` tier ONLY**, not `@smoke`+`@feature`. Two jobs:
+
+- **`verify`** (single job): `typecheck` + `lint` + unit/integration `test` + `build`. Fast, never flaky.
+- **`e2e-smoke`** (matrix): the `@smoke` tier, split across a **shard matrix** (`--shard=i/N`) so N independent GitHub-Actions jobs run in parallel — each with its OWN `dev:server:nowatch` + vite, so the `workers:1` shared-server contention (which blocks *in-process* parallelism — see `playwright.config.ts`) does not apply *across jobs*. Per-test rooms (`filterBy(['testId'])`) keep shards isolated. Runs with **`PLAYWRIGHT_RETRIES=2`** so a transient two-client / timing hiccup retries instead of failing the PR (local dev stays 0 retries per policy #2 — this is the documented "known-flaky environment" override).
+
+**Why @feature is excluded from the merge gate.** The full-suite run on 2026-06-03 confirmed `@smoke` is green (the lone flake, `sector-alpha:243`'s two-client room-sharing race, is absorbed by reruns), while `@feature` carries **pre-existing** flaky/failing locks that predate this refactor and are a *separate* de-flake project:
+- **Two-client room-sharing races** — specs that put two browser contexts in one room via an undefined `testId` (a Colyseus matchmaking race) intermittently land in separate rooms (`robustness`'s p2p tests, `sector-alpha:243`).
+- **Stale locators** — `robustness`'s 4 two-client tests clicked the removed "Enter Sector Alpha" button (**repaired 2026-06-03** to the `?room=sector` auto-join; `sector-alpha`/`ship-selection` were already repaired to the Join-the-fight → galaxy-map flow).
+- **Host-load-sensitive timing** — tight correction-rate locks (`sync-health` W-thrust, `prediction-idle-bounded` idle, `robustness:281` post-collision, `ramming-probe-armpit`) that fail on a loaded runner; the netcode-health gate is their machine-insensitive replacement.
+
+Gating PRs on those would make CI red on environment noise. `@feature` stays runnable via `pnpm e2e` (full) / `pnpm e2e:feature` for thorough local + manual checks, and specs are incrementally de-flaked (deterministic spawns + shared `testId` + state predicates) and **promoted back into the CI smoke gate** as they harden — the deterministic combat split (`tests/e2e/combat/*`) is the first promotion candidate once its behaviour is confirmed on the CI ubuntu runner.
+
 ## Why this doc exists
 
 On 2026-05-19 a 6-commit wrap-up shipped with the full deterministic suite green (typecheck 0 / lint 0 / 1031 unit / integration / boot / bench) and was unplayable on-device. Phase 1 of the e2e-rebuild plan built the netcode-health gate (`pnpm e2e:netgate`) to answer the playability question the deterministic suite was never trying to answer; this doc Phase-0b — the prerequisite for Phase 2's framework restructure — classifies every existing E2E spec so the runner can ship a coherent four-tier story instead of one unsorted bag of `tests/e2e/*.spec.ts`.
