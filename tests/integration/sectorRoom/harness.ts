@@ -95,6 +95,14 @@ export interface SectorTestHarness {
   getServerRoom(): ServerRoom<SectorState> | null;
   /** Connect a fresh client connection as a named player. */
   connectAs(playerId: string, joinOpts?: Record<string, unknown>): Promise<ClientRoom<SectorState>>;
+  /** Connect AND complete the join handshake so the ship activates
+   *  (`isActive=true`). The production browser sends `client_ready` once
+   *  it has finished bootstrapping; the bare colyseus.js client here must
+   *  do the same or the ship sits `isActive=false` until the 30 s
+   *  `client_ready` watchdog. Sends `client_ready`, then polls the server
+   *  ship until it is active (`arrivalTick = serverTick + 36 ≈ 600 ms`).
+   *  Use this whenever a test needs a live, active hull. */
+  connectActive(playerId: string, joinOpts?: Record<string, unknown>): Promise<ClientRoom<SectorState>>;
   /** Send a `leave()` from the client side. */
   disconnectClient(room: ClientRoom<SectorState>): Promise<void>;
   /** Wait for the next snapshot. Note: snapshot broadcasts are suppressed
@@ -201,6 +209,22 @@ export async function bootSectorTestServer(opts: {
       // Room instance without an async matchMaker.query.
       if (!firstRoomId) firstRoomId = room.roomId;
       return room;
+    },
+    async connectActive(playerId, joinOpts = {}) {
+      const room = await this.connectAs(playerId, joinOpts);
+      room.send('client_ready', { type: 'client_ready' });
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const server = this.getServerRoom();
+        if (server) {
+          const state = server.state as SectorState;
+          for (const [, ship] of state.ships) {
+            if (ship.playerId === playerId && ship.isActive) return room;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      throw new Error(`connectActive: ship for ${playerId} never activated`);
     },
     async disconnectClient(room) {
       try { await room.leave(); } catch { /* ignore */ }

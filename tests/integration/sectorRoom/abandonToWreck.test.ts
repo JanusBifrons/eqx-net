@@ -86,6 +86,11 @@ describe('SectorRoom integration — abandon → wreck conversion', () => {
       spawnY: SPAWN_Y,
     });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
+    // Complete the join handshake so the hull activates (the bare client
+    // must send client_ready; the browser does this after bootstrap).
+    // arrivalTick = serverTick + 36 ticks ≈ 600 ms.
+    client.send('client_ready', { type: 'client_ready' });
+    await harness.advance(800);
 
     // Get the active ship's shipInstanceId out of state.ships.
     const state = getRoomById(client.roomId).state as SectorState;
@@ -186,7 +191,10 @@ describe('SectorRoom integration — abandon → wreck conversion', () => {
       spawnY: SPAWN_Y,
     });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
-    await harness.advance(200); // let SAB pose settle
+    // Complete the join handshake so the hull activates, then let the SAB
+    // pose settle (arrivalTick ≈ 600 ms).
+    _abandoned.send('client_ready', { type: 'client_ready' });
+    await harness.advance(800);
 
     const state = getRoomById(_abandoned.roomId).state as SectorState;
     let shipId = '';

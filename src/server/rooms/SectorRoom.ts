@@ -76,7 +76,7 @@ import { recordLagCompPoses } from './lagCompRecorder.js';
 import { TickBudgetTelemetry } from './TickBudgetTelemetry.js';
 import {
   evaluateSectorIdle,
-  findAbandonedPlayers,
+  findAbandonedShips,
 } from './sectorIdleEvaluator.js';
 import { runAiTick } from './aiTickRunner.js';
 import { makeInputHandler } from './InputHandler.js';
@@ -839,6 +839,9 @@ export class SectorRoom extends Room<SectorState> {
       state: this.state,
       sabF32: this.sabF32,
       shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
+      ownerlessShips: this.ownerlessShips,
       playerToSlot: this.playerToSlot,
       slotToPlayer: this.slotToPlayer,
       freeSlots: this.freeSlots,
@@ -3088,8 +3091,11 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4 abandon detection — galaxy-rooms only, every 30 ticks
     // (~500ms). See sectorIdleEvaluator.ts.
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
-      const abandoned = findAbandonedPlayers(this.state.ships, getPlayerShipStore());
-      for (const playerId of abandoned) this.convertShipToWreck(playerId);
+      const abandoned = findAbandonedShips(this.state.ships, getPlayerShipStore());
+      for (const a of abandoned) {
+        if (a.lingering) this.wreckCoordinator.convertLingeringHullToWreck(a.shipInstanceId);
+        else this.convertShipToWreck(a.playerId);
+      }
     }
 
     // Phase 5d spatial-grid update + Phase 1 AI runaway-bounds clamp.

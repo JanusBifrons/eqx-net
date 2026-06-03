@@ -54,6 +54,12 @@ export interface WreckLifecycleCoordinatorDeps {
   sabF32: Float32Array;
   /** Per-tick player pose cache. */
   shipPoseCache: Map<string, ShipPhysicsState>;
+  /** Phase 6b lingering-hull bookkeeping (shipInstanceId-keyed). The
+   *  lingering→wreck conversion reads the displaced hull's slot + frozen
+   *  pose from here, and cancels its pending auto-evict timer. */
+  lingeringSlots: Map<string, number>;
+  lingeringPoseCache: Map<string, ShipPhysicsState>;
+  ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
   /** Slot bookkeeping (room owns the canonical maps). */
   playerToSlot: Map<string, number>;
   slotToPlayer: Map<number, string>;
@@ -194,6 +200,73 @@ export class WreckLifecycleCoordinator {
     this.wreckConversions++;
     d.serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: d.sectorKey() });
     d.logger.info({ playerId, shipInstanceId, sectorKey: d.sectorKey() }, 'ship abandoned → wreck');
+  }
+
+  /**
+   * Convert a LINGERING hull (displaced / disconnected, `isActive=false`,
+   * slot tracked in `lingeringSlots`) into a wreck. Mirrors
+   * `convertShipToWreck` but keyed by shipInstanceId, because the owning
+   * player may be piloting a DIFFERENT active hull in this same room — so
+   * this path must NEVER tear down any playerId-keyed state.
+   *
+   * Symmetric with the abandon-active path: "an abandoned ship becomes a
+   * wreck if it's still in the game world." A lingering hull is still in
+   * the world (a remote observer renders it), so abandoning it leaves a
+   * wreck rather than silently lingering out its 15-min TTL.
+   *
+   * No-op when the hull is missing / has no lingering slot / is already
+   * destroyed.
+   */
+  convertLingeringHullToWreck(shipInstanceId: string): void {
+    const d = this.deps;
+    const ship = d.state.ships.get(shipInstanceId);
+    const slot = d.lingeringSlots.get(shipInstanceId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) return;
+
+    const b = slotBase(slot);
+    const pose = d.lingeringPoseCache.get(shipInstanceId) ?? {
+      x:      d.sabF32[b + SLOT_X_OFF]!,
+      y:      d.sabF32[b + SLOT_Y_OFF]!,
+      vx:     d.sabF32[b + SLOT_VX_OFF]!,
+      vy:     d.sabF32[b + SLOT_VY_OFF]!,
+      angle:  d.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: d.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+
+    // 1) Build the wreck schema entry (schema-first for crash safety).
+    const wreck = d.newWreckState();
+    wreck.shipInstanceId = shipInstanceId;
+    wreck.kind = ship.kind;
+    wreck.health = ship.health;
+    wreck.maxHealth = ship.maxHealth;
+    d.state.wrecks.set(shipInstanceId, wreck);
+    this.wreckPoseCache.set(shipInstanceId, pose);
+
+    // 2) Transfer slot ownership + re-key the Rapier body. The displaced
+    //    hull's body was re-keyed to `linger-${id}` at the
+    //    fresh-spawn-displaces point (SectorRoom rebind branch), so the
+    //    REKEY here must use that same old id — not the playerId.
+    this.slotToWreck.set(slot, shipInstanceId);
+    this.wreckToSlot.set(shipInstanceId, slot);
+    d.postToWorker({ type: 'REKEY_SHIP', oldId: `linger-${shipInstanceId}`, newId: `wreck-${shipInstanceId}` });
+
+    // 3) Tear down ONLY the lingering-hull bookkeeping. Slot is NOT
+    //    pushed onto freeSlots — the wreck owns it now. Cancel the
+    //    pending auto-evict timer or it would later DESPAWN the (now
+    //    gone) `linger-${id}` body and double-free the slot.
+    d.lingeringSlots.delete(shipInstanceId);
+    d.lingeringPoseCache.delete(shipInstanceId);
+    const timer = d.ownerlessShips.get(shipInstanceId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      d.ownerlessShips.delete(shipInstanceId);
+    }
+    d.state.ships.delete(shipInstanceId);
+
+    this.wreckConversions++;
+    d.serverLogEvent('ship_abandoned', { playerId: ship.playerId, shipInstanceId, sectorKey: d.sectorKey(), lingering: true });
+    d.logger.info({ playerId: ship.playerId, shipInstanceId, sectorKey: d.sectorKey() }, 'lingering hull abandoned → wreck');
   }
 
   /**
