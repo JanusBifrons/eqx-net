@@ -61,15 +61,36 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   const lingeringSeen = lingeringSeenScratch;
   lingeringSeen.clear();
   const localPlayerId = mirror.localPlayerId;
+  const localShipInstanceId = mirror.localShipInstanceId ?? null;
   // 2026-05-25 heap-growth gate step 4: `for…in` instead of
   // `Object.entries` — saves the per-snapshot [key,value] tuple array.
   for (const shipInstanceId in snap.states) {
     const entry = snap.states[shipInstanceId]!;
-    // Local-self exemption: own ship MUST stay in `mirror.ships` even
-    // while pending-join (isActive=false on server). Without this the
-    // bootstrap chain stalls on rendererFirstFrameRendered.
-    const isOwnShip = localPlayerId !== null && entry.playerId === localPlayerId;
-    if (entry.isActive === false && !isOwnShip) {
+    // Own-ship identification keys on shipInstanceId, NOT playerId: a
+    // displaced player owns BOTH a lingering hull and a fresh active ship
+    // under one playerId (2026-06-03 "pinned in my old interceptor" bug —
+    // the old playerId-only exemption let the displaced hull clobber the
+    // new active ship at statesByPlayerId[playerId]).
+    const isOwnPlayer = localPlayerId !== null && entry.playerId === localPlayerId;
+    // Only the welcome ship keeps the pending-join active exemption.
+    const isOwnActiveShip =
+      isOwnPlayer && localShipInstanceId !== null && shipInstanceId === localShipInstanceId;
+    if (entry.isActive === false && isOwnActiveShip) {
+      // Own joining ship MUST stay in `mirror.ships` even while pending-join
+      // (isActive=false on server). Without this the bootstrap chain stalls
+      // on rendererFirstFrameRendered.
+      statesByPlayerId[entry.playerId] = entry;
+      continue;
+    }
+    if (entry.isActive === false && isOwnPlayer) {
+      // Own DISPLACED lingering hull (a different shipInstanceId than the
+      // welcome ship). The owner does NOT render their own lingering hull,
+      // and it must NOT overwrite the active ship at
+      // statesByPlayerId[playerId]. Skip it — leaving it out of
+      // `lingeringSeen` evicts it from mirror.lingeringShips below.
+      continue;
+    }
+    if (entry.isActive === false) {
       // Route to the lingering map. We update pose every snapshot;
       // identity fields come from the schema diff and are preserved.
       // Probe 8 (mobile-perf-investigation, 2026-05-24) — pool the

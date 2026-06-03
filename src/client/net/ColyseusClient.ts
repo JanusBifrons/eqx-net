@@ -1091,6 +1091,12 @@ export class ColyseusGameClient {
       this.lastSentInputAtMs = 0;
       logEvent('welcome', { playerId: msg.playerId, serverTick: msg.serverTick, idReassigned: !!idChanged });
       this.mirror.localPlayerId = msg.playerId;
+      // The local ACTIVE ship's id. Own-ship snapshot routing keys on this,
+      // not just playerId, because a displaced player owns BOTH a lingering
+      // hull and a fresh active ship under one playerId (2026-06-03 "pinned
+      // in my old interceptor" bug).
+      this.mirror.localShipInstanceId =
+        msg.shipInstanceId && msg.shipInstanceId !== '' ? msg.shipInstanceId : null;
       callbacks.onPlayerId(msg.playerId);
       // Phase 8 — surface the stable galaxy sector key for HUD + galaxy-map
       // overlay consumers. `null` for engineering rooms. The display name is
@@ -1120,7 +1126,13 @@ export class ColyseusGameClient {
         const ownShipInstanceId = msg.shipInstanceId;
         for (const [shipInstanceId, lEntry] of this.mirror.lingeringShips) {
           const matchesByInstance = ownShipInstanceId !== '' && shipInstanceId === ownShipInstanceId;
-          const matchesByPlayer = lEntry.ownerPlayerId === msg.playerId;
+          // Only fall back to owner-match when the server sent NO instance id
+          // (engineering rooms). With a real id, rescue EXACTLY the welcome's
+          // active ship — never a same-player OLD lingering hull the player
+          // just displaced (which `matchesByPlayer` used to wrongly grab,
+          // seeding the local body at the stale hull's pose + leaving the new
+          // ship stuck in lingeringShips — the 2026-06-03 displace bug).
+          const matchesByPlayer = ownShipInstanceId === '' && lEntry.ownerPlayerId === msg.playerId;
           if (matchesByInstance || matchesByPlayer) {
             const mirrorEntry: ShipRenderState = {
               x: lEntry.x, y: lEntry.y, vx: lEntry.vx, vy: lEntry.vy, angle: lEntry.angle,

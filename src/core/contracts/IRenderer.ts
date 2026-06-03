@@ -254,6 +254,12 @@ export interface RenderMirror {
    *  the missile vanishes from a full snapshot (eviction). */
   missiles?: Map<number, MissileRenderState>;
   localPlayerId: string | null;
+  /** The local player's ACTIVE ship's shipInstanceId (from the `welcome`
+   *  message). A displaced player owns BOTH a lingering hull and a new active
+   *  ship under the same `playerId`, so own-ship identification must key on
+   *  this — NOT just `localPlayerId` — to avoid binding the local view to the
+   *  stale lingering hull. Null until welcome. */
+  localShipInstanceId?: string | null;
   /** Floating damage numbers to spawn this frame. Drained + cleared each
    *  frame. `targetId` groups hits to the same entity so the renderer's
    *  accumulator can sum them into one floating number (plan: melodic-
