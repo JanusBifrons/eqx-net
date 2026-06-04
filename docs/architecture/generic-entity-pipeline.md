@@ -108,13 +108,19 @@ Adding the structure touched only:
 
 ## Deliberately NOT done
 
-- **No server `EntitySyncRouter` rewrite.** Pose-core SEND is already generic via
-  the kind byte; rewriting the proven broadcast for the structure case would be
-  risk without functional gain.
+- **No rewrite of the broadcasters' byte-level encoding.** B4 added an
+  `EntitySyncRouter` ([src/server/rooms/EntitySyncRouter.ts](../../src/server/rooms/EntitySyncRouter.ts))
+  as the single per-tick orchestration seam — it owns the routing DECISION +
+  ordering (pose-core binary FIRST so the interest scratch is built before the
+  json-slice send reuses it — HC#4) + a boot-time `SyncProfile.transport`
+  governance check (which finally makes `transport` load-bearing). But the proven
+  `SwarmBroadcaster` / `SnapshotBroadcaster` keep their byte-level encoding
+  UNCHANGED. Making the router own per-entity *iteration* would move wire bytes
+  (the fixed-stride binary record + the tuned 20 Hz json-slice loop) for zero
+  functional gain — so it does not; the netgate is the verdict if that is ever
+  attempted.
 - **No projectile/missile collision moved into the physics worker.** The
   main-thread lag-comp split is strategic; only the *dispatch tail* collapsed.
-- `resolveDroneDisplayPose → resolveEntityDisplayPose` rename — non-load-bearing
-  generalization, deferred.
 
 ## Verification
 

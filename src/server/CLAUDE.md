@@ -186,6 +186,28 @@ room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible ty
 ⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
 story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
 
+**EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
+entity-sync sends in `SectorRoom.update()` now route through ONE
+[EntitySyncRouter](rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of
+calling the two broadcasters directly. The router owns the **ordering decision**
+— pose-core binary FIRST (`SwarmBroadcaster.broadcast()` builds the
+per-(client,tick) `interestScratch`), then json-slice
+(`SnapshotBroadcaster.broadcast(sectorIdle)` reuses it, no second `query9` —
+**HC#4, now enforced by the router, not the caller**) — and evaluates sector-idle
+**between** the two sends (verbatim: `swarm.broadcast` may apply backpressure
+before idle reads `clients.length`, so the order is preserved, not reordered).
+The proven broadcasters keep their **byte-level encoding UNCHANGED** (the safe
+shape — making the router own per-entity iteration would move wire bytes for zero
+gain; STOP+flag + netgate if ever attempted). Its constructor runs a **boot-time
+`SyncProfile.transport` governance check** (`assertTransportGovernance`) that
+validates every `EntityKindRegistry` kind's transport is well-formed and that the
+pose-core bytes match the wire constants — this is what finally makes
+`SyncProfile.transport` load-bearing (boot-time only, never in the `route()` hot
+path). Hot path is allocation-free (#14): the idle closure is built once at
+construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.ts`
+(ordering + idle-threading + governance); the full-snapshot-path byte-identity is
+the netgate + the existing integration suite.
+
 ## Lingering-hull → wreck symmetry (2026-06-03)
 
 "An abandoned ship becomes a wreck if it's still in the game world, otherwise it vanishes." A **lingering** hull (disconnected / fresh-spawn-displaced, `isActive=false`) is still in the world (a remote observer renders it from `mirror.lingeringShips`), so abandoning it must leave a wreck — symmetric with abandoning an active hull. `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](rooms/sectorIdleEvaluator.ts)) returns BOTH active and lingering abandoned ships (no `!isActive` skip) with a `lingering` flag; the `update()` poll routes active → `convertShipToWreck(playerId)` and lingering → `WreckLifecycleCoordinator.convertLingeringHullToWreck(shipInstanceId)`. The lingering path is **shipInstanceId-keyed** because the owning player may be piloting a DIFFERENT active hull — it reads `lingeringSlots`/`lingeringPoseCache`, rekeys the worker body `linger-${id}` → `wreck-${id}`, cancels the ownerless-evict timer, and **never touches any playerId-keyed map**. Locks: [abandonLingeringToWreck.test.ts](../../tests/integration/sectorRoom/abandonLingeringToWreck.test.ts) + the browser-level `tests/e2e/linger/abandon-lingering-wreck.spec.ts`. The galaxy-only linger/wreck/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).

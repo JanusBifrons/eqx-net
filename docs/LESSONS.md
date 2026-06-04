@@ -14,6 +14,19 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-04 — GEP B4 (EntitySyncRouter) — wrap a tuned hot loop, don't rewrite it; make an inert descriptor field load-bearing at boot
+Commit: the B4 server-router commit (this commit)
+
+The directive was "everything routes through one entity system" — including the server send. The naive reading is "build a router that iterates the entity set and routes each entity by its `SyncProfile.transport`." That would have rewritten the two proven, byte-perfect, pool-optimised sends (the fixed-stride binary swarm record + the tuned ~271-LOC 20 Hz json-slice loop) for **zero functional gain** — pure netcode risk. The synthesis that satisfies the directive WITHOUT moving a wire byte:
+
+- **The router owns the routing DECISION + ORDERING, not the encoding.** `EntitySyncRouter.route()` calls pose-core (`SwarmBroadcaster`) then json-slice (`SnapshotBroadcaster`) — every entity still routes *through* the router, but each broadcaster's byte output is untouched. "Everything routes through" is satisfied by the router being the single per-tick entry point + owning the order, not by it re-encoding anything.
+- **HC#4 ordering moves INTO the router.** Pose-core must run before json-slice (it builds the per-(client,tick) `interestScratch` the drone slice reuses — no second `query9`). Pre-B4 that ordering was an implicit property of two adjacent `update()` lines; now the router *guarantees* it. The lock (`EntitySyncRouter.test.ts`) asserts call order `swarm → idle → snapshot` with fakes.
+- **Don't reorder a side-effecting computation to fit a cleaner signature.** Sector-idle is evaluated BETWEEN the two sends because `swarm.broadcast()` can apply backpressure (`client.leave`) before idle reads `clients.length`. The router preserves that exact order via an `evaluateSectorIdle` closure built ONCE at construction (zero per-tick closure alloc, #14) and invoked between the two `broadcast()` calls — NOT moved before the first send.
+
+**Making `SyncProfile.transport` load-bearing — at boot, not in the hot path.** `transport` was declared on every kind's descriptor since P1 but *consumed by nothing* (the "missing extraction layer"). The temptation is to read it per-entity in the send loop to "prove" it's used — that adds a per-entity branch to the hot path (megamorphism/alloc risk, the same class of mistake HC#5 guards). Instead, the router's constructor runs `assertTransportGovernance()`: it validates every registry kind's transport is well-formed (pose-core ⇒ has a `poseCoreKind`; json-slice ⇒ has a `jsonSliceTag`) and that the pose-core bytes match the wire constants. A registry/wire drift now fails loudly at room boot. The field governs a boot-time invariant — load-bearing, zero hot-path cost. The boot smoke (`timeout pnpm dev:server` → 7 `SectorRoom created` + `server ready`, 0 errors) exercises it for free.
+
+Downstream: B5 re-proves the kind=2 structure rides this generic router (`transportFor(structure) === 'pose-core'`) with zero new dispatch branches. If a future change ever needs the router to own per-entity *iteration* and that moves a wire byte: STOP and keep this shape — the netgate is the verdict.
+
 ## 2026-06-04 — GEP B1/B2 (OOP entity pipeline) — leaf classes + the OOP-vs-megamorphism synthesis
 Commits: `a806cdc` (B1 leaves) + the B2 resolver/applyInteraction re-route (this commit)
 

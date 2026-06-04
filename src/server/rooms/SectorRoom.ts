@@ -67,6 +67,7 @@ import {
   WebRtcFallbackMessageSchema,
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
+import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
@@ -427,6 +428,9 @@ export class SectorRoom extends Room<SectorState> {
   private webrtcChannelManager: WebRtcChannelManager | null = null;
   /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
   private swarmBroadcaster!: SwarmBroadcaster;
+  /** GEP B4 — single orchestration entry point for per-tick entity sync (routes
+   *  pose-core then json-slice in HC#4 order). Extracted to `EntitySyncRouter.ts`. */
+  private entitySync!: EntitySyncRouter;
   /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
   private sectorPersistence!: SectorPersistence;
   /** Living World bot lifecycle (spawn/despawn/markHostile). Extracted to `LivingWorldBotHooks.ts`. */
@@ -1278,6 +1282,31 @@ export class SectorRoom extends Room<SectorState> {
       swarmEncoder: this.swarmEncoder,
       snapshotBroadcaster: this.snapshotBroadcaster,
       logger,
+    });
+
+    // GEP B4 — the single orchestration entry point for per-tick entity sync.
+    // Routes pose-core binary FIRST (builds interestScratch), then the json-slice
+    // snapshot slices (reuse it — HC#4), evaluating sector-idle between the two
+    // sends exactly where update() used to (backpressure order preserved). The
+    // idle closure is built ONCE here (no per-tick closure alloc, #14); its inner
+    // options object is built per tick exactly as before. Construction also runs a
+    // boot-time SyncProfile.transport governance check (makes `transport`
+    // load-bearing). The proven broadcasters keep the byte-level encoding.
+    this.entitySync = new EntitySyncRouter({
+      swarmBroadcaster: this.swarmBroadcaster,
+      snapshotBroadcaster: this.snapshotBroadcaster,
+      evaluateSectorIdle: () =>
+        evaluateSectorIdle({
+          idleTracker: this.idleTracker,
+          serverTick: this.serverTick,
+          shipPoseCache: this.shipPoseCache,
+          liveProjectiles: this.liveProjectiles,
+          connectedClientCount: this.clients.length,
+          swarmEntityCount: this.swarmRegistry.size(),
+          forceBroadcastUntilTick: this.forceBroadcastUntilTick,
+          idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
+          idleThresholdTicks: IDLE_THRESHOLD_TICKS,
+        }),
     });
 
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
@@ -3264,54 +3293,15 @@ export class SectorRoom extends Room<SectorState> {
     // deltas. Phase 5d: encode per-client with the spatial grid's 9-cell
     // interest window. Out-of-interest entities still ship at decimated
     // cadence inside the encoder.
-    this.swarmBroadcaster.broadcast();
-    phaseTime('swarmEncode');
-    phaseTime('swarmBroadcast');
-
-    // Stage 5 sector-idle evaluation — see sectorIdleEvaluator.ts.
-    const sectorIdle = evaluateSectorIdle({
-      idleTracker: this.idleTracker,
-      serverTick: this.serverTick,
-      shipPoseCache: this.shipPoseCache,
-      liveProjectiles: this.liveProjectiles,
-      connectedClientCount: this.clients.length,
-      swarmEntityCount: this.swarmRegistry.size(),
-      forceBroadcastUntilTick: this.forceBroadcastUntilTick,
-      idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
-      idleThresholdTicks: IDLE_THRESHOLD_TICKS,
-    });
-
-    // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
-    //
-    // Pre-Stage-5: every 3rd update() the room built one snapshot containing
-    // every alive ship and broadcast it to every client.
-    //
-    // Stage 5 (initial): introduced two cadences (close-tier 30 Hz at
-    // every 2 broadcastCounter ticks, far-tier 20 Hz at every 3) and
-    // sent on the union — `closeFires || farFires`. That produced
-    // irregular 17/17/33/33 ms intervals at the recipient, which broke
-    // the reconciler's lerp (built around a clean ~50 ms cadence) and
-    // caused visible stutter (see `docs/LESSONS.md` 2026-05-08 hotfix #4).
-    //
-    // Stage 5 (post-hotfix #4): single 20 Hz cadence — `shouldBroadcastFar`
-    // only. Tier classification is no longer used for inclusion (every
-    // alive ship is in every fired snapshot, same as pre-Stage-5). The
-    // gains kept from Stage 5: phase staggering (each recipient's
-    // farOffset hashed from playerId, smoothing server CPU spikes since
-    // recipients almost never peak on the same tick); idle suppression
-    // after 60 ticks of no sector activity; lastInput omission when the
-    // bits match the per-recipient cache. The 30 Hz close-tier idea is
-    // shelved until a single-cadence design with selective tier inclusion
-    // can be tested end-to-end.
-    //
-    // Scheduling tick is `broadcastCounter` (incremented once per update()),
-    // NOT `serverTick` (read from SAB). The worker's SAB tick can advance
-    // by 1, 2, or 3 between successive update() calls when the two 60 Hz
-    // loops drift; using SAB tick % 3 for scheduling caused ~25% missed
-    // broadcasts pre-Phase-3. See `docs/LESSONS.md`. broadcastCounter is
-    // purely main-thread and so is monotonic with update() calls.
-    this.snapshotBroadcaster.broadcast(sectorIdle);
-    phaseTime('snapshotBroadcast');
+    // GEP B4 — both per-tick entity-sync sends route through the EntitySyncRouter:
+    // pose-core binary FIRST (builds the per-(client,tick) interestScratch), then
+    // the json-slice snapshot slices (reuse it — no second query9; HC#4). The
+    // router evaluates sector-idle BETWEEN the two sends (swarm.broadcast may apply
+    // backpressure before idle reads clients.length — order preserved verbatim) and
+    // fires the phaseTime markers at the same boundaries. The single-20 Hz cadence,
+    // phase staggering, and idle-suppression rationale live in SnapshotBroadcaster
+    // + server CLAUDE.md (Phase 3 snapshot-broadcast-rate) + docs/LESSONS.md.
+    this.entitySync.route(phaseTime);
 
     // Phase 1 swift-otter — once per second, expire any WebRTC sessions
     // whose ICE deadline has elapsed without `onConnected`. Gated to
