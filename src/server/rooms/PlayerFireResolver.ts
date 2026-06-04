@@ -28,8 +28,6 @@
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
-  HitscanWeaponDef,
-  ProjectileWeaponDef,
   MissileWeaponDef,
   WeaponId,
   getWeapon,
@@ -39,6 +37,8 @@ import {
   rayHitsConvexPolygon,
   SHIP_COLLISION_RADIUS,
 } from '../../core/combat/Weapons.js';
+import { getWeaponObject } from '../../core/combat/weapons/index.js';
+import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import { canAfford, spendEnergy, resolveSlotEnergyCost } from '../../core/combat/Energy.js';
 import {
@@ -161,8 +161,22 @@ export interface PlayerFireResolverDeps {
   logger: Logger;
 }
 
-export class PlayerFireResolver {
+export class PlayerFireResolver implements WeaponFireSink {
   constructor(private readonly deps: PlayerFireResolverDeps) {}
+
+  /** Reused per-mount fire geometry (the resolver IS the WeaponFireSink — see
+   *  `src/core/combat/weapons/`). Mutated per mount; no per-fire allocation. */
+  private readonly _fireCtx: WeaponFireContext = {
+    fromX: 0, fromY: 0, dirX: 0, dirY: 0, shooterVx: 0, shooterVy: 0, mountId: '',
+  };
+  // Per-fire-event sink state — set in resolve() before the salvo, read by the
+  // sink methods. resolve() is synchronous + single-threaded, so race-free.
+  private _shooterId = '';
+  private _effTick = 0;
+  private _bestHitId: string | null = null;
+  private _bestHitDist = Infinity;
+  private _bestHitDamage = 0;
+  private _bestHitWireId: string | undefined = undefined;
 
   /**
    * Handle a player's `fire` message. Drops silently on malformed
@@ -244,21 +258,20 @@ export class PlayerFireResolver {
     const shooterVy = rewoundShooter?.vy ?? fallbackShooter?.vy ?? 0;
     const shipAngleAtFireTick = rewoundShooter?.angle ?? fallbackShooter?.angle ?? dirAngle;
 
-    // Per-mount fire result accumulator.
-    let bestHitId: string | null = null;
-    let bestHitDist = Infinity;
-    let bestHitIsObstacle = false;
-    let bestHitX = 0;
-    let bestHitY = 0;
-    let bestHitDamage = 0;
-    let bestHitWireId: string | undefined;
+    // Reset the per-fire-event sink accumulator (the resolver IS the sink).
+    this._shooterId = shooterId;
+    this._effTick = effTick;
+    this._bestHitId = null;
+    this._bestHitDist = Infinity;
+    this._bestHitDamage = 0;
+    this._bestHitWireId = undefined;
 
     const playerAngles = d.playerMountAngles.get(shooterId);
+    const ctx = this._fireCtx;
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;
-      const weaponDef = getWeapon(weaponId);
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
       const currentMountAngle = playerAngles?.[mIdx] ?? 0;
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
@@ -286,152 +299,161 @@ export class PlayerFireResolver {
         },
       });
 
-      if (weaponDef.mode === 'projectile') {
-        const projDef = weaponDef as ProjectileWeaponDef;
-        d.spawnServerProjectile(
-          shooterId,
-          rayFromX, rayFromY,
-          shooterVx + ndx * projDef.speed,
-          shooterVy + ndy * projDef.speed,
-          projDef.damage, projDef.radius, projDef.maxTicks,
-          weaponId,
-        );
-        continue;
-      }
-
-      if (weaponDef.mode === 'missile') {
-        // Missile: lock-at-launch happens inside MissileSimulation; the
-        // spawn returns false (and we skip broadcasting laser_fired) when
-        // the pool is exhausted. No hit-resolution at fire-time — the
-        // simulation owns the lifecycle and emits missile_fired /
-        // missile_detonated.
-        d.spawnServerMissile(
-          shooterId,
-          rayFromX, rayFromY,
-          ndx, ndy,
-          weaponDef as MissileWeaponDef,
-        );
-        continue;
-      }
-
-      // Hitscan: lag-comp check against rewound positions of all other
-      // ships and swarm entities for this mount's ray.
-      const hitscanDef = weaponDef as HitscanWeaponDef;
-      let mountHitId: string | null = null;
-      let mountHitDist = Infinity;
-      let mountHitIsObstacle = false;
-
-      // 1. Other player ships (lag-comp via snapshot ring).
-      for (const [targetId] of d.playerToSlot) {
-        if (targetId === shooterId) continue;
-        const targetShip = d.getActiveShip(targetId);
-        if (!targetShip || !targetShip.alive) continue;
-        const rewound = d.snapshotRing.getPoseAt(targetId, effTick);
-        const fallback = d.shipPoseCache.get(targetId);
-        const cx = rewound?.x ?? fallback?.x;
-        const cy = rewound?.y ?? fallback?.y;
-        if (cx === undefined || cy === undefined) continue;
-        const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
-        if (dist !== null && dist < mountHitDist) {
-          mountHitDist = dist;
-          mountHitId = targetId;
-          mountHitIsObstacle = false;
-        }
-      }
-
-      // 2. Lingering hulls (live pose; no ring rewind).
-      for (const [shipInstanceId] of d.lingeringSlots) {
-        const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
-        if (!lingeringPose) continue;
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
-        if (dist !== null && dist < mountHitDist) {
-          mountHitDist = dist;
-          mountHitId = shipInstanceId;
-          mountHitIsObstacle = false;
-        }
-      }
-
-      // 3. Swarm (drones + asteroids).
-      for (const rec of d.swarmRegistry.all()) {
-        const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
-        const b = slotBase(rec.slot);
-        const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
-        const cy = rewound?.y ?? d.sabF32[b + SLOT_Y_OFF]!;
-        const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
-        let dist: number | null;
-        if (rec.kind === 0 && rec.vertices) {
-          dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, ca, rec.vertices);
-        } else {
-          dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, rec.radius);
-        }
-        if (dist !== null && dist < mountHitDist) {
-          mountHitDist = dist;
-          mountHitId = rec.id;
-          mountHitIsObstacle = true;
-        }
-      }
-
-      // 4. Wrecks (sphere-shootable; `wreck-` prefix routes applyDamage to state.wrecks).
-      for (const [shipInstanceId, slot] of d.wreckToSlot) {
-        const b = slotBase(slot);
-        const cx = d.sabF32[b + SLOT_X_OFF]!;
-        const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, hitscanDef.range, cx, cy, SHIP_COLLISION_RADIUS);
-        if (dist !== null && dist < mountHitDist) {
-          mountHitDist = dist;
-          mountHitId = `wreck-${shipInstanceId}`;
-          mountHitIsObstacle = false;
-        }
-      }
-
-      // Resolve wire target id (swarm hits → `swarm-${entityId}`).
-      let wireTargetId: string | undefined = mountHitId ?? undefined;
-      if (mountHitId && mountHitIsObstacle) {
-        const rec = d.swarmRegistry.get(mountHitId);
-        if (rec) wireTargetId = `swarm-${rec.entityId}`;
-      }
-
-      if (mountHitId) {
-        if (Math.random() < 0.01) {
-          d.logger.info({ shooterId, mountId: mount.id, hitId: mountHitId, hitIsObstacle: mountHitIsObstacle }, 'LASER_FIRED (1% sample)');
-        }
-        const hitX = rayFromX + ndx * mountHitDist;
-        const hitY = rayFromY + ndy * mountHitDist;
-        d.applyDamage(mountHitId, shooterId, hitscanDef.damage, hitX, hitY);
-        if (mountHitDist < bestHitDist) {
-          bestHitDist = mountHitDist;
-          bestHitId = mountHitId;
-          bestHitIsObstacle = mountHitIsObstacle;
-          bestHitX = hitX;
-          bestHitY = hitY;
-          bestHitDamage = hitscanDef.damage;
-          bestHitWireId = wireTargetId;
-        }
-      }
-
-      const beamEndX = rayFromX + ndx * (mountHitDist === Infinity ? hitscanDef.range : mountHitDist);
-      const beamEndY = rayFromY + ndy * (mountHitDist === Infinity ? hitscanDef.range : mountHitDist);
-      d.broadcast('laser_fired', {
-        type: 'laser_fired',
-        shooterId,
-        mountId: mount.id,
-        fromX: rayFromX,
-        fromY: rayFromY,
-        toX: beamEndX,
-        toY: beamEndY,
-        hit: !!mountHitId,
-        targetId: wireTargetId,
-      });
+      // Per-mode fire dispatch collapses to one virtual call (GEP B3): the
+      // weapon flyweight calls back the matching sink method below
+      // (hitscan / spawnProjectile / spawnMissile).
+      ctx.fromX = rayFromX;
+      ctx.fromY = rayFromY;
+      ctx.dirX = ndx;
+      ctx.dirY = ndy;
+      ctx.shooterVx = shooterVx;
+      ctx.shooterVy = shooterVy;
+      ctx.mountId = mount.id;
+      getWeaponObject(weaponId).resolveFire(ctx, this);
     }
 
-    // Aggregate hit_ack.
-    void bestHitX; void bestHitY; void bestHitIsObstacle;
-    if (bestHitId) {
-      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: bestHitWireId, damage: bestHitDamage };
+    // Aggregate hit_ack (from the sink's best-hit accumulator).
+    if (this._bestHitId) {
+      const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: true, targetId: this._bestHitWireId, damage: this._bestHitDamage };
       client.send('hit_ack', ack);
     } else {
       const ack: HitAckMessage = { type: 'hit_ack', clientShotId, hit: false };
       client.send('hit_ack', ack);
     }
+  }
+
+  // ─── WeaponFireSink — the per-mode server bodies, dispatched by the weapon
+  //     flyweight; relocated VERBATIM from the former mode if-tree (GEP B3). ───
+
+  /** Beam: the 4-pass lag-comp candidate sweep + applyDamage + laser_fired,
+   *  updating the best-hit accumulator for the aggregate hit_ack. */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number): void {
+    const d = this.deps;
+    const rayFromX = ctx.fromX;
+    const rayFromY = ctx.fromY;
+    const ndx = ctx.dirX;
+    const ndy = ctx.dirY;
+    const effTick = this._effTick;
+    const shooterId = this._shooterId;
+    let mountHitId: string | null = null;
+    let mountHitDist = Infinity;
+    let mountHitIsObstacle = false;
+
+    // 1. Other player ships (lag-comp via snapshot ring).
+    for (const [targetId] of d.playerToSlot) {
+      if (targetId === shooterId) continue;
+      const targetShip = d.getActiveShip(targetId);
+      if (!targetShip || !targetShip.alive) continue;
+      const rewound = d.snapshotRing.getPoseAt(targetId, effTick);
+      const fallback = d.shipPoseCache.get(targetId);
+      const cx = rewound?.x ?? fallback?.x;
+      const cy = rewound?.y ?? fallback?.y;
+      if (cx === undefined || cy === undefined) continue;
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, range, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
+      if (dist !== null && dist < mountHitDist) {
+        mountHitDist = dist;
+        mountHitId = targetId;
+        mountHitIsObstacle = false;
+      }
+    }
+
+    // 2. Lingering hulls (live pose; no ring rewind).
+    for (const [shipInstanceId] of d.lingeringSlots) {
+      const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
+      if (!lingeringPose) continue;
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
+      if (dist !== null && dist < mountHitDist) {
+        mountHitDist = dist;
+        mountHitId = shipInstanceId;
+        mountHitIsObstacle = false;
+      }
+    }
+
+    // 3. Swarm (drones + asteroids).
+    for (const rec of d.swarmRegistry.all()) {
+      const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
+      const b = slotBase(rec.slot);
+      const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
+      const cy = rewound?.y ?? d.sabF32[b + SLOT_Y_OFF]!;
+      const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
+      let dist: number | null;
+      if (rec.kind === 0 && rec.vertices) {
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, range, cx, cy, ca, rec.vertices);
+      } else {
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, cx, cy, rec.radius);
+      }
+      if (dist !== null && dist < mountHitDist) {
+        mountHitDist = dist;
+        mountHitId = rec.id;
+        mountHitIsObstacle = true;
+      }
+    }
+
+    // 4. Wrecks (sphere-shootable; `wreck-` prefix routes applyDamage to state.wrecks).
+    for (const [shipInstanceId, slot] of d.wreckToSlot) {
+      const b = slotBase(slot);
+      const cx = d.sabF32[b + SLOT_X_OFF]!;
+      const cy = d.sabF32[b + SLOT_Y_OFF]!;
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, cx, cy, SHIP_COLLISION_RADIUS);
+      if (dist !== null && dist < mountHitDist) {
+        mountHitDist = dist;
+        mountHitId = `wreck-${shipInstanceId}`;
+        mountHitIsObstacle = false;
+      }
+    }
+
+    // Resolve wire target id (swarm hits → `swarm-${entityId}`).
+    let wireTargetId: string | undefined = mountHitId ?? undefined;
+    if (mountHitId && mountHitIsObstacle) {
+      const rec = d.swarmRegistry.get(mountHitId);
+      if (rec) wireTargetId = `swarm-${rec.entityId}`;
+    }
+
+    if (mountHitId) {
+      if (Math.random() < 0.01) {
+        d.logger.info({ shooterId, mountId: ctx.mountId, hitId: mountHitId, hitIsObstacle: mountHitIsObstacle }, 'LASER_FIRED (1% sample)');
+      }
+      const hitX = rayFromX + ndx * mountHitDist;
+      const hitY = rayFromY + ndy * mountHitDist;
+      d.applyDamage(mountHitId, shooterId, damage, hitX, hitY);
+      if (mountHitDist < this._bestHitDist) {
+        this._bestHitDist = mountHitDist;
+        this._bestHitId = mountHitId;
+        this._bestHitDamage = damage;
+        this._bestHitWireId = wireTargetId;
+      }
+    }
+
+    const beamEndX = rayFromX + ndx * (mountHitDist === Infinity ? range : mountHitDist);
+    const beamEndY = rayFromY + ndy * (mountHitDist === Infinity ? range : mountHitDist);
+    d.broadcast('laser_fired', {
+      type: 'laser_fired',
+      shooterId,
+      mountId: ctx.mountId,
+      fromX: rayFromX,
+      fromY: rayFromY,
+      toX: beamEndX,
+      toY: beamEndY,
+      hit: !!mountHitId,
+      targetId: wireTargetId,
+    });
+  }
+
+  /** Bolt: spawn a server projectile (collision resolved by ProjectilePipeline). */
+  spawnProjectile(
+    ctx: WeaponFireContext,
+    vx: number,
+    vy: number,
+    damage: number,
+    radius: number,
+    maxTicks: number,
+    weaponId: WeaponId,
+  ): void {
+    this.deps.spawnServerProjectile(this._shooterId, ctx.fromX, ctx.fromY, vx, vy, damage, radius, maxTicks, weaponId);
+  }
+
+  /** Missile: lock-at-launch + lifecycle owned by MissileSimulation. */
+  spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void {
+    this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, def);
   }
 }

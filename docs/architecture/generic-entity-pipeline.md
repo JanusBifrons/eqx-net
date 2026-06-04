@@ -6,10 +6,12 @@
 > ([src/server/entity/leaves/](../../src/server/entity/leaves/)) that *compose*
 > their damage/sync/render capabilities, a single monomorphic damage call site,
 > and (B4) the server `EntitySyncRouter` + client `entityFactory` extraction layer.
-> **B1** (leaf classes) and **B2** (`DamageRouter` → `EntityResolver` + monomorphic
-> `applyInteraction`) are landed and byte-identical (golden-master + netgate green);
-> **B3** (weapon hierarchy), **B4** (extraction layer + `resolveEntityDisplayPose`
-> rename), **B5** (structure re-proven *through* the generic layer) are in progress.
+> **B1** (leaf classes), **B2** (`DamageRouter` → `EntityResolver` + monomorphic
+> `applyInteraction`), and **B3** (weapon flyweights — both fire resolvers' mode
+> if-tree collapsed to one `weapon.resolveFire(ctx, sink)`) are landed and
+> byte-identical (golden-master + netgate + fire-parity + a combat E2E green);
+> **B4** (extraction layer + `resolveEntityDisplayPose` rename) and **B5**
+> (structure re-proven *through* the generic layer) are in progress.
 > Sections below tagged *(data-driven — superseded)* describe the build being
 > replaced and are rewritten as each OOP phase lands.
 
