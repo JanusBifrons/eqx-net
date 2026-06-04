@@ -430,6 +430,25 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Generic Entity Pipeline P4 — `?room=structure-test&testId=<uuid>` loads a
+// single static, damageable STRUCTURE (pose-core kind 2) directly ahead of the
+// player so the browser can verify it renders + is shootable (the client half
+// of the "for free" proof). filterBy(['testId']) isolates parallel specs.
+gameServer
+  .define('structure-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    structurePoses: [
+      // Straight ahead of a spawn-angle-0 ship (forward = +Y), well within
+      // weapon range so a forward shot lands on the structure's collider.
+      { id: 'struct-0', x: 0, y: 150, radius: 60 },
+    ],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons
 // MUST interpenetrate → Rapier MUST emit contact events → server MUST
