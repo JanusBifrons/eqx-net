@@ -40,6 +40,10 @@ The persistent galaxy lives at [galaxy/galaxy.ts](galaxy/galaxy.ts) — a pure m
 
 When a new phase needs a new concretion (e.g., persistence), add it as a new contract here — never by reaching from core into the server or client zones.
 
+### Generic Entity Pipeline contracts (2026-06-04)
+
+`src/core/entity/` + the `IDamageable` / `INetworkSynced` / `IRenderContributor` contracts make a new world-object type "a leaf + a descriptor". The append-only `EntityKindRegistry` ([entity/EntityKindRegistry.ts](entity/EntityKindRegistry.ts)) maps each `EntityKindTag` → its sync + render + damageable descriptors; `IDamageable` declares the zone-pure damage surface (`HealthBinding` — a stateless per-kind accessor over the live store, NEVER a value copy, + the reused `Interaction`/`InteractionResultMut`). The kind-specific orchestration (broadcast/bus/worker side-effects) is a SERVER concern (`DamageRouter`), not core. `Entity` is a SEPARATE type from `AiEntity` (`IAiBehaviour.ts`) — don't conflate. Kinds + pose-core bytes are append-only (mirrors invariant #11). Full story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
 ---
 
 ## Event Bus Rules (core owns the bus)

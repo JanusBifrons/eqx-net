@@ -146,6 +146,26 @@ bodies.
 - **When introducing a new visible entity type** (wreck, lingering hull, future X), add an integration test in `tests/integration/sectorRoom/` that drives the full snapshot path. Don't rely on smoke tests — they are not repeatable and don't protect future PRs.
 - **Integration clients MUST send `client_ready` or ships never activate (2026-06-03).** The bare `colyseus.js` client in `harness.ts` does NOT run the browser's bootstrap, so without an explicit `client_ready` the join handshake never completes — `ship.isActive` stays `false` until the 30-s `CLIENT_READY_TIMEOUT_TICKS` watchdog. Tests that assert on active hulls (`abandonToWreck`, `lingering`) were silently RED for this reason. Use `harness.connectActive(playerId, opts)` (sends `client_ready`, polls until `isActive`) for any test that needs a live hull; plain `connectAs` only gives a pending/lingering-able hull. The `SectorRoom._internals` piercing getter (dropped by the v3 subsystem extraction, which had left `hitAckContract`/`droneTargetActiveOnly`/`ramming`/`lingering` erroring with `_internals` undefined) was **restored 2026-06-03** (exposes `serverTick`, `ownerlessShips`, `aiPlayerScratch`, `postToWorker`, `applyDamage`). The lingering/wreck/pool suite is now green. The combat/AI files (`hitAckContract`, `droneTargetActiveOnly`, `ramming`) still need `connectActive` for their active-ship spawns (the same `client_ready` gap) — a mechanical follow-up outside the lingering/wreck scope.
 
+## Generic Entity Pipeline — damage dispatch + a new pose-core kind (2026-06-04)
+
+`DamageRouter.apply` is **table-driven**: `resolve(targetId) → DamageKind`
+(centralised id-shape selection) then a per-kind `{ health, perHit?, death }`
+strategy (`applyLayered → broadcast → perHit → death`). It is byte-identical to
+the former 4-branch if-tree (locked by `DamageRouter.dispatch.test.ts`, a
+golden-master written test-first — HC#1: branch order + side-effects are
+load-bearing). Adding a damageable type does **not** add a branch here.
+
+A new **pose-core** entity type (e.g. `SWARM_KIND_STRUCTURE = 2`) is a
+swarm-registry record — it rides `BinarySwarmBroadcast` (writes `rec.kind`
+as-is, no encoder change), the interest grid (reuses the single per-(client,tick)
+`interestScratch`, no new `query9`), and the `DamageRouter` 'swarm' strategy for
+free. The only damage-specific line is seeding `swarmHealth` on spawn (absence =
+immune, like asteroids). `SwarmSpawner.spawnStructure` mirrors `spawnAsteroid`
+(`spawnOne` is already kind-generic). Test trigger: the testMode `structurePoses`
+room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible type
+⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
+story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
 ## Lingering-hull → wreck symmetry (2026-06-03)
 
 "An abandoned ship becomes a wreck if it's still in the game world, otherwise it vanishes." A **lingering** hull (disconnected / fresh-spawn-displaced, `isActive=false`) is still in the world (a remote observer renders it from `mirror.lingeringShips`), so abandoning it must leave a wreck — symmetric with abandoning an active hull. `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](rooms/sectorIdleEvaluator.ts)) returns BOTH active and lingering abandoned ships (no `!isActive` skip) with a `lingering` flag; the `update()` poll routes active → `convertShipToWreck(playerId)` and lingering → `WreckLifecycleCoordinator.convertLingeringHullToWreck(shipInstanceId)`. The lingering path is **shipInstanceId-keyed** because the owning player may be piloting a DIFFERENT active hull — it reads `lingeringSlots`/`lingeringPoseCache`, rekeys the worker body `linger-${id}` → `wreck-${id}`, cancels the ownerless-evict timer, and **never touches any playerId-keyed map**. Locks: [abandonLingeringToWreck.test.ts](../../tests/integration/sectorRoom/abandonLingeringToWreck.test.ts) + the browser-level `tests/e2e/linger/abandon-lingering-wreck.spec.ts`. The galaxy-only linger/wreck/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).
