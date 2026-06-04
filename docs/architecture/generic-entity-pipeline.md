@@ -1,19 +1,26 @@
 # Generic Entity Pipeline
 
-> **Status: OOP migration in progress** (branch `feat/generic-entity-pipeline`).
-> The original build proved the thesis with a *data-driven* dispatch; it is being
+> **Status: OOP migration COMPLETE on this branch** (`feat/generic-entity-pipeline`).
+> The original build proved the thesis with a *data-driven* dispatch; it has been
 > rebuilt as the planned **OOP entity model** — real leaf classes
 > ([src/server/entity/leaves/](../../src/server/entity/leaves/)) that *compose*
 > their damage/sync/render capabilities, a single monomorphic damage call site,
-> and (B4) the server `EntitySyncRouter` + client `entityFactory` extraction layer.
+> and the B4 extraction layer (server `EntitySyncRouter` + client `EntityFactory`).
 > **B1** (leaf classes), **B2** (`DamageRouter` → `EntityResolver` + monomorphic
-> `applyInteraction`), and **B3** (weapon flyweights — both fire resolvers' mode
-> if-tree collapsed to one `weapon.resolveFire(ctx, sink)`) are landed and
-> byte-identical (golden-master + netgate + fire-parity + a combat E2E green);
-> **B4** (extraction layer + `resolveEntityDisplayPose` rename) and **B5**
-> (structure re-proven *through* the generic layer) are in progress.
-> Sections below tagged *(data-driven — superseded)* describe the build being
-> replaced and are rewritten as each OOP phase lands.
+> `applyInteraction`), **B3** (weapon flyweights — both fire resolvers' mode
+> if-tree collapsed to one `weapon.resolveFire(ctx, sink)`), **B4** (client
+> `EntityFactory` + per-kind leaves replacing the `swarmKindProfile` table
+> [client]; the `EntitySyncRouter` routing/governance seam [server];
+> `resolveEntityDisplayPose` rename), and **B5** (the kind=2 structure re-proven
+> *through* the generic factory/router with **zero new dispatch sites** —
+> `tests/e2e/structure-visible-damageable.spec.ts` + `structureEntity.test.ts`
+> green) are **all landed and byte-identical** (golden-master + fire-parity +
+> the integration suite identical to baseline + combat/structure E2E).
+> **Outstanding pre-merge verdict:** `pnpm e2e:netgate` on a quiet host — the
+> deterministic + byte-identity evidence is green, and the netgate is the standing
+> live-loop verdict (deferred off the demonstrably-loaded dev box this session).
+> Sections below tagged *(data-driven — superseded)* describe the build that was
+> replaced.
 
 ## Why
 
@@ -68,10 +75,15 @@ Adding the structure touched only:
   `BinarySwarmBroadcast` (writes `rec.kind` as-is) + the interest grid (a
   structure reuses the single `interestScratch` per (client,tick) — verified, no
   new `query9`) **unchanged**.
-- **DAMAGE**: *nothing*. `DamageRouter` routes any swarm-registry entity with a
-  `swarmHealth` entry through its 'swarm' strategy. Seeding `swarmHealth` on spawn
-  is the only structure-specific damage line; the four dispatch sites are
-  byte-untouched.
+- **DAMAGE**: a `StructureEntity` leaf (`src/server/entity/leaves/`) + ONE arm in
+  `EntityResolver` (`rec.kind === 2 → this.structure`) that selects it — then the
+  SAME monomorphic `applyInteraction` a drone uses (set `target`, return leaf).
+  The four dispatch SITES (`DamageRouter.apply` / `ProjectilePipeline` /
+  `MissileSimulation` / `ShieldHullRouter`) gain **zero** branches — every one
+  routes through the single resolver. Seeding `swarmHealth` on spawn is what makes
+  it a damage target (absence = immune, like an asteroid). *(Pre-OOP this said
+  "DAMAGE: nothing"; the honest post-B2 cost is "a leaf + one resolver arm",
+  still far below the old 4-site if-tree.)*
 - **CONSTRUCT / RENDER**: a `StructureClientLeaf` (static, no-AI, no-shield)
   selected by `ClientEntityFactory.leafFor(2)`. The factory then locks + poses it
   like an asteroid via the existing predWorld + sprite path.
@@ -141,8 +153,12 @@ Adding the structure touched only:
    `src/client/net/entity/leaves/` wired into `ClientEntityFactory.leafFor`
    (static-vs-dynamic is derived from the descriptor; the leaf holds the
    collider/mass/AI/shield specifics).
-3. A `SwarmSpawner.spawn<X>` entry point + a spawn trigger; seed `swarmHealth` if
-   it should be damageable.
+3. A `SwarmSpawner.spawn<X>` entry point + a spawn trigger. If it should be
+   damageable: seed `swarmHealth` on spawn, add a server `<X>Entity` leaf
+   (`src/server/entity/leaves/`), and one selection arm in `EntityResolver`
+   (`rec.kind === N → this.<x>`) — then it rides the same monomorphic
+   `applyInteraction` (no new dispatch SITE). Non-damageable kinds need none of
+   this (the resolver returns `null`, like an asteroid).
 4. (If it needs a distinct collider/sprite) its vertices/mass at the kind-explicit
    construction site + a sprite arm. A circle + the asteroid sprite is the
    zero-effort default.
