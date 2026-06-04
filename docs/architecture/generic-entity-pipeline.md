@@ -125,3 +125,112 @@ Adding the structure touched only:
    CLAUDE.md mandate) + an E2E if it's player-facing.
 
 The four combat/sync dispatch sites do **not** change.
+
+## Architecture diagram
+
+```mermaid
+flowchart LR
+  subgraph core["src/core — zone-pure contracts (append a row / a binding to extend)"]
+    REG["EntityKindRegistry<br/>tag → {poseCoreKind, damageable, sync, render}"]
+    IDMG["IDamageable<br/>HealthBinding · Interaction · InteractionResultMut"]
+    INET["INetworkSynced / IRenderContributor<br/>SyncProfile · RenderContribution"]
+  end
+
+  subgraph server["src/server"]
+    direction TB
+    SPN["SwarmSpawner.spawnOne (kind-generic)<br/>spawnAsteroid · spawnDrone · spawnStructure"]
+    SREG["SwarmEntityRegistry<br/>kind byte 0=ast · 1=drone · 2=structure …"]
+    SH["swarmHealth map<br/>seed on spawn = 'damageable'"]
+    DR["DamageRouter.apply (TABLE-DRIVEN)<br/>resolve(id)→kind → strategies[kind] {health, perHit, death}<br/>'swarm' strategy handles ANY swarmHealth entry"]
+    ENC["BinarySwarmBroadcast (writes rec.kind as-is)<br/>+ interest grid (one interestScratch / client / tick)"]
+  end
+
+  WIRE(["swarmWireFormat v3 — 33-byte record · kind = free u8 (append-only)"])
+
+  subgraph client["src/client"]
+    direction TB
+    DEC["BinarySwarmDecoder (reads ANY u8 kind)<br/>→ mirror.swarm"]
+    PROF["swarmKindClientProfile(kind)<br/>{staticBody, hasAiBehaviour, hasShield}<br/>unknown kind → SKIP (HC#2)"]
+    PRED["syncSwarmIntoPredWorld → predWorld body<br/>(lock+pose / register AI / collider swap by profile)"]
+    SPR["swarmSpriteUpdater → sprite · damage numbers · health bars"]
+  end
+
+  SPN --> SREG --> ENC --> WIRE --> DEC --> PROF --> PRED
+  DEC --> SPR
+  SPN -. seed .-> SH
+  DR -. reads .-> SH
+  DR == DamageEvent ==> DEC
+  REG -. descriptors .-> SREG
+  IDMG -. HealthBinding .-> DR
+  INET -. SyncProfile .-> ENC
+```
+
+**The five touch-points for a new pose-core kind** (everything else is reused): a
+registry row (core), a `swarmKindClientProfile` case (client), a `spawn<X>` entry
+point + spawn trigger (server), `swarmHealth` seeding if damageable (server), and
+— only if it needs a distinct look — its vertices/mass + a sprite arm.
+
+## Worked examples
+
+### A new "mine" weapon
+
+A mine is a *deployed, static, damageable hazard that detonates on proximity*. It
+splits cleanly into the **entity** (free) and the **weapon behaviour** (the only
+real new code — exactly "the leaf's gameplay logic"):
+
+**Free (rides the pipeline, like a structure):** a `'mine'` pose-core kind
+(`SWARM_KIND_MINE = 3`); `SwarmSpawner.spawnMine` (mirrors `spawnStructure`); a
+`swarmKindClientProfile` case (static, no-AI, no-shield); a sprite arm; an
+`EntityKindRegistry` row. Seed `swarmHealth` → it is shootable through the
+unchanged `DamageRouter` 'swarm' strategy. Carry an `ownerId` so it ignores its
+deployer.
+
+**New code (the mine's behaviour):**
+1. **Deploy** — a `WeaponCatalogue` entry with a `'deploy'` mode (append-only,
+   invariant #11). `PlayerFireResolver` on a deploy-mode fire `spawnMine(...)` at
+   the player's pose instead of a projectile/beam. (Extends the weapon-mode union
+   + one fire-resolver branch.)
+2. **Proximity trigger** — a per-tick check (the mine's tick): is a non-owner
+   within `triggerRadius`? This wants the **`entities-within-radius` query** noted
+   as future Phase 5 (layers on the existing interest grid; allocation-free).
+3. **Detonate → splash** — on trigger, find entities within `blastRadius` (same
+   radius query) and `applyDamage` each. The damage **dispatch is free** —
+   `applyDamage` already routes through `DamageRouter` to whatever's hit (ships,
+   drones, structures, other mines). Reuses `MissileSimulation`'s splash shape.
+   Then evict the mine (like any swarm entity).
+
+Net: you write the *trigger + detonation* logic and a catalogue row. You never
+write "why can't I see the mine / network it / shoot it" — those are free. (The
+mine also motivates building the Phase-5 radius query, which then serves
+black-holes / area-forces too.)
+
+### A new SET of structures (walls, turrets, reactors, …)
+
+Two scaling strategies depending on whether they differ *cosmetically* or
+*behaviourally*:
+
+**Cosmetic / static variety → one kind + a structure catalogue (NO new kind
+bytes).** Keep all of them on `SWARM_KIND_STRUCTURE = 2` and carry a **subtype**
+in the spare `shipKind` byte (offset +32 — "meaningful only when kind=drone"
+today; repurpose it as the structure-subtype index when kind=2; still no
+stride/version bump). Add a `StructureCatalogue` (the same append-only-catalogue
+pattern as `SHIP_KINDS` / `WeaponCatalogue`): `subtype → {shape/vertices, health,
+mass, sprite}`. Adding a structure = **one catalogue row**. The spawner reads
+health/shape/mass per subtype; the client decoder reads the subtype byte → the
+right sprite + collider; the damage path is unchanged. A set of N static
+structures = N catalogue rows + N sprites — zero new kind bytes, zero new
+dispatch, zero new network code. (This is exactly how `SHIP_KINDS` gives many
+ship variants inside the `drone` / `active-ship` kinds.)
+
+**Behavioural variety → leaf logic (+ a kind only if client routing differs).** A
+turret that shoots back, a reactor that chain-explodes, a generator that buffs
+allies — that *behaviour* is a per-tick server hook (like the mine's proximity),
+small and self-contained. Give it its own kind byte only if its **client routing**
+genuinely differs (e.g. a turret needs AI/mount rendering → a profile with
+`hasAiBehaviour`); otherwise keep it on kind 2 + subtype + a server-side
+behaviour hook. The entity infrastructure (spawn / render / network / take-damage)
+is free either way.
+
+**Rule of thumb:** *cosmetic/static variety lives in a catalogue (data);
+behavioural variety lives in a leaf hook (small code); a new client routing shape
+earns a new kind byte.*
