@@ -1,9 +1,17 @@
 # Generic Entity Pipeline
 
-> **Status: shipped** (branch `feat/generic-entity-pipeline`, 4 phases). The thesis is
-> demonstrated: a brand-new networked, collidable, *damageable* world-object type
-> (a "structure") was added end-to-end with **zero new dispatch code** in the four
-> combat/sync sites — it rides the existing seams.
+> **Status: OOP migration in progress** (branch `feat/generic-entity-pipeline`).
+> The original build proved the thesis with a *data-driven* dispatch; it is being
+> rebuilt as the planned **OOP entity model** — real leaf classes
+> ([src/server/entity/leaves/](../../src/server/entity/leaves/)) that *compose*
+> their damage/sync/render capabilities, a single monomorphic damage call site,
+> and (B4) the server `EntitySyncRouter` + client `entityFactory` extraction layer.
+> **B1** (leaf classes) and **B2** (`DamageRouter` → `EntityResolver` + monomorphic
+> `applyInteraction`) are landed and byte-identical (golden-master + netgate green);
+> **B3** (weapon hierarchy), **B4** (extraction layer + `resolveEntityDisplayPose`
+> rename), **B5** (structure re-proven *through* the generic layer) are in progress.
+> Sections below tagged *(data-driven — superseded)* describe the build being
+> replaced and are rewritten as each OOP phase lands.
 
 ## Why
 
@@ -46,7 +54,7 @@ rendering / damage come for free.
 | Phase | Deliverable | Key files |
 |---|---|---|
 | **P1** | Zone-pure `Entity` base + capability contracts (`IDamageable`, `INetworkSynced`, `IRenderContributor`) + append-only `EntityKindRegistry`. Server `HealthBinding` singletons over the real stores. | `src/core/entity/`, `src/core/contracts/IDamageable.ts`, `src/server/entity/healthBindings.ts` |
-| **P2** | Collapsed `DamageRouter.apply`'s if-tree → **table-driven** (`resolve(targetId) → DamageKind`, then a per-kind `{ health, perHit?, death }` strategy). Byte-identical, locked by a 12-case golden-master. | `src/server/rooms/DamageRouter.ts`, `DamageRouter.dispatch.test.ts` |
+| **P2 → B1/B2 (OOP)** | **B1**: real Entity leaf classes (`ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity` damageable; `AsteroidEntity` non-damageable; `Projectile`/`MissileEntity` sync-only) that *compose* their `{ health, perHit, death }` + sync/render. **B2**: `DamageRouter.apply` → `EntityResolver.resolve(targetId) → leaf` + ONE monomorphic `applyInteraction` reading the leaf's composed data. Byte-identical, locked by the 12-case golden-master + leaf-parity test + `damageDispatch.bench.ts`. | `src/server/entity/leaves/`, `src/server/entity/EntityResolver.ts`, `src/server/rooms/DamageRouter.ts`, `DamageRouter.dispatch.test.ts` |
 | **P3** | Client `swarmKindProfile` — explicit per-kind predWorld routing (`staticBody` / `hasAiBehaviour` / `hasShield`). Unknown kinds **skip** instead of being mis-routed as drones (HC#2). | `src/client/net/swarmKindProfile.ts`, `ColyseusClient.syncSwarmIntoPredWorld` |
 | **P4** | A static, damageable **STRUCTURE** (`SWARM_KIND_STRUCTURE = 2`) end-to-end as the proof. | `swarmWireFormat.ts`, `SwarmSpawner.spawnStructure`, the `structurePoses` trigger, the `STRUCTURE` profile case, `structureEntity.test.ts`, `structure-visible-damageable.spec.ts` |
 
@@ -85,9 +93,15 @@ Adding the structure touched only:
   unknown kinds skip; a wired kind routes by descriptor.
 - **HC#3 — drone HP lives in a parallel map** (`CombatSubsystem.swarmHealth`), so
   `HealthBinding` holds a *reference* to the live store, never a value copy.
-- **HC#5 — monomorphic dispatch.** The damage call site stays one method reading a
-  4-key strategy record (not a virtual `entity.receiveInteraction()` across N
-  hidden classes, which would megamorphic-deopt under ramming/projectile load).
+- **HC#5 — monomorphic dispatch (the OOP synthesis).** The leaves are real objects
+  (identity / sync / render), but the damage call site stays MONOMORPHIC: ONE
+  `DamageRouter.applyInteraction` reading the leaf's composed `health` / `perHit` /
+  `death` DATA — never a per-class virtual `leaf.receiveInteraction()` across the N
+  leaf classes (that megamorphic-deopts under ramming/projectile load). OOP for
+  identity/sync/render where polymorphism is cheap; one hot function for damage.
+  Lock: the `DO NOT replace this with receiveInteraction` guard comment in
+  `DamageRouter` + `benchmarks/damageDispatch.bench.ts` (mixed-kind ≈ single-kind
+  per `apply` — no cliff).
 
 ## Deliberately NOT done
 

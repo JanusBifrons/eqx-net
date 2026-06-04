@@ -146,14 +146,34 @@ bodies.
 - **When introducing a new visible entity type** (wreck, lingering hull, future X), add an integration test in `tests/integration/sectorRoom/` that drives the full snapshot path. Don't rely on smoke tests — they are not repeatable and don't protect future PRs.
 - **Integration clients MUST send `client_ready` or ships never activate (2026-06-03).** The bare `colyseus.js` client in `harness.ts` does NOT run the browser's bootstrap, so without an explicit `client_ready` the join handshake never completes — `ship.isActive` stays `false` until the 30-s `CLIENT_READY_TIMEOUT_TICKS` watchdog. Tests that assert on active hulls (`abandonToWreck`, `lingering`) were silently RED for this reason. Use `harness.connectActive(playerId, opts)` (sends `client_ready`, polls until `isActive`) for any test that needs a live hull; plain `connectAs` only gives a pending/lingering-able hull. The `SectorRoom._internals` piercing getter (dropped by the v3 subsystem extraction, which had left `hitAckContract`/`droneTargetActiveOnly`/`ramming`/`lingering` erroring with `_internals` undefined) was **restored 2026-06-03** (exposes `serverTick`, `ownerlessShips`, `aiPlayerScratch`, `postToWorker`, `applyDamage`). The lingering/wreck/pool suite is now green. The combat/AI files (`hitAckContract`, `droneTargetActiveOnly`, `ramming`) still need `connectActive` for their active-ship spawns (the same `client_ready` gap) — a mechanical follow-up outside the lingering/wreck scope.
 
-## Generic Entity Pipeline — damage dispatch + a new pose-core kind (2026-06-04)
+## Generic Entity Pipeline — OOP damage dispatch + a new pose-core kind (2026-06-04)
 
-`DamageRouter.apply` is **table-driven**: `resolve(targetId) → DamageKind`
-(centralised id-shape selection) then a per-kind `{ health, perHit?, death }`
-strategy (`applyLayered → broadcast → perHit → death`). It is byte-identical to
-the former 4-branch if-tree (locked by `DamageRouter.dispatch.test.ts`, a
-golden-master written test-first — HC#1: branch order + side-effects are
-load-bearing). Adding a damageable type does **not** add a branch here.
+> Updated 2026-06-04 (GEP B2): the data-driven `strategies[kind]` table is now
+> the **OOP entity pipeline**. The damage SHAPE is real leaf objects, not a
+> side table.
+
+`DamageRouter.apply` routes through real Entity LEAVES: `EntityResolver.resolve(targetId)`
+returns the live leaf it names (`ShipEntity` / `WreckEntity` / `DroneEntity` /
+`StructureEntity` in [src/server/entity/leaves/](entity/leaves/)), then ONE
+monomorphic `DamageRouter.applyInteraction(leaf, …)` reads the leaf's COMPOSED
+`{ health, perHit, death }` data (`applyLayered → broadcast → perHit → death`).
+Each leaf owns its identity + pose and composes its damage strategy + sync/render
+descriptors — a new damageable type is **a leaf + a registry row**, ZERO new
+dispatch branch here. Byte-identical to the former if-tree / strategy-table
+(locked by `DamageRouter.dispatch.test.ts`, the golden-master — HC#1: branch
+order + per-branch side-effects are load-bearing). The ordered shape-based
+selection (wreck→lingering→active→swarm; an asteroid, kind 0, is **non-damageable**
+→ the resolver returns `null` = immune) lives in
+[EntityResolver.ts](entity/EntityResolver.ts).
+
+**HC#5 (monomorphism guard).** `applyInteraction` is ONE concrete function
+reading the leaf's composed DATA — it must NEVER become a per-class virtual
+`leaf.receiveInteraction()` across the N leaf classes (that megamorphic-deopts in
+V8 under ramming/projectile load). The leaves are objects for identity/sync/render
+(where polymorphism is cheap + clarifying); the per-hit hot work stays one
+monomorphic call site. Lock: the `DO NOT replace this with receiveInteraction`
+guard comment + `benchmarks/damageDispatch.bench.ts` (mixed-kind ≈ single-kind
+per `apply` — no cliff). Adding a damageable type does **not** add a branch here.
 
 A new **pose-core** entity type (e.g. `SWARM_KIND_STRUCTURE = 2`) is a
 swarm-registry record — it rides `BinarySwarmBroadcast` (writes `rec.kind`

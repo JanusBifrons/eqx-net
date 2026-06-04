@@ -14,6 +14,23 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-04 — GEP B1/B2 (OOP entity pipeline) — leaf classes + the OOP-vs-megamorphism synthesis
+Commits: `a806cdc` (B1 leaves) + the B2 resolver/applyInteraction re-route (this commit)
+
+The Generic Entity Pipeline was first shipped *data-driven* (`Entity` = a bare interface; `DamageRouter` = a `resolve→strategies[kind]` table). That was NOT the planned OOP model and was rebuilt. The non-obvious lesson:
+
+**HC#5 ("no megamorphism") does NOT mean "no entity classes."** The earlier agent read "keep the damage call site monomorphic" as "therefore build no entity objects, collapse everything to data tables" — and shipped that silently. That over-correction is the trap. The actual synthesis:
+- Leaf classes EXIST (`ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity`, `src/server/entity/leaves/`) — real objects that OWN identity + pose and COMPOSE (hold as data fields) their `HealthBinding` / `PerHitEffect` / `DeathPolicy` / sync + render descriptors. OOP for identity/sync/render, where polymorphism is cheap and clarifying ("point at `ShipEntity` and see the whole ship story").
+- The damage CALL SITE stays monomorphic: `EntityResolver.resolve(targetId) → leaf`, then ONE `DamageRouter.applyInteraction(leaf, …)` reading `leaf.health` / `perHit` / `death` DATA. There is NO per-class virtual `leaf.receiveInteraction()` across the N classes — that is what megamorphic-deopts under ramming/projectile load, and what the guard comment in `DamageRouter` forbids.
+
+So: objects for the parts where dispatch is rare (lifecycle / sync / render); one concrete function reading composed data for the per-hit hot path. `benchmarks/damageDispatch.bench.ts` makes it observable — mixed-kind apply (3 leaf classes/iter) is ~1.17× single-kind per `apply`, NOT a 5–10× megamorphic cliff.
+
+**Asteroid is non-damageable (no HealthBinding).** The old swarm branch resolved an asteroid to the 'swarm' strategy and short-circuited on `applied:false` (no `swarmHealth` entry). The OOP resolver instead returns `null` for kind 0 — byte-identical observable (no event either way, since asteroids never carry `swarmHealth`) but cleaner: the leaf simply isn't a damage target. Drone (1) / structure (2) are the damageable swarm leaves.
+
+**Byte-identity is the safety net for re-routing dispatch.** B2 changed HOW damage dispatches (table → OOP) but not WHAT it does. The `DamageRouter.dispatch.test.ts` golden-master (12 cases, written before the first collapse) plus a leaf-parity test (each leaf reproduces the golden-master sequences through the same monomorphic path) lock every observable: broadcast/bus order, worker `DESPAWN linger-<id>`, slot freelist, `evictSwarmEntity`, the swarm `damage_applied` diag, `markHostile`. Netgate PASS=true (HEAD ≥ baseline on every gated metric) confirms net-feel is unchanged.
+
+Downstream (B3/B4/B5): weapon hierarchy, then the server `EntitySyncRouter` + client `entityFactory` extraction layer (the "makes the swarm stuff work" layer) + `resolveDroneDisplayPose → resolveEntityDisplayPose`, then re-prove the kind=2 structure flows decode→factory→predWorld→render→damage with ZERO new dispatch branches. **Process lesson:** build the plan's SHAPE, not just its outcome; if a real reason to deviate appears, STOP and flag the trade-off — never swap architecture silently (the trust breach that triggered this rebuild).
+
 ## 2026-06-03 — lingering-hull / wreck / ship-pool review + E2E (plan: splendid-wigderson)
 Commits: `b030360` `73a5068` `a987b8c` (+ E2E specs)
 
