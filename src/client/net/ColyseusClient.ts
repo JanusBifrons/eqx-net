@@ -32,7 +32,8 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
-import { swarmKindClientProfile } from './swarmKindProfile.js';
+import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
+import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
@@ -79,9 +80,7 @@ import {
 } from './swarmInterpolation';
 import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
-import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
-import { HostileDroneBehaviour } from '@core/ai/HostileDroneBehaviour';
 import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
 import {
   pickTarget,
@@ -310,6 +309,24 @@ export class ColyseusGameClient {
    *  `resolveEntityDisplayPose`) into this scratch. Kept distinct from
    *  `_swarmInterpScratch` so the two never alias across frame phases. */
   private readonly _aimInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+  /** Generic Entity Pipeline B4 — the client-side entity construction factory
+   *  (the spawn-time kind→leaf routing seam, OOP peer of the server leaves). It
+   *  replaces the old `swarmKindProfile` data table. `ColyseusClient` REMAINS
+   *  the owner of `predSwarmKeys` / `_swarmBodyKeyCache` / `_aiRegisteredIds`;
+   *  the leaves only read the reused `_clientSpawnCtx` + call predWorld /
+   *  aiController (so `updateMirror`'s per-frame follower stays untouched). */
+  private readonly _entityFactory = new ClientEntityFactory();
+  /** Reused construction context — one instance mutated in place per entity, so
+   *  swarm spawn allocates nothing (invariant #14). `predWorld` / `entry` are
+   *  filled per use; `aiController` is the (constant) hostility ledger. */
+  private readonly _clientSpawnCtx: ClientSpawnCtx = {
+    predWorld: null as unknown as ClientSpawnCtx['predWorld'],
+    aiController: this._aiController,
+    entityId: 0,
+    key: '',
+    entry: null as unknown as ClientSpawnCtx['entry'],
+    registeredAiId: null,
+  };
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
@@ -2626,89 +2643,45 @@ export class ColyseusGameClient {
     const seen = this._swarmSyncSeenScratch;
     seen.clear();
     const keyCache = this._swarmBodyKeyCache;
+    // Generic Entity Pipeline B4: route construction through the client
+    // EntityFactory (the OOP peer of the server leaves). The reused ctx keeps
+    // this allocation-free (invariant #14); `ColyseusClient` stays the owner of
+    // predSwarmKeys / _swarmBodyKeyCache / _aiRegisteredIds — the leaves only
+    // read the ctx and call predWorld / aiController. `staticBody` (lock + pose)
+    // is now derived from the core descriptor inside the leaf base; the per-kind
+    // collider / mass / AI-ledger / shield-swap details live in the leaves.
+    const ctx = this._clientSpawnCtx;
+    ctx.predWorld = this.predWorld;
     for (const [entityId, entry] of this.mirror.swarm) {
-      // HC#2 (Generic Entity Pipeline P3): route by an EXPLICIT per-kind
-      // profile. An unrecognised pose-core kind (a future type not yet wired
-      // client-side) is SKIPPED here — it never falls through to the drone
-      // path (the old `else`-is-drone branch that would mis-register a kind=2
-      // structure as a HostileDroneBehaviour). Kinds 0 (asteroid) / 1 (drone)
-      // always resolve, so this is behaviour-identical for today's wire.
-      const profile = swarmKindClientProfile(entry.kind);
-      if (profile === null) continue;
+      // HC#2: an unrecognised pose-core kind resolves to `null` and is SKIPPED —
+      // it never falls through to the drone path (the old `else`-is-drone branch
+      // that would mis-register a kind=2 structure as a HostileDroneBehaviour).
+      const leaf = this._entityFactory.leafFor(entry.kind);
+      if (leaf === null) continue;
       let key = keyCache.get(entityId);
       if (key === undefined) {
         key = `swarm-${entityId}`;
         keyCache.set(entityId, key);
       }
       seen.add(key);
+      ctx.entityId = entityId;
+      ctx.key = key;
+      ctx.entry = entry;
       if (!this.predWorld.hasShip(key)) {
-        // Asteroids (kind=0) get a deterministic convex-polygon collider —
-        // identical vertices to the server because both sides seed from the
-        // same entityId. Drones (kind=1) stay circular.
-        const vertices = entry.kind === 0
-          ? generateAsteroidVertices(entityId, entry.radius)
-          : undefined;
-        // 2026-05-28 fix — for drones, use `kind.mass` so the client's
-        // predWorld body matches the server's mass (and therefore the
-        // resolver impulse distribution against the player's ship is
-        // identical). Pre-fix the hardcoded `3` meant a Crossguard
-        // drone (catalogue mass = 30) had a 1:3 player/drone mass ratio
-        // on the client but 1:30 on the server, so the player's local
-        // prediction had drones move much further per impulse than the
-        // server actually allowed — every snapshot fed a big drift
-        // correction. Asteroids stay at 3 (their server-side mass via
-        // ASTEROID_DEFAULT_MASS or per-roster override matches; this
-        // doesn't apply because asteroids use `convexHull` and area-
-        // density, not the additional-mass pin path).
-        const mass = entry.kind === 1
-          ? (getShipKind(entry.shipKind ?? null).mass ?? 3)
-          : 3;
-        this.predWorld.spawnObstacle(key, entry.x, entry.y, entry.radius, mass, vertices);
-        // Lock asteroids (kind=0) only — they're static on the server and
-        // locking them stops the player from pushing them out of pose
-        // during reconciler replay. Drones (kind=1) stay UNLOCKED so the
-        // client predicts drone-vs-player collision lockstep with the
-        // server: both sides run dynamic-vs-dynamic collision, both with
-        // the kind's authored mass, both reach the same equilibrium.
-        // Locking drones client-only would diverge the client from the
-        // server (player bounces off locked drone client-side, server says
-        // drone moves), so the reconciler would constantly snap.
-        if (profile.staticBody) {
-          this.predWorld.lockBody(key);
-        }
-        if (profile.hasAiBehaviour) {
-          const kind = getShipKind(entry.shipKind ?? null);
-          this._aiController.register(`${entityId}`, entityId, new HostileDroneBehaviour(kind));
-          this._aiRegisteredIds.add(entityId);
+        ctx.registeredAiId = null;
+        leaf.spawnBody(ctx);
+        // Fold any AI-ledger registration the leaf made (drone only) into the
+        // client-owned set — single cache ownership stays here.
+        if (ctx.registeredAiId !== null) {
+          this._aiRegisteredIds.add(ctx.registeredAiId);
         }
         this.predSwarmKeys.add(key);
       }
-      // Phase 6 — drive the drone hull collider swap from the SINGLE
-      // authoritative shield-down field (the slim `snap.drones[]` slice
-      // keeps `entry.shieldDown` consistent for in-interest drones; the
-      // binary recordFlags bit covers the rest). `setHullExposed` is
-      // idempotent so calling it every sync is cheap. One ownership site
-      // — no second correction path (chapter-2 rule).
-      if (profile.hasShield) {
-        this.predWorld.setHullExposed(key, entry.shieldDown ?? false, getShipKind(entry.shipKind ?? null));
-      }
-      // Asteroids (kind=0) take their predWorld pose straight from the
-      // binary packet — they're locked / static server-side and only move
-      // on collision events, where the authoritative snap IS correct.
-      //
-      // Drones (kind=1) are NO LONGER posed here. Post the drone-snapshot-
-      // interpolation pivot (2026-05-18) the drone's predWorld body is a
-      // KINEMATIC follower driven each frame from the time-interpolated
-      // pose in `updateMirror` (single pose source: the decoder-fed
-      // `poseRing`). Writing the raw binary pose here as well would be a
-      // second, fighting correction path — exactly the chapter-2
-      // dual-path bug. There is no client drone AI to re-anchor anymore;
-      // the server stays fully hit-authoritative (no client drone ray).
-      if (profile.staticBody) {
-        this.predWorld.setShipState(key, {
-          x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
-        });
-      }
+      // Idempotent per-sync upkeep: shield-collider swap (drone) or static
+      // repose (asteroid / structure). Drones are NOT re-posed here — the
+      // `updateMirror` kinematic follower is the single per-frame pose writer
+      // (one-pose-per-frame rule); the leaf's onSync only swaps the shield.
+      leaf.onSync(ctx);
     }
     // Sweep predWorld bodies whose entityId no longer appears in mirror.swarm.
     for (const key of this.predSwarmKeys) {

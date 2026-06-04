@@ -57,7 +57,7 @@ rendering / damage come for free.
 |---|---|---|
 | **P1** | Zone-pure `Entity` base + capability contracts (`IDamageable`, `INetworkSynced`, `IRenderContributor`) + append-only `EntityKindRegistry`. Server `HealthBinding` singletons over the real stores. | `src/core/entity/`, `src/core/contracts/IDamageable.ts`, `src/server/entity/healthBindings.ts` |
 | **P2 → B1/B2 (OOP)** | **B1**: real Entity leaf classes (`ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity` damageable; `AsteroidEntity` non-damageable; `Projectile`/`MissileEntity` sync-only) that *compose* their `{ health, perHit, death }` + sync/render. **B2**: `DamageRouter.apply` → `EntityResolver.resolve(targetId) → leaf` + ONE monomorphic `applyInteraction` reading the leaf's composed data. Byte-identical, locked by the 12-case golden-master + leaf-parity test + `damageDispatch.bench.ts`. | `src/server/entity/leaves/`, `src/server/entity/EntityResolver.ts`, `src/server/rooms/DamageRouter.ts`, `DamageRouter.dispatch.test.ts` |
-| **P3** | Client `swarmKindProfile` — explicit per-kind predWorld routing (`staticBody` / `hasAiBehaviour` / `hasShield`). Unknown kinds **skip** instead of being mis-routed as drones (HC#2). | `src/client/net/swarmKindProfile.ts`, `ColyseusClient.syncSwarmIntoPredWorld` |
+| **P3 → B4 (client)** | **B4**: client `EntityFactory` + per-kind client leaves (the OOP peer of the server leaves) — `leafFor(kind)` constructs the predWorld body, reading `staticBody = !descriptor.sync.interpolated` from the shared core `EntityKindRegistry` and holding only the client-specific bits (collider/mass/AI-ledger/shield-swap). Unknown kinds **skip** instead of being mis-routed as drones (HC#2). The old `swarmKindProfile` data table is DELETED; `ColyseusClient` remains the owner of the body/AI caches (the factory takes a reused zero-alloc ctx). | `src/client/net/entity/ClientEntityFactory.ts`, `src/client/net/entity/leaves/`, `tests/unit/clientEntityFactory.test.ts`, `ColyseusClient.syncSwarmIntoPredWorld` |
 | **P4** | A static, damageable **STRUCTURE** (`SWARM_KIND_STRUCTURE = 2`) end-to-end as the proof. | `swarmWireFormat.ts`, `SwarmSpawner.spawnStructure`, the `structurePoses` trigger, the `STRUCTURE` profile case, `structureEntity.test.ts`, `structure-visible-damageable.spec.ts` |
 
 ## The "structure for free" proof — what it actually cost
@@ -72,9 +72,9 @@ Adding the structure touched only:
   `swarmHealth` entry through its 'swarm' strategy. Seeding `swarmHealth` on spawn
   is the only structure-specific damage line; the four dispatch sites are
   byte-untouched.
-- **CONSTRUCT / RENDER**: one `case` in `swarmKindClientProfile` (STRUCTURE =
-  static, no-AI, no-shield). The P3 scaffold then locks + poses it like an
-  asteroid via the existing predWorld + sprite path.
+- **CONSTRUCT / RENDER**: a `StructureClientLeaf` (static, no-AI, no-shield)
+  selected by `ClientEntityFactory.leafFor(2)`. The factory then locks + poses it
+  like an asteroid via the existing predWorld + sprite path.
 - **SPAWN**: a `SwarmSpawner.spawnStructure` helper (`spawnOne` was already
   generic — its `kind===0/1` guards naturally exclude kind 2) + a `structurePoses`
   testMode trigger.
@@ -91,8 +91,9 @@ Adding the structure touched only:
 - **HC#2 — "a new kind byte needs no client changes" was HALF-FALSE.** The binary
   decoder reads any `u8`, but `syncSwarmIntoPredWorld` used `kind===0 ? asteroid :
   else-is-drone`, so a kind=2 would have been mis-registered as a
-  `HostileDroneBehaviour`. P3's `swarmKindProfile` makes routing explicit:
-  unknown kinds skip; a wired kind routes by descriptor.
+  `HostileDroneBehaviour`. The B4 client `EntityFactory.leafFor(kind)` makes
+  routing explicit: an unknown kind returns `null` → skip; a wired kind routes to
+  its leaf.
 - **HC#3 — drone HP lives in a parallel map** (`CombatSubsystem.swarmHealth`), so
   `HealthBinding` holds a *reference* to the live store, never a value copy.
 - **HC#5 — monomorphic dispatch (the OOP synthesis).** The leaves are real objects
@@ -130,8 +131,10 @@ Adding the structure touched only:
 ## Adding the next pose-core type (the recipe this bought you)
 
 1. Append `SWARM_KIND_<X> = N` to `swarmWireFormat.ts` (no stride/version bump).
-2. Append the kind to `EntityKindRegistry` (core) + a `swarmKindClientProfile`
-   case (client) with its static/AI/shield descriptor.
+2. Append the kind to `EntityKindRegistry` (core) + a client leaf in
+   `src/client/net/entity/leaves/` wired into `ClientEntityFactory.leafFor`
+   (static-vs-dynamic is derived from the descriptor; the leaf holds the
+   collider/mass/AI/shield specifics).
 3. A `SwarmSpawner.spawn<X>` entry point + a spawn trigger; seed `swarmHealth` if
    it should be damageable.
 4. (If it needs a distinct collider/sprite) its vertices/mass at the kind-explicit
@@ -166,8 +169,8 @@ flowchart LR
   subgraph client["src/client"]
     direction TB
     DEC["BinarySwarmDecoder (reads ANY u8 kind)<br/>→ mirror.swarm"]
-    PROF["swarmKindClientProfile(kind)<br/>{staticBody, hasAiBehaviour, hasShield}<br/>unknown kind → SKIP (HC#2)"]
-    PRED["syncSwarmIntoPredWorld → predWorld body<br/>(lock+pose / register AI / collider swap by profile)"]
+    PROF["ClientEntityFactory.leafFor(kind)<br/>asteroid/drone/structure leaf (reads core descriptor)<br/>unknown kind → null → SKIP (HC#2)"]
+    PRED["syncSwarmIntoPredWorld → leaf.spawnBody/onSync → predWorld body<br/>(lock+pose / register AI / collider swap)"]
     SPR["swarmSpriteUpdater → sprite · damage numbers · health bars"]
   end
 
@@ -182,9 +185,10 @@ flowchart LR
 ```
 
 **The five touch-points for a new pose-core kind** (everything else is reused): a
-registry row (core), a `swarmKindClientProfile` case (client), a `spawn<X>` entry
-point + spawn trigger (server), `swarmHealth` seeding if damageable (server), and
-— only if it needs a distinct look — its vertices/mass + a sprite arm.
+registry row (core), a client leaf wired into `ClientEntityFactory` (client), a
+`spawn<X>` entry point + spawn trigger (server), `swarmHealth` seeding if
+damageable (server), and — only if it needs a distinct look — its vertices/mass +
+a sprite arm.
 
 ## Worked examples
 
@@ -196,8 +200,8 @@ real new code — exactly "the leaf's gameplay logic"):
 
 **Free (rides the pipeline, like a structure):** a `'mine'` pose-core kind
 (`SWARM_KIND_MINE = 3`); `SwarmSpawner.spawnMine` (mirrors `spawnStructure`); a
-`swarmKindClientProfile` case (static, no-AI, no-shield); a sprite arm; an
-`EntityKindRegistry` row. Seed `swarmHealth` → it is shootable through the
+`MineClientLeaf` wired into `ClientEntityFactory` (static, no-AI, no-shield); a
+sprite arm; an `EntityKindRegistry` row. Seed `swarmHealth` → it is shootable through the
 unchanged `DamageRouter` 'swarm' strategy. Carry an `ownerId` so it ignores its
 deployer.
 
