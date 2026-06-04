@@ -41,7 +41,7 @@ import {
   interpolateSwarmPose,
   type InterpolatedPose,
 } from '../../net/swarmInterpolation';
-import { resolveDroneDisplayPose } from '../../net/swarmDisplayPose';
+import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 
 export interface SwarmSpriteCtx {
   shipContainer: Container;
@@ -78,7 +78,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // Drones: read the already-resolved single-per-frame pose; asteroids:
     // render-now interpolation (see file docstring).
     const lerped = entry.kind === 1
-      ? resolveDroneDisplayPose(entry, ctx.swarmPoseScratch)
+      ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
       : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
     sprite.x = lerped.x;
     sprite.y = -lerped.y;

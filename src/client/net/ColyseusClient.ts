@@ -307,7 +307,7 @@ export class ColyseusGameClient {
   /** Scratch the `tickLocalMountAim` aim builder writes the resolved
    *  drone pose into. `buildLocalAimTargets` no longer interpolates — it
    *  READS the single per-frame pose `updateMirror` wrote (via
-   *  `resolveDroneDisplayPose`) into this scratch. Kept distinct from
+   *  `resolveEntityDisplayPose`) into this scratch. Kept distinct from
    *  `_swarmInterpScratch` so the two never alias across frame phases. */
   private readonly _aimInterpScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
 

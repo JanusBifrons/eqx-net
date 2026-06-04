@@ -120,7 +120,7 @@ describe('LIVE_BEAM_PERSIST_MS bridges consecutive held shots (no beam blink)', 
  * SINGLE per-frame display pose `ColyseusClient.updateMirror` already
  * resolved into `entry.x/y/angle` (one `interpolateSwarmPose` per
  * frame; the same value the sprite + predWorld collision body + laser
- * beam read), via `resolveDroneDisplayPose`. It no longer interpolates
+ * beam read), via `resolveEntityDisplayPose`. It no longer interpolates
  * itself. `0e24448` had it re-interpolate here — correct in direction
  * (aim the drawn pose, not the raw/ahead one) but it added a THIRD
  * divergent-`now` resolution site (aim @ tickPhysics-now ≠ updateMirror
