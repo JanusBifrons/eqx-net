@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import { swarmKindClientProfile } from './swarmKindProfile.js';
 
 describe('swarmKindClientProfile', () => {
@@ -26,8 +26,15 @@ describe('swarmKindClientProfile', () => {
     expect(p!.hasShield).toBe(true); // setHullExposed swap
   });
 
+  it('structure (kind 2, P4) is a static, no-AI, no-shield body — but damageable server-side', () => {
+    const p = swarmKindClientProfile(SWARM_KIND_STRUCTURE);
+    expect(p).not.toBeNull();
+    expect(p!.staticBody).toBe(true); // locked + posed from packet, like an asteroid
+    expect(p!.hasAiBehaviour).toBe(false);
+    expect(p!.hasShield).toBe(false);
+  });
+
   it('an unrecognised kind returns null — the caller SKIPS it (never the drone path, HC#2)', () => {
-    expect(swarmKindClientProfile(2)).toBeNull(); // P4 structure is not wired yet
     expect(swarmKindClientProfile(7)).toBeNull();
     expect(swarmKindClientProfile(255)).toBeNull();
   });

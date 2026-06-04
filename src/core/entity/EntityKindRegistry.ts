@@ -79,6 +79,16 @@ const SEED: readonly EntityKindDescriptor[] = [
     sync: { transport: 'json-slice', interpolated: false, jsonSliceTag: 'missiles' },
     render: { bucket: 'missiles', preservedFields: [], interpolated: false },
   },
+  {
+    // P4 "structure for free": rides the pose-core binary channel (kind byte 2)
+    // — the same generic transport as drones/asteroids — and is damageable
+    // through the existing swarm path (server seeds swarmHealth). Static like an
+    // asteroid (not interpolated/AI), but takes damage. Appended, never reordered.
+    tag: 'structure',
+    damageable: true,
+    sync: { transport: 'pose-core', poseCoreKind: 2, interpolated: false },
+    render: { bucket: 'swarm', preservedFields: ['kind'], interpolated: false },
+  },
 ];
 
 const BY_TAG = new Map<EntityKindTag, EntityKindDescriptor>();

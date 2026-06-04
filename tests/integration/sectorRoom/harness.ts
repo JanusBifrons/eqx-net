@@ -139,6 +139,10 @@ export async function bootSectorTestServer(opts: {
   sectorKey?: string;
   droneCount?: number;
   testMode?: boolean;
+  /** GEP P4 — deterministic structure placement (kind=2 swarm entities, seeded
+   *  into swarmHealth so they're damageable). testMode-only; forwarded to the
+   *  `structurePoses` room option. */
+  structurePoses?: ReadonlyArray<{ id?: string; x: number; y: number; radius?: number; mass?: number }>;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -173,6 +177,7 @@ export async function bootSectorTestServer(opts: {
     sectorKey: opts.sectorKey,
     droneCount: opts.droneCount ?? 0,
     testMode: opts.testMode ?? true,
+    structurePoses: opts.structurePoses,
   });
   await gameServer.listen(port);
 

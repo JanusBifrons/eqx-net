@@ -32,7 +32,7 @@ export interface SectorPersistenceDeps {
   sectorKey: () => string | null;
   sabF32: Float32Array;
   swarmRegistry: {
-    all(): Iterable<{ id: string; slot: number; kind: 0 | 1 }>;
+    all(): Iterable<{ id: string; slot: number; kind: number }>;
     has(entityId: string): boolean;
   };
   /** Per-entity hull pool — drones are killable; asteroids absent. */

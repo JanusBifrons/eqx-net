@@ -60,6 +60,12 @@ export const SWARM_RECORD_FLAG_SHIELD_DOWN = 1 << 1;
 
 export const SWARM_KIND_ASTEROID = 0;
 export const SWARM_KIND_DRONE = 1;
+/** Generic Entity Pipeline P4 — a static, damageable world STRUCTURE. A new
+ *  pose-core `kind` BYTE value only: NO stride change, NO `SWARM_WIRE_VERSION`
+ *  bump (the kind field is a free u8; the decoder reads any value). It rides
+ *  the existing binary encoder/broadcast/interest path for free; the client
+ *  routes it via `swarmKindClientProfile`. Kinds are append-only. */
+export const SWARM_KIND_STRUCTURE = 2;
 
 /** Maximum number of records that fit in a buffer of `bufBytes` total bytes. */
 export function swarmRecordCapacity(bufBytes: number): number {

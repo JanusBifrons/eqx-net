@@ -22,7 +22,7 @@
  * (skip-not-misroute), and none exists on the wire today.
  */
 
-import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 
 export interface SwarmKindClientProfile {
   readonly kind: number;
@@ -55,6 +55,17 @@ const DRONE: SwarmKindClientProfile = {
   hasShield: true,
 };
 
+// P4 "structure for free": a static, damageable structure is asteroid-like
+// client-side (locked + posed from the packet, no AI brain, no shield layer)
+// — but unlike an asteroid the SERVER seeds its `swarmHealth`, so the existing
+// DamageRouter 'swarm' strategy makes it damageable with ZERO new dispatch.
+const STRUCTURE: SwarmKindClientProfile = {
+  kind: SWARM_KIND_STRUCTURE,
+  staticBody: true,
+  hasAiBehaviour: false,
+  hasShield: false,
+};
+
 /**
  * The client profile for a pose-core kind byte, or `null` for an unrecognised
  * kind (a future pose-core type not yet wired client-side). Callers MUST treat
@@ -67,6 +78,8 @@ export function swarmKindClientProfile(kind: number): SwarmKindClientProfile | n
       return ASTEROID;
     case SWARM_KIND_DRONE:
       return DRONE;
+    case SWARM_KIND_STRUCTURE:
+      return STRUCTURE;
     default:
       return null;
   }

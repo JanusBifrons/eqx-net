@@ -11,7 +11,7 @@
 
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 
-export type SwarmKind = 0 /* asteroid */ | 1 /* drone */;
+export type SwarmKind = 0 /* asteroid */ | 1 /* drone */ | 2 /* structure (GEP P4) */;
 
 export interface SwarmEntityRecord {
   id: string;

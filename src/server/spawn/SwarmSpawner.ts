@@ -4,6 +4,7 @@ import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
+import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 
 export interface AsteroidSpec {
@@ -181,6 +182,18 @@ export class SwarmSpawner {
       id: d.id, x: d.x, y: d.y, vx: d.vx ?? 0, vy: d.vy ?? 0, radius, mass,
     };
     return this.spawnOne(1, spec, this.hooks.droneBehaviour, kind);
+  }
+
+  /** Spawn one static, damageable STRUCTURE (Generic Entity Pipeline P4). Rides
+   *  the kind=2 pose-core path: no AI, no polygon collider, heavy mass so
+   *  projectile / ram impulse barely moves it. The CALLER seeds `swarmHealth`
+   *  to make it damageable through the EXISTING DamageRouter 'swarm' strategy —
+   *  zero new dispatch code. Returns false if no free slot. */
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number }): boolean {
+    const spec: AsteroidSpec = {
+      id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
+    };
+    return this.spawnOne(2, spec, undefined);
   }
 
   private spawnOne(

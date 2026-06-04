@@ -43,6 +43,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
+import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
@@ -615,6 +616,13 @@ export class SectorRoom extends Room<SectorState> {
       hitX?: number,
       hitY?: number,
     ) => void;
+    /** GEP P4 — lets the structureEntity integration test find a kind=2 record
+     *  and assert it is damageable (seeded into swarmHealth). */
+    swarmRegistry: {
+      all(): Iterable<{ id: string; kind: number; entityId: number }>;
+      get(id: string): { id: string; kind: number; entityId: number } | null | undefined;
+    };
+    swarmHealth: Map<string, number>;
   } {
     return {
       serverTick: this.serverTick,
@@ -623,6 +631,8 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      swarmRegistry: this.swarmRegistry,
+      swarmHealth: this.swarmHealth,
     };
   }
 
@@ -817,6 +827,21 @@ export class SectorRoom extends Room<SectorState> {
         angle?: number;
         hullExposed?: boolean;
       }>;
+      /**
+       * Generic Entity Pipeline P4 — deterministic STRUCTURE placement. Each
+       * entry spawns a static, damageable structure (pose-core kind byte 2) at
+       * a world `(x, y)`, seeding `swarmHealth` so it takes damage through the
+       * EXISTING swarm path (zero new dispatch). testMode-only; suppresses the
+       * legacy asteroid roster like `dronePoses`. Drives the `structureEntity`
+       * integration + `structure-visible-damageable` E2E ("for free" proof).
+       */
+      structurePoses?: ReadonlyArray<{
+        id?: string;
+        x: number;
+        y: number;
+        radius?: number;
+        mass?: number;
+      }>;
     };
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -844,8 +869,9 @@ export class SectorRoom extends Room<SectorState> {
     const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
     const useDronePoses = this.testMode && Array.isArray(roomOpts.dronePoses) && roomOpts.dronePoses.length > 0;
+    const useStructurePoses = this.testMode && Array.isArray(roomOpts.structurePoses) && roomOpts.structurePoses.length > 0;
     const asteroidRoster =
-      (useBulkSeed || useSingleAsteroid || useDronePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
+      (useBulkSeed || useSingleAsteroid || useDronePoses || useStructurePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -1375,6 +1401,27 @@ export class SectorRoom extends Room<SectorState> {
         placed++;
       }
       logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
+    } else if (useStructurePoses) {
+      // Generic Entity Pipeline P4 — deterministic STRUCTURE placement (the
+      // "for free" proof). Each structure is a kind=2 swarm entity; seeding
+      // `swarmHealth` is the ONLY thing that makes it damageable — the existing
+      // DamageRouter 'swarm' strategy then handles it with ZERO new dispatch.
+      // `swarmShield = 0` (no shield layer) so a hit lands straight on the hull.
+      const poses = roomOpts.structurePoses!;
+      let placed = 0;
+      for (let i = 0; i < poses.length; i++) {
+        const p = poses[i]!;
+        const id = p.id ?? `structure-${i}`;
+        const ok = this.swarmSpawner.spawnStructure({ id, x: p.x, y: p.y, radius: p.radius ?? 50, mass: p.mass });
+        if (!ok) {
+          logger.error({ requested: poses.length, spawned: placed }, 'structurePoses spawn truncated (slot pool exhausted)');
+          break;
+        }
+        this.swarmHealth.set(id, STRUCTURE_DEFAULT_HEALTH);
+        this.swarmShield.set(id, 0);
+        placed++;
+      }
+      logger.info({ requested: poses.length, spawned: placed }, 'structurePoses seeded');
     } else if (useBulkSeed) {
       // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
       // small drone ring with a sunflower-spiral spread across a disc, sized

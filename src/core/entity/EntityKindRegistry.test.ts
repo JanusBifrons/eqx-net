@@ -18,6 +18,7 @@ const ALL_TAGS: readonly EntityKindTag[] = [
   'asteroid',
   'projectile',
   'missile',
+  'structure',
 ];
 
 describe('EntityKindRegistry', () => {
@@ -59,6 +60,16 @@ describe('EntityKindRegistry', () => {
     expect(getEntityKind('asteroid').damageable).toBe(false);
     expect(getEntityKind('projectile').damageable).toBe(false);
     expect(getEntityKind('missile').damageable).toBe(false);
+    // P4: the structure is the new pose-core damageable kind.
+    expect(getEntityKind('structure').damageable).toBe(true);
+  });
+
+  it('the structure rides pose-core kind byte 2 (P4 "for free" proof)', () => {
+    const structure = getEntityKind('structure');
+    expect(structure.sync.transport).toBe('pose-core');
+    expect(structure.sync.poseCoreKind).toBe(2);
+    expect(structure.sync.interpolated).toBe(false); // static, like an asteroid
+    expect(entityKindByPoseCore(2)).toBe('structure');
   });
 
   it('every kind carries a render bucket and a preservedFields array', () => {

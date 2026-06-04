@@ -37,7 +37,8 @@ export type EntityKindTag =
   | 'drone'
   | 'asteroid'
   | 'projectile'
-  | 'missile';
+  | 'missile'
+  | 'structure'; // P4 — a static, damageable world object (pose-core kind 2)
 
 /**
  * Scratch-filled pose. Callers own the object and reuse it across entities
