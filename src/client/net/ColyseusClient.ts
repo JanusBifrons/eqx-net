@@ -32,6 +32,7 @@ import {
 import { recoverInputTickFromStarvation } from './inputTickRecovery';
 import { LingeringPredBodyManager } from './LingeringPredBodyManager.js';
 import { SnapshotCoalescer } from './SnapshotCoalescer.js';
+import { swarmKindClientProfile } from './swarmKindProfile.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
@@ -2626,6 +2627,14 @@ export class ColyseusGameClient {
     seen.clear();
     const keyCache = this._swarmBodyKeyCache;
     for (const [entityId, entry] of this.mirror.swarm) {
+      // HC#2 (Generic Entity Pipeline P3): route by an EXPLICIT per-kind
+      // profile. An unrecognised pose-core kind (a future type not yet wired
+      // client-side) is SKIPPED here — it never falls through to the drone
+      // path (the old `else`-is-drone branch that would mis-register a kind=2
+      // structure as a HostileDroneBehaviour). Kinds 0 (asteroid) / 1 (drone)
+      // always resolve, so this is behaviour-identical for today's wire.
+      const profile = swarmKindClientProfile(entry.kind);
+      if (profile === null) continue;
       let key = keyCache.get(entityId);
       if (key === undefined) {
         key = `swarm-${entityId}`;
@@ -2664,9 +2673,10 @@ export class ColyseusGameClient {
         // Locking drones client-only would diverge the client from the
         // server (player bounces off locked drone client-side, server says
         // drone moves), so the reconciler would constantly snap.
-        if (entry.kind === 0) {
+        if (profile.staticBody) {
           this.predWorld.lockBody(key);
-        } else {
+        }
+        if (profile.hasAiBehaviour) {
           const kind = getShipKind(entry.shipKind ?? null);
           this._aiController.register(`${entityId}`, entityId, new HostileDroneBehaviour(kind));
           this._aiRegisteredIds.add(entityId);
@@ -2679,7 +2689,7 @@ export class ColyseusGameClient {
       // binary recordFlags bit covers the rest). `setHullExposed` is
       // idempotent so calling it every sync is cheap. One ownership site
       // — no second correction path (chapter-2 rule).
-      if (entry.kind === 1) {
+      if (profile.hasShield) {
         this.predWorld.setHullExposed(key, entry.shieldDown ?? false, getShipKind(entry.shipKind ?? null));
       }
       // Asteroids (kind=0) take their predWorld pose straight from the
@@ -2694,7 +2704,7 @@ export class ColyseusGameClient {
       // second, fighting correction path — exactly the chapter-2
       // dual-path bug. There is no client drone AI to re-anchor anymore;
       // the server stays fully hit-authoritative (no client drone ray).
-      if (entry.kind === 0) {
+      if (profile.staticBody) {
         this.predWorld.setShipState(key, {
           x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy, angle: entry.angle, angvel: entry.angvel,
         });
