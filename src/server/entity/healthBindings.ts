@@ -1,40 +1,31 @@
 /**
- * Server-side `HealthBinding` factories — the concrete answer to HC#3.
+ * Server-side `HealthBinding` singletons — the concrete answer to HC#3, now
+ * STATELESS + per-kind (created once, never per hit → zero hot-loop allocation,
+ * invariant #14).
  *
- * Each factory returns a thin shim that, when asked to apply damage, calls
- * the EXISTING layered-damage primitive against the REAL live store and fills
- * the reused `InteractionResultMut`. There is no data migration and no value
- * copy: the binding closes over the live `ShipState` / `WreckState` /
- * `ShieldHullRouter` (whose `swarmHealth` / `swarmShield` maps own drone HP),
- * so the single source of truth is unchanged.
+ * Each factory closes over only the stable `ShieldHullRouter` and returns ONE
+ * binding that handles every entity of its kind; the entity-specific state is
+ * the `target` argument. The output is byte-identical to the matching
+ * DamageRouter branch's health computation (DamageRouter.ts branches 1/2/3/4),
+ * locked by `healthBindings.test.ts` + the dispatch golden-master.
  *
- * The output is intentionally byte-identical to the matching DamageRouter
- * branch's health computation (DamageRouter.ts branches 1/2/3/4). Phase 1
- * locks that parity in `healthBindings.test.ts`; Phase 2 routes
- * DamageRouter.apply through these so the if-tree collapses with zero
- * behaviour change.
- *
- * Server zone: imports the Colyseus schema + ShieldHullRouter. The contract
- * (`HealthBinding`) is the zone-pure abstraction in src/core.
+ * Server zone: imports the Colyseus schema types + ShieldHullRouter. The
+ * contract (`HealthBinding`) is the zone-pure abstraction in src/core.
  */
 
 import type { HealthBinding, InteractionResultMut } from '../../core/contracts/IDamageable.js';
 import type { ShipState, WreckState } from '../rooms/schema/SectorState.js';
 import type { ShieldHullRouter, SwarmDamageTarget } from '../rooms/ShieldHullRouter.js';
 
-/**
- * Active or lingering player ship. Matches DamageRouter branch 3 (active,
- * `workerBodyId = playerId`) and branch 2 (lingering, `workerBodyId = null`).
- * `damageShipLayered` mutates `ship.health` / `ship.shield` in place.
- */
-export function shipHealthBinding(
-  ship: ShipState,
+/** Shared ship-layered binding; `workerBodyIdFor` differs active vs lingering. */
+function shipBinding(
   router: ShieldHullRouter,
-  workerBodyId: string | null,
+  workerBodyIdFor: (ship: ShipState) => string | null,
 ): HealthBinding {
   return {
-    applyLayered(amount: number, _atTick: number, out: InteractionResultMut): void {
-      const r = router.damageShipLayered(ship, amount, workerBodyId);
+    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
+      const ship = target as ShipState;
+      const r = router.damageShipLayered(ship, amount, workerBodyIdFor(ship));
       out.applied = true;
       out.newHealth = ship.health;
       out.newShield = r.newShield;
@@ -46,13 +37,23 @@ export function shipHealthBinding(
   };
 }
 
-/**
- * Ownerless wreck. Matches DamageRouter branch 1: flat hull damage, no
- * shield layer, `hullMax = wreck.maxHealth`.
- */
-export function wreckHealthBinding(wreck: WreckState): HealthBinding {
+/** Active player ship (branch 3): worker body keyed by playerId → SET_HULL_EXPOSED
+ *  on the active body when the shield breaks. */
+export function activeShipHealthBinding(router: ShieldHullRouter): HealthBinding {
+  return shipBinding(router, (ship) => ship.playerId);
+}
+
+/** Lingering hull (branch 2): `workerBodyId = null` → no SET_HULL_EXPOSED post
+ *  (matches the original branch, which passes null). */
+export function lingeringHealthBinding(router: ShieldHullRouter): HealthBinding {
+  return shipBinding(router, () => null);
+}
+
+/** Ownerless wreck (branch 1): flat hull damage, no shield layer. */
+export function wreckHealthBinding(): HealthBinding {
   return {
-    applyLayered(amount: number, _atTick: number, out: InteractionResultMut): void {
+    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
+      const wreck = target as WreckState;
       wreck.health = Math.max(0, wreck.health - amount);
       out.applied = true;
       out.newHealth = wreck.health;
@@ -66,19 +67,15 @@ export function wreckHealthBinding(wreck: WreckState): HealthBinding {
 }
 
 /**
- * Swarm entity (drone OR asteroid). Matches DamageRouter branch 4:
- * `damageSwarmLayered` returns `null` for an asteroid (no `swarmHealth`
- * entry) → the binding reports `applied = false` (immune), leaving the store
- * untouched. For a drone it mutates the parallel `swarmHealth` /
- * `swarmShield` maps the router owns (HC#3) and reads `swarmHealth.get(id)`
- * for the resulting hull — exactly as the branch does.
+ * Swarm entity (branch 4): drone OR asteroid. `damageSwarmLayered` returns
+ * `null` for an asteroid (no `swarmHealth` entry) → `out.applied = false`
+ * (immune, store untouched). For a drone it mutates the parallel `swarmHealth`
+ * / `swarmShield` maps the router owns (HC#3) and reads `swarmHealth.get(id)`.
  */
-export function swarmHealthBinding(
-  rec: SwarmDamageTarget,
-  router: ShieldHullRouter,
-): HealthBinding {
+export function swarmHealthBinding(router: ShieldHullRouter): HealthBinding {
   return {
-    applyLayered(amount: number, _atTick: number, out: InteractionResultMut): void {
+    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
+      const rec = target as SwarmDamageTarget;
       const r = router.damageSwarmLayered(rec, amount);
       if (r === null) {
         out.applied = false; // asteroid — immune, store untouched
