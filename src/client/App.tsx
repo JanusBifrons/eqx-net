@@ -46,8 +46,8 @@ import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
-import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
+import { GalaxyOverviewSelectChrome } from './components/GalaxyOverviewSelectChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
@@ -610,11 +610,11 @@ function GameSurface({
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (
         <Slot anchor="fullscreen" order={25}>
-          {/* In-game overview is roster-pick only. Warp is reserved for
-              the bottom-center MAP button / M-key overlay
-              (`GalaxyMapLayer`). Refactor 2026-05-13. */}
-          <GalaxyOverviewScreen
-            mode="select"
+          {/* In-game ship-swap overview — roster-pick only over the live
+              game (single-canvas refactor: Map A's second Pixi
+              Application is retired). Warp lives on the bottom-center MAP
+              button / M-key overlay (`GalaxyMapLayer`). */}
+          <GalaxyOverviewSelectChrome
             onClose={() => setGalaxyOverviewOpen(false)}
           />
         </Slot>
