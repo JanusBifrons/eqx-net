@@ -26,6 +26,7 @@ import type { ColyseusGameClient } from '../net/ColyseusClient';
 import type { Keyboard } from '../input/Keyboard';
 import type { TouchInput } from '../input/TouchInput';
 import type { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
+import type { GalaxyLayerMode } from '../render/galaxy/galaxyLayerDecisions';
 import type { ConnectionStatus } from '../state/store';
 import type { MutableRefObject } from 'react';
 import { SERVER_URL } from './serverUrl';
@@ -47,6 +48,20 @@ export interface ConnectFlowOpts {
   onConnectionStatus: (status: ConnectionStatus) => void;
   onPlayerId: (id: string) => void;
   onSectorName: (name: string) => void;
+  /**
+   * `connect` (default) — the gameplay path: init renderer, kick the
+   * sim RAF loop, join a Colyseus room. `idle` — the persistent
+   * galaxy-picker canvas (single-canvas refactor): init the renderer and
+   * install the galaxy overlay (in `overlayMode`), then STOP — no sim
+   * loop, no room join. The galaxy layer renders + pulses on the
+   * renderer's own ticker. The flip from idle → connect happens by
+   * re-running the bootstrap in `connect` mode once a sector is chosen.
+   */
+  surfaceMode?: 'connect' | 'idle';
+  /** Galaxy-overlay mode passed to `installGalaxyOverlay`. Default `overlay`. */
+  overlayMode?: GalaxyLayerMode;
+  /** Selector-mode tap handler (the spawn picker). Used when `overlayMode === 'selector'`. */
+  onSelectorPick?: (sectorKey: string) => void;
 }
 
 export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<void> {
@@ -55,7 +70,9 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     phaseEnterPerfNow, isDisposed, galaxyLayerRef, animFrameRef,
     roomNameOverride, joinOptionsOverride, onEngageTransit,
     onConnectionStatus, onPlayerId, onSectorName,
+    surfaceMode = 'connect', overlayMode = 'overlay', onSelectorPick,
   } = opts;
+  const idle = surfaceMode === 'idle';
 
   const rendererInitStartedAt = performance.now();
   await renderer.init(el);
@@ -76,7 +93,10 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
   // is for inter-sector transit only, and is driven by the
   // transitState effect below). The curtain fades AND the
   // arrival flash fires when `gameReady` flips true.
-  if (!useUIStore.getState().rendererFirstFrameRendered) {
+  //
+  // Idle (galaxy-picker) mode has no join load period, so the curtain
+  // stays DOWN — the picker must be visible immediately.
+  if (!idle && !useUIStore.getState().rendererFirstFrameRendered) {
     renderer.setLoadCurtain(true);
   }
   logEvent('renderer_init_complete', {
@@ -84,14 +104,23 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     msFromPhaseEnter: Math.round(performance.now() - phaseEnterPerfNow),
   });
 
-  // Map B (additive in-game galaxy overlay) — see galaxyOverlay.ts
-  // for the worker-vs-DOM construction paths.
+  // Galaxy overlay — `overlay` (in-game additive Map B) or `selector`
+  // (the full-screen spawn picker on this persistent canvas). See
+  // galaxyOverlay.ts for the worker-vs-DOM construction paths.
   galaxyLayerRef.current = installGalaxyOverlay({
     renderer,
     useWorker,
     el,
     onEngageTransit,
+    mode: overlayMode,
+    onSelectorPick,
   });
+
+  // Idle galaxy-picker canvas: no simulation and no room. The galaxy
+  // layer renders + pulses via its own ticker on the renderer's stage,
+  // so we stop here — no sim RAF loop, no gameClient.connect. The flip
+  // to a live game re-runs this flow in `connect` mode.
+  if (idle) return;
 
   // Probe 3 (mobile-perf-investigation): `?fpscap=N` URL override
   // for DEFAULT_MIN_FRAME_INTERVAL_MS. See gameRafLoop.ts.
