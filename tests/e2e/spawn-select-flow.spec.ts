@@ -41,19 +41,13 @@ test('post-auth spawn-select → click sector → game surface mounts', async ({
   expect(errors, errors.join('\n')).toEqual([]);
 });
 
-// The galaxy-sector variant uses a canvas-centre click to target Sol Prime.
-// Post-refactor the renderer centers on the bbox of ALL sectors (not Sol
-// Prime), so canvas-centre is between hexes — the click doesn't reliably
-// land on one. Plus the click now opens the ShipPickerModal (a new
-// confirmation step) before spawning. Marked `fixme` until either:
-//   (a) the renderer exposes a debug hook to programmatically open the
-//       picker for a given sectorKey (clean), OR
-//   (b) the spec computes the hex's actual on-screen position from the
-//       renderer's published axial layout (more brittle).
-// The engineering-sector variant above passes and exercises the same
-// post-`handleSelectRoom` server flow.
-// (e2e-rebuild Phase 5 repair queue, 2026-05-20.)
-test.fixme('post-auth spawn-select → click galaxy sector → game surface mounts', async ({
+// The galaxy-sector variant drives a real galaxy room via the
+// deterministic `__eqxGalaxyPick(sectorKey)` DEV hook — the programmatic
+// path the prior `fixme` comment was waiting for (landed with the
+// single-canvas refactor). It mirrors a real selector-layer tap on the
+// shared canvas (incl. the 200 ms tap-shield) without hex-pixel math,
+// then confirms the ShipPickerModal → Spawn → game-surface round-trip.
+test('post-auth spawn-select → pick galaxy sector → game surface mounts', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -63,18 +57,18 @@ test.fixme('post-auth spawn-select → click galaxy sector → game surface moun
   await page.locator('text=Join the fight').first().click();
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 
-  // Drive into a real galaxy room. The Pixi hex click is the only
-  // page-reachable path — there's no programmatic shortcut to
-  // `handleSelectRoom('galaxy-${key}')`. Sol Prime sits at world (0,0)
-  // and the renderer's default centre is also (0,0), so the canvas
-  // centre is its on-screen position.
-  const canvas = page.locator('[data-testid="galaxy-map-screen"] canvas').first();
-  await expect(canvas).toBeVisible({ timeout: 5_000 });
-  const box = await canvas.boundingBox();
-  if (!box) throw new Error('canvas has no bounding box');
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  // Drive a deterministic sector pick (Sol Prime) via the DEV hook
+  // installed by GameSurface in idle mode.
+  await page.waitForFunction(
+    () => typeof (window as unknown as { __eqxGalaxyPick?: unknown }).__eqxGalaxyPick === 'function',
+    null,
+    { timeout: 8_000 },
+  );
+  await page.evaluate(() => {
+    (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('sol-prime');
+  });
 
-  // 2026-05-10 refactor: clicking a sector hex now opens the
+  // 2026-05-10 refactor: a sector pick opens the
   // ShipPickerModal ("Spawn in {sector}"). Accept the default ship
   // (the picker pre-selects the user's last choice, or Fighter on
   // fresh state) by clicking Spawn — that's what fires the actual

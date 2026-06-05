@@ -47,6 +47,7 @@ import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
 import { GalaxyOverviewScreen } from './components/GalaxyOverviewScreen';
+import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
@@ -73,7 +74,24 @@ installStreamingDiag();
 // `tests/mobile-perf/heap-budget-injected-leak.spec.ts`.
 installTestLeakHook();
 
+/** Delay between a galaxy sector tap and the kind-picker mount, in ms.
+ *  The tap originates on the shared Pixi canvas, so the originating
+ *  touchend can bleed through onto the modal mounted under the player's
+ *  finger and auto-resolve a card. Deferring the picker mount past the
+ *  touchend drain (≈50 ms ceiling on slow phones) avoids that. Moved
+ *  here from the retired GalaxyOverviewScreen with the single-canvas
+ *  refactor — the tap-shield belongs at the tap site. */
+const PICKER_OPEN_DELAY_MS = 200;
+
 interface GameSurfaceProps {
+  /**
+   * `connect` — the gameplay surface: connect to a Colyseus room, render
+   * the HUD. `idle` — the persistent galaxy-picker canvas (single-canvas
+   * refactor): the same shared canvas renders the hex map via
+   * GalaxyMapLayer in selector mode, with GalaxyPickerChrome overlaid; no
+   * room is joined. The flip to `connect` happens when a sector is chosen.
+   */
+  surfaceMode: 'idle' | 'connect';
   /** Phase 8 — room name chosen by the lobby/galaxy-map screen. Falls back
    *  to the URL `?room=` / `?galaxy=` params or `'sector'` when undefined,
    *  preserving the E2E auto-join escape hatch. */
@@ -82,9 +100,27 @@ interface GameSurfaceProps {
    *  Colyseus `joinOrCreate` call. Used by the roster-panel Spawn flow
    *  to thread the chosen `shipId` to the server's `onJoin`. */
   joinOptionsOverride?: Record<string, unknown>;
+  /** Idle (galaxy-picker) spawn entry points. */
+  onSelectRoom?: (roomName: string) => void;
+  onSpawnExistingShip?: (shipId: string, sectorKey: string) => void;
+  onSpawnNewShip?: (kind: unknown, sectorKey: string) => void;
+  onSelectLocal?: () => void;
 }
 
-function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps): JSX.Element {
+function GameSurface({
+  surfaceMode,
+  roomNameOverride,
+  joinOptionsOverride,
+  onSelectRoom,
+  onSpawnExistingShip,
+  onSpawnNewShip,
+  onSelectLocal,
+}: GameSurfaceProps): JSX.Element {
+  const idle = surfaceMode === 'idle';
+  const overlayMode = idle ? 'selector' : 'overlay';
+  // Imperative handle into the picker chrome so a sector tap on the
+  // shared canvas's selector layer opens the kind-picker.
+  const pickerApiRef = useRef<GalaxyPickerApi | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const clientRef = useRef<ColyseusGameClient | null>(null);
   const rendererRef = useRef<IRenderer | null>(null);
@@ -285,6 +321,20 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
     if (room) cancelTransit(room);
   }, []);
 
+  // Selector-mode tap (idle galaxy picker). A hex tap on the shared
+  // canvas routes here; we log the same diagnostics the retired
+  // GalaxyOverviewScreen emitted (galaxy_sector_click + respawn_clicked
+  // source='sector-pick'), then defer the kind-picker mount past the
+  // touchend drain (tap-shield) and open it via the chrome's apiRef.
+  const handleSelectorPick = useCallback((sectorKey: string) => {
+    const t0 = performance.now();
+    logEvent('galaxy_sector_click', { key: sectorKey, mode: 'spawn', ts: t0 });
+    logEvent('respawn_clicked', { source: 'sector-pick', sectorKey });
+    window.setTimeout(() => {
+      pickerApiRef.current?.openForSector(sectorKey);
+    }, PICKER_OPEN_DELAY_MS);
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
     const el = containerRef.current;
@@ -333,6 +383,12 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           ui.setPhase('connecting');
           setTimeout(() => useUIStore.getState().setPhase('game'), 100);
         };
+      // Test-only hook: drive a galaxy sector pick deterministically from
+      // E2E without computing the hex's on-screen pixel position. Mirrors
+      // a real selector-layer tap (single-canvas refactor). Only meaningful
+      // in idle mode; production tree-shakes.
+      (window as unknown as { __eqxGalaxyPick?: (key: string) => void })
+        .__eqxGalaxyPick = (key: string) => handleSelectorPick(key);
     }
 
     const onKey = (e: KeyboardEvent): void => {
@@ -368,6 +424,9 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       onConnectionStatus: setConnectionStatus,
       onPlayerId: setPlayerId,
       onSectorName: setSectorName,
+      surfaceMode,
+      overlayMode,
+      onSelectorPick: handleSelectorPick,
     }).catch((err: unknown) => {
       console.error('[GameSurface] connection failed', err);
       setConnectionStatus('error');
@@ -424,7 +483,7 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
       audioRef.current = null;
       try { gameClient.dispose(); } catch (e) { stepLog('gameClient.dispose', e); }
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit, surfaceMode, overlayMode, handleSelectorPick]);
 
   // Reactive sync from Zustand to the Pixi galaxy layer. The layer is
   // constructed inside the main mount effect (async after renderer.init)
@@ -438,8 +497,10 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
   // mode the layer lives inside the worker; state crosses via the
   // `WorkerRendererClient.setLayer*` postMessages.
   useEffect(() => {
-    syncGalaxyVisibility(galaxyLayerRef.current, rendererRef.current, galaxyMapOpen);
-  }, [galaxyMapOpen]);
+    // Idle (selector) picker is ALWAYS visible — it's the whole screen.
+    // The additive overlay (connect mode) follows the MAP-button toggle.
+    syncGalaxyVisibility(galaxyLayerRef.current, rendererRef.current, idle ? true : galaxyMapOpen);
+  }, [galaxyMapOpen, idle]);
   useEffect(() => {
     syncGalaxyCurrentSector(galaxyLayerRef.current, rendererRef.current, galaxyLayerCurrentSectorKey);
   }, [galaxyLayerCurrentSectorKey]);
@@ -512,6 +573,16 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
           willChange: 'transform',
         }}
       />
+      {idle ? (
+        <GalaxyPickerChrome
+          apiRef={pickerApiRef}
+          onSelectRoom={onSelectRoom}
+          onSpawnExistingShip={onSpawnExistingShip}
+          onSpawnNewShip={onSpawnNewShip}
+          onSelectLocal={onSelectLocal}
+        />
+      ) : (
+        <>
       <Slot anchor="top-left" order={1}><SectorInfoPanel /></Slot>
       <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
@@ -547,6 +618,8 @@ function GameSurface({ roomNameOverride, joinOptionsOverride }: GameSurfaceProps
             onClose={() => setGalaxyOverviewOpen(false)}
           />
         </Slot>
+      )}
+        </>
       )}
       <HudTestAttributes />
     </Box>
@@ -668,16 +741,18 @@ export function App(): JSX.Element {
           setPhase={setPhase}
           gameSurface={
             <GameSurface
+              surfaceMode={phase === 'galaxy-map' ? 'idle' : 'connect'}
               roomNameOverride={roomNameOverride}
               joinOptionsOverride={joinOptionsOverride}
+              onSelectRoom={handleSelectRoom}
+              onSpawnExistingShip={handleSpawnExistingShip}
+              onSpawnNewShip={handleSpawnNewShip}
+              onSelectLocal={handleSelectLocal}
             />
           }
           onJoinFromMeta={handleJoinFromMeta}
           onSelectLocal={handleSelectLocal}
           onAuthSuccess={handleAuthSuccess}
-          onSelectRoom={handleSelectRoom}
-          onSpawnExistingShip={handleSpawnExistingShip}
-          onSpawnNewShip={handleSpawnNewShip}
         />
         <TopRightToolbar />
         {/* Unified warp-screen overlay. Internally null when phase !==

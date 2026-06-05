@@ -17,7 +17,6 @@ import { AppHeader } from '../components/AppHeader';
 import { LoginPage } from '../components/LoginPage';
 import { ProfileModal } from '../components/ProfileModal';
 import { SettingsModal } from '../components/SettingsModal';
-import { GalaxyOverviewScreen } from '../components/GalaxyOverviewScreen';
 import { MetaLandingScreen } from '../components/MetaLandingScreen';
 import { LocalSurface } from '../components/LocalSurface';
 import { MobileAvatarBadge } from '../layout/MobileAvatarBadge';
@@ -33,24 +32,26 @@ export interface PhaseRouterProps {
   openSettings: () => void;
   closeSettings: () => void;
   setPhase: (p: Phase) => void;
-  // 'game' phase deps.
+  /**
+   * The shared gameplay/picker canvas. Rendered in BOTH the 'game'
+   * phase (where GameSurface is in 'connect' mode) AND the 'galaxy-map'
+   * phase (where it's in 'idle' mode, drawing the spawn picker on the
+   * same canvas via GalaxyMapLayer's selector mode — single-canvas
+   * refactor). The surface mode + spawn callbacks are wired into the
+   * element by App.
+   */
   gameSurface: JSX.Element;
   // 'meta' phase deps.
   onJoinFromMeta: () => void;
   onSelectLocal: () => void;
   // 'auth' phase deps.
   onAuthSuccess: () => void;
-  // 'galaxy-map' phase deps.
-  onSelectRoom: (roomName: string) => void;
-  onSpawnExistingShip: (shipId: string, sectorKey: string) => void;
-  onSpawnNewShip: (kind: unknown, sectorKey: string) => void;
 }
 
 export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   const {
     phase, user, profileOpen, setProfileOpen, settingsOpen, openSettings, closeSettings,
     setPhase, gameSurface, onJoinFromMeta, onSelectLocal, onAuthSuccess,
-    onSelectRoom, onSpawnExistingShip, onSpawnNewShip,
   } = props;
 
   const headerWithLogin = (
@@ -123,15 +124,11 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
           }}
         />
       ) : (
-        <GalaxyOverviewScreen
-          mode="spawn"
-          /* activeLimboSectorKey omitted on purpose so the screen runs its
-             own /dev/limbo lookup and renders the saved-ship card. */
-          onSelectRoom={onSelectRoom}
-          onSpawnExistingShip={onSpawnExistingShip}
-          onSpawnNewShip={onSpawnNewShip}
-          onSelectLocal={onSelectLocal}
-        />
+        // 'galaxy-map' — the spawn picker now renders on the SHARED
+        // canvas (GameSurface in 'idle' mode draws GalaxyMapLayer's
+        // selector and overlays GalaxyPickerChrome). No second Pixi
+        // Application. Spawn callbacks are wired into the element by App.
+        gameSurface
       )}
       {modals}
     </>

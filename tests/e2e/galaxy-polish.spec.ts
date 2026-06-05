@@ -10,16 +10,16 @@ import { test, expect, type Page } from '@playwright/test';
  *  2. `FullscreenCTA` is NOT rendered inside the galaxy map. Today the
  *     component exists but has zero JSX call-sites; this lock catches a
  *     well-meaning future re-introduction inside the spawn picker.
- *  3. Default galaxy-overview zoom is 0.7 (`GalaxyOverviewRenderer.init`
- *     line `viewport.setZoom(0.7)`). The renderer publishes the live
- *     scale into `data-galaxy-zoom` on the mount container — change the
- *     zoom literal in one place and the assertion shifts; change one
- *     without the other and CI fails loudly.
+ *
+ * (The former "default zoom is 0.7 via data-galaxy-zoom" lock was
+ *  retired with the single-canvas refactor: the spawn picker now renders
+ *  on the shared gameplay canvas via GalaxyMapLayer's selector mode — a
+ *  static screen-space fit with no free-pan/zoom viewport, so there is no
+ *  zoom attribute to assert.)
  *
  * WHAT CHANGING WOULD RE-FAIL THIS:
  *  - Putting the marketing banner back on the post-auth landing.
  *  - Adding `<FullscreenCTA />` JSX inside the spawn-mode branch.
- *  - Changing `setZoom(0.7)` to a different default in the renderer.
  *
  * This is a UNCOVERED→COVERED test: there is no user bug report behind
  * it. Smoke-testing the marketing-text-on-spawn case would feel obvious
@@ -75,25 +75,4 @@ test('galaxy-map-screen: FullscreenCTA is not rendered in the spawn-mode landing
       'fullscreen is owned by the FullscreenToggle in the layout slot ' +
       'system, not a standalone CTA in the spawn landing.',
   ).toHaveCount(0);
-});
-
-test('galaxy-map-screen: default zoom is 0.7', async ({ page }) => {
-  test.setTimeout(25_000);
-  await goToGalaxyMap(page);
-
-  const screen = page.locator('[data-testid="galaxy-map-screen"]');
-  // The renderer publishes its current zoom to `data-galaxy-zoom` on the
-  // mount container after `setZoom(0.7)`. Allow up to 5 s for the Pixi
-  // init promise to resolve and publish the attribute.
-  const mount = screen.locator('[data-galaxy-zoom]').first();
-  await expect(mount).toBeAttached({ timeout: 5_000 });
-
-  // Spec value is exactly 0.7. The renderer publishes with `toFixed(3)`,
-  // so we expect the string "0.700".
-  await expect(
-    mount,
-    'Default galaxy-overview zoom must be 0.7 (published as "0.700" via ' +
-      '`data-galaxy-zoom` by GalaxyOverviewRenderer.init). Change this and ' +
-      'the perceived map size changes — keep the test and the literal in lockstep.',
-  ).toHaveAttribute('data-galaxy-zoom', '0.700', { timeout: 5_000 });
 });

@@ -206,6 +206,12 @@ export function GalaxyPickerChrome({
           right: 16,
           alignItems: 'center',
           pointerEvents: 'auto',
+          // Above the roster panel (zIndex 2). The roster column hugs the
+          // viewport's right edge now (the chrome is transparent over the
+          // full-bleed shared canvas, not a centred max-width box like the
+          // retired GalaxyOverviewScreen), so these CTAs would otherwise sit
+          // under the roster's pointer-capture region.
+          zIndex: 3,
         }}
       >
         {onSelectLocal && (
