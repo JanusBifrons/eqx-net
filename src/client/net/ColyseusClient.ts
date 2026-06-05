@@ -71,6 +71,7 @@ import {
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
+import { tickLocalMountAngles } from '../combat/localMountAim';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
@@ -82,11 +83,7 @@ import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
-import {
-  pickTarget,
-  rotateMountToward,
-  wrapPi,
-} from '@core/ai/WeaponMountController';
+import { pickTarget } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -635,6 +632,9 @@ export class ColyseusGameClient {
    *  rather than per-mount because all mounts in a slot share one target
    *  (user-clarified design rule). */
   private _localSlotTarget: string | null = null;
+  /** Reused scratch for the active-slot mount-id set in `tickLocalMountAim`
+   *  (alloc-free per-frame membership test; invariant #14). */
+  private readonly _activeMountIdsScratch = new Set<string>();
   /** Idle-suppression for the input upstream (network-discipline P4). The
    *  client only emits an `input` message when the control state has changed
    *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
@@ -4102,11 +4102,20 @@ export class ColyseusGameClient {
     if (!ship) return;
     const state = this.predWorld.getShipState(localId);
     if (!state) return;
-    const mounts = this.localShipMounts();
-    if (mounts.length === 0) {
+    // `mountAngles` is CATALOGUE-indexed everywhere it is READ (the
+    // renderer beam direction + the turret sprites). Size + write the
+    // array by the FULL kind.mounts; only the ACTIVE SLOT's mounts aim
+    // (the rest slew to base). Indexing by the active-slot order instead
+    // is the latent index bug — see combat/localMountAim.ts.
+    const catalogueMounts = getShipKind(ship.kind ?? null).mounts ?? [];
+    if (catalogueMounts.length === 0) {
       if (ship.mountAngles) ship.mountAngles = undefined;
       return;
     }
+    // Active-slot mount ids — reused scratch set (alloc-free, invariant #14).
+    const activeMountIds = this._activeMountIdsScratch;
+    activeMountIds.clear();
+    for (const m of this.localShipMounts()) activeMountIds.add(m.id);
 
     // Gather drone auto-aim targets from the SINGLE per-frame display
     // pose. `buildLocalAimTargets` reads the pose `updateMirror` already
@@ -4136,40 +4145,22 @@ export class ColyseusGameClient {
     });
     this._localSlotTarget = target?.id ?? null;
 
-    // Allocate / resize the per-ship mountAngles array. number[] is fine
-    // here — N is small (1–3) and the array survives multiple frames.
+    // Allocate / resize the per-ship mountAngles array to the FULL
+    // catalogue length (the index space every reader uses). number[] is
+    // fine — N is small (1–3) and the array survives multiple frames.
     let angles = ship.mountAngles;
-    if (!angles || angles.length !== mounts.length) {
-      angles = new Array<number>(mounts.length).fill(0);
+    if (!angles || angles.length !== catalogueMounts.length) {
+      angles = new Array<number>(catalogueMounts.length).fill(0);
       ship.mountAngles = angles;
     }
 
-    if (target === null) {
-      // No target — slew every mount back to its base (0 in mount-local frame).
-      for (let i = 0; i < mounts.length; i++) {
-        angles[i] = rotateMountToward(angles[i] ?? 0, 0, mounts[i]!, dtSec);
-      }
-      return;
-    }
-
-    // For each mount: compute the world-bearing from the mount's pivot to
-    // the target, subtract ship.angle (rotate into ship-local frame) and
-    // mount.baseAngle (rotate into mount-local frame), then slew toward
-    // that bearing within the mount's arc and speed limits.
-    const cosA = Math.cos(state.angle);
-    const sinA = Math.sin(state.angle);
-    for (let i = 0; i < mounts.length; i++) {
-      const mount = mounts[i]!;
-      const mountWorldX = state.x + (mount.localX * cosA - mount.localY * sinA);
-      const mountWorldY = state.y + (mount.localX * sinA + mount.localY * cosA);
-      const dx = target.x - mountWorldX;
-      const dy = target.y - mountWorldY;
-      // World bearing — same convention as ship.angle: `atan2(-dx, dy)`
-      // (forward = -y, right = +x).
-      const worldBearing = Math.atan2(-dx, dy);
-      const mountLocalBearing = wrapPi(worldBearing - state.angle - mount.baseAngle);
-      angles[i] = rotateMountToward(angles[i] ?? 0, mountLocalBearing, mount, dtSec);
-    }
+    // Slew each catalogue mount: the active-slot mounts aim at the target,
+    // the rest return to base. Catalogue-indexed write — see
+    // combat/localMountAim.ts for the index-space contract.
+    tickLocalMountAngles(
+      angles, catalogueMounts, activeMountIds, target,
+      state.x, state.y, state.angle, dtSec,
+    );
   }
 
   /** Compute (and cache in `mirror.liveBeams`) the local player's hitscan

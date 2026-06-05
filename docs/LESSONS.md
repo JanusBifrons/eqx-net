@@ -14,6 +14,40 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-05 — single-canvas galaxy + a latent mount-index bug — a documented contract the code quietly violated
+Commit: single-canvas-galaxy steps + the localMountAim fix (this branch)
+Two findings from the galaxy-map-canvas-laser-fix branch.
+
+**1. Single-canvas unify.** Retired the galaxy map's SECOND Pixi `Application`
+(`GalaxyOverviewRenderer`). There is now one `GalaxyMapLayer` on the shared
+gameplay canvas, with an `overlay`/`selector` mode. The lifecycle key: the
+post-auth picker renders before any room is joined, so `GameSurface` got a
+`surfaceMode: 'idle' | 'connect'` — in `idle` the renderer inits + the
+selector layer installs but NO room is joined and NO sim loop runs; the layer
+still paints because Pixi's `app.ticker` auto-renders the stage (no
+`MIRROR_UPDATE` needed). Full story: `docs/architecture/single-canvas-galaxy.md`.
+
+**2. The latent mount-index bug (the "laser" half).** `ShipRenderState.mountAngles`
+is **read** catalogue-indexed by BOTH the live-beam renderer and the turret
+sprites, and `src/client/CLAUDE.md` documented it as "indexed by catalogue
+mount-order." But the local-player WRITER (`tickLocalMountAim`) sized + indexed
+the array by the **active SLOT's** mounts (`resolveSlotMounts`, slot-local
+order). Those two index spaces COINCIDE only while a slot is the full catalogue
+in catalogue order — which is true for every ship shipping today, so the bug
+never manifested. It was a real defect waiting on the first subset/reorder slot:
+the local player's beams + turrets would read the wrong mount's angle (or
+`undefined` → base). Remote players were always correct (server writes
+catalogue-indexed). **Lesson: a contract being *documented* (and *read*
+correctly everywhere) does not mean the *writer* honours it — a single
+divergent write site can sit latent for months behind data that happens to make
+the two index spaces equal.** Fix: a pure `combat/localMountAim.ts`
+`tickLocalMountAngles(out, catalogueMounts, activeMountIds, …)` that writes
+catalogue-indexed (active-slot mounts aim, the rest slew to base), locked by a
+subset/reorder-slot unit test that fails on slot-local indexing. The general
+sniff test: when an array is **written** by one index space (`resolveSlotMounts`)
+and **read** by another (`kind.mounts.findIndex`), they must be proven equal —
+or made equal — not assumed.
+
 ## 2026-06-04 — GEP B4 (EntitySyncRouter) — wrap a tuned hot loop, don't rewrite it; make an inert descriptor field load-bearing at boot
 Commit: the B4 server-router commit (this commit)
 
