@@ -34,7 +34,7 @@
  * `interpolateSwarmPose(sw, now, scratch)` itself, so its result tracked
  * whatever `now` it was handed (≠ `updateMirror`'s now) → the
  * now-independence + equals-written-entry assertions fail. GREEN after
- * routing it through `resolveDroneDisplayPose` (read the one written
+ * routing it through `resolveEntityDisplayPose` (read the one written
  * pose). Reverting that seam swap re-fails this lock.
  *
  * `interpolateSwarmPose` itself is deliberately untouched — its
@@ -45,7 +45,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { interpolateSwarmPose, type InterpolatedPose } from '../../src/client/net/swarmInterpolation.js';
-import { resolveDroneDisplayPose } from '../../src/client/net/swarmDisplayPose.js';
+import { resolveEntityDisplayPose } from '../../src/client/net/swarmDisplayPose.js';
 import { buildLocalAimTargets } from '../../src/client/combat/LocalBeam.js';
 import type { SwarmRenderState, PoseRingEntry } from '../../src/core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../src/core/contracts/IRenderer.js';
@@ -161,7 +161,7 @@ describe('swarm pose consistency — one resolution per frame, every consumer re
 
     // Sprite consumer @ now₃ (render, later) — MUST go through the seam.
     const now3Scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
-    const sprite = resolveDroneDisplayPose(drone, now3Scratch);
+    const sprite = resolveEntityDisplayPose(drone, now3Scratch);
 
     // Aim consumer (tickPhysics phase, earlier in the frame).
     const aimScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };

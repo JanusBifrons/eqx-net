@@ -42,13 +42,18 @@ import type { SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import type { InterpolatedPose } from './swarmInterpolation.js';
 
 /**
- * The drone's resolved display pose for THIS frame: the value
+ * An entity's resolved display pose for THIS frame: the value
  * `ColyseusClient.updateMirror` already wrote into `entry.x/y/angle`
  * via the frame's single `interpolateSwarmPose` call. Mutates `out`
  * (pass a per-consumer scratch) to keep the hot path allocation-free,
  * mirroring `interpolateSwarmPose`'s contract so call sites swap 1:1.
+ *
+ * Renamed from `resolveDroneDisplayPose` (Generic Entity Pipeline B4) — the
+ * seam is entity-generic (a `Pick<…,'x'|'y'|'angle'>` reader), not drone-
+ * specific; drones are simply the only kind that needs it today (asteroids /
+ * structures are static, posed straight from the packet).
  */
-export function resolveDroneDisplayPose(
+export function resolveEntityDisplayPose(
   entry: Pick<SwarmRenderState, 'x' | 'y' | 'angle'>,
   out: InterpolatedPose,
 ): InterpolatedPose {

@@ -445,6 +445,9 @@ export class WorkerRendererClient implements IRenderer {
   setLayerTransitDocked(docked: boolean): void {
     this.post({ type: 'SET_TRANSIT_DOCKED', docked });
   }
+  setLayerMode(mode: 'overlay' | 'selector'): void {
+    this.post({ type: 'SET_OVERLAY_MODE', mode });
+  }
 
   /** Notify the worker of a canvas-host resize. */
   resize(width: number, height: number, dpr: number): void {

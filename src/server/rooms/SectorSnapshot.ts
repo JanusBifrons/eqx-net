@@ -17,8 +17,8 @@ export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
 
 export interface SectorSnapshotEntity {
   entityId: string;
-  /** 0 = asteroid, 1 = drone — matches `SwarmKind`. */
-  kind: 0 | 1;
+  /** 0 = asteroid, 1 = drone, 2 = structure — matches `SwarmKind`. */
+  kind: number;
   /** Last-known position. Recorded for diagnostics; NOT restored on hydrate
    *  (positions are deterministic from config; restoring would create entity-id
    *  stability problems on shape changes). */

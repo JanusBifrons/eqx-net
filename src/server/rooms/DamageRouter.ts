@@ -1,23 +1,33 @@
 /**
- * Routes incoming damage to the right target kind.
+ * Routes incoming damage to the right target LEAF and applies it.
  *
- * Four branches, dispatched by targetId shape:
- *   1. `wreck-${shipInstanceId}` — Colyseus wrecks schema; tear down +
- *      destroy bus event on health 0.
- *   2. shipInstanceId where `state.ships.get(id).isActive === false` —
- *      lingering hull; layered shield/hull damage; on 0 broadcast
- *      destroy + free the lingering slot + DESPAWN the linger-prefixed
- *      worker body.
- *   3. playerId (active ship resolved via the indirection map) —
- *      layered damage + PLAYER_DAMAGED bus event; on 0 mark dead +
- *      destroy broadcast + SHIP_DESTROYED bus event.
- *   4. swarm registry id — drone path: layered damage; asteroids
- *      immune (null layered result); on 0 evictSwarmEntity. Damage
- *      events use the WIRE id (`swarm-<entityId>`) so client sprite
- *      keying works.
+ * Generic Entity Pipeline B2: the former 4-branch id-shape if-tree — and the
+ * data-driven `strategies[kind]` table that briefly replaced it — are collapsed
+ * into the OOP pipeline:
  *
- * Composes ShieldHullRouter (layered + regen), WreckLifecycleCoordinator
- * (destroyWreck), and the room's evictSwarmEntity for the swarm tail.
+ *   resolver.resolve(targetId) → Entity LEAF  (a real object that COMPOSES its
+ *                                              own { health, perHit, death })
+ *   applyInteraction(leaf, …)  → applyLayered → broadcast → perHit → death
+ *
+ * The leaf is a `ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity`
+ * (`src/server/entity/leaves/`); a NEW damageable type is a leaf + a registry
+ * row, with ZERO new dispatch branch here (the "structure for free" proof). The
+ * ordered, shape-based selection lives in `EntityResolver` (HC#1 — branch order
+ * + per-branch side-effects are load-bearing). Behaviour is byte-identical to
+ * the old if-tree — locked by `DamageRouter.dispatch.test.ts` (the golden-master).
+ *
+ * HC#5 (megamorphism guard): `applyInteraction` is ONE concrete function reading
+ * the leaf's composed `health` / `perHit` / `death` DATA. It must NEVER become a
+ * per-class virtual `leaf.receiveInteraction()` dispatched across the N leaf
+ * classes — under ramming/projectile load that megamorphic-deopts in V8. The
+ * leaves are objects for identity/sync/render; the per-hit work stays one
+ * monomorphic call site. (Bench: `benchmarks/damageDispatch.bench.ts`.)
+ *
+ * Allocation-free: the resolver builds the leaf flyweights once; resolution +
+ * result use reused instance scratch (invariant #14).
+ *
+ * Composes ShieldHullRouter (layered + regen, via the leaves' health bindings),
+ * WreckLifecycleCoordinator (destroyWreck), and the room's evictSwarmEntity.
  *
  * Extracted from SectorRoom (commit 21 partial).
  */
@@ -25,25 +35,26 @@
 import type { Logger } from 'pino';
 import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
-import {
-  SLOT_X_OFF,
-  SLOT_Y_OFF,
-  slotBase,
-} from '../../shared-types/sabLayout.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
 import type { ShipState, WreckState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { ShieldHullRouter } from './ShieldHullRouter.js';
+import {
+  resetInteractionResult,
+  type InteractionResultMut,
+} from '../../core/contracts/IDamageable.js';
+import { EntityResolver } from '../entity/EntityResolver.js';
+import type { DamageableLeaf } from '../entity/leaves/index.js';
 
 /** Subset of SwarmEntityRecord the swarm branch needs. */
 export interface SwarmDmgRecord {
   id: string;
   slot: number;
   entityId: number;
-  /** SwarmKind enum (0 = asteroid, 1 = drone). Surfaced into the
-   *  `damage_applied` diag entry so a capture can distinguish drone
-   *  hits from the (now-impossible) asteroid hits. */
+  /** SwarmKind enum (0 = asteroid, 1 = drone, 2 = structure). Surfaced into the
+   *  `damage_applied` diag entry so a capture can distinguish drone hits from
+   *  the (immune) asteroid hits. */
   kind: number;
   shipKind?: string | null;
   shieldDown?: boolean;
@@ -97,186 +108,78 @@ export interface DamageRouterDeps {
   postToWorker: (cmd: WorkerCmd) => void;
   /** Pino logger for the lifecycle log line. */
   logger: Logger;
-  /** Diagnostic ring-buffer sink — emits `damage_applied` on swarm
-   *  hits. */
+  /** Diagnostic ring-buffer sink — emits `damage_applied` on swarm hits. */
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
 }
 
 export class DamageRouter {
-  constructor(private readonly deps: DamageRouterDeps) {}
+  /** Owns the leaf flyweights + the ordered shape-based lookup. */
+  private readonly resolver: EntityResolver;
+  // Reused result scratch — apply() is synchronous + single-threaded.
+  private readonly _out: InteractionResultMut = {
+    applied: false, newHealth: 0, newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'hull', destroyed: false,
+  };
 
-  /** Dispatch a confirmed hit to the appropriate damage branch. */
+  constructor(private readonly deps: DamageRouterDeps) {
+    // DamageRouterDeps structurally satisfies EntityResolverDeps (LeafDeps +
+    // the lookup surfaces), so the resolver wires from the same deps bag.
+    this.resolver = new EntityResolver(deps);
+  }
+
+  /** Dispatch a confirmed hit: resolve the target leaf, then apply the
+   *  interaction. Behaviour byte-identical to the old if-tree (golden-master). */
   apply(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
-    const d = this.deps;
+    const leaf = this.resolver.resolve(targetId, shooterId, damage);
+    if (leaf === null) return;
+    this.applyInteraction(leaf, targetId, shooterId, damage, hitX, hitY);
+  }
 
-    // 1. Wrecks (wire id prefix).
-    if (targetId.startsWith('wreck-')) {
-      const shipInstanceId = targetId.slice('wreck-'.length);
-      const wreck = d.wrecksMap.get(shipInstanceId);
-      if (!wreck) return;
-      wreck.health = Math.max(0, wreck.health - damage);
-      const pose = d.wreckPoseCache.get(shipInstanceId);
-      d.broadcastDamage({
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: wreck.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: 0,
-        shieldMax: 0,
-        hullMax: wreck.maxHealth,
-        hitLayer: 'hull',
-      });
-      if (wreck.health <= 0) {
-        d.broadcastDestroy({ type: 'destroy', targetId, shooterId });
-        d.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        d.destroyWreck(shipInstanceId);
-        d.logger.info({ shipInstanceId, shooterId }, 'wreck destroyed');
-      }
-      return;
-    }
+  /**
+   * The single, MONOMORPHIC per-hit call site (HC#5). Reads the leaf's composed
+   * `health` / `perHit` / `death` DATA — NOT a per-class virtual method. The
+   * order (layered damage → universal broadcast → perHit → death) + the
+   * `!applied` early-out are verbatim from the old uniform tail, so the collapse
+   * is behaviour-preserving.
+   *
+   * DO NOT replace this with `leaf.receiveInteraction(...)`: a virtual call
+   * across the N leaf classes megamorphic-deopts under ramming/projectile load.
+   * Keep dispatch monomorphic; vary per-kind behaviour by the composed data.
+   */
+  private applyInteraction(
+    leaf: DamageableLeaf,
+    targetId: string,
+    shooterId: string,
+    damage: number,
+    hitX?: number,
+    hitY?: number,
+  ): void {
+    const out = this._out;
+    resetInteractionResult(out);
+    const tick = this.deps.serverTick();
+    const wireTargetId = this.resolver.wireTargetId;
 
-    // 2. Lingering hulls (Phase 6b — schema entry with isActive=false).
-    const directLingering = d.shipsMap.get(targetId);
-    if (directLingering && !directLingering.isActive) {
-      if (!directLingering.alive) return;
-      const f = d.shieldHullRouter.damageShipLayered(directLingering, damage, null);
-      const pose = d.lingeringPoseCache.get(targetId);
-      const dmgEvent: DamageEvent = {
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: directLingering.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: f.newShield,
-        shieldMax: f.shieldMax,
-        hullMax: f.hullMax,
-        hitLayer: f.hitLayer,
-      };
-      d.broadcastDamage(dmgEvent);
-      if (directLingering.health <= 0) {
-        directLingering.alive = false;
-        d.broadcastDestroy({ type: 'destroy', targetId, shooterId });
-        const slot = d.lingeringSlots.get(targetId);
-        if (slot !== undefined) {
-          d.lingeringSlots.delete(targetId);
-          d.lingeringPoseCache.delete(targetId);
-          d.freeSlots.push(slot);
-          // After the fresh-spawn-displaces rekey, the worker's body
-          // for this hull is keyed by `linger-${shipInstanceId}`,
-          // NOT by playerId (which now points at the player's active
-          // ship). Despawn the correct body.
-          d.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${targetId}` });
-        }
-        d.shipsMap.delete(targetId);
-        d.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        d.logger.info({ shipInstanceId: targetId, shooterId }, 'lingering hull destroyed');
-      }
-      return;
-    }
+    leaf.health.applyLayered(leaf.target, damage, tick, out);
+    if (!out.applied) return; // immune target — no event
 
-    // 3. Active player ship (targetId = playerId).
-    const ship = d.getActiveShip(targetId);
-    if (ship) {
-      if (!ship.alive) return;
-      // Plan: crispy-kazoo, Commit 2 — defence-in-depth for the
-      // spawn-handshake's pending-join window. A ship that hasn't
-      // completed the handshake (isActive=false) is invisible to
-      // drones (aiTickRunner filters) and remote-player snapshots
-      // (translator filters), but a stray damage event from an
-      // edge-case path is dropped here. The lingering-hull branch
-      // above has its own `isActive===false` semantics (lingering
-      // == disconnected piloted hull, distinct concept) — leave
-      // untouched. Spawn-handshake gating reaches the active branch
-      // only.
-      if (!ship.isActive) {
-        d.serverLogEvent('damage_skipped_pending_join', { targetId, shooterId, damage });
-        return;
-      }
-      // Active branch: targetId is the playerId, which is also the
-      // worker body id for the player ship (SPAWN used playerId).
-      const f = d.shieldHullRouter.damageShipLayered(ship, damage, targetId);
-      const pose = d.shipPoseCache.get(targetId);
-      const dmgEvent: DamageEvent = {
-        type: 'damage',
-        targetId,
-        damage,
-        newHealth: ship.health,
-        shooterId,
-        hitX: hitX ?? pose?.x,
-        hitY: hitY ?? pose?.y,
-        newShield: f.newShield,
-        shieldMax: f.shieldMax,
-        hullMax: f.hullMax,
-        hitLayer: f.hitLayer,
-      };
-      d.broadcastDamage(dmgEvent);
-      d.bus.emit('PLAYER_DAMAGED', { type: 'PLAYER_DAMAGED', targetId, damage, newHealth: ship.health });
-
-      if (ship.health <= 0) {
-        ship.alive = false;
-        d.broadcastDestroy({ type: 'destroy', targetId, shooterId });
-        d.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId, shooterId });
-        d.logger.info({ targetId, shooterId }, 'ship destroyed');
-      }
-      return;
-    }
-
-    // 4. Swarm target. Asteroids (kind=0, no swarmHealth entry) → immune.
-    const rec = d.swarmRegistry.get(targetId);
-    if (!rec) return;
-    const sf = d.shieldHullRouter.damageSwarmLayered(rec, damage);
-    if (sf === null) return;
-    const newHealth = d.shieldHullRouter.swarmHealth.get(targetId) ?? 0;
-
-    const wireTargetId = `swarm-${rec.entityId}`;
-    const b = slotBase(rec.slot);
-    const swarmHitX = hitX ?? d.sabF32[b + SLOT_X_OFF]!;
-    const swarmHitY = hitY ?? d.sabF32[b + SLOT_Y_OFF]!;
-    d.broadcastDamage({
+    const dmgEvent: DamageEvent = {
       type: 'damage',
       targetId: wireTargetId,
       damage,
-      newHealth,
+      newHealth: out.newHealth,
       shooterId,
-      hitX: swarmHitX,
-      hitY: swarmHitY,
-      newShield: sf.newShield,
-      shieldMax: sf.shieldMax,
-      hullMax: sf.hullMax,
-      hitLayer: sf.hitLayer,
-    });
-    // Diag — emits ONLY for swarm hits (the user's missile-vs-asteroid
-    // smoke class). Player/lingering/wreck branches return early above;
-    // a separate `damage_applied` log per branch would be noise. The
-    // E2E missile-vs-drone spec polls `/dev/events` for this tag with
-    // `kind === 'swarm'` to assert non-zero damage actually landed.
-    d.serverLogEvent('damage_applied', {
-      targetId: rec.id,
-      wireTargetId,
-      shooterId,
-      damage,
-      newHealth,
-      newShield: sf.newShield,
-      hitLayer: sf.hitLayer,
-      kind: 'swarm',
-      swarmKind: rec.kind,
-    });
+      hitX: hitX ?? this.resolver.poseX,
+      hitY: hitY ?? this.resolver.poseY,
+      newShield: out.newShield,
+      shieldMax: out.shieldMax,
+      hullMax: out.hullMax,
+      hitLayer: out.hitLayer,
+    };
+    this.deps.broadcastDamage(dmgEvent);
 
-    // Phase 1 AI: a hit flips the drone's behaviour state to COMBAT and
-    // adds the shooter to its hostile set. Same call goes to the client
-    // from its damage-event handler — both sides converge on the same
-    // hostility state without a wire-format bump.
-    if (shooterId) {
-      d.aiController.markHostile(rec.id, shooterId, d.serverTick());
-    }
+    leaf.perHit?.onApplied(leaf.target, targetId, wireTargetId, shooterId, damage, out, tick);
 
-    if (newHealth <= 0) {
-      d.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: true, shooterId });
+    if (out.destroyed) {
+      leaf.death.onDestroyed(leaf.target, targetId, wireTargetId, shooterId, tick);
     }
   }
 }

@@ -12,7 +12,7 @@
 import type { WeaponMode } from '@core/combat/WeaponCatalogue';
 import type { SwarmRenderState } from '@core/contracts/IRenderer';
 import type { InterpolatedPose } from '../net/swarmInterpolation';
-import { resolveDroneDisplayPose } from '../net/swarmDisplayPose';
+import { resolveEntityDisplayPose } from '../net/swarmDisplayPose';
 
 /**
  * Should a LOCAL-player fire of this weapon mode spawn a travelling ghost
@@ -68,7 +68,7 @@ export interface LocalAimTarget {
  * pose that `ColyseusClient.updateMirror` already resolved (one
  * `interpolateSwarmPose` call per frame, written into `entry.x/y/angle`,
  * and the pose the predWorld collision body + sprite + laser beam all
- * use) — via `resolveDroneDisplayPose`. It does **not** re-interpolate.
+ * use) — via `resolveEntityDisplayPose`. It does **not** re-interpolate.
  *
  * Why this matters (drone/laser-jitter fix, 2026-05-19; supersedes the
  * `0e24448` mechanism, same goal): `buildLocalAimTargets` runs in
@@ -97,7 +97,7 @@ export function buildLocalAimTargets(
   const out: LocalAimTarget[] = [];
   for (const [entityId, sw] of swarm) {
     if (sw.kind !== 1) continue; // asteroids aren't valid targets
-    resolveDroneDisplayPose(sw, scratch);
+    resolveEntityDisplayPose(sw, scratch);
     out.push({
       id: `swarm-${entityId}`,
       x: scratch.x,

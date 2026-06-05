@@ -69,7 +69,13 @@ export class TickBudgetTelemetry {
     phases: Record<string, number>;
   }> = [];
 
-  private lastTickHitchAtMs = 0;
+  // -Infinity (not 0) so the FIRST hitch always clears the cooldown
+  // gate. `performance.now()` is relative to the worker/process time
+  // origin, so in a freshly-started worker `nowMs` can be < the 250 ms
+  // interval — initialising to 0 made `nowMs - 0 >= 250` false and
+  // silently dropped a sector's first-ever hitch (and flaked the unit
+  // test on fast CI workers, green-local / red-CI).
+  private lastTickHitchAtMs = Number.NEGATIVE_INFINITY;
   private tickStart = 0;
   private phaseAnchor = 0;
 

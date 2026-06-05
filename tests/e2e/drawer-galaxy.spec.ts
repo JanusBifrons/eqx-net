@@ -150,12 +150,14 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
     const win = window as unknown as StoreWindow;
     const logs = win.__eqxLogs ?? [];
     return logs.filter(
-      (e) => e.tag === 'component_mount' && e.data['name'] === 'GalaxyOverviewScreen',
+      // Single-canvas refactor: the in-game overview is now the
+      // canvas-less GalaxyOverviewSelectChrome (was GalaxyOverviewScreen).
+      (e) => e.tag === 'component_mount' && e.data['name'] === 'GalaxyOverviewSelectChrome',
     ).length;
   });
   expect(
     mountCount,
-    `GalaxyOverviewScreen mounted ${mountCount} times in one open/close cycle. ` +
+    `GalaxyOverviewSelectChrome mounted ${mountCount} times in one open/close cycle. ` +
       `Expected ≤ 2 (StrictMode doubles mount on first open; close should not mount). ` +
       `>2 = the user-reported double-mount regression.`,
   ).toBeLessThanOrEqual(2);

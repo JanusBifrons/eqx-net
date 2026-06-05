@@ -14,6 +14,70 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-05 — single-canvas galaxy + a latent mount-index bug — a documented contract the code quietly violated
+Commit: single-canvas-galaxy steps + the localMountAim fix (this branch)
+Two findings from the galaxy-map-canvas-laser-fix branch.
+
+**1. Single-canvas unify.** Retired the galaxy map's SECOND Pixi `Application`
+(`GalaxyOverviewRenderer`). There is now one `GalaxyMapLayer` on the shared
+gameplay canvas, with an `overlay`/`selector` mode. The lifecycle key: the
+post-auth picker renders before any room is joined, so `GameSurface` got a
+`surfaceMode: 'idle' | 'connect'` — in `idle` the renderer inits + the
+selector layer installs but NO room is joined and NO sim loop runs; the layer
+still paints because Pixi's `app.ticker` auto-renders the stage (no
+`MIRROR_UPDATE` needed). Full story: `docs/architecture/single-canvas-galaxy.md`.
+
+**2. The latent mount-index bug (the "laser" half).** `ShipRenderState.mountAngles`
+is **read** catalogue-indexed by BOTH the live-beam renderer and the turret
+sprites, and `src/client/CLAUDE.md` documented it as "indexed by catalogue
+mount-order." But the local-player WRITER (`tickLocalMountAim`) sized + indexed
+the array by the **active SLOT's** mounts (`resolveSlotMounts`, slot-local
+order). Those two index spaces COINCIDE only while a slot is the full catalogue
+in catalogue order — which is true for every ship shipping today, so the bug
+never manifested. It was a real defect waiting on the first subset/reorder slot:
+the local player's beams + turrets would read the wrong mount's angle (or
+`undefined` → base). Remote players were always correct (server writes
+catalogue-indexed). **Lesson: a contract being *documented* (and *read*
+correctly everywhere) does not mean the *writer* honours it — a single
+divergent write site can sit latent for months behind data that happens to make
+the two index spaces equal.** Fix: a pure `combat/localMountAim.ts`
+`tickLocalMountAngles(out, catalogueMounts, activeMountIds, …)` that writes
+catalogue-indexed (active-slot mounts aim, the rest slew to base), locked by a
+subset/reorder-slot unit test that fails on slot-local indexing. The general
+sniff test: when an array is **written** by one index space (`resolveSlotMounts`)
+and **read** by another (`kind.mounts.findIndex`), they must be proven equal —
+or made equal — not assumed.
+
+## 2026-06-04 — GEP B4 (EntitySyncRouter) — wrap a tuned hot loop, don't rewrite it; make an inert descriptor field load-bearing at boot
+Commit: the B4 server-router commit (this commit)
+
+The directive was "everything routes through one entity system" — including the server send. The naive reading is "build a router that iterates the entity set and routes each entity by its `SyncProfile.transport`." That would have rewritten the two proven, byte-perfect, pool-optimised sends (the fixed-stride binary swarm record + the tuned ~271-LOC 20 Hz json-slice loop) for **zero functional gain** — pure netcode risk. The synthesis that satisfies the directive WITHOUT moving a wire byte:
+
+- **The router owns the routing DECISION + ORDERING, not the encoding.** `EntitySyncRouter.route()` calls pose-core (`SwarmBroadcaster`) then json-slice (`SnapshotBroadcaster`) — every entity still routes *through* the router, but each broadcaster's byte output is untouched. "Everything routes through" is satisfied by the router being the single per-tick entry point + owning the order, not by it re-encoding anything.
+- **HC#4 ordering moves INTO the router.** Pose-core must run before json-slice (it builds the per-(client,tick) `interestScratch` the drone slice reuses — no second `query9`). Pre-B4 that ordering was an implicit property of two adjacent `update()` lines; now the router *guarantees* it. The lock (`EntitySyncRouter.test.ts`) asserts call order `swarm → idle → snapshot` with fakes.
+- **Don't reorder a side-effecting computation to fit a cleaner signature.** Sector-idle is evaluated BETWEEN the two sends because `swarm.broadcast()` can apply backpressure (`client.leave`) before idle reads `clients.length`. The router preserves that exact order via an `evaluateSectorIdle` closure built ONCE at construction (zero per-tick closure alloc, #14) and invoked between the two `broadcast()` calls — NOT moved before the first send.
+
+**Making `SyncProfile.transport` load-bearing — at boot, not in the hot path.** `transport` was declared on every kind's descriptor since P1 but *consumed by nothing* (the "missing extraction layer"). The temptation is to read it per-entity in the send loop to "prove" it's used — that adds a per-entity branch to the hot path (megamorphism/alloc risk, the same class of mistake HC#5 guards). Instead, the router's constructor runs `assertTransportGovernance()`: it validates every registry kind's transport is well-formed (pose-core ⇒ has a `poseCoreKind`; json-slice ⇒ has a `jsonSliceTag`) and that the pose-core bytes match the wire constants. A registry/wire drift now fails loudly at room boot. The field governs a boot-time invariant — load-bearing, zero hot-path cost. The boot smoke (`timeout pnpm dev:server` → 7 `SectorRoom created` + `server ready`, 0 errors) exercises it for free.
+
+Downstream: B5 re-proves the kind=2 structure rides this generic router (`transportFor(structure) === 'pose-core'`) with zero new dispatch branches. If a future change ever needs the router to own per-entity *iteration* and that moves a wire byte: STOP and keep this shape — the netgate is the verdict.
+
+## 2026-06-04 — GEP B1/B2 (OOP entity pipeline) — leaf classes + the OOP-vs-megamorphism synthesis
+Commits: `a806cdc` (B1 leaves) + the B2 resolver/applyInteraction re-route (this commit)
+
+The Generic Entity Pipeline was first shipped *data-driven* (`Entity` = a bare interface; `DamageRouter` = a `resolve→strategies[kind]` table). That was NOT the planned OOP model and was rebuilt. The non-obvious lesson:
+
+**HC#5 ("no megamorphism") does NOT mean "no entity classes."** The earlier agent read "keep the damage call site monomorphic" as "therefore build no entity objects, collapse everything to data tables" — and shipped that silently. That over-correction is the trap. The actual synthesis:
+- Leaf classes EXIST (`ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity`, `src/server/entity/leaves/`) — real objects that OWN identity + pose and COMPOSE (hold as data fields) their `HealthBinding` / `PerHitEffect` / `DeathPolicy` / sync + render descriptors. OOP for identity/sync/render, where polymorphism is cheap and clarifying ("point at `ShipEntity` and see the whole ship story").
+- The damage CALL SITE stays monomorphic: `EntityResolver.resolve(targetId) → leaf`, then ONE `DamageRouter.applyInteraction(leaf, …)` reading `leaf.health` / `perHit` / `death` DATA. There is NO per-class virtual `leaf.receiveInteraction()` across the N classes — that is what megamorphic-deopts under ramming/projectile load, and what the guard comment in `DamageRouter` forbids.
+
+So: objects for the parts where dispatch is rare (lifecycle / sync / render); one concrete function reading composed data for the per-hit hot path. `benchmarks/damageDispatch.bench.ts` makes it observable — mixed-kind apply (3 leaf classes/iter) is ~1.17× single-kind per `apply`, NOT a 5–10× megamorphic cliff.
+
+**Asteroid is non-damageable (no HealthBinding).** The old swarm branch resolved an asteroid to the 'swarm' strategy and short-circuited on `applied:false` (no `swarmHealth` entry). The OOP resolver instead returns `null` for kind 0 — byte-identical observable (no event either way, since asteroids never carry `swarmHealth`) but cleaner: the leaf simply isn't a damage target. Drone (1) / structure (2) are the damageable swarm leaves.
+
+**Byte-identity is the safety net for re-routing dispatch.** B2 changed HOW damage dispatches (table → OOP) but not WHAT it does. The `DamageRouter.dispatch.test.ts` golden-master (12 cases, written before the first collapse) plus a leaf-parity test (each leaf reproduces the golden-master sequences through the same monomorphic path) lock every observable: broadcast/bus order, worker `DESPAWN linger-<id>`, slot freelist, `evictSwarmEntity`, the swarm `damage_applied` diag, `markHostile`. Netgate PASS=true (HEAD ≥ baseline on every gated metric) confirms net-feel is unchanged.
+
+Downstream (B3/B4/B5): weapon hierarchy, then the server `EntitySyncRouter` + client `entityFactory` extraction layer (the "makes the swarm stuff work" layer) + `resolveDroneDisplayPose → resolveEntityDisplayPose`, then re-prove the kind=2 structure flows decode→factory→predWorld→render→damage with ZERO new dispatch branches. **Process lesson:** build the plan's SHAPE, not just its outcome; if a real reason to deviate appears, STOP and flag the trade-off — never swap architecture silently (the trust breach that triggered this rebuild).
+
 ## 2026-06-03 — lingering-hull / wreck / ship-pool review + E2E (plan: splendid-wigderson)
 Commits: `b030360` `73a5068` `a987b8c` (+ E2E specs)
 

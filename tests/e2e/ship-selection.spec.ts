@@ -54,15 +54,21 @@ async function mockAuthAndGo(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 }
 
-/** Open the ship picker by clicking the centre hex (Sol Prime, at world (0,0))
- *  of the galaxy overview canvas. Post-refactor, the picker opens whenever
- *  a sector hex is tapped — there's no separate trigger button. */
+/** Open the ship picker for a sector. Single-canvas refactor: the spawn
+ *  picker renders on the shared canvas via GalaxyMapLayer's selector
+ *  mode, and a real tap routes through the host's `onSelectorPick`
+ *  (incl. the 200 ms tap-shield). The DEV-only `__eqxGalaxyPick(key)`
+ *  hook mirrors that tap deterministically — no hex-pixel math (this is
+ *  the programmatic path the old fixme comment was waiting for). */
 async function openPickerViaSectorClick(page: Page): Promise<void> {
-  const canvas = page.locator('[data-testid="galaxy-map-screen"] canvas').first();
-  await expect(canvas).toBeVisible({ timeout: 5_000 });
-  const box = await canvas.boundingBox();
-  if (!box) throw new Error('galaxy-map-screen canvas has no bounding box');
-  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+  await page.waitForFunction(
+    () => typeof (window as unknown as { __eqxGalaxyPick?: unknown }).__eqxGalaxyPick === 'function',
+    null,
+    { timeout: 8_000 },
+  );
+  await page.evaluate(() => {
+    (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('sol-prime');
+  });
   await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 5_000 });
 }
 
@@ -74,23 +80,21 @@ test.describe('ship-picker on galaxy-map', () => {
     // the picker is now triggered by a sector hex tap (covered below).
     await mockAuthAndGo(page);
     await expect(page.getByTestId('engineering-rooms-button')).toBeVisible({ timeout: 8000 });
+    // Single-canvas refactor: the hex map now renders on the SHARED
+    // gameplay canvas (game-surface), with the picker chrome
+    // (galaxy-map-screen) overlaid as a sibling — so the canvas lives
+    // under game-surface, not under galaxy-map-screen.
     await expect(
-      page.locator('[data-testid="galaxy-map-screen"] canvas').first(),
+      page.locator('[data-testid="game-surface"] canvas').first(),
     ).toBeVisible();
   });
 
-  // The three tests below open the picker by clicking the centre of the
-  // galaxy-map canvas. That worked when the renderer centered on Sol Prime
-  // (world (0,0)), but the post-refactor renderer centers on the bbox of
-  // ALL sectors — so canvas-centre is somewhere between sectors, not a
-  // hex. Until we expose a programmatic path (e.g. `window.__eqxGalaxy
-  // .openPicker(sectorKey)` debug hook) or compute the actual hex screen
-  // position, these tests can't reliably target a sector tap. Marked
-  // `fixme` so they don't pollute the smoke failure list. The underlying
-  // picker behaviour is still locked at the unit/component level by
-  // `components/ShipPickerModal.tsx` and its component tests.
-  // (e2e-rebuild Phase 5 repair queue, 2026-05-20.)
-  test.fixme('sector click opens the picker with a card per kind', async ({ page }) => {
+  // The three tests below open the picker via the deterministic
+  // `__eqxGalaxyPick` hook (the programmatic path the prior `fixme`
+  // comment was waiting for — landed with the single-canvas refactor).
+  // Previously fixme because canvas-centre clicks couldn't reliably hit
+  // a hex once the renderer centred on the multi-sector bbox.
+  test('sector click opens the picker with a card per kind', async ({ page }) => {
     await mockAuthAndGo(page);
     await openPickerViaSectorClick(page);
     await expect(page.getByTestId('ship-card-fighter')).toBeVisible();
@@ -98,7 +102,7 @@ test.describe('ship-picker on galaxy-map', () => {
     await expect(page.getByTestId('ship-card-heavy')).toBeVisible();
   });
 
-  test.fixme('clicking a card moves the tentative-selection highlight (data-selected)', async ({
+  test('clicking a card moves the tentative-selection highlight (data-selected)', async ({
     page,
   }) => {
     await mockAuthAndGo(page);
@@ -109,7 +113,7 @@ test.describe('ship-picker on galaxy-map', () => {
     await expect(page.getByTestId('ship-card-fighter')).toHaveAttribute('data-selected', '0');
   });
 
-  test.fixme('picker exposes Spawn + Cancel buttons; Cancel closes', async ({ page }) => {
+  test('picker exposes Spawn + Cancel buttons; Cancel closes', async ({ page }) => {
     await mockAuthAndGo(page);
     await openPickerViaSectorClick(page);
     await expect(page.getByTestId('ship-picker-spawn')).toBeVisible();

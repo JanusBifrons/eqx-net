@@ -43,6 +43,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
+import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
@@ -66,6 +67,7 @@ import {
   WebRtcFallbackMessageSchema,
 } from '../../shared-types/messages/webrtcSignalingMessages.js';
 import { SwarmBroadcaster } from './SwarmBroadcaster.js';
+import { EntitySyncRouter } from './EntitySyncRouter.js';
 import { SectorPersistence } from './SectorPersistence.js';
 import { LivingWorldBotHooks } from './LivingWorldBotHooks.js';
 import { OwnerlessShipEvictor } from './OwnerlessShipEvictor.js';
@@ -426,6 +428,9 @@ export class SectorRoom extends Room<SectorState> {
   private webrtcChannelManager: WebRtcChannelManager | null = null;
   /** Per-client binary swarm packet encode + send. Extracted to `SwarmBroadcaster.ts`. */
   private swarmBroadcaster!: SwarmBroadcaster;
+  /** GEP B4 — single orchestration entry point for per-tick entity sync (routes
+   *  pose-core then json-slice in HC#4 order). Extracted to `EntitySyncRouter.ts`. */
+  private entitySync!: EntitySyncRouter;
   /** Sector volatile-state persistence (swarm health snapshots). Extracted to `SectorPersistence.ts`. */
   private sectorPersistence!: SectorPersistence;
   /** Living World bot lifecycle (spawn/despawn/markHostile). Extracted to `LivingWorldBotHooks.ts`. */
@@ -615,6 +620,13 @@ export class SectorRoom extends Room<SectorState> {
       hitX?: number,
       hitY?: number,
     ) => void;
+    /** GEP P4 — lets the structureEntity integration test find a kind=2 record
+     *  and assert it is damageable (seeded into swarmHealth). */
+    swarmRegistry: {
+      all(): Iterable<{ id: string; kind: number; entityId: number }>;
+      get(id: string): { id: string; kind: number; entityId: number } | null | undefined;
+    };
+    swarmHealth: Map<string, number>;
   } {
     return {
       serverTick: this.serverTick,
@@ -623,6 +635,8 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      swarmRegistry: this.swarmRegistry,
+      swarmHealth: this.swarmHealth,
     };
   }
 
@@ -817,6 +831,21 @@ export class SectorRoom extends Room<SectorState> {
         angle?: number;
         hullExposed?: boolean;
       }>;
+      /**
+       * Generic Entity Pipeline P4 — deterministic STRUCTURE placement. Each
+       * entry spawns a static, damageable structure (pose-core kind byte 2) at
+       * a world `(x, y)`, seeding `swarmHealth` so it takes damage through the
+       * EXISTING swarm path (zero new dispatch). testMode-only; suppresses the
+       * legacy asteroid roster like `dronePoses`. Drives the `structureEntity`
+       * integration + `structure-visible-damageable` E2E ("for free" proof).
+       */
+      structurePoses?: ReadonlyArray<{
+        id?: string;
+        x: number;
+        y: number;
+        radius?: number;
+        mass?: number;
+      }>;
     };
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -844,8 +873,9 @@ export class SectorRoom extends Room<SectorState> {
     const useBulkSeed = typeof roomOpts.swarmCount === 'number' && roomOpts.swarmCount > 0;
     const useSingleAsteroid = roomOpts.singleAsteroid === true;
     const useDronePoses = this.testMode && Array.isArray(roomOpts.dronePoses) && roomOpts.dronePoses.length > 0;
+    const useStructurePoses = this.testMode && Array.isArray(roomOpts.structurePoses) && roomOpts.structurePoses.length > 0;
     const asteroidRoster =
-      (useBulkSeed || useSingleAsteroid || useDronePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
+      (useBulkSeed || useSingleAsteroid || useDronePoses || useStructurePoses) ? [] : (roomOpts.asteroidConfig ?? ASTEROIDS);
 
     // Phase 5c: seed swarm via the spawner, which owns slot allocation,
     // SAB priming, registry registration, and the worker spawn-obstacle
@@ -1254,6 +1284,31 @@ export class SectorRoom extends Room<SectorState> {
       logger,
     });
 
+    // GEP B4 — the single orchestration entry point for per-tick entity sync.
+    // Routes pose-core binary FIRST (builds interestScratch), then the json-slice
+    // snapshot slices (reuse it — HC#4), evaluating sector-idle between the two
+    // sends exactly where update() used to (backpressure order preserved). The
+    // idle closure is built ONCE here (no per-tick closure alloc, #14); its inner
+    // options object is built per tick exactly as before. Construction also runs a
+    // boot-time SyncProfile.transport governance check (makes `transport`
+    // load-bearing). The proven broadcasters keep the byte-level encoding.
+    this.entitySync = new EntitySyncRouter({
+      swarmBroadcaster: this.swarmBroadcaster,
+      snapshotBroadcaster: this.snapshotBroadcaster,
+      evaluateSectorIdle: () =>
+        evaluateSectorIdle({
+          idleTracker: this.idleTracker,
+          serverTick: this.serverTick,
+          shipPoseCache: this.shipPoseCache,
+          liveProjectiles: this.liveProjectiles,
+          connectedClientCount: this.clients.length,
+          swarmEntityCount: this.swarmRegistry.size(),
+          forceBroadcastUntilTick: this.forceBroadcastUntilTick,
+          idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
+          idleThresholdTicks: IDLE_THRESHOLD_TICKS,
+        }),
+    });
+
     // Deterministic per-room ship-kind sequence. When `roomOpts.droneKinds`
     // is set, the spawner advances through this array round-robin instead
     // of pickRandomShipKind, so the `mount-test` engineering room can
@@ -1375,6 +1430,27 @@ export class SectorRoom extends Room<SectorState> {
         placed++;
       }
       logger.info({ requested: poses.length, spawned: placed }, 'dronePoses seeded');
+    } else if (useStructurePoses) {
+      // Generic Entity Pipeline P4 — deterministic STRUCTURE placement (the
+      // "for free" proof). Each structure is a kind=2 swarm entity; seeding
+      // `swarmHealth` is the ONLY thing that makes it damageable — the existing
+      // DamageRouter 'swarm' strategy then handles it with ZERO new dispatch.
+      // `swarmShield = 0` (no shield layer) so a hit lands straight on the hull.
+      const poses = roomOpts.structurePoses!;
+      let placed = 0;
+      for (let i = 0; i < poses.length; i++) {
+        const p = poses[i]!;
+        const id = p.id ?? `structure-${i}`;
+        const ok = this.swarmSpawner.spawnStructure({ id, x: p.x, y: p.y, radius: p.radius ?? 50, mass: p.mass });
+        if (!ok) {
+          logger.error({ requested: poses.length, spawned: placed }, 'structurePoses spawn truncated (slot pool exhausted)');
+          break;
+        }
+        this.swarmHealth.set(id, STRUCTURE_DEFAULT_HEALTH);
+        this.swarmShield.set(id, 0);
+        placed++;
+      }
+      logger.info({ requested: poses.length, spawned: placed }, 'structurePoses seeded');
     } else if (useBulkSeed) {
       // Phase 5e bulk seed. Replaces both the legacy ASTEROIDS list and the
       // small drone ring with a sunflower-spiral spread across a disc, sized
@@ -3217,54 +3293,15 @@ export class SectorRoom extends Room<SectorState> {
     // deltas. Phase 5d: encode per-client with the spatial grid's 9-cell
     // interest window. Out-of-interest entities still ship at decimated
     // cadence inside the encoder.
-    this.swarmBroadcaster.broadcast();
-    phaseTime('swarmEncode');
-    phaseTime('swarmBroadcast');
-
-    // Stage 5 sector-idle evaluation — see sectorIdleEvaluator.ts.
-    const sectorIdle = evaluateSectorIdle({
-      idleTracker: this.idleTracker,
-      serverTick: this.serverTick,
-      shipPoseCache: this.shipPoseCache,
-      liveProjectiles: this.liveProjectiles,
-      connectedClientCount: this.clients.length,
-      swarmEntityCount: this.swarmRegistry.size(),
-      forceBroadcastUntilTick: this.forceBroadcastUntilTick,
-      idleMotionEpsilonSq: IDLE_MOTION_EPSILON_SQ,
-      idleThresholdTicks: IDLE_THRESHOLD_TICKS,
-    });
-
-    // Stage 5 (post-hotfix #4) — per-client phase-staggered snapshot broadcast.
-    //
-    // Pre-Stage-5: every 3rd update() the room built one snapshot containing
-    // every alive ship and broadcast it to every client.
-    //
-    // Stage 5 (initial): introduced two cadences (close-tier 30 Hz at
-    // every 2 broadcastCounter ticks, far-tier 20 Hz at every 3) and
-    // sent on the union — `closeFires || farFires`. That produced
-    // irregular 17/17/33/33 ms intervals at the recipient, which broke
-    // the reconciler's lerp (built around a clean ~50 ms cadence) and
-    // caused visible stutter (see `docs/LESSONS.md` 2026-05-08 hotfix #4).
-    //
-    // Stage 5 (post-hotfix #4): single 20 Hz cadence — `shouldBroadcastFar`
-    // only. Tier classification is no longer used for inclusion (every
-    // alive ship is in every fired snapshot, same as pre-Stage-5). The
-    // gains kept from Stage 5: phase staggering (each recipient's
-    // farOffset hashed from playerId, smoothing server CPU spikes since
-    // recipients almost never peak on the same tick); idle suppression
-    // after 60 ticks of no sector activity; lastInput omission when the
-    // bits match the per-recipient cache. The 30 Hz close-tier idea is
-    // shelved until a single-cadence design with selective tier inclusion
-    // can be tested end-to-end.
-    //
-    // Scheduling tick is `broadcastCounter` (incremented once per update()),
-    // NOT `serverTick` (read from SAB). The worker's SAB tick can advance
-    // by 1, 2, or 3 between successive update() calls when the two 60 Hz
-    // loops drift; using SAB tick % 3 for scheduling caused ~25% missed
-    // broadcasts pre-Phase-3. See `docs/LESSONS.md`. broadcastCounter is
-    // purely main-thread and so is monotonic with update() calls.
-    this.snapshotBroadcaster.broadcast(sectorIdle);
-    phaseTime('snapshotBroadcast');
+    // GEP B4 — both per-tick entity-sync sends route through the EntitySyncRouter:
+    // pose-core binary FIRST (builds the per-(client,tick) interestScratch), then
+    // the json-slice snapshot slices (reuse it — no second query9; HC#4). The
+    // router evaluates sector-idle BETWEEN the two sends (swarm.broadcast may apply
+    // backpressure before idle reads clients.length — order preserved verbatim) and
+    // fires the phaseTime markers at the same boundaries. The single-20 Hz cadence,
+    // phase staggering, and idle-suppression rationale live in SnapshotBroadcaster
+    // + server CLAUDE.md (Phase 3 snapshot-broadcast-rate) + docs/LESSONS.md.
+    this.entitySync.route(phaseTime);
 
     // Phase 1 swift-otter — once per second, expire any WebRTC sessions
     // whose ICE deadline has elapsed without `onConnected`. Gated to

@@ -20,7 +20,7 @@
  * drawn".
  *
  * It exercises the REAL production functions — `buildLocalAimTargets`,
- * `resolveDroneDisplayPose`, `interpolateSwarmPose` — NOT a re-modelled
+ * `resolveEntityDisplayPose`, `interpolateSwarmPose` — NOT a re-modelled
  * pipeline (the sibling `droneRenderSmoothness.test.ts` models the
  * RETIRED pre-2026-05-18 client-AI/predWorld-snap/spring path and is
  * not the right scaffolding post-pivot). Fully deterministic (injected
@@ -50,7 +50,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { interpolateSwarmPose, type InterpolatedPose } from '../../src/client/net/swarmInterpolation.js';
-import { resolveDroneDisplayPose } from '../../src/client/net/swarmDisplayPose.js';
+import { resolveEntityDisplayPose } from '../../src/client/net/swarmDisplayPose.js';
 import { buildLocalAimTargets } from '../../src/client/combat/LocalBeam.js';
 import type { SwarmRenderState, PoseRingEntry } from '../../src/core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../src/core/contracts/IRenderer.js';
@@ -141,7 +141,7 @@ describe('drone — one pose per frame across a jittery App-loop sequence', () =
 
       // ── render: the sprite reads the written entry via the seam,
       //    at render-now (later in the frame) — must equal collision.
-      const sprite = resolveDroneDisplayPose(drone, spriteScratch);
+      const sprite = resolveEntityDisplayPose(drone, spriteScratch);
       expect(sprite.x).toBe(collision.x);
       expect(sprite.y).toBe(collision.y);
       expect(sprite.angle).toBe(collision.angle);

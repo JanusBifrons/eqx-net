@@ -2,9 +2,13 @@ import { Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js';
 import {
   GALAXY_SECTORS,
   axialToPixel,
-  isNeighbour,
   type GalaxySector,
 } from '@core/galaxy/galaxy';
+import {
+  isSectorSelectable,
+  clusterFitFraction,
+  type GalaxyLayerMode,
+} from './galaxyLayerDecisions';
 
 /**
  * In-game additive galaxy-map layer (Map B).
@@ -61,6 +65,10 @@ export class GalaxyMapLayer extends Container {
   private readonly _edgeDedupScratch = new Set<string>();
   private currentSectorKey: string | null = null;
   private isDocked = true;
+  /** `overlay` = in-game additive HUD (Map B, neighbours-only);
+   *  `selector` = spawn/warp picker (Map A's role, every sector
+   *  tappable, full-screen). Single-canvas refactor, 2026-06-05. */
+  private mode: GalaxyLayerMode = 'overlay';
   private pulsePhase = 0;
   private screenW = 0;
   private screenH = 0;
@@ -98,6 +106,18 @@ export class GalaxyMapLayer extends Container {
     if (this.isDocked === docked) return;
     this.isDocked = docked;
     this.repaint();
+  }
+
+  /**
+   * Switch between the in-game additive overlay (`overlay`) and the
+   * full-screen spawn/warp picker (`selector`). Repaints selectability
+   * and re-fits the cluster (the selector fills more of the viewport).
+   */
+  setMode(mode: GalaxyLayerMode): void {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.repaint();
+    if (this.screenW > 0 && this.screenH > 0) this.resize(this.screenW, this.screenH);
   }
 
   /**
@@ -145,7 +165,7 @@ export class GalaxyMapLayer extends Container {
     }
     const clusterW = maxX - minX;
     const clusterH = maxY - minY;
-    const target = Math.min(screenW, screenH) * 0.6;
+    const target = Math.min(screenW, screenH) * clusterFitFraction(this.mode);
     const scale = Math.min(target / clusterW, target / clusterH);
     this.clusterRoot.scale.set(scale);
     // Centre on the current sector ("you are here") if known, else fall
@@ -170,9 +190,12 @@ export class GalaxyMapLayer extends Container {
   }
 
   private isSelectable(sec: GalaxySector): boolean {
-    if (!this.isDocked) return false;
-    if (!this.currentSectorKey) return false;
-    return isNeighbour(this.currentSectorKey, sec.key);
+    return isSectorSelectable({
+      mode: this.mode,
+      docked: this.isDocked,
+      currentSectorKey: this.currentSectorKey,
+      sectorKey: sec.key,
+    });
   }
 
   private buildHexes(): void {

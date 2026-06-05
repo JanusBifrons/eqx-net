@@ -104,7 +104,7 @@ test.describe('galaxy-map overlay (Map B)', () => {
     await ctx.close();
   });
 
-  test('drawer Galaxy tab opens the standalone overview (Map A warp-mode), not the additive overlay', async ({ browser }) => {
+  test('drawer Galaxy tab opens the in-game ship-swap overview, not the additive overlay', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
@@ -118,16 +118,19 @@ test.describe('galaxy-map overlay (Map B)', () => {
     await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="galaxy-tab-show-map"]').click();
 
-    // Drawer auto-closes; the standalone overview mounts.
-    await expect(page.locator('[data-testid="galaxy-overview-warp"]')).toBeVisible({ timeout: 5_000 });
+    // Drawer auto-closes; the roster ship-swap overview mounts.
+    // Single-canvas refactor: this is GalaxyOverviewSelectChrome
+    // (testid `galaxy-overview-select`) — Map A's second Pixi Application
+    // is retired, so there is no `galaxy-overview-warp` surface anymore.
+    await expect(page.locator('[data-testid="galaxy-overview-select"]')).toBeVisible({ timeout: 5_000 });
 
-    // The additive HUD button stays unaffected by Map A.
+    // The additive HUD button stays unaffected.
     const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
     await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
 
     // Close button restores gameplay.
     await page.locator('[data-testid="galaxy-overview-close"]').click();
-    await expect(page.locator('[data-testid="galaxy-overview-warp"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="galaxy-overview-select"]')).toHaveCount(0);
 
     await ctx.close();
   });

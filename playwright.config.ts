@@ -94,6 +94,7 @@ const FEATURE_SPECS: string[] = [
   '**/ramming-probe-armpit.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
+  '**/structure-visible-damageable.spec.ts',
   '**/linger/*.spec.ts',
 ];
 

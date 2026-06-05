@@ -26,6 +26,7 @@
  */
 
 import { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
+import type { GalaxyLayerMode } from '../render/galaxy/galaxyLayerDecisions';
 import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
@@ -36,6 +37,16 @@ export interface InstallGalaxyOverlayOpts {
   useWorker: boolean;
   el: HTMLDivElement;
   onEngageTransit: (key: string) => void;
+  /**
+   * `overlay` (default) — the in-game additive heads-up map: taps warp
+   * to a neighbour and close the overlay. `selector` — the full-screen
+   * spawn/warp picker: every sector is tappable, the picker is always
+   * shown, and taps route to {@link onSelectorPick} (the spawn flow)
+   * instead of engaging a transit.
+   */
+  mode?: GalaxyLayerMode;
+  /** Selector-mode tap handler (spawn picker). Required when `mode === 'selector'`. */
+  onSelectorPick?: (sectorKey: string) => void;
 }
 
 /**
@@ -45,35 +56,40 @@ export interface InstallGalaxyOverlayOpts {
  * inside the worker, addressed via the renderer's setLayer* methods).
  */
 export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapLayer | null {
-  const { renderer, useWorker, el, onEngageTransit } = opts;
+  const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick } = opts;
   const s0 = useUIStore.getState();
+  const selector = mode === 'selector';
+  // The selector picker is always on screen; the additive overlay
+  // follows the Zustand MAP-button toggle.
+  const initialVisible = selector ? true : s0.isGalaxyMapOpen;
+  const onTap = selector
+    ? (key: string): void => { onSelectorPick?.(key); }
+    : (key: string): void => {
+        onEngageTransit(key);
+        // Auto-close the additive overlay on warp-tap; the user explicitly
+        // asked for tap-to-warp to dismiss the map (otherwise it stays
+        // visible during SPOOLING and feels stuck).
+        useUIStore.getState().setGalaxyMapOpen(false);
+      };
+
   if (useWorker) {
     // The worker already owns its layer; just route taps + push
     // initial state so the overlay knows which sector is "you are
     // here" and whether it's selectable.
-    (renderer as WorkerRendererClient).setOverlayTapHandler((key) => {
-      onEngageTransit(key);
-      useUIStore.getState().setGalaxyMapOpen(false);
-    });
+    (renderer as WorkerRendererClient).setOverlayTapHandler(onTap);
+    (renderer as WorkerRendererClient).setLayerMode(mode);
     (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
     (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
-    (renderer as WorkerRendererClient).setLayerVisible(s0.isGalaxyMapOpen);
+    (renderer as WorkerRendererClient).setLayerVisible(initialVisible);
     return null;
   }
-  const galaxyLayer = new GalaxyMapLayer({
-    onSelect: (key) => {
-      onEngageTransit(key);
-      // Auto-close the additive overlay on warp-tap; the user explicitly
-      // asked for tap-to-warp to dismiss the map (otherwise it stays
-      // visible during SPOOLING and feels stuck).
-      useUIStore.getState().setGalaxyMapOpen(false);
-    },
-  });
+  const galaxyLayer = new GalaxyMapLayer({ onSelect: onTap });
   renderer.addOverlayContainer(galaxyLayer);
+  galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);
   galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
   galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
-  galaxyLayer.setVisible(s0.isGalaxyMapOpen);
+  galaxyLayer.setVisible(initialVisible);
   return galaxyLayer;
 }
 
@@ -118,5 +134,22 @@ export function syncGalaxyTransitDocked(
   galaxyLayer?.setTransitDocked(docked);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerTransitDocked(docked);
+  }
+}
+
+/**
+ * Mode sync — routes both the DOM-mode layer and the worker-hosted
+ * layer. `overlay` = in-game additive HUD; `selector` = full-screen
+ * spawn/warp picker (single-canvas refactor). Mirrors the dual-path
+ * shape of the sync helpers above.
+ */
+export function syncGalaxyMode(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  mode: GalaxyLayerMode,
+): void {
+  galaxyLayer?.setMode(mode);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerMode(mode);
   }
 }

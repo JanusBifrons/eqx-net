@@ -146,6 +146,68 @@ bodies.
 - **When introducing a new visible entity type** (wreck, lingering hull, future X), add an integration test in `tests/integration/sectorRoom/` that drives the full snapshot path. Don't rely on smoke tests — they are not repeatable and don't protect future PRs.
 - **Integration clients MUST send `client_ready` or ships never activate (2026-06-03).** The bare `colyseus.js` client in `harness.ts` does NOT run the browser's bootstrap, so without an explicit `client_ready` the join handshake never completes — `ship.isActive` stays `false` until the 30-s `CLIENT_READY_TIMEOUT_TICKS` watchdog. Tests that assert on active hulls (`abandonToWreck`, `lingering`) were silently RED for this reason. Use `harness.connectActive(playerId, opts)` (sends `client_ready`, polls until `isActive`) for any test that needs a live hull; plain `connectAs` only gives a pending/lingering-able hull. The `SectorRoom._internals` piercing getter (dropped by the v3 subsystem extraction, which had left `hitAckContract`/`droneTargetActiveOnly`/`ramming`/`lingering` erroring with `_internals` undefined) was **restored 2026-06-03** (exposes `serverTick`, `ownerlessShips`, `aiPlayerScratch`, `postToWorker`, `applyDamage`). The lingering/wreck/pool suite is now green. The combat/AI files (`hitAckContract`, `droneTargetActiveOnly`, `ramming`) still need `connectActive` for their active-ship spawns (the same `client_ready` gap) — a mechanical follow-up outside the lingering/wreck scope.
 
+## Generic Entity Pipeline — OOP damage dispatch + a new pose-core kind (2026-06-04)
+
+> Updated 2026-06-04 (GEP B2): the data-driven `strategies[kind]` table is now
+> the **OOP entity pipeline**. The damage SHAPE is real leaf objects, not a
+> side table.
+
+`DamageRouter.apply` routes through real Entity LEAVES: `EntityResolver.resolve(targetId)`
+returns the live leaf it names (`ShipEntity` / `WreckEntity` / `DroneEntity` /
+`StructureEntity` in [src/server/entity/leaves/](entity/leaves/)), then ONE
+monomorphic `DamageRouter.applyInteraction(leaf, …)` reads the leaf's COMPOSED
+`{ health, perHit, death }` data (`applyLayered → broadcast → perHit → death`).
+Each leaf owns its identity + pose and composes its damage strategy + sync/render
+descriptors — a new damageable type is **a leaf + a registry row**, ZERO new
+dispatch branch here. Byte-identical to the former if-tree / strategy-table
+(locked by `DamageRouter.dispatch.test.ts`, the golden-master — HC#1: branch
+order + per-branch side-effects are load-bearing). The ordered shape-based
+selection (wreck→lingering→active→swarm; an asteroid, kind 0, is **non-damageable**
+→ the resolver returns `null` = immune) lives in
+[EntityResolver.ts](entity/EntityResolver.ts).
+
+**HC#5 (monomorphism guard).** `applyInteraction` is ONE concrete function
+reading the leaf's composed DATA — it must NEVER become a per-class virtual
+`leaf.receiveInteraction()` across the N leaf classes (that megamorphic-deopts in
+V8 under ramming/projectile load). The leaves are objects for identity/sync/render
+(where polymorphism is cheap + clarifying); the per-hit hot work stays one
+monomorphic call site. Lock: the `DO NOT replace this with receiveInteraction`
+guard comment + `benchmarks/damageDispatch.bench.ts` (mixed-kind ≈ single-kind
+per `apply` — no cliff). Adding a damageable type does **not** add a branch here.
+
+A new **pose-core** entity type (e.g. `SWARM_KIND_STRUCTURE = 2`) is a
+swarm-registry record — it rides `BinarySwarmBroadcast` (writes `rec.kind`
+as-is, no encoder change), the interest grid (reuses the single per-(client,tick)
+`interestScratch`, no new `query9`), and the `DamageRouter` 'swarm' strategy for
+free. The only damage-specific line is seeding `swarmHealth` on spawn (absence =
+immune, like asteroids). `SwarmSpawner.spawnStructure` mirrors `spawnAsteroid`
+(`spawnOne` is already kind-generic). Test trigger: the testMode `structurePoses`
+room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible type
+⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
+story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
+
+**EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
+entity-sync sends in `SectorRoom.update()` now route through ONE
+[EntitySyncRouter](rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of
+calling the two broadcasters directly. The router owns the **ordering decision**
+— pose-core binary FIRST (`SwarmBroadcaster.broadcast()` builds the
+per-(client,tick) `interestScratch`), then json-slice
+(`SnapshotBroadcaster.broadcast(sectorIdle)` reuses it, no second `query9` —
+**HC#4, now enforced by the router, not the caller**) — and evaluates sector-idle
+**between** the two sends (verbatim: `swarm.broadcast` may apply backpressure
+before idle reads `clients.length`, so the order is preserved, not reordered).
+The proven broadcasters keep their **byte-level encoding UNCHANGED** (the safe
+shape — making the router own per-entity iteration would move wire bytes for zero
+gain; STOP+flag + netgate if ever attempted). Its constructor runs a **boot-time
+`SyncProfile.transport` governance check** (`assertTransportGovernance`) that
+validates every `EntityKindRegistry` kind's transport is well-formed and that the
+pose-core bytes match the wire constants — this is what finally makes
+`SyncProfile.transport` load-bearing (boot-time only, never in the `route()` hot
+path). Hot path is allocation-free (#14): the idle closure is built once at
+construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.ts`
+(ordering + idle-threading + governance); the full-snapshot-path byte-identity is
+the netgate + the existing integration suite.
+
 ## Lingering-hull → wreck symmetry (2026-06-03)
 
 "An abandoned ship becomes a wreck if it's still in the game world, otherwise it vanishes." A **lingering** hull (disconnected / fresh-spawn-displaced, `isActive=false`) is still in the world (a remote observer renders it from `mirror.lingeringShips`), so abandoning it must leave a wreck — symmetric with abandoning an active hull. `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](rooms/sectorIdleEvaluator.ts)) returns BOTH active and lingering abandoned ships (no `!isActive` skip) with a `lingering` flag; the `update()` poll routes active → `convertShipToWreck(playerId)` and lingering → `WreckLifecycleCoordinator.convertLingeringHullToWreck(shipInstanceId)`. The lingering path is **shipInstanceId-keyed** because the owning player may be piloting a DIFFERENT active hull — it reads `lingeringSlots`/`lingeringPoseCache`, rekeys the worker body `linger-${id}` → `wreck-${id}`, cancels the ownerless-evict timer, and **never touches any playerId-keyed map**. Locks: [abandonLingeringToWreck.test.ts](../../tests/integration/sectorRoom/abandonLingeringToWreck.test.ts) + the browser-level `tests/e2e/linger/abandon-lingering-wreck.spec.ts`. The galaxy-only linger/wreck/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).
