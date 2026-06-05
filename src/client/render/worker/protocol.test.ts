@@ -113,6 +113,8 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_CURRENT_SECTOR', msg: { type: 'SET_CURRENT_SECTOR', sectorKey: 'sol-prime' } },
       { name: 'SET_CURRENT_SECTOR null', msg: { type: 'SET_CURRENT_SECTOR', sectorKey: null } },
       { name: 'SET_TRANSIT_DOCKED', msg: { type: 'SET_TRANSIT_DOCKED', docked: true } },
+      { name: 'SET_OVERLAY_MODE overlay', msg: { type: 'SET_OVERLAY_MODE', mode: 'overlay' } },
+      { name: 'SET_OVERLAY_MODE selector', msg: { type: 'SET_OVERLAY_MODE', mode: 'selector' } },
       { name: 'RESIZE', msg: { type: 'RESIZE', width: 1024, height: 768, dpr: 1.5 } },
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },
@@ -207,6 +209,7 @@ describe('renderer-worker protocol', () => {
           case 'SET_VISIBLE':
           case 'SET_CURRENT_SECTOR':
           case 'SET_TRANSIT_DOCKED':
+          case 'SET_OVERLAY_MODE':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'SET_WARP_MODE':

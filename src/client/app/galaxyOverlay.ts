@@ -26,6 +26,7 @@
  */
 
 import { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
+import type { GalaxyLayerMode } from '../render/galaxy/galaxyLayerDecisions';
 import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
@@ -118,5 +119,22 @@ export function syncGalaxyTransitDocked(
   galaxyLayer?.setTransitDocked(docked);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerTransitDocked(docked);
+  }
+}
+
+/**
+ * Mode sync — routes both the DOM-mode layer and the worker-hosted
+ * layer. `overlay` = in-game additive HUD; `selector` = full-screen
+ * spawn/warp picker (single-canvas refactor). Mirrors the dual-path
+ * shape of the sync helpers above.
+ */
+export function syncGalaxyMode(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  mode: GalaxyLayerMode,
+): void {
+  galaxyLayer?.setMode(mode);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerMode(mode);
   }
 }

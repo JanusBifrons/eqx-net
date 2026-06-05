@@ -52,6 +52,14 @@ export interface MirrorUpdateMsg {
 export interface SetVisibleMsg { type: 'SET_VISIBLE'; visible: boolean }
 export interface SetCurrentSectorMsg { type: 'SET_CURRENT_SECTOR'; sectorKey: string | null }
 export interface SetTransitDockedMsg { type: 'SET_TRANSIT_DOCKED'; docked: boolean }
+/**
+ * Switch the worker-hosted GalaxyMapLayer between the in-game additive
+ * overlay (`overlay`) and the full-screen spawn/warp picker (`selector`).
+ * The mode string is inlined (not imported from `galaxyLayerDecisions`)
+ * to keep the worker-protocol dir free of client-render imports — same
+ * convention every other message here follows.
+ */
+export interface SetOverlayModeMsg { type: 'SET_OVERLAY_MODE'; mode: 'overlay' | 'selector' }
 
 /**
  * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
@@ -241,6 +249,7 @@ export type MainToWorkerMsg =
   | SetVisibleMsg
   | SetCurrentSectorMsg
   | SetTransitDockedMsg
+  | SetOverlayModeMsg
   | ResizeMsg
   | SetTickerFpsMsg
   | SetWarpModeMsg

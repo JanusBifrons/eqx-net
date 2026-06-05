@@ -182,6 +182,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         galaxyLayer?.setTransitDocked(msg.docked);
         break;
       }
+      case 'SET_OVERLAY_MODE': {
+        galaxyLayer?.setMode(msg.mode);
+        break;
+      }
 
       case 'SET_DIAG_MARKERS': {
         // F1 — flip per-frame marker emission. No renderer dependency
