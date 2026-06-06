@@ -58,6 +58,39 @@ test('auto-fires at an in-range hostile with NO input (default ON)', async ({ br
   }
 });
 
+test('toggling AUTO off stops auto-fire at a hostile (manual override still works)', async ({ browser }) => {
+  const { ctx, page } = await joinAutoFire(browser, { startHostile: true });
+  try {
+    // Confirm it auto-fires first (AUTO defaults ON).
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
+      undefined,
+      { timeout: 8000 },
+    );
+    // Turn AUTO off via the toggle — auto-fire must stop.
+    await page.locator('[data-testid="auto-fire-toggle"]').click();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '0',
+      undefined,
+      { timeout: 5000 },
+    );
+    expect(await getBeamActive(page)).toBe(false);
+
+    // Manual fire still works with AUTO off.
+    await page.keyboard.down('Space');
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-beam-active') === '1',
+      undefined,
+      { timeout: 5000 },
+    );
+    await page.keyboard.up('Space');
+    expect(await getBeamActive(page)).toBe(true);
+  } finally {
+    await page.keyboard.up('Space').catch(() => undefined);
+    await ctx.close();
+  }
+});
+
 test('does NOT auto-fire at a NEUTRAL drone, but manual fire still works', async ({ browser }) => {
   const { ctx, page } = await joinAutoFire(browser, { startHostile: false });
   try {

@@ -28,6 +28,7 @@ import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { MobileControls } from './components/MobileControls';
+import { AutoFireToggleButton } from './components/AutoFireToggleButton';
 import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
@@ -602,6 +603,11 @@ function GameSurface({
        *  positions) and in the corner on desktop. The held controls
        *  (joystick/FIRE/BOOST) stay dedicated in MobileControls. Phase 2 adds
        *  the "Build ▸" structure-placement actions to the same dial. */}
+      {/* Auto-fire mode toggle — shown on BOTH desktop and touch (default ON).
+       *  order=5 keeps it rightmost in the row-reverse cluster; on touch it sits
+       *  where FIRE would be when auto-fire is OFF (MobileControls hides FIRE
+       *  while ON). */}
+      <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>
       <Slot anchor="bottom-right" order={30}><SpeedDialMenu /></Slot>
       {/* Structures plan (Phase 2): placement confirm banner — shown only while
        *  the player is in placement mode (set by the speed-dial Build menu). */}
