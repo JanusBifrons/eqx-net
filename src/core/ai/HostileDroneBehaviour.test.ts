@@ -97,6 +97,51 @@ describe('HostileDroneBehaviour — IDLE patrol', () => {
   });
 });
 
+describe('HostileDroneBehaviour — Part C target selection', () => {
+  // Convention-agnostic: assert WHICH target was chosen by the SIGN of the
+  // drone's turn intent (it rotates toward its target). Two equidistant
+  // hostiles placed symmetrically left/right produce opposite-sign turns, so
+  // matching the single-target reference tells us which one was picked.
+  const turnToward = (view: AiWorldView): number => {
+    const b = new HostileDroneBehaviour();
+    b.markHostile('full', 100);
+    b.markHostile('wounded', 100);
+    const intent = b.tick(droneAt(0, 0, 0, 0), view);
+    return intent.setAngvel ?? intent.torque ?? 0;
+  };
+  const at = (id: string, x: number, y: number, health: number): AiWorldView['players'][number] => ({
+    id, x, y, vx: 0, vy: 0, health, maxHealth: 100,
+  });
+  const view = (players: AiWorldView['players'], tick = 200): AiWorldView => ({ players, tick, dtSec: 1 / 60 });
+
+  it('picks the lower-health hostile over an equidistant full-HP one', () => {
+    // full-HP to the RIGHT (first in order → pure-nearest tie-break), wounded to
+    // the LEFT. Health weighting must pick the wounded (left) → turn sign equals
+    // the wounded-only reference and is OPPOSITE the full-only reference.
+    const both = turnToward(view([at('full', 100, 0, 100), at('wounded', -100, 0, 10)]));
+    const woundedOnly = turnToward(view([at('wounded', -100, 0, 10)]));
+    const fullOnly = turnToward(view([at('full', 100, 0, 100)]));
+    expect(Math.sign(both)).toBe(Math.sign(woundedOnly));
+    expect(Math.sign(both)).not.toBe(Math.sign(fullOnly));
+    expect(woundedOnly).not.toBe(0);
+  });
+
+  it('holds its committed target through the dwell window', () => {
+    const b = new HostileDroneBehaviour();
+    b.markHostile('left', 100);
+    b.markHostile('right', 100);
+    // Acquire `left` first (only it in view).
+    const t1 = b.tick(droneAt(0, 0, 0, 0), view([at('left', -100, 0, 100)], 200));
+    const turn1 = t1.setAngvel ?? t1.torque ?? 0;
+    // Within the dwell window an equidistant `right` appears. Dwell holds `left`
+    // → turn keeps the same sign (still steering toward the left target).
+    const t2 = b.tick(droneAt(0, 0, 0, 0), view([at('left', -100, 0, 100), at('right', 100, 0, 100)], 210));
+    const turn2 = t2.setAngvel ?? t2.torque ?? 0;
+    expect(Math.sign(turn2)).toBe(Math.sign(turn1));
+    expect(turn1).not.toBe(0);
+  });
+});
+
 describe('HostileDroneBehaviour — hostility lifecycle', () => {
   it('flips to COMBAT after markHostile', () => {
     const b = new HostileDroneBehaviour();
