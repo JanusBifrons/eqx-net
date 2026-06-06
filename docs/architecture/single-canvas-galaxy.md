@@ -82,13 +82,22 @@ roster ship-swap picker, so it is now `GalaxyOverviewSelectChrome` — roster
 panel + close over a dim scrim of the live game, **no galaxy backdrop**.
 Tap-to-warp stays on the MAP button / `M`-key `overlay`.
 
-## What was deliberately dropped
+## Pan / pinch / wheel zoom (dropped 2026-06-05, RESTORED 2026-06-06)
 
-- **Free pan / pinch / wheel zoom.** The selector picker is a static
-  screen-space fit; the 7-hex graph fits at 0.85. `pixi-viewport` can't run in
-  the OffscreenCanvas worker anyway, and the layer is screen-space (it doesn't
-  pan with the world camera). The `data-galaxy-zoom` E2E lock (published by the
-  old renderer) was retired with it.
+The single-canvas refactor initially dropped free pan/zoom from the selector
+picker (static screen-space fit). The user relies on it, so it was **restored**
+2026-06-06 — but NOT via `pixi-viewport` (which can't run in the OffscreenCanvas
+worker). Instead `GalaxyMapLayer` drives its screen-space `clusterRoot` with the
+same hand-rolled [`Camera`](../../src/client/render/worker/Camera.ts) the world
+view uses (drag + pinch + wheel + clamp + momentum; DOM-free, so it works in
+both render paths). `resize()` seeds the camera to the fit (re-fit only on a
+real size change — a same-dims resize preserves the user's pan/zoom); the
+renderer routes canvas pointer/wheel events to the layer's camera while
+`isPanZoomActive()` (selector mode + visible), and a tap (vs drag) still selects
+a sector via `hitTest`. `overlay` mode (the in-game additive MAP) keeps its
+static fit — no pan/zoom there. Lock: `tests/e2e/galaxy-map-pan-zoom.spec.ts`
+reads the REAL `clusterRoot` transform via `window.__eqxGalaxyTransform()` (not a
+recompute) and asserts a drag pans + a wheel zooms.
 - **In-canvas limbo RESUME pulse.** Multi-ship roster already surfaces
   lingering ships per-card; all sectors stay selectable. `GalaxyPickerChrome`
   keeps the hidden `limbo-resume-banner` / `data-limbo-sector-key` stub for

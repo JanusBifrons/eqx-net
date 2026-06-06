@@ -66,7 +66,13 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         // hex `pointertap` listeners don't fire here (no Pixi event
         // system in worker context), so we drive selection via a
         // custom hit-test wired through `renderer.setOnTap`.
-        galaxyLayer = new GalaxyMapLayer({ onSelect: () => { /* unused — see hitTest path */ } });
+        // `selector` mode taps go through the layer's own pan/zoom camera
+        // (renderer routes pointer events to it), which resolves a tap via
+        // hitTest then calls `onSelect` → post OVERLAY_TAPPED. `overlay` mode
+        // (in-game MAP, no pan/zoom) still routes taps via the world camera's
+        // `onTap` handler set in `addGalaxyOverlay` below. Both reach the same
+        // OVERLAY_TAPPED message.
+        galaxyLayer = new GalaxyMapLayer({ onSelect: (sectorKey) => { post({ type: 'OVERLAY_TAPPED', sectorKey }); } });
         galaxyLayer.resize(msg.width, msg.height);
         renderer.addGalaxyOverlay(galaxyLayer, (sx, sy) => {
           if (!galaxyLayer) return;

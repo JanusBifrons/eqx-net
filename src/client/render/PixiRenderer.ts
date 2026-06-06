@@ -1,6 +1,7 @@
 import { Application, Graphics, Container } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
@@ -170,6 +171,11 @@ export class PixiRenderer implements IRenderer {
   // to attach filters. Pools own the actual sprite lifecycle.
   private liveBeamGfx: Container | null = null;
   private remoteBeamGfx: Container | null = null;
+  /** The galaxy overlay layer (set when installed). When it reports
+   *  `isPanZoomActive()` (selector/spawn mode + visible), the canvas
+   *  pointer/wheel handlers route to ITS camera (free pan/zoom of the
+   *  galaxy) instead of the world camera. Restored 2026-06-06. */
+  private _galaxyLayer: GalaxyMapLayer | null = null;
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
   /**
@@ -632,6 +638,20 @@ export class PixiRenderer implements IRenderer {
    * from the main thread. The Camera consumes via its state machine.
    */
   forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number }): void {
+    // Galaxy selector (spawn/warp picker) owns pointer input for free
+    // pan/zoom; a tap is resolved to a sector inside the layer. Otherwise
+    // the world camera consumes it (gameplay pan/zoom + tap).
+    const gl = this._galaxyLayer;
+    if (gl !== null && gl.isPanZoomActive()) {
+      switch (e.type) {
+        case 'pointerdown': gl.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp); break;
+        case 'pointermove': gl.onPointerMove(e.pointerId, e.offsetX, e.offsetY); break;
+        case 'pointerup': gl.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp); break;
+        case 'pointercancel':
+        case 'pointerleave': gl.onPointerCancel(e.pointerId); break;
+      }
+      return;
+    }
     switch (e.type) {
       case 'pointerdown':
         this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
@@ -681,10 +701,16 @@ export class PixiRenderer implements IRenderer {
     if (!this.initialized) return;
     this.app.stage.addChild(layer);
     this.setOnTap(onTapInside);
+    if (layer instanceof GalaxyMapLayer) this._galaxyLayer = layer;
   }
 
   /** Worker-context wheel forwarding. */
   forwardWheelEvent(deltaY: number, offsetX: number, offsetY: number): void {
+    const gl = this._galaxyLayer;
+    if (gl !== null && gl.isPanZoomActive()) {
+      gl.onWheel(deltaY, offsetX, offsetY);
+      return;
+    }
     this.camera.onWheel(deltaY, offsetX, offsetY);
   }
 
@@ -698,6 +724,18 @@ export class PixiRenderer implements IRenderer {
   private installCanvasEventListeners(canvas: HTMLCanvasElement): void {
     const onPointer = (e: PointerEvent): void => {
       const stamp = Date.now();
+      // Galaxy selector owns pointer input (free pan/zoom; tap → sector).
+      const gl = this._galaxyLayer;
+      if (gl !== null && gl.isPanZoomActive()) {
+        switch (e.type) {
+          case 'pointerdown': gl.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp); break;
+          case 'pointermove': gl.onPointerMove(e.pointerId, e.offsetX, e.offsetY); break;
+          case 'pointerup': gl.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp); break;
+          case 'pointercancel':
+          case 'pointerleave': gl.onPointerCancel(e.pointerId); break;
+        }
+        return;
+      }
       switch (e.type) {
         case 'pointerdown':
           this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
@@ -716,6 +754,11 @@ export class PixiRenderer implements IRenderer {
     };
     const onWheel = (e: WheelEvent): void => {
       e.preventDefault();
+      const gl = this._galaxyLayer;
+      if (gl !== null && gl.isPanZoomActive()) {
+        gl.onWheel(e.deltaY, e.offsetX, e.offsetY);
+        return;
+      }
       this.camera.onWheel(e.deltaY, e.offsetX, e.offsetY);
     };
     const onTouchMove = (e: TouchEvent): void => {
@@ -1568,6 +1611,7 @@ export class PixiRenderer implements IRenderer {
   addOverlayContainer(overlay: unknown): void {
     if (!this.initialized) return;
     this.app.stage.addChild(overlay as Container);
+    if (overlay instanceof GalaxyMapLayer) this._galaxyLayer = overlay;
   }
 
   /**
