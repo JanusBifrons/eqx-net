@@ -63,6 +63,7 @@ export type {
 
 // Living World (server → client)
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
+export type { GridPulseEvent } from './messages/gridMessages.js';
 
 // Missile subsystem (server → client)
 export {

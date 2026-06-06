@@ -116,6 +116,9 @@ export interface SnapshotBroadcasterDeps {
    * guard, but degraded routing is the manager's job.
    */
   sendSnapshot?: (client: Client, snap: SnapshotMessage) => void;
+  /** Structures plan, Phase 3 — the cached structures slice (rebuilt at the
+   *  1 Hz grid pulse, attached by reference). Undefined ⇒ no structures. */
+  getStructuresSlice?: () => SnapshotMessage['structures'];
 }
 
 interface AllShipEntry {
@@ -186,6 +189,7 @@ type MutableSnapshotMessage = {
   missiles?: SnapshotMessage['missiles'];
   drones?: SnapshotMessage['drones'];
   wrecks?: SnapshotMessage['wrecks'];
+  structures?: SnapshotMessage['structures'];
 };
 
 export class SnapshotBroadcaster {
@@ -665,6 +669,10 @@ export class SnapshotBroadcaster {
       snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
       snap.drones = dronesCount > 0 ? dronesScratch : undefined;
       snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
+      // Structures plan, Phase 3 — the same cached slice array (rebuilt at the
+      // 1 Hz pulse, NOT per tick) is attached by reference to every recipient.
+      // Undefined when no structures exist (zero cost).
+      snap.structures = this.deps.getStructuresSlice?.();
       // plan: imperative-taco-r2 — stamp server-send time so the client
       // can separate network in-transit delay from server-side silence
       // during recv_gap_long events. `performance.now()` is a primitive

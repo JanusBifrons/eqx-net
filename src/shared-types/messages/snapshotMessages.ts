@@ -180,4 +180,29 @@ export interface SnapshotMessage {
      *  catalogue lookups. */
     lifePct: number;
   }>;
+  /** Placed structures' slow-moving grid state (structures plan, Phase 3).
+   *  Slim + low-cadence (rebuilt at the 1 Hz pulse, not per tick); the same
+   *  array reference is attached to every recipient. POSE is NOT here — a
+   *  structure is a kind=2 swarm entity, so its x/y/radius/subtype flow on the
+   *  binary swarm channel. This slice carries only what the binary wire can't:
+   *  the connector web + power/construction state. Absent when no structures
+   *  exist (zero cost otherwise). `id` is the structure's swarm id (string). */
+  structures?: Array<{
+    id: string;
+    /** Component net power ≥ 0 AND reachable to a Capital. */
+    powered: boolean;
+    /** Component net power (Σ output − Σ consumption over built members). */
+    netPower?: number;
+    /** Connected neighbour ids — draws the web on the client. */
+    connTo?: string[];
+    /** Minerals currently stored (Capital bank; omitted when 0). */
+    minerals?: number;
+    /** True once fully constructed. */
+    built?: boolean;
+    /** Construction fraction [0..1]; sent ONLY while `!built` (drives the
+     *  scaffolding fill-bar), omitted once complete to keep the slice small. */
+    buildPct?: number;
+    /** Deconstruction fraction [0..1] while reclaiming; omitted otherwise. */
+    deconstructPct?: number;
+  }>;
 }

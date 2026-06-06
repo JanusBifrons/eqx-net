@@ -46,7 +46,10 @@ import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
+import { TRANSFER_PULSE_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
+import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
@@ -454,6 +457,13 @@ export class SectorRoom extends Room<SectorState> {
   private structurePlacement!: StructurePlacementSubsystem;
   /** Monotonic id source for player-placed structures (session-scoped). */
   private placedStructureCounter = 0;
+  /** Power-grid pulse subsystem (structures plan, Phase 3). */
+  private structureGrid!: StructureGridSubsystem;
+  /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
+  private structureGridTimer: ReturnType<typeof setInterval> | undefined;
+  /** Cached low-cadence structures snapshot slice (rebuilt on pulse / place;
+   *  attached by reference to every recipient). Undefined ⇒ no structures. */
+  private structuresSlice: SnapshotMessage['structures'] = undefined;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
@@ -644,6 +654,10 @@ export class SectorRoom extends Room<SectorState> {
     /** Structures plan, Phase 2 — lets the placement integration test assert
      *  the blueprint vs pre-built record state from the player-driven path. */
     structureRegistry: StructureRegistry;
+    /** Structures plan, Phase 3 — drive the grid pulse deterministically (no
+     *  wall-clock wait) + read the cached snapshot slice. */
+    pulseStructureGrid: () => void;
+    getStructuresSlice: () => SnapshotMessage['structures'];
   } {
     return {
       serverTick: this.serverTick,
@@ -655,6 +669,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.swarmHealth,
       structureRegistry: this.structureRegistry,
+      pulseStructureGrid: () => this.structureGridTick(),
+      getStructuresSlice: () => this.structuresSlice,
     };
   }
 
@@ -1208,6 +1224,9 @@ export class SectorRoom extends Room<SectorState> {
           () => { client.send('snapshot', snap); },
         );
       },
+      // Structures plan, Phase 3 — the cached slice (rebuilt at the 1 Hz grid
+      // pulse / on placement), attached by reference to every recipient.
+      getStructuresSlice: () => this.structuresSlice,
     });
 
     // Player onLeave handler. Three branches: shouldLinger / transit-
@@ -1389,6 +1408,23 @@ export class SectorRoom extends Room<SectorState> {
       nextId: () => `pstruct-${this.placedStructureCounter++}`,
       registry: this.structureRegistry,
     });
+
+    // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
+    // The 1 Hz logistics heartbeat: construction flow, repair, deconstruction,
+    // power aggregation. Runs OFF the 60 Hz physics tick (unref'd timer).
+    this.structureGrid = new StructureGridSubsystem({
+      registry: this.structureRegistry,
+      getHealth: (id) => this.swarmHealth.get(id) ?? 0,
+      setHealth: (id, hp) => { this.swarmHealth.set(id, hp); },
+      despawn: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+        this.swarmHealth.delete(id);
+        this.swarmShield.delete(id);
+      },
+    });
+    this.structureGridTimer = setInterval(() => this.structureGridTick(), TRANSFER_PULSE_MS);
+    this.structureGridTimer.unref?.();
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -1654,6 +1690,10 @@ export class SectorRoom extends Room<SectorState> {
       );
       if (id === null) {
         logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
+      } else {
+        // Refresh the slice so the new blueprint + its auto-connection appear on
+        // the next snapshot without waiting for the 1 Hz pulse.
+        this.rebuildStructuresSlice();
       }
     });
 
@@ -1665,7 +1705,9 @@ export class SectorRoom extends Room<SectorState> {
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
-      this.structurePlacement.remove(owner, parsed.data.id);
+      if (this.structurePlacement.remove(owner, parsed.data.id)) {
+        this.rebuildStructuresSlice();
+      }
     });
 
     // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
@@ -2058,7 +2100,71 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
   ): void {
+    // Structures plan, Phase 3 — a destroyed structure must sever its grid
+    // connections (StructureRegistry.remove disconnects) so the web doesn't
+    // keep a dangling edge. Idempotent: harmless if `rec` isn't a structure or
+    // was already removed (e.g. by placement.remove / deconstruction).
+    if (this.structureRegistry.has(rec.id)) {
+      this.structureRegistry.remove(rec.id);
+      this.rebuildStructuresSlice();
+    }
     this.swarmEvictor.evict(rec, opts);
+  }
+
+  // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
+
+  /** One 1 Hz grid heartbeat: pulse the logistics web, refresh the snapshot
+   *  slice, and broadcast the discrete `grid_pulse` flash event. No-op (and no
+   *  broadcast) when the sector has no structures. */
+  private structureGridTick(): void {
+    if (this.structureRegistry.size === 0) return;
+    const result = this.structureGrid.pulse(Date.now());
+    this.rebuildStructuresSlice();
+    if (result.flashed.length > 0) {
+      this.broadcast('grid_pulse', {
+        type: 'grid_pulse',
+        flashed: result.flashed,
+        material: result.material,
+      });
+    }
+  }
+
+  /** Rebuild the cached structures snapshot slice from the registry + grid.
+   *  Called at the 1 Hz pulse and after each placement/removal — never on the
+   *  60 Hz tick, so the array allocation here is off the hot loop. */
+  private rebuildStructuresSlice(): void {
+    if (this.structureRegistry.size === 0) {
+      this.structuresSlice = undefined;
+      return;
+    }
+    const arr: NonNullable<SnapshotMessage['structures']> = [];
+    for (const rec of this.structureRegistry.all()) {
+      const summary = this.structureGrid.powerSummaryFor(rec.id);
+      const conns = this.structureRegistry.connectionsOf(rec.id);
+      const entry: NonNullable<SnapshotMessage['structures']>[number] = {
+        id: rec.id,
+        powered: summary.powered,
+        netPower: summary.netPower,
+        built: rec.isConstructed,
+      };
+      if (conns.length > 0) {
+        const connTo: string[] = [];
+        for (const c of conns) {
+          const other = c.getOtherNode(rec.id);
+          if (other !== null) connTo.push(other);
+        }
+        entry.connTo = connTo;
+      }
+      if (rec.minerals > 0) entry.minerals = rec.minerals;
+      if (!rec.isConstructed && rec.constructionCost > 0) {
+        entry.buildPct = rec.constructionProgress / rec.constructionCost;
+      }
+      if (rec.isDeconstructing && rec.constructionCost > 0) {
+        entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
+      }
+      arr.push(entry);
+    }
+    this.structuresSlice = arr;
   }
 
   // ── Living World Director hooks ─────────────────────────────────────────
@@ -3133,6 +3239,11 @@ export class SectorRoom extends Room<SectorState> {
 
   override onDispose(): void {
     this.simLoopStopped = true;
+    // Structures plan, Phase 3 — stop the grid pulse heartbeat.
+    if (this.structureGridTimer !== undefined) {
+      clearInterval(this.structureGridTimer);
+      this.structureGridTimer = undefined;
+    }
     // Paradigm plan (quirky-rabbit) Phase 6 — unsubscribe from the GC
     // observer so the disposed room isn't kept alive by the subscriber
     // closure (and so the observer doesn't try to broadcast through a
