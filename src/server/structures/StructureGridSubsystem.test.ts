@@ -11,10 +11,15 @@ import {
 
 /** Shared harness: a real registry + health map, with placement + grid wired
  *  over the same state (the way SectorRoom wires them). */
-function makeHarness(asteroid?: { entityId: number; x: number; y: number; range?: number }) {
+function makeHarness(
+  asteroid?: { entityId: number; x: number; y: number; range?: number },
+  drone?: { id: string; entityId: number; x: number; y: number },
+) {
   const registry = new StructureRegistry();
   const health = new Map<string, number>();
   const despawned: string[] = [];
+  const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
+  const beams: Array<{ shooterId: string; targetId: string }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -33,16 +38,21 @@ function makeHarness(asteroid?: { entityId: number; x: number; y: number; range?
     despawn: (id) => { despawned.push(id); health.delete(id); },
     findNearestAsteroid: (x, y, range) => {
       if (!asteroid) return null;
-      const dx = asteroid.x - x;
-      const dy = asteroid.y - y;
-      if (Math.hypot(dx, dy) > range) return null;
+      if (Math.hypot(asteroid.x - x, asteroid.y - y) > range) return null;
       return { entityId: asteroid.entityId, x: asteroid.x, y: asteroid.y };
     },
+    findNearestDrone: (x, y, range) => {
+      if (!drone) return null;
+      if (Math.hypot(drone.x - x, drone.y - y) > range) return null;
+      return { id: drone.id, entityId: drone.entityId, x: drone.x, y: drone.y };
+    },
+    applyDamage: (targetId, shooterId, amount) => damage.push({ targetId, shooterId, amount }),
+    broadcastBeam: (shooterId, _fx, _fy, _tx, _ty, targetId) => beams.push({ shooterId, targetId }),
   });
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, placement, grid, pulse };
+  return { registry, health, despawned, damage, beams, placement, grid, pulse };
 }
 
 const OWNER = 'player-1';
@@ -225,6 +235,58 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     h.pulse();
     expect(minerRec.miningTargetEntityId).toBeUndefined();
     expect(minerRec.minerals).toBe(0);
+  });
+});
+
+describe('StructureGridSubsystem — turrets (Phase 5)', () => {
+  it('a built + powered turret fires on a drone in range, respecting fireRateMs', () => {
+    const drone = { id: 'swarm-3', entityId: 3, x: 200, y: 0 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 150, 0)!; // offsets turret draw (15)
+    const turret = h.placement.place(OWNER, 'turret', 0, 200)!;
+    for (let i = 0; i < 120; i++) h.pulse();
+    expect(h.registry.get(sol)!.isConstructed).toBe(true);
+    expect(h.registry.get(turret)!.isConstructed).toBe(true);
+
+    // First tick fires; an immediate second tick is on cooldown (fireRateMs 600).
+    h.grid.tickTurrets(10_000);
+    h.grid.tickTurrets(10_050);
+    expect(h.damage.length).toBe(1);
+    expect(h.damage[0]).toMatchObject({ targetId: 'swarm-3', shooterId: turret, amount: 20 });
+    expect(h.beams.length).toBe(1);
+    expect(h.registry.get(turret)!.turretTargetEntityId).toBe(3);
+
+    // After the cooldown elapses it fires again.
+    h.grid.tickTurrets(10_700);
+    expect(h.damage.length).toBe(2);
+  });
+
+  it('an UNPOWERED turret does not fire', () => {
+    const drone = { id: 'swarm-4', entityId: 4, x: 200, y: 0 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const turret = h.placement.place(OWNER, 'turret', 0, 200)!;
+    // No solar: but turret only draws 15; capital 50 − 15 = 35 ≥ 0 → powered.
+    // Add a heavy consumer to push the grid negative.
+    const m1 = h.placement.place(OWNER, 'miner', 0, -200)!; // consumes 60
+    for (let i = 0; i < 400; i++) h.pulse();
+    expect(h.registry.get(turret)!.isConstructed).toBe(true);
+    expect(h.registry.get(m1)!.isConstructed).toBe(true);
+    // capital 50 − turret 15 − miner 60 = −25 → unpowered.
+    h.grid.tickTurrets(10_000);
+    expect(h.damage.length).toBe(0);
+    expect(h.registry.get(turret)!.turretTargetEntityId).toBeUndefined();
+  });
+
+  it('a turret with no drone in range fires nothing', () => {
+    const h = makeHarness(); // no drone
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const turret = h.placement.place(OWNER, 'turret', 0, 200)!;
+    for (let i = 0; i < 120; i++) h.pulse();
+    expect(h.registry.get(turret)!.isConstructed).toBe(true);
+    h.grid.tickTurrets(10_000);
+    expect(h.damage.length).toBe(0);
   });
 });
 

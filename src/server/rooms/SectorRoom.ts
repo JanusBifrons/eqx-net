@@ -47,7 +47,8 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
-import { TRANSFER_PULSE_MS } from '../../core/structures/structureGridConstants.js';
+import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -467,6 +468,8 @@ export class SectorRoom extends Room<SectorState> {
   private structureGrid!: StructureGridSubsystem;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
+  /** Faster turret aim/fire timer (Phase 5; unref'd). */
+  private structureTurretTimer: ReturnType<typeof setInterval> | undefined;
   /** Cached low-cadence structures snapshot slice (rebuilt on pulse / place;
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
   private structuresSlice: SnapshotMessage['structures'] = undefined;
@@ -666,6 +669,9 @@ export class SectorRoom extends Room<SectorState> {
     getStructuresSlice: () => SnapshotMessage['structures'];
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
     spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
+    /** Phase 5 — seed a drone + drive the turret tick for the turret test. */
+    spawnTestDrone: (id: string, x: number, y: number) => boolean;
+    tickStructureTurrets: () => void;
   } {
     return {
       serverTick: this.serverTick,
@@ -681,6 +687,15 @@ export class SectorRoom extends Room<SectorState> {
       getStructuresSlice: () => this.structuresSlice,
       spawnTestAsteroid: (id, x, y, radius) =>
         this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
+      spawnTestDrone: (id, x, y) => {
+        const ok = this.swarmSpawner.spawnDrone({ id, x, y, kind: 'fighter' });
+        if (ok) {
+          this.swarmHealth.set(id, getDroneMaxHealth('fighter') ?? 40);
+          this.swarmShield.set(id, 0); // hull exposed so turret damage lands
+        }
+        return ok;
+      },
+      tickStructureTurrets: () => this.structureTurretTick(),
     };
   }
 
@@ -895,6 +910,18 @@ export class SectorRoom extends Room<SectorState> {
        *  mining (the pulse is a wall-clock timer, NOT the physics tick, so
        *  `testTimeScale` doesn't speed it). Default `TRANSFER_PULSE_MS`. */
       structureGridPulseMs?: number;
+      /** Structures plan (Phase 3-5) — seed PRE-BUILT, auto-connected structures
+       *  at hand-authored poses (owner `scenario`). testMode-only bespoke
+       *  trigger: gives E2E a fully-functional powered grid without fighting the
+       *  place-ahead UI (which stacks/overlaps multiple placements) or the
+       *  construction wait. Each is born `isConstructed` at full HP. */
+      prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Structures plan (Phase 5) — park idle drones at poses (turret targets).
+       *  testMode-only; for the turret-fires scenario. */
+      scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
+      /** Structures plan (Phase 4) — seed asteroids at poses (miner targets).
+       *  testMode-only; for the mining scenario. */
+      scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
     };
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -1438,12 +1465,31 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmShield.delete(id);
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
+      findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
+      applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
+      broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId) => {
+        this.broadcast('laser_fired', {
+          type: 'laser_fired',
+          shooterId,
+          fromX, fromY, toX, toY,
+          hit: true,
+          targetId,
+        });
+      },
     });
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
       : TRANSFER_PULSE_MS;
     this.structureGridTimer = setInterval(() => this.structureGridTick(), pulseMs);
     this.structureGridTimer.unref?.();
+    // Phase 5 — turret aim/fire on a faster cadence than the grid pulse.
+    this.structureTurretTimer = setInterval(() => this.structureTurretTick(), TURRET_TICK_MS);
+    this.structureTurretTimer.unref?.();
+
+    // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
+    // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
+    // overlap, no construction wait).
+    if (this.testMode) this.seedStructureScenario(roomOpts);
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -2153,6 +2199,59 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Structures plan (Phase 3-5) — seed a testMode scenario: PRE-BUILT,
+   *  auto-connected structures (owner `scenario`) + parked drones + asteroids.
+   *  Gives E2E a fully-functional powered grid without the place-ahead UI
+   *  (which overlaps stacked placements) or the construction wait. */
+  private seedStructureScenario(roomOpts: {
+    prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number }>;
+    scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
+    scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+  }): void {
+    const prebuilt = roomOpts.prebuiltStructures;
+    if (prebuilt && prebuilt.length > 0) {
+      for (const ps of prebuilt) {
+        const id = this.structurePlacement.place('scenario', ps.kind as string, ps.x, ps.y);
+        if (id === null) {
+          logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
+          continue;
+        }
+        const rec = this.structureRegistry.get(id);
+        if (rec && !rec.isConstructed) {
+          rec.isConstructed = true;
+          rec.constructionProgress = rec.constructionCost;
+          this.swarmHealth.set(id, getStructureKind(rec.kind).maxHealth);
+        }
+      }
+      this.structureRegistry.topologyDirty = true;
+      // One pulse rebuilds the grid (powered components) + refreshes the slice.
+      this.structureGridTick();
+    }
+    let scenarioSwarmId = 0;
+    for (const a of roomOpts.scenarioAsteroids ?? []) {
+      this.swarmSpawner.spawnAsteroid({
+        id: `scenario-rock-${scenarioSwarmId++}`, x: a.x, y: a.y, vx: 0, vy: 0, radius: a.radius ?? 30, mass: 1,
+      });
+    }
+    for (const d of roomOpts.scenarioDrones ?? []) {
+      const droneId = `scenario-drone-${scenarioSwarmId++}`;
+      if (this.swarmSpawner.spawnDrone({ id: droneId, x: d.x, y: d.y, kind: 'fighter' })) {
+        this.swarmHealth.set(droneId, getDroneMaxHealth('fighter') ?? 40);
+        this.swarmShield.set(droneId, 0); // hull exposed so turret damage lands
+      }
+    }
+  }
+
+  /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
+   *  No-op when the sector has no structures. */
+  private structureTurretTick(): void {
+    if (this.structureRegistry.size === 0) return;
+    this.structureGrid.tickTurrets(Date.now());
+    // Refresh the slice so the client's turret aim line tracks at the turret
+    // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
+    this.rebuildStructuresSlice();
+  }
+
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y). Reads authoritative poses from the SAB via each record's slot
    *  (asteroids are static, so this is their spawn pose). Low-frequency (1 Hz
@@ -2162,20 +2261,32 @@ export class SectorRoom extends Room<SectorState> {
     y: number,
     range: number,
   ): { entityId: number; x: number; y: number } | null {
-    const r2 = range * range;
-    let best: { entityId: number; x: number; y: number } | null = null;
-    let bestD2 = r2;
+    return this.findNearestSwarmOfKind(x, y, range, 0);
+  }
+
+  /** Nearest swarm entity of `swarmKind` (0=asteroid, 1=drone) within `range`
+   *  of (x, y). Reads authoritative poses from the SAB via each record's slot.
+   *  Low-frequency (1 Hz pulse / 100 ms turret tick), so the linear scan is
+   *  fine. Returns the registry id (for damage) + entityId + pose. */
+  private findNearestSwarmOfKind(
+    x: number,
+    y: number,
+    range: number,
+    swarmKind: number,
+  ): { id: string; entityId: number; x: number; y: number } | null {
+    let best: { id: string; entityId: number; x: number; y: number } | null = null;
+    let bestD2 = range * range;
     for (const rec of this.swarmRegistry.all()) {
-      if (rec.kind !== 0) continue; // asteroids only
+      if (rec.kind !== swarmKind) continue;
       const base = slotBase(rec.slot);
-      const ax = this.sabF32[base + SLOT_X_OFF]!;
-      const ay = this.sabF32[base + SLOT_Y_OFF]!;
-      const dx = ax - x;
-      const dy = ay - y;
+      const sx = this.sabF32[base + SLOT_X_OFF]!;
+      const sy = this.sabF32[base + SLOT_Y_OFF]!;
+      const dx = sx - x;
+      const dy = sy - y;
       const d2 = dx * dx + dy * dy;
       if (d2 <= bestD2) {
         bestD2 = d2;
-        best = { entityId: rec.entityId, x: ax, y: ay };
+        best = { id: rec.id, entityId: rec.entityId, x: sx, y: sy };
       }
     }
     return best;
@@ -2219,6 +2330,7 @@ export class SectorRoom extends Room<SectorState> {
         entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
       }
       if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
+      if (rec.turretTargetEntityId !== undefined) entry.turretTargetId = rec.turretTargetEntityId;
       arr.push(entry);
     }
     this.structuresSlice = arr;
@@ -3300,6 +3412,11 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureGridTimer !== undefined) {
       clearInterval(this.structureGridTimer);
       this.structureGridTimer = undefined;
+    }
+    // Phase 5 — stop the turret tick.
+    if (this.structureTurretTimer !== undefined) {
+      clearInterval(this.structureTurretTimer);
+      this.structureTurretTimer = undefined;
     }
     // Paradigm plan (quirky-rabbit) Phase 6 — unsubscribe from the GC
     // observer so the disposed room isn't kept alive by the subscriber

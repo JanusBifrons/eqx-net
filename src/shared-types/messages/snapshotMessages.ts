@@ -209,5 +209,8 @@ export interface SnapshotMessage {
     /** Phase 4 — the asteroid entityId a Miner is extracting from (draws the
      *  mining beam). Present only on actively-mining miners. */
     miningTargetId?: number;
+    /** Phase 5 — the drone entityId a Turret is aiming at (draws the aim line;
+     *  the fire beam itself arrives as a discrete `laser_fired`). */
+    turretTargetId?: number;
   }>;
 }

@@ -53,3 +53,8 @@ export const DECONSTRUCTION_RATE_KG = 100;
 /** Minerals the pre-built Capital starts with, so a base can bootstrap a few
  *  Connectors + Solar panels before mining (Phase 4) comes online. */
 export const CAPITAL_STARTING_MINERALS = 5000;
+
+/** Turret aim/fire tick interval, ms (Phase 5). Faster than the 1 Hz grid pulse
+ *  so turrets track + engage drones responsively; actual shots are gated by the
+ *  per-kind `fireRateMs`. */
+export const TURRET_TICK_MS = 100;

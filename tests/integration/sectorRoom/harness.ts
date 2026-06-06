@@ -143,6 +143,10 @@ export async function bootSectorTestServer(opts: {
    *  into swarmHealth so they're damageable). testMode-only; forwarded to the
    *  `structurePoses` room option. */
   structurePoses?: ReadonlyArray<{ id?: string; x: number; y: number; radius?: number; mass?: number }>;
+  /** Structures plan (Phase 3-5) — pre-built, auto-connected scenario grid. */
+  prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number }>;
+  scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
+  scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -178,6 +182,9 @@ export async function bootSectorTestServer(opts: {
     droneCount: opts.droneCount ?? 0,
     testMode: opts.testMode ?? true,
     structurePoses: opts.structurePoses,
+    prebuiltStructures: opts.prebuiltStructures,
+    scenarioDrones: opts.scenarioDrones,
+    scenarioAsteroids: opts.scenarioAsteroids,
   });
   await gameServer.listen(port);
 

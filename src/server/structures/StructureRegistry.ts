@@ -40,6 +40,11 @@ export interface StructureRecord {
    *  (for the client beam). Transient; recomputed each pulse, undefined when
    *  not a miner / unpowered / no asteroid in range. */
   miningTargetEntityId?: number;
+  /** Phase 5 — the drone entityId this Turret is aiming at (for the client aim
+   *  line). Transient; recomputed each turret tick. */
+  turretTargetEntityId?: number;
+  /** Phase 5 — wall-clock ms of this Turret's last shot (fire-rate cooldown). */
+  lastTurretFireMs?: number;
 }
 
 export class StructureRegistry {

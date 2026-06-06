@@ -172,6 +172,9 @@ export interface StructureRenderState {
   /** Phase 4 — asteroid entityId a Miner is extracting from (draws the beam),
    *  or undefined. */
   miningTargetId?: number;
+  /** Phase 5 — drone entityId a Turret is aiming at (draws the aim line), or
+   *  undefined. */
+  turretTargetId?: number;
 }
 
 /**

@@ -68,6 +68,18 @@ export class ConnectorRenderer {
         }
       }
 
+      // Phase 5 — turret aim line toward its target drone (the fire beam
+      // itself arrives as a discrete laser_fired). Faint dashed-feel via low
+      // alpha; the actual shot is the bright beam.
+      if (st.turretTargetId !== undefined) {
+        const target = swarm.get(st.turretTargetId);
+        if (target) {
+          g.moveTo(ax, ay);
+          g.lineTo(target.x, -target.y);
+          g.stroke({ color: 0xff5555, alpha: 0.35, width: Math.max(1 / scale, 1) });
+        }
+      }
+
       // Construction fill-bar for blueprints (above the structure body).
       if (!st.built) {
         const r = a.radius;

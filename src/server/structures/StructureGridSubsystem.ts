@@ -45,6 +45,13 @@ export interface StructureGridHooks {
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y), or null. Returns the asteroid's dense entityId + pose. */
   findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number } | null;
+  /** Phase 5 — nearest drone (swarm kind 1) within `range` of (x, y), or null.
+   *  Returns the drone's registry id (for damage) + entityId + pose. */
+  findNearestDrone?(x: number, y: number, range: number): { id: string; entityId: number; x: number; y: number } | null;
+  /** Phase 5 — apply turret damage to a target through the standard path. */
+  applyDamage?(targetId: string, shooterId: string, damage: number): void;
+  /** Phase 5 — broadcast the turret fire beam (laser_fired). */
+  broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string): void;
 }
 
 export interface GridPulseResult {
@@ -62,6 +69,33 @@ export class StructureGridSubsystem {
   /** Read-only grid query for the snapshot slice (powered / netPower). */
   powerSummaryFor(id: string): { netPower: number; powered: boolean } {
     return this.grid.powerSummaryFor(id);
+  }
+
+  /**
+   * Phase 5 — aim + fire turrets. Called on the faster turret tick (NOT the
+   * 1 Hz pulse) so turrets engage drones responsively. Each built + powered
+   * turret targets the nearest drone in `weaponRange`, aims at it, and fires
+   * (damage + beam) when its per-kind `fireRateMs` cooldown has elapsed.
+   * Reads the live grid built by the most recent `pulse()` rebuild.
+   */
+  tickTurrets(nowMs: number): void {
+    if (!this.hooks.findNearestDrone || !this.hooks.applyDamage) return;
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind !== 'turret' || !rec.isConstructed) continue;
+      if (!this.grid.powerSummaryFor(rec.id).powered) {
+        rec.turretTargetEntityId = undefined;
+        continue;
+      }
+      const kind = getStructureKind('turret');
+      const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange ?? 0);
+      rec.turretTargetEntityId = target?.entityId;
+      if (!target) continue;
+      const cooldown = kind.fireRateMs ?? 600;
+      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldown) continue;
+      rec.lastTurretFireMs = nowMs;
+      this.hooks.applyDamage(target.id, rec.id, kind.weaponDamage ?? 0);
+      this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
+    }
   }
 
   /** One grid heartbeat. `nowMs` stamps connection flashes. */
