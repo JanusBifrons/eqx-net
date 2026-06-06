@@ -39,9 +39,8 @@ import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
-import { SlotSelector } from './components/SlotSelector';
 import { EnergyBar } from './components/EnergyBar';
-import { GalaxyMapToggleButton } from './components/GalaxyMapToggleButton';
+import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -593,19 +592,15 @@ function GameSurface({
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
-      {/* SlotSelector and the MAP toggle live in different anchors on
-       *  touch vs. desktop. On touch, MobileControls renders SlotSelector
-       *  inline above FIRE in the bottom-right thumb cluster, and the MAP
-       *  toggle goes above the joystick in bottom-left. On desktop both
-       *  stay at bottom-center where the player is more likely looking. */}
-      {!isTouchRef.current && (
-        <Slot anchor="bottom-center" order={5}><SlotSelector /></Slot>
-      )}
-      {isTouchRef.current ? (
-        <Slot anchor="bottom-left" order={10}><GalaxyMapToggleButton /></Slot>
-      ) : (
-        <Slot anchor="bottom-center" order={10}><GalaxyMapToggleButton /></Slot>
-      )}
+      {/* Speed-dial UI refactor (Phase 1): the discrete (tap) HUD actions —
+       *  Map toggle, weapon-slot select, and the drawer/panels entry — are
+       *  consolidated into a single SpeedDial in the bottom-right anchor. It
+       *  sits to the LEFT of the held FIRE/BOOST cluster on touch (order 30 >
+       *  their 10/20 in the row-reverse anchor, so those keep their corner
+       *  positions) and in the corner on desktop. The held controls
+       *  (joystick/FIRE/BOOST) stay dedicated in MobileControls. Phase 2 adds
+       *  the "Build ▸" structure-placement actions to the same dial. */}
+      <Slot anchor="bottom-right" order={30}><SpeedDialMenu /></Slot>
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (

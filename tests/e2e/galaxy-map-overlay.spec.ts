@@ -3,15 +3,21 @@ import { test, expect, devices } from '@playwright/test';
 /**
  * Galaxy Map refactor (2026-05-10) — Map B regression lock.
  *
- * Map B is the in-game additive Pixi overlay (`GalaxyMapLayer`) toggled by
- * the bottom-center HUD MAP button (`GalaxyMapToggleButton`). It lives on
- * the gameplay canvas's stage, above the world viewport, so non-hex pixels
- * pass through to gameplay underneath.
+ * Map B is the in-game additive Pixi overlay (`GalaxyMapLayer`). Post the
+ * speed-dial UI refactor (Phase 1) the React-side toggle is the **Map action
+ * inside the consolidated bottom-right `SpeedDial`** (`data-testid` still
+ * `galaxy-map-toggle`, on the action's Fab), not the old standalone
+ * bottom-center MAP button. The action carries `aria-pressed` reflecting the
+ * `isGalaxyMapOpen` store flag. The keyboard `M` shortcut is unchanged.
  *
- * These specs lock the React-side toggle behaviour (button aria-pressed,
- * keyboard `M` shortcut). The Pixi-side draw is covered by the manual UX
- * walk and the renderer's pure-graph adjacency logic in
- * `src/core/galaxy/galaxy.test.ts`. The wire/server-side neighbour
+ * The dial collapses its actions to `scale(0)` when closed (in the DOM but not
+ * clickable / not "visible"), so any test that CLICKS the Map action must open
+ * the dial first via the FAB. Tests that only read `aria-pressed` (the M-key
+ * case) can query the attribute directly — it stays readable while collapsed.
+ *
+ * These specs lock the React-side toggle behaviour. The Pixi-side draw is
+ * covered by the manual UX walk and the renderer's pure-graph adjacency logic
+ * in `src/core/galaxy/galaxy.test.ts`. The wire/server-side neighbour
  * enforcement is locked by `src/server/transit/TransitOrchestrator.test.ts`.
  */
 
@@ -31,21 +37,34 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 30_000 });
 }
 
+/**
+ * Open the consolidated SpeedDial and wait for the Map action to expand into
+ * its clickable state. Idempotent for the purposes of these tests — they call
+ * it again before each click because clicking an action collapses the dial.
+ */
+async function openDial(page: import('@playwright/test').Page): Promise<void> {
+  await page.locator('[data-testid="speed-dial-fab"]').click();
+  await expect(page.locator('[data-testid="galaxy-map-toggle"]')).toBeVisible({ timeout: 5_000 });
+}
+
 test.describe('galaxy-map overlay (Map B)', () => {
-  test('desktop: MAP toggle button is visible in-game and reflects the open state', async ({ browser }) => {
+  test('desktop: MAP action in the speed-dial is reachable and reflects the open state', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
     const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-    await expect(mapBtn).toBeVisible();
+
+    // Open the dial → the Map action expands and reads "closed" (overlay off).
+    await openDial(page);
     await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
 
-    // Tap → opens.
+    // Click the action → overlay opens (and the dial collapses).
     await mapBtn.click();
     await expect(mapBtn).toHaveAttribute('aria-pressed', 'true');
 
-    // Tap again → closes.
+    // Re-open the dial, click again → overlay closes.
+    await openDial(page);
     await mapBtn.click();
     await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
 
@@ -71,25 +90,32 @@ test.describe('galaxy-map overlay (Map B)', () => {
     await ctx.close();
   });
 
-  test('mobile: MAP toggle button sits in the bottom-center slot alongside the slot selector', async ({ browser }) => {
+  test('mobile: MAP and weapon-slot actions both live inside the consolidated dial', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({ ...iPhone, viewport: { width: 375, height: 667 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
     const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-    // weapons/energy/AI overhaul (§5.2): the per-weapon picker is now the
-    // SlotSelector (`slot-selector`), rendered in the same mobile cluster.
+    // Speed-dial UI refactor (Phase 1): the MAP toggle and the weapon-slot
+    // selector are now sibling actions in the same SpeedDial (replacing the
+    // old scattered bottom-center MAP button + thumb-cluster slot toggle).
     const weaponBtn = page.locator('[data-testid="slot-selector"]');
+
+    // Collapsed: actions are in the DOM but not visible (scale 0).
+    await expect(mapBtn).toBeHidden();
+    await expect(weaponBtn).toBeHidden();
+
+    // Open the dial → both actions expand and become reachable.
+    await page.locator('[data-testid="speed-dial-fab"]').tap();
     await expect(mapBtn).toBeVisible();
     await expect(weaponBtn).toBeVisible();
 
-    // Both share the bottom-center anchor; the slot host is one element.
+    // MUI lays the actions out in a column, so they never overlap.
     const mapBox = await mapBtn.boundingBox();
     const weaponBox = await weaponBtn.boundingBox();
     expect(mapBox).not.toBeNull();
     expect(weaponBox).not.toBeNull();
-    // Sanity: the MAP button is not literally on top of the slot selector.
     if (mapBox && weaponBox) {
       const overlap =
         Math.max(0, Math.min(mapBox.x + mapBox.width, weaponBox.x + weaponBox.width) - Math.max(mapBox.x, weaponBox.x))
@@ -97,7 +123,7 @@ test.describe('galaxy-map overlay (Map B)', () => {
       expect(overlap).toBe(0);
     }
 
-    // Tap toggles aria-pressed.
+    // Tap the MAP action → overlay opens.
     await mapBtn.tap();
     await expect(mapBtn).toHaveAttribute('aria-pressed', 'true');
 
