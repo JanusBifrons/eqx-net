@@ -134,5 +134,8 @@ export function applyDroneMountAngles(snap: SnapshotMessage, mirror: RenderMirro
       sw.mountAngles = undefined;
     }
     if (d.shieldDown !== undefined) sw.shieldDown = d.shieldDown;
+    // Part C — decode the hull-health percent for health-weighted player aim.
+    // The server omits `hp` for full-HP drones, so absent ⇒ full (1).
+    sw.healthFrac = d.hp !== undefined ? d.hp / 100 : 1;
   }
 }

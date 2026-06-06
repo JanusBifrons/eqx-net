@@ -26,9 +26,12 @@ import {
   pickTarget,
   rotateMountToward,
   wrapPi,
+  PLAYER_AIM_HEALTH_WEIGHT,
+  PLAYER_AIM_SWITCH_MARGIN,
   type MountTargetView,
 } from '../../core/ai/WeaponMountController.js';
 import { HITSCAN_RANGE } from '../../core/combat/Weapons.js';
+import { getDroneMaxHealth } from './droneKindHelpers.js';
 import {
   DEFAULT_SHIP_KIND,
   getShipKind,
@@ -94,6 +97,12 @@ export interface WeaponMountTickerDeps {
   getActiveShip: (playerId: string) => ShipState | undefined;
   /** Hostility ledger lookup — driven by `markHostile`/`purgeHostility`. */
   aiController: BehaviourLookup;
+  /** Drone hull health, keyed by swarm id — for health-weighted player aim
+   *  (Part C). Same source as the snapshot `hp` percent, so the predicted
+   *  client aim (which reads the synced `hp`) and this server aim agree.
+   *  LAZY accessor: the backing map (shieldHullRouter.swarmHealth) is built
+   *  AFTER this ticker in SectorRoom's constructor, so resolve it per-tick. */
+  swarmHealth: () => Map<string, number>;
   /** Resolves the active-slot mount list for a kind (composes mountGeometry). */
   resolveSlotMounts: (kind: ShipKind, slotId?: string) => ReadonlyArray<WeaponMount>;
 }
@@ -143,11 +152,13 @@ export class WeaponMountTicker {
     y: number,
     vx: number,
     vy: number,
+    health?: number,
+    maxHealth?: number,
   ): void {
     type MutableMountTargetView = { -readonly [K in keyof MountTargetView]: MountTargetView[K] };
     const slot = arr[i] as MutableMountTargetView | undefined;
     if (!slot) {
-      arr[i] = { id, x, y, vx, vy };
+      arr[i] = { id, x, y, vx, vy, health, maxHealth };
       return;
     }
     slot.id = id;
@@ -155,6 +166,10 @@ export class WeaponMountTicker {
     slot.y = y;
     slot.vx = vx;
     slot.vy = vy;
+    // Always assign (reused scratch) so a slot that previously held health
+    // doesn't leak a stale value into a target that now has none.
+    slot.health = health;
+    slot.maxHealth = maxHealth;
   }
 
   constructor(private readonly deps: WeaponMountTickerDeps) {}
@@ -173,16 +188,23 @@ export class WeaponMountTicker {
     // for every player's pickTarget call. Logical-length over physical
     // slot: reuse view instances across ticks (Phase 5 — invariant #14).
     const targets = this.mountTargetsScratch;
+    const swarmHealth = d.swarmHealth();
     let count = 0;
     for (const rec of d.swarmRegistry.all()) {
       if (rec.kind !== 1) continue;
       const b = slotBase(rec.slot);
+      // Part C — carry drone health so the player turret can focus the wounded.
+      // Per-drone (shared across players); hostility is per-player (callback
+      // below). maxHealth from the kind; undefined when unknown ⇒ distance-only.
+      const maxHp = getDroneMaxHealth(rec.shipKind) ?? undefined;
+      const curHp = maxHp !== undefined ? swarmHealth.get(rec.id) : undefined;
       WeaponMountTicker.writeTargetSlot(
         targets, count, rec.id,
         d.sabF32[b + SLOT_X_OFF]!,
         d.sabF32[b + SLOT_Y_OFF]!,
         d.sabF32[b + SLOT_VX_OFF]!,
         d.sabF32[b + SLOT_VY_OFF]!,
+        curHp, maxHp,
       );
       count++;
     }
@@ -198,9 +220,27 @@ export class WeaponMountTicker {
       if (mounts.length === 0) continue;
 
       const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
-      const target = pickTarget(pose.x, pose.y, targets, prevTargetId, () => true, {
-        maxDistance: HITSCAN_RANGE,
-      });
+      // Part C — hostile-only (per-player ledger), health-weighted, commitment-
+      // sticky aim. Identical options to the client's `tickLocalMountAim` so the
+      // predicted beam and this authoritative mount angle agree (lockstep).
+      const target = pickTarget(
+        pose.x, pose.y, targets, prevTargetId,
+        (id) => {
+          // Same hostility source as HostileDroneBehaviour / tickDrone: the
+          // drone's `hostileTo` set. Mirrors the client's `isHostileToLocal`
+          // (kept in sync via the damage/bot_aggro markHostile mirror), so the
+          // server + client picks agree.
+          const b = d.aiController.getBehaviour(id);
+          if (!b) return false;
+          const ho = (b as { hostileTo?: Set<string> }).hostileTo;
+          return ho ? ho.has(playerId) : false;
+        },
+        {
+          maxDistance: HITSCAN_RANGE,
+          healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
+          switchMargin: PLAYER_AIM_SWITCH_MARGIN,
+        },
+      );
       this.playerSlotTargets.set(playerId, target?.id ?? null);
 
       let angles = this.playerMountAngles.get(playerId);

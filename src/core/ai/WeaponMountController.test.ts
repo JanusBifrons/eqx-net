@@ -164,6 +164,28 @@ describe('WeaponMountController.pickTarget', () => {
     ).toBe('alt');
   });
 
+  it('per-target `hostile` flag overrides the isHostile callback when defined', () => {
+    // Single-viewer (client) path: the target carries its own hostility, so the
+    // callback is ignored. `a` is flagged hostile, `b` not — even though the
+    // callback would reject both.
+    const targets: MountTargetView[] = [
+      { id: 'a', x: 100, y: 0, vx: 0, vy: 0, hostile: true },
+      { id: 'b', x: 50, y: 0, vx: 0, vy: 0, hostile: false },
+    ];
+    expect(pickTarget(0, 0, targets, null, () => false)?.id).toBe('a');
+    // And a target whose flag is false is never chosen even if the callback says yes.
+    expect(pickTarget(0, 0, targets, null, () => true)?.id).toBe('a');
+  });
+
+  it('falls back to the callback when a target has no `hostile` flag', () => {
+    // Mixed: `c` has no flag (callback decides), `d` flagged false.
+    const targets: MountTargetView[] = [
+      { id: 'c', x: 100, y: 0, vx: 0, vy: 0 },
+      { id: 'd', x: 50, y: 0, vx: 0, vy: 0, hostile: false },
+    ];
+    expect(pickTarget(0, 0, targets, null, (id) => id === 'c')?.id).toBe('c');
+  });
+
   it('dwell does not resurrect a prev that left range / died', () => {
     // prev is out of range (gated out) → not held even within dwell.
     const targets = [t('prev', 5000, 0), t('alt', 100, 0)];

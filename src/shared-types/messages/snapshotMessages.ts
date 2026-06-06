@@ -137,6 +137,13 @@ export interface SnapshotMessage {
      *  channel with the binary recordFlags bit; the client applies the
      *  collider swap from ONE site (syncSwarmIntoPredWorld). */
     shieldDown?: boolean;
+    /** Hull health PERCENT (0-100 integer) for health-weighted player turret
+     *  aim (Part C — the player turret + auto-fire focus the wounded). Emitted
+     *  only for DAMAGED in-interest drones (full-HP omit it → client treats
+     *  absent as 100 %), so undamaged sectors pay zero extra bytes. Pose still
+     *  flows on the binary channel; this is a slim non-pose field like
+     *  `shieldDown`/`mountAngles`. */
+    hp?: number;
     /** Multi-mount/turret refactor (Phase 4c, 2026-05-11). Per-mount slewed
      *  angle in arc-local frame for this drone, indexed by mount-order in
      *  the ship-kind catalogue. Emitted only for in-interest drones whose

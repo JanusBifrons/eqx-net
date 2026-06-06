@@ -84,7 +84,7 @@ import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
-import { pickTarget } from '@core/ai/WeaponMountController';
+import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
   onConnectionStatus: (s: ConnectionStatus) => void;
@@ -165,6 +165,18 @@ const INPUT_HEARTBEAT_MS = 250;
 // (20 Hz). Both capture nothing — safe to hoist to module scope.
 function _px3(n: number): number { return parseFloat(n.toFixed(3)); }
 function _pa5(n: number): number { return parseFloat(n.toFixed(5)); }
+
+// Part C — local player turret aim (tickLocalMountAim). Hoisted module consts
+// so the per-tick pickTarget call allocates neither an options literal nor a
+// closure (invariant #14). LocalAimTargets carry their own `hostile` flag, so
+// this callback is never invoked (pickTarget reads `t.hostile`); it exists only
+// to satisfy the signature. Options mirror the server's WeaponMountTicker.
+const LOCAL_AIM_NOOP_HOSTILE = (): boolean => true;
+const LOCAL_AIM_OPTS = {
+  maxDistance: HITSCAN_RANGE,
+  healthWeight: PLAYER_AIM_HEALTH_WEIGHT,
+  switchMargin: PLAYER_AIM_SWITCH_MARGIN,
+} as const;
 
 export class ColyseusGameClient {
   /**
@@ -4250,7 +4262,7 @@ export class ColyseusGameClient {
     const targets = this._lastAimTargets;
     for (let i = 0; i < targets.length; i++) {
       const t = targets[i]!;
-      if (!t.isHostile) continue;
+      if (!t.hostile) continue;
       const dx = t.x - x;
       const dy = t.y - y;
       if (dx * dx + dy * dy <= r2) return true;
@@ -4302,14 +4314,18 @@ export class ColyseusGameClient {
     // (invariant #14). buildLocalAimTargets already runs each aim tick.
     this._lastAimTargets = targets;
 
-    // Range gate: only acquire targets within hitscan reach. Out-of-range
-    // drones don't peg the turret — when no candidate is in view, the
-    // mounts slew back to forward (the `if (target === null)` branch
-    // below). User-requested feedback (2026-05-11): "return the weapons
-    // to aiming forwards when an enemy ship is out of range".
-    const target = pickTarget(state.x, state.y, targets, this._localSlotTarget, () => true, {
-      maxDistance: HITSCAN_RANGE,
-    });
+    // Part C — hostile-only, health-weighted, commitment-sticky aim so the
+    // turret tracks (and the beam hits) the wounded hostile the auto-fire is
+    // engaging. Targets carry their own `hostile` + `health` (LocalAimTarget),
+    // so the callback is never consulted (pickTarget reads `t.hostile`) — the
+    // single-viewer alloc-free path. Options + the hostility VALUES match the
+    // server's `WeaponMountTicker.tickPlayer` (shared PLAYER_AIM_* constants +
+    // the synced markHostile ledger / drone-hp), keeping the predicted beam and
+    // the authoritative mount angle in lockstep (Invariant #12). Out-of-range /
+    // no-hostile ⇒ null ⇒ mounts slew back to forward.
+    const target = pickTarget(
+      state.x, state.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
+    );
     this._localSlotTarget = target?.id ?? null;
 
     // Allocate / resize the per-ship mountAngles array to the FULL

@@ -49,6 +49,7 @@ import {
   type ShipInputBits,
 } from '../net/snapshotScheduler.js';
 import { checkBackpressure } from '../net/Backpressure.js';
+import { getDroneMaxHealth } from './droneKindHelpers.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -59,6 +60,8 @@ export interface SwarmDroneRec {
   id: string;
   kind: number;
   shieldDown?: boolean;
+  /** Ship-kind id — used to resolve max health for the `hp` percent (Part C). */
+  shipKind?: string;
 }
 
 export interface SwarmLookupByEid {
@@ -97,6 +100,9 @@ export interface SnapshotBroadcasterDeps {
   boostingPlayers: Set<string>;
   thrustingPlayers: Set<string>;
   swarmRegistry: SwarmLookupByEid;
+  /** Drone hull health, keyed by swarm id — for the per-drone `hp` percent in
+   *  the slice (Part C health-weighted player aim). */
+  swarmHealth: Map<string, number>;
   playerMountAngles: Map<string, Float32Array>;
   droneMountAngles: Map<string, Float32Array>;
   /** Missile simulation — per-recipient AOI-filtered missile pose slice. */
@@ -167,6 +173,7 @@ type MutableDroneEntry = {
   id: number;
   mountAngles?: number[];
   shieldDown?: boolean;
+  hp?: number;
 };
 
 type MutableWreckEntry = {
@@ -353,12 +360,14 @@ export class SnapshotBroadcaster {
   private static writeDroneSlot(
     arr: MutableDroneEntry[], i: number,
     id: number, mountAngles: number[] | undefined, shieldDown: boolean,
+    hp: number | undefined,
   ): void {
     const slot = arr[i];
     if (!slot) {
-      arr[i] = shieldDown
-        ? { id, mountAngles, shieldDown: true }
-        : { id, mountAngles };
+      const fresh: MutableDroneEntry = { id, mountAngles };
+      if (shieldDown) fresh.shieldDown = true;
+      if (hp !== undefined) fresh.hp = hp;
+      arr[i] = fresh;
       return;
     }
     slot.id = id;
@@ -367,6 +376,8 @@ export class SnapshotBroadcaster {
     slot.mountAngles = mountAngles;
     if (shieldDown) slot.shieldDown = true;
     else delete slot.shieldDown;
+    if (hp !== undefined) slot.hp = hp;
+    else delete slot.hp;
   }
 
   private static writeWreckSlot(
@@ -625,10 +636,23 @@ export class SnapshotBroadcaster {
               }
             }
           }
-          if (!droneMountAnglesArr && !rec.shieldDown) continue;
+          // Hull health percent (Part C) — emitted only when DAMAGED so
+          // undamaged drones add zero bytes (client treats absent as 100 %).
+          let hpPct: number | undefined;
+          const maxHp = getDroneMaxHealth(rec.shipKind);
+          if (maxHp && maxHp > 0) {
+            const cur = d.swarmHealth.get(rec.id);
+            if (cur !== undefined && cur < maxHp) {
+              let pct = Math.round((cur / maxHp) * 100);
+              if (pct < 0) pct = 0;
+              else if (pct > 99) pct = 99; // <100 by construction (cur < maxHp)
+              hpPct = pct;
+            }
+          }
+          if (!droneMountAnglesArr && !rec.shieldDown && hpPct === undefined) continue;
           SnapshotBroadcaster.writeDroneSlot(
             dronesScratch, dronesCount,
-            eid, droneMountAnglesArr, rec.shieldDown ?? false,
+            eid, droneMountAnglesArr, rec.shieldDown ?? false, hpPct,
           );
           dronesCount++;
         }

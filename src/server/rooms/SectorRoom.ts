@@ -980,6 +980,7 @@ export class SectorRoom extends Room<SectorState> {
       shipPoseCache: this.shipPoseCache,
       getActiveShip: (pid) => this.getActiveShip(pid),
       aiController: this.aiController,
+      swarmHealth: () => this.swarmHealth,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
     });
 
@@ -1247,6 +1248,7 @@ export class SectorRoom extends Room<SectorState> {
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
       swarmRegistry: this.swarmRegistry,
+      swarmHealth: this.swarmHealth,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,

@@ -137,6 +137,11 @@ export interface SwarmRenderState {
    *  — drives the radar's hostile-vs-idle colouring + glow. Absent on
    *  asteroids and on drones whose AI hasn't been hit yet. */
   isHostileToLocal?: boolean;
+  /** Hull health FRACTION (0..1) for this drone, decoded from the snapshot
+   *  `drones[].hp` percent (Part C — health-weighted player turret aim /
+   *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
+   *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
+  healthFrac?: number;
   /** Per-mount rotation angle, ship-relative AND already biased past
    *  `mount.baseAngle`. Indexed by catalogue mount-order. Multi-mount/
    *  turret refactor Phase 4c (2026-05-11): authoritative angles arrive in

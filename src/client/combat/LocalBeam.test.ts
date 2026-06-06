@@ -221,4 +221,21 @@ describe('buildLocalAimTargets — turret aims where the drone is DRAWN, not its
     const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
     expect(buildLocalAimTargets(new Map(), scratch)).toEqual([]);
   });
+
+  it('carries hostility + health for Part C aim weighting', () => {
+    const wounded = movingDrone([{ x: 10, y: 0, arrivalMs: 0 }]);
+    wounded.isHostileToLocal = true;
+    wounded.healthFrac = 0.2;
+    const fresh = movingDrone([{ x: 20, y: 0, arrivalMs: 0 }]);
+    // isHostileToLocal + healthFrac left undefined → defaults (neutral, full).
+    const swarm = new Map<number, SwarmRenderState>([[1, wounded], [2, fresh]]);
+    const scratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+    const [w, f] = buildLocalAimTargets(swarm, scratch);
+    expect(w!.hostile).toBe(true);
+    expect(w!.health).toBeCloseTo(0.2, 6);
+    expect(w!.maxHealth).toBe(1);
+    // Defaults: not hostile, full health (absent hp ⇒ 1).
+    expect(f!.hostile).toBe(false);
+    expect(f!.health).toBe(1);
+  });
 });

@@ -48,6 +48,13 @@ export interface MountTargetView {
    *  pure nearest-target behaviour. */
   readonly health?: number;
   readonly maxHealth?: number;
+  /** Per-target hostility, used INSTEAD of the `isHostile(id)` callback when
+   *  defined. Lets a single-viewer caller (the client's local player) carry the
+   *  flag on the target (alloc-free, no id parsing) while a multi-viewer caller
+   *  (the server, hostility is per-player) keeps using the callback. Both paths
+   *  yield the same boolean for the same (target, viewer), so server/client
+   *  picks stay in lockstep. Undefined ⇒ fall back to the callback. */
+  readonly hostile?: boolean;
 }
 
 /** A single mount's static configuration — the subset of `WeaponMount` the
@@ -72,6 +79,17 @@ export interface MountConfig {
  *  enough that legitimate closer threats win; large enough that frame-to-frame
  *  micro-jitter doesn't flap targets. */
 export const STICKY_HYSTERESIS_FACTOR = 1.1;
+
+/** Shared player-turret aim tuning (Part C). Used IDENTICALLY by the client's
+ *  predicted aim (`tickLocalMountAim`) and the server's authoritative aim
+ *  (`MountAimSubsystem`/`WeaponMountTicker.tickPlayer`) so the predicted beam
+ *  and the server's hit-resolution mount angle agree. Same constants on both
+ *  sides is load-bearing for mount-angle lockstep (Invariant #12). */
+export const PLAYER_AIM_HEALTH_WEIGHT = 1.5;
+/** Commitment margin for the player turret — resists flapping between hostiles
+ *  and gives the "delay before switching targets" feel without a wall-clock /
+ *  tick timer (which would diverge across the client/server tick references). */
+export const PLAYER_AIM_SWITCH_MARGIN = 1.6;
 
 export interface PickTargetOptions {
   /** Override the default hysteresis factor for tests / future tuning. */
@@ -158,7 +176,9 @@ export function pickTarget(
   let prevScore = Infinity;
 
   for (const t of targets) {
-    if (!isHostile(t.id)) continue;
+    // Per-target flag wins when defined (single-viewer client, alloc-free);
+    // otherwise the per-viewer callback (server). Same value either way.
+    if (!(t.hostile !== undefined ? t.hostile : isHostile(t.id))) continue;
     const dx = t.x - shipX;
     const dy = t.y - shipY;
     const d2 = dx * dx + dy * dy;
