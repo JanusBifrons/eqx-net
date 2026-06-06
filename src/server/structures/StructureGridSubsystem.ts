@@ -29,6 +29,7 @@ import {
   REPAIR_PULSE_AMOUNT,
   REPAIR_COST_PER_HP,
   DECONSTRUCTION_RATE_KG,
+  CONNECTION_THROUGHPUT,
 } from '../../core/structures/structureGridConstants.js';
 import { buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -41,6 +42,9 @@ export interface StructureGridHooks {
   setHealth(id: string, hp: number): void;
   /** Despawn a structure's swarm entity (used by deconstruction). */
   despawn(id: string): void;
+  /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
+   *  (x, y), or null. Returns the asteroid's dense entityId + pose. */
+  findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number } | null;
 }
 
 export interface GridPulseResult {
@@ -69,10 +73,58 @@ export class StructureGridSubsystem {
     }
 
     const flashed: Array<[string, string]> = [];
+    this.processMining();
+    this.processTransfer(nowMs, flashed);
     this.processConstruction(nowMs, flashed);
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
     return { flashed, material: 'minerals' };
+  }
+
+  /** Phase 4 — each built + powered Miner extracts `miningRate` from the
+   *  nearest in-range asteroid into its local buffer (capped by storage). */
+  private processMining(): void {
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind !== 'miner' || !rec.isConstructed) continue;
+      if (!this.grid.powerSummaryFor(rec.id).powered) {
+        rec.miningTargetEntityId = undefined;
+        continue;
+      }
+      const kind = getStructureKind('miner');
+      const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
+      rec.miningTargetEntityId = target?.entityId;
+      if (!target) continue;
+      // Mining never damages the asteroid (effectively infinite, first cut).
+      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + (kind.miningRate ?? 0));
+    }
+  }
+
+  /** Phase 4 — haul buffered minerals from non-Capital structures toward a
+   *  Capital with free storage, along the A* route (capped by throughput). */
+  private processTransfer(nowMs: number, flashed: Array<[string, string]>): void {
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind === 'capital' || !rec.isConstructed || rec.minerals <= 0) continue;
+      const dest = this.findCapitalWithSpace(rec.id);
+      if (!dest) continue;
+      const capStorage = getStructureKind(dest.capital.kind).storageCapacity;
+      const space = capStorage - dest.capital.minerals;
+      if (space <= 0) continue;
+      const move = Math.min(rec.minerals, CONNECTION_THROUGHPUT, space);
+      if (move <= 0) continue;
+      rec.minerals -= move;
+      dest.capital.minerals += move;
+      this.flashRoute(dest.route, nowMs, flashed);
+    }
+  }
+
+  private findCapitalWithSpace(sourceId: string): { capital: StructureRecord; route: readonly string[] } | null {
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind !== 'capital' || !rec.isConstructed) continue;
+      if (rec.minerals >= getStructureKind(rec.kind).storageCapacity) continue;
+      const route = this.grid.route(sourceId, rec.id);
+      if (route) return { capital: rec, route };
+    }
+    return null;
   }
 
   /** Find a built Capital with minerals that can route to `targetId`. */

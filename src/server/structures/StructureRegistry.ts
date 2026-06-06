@@ -33,8 +33,13 @@ export interface StructureRecord {
   /** True while the player is reclaiming this structure (Phase 3 deconstruct). */
   isDeconstructing: boolean;
   /** Minerals currently stored here. Only the Capital has meaningful
-   *  `storageCapacity`; it is the bank the construction stream draws from. */
+   *  `storageCapacity`; it is the bank the construction stream draws from.
+   *  A Miner buffers locally here before hauling toward the Capital. */
   minerals: number;
+  /** Phase 4 — the asteroid entityId this Miner is currently extracting from
+   *  (for the client beam). Transient; recomputed each pulse, undefined when
+   *  not a miner / unpowered / no asteroid in range. */
+  miningTargetEntityId?: number;
 }
 
 export class StructureRegistry {

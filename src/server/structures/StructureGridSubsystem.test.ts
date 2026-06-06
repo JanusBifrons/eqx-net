@@ -11,7 +11,7 @@ import {
 
 /** Shared harness: a real registry + health map, with placement + grid wired
  *  over the same state (the way SectorRoom wires them). */
-function makeHarness() {
+function makeHarness(asteroid?: { entityId: number; x: number; y: number; range?: number }) {
   const registry = new StructureRegistry();
   const health = new Map<string, number>();
   const despawned: string[] = [];
@@ -31,6 +31,13 @@ function makeHarness() {
     getHealth: (id) => health.get(id) ?? 0,
     setHealth: (id, hp) => health.set(id, hp),
     despawn: (id) => { despawned.push(id); health.delete(id); },
+    findNearestAsteroid: (x, y, range) => {
+      if (!asteroid) return null;
+      const dx = asteroid.x - x;
+      const dy = asteroid.y - y;
+      if (Math.hypot(dx, dy) > range) return null;
+      return { entityId: asteroid.entityId, x: asteroid.x, y: asteroid.y };
+    },
   });
 
   let now = 0;
@@ -180,6 +187,44 @@ describe('StructureGridSubsystem — repair + deconstruction', () => {
     expect(h.registry.has(con)).toBe(false);
     expect(h.despawned).toContain(con);
     expect(capRec.minerals).toBeGreaterThan(mineralsBefore); // reclaimed
+  });
+});
+
+describe('StructureGridSubsystem — mining (Phase 4)', () => {
+  it('a built + powered miner extracts minerals and hauls them to the capital', async () => {
+    // Asteroid at (250,0), within the miner's miningRange.
+    const h = makeHarness({ entityId: 7, x: 250, y: 0 });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    // Solar to offset the miner's power draw (miner consumes 60; cap 50 + solar 30 = 80).
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    const capRec = [...h.registry.all()].find((r) => r.kind === 'capital')!;
+
+    // Build solar + miner.
+    for (let i = 0; i < 200; i++) h.pulse();
+    expect(h.registry.get(sol)!.isConstructed).toBe(true);
+    expect(h.registry.get(miner)!.isConstructed).toBe(true);
+
+    const before = capRec.minerals;
+    h.pulse();
+    // The miner mined + hauled this pulse → capital bank grew.
+    expect(capRec.minerals).toBeGreaterThan(before);
+    expect(h.registry.get(miner)!.miningTargetEntityId).toBe(7);
+  });
+
+  it('an UNPOWERED miner does not mine (no asteroid target set)', () => {
+    // Asteroid in range, but no solar → miner draws the grid negative.
+    const h = makeHarness({ entityId: 9, x: 250, y: 0 });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    // Build the miner (construction itself isn't power-gated).
+    for (let i = 0; i < 400; i++) h.pulse();
+    const minerRec = h.registry.get(miner)!;
+    expect(minerRec.isConstructed).toBe(true);
+    // Capital 50 − miner 60 = −10 → unpowered → no mining target, no minerals.
+    h.pulse();
+    expect(minerRec.miningTargetEntityId).toBeUndefined();
+    expect(minerRec.minerals).toBe(0);
   });
 });
 

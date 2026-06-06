@@ -14,14 +14,35 @@ import { useUIStore, useShouldRenderHud } from '../state/store';
 export function GridPowerReadout(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const netPower = useUIStore((s) => s.gridNetPower);
-  if (!shouldRender || netPower === 0) return null;
-  const positive = netPower > 0;
+  const minerals = useUIStore((s) => s.minerals);
+  // Hidden until the player has a grid (any power or minerals to show).
+  if (!shouldRender || (netPower === 0 && minerals === 0)) return null;
+  const positive = netPower >= 0;
   return (
-    <Box data-testid="grid-power" data-net-power={netPower} sx={positive ? CHIP_SX : CHIP_LOW_SX}>
-      ⚡ {netPower > 0 ? '+' : ''}{netPower}
+    <Box sx={ROW_SX}>
+      <Box data-testid="grid-power" data-net-power={netPower} sx={positive ? CHIP_SX : CHIP_LOW_SX}>
+        ⚡ {netPower > 0 ? '+' : ''}{netPower}
+      </Box>
+      <Box data-testid="grid-minerals" data-minerals={minerals} sx={MINERAL_SX}>
+        ⛏ {Math.floor(minerals).toLocaleString()}
+      </Box>
     </Box>
   );
 }
+
+const ROW_SX = { display: 'flex', gap: 0.5 } as const;
+
+const MINERAL_SX = {
+  px: 1,
+  py: 0.25,
+  borderRadius: 1,
+  bgcolor: 'rgba(5,7,15,0.78)',
+  border: '1px solid rgba(238,136,68,0.5)',
+  color: '#eb8',
+  fontSize: 12,
+  fontFamily: 'monospace',
+  fontWeight: 700,
+} as const;
 
 const CHIP_SX = {
   px: 1,

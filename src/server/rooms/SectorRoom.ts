@@ -229,6 +229,12 @@ const JoinOptionsSchema = z
      *  ignored on live galaxy rooms so a malicious client can't force a
      *  short or huge linger window. */
     lingerMs: z.number().int().min(1).max(900_000).optional(),
+    /** Structures plan (Phase 3/4) test-only override of the grid pulse
+     *  interval (ms). On the room-creating client it reaches `onCreate` and
+     *  sets the pulse timer; lets the mining/construction E2E fast-forward the
+     *  wall-clock pulse (which `testTimeScale` can't, being physics-tick-only).
+     *  testMode-gated. */
+    structureGridPulseMs: z.number().int().min(20).max(2000).optional(),
   })
   .passthrough();
 
@@ -658,6 +664,8 @@ export class SectorRoom extends Room<SectorState> {
      *  wall-clock wait) + read the cached snapshot slice. */
     pulseStructureGrid: () => void;
     getStructuresSlice: () => SnapshotMessage['structures'];
+    /** Phase 4 — seed a mineable asteroid for the mining integration test. */
+    spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
   } {
     return {
       serverTick: this.serverTick,
@@ -671,6 +679,8 @@ export class SectorRoom extends Room<SectorState> {
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
       getStructuresSlice: () => this.structuresSlice,
+      spawnTestAsteroid: (id, x, y, radius) =>
+        this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
     };
   }
 
@@ -880,6 +890,11 @@ export class SectorRoom extends Room<SectorState> {
         radius?: number;
         mass?: number;
       }>;
+      /** Structures plan, Phase 3/4 — override the grid pulse interval (ms).
+       *  testMode-only bespoke trigger so E2E can fast-forward construction +
+       *  mining (the pulse is a wall-clock timer, NOT the physics tick, so
+       *  `testTimeScale` doesn't speed it). Default `TRANSFER_PULSE_MS`. */
+      structureGridPulseMs?: number;
     };
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -1422,8 +1437,12 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmHealth.delete(id);
         this.swarmShield.delete(id);
       },
+      findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
     });
-    this.structureGridTimer = setInterval(() => this.structureGridTick(), TRANSFER_PULSE_MS);
+    const pulseMs = this.testMode && roomOpts.structureGridPulseMs
+      ? Math.max(20, roomOpts.structureGridPulseMs)
+      : TRANSFER_PULSE_MS;
+    this.structureGridTimer = setInterval(() => this.structureGridTick(), pulseMs);
     this.structureGridTimer.unref?.();
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
@@ -2134,6 +2153,34 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
+   *  (x, y). Reads authoritative poses from the SAB via each record's slot
+   *  (asteroids are static, so this is their spawn pose). Low-frequency (1 Hz
+   *  pulse), so the linear scan is fine. */
+  private findNearestAsteroid(
+    x: number,
+    y: number,
+    range: number,
+  ): { entityId: number; x: number; y: number } | null {
+    const r2 = range * range;
+    let best: { entityId: number; x: number; y: number } | null = null;
+    let bestD2 = r2;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue; // asteroids only
+      const base = slotBase(rec.slot);
+      const ax = this.sabF32[base + SLOT_X_OFF]!;
+      const ay = this.sabF32[base + SLOT_Y_OFF]!;
+      const dx = ax - x;
+      const dy = ay - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 <= bestD2) {
+        bestD2 = d2;
+        best = { entityId: rec.entityId, x: ax, y: ay };
+      }
+    }
+    return best;
+  }
+
   /** Rebuild the cached structures snapshot slice from the registry + grid.
    *  Called at the 1 Hz pulse and after each placement/removal — never on the
    *  60 Hz tick, so the array allocation here is off the hot loop. */
@@ -2171,6 +2218,7 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.isDeconstructing && rec.constructionCost > 0) {
         entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
       }
+      if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
       arr.push(entry);
     }
     this.structuresSlice = arr;

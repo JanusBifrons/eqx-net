@@ -169,6 +169,9 @@ export interface StructureRenderState {
   buildPct: number;
   /** Deconstruction fraction [0..1] while reclaiming (0 normally). */
   deconstructPct: number;
+  /** Phase 4 — asteroid entityId a Miner is extracting from (draws the beam),
+   *  or undefined. */
+  miningTargetId?: number;
 }
 
 /**

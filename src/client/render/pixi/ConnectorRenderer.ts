@@ -55,6 +55,19 @@ export class ConnectorRenderer {
         g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
       }
 
+      // Phase 4 — mining beam from a miner to its target asteroid (positions
+      // joined from the swarm mirror by entityId).
+      if (st.miningTargetId !== undefined) {
+        const target = swarm.get(st.miningTargetId);
+        if (target) {
+          const tx = target.x;
+          const ty = -target.y;
+          g.moveTo(ax, ay);
+          g.lineTo(tx, ty);
+          g.stroke({ color: 0xee8844, alpha: 0.85, width: Math.max(1 / scale, 2) });
+        }
+      }
+
       // Construction fill-bar for blueprints (above the structure body).
       if (!st.built) {
         const r = a.radius;

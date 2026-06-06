@@ -206,5 +206,8 @@ export interface SnapshotMessage {
     buildPct?: number;
     /** Deconstruction fraction [0..1] while reclaiming; omitted otherwise. */
     deconstructPct?: number;
+    /** Phase 4 — the asteroid entityId a Miner is extracting from (draws the
+     *  mining beam). Present only on actively-mining miners. */
+    miningTargetId?: number;
   }>;
 }

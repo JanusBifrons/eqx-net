@@ -179,6 +179,9 @@ export interface UIStore {
    *  the 1 Hz pulse cadence from the structures snapshot slice. 0 when the
    *  player has no powered grid. */
   gridNetPower: number;
+  /** Structures plan (Phase 4) — the player's mineral bank (the Capital's
+   *  stored minerals). Discrete HUD readout from the structures slice. */
+  minerals: number;
   /** The local ship's full energy pool — the denominator for the top-center
    *  EnergyBar (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
@@ -292,6 +295,7 @@ export interface UIStore {
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
   setGridNetPower: (net: number) => void;
+  setMinerals: (n: number) => void;
   setEnergyMax: (max: number) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;

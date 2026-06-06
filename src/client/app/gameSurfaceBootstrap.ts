@@ -128,6 +128,10 @@ export function buildJoinSpec(
   // observe despawn→return-to-pool in ~2 s. Server-side testMode-gated.
   if (urlParams.has('lingerMs'))
     extraJoinOptions['lingerMs'] = parseInt(urlParams.get('lingerMs')!, 10);
+  // Structures plan (Phase 3/4) — override the grid pulse interval (ms) so the
+  // mining/construction E2E can fast-forward the wall-clock pulse. testMode-gated.
+  if (urlParams.has('structureGridPulseMs'))
+    extraJoinOptions['structureGridPulseMs'] = parseInt(urlParams.get('structureGridPulseMs')!, 10);
   // plan: imperative-taco — `?startHostile=1` pre-marks every drone
   // hostile to the joining player at spawn, so a CDP allocation profile
   // hits steady-state combat without an IDLE→COMBAT warmup tail.
