@@ -35,6 +35,7 @@ import {
   shapeForKind,
   buildAsteroidGfx,
   buildDroneGfx,
+  buildStructureGfx,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -69,6 +70,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = entry.shipKind
           ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
           : buildDroneGfx(entry.radius);
+      } else if (entry.kind === 2) {
+        // Structures (pose-core kind 2): a per-subtype tinted polygon read from
+        // the shared shipKind byte (structures plan, Phase 2).
+        sprite = buildStructureGfx(entry.shipKind, entry.radius);
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
       }

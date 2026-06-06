@@ -41,6 +41,7 @@ import { useWarpOrchestration } from './useWarpOrchestration';
 import { ShipStatsCard } from './components/ShipStatsCard';
 import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
+import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -601,6 +602,9 @@ function GameSurface({
        *  (joystick/FIRE/BOOST) stay dedicated in MobileControls. Phase 2 adds
        *  the "Build ▸" structure-placement actions to the same dial. */}
       <Slot anchor="bottom-right" order={30}><SpeedDialMenu /></Slot>
+      {/* Structures plan (Phase 2): placement confirm banner — shown only while
+       *  the player is in placement mode (set by the speed-dial Build menu). */}
+      <Slot anchor="bottom-center" order={5}><StructurePlacementBanner /></Slot>
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (

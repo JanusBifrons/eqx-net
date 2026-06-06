@@ -1,12 +1,19 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
 import MenuIcon from '@mui/icons-material/Menu';
 import MapIcon from '@mui/icons-material/Map';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
+import ConstructionIcon from '@mui/icons-material/Construction';
+import HexagonIcon from '@mui/icons-material/Hexagon';
+import HubIcon from '@mui/icons-material/Hub';
+import SolarPowerIcon from '@mui/icons-material/SolarPower';
+import DiamondIcon from '@mui/icons-material/Diamond';
+import ShieldIcon from '@mui/icons-material/Shield';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
+import { STRUCTURE_KINDS_LIST, type StructureKindId } from '@shared-types/structureKinds';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor, Phase 1).
@@ -41,21 +48,30 @@ export function SpeedDialMenu(): JSX.Element | null {
   const activeSlotId = useUIStore((s) => s.activeSlotId);
   const shipKindId = useUIStore((s) => s.selectedShipKind);
   const setActiveSlotId = useUIStore((s) => s.setActiveSlotId);
+  const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
   const [open, setOpen] = useState(false);
+  // `build` swaps the dial's actions to the structure-kind picker (a "Build ▸"
+  // sub-menu, since MUI SpeedDial doesn't nest). Reset whenever the dial closes.
+  const [buildMode, setBuildMode] = useState(false);
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setBuildMode(false);
+  }, []);
 
   const handleMenu = useCallback(() => {
-    setOpen(false);
+    close();
     setDrawerOpen(true);
-  }, [setDrawerOpen]);
+  }, [close, setDrawerOpen]);
 
   const handleMap = useCallback(() => {
-    setOpen(false);
+    close();
     toggleGalaxyMapOpen();
-  }, [toggleGalaxyMapOpen]);
+  }, [close, toggleGalaxyMapOpen]);
 
   const handleWeapon = useCallback(() => {
-    setOpen(false);
+    close();
     // Cycle to the next weapon slot on the local ship. Today every gameplay
     // ship has exactly one slot, so this is a no-op affordance that still
     // surfaces "this is your hot slot"; it becomes a real cycle the moment a
@@ -65,7 +81,18 @@ export function SpeedDialMenu(): JSX.Element | null {
     const idx = slots.findIndex((s) => s.id === activeSlotId);
     const next = slots[(idx + 1) % slots.length];
     if (next) setActiveSlotId(next.id);
-  }, [shipKindId, activeSlotId, setActiveSlotId]);
+  }, [close, shipKindId, activeSlotId, setActiveSlotId]);
+
+  // Enter the Build sub-menu (keep the dial open so the kind actions show).
+  const handleBuild = useCallback(() => setBuildMode(true), []);
+
+  const handlePickBuild = useCallback(
+    (kind: StructureKindId) => {
+      setPlacementKind(kind);
+      close();
+    },
+    [close, setPlacementKind],
+  );
 
   if (!shouldRender || isDead) return null;
 
@@ -81,36 +108,69 @@ export function SpeedDialMenu(): JSX.Element | null {
       direction="up"
       open={open}
       onOpen={() => setOpen(true)}
-      onClose={() => setOpen(false)}
+      onClose={close}
       FabProps={FAB_PROPS}
       sx={DIAL_SX}
     >
-      <SpeedDialAction
-        icon={<MenuIcon />}
-        tooltipTitle="Panels"
-        data-testid="speed-dial-menu"
-        onClick={handleMenu}
-        FabProps={MENU_ACTION_FAB_PROPS}
-      />
-      <SpeedDialAction
-        icon={<MapIcon />}
-        tooltipTitle="Map"
-        data-testid="galaxy-map-toggle"
-        aria-pressed={isGalaxyMapOpen}
-        onClick={handleMap}
-        FabProps={mapActionFabProps(isGalaxyMapOpen)}
-      />
-      <SpeedDialAction
-        icon={<GpsFixedIcon />}
-        tooltipTitle={weaponLabel}
-        data-testid="slot-selector"
-        data-slot-id={activeSlot?.id}
-        onClick={handleWeapon}
-        FabProps={WEAPON_ACTION_FAB_PROPS}
-      />
+      {buildMode
+        ? STRUCTURE_KINDS_LIST.map((k) => (
+            <SpeedDialAction
+              key={k.id}
+              icon={BUILD_ICONS[k.id] ?? <ConstructionIcon />}
+              tooltipTitle={`Build ${k.displayName}`}
+              data-testid={`build-${k.id}`}
+              onClick={() => handlePickBuild(k.id)}
+              FabProps={ACTION_FAB_BASE}
+            />
+          ))
+        : [
+            <SpeedDialAction
+              key="menu"
+              icon={<MenuIcon />}
+              tooltipTitle="Panels"
+              data-testid="speed-dial-menu"
+              onClick={handleMenu}
+              FabProps={MENU_ACTION_FAB_PROPS}
+            />,
+            <SpeedDialAction
+              key="map"
+              icon={<MapIcon />}
+              tooltipTitle="Map"
+              data-testid="galaxy-map-toggle"
+              aria-pressed={isGalaxyMapOpen}
+              onClick={handleMap}
+              FabProps={mapActionFabProps(isGalaxyMapOpen)}
+            />,
+            <SpeedDialAction
+              key="weapon"
+              icon={<GpsFixedIcon />}
+              tooltipTitle={weaponLabel}
+              data-testid="slot-selector"
+              data-slot-id={activeSlot?.id}
+              onClick={handleWeapon}
+              FabProps={WEAPON_ACTION_FAB_PROPS}
+            />,
+            <SpeedDialAction
+              key="build"
+              icon={<ConstructionIcon />}
+              tooltipTitle="Build ▸"
+              data-testid="speed-dial-build"
+              onClick={handleBuild}
+              FabProps={ACTION_FAB_BASE}
+            />,
+          ]}
     </SpeedDial>
   );
 }
+
+/** Per-kind Build icon. */
+const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
+  capital: <HexagonIcon />,
+  connector: <HubIcon />,
+  solar: <SolarPowerIcon />,
+  miner: <DiamondIcon />,
+  turret: <ShieldIcon />,
+};
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
 

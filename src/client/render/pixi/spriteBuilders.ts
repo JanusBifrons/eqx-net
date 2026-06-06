@@ -14,6 +14,7 @@
 import { Graphics } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../../shared-types/shipKinds.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 export const HITBOX_COLOR = 0xff0066;
@@ -181,6 +182,44 @@ export function buildDroneGfx(radius: number): Graphics {
   // Glowing core dot so they remain visible at small radii.
   g.circle(0, 0, Math.max(2, radius * 0.25));
   g.fill({ color: DRONE_CORE_COLOR });
+  return g;
+}
+
+/** Regular-polygon side count per structure subtype — gives each kind a
+ *  distinct silhouette without bespoke hand-authored hulls. Hubs read as
+ *  many-sided (octagon/hexagon); leaves are simpler shapes. */
+const STRUCTURE_SIDES: Record<string, number> = {
+  capital: 8,
+  connector: 6,
+  solar: 4,
+  miner: 5,
+  turret: 3,
+};
+
+/**
+ * Structure visual (pose-core kind 2) — a regular polygon tinted with the
+ * subtype's catalogue `color`, sided per `STRUCTURE_SIDES`. Drawn in math space
+ * (Y-up) like the other builders; the renderer rotates by `-angle`. An unknown
+ * subtype falls back to the Capital's look (matching the catalogue's forgiving
+ * `getStructureKind`).
+ */
+export function buildStructureGfx(structureKindId: string | undefined, radius: number): Graphics {
+  const g = new Graphics();
+  const kind = getStructureKind(structureKindId);
+  const sides = STRUCTURE_SIDES[kind.id] ?? 6;
+  const verts: { x: number; y: number }[] = [];
+  for (let i = 0; i < sides; i++) {
+    // Start at the top (-y in pixi screen space) and go clockwise.
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
+    verts.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
+  }
+  g.poly(verts);
+  g.fill({ color: kind.color });
+  g.poly(verts);
+  g.stroke({ color: 0xffffff, width: 1.5, alpha: 0.6 });
+  // Core dot so small structures stay legible.
+  g.circle(0, 0, Math.max(2, radius * 0.18));
+  g.fill({ color: 0xffffff, alpha: 0.85 });
   return g;
 }
 
