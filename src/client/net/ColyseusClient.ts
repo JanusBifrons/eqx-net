@@ -3737,6 +3737,17 @@ export class ColyseusGameClient {
       // client brain ⇒ no divergent inputs ⇒ nothing to reconcile/snap.
       if (!this.localDead && this.predWorld && this.reconciler && this.mirror.localPlayerId) {
         const nowMs = this.clock.now();
+        // Boost is now an independent every-tick forward impulse (no longer
+        // gated on thrust), so it MUST be energy-gated to match the server:
+        // `InputHandler` strips the boost bit when the pool can't afford
+        // BOOST_TICK_COST. Predicting an un-gated boost while the server
+        // applies none = continuous per-tick velocity divergence once the
+        // pool empties (the netgate's rollingCorrRate / maxDriftUnits class).
+        // `predEnergy` is hard-reconciled to server energy each snapshot, so
+        // this gate tracks the server's; the fire path gates the same way.
+        // We predict, record, SEND and drain on the SAME gated value so client
+        // and server stay byte-aligned (minimises corrections).
+        const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
         // Pooled per-tick scratches (data-driven from the 2026-05-30 CDP
         // profile — `tickPhysics` was rank-2 at 81 KB / 7.5 %). The
         // Reconciler copies `rec` into its own ring buffer; predWorld
@@ -3746,14 +3757,14 @@ export class ColyseusGameClient {
         rec.thrust = thrust;
         rec.turnLeft = turnLeft;
         rec.turnRight = turnRight;
-        rec.boost = boost;
+        rec.boost = boostApplied;
         rec.reverse = reverse;
         rec.sentAt = nowMs;
         const applyArg = this._applyInputScratch;
         applyArg.thrust = thrust;
         applyArg.turnLeft = turnLeft;
         applyArg.turnRight = turnRight;
-        applyArg.boost = boost;
+        applyArg.boost = boostApplied;
         applyArg.reverse = reverse;
         this.predWorld.applyInput(this.mirror.localPlayerId, applyArg);
         this.reconciler.recordInput(rec);
@@ -3769,13 +3780,13 @@ export class ColyseusGameClient {
         // all-idle restriction keeps throttling safe because held all-idle
         // adds zero impulse, so a skipped tick is physically equivalent.
         const last = this.lastSentInputState;
-        const allIdle = !thrust && !turnLeft && !turnRight && !boost && !reverse;
+        const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse;
         const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
         const stateChanged = !last
           || last.thrust !== thrust
           || last.turnLeft !== turnLeft
           || last.turnRight !== turnRight
-          || last.boost !== boost
+          || last.boost !== boostApplied
           || last.reverse !== reverse;
         const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
         const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
@@ -3787,7 +3798,7 @@ export class ColyseusGameClient {
           sendArg.thrust = thrust;
           sendArg.turnLeft = turnLeft;
           sendArg.turnRight = turnRight;
-          sendArg.boost = boost;
+          sendArg.boost = boostApplied;
           sendArg.reverse = reverse;
           this.room.send('input', sendArg);
           // lastSentInputState retains state ACROSS ticks — must NOT
@@ -3799,20 +3810,23 @@ export class ColyseusGameClient {
             stored.thrust = thrust;
             stored.turnLeft = turnLeft;
             stored.turnRight = turnRight;
-            stored.boost = boost;
+            stored.boost = boostApplied;
             stored.reverse = reverse;
           } else {
-            this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+            this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse };
           }
           this.lastSentInputAtMs = nowMs;
           if ((stateChanged || (tick % 60) === 0) && isFullDiagMode()) {
-            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
+            logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
           }
         }
         // Show the local exhaust trail without waiting an RTT for the server
         // to confirm — the next snapshot will overwrite from server truth.
+        // Boost is now thrust-independent, so the trail shows whenever boost is
+        // actually applied (energy-affordable), matching the server's
+        // `boostingPlayers` membership + the predEnergy drain below.
         if (this.mirror.boostingShips) {
-          if (boost && thrust) this.mirror.boostingShips.add(this.mirror.localPlayerId);
+          if (boostApplied) this.mirror.boostingShips.add(this.mirror.localPlayerId);
           else this.mirror.boostingShips.delete(this.mirror.localPlayerId);
         }
         if (this.mirror.thrustingShips) {
@@ -4032,17 +4046,21 @@ export class ColyseusGameClient {
       // keeps the touch state machine consistent with the in-loop path.
       void tcFire2;
       const boost     = kb.boost || (this.touchInput?.getBoostHeld() ?? false);
+      // Energy-gate boost identically to the per-tick path so the sentinel
+      // re-send carries the same value the server will apply (and that the
+      // per-tick path predicted) — keeps `lastSentInputState` consistent.
+      const boostApplied = boost && canAfford(this.predEnergy, BOOST_TICK_COST);
       const reverse   = kb.reverse;
       const tick = this.inputTick; // NOT incremented; sentinel rides at the last-sent tick
       const nowMs = this.clock.now();
       const last = this.lastSentInputState;
-      const allIdle = !thrust && !turnLeft && !turnRight && !boost && !reverse;
+      const allIdle = !thrust && !turnLeft && !turnRight && !boostApplied && !reverse;
       const lastAllIdle = !!last && !last.thrust && !last.turnLeft && !last.turnRight && !last.boost && !last.reverse;
       const stateChanged = !last
         || last.thrust !== thrust
         || last.turnLeft !== turnLeft
         || last.turnRight !== turnRight
-        || last.boost !== boost
+        || last.boost !== boostApplied
         || last.reverse !== reverse;
       const heartbeatDue = nowMs - this.lastSentInputAtMs >= INPUT_HEARTBEAT_MS;
       const throttle = allIdle && lastAllIdle && !stateChanged && !heartbeatDue;
@@ -4056,7 +4074,7 @@ export class ColyseusGameClient {
         sendArg.thrust = thrust;
         sendArg.turnLeft = turnLeft;
         sendArg.turnRight = turnRight;
-        sendArg.boost = boost;
+        sendArg.boost = boostApplied;
         sendArg.reverse = reverse;
         this.room.send('input', sendArg);
         // lastSentInputState retains state across ticks — mutate in
@@ -4066,10 +4084,10 @@ export class ColyseusGameClient {
           stored.thrust = thrust;
           stored.turnLeft = turnLeft;
           stored.turnRight = turnRight;
-          stored.boost = boost;
+          stored.boost = boostApplied;
           stored.reverse = reverse;
         } else {
-          this.lastSentInputState = { thrust, turnLeft, turnRight, boost, reverse };
+          this.lastSentInputState = { thrust, turnLeft, turnRight, boost: boostApplied, reverse };
         }
         this.lastSentInputAtMs = nowMs;
         // Always log on sentinel send (no stateChanged / tick%60 gate) so
@@ -4078,7 +4096,7 @@ export class ColyseusGameClient {
         // for the 6e4d9c2 class. Gated by full-diag-mode at the callsite
         // (Phase 5e — invariant #14); the assertion only runs under diag.
         if (isFullDiagMode()) {
-          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost, reverse });
+          logEvent('inputSent', { tick, thrust, turnLeft, turnRight, boost: boostApplied, reverse });
         }
       }
     }
