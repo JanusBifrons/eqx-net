@@ -11,9 +11,12 @@ import {
   SWARM_HEADER_BYTES, SWARM_RECORD_BYTES,
   SWARM_REC_ANGVEL_OFF,
   SWARM_REC_RADIUS_OFF,
+  SWARM_REC_SHIP_KIND_OFF,
   SWARM_FLAG_FULL, SWARM_RECORD_FLAG_SLEEPING,
   SWARM_WIRE_VERSION,
+  SWARM_KIND_STRUCTURE,
 } from '../../shared-types/swarmWireFormat.js';
+import { structureKindToIndex } from '../../shared-types/structureKinds.js';
 
 const SLOT_A = 5;
 const SLOT_B = 7;
@@ -290,5 +293,21 @@ describe('BinarySwarmBroadcast — encoder', () => {
     const packet = encoder.encode(registry, f32, u32, 61); // no filter
     expect(packet).not.toBeNull();
     expect(new DataView(packet!.buffer, packet!.byteOffset).getUint16(2, true)).toBe(2);
+  });
+
+  it('encodes a STRUCTURE subtype into the shared shipKind byte (Phase 2)', () => {
+    // kind=2 (structure); rec.shipKind holds the structure-kind id.
+    const rec = registry.register('struct-0', SLOT_A, 2, 36, 100, 200, 0);
+    rec.shipKind = 'turret';
+    setSlotPose(f32, SLOT_A, 100, 200, 0, 0, 0);
+
+    const packet = encoder.encode(registry, f32, u32, 60); // full-snapshot tick
+    expect(packet).not.toBeNull();
+    const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
+    // First (only) record's kind + subtype byte.
+    expect(view.getUint8(SWARM_HEADER_BYTES + 2)).toBe(SWARM_KIND_STRUCTURE);
+    expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_SHIP_KIND_OFF)).toBe(
+      structureKindToIndex('turret'),
+    );
   });
 });
