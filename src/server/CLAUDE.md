@@ -217,7 +217,15 @@ absent when none), broadcasts `grid_pulse`, severs on structure death via
 `evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
 the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
 touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
-changes.** See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+changes.** Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
+`tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
+the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);
+a **bespoke fire path**, NOT `AiFireResolver` (which targets players). The
+testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
+`scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
+room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
+placements; this seeds the end state). See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
 
 **EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
 entity-sync sends in `SectorRoom.update()` now route through ONE

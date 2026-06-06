@@ -140,10 +140,34 @@ the client draws the beam (`ConnectorRenderer`) and shows the bank in the HUD
 (testMode) overrides the wall-clock pulse interval so construction/mining
 fast-forward — `testTimeScale` can't (it's physics-tick-only).
 
-## Phase 5 (planned)
+## Turrets (Phase 5 — shipped)
 
-- **5** — defensive turrets aim + fire at hostile drones (power-gated by the
-  grid's `powered` flag).
+`StructureGridSubsystem.tickTurrets(nowMs)` runs on a faster `TURRET_TICK_MS`
+(100 ms) timer than the 1 Hz pulse (SectorRoom owns it): each built + **powered**
+turret targets the nearest drone in `weaponRange` (`findNearestDrone` hook →
+`findNearestSwarmOfKind` over swarm kind=1 via SAB pose), aims (`turretTargetId`
+on the slice → client aim line), and fires on its per-kind `fireRateMs` cooldown
+(`applyDamage` + a `laser_fired` beam). It's a **bespoke fire path**, not
+`AiFireResolver` (which targets players — turrets target drones). Power-gated: an
+overdrawn grid (`powered === false`) fires nothing.
+
+## Test scenario trigger (the bespoke E2E primitive)
+
+The place-ahead UI stacks multiple placements at the same spot (overlap →
+rejected), and construction takes seconds — both hostile to a deterministic E2E.
+The fix is a **pre-built scenario trigger** (testMode room opts, seeded in
+`onCreate` via `seedStructureScenario`): `prebuiltStructures` (placed through the
+real subsystem, then forced `isConstructed` + full HP + auto-connected, owner
+`scenario`), `scenarioDrones`, `scenarioAsteroids`. The `structure-scenario-test`
+engineering room bakes a full powered grid (Capital + 2 Solar + Miner@asteroid +
+Turret@drone) so the client E2E observes end states directly (power/minerals HUD,
+drone death) with no UI-placement fragility or construction wait. `_internals`
+adds `spawnTestAsteroid` / `spawnTestDrone` / `tickStructureTurrets` /
+`pulseStructureGrid` seams for the integration suite.
+
+**The structures plan is feature-complete (Phases 1–5).** Future polish (noted):
+the tap-to-position world ghost, per-asteroid mineral depletion, manual
+connect/disconnect UI, persistence of placed structures.
 
 ## Tests
 
@@ -165,5 +189,9 @@ fast-forward — `testTimeScale` can't (it's physics-tick-only).
 - `tests/e2e/structure-grid-web.spec.ts` — slice + power HUD reach the client.
 - `tests/integration/sectorRoom/structureMining.test.ts` — powered miner grows
   the bank / unpowered miner mines nothing.
-- `tests/e2e/mining-beam.spec.ts` — mineral bank reaches the HUD (instant +
-  fast-pulse growth).
+- `tests/integration/sectorRoom/structureTurret.test.ts` — powered turret damages
+  a drone / unpowered turret holds fire.
+- `tests/integration/sectorRoom/structureScenario.test.ts` — the scenario trigger
+  seeds a powered grid that mines + fires.
+- `tests/e2e/structure-scenario.spec.ts` — grid power / mining bank climb / turret
+  kills drone reach the client (via the pre-built scenario room).

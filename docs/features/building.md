@@ -66,9 +66,16 @@ mining beam, extracts minerals, and hauls them down the web to your Capital — 
 ⛏ readout climbs. An unpowered tower sits idle. Asteroids don't deplete (first
 cut).
 
-## Roadmap (not yet shipped)
+## Turrets (Phase 5 — shipped)
 
-- **Phase 5** — defensive turrets (power-gated by the grid).
+Place a **Turret** near where drones roam and keep it **powered**. It tracks the
+nearest drone in range and fires on a cooldown, killing it — your automated base
+defence. An unpowered turret holds fire, so balance generation against your
+miners' + turrets' draw.
+
+The base-building feature set is now complete: place structures, link them
+through hubs, build them up via the mineral flow, mine to refill the bank, and
+defend with turrets — all over one 1-second logistics pulse.
 
 ## What's shipped so far
 
@@ -80,3 +87,4 @@ cut).
   the grid-power HUD.
 - **Phase 4** — mining towers extract minerals (power-gated) and haul them to the
   Capital; mineral-bank HUD + mining beam.
+- **Phase 5** — defensive turrets track + destroy drones in range (power-gated).
