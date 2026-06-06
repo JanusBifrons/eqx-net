@@ -9,6 +9,7 @@ import {
   clusterFitFraction,
   type GalaxyLayerMode,
 } from './galaxyLayerDecisions';
+import { Camera } from '../worker/Camera';
 
 /**
  * In-game additive galaxy-map layer (Map B).
@@ -75,6 +76,22 @@ export class GalaxyMapLayer extends Container {
   private hexSize = HEX_SIZE_BASE;
   private disposed = false;
 
+  /**
+   * Free pan / pinch / wheel zoom for the `selector` (spawn/warp picker)
+   * mode — restored 2026-06-06 (the single-canvas refactor had dropped it).
+   * Reuses the same hand-rolled {@link Camera} as the world camera, driving
+   * the screen-space `clusterRoot` transform. Works in BOTH render paths
+   * (main-thread DOM + worker) because the renderer routes raw canvas
+   * pointer/wheel events here when {@link isPanZoomActive} is true. A tap
+   * (vs drag) still selects a sector via {@link hitTest}. `overlay` mode (the
+   * in-game additive MAP) keeps its static fit — no pan/zoom there.
+   */
+  private readonly panZoomCamera: Camera;
+  /** Screen dims the pan/zoom camera was last seeded (fit) at. A resize with
+   *  the SAME dims preserves the user's pan/zoom; a real size change re-fits. */
+  private _seedW = 0;
+  private _seedH = 0;
+
   constructor(opts: { onSelect: (sectorKey: string) => void }) {
     super();
     this.onSelect = opts.onSelect;
@@ -83,8 +100,50 @@ export class GalaxyMapLayer extends Container {
     this.clusterRoot.addChild(this.edgeLayer);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
+    // The camera drives `clusterRoot`'s transform. minScale/maxScale are
+    // generous absolute bounds that comfortably contain the 7-hex fit
+    // (~0.5 on a phone) and a reasonable zoom range around it. No follow
+    // target is ever set (the galaxy doesn't track a ship).
+    this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
     this.buildHexes();
     Ticker.shared.add(this.tick);
+  }
+
+  /** True while the spawn/warp picker is on screen — the window during which
+   *  the renderer routes pointer/wheel events here for pan/zoom. */
+  isPanZoomActive(): boolean {
+    return this.mode === 'selector' && this.visible;
+  }
+
+  // ── Pan/zoom input (routed from the renderer's canvas listeners; screen
+  //    px in the same frame the world camera uses). The camera mutates
+  //    `clusterRoot`; `tick` eases the wheel zoom + momentum each frame. ──
+  onPointerDown(pointerId: number, screenX: number, screenY: number, stamp: number): void {
+    this.panZoomCamera.onPointerDown(pointerId, screenX, screenY, stamp);
+  }
+  onPointerMove(pointerId: number, screenX: number, screenY: number): void {
+    this.panZoomCamera.onPointerMove(pointerId, screenX, screenY);
+  }
+  /** Returns true if the pointer cycle was a tap (and a sector was selected). */
+  onPointerUp(pointerId: number, screenX: number, screenY: number, stamp: number): boolean {
+    const result = this.panZoomCamera.onPointerUp(pointerId, screenX, screenY, stamp);
+    if (result.wasTap) {
+      const key = this.hitTest(screenX, screenY);
+      if (key !== null) this.onSelect(key);
+    }
+    return result.wasTap;
+  }
+  onPointerCancel(pointerId: number): void {
+    this.panZoomCamera.onPointerCancel(pointerId);
+  }
+  onWheel(deltaY: number, screenX: number, screenY: number): void {
+    this.panZoomCamera.onWheel(deltaY, screenX, screenY);
+  }
+
+  /** Live `clusterRoot` transform — the REAL drawn pan/zoom state (not a
+   *  recompute). Used by the DEV `__eqxGalaxyTransform` E2E hook. */
+  getDebugTransform(): { x: number; y: number; scale: number } {
+    return { x: this.clusterRoot.x, y: this.clusterRoot.y, scale: this.clusterRoot.scale.x };
   }
 
   setVisible(open: boolean): void {
@@ -116,6 +175,10 @@ export class GalaxyMapLayer extends Container {
   setMode(mode: GalaxyLayerMode): void {
     if (this.mode === mode) return;
     this.mode = mode;
+    // Force the next resize to re-fit the pan/zoom camera (fresh fit on
+    // entering the selector; clears any stale pan/zoom from a prior session).
+    this._seedW = 0;
+    this._seedH = 0;
     this.repaint();
     if (this.screenW > 0 && this.screenH > 0) this.resize(this.screenW, this.screenH);
   }
@@ -177,9 +240,26 @@ export class GalaxyMapLayer extends Container {
       : null;
     const focalX = focal ? focal.x : (minX + maxX) / 2;
     const focalY = focal ? focal.y : (minY + maxY) / 2;
+    this.hexSize = HEX_SIZE_BASE; // graphics use base size; root is scaled
+
+    if (this.mode === 'selector') {
+      // Selector (spawn/warp picker): the pan/zoom camera owns clusterRoot.
+      // Always keep its screen size current; re-seed the FIT (zoom + centre)
+      // only when the dims actually changed (or on first/mode entry, when
+      // `_seedW`==0). A same-dims resize PRESERVES the user's pan/zoom.
+      this.panZoomCamera.setScreenSize(screenW, screenH);
+      if (screenW !== this._seedW || screenH !== this._seedH) {
+        this.panZoomCamera.setZoom(scale);
+        this.panZoomCamera.moveCenter(focalX, focalY);
+        this._seedW = screenW;
+        this._seedH = screenH;
+      }
+      return;
+    }
+    // Overlay (in-game additive MAP): static screen-space fit, no pan/zoom.
+    this.clusterRoot.scale.set(scale);
     this.clusterRoot.x = screenW / 2 - focalX * scale;
     this.clusterRoot.y = screenH / 2 - focalY * scale;
-    this.hexSize = HEX_SIZE_BASE; // graphics use base size; root is scaled
   }
 
   override destroy(): void {
@@ -252,7 +332,11 @@ export class GalaxyMapLayer extends Container {
         hex.stroke({ color: COLOR_LOCKED_STROKE, width: 1.5, alpha: 0.45 });
       }
 
-      hex.eventMode = selectable ? 'static' : 'none';
+      // Overlay mode keeps Pixi's per-hex `pointertap` for tap-to-warp. In
+      // selector mode the pan/zoom camera owns ALL pointer input (a tap is
+      // resolved via `hitTest` in `onPointerUp`), so hexes are non-interactive
+      // to avoid double-handling the tap.
+      hex.eventMode = this.mode === 'overlay' && selectable ? 'static' : 'none';
       hex.cursor = selectable ? 'pointer' : 'default';
 
       label.alpha = highlighted ? 0.95 : selectable ? 0.85 : 0.45;
@@ -291,6 +375,8 @@ export class GalaxyMapLayer extends Container {
 
   private readonly tick = (): void => {
     if (!this.visible) return;
+    // Ease the wheel-zoom + coast pan momentum (selector pan/zoom only).
+    if (this.mode === 'selector') this.panZoomCamera.tick();
     this.pulsePhase += 0.05;
     if (this.pulsePhase > Math.PI * 2) this.pulsePhase -= Math.PI * 2;
     const pulse = 0.7 + 0.3 * Math.abs(Math.sin(this.pulsePhase));

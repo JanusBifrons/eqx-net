@@ -78,6 +78,7 @@ const FEATURE_SPECS: string[] = [
   '**/feel-test-lockstep.spec.ts',
   '**/feel-tuning.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
+  '**/galaxy-map-pan-zoom.spec.ts',
   '**/galaxy-polish.spec.ts',
   '**/halo-radar.spec.ts',
   '**/input-throttle-drift.spec.ts',

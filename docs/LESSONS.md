@@ -14,6 +14,62 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-06 — on-device "combat lag" was a Zustand whole-store subscription, NOT the netcode
+Commit: fix/hud-rerender-storm-combat-lag
+**Symptom.** After the big merge to `main`, on-device play lagged: the world froze
+for ~0.5 s every few seconds and the frame rate visibly dropped on a 90 Hz phone.
+
+**The false trail (corrected).** The first capture (`…-qihmkf`) showed recurring
+~560 ms `recv_gap_long` events on the WebSocket with the server-send cadence a
+clean 50 ms — read naively as "the WiFi radio is holding snapshot frames." That
+diagnosis was WRONG, and the tell was a question worth remembering: *if it were
+the network, why would the RENDER Hz drop?* RAF is driven by vsync, independent
+of the socket. A render-Hz drop means the main thread is involved.
+
+**How we actually localised it (the reusable method).** Drove the phone via
+ADB/CDP into a deterministic 35-hostile-drone room (`phone-stall-test`,
+`startHostile=1`, `worker=0`) from a clean force-stop→relaunch each run
+(`diag/adb-shots/phone-stall-capture.mjs`), then measured three things on ONE
+timeline: `Network.webSocketFrameReceived` (true network arrival, *independent of
+JS*), an injected rAF interval tracker, and `Performance.getMetrics` busy%. Result:
+**WS frames arrived steadily** (p90 18 ms, ~1 gap in 40 s) while the **main thread
+sat at 66–83 % busy every second** and RAF hitched to 20–33 Hz. So the original
+"560 ms network gaps" were a **measurement artifact** — when the main thread
+blocks, the JS handler that timestamps `recvGapMs` fires late and manufactures a
+fake gap. Then a CPU sampling profile (`phone-cpu-profile.mjs`) named the cost:
+**~44 % React+MUI+Emotion re-rendering vs only ~9 % Pixi** (the actual game).
+Thermal was ruled out directly: `scaling_max_freq == cpuinfo_max_freq` on every
+cluster (no DVFS cap), cores freely boosting, Thermal Status NONE.
+
+**Root cause.** `GameSurface` (the component that renders the entire HUD subtree)
+had `const {...} = useUIStore()` — a **no-argument store subscription**, which
+subscribes to the WHOLE store. Every write during combat (per-hit shield/hull from
+35 drones, energy, swarm count) re-rendered `GameSurface` → the whole MUI HUD →
+Emotion re-serialized every component's `sx` (string hashing via `murmur2`,
+`serializeStyles`). That Emotion/React storm pegged the main thread and starved
+the render loop.
+
+**Fix.** Select each (stable) setter individually: `useUIStore((s) => s.setX)`.
+Setters never change identity, so the component stops re-rendering on unrelated
+writes. Same clean capture after the fix: **busy% 75 % → ~45 %, RAF max 40 ms →
+~18 ms** (render back to ~45–70 Hz). One line.
+
+**Lock.** ESLint `no-restricted-syntax` bans no-arg `useUIStore()` in
+`src/client/**` (forces a selector). Fits the existing lint-enforced Zustand
+discipline (invariant #2).
+
+**Lessons for downstream.**
+1. A render-Hz drop is a *main-thread/GPU* signal, never pure network. Don't
+   diagnose "lag" from `recvGapMs` measured in JS — it's contaminated by
+   main-thread blocking. Measure network arrival at the transport layer
+   (`Network.webSocketFrameReceived`) and busy% separately.
+2. `useUIStore()` with no selector is a whole-store subscription — in any
+   component that renders MUI, it cascades an Emotion re-render storm. Always
+   pass a selector.
+3. Measure on a **production build** when sizing React/Emotion cost — the Vite
+   dev build (`jsxDEV`, unbundled deps) inflates it; the residual re-render bug is
+   real either way, but the absolute numbers above are dev-inflated.
+
 ## 2026-06-05 — single-canvas galaxy + a latent mount-index bug — a documented contract the code quietly violated
 Commit: single-canvas-galaxy steps + the localMountAim fix (this branch)
 Two findings from the galaxy-map-canvas-laser-fix branch.

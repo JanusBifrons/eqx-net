@@ -32,6 +32,22 @@ on:
       - 'src/shared-types/messages/**'
       - 'tests/netgate/**'
       - 'tests/e2e/netcode-health.spec.ts'
+  # Manual runs for VARIANCE CHARACTERISATION + bisecting. `head_ref` selects
+  # the HEAD arm; set it to `origin/main` for a main-vs-main run (two identical
+  # arms) to measure a metric's natural run-to-run variance on the CI runner —
+  # the prescribed way to decide whether a RED is a code regression or noise
+  # (see src/server/CLAUDE.md "Netcode-health gate" + netHealthBudget.ts).
+  # Blank ⇒ the PR working tree (same as the pull_request path).
+  workflow_dispatch:
+    inputs:
+      head_ref:
+        description: 'HEAD arm ref vs origin/main (blank = working tree; origin/main = variance characterisation)'
+        required: false
+        default: ''
+      reps:
+        description: 'Interleaved A/B rep count (default 4)'
+        required: false
+        default: '4'
 
 jobs:
   netgate:
@@ -60,6 +76,10 @@ jobs:
       # driver boots two HMR-disabled vite arms + per-arm latency proxy and runs
       # the netcode-health spec interleaved; it exits non-zero on RED.
       - name: Netcode-health gate (head vs origin/main)
-        run: pnpm run e2e:netgate
+        # Explicit args == the prior no-arg defaults for pull_request (head_ref
+        # is empty ⇒ working tree); workflow_dispatch can override the HEAD arm
+        # (e.g. origin/main for a main-vs-main variance run).
+        run: pnpm run e2e:netgate "origin/main" "${{ github.event.inputs.head_ref }}"
         env:
           CI: 'true'
+          NETGATE_REPS: ${{ github.event.inputs.reps || '4' }}

@@ -84,6 +84,12 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
     return null;
   }
   const galaxyLayer = new GalaxyMapLayer({ onSelect: onTap });
+  // DEV/E2E hook: expose the REAL drawn pan/zoom transform (clusterRoot), so
+  // a spec can assert pan/zoom actually moved the rendered map rather than
+  // recomputing from inputs (the `data-beam-from` tautology lesson). Main-
+  // thread (DOM) path only; the worker hosts its own layer.
+  (window as unknown as { __eqxGalaxyTransform?: () => { x: number; y: number; scale: number } })
+    .__eqxGalaxyTransform = () => galaxyLayer.getDebugTransform();
   renderer.addOverlayContainer(galaxyLayer);
   galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);

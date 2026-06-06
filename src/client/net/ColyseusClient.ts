@@ -36,6 +36,7 @@ import { SnapshotCoalescer } from './SnapshotCoalescer.js';
 import { ClientEntityFactory } from './entity/ClientEntityFactory.js';
 import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
+import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
 import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
 import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
@@ -235,19 +236,27 @@ export class ColyseusGameClient {
       // Non-browser context — keep default.
     }
     this.snapshotCoalescer = new SnapshotCoalescer(coalesceParam !== '0');
-    // Phase 2 swift-otter — `?webrtc=1` opts the client into the
-    // WebRTC DataChannel snapshot transport. Default OFF in Phase 2;
-    // Phase 4 E2E evidence will determine whether to flip the default
-    // (see `plans/i-d-like-you-to-swift-otter.md`).
-    let webrtcParam: string | null = null;
+    // swift-otter — WebRTC DataChannel snapshot transport. Default flipped
+    // ON for real users (2026-06-06): on-device the DC carries ~99% of
+    // snapshots over UDP, avoiding the WS/TCP head-of-line amplification that
+    // stretches a brief WiFi-radio stall into a ~530 ms snapshot gap (the
+    // on-device "jumps"). Reliable WS is retained as automatic fallback when
+    // the DC can't establish (NAT/cellular), so default-on is safe. Default
+    // OFF under Playwright automation (navigator.webdriver) so the E2E suite
+    // stays WS-deterministic AND the netgate keeps measuring the proxied WS
+    // path (the DC is P2P UDP and bypasses the injected-latency proxy).
+    // `?webrtc=0`/`=1` override. Pure decision lives in `webrtcEnable.ts`.
+    let webrtcEnabled = false;
     try {
-      if (typeof window !== 'undefined' && window.location?.search) {
-        webrtcParam = new URLSearchParams(window.location.search).get('webrtc');
+      if (typeof window !== 'undefined' && window.location) {
+        const isAutomation =
+          typeof navigator !== 'undefined' && navigator.webdriver === true;
+        webrtcEnabled = webrtcEnabledFromSearch(window.location.search, isAutomation);
       }
     } catch {
-      // Non-browser context — keep default OFF.
+      // Non-browser context — keep default OFF (no RTCPeerConnection).
     }
-    this._webrtcEnabled = webrtcParam === '1';
+    this._webrtcEnabled = webrtcEnabled;
   }
 
   /** Phase 6 — IAudio sink for TiDi pitch-shift. Optional: tests / headless
