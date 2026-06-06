@@ -23,8 +23,12 @@ import {
   structureKindToIndex,
   type StructureKindId,
 } from '../../shared-types/structureKinds.js';
-import { SCAFFOLDING_HP_FRACTION } from '../../core/structures/structureGridConstants.js';
+import {
+  SCAFFOLDING_HP_FRACTION,
+  CAPITAL_STARTING_MINERALS,
+} from '../../core/structures/structureGridConstants.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
+import { autoConnectStructure } from './structureGridView.js';
 
 export interface StructurePlacementHooks {
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
@@ -79,6 +83,11 @@ export class StructurePlacementSubsystem {
 
     this.hooks.seedHealth(id, hp);
 
+    // The Capital is born with a starting mineral bank (capped by its storage)
+    // so a base can bootstrap a few structures before mining (Phase 4) exists.
+    const minerals =
+      kindId === 'capital' ? Math.min(CAPITAL_STARTING_MINERALS, kind.storageCapacity) : 0;
+
     const rec: StructureRecord = {
       id,
       owner,
@@ -91,8 +100,11 @@ export class StructurePlacementSubsystem {
       constructionProgress: preBuilt ? kind.constructionCost : 0,
       constructionCost: kind.constructionCost,
       isDeconstructing: false,
+      minerals,
     };
     this.hooks.registry.add(rec);
+    // Auto-wire into the owner's grid: nearest in-range hub with a free slot.
+    autoConnectStructure(this.hooks.registry, id);
     return id;
   }
 
