@@ -58,9 +58,16 @@ leaves. The top-left **⚡ readout** shows your grid's net power.
 
 Damaged built structures slowly **repair** from the bank too.
 
+## Mining (Phase 4 — shipped)
+
+Place a **Mining Tower** near an asteroid (within range) and keep it **powered**
+(add Solar panels so your grid's net power stays ≥ 0). Each pulse it fires a
+mining beam, extracts minerals, and hauls them down the web to your Capital — the
+⛏ readout climbs. An unpowered tower sits idle. Asteroids don't deplete (first
+cut).
+
 ## Roadmap (not yet shipped)
 
-- **Phase 4** — mining towers + mining lasers + minerals (refills the bank).
 - **Phase 5** — defensive turrets (power-gated by the grid).
 
 ## What's shipped so far
@@ -71,3 +78,5 @@ Damaged built structures slowly **repair** from the bank too.
 - **Phase 3** — the power grid: connectors + the connector web, the construction
   flow economy (build / pause / resume / dead-end), repair, deconstruction, and
   the grid-power HUD.
+- **Phase 4** — mining towers extract minerals (power-gated) and haul them to the
+  Capital; mineral-bank HUD + mining beam.

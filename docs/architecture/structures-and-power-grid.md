@@ -125,10 +125,23 @@ handler records `mirror.gridFlashes` (numeric pair key, alloc-free).
 pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
 `swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the HUD chip.
 
-## Phases 4–5 (planned)
+## Mining (Phase 4 — shipped)
 
-- **4** — mining towers extract minerals from asteroids in range, hauled to the
-  Capital over the pulse (the `transfer` step of the pulse, currently dormant).
+`StructureGridSubsystem.pulse()` gained two steps before construction: **mining**
+(each built + **powered** Miner extracts `miningRate` from the nearest in-range
+asteroid — `findNearestAsteroid` hook scans swarm kind=0 via the SAB pose — into
+a local buffer capped by `storageCapacity`; mining never damages the asteroid,
+effectively infinite first cut) and **transfer** (haul buffered minerals to a
+Capital with free space along the A* route, capped by `CONNECTION_THROUGHPUT`).
+Power-gated: an unpowered grid (e.g. Capital 50 − Miner 60 < 0) mines nothing.
+The miner's `miningTargetId` (asteroid entityId) rides the `structures[]` slice;
+the client draws the beam (`ConnectorRenderer`) and shows the bank in the HUD
+(`gridMinerals` → the ⛏ chip). **Bespoke E2E trigger:** `structureGridPulseMs`
+(testMode) overrides the wall-clock pulse interval so construction/mining
+fast-forward — `testTimeScale` can't (it's physics-tick-only).
+
+## Phase 5 (planned)
+
 - **5** — defensive turrets aim + fire at hostile drones (power-gated by the
   grid's `powered` flag).
 
@@ -150,3 +163,7 @@ pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
   `structureConstruction.test.ts` — the grid web + flow economy through the room.
 - `src/client/render/pixi/connectorVisual.test.ts` — connector visual params.
 - `tests/e2e/structure-grid-web.spec.ts` — slice + power HUD reach the client.
+- `tests/integration/sectorRoom/structureMining.test.ts` — powered miner grows
+  the bank / unpowered miner mines nothing.
+- `tests/e2e/mining-beam.spec.ts` — mineral bank reaches the HUD (instant +
+  fast-pulse growth).
