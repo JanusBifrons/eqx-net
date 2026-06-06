@@ -82,16 +82,55 @@ so it unit-tests like `TransitOrchestrator`):
   coordinate model; the pure `computePlacementPose` is unit-locked). The full
   tap-to-position world ghost is a planned follow-up.
 
-## Phases 3–5 (planned)
+## The power grid (Phase 3 — shipped)
 
-- **3** — `Connection` + `Grid` (zone-pure, BFS components + A* routing) + the
-  `StructureGridSubsystem` 1 Hz pulse: power aggregation, the **construction flow
-  economy** (blueprints build by draining connected storage; dead-end rule for
-  unbuilt nodes), repair, deconstruction, and the `structures[]` snapshot slice +
-  `grid_pulse` discrete event for the connector web + scaffolding fill-bar.
+**Zone-pure core** (`src/core/structures/`):
+- `Connection.ts` — an undirected intra-sector link (`getOtherNode`, flash
+  window, `connectionLength`).
+- `Grid.ts` — `canConnect` (the hub model: hub-required / per-kind
+  `maxConnections` cap / edge-to-edge `CONNECTION_MAX_RANGE` / no-self/dup /
+  line-of-sight), BFS connected components (**built-only — the dead-end rule:
+  you can't relay THROUGH an unbuilt node**), power aggregation (`powered`
+  requires a Capital in the component AND net ≥ 0), and A* routing + a route
+  cache dropped on every rebuild.
+- `structureGridConstants.ts` — `CONNECTION_MAX_RANGE`, `TRANSFER_PULSE_MS`,
+  `CONSTRUCTION_PULSE_AMOUNT`, `REPAIR_*`, `DECONSTRUCTION_RATE_KG`,
+  `CAPITAL_STARTING_MINERALS`, `FLASH_DURATION_MS`.
+
+**Server** (`src/server/structures/`):
+- `StructureRegistry` carries the connection adjacency (+ flat conn map),
+  `topologyDirty`, and per-structure `minerals`; `remove()` severs (no leaks).
+- `structureGridView.ts` projects each record → a `GridNode` (the
+  `isConstructed` power gate lives here) and `autoConnectStructure` (nearest
+  in-range hub, per-owner) runs on every place.
+- `StructureGridSubsystem` — the 1 Hz `pulse()` (directly callable for
+  deterministic tests; off the 60 Hz tick, `unref`'d): rebuild topology if
+  dirty → **construction flow** (each blueprint drains up to
+  `CONSTRUCTION_PULSE_AMOUNT` from a routable Capital; completion flips
+  `isConstructed` + resets HP + dirties topology; dry source ⇒ pauses, no flag)
+  → repair → deconstruction → connection flashes. `SectorRoom` runs the timer,
+  rebuilds the `structures[]` slice, broadcasts `grid_pulse`, and severs on
+  structure death via `evictSwarmEntity`.
+
+**Wire** — `SnapshotMessage.structures[]` (slim, low-cadence, same array ref per
+recipient, entityId-keyed → joins the swarm mirror for pose) +
+`grid_pulse { flashed: [entityId,entityId][], material }` (discrete ≤ 1 Hz
+flash event). **Netgate territory** (invariant #8) — these touch the
+snapshot/broadcast path.
+
+**Client** — `ColyseusClient.syncStructures` mirrors the slice into
+`mirror.structures` + dispatches `gridNetPower` to Zustand; the `grid_pulse`
+handler records `mirror.gridFlashes` (numeric pair key, alloc-free).
+`render/pixi/ConnectorRenderer` draws the web (idle vs flowing alpha/width
+pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
+`swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the HUD chip.
+
+## Phases 4–5 (planned)
+
 - **4** — mining towers extract minerals from asteroids in range, hauled to the
-  Capital over the pulse.
-- **5** — defensive turrets aim + fire at hostile drones (power-gated).
+  Capital over the pulse (the `transfer` step of the pulse, currently dormant).
+- **5** — defensive turrets aim + fire at hostile drones (power-gated by the
+  grid's `powered` flag).
 
 ## Tests
 
@@ -103,3 +142,11 @@ so it unit-tests like `TransitOrchestrator`):
 - `src/client/structures/structurePlacementClient.test.ts` — placement geometry.
 - `tests/e2e/structure-build-placement.spec.ts` — UI → wire → mirror.
 - `tests/e2e/speed-dial.spec.ts` — the consolidated dial.
+- `src/core/structures/Connection.test.ts` + `Grid.test.ts` — connection +
+  the full `canConnect` rule matrix, components, dead-end, routing, route-cache.
+- `src/server/structures/StructureGridSubsystem.test.ts` — auto-connect,
+  construction build-up/pause/resume/dead-end, repair, deconstruction, power.
+- `tests/integration/sectorRoom/structureGrid.test.ts` +
+  `structureConstruction.test.ts` — the grid web + flow economy through the room.
+- `src/client/render/pixi/connectorVisual.test.ts` — connector visual params.
+- `tests/e2e/structure-grid-web.spec.ts` — slice + power HUD reach the client.

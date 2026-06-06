@@ -41,19 +41,33 @@ dedicated buttons; a tap-to-expand menu is the wrong place for an input you hold
 hub** (a Connector or the Capital) — never to each other. Hubs link to hubs to
 extend the web. (The grid + connections land in Phase 3.)
 
+## The grid (Phase 3 — shipped)
+
+Place a **Capital** first (it's pre-built — your base's root + mineral bank).
+Then place **Connectors** and leaves in range: each new structure auto-links to
+the nearest in-range **hub** (a Connector or the Capital). A blue web draws
+between linked structures; it brightens orange in a pulse when minerals flow.
+
+A freshly-placed structure is a **blueprint** (dim, with a blue fill-bar). Every
+1-second pulse it pulls minerals from your Capital's bank and the fill-bar climbs
+— when full, it snaps to solid and joins the live grid. If the bank runs dry,
+construction simply **pauses** and resumes when minerals return (no progress
+lost). An unbuilt Connector is a **dead end**: leaves hanging off it only start
+building once *it* completes — so a base grows outward, Capital → Connector →
+leaves. The top-left **⚡ readout** shows your grid's net power.
+
+Damaged built structures slowly **repair** from the bank too.
+
 ## Roadmap (not yet shipped)
 
-- **Phase 3** — the power grid + connectors + the *flow-economy construction*:
-  a placed structure is a **blueprint** (10 % HP, non-operational) that builds up
-  gradually by pulling minerals from connected storage over the 1 Hz pulse; runs
-  dry → construction pauses, refills → resumes.
-- **Phase 4** — mining towers + mining lasers + minerals.
-- **Phase 5** — defensive turrets.
+- **Phase 4** — mining towers + mining lasers + minerals (refills the bank).
+- **Phase 5** — defensive turrets (power-gated by the grid).
 
 ## What's shipped so far
 
 - **Phase 1** — the consolidated bottom-right SpeedDial (Map / Weapon / Panels).
 - **Phase 2** — the structure catalogue, server-authoritative placement
-  (blueprint at 10 % HP; Capital pre-built), per-subtype rendering, and the
-  Build → place UI. Structures render and take damage; the grid/economy that
-  feeds them is Phase 3.
+  (blueprint at 10 % HP; Capital pre-built), per-subtype rendering, Build → place UI.
+- **Phase 3** — the power grid: connectors + the connector web, the construction
+  flow economy (build / pause / resume / dead-end), repair, deconstruction, and
+  the grid-power HUD.
