@@ -40,6 +40,21 @@ export interface MountTargetView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Current health of the target. Optional — when present (with `maxHealth`)
+   *  AND `PickTargetOptions.healthWeight > 0`, the pick is biased toward
+   *  lower-health targets ("finish the wounded one"). Low health == lots of
+   *  damage already taken, so this also captures the "weight by damage done"
+   *  intent in solo / primary-attacker play. Omit on both sides to keep the
+   *  pure nearest-target behaviour. */
+  readonly health?: number;
+  readonly maxHealth?: number;
+  /** Per-target hostility, used INSTEAD of the `isHostile(id)` callback when
+   *  defined. Lets a single-viewer caller (the client's local player) carry the
+   *  flag on the target (alloc-free, no id parsing) while a multi-viewer caller
+   *  (the server, hostility is per-player) keeps using the callback. Both paths
+   *  yield the same boolean for the same (target, viewer), so server/client
+   *  picks stay in lockstep. Undefined ⇒ fall back to the callback. */
+  readonly hostile?: boolean;
 }
 
 /** A single mount's static configuration — the subset of `WeaponMount` the
@@ -65,6 +80,17 @@ export interface MountConfig {
  *  micro-jitter doesn't flap targets. */
 export const STICKY_HYSTERESIS_FACTOR = 1.1;
 
+/** Shared player-turret aim tuning (Part C). Used IDENTICALLY by the client's
+ *  predicted aim (`tickLocalMountAim`) and the server's authoritative aim
+ *  (`MountAimSubsystem`/`WeaponMountTicker.tickPlayer`) so the predicted beam
+ *  and the server's hit-resolution mount angle agree. Same constants on both
+ *  sides is load-bearing for mount-angle lockstep (Invariant #12). */
+export const PLAYER_AIM_HEALTH_WEIGHT = 1.5;
+/** Commitment margin for the player turret — resists flapping between hostiles
+ *  and gives the "delay before switching targets" feel without a wall-clock /
+ *  tick timer (which would diverge across the client/server tick references). */
+export const PLAYER_AIM_SWITCH_MARGIN = 1.6;
+
 export interface PickTargetOptions {
   /** Override the default hysteresis factor for tests / future tuning. */
   stickyHysteresisFactor?: number;
@@ -76,6 +102,33 @@ export interface PickTargetOptions {
    *  (e.g. hitscan vs longer-range projectile). Omit (or pass `Infinity`)
    *  to disable the range gate. */
   maxDistance?: number;
+  /** Bias toward LOW-health targets. Each candidate's effective score is
+   *  `distance² * (1 + healthWeight * health/maxHealth)`, so a full-health
+   *  target is penalised by up to `healthWeight×` its distance² while a
+   *  near-dead one keeps the raw distance² — letting a wounded target a bit
+   *  farther away win over a pristine closer one. `0` (default) ⇒ pure
+   *  nearest-target, byte-identical to the pre-Part-C behaviour. Requires
+   *  `health`/`maxHealth` on the candidates; missing values fall back to
+   *  distance-only for that candidate. */
+  healthWeight?: number;
+  /** Commitment margin in SCORE space: the previous target is kept unless a
+   *  challenger's score beats it by this factor (`prevScore <= bestScore *
+   *  switchMargin` ⇒ keep prev). Larger ⇒ stickier ("don't abandon the target
+   *  you're finishing"). When omitted it defaults to `stickyHysteresisFactor²`,
+   *  which makes the score-space comparison reduce EXACTLY to the legacy
+   *  squared-distance hysteresis (the byte-identical guarantee). */
+  switchMargin?: number;
+  /** Hard switch-DELAY (in ticks). While `ticksSincePrevTarget < dwellTicks`
+   *  the previous target is kept outright (as long as it's still hostile +
+   *  in range), even if a better challenger exists. Caller owns the dwell
+   *  clock (`ticksSincePrevTarget`). Tick-based ⇒ deterministic; use ONLY where
+   *  both sides share a tick reference (server drone AI). Default `0` (no
+   *  hard delay) ⇒ legacy behaviour. */
+  dwellTicks?: number;
+  /** Ticks since the caller last switched its target — paired with
+   *  `dwellTicks`. Caller-owned per-instance state (kept off the controller for
+   *  lockstep, like `prevTargetId`). Defaults to `Infinity` (no active dwell). */
+  ticksSincePrevTarget?: number;
 }
 
 /**
@@ -108,48 +161,67 @@ export function pickTarget(
 ): MountTargetView | null {
   const factor = options?.stickyHysteresisFactor ?? STICKY_HYSTERESIS_FACTOR;
   const maxDistance = options?.maxDistance ?? Infinity;
+  const healthWeight = options?.healthWeight ?? 0;
+  // Commitment margin in score space. Default = factor² so that, with
+  // healthWeight 0 (score === d²), this reduces EXACTLY to the legacy
+  // squared-distance hysteresis (`prevD2 <= nearestD2 * factor²`).
+  const switchMargin = options?.switchMargin ?? factor * factor;
+  const dwellTicks = options?.dwellTicks ?? 0;
+  const ticksSincePrev = options?.ticksSincePrevTarget ?? Infinity;
   // Pre-square the gate so the hot loop stays sqrt-free.
   const maxD2 = maxDistance === Infinity ? Infinity : maxDistance * maxDistance;
-  let nearest: MountTargetView | null = null;
-  let nearestD2 = Infinity;
+  let best: MountTargetView | null = null;
+  let bestScore = Infinity;
   let prev: MountTargetView | null = null;
-  let prevD2 = Infinity;
+  let prevScore = Infinity;
 
   for (const t of targets) {
-    if (!isHostile(t.id)) continue;
+    // Per-target flag wins when defined (single-viewer client, alloc-free);
+    // otherwise the per-viewer callback (server). Same value either way.
+    if (!(t.hostile !== undefined ? t.hostile : isHostile(t.id))) continue;
     const dx = t.x - shipX;
     const dy = t.y - shipY;
     const d2 = dx * dx + dy * dy;
-    // Out-of-range candidates don't count — neither as the nearest, nor as
-    // the sticky pin's renewal. A target that drifts past `maxDistance` is
-    // dropped from `prev` as well, so the next call returns the nearest
-    // in-range candidate (or null, slewing mounts back to forward).
+    // Out-of-range candidates don't count — neither as the best, nor as the
+    // sticky pin's renewal. A target that drifts past `maxDistance` is dropped
+    // from `prev` as well, so the next call returns the best in-range candidate
+    // (or null, slewing mounts back to forward).
     if (d2 > maxD2) continue;
-    if (d2 < nearestD2) {
-      nearestD2 = d2;
-      nearest = t;
+    // Score = distance² biased toward low health (lower score = preferred).
+    // healthWeight 0 (or missing health) ⇒ score === d² ⇒ pure nearest.
+    let score = d2;
+    if (healthWeight > 0 && t.health !== undefined && t.maxHealth !== undefined && t.maxHealth > 0) {
+      let frac = t.health / t.maxHealth;
+      if (frac < 0) frac = 0;
+      else if (frac > 1) frac = 1;
+      score = d2 * (1 + healthWeight * frac);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = t;
     }
     if (prevTargetId !== null && t.id === prevTargetId) {
       prev = t;
-      prevD2 = d2;
+      prevScore = score;
     }
   }
 
   // No hostiles in view: drop the slot's target. The caller's next-tick
   // call sees `prevTargetId = null` and starts fresh.
-  if (!nearest) return null;
+  if (!best) return null;
 
-  // No previous target (first frame, or it died / left): take the nearest.
-  if (!prev) return nearest;
+  // No previous target (first frame, or it died / left): take the best.
+  if (!prev) return best;
 
-  // Sticky branch: keep `prev` unless the nearest is meaningfully closer.
-  // We compare squared distances against `(d * factor)²` so we don't need
-  // a sqrt on the hot path. `prev` wins when
-  //   d(prev) <= d(nearest) * factor
-  //   ⇔ d²(prev) <= d²(nearest) * factor²
-  const threshold = nearestD2 * factor * factor;
-  if (prevD2 <= threshold) return prev;
-  return nearest;
+  // Hard switch-delay: hold the previous target until the dwell elapses,
+  // even if a better challenger exists (AI only; default dwellTicks 0 = off).
+  if (ticksSincePrev < dwellTicks) return prev;
+
+  // Commitment branch: keep `prev` unless the best candidate beats it by the
+  // margin. `prev` wins when `prevScore <= bestScore * switchMargin`. With the
+  // default margin (factor²) + score==d² this is the legacy hysteresis exactly.
+  if (prevScore <= bestScore * switchMargin) return prev;
+  return best;
 }
 
 /** Wrap an angle into the [-π, π] range. Centralised so every rotation

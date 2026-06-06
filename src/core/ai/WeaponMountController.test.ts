@@ -10,6 +10,9 @@ import {
 } from './WeaponMountController.js';
 
 const t = (id: string, x: number, y: number): MountTargetView => ({ id, x, y, vx: 0, vy: 0 });
+const th = (id: string, x: number, y: number, health: number, maxHealth = 100): MountTargetView => ({
+  id, x, y, vx: 0, vy: 0, health, maxHealth,
+});
 const all = (): ((id: string) => boolean) => () => true;
 const none = (): ((id: string) => boolean) => () => false;
 
@@ -114,6 +117,83 @@ describe('WeaponMountController.pickTarget', () => {
     expect(pickTarget(0, 0, ordered, null, all())?.id).toBe('first');
     const reversed = [t('second', -100, 0), t('first', 100, 0)];
     expect(pickTarget(0, 0, reversed, null, all())?.id).toBe('second');
+  });
+
+  // ── Part C: smarter selection (health weight / commitment / dwell) ──
+
+  it('healthWeight prefers a wounded target over a slightly closer full-HP one', () => {
+    // full-HP target at d=100; wounded (10%) target at d=110. Pure-nearest
+    // would pick the closer full-HP one; with healthWeight the wounded wins.
+    const targets = [th('full', 100, 0, 100), th('wounded', 110, 0, 10)];
+    expect(pickTarget(0, 0, targets, null, all())?.id).toBe('full'); // no weight → nearest
+    expect(pickTarget(0, 0, targets, null, all(), { healthWeight: 1 })?.id).toBe('wounded');
+  });
+
+  it('healthWeight does NOT override a much-closer full-HP target', () => {
+    // Wounded but far (d=500) vs full-HP point-blank (d=10): distance² still
+    // dominates, so the close one wins even at full health.
+    const targets = [th('far-wounded', 500, 0, 1), th('close-full', 10, 0, 100)];
+    expect(pickTarget(0, 0, targets, null, all(), { healthWeight: 2 })?.id).toBe('close-full');
+  });
+
+  it('healthWeight 0 (default) is identical to pure nearest even with health present', () => {
+    const targets = [th('a', 100, 0, 100), th('b', 90, 0, 5)];
+    expect(pickTarget(0, 0, targets, null, all())?.id).toBe('b'); // b is closer
+    expect(pickTarget(0, 0, targets, null, all(), { healthWeight: 0 })?.id).toBe('b');
+  });
+
+  it('switchMargin commits harder to the previous target (resists stealing)', () => {
+    // alt is closer than prev, enough to beat the default 1.21 hysteresis but
+    // not a 2.0 commitment margin.
+    const targets = [t('prev', 100, 0), t('alt', 80, 0)];
+    // default margin (1.21): 100² > 80²*1.21 (10000 > 7744) → switch to alt.
+    expect(pickTarget(0, 0, targets, 'prev', all())?.id).toBe('alt');
+    // margin 2.0: keep prev unless prevScore > bestScore*2 (10000 > 12800? no) → keep prev.
+    expect(pickTarget(0, 0, targets, 'prev', all(), { switchMargin: 2 })?.id).toBe('prev');
+  });
+
+  it('dwellTicks holds the previous target until the delay elapses', () => {
+    const targets = [t('prev', 200, 0), t('alt', 10, 0)]; // alt overwhelmingly closer
+    // Within dwell → keep prev despite the far-better challenger.
+    expect(
+      pickTarget(0, 0, targets, 'prev', all(), { dwellTicks: 30, ticksSincePrevTarget: 5 })?.id,
+    ).toBe('prev');
+    // Dwell elapsed → switch to the better target.
+    expect(
+      pickTarget(0, 0, targets, 'prev', all(), { dwellTicks: 30, ticksSincePrevTarget: 30 })?.id,
+    ).toBe('alt');
+  });
+
+  it('per-target `hostile` flag overrides the isHostile callback when defined', () => {
+    // Single-viewer (client) path: the target carries its own hostility, so the
+    // callback is ignored. `a` is flagged hostile, `b` not — even though the
+    // callback would reject both.
+    const targets: MountTargetView[] = [
+      { id: 'a', x: 100, y: 0, vx: 0, vy: 0, hostile: true },
+      { id: 'b', x: 50, y: 0, vx: 0, vy: 0, hostile: false },
+    ];
+    expect(pickTarget(0, 0, targets, null, () => false)?.id).toBe('a');
+    // And a target whose flag is false is never chosen even if the callback says yes.
+    expect(pickTarget(0, 0, targets, null, () => true)?.id).toBe('a');
+  });
+
+  it('falls back to the callback when a target has no `hostile` flag', () => {
+    // Mixed: `c` has no flag (callback decides), `d` flagged false.
+    const targets: MountTargetView[] = [
+      { id: 'c', x: 100, y: 0, vx: 0, vy: 0 },
+      { id: 'd', x: 50, y: 0, vx: 0, vy: 0, hostile: false },
+    ];
+    expect(pickTarget(0, 0, targets, null, (id) => id === 'c')?.id).toBe('c');
+  });
+
+  it('dwell does not resurrect a prev that left range / died', () => {
+    // prev is out of range (gated out) → not held even within dwell.
+    const targets = [t('prev', 5000, 0), t('alt', 100, 0)];
+    expect(
+      pickTarget(0, 0, targets, 'prev', all(), {
+        maxDistance: 500, dwellTicks: 30, ticksSincePrevTarget: 1,
+      })?.id,
+    ).toBe('alt');
   });
 });
 

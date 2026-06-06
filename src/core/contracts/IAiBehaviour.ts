@@ -17,6 +17,12 @@ export interface AiPlayerView {
   readonly y: number;
   readonly vx: number;
   readonly vy: number;
+  /** Current hull health + its max, for health-weighted target selection
+   *  (drones focus the wounded). Optional — when absent the picker falls back
+   *  to pure nearest. Server-populated; the client never builds drone views
+   *  (drones are snapshot-interpolated, no client brain). */
+  readonly health?: number;
+  readonly maxHealth?: number;
 }
 
 /**

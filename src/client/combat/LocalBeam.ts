@@ -59,6 +59,19 @@ export interface LocalAimTarget {
   y: number;
   vx: number;
   vy: number;
+  /** Whether this drone is currently hostile to the local player (mirror of
+   *  `SwarmRenderState.isHostileToLocal`, last computed in `updateMirror`).
+   *  Auto-fire engages ONLY hostiles; carrying the flag here lets the
+   *  fire-decision scan stay allocation-free (no ledger lookup / id parsing
+   *  per candidate — invariant #14). Named `hostile` to match
+   *  `MountTargetView.hostile` so the turret-aim `pickTarget` reads it directly
+   *  (Part C — hostile-only player aim, alloc-free single-viewer path). */
+  hostile: boolean;
+  /** Hull health fraction (0..1) of this drone, from `SwarmRenderState.healthFrac`
+   *  (absent ⇒ 1/full). With `maxHealth: 1` this feeds `pickTarget`'s
+   *  `healthWeight` so the turret + auto-fire prefer the wounded (Part C). */
+  health: number;
+  maxHealth: number;
 }
 
 /**
@@ -104,6 +117,9 @@ export function buildLocalAimTargets(
       y: scratch.y,
       vx: sw.vx,
       vy: sw.vy,
+      hostile: sw.isHostileToLocal ?? false,
+      health: sw.healthFrac ?? 1,
+      maxHealth: 1,
     });
   }
   return out;

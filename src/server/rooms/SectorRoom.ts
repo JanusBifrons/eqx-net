@@ -522,12 +522,14 @@ export class SectorRoom extends Room<SectorState> {
   private sessionToPlayer = new Map<string, string>();
   private playerToSession = new Map<string, string>();
   private inputCountThisTick = new Map<string, number>();
-  /** PlayerIds currently holding shift-boost AND thrust. Surfaced on every
-   *  snapshot so all clients can render an exhaust trail for that ship. */
+  /** PlayerIds currently holding boost (energy-affordable), regardless of
+   *  thrust. Surfaced on every snapshot so all clients can render an exhaust
+   *  trail for that ship; also drives the per-tick boost energy drain. */
   private readonly boostingPlayers = new Set<string>();
   /** PlayerIds currently holding thrust (regardless of boost). Surfaced on
    *  every snapshot so observers can see a baseline thrust flame whenever
-   *  a ship is accelerating. Strict superset of `boostingPlayers`. */
+   *  a ship is accelerating. No longer a strict superset of `boostingPlayers`
+   *  (boost without thrust is now valid). */
   private readonly thrustingPlayers = new Set<string>();
   /** Last client input tick the physics worker confirmed it applied, read from SAB.
    *  Owned by SnapshotBroadcaster (extracted); aliased here for the
@@ -978,6 +980,7 @@ export class SectorRoom extends Room<SectorState> {
       shipPoseCache: this.shipPoseCache,
       getActiveShip: (pid) => this.getActiveShip(pid),
       aiController: this.aiController,
+      swarmHealth: () => this.swarmHealth,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
     });
 
@@ -1245,6 +1248,7 @@ export class SectorRoom extends Room<SectorState> {
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
       swarmRegistry: this.swarmRegistry,
+      swarmHealth: this.swarmHealth,
       playerMountAngles: this.mountTicker.playerMountAngles,
       droneMountAngles: this.mountTicker.droneMountAngles,
       missileSim: this.missileSim,
@@ -2114,11 +2118,11 @@ export class SectorRoom extends Room<SectorState> {
    * the energy pool lives on the main thread, alongside shield regen + the
    * fire-path drain. Each tick: regen every active ship's pool (no
    * post-spend delay — the bar always feels alive), then drain one boost
-   * tick for every player currently boosting (`boostingPlayers` is already
-   * "boost && thrust"). The boost bit was stripped in the input handler when
-   * the pool couldn't afford a tick, so this drain can't drive it negative;
-   * `spendEnergy` clamps at 0 anyway. Scalar core helpers ⇒ zero per-tick
-   * allocation (Invariant #14).
+   * tick for every player currently boosting (`boostingPlayers` = boost held,
+   * regardless of thrust). The boost bit was stripped in the input handler
+   * when the pool couldn't afford a tick, so this drain can't drive it
+   * negative; `spendEnergy` clamps at 0 anyway. Scalar core helpers ⇒ zero
+   * per-tick allocation (Invariant #14).
    */
   private tickEnergy(): void {
     for (const [, ship] of this.state.ships) {

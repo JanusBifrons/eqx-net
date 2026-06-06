@@ -41,6 +41,17 @@ const TURN_RAMP_WINDOW = 0.25;
  *  them. 1800 ticks @ 60 Hz = 30 s. Mirrors the player's own intuition that
  *  if they've been clean for half a minute, the drone has lost interest. */
 const FORGET_TICKS = 1800;
+/** Part C — bias the drone's target pick toward the lowest-health hostile
+ *  ("gang up on the wounded one") instead of pure nearest. Moderate so a
+ *  far-but-wounded player doesn't pull a drone across the sector past a
+ *  point-blank threat — distance² still dominates at large gaps. No effect when
+ *  the player view carries no health (e.g. older tests). */
+const DRONE_TARGET_HEALTH_WEIGHT = 1.5;
+/** Part C — hard switch-DELAY: once a drone commits to a target it holds it for
+ *  this many ticks before re-evaluating, so a pack doesn't all flip targets in
+ *  unison every tick as ranges cross. ~0.5 s at 60 Hz. Server-only (deterministic
+ *  server tick; the client never ticks the drone brain). */
+const DRONE_TARGET_DWELL_TICKS = 30;
 /** Target orbit radius for IDLE patrol. Players spawn near the origin so
  *  this is comfortably outside the spawn zone without being so far that
  *  drones are off-screen most of the session. */
@@ -91,6 +102,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  reset purely by `markHostile`/`purgeHostility`/time-decay, both of
    *  which fire symmetrically on server and client. */
   private prevTargetId: string | null = null;
+  /** Server tick at which `prevTargetId` was last (re)acquired — drives the
+   *  `DRONE_TARGET_DWELL_TICKS` switch-delay in the body target pick. */
+  private prevTargetSinceTick = 0;
   /** Phase 4c (2026-05-11) — half-arc of the widest rotating mount in
    *  this kind's primary slot, used to widen the body-aim fire gate so
    *  drones with turrets fire even when the body is off-aim by less than
@@ -262,10 +276,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     //    coming in Phase 4b — single ownership site for the targeting
     //    policy. When no hostile is in view this frame, fall back to patrol
     //    motion but stay in COMBAT state until the time-decay clears the set.
-    const target = pickTarget(self.x, self.y, view.players, this.prevTargetId, (id) =>
-      this.hostileTo.has(id),
+    // Part C — smarter selection: bias toward the lowest-health hostile and
+    // hold the choice for DRONE_TARGET_DWELL_TICKS before re-evaluating (so a
+    // pack focus-fires the wounded instead of all flipping targets per tick).
+    const target = pickTarget(
+      self.x, self.y, view.players, this.prevTargetId, (id) => this.hostileTo.has(id),
+      {
+        healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
+        dwellTicks: DRONE_TARGET_DWELL_TICKS,
+        ticksSincePrevTarget: view.tick - this.prevTargetSinceTick,
+      },
     );
-    this.prevTargetId = target?.id ?? null;
+    const newId = target?.id ?? null;
+    if (newId !== this.prevTargetId) this.prevTargetSinceTick = view.tick;
+    this.prevTargetId = newId;
     if (target === null) return this.tickPatrol(self);
 
     return this.tickCombat(self, view, target);

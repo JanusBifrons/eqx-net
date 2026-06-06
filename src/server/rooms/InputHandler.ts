@@ -74,9 +74,13 @@ export function makeInputHandler(
         type: 'INPUT', slot, inputTick: tick, thrust, turnLeft, turnRight, boost, reverse,
       });
     }
-    // Boost = "shift held AND thrust held". Renderer layers boost on top of
-    // the baseline thrust flame; shift alone doesn't visually do anything.
-    if (boost && thrust) ctx.boostingPlayers.add(playerId);
+    // Boost is now an independent forward thrust along the ship's facing,
+    // applied whenever boost is held (energy-affordable — the bit was stripped
+    // above when the pool couldn't afford a tick). It no longer requires
+    // thrust. `boostingPlayers` drives both the per-tick energy drain
+    // (tickEnergy) and the exhaust trail (renderer layers it on top of the
+    // baseline thrust flame).
+    if (boost) ctx.boostingPlayers.add(playerId);
     else ctx.boostingPlayers.delete(playerId);
     if (thrust) ctx.thrustingPlayers.add(playerId);
     else ctx.thrustingPlayers.delete(playerId);

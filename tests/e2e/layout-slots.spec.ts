@@ -49,7 +49,15 @@ test.describe('layout-slots', () => {
 
     const joystick = page.locator('[data-testid="mobile-joystick"]');
     const fire = page.locator('[data-testid="mobile-fire"]');
+    const autoToggle = page.locator('[data-testid="auto-fire-toggle"]');
     await expect(joystick).toBeVisible();
+    // Auto-fire defaults ON → the AUTO toggle is shown and the manual FIRE
+    // button is hidden (auto-fire handles firing). Turning AUTO off reveals the
+    // original manual FIRE button.
+    await expect(autoToggle).toBeVisible();
+    await expect(autoToggle).toHaveAttribute('data-state', 'on');
+    await expect(fire).toHaveCount(0);
+    await autoToggle.click();
     await expect(fire).toBeVisible();
 
     const joyBox = await joystick.boundingBox();

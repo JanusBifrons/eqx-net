@@ -9,8 +9,13 @@ import type { ShipKind } from '../../shared-types/shipKinds.js';
  * math; `World.applyInput` is now a thin wrapper that looks up
  * `(body, kind)` and forwards.
  *
- *   1. Throttle — forward + reverse impulse, boost multiplier when
- *      throttle > 0 and boost held.
+ *   1. Throttle — forward + reverse impulse (no boost multiplier).
+ *   1b. Boost — an INDEPENDENT forward impulse along the ship's facing
+ *      whenever boost is held, regardless of thrust/turn/reverse. It is
+ *      no longer a throttle multiplier. The `boost` bit is energy-gated
+ *      by the caller (server strips it when the pool can't afford a tick;
+ *      the client mirrors that gate before predicting) so prediction and
+ *      authority stay in lockstep.
  *   2. Snappy turn — direct setAngvel on hold, releases let angular
  *      damping decay naturally.
  *   3. Lateral-grip — 1-pole low-pass on the sideways component of
@@ -49,9 +54,20 @@ export function applyShipInput(
   const rev = input.reverse ? kind.reverseFactor : 0;
   const throttle = fwd - rev;
   if (throttle !== 0) {
-    const boostMul = input.boost && throttle > 0 ? kind.boostMultiplier : 1;
-    const mag = kind.thrustImpulse * boostMul * throttle;
+    const mag = kind.thrustImpulse * throttle;
     body.applyImpulse({ x: fx * mag, y: fy * mag }, true);
+  }
+
+  // ---- 1b. Boost (independent forward kick along facing) -----------------
+  // Boost no longer modifies the movement direction or requires thrust: while
+  // held it always pushes along the ship's nose, regardless of thrust/turn/
+  // reverse. Magnitude thrustImpulse*(boostMultiplier-1) so that thrust+boost
+  // keeps the old combined magnitude (thrustImpulse*boostMultiplier) and
+  // boost-alone still delivers a strong forward push. The caller energy-gates
+  // the `boost` bit (see header) so an exhausted pool can't keep boosting.
+  if (input.boost) {
+    const bmag = kind.thrustImpulse * (kind.boostMultiplier - 1);
+    if (bmag !== 0) body.applyImpulse({ x: fx * bmag, y: fy * bmag }, true);
   }
 
   // ---- 2. Snappy turn (direct setAngvel, snap-stop on release) ---------

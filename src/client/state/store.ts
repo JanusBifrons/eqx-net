@@ -38,6 +38,7 @@ const initialShipKind      = loadShipKind(null);
 const initialDevOverlay    = initialPersisted.showDevOverlay   ?? true;
 const initialLogPanel      = initialPersisted.showLogPanel     ?? true;
 const initialServerGhost   = initialPersisted.showServerGhost  ?? true;
+const initialAutoFire      = initialPersisted.autoFireEnabled  ?? true;
 const initialArrivalMode   = initialPersisted.arrivalMode      ?? 'same';
 const initialArrivalTargetX = initialPersisted.arrivalTargetX  ?? 0;
 const initialArrivalTargetY = initialPersisted.arrivalTargetY  ?? 0;
@@ -55,6 +56,7 @@ function persistSettings(
     | 'showDevOverlay'
     | 'showLogPanel'
     | 'showServerGhost'
+    | 'autoFireEnabled'
     | 'arrivalMode'
     | 'arrivalTargetX'
     | 'arrivalTargetY'
@@ -66,6 +68,7 @@ function persistSettings(
     showDevOverlay:  state.showDevOverlay,
     showLogPanel:    state.showLogPanel,
     showServerGhost: state.showServerGhost,
+    autoFireEnabled: state.autoFireEnabled,
     arrivalMode:     state.arrivalMode,
     arrivalTargetX:  state.arrivalTargetX,
     arrivalTargetY:  state.arrivalTargetY,
@@ -126,6 +129,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   showDevOverlay: initialDevOverlay,
   showLogPanel: initialLogPanel,
   showServerGhost: initialServerGhost,
+  autoFireEnabled: initialAutoFire,
   selectedShipKind: initialShipKind,
   shipCount: 0,
   swarmCount: 0,
@@ -184,6 +188,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShowDevOverlay:  (v) => { set({ showDevOverlay:  v }); persistSettings(get()); },
   setShowLogPanel:    (v) => { set({ showLogPanel:    v }); persistSettings(get()); },
   setShowServerGhost: (v) => { set({ showServerGhost: v }); persistSettings(get()); },
+  setAutoFireEnabled: (v) => { set({ autoFireEnabled: v }); persistSettings(get()); },
   setSelectedShipKind: (id) => { set({ selectedShipKind: id }); saveShipKind(activeUserId, id); },
   toggleDevOverlay: () => { set((s) => ({ showDevOverlay: !s.showDevOverlay })); persistSettings(get()); },
   setShipCount: (n) => set({ shipCount: n }),
@@ -426,6 +431,7 @@ export function applyUserPrefs(userId: UserId): void {
     showDevOverlay:  persisted.showDevOverlay  ?? true,
     showLogPanel:    persisted.showLogPanel    ?? true,
     showServerGhost: persisted.showServerGhost ?? true,
+    autoFireEnabled: persisted.autoFireEnabled ?? true,
     arrivalMode:     persisted.arrivalMode     ?? 'same',
     arrivalTargetX:  persisted.arrivalTargetX  ?? 0,
     arrivalTargetY:  persisted.arrivalTargetY  ?? 0,

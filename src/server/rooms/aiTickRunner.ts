@@ -34,7 +34,7 @@ export interface AiTickCtx {
   aiController: AiController;
   serverTick: number;
   playerToSlot: Map<string, number>;
-  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean } | undefined;
+  getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number } | undefined;
   shipPoseCache: Map<string, PoseRecord>;
   aiPlayerScratch: AiPlayerView[];
   swarmEntitySnapshot: (id: string) => AiEntity | null;
@@ -53,7 +53,10 @@ export function runAiTick(ctx: AiTickCtx): void {
     if (!ship.isActive) continue;
     const pose = ctx.shipPoseCache.get(pid);
     if (!pose) continue;
-    ctx.aiPlayerScratch.push({ id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy });
+    ctx.aiPlayerScratch.push({
+      id: pid, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy,
+      health: ship.health, maxHealth: ship.maxHealth,
+    });
   }
   ctx.aiController.tick(ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot);
   ctx.phaseTime('aiTick');

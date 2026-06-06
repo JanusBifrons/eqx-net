@@ -27,6 +27,18 @@ describe('settingsStorage', () => {
     });
   });
 
+  it('round-trips the autoFireEnabled toggle', () => {
+    saveSettings('alice', { autoFireEnabled: false } as never);
+    expect(loadSettings('alice').autoFireEnabled).toBe(false);
+    saveSettings('alice', { autoFireEnabled: true } as never);
+    expect(loadSettings('alice').autoFireEnabled).toBe(true);
+  });
+
+  it('drops a non-boolean autoFireEnabled', () => {
+    localStorage.setItem('eqxSettings:alice', JSON.stringify({ autoFireEnabled: 'yes' }));
+    expect(loadSettings('alice').autoFireEnabled).toBeUndefined();
+  });
+
   it('keeps users isolated', () => {
     saveSettings('alice', { showDevOverlay: false, showLogPanel: false, showServerGhost: false });
     saveSettings('bob',   { showDevOverlay: true,  showLogPanel: true,  showServerGhost: true  });

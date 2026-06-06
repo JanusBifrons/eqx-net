@@ -6,7 +6,7 @@ import { Slot } from '../layout/Slot';
 import { FireCooldownRing } from './FireCooldownRing';
 import { useMountLog } from '../debug/useMountLog';
 import { logEvent } from '../debug/ClientLogger';
-import { useShouldRenderHud } from '../state/store';
+import { useShouldRenderHud, useUIStore } from '../state/store';
 
 interface Props {
   touchInput: TouchInput;
@@ -33,6 +33,10 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
   // Hook called before the late return so all subsequent hooks see a
   // stable order on every render.
   const shouldRender = useShouldRenderHud();
+  // Auto-fire mode hides the manual FIRE button (the AutoFireToggleButton drives
+  // the mode; auto-fire handles firing). Manual fire still works via the button
+  // when auto-fire is OFF (and Space always works as an override).
+  const autoFireEnabled = useUIStore((s) => s.autoFireEnabled);
   // The joystick zone lives inside a `<Slot>` portal whose host doesn't
   // exist on the first render — `useRef` would observe `null` at the time
   // the effect first runs and skip nipplejs setup forever. A state-backed
@@ -176,26 +180,31 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
        *  sits to the LEFT of it. The bottom-right anchor is row-reverse, so
        *  FIRE (order=10) is the rightmost element and BOOST (order=20) is to
        *  its left. The weapon-slot toggle that used to live above FIRE moved
-       *  into the consolidated SpeedDial (speed-dial UI refactor, Phase 1). */}
-      <Slot anchor="bottom-right" order={10}>
-        {/* Fire button + cooldown ring overlay. `position: relative` is the
-         *  positioning context the ring's `position: absolute` resolves
-         *  against; the ring overlays the button with `pointerEvents: none`
-         *  so touch still hits the button. */}
-        <Box sx={{ position: 'relative' }}>
-          <Box
-            component="button"
-            data-testid="mobile-fire"
-            onTouchStart={onFireStart}
-            onTouchEnd={onFireEnd}
-            onTouchCancel={onFireEnd}
-            sx={fireButtonSx}
-          >
-            FIRE
+       *  into the consolidated SpeedDial (speed-dial UI refactor, Phase 1).
+       *  The manual FIRE button is shown ONLY when auto-fire is OFF — with
+       *  auto-fire ON the AUTO toggle (App `bottom-right order={5}`) owns the
+       *  cluster corner and firing is automatic. */}
+      {!autoFireEnabled && (
+        <Slot anchor="bottom-right" order={10}>
+          {/* Fire button + cooldown ring overlay. `position: relative` is the
+           *  positioning context the ring's `position: absolute` resolves
+           *  against; the ring overlays the button with `pointerEvents: none`
+           *  so touch still hits the button. */}
+          <Box sx={{ position: 'relative' }}>
+            <Box
+              component="button"
+              data-testid="mobile-fire"
+              onTouchStart={onFireStart}
+              onTouchEnd={onFireEnd}
+              onTouchCancel={onFireEnd}
+              sx={fireButtonSx}
+            >
+              FIRE
+            </Box>
+            <FireCooldownRing />
           </Box>
-          <FireCooldownRing />
-        </Box>
-      </Slot>
+        </Slot>
+      )}
 
       <Slot anchor="bottom-right" order={20}>
         <Box
