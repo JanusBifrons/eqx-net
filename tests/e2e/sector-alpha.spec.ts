@@ -195,15 +195,37 @@ test.describe('movement', () => {
     await waitForShipPos(page);
     const before = await getShipPos(page);
 
+    // Hold W and POLL until the ship has measurably moved, using the time
+    // budget as a deadline — do NOT sample once after a fixed window. The
+    // join → client_ready → server-activation handshake can land *after* a
+    // fixed thrust window on a loaded runner, leaving the ship briefly
+    // uncontrollable so a single post-window sample reads 0 displacement (the
+    // flake that reddened main CI on 2026-06-06, run 27064978407). Holding the
+    // key while polling lets the thrust keep applying until activation
+    // completes; a genuine "never moves" regression still fails at the deadline.
     await page.keyboard.down('w');
-    await page.waitForTimeout(800);
-    await page.keyboard.up('w');
-    await page.waitForTimeout(200); // let last server tick propagate
+    try {
+      await page
+        .waitForFunction(
+          (b) => {
+            const el = document.querySelector('[data-testid="game-surface"]');
+            const x = parseFloat(el?.getAttribute('data-ship-x') ?? 'NaN');
+            const y = parseFloat(el?.getAttribute('data-ship-y') ?? 'NaN');
+            return !Number.isNaN(x) && !Number.isNaN(y) && Math.hypot(x - b.x, y - b.y) > 2;
+          },
+          before,
+          { timeout: 10_000 },
+        )
+        .catch(() => { /* fall through to the explicit assertion for a clear message */ });
+    } finally {
+      await page.keyboard.up('w');
+    }
+    await page.waitForTimeout(200); // let the last server tick propagate
 
     const after = await getShipPos(page);
     const dist = Math.hypot(after.x - before.x, after.y - before.y);
 
-    // With mass≈1 and THRUST_IMPULSE=0.15 at 60 Hz, 800 ms of thrust gives
+    // With mass≈1 and THRUST_IMPULSE=0.15 at 60 Hz, sustained thrust gives
     // roughly 7 units/s terminal velocity → ≥2 unit displacement is conservative.
     expect(dist).toBeGreaterThan(2);
 
@@ -224,15 +246,34 @@ test.describe('movement', () => {
         ),
       );
 
+    // Hold A and POLL until the ship has rotated CCW (positive), with the time
+    // budget as a deadline — same activation race as the thrust test above
+    // (a single post-window sample read angle 0). Holding the key while polling
+    // lets the turn keep applying until the ship is controllable.
     await page.keyboard.down('a');
-    await page.waitForTimeout(300);
-    await page.keyboard.up('a');
+    try {
+      await page
+        .waitForFunction(
+          () => {
+            const a = parseFloat(
+              document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-ship-angle') ?? 'NaN',
+            );
+            return !Number.isNaN(a) && a > 0.05;
+          },
+          undefined,
+          { timeout: 10_000 },
+        )
+        .catch(() => { /* fall through to the assertion below */ });
+    } finally {
+      await page.keyboard.up('a');
+    }
     await page.waitForTimeout(100);
 
-    // angle is exposed in data-ship-angle (added alongside x/y in the render loop)
-    // Rapier CCW = positive angle; turnLeft = positive ω → angle should have increased.
+    // Rapier CCW = positive angle; turnLeft = positive ω → angle should have
+    // increased. Angle may be NaN if data-ship-angle isn't wired in this build;
+    // skip rather than fail noisily (preserves the original tolerance). A wired
+    // angle that never left 0 is a real regression → fails here.
     const angle = await getAngle();
-    // Angle may be NaN if data-ship-angle not yet wired; skip rather than fail noisily.
     if (!Number.isNaN(angle)) {
       expect(angle).toBeGreaterThan(0);
     }
