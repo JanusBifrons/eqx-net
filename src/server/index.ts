@@ -237,6 +237,31 @@ gameServer
     testTimeScale: 10,
   })
   .filterBy(['testId']);
+// Auto-fire E2E room (weapon-autofire-boost-mechanics). A single hull-exposed
+// drone parked 150 u ahead of the player spawn — within every weapon's
+// auto-fire range (beam 250). Join with `?startHostile=1` to make the drone
+// aggress: it marks hostile server-side and attacks, and the resulting `damage`
+// → `markHostile` mirror reliably flags it hostile on the CLIENT once the drone
+// has registered (the join-time `bot_aggro` alone can race ahead of client
+// registration). The client then auto-fires back with NO player input — pair
+// with a high `?initialHull` so the player survives to fire. WITHOUT
+// `startHostile` the drone stays neutral/idle, so the spec can also assert
+// auto-fire does NOT engage a non-hostile drone. `testTimeScale: 10` compresses
+// the cooldown/regen cadence. `dronePoses` is a hardcoded room option (NOT a URL
+// param), so the drone must live in a dedicated room like this — `test-sector-
+// fast` has no drones. filterBy(testId) isolates parallel specs.
+gameServer
+  .define('auto-fire-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    testTimeScale: 10,
+    dronePoses: [{ kind: 'fighter', x: 0, y: 150, angle: 0, hullExposed: true }],
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // 2026-06-03 — deterministic respawn-cascade environment (test-coverage-audit
 // Phase 3). A test-sector with 4 drones so a client joining `?startHostile=1`
 // reproduces the BOT-PRESSURE conditions the original

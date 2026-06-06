@@ -95,6 +95,29 @@ describe('AiController', () => {
     expect(fires).toHaveLength(1);
   });
 
+  it('buffers markHostile that arrives BEFORE register and applies it on register', () => {
+    // The startHostile-at-join / pre-interest-aggro race: hostility is marked
+    // before the entity is registered. Pre-fix it was silently dropped.
+    ctrl.markHostile('drone-1', 'p1', 50);
+    expect(ctrl.isEntityHostileToPlayer('drone-1', 'p1')).toBe(false); // not registered yet
+    ctrl.register('drone-1', 5, new HostileDroneBehaviour());
+    expect(ctrl.isEntityHostileToPlayer('drone-1', 'p1')).toBe(true); // applied on register
+  });
+
+  it('purgeHostility drops buffered (pre-register) hostility too', () => {
+    ctrl.markHostile('drone-1', 'p1', 50);
+    ctrl.purgeHostility('p1');
+    ctrl.register('drone-1', 5, new HostileDroneBehaviour());
+    expect(ctrl.isEntityHostileToPlayer('drone-1', 'p1')).toBe(false);
+  });
+
+  it('unregister discards buffered hostility (no leak into a later re-register)', () => {
+    ctrl.markHostile('drone-1', 'p1', 50);
+    ctrl.unregister('drone-1'); // clears the pending buffer
+    ctrl.register('drone-1', 5, new HostileDroneBehaviour());
+    expect(ctrl.isEntityHostileToPlayer('drone-1', 'p1')).toBe(false);
+  });
+
   it('multiple entities tick independently each call', () => {
     ctrl.register('drone-a', 1, new HostileDroneBehaviour());
     ctrl.register('drone-b', 2, new HostileDroneBehaviour());

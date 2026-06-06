@@ -59,6 +59,12 @@ export interface LocalAimTarget {
   y: number;
   vx: number;
   vy: number;
+  /** Whether this drone is currently hostile to the local player (mirror of
+   *  `SwarmRenderState.isHostileToLocal`, last computed in `updateMirror`).
+   *  Auto-fire engages ONLY hostiles; carrying the flag here lets the
+   *  fire-decision scan stay allocation-free (no ledger lookup / id parsing
+   *  per candidate — invariant #14). */
+  isHostile: boolean;
 }
 
 /**
@@ -104,6 +110,7 @@ export function buildLocalAimTargets(
       y: scratch.y,
       vx: sw.vx,
       vy: sw.vy,
+      isHostile: sw.isHostileToLocal ?? false,
     });
   }
   return out;

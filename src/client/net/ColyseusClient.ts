@@ -59,7 +59,7 @@ import { installPageLifecycleObserver } from '../debug/pageLifecycleObserver';
 import { recordServerGcPause, startHealthStatsPublisher } from '../debug/healthStats';
 import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
-import { getWeapon } from '@core/combat/WeaponCatalogue';
+import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
 import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
@@ -71,7 +71,7 @@ import {
   type ReconcileFeedbackSink,
   type MountFireGeom,
 } from '../combat/HitPrediction.client';
-import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets } from '../combat/LocalBeam';
+import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets, type LocalAimTarget } from '../combat/LocalBeam';
 import { tickLocalMountAngles } from '../combat/localMountAim';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
@@ -636,6 +636,23 @@ export class ColyseusGameClient {
   /** Reused scratch for the active-slot mount-id set in `tickLocalMountAim`
    *  (alloc-free per-frame membership test; invariant #14). */
   private readonly _activeMountIdsScratch = new Set<string>();
+
+  // ── Auto-fire (weapon-autofire-boost-mechanics, Part B/C) ──────────────
+  /** Drone-only aim targets (kind=1) built once per frame by
+   *  `tickLocalMountAim` (`buildLocalAimTargets`); the once-per-RAF fire block
+   *  REUSES this reference for the auto-fire pick, so no second target build /
+   *  allocation (invariant #14). May be ≤1 frame stale on a zero-iteration RAF
+   *  — acceptable (matches the existing aim lead-lag); the fire block guards on
+   *  `.length`. */
+  private _lastAimTargets: LocalAimTarget[] = [];
+  /** Cached active-slot weapon resolution, keyed by (kind, slotId). Auto-fire
+   *  (default ON) evaluates the fire block EVERY frame, so resolving the slot
+   *  via `resolveSlotMounts` (which allocates) every frame would violate
+   *  invariant #14 — recompute only when the kind or active slot changes. */
+  private _afSlotKindKey: string | null = null;
+  private _afSlotIdKey: string | null = null;
+  private _afSlotWeaponDef: WeaponDef = getWeapon('hitscan');
+  private _afSlotCooldownTicks = 0;
   /** Idle-suppression for the input upstream (network-discipline P4). The
    *  client only emits an `input` message when the control state has changed
    *  since the last send OR when {@link INPUT_HEARTBEAT_MS} has elapsed.
@@ -3933,55 +3950,82 @@ export class ColyseusGameClient {
     // the touch branch broke firing entirely on phone (the smoke-test
     // class that surfaced this hoist's regression — kb.fireHeld is
     // always false on touch devices).
-    const fireHeldHoisted = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false);
-    if (fireHeldHoisted && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
+    const manualFire = kb.fireHeld || (this.touchInput?.getFireHeld() ?? false);
+    // Auto-fire (default ON): fire automatically at an in-range HOSTILE without
+    // any input. Manual fire (Space / FIRE button) still works as an override.
+    const autoFireEnabled = useUIStore.getState().autoFireEnabled;
+    if ((manualFire || autoFireEnabled) && this.mirror.localPlayerId && !this.localDead && this.predWorld && this.room) {
       // Weapons/energy/AI overhaul (§5.2): the firing weapon is the active
       // SLOT's bound weapon, not a per-weapon picker. Slot cooldown = max
       // over the slot's mounts (mirrors the server gate); the energy gate
       // mirrors the server's so a depleted pool stops local ghost spam.
-      const localKind = getShipKind(this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null);
+      const kindStr = this.mirror.ships.get(this.mirror.localPlayerId)?.kind ?? null;
+      const localKind = getShipKind(kindStr);
       const activeSlotId = useUIStore.getState().activeSlotId;
-      // TODO: alloc-debt — resolveSlotMounts builds a small array per fire-held
-      // frame (same pre-existing pattern as localShipMounts in
-      // buildLocalAimTargets). resolveSlotEnergyCost below is alloc-free.
-      const slotMounts = resolveSlotMounts(localKind, activeSlotId);
-      const slotWeaponDef = getWeapon(slotMounts[0]?.weaponId ?? 'hitscan');
-      let slotCooldownTicks = 0;
-      for (let i = 0; i < slotMounts.length; i++) {
-        const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
-        if (c > slotCooldownTicks) slotCooldownTicks = c;
+      // Cache the slot weapon resolution by (kind, slot). Auto-fire evaluates
+      // this block EVERY frame, and `resolveSlotMounts` allocates a small
+      // array — recompute only when the kind or slot changes (invariant #14).
+      if (this._afSlotKindKey !== kindStr || this._afSlotIdKey !== activeSlotId) {
+        const slotMounts = resolveSlotMounts(localKind, activeSlotId);
+        const weaponDef = getWeapon(slotMounts[0]?.weaponId ?? 'hitscan');
+        let cd = 0;
+        for (let i = 0; i < slotMounts.length; i++) {
+          const c = getWeapon(slotMounts[i]!.weaponId).cooldownTicks;
+          if (c > cd) cd = c;
+        }
+        this._afSlotWeaponDef = weaponDef;
+        this._afSlotCooldownTicks = cd === 0 ? weaponDef.cooldownTicks : cd;
+        this._afSlotKindKey = kindStr;
+        this._afSlotIdKey = activeSlotId;
       }
-      if (slotCooldownTicks === 0) slotCooldownTicks = slotWeaponDef.cooldownTicks;
-      if (slotWeaponDef.mode === 'hitscan') {
-        this.updateLiveBeam();
-      } else {
-        // Projectile / missile has no continuous beam — clear so a
-        // mid-hold slot switch can't leave a stale hitscan beam.
-        this.mirror.liveBeams?.clear();
-        this._lastHitscanFireMs = null;
+      const slotWeaponDef = this._afSlotWeaponDef;
+      const slotCooldownTicks = this._afSlotCooldownTicks;
+
+      // Fire INTENT: manual override OR auto-fire when a HOSTILE drone is within
+      // this weapon's auto-fire range. Scans the per-frame `_lastAimTargets`
+      // (drone-only, kind=1 — never asteroids/structures) reading the carried
+      // `isHostile` flag ⇒ allocation-free, no ledger lookup / id parsing
+      // (invariant #14). `_lastAimTargets` may be ≤1 frame stale on a
+      // zero-iteration RAF; the cooldown gate makes that harmless. Auto-fire
+      // only decides WHEN to fire — the server stays the hit authority via its
+      // own mount angles; turret aim/fire-target unification is Part C.
+      let fireWanted = manualFire;
+      if (!fireWanted && autoFireEnabled) {
+        const st = this.predWorld.getShipState(this.mirror.localPlayerId);
+        if (st) fireWanted = this.hasHostileInRange(st.x, st.y, weaponAutoFireRange(slotWeaponDef));
       }
-      const cooldownMs = (slotCooldownTicks * 1000) / 60;
-      const nowMs = this.clock.now();
-      // Use the Zustand-mirrored `lastFireMs` as the wall-clock anchor
-      // — set by `sendFire`, cleared by `setActiveSlotId`, so a slot swap
-      // implicitly resets the gate. First-fire short-circuits when null.
-      const lastFireMs = useUIStore.getState().lastFireMs;
-      const wallclockReady = lastFireMs === null || (nowMs - lastFireMs) >= cooldownMs;
-      // Energy gate (predicted) — don't fire a ghost the server would reject.
-      const energyReady = canAfford(this.predEnergy, resolveSlotEnergyCost(localKind, activeSlotId));
-      if (wallclockReady && energyReady) {
-        // Bump sendTick if inputTick hasn't yet caught up to the
-        // server-side cooldown floor. This is the "give the player
-        // their fire even if inputTick stalled" branch.
-        const tickFloor = this.lastFiredAtTick + slotCooldownTicks;
-        const sendTick = Math.max(this.inputTick, tickFloor);
-        this.sendFire(sendTick);
-        this.lastFiredAtTick = sendTick;
-        if (slotWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
-      } else if (!energyReady && slotWeaponDef.mode === 'hitscan') {
-        // Out of energy mid-hold: drop the continuous beam too.
-        this.mirror.liveBeams?.clear();
-        this._lastHitscanFireMs = null;
+      if (fireWanted) {
+        if (slotWeaponDef.mode === 'hitscan') {
+          this.updateLiveBeam();
+        } else {
+          // Projectile / missile has no continuous beam — clear so a
+          // mid-hold slot switch can't leave a stale hitscan beam.
+          this.mirror.liveBeams?.clear();
+          this._lastHitscanFireMs = null;
+        }
+        const cooldownMs = (slotCooldownTicks * 1000) / 60;
+        const nowMs = this.clock.now();
+        // Use the Zustand-mirrored `lastFireMs` as the wall-clock anchor
+        // — set by `sendFire`, cleared by `setActiveSlotId`, so a slot swap
+        // implicitly resets the gate. First-fire short-circuits when null.
+        const lastFireMs = useUIStore.getState().lastFireMs;
+        const wallclockReady = lastFireMs === null || (nowMs - lastFireMs) >= cooldownMs;
+        // Energy gate (predicted) — don't fire a ghost the server would reject.
+        const energyReady = canAfford(this.predEnergy, resolveSlotEnergyCost(localKind, activeSlotId));
+        if (wallclockReady && energyReady) {
+          // Bump sendTick if inputTick hasn't yet caught up to the
+          // server-side cooldown floor. This is the "give the player
+          // their fire even if inputTick stalled" branch.
+          const tickFloor = this.lastFiredAtTick + slotCooldownTicks;
+          const sendTick = Math.max(this.inputTick, tickFloor);
+          this.sendFire(sendTick);
+          this.lastFiredAtTick = sendTick;
+          if (slotWeaponDef.mode === 'hitscan') this._lastHitscanFireMs = this.clock.now();
+        } else if (!energyReady && slotWeaponDef.mode === 'hitscan') {
+          // Out of energy mid-hold: drop the continuous beam too.
+          this.mirror.liveBeams?.clear();
+          this._lastHitscanFireMs = null;
+        }
       }
     }
 
@@ -4192,6 +4236,28 @@ export class ColyseusGameClient {
    * no individualised hostility set). Future PvP would require a richer
    * filter; for solo combat "any drone, nearest one" is the right model.
    */
+  /**
+   * Auto-fire predicate: is any HOSTILE drone within `range` of (x, y)?
+   * Allocation-free scan over the per-frame `_lastAimTargets` (drone-only,
+   * kind=1), reading the carried `isHostile` flag and a squared-distance
+   * compare (no sqrt) — safe for the per-frame fire-decision hot path
+   * (invariant #14). Returns false when auto-fire should hold (no hostile in
+   * reach) so the ship doesn't auto-engage neutral ambient drones or waste the
+   * energy pool. Drone-vs-drone hit authority stays server-side.
+   */
+  private hasHostileInRange(x: number, y: number, range: number): boolean {
+    const r2 = range * range;
+    const targets = this._lastAimTargets;
+    for (let i = 0; i < targets.length; i++) {
+      const t = targets[i]!;
+      if (!t.isHostile) continue;
+      const dx = t.x - x;
+      const dy = t.y - y;
+      if (dx * dx + dy * dy <= r2) return true;
+    }
+    return false;
+  }
+
   private tickLocalMountAim(dtSec: number): void {
     const localId = this.mirror.localPlayerId;
     if (!localId || !this.predWorld) return;
@@ -4231,6 +4297,10 @@ export class ColyseusGameClient {
     const targets = this.mirror.swarm
       ? buildLocalAimTargets(this.mirror.swarm, this._aimInterpScratch)
       : [];
+    // Cache the (drone-only, kind=1) target list so the once-per-RAF fire
+    // block can reuse it for the auto-fire pick without a second build/alloc
+    // (invariant #14). buildLocalAimTargets already runs each aim tick.
+    this._lastAimTargets = targets;
 
     // Range gate: only acquire targets within hitscan reach. Out-of-range
     // drones don't peg the turret — when no candidate is in view, the

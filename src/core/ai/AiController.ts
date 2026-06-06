@@ -43,15 +43,34 @@ interface AiRegistration {
 export class AiController {
   private readonly entities = new Map<string, AiRegistration>();
   private readonly fireQueue: AiFireRequest[] = [];
+  /**
+   * Hostility marked for an entity that is not yet registered, buffered so it
+   * is APPLIED when the entity registers. Without this a `markHostile` /
+   * `bot_aggro` that races ahead of registration is silently lost — the
+   * `startHostile`-at-join case (the drone is flagged hostile the same instant
+   * the player joins, before the client's first swarm packet registers it) and
+   * any future "aggro arrives before the entity is in interest" case. Maps
+   * `entityId → (shooterId → latest tick)`. Event-driven (discrete), never the
+   * per-tick hot path. Server-side this is inert (drones register at spawn, so
+   * `markHostile` always finds them) — keeping the live loop byte-identical.
+   */
+  private readonly pendingHostile = new Map<string, Map<string, number>>();
 
   constructor(private readonly sink: AiIntentSink) {}
 
   register(entityId: string, slot: number, behaviour: IAiBehaviour): void {
     this.entities.set(entityId, { slot, behaviour });
+    // Apply any hostility that arrived before this entity registered.
+    const pending = this.pendingHostile.get(entityId);
+    if (pending) {
+      for (const [shooterId, atTick] of pending) behaviour.markHostile?.(shooterId, atTick);
+      this.pendingHostile.delete(entityId);
+    }
   }
 
   unregister(entityId: string): void {
     this.entities.delete(entityId);
+    this.pendingHostile.delete(entityId);
   }
 
   has(entityId: string): boolean {
@@ -83,7 +102,19 @@ export class AiController {
   markHostile(entityId: string, shooterId: string, atTick: number): void {
     if (!shooterId) return;
     const reg = this.entities.get(entityId);
-    reg?.behaviour.markHostile?.(shooterId, atTick);
+    if (reg) {
+      reg.behaviour.markHostile?.(shooterId, atTick);
+      return;
+    }
+    // Not registered yet — buffer so register() can apply it (see
+    // `pendingHostile`). Keep the latest tick if marked twice pre-register.
+    let pending = this.pendingHostile.get(entityId);
+    if (!pending) {
+      pending = new Map<string, number>();
+      this.pendingHostile.set(entityId, pending);
+    }
+    const prev = pending.get(shooterId);
+    if (prev === undefined || atTick > prev) pending.set(shooterId, atTick);
   }
 
   /**
@@ -97,6 +128,8 @@ export class AiController {
     for (const reg of this.entities.values()) {
       reg.behaviour.purgeHostility?.(playerId);
     }
+    // Also drop any buffered (pre-register) hostility for this player.
+    for (const pending of this.pendingHostile.values()) pending.delete(playerId);
   }
 
   /**
@@ -107,6 +140,7 @@ export class AiController {
    */
   clear(): void {
     this.entities.clear();
+    this.pendingHostile.clear();
   }
 
   /**
