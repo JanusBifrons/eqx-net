@@ -127,6 +127,9 @@ export interface UIStore {
   showDevOverlay: boolean;
   showLogPanel: boolean;
   showServerGhost: boolean;
+  /** Auto-fire mode (default ON, persisted): weapons fire automatically at
+   *  in-range hostiles. When OFF, the manual FIRE button / Space-key returns. */
+  autoFireEnabled: boolean;
   /** Player's chosen ship kind for the next spawn. Persisted per-user via
    *  `shipSelectionStorage`. Defaults to `DEFAULT_SHIP_KIND` until the user
    *  picks one or `applyUserPrefs(userId)` re-reads from storage. */
@@ -278,6 +281,7 @@ export interface UIStore {
   setShowDevOverlay: (v: boolean) => void;
   setShowLogPanel: (v: boolean) => void;
   setShowServerGhost: (v: boolean) => void;
+  setAutoFireEnabled: (v: boolean) => void;
   setSelectedShipKind: (id: ShipKindId) => void;
   toggleDevOverlay: () => void;
   setShipCount: (n: number) => void;

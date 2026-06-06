@@ -189,3 +189,36 @@ export function getWeapon(id: WeaponId): WeaponDef {
 export function isWeaponId(v: unknown): v is WeaponId {
   return v === 'hitscan' || v === 'laser' || v === 'heat-seeker';
 }
+
+/**
+ * Maximum range (world units) at which auto-fire should engage a target with
+ * this weapon. Per-mode so each weapon "shoots when in its own reach":
+ *
+ *   - hitscan:    the beam's `range` (instant, exact).
+ *   - projectile: `speed * maxTicks / 60` (the bolt's max travel) × 0.85 so
+ *     auto-fire only opens up where the bolt can realistically still land
+ *     before its lifetime expires (a target at the very edge usually drifts
+ *     out before the bolt arrives).
+ *   - missile:    `speed * lifetimeTicks / 60` × 0.5 — homing missiles can
+ *     reach much farther, but auto-firing them at full lifetime range wastes a
+ *     scarce, expensive salvo on shots likely to be dodged/expire; cap engage
+ *     range to half the theoretical reach.
+ *
+ * Pure + allocation-free (scalar in/out) — safe to call in the fire-decision
+ * hot path. The exhaustive `never` default makes a future weapon mode a
+ * compile error rather than a silent `undefined`.
+ */
+export function weaponAutoFireRange(def: WeaponDef): number {
+  switch (def.mode) {
+    case 'hitscan':
+      return def.range;
+    case 'projectile':
+      return ((def.speed * def.maxTicks) / 60) * 0.85;
+    case 'missile':
+      return ((def.speed * def.lifetimeTicks) / 60) * 0.5;
+    default: {
+      const _exhaustive: never = def;
+      return _exhaustive as never;
+    }
+  }
+}

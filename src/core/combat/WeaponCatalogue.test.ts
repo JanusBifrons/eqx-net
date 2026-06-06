@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { getWeapon, isWeaponId, WEAPONS, WEAPON_IDS, DEFAULT_WEAPON } from './WeaponCatalogue.js';
+import {
+  getWeapon,
+  isWeaponId,
+  weaponAutoFireRange,
+  WEAPONS,
+  WEAPON_IDS,
+  DEFAULT_WEAPON,
+} from './WeaponCatalogue.js';
 
 describe('WeaponCatalogue', () => {
   it('getWeapon returns the hitscan (beam) definition', () => {
@@ -89,6 +96,46 @@ describe('WeaponCatalogue', () => {
 
   it('isWeaponId accepts heat-seeker', () => {
     expect(isWeaponId('heat-seeker')).toBe(true);
+  });
+});
+
+describe('weaponAutoFireRange', () => {
+  it('hitscan uses the beam range exactly', () => {
+    const w = getWeapon('hitscan');
+    if (w.mode !== 'hitscan') throw new Error('expected hitscan');
+    expect(weaponAutoFireRange(w)).toBe(w.range);
+  });
+
+  it('projectile is 0.85x the bolt max travel (speed*maxTicks/60)', () => {
+    const w = getWeapon('laser');
+    if (w.mode !== 'projectile') throw new Error('expected projectile');
+    const maxTravel = (w.speed * w.maxTicks) / 60;
+    expect(weaponAutoFireRange(w)).toBeCloseTo(maxTravel * 0.85, 6);
+    // Must stay strictly inside the bolt's reach so it can land before expiry.
+    expect(weaponAutoFireRange(w)).toBeLessThan(maxTravel);
+  });
+
+  it('missile is capped to half the theoretical homing reach', () => {
+    const w = getWeapon('heat-seeker');
+    if (w.mode !== 'missile') throw new Error('expected missile');
+    const maxReach = (w.speed * w.lifetimeTicks) / 60;
+    expect(weaponAutoFireRange(w)).toBeCloseTo(maxReach * 0.5, 6);
+  });
+
+  it('orders beam < bolt < missile auto-fire range (close → medium → long)', () => {
+    const beam = weaponAutoFireRange(getWeapon('hitscan'));
+    const bolt = weaponAutoFireRange(getWeapon('laser'));
+    const missile = weaponAutoFireRange(getWeapon('heat-seeker'));
+    expect(beam).toBeLessThan(bolt);
+    expect(bolt).toBeLessThan(missile);
+  });
+
+  it('returns a positive finite range for every weapon', () => {
+    for (const w of WEAPONS.values()) {
+      const r = weaponAutoFireRange(w);
+      expect(Number.isFinite(r)).toBe(true);
+      expect(r).toBeGreaterThan(0);
+    }
   });
 });
 

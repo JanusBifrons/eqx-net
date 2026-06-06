@@ -11,6 +11,10 @@ export interface PersistedSettings {
   showDevOverlay: boolean;
   showLogPanel: boolean;
   showServerGhost: boolean;
+  /** Auto-fire mode: weapons fire automatically at in-range hostiles. Default
+   *  ON (so players never have to manually fire). When OFF, the manual FIRE
+   *  button / Space-key behaviour returns. */
+  autoFireEnabled: boolean;
   /** Hyperspace arrival mode (mobile-only UI; PC ignores). */
   arrivalMode: ArrivalMode;
   /** User-typed arrival x in `xy` mode. Clamped to sector bounds on blur. */
@@ -34,6 +38,7 @@ function decode(parsed: unknown): Partial<PersistedSettings> | null {
   if (typeof obj['showDevOverlay']  === 'boolean') out.showDevOverlay  = obj['showDevOverlay'];
   if (typeof obj['showLogPanel']    === 'boolean') out.showLogPanel    = obj['showLogPanel'];
   if (typeof obj['showServerGhost'] === 'boolean') out.showServerGhost = obj['showServerGhost'];
+  if (typeof obj['autoFireEnabled']  === 'boolean') out.autoFireEnabled  = obj['autoFireEnabled'];
   if (isArrivalMode(obj['arrivalMode']))           out.arrivalMode     = obj['arrivalMode'];
   if (typeof obj['arrivalTargetX']  === 'number' && Number.isFinite(obj['arrivalTargetX'])) {
     out.arrivalTargetX = obj['arrivalTargetX'];
