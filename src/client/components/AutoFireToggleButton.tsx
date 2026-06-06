@@ -29,13 +29,13 @@ export function AutoFireToggleButton(): JSX.Element | null {
       data-testid="auto-fire-toggle"
       data-state={autoFireEnabled ? 'on' : 'off'}
       aria-pressed={autoFireEnabled}
+      // `onClick` ONLY — a discrete toggle, not a held control. A tap fires a
+      // single click on every platform; adding `onTouchStart` (even with
+      // preventDefault) double-toggled on touch contexts (touchstart + a
+      // still-delivered click), which flipped auto-fire straight back ON — the
+      // CI layout-slots failure. The FIRE/BOOST buttons keep onTouchStart
+      // because they are press-and-HOLD; this is a single-shot toggle.
       onClick={toggle}
-      onTouchStart={(e) => {
-        // Tap toggles immediately; preventDefault stops the synthetic click +
-        // any joystick/scroll interference on touch devices.
-        e.preventDefault();
-        toggle();
-      }}
       sx={autoFireEnabled ? autoOnSx : autoOffSx}
     >
       AUTO
