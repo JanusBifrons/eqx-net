@@ -44,6 +44,9 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
+import { StructureRegistry } from '../structures/StructureRegistry.js';
+import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
+import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
@@ -107,7 +110,13 @@ import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
-import { EngageTransitSchema, CancelTransitSchema, ClientReadyMessageSchema } from '../../shared-types/messages.js';
+import {
+  EngageTransitSchema,
+  CancelTransitSchema,
+  ClientReadyMessageSchema,
+  PlaceStructureSchema,
+  RemoveStructureSchema,
+} from '../../shared-types/messages.js';
 import {
   rayHitsSphere,
   // rayHitsConvexPolygon now used inside PlayerFireResolver.ts
@@ -440,6 +449,11 @@ export class SectorRoom extends Room<SectorState> {
   /** Player onLeave handler (lingering / transit / despawn branches). Extracted to `LeaveHandler.ts`. */
   private leaveHandler!: LeaveHandler;
   private swarmSpawner!: SwarmSpawner;
+  /** Placed-structure bookkeeping (structures plan, Phase 2). */
+  private readonly structureRegistry = new StructureRegistry();
+  private structurePlacement!: StructurePlacementSubsystem;
+  /** Monotonic id source for player-placed structures (session-scoped). */
+  private placedStructureCounter = 0;
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
@@ -623,10 +637,13 @@ export class SectorRoom extends Room<SectorState> {
     /** GEP P4 — lets the structureEntity integration test find a kind=2 record
      *  and assert it is damageable (seeded into swarmHealth). */
     swarmRegistry: {
-      all(): Iterable<{ id: string; kind: number; entityId: number }>;
-      get(id: string): { id: string; kind: number; entityId: number } | null | undefined;
+      all(): Iterable<{ id: string; kind: number; entityId: number; shipKind?: string }>;
+      get(id: string): { id: string; kind: number; entityId: number; shipKind?: string } | null | undefined;
     };
     swarmHealth: Map<string, number>;
+    /** Structures plan, Phase 2 — lets the placement integration test assert
+     *  the blueprint vs pre-built record state from the player-driven path. */
+    structureRegistry: StructureRegistry;
   } {
     return {
       serverTick: this.serverTick,
@@ -637,6 +654,7 @@ export class SectorRoom extends Room<SectorState> {
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.swarmHealth,
+      structureRegistry: this.structureRegistry,
     };
   }
 
@@ -1347,6 +1365,31 @@ export class SectorRoom extends Room<SectorState> {
       logger.error({ requested: asteroidRoster.length, seeded }, 'swarm spawner: not all asteroids seeded (slot pool exhausted)');
     }
 
+    // ── Structure placement (structures plan, Phase 2) ──────────────────
+    // Decision logic over injected concretions (spawn / health-seed / despawn /
+    // clamp / id). A placed structure rides the existing kind=2 swarm path, so
+    // it broadcasts + takes damage for free; the only structure-specific seam
+    // is `swarmHealth` (presence = damageable) + the StructureRegistry record.
+    this.structurePlacement = new StructurePlacementSubsystem({
+      spawnStructure: (s) => this.swarmSpawner.spawnStructure(s),
+      seedHealth: (id, hp) => {
+        this.swarmHealth.set(id, hp);
+        this.swarmShield.set(id, 0); // no shield layer — hits land on the hull
+      },
+      despawn: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+        this.swarmHealth.delete(id);
+        this.swarmShield.delete(id);
+      },
+      clamp: (x, y) => {
+        const c = clampToSectorBounds(x, y);
+        return { x: c.x, y: c.y };
+      },
+      nextId: () => `pstruct-${this.placedStructureCounter++}`,
+      registry: this.structureRegistry,
+    });
+
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
     // internal swarm entities, NOT Colyseus clients.
@@ -1592,6 +1635,37 @@ export class SectorRoom extends Room<SectorState> {
         return;
       }
       this.handleClientReady(client);
+    });
+
+    // ── Structures plan, Phase 2 — placement / removal ──────────────────
+    this.onMessage('place_structure', (client: Client, raw: unknown) => {
+      const parsed = PlaceStructureSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed place_structure');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const id = this.structurePlacement.place(
+        owner,
+        parsed.data.kind,
+        parsed.data.x,
+        parsed.data.y,
+      );
+      if (id === null) {
+        logger.warn({ sessionId: client.sessionId, kind: parsed.data.kind }, 'place_structure rejected');
+      }
+    });
+
+    this.onMessage('remove_structure', (client: Client, raw: unknown) => {
+      const parsed = RemoveStructureSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed remove_structure');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      this.structurePlacement.remove(owner, parsed.data.id);
     });
 
     // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { StructureKindIdSchema } from '../structureKinds.js';
 
 export const InputMessageSchema = z
   .object({
@@ -108,6 +109,28 @@ export const ClientReadyMessageSchema = z
   })
   .strict();
 
+/** Client → server (structures plan, Phase 2): "place a <kind> blueprint at
+ *  world (x, y)". The server validates the kind + clamps the position to
+ *  playable sector bounds, then drops a non-operational scaffolding (10 % HP)
+ *  that the grid pulse builds up over time (Phase 3). Strict — no extra keys. */
+export const PlaceStructureSchema = z
+  .object({
+    type: z.literal('place_structure'),
+    kind: StructureKindIdSchema,
+    x: z.number().finite(),
+    y: z.number().finite(),
+  })
+  .strict();
+
+/** Client → server (structures plan, Phase 2): "remove the structure I own
+ *  with this id". The server rejects ids the requester doesn't own. */
+export const RemoveStructureSchema = z
+  .object({
+    type: z.literal('remove_structure'),
+    id: z.string().min(1),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -115,6 +138,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   EngageTransitSchema,
   CancelTransitSchema,
   ClientReadyMessageSchema,
+  PlaceStructureSchema,
+  RemoveStructureSchema,
 ]);
 
 export type InputMessage = z.infer<typeof InputMessageSchema>;
@@ -123,4 +148,6 @@ export type FireMessage = z.infer<typeof FireMessageSchema>;
 export type EngageTransitMessage = z.infer<typeof EngageTransitSchema>;
 export type CancelTransitMessage = z.infer<typeof CancelTransitSchema>;
 export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
+export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
+export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;
