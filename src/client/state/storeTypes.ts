@@ -174,6 +174,11 @@ export interface UIStore {
    *  (purity-clean: it's a kind id, not a spatial field). Set by the
    *  speed-dial Build actions; cleared on confirm / cancel. */
   placementKind: StructureKindId | null;
+  /** Structures plan (Phase 3) — the player's live grid net power (Σ output −
+   *  Σ consumption over their powered component). Discrete HUD readout, set at
+   *  the 1 Hz pulse cadence from the structures snapshot slice. 0 when the
+   *  player has no powered grid. */
+  gridNetPower: number;
   /** The local ship's full energy pool — the denominator for the top-center
    *  EnergyBar (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
@@ -286,6 +291,7 @@ export interface UIStore {
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
+  setGridNetPower: (net: number) => void;
   setEnergyMax: (max: number) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;

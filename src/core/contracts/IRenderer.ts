@@ -151,6 +151,27 @@ export interface SwarmRenderState {
 }
 
 /**
+ * Structure grid state (structures plan, Phase 3). Mirrored from
+ * `SnapshotMessage.structures[]`, keyed by the same entityId as `swarm` (which
+ * holds the pose). Drives the connector web, the scaffolding fill + dim, and the
+ * HUD power readout. Pure UI state — no spatial fields (those live in `swarm`).
+ */
+export interface StructureRenderState {
+  /** Component net power ≥ 0 AND reachable to a Capital. */
+  powered: boolean;
+  /** Component net power (Σ output − Σ consumption over built members). */
+  netPower: number;
+  /** Connected neighbour entityIds — the web edges. */
+  connTo: number[];
+  /** True once fully constructed (blueprints render dimmed until then). */
+  built: boolean;
+  /** Construction fraction [0..1] (1 when built) — drives the fill-bar. */
+  buildPct: number;
+  /** Deconstruction fraction [0..1] while reclaiming (0 normally). */
+  deconstructPct: number;
+}
+
+/**
  * Heat-seeking missile render state. Authoritative pose plus the two
  * fields the renderer needs that aren't on `SnapshotMessage.missiles[]`
  * directly: the previous-arrival pose (for interpolation) and the
@@ -244,6 +265,18 @@ export interface RenderMirror {
    * map at their last-shipped pose and the renderer freezes interpolation.
    */
   swarm?: Map<number, SwarmRenderState>;
+  /** Structures plan, Phase 3 — slow-moving grid state for placed structures,
+   *  keyed by the SAME dense entityId as `swarm` (the structure's POSE lives in
+   *  `swarm`; this carries the grid web + power/construction state). Mirrored
+   *  from `SnapshotMessage.structures[]`. The renderer joins by entityId to draw
+   *  the connector web + scaffolding fill + dim unbuilt blueprints. */
+  structures?: Map<number, StructureRenderState>;
+  /** Structures plan, Phase 3 — connection flash windows from the discrete
+   *  `grid_pulse` event. Key is the sorted entityId pair packed as
+   *  `min * 65536 + max` (numeric ⇒ no per-frame string-key allocation in the
+   *  renderer); value is the `performance.now()` ms until which the segment
+   *  renders "flowing". */
+  gridFlashes?: Map<number, number>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored

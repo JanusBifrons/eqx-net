@@ -12,8 +12,10 @@
  */
 export interface GridPulseEvent {
   type: 'grid_pulse';
-  /** Endpoint id pairs `[aId, bId]` that carried flow this pulse. */
-  flashed: Array<[string, string]>;
+  /** Endpoint entityId pairs `[aId, bId]` that carried flow this pulse —
+   *  numeric `u16 entityId`s matching the binary swarm channel + the
+   *  `structures[]` slice, so the client joins them to structure positions. */
+  flashed: Array<[number, number]>;
   /** Flow material — drives the client tint (Phase 3: always 'minerals'). */
   material: 'power' | 'minerals';
 }

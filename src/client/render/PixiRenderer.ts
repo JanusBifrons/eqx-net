@@ -6,6 +6,7 @@ import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
+import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
 import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSpriteUpdater.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
@@ -89,6 +90,8 @@ export class PixiRenderer implements IRenderer {
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
+  /** Structures plan, Phase 3 — grid connector web renderer. */
+  private connectorRenderer!: ConnectorRenderer;
   /**
    * Warp-mode render state — the "loading screen" rendered ON the same
    * canvas as gameplay (no separate Pixi Application). When `warpActive`
@@ -449,6 +452,11 @@ export class PixiRenderer implements IRenderer {
 
     this.shipContainer = new Container();
     this.camera.addChild(this.shipContainer);
+
+    // Structures plan, Phase 3 — the grid connector web. Added FIRST so the
+    // lines render BEHIND the structure/ship sprites added later.
+    this.connectorRenderer = new ConnectorRenderer();
+    this.shipContainer.addChild(this.connectorRenderer.gfx);
 
     // 2026-05-26 heap-growth gate step 12 — pool ctx objects for the
     // per-frame sprite updaters. All fields are permanent references;
@@ -823,6 +831,10 @@ export class PixiRenderer implements IRenderer {
         this.explosionSprites.splice(i, 1);
       }
     }
+
+    // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
+    // mirror.structures → mirror.swarm positions; no-op when no structures.
+    this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
 
     // Phase 5c swarm sprites (asteroids + drones) — see
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.

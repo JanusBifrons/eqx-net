@@ -2121,11 +2121,16 @@ export class SectorRoom extends Room<SectorState> {
     const result = this.structureGrid.pulse(Date.now());
     this.rebuildStructuresSlice();
     if (result.flashed.length > 0) {
-      this.broadcast('grid_pulse', {
-        type: 'grid_pulse',
-        flashed: result.flashed,
-        material: result.material,
-      });
+      // Map the registry's string-id pairs to dense entityIds for the wire.
+      const flashed: Array<[number, number]> = [];
+      for (const [a, b] of result.flashed) {
+        const ea = this.swarmRegistry.get(a)?.entityId;
+        const eb = this.swarmRegistry.get(b)?.entityId;
+        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb]);
+      }
+      if (flashed.length > 0) {
+        this.broadcast('grid_pulse', { type: 'grid_pulse', flashed, material: result.material });
+      }
     }
   }
 
@@ -2139,21 +2144,25 @@ export class SectorRoom extends Room<SectorState> {
     }
     const arr: NonNullable<SnapshotMessage['structures']> = [];
     for (const rec of this.structureRegistry.all()) {
+      const entityId = this.swarmRegistry.get(rec.id)?.entityId;
+      if (entityId === undefined) continue; // swarm entity gone — skip
       const summary = this.structureGrid.powerSummaryFor(rec.id);
       const conns = this.structureRegistry.connectionsOf(rec.id);
       const entry: NonNullable<SnapshotMessage['structures']>[number] = {
-        id: rec.id,
+        id: entityId,
         powered: summary.powered,
         netPower: summary.netPower,
         built: rec.isConstructed,
       };
       if (conns.length > 0) {
-        const connTo: string[] = [];
+        const connTo: number[] = [];
         for (const c of conns) {
           const other = c.getOtherNode(rec.id);
-          if (other !== null) connTo.push(other);
+          if (other === null) continue;
+          const otherEntityId = this.swarmRegistry.get(other)?.entityId;
+          if (otherEntityId !== undefined) connTo.push(otherEntityId);
         }
-        entry.connTo = connTo;
+        if (connTo.length > 0) entry.connTo = connTo;
       }
       if (rec.minerals > 0) entry.minerals = rec.minerals;
       if (!rec.isConstructed && rec.constructionCost > 0) {

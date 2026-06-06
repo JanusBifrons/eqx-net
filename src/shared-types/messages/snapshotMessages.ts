@@ -186,15 +186,17 @@ export interface SnapshotMessage {
    *  structure is a kind=2 swarm entity, so its x/y/radius/subtype flow on the
    *  binary swarm channel. This slice carries only what the binary wire can't:
    *  the connector web + power/construction state. Absent when no structures
-   *  exist (zero cost otherwise). `id` is the structure's swarm id (string). */
+   *  exist (zero cost otherwise). `id` is the dense `u16 entityId` matching the
+   *  binary swarm channel — so the client joins this slice to the swarm mirror
+   *  (which carries the pose) by entityId. */
   structures?: Array<{
-    id: string;
+    id: number;
     /** Component net power ≥ 0 AND reachable to a Capital. */
     powered: boolean;
     /** Component net power (Σ output − Σ consumption over built members). */
     netPower?: number;
-    /** Connected neighbour ids — draws the web on the client. */
-    connTo?: string[];
+    /** Connected neighbour entityIds — draws the web on the client. */
+    connTo?: number[];
     /** Minerals currently stored (Capital bank; omitted when 0). */
     minerals?: number;
     /** True once fully constructed. */

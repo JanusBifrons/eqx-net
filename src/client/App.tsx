@@ -42,6 +42,7 @@ import { ShipStatsCard } from './components/ShipStatsCard';
 import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
+import { GridPowerReadout } from './components/GridPowerReadout';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -605,6 +606,8 @@ function GameSurface({
       {/* Structures plan (Phase 2): placement confirm banner — shown only while
        *  the player is in placement mode (set by the speed-dial Build menu). */}
       <Slot anchor="bottom-center" order={5}><StructurePlacementBanner /></Slot>
+      {/* Structures plan (Phase 3): grid net-power readout (top-left). */}
+      <Slot anchor="top-left" order={40}><GridPowerReadout /></Slot>
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (

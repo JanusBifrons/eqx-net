@@ -2,7 +2,8 @@ import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
-import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage } from '@shared-types/messages';
+import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
+import { FLASH_DURATION_MS as GRID_FLASH_DURATION_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -1307,6 +1308,24 @@ export class ColyseusGameClient {
       this.hudDispatcher.pushSwarmCount(this.mirror.swarm?.size ?? 0);
     });
 
+    // Structures plan, Phase 3 — discrete grid pulse: light the named
+    // connection segments for FLASH_DURATION_MS. Stored on the mirror so the
+    // (worker) renderer reads them; joined to structure positions by entityId.
+    room.onMessage('grid_pulse', (msg: GridPulseEvent) => {
+      if (!msg || !Array.isArray(msg.flashed)) return;
+      let flashes = this.mirror.gridFlashes;
+      if (!flashes) { flashes = new Map(); this.mirror.gridFlashes = flashes; }
+      const until = this.clock.now() + GRID_FLASH_DURATION_MS;
+      for (const pair of msg.flashed) {
+        const a = pair[0];
+        const b = pair[1];
+        if (typeof a !== 'number' || typeof b !== 'number') continue;
+        const lo = a < b ? a : b;
+        const hi = a < b ? b : a;
+        flashes.set(lo * 65536 + hi, until);
+      }
+    });
+
     room.onMessage('damage', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse on receive
       // (invariant #4; mirrors the collision_resolved drop-on-fail). The
@@ -2322,6 +2341,10 @@ export class ColyseusGameClient {
     // (see syncMirror); this just refreshes per-frame pose.
     this.syncWreckPoses(snap.wrecks);
 
+    // Structures plan, Phase 3 — mirror the slim grid slice (web + power +
+    // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
+    this.syncStructures(snap.structures);
+
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
 
@@ -2721,6 +2744,47 @@ export class ColyseusGameClient {
   }
 
   // ── State mirror ────────────────────────────────────────────────────────
+
+  /** Last grid net power pushed to the HUD store (avoid 20 Hz store churn). */
+  private _lastGridNetPower: number | null = null;
+
+  /** Structures plan, Phase 3 — mirror the `structures[]` slice into
+   *  `mirror.structures` (rebuilt each snapshot — it's low-cadence + small) and
+   *  dispatch the player's grid net power to the HUD store on change. */
+  private syncStructures(slice: SnapshotMessage['structures']): void {
+    if (slice && slice.length > 0) {
+      let map = this.mirror.structures;
+      if (!map) { map = new Map(); this.mirror.structures = map; }
+      map.clear();
+      let netPower: number | null = null;
+      for (const s of slice) {
+        map.set(s.id, {
+          powered: s.powered,
+          netPower: s.netPower ?? 0,
+          connTo: s.connTo ?? [],
+          built: s.built ?? false,
+          buildPct: s.built ? 1 : (s.buildPct ?? 0),
+          deconstructPct: s.deconstructPct ?? 0,
+        });
+        // Surface the powered grid's net power (members share a component, so
+        // the max powered netPower represents the player's live grid).
+        if (s.powered && (netPower === null || (s.netPower ?? 0) > netPower)) {
+          netPower = s.netPower ?? 0;
+        }
+      }
+      const resolved = netPower ?? 0;
+      if (resolved !== this._lastGridNetPower) {
+        this._lastGridNetPower = resolved;
+        useUIStore.getState().setGridNetPower(resolved);
+      }
+    } else {
+      if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
+      if (this._lastGridNetPower !== null) {
+        this._lastGridNetPower = null;
+        useUIStore.getState().setGridNetPower(0);
+      }
+    }
+  }
 
   private syncMirror(state: unknown): void {
     if (!state || typeof state !== 'object') return;

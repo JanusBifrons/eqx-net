@@ -107,6 +107,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else {
       sprite.tint = 0xffffff;
     }
+    // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
+    // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.
+    if (entry.kind === 2) {
+      const st = mirror.structures?.get(entityId);
+      sprite.alpha = st && !st.built ? 0.45 : 1;
+    }
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.
   }

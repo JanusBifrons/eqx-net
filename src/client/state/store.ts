@@ -142,6 +142,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitSpoolMs: null,
   activeSlotId: 'primary',
   placementKind: null,
+  gridNetPower: 0,
   energyMax: 100,
   lastFireMs: null,
   isDrawerOpen: false,
@@ -203,6 +204,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
   setPlacementKind: (k) => set({ placementKind: k }),
+  setGridNetPower: (net) => set({ gridNetPower: net }),
   setEnergyMax: (max) => set({ energyMax: max }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),
