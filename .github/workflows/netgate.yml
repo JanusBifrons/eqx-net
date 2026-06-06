@@ -1,0 +1,65 @@
+name: Netgate
+
+# Netcode-health gate (invariant #8 / #8-corollary). The deterministic CI
+# (ci.yml `verify` + `e2e-smoke`) is NOT a playability signal — the 2026-05-19
+# incident shipped every deterministic gate green and was unplayable on-device.
+# This gate joins a real Colyseus room over an injected mobile-network profile
+# and compares the working tree's `data-pred-stats` against a same-session
+# `origin/main` baseline arm on the SAME runner (so host noise hits both arms
+# equally — the anti-flake design is mechanism, not margin).
+#
+# PATH-FILTERED: runs ONLY when a PR touches the live loop (client net /
+# prediction / physics / render loop / snapshot decode-interpolate / mount aim /
+# SectorRoom tick+snapshot / the wire contracts those ride). Doc/test/unrelated
+# PRs skip it. See src/server/CLAUDE.md "Netcode-health gate".
+#
+# This job is intended to be a REQUIRED status check in branch protection.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/client/net/**'
+      - 'src/client/render/**'
+      - 'src/core/prediction/**'
+      - 'src/core/physics/**'
+      - 'src/core/ai/WeaponMountController.ts'
+      - 'src/server/rooms/SectorRoom.ts'
+      - 'src/server/rooms/SnapshotBroadcaster.ts'
+      - 'src/server/rooms/EntitySyncRouter.ts'
+      - 'src/server/net/**'
+      - 'src/shared-types/swarmWireFormat.ts'
+      - 'src/shared-types/messages/**'
+      - 'tests/netgate/**'
+      - 'tests/e2e/netcode-health.spec.ts'
+
+jobs:
+  netgate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The driver creates git worktrees and compares against origin/main —
+          # both need full history + the base ref present locally.
+          fetch-depth: 0
+      - name: Fetch baseline ref (origin/main)
+        run: git fetch origin main:refs/remotes/origin/main
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+      # Baseline = origin/main, head = the PR working tree (default args). The
+      # driver boots two HMR-disabled vite arms + per-arm latency proxy and runs
+      # the netcode-health spec interleaved; it exits non-zero on RED.
+      - name: Netcode-health gate (head vs origin/main)
+        run: pnpm run e2e:netgate
+        env:
+          CI: 'true'
