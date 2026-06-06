@@ -17,6 +17,8 @@ export {
   EngageTransitSchema,
   CancelTransitSchema,
   ClientReadyMessageSchema,
+  PlaceStructureSchema,
+  RemoveStructureSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -26,6 +28,8 @@ export type {
   EngageTransitMessage,
   CancelTransitMessage,
   ClientReadyMessage,
+  PlaceStructureMessage,
+  RemoveStructureMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 
@@ -59,6 +63,7 @@ export type {
 
 // Living World (server → client)
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
+export type { GridPulseEvent } from './messages/gridMessages.js';
 
 // Missile subsystem (server → client)
 export {

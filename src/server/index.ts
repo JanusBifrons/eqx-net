@@ -449,6 +449,32 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Structures plan (Phase 3-5) — a fully-built, POWERED grid scenario for the
+// client-half E2Es. Pre-built (no construction wait) + auto-connected: a Capital
+// + 2 Solar (power), a Miner next to an asteroid (mining → mineral bank), and a
+// Turret next to a parked drone (turret kills it). Avoids the place-ahead UI
+// overlap problem; the E2E observes the grid-power / minerals HUD + the drone
+// dying (swarm count drops). filterBy(['testId']) isolates parallel specs.
+gameServer
+  .define('structure-scenario-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    peacefulDrones: true,
+    structureGridPulseMs: 100,
+    prebuiltStructures: [
+      { kind: 'capital', x: 0, y: 0 },
+      { kind: 'solar', x: 250, y: 0 },
+      { kind: 'solar', x: 0, y: 250 },
+      { kind: 'miner', x: -350, y: 0 },
+      { kind: 'turret', x: 0, y: -350 },
+    ],
+    scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
+    scenarioDrones: [{ x: 0, y: -550 }],
+    defaultSpawnX: 600,
+    defaultSpawnY: 600,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons
 // MUST interpenetrate → Rapier MUST emit contact events → server MUST

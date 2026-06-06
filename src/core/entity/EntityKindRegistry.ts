@@ -87,7 +87,10 @@ const SEED: readonly EntityKindDescriptor[] = [
     tag: 'structure',
     damageable: true,
     sync: { transport: 'pose-core', poseCoreKind: 2, interpolated: false },
-    render: { bucket: 'swarm', preservedFields: ['kind'], interpolated: false },
+    // `shipKind` preserved (a field refinement, not a reorder): for kind=2 the
+    // shared `shipKind` byte carries the STRUCTURE subtype id, which drives the
+    // per-subtype silhouette + tint. Must survive the per-frame mirror rebuild.
+    render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind'], interpolated: false },
   },
 ];
 

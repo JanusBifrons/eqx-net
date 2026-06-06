@@ -35,6 +35,7 @@ import {
   shapeForKind,
   buildAsteroidGfx,
   buildDroneGfx,
+  buildStructureGfx,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -69,6 +70,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = entry.shipKind
           ? buildShipGfxFromShape(shapeForKind(entry.shipKind))
           : buildDroneGfx(entry.radius);
+      } else if (entry.kind === 2) {
+        // Structures (pose-core kind 2): a per-subtype tinted polygon read from
+        // the shared shipKind byte (structures plan, Phase 2).
+        sprite = buildStructureGfx(entry.shipKind, entry.radius);
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
       }
@@ -101,6 +106,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       sprite.tint = DAMAGE_FLASH_COLOR;
     } else {
       sprite.tint = 0xffffff;
+    }
+    // Structures plan, Phase 3 — blueprints (not yet built) render dimmed
+    // ("scaffolding"); the fill-bar (ConnectorRenderer) shows build progress.
+    if (entry.kind === 2) {
+      const st = mirror.structures?.get(entityId);
+      sprite.alpha = st && !st.built ? 0.45 : 1;
     }
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.

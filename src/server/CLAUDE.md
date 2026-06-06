@@ -186,6 +186,47 @@ room option (mirrors `dronePoses`) → `structure-test` E2E room. New visible ty
 ⇒ the integration-test mandate above applies (`structureEntity.test.ts`). Full
 story: [docs/architecture/generic-entity-pipeline.md](../../docs/architecture/generic-entity-pipeline.md).
 
+**Player-driven structure placement (structures plan, Phase 2).** Beyond the
+testMode `structurePoses` seed, players place structures over the wire:
+`place_structure` / `remove_structure` (zod `.strict()`,
+`src/shared-types/messages/clientMessages.ts`) → `SectorRoom` handlers (resolve
+owner via `sessionToPlayer`) → [StructurePlacementSubsystem](structures/StructurePlacementSubsystem.ts)
+(decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
+unit-tested like `TransitOrchestrator`) + [StructureRegistry](structures/StructureRegistry.ts)
+(ownership + construction state). Placement model: every structure lands a
+**blueprint** at `SCAFFOLDING_HP_FRACTION` (10 %) HP, `isConstructed:false`,
+non-operational; the **Capital** is the exception (`constructionCost===0` ⇒
+pre-built, full HP, the mineral bank). Placement does NOT pre-charge minerals —
+the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprint
+can be placed with an empty bank and waits. The structure subtype rides the
+**shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
+`rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
+`SectorRoom._internals` exposes `structureRegistry` + the swarm record `shipKind`
+for the integration test.
+
+**Power grid (structures plan, Phase 3).** `StructureRegistry` carries the
+connection adjacency (+ `topologyDirty` + per-structure `minerals`; `remove()`
+severs). `structureGridView.autoConnectStructure` runs on every place (nearest
+in-range hub, per-owner). `StructureGridSubsystem.pulse()` is the **1 Hz
+heartbeat** — directly callable so integration tests drive it deterministically
+(no wall-clock wait), `unref`'d + OFF the 60 Hz tick: rebuild-if-dirty →
+construction flow (drain a routable Capital; complete ⇒ build + reset HP + dirty;
+dry ⇒ pause) → repair → deconstruction → flashes. `SectorRoom` owns the timer,
+rebuilds the `structures[]` slice (entityId-keyed; same array ref per recipient,
+absent when none), broadcasts `grid_pulse`, severs on structure death via
+`evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
+the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
+touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
+changes.** Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
+`tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
+the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);
+a **bespoke fire path**, NOT `AiFireResolver` (which targets players). The
+testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
+`scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
+room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
+placements; this seeds the end state). See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+
 **EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
 entity-sync sends in `SectorRoom.update()` now route through ONE
 [EntitySyncRouter](rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of

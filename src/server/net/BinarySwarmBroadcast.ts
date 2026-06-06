@@ -27,6 +27,8 @@ import {
   swarmPacketSize,
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
+import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
 
 /** Tick cadence at which a full snapshot is forced regardless of changes. */
@@ -164,11 +166,17 @@ export class BinarySwarmBroadcast {
       // says is at rest.
       this.view.setFloat32(writeOffset + SWARM_REC_ANGVEL_OFF, sleeping ? 0 : angvel, true);
       this.view.setFloat32(writeOffset + SWARM_REC_RADIUS_OFF, rec.radius, true);
-      // Trailing byte: drone's ship-kind index. Asteroids write 0 (the
-      // client decoder ignores the byte for kind=0 records anyway).
-      const shipKindIdx = rec.kind === 1 && rec.shipKind && isShipKindId(rec.shipKind)
-        ? shipKindToIndex(rec.shipKind)
-        : 0;
+      // Trailing byte: the shared subtype index. For a DRONE it's the
+      // ship-kind index into SHIP_KINDS_LIST; for a STRUCTURE it's the
+      // structure-kind index into STRUCTURE_KINDS_LIST (the byte is shared —
+      // the client decoder demuxes on `kind`). Asteroids write 0 (the decoder
+      // ignores the byte for kind=0 records anyway).
+      let shipKindIdx = 0;
+      if (rec.kind === SWARM_KIND_DRONE && rec.shipKind && isShipKindId(rec.shipKind)) {
+        shipKindIdx = shipKindToIndex(rec.shipKind);
+      } else if (rec.kind === SWARM_KIND_STRUCTURE && rec.shipKind && isStructureKindId(rec.shipKind)) {
+        shipKindIdx = structureKindToIndex(rec.shipKind);
+      }
       this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
       writeOffset += SWARM_RECORD_BYTES;
 

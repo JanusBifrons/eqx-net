@@ -58,9 +58,11 @@ test('slot selector replaces the per-weapon picker', async ({ browser }) => {
   try {
     // The old per-weapon boxes are gone.
     await expect(page.locator('[data-testid="weapon-selector"]')).toHaveCount(0);
-    // The slot selector mounts once the HUD has the local ship kind (which
-    // arrives with the first snapshots, not instantly on join) — generous
-    // render-settle window, not a game-time wait.
+    // Speed-dial UI refactor (Phase 1): slot selection moved out of the thumb
+    // cluster into the consolidated SpeedDial. The action is in the DOM but
+    // collapsed until the dial is opened — open it, then assert the slot action
+    // is reachable. Generous render-settle window, not a game-time wait.
+    await page.locator('[data-testid="speed-dial-fab"]').click({ timeout: 10_000 });
     await expect(page.locator('[data-testid="slot-selector"]')).toBeVisible({ timeout: 10_000 });
   } finally {
     await ctx.close();

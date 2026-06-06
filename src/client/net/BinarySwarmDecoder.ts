@@ -22,8 +22,10 @@ import {
   SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
   SWARM_KIND_DRONE,
+  SWARM_KIND_STRUCTURE,
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
+import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -111,7 +113,15 @@ export function decodeSwarmPacket(
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
     const shieldDown = (recFlags & SWARM_RECORD_FLAG_SHIELD_DOWN) !== 0;
-    const shipKindId = kind === SWARM_KIND_DRONE ? shipKindFromIndex(shipKindByte) : undefined;
+    // The shared subtype byte demuxes on `kind`: a drone decodes a ship-kind
+    // id, a structure decodes a structure-kind id (both drive the silhouette +
+    // tint), an asteroid ignores it.
+    const shipKindId =
+      kind === SWARM_KIND_DRONE
+        ? shipKindFromIndex(shipKindByte)
+        : kind === SWARM_KIND_STRUCTURE
+          ? structureKindFromIndex(shipKindByte)
+          : undefined;
 
     let entry = swarm.get(entityId);
     if (!entry) {

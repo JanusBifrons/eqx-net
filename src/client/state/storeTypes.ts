@@ -14,6 +14,7 @@
 
 import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -168,6 +169,19 @@ export interface UIStore {
    *  so the selector shows a single toggle; forward-compatible with multi-slot
    *  ships). Threaded to the server as `FireMessage.slotId`. */
   activeSlotId: string;
+  /** Structures plan (Phase 2) — the structure kind the player is about to
+   *  place, or null when not in placement mode. Discrete UI selection
+   *  (purity-clean: it's a kind id, not a spatial field). Set by the
+   *  speed-dial Build actions; cleared on confirm / cancel. */
+  placementKind: StructureKindId | null;
+  /** Structures plan (Phase 3) — the player's live grid net power (Σ output −
+   *  Σ consumption over their powered component). Discrete HUD readout, set at
+   *  the 1 Hz pulse cadence from the structures snapshot slice. 0 when the
+   *  player has no powered grid. */
+  gridNetPower: number;
+  /** Structures plan (Phase 4) — the player's mineral bank (the Capital's
+   *  stored minerals). Discrete HUD readout from the structures slice. */
+  minerals: number;
   /** The local ship's full energy pool — the denominator for the top-center
    *  EnergyBar (the fill comes per-frame from
    *  `ColyseusClient.getPredictedEnergy()`). Set once on spawn from the
@@ -279,6 +293,9 @@ export interface UIStore {
   setTransitTargetSectorKey: (key: string | null) => void;
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveSlotId: (id: string) => void;
+  setPlacementKind: (k: StructureKindId | null) => void;
+  setGridNetPower: (net: number) => void;
+  setMinerals: (n: number) => void;
   setEnergyMax: (max: number) => void;
   setLastFireMs: (ms: number | null) => void;
   setDrawerOpen: (v: boolean) => void;

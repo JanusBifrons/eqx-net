@@ -141,6 +141,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitTargetSectorKey: null,
   transitSpoolMs: null,
   activeSlotId: 'primary',
+  placementKind: null,
+  gridNetPower: 0,
+  minerals: 0,
   energyMax: 100,
   lastFireMs: null,
   isDrawerOpen: false,
@@ -201,6 +204,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // Switching slot resets the wall-clock cooldown anchor so a fresh slot
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
+  setPlacementKind: (k) => set({ placementKind: k }),
+  setGridNetPower: (net) => set({ gridNetPower: net }),
+  setMinerals: (n) => set({ minerals: n }),
   setEnergyMax: (max) => set({ energyMax: max }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),
   setDrawerOpen: (v) => set({ isDrawerOpen: v }),

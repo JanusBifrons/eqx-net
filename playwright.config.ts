@@ -95,6 +95,10 @@ const FEATURE_SPECS: string[] = [
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',
   '**/structure-visible-damageable.spec.ts',
+  // Structures plan (speed-dial-resource-structures) — build/grid/mining/turret.
+  '**/structure-build-placement.spec.ts',
+  '**/structure-grid-web.spec.ts',
+  '**/structure-scenario.spec.ts',
   '**/linger/*.spec.ts',
 ];
 

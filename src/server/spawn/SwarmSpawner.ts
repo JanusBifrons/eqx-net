@@ -189,11 +189,19 @@ export class SwarmSpawner {
    *  projectile / ram impulse barely moves it. The CALLER seeds `swarmHealth`
    *  to make it damageable through the EXISTING DamageRouter 'swarm' strategy —
    *  zero new dispatch code. Returns false if no free slot. */
-  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number }): boolean {
+  spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string }): boolean {
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
     };
-    return this.spawnOne(2, spec, undefined);
+    const ok = this.spawnOne(2, spec, undefined);
+    // The structure SUBTYPE rides the shared `shipKind` byte (kind=2 path) so
+    // the client decoder can pick the right silhouette + tint. Set it on the
+    // freshly-registered record (spawnOne only auto-sets shipKind for drones).
+    if (ok && s.shipKind) {
+      const rec = this.registry.get(s.id);
+      if (rec) rec.shipKind = s.shipKind;
+    }
+    return ok;
   }
 
   private spawnOne(

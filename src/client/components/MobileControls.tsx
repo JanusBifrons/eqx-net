@@ -3,7 +3,6 @@ import Box from '@mui/material/Box';
 import nipplejs from 'nipplejs';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
-import { SlotSelector } from './SlotSelector';
 import { FireCooldownRing } from './FireCooldownRing';
 import { useMountLog } from '../debug/useMountLog';
 import { logEvent } from '../debug/ClientLogger';
@@ -173,30 +172,28 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
         />
       </Slot>
 
-      {/* Right thumb cluster: WEAPON (small) sits ABOVE FIRE in a tight
-       *  column; BOOST sits to the LEFT of that column. The bottom-right
-       *  anchor is row-reverse, so the column wrapper (order=10) is the
-       *  rightmost element and BOOST (order=20) is to its left. */}
+      {/* Right thumb cluster: FIRE (with its cooldown ring overlay). BOOST
+       *  sits to the LEFT of it. The bottom-right anchor is row-reverse, so
+       *  FIRE (order=10) is the rightmost element and BOOST (order=20) is to
+       *  its left. The weapon-slot toggle that used to live above FIRE moved
+       *  into the consolidated SpeedDial (speed-dial UI refactor, Phase 1). */}
       <Slot anchor="bottom-right" order={10}>
-        <Box sx={{ display: 'flex', flexDirection: 'column-reverse', alignItems: 'center', gap: 0.75 }}>
-          {/* Fire button + cooldown ring overlay. `position: relative`
-           *  is the positioning context the ring's `position: absolute`
-           *  resolves against; the ring overlays the button with
-           *  `pointerEvents: none` so touch still hits the button. */}
-          <Box sx={{ position: 'relative' }}>
-            <Box
-              component="button"
-              data-testid="mobile-fire"
-              onTouchStart={onFireStart}
-              onTouchEnd={onFireEnd}
-              onTouchCancel={onFireEnd}
-              sx={fireButtonSx}
-            >
-              FIRE
-            </Box>
-            <FireCooldownRing />
+        {/* Fire button + cooldown ring overlay. `position: relative` is the
+         *  positioning context the ring's `position: absolute` resolves
+         *  against; the ring overlays the button with `pointerEvents: none`
+         *  so touch still hits the button. */}
+        <Box sx={{ position: 'relative' }}>
+          <Box
+            component="button"
+            data-testid="mobile-fire"
+            onTouchStart={onFireStart}
+            onTouchEnd={onFireEnd}
+            onTouchCancel={onFireEnd}
+            sx={fireButtonSx}
+          >
+            FIRE
           </Box>
-          <SlotSelector />
+          <FireCooldownRing />
         </Box>
       </Slot>
 
