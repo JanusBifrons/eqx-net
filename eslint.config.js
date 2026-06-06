@@ -169,6 +169,20 @@ export default [
           ],
         },
       ],
+      // A no-argument `useUIStore()` subscribes the component to the ENTIRE
+      // store, re-rendering it on every write. In a component that renders the
+      // HUD subtree (GameSurface), that cascaded an Emotion/MUI re-render storm
+      // that pegged the main thread during combat — the on-device "lag"
+      // (CPU profile 2026-06-06: ~44% React+MUI+Emotion vs ~9% Pixi). Always
+      // pass a selector: `useUIStore((s) => s.thing)`. Setters are stable refs,
+      // so selecting them never triggers a re-render. See root CLAUDE.md #2.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='useUIStore'][arguments.length=0]",
+          message: 'Do not call useUIStore() with no selector — it subscribes to the WHOLE store and re-renders on every write (Emotion/MUI re-render storm = the 2026-06-06 combat lag). Pass a selector: useUIStore((s) => s.x). Setters are stable, so selecting them never re-renders.',
+        },
+      ],
     },
   },
   {

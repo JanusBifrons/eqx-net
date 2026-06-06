@@ -145,7 +145,17 @@ function GameSurface({
   // off the curtain visibility (`useIsLoadingActive`). Honours the
   // `?loading=cosmetic` URL kill switch via the underlying selector.
   const isLoadingActive = useIsLoadingActive();
-  const { setConnectionStatus, setPlayerId, setSectorName } = useUIStore();
+  // Per-setter selectors, NOT a no-arg `useUIStore()` whole-store subscription.
+  // A no-arg subscription re-renders GameSurface — the entire HUD subtree
+  // (every Slot, SpeedDialMenu, the MUI bars/panels) — on EVERY store write,
+  // including per-hit shield/hull + swarm-count churn during combat. That
+  // cascaded an Emotion style-reserialization storm that pegged the main
+  // thread (~75% busy, render dropping to ~30Hz) — the on-device "lag"
+  // (CPU profile 2026-06-06: ~44% React+MUI+Emotion vs ~9% Pixi). Setters are
+  // stable refs, so selecting each one never triggers a re-render.
+  const setConnectionStatus = useUIStore((s) => s.setConnectionStatus);
+  const setPlayerId = useUIStore((s) => s.setPlayerId);
+  const setSectorName = useUIStore((s) => s.setSectorName);
 
   // Plan: crispy-kazoo, Commit 4 — on loading transitions, suspend the
   // audio context + disable Keyboard / TouchInput so input events the
