@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode, type TouchEvent } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
@@ -26,12 +26,22 @@ import { STRUCTURE_KINDS_LIST, type StructureKindId } from '@shared-types/struct
  * dedicated buttons — a tap-to-expand FAB is the wrong affordance for an input
  * you hold down (confirmed with the user).
  *
- * Placement: it portals into the `bottom-right` anchor at a HIGH `order` so on
- * touch it sits to the LEFT of the existing FIRE/BOOST cluster (which keep
- * their corner positions unchanged — orders 10/20 in the row-reverse anchor);
- * on desktop, where there is no thumb cluster, it simply sits in the corner.
- * The dial expands UPWARD (`direction="up"`) so its actions grow away from the
- * bottom bezel.
+ * Placement: it portals into the `bottom-right` anchor at `order={1}` — the
+ * LOWEST order, which is the corner-most slot in the row-reverse bottom-right
+ * anchor. So the dial sits in the bottom-right CORNER, to the right of the AUTO
+ * toggle (order 5) and the FIRE/BOOST cluster (orders 10/20), on both touch and
+ * desktop (smoke handoff 2026-06-06, Issue 3 — "the speed dial is in the wrong
+ * place" → corner). The dial expands UPWARD (`direction="up"`) so its actions
+ * grow away from the bottom bezel.
+ *
+ * Multitouch (same handoff): MUI `SpeedDial` opens via a synthesized CLICK,
+ * which mobile browsers only emit for the PRIMARY touch — so a second
+ * simultaneous touch (tapping the dial while the joystick is held) never
+ * opened it. The FAB + each action therefore also bind `onTouchStart` (the raw
+ * touch IS delivered to a second touch point, exactly like FIRE/BOOST in
+ * MobileControls), with a short post-touch click-suppression window so the
+ * trailing synthesized click doesn't double-fire the action (the
+ * AutoFireToggleButton double-toggle trap). `onClick` is kept for desktop.
  *
  * Phase 2 will append a "Build ▸" set of structure-placement actions here.
  *
@@ -55,10 +65,39 @@ export function SpeedDialMenu(): JSX.Element | null {
   // sub-menu, since MUI SpeedDial doesn't nest). Reset whenever the dial closes.
   const [buildMode, setBuildMode] = useState(false);
 
+  // Multitouch support (smoke handoff 2026-06-06, Issue 3). We drive the FAB +
+  // actions on `onTouchStart` so a SECOND simultaneous touch (the dial tapped
+  // while a steering joystick touch is held) opens/activates them — mobile
+  // browsers only synthesize a `click` for the PRIMARY touch sequence, so the
+  // pure-MUI click path never fired for the second touch. `lastTouchMs` records
+  // the touch so the trailing synthesized click is ignored (the
+  // AutoFireToggleButton double-fire trap); `onClick` stays live for desktop.
+  const lastTouchMs = useRef(0);
+  const touchActivate = useCallback(
+    (fn: () => void) => (e: TouchEvent) => {
+      e.preventDefault(); // best-effort suppress the synthesized click
+      e.stopPropagation();
+      lastTouchMs.current = Date.now();
+      fn();
+    },
+    [],
+  );
+  const clickActivate = useCallback(
+    (fn: () => void) => () => {
+      // Ignore the click some browsers still synthesize shortly after a
+      // touchstart we already handled.
+      if (Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
+      fn();
+    },
+    [],
+  );
+
   const close = useCallback(() => {
     setOpen(false);
     setBuildMode(false);
   }, []);
+
+  const toggleOpen = useCallback(() => setOpen((o) => !o), []);
 
   const handleMenu = useCallback(() => {
     close();
@@ -107,9 +146,19 @@ export function SpeedDialMenu(): JSX.Element | null {
       icon={<SpeedDialIcon />}
       direction="up"
       open={open}
-      onOpen={() => setOpen(true)}
-      onClose={close}
-      FabProps={FAB_PROPS}
+      // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
+      // the suppression window — our `onTouchStart` already toggled `open`, so
+      // letting the trailing click toggle again would immediately undo it.
+      // Non-toggle reasons (focus / blur / escape / mouseLeave) still apply.
+      onOpen={(_e, reason) => {
+        if (reason === 'toggle' && Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
+        setOpen(true);
+      }}
+      onClose={(_e, reason) => {
+        if (reason === 'toggle' && Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
+        close();
+      }}
+      FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
       sx={DIAL_SX}
     >
       {buildMode
@@ -119,8 +168,8 @@ export function SpeedDialMenu(): JSX.Element | null {
               icon={BUILD_ICONS[k.id] ?? <ConstructionIcon />}
               tooltipTitle={`Build ${k.displayName}`}
               data-testid={`build-${k.id}`}
-              onClick={() => handlePickBuild(k.id)}
-              FabProps={ACTION_FAB_BASE}
+              onClick={clickActivate(() => handlePickBuild(k.id))}
+              FabProps={{ ...ACTION_FAB_BASE, onTouchStart: touchActivate(() => handlePickBuild(k.id)) }}
             />
           ))
         : [
@@ -129,8 +178,8 @@ export function SpeedDialMenu(): JSX.Element | null {
               icon={<MenuIcon />}
               tooltipTitle="Panels"
               data-testid="speed-dial-menu"
-              onClick={handleMenu}
-              FabProps={MENU_ACTION_FAB_PROPS}
+              onClick={clickActivate(handleMenu)}
+              FabProps={{ ...MENU_ACTION_FAB_PROPS, onTouchStart: touchActivate(handleMenu) }}
             />,
             <SpeedDialAction
               key="map"
@@ -138,8 +187,8 @@ export function SpeedDialMenu(): JSX.Element | null {
               tooltipTitle="Map"
               data-testid="galaxy-map-toggle"
               aria-pressed={isGalaxyMapOpen}
-              onClick={handleMap}
-              FabProps={mapActionFabProps(isGalaxyMapOpen)}
+              onClick={clickActivate(handleMap)}
+              FabProps={{ ...mapActionFabProps(isGalaxyMapOpen), onTouchStart: touchActivate(handleMap) }}
             />,
             <SpeedDialAction
               key="weapon"
@@ -147,16 +196,16 @@ export function SpeedDialMenu(): JSX.Element | null {
               tooltipTitle={weaponLabel}
               data-testid="slot-selector"
               data-slot-id={activeSlot?.id}
-              onClick={handleWeapon}
-              FabProps={WEAPON_ACTION_FAB_PROPS}
+              onClick={clickActivate(handleWeapon)}
+              FabProps={{ ...WEAPON_ACTION_FAB_PROPS, onTouchStart: touchActivate(handleWeapon) }}
             />,
             <SpeedDialAction
               key="build"
               icon={<ConstructionIcon />}
               tooltipTitle="Build ▸"
               data-testid="speed-dial-build"
-              onClick={handleBuild}
-              FabProps={ACTION_FAB_BASE}
+              onClick={clickActivate(handleBuild)}
+              FabProps={{ ...ACTION_FAB_BASE, onTouchStart: touchActivate(handleBuild) }}
             />,
           ]}
     </SpeedDial>
@@ -171,6 +220,12 @@ const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   miner: <DiamondIcon />,
   turret: <ShieldIcon />,
 };
+
+/** Window after a handled `onTouchStart` during which a synthesized `click` is
+ *  ignored, so touch activation doesn't double-fire (the AutoFireToggleButton
+ *  double-toggle trap). 700 ms comfortably covers the browser's touch→click
+ *  delay without swallowing a deliberate follow-up desktop click. */
+const TOUCH_CLICK_SUPPRESS_MS = 700;
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
 
