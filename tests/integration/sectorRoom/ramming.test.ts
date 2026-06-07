@@ -56,9 +56,9 @@ describe('SectorRoom integration — ramming damage', () => {
 
     // Drive a hard HEAD-ON collision (worker body id == playerId). Closing
     // along the ship's forward axis (+y at angle 0) so the car-model
-    // lateralGrip does NOT bleed the closing speed, and with a clear
-    // penetration normal (offset, not concentric) Rapier emits a large
-    // separating contact force well above RAM_FORCE_FLOOR.
+    // lateralGrip does NOT bleed the closing speed. The 2400 u/s closing speed
+    // (1200 + 1200) is far above RAM_MIN_IMPACT_SPEED, so the worker-measured
+    // impactSpeed drives full ramming damage.
     internal.postToWorker({ type: 'SET_POSITION', entityId: p1, x: 0, y: -50, angle: 0, vx: 0, vy: 1200, angvel: 0 });
     internal.postToWorker({ type: 'SET_POSITION', entityId: p2, x: 0, y: 50, angle: 0, vx: 0, vy: -1200, angvel: 0 });
 

@@ -36,7 +36,20 @@ export interface Contact {
   vByPost: number;
   /** Magnitude of the total contact force (Newtons). */
   forceMagnitude: number;
+  /** Closing speed (game u/s) at impact — magnitude of the relative velocity
+   *  from the bodies' PRE-step velocities (supplied by the caller via
+   *  `preVel`). Post-step velocity is useless as an impact measure (a ship
+   *  that head-on-stops against a static structure has vPost≈0 yet a large
+   *  impact); the pre-step relative velocity IS the closing speed. The damage
+   *  model (`aggregateRamming`) gates on this. Undefined when no `preVel` was
+   *  passed — damage then falls back to a force-derived estimate. */
+  impactSpeed?: number;
 }
+
+/** A read-only pre-step velocity lookup, keyed by entity id. */
+export type PreStepVelocities = {
+  get(id: string): { vx: number; vy: number } | undefined;
+};
 
 /**
  * Drain `eventQueue` and return contacts above `forceFloor`.
@@ -44,11 +57,18 @@ export interface Contact {
  * Mutates `eventQueue` (consumes pending events). Pass a freshly-stepped
  * queue; otherwise the caller is responsible for understanding that older
  * events from prior ticks may also be returned.
+ *
+ * `preVel` (optional): the bodies' velocities BEFORE this tick's step, used to
+ * compute each contact's `impactSpeed` (the closing speed). A body absent from
+ * the lookup is treated as at rest (correct for a static structure, and a safe
+ * one-tick grace for a just-spawned body not yet recorded). Pass `null` to skip
+ * impact-speed computation entirely (the damage model falls back to force).
  */
 export function drainContacts(
   eventQueue: RAPIER.EventQueue,
   world: PhysicsWorld,
   forceFloor: number,
+  preVel: PreStepVelocities | null = null,
 ): Contact[] {
   const contacts: Contact[] = [];
 
@@ -71,7 +91,7 @@ export function drainContacts(
     const b = world.getShipState(bId);
     if (!a || !b) return;
 
-    contacts.push({
+    const contact: Contact = {
       aId,
       bId,
       vAxPost: a.vx,
@@ -79,7 +99,15 @@ export function drainContacts(
       vBxPost: b.vx,
       vByPost: b.vy,
       forceMagnitude: force,
-    });
+    };
+    if (preVel !== null) {
+      const preA = preVel.get(aId);
+      const preB = preVel.get(bId);
+      const rvx = (preA?.vx ?? 0) - (preB?.vx ?? 0);
+      const rvy = (preA?.vy ?? 0) - (preB?.vy ?? 0);
+      contact.impactSpeed = Math.hypot(rvx, rvy);
+    }
+    contacts.push(contact);
   });
 
   return contacts;

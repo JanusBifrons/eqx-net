@@ -860,11 +860,10 @@ export class SectorRoom extends Room<SectorState> {
       testTimeScale?: number;
       /**
        * 2026-05-28 — test-only: gate the entire ramming-damage path. The
-       * existing damage formula in `core/combat/Ramming.ts` is force-
-       * gated already (`RAM_FORCE_FLOOR = 300` N below which damage is
-       * 0), but ANY meaningful ramming exceeds that floor and quickly
-       * caps the player at the per-pair `RAM_DAMAGE_MAX = 50` HP/tick.
-       * `ramming-probe-test` needs the player to ram a target repeatedly
+       * damage formula in `core/combat/Ramming.ts` is impact-speed gated
+       * (`RAM_MIN_IMPACT_SPEED` u/s below which damage is 0), and a real
+       * ram quickly caps the player at the per-pair `RAM_DAMAGE_MAX = 50`
+       * HP/tick. `ramming-probe-test` needs the player to ram a target
        * to gather visual-vs-physics frames WITHOUT dying. When this
        * flag is true the `onContactBatch` path skips the `applyDamage`
        * call (server still broadcasts `collision_resolved` for velocity
@@ -2647,6 +2646,7 @@ export class SectorRoom extends Room<SectorState> {
               aId: p.aId,
               bId: p.bId,
               force: parseFloat(p.force.toFixed(1)),
+              impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
               damage: parseFloat(p.damage.toFixed(2)),
               tick,
             });
