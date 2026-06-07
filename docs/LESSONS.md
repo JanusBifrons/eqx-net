@@ -14,6 +14,51 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-07 — laser beam "detach" was a dirty-cache gate that measured per-frame delta, not drift-since-draw
+Commit: fix/laser-beam-detach-render-cache
+
+**Symptom.** On-device (and reproduced locally, `diag/laser-repro/`): the Interceptor's
+twin beams "disconnect when shooting — stay stuck then catch up when I turn/fly." Fly
+forward and hold fire → the beam freezes in world space and the ship pulls away, snapping
+back only on a hard manoeuvre. **No enemy required.**
+
+**Root cause (primary).** `PixiRenderer.update()`'s live-beam (and remote-beam) block gated
+`BeamSpritePool.setBeams(...)` behind a `dirty` flag — but the cache slot it compared against
+was **overwritten with the current pose every frame**, so the comparison measured *per-frame
+delta*, not *drift since the last actual DRAW*. Coasting under `BEAM_EPSILON = 4 u/frame` never
+tripped `dirty`, so `setBeams` was never called and the drawn sprite froze while the ship flew
+on. The fix: delete the gate, call `setBeams` unconditionally — it's O(count) sprite-transform
+writes, no triangulation, no allocation (invariant #14), so for 1–2 beams there is nothing worth
+gating. **General rule: never gate per-frame sprite-transform writes behind a per-frame-delta
+cache; if you must gate, compare against the last value you actually DREW, not last frame's.**
+
+**Root cause (secondary).** `tickLocalMountAim` aimed the turret from the PREDICTED predWorld
+pose while the beam is DRAWN from the mirror pose, so the reconciler lerp offset (~0.3 rad mid-
+turn) leaked into the beam direction. Fix: aim from the mirror `ship` pose (same source the beam
+origin already uses). Caller-only change; keep the `predWorld.getShipState` existence guard (the
+predWorld body is still the hitscan collision world).
+
+**Why this regressed repeatedly: the test read a recompute, not the drawn artifact.** The
+existing `laser-smoothness.spec.ts` reads `data-beam-from-x/y`, which `gameRafLoop` RECOMPUTES
+from the ship pose with the same `±20·forward(angle)` formula the renderer uses — so it tracks
+the ship perfectly while the rendered sprite is frozen. It stayed green through every "fix." The
+lock now reads the REAL `BeamSpritePool` sprite transform via `getLiveBeamTransform()` →
+`window.__eqxBeamTransform()`. (See [[feedback-test-observable-reads-actual-output]].)
+
+**Test-harness gotcha (the expensive part of this session): a full-game `?worker=0` E2E is
+USELESS as a headless render-tracking lock.** Under headless software-WebGL (swiftshader), each
+Pixi render is slow, so the RAF-driven render loop runs far slower than the wall-clock-anchored
+physics. The drawn beam then desyncs from the ship *regardless of the fix* — measured **121 u
+drift on the FIXED build headless vs 3.9 u headed**, and a frozen-looking 135 u that fooled the
+first verification pass into thinking the fix hadn't landed. Any E2E whose assertion depends on
+the RAF render loop keeping pace with physics is unreliable headless. **Resolution: drive the
+renderer SYNCHRONOUSLY from a probe page** (`src/client/__offscreen-spike__/beam-render-probe-main.ts`
+mounts a main-thread `PixiRenderer` and exposes `postFrame()` = one explicit `update(mirror)`).
+The probe reads the sprite's JS transform (which `setBeams` writes regardless of GPU paint), so
+it is deterministic, headless-safe, and fast (4.5 s vs 50 s+). It also reproduces the exact
+sub-4-u/frame freeze on demand — the revert-check fails it by 80 u. The full-game visual proof
+lives in `diag/laser-repro/` (headed screenshots), not in CI.
+
 ## 2026-06-06 — on-device "combat lag" was a Zustand whole-store subscription, NOT the netcode
 Commit: fix/hud-rerender-storm-combat-lag
 **Symptom.** After the big merge to `main`, on-device play lagged: the world froze

@@ -4284,8 +4284,13 @@ export class ColyseusGameClient {
     if (!localId || !this.predWorld) return;
     const ship = this.mirror.ships.get(localId);
     if (!ship) return;
-    const state = this.predWorld.getShipState(localId);
-    if (!state) return;
+    // The predWorld body must still EXIST (it's the hitscan collision world the
+    // beam ray casts INTO), but its POSE must NOT drive aim geometry: the turret
+    // + beam are DRAWN from the mirror `ship` pose, so aiming from the predicted
+    // pose leaks the reconciler lerp offset into the beam direction (the laser-
+    // detach SECONDARY cause; locked by ColyseusClient.liveBeamMountAimPose.test
+    // — matches the beam ORIGIN fix in updateLiveBeam). Aim from `ship` below.
+    if (!this.predWorld.getShipState(localId)) return;
     // `mountAngles` is CATALOGUE-indexed everywhere it is READ (the
     // renderer beam direction + the turret sprites). Size + write the
     // array by the FULL kind.mounts; only the ACTIVE SLOT's mounts aim
@@ -4333,7 +4338,7 @@ export class ColyseusGameClient {
     // the authoritative mount angle in lockstep (Invariant #12). Out-of-range /
     // no-hostile ⇒ null ⇒ mounts slew back to forward.
     const target = pickTarget(
-      state.x, state.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
+      ship.x, ship.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
     );
     this._localSlotTarget = target?.id ?? null;
 
@@ -4351,7 +4356,7 @@ export class ColyseusGameClient {
     // combat/localMountAim.ts for the index-space contract.
     tickLocalMountAngles(
       angles, catalogueMounts, activeMountIds, target,
-      state.x, state.y, state.angle, dtSec,
+      ship.x, ship.y, ship.angle, dtSec,
     );
   }
 

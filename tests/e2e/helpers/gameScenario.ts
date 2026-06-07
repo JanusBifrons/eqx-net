@@ -38,6 +38,12 @@ export interface TestClientOpts {
    *  room). For multi-client specs, mint the testId at the test level
    *  and pass it explicitly to each launchTestClient call. */
   testId?: string;
+  /** Force the renderer path. '0' = main-thread PixiRenderer (renders to the
+   *  DOM canvas → screenshot-able AND installs `window.__eqxBeamTransform`);
+   *  '1' = OffscreenCanvas worker. Omit ⇒ prod default (worker on desktop,
+   *  main-thread on touch). Render-level E2Es that read the REAL drawn sprite
+   *  transform must pass '0'. */
+  worker?: '0' | '1';
 }
 
 export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
@@ -54,6 +60,7 @@ export async function launchTestClient(browser: Browser, opts: TestClientOpts) {
   if (opts.initialAngle !== undefined) params.set('initialAngle', String(opts.initialAngle));
   if (opts.shipKind !== undefined) params.set('shipKind', opts.shipKind);
   if (opts.injectLeak !== undefined) params.set('injectLeak', String(opts.injectLeak));
+  if (opts.worker !== undefined) params.set('worker', opts.worker);
   await page.goto(`${BASE_URL}?${params}`);
   await page.waitForFunction(
     () =>

@@ -179,16 +179,23 @@ export class PixiRenderer implements IRenderer {
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
   /**
-   * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
-   * dirty-flag check on the per-frame Graphics rebuild path.
-   * `liveBeamGfx.clear() + moveTo + lineTo + stroke` ran every frame
-   * while held-fire was active even when the ship hadn't moved or
-   * rotated past visual threshold. Same pattern as HealthBars and
-   * BackgroundGrid — Pixi v8 allocates fresh ShapePath /
-   * GpuGraphicsContext per `stroke()` call. Cached per-mount endpoints
-   * + alpha; epsilon 0.5 world units (sub-pixel at typical zoom).
-   * `_liveBeamCacheCount` is the number of valid entries — used so we
-   * can rebuild from cache without depending on Map size invariants.
+   * Reused per-frame scratch slot arrays for the live + remote beam
+   * `BeamSpritePool.setBeams(cache, count)` input — one slot per mount,
+   * refilled from the current ship/drone pose each frame so we don't
+   * allocate per-mount (invariant #14).
+   *
+   * History: these were a DIRTY-FLAG cache (plan combat-fx-hunt,
+   * 2026-05-31) that gated the `setBeams` call behind a per-frame endpoint
+   * delta check (epsilon 4 u). That gate WAS the laser-detach bug: the slot
+   * was overwritten with the current pose every frame, so the comparison
+   * measured per-frame DELTA, not drift-since-the-last-DRAW. Coasting under
+   * 4 u/frame never tripped it → `setBeams` was skipped → the drawn beam
+   * froze in world space while the ship flew on, snapping only when one
+   * frame exceeded 4 u (reproduced 2026-06-07: diag/laser-repro/ +
+   * tests/e2e/combat/interceptor-beam-stays-connected.spec.ts). The gate is
+   * GONE — `setBeams` is now called unconditionally. It's cheap: O(count)
+   * sprite-transform writes, no Graphics triangulation, no allocation, so
+   * for the handful of live + remote beams there is nothing worth gating.
    */
   private readonly _liveBeamCache: Array<{
     mountId: string;
@@ -197,12 +204,6 @@ export class PixiRenderer implements IRenderer {
     toX: number;
     toY: number;
   }> = [];
-  private _liveBeamCacheCount = 0;
-  /** Same dirty-flag cache for remote shooters' beams (per-shooter +
-   *  per-mount keyed). With multiple drones firing at once the rebuild
-   *  cost was per-frame × per-beam — the cache compounds. Flat array
-   *  matches liveBeam pattern; iteration order is stable across frames
-   *  (JS Map preserves insertion order). */
   private readonly _remoteBeamCache: Array<{
     shooterId: string;
     mountId: string;
@@ -212,7 +213,6 @@ export class PixiRenderer implements IRenderer {
     toY: number;
     alpha: number;
   }> = [];
-  private _remoteBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -935,16 +935,11 @@ export class PixiRenderer implements IRenderer {
     // the pre-refactor "ship.pos + 20 u forward" path.
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
-      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache, same
-      // shape as liveBeam. Flat pooled slot array; count + per-beam
-      // endpoint/alpha comparison. Sub-pixel drift (epsilon 0.5 world
-      // units, 0.05 alpha) hits the cache; visible motion / new
-      // shooters / fade transitions trigger rebuild.
-      const BEAM_EPSILON = 4.0;
-      const ALPHA_EPSILON = 0.05;
+      // Fill the reused pooled slot array from each shooter's current pose,
+      // then setBeams unconditionally. (No dirty-flag gate — that gate was
+      // the laser-detach bug; see the _liveBeamCache field comment.)
       const now = performance.now();
       let slotIdx = 0;
-      let dirty = false;
 
       for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
@@ -1042,22 +1037,10 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Compare against cache slot — mark dirty if mismatch.
           let slot = this._remoteBeamCache[slotIdx];
           if (!slot) {
             slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
             this._remoteBeamCache[slotIdx] = slot;
-            dirty = true;
-          } else if (!dirty) {
-            if (slot.shooterId !== shooterId
-              || slot.mountId !== mountId
-              || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
-              || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
-              || Math.abs(slot.toX - toX) > BEAM_EPSILON
-              || Math.abs(slot.toY - toY) > BEAM_EPSILON
-              || Math.abs(slot.alpha - alpha) > ALPHA_EPSILON) {
-              dirty = true;
-            }
           }
           slot.shooterId = shooterId;
           slot.mountId = mountId;
@@ -1069,19 +1052,15 @@ export class PixiRenderer implements IRenderer {
           slotIdx++;
         }
       }
-      if (slotIdx !== this._remoteBeamCacheCount) dirty = true;
-      this._remoteBeamCacheCount = slotIdx;
-
       // Sprite-pool driven render — no clear/redraw, just transforms.
-      // Pool handles its own pooling + visibility; dirty-flag still
-      // gates the call so a totally-static set of beams doesn't
-      // touch the sprite transforms.
-      if (dirty) this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      // Called UNCONDITIONALLY: setBeams is O(count) sprite-transform writes
+      // with no allocation, so there is nothing to gate (the old dirty-flag
+      // gate was the laser-detach bug — see the _liveBeamCache field comment).
+      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
     } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
-      this._remoteBeamCacheCount = 0;
     }
 
     // Live hitscan beams — one per mount in the local ship's active slot.
@@ -1099,21 +1078,10 @@ export class PixiRenderer implements IRenderer {
       const localKind = getShipKind(localShip.kind ?? null);
       const localMounts = localKind.mounts ?? [];
 
-      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache. Compute
-      // all current-frame beam endpoints into the cache slot array
-      // and compare against the prior frame's. If every beam's
-      // endpoints are within `BEAM_EPSILON` (0.5 world units) AND the
-      // beam-count is identical, skip the entire `clear() + moveTo +
-      // lineTo + stroke ×2` cycle. Sub-pixel motion (no rotation, no
-      // movement) hits the cache; rotation > ~0.0007 rad still
-      // triggers a rebuild (at the 700u beam endpoint, 0.0007 rad
-      // sweeps 0.5u).
-      const BEAM_EPSILON = 4.0;
-      const incomingCount = mirror.liveBeams.size;
-      let dirty = incomingCount !== this._liveBeamCacheCount;
-
-      // First pass: compute new endpoints; compare to cache. Reuse
-      // pooled slots so we don't allocate per-mount each frame.
+      // Fill the reused pooled slot array from the current ship pose, then
+      // setBeams unconditionally. (No dirty-flag gate — that gate was the
+      // laser-detach bug; see the _liveBeamCache field comment. Reuse the
+      // pooled slots so we don't allocate per-mount each frame.)
       let slotIdx = 0;
       for (const [mountId, beam] of mirror.liveBeams) {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
@@ -1132,15 +1100,6 @@ export class PixiRenderer implements IRenderer {
           slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
           this._liveBeamCache[slotIdx] = slot;
         }
-        if (!dirty) {
-          if (slot.mountId !== mountId
-            || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
-            || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
-            || Math.abs(slot.toX - toX) > BEAM_EPSILON
-            || Math.abs(slot.toY - toY) > BEAM_EPSILON) {
-            dirty = true;
-          }
-        }
         slot.mountId = mountId;
         slot.fromX = fromX;
         slot.fromY = fromY;
@@ -1148,15 +1107,12 @@ export class PixiRenderer implements IRenderer {
         slot.toY = toY;
         slotIdx++;
       }
-      this._liveBeamCacheCount = slotIdx;
-
-      // Sprite-pool driven render (matches remoteBeam path).
-      if (dirty) this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      // Sprite-pool driven render (matches remoteBeam path) — UNCONDITIONAL.
+      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
       this.liveBeamGfx!.visible = true;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
       this._liveBeamPool?.hideAll();
-      this._liveBeamCacheCount = 0;
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
@@ -1705,6 +1661,21 @@ export class PixiRenderer implements IRenderer {
    */
   getFeedback(): RendererFeedback {
     return this.feedback;
+  }
+
+  /**
+   * Test-only — the ACTUAL drawn live-beam origin (BeamSpritePool sprite[0]
+   * transform) in GAME space, plus the live-beam count. Exposed to E2E via
+   * the `window.__eqxBeamTransform()` DEV getter (installed main-thread-only
+   * in App.tsx, mirroring `window.__eqxGalaxyTransform`). A render test reads
+   * THIS — the real drawn sprite — so it catches the dirty-cache freeze that
+   * the `data-beam-from` recompute (gameRafLoop) tautologically hides.
+   * Returns null when no beam is live.
+   */
+  getLiveBeamTransform(): { count: number; fromX: number; fromY: number } | null {
+    const origin = this._liveBeamPool?.renderedOrigin ?? null;
+    if (!origin) return null;
+    return { count: this._liveBeamPool!.liveCount, fromX: origin.x, fromY: origin.y };
   }
 
   /**

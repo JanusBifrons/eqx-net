@@ -401,6 +401,19 @@ function GameSurface({
       // in idle mode; production tree-shakes.
       (window as unknown as { __eqxGalaxyPick?: (key: string) => void })
         .__eqxGalaxyPick = (key: string) => handleSelectorPick(key);
+      // Test-only hook: expose the REAL drawn live-beam origin (BeamSpritePool
+      // sprite transform) so a render E2E asserts the beam tracks the ship,
+      // NOT a recompute (the `data-beam-from` tautology — see src/client/CLAUDE.md
+      // + galaxyOverlay's __eqxGalaxyTransform). Main-thread path only: the
+      // worker renderer hosts its own sprite pool, unreadable from `window`.
+      if (!useWorker) {
+        (window as unknown as {
+          __eqxBeamTransform?: () => { count: number; fromX: number; fromY: number } | null;
+        }).__eqxBeamTransform = () =>
+          (renderer as unknown as {
+            getLiveBeamTransform: () => { count: number; fromX: number; fromY: number } | null;
+          }).getLiveBeamTransform();
+      }
     }
 
     const onKey = (e: KeyboardEvent): void => {

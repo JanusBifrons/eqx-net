@@ -131,4 +131,21 @@ export class BeamSpritePool {
   get poolSize(): number {
     return this._pool.length;
   }
+
+  /**
+   * Test-only: the ACTUAL drawn origin of beam[0] in GAME space, read back
+   * from the live Pixi sprite transform (un-flipping the `sprite.y = -fromY`
+   * convention applied in `setBeams`). Returns null when no beam is live.
+   *
+   * This is the REAL artifact a render E2E must read — not a recompute from
+   * the ship pose (the `data-beam-from` tautology, see src/client/CLAUDE.md).
+   * When the dirty-cache gate above `setBeams` is broken, this value FREEZES
+   * while the ship flies on; a recompute never could.
+   */
+  get renderedOrigin(): { x: number; y: number } | null {
+    if (this._liveCount <= 0) return null;
+    const s = this._pool[0];
+    if (!s || !s.visible) return null;
+    return { x: s.x, y: -s.y };
+  }
 }
