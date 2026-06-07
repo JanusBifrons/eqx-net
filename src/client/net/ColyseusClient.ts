@@ -4332,8 +4332,16 @@ export class ColyseusGameClient {
     // the synced markHostile ledger / drone-hp), keeping the predicted beam and
     // the authoritative mount angle in lockstep (Invariant #12). Out-of-range /
     // no-hostile ⇒ null ⇒ mounts slew back to forward.
+    // Pick + aim from the RENDERED (mirror) pose the beam is DRAWN from
+    // (`ship.x/y/angle`), NOT the predicted pose (`state.*`). The predWorld
+    // body is kept as the hitscan collision world (the `state` guard above),
+    // but its pose lags the mirror by the reconciler lerp offset (up to
+    // ~0.5 rad mid-turn), so aiming the turret from it leaks that offset
+    // into the beam direction — the secondary laser-detach cause (on-device
+    // smoke handoff 2026-06-06, Issue 1 Bug #2). Locked by
+    // ColyseusClient.liveBeamMountAimPose.test.ts.
     const target = pickTarget(
-      state.x, state.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
+      ship.x, ship.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
     );
     this._localSlotTarget = target?.id ?? null;
 
@@ -4351,7 +4359,7 @@ export class ColyseusGameClient {
     // combat/localMountAim.ts for the index-space contract.
     tickLocalMountAngles(
       angles, catalogueMounts, activeMountIds, target,
-      state.x, state.y, state.angle, dtSec,
+      ship.x, ship.y, ship.angle, dtSec,
     );
   }
 

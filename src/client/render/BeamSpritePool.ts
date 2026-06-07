@@ -127,6 +127,21 @@ export class BeamSpritePool {
     return this._liveCount;
   }
 
+  /**
+   * E2E observable — the WORLD-space `from` X of the first drawn beam (the
+   * sprite's actual transform), or `null` when nothing is drawn. Used by
+   * `data-beam-rendered-from-x` to detect the render-cache detach bug
+   * (reads what's DRAWN, not a recompute). World-space, so it undoes the
+   * `pixiY = -gameY` flip applied in `setBeams`.
+   */
+  get renderedFromX(): number | null {
+    return this._liveCount > 0 ? (this._pool[0]?.x ?? null) : null;
+  }
+
+  get renderedFromY(): number | null {
+    return this._liveCount > 0 ? -(this._pool[0]?.y ?? 0) : null;
+  }
+
   /** Test-only: total pool size (visible + hidden). */
   get poolSize(): number {
     return this._pool.length;

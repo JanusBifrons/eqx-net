@@ -321,6 +321,21 @@ function writeE2EDataset(
     delete el.dataset['beamDist'];
   }
 
+  // ACTUAL drawn-beam origin (the BeamSpritePool sprite transform), as
+  // opposed to the recompute above. This is the observable that catches
+  // the render-cache detach bug (smoke handoff 2026-06-06, Issue 1 Bug #1):
+  // data-beam-from-x/y tracks the live ship and stays glued even when the
+  // drawn beam freezes, so only this attribute fails on a detach.
+  const renderedFromX = feedback.liveBeamRenderedFromX;
+  const renderedFromY = feedback.liveBeamRenderedFromY;
+  if (typeof renderedFromX === 'number' && typeof renderedFromY === 'number') {
+    el.dataset['beamRenderedFromX'] = renderedFromX.toFixed(3);
+    el.dataset['beamRenderedFromY'] = renderedFromY.toFixed(3);
+  } else {
+    delete el.dataset['beamRenderedFromX'];
+    delete el.dataset['beamRenderedFromY'];
+  }
+
   // Remote lasers — Phase 2c per-mount flatten.
   el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
   const remoteHitTargetIds: string[] = [];

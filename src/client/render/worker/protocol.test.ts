@@ -154,6 +154,8 @@ describe('renderer-worker protocol', () => {
             damageNumberActiveCount: 2,
             wreckSpriteCount: 4,
             firstFrameRendered: true,
+            liveBeamRenderedFromX: 12.5,
+            liveBeamRenderedFromY: -8.25,
           },
         },
       },

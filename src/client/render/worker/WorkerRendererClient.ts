@@ -52,6 +52,8 @@ function emptyFeedback(): RendererFeedback {
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
     firstFrameRendered: false,
+    liveBeamRenderedFromX: null,
+    liveBeamRenderedFromY: null,
   };
 }
 
@@ -510,6 +512,8 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
+        this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
+        this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

@@ -490,6 +490,22 @@ export interface RendererFeedback {
    * transition to fire the `pixi_first_frame` diagnostic event.
    */
   firstFrameRendered: boolean;
+  /**
+   * World-space origin of the local player's first live hitscan beam as
+   * ACTUALLY DRAWN this frame (the `BeamSpritePool` sprite transform),
+   * or `null` when no live beam is on screen. E2E test attribute
+   * `data-beam-rendered-from-x/y` reads this.
+   *
+   * Distinct from `data-beam-from-x/y` (which RECOMPUTES the origin from
+   * the live ship pose in `gameRafLoop`): that recompute tracks the ship
+   * perfectly and passes even when the drawn beam is frozen, so it cannot
+   * catch the render-cache detach bug (smoke handoff 2026-06-06, Issue 1
+   * Bug #1). Reading the real sprite transform is the only observable that
+   * fails when the beam stops being redrawn. Test-only surface — not
+   * consumed by gameplay logic.
+   */
+  liveBeamRenderedFromX: number | null;
+  liveBeamRenderedFromY: number | null;
 }
 
 export interface IRenderer {
