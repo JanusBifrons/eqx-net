@@ -38,6 +38,7 @@ const storeState = vi.hoisted(() => ({
   localPoseResolved: true,
   arrivalTickFromServer: 123 as number | null,
   arrivalAcked: true,
+  setSelectedEntity: vi.fn(),
 }));
 
 vi.mock('../state/store.js', () => ({
@@ -110,7 +111,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
   } as unknown as ColyseusGameClient;
   const mockRenderer = {
     update: fake.rendererUpdate,
-    getFeedback: () => ({ firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0 }),
+    getFeedback: () => ({ firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null }),
   } as unknown as IRenderer;
   const el = document.createElement('div');
   const animFrameRef = { current: 0 };

@@ -480,4 +480,15 @@ function writeE2EDataset(
     el.dataset['obstaclePositions'] = JSON.stringify(swarmMap);
     el.dataset['swarmDetail'] = JSON.stringify(swarmDetail);
   }
+
+  // Click-to-inspect selection (Item B2) — E2E observability for the selection
+  // bracket. Reads the RENDERER's published selection (the real owner), NOT a
+  // recompute. Webdriver-gated (E2E-only) like the rest of this dataset.
+  if (feedback.selectedPickId !== null) {
+    el.dataset['selectedPickId'] = feedback.selectedPickId;
+    el.dataset['selectedPickKind'] = feedback.selectedPickKind ?? '';
+  } else {
+    delete el.dataset['selectedPickId'];
+    delete el.dataset['selectedPickKind'];
+  }
 }

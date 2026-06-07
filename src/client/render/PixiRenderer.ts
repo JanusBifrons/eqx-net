@@ -955,6 +955,30 @@ export class PixiRenderer implements IRenderer {
     return gl !== null && (gl.isPanZoomActive() || gl.visible);
   }
 
+  /**
+   * DEV/E2E-only deterministic selection at a GAME-space point — bypasses
+   * screen→world projection so a Playwright spec can select an entity at its
+   * known world position without the camera-transform fragility a real screen
+   * tap would carry. Mirrors the `__eqxGalaxyPick` DEV-hook pattern. Runs the
+   * SAME `pickEntityAt` + toggle logic the real tap uses, so it exercises the
+   * full pick → select → bracket → feedback path. Returns the resolved id.
+   */
+  devSelectAtWorld(gameX: number, gameY: number): string | null {
+    if (this._lastMirror === null) return null;
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    if (hit === null) {
+      this._selectedId = null;
+      this._selectedKind = null;
+    } else if (hit.id === this._selectedId) {
+      this._selectedId = null;
+      this._selectedKind = null;
+    } else {
+      this._selectedId = hit.id;
+      this._selectedKind = hit.kind;
+    }
+    return this._selectedId;
+  }
+
   update(mirror: RenderMirror): void {
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
