@@ -37,7 +37,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function joinAndOpenBuild(
   browser: Browser,
-  opts: { mobile: boolean },
+  opts: { mobile: boolean; worker?: boolean },
 ): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext(
     opts.mobile
@@ -45,7 +45,11 @@ async function joinAndOpenBuild(
       : { viewport: { width: 1280, height: 800 } },
   );
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout&worker=0`);
+  // `worker !== false` → force the main-thread renderer (?worker=0); pass
+  // `worker:true` to exercise the OffscreenCanvas WORKER path (pointer events
+  // forwarded via POINTER_EVENT → forwardPointerEvent).
+  const workerParam = opts.worker === true ? '&worker=1' : '&worker=0';
+  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout${workerParam}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -165,4 +169,66 @@ test('(C) the blueprint ghost FOLLOWS the tap position (tap-to-position)', async
   } finally {
     await ctx.close();
   }
+});
+
+/**
+ * The end-to-end position lock the B/C tests MISSED: tap a point, confirm, and
+ * assert the placed STRUCTURE lands at the tapped point (not ahead-of-ship —
+ * the smoke bug "the capital just placed in front of the ship"). Run on BOTH
+ * renderer paths because the worker path forwards pointer events differently.
+ */
+async function tapPlaceAssertAtTap(browser: Browser, useWorker: boolean): Promise<void> {
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    const surface = page.locator('[data-testid="game-surface"]');
+    // Tap well off-centre so the chosen point is clearly NOT the ahead-of-ship
+    // default (a fixed clearance along the ship facing).
+    await page.mouse.click(950, 250);
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      undefined,
+      { timeout: 6_000 },
+    );
+    const chosenX = parseFloat((await surface.getAttribute('data-placement-world-x')) ?? 'NaN');
+    const chosenY = parseFloat((await surface.getAttribute('data-placement-world-y')) ?? 'NaN');
+    expect(Number.isFinite(chosenX), 'chosen world X published').toBe(true);
+    expect(Number.isFinite(chosenY), 'chosen world Y published').toBe(true);
+
+    await page.locator('[data-testid="placement-confirm"]').click();
+
+    const placed = await page.waitForFunction(
+      () => {
+        const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-swarm-detail');
+        if (!raw) return null;
+        const detail = JSON.parse(raw) as Record<string, { x: number; y: number; kind: number }>;
+        for (const k of Object.keys(detail)) {
+          const e = detail[k]!;
+          if (e.kind === 2) return { x: e.x, y: e.y };
+        }
+        return null;
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+    const pos = await placed.jsonValue();
+    // eslint-disable-next-line no-console
+    console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
+    const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
+    expect(distToChosen, `structure should be at the tapped point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
+  } finally {
+    await ctx.close();
+  }
+}
+
+test('(D) main-thread: Confirm places the structure at the tapped point', async ({ browser }) => {
+  test.setTimeout(60_000); // test-sector-fast room cold-boot (infrastructural)
+  await tapPlaceAssertAtTap(browser, false);
+});
+
+test('(E) WORKER path: Confirm places the structure at the tapped point', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await tapPlaceAssertAtTap(browser, true);
 });

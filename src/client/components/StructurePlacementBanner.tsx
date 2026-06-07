@@ -2,6 +2,7 @@ import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { placeStructureAhead, placeStructureAt } from '../structures/structurePlacementClient';
+import { logEvent } from '../debug/ClientLogger';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2;
@@ -40,8 +41,22 @@ export function StructurePlacementBanner(): JSX.Element | null {
     const surface = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
     const wx = surface?.dataset['placementWorldX'];
     const wy = surface?.dataset['placementWorldY'];
-    if (wx !== undefined && wy !== undefined) {
-      placeStructureAt(placementKind, parseFloat(wx), parseFloat(wy));
+    const hasChosen = wx !== undefined && wy !== undefined;
+    // Diagnostic (2026-06-07): tap-to-position landed structures at the default
+    // ahead-of-ship on a device the E2E couldn't reproduce. This records the
+    // ACTUAL sent point + whether the ghost was ever positioned/parked, so an
+    // autocapture reveals tap-didn't-register vs sent-but-server-relocated.
+    logEvent('structure_place_confirm', {
+      kind: placementKind,
+      hasChosen,
+      x: hasChosen ? parseFloat(wx!) : null,
+      y: hasChosen ? parseFloat(wy!) : null,
+      stuck: surface?.dataset['placementStuck'] ?? null,
+      shipX: surface?.dataset['shipX'] ?? null,
+      shipY: surface?.dataset['shipY'] ?? null,
+    });
+    if (hasChosen) {
+      placeStructureAt(placementKind, parseFloat(wx!), parseFloat(wy!));
     } else {
       placeStructureAhead(placementKind);
     }
