@@ -14,6 +14,11 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
 
   it('seeds a pre-built, auto-connected, powered grid that mines + fires', async () => {
     harness = await bootSectorTestServer({
+      // Clean scene: suppress the ambient ASTEROIDS field (asteroid-0 sits at
+      // (200,0) and would now correctly block the capital→solar(250,0) link once
+      // Item D threads asteroids into the LOS check). Only `scenarioAsteroids`
+      // — placed clear of every connecting segment — should exist.
+      asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
         { kind: 'solar', x: 250, y: 0 },

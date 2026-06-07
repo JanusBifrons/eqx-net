@@ -58,6 +58,17 @@ export interface PowerSummary {
   powered: boolean;
 }
 
+/** A non-structure body that blocks a connection's line of sight (Item D —
+ *  asteroids). Treated as a square AABB (half-extent = `radius`) so it reuses
+ *  the same `segmentIntersectsAabb` test the structure-node LOS check uses.
+ *  The server projects each swarm kind=0 record (pose from the SAB, radius from
+ *  the registry) into one of these. */
+export interface GridObstacle {
+  x: number;
+  y: number;
+  radius: number;
+}
+
 /** Edge-to-edge distance between two nodes' square AABBs (half-extent =
  *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
  *  `edgeDistance`. */
@@ -97,11 +108,14 @@ export function segmentIntersectsAabb(
 }
 
 /** True if the segment between two nodes' centres passes through any OTHER
- *  node's body. */
+ *  node's body, or (Item D) through any non-structure `obstacle` (asteroid).
+ *  `obstacles` is OPTIONAL — omitting it is byte-identical to the structures-
+ *  only behaviour, so existing callers/tests are unaffected. */
 export function isConnectionLineBlocked(
   a: GridNode,
   b: GridNode,
   nodes: ReadonlyMap<string, GridNode>,
+  obstacles?: readonly GridObstacle[],
 ): boolean {
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
@@ -112,6 +126,18 @@ export function isConnectionLineBlocked(
       )
     ) {
       return true;
+    }
+  }
+  if (obstacles) {
+    for (const o of obstacles) {
+      if (
+        segmentIntersectsAabb(
+          a.x, a.y, b.x, b.y,
+          o.x - o.radius, o.y - o.radius, o.x + o.radius, o.y + o.radius,
+        )
+      ) {
+        return true;
+      }
     }
   }
   return false;
@@ -127,6 +153,7 @@ export function canConnect(
   b: GridNode,
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
+  obstacles?: readonly GridObstacle[],
 ): CanConnectResult {
   if (a.id === b.id) return { ok: false, reason: 'self' };
   // Hub rule: at least one endpoint must be a Connector or the Capital. A leaf
@@ -142,7 +169,7 @@ export function canConnect(
   if (bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
 
   if (edgeDistance(a, b) > CONNECTION_MAX_RANGE) return { ok: false, reason: 'out-of-range' };
-  if (isConnectionLineBlocked(a, b, nodes)) return { ok: false, reason: 'blocked' };
+  if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
   return { ok: true };
 }
 

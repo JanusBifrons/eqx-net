@@ -27,6 +27,7 @@ import {
   SCAFFOLDING_HP_FRACTION,
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure } from './structureGridView.js';
 
@@ -43,6 +44,11 @@ export interface StructurePlacementHooks {
   nextId(): string;
   /** Shared registry. */
   registry: StructureRegistry;
+  /** Item D — live non-structure obstacles (asteroids) that block a connection's
+   *  line of sight, so a structure never auto-wires straight through a rock.
+   *  Optional: when omitted, auto-connection falls back to the structures-only
+   *  LOS check (byte-identical to pre-Item-D). */
+  getObstacles?: () => readonly GridObstacle[];
 }
 
 export class StructurePlacementSubsystem {
@@ -103,8 +109,9 @@ export class StructurePlacementSubsystem {
       minerals,
     };
     this.hooks.registry.add(rec);
-    // Auto-wire into the owner's grid: nearest in-range hub with a free slot.
-    autoConnectStructure(this.hooks.registry, id);
+    // Auto-wire into the owner's grid: nearest in-range hub with a free slot
+    // whose connecting segment isn't blocked by another structure OR an asteroid.
+    autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
     return id;
   }
 

@@ -6,6 +6,7 @@ import {
   segmentIntersectsAabb,
   isConnectionLineBlocked,
   type GridNode,
+  type GridObstacle,
 } from './Grid.js';
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE, CONNECTION_THROUGHPUT } from './structureGridConstants.js';
@@ -131,6 +132,52 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
     const blocker = connector('blk', 0, 0, true);
     const nodes = new Map([['a', a], ['b', b], ['blk', blocker]]);
     expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: false, reason: 'blocked' });
+  });
+});
+
+// ── Item D — obstacle-aware connection blocking (asteroids) ────────────────
+describe('canConnect / isConnectionLineBlocked — obstacle blocking (Item D)', () => {
+  it('isConnectionLineBlocked: an obstacle ON the segment blocks; OFF does not', () => {
+    const a = node('a', { x: -300, y: 0 });
+    const b = node('b', { x: 300, y: 0 });
+    const onSegment: GridObstacle = { x: 0, y: 0, radius: 50 };
+    const offSegment: GridObstacle = { x: 0, y: 400, radius: 50 };
+    // No OTHER structure nodes; only the asteroid sits between a and b.
+    const nodes = new Map([['a', a], ['b', b]]);
+    expect(isConnectionLineBlocked(a, b, nodes, [onSegment])).toBe(true);
+    expect(isConnectionLineBlocked(a, b, nodes, [offSegment])).toBe(false);
+    // Omitted obstacles param ⇒ current (structures-only) behaviour: not blocked.
+    expect(isConnectionLineBlocked(a, b, nodes)).toBe(false);
+  });
+
+  it('canConnect: an asteroid on the connecting segment ⇒ blocked', () => {
+    // Two in-range hubs (edge dist 600 - (80+24) = 496 ≤ CONNECTION_MAX_RANGE),
+    // nothing between them in the nodes map — only the asteroid blocks LOS.
+    const a = capital('a', -300, 0);
+    const b = connector('b', 300, 0);
+    const nodes = new Map([['a', a], ['b', b]]);
+    const asteroid: GridObstacle = { x: 0, y: 0, radius: 60 };
+    expect(canConnect(a, b, new Map(), nodes, [asteroid])).toEqual({
+      ok: false,
+      reason: 'blocked',
+    });
+  });
+
+  it('canConnect: an asteroid off the connecting segment ⇒ ok', () => {
+    const a = capital('a', -300, 0);
+    const b = connector('b', 300, 0);
+    const nodes = new Map([['a', a], ['b', b]]);
+    const asteroid: GridObstacle = { x: 0, y: 500, radius: 60 };
+    expect(canConnect(a, b, new Map(), nodes, [asteroid])).toEqual({ ok: true });
+  });
+
+  it('canConnect: omitting obstacles is byte-identical to the pre-Item-D call', () => {
+    // Same two hubs, an asteroid that WOULD block — but the obstacles param is
+    // omitted, so the call must behave exactly as today (connect ok).
+    const a = capital('a', -300, 0);
+    const b = connector('b', 300, 0);
+    const nodes = new Map([['a', a], ['b', b]]);
+    expect(canConnect(a, b, new Map(), nodes)).toEqual({ ok: true });
   });
 });
 

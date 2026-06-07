@@ -49,6 +49,7 @@ import { StructurePlacementSubsystem } from '../structures/StructurePlacementSub
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
@@ -1452,6 +1453,24 @@ export class SectorRoom extends Room<SectorState> {
       },
       nextId: () => `pstruct-${this.placedStructureCounter++}`,
       registry: this.structureRegistry,
+      // Item D — asteroids (swarm kind=0) block a connector's line of sight, so
+      // a structure never auto-wires straight through a rock. Poses read live
+      // from the SAB (same path as findNearestSwarmOfKind); radius from the
+      // registry record. Off the 60 Hz hot loop (runs only on placement), so the
+      // array build here is fine.
+      getObstacles: () => {
+        const obstacles: GridObstacle[] = [];
+        for (const rec of this.swarmRegistry.all()) {
+          if (rec.kind !== 0) continue; // asteroids only
+          const base = slotBase(rec.slot);
+          obstacles.push({
+            x: this.sabF32[base + SLOT_X_OFF]!,
+            y: this.sabF32[base + SLOT_Y_OFF]!,
+            radius: rec.radius,
+          });
+        }
+        return obstacles;
+      },
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────

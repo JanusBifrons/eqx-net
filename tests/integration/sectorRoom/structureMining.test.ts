@@ -32,7 +32,7 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
   afterEach(async () => { if (harness) await harness.cleanup(); });
 
   it('a powered miner near an asteroid grows the capital mineral bank', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -58,7 +58,7 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
   }, 25_000);
 
   it('an UNPOWERED miner (no solar to offset its draw) mines nothing', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
     internals.spawnTestAsteroid('mine-rock', 0, 600, 30);
