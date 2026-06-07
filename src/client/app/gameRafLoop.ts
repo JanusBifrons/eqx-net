@@ -348,6 +348,14 @@ function writeE2EDataset(
   if (typeof placeX === 'number' && typeof placeY === 'number') {
     el.dataset['placementScreenX'] = placeX.toFixed(1);
     el.dataset['placementScreenY'] = placeY.toFixed(1);
+    // The pointer-chosen GAME point the Confirm send uses (tap/drag-to-position
+    // 2026-06-07). Published as data-attrs so the banner reads it on Confirm
+    // without a per-frame React write (#2).
+    if (typeof feedback.placementChosenWorldX === 'number' && typeof feedback.placementChosenWorldY === 'number') {
+      el.dataset['placementWorldX'] = feedback.placementChosenWorldX.toFixed(2);
+      el.dataset['placementWorldY'] = feedback.placementChosenWorldY.toFixed(2);
+    }
+    el.dataset['placementStuck'] = feedback.placementStuck ? '1' : '0';
     const banner = document.querySelector('[data-testid="placement-banner"]') as HTMLElement | null;
     if (banner) {
       // Clamp into the viewport so the confirm never drifts fully off-screen.
@@ -359,6 +367,9 @@ function writeE2EDataset(
   } else {
     delete el.dataset['placementScreenX'];
     delete el.dataset['placementScreenY'];
+    delete el.dataset['placementWorldX'];
+    delete el.dataset['placementWorldY'];
+    delete el.dataset['placementStuck'];
   }
 
   // Remote lasers — Phase 2c per-mount flatten.

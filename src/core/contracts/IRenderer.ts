@@ -528,6 +528,20 @@ export interface RendererFeedback {
    */
   placementScreenX: number | null;
   placementScreenY: number | null;
+  /**
+   * Tap/drag-to-position placement (2026-06-07). The renderer owns the
+   * pointer-follow because it holds the camera (`screenToWorld`) and sees
+   * pointer events on BOTH the main-thread and worker paths.
+   * `placementChosenWorldX/Y` is the GAME-space point the blueprint is being
+   * positioned at (pointer-driven; falls back to the ahead-of-ship preview
+   * before the player interacts) — read by the Confirm send. `placementStuck`
+   * is true once the pointer is released (the ghost is parked) — the Confirm
+   * banner is shown only then, so it never sits under a dragging finger.
+   * Both `null`/`false` when not in placement mode.
+   */
+  placementChosenWorldX: number | null;
+  placementChosenWorldY: number | null;
+  placementStuck: boolean;
 }
 
 export interface IRenderer {

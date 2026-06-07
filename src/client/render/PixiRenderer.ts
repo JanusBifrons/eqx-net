@@ -100,6 +100,18 @@ export class PixiRenderer implements IRenderer {
    *  `shipContainer` (world space) so it pans/zooms with the structures. */
   private _placementGhost: Graphics | null = null;
   private _placementGhostKind: string | null = null;
+  /** Tap/drag-to-position placement state (2026-06-07). `_placementActive` is
+   *  set each frame from `mirror.pendingPlacementPreview`. While active, canvas
+   *  pointer events position the blueprint ghost (game-space) instead of
+   *  panning the camera. `_placementChosenX/Y` is the chosen GAME point (null =
+   *  not yet positioned → fall back to the ahead-of-ship preview).
+   *  `_placementFollowing` true ⇒ the ghost tracks the pointer (desktop hover /
+   *  mobile drag); set false on pointer-up so the ghost parks and the Confirm
+   *  banner appears. */
+  private _placementActive = false;
+  private _placementFollowing = true;
+  private _placementChosenX: number | null = null;
+  private _placementChosenY: number | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -275,6 +287,9 @@ export class PixiRenderer implements IRenderer {
     liveBeamRenderedFromY: null,
     placementScreenX: null,
     placementScreenY: null,
+    placementChosenWorldX: null,
+    placementChosenWorldY: null,
+    placementStuck: false,
   };
 
   /**
@@ -691,6 +706,11 @@ export class PixiRenderer implements IRenderer {
       }
       return;
     }
+    // Structure placement positions the ghost instead of panning (worker path).
+    if (this._placementActive) {
+      this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+      return;
+    }
     switch (e.type) {
       case 'pointerdown':
         this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
@@ -775,6 +795,12 @@ export class PixiRenderer implements IRenderer {
         }
         return;
       }
+      // Structure placement: position the blueprint ghost instead of panning.
+      // The Camera's `screenToWorld` gives pixi-world coords (y = -gameY).
+      if (this._placementActive) {
+        this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+        return;
+      }
       switch (e.type) {
         case 'pointerdown':
           this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
@@ -814,6 +840,45 @@ export class PixiRenderer implements IRenderer {
     add('pointerleave', onPointer as EventListener);
     add('wheel', onWheel as EventListener, { passive: false });
     add('touchmove', onTouchMove as EventListener, { passive: false });
+  }
+
+  /**
+   * Position the placement blueprint ghost from a canvas pointer event. Shared
+   * by the main-thread path (`installCanvasEventListeners`) and the worker path
+   * (`forwardPointerEvent`). `screenX/Y` are canvas-relative. `screenToWorld`
+   * returns pixi-world coords, so `gameY = -that.y`.
+   *
+   * Follow model: `_placementFollowing` starts true when placement begins, so
+   * the ghost tracks the pointer (desktop HOVER move / mobile DRAG). Releasing
+   * (pointer-up) parks the ghost (`following = false`) → the Confirm banner
+   * appears. A fresh press re-enters following to re-position.
+   */
+  private routePlacementPointer(type: string, screenX: number, screenY: number): void {
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gameX = w.x;
+    const gameY = -w.y;
+    switch (type) {
+      case 'pointerdown':
+        this._placementFollowing = true;
+        this._placementChosenX = gameX;
+        this._placementChosenY = gameY;
+        break;
+      case 'pointermove':
+        if (this._placementFollowing) {
+          this._placementChosenX = gameX;
+          this._placementChosenY = gameY;
+        }
+        break;
+      case 'pointerup':
+        this._placementChosenX = gameX;
+        this._placementChosenY = gameY;
+        this._placementFollowing = false;
+        break;
+      case 'pointercancel':
+      case 'pointerleave':
+        this._placementFollowing = false;
+        break;
+    }
   }
 
   update(mirror: RenderMirror): void {
@@ -1205,6 +1270,7 @@ export class PixiRenderer implements IRenderer {
     // never steady-state. (Phase-A3: the create/rebuild/hide branching could
     // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
     const preview = mirror.pendingPlacementPreview;
+    this._placementActive = preview != null;
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
         if (this._placementGhost) {
@@ -1218,17 +1284,31 @@ export class PixiRenderer implements IRenderer {
         this._placementGhost = g;
         this._placementGhostKind = preview.kind;
       }
+      // Draw at the pointer-chosen world point once the player has positioned
+      // it; before that fall back to the ahead-of-ship preview pose.
+      const gx = this._placementChosenX ?? preview.x;
+      const gy = this._placementChosenY ?? preview.y;
       this._placementGhost.visible = true;
-      this._placementGhost.x = preview.x;
-      this._placementGhost.y = -preview.y; // Y-flip
+      this._placementGhost.x = gx;
+      this._placementGhost.y = -gy; // Y-flip
       this._placementGhost.rotation = -preview.angle;
-      const screen = this.camera.toScreen(preview.x, -preview.y);
+      const screen = this.camera.toScreen(gx, -gy);
       this.feedback.placementScreenX = screen.x;
       this.feedback.placementScreenY = screen.y;
+      this.feedback.placementChosenWorldX = gx;
+      this.feedback.placementChosenWorldY = gy;
+      this.feedback.placementStuck = !this._placementFollowing;
     } else {
       if (this._placementGhost) this._placementGhost.visible = false;
       this.feedback.placementScreenX = null;
       this.feedback.placementScreenY = null;
+      this.feedback.placementChosenWorldX = null;
+      this.feedback.placementChosenWorldY = null;
+      this.feedback.placementStuck = false;
+      // Reset for the next placement (start in follow mode, no chosen point).
+      this._placementFollowing = true;
+      this._placementChosenX = null;
+      this._placementChosenY = null;
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's

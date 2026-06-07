@@ -1,7 +1,7 @@
 import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { placeStructureAhead } from '../structures/structurePlacementClient';
+import { placeStructureAhead, placeStructureAt } from '../structures/structurePlacementClient';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2;
@@ -34,14 +34,24 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const kind = getStructureKind(placementKind);
 
   const onConfirm = (): void => {
-    placeStructureAhead(placementKind);
+    // Send at the pointer-chosen world point (published by the renderer as
+    // data-placement-world-x/y); fall back to ahead-of-ship if the player
+    // somehow confirmed before positioning.
+    const surface = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
+    const wx = surface?.dataset['placementWorldX'];
+    const wy = surface?.dataset['placementWorldY'];
+    if (wx !== undefined && wy !== undefined) {
+      placeStructureAt(placementKind, parseFloat(wx), parseFloat(wy));
+    } else {
+      placeStructureAhead(placementKind);
+    }
     setPlacementKind(null);
   };
   const onCancel = (): void => setPlacementKind(null);
 
   return (
     <Box data-testid="placement-banner" sx={BANNER_SX}>
-      <Box sx={LABEL_SX}>Place {kind.displayName} ahead?</Box>
+      <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
       <Button
         size="small"
         data-testid="placement-confirm"

@@ -97,13 +97,23 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
   }
 });
 
-test('(B) confirm is clickable at a MOBILE viewport (world-anchored, not occluded)', async ({ browser }) => {
+test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE viewport', async ({ browser }) => {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
   try {
     const before = await swarmCount(page);
 
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"]').click();
+
+    // Tap-to-position (2026-06-07): the Confirm banner is HIDDEN until the ghost
+    // is parked (pointer released), so it never sits under a dragging finger.
+    // A tap on the world canvas positions + parks the blueprint there.
+    await page.touchscreen.tap(195, 220); // clear of the centred ship
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      undefined,
+      { timeout: 5_000 },
+    );
 
     const confirm = page.locator('[data-testid="placement-confirm"]');
     await expect(confirm).toBeVisible({ timeout: 5_000 });
@@ -121,6 +131,37 @@ test('(B) confirm is clickable at a MOBILE viewport (world-anchored, not occlude
       { timeout: 10_000 },
     );
     expect(await swarmCount(page)).toBeGreaterThan(before);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('(C) the blueprint ghost FOLLOWS the tap position (tap-to-position)', async ({ browser }) => {
+  // The smoke complaint: "it doesn't move to where I click." The ghost must
+  // track the chosen world point. Tap left vs right and assert the projected
+  // ghost screen-x moves the same way.
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    const surface = page.locator('[data-testid="game-surface"]');
+    const screenXAfterTapAt = async (x: number): Promise<number> => {
+      await page.mouse.click(x, 400);
+      await page.waitForFunction(
+        () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+        undefined,
+        { timeout: 5_000 },
+      );
+      return parseFloat((await surface.getAttribute('data-placement-screen-x')) ?? 'NaN');
+    };
+
+    const left = await screenXAfterTapAt(350);
+    const right = await screenXAfterTapAt(900);
+    expect(Number.isFinite(left)).toBe(true);
+    expect(Number.isFinite(right)).toBe(true);
+    // Tapping further right parks the ghost further right (it FOLLOWS the tap).
+    expect(right).toBeGreaterThan(left + 200);
   } finally {
     await ctx.close();
   }
