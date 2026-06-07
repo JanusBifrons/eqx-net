@@ -88,7 +88,7 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
           onJoin={onJoinFromMeta}
           onSelectLocal={user ? onSelectLocal : undefined}
         />
-        <MobileAvatarBadge onClick={() => setProfileOpen(true)} />
+        <MobileAvatarBadge onProfileClick={() => setProfileOpen(true)} />
         {modals}
       </>
     );
