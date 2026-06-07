@@ -2,6 +2,7 @@ import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { placeStructureAhead, placeStructureAt } from '../structures/structurePlacementClient';
+import { placementChosen } from '../structures/placementChosen';
 import { logEvent } from '../debug/ClientLogger';
 
 /**
@@ -35,28 +36,25 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const kind = getStructureKind(placementKind);
 
   const onConfirm = (): void => {
-    // Send at the pointer-chosen world point (published by the renderer as
-    // data-placement-world-x/y); fall back to ahead-of-ship if the player
-    // somehow confirmed before positioning.
-    const surface = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
-    const wx = surface?.dataset['placementWorldX'];
-    const wy = surface?.dataset['placementWorldY'];
-    const hasChosen = wx !== undefined && wy !== undefined;
-    // Diagnostic (2026-06-07): tap-to-position landed structures at the default
-    // ahead-of-ship on a device the E2E couldn't reproduce. This records the
-    // ACTUAL sent point + whether the ghost was ever positioned/parked, so an
-    // autocapture reveals tap-didn't-register vs sent-but-server-relocated.
+    // Send at the pointer-chosen world point. The point flows on the PRODUCTION
+    // `placementChosen` channel (a plain module singleton gameRafLoop writes
+    // every frame while the ghost is up) — NOT the data-* dataset, which is
+    // gated behind navigator.webdriver and therefore EMPTY on real phones. That
+    // dataset dependency is exactly why Confirm placed ahead-of-ship on-device
+    // while passing the (webdriver=true) E2E (smoke 2026-06-07 capture kuytvy).
+    // Fall back to ahead-of-ship only if the player confirmed before positioning.
+    const cx = placementChosen.worldX;
+    const cy = placementChosen.worldY;
+    const hasChosen = cx !== null && cy !== null;
     logEvent('structure_place_confirm', {
       kind: placementKind,
       hasChosen,
-      x: hasChosen ? parseFloat(wx!) : null,
-      y: hasChosen ? parseFloat(wy!) : null,
-      stuck: surface?.dataset['placementStuck'] ?? null,
-      shipX: surface?.dataset['shipX'] ?? null,
-      shipY: surface?.dataset['shipY'] ?? null,
+      x: cx,
+      y: cy,
+      stuck: placementChosen.stuck,
     });
     if (hasChosen) {
-      placeStructureAt(placementKind, parseFloat(wx!), parseFloat(wy!));
+      placeStructureAt(placementKind, cx, cy);
     } else {
       placeStructureAhead(placementKind);
     }

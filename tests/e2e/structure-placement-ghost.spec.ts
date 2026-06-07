@@ -232,3 +232,58 @@ test('(E) WORKER path: Confirm places the structure at the tapped point', async 
   test.setTimeout(60_000);
   await tapPlaceAssertAtTap(browser, true);
 });
+
+/**
+ * (F) The gap D/E missed — and why this bug shipped (smoke 2026-06-07 capture
+ * kuytvy). D/E read the chosen point from `data-placement-world-x`, but that
+ * whole dataset surface is gated behind `navigator.webdriver` (gameRafLoop's
+ * `resolveE2EDatasetEnabled`). Playwright sets webdriver=true, so D/E saw a
+ * channel NO real phone has — on-device, Confirm read an empty dataset and
+ * placed ahead-of-ship. `?noE2EDataset=1` turns that dataset OFF even under
+ * Playwright, reproducing the PRODUCTION condition. The fix routes the chosen
+ * point through the `placementChosen` module singleton (populated by gameRafLoop
+ * regardless of webdriver), so Confirm's `structure_place_confirm` log must
+ * report hasChosen=true with finite coords. Asserts via `window.__eqxLogs`
+ * (always-on diag), never the (now-off) dataset.
+ */
+test('(F) PRODUCTION channel: Confirm uses the chosen point with the E2E dataset OFF', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  try {
+    await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout&worker=0&noE2EDataset=1`);
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="game-surface"]');
+        return el !== null && el.getAttribute('data-local-player-id') !== '';
+      },
+      { timeout: 12_000 },
+    );
+    await page.locator('[data-testid="speed-dial-fab"]').click();
+    await page.locator('[data-testid="speed-dial-build"]').click();
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    // Position the ghost well off-centre (NOT the ahead-of-ship default). The
+    // banner anchors over the ghost via the un-gated production bridge, so the
+    // Confirm button is hit-testable even with the dataset off (Playwright's
+    // actionability wait also gives the placementChosen ref a frame to populate).
+    await page.mouse.click(950, 250);
+    await page.locator('[data-testid="placement-confirm"]').click();
+
+    const confirmLog = await page.waitForFunction(
+      () => {
+        const logs = (window as unknown as { __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }> }).__eqxLogs ?? [];
+        return logs.find((l) => l.tag === 'structure_place_confirm')?.data ?? null;
+      },
+      undefined,
+      { timeout: 8_000 },
+    );
+    const data = (await confirmLog.jsonValue()) as { hasChosen: boolean; x: number | null; y: number | null };
+    expect(data.hasChosen, 'Confirm must use the pointer-chosen point, not the ahead-of-ship fallback').toBe(true);
+    expect(Number.isFinite(data.x as number)).toBe(true);
+    expect(Number.isFinite(data.y as number)).toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
