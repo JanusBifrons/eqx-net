@@ -31,8 +31,17 @@ import {
   computeIsLoadingActive,
 } from '../state/store.js';
 import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
+import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
+import { resetSelectionStats } from '../net/selectionStats.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
+
+/** Click-to-inspect (Item B5) — last selection id the bridge published, so the
+ *  RendererFeedback → Zustand mirror + server select/deselect sends fire ONLY on
+ *  a transition (not every frame). Module-scope: the loop is a singleton per
+ *  session and this never needs to survive a teardown (a fresh selection on the
+ *  next session re-syncs naturally from null). */
+let _lastPublishedSelectedId: string | null = null;
 
 // plan: imperative-taco — Playwright sets `navigator.webdriver=true`;
 // a real player's browser leaves it undefined/false. The heavy E2E
@@ -255,6 +264,31 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     if (writeE2E && feedback) {
       writeE2EDataset(el, gameClient, feedback, localId, localShip ?? null);
     }
+
+    // ── Click-to-inspect selection bridge (Item B2/B3/B5) ──────────────────
+    // The renderer owns the selection and publishes it on RendererFeedback.
+    // Mirror TRANSITIONS (on change only) into Zustand (panel visibility) and
+    // start/stop the server's ~5 Hz stats stream. `getFeedback()` is a zero-
+    // alloc field return (the heavy E2E dataset cost is gated above), so this
+    // per-frame read is cheap; the actual work fires only on a transition.
+    const selFb = feedback ?? renderer.getFeedback();
+    const selId = selFb.selectedPickId;
+    if (selId !== _lastPublishedSelectedId) {
+      _lastPublishedSelectedId = selId;
+      const selKind = selFb.selectedPickKind;
+      useUIStore.getState().setSelectedEntity(selId, selKind);
+      resetSelectionStats(); // drop stale numbers across a selection change
+      if (selId === null) {
+        sendDeselectEntity();
+      } else if (selKind === 'ship' || selKind === 'structure') {
+        // Ship/structure use the server stats channel; drone/wreck read the
+        // mirror, so cancel any prior server stream when switching to them.
+        sendSelectEntity(selId, selKind);
+      } else {
+        sendDeselectEntity();
+      }
+    }
+
     animFrameRef.current = requestAnimationFrame(loop);
   };
 

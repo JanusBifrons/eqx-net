@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { StructureKindIdSchema } from '../structureKinds.js';
+import { SelectEntitySchema, DeselectEntitySchema } from './selectionMessages.js';
 
 export const InputMessageSchema = z
   .object({
@@ -140,6 +141,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
+  SelectEntitySchema,
+  DeselectEntitySchema,
 ]);
 
 export type InputMessage = z.infer<typeof InputMessageSchema>;

@@ -553,6 +553,22 @@ export interface RendererFeedback {
    * consumed by gameplay logic.
    */
   placementPreviewConnectionCount: number;
+  /**
+   * Click-to-inspect selection (structures follow-up Item B2). The renderer
+   * owns the selected entity (set on a gameplay tap that resolves to an
+   * entity via `pickEntityAt`, toggled off on re-tap, cleared on empty-space
+   * tap) and publishes its id here so the main thread can mirror it into the
+   * discrete Zustand `selectedEntityId` (panel visibility). `null` when nothing
+   * is selected. The id form matches the `HealthBarManager` lookup convention:
+   * `playerId` for a ship, `swarm-<entityId>` for a drone/structure,
+   * `shipInstanceId` for a wreck. Non-spatial / UI-affordance surface — not
+   * consumed by gameplay logic.
+   */
+  selectedPickId: string | null;
+  /** Kind of the selected entity (drives the stats-channel routing: only
+   *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
+   *  read health from the mirror directly). `null` when nothing is selected. */
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
 }
 
 export interface IRenderer {

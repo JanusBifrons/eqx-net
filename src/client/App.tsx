@@ -44,6 +44,7 @@ import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { GridPowerReadout } from './components/GridPowerReadout';
+import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -625,6 +626,9 @@ function GameSurface({
       <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
       {/* Structures plan (Phase 3): grid net-power readout (top-left). */}
       <Slot anchor="top-left" order={40}><GridPowerReadout /></Slot>
+      {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
+       *  only while an entity is selected. */}
+      <Slot anchor="top-center" order={2}><EntityStatsPanel /></Slot>
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
        *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,

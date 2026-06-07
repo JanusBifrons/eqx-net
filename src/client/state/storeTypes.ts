@@ -177,6 +177,18 @@ export interface UIStore {
    *  (purity-clean: it's a kind id, not a spatial field). Set by the
    *  speed-dial Build actions; cleared on confirm / cancel. */
   placementKind: StructureKindId | null;
+  /** Click-to-inspect selection (structures follow-up Item B3). The id of the
+   *  entity the player tapped to inspect, or null when nothing is selected.
+   *  Drives `EntityStatsPanel` VISIBILITY only — purity-clean (a discrete id
+   *  string, NOT a spatial field; the live hp/shield numbers live in the
+   *  non-Zustand `selectionStats` module singleton, polled by the panel). The
+   *  renderer owns the selection (`RendererFeedback.selectedPickId`); the main
+   *  thread mirrors transitions here on change only. */
+  selectedEntityId: string | null;
+  /** Kind of the selected entity — `ship`/`structure` use the server
+   *  `entity_stats` channel; `drone`/`wreck` read health from the render mirror
+   *  directly. Null when nothing is selected. */
+  selectedEntityKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
   /** Structures plan (Phase 3) — the player's live grid net power (Σ output −
    *  Σ consumption over their powered component). Discrete HUD readout, set at
    *  the 1 Hz pulse cadence from the structures snapshot slice. 0 when the
@@ -298,6 +310,11 @@ export interface UIStore {
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
+  /** Set the inspected entity selection (Item B3). Both args change together. */
+  setSelectedEntity: (
+    id: string | null,
+    kind: 'ship' | 'drone' | 'structure' | 'wreck' | null,
+  ) => void;
   setGridNetPower: (net: number) => void;
   setMinerals: (n: number) => void;
   setEnergyMax: (max: number) => void;

@@ -121,7 +121,11 @@ import {
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
+  SelectEntitySchema,
+  DeselectEntitySchema,
 } from '../../shared-types/messages.js';
+import type { EntityStatsMessage } from '../../shared-types/messages/selectionMessages.js';
+import { SelectionStatsSubsystem, type Selection } from './SelectionStatsSubsystem.js';
 import {
   rayHitsSphere,
   // rayHitsConvexPolygon now used inside PlayerFireResolver.ts
@@ -242,6 +246,11 @@ const JoinOptionsSchema = z
 
 const MAX_INPUTS_PER_TICK = 3;
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
+
+/** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
+ *  timer — low-frequency + off the snapshot/physics hot path; only does work
+ *  while a client has an entity selected. */
+const SELECTION_STATS_INTERVAL_MS = 200;
 
 /** Stage 5 — sector idle threshold. After this many ticks without any
  *  motion-above-epsilon or projectile-in-flight event, the room
@@ -471,6 +480,10 @@ export class SectorRoom extends Room<SectorState> {
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
   private structureTurretTimer: ReturnType<typeof setInterval> | undefined;
+  /** Click-to-inspect live-stats channel (structures follow-up Item B5) +
+   *  its ~5 Hz emit timer (unref'd; OFF the snapshot/physics hot path). */
+  private selectionStats!: SelectionStatsSubsystem;
+  private selectionStatsTimer: ReturnType<typeof setInterval> | undefined;
   /** Cached low-cadence structures snapshot slice (rebuilt on pulse / place;
    *  attached by reference to every recipient). Undefined ⇒ no structures. */
   private structuresSlice: SnapshotMessage['structures'] = undefined;
@@ -1508,6 +1521,19 @@ export class SectorRoom extends Room<SectorState> {
     this.structureTurretTimer = setInterval(() => this.structureTurretTick(), TURRET_TICK_MS);
     this.structureTurretTimer.unref?.();
 
+    // Click-to-inspect live-stats channel (structures follow-up Item B5). Its
+    // own ~5 Hz timer (200 ms), unref'd + OFF the snapshot/physics tick — the
+    // emitter only does work while a client has an entity selected.
+    this.selectionStats = new SelectionStatsSubsystem({
+      resolveStats: (sel) => this.resolveSelectionStats(sel),
+      sendTo: (sessionId, msg) => {
+        const client = this.clients.find((c) => c.sessionId === sessionId);
+        client?.send('entity_stats', msg);
+      },
+    });
+    this.selectionStatsTimer = setInterval(() => this.selectionStats.tick(), SELECTION_STATS_INTERVAL_MS);
+    this.selectionStatsTimer.unref?.();
+
     // Structures plan (Phase 3-5) — testMode scenario seeding: a pre-built,
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
@@ -1795,6 +1821,30 @@ export class SectorRoom extends Room<SectorState> {
       if (this.structurePlacement.remove(owner, parsed.data.id)) {
         this.rebuildStructuresSlice();
       }
+    });
+
+    // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
+    // The renderer tells the main thread which entity is selected; the client
+    // forwards ship/structure selections here. The ~5 Hz emit happens on
+    // `selectionStatsTimer` (off the hot path); these handlers only register /
+    // clear the per-connection selection. Per-session cleanup on disconnect /
+    // transit lives in `onLeave` (no 5 Hz leak).
+    this.onMessage('select_entity', (client: Client, raw: unknown) => {
+      const parsed = SelectEntitySchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed select_entity');
+        return;
+      }
+      this.selectionStats.select(client.sessionId, parsed.data.id, parsed.data.kind);
+    });
+
+    this.onMessage('deselect_entity', (client: Client, raw: unknown) => {
+      const parsed = DeselectEntitySchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed deselect_entity');
+        return;
+      }
+      this.selectionStats.deselect(client.sessionId);
     });
 
     // ── Phase 1 swift-otter — WebRTC signaling handlers ─────────────────
@@ -2356,6 +2406,54 @@ export class SectorRoom extends Room<SectorState> {
       arr.push(entry);
     }
     this.structuresSlice = arr;
+  }
+
+  /**
+   * Resolve live stats for a click-to-inspect selection (Item B5). Returns null
+   * when the entity is gone (dead / despawned / lingering-only) — the
+   * `SelectionStatsSubsystem` auto-clears the selection on null so the ~5 Hz
+   * emitter never leaks. Only ship + structure ids reach here (drones/wrecks
+   * read health client-side from the mirror).
+   *
+   *   - ship      → `id` is a playerId; resolve `state.ships.get(id)`. A
+   *                 lingering hull (`isActive === false`) is treated as gone.
+   *   - structure → `id` is the numeric swarm `entityId`; resolve the swarm
+   *                 record → its registry id → `structureRegistry` + `swarmHealth`.
+   */
+  private resolveSelectionStats(sel: Selection): EntityStatsMessage | null {
+    if (sel.kind === 'ship') {
+      const ship = this.state.ships.get(sel.id);
+      if (!ship || !ship.isActive || !ship.alive) return null;
+      const kind = getShipKind(ship.kind);
+      return {
+        type: 'entity_stats',
+        id: sel.id,
+        kind: 'ship',
+        name: ship.displayName,
+        hp: Math.max(0, Math.round(ship.health)),
+        hpMax: Math.round(ship.maxHealth),
+        shield: Math.max(0, Math.round(ship.shield)),
+        shieldMax: Math.round(kind.shieldMax),
+      };
+    }
+    // structure — id is the numeric swarm entityId (as a string).
+    const entityId = Number(sel.id);
+    if (!Number.isFinite(entityId)) return null;
+    const swarmRec = this.swarmRegistry.getByEntityId(entityId);
+    if (!swarmRec) return null;
+    const struct = this.structureRegistry.get(swarmRec.id);
+    if (!struct) return null;
+    const hp = this.swarmHealth.get(swarmRec.id);
+    if (hp === undefined) return null;
+    const kind = getStructureKind(struct.kind);
+    return {
+      type: 'entity_stats',
+      id: sel.id,
+      kind: 'structure',
+      name: kind.displayName,
+      hp: Math.max(0, Math.round(hp)),
+      hpMax: Math.round(kind.maxHealth),
+    };
   }
 
   // ── Living World Director hooks ─────────────────────────────────────────
@@ -3320,6 +3418,11 @@ export class SectorRoom extends Room<SectorState> {
     const leavingPlayerId = this.sessionToPlayer.get(client.sessionId);
     if (leavingPlayerId) this.pendingJoin.delete(leavingPlayerId);
 
+    // Click-to-inspect (Item B5) — drop this connection's selection so the
+    // ~5 Hz stats emitter doesn't keep resolving for a gone session (covers
+    // disconnect AND inter-sector transit, both of which fire onLeave).
+    this.selectionStats?.clearSession(client.sessionId);
+
     // Phase 1 swift-otter — tear down the WebRTC peer connection BEFORE
     // running the existing leave handler. The leaveHandler does the
     // player-state cleanup (lingering / transit / despawn); the DC
@@ -3440,6 +3543,11 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureTurretTimer !== undefined) {
       clearInterval(this.structureTurretTimer);
       this.structureTurretTimer = undefined;
+    }
+    // Item B5 — stop the click-to-inspect stats emitter.
+    if (this.selectionStatsTimer !== undefined) {
+      clearInterval(this.selectionStatsTimer);
+      this.selectionStatsTimer = undefined;
     }
     // Paradigm plan (quirky-rabbit) Phase 6 — unsubscribe from the GC
     // observer so the disposed room isn't kept alive by the subscriber
