@@ -144,19 +144,30 @@ describe('EngineEmitter — per-kind nozzle profile', () => {
   }
 
   it('spawns at the supplied per-kind sternOffset (not the legacy 25u)', () => {
-    const created: Record<string, unknown>[] = [];
-    const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
-    // angle 0 + zero velocity → astern is straight "down" (gfx.y = +sternOffset)
-    // and the only post-emit drift is the astern ejection (always increases y).
-    // gfx.y lands in [10, ~16) — unambiguously the ~10u rear extent, NOT the
-    // legacy 25u (which would put it at ≥ 25). tick(0.05) to clear the
-    // speed-floor emit interval at zero speed.
-    e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
-    e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
-    expect(created.length).toBeGreaterThan(0);
-    const y = created[0]!.y as number;
-    expect(y).toBeGreaterThanOrEqual(9.99);
-    expect(y).toBeLessThan(18);
+    // Math.random is mocked to 0.5 (like the sibling cases) so the spawn is
+    // DETERMINISTIC: perp = (0.5-0.5)*w = 0 (no nozzle-width offset), the
+    // ejection cone is pure-astern (max y-drift), and the ±20% ejection-speed
+    // term is exactly 1.0×. Without this the unmocked nozzle spread + ejection
+    // cone make the post-emit y-drift vary enough to occasionally clear the
+    // bound under an unlucky draw (a parallel-scheduling-exposed flake,
+    // 2026-06-07). angle 0 + zero velocity → astern is straight "down"
+    // (gfx.y = +sternOffset) and the only post-emit drift is the astern
+    // ejection (always increases y): spawn 10 + ~8 astern drift = 18.0 here.
+    // The lock is that it's the ~10u rear extent, NOT the legacy 25u — which
+    // would spawn at 25 and drift to ~33. So `< 25` cleanly separates them.
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const created: Record<string, unknown>[] = [];
+      const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
+      e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+      e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
+      expect(created.length).toBeGreaterThan(0);
+      const y = created[0]!.y as number;
+      expect(y).toBeGreaterThanOrEqual(9.99); // at/behind the 10u nozzle
+      expect(y).toBeLessThan(25); // NOT the legacy 25u (which would spawn ≥ 25)
+    } finally {
+      rnd.mockRestore();
+    }
   });
 
   it('plumeScale widens the nozzle mouth proportionally', () => {
