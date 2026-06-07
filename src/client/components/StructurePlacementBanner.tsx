@@ -1,7 +1,9 @@
 import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { placeStructureAhead } from '../structures/structurePlacementClient';
+import { placeStructureAhead, placeStructureAt } from '../structures/structurePlacementClient';
+import { placementChosen } from '../structures/placementChosen';
+import { logEvent } from '../debug/ClientLogger';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2;
@@ -34,14 +36,35 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const kind = getStructureKind(placementKind);
 
   const onConfirm = (): void => {
-    placeStructureAhead(placementKind);
+    // Send at the pointer-chosen world point. The point flows on the PRODUCTION
+    // `placementChosen` channel (a plain module singleton gameRafLoop writes
+    // every frame while the ghost is up) — NOT the data-* dataset, which is
+    // gated behind navigator.webdriver and therefore EMPTY on real phones. That
+    // dataset dependency is exactly why Confirm placed ahead-of-ship on-device
+    // while passing the (webdriver=true) E2E (smoke 2026-06-07 capture kuytvy).
+    // Fall back to ahead-of-ship only if the player confirmed before positioning.
+    const cx = placementChosen.worldX;
+    const cy = placementChosen.worldY;
+    const hasChosen = cx !== null && cy !== null;
+    logEvent('structure_place_confirm', {
+      kind: placementKind,
+      hasChosen,
+      x: cx,
+      y: cy,
+      stuck: placementChosen.stuck,
+    });
+    if (hasChosen) {
+      placeStructureAt(placementKind, cx, cy);
+    } else {
+      placeStructureAhead(placementKind);
+    }
     setPlacementKind(null);
   };
   const onCancel = (): void => setPlacementKind(null);
 
   return (
     <Box data-testid="placement-banner" sx={BANNER_SX}>
-      <Box sx={LABEL_SX}>Place {kind.displayName} ahead?</Box>
+      <Box sx={LABEL_SX}>Place {kind.displayName} here?</Box>
       <Button
         size="small"
         data-testid="placement-confirm"

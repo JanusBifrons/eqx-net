@@ -37,7 +37,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function joinAndOpenBuild(
   browser: Browser,
-  opts: { mobile: boolean },
+  opts: { mobile: boolean; worker?: boolean },
 ): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext(
     opts.mobile
@@ -45,7 +45,11 @@ async function joinAndOpenBuild(
       : { viewport: { width: 1280, height: 800 } },
   );
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout&worker=0`);
+  // `worker !== false` → force the main-thread renderer (?worker=0); pass
+  // `worker:true` to exercise the OffscreenCanvas WORKER path (pointer events
+  // forwarded via POINTER_EVENT → forwardPointerEvent).
+  const workerParam = opts.worker === true ? '&worker=1' : '&worker=0';
+  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout${workerParam}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -97,13 +101,23 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
   }
 });
 
-test('(B) confirm is clickable at a MOBILE viewport (world-anchored, not occluded)', async ({ browser }) => {
+test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE viewport', async ({ browser }) => {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
   try {
     const before = await swarmCount(page);
 
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"]').click();
+
+    // Tap-to-position (2026-06-07): the Confirm banner is HIDDEN until the ghost
+    // is parked (pointer released), so it never sits under a dragging finger.
+    // A tap on the world canvas positions + parks the blueprint there.
+    await page.touchscreen.tap(195, 220); // clear of the centred ship
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      undefined,
+      { timeout: 5_000 },
+    );
 
     const confirm = page.locator('[data-testid="placement-confirm"]');
     await expect(confirm).toBeVisible({ timeout: 5_000 });
@@ -121,6 +135,154 @@ test('(B) confirm is clickable at a MOBILE viewport (world-anchored, not occlude
       { timeout: 10_000 },
     );
     expect(await swarmCount(page)).toBeGreaterThan(before);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('(C) the blueprint ghost FOLLOWS the tap position (tap-to-position)', async ({ browser }) => {
+  // The smoke complaint: "it doesn't move to where I click." The ghost must
+  // track the chosen world point. Tap left vs right and assert the projected
+  // ghost screen-x moves the same way.
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    const surface = page.locator('[data-testid="game-surface"]');
+    const screenXAfterTapAt = async (x: number): Promise<number> => {
+      await page.mouse.click(x, 400);
+      await page.waitForFunction(
+        () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+        undefined,
+        { timeout: 5_000 },
+      );
+      return parseFloat((await surface.getAttribute('data-placement-screen-x')) ?? 'NaN');
+    };
+
+    const left = await screenXAfterTapAt(350);
+    const right = await screenXAfterTapAt(900);
+    expect(Number.isFinite(left)).toBe(true);
+    expect(Number.isFinite(right)).toBe(true);
+    // Tapping further right parks the ghost further right (it FOLLOWS the tap).
+    expect(right).toBeGreaterThan(left + 200);
+  } finally {
+    await ctx.close();
+  }
+});
+
+/**
+ * The end-to-end position lock the B/C tests MISSED: tap a point, confirm, and
+ * assert the placed STRUCTURE lands at the tapped point (not ahead-of-ship —
+ * the smoke bug "the capital just placed in front of the ship"). Run on BOTH
+ * renderer paths because the worker path forwards pointer events differently.
+ */
+async function tapPlaceAssertAtTap(browser: Browser, useWorker: boolean): Promise<void> {
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    const surface = page.locator('[data-testid="game-surface"]');
+    // Tap well off-centre so the chosen point is clearly NOT the ahead-of-ship
+    // default (a fixed clearance along the ship facing).
+    await page.mouse.click(950, 250);
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      undefined,
+      { timeout: 6_000 },
+    );
+    const chosenX = parseFloat((await surface.getAttribute('data-placement-world-x')) ?? 'NaN');
+    const chosenY = parseFloat((await surface.getAttribute('data-placement-world-y')) ?? 'NaN');
+    expect(Number.isFinite(chosenX), 'chosen world X published').toBe(true);
+    expect(Number.isFinite(chosenY), 'chosen world Y published').toBe(true);
+
+    await page.locator('[data-testid="placement-confirm"]').click();
+
+    const placed = await page.waitForFunction(
+      () => {
+        const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-swarm-detail');
+        if (!raw) return null;
+        const detail = JSON.parse(raw) as Record<string, { x: number; y: number; kind: number }>;
+        for (const k of Object.keys(detail)) {
+          const e = detail[k]!;
+          if (e.kind === 2) return { x: e.x, y: e.y };
+        }
+        return null;
+      },
+      undefined,
+      { timeout: 10_000 },
+    );
+    const pos = await placed.jsonValue();
+    // eslint-disable-next-line no-console
+    console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
+    const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
+    expect(distToChosen, `structure should be at the tapped point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
+  } finally {
+    await ctx.close();
+  }
+}
+
+test('(D) main-thread: Confirm places the structure at the tapped point', async ({ browser }) => {
+  test.setTimeout(60_000); // test-sector-fast room cold-boot (infrastructural)
+  await tapPlaceAssertAtTap(browser, false);
+});
+
+test('(E) WORKER path: Confirm places the structure at the tapped point', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await tapPlaceAssertAtTap(browser, true);
+});
+
+/**
+ * (F) The gap D/E missed — and why this bug shipped (smoke 2026-06-07 capture
+ * kuytvy). D/E read the chosen point from `data-placement-world-x`, but that
+ * whole dataset surface is gated behind `navigator.webdriver` (gameRafLoop's
+ * `resolveE2EDatasetEnabled`). Playwright sets webdriver=true, so D/E saw a
+ * channel NO real phone has — on-device, Confirm read an empty dataset and
+ * placed ahead-of-ship. `?noE2EDataset=1` turns that dataset OFF even under
+ * Playwright, reproducing the PRODUCTION condition. The fix routes the chosen
+ * point through the `placementChosen` module singleton (populated by gameRafLoop
+ * regardless of webdriver), so Confirm's `structure_place_confirm` log must
+ * report hasChosen=true with finite coords. Asserts via `window.__eqxLogs`
+ * (always-on diag), never the (now-off) dataset.
+ */
+test('(F) PRODUCTION channel: Confirm uses the chosen point with the E2E dataset OFF', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await ctx.newPage();
+  try {
+    await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout&worker=0&noE2EDataset=1`);
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('[data-testid="game-surface"]');
+        return el !== null && el.getAttribute('data-local-player-id') !== '';
+      },
+      { timeout: 12_000 },
+    );
+    await page.locator('[data-testid="speed-dial-fab"]').click();
+    await page.locator('[data-testid="speed-dial-build"]').click();
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    // Position the ghost well off-centre (NOT the ahead-of-ship default). The
+    // banner anchors over the ghost via the un-gated production bridge, so the
+    // Confirm button is hit-testable even with the dataset off (Playwright's
+    // actionability wait also gives the placementChosen ref a frame to populate).
+    await page.mouse.click(950, 250);
+    await page.locator('[data-testid="placement-confirm"]').click();
+
+    const confirmLog = await page.waitForFunction(
+      () => {
+        const logs = (window as unknown as { __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }> }).__eqxLogs ?? [];
+        return logs.find((l) => l.tag === 'structure_place_confirm')?.data ?? null;
+      },
+      undefined,
+      { timeout: 8_000 },
+    );
+    const data = (await confirmLog.jsonValue()) as { hasChosen: boolean; x: number | null; y: number | null };
+    expect(data.hasChosen, 'Confirm must use the pointer-chosen point, not the ahead-of-ship fallback').toBe(true);
+    expect(Number.isFinite(data.x as number)).toBe(true);
+    expect(Number.isFinite(data.y as number)).toBe(true);
   } finally {
     await ctx.close();
   }

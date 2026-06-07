@@ -37,6 +37,22 @@ export type { BotRecord, DirectorSnapshot } from './director/HunterBotPool.js';
 
 export const LIVING_WORLD_BOT_COUNT = 25;
 
+/** Ops kill-switch for the Living World hunter bots. When
+ *  `EQX_DISABLE_LIVING_WORLD` is `1`/`true`, the server boot SKIPS constructing
+ *  and starting the director — so no hunter bots spawn, migrate, or aggro
+ *  players (the director is the single owner of hunter-bot lifecycle, and its
+ *  `tick()` step 3 is the only proactive-aggression source). Ambient per-sector
+ *  drones are unaffected: they remain NEUTRAL and only fight back if the player
+ *  shoots them (the reactive `damage → markHostile` mirror), so building
+ *  gameplay is peaceful. Read once at boot — temporary by design: unset the env
+ *  var and restart to re-arm. */
+export function isLivingWorldDisabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const v = env['EQX_DISABLE_LIVING_WORLD'];
+  return v === '1' || v === 'true';
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;

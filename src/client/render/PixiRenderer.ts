@@ -6,6 +6,8 @@ import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/pr
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
+import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
+import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
@@ -98,6 +100,18 @@ export class PixiRenderer implements IRenderer {
    *  `shipContainer` (world space) so it pans/zooms with the structures. */
   private _placementGhost: Graphics | null = null;
   private _placementGhostKind: string | null = null;
+  /** Tap/drag-to-position placement state (2026-06-07). `_placementActive` is
+   *  set each frame from `mirror.pendingPlacementPreview`. While active, canvas
+   *  pointer events position the blueprint ghost (game-space) instead of
+   *  panning the camera. `_placementChosenX/Y` is the chosen GAME point (null =
+   *  not yet positioned → fall back to the ahead-of-ship preview).
+   *  `_placementFollowing` true ⇒ the ghost tracks the pointer (desktop hover /
+   *  mobile drag); set false on pointer-up so the ghost parks and the Confirm
+   *  banner appears. */
+  private _placementActive = false;
+  private _placementFollowing = true;
+  private _placementChosenX: number | null = null;
+  private _placementChosenY: number | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -147,19 +161,11 @@ export class PixiRenderer implements IRenderer {
    *  Drawn with a desaturated kind colour; updated each frame from
    *  `mirror.wrecks`. Removed when the wreck disappears from the mirror. */
   private wreckSprites = new Map<string, Graphics>();
-  /** Per-ship boost-exhaust flame, parented to the ship sprite. Visible only
-   *  while the ship is in `mirror.boostingShips`. Pooled — created on first
-   *  boost, hidden when not active, destroyed with the ship sprite. */
-  private boostFlames = new Map<string, Graphics>();
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
    *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
    *  the ship's world transform; the cluster's own children sit at their
    *  mount-local offset and baseAngle rotation. */
   private mountVisuals = new MountVisualManager();
-  /** Per-ship baseline thrust flame, parented to the ship sprite. Visible
-   *  while the ship is in `mirror.thrustingShips` (any acceleration). Boost
-   *  flame layers on top. Pooled — same lifecycle as `boostFlames`. */
-  private thrustFlames = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
   private projectileSprites = new Map<string, Graphics>();
   /** Per-missile sprites, keyed by stable per-sector missileId. Pooled
@@ -231,6 +237,16 @@ export class PixiRenderer implements IRenderer {
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
+  /** Reused scratch for the `getEntityPose` effects poll — mutated per call
+   *  by `entityPoseFromSprite` (+ vx/vy filled from `_lastMirror`) so the
+   *  per-frame engine/shield pose lookup allocates nothing (Invariant #14).
+   *  Read synchronously inside the effects tick; never stored across frames. */
+  private readonly _enginePoseScratch: EntityPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0 };
+  /** Latest mirror handed to `update()` — lets the `getEntityPose` closure
+   *  read a ship's velocity (the sprite carries only x/y/rotation). Set as the
+   *  first statement of `update`; the effects tick at the tail of the same
+   *  call reads it, so it's always this frame's mirror. */
+  private _lastMirror: RenderMirror | null = null;
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
@@ -271,6 +287,9 @@ export class PixiRenderer implements IRenderer {
     liveBeamRenderedFromY: null,
     placementScreenX: null,
     placementScreenY: null,
+    placementChosenWorldX: null,
+    placementChosenWorldY: null,
+    placementStuck: false,
   };
 
   /**
@@ -305,6 +324,20 @@ export class PixiRenderer implements IRenderer {
    *  + `getFeedback()` for the parallel (but contract-gated) channel. */
   getFrameMarkers(): FrameMarkers {
     return this.frameMarkers;
+  }
+
+  /** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
+   *  + engine particle world positions (pixi coords; gfx.y = -gameY). */
+  __debugEngine(): { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null {
+    const localId = this._lastMirror?.localPlayerId;
+    if (!localId || !this.effects) return null;
+    const sp = this.sprites.get(localId);
+    if (!sp) return null;
+    const out: number[] = [];
+    const n = this.effects.debugCopyEngineParticleWorld(out);
+    out.length = n * 4;
+    const sv = this._lastMirror?.ships.get(localId);
+    return { ship: { x: sp.x, y: sp.y, vx: sv?.vx ?? 0, vy: sv?.vy ?? 0 }, particles: out };
   }
 
   async init(rawContainer: unknown): Promise<void> {
@@ -485,8 +518,6 @@ export class PixiRenderer implements IRenderer {
     this._shipUpdaterCtx = {
       shipContainer: this.shipContainer,
       sprites: this.sprites,
-      thrustFlames: this.thrustFlames,
-      boostFlames: this.boostFlames,
       mountVisuals: this.mountVisuals,
       remoteHitTargets: this._updateRemoteHitTargetsScratch,
       localHitTargets: this._updateLocalHitTargetsScratch,
@@ -545,8 +576,20 @@ export class PixiRenderer implements IRenderer {
         // sprite map (despawned, never spawned, off-interest).
         getEntityPose: (entityId: string) => {
           const sp = this.sprites.get(entityId);
-          if (sp) return { x: sp.x, y: -sp.y, angle: sp.rotation };
-          return null;
+          if (!sp) return null;
+          // Pure seam helper: converts the Pixi sprite pose BACK to game
+          // space (Y-up, angle un-negated). Mutates the reused scratch so
+          // the per-frame poll allocates nothing (Invariant #14); the
+          // emitter reads it synchronously and never stores it.
+          const pose = entityPoseFromSprite(sp, this._enginePoseScratch);
+          // Velocity for speed-scaled emission + coherent streaming. The
+          // sprite carries no velocity; read it from this frame's mirror.
+          // Ships only (drones live in mirror.swarm and don't emit engine
+          // particles) → undefined for non-ships ⇒ 0.
+          const ship = this._lastMirror?.ships.get(entityId);
+          pose.vx = ship?.vx ?? 0;
+          pose.vy = ship?.vy ?? 0;
+          return pose;
         },
         beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
         fxKillSwitches,
@@ -663,6 +706,11 @@ export class PixiRenderer implements IRenderer {
       }
       return;
     }
+    // Structure placement positions the ghost instead of panning (worker path).
+    if (this._placementActive) {
+      this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+      return;
+    }
     switch (e.type) {
       case 'pointerdown':
         this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, e.stamp);
@@ -747,6 +795,12 @@ export class PixiRenderer implements IRenderer {
         }
         return;
       }
+      // Structure placement: position the blueprint ghost instead of panning.
+      // The Camera's `screenToWorld` gives pixi-world coords (y = -gameY).
+      if (this._placementActive) {
+        this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+        return;
+      }
       switch (e.type) {
         case 'pointerdown':
           this.camera.onPointerDown(e.pointerId, e.offsetX, e.offsetY, stamp);
@@ -788,12 +842,55 @@ export class PixiRenderer implements IRenderer {
     add('touchmove', onTouchMove as EventListener, { passive: false });
   }
 
+  /**
+   * Position the placement blueprint ghost from a canvas pointer event. Shared
+   * by the main-thread path (`installCanvasEventListeners`) and the worker path
+   * (`forwardPointerEvent`). `screenX/Y` are canvas-relative. `screenToWorld`
+   * returns pixi-world coords, so `gameY = -that.y`.
+   *
+   * Follow model: `_placementFollowing` starts true when placement begins, so
+   * the ghost tracks the pointer (desktop HOVER move / mobile DRAG). Releasing
+   * (pointer-up) parks the ghost (`following = false`) → the Confirm banner
+   * appears. A fresh press re-enters following to re-position.
+   */
+  private routePlacementPointer(type: string, screenX: number, screenY: number): void {
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gameX = w.x;
+    const gameY = -w.y;
+    switch (type) {
+      case 'pointerdown':
+        this._placementFollowing = true;
+        this._placementChosenX = gameX;
+        this._placementChosenY = gameY;
+        break;
+      case 'pointermove':
+        if (this._placementFollowing) {
+          this._placementChosenX = gameX;
+          this._placementChosenY = gameY;
+        }
+        break;
+      case 'pointerup':
+        this._placementChosenX = gameX;
+        this._placementChosenY = gameY;
+        this._placementFollowing = false;
+        break;
+      case 'pointercancel':
+      case 'pointerleave':
+        this._placementFollowing = false;
+        break;
+    }
+  }
+
   update(mirror: RenderMirror): void {
     // F1 — bracket the whole update() for `rendererUpdateMs`. Single
     // exit point (the method has no early `return`), so a start-stamp +
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
     // production cost). See `frameMarkers` / `FrameMarkers`.
     const updateStart = performance.now();
+    // Stash this frame's mirror so the getEntityPose effects closure can read
+    // ship velocity (the sprite carries only x/y/rotation). The effects tick
+    // at the tail of THIS update reads it → always the current frame's mirror.
+    this._lastMirror = mirror;
     // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
     // containers instead of `new Set<string>()` per frame.
     const seen = this._updateSeenScratch;
@@ -903,8 +1000,6 @@ export class PixiRenderer implements IRenderer {
         this.mountVisuals.removeShip(id);
         sprite.destroy({ children: true });
         this.sprites.delete(id);
-        this.boostFlames.delete(id);
-        this.thrustFlames.delete(id);
       }
     }
 
@@ -1175,6 +1270,7 @@ export class PixiRenderer implements IRenderer {
     // never steady-state. (Phase-A3: the create/rebuild/hide branching could
     // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
     const preview = mirror.pendingPlacementPreview;
+    this._placementActive = preview != null;
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
         if (this._placementGhost) {
@@ -1188,17 +1284,31 @@ export class PixiRenderer implements IRenderer {
         this._placementGhost = g;
         this._placementGhostKind = preview.kind;
       }
+      // Draw at the pointer-chosen world point once the player has positioned
+      // it; before that fall back to the ahead-of-ship preview pose.
+      const gx = this._placementChosenX ?? preview.x;
+      const gy = this._placementChosenY ?? preview.y;
       this._placementGhost.visible = true;
-      this._placementGhost.x = preview.x;
-      this._placementGhost.y = -preview.y; // Y-flip
+      this._placementGhost.x = gx;
+      this._placementGhost.y = -gy; // Y-flip
       this._placementGhost.rotation = -preview.angle;
-      const screen = this.camera.toScreen(preview.x, -preview.y);
+      const screen = this.camera.toScreen(gx, -gy);
       this.feedback.placementScreenX = screen.x;
       this.feedback.placementScreenY = screen.y;
+      this.feedback.placementChosenWorldX = gx;
+      this.feedback.placementChosenWorldY = gy;
+      this.feedback.placementStuck = !this._placementFollowing;
     } else {
       if (this._placementGhost) this._placementGhost.visible = false;
       this.feedback.placementScreenX = null;
       this.feedback.placementScreenY = null;
+      this.feedback.placementChosenWorldX = null;
+      this.feedback.placementChosenWorldY = null;
+      this.feedback.placementStuck = false;
+      // Reset for the next placement (start in follow mode, no chosen point).
+      this._placementFollowing = true;
+      this._placementChosenX = null;
+      this._placementChosenY = null;
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's
@@ -1405,7 +1515,9 @@ export class PixiRenderer implements IRenderer {
     if (thrust) {
       for (const id of thrust) {
         if (!this._activeThrustIds.has(id)) {
-          this.effects.setContinuous(id, 'thrust', true);
+          // Per-kind nozzle offset + plume scale, computed once at
+          // registration (not per frame) from the ship catalogue.
+          this.effects.setContinuous(id, 'thrust', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
           this._activeThrustIds.add(id);
         }
       }
@@ -1423,7 +1535,7 @@ export class PixiRenderer implements IRenderer {
     if (boost) {
       for (const id of boost) {
         if (!this._activeBoostIds.has(id)) {
-          this.effects.setContinuous(id, 'boost', true);
+          this.effects.setContinuous(id, 'boost', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
           this._activeBoostIds.add(id);
         }
       }

@@ -2,8 +2,8 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Page } from '@playwright/test';
 
-/** Committed screenshot output (diag/ is tracked; test-results/ is gitignored). */
-const SCREENSHOT_DIR = join(process.cwd(), 'diag', 'e2e-screenshots', 'linger-wreck');
+/** Committed screenshot output root (diag/ is tracked; test-results/ is gitignored). */
+const SCREENSHOT_ROOT = join(process.cwd(), 'diag', 'e2e-screenshots');
 
 /**
  * Capture the rendered game scene for visual verification of entity
@@ -16,10 +16,14 @@ const SCREENSHOT_DIR = join(process.cwd(), 'diag', 'e2e-screenshots', 'linger-wr
  *
  * Waits for the join-handshake load curtain to drop
  * (`data-loading-active=0`) plus a short settle so the warp-in fade has
- * cleared before the capture, then writes `<name>.png` and returns its path.
+ * cleared before the capture, then writes `<subdir>/<name>.png` and returns
+ * its path. `subdir` defaults to `linger-wreck` for back-compat with the
+ * existing lingering-hull specs; the engine-particle flight spec passes
+ * `engine-particles`.
  */
-export async function captureGameScene(page: Page, name: string): Promise<string> {
-  mkdirSync(SCREENSHOT_DIR, { recursive: true });
+export async function captureGameScene(page: Page, name: string, subdir = 'linger-wreck'): Promise<string> {
+  const dir = join(SCREENSHOT_ROOT, subdir);
+  mkdirSync(dir, { recursive: true });
   // Best-effort wait for the curtain to drop so we don't snap the warp veil.
   try {
     await page.waitForFunction(
@@ -34,7 +38,7 @@ export async function captureGameScene(page: Page, name: string): Promise<string
   }
   // Let the warp-curtain fade clear (visual artefact, not a game-time wait).
   await page.waitForTimeout(300);
-  const path = join(SCREENSHOT_DIR, `${name}.png`);
+  const path = join(dir, `${name}.png`);
   await page.screenshot({ path, fullPage: false });
   return path;
 }

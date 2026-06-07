@@ -1,23 +1,23 @@
 /**
  * `EngineEmitter` — per-ship continuous particle trails for thrust + boost.
  *
- * Plan: `~/.claude/plans/i-d-like-you-to-wiggly-puppy.md` M5.
+ * Plan: `~/.claude/plans/i-d-like-you-to-wiggly-puppy.md` M5; overhauled by
+ * the engine-fx pass (plan `majestic-pie`).
  *
- * The existing `boostFlames` / `thrustFlames` Graphics taper triangles in
- * `PixiRenderer.ts:116-128` + `pixi/spriteBuilders.ts` are KEPT as the
- * `minimal` tier fallback (and as the immediate flame at high/medium/low).
- * `EngineEmitter` adds a particle trail BEHIND the ship's stern that
- * complements the legacy flame — small fast-fading particles that imply
- * exhaust velocity.
+ * This is now the SOLE engine visual — the legacy triangle thrust/boost
+ * flames were removed (particle-only decision). The plume is additive
+ * hot-core particles (white-hot → base → smoke colour-over-life) emerging
+ * from the per-kind nozzle, with speed-scaled density + velocity-coherent
+ * streaming.
  *
  * Tier dial (callee-side):
  *  - high    : both thrust + boost emitters fire; boost emits larger,
  *              brighter particles layered on top.
- *  - medium  : thrust emitter only (boost emitter disabled — boost trail
- *              dropped first because the legacy boost flame already reads
- *              loud enough on its own).
+ *  - medium  : thrust emitter only (boost emitter disabled first).
  *  - low     : thrust emitter at half rate.
- *  - minimal : no particles (legacy Graphics flames are the only visual).
+ *  - minimal : thrust emitter at a sparse floor rate — NOT zero, because
+ *              there's no longer a flame fallback; every device must still
+ *              show some exhaust.
  *
  * Ownership: one entry per (entityId, kind) — `setActive(id, kind, true)`
  * registers, `setActive(id, kind, false)` unregisters. Re-entrant.
@@ -27,10 +27,11 @@
  * maps and lets it work uniformly for players (`mirror.ships`) and drones
  * (`mirror.swarm`).
  *
- * Particles: hand-rolled Graphics (same pattern as DestructionFx) — small
- * circles with random outward velocity from the stern, fade + shrink over
- * lifetime. Pool cap 300 (60 emit-rate × 0.5 s lifetime × ~10 ships =
- * 300 — past steady-state worst case).
+ * Particles: pooled additive hot-core Graphics (white-baked 2-layer dot;
+ * `gfx.tint` ramps the colour over life). Spawned across the nozzle mouth
+ * with velocity = ship-velocity inheritance + an astern ejection cone; fade +
+ * taper over lifetime. Pool cap 300 (60 emit-rate × ~0.5 s lifetime × ~10
+ * ships = 300 — past steady-state worst case).
  */
 
 import type { Container, Graphics as PixiGraphics } from 'pixi.js';
@@ -42,23 +43,52 @@ export interface EngineFactories {
   makeParticle: (tint: number) => PixiGraphics;
 }
 
-/** Pose surface the emitter polls per tick. */
-export type EnginePoseFn = (entityId: string) => { x: number; y: number; angle: number } | null;
+/** Pose surface the emitter polls per tick. `vx`/`vy` (game-space velocity,
+ *  filled by the renderer from the render mirror) drive speed-scaled emission
+ *  + velocity-coherent streaming; absent ⇒ treated as 0 (a stationary engine
+ *  still emits at the floor rate). */
+export type EnginePoseFn = (
+  entityId: string,
+) => { x: number; y: number; angle: number; vx?: number; vy?: number } | null;
+
+/** Per-kind engine geometry handed to `setActive` at registration (computed
+ *  once by the renderer from the ship catalogue — see `engineGeometry.ts`).
+ *  Structurally compatible with `EngineProfile` so the renderer passes it
+ *  directly without coupling this module to the render zone. */
+export interface EngineProfileInput {
+  /** Distance behind ship centre (game units) to the nozzle. */
+  sternOffset: number;
+  /** Plume-size multiplier (nozzle width / particle size / density). */
+  plumeScale: number;
+}
+
+/** Fallback nozzle distance when no profile is supplied (tests / legacy
+ *  callers). Roughly the fighter rear extent. */
+const FALLBACK_STERN_OFFSET = 12;
 
 interface ActiveEmitter {
   entityId: string;
   kind: ContinuousEffectKind;
   /** Wall-clock since last emit (seconds). Drives emit cadence. */
   emitAccumSec: number;
+  /** Per-kind nozzle distance behind ship centre (game units). */
+  sternOffset: number;
+  /** Per-kind plume-size multiplier (nozzle width / particle size / density). */
+  plumeScale: number;
 }
 
 interface EngineParticle {
   gfx: PixiGraphics;
-  /** Tint baked into `gfx` — used to route the record back to the
-   *  right free-pool on death. The factory sets this at construction
-   *  and we never repaint it (Pixi v8 Graphics fill is finalised at
-   *  build time; cheaper to keep tint-segregated pools). */
+  /** Base/MID-life colour AND the free-pool routing key. The Graphics is
+   *  baked WHITE (additive) — colour-over-life is driven per frame via
+   *  `gfx.tint`, ramping white-hot (birth) → this base → `smokeColor` (death).
+   *  The pool stays tint-keyed by THIS value (never the transient display
+   *  tint) so routing is stable. */
   tint: number;
+  /** Late-life smoke colour the per-frame tint ramps toward as it dies. */
+  smokeColor: number;
+  /** Per-particle size multiplier (random, for plume variation). */
+  sizeMul: number;
   vx: number;
   vy: number;
   lifeS: number;
@@ -67,11 +97,27 @@ interface EngineParticle {
 
 const PARTICLE_POOL_CAP = 300;
 
+/** White-hot birth colour the per-frame tint ramps DOWN from. */
+const HOT_COLOR = 0xffffff;
+
+/** Per-channel integer lerp between two RGB hex colours. Pure scalar math —
+ *  no allocation, safe in the per-frame particle loop (Invariant #14). */
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff;
+  const ag = (a >> 8) & 0xff;
+  const ab = a & 0xff;
+  const r = (ar + (((b >> 16) & 0xff) - ar) * t) & 0xff;
+  const g = (ag + (((b >> 8) & 0xff) - ag) * t) & 0xff;
+  const bl = (ab + ((b & 0xff) - ab) * t) & 0xff;
+  return (r << 16) | (g << 8) | bl;
+}
+
 const QUALITY_DIAL: Record<EffectQuality, { thrustRateMul: number; boostEnabled: boolean }> = {
   high:    { thrustRateMul: 1.0, boostEnabled: true },
   medium:  { thrustRateMul: 1.0, boostEnabled: false },
   low:     { thrustRateMul: 0.5, boostEnabled: false },
-  minimal: { thrustRateMul: 0.0, boostEnabled: false },
+  // Particle-only: minimal must still show a sparse plume (no flame fallback).
+  minimal: { thrustRateMul: 0.35, boostEnabled: false },
 };
 
 export interface EngineEmitterOptions {
@@ -112,13 +158,24 @@ export class EngineEmitter {
    * Register or unregister a continuous emitter. Re-entrant: calling with
    * the same (id, kind, active) is a no-op.
    */
-  setActive(entityId: string, kind: ContinuousEffectKind, active: boolean): void {
+  setActive(
+    entityId: string,
+    kind: ContinuousEffectKind,
+    active: boolean,
+    profile?: EngineProfileInput,
+  ): void {
     // Engine emitter only handles 'thrust' and 'boost'. 'shield' is M8.
     if (kind !== 'thrust' && kind !== 'boost') return;
     const key = `${entityId}:${kind}`;
     const exists = this.emitters.has(key);
     if (active && !exists) {
-      this.emitters.set(key, { entityId, kind, emitAccumSec: 0 });
+      this.emitters.set(key, {
+        entityId,
+        kind,
+        emitAccumSec: 0,
+        sternOffset: profile?.sternOffset ?? FALLBACK_STERN_OFFSET,
+        plumeScale: profile?.plumeScale ?? 1,
+      });
     } else if (!active && exists) {
       this.emitters.delete(key);
     }
@@ -145,19 +202,32 @@ export class EngineEmitter {
 
     for (const e of this.emitters.values()) {
       const params = e.kind === 'thrust'
-        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844 }
-        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff };
+        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, smokeColor: DEFAULT_ENGINE_PARAMS.thrustSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.thrustEjectSpeed, refSpeed: DEFAULT_ENGINE_PARAMS.thrustRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.thrustMinRateFrac }
+        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, smokeColor: DEFAULT_ENGINE_PARAMS.boostSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.boostEjectSpeed, refSpeed: DEFAULT_ENGINE_PARAMS.boostRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.boostMinRateFrac };
       if (params.rateHz <= 0) continue;
 
-      const intervalSec = 1 / params.rateHz;
+      // Poll the pose ONCE per emitter per tick (not per-particle): all
+      // particles this tick share the pose + the speed reading is taken once.
+      const pose = getPose(e.entityId);
+      if (!pose) continue;
+
+      // Speed-scaled emission: faster ship → denser plume (and longer jet),
+      // slow/idle thrust → a sputter at `minRateFrac`. Fixes "they don't
+      // spawn more/less when the engine moves faster".
+      const speed = Math.hypot(pose.vx ?? 0, pose.vy ?? 0);
+      const speedFrac = Math.max(params.minRateFrac, Math.min(1, speed / params.refSpeed));
+      const rateHz = params.rateHz * speedFrac;
+      if (rateHz <= 0) continue;
+
+      const nozzleWidth = params.nozzleWidth * e.plumeScale;
+      const ejectSpeed = params.ejectSpeed * (0.6 + 0.4 * speedFrac);
+      const intervalSec = 1 / rateHz;
       e.emitAccumSec += dtSec;
       // Catch-up cap: never spawn more than 5 particles per tick from one
       // emitter (defensive against long pauses → giant catch-up bursts).
       let emittedThisTick = 0;
       while (e.emitAccumSec >= intervalSec && emittedThisTick < 5) {
-        const pose = getPose(e.entityId);
-        if (!pose) break;
-        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000);
+        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth, ejectSpeed, params.smokeColor);
         e.emitAccumSec -= intervalSec;
         emittedThisTick++;
       }
@@ -171,6 +241,21 @@ export class EngineEmitter {
   /** Counts for the budget. */
   activeCount(): { emitters: number; particles: number } {
     return { emitters: this.emitters.size, particles: this.particles.length };
+  }
+
+  /** DEBUG: copy live particle WORLD positions + GAME velocities into `out` as
+   *  [gfxX, gfxY, vx, vy, ...] (gfx.y = -gameY; vx/vy are game-space). Camera-
+   *  independent ground truth for the exhaust-side investigation. Returns count. */
+  debugCopyParticleWorld(out: number[]): number {
+    const n = this.particles.length;
+    for (let i = 0; i < n; i++) {
+      const p = this.particles[i]!;
+      out[i * 4] = p.gfx.x;
+      out[i * 4 + 1] = p.gfx.y;
+      out[i * 4 + 2] = p.vx;
+      out[i * 4 + 3] = p.vy;
+    }
+    return n;
   }
 
   /** Wipe everything on sector handoff. Destroys both live and pooled
@@ -192,10 +277,14 @@ export class EngineEmitter {
   // ── Private ──────────────────────────────────────────────────────────
 
   private emitParticle(
-    pose: { x: number; y: number; angle: number },
+    pose: { x: number; y: number; angle: number; vx?: number; vy?: number },
     spread: number,
     tint: number,
     lifetimeS: number,
+    sternOffset: number,
+    nozzleWidth: number,
+    ejectSpeed: number,
+    smokeColor: number,
   ): void {
     if (this.particles.length >= PARTICLE_POOL_CAP) {
       const oldest = this.particles.shift();
@@ -205,19 +294,36 @@ export class EngineEmitter {
       }
     }
 
-    // Ship-relative stern offset (game-space). Ship's forward is
-    // -sin(angle), cos(angle); stern is the opposite direction. We emit
-    // ~25 u behind the ship's centre + some spread.
-    const sternOffsetWorld = -25;
-    const sx = pose.x + Math.sin(pose.angle) * (-sternOffsetWorld); // = pose.x - sin*25 = stern X
-    const sy = pose.y - Math.cos(pose.angle) * (-sternOffsetWorld); // = pose.y + cos*25 = stern Y
+    // Nozzle position (game-space). Forward = (-sin θ, cos θ); the stern
+    // (astern) direction is the opposite, (sin θ, -cos θ). `pose.angle` is
+    // now game-space (the renderer un-negates it — see entityPoseFromSprite),
+    // and `sternOffset` is the per-kind hull rear extent so the plume emerges
+    // AT the engine, not a flat 25 u behind centre.
+    const sinA = Math.sin(pose.angle);
+    const cosA = Math.cos(pose.angle);
+    let sx = pose.x + sinA * sternOffset;
+    let sy = pose.y - cosA * sternOffset;
+    // Positional spread across the nozzle mouth, PERPENDICULAR to the thrust
+    // axis. Perp(astern) = (cos θ, sin θ). Gives the plume width instead of a
+    // single emit point.
+    const perp = (Math.random() - 0.5) * nozzleWidth;
+    sx += cosA * perp;
+    sy += sinA * perp;
 
-    // Velocity: behind the ship with a random spread cone.
+    // Velocity = PURE astern ejection (game-space world velocity). (-sin, cos)
+    // of (angle+π) is the astern direction. The plume TRAILS naturally because
+    // the ship races forward while the exhaust shoots astern — faster ship ⇒
+    // longer relative trail. (A previous "velocity-inheritance" term —
+    // `pose.v * streamFactor` — rendered the exhaust on the FORWARD side at
+    // high speed; removed 2026-06-07. Lock: engine-particles-probe.spec.ts
+    // "exhaust stays astern at high ship speed".)
     const heading = pose.angle + Math.PI; // pointing astern
     const spreadAngle = heading + (Math.random() - 0.5) * spread;
-    const speed = 60 + Math.random() * 40;
-    const vx = -Math.sin(spreadAngle) * speed;
-    const vy = Math.cos(spreadAngle) * speed;
+    const ejs = ejectSpeed * (0.8 + Math.random() * 0.4); // ±20% per-particle
+    const vx = -Math.sin(spreadAngle) * ejs;
+    const vy = Math.cos(spreadAngle) * ejs;
+
+    const sizeMul = 0.8 + Math.random() * 0.6; // ±, plume variation
 
     // Pool path: pop a free record + Graphics if one exists for this
     // tint, reset its mutable fields. Otherwise allocate (only happens
@@ -227,24 +333,27 @@ export class EngineEmitter {
       p = {
         gfx: this.factories.makeParticle(tint),
         tint,
+        smokeColor,
+        sizeMul,
         vx, vy,
         lifeS: lifetimeS,
         initialLifeS: lifetimeS,
       };
     } else {
+      p.smokeColor = smokeColor;
+      p.sizeMul = sizeMul;
       p.vx = vx;
       p.vy = vy;
       p.lifeS = lifetimeS;
       p.initialLifeS = lifetimeS;
-      // Pixi v8 Graphics doesn't carry stale state we need to reset
-      // here — alpha + scale are set by tickParticles on the next frame
-      // before paint, and position is set just below.
     }
-    // Apply Y-flip when writing to Pixi.
+    // Apply Y-flip when writing to Pixi. Birth state = white-hot, full alpha,
+    // birth size — `tickParticles` re-derives tint/alpha/scale each frame.
     p.gfx.x = sx;
     p.gfx.y = -sy;
     p.gfx.alpha = 1;
-    p.gfx.scale.set(1, 1);
+    p.gfx.tint = HOT_COLOR;
+    p.gfx.scale.set(sizeMul);
     this.parent.addChild(p.gfx);
     this.particles.push(p);
   }
@@ -282,9 +391,15 @@ export class EngineEmitter {
       // Drift in world; Pixi Y is flipped on write.
       p.gfx.x += p.vx * dtSec;
       p.gfx.y -= p.vy * dtSec;
-      const t = p.lifeS / p.initialLifeS;
+      const t = p.lifeS / p.initialLifeS; // 1 at birth → 0 at death
       p.gfx.alpha = t;
-      p.gfx.scale.set(t * 1.2);
+      // Taper the plume: bright + larger near the nozzle, shrinking with age.
+      p.gfx.scale.set(p.sizeMul * (0.45 + 0.55 * t));
+      // Colour-over-life: white-hot (birth) → base hue (mid) → smoke (death).
+      // First 40 % of life ramps hot→base; the rest ramps base→smoke.
+      p.gfx.tint = t > 0.6
+        ? lerpColor(HOT_COLOR, p.tint, (1 - t) / 0.4)
+        : lerpColor(p.tint, p.smokeColor, (0.6 - t) / 0.6);
     }
   }
 }

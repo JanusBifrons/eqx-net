@@ -30,6 +30,7 @@ import {
   computeBootstrapReadyFromState,
   computeIsLoadingActive,
 } from '../state/store.js';
+import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import type { IRenderer } from '@core/contracts/IRenderer';
 
@@ -215,9 +216,36 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // them on prod halves the rank-1 allocator P1 named
     // (`gameRafLoop.loop` 55 KB / 6.8 %).
     const writeE2E = writeDataset && E2E_DATASET_ENABLED;
-    // Single batched renderer-feedback read per frame — only when we
-    // intend to use it (skips a `getFeedback()` call entirely in prod).
-    const feedback = writeE2E ? renderer.getFeedback() : null;
+    // A blueprint ghost is up ⇒ we need renderer feedback in PRODUCTION too: the
+    // Confirm banner reads the pointer-chosen world point + the banner anchors
+    // over the ghost. The data-* placement surface in `writeE2EDataset` is
+    // webdriver-only, so on a real phone Confirm used to read an empty dataset
+    // and place ahead-of-ship (smoke 2026-06-07 capture kuytvy). This bridge is
+    // NOT E2E-gated. `pendingPlacementPreview` is a cheap mirror flag and
+    // placement is a rare, brief mode, so the extra getFeedback() is negligible.
+    const placing = gameClient.mirror.pendingPlacementPreview != null;
+    // Single batched renderer-feedback read per frame — when E2E wants the
+    // dataset OR a placement is active. Skips getFeedback() entirely otherwise.
+    const feedback = (writeE2E || placing) ? renderer.getFeedback() : null;
+    if (placing && feedback) {
+      placementChosen.worldX =
+        typeof feedback.placementChosenWorldX === 'number' ? feedback.placementChosenWorldX : null;
+      placementChosen.worldY =
+        typeof feedback.placementChosenWorldY === 'number' ? feedback.placementChosenWorldY : null;
+      placementChosen.stuck = feedback.placementStuck;
+      // Anchor the Confirm banner over the ghost's projected screen position.
+      const psx = feedback.placementScreenX;
+      const psy = feedback.placementScreenY;
+      if (typeof psx === 'number' && typeof psy === 'number') {
+        const banner = document.querySelector('[data-testid="placement-banner"]') as HTMLElement | null;
+        if (banner) {
+          banner.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, psx))}px`;
+          banner.style.top = `${Math.max(48, Math.min(window.innerHeight - 8, psy))}px`;
+        }
+      }
+    } else if (placementChosen.worldX !== null || placementChosen.stuck) {
+      resetPlacementChosen();
+    }
     if (localShip && writeE2E && feedback) {
       el.dataset['shipX'] = localShip.x.toFixed(3);
       el.dataset['shipY'] = localShip.y.toFixed(3);
@@ -348,17 +376,22 @@ function writeE2EDataset(
   if (typeof placeX === 'number' && typeof placeY === 'number') {
     el.dataset['placementScreenX'] = placeX.toFixed(1);
     el.dataset['placementScreenY'] = placeY.toFixed(1);
-    const banner = document.querySelector('[data-testid="placement-banner"]') as HTMLElement | null;
-    if (banner) {
-      // Clamp into the viewport so the confirm never drifts fully off-screen.
-      const cx = Math.max(8, Math.min(window.innerWidth - 8, placeX));
-      const cy = Math.max(48, Math.min(window.innerHeight - 8, placeY));
-      banner.style.left = `${cx}px`;
-      banner.style.top = `${cy}px`;
+    // The pointer-chosen GAME point the Confirm send uses (tap/drag-to-position
+    // 2026-06-07). Published as data-attrs so the banner reads it on Confirm
+    // without a per-frame React write (#2).
+    if (typeof feedback.placementChosenWorldX === 'number' && typeof feedback.placementChosenWorldY === 'number') {
+      el.dataset['placementWorldX'] = feedback.placementChosenWorldX.toFixed(2);
+      el.dataset['placementWorldY'] = feedback.placementChosenWorldY.toFixed(2);
     }
+    el.dataset['placementStuck'] = feedback.placementStuck ? '1' : '0';
+    // NB: the banner is anchored over the ghost in the PRODUCTION placement
+    // bridge in `loop` (un-gated), not here — that block is webdriver-only.
   } else {
     delete el.dataset['placementScreenX'];
     delete el.dataset['placementScreenY'];
+    delete el.dataset['placementWorldX'];
+    delete el.dataset['placementWorldY'];
+    delete el.dataset['placementStuck'];
   }
 
   // Remote lasers — Phase 2c per-mount flatten.

@@ -75,14 +75,24 @@ export function computePlacementPreview(
 export function placeStructureAhead(kindId: StructureKindId): boolean {
   const client = getGameClient();
   if (!client) return false;
-  const room = client.getRoom();
-  if (!room) return false;
   const localId = client.mirror.localPlayerId;
   if (!localId) return false;
   const ship = client.mirror.ships.get(localId);
   if (!ship) return false;
-
   const pos = computePlacementPose({ x: ship.x, y: ship.y, angle: ship.angle }, kindId);
-  room.send('place_structure', { type: 'place_structure', kind: kindId, x: pos.x, y: pos.y });
+  return placeStructureAt(kindId, pos.x, pos.y);
+}
+
+/**
+ * Place a structure of `kindId` at an EXPLICIT world position (the tap/drag-
+ * positioned blueprint ghost — 2026-06-07). Returns true if the message was
+ * sent (false when there's no live room yet).
+ */
+export function placeStructureAt(kindId: StructureKindId, x: number, y: number): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y });
   return true;
 }

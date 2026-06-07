@@ -14,7 +14,7 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
-import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT } from './livingworld/LivingWorldDirector.js';
+import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
 
 const logger = pino({
   name: 'server',
@@ -708,13 +708,22 @@ async function main(): Promise<void> {
   // Living World — start the population director over the live galaxy
   // rooms (production timings). Single process-global owner of the 25
   // hunter bots; unref'd control loop so it never keeps Node alive on
-  // its own. Stopped in `shutdown()`.
-  livingWorldDirector = new LivingWorldDirector(galaxyRooms);
-  livingWorldDirector.start();
-  logger.info(
-    { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT },
-    'living world director started',
-  );
+  // its own. Stopped in `shutdown()`. The EQX_DISABLE_LIVING_WORLD
+  // kill-switch (ops/playtest) skips it entirely so building gameplay is
+  // peaceful — ambient sector drones stay neutral. Re-arm by unsetting it.
+  if (isLivingWorldDisabled()) {
+    logger.warn(
+      { sectors: galaxyRooms.size },
+      'living world DISARMED — no hunter bots will spawn or hunt (EQX_DISABLE_LIVING_WORLD set); unset + restart to re-arm',
+    );
+  } else {
+    livingWorldDirector = new LivingWorldDirector(galaxyRooms);
+    livingWorldDirector.start();
+    logger.info(
+      { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT },
+      'living world director started',
+    );
+  }
 
   // All boot work is done — joining a galaxy room will now succeed.
   // Flip the /healthz `ready` flag so the client landing screen enables

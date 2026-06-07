@@ -76,6 +76,9 @@ const FEATURE_SPECS: string[] = [
   '**/drawer-galaxy.spec.ts',
   '**/drone-destruction.spec.ts',
   '**/drone-laser-smoothness.spec.ts',
+  '**/engine-particles-probe.spec.ts',
+  '**/engine-particles-flight.spec.ts',
+  '**/engine-particles-demo.spec.ts',
   '**/feel-test-lockstep.spec.ts',
   '**/feel-tuning.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
@@ -101,6 +104,7 @@ const FEATURE_SPECS: string[] = [
   '**/structure-visible-damageable.spec.ts',
   // Structures plan (speed-dial-resource-structures) — build/grid/mining/turret.
   '**/structure-build-placement.spec.ts',
+  '**/structure-placement-ghost.spec.ts',
   '**/structure-grid-web.spec.ts',
   '**/structure-scenario.spec.ts',
   '**/linger/*.spec.ts',

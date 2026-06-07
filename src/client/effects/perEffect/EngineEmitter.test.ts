@@ -85,11 +85,189 @@ describe('EngineEmitter — tier dial', () => {
     expect(low.activeCount().particles).toBeLessThan(high.activeCount().particles);
   });
 
-  it('emits zero particles at "minimal" (legacy Graphics flames are the only visual)', () => {
-    const e = new EngineEmitter(makeParent() as never, () => 'minimal', makeFactories());
+  it('emits a SPARSE plume at "minimal" (particle-only: no flame fallback)', () => {
+    // Post flame-removal, minimal must still show some exhaust — but fewer
+    // than high (0.35 rate mul vs 1.0).
+    const minimal = new EngineEmitter(makeParent() as never, () => 'minimal', makeFactories());
+    const high = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());
+    minimal.setActive('s', 'thrust', true);
+    high.setActive('s', 'thrust', true);
+    for (let i = 0; i < 60; i++) {
+      minimal.tick(0.016, POSE_AT_ORIGIN);
+      high.tick(0.016, POSE_AT_ORIGIN);
+    }
+    expect(minimal.activeCount().particles).toBeGreaterThan(0);
+    expect(minimal.activeCount().particles).toBeLessThan(high.activeCount().particles);
+  });
+});
+
+describe('EngineEmitter — spawn side (paired math lock for the mirror fix)', () => {
+  it('spawns the particle ASTERN on the correct side for a diagonal heading', () => {
+    // PAIRED with entityPoseFromSprite.test.ts (Invariant #13): the seam test
+    // proves the renderer now hands a GAME-SPACE angle; this proves the
+    // emitter places the particle astern (un-mirrored) GIVEN a game-space
+    // angle. Together they cover the X-mirror smoke bug.
+    const created: Record<string, unknown>[] = [];
+    const factories: EngineFactories = {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        created.push(g);
+        return g as never;
+      }),
+    };
+    const e = new EngineEmitter(makeParent() as never, () => 'high', factories);
     e.setActive('s', 'thrust', true);
-    for (let i = 0; i < 30; i++) e.tick(0.016, POSE_AT_ORIGIN);
-    expect(e.activeCount().particles).toBe(0);
+    // Game-space heading +π/4. Forward = (-sin, cos); astern = (sin, -cos),
+    // i.e. +X and -Y in game space. With the pre-fix NEGATED angle this would
+    // have spawned at -X (the mirror).
+    const pose: EnginePoseFn = () => ({ x: 0, y: 0, angle: Math.PI / 4 });
+    e.tick(0.05, pose);
+    expect(created.length).toBeGreaterThan(0);
+    const g = created[0]!;
+    // gfx is Pixi-space: gfx.x = gameX, gfx.y = -gameY.
+    const gameX = g.x as number;
+    const gameY = -(g.y as number);
+    expect(gameX).toBeGreaterThan(0); // astern is +X for +π/4 (NOT mirrored to -X)
+    expect(gameY).toBeLessThan(0); // astern is -Y for +π/4
+  });
+});
+
+describe('EngineEmitter — per-kind nozzle profile', () => {
+  function collectFactories(into: Record<string, unknown>[]): EngineFactories {
+    return {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        into.push(g);
+        return g as never;
+      }),
+    };
+  }
+
+  it('spawns at the supplied per-kind sternOffset (not the legacy 25u)', () => {
+    // Math.random is mocked to 0.5 (like the sibling cases) so the spawn is
+    // DETERMINISTIC: perp = (0.5-0.5)*w = 0 (no nozzle-width offset), the
+    // ejection cone is pure-astern (max y-drift), and the ±20% ejection-speed
+    // term is exactly 1.0×. Without this the unmocked nozzle spread + ejection
+    // cone make the post-emit y-drift vary enough to occasionally clear the
+    // bound under an unlucky draw (a parallel-scheduling-exposed flake,
+    // 2026-06-07). angle 0 + zero velocity → astern is straight "down"
+    // (gfx.y = +sternOffset) and the only post-emit drift is the astern
+    // ejection (always increases y): spawn 10 + ~8 astern drift = 18.0 here.
+    // The lock is that it's the ~10u rear extent, NOT the legacy 25u — which
+    // would spawn at 25 and drift to ~33. So `< 25` cleanly separates them.
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    try {
+      const created: Record<string, unknown>[] = [];
+      const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
+      e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+      e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
+      expect(created.length).toBeGreaterThan(0);
+      const y = created[0]!.y as number;
+      expect(y).toBeGreaterThanOrEqual(9.99); // at/behind the 10u nozzle
+      expect(y).toBeLessThan(25); // NOT the legacy 25u (which would spawn ≥ 25)
+    } finally {
+      rnd.mockRestore();
+    }
+  });
+
+  it('plumeScale widens the nozzle mouth proportionally', () => {
+    // random=1 → perp = +nozzleWidth/2, and identical velocity for both runs
+    // (velocity is plume-scale-independent), so the constant post-emit x-drift
+    // cancels in the SUBTRACTION x2 - x1 = perpΔ = 0.5·thrustNozzleWidth·(2-1).
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(1);
+    try {
+      const spawnX = (plumeScale: number): number => {
+        const created: Record<string, unknown>[] = [];
+        const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
+        e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale });
+        e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
+        return created[0]!.x as number;
+      };
+      const x1 = spawnX(1);
+      const x2 = spawnX(2);
+      expect(Math.abs(x2)).toBeGreaterThan(Math.abs(x1));
+      expect(Math.abs(x2) - Math.abs(x1)).toBeCloseTo(5, 5); // 0.5 * thrustNozzleWidth(10)
+    } finally {
+      rnd.mockRestore();
+    }
+  });
+});
+
+describe('EngineEmitter — speed-scaled emission (Bug 3)', () => {
+  it('emits MORE particles at high ship speed than at idle, but idle still sputters', () => {
+    const steadyCount = (vx: number, vy: number): number => {
+      const e = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());
+      e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+      const pose: EnginePoseFn = () => ({ x: 0, y: 0, angle: 0, vx, vy });
+      for (let i = 0; i < 60; i++) e.tick(0.016, pose); // ~1 s → steady state
+      return e.activeCount().particles;
+    };
+    const idle = steadyCount(0, 0); // floor rate
+    const fast = steadyCount(0, 600); // ≥ refSpeed → full rate
+    expect(idle).toBeGreaterThan(0); // a stationary-but-thrusting engine still sputters
+    expect(fast).toBeGreaterThan(idle); // density tracks speed
+  });
+});
+
+describe('EngineEmitter — exhaust is pure astern ejection (wrong-side regression)', () => {
+  it('drift stays ASTERN regardless of ship velocity (no forward inheritance)', () => {
+    // The Step-3 velocity-inheritance "streaming" rendered the exhaust on the
+    // FORWARD side at high ship speed (smoke 2026-06-07). The fix: particle
+    // velocity is PURE astern ejection, independent of ship velocity. For an
+    // up-facing ship (angle 0), astern = -y(game) = gfx.y INCREASES.
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(0.5); // no perp, astern-aligned cone
+    try {
+      const driftY = (vx: number, vy: number): number => {
+        const created: Record<string, unknown>[] = [];
+        const e = new EngineEmitter(makeParent() as never, () => 'high', {
+          makeParticle: vi.fn(() => {
+            const g = makeStubGfx();
+            created.push(g);
+            return g as never;
+          }),
+        });
+        e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+        e.tick(0.05, () => ({ x: 0, y: 0, angle: 0, vx, vy }));
+        // gfx.y − spawn offset(10) = post-emit drift in pixi-y; > 0 = astern.
+        return (created[0]!.y as number) - 10;
+      };
+      const idleDrift = driftY(0, 0);
+      const fastDrift = driftY(0, 600); // FAST forward — the regime that broke
+      expect(idleDrift).toBeGreaterThan(0); // astern at idle
+      expect(fastDrift).toBeGreaterThan(0); // STILL astern at high speed (the fix)
+      expect(fastDrift).toBeGreaterThanOrEqual(idleDrift); // eject speed scales up with speed
+    } finally {
+      rnd.mockRestore();
+    }
+  });
+});
+
+describe('EngineEmitter — colour-over-life (punch)', () => {
+  it('ramps gfx.tint white-hot → base → smoke and dims over lifetime', () => {
+    const created: Record<string, unknown>[] = [];
+    const e = new EngineEmitter(makeParent() as never, () => 'high', {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        created.push(g);
+        return g as never;
+      }),
+    });
+    e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+    // Spawn one particle (full-rate via a moving pose) + sample its tint early.
+    e.tick(0.02, () => ({ x: 0, y: 0, angle: 0, vx: 0, vy: 600 }));
+    expect(created.length).toBeGreaterThan(0);
+    const g = created[0]!;
+    const earlyTint = g.tint as number; // near white-hot just after birth
+
+    // Age the particle toward death with no new emits (emitter removed).
+    e.setActive('s', 'thrust', false);
+    for (let i = 0; i < 18; i++) e.tick(0.016, () => ({ x: 0, y: 0, angle: 0 }));
+    const lateTint = g.tint as number;
+
+    const brightness = (c: number): number =>
+      ((c >> 16) & 0xff) + ((c >> 8) & 0xff) + (c & 0xff);
+    expect(lateTint).not.toBe(earlyTint); // colour evolves over life
+    expect(brightness(earlyTint)).toBeGreaterThan(brightness(lateTint)); // hot → smoke
   });
 });
 

@@ -62,6 +62,64 @@ describe('drainContacts', () => {
     world.dispose();
   });
 
+  it('tags each contact with impactSpeed = |relative pre-step velocity| from preVel', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    world.spawnShip('a', -20, 0);
+    world.spawnShip('b', 20, 0);
+    world.setShipState('a', { x: -20, y: 0, angle: 0, vx: 40, vy: 0 });
+    world.setShipState('b', { x: 20, y: 0, angle: 0, vx: -40, vy: 0 });
+    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+
+    // The caller supplies the PRE-step (approach) velocities. The closing speed
+    // is the magnitude of their relative velocity, independent of the noisy
+    // post-collision velocities the world now holds.
+    const preVel = new Map<string, { vx: number; vy: number }>([
+      ['a', { vx: 40, vy: 0 }],
+      ['b', { vx: -40, vy: 0 }],
+    ]);
+    const contacts = drainContacts(eventQueue, world, 50, preVel);
+    expect(contacts.length).toBeGreaterThan(0);
+    expect(contacts[0]!.impactSpeed).toBeCloseTo(80, 6); // |40 - (-40)|
+
+    world.dispose();
+  });
+
+  it('treats an entity missing from preVel as at rest (correct for a static structure)', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    world.spawnShip('a', -20, 0);
+    world.spawnShip('b', 20, 0);
+    world.setShipState('a', { x: -20, y: 0, angle: 0, vx: 40, vy: 0 });
+    world.setShipState('b', { x: 20, y: 0, angle: 0, vx: -40, vy: 0 });
+    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+
+    // Only 'a' has a recorded pre-velocity; 'b' (a stand-in static structure)
+    // is absent ⇒ treated as 0 ⇒ impactSpeed = |a's approach speed|.
+    const preVel = new Map<string, { vx: number; vy: number }>([['a', { vx: 40, vy: 30 }]]);
+    const contacts = drainContacts(eventQueue, world, 50, preVel);
+    expect(contacts.length).toBeGreaterThan(0);
+    expect(contacts[0]!.impactSpeed).toBeCloseTo(50, 6); // hypot(40, 30)
+
+    world.dispose();
+  });
+
+  it('omits impactSpeed when no preVel is supplied (force-fallback path)', async () => {
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    world.spawnShip('a', -20, 0);
+    world.spawnShip('b', 20, 0);
+    world.setShipState('a', { x: -20, y: 0, angle: 0, vx: 40, vy: 0 });
+    world.setShipState('b', { x: 20, y: 0, angle: 0, vx: -40, vy: 0 });
+    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+
+    const contacts = drainContacts(eventQueue, world, 50);
+    expect(contacts.length).toBeGreaterThan(0);
+    expect(contacts[0]!.impactSpeed).toBeUndefined();
+
+    world.dispose();
+  });
+
   it('filters out contacts whose force is below the floor', async () => {
     const world = await PhysicsWorld.create();
     const eventQueue = new RAPIER.EventQueue(true);

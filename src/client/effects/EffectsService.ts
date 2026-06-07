@@ -26,7 +26,7 @@ import {
 import { EffectsBudget } from './EffectsBudget';
 import { DestructionFx } from './perEffect/DestructionFx';
 import { buildDestructionFactories } from './perEffect/destructionFactories';
-import { EngineEmitter, type EnginePoseFn } from './perEffect/EngineEmitter';
+import { EngineEmitter, type EnginePoseFn, type EngineProfileInput } from './perEffect/EngineEmitter';
 import { buildEngineFactories } from './perEffect/engineFactories';
 import { LaserGlow, type LaserGlowBeams } from './perEffect/LaserGlow';
 import { buildLaserGlowFactories } from './perEffect/laserGlowFactories';
@@ -169,7 +169,13 @@ export class EffectsService implements IEffects {
    * M1 records the entry so the test surface can observe it; M5 (engines)
    * + M8 (shields) attach real Pixi visuals.
    */
-  setContinuous(entityId: string, kind: ContinuousEffectKind, active: boolean, radius?: number): void {
+  setContinuous(
+    entityId: string,
+    kind: ContinuousEffectKind,
+    active: boolean,
+    radius?: number,
+    engine?: EngineProfileInput,
+  ): void {
     const key = `${entityId}:${kind}`;
     const prev = this.continuous.get(key);
     if (prev?.active === active) return; // re-entrant: no-op on identical state
@@ -180,7 +186,9 @@ export class EffectsService implements IEffects {
     }
     // Dispatch to the per-effect manager.
     if (kind === 'thrust' || kind === 'boost') {
-      this.engines.setActive(entityId, kind, active);
+      // `engine` carries the per-kind nozzle offset + plume scale (computed
+      // by the renderer from the ship catalogue). `radius` stays shield-only.
+      this.engines.setActive(entityId, kind, active, engine);
     } else if (kind === 'shield') {
       // Threading `radius` through is what makes the visible shield aura
       // match the physics ball collider per-kind. Without it, ShieldAura
@@ -262,6 +270,11 @@ export class EffectsService implements IEffects {
 
   pulseShield(entityId: string): void {
     this.shieldAura.pulse(entityId);
+  }
+
+  /** DEBUG passthrough — see `EngineEmitter.debugCopyParticleWorld`. */
+  debugCopyEngineParticleWorld(out: number[]): number {
+    return this.engines.debugCopyParticleWorld(out);
   }
 
   // ── IFilterEffects ──────────────────────────────────────────────────

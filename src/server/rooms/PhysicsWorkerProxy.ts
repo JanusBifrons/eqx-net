@@ -49,7 +49,9 @@ export type WorkerCmd =
    *  despawned entities. See docs/architecture/missile-simulation.md. */
   | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number };
 
-/** Per-tick contact payload extracted from the worker's CONTACT_BATCH message. */
+/** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
+ *  Mirrors `core/physics/contactDrain.ts` `Contact` across the postMessage
+ *  boundary (structured-clone preserves every field). */
 export interface ContactPayload {
   aId: string;
   bId: string;
@@ -58,6 +60,8 @@ export interface ContactPayload {
   vBxPost: number;
   vByPost: number;
   forceMagnitude: number;
+  /** Closing speed (game u/s) at impact — drives the ramming-damage gate. */
+  impactSpeed?: number;
 }
 
 /** Generic worker-to-main message shape (loosely typed; the worker

@@ -125,6 +125,11 @@ async function main(): Promise<void> {
   const sleepCount = new Map<number, number>();
   /** Per-slot last-broadcast sleep flag, used to detect transitions for SLEEP_TRANSITION. */
   const sleepState = new Map<number, boolean>();
+  /** Per-entity velocity AS OF THE END OF THE PREVIOUS TICK = this tick's
+   *  pre-step (approach) velocity. `drainContacts` reads this to compute each
+   *  contact's impact (closing) speed. Repopulated from `allStates` at the tail
+   *  of every tick; value objects are reused (no per-tick allocation, #14). */
+  const prevVel = new Map<string, { vx: number; vy: number }>();
   let tick = 0;
 
   // Register command handler BEFORE signalling READY so commands sent
@@ -378,10 +383,32 @@ async function main(): Promise<void> {
     // Stage 2 — drain contact-force events and post a single batched
     // CONTACT_BATCH per tick. drainContacts applies the production force
     // floor and resolves collider→body→entity-id; the main thread relays
-    // each entry as a `collision_resolved` network message.
-    const contacts = drainContacts(eventQueue, physics, CONTACT_FORCE_FLOOR);
+    // each entry as a `collision_resolved` network message. `prevVel` (last
+    // tick's velocities = this tick's pre-step approach velocities) lets it
+    // tag each contact with its impact (closing) speed for the damage gate.
+    const contacts = drainContacts(eventQueue, physics, CONTACT_FORCE_FLOOR, prevVel);
     if (contacts.length > 0) {
       parentPort!.postMessage({ type: 'CONTACT_BATCH', tick, contacts });
+    }
+
+    // Snapshot THIS tick's post-step velocities as NEXT tick's pre-step
+    // (approach) velocities. Reuse value objects to stay allocation-free (#14);
+    // `allStates` was already gathered above for the SAB write.
+    for (const [id, s] of allStates) {
+      const e = prevVel.get(id);
+      if (e !== undefined) {
+        e.vx = s.vx;
+        e.vy = s.vy;
+      } else {
+        prevVel.set(id, { vx: s.vx, vy: s.vy });
+      }
+    }
+    // Prune despawned entities so prevVel stays bounded. Only scans when stale
+    // entries exist — in steady state the sizes match and this is a no-op.
+    if (prevVel.size > allStates.size) {
+      for (const id of prevVel.keys()) {
+        if (!allStates.has(id)) prevVel.delete(id);
+      }
     }
 
     // Phase 6 — publish the wall-clock duration of this step (in µs) so the

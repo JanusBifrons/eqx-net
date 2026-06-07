@@ -105,6 +105,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             liveBeamRenderedFromY: fb.liveBeamRenderedFromY,
             placementScreenX: fb.placementScreenX,
             placementScreenY: fb.placementScreenY,
+            placementChosenWorldX: fb.placementChosenWorldX,
+            placementChosenWorldY: fb.placementChosenWorldY,
+            placementStuck: fb.placementStuck,
           },
         });
         // F1 — per-frame sub-cost markers. GATED: only post when

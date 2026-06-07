@@ -27,14 +27,43 @@ export const DEFAULT_DESTRUCTION_PARAMS = {
   scatter: 1.0,
 } as const;
 
-/** Tuned in M5 — Engine particles. */
+/** Tuned in M5 — Engine particles. Overhauled by the engine-fx pass
+ *  (plan `majestic-pie`): per-kind nozzle anchoring + speed-scaled emission +
+ *  velocity-coherent streaming + additive hot-core colour-over-life. */
 export const DEFAULT_ENGINE_PARAMS = {
   thrustEmitRateHz: 60,
-  thrustLifetimeMs: 350,
+  thrustLifetimeMs: 450,
   thrustSpread: 0.25,
   boostEmitRateHz: 90,
-  boostLifetimeMs: 500,
+  boostLifetimeMs: 600,
   boostSpread: 0.18,
+  /** Nozzle-mouth width (game units, before per-kind `plumeScale`). Particles
+   *  spawn across this width perpendicular to the thrust axis so the plume
+   *  reads as an exhaust mouth, not a single point. */
+  thrustNozzleWidth: 10,
+  boostNozzleWidth: 8,
+  /** Astern ejection speed (game u/s) — the particle's WORLD velocity is pure
+   *  astern ejection (no ship-velocity inheritance; that rendered the plume on
+   *  the forward side at speed — removed 2026-06-07). Per-particle ±20%
+   *  variance at spawn; scaled up mildly with ship speed (see `tick`). The
+   *  plume trails because the ship races forward while exhaust shoots astern. */
+  thrustEjectSpeed: 200,
+  boostEjectSpeed: 280,
+  /** Ship speed (game u/s) at which emission reaches full rate + full eject
+   *  speed. Below it, rate scales down to `minRateFrac` so a slow/idle engine
+   *  sputters and a fast one streams densely (speed-responsive density). */
+  thrustRefSpeed: 400,
+  boostRefSpeed: 550,
+  /** Floor on the speed-scaled emit rate so a stationary-but-thrusting engine
+   *  still shows exhaust (fraction of the tier rate). */
+  thrustMinRateFrac: 0.5,
+  boostMinRateFrac: 0.5,
+  /** Colour-over-life endpoints. Particles are baked WHITE + additive; the
+   *  per-frame `gfx.tint` ramps white-hot (birth) → base (mid) → smoke (death).
+   *  Base is the kind hue (thrust orange 0xff8844 / boost blue 0x88ccff, set as
+   *  the pool key); these are the late-life smoke tints it fades toward. */
+  thrustSmokeColor: 0x551a00,
+  boostSmokeColor: 0x101a44,
 } as const;
 
 /** Tuned in M6 — Laser glow. */

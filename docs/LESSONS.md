@@ -14,6 +14,69 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-07 — engine-fx — the exhaust-mirror bug lived at the renderer↔emitter SEAM, not in the emitter
+Commit: feat/engine-particle-fx (plan `majestic-pie`)
+**Symptom (smoke).** Engine exhaust particles appeared on the WRONG side (right
+instead of left), detached from the nozzle "on a circle", and were dull + didn't
+respond to speed.
+
+**The seam bug (the reusable lesson).** The mirror was a one-character
+convention error in `PixiRenderer.init`'s `getEntityPose` closure: it returned
+`angle: sp.rotation`. The sprite is drawn with `sprite.rotation = -ship.angle`
+(Pixi Y-down), so `sp.rotation` is the NEGATED game angle — but the closure's
+own contract (and the `EngineEmitter` math it feeds) is game-space. Because the
+emitter does `sin(angle)` for the stern X and ejection X, and `sin` is ODD, the
+negated angle flipped ONLY the X (cos is even → Y was fine) — a clean left/right
+mirror. **Invariant #13 "test at the level where the bug LIVES" was decisive
+here:** a unit test on `EngineEmitter` alone PASSES on the buggy build (its math
+is correct for whatever angle it's handed) — the classic wrong-level trap. The
+failing-first lock had to be at the SEAM (`entityPoseFromSprite.test.ts` asserts
+`angle === -rotation`, RED before the one-line fix), paired with an emitter
+math-lock for the spawn side. Greppable rule: when an effect "glued" to an
+entity renders mirrored/rotated wrong, suspect the POSE-CONVERSION seam (Y-flip
+/ angle-negate) before the effect's own math.
+
+**The "circle when fast" was deposit, not geometry.** Particles ejected at
+60–100 u/s while the ship cruises at 750+ → the ship outruns its slow exhaust
+and the dots get deposited in world space along the flight path (an arc when
+turning). Fix = inherit a fraction (`streamFactor`) of the ship's velocity so
+the plume trails, + scale emit density/eject speed by speed. The emitter
+couldn't even SEE velocity (the sprite carries only x/y/rotation) — had to stash
+the frame's mirror (`_lastMirror`) and fill `vx/vy` from `mirror.ships` into the
+reused pose scratch.
+
+**Follow-up (same day): the "coherent streaming" was the SECOND wrong-side bug
+— trust the measurement over the proof.** The Step-3 velocity-inheritance fix
+for "circle when fast" (particle world velocity = `shipVel × streamFactor +
+asternEjection`) rendered the exhaust on the FORWARD side at high ship speed
+(confirmed in-game at 472 u/s AND in the probe). The maddening part: the
+analytic argument is AIRTIGHT that the relative velocity is always astern
+(`(streamFactor−1)·shipVel + ejection`, both terms astern for `streamFactor<1`)
+— I re-derived it five times and it always said astern. The RENDER said forward.
+The resolution was to STOP theorising and instrument: a `__debugEngine` hook
+that reads the particles' actual WORLD positions (camera-independent) showed
+`forward: 5/5` at `streamFactor 0.6` and `astern: 5/5` at `streamFactor 0` —
+conclusive. Removed the inheritance entirely; the plume trails naturally because
+the ship races forward while exhaust shoots astern (pure ejection can never be
+forward). Reusable lesson: when a from-first-principles proof disagrees with a
+screenshot, the screenshot wins — add a camera-independent world-coordinate
+readout and bisect the suspect term, don't keep re-deriving. Also: I had
+dismissed the probe's moving-ship plume as a "camera artifact" — it was THIS
+real bug the whole time; the user catching it in a screenshot I shouldn't have
+sent is what forced the proper investigation.
+
+**Visual-first probe gotcha.** The screenshot probe MUST construct a MAIN-THREAD
+`PixiRenderer` directly — `WorkerRendererClient` (OffscreenCanvas) screenshots
+BLACK *and* bypasses the real `getEntityPose` where the bug lived. A diagonal
+ship angle is required to expose the X-mirror (at angle 0, `sin 0 = 0` hides it —
+which is why the pre-existing sandbox never revealed it). The probe's
+moving-ship case was confounded by its hand-rolled dual-RAF camera follow
+(particles appeared on the travel side); the REAL `galaxy-test` flight spec was
+the authority on moving behaviour and showed correct astern trailing. At real
+game zoom the exhaust must be sized for visibility — dull 2px dots vanish; bigger
+additive hot-core particles + longer life were needed once the legacy flame
+(which had carried the visual) was removed.
+
 ## 2026-06-06 — on-device "combat lag" was a Zustand whole-store subscription, NOT the netcode
 Commit: fix/hud-rerender-storm-combat-lag
 **Symptom.** After the big merge to `main`, on-device play lagged: the world froze
