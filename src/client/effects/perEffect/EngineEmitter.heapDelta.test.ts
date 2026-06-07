@@ -48,7 +48,13 @@ function makeParent(): { addChild: () => unknown; removeChild: () => unknown } {
   return { addChild: () => undefined, removeChild: () => undefined };
 }
 
-const POSE: EnginePoseFn = () => ({ x: 0, y: 0, angle: 0 });
+// REUSED pose object (mirrors the renderer's `_enginePoseScratch` — the
+// production path returns the same scratch every call, so the per-frame poll
+// allocates nothing). Carries velocity to exercise the speed-scaled emission +
+// velocity-inheritance path; isolating the EMITTER's per-cycle alloc means the
+// pose function itself must not allocate.
+const REUSED_POSE = { x: 0, y: 0, angle: 0, vx: 120, vy: 80 };
+const POSE: EnginePoseFn = () => REUSED_POSE;
 
 describe('EngineEmitter heap-delta — particles pooled across emit/die cycles (capture 8y3njt)', () => {
   it('factory.makeParticle stops being called after pool fills', () => {

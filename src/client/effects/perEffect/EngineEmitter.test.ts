@@ -138,16 +138,17 @@ describe('EngineEmitter — per-kind nozzle profile', () => {
   it('spawns at the supplied per-kind sternOffset (not the legacy 25u)', () => {
     const created: Record<string, unknown>[] = [];
     const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
-    // angle 0 → astern is straight "down" (gfx.y = +sternOffset). One frame of
-    // post-emit drift (≤ |v|/60 ≈ 1.7 u, always astern → increases y) is the
-    // only deviation, so gfx.y lands in [10, ~12) — unambiguously the ~10u
-    // rear extent, NOT the legacy 25u (which would put it at ≥ 25).
+    // angle 0 + zero velocity → astern is straight "down" (gfx.y = +sternOffset)
+    // and the only post-emit drift is the astern ejection (always increases y).
+    // gfx.y lands in [10, ~16) — unambiguously the ~10u rear extent, NOT the
+    // legacy 25u (which would put it at ≥ 25). tick(0.05) to clear the
+    // speed-floor emit interval at zero speed.
     e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
-    e.tick(1 / 60, () => ({ x: 0, y: 0, angle: 0 }));
+    e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
     expect(created.length).toBeGreaterThan(0);
     const y = created[0]!.y as number;
     expect(y).toBeGreaterThanOrEqual(9.99);
-    expect(y).toBeLessThan(13);
+    expect(y).toBeLessThan(18);
   });
 
   it('plumeScale widens the nozzle mouth proportionally', () => {
@@ -160,13 +161,57 @@ describe('EngineEmitter — per-kind nozzle profile', () => {
         const created: Record<string, unknown>[] = [];
         const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
         e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale });
-        e.tick(0.02, () => ({ x: 0, y: 0, angle: 0 }));
+        e.tick(0.05, () => ({ x: 0, y: 0, angle: 0 }));
         return created[0]!.x as number;
       };
       const x1 = spawnX(1);
       const x2 = spawnX(2);
       expect(Math.abs(x2)).toBeGreaterThan(Math.abs(x1));
       expect(Math.abs(x2) - Math.abs(x1)).toBeCloseTo(5, 5); // 0.5 * thrustNozzleWidth(10)
+    } finally {
+      rnd.mockRestore();
+    }
+  });
+});
+
+describe('EngineEmitter — speed-scaled emission (Bug 3)', () => {
+  it('emits MORE particles at high ship speed than at idle, but idle still sputters', () => {
+    const steadyCount = (vx: number, vy: number): number => {
+      const e = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());
+      e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+      const pose: EnginePoseFn = () => ({ x: 0, y: 0, angle: 0, vx, vy });
+      for (let i = 0; i < 60; i++) e.tick(0.016, pose); // ~1 s → steady state
+      return e.activeCount().particles;
+    };
+    const idle = steadyCount(0, 0); // floor rate
+    const fast = steadyCount(0, 600); // ≥ refSpeed → full rate
+    expect(idle).toBeGreaterThan(0); // a stationary-but-thrusting engine still sputters
+    expect(fast).toBeGreaterThan(idle); // density tracks speed
+  });
+});
+
+describe('EngineEmitter — velocity-coherent streaming (Bug 2b)', () => {
+  it('inherits a fraction of ship velocity so the plume trails the moving ship', () => {
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(0.5); // no perp, astern-aligned cone
+    try {
+      const driftY = (vx: number, vy: number): number => {
+        const created: Record<string, unknown>[] = [];
+        const e = new EngineEmitter(makeParent() as never, () => 'high', {
+          makeParticle: vi.fn(() => {
+            const g = makeStubGfx();
+            created.push(g);
+            return g as never;
+          }),
+        });
+        e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+        e.tick(0.05, () => ({ x: 0, y: 0, angle: 0, vx, vy }));
+        // gfx.y − spawn offset(10) = the post-emit drift in pixi-y.
+        return (created[0]!.y as number) - 10;
+      };
+      const idleDrift = driftY(0, 0); // pure astern → particle moves "down" (gfx.y ↑)
+      const fwdDrift = driftY(0, 600); // ship races +y(game) → particle carried forward (gfx.y ↓)
+      expect(idleDrift).toBeGreaterThan(0);
+      expect(fwdDrift).toBeLessThan(idleDrift); // velocity inheritance pulls it forward
     } finally {
       rnd.mockRestore();
     }

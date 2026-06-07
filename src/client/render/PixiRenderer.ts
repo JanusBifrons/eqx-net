@@ -238,6 +238,11 @@ export class PixiRenderer implements IRenderer {
    *  per-frame engine/shield pose lookup allocates nothing (Invariant #14).
    *  Read synchronously inside the effects tick; never stored across frames. */
   private readonly _enginePoseScratch: EntityPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0 };
+  /** Latest mirror handed to `update()` — lets the `getEntityPose` closure
+   *  read a ship's velocity (the sprite carries only x/y/rotation). Set as the
+   *  first statement of `update`; the effects tick at the tail of the same
+   *  call reads it, so it's always this frame's mirror. */
+  private _lastMirror: RenderMirror | null = null;
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
@@ -557,7 +562,15 @@ export class PixiRenderer implements IRenderer {
           // space (Y-up, angle un-negated). Mutates the reused scratch so
           // the per-frame poll allocates nothing (Invariant #14); the
           // emitter reads it synchronously and never stores it.
-          return entityPoseFromSprite(sp, this._enginePoseScratch);
+          const pose = entityPoseFromSprite(sp, this._enginePoseScratch);
+          // Velocity for speed-scaled emission + coherent streaming. The
+          // sprite carries no velocity; read it from this frame's mirror.
+          // Ships only (drones live in mirror.swarm and don't emit engine
+          // particles) → undefined for non-ships ⇒ 0.
+          const ship = this._lastMirror?.ships.get(entityId);
+          pose.vx = ship?.vx ?? 0;
+          pose.vy = ship?.vy ?? 0;
+          return pose;
         },
         beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
         fxKillSwitches,
@@ -805,6 +818,10 @@ export class PixiRenderer implements IRenderer {
     // tail-write is exact. Sub-µs, unconditional (markers-off baseline =
     // production cost). See `frameMarkers` / `FrameMarkers`.
     const updateStart = performance.now();
+    // Stash this frame's mirror so the getEntityPose effects closure can read
+    // ship velocity (the sprite carries only x/y/rotation). The effects tick
+    // at the tail of THIS update reads it → always the current frame's mirror.
+    this._lastMirror = mirror;
     // 2026-05-25 heap-growth gate step 6: reuse persistent scratch
     // containers instead of `new Set<string>()` per frame.
     const seen = this._updateSeenScratch;

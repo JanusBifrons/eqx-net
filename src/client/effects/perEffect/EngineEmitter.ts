@@ -42,8 +42,13 @@ export interface EngineFactories {
   makeParticle: (tint: number) => PixiGraphics;
 }
 
-/** Pose surface the emitter polls per tick. */
-export type EnginePoseFn = (entityId: string) => { x: number; y: number; angle: number } | null;
+/** Pose surface the emitter polls per tick. `vx`/`vy` (game-space velocity,
+ *  filled by the renderer from the render mirror) drive speed-scaled emission
+ *  + velocity-coherent streaming; absent ⇒ treated as 0 (a stationary engine
+ *  still emits at the floor rate). */
+export type EnginePoseFn = (
+  entityId: string,
+) => { x: number; y: number; angle: number; vx?: number; vy?: number } | null;
 
 /** Per-kind engine geometry handed to `setActive` at registration (computed
  *  once by the renderer from the ship catalogue — see `engineGeometry.ts`).
@@ -175,20 +180,32 @@ export class EngineEmitter {
 
     for (const e of this.emitters.values()) {
       const params = e.kind === 'thrust'
-        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth }
-        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth };
+        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.thrustEjectSpeed, streamFactor: DEFAULT_ENGINE_PARAMS.thrustStreamFactor, refSpeed: DEFAULT_ENGINE_PARAMS.thrustRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.thrustMinRateFrac }
+        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.boostEjectSpeed, streamFactor: DEFAULT_ENGINE_PARAMS.boostStreamFactor, refSpeed: DEFAULT_ENGINE_PARAMS.boostRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.boostMinRateFrac };
       if (params.rateHz <= 0) continue;
 
+      // Poll the pose ONCE per emitter per tick (not per-particle): all
+      // particles this tick share the pose + the speed reading is taken once.
+      const pose = getPose(e.entityId);
+      if (!pose) continue;
+
+      // Speed-scaled emission: faster ship → denser plume (and longer jet),
+      // slow/idle thrust → a sputter at `minRateFrac`. Fixes "they don't
+      // spawn more/less when the engine moves faster".
+      const speed = Math.hypot(pose.vx ?? 0, pose.vy ?? 0);
+      const speedFrac = Math.max(params.minRateFrac, Math.min(1, speed / params.refSpeed));
+      const rateHz = params.rateHz * speedFrac;
+      if (rateHz <= 0) continue;
+
       const nozzleWidth = params.nozzleWidth * e.plumeScale;
-      const intervalSec = 1 / params.rateHz;
+      const ejectSpeed = params.ejectSpeed * (0.6 + 0.4 * speedFrac);
+      const intervalSec = 1 / rateHz;
       e.emitAccumSec += dtSec;
       // Catch-up cap: never spawn more than 5 particles per tick from one
       // emitter (defensive against long pauses → giant catch-up bursts).
       let emittedThisTick = 0;
       while (e.emitAccumSec >= intervalSec && emittedThisTick < 5) {
-        const pose = getPose(e.entityId);
-        if (!pose) break;
-        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth);
+        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth, ejectSpeed, params.streamFactor);
         e.emitAccumSec -= intervalSec;
         emittedThisTick++;
       }
@@ -223,12 +240,14 @@ export class EngineEmitter {
   // ── Private ──────────────────────────────────────────────────────────
 
   private emitParticle(
-    pose: { x: number; y: number; angle: number },
+    pose: { x: number; y: number; angle: number; vx?: number; vy?: number },
     spread: number,
     tint: number,
     lifetimeS: number,
     sternOffset: number,
     nozzleWidth: number,
+    ejectSpeed: number,
+    streamFactor: number,
   ): void {
     if (this.particles.length >= PARTICLE_POOL_CAP) {
       const oldest = this.particles.shift();
@@ -254,13 +273,15 @@ export class EngineEmitter {
     sx += cosA * perp;
     sy += sinA * perp;
 
-    // Velocity: behind the ship with a random spread cone. (Step 3 layers
-    // ship-velocity inheritance + speed scaling on top of this.)
+    // Velocity = a fraction of the ship's own velocity (so the plume TRAILS
+    // the moving ship instead of being deposited in world space — the
+    // "circle/arc when fast" bug) PLUS an astern ejection cone. (-sin, cos)
+    // of (angle+π) is the astern direction.
     const heading = pose.angle + Math.PI; // pointing astern
     const spreadAngle = heading + (Math.random() - 0.5) * spread;
-    const speed = 60 + Math.random() * 40;
-    const vx = -Math.sin(spreadAngle) * speed;
-    const vy = Math.cos(spreadAngle) * speed;
+    const ejs = ejectSpeed * (0.8 + Math.random() * 0.4); // ±20% per-particle
+    const vx = (pose.vx ?? 0) * streamFactor - Math.sin(spreadAngle) * ejs;
+    const vy = (pose.vy ?? 0) * streamFactor + Math.cos(spreadAngle) * ejs;
 
     // Pool path: pop a free record + Graphics if one exists for this
     // tint, reset its mutable fields. Otherwise allocate (only happens
