@@ -406,10 +406,23 @@ export class MissileSimulation {
         continue;
       }
 
-      // 6. Lifetime decrement / expiry.
+      // 6. Lifetime decrement / expiry. Impact-only (smoke handoff
+      // 2026-06-06, Issue 2): a missile that never lands a direct hit
+      // DESPAWNS without detonating — no splash, no damage, no explosion
+      // VFX (the client sprite alpha-fades over its last 15 % of life and
+      // is reaped when it leaves the snapshot `missiles[]` slice, so the
+      // fizzle is graceful with no broadcast needed). The TTL stays as a
+      // despawn cap so a never-hitting missile doesn't fly forever. Only
+      // the direct sweep (step 5) deals damage now.
       m.ticksRemaining -= 1;
       if (m.ticksRemaining <= 0) {
-        this.detonate(m, m.x, m.y, null, null, 'lifetime');
+        this.deps.serverLogEvent?.('missile_expired', {
+          missileId: m.id,
+          ownerId: m.ownerId,
+          x: m.x,
+          y: m.y,
+          lockedTargetId: m.lockedTargetId,
+        });
         this.releaseAtPos(i);
         continue;
       }

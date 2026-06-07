@@ -18,9 +18,9 @@
  *     lifetime compresses to ~600 ms wall-clock).
  *   - Shooter spawns as `missile-frigate` at origin facing +y.
  *   - Target spawns 1000 u in front of the shooter (well inside the
- *     2400 u lock range; well outside the 36 u proximity-fuse so the
- *     test exercises homing + sweep-collision, not the spawn-coincident
- *     fuse).
+ *     2400 u lock range). Since the impact-only change (2026-06-06) the
+ *     proximity fuse is disabled, so detonation here is always 'sweep'
+ *     (a direct homing hit) — the assertion stays `cause !== 'lifetime'`.
  *   - Shooter cycles weapon to heat-seeker (Q twice from default
  *     hitscan) and holds Space for ~1.2 s to maximise the chance of
  *     catching the fire-dispatch wall-clock-anchored catch-up loop on
@@ -545,6 +545,89 @@ test('held fire auto-refires heat-seeker every cooldown — no need to tap', asy
       ).toBeGreaterThanOrEqual(2500);
       expect(gap).toBeLessThanOrEqual(3700);
     }
+  } finally {
+    await shooter.ctx.close();
+  }
+});
+
+test('impact-only: a missile with no target FIZZLES on expiry — no lifetime/fuse detonation, no damage', async ({
+  browser,
+  request,
+}) => {
+  // Regression lock for the impact-only change (smoke handoff 2026-06-06,
+  // Issue 2: "make it only explode on impact"). A missile that never lands
+  // a DIRECT sweep hit must despawn WITHOUT detonating — no splash, no
+  // damage, no explosion. Pre-change a missile that flew its full lifetime
+  // detonated with cause 'lifetime' (splash-in-place), and a near-miss
+  // detonated 'fuse' (proximityFuseRadius=36) → this test FAILS on the old
+  // code, satisfying Invariant #13.
+  //
+  // Scenario: a LONE missile-frigate in test-sector-fast (no other players,
+  // no drones) fires a heat-seeker. With no hostile in the sector the
+  // missile flies straight (dumb mode) and never hits anything.
+  // testTimeScale=10 compresses the 6 s lifetime to ~600 ms wall-clock.
+  const testId = randomUUID();
+  const shooter = await joinShip(browser, {
+    testId,
+    spawnX: 0,
+    spawnY: 0,
+    shipKind: 'missile-frigate',
+  });
+
+  try {
+    expect(shooter.playerId).not.toBe('');
+    await shooter.page.waitForTimeout(300);
+
+    const fireTs = Date.now();
+    const fired = await shooter.page.evaluate(() => {
+      const w = window as unknown as {
+        __eqxClient?: { triggerFireForTest?: (id: string) => boolean };
+      };
+      return w.__eqxClient?.triggerFireForTest?.('heat-seeker') ? 'ok' : 'failed';
+    });
+    expect(fired, 'triggerFireForTest did not succeed').toBe('ok');
+
+    // Confirm the missile actually spawned (so "no detonation" means
+    // "fizzled", not "never fired").
+    const spawned = await fetchEvents(
+      request,
+      (e) => e.tag === 'missile_spawned' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
+      { timeoutMs: 4000 },
+    );
+    expect(spawned, 'no missile_spawned — fire never reached the simulation').not.toBeNull();
+
+    // Wait out the full lifetime (≈600 ms at 10× + margin) so the expiry
+    // path has definitely run.
+    await shooter.page.waitForTimeout(1500);
+
+    // The missile must have EXPIRED (non-damaging despawn), and NOT
+    // detonated for any reason.
+    const expired = await fetchEvents(
+      request,
+      (e) => e.tag === 'missile_expired' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
+      { timeoutMs: 2000 },
+    );
+    expect(expired, 'missile never logged missile_expired — the impact-only despawn path did not run').not.toBeNull();
+
+    // No detonation of ANY cause from this shooter (pre-change: 'lifetime').
+    const detonated = await fetchEvents(
+      request,
+      (e) => e.tag === 'missile_detonated' && e.data['ownerId'] === shooter.playerId && e.ts >= fireTs,
+      { timeoutMs: 500 },
+    );
+    expect(
+      detonated,
+      `a missile detonated (cause '${String(detonated?.data['cause'])}') with no target present — ` +
+      `impact-only means a missed missile must fizzle, never explode in-place.`,
+    ).toBeNull();
+
+    // And no damage was applied by this shooter.
+    const damageApplied = await fetchEvents(
+      request,
+      (e) => e.tag === 'damage_applied' && e.data['shooterId'] === shooter.playerId,
+      { timeoutMs: 500 },
+    );
+    expect(damageApplied, 'a missed missile dealt damage — impact-only violated').toBeNull();
   } finally {
     await shooter.ctx.close();
   }
