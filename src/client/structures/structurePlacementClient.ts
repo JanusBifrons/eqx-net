@@ -41,6 +41,33 @@ export function computePlacementPose(ship: ShipPose, kindId: StructureKindId): {
   return { x: ship.x + fx * dist, y: ship.y + fy * dist };
 }
 
+/** Structure placement preview — the pose + kind the render mirror carries so
+ *  the renderer can draw a translucent blueprint ghost (smoke handoff
+ *  2026-06-06, Issue 5). Pure data shape, structured-cloneable for the worker. */
+export interface PlacementPreview {
+  kind: StructureKindId;
+  x: number;
+  y: number;
+  angle: number;
+}
+
+/**
+ * Build the placement preview for `kindId` at the ahead-of-ship pose, or `null`
+ * when there's nothing to preview (`kindId` is null). Split out pure so the
+ * geometry + null-gating is unit-testable without a renderer. `angle` is 0:
+ * structures render as regular polygons (no meaningful facing), matching the
+ * static structure sprite. Reuses `computePlacementPose` so the ghost lands at
+ * EXACTLY the spot `placeStructureAhead` will send (no preview/commit drift).
+ */
+export function computePlacementPreview(
+  ship: ShipPose,
+  kindId: StructureKindId | null,
+): PlacementPreview | null {
+  if (!kindId) return null;
+  const pos = computePlacementPose(ship, kindId);
+  return { kind: kindId, x: pos.x, y: pos.y, angle: 0 };
+}
+
 /**
  * Place a structure of `kindId` ahead of the local ship. Returns true if the
  * message was sent (false when there's no live room / local ship yet).

@@ -32,7 +32,9 @@ import {
   buildGhostGfx,
   applyMountOffset,
   buildExplosionGfx,
+  buildStructureGfx,
 } from './pixi/spriteBuilders.js';
+import { getStructureKind } from '@shared-types/structureKinds';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -91,6 +93,11 @@ export class PixiRenderer implements IRenderer {
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
+  /** Structure placement ghost (Issue 5) — lazily built translucent blueprint
+   *  silhouette, rebuilt when the previewed kind changes. Lives in
+   *  `shipContainer` (world space) so it pans/zooms with the structures. */
+  private _placementGhost: Graphics | null = null;
+  private _placementGhostKind: string | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -262,6 +269,8 @@ export class PixiRenderer implements IRenderer {
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
+    placementScreenX: null,
+    placementScreenY: null,
   };
 
   /**
@@ -1154,6 +1163,42 @@ export class PixiRenderer implements IRenderer {
       // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
       // construction in init() for the rationale.
       this.camera.follow({ x: local.x, y: local.y });
+    }
+
+    // Structure placement ghost + world→screen projection for the confirm
+    // (smoke handoff 2026-06-06, Issue 5). Draw a translucent blueprint
+    // silhouette at the previewed world pose and project that pose to screen
+    // so the world-anchored confirm UI can sit on top of it. The ghost lives
+    // in `shipContainer` (world space) so it pans/zooms with real structures;
+    // Y-flip per the pixiY = -gameY convention. Only active during placement
+    // mode (preview set), so the rebuild + `toScreen` alloc is transient UI,
+    // never steady-state. (Phase-A3: the create/rebuild/hide branching could
+    // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
+    const preview = mirror.pendingPlacementPreview;
+    if (preview) {
+      if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
+        if (this._placementGhost) {
+          this.shipContainer.removeChild(this._placementGhost);
+          this._placementGhost.destroy();
+        }
+        const radius = getStructureKind(preview.kind).radius;
+        const g = buildStructureGfx(preview.kind, radius);
+        g.alpha = 0.4; // translucent blueprint
+        this.shipContainer.addChild(g);
+        this._placementGhost = g;
+        this._placementGhostKind = preview.kind;
+      }
+      this._placementGhost.visible = true;
+      this._placementGhost.x = preview.x;
+      this._placementGhost.y = -preview.y; // Y-flip
+      this._placementGhost.rotation = -preview.angle;
+      const screen = this.camera.toScreen(preview.x, -preview.y);
+      this.feedback.placementScreenX = screen.x;
+      this.feedback.placementScreenY = screen.y;
+    } else {
+      if (this._placementGhost) this._placementGhost.visible = false;
+      this.feedback.placementScreenX = null;
+      this.feedback.placementScreenY = null;
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's

@@ -54,6 +54,8 @@ function emptyFeedback(): RendererFeedback {
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
+    placementScreenX: null,
+    placementScreenY: null,
   };
 }
 
@@ -514,6 +516,8 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
         this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;
+        this.feedback.placementScreenX = msg.feedback.placementScreenX;
+        this.feedback.placementScreenY = msg.feedback.placementScreenY;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

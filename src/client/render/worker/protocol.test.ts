@@ -156,6 +156,8 @@ describe('renderer-worker protocol', () => {
             firstFrameRendered: true,
             liveBeamRenderedFromX: 12.5,
             liveBeamRenderedFromY: -8.25,
+            placementScreenX: 200,
+            placementScreenY: 150,
           },
         },
       },

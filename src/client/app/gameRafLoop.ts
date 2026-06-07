@@ -336,6 +336,31 @@ function writeE2EDataset(
     delete el.dataset['beamRenderedFromY'];
   }
 
+  // Structure placement confirm — world-anchored (smoke handoff 2026-06-06,
+  // Issue 5). Move the (position:fixed) confirm banner to the renderer's
+  // projected on-screen position of the blueprint ghost, so it sits over the
+  // structure and ABOVE the thumb cluster (fixes the mobile occlusion).
+  // Direct-DOM write — no per-frame React re-render (#2). The query is cheap
+  // and only matches while placement mode is active (the banner is unmounted
+  // otherwise).
+  const placeX = feedback.placementScreenX;
+  const placeY = feedback.placementScreenY;
+  if (typeof placeX === 'number' && typeof placeY === 'number') {
+    el.dataset['placementScreenX'] = placeX.toFixed(1);
+    el.dataset['placementScreenY'] = placeY.toFixed(1);
+    const banner = document.querySelector('[data-testid="placement-banner"]') as HTMLElement | null;
+    if (banner) {
+      // Clamp into the viewport so the confirm never drifts fully off-screen.
+      const cx = Math.max(8, Math.min(window.innerWidth - 8, placeX));
+      const cy = Math.max(48, Math.min(window.innerHeight - 8, placeY));
+      banner.style.left = `${cx}px`;
+      banner.style.top = `${cy}px`;
+    }
+  } else {
+    delete el.dataset['placementScreenX'];
+    delete el.dataset['placementScreenY'];
+  }
+
   // Remote lasers — Phase 2c per-mount flatten.
   el.dataset['remoteLaserCount'] = String(gameClient.mirror.remoteLasers?.size ?? 0);
   const remoteHitTargetIds: string[] = [];

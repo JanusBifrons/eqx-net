@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computePlacementPose, PLACEMENT_AHEAD_GAP } from './structurePlacementClient.js';
+import { computePlacementPose, computePlacementPreview, PLACEMENT_AHEAD_GAP } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 
 describe('computePlacementPose', () => {
@@ -22,5 +22,23 @@ describe('computePlacementPose', () => {
     const cap = computePlacementPose({ x: 0, y: 0, angle: 0 }, 'capital');
     const con = computePlacementPose({ x: 0, y: 0, angle: 0 }, 'connector');
     expect(cap.y).toBeGreaterThan(con.y);
+  });
+});
+
+describe('computePlacementPreview (Issue 5 — render-mirror ghost pose)', () => {
+  it('returns null when no kind is selected (no preview)', () => {
+    expect(computePlacementPreview({ x: 0, y: 0, angle: 0 }, null)).toBeNull();
+  });
+
+  it('lands at EXACTLY the computePlacementPose spot (no preview/commit drift)', () => {
+    const ship = { x: 100, y: 50, angle: Math.PI / 3 };
+    const pose = computePlacementPose(ship, 'turret');
+    const preview = computePlacementPreview(ship, 'turret');
+    expect(preview).not.toBeNull();
+    expect(preview!.kind).toBe('turret');
+    expect(preview!.x).toBeCloseTo(pose.x, 6);
+    expect(preview!.y).toBeCloseTo(pose.y, 6);
+    // Structures render as regular polygons — angle is 0 (no facing).
+    expect(preview!.angle).toBe(0);
   });
 });
