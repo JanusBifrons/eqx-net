@@ -290,6 +290,7 @@ export class PixiRenderer implements IRenderer {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementPreviewConnectionCount: 0,
   };
 
   /**
@@ -985,7 +986,14 @@ export class PixiRenderer implements IRenderer {
 
     // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
     // mirror.structures → mirror.swarm positions; no-op when no structures.
+    // Item C: feed the connector preview the pointer-chosen ghost point (so the
+    // preview lines emanate from where the ghost is actually drawn), then read
+    // the would-connect count back into the feedback channel.
+    this.connectorRenderer.ghostWorldX = this._placementChosenX;
+    this.connectorRenderer.ghostWorldY = this._placementChosenY;
     this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
+    this.feedback.placementPreviewConnectionCount =
+      this.connectorRenderer.placementPreviewConnectionCount;
 
     // Phase 5c swarm sprites (asteroids + drones) — see
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.

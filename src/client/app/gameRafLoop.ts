@@ -384,6 +384,9 @@ function writeE2EDataset(
       el.dataset['placementWorldY'] = feedback.placementChosenWorldY.toFixed(2);
     }
     el.dataset['placementStuck'] = feedback.placementStuck ? '1' : '0';
+    // Item C — would-connect count for the live connection-range preview, so
+    // the banner / E2E can read how many hubs the ghost would link to here.
+    el.dataset['placementPreviewConnCount'] = String(feedback.placementPreviewConnectionCount);
     // NB: the banner is anchored over the ghost in the PRODUCTION placement
     // bridge in `loop` (un-gated), not here — that block is webdriver-only.
   } else {
@@ -392,6 +395,7 @@ function writeE2EDataset(
     delete el.dataset['placementWorldX'];
     delete el.dataset['placementWorldY'];
     delete el.dataset['placementStuck'];
+    delete el.dataset['placementPreviewConnCount'];
   }
 
   // Remote lasers — Phase 2c per-mount flatten.

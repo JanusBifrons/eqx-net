@@ -542,6 +542,17 @@ export interface RendererFeedback {
   placementChosenWorldX: number | null;
   placementChosenWorldY: number | null;
   placementStuck: boolean;
+  /**
+   * Structure placement connection-range preview (structures follow-up Item C).
+   * The number of existing structures the placement ghost WOULD connect to if
+   * placed at its current position — computed by the `ConnectorRenderer` preview
+   * pass with the SAME obstacle-aware `canConnect` the server runs on placement
+   * (so the preview matches reality). `0` when there is no active preview or the
+   * ghost is out of range / blocked from every hub. Published as
+   * `data-placement-preview-conn-count`. Test-only / UI-affordance surface — not
+   * consumed by gameplay logic.
+   */
+  placementPreviewConnectionCount: number;
 }
 
 export interface IRenderer {
