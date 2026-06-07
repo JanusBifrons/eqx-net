@@ -149,19 +149,11 @@ export class PixiRenderer implements IRenderer {
    *  Drawn with a desaturated kind colour; updated each frame from
    *  `mirror.wrecks`. Removed when the wreck disappears from the mirror. */
   private wreckSprites = new Map<string, Graphics>();
-  /** Per-ship boost-exhaust flame, parented to the ship sprite. Visible only
-   *  while the ship is in `mirror.boostingShips`. Pooled — created on first
-   *  boost, hidden when not active, destroyed with the ship sprite. */
-  private boostFlames = new Map<string, Graphics>();
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
    *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
    *  the ship's world transform; the cluster's own children sit at their
    *  mount-local offset and baseAngle rotation. */
   private mountVisuals = new MountVisualManager();
-  /** Per-ship baseline thrust flame, parented to the ship sprite. Visible
-   *  while the ship is in `mirror.thrustingShips` (any acceleration). Boost
-   *  flame layers on top. Pooled — same lifecycle as `boostFlames`. */
-  private thrustFlames = new Map<string, Graphics>();
   private serverGhost: Graphics | null = null;
   private projectileSprites = new Map<string, Graphics>();
   /** Per-missile sprites, keyed by stable per-sector missileId. Pooled
@@ -497,8 +489,6 @@ export class PixiRenderer implements IRenderer {
     this._shipUpdaterCtx = {
       shipContainer: this.shipContainer,
       sprites: this.sprites,
-      thrustFlames: this.thrustFlames,
-      boostFlames: this.boostFlames,
       mountVisuals: this.mountVisuals,
       remoteHitTargets: this._updateRemoteHitTargetsScratch,
       localHitTargets: this._updateLocalHitTargetsScratch,
@@ -931,8 +921,6 @@ export class PixiRenderer implements IRenderer {
         this.mountVisuals.removeShip(id);
         sprite.destroy({ children: true });
         this.sprites.delete(id);
-        this.boostFlames.delete(id);
-        this.thrustFlames.delete(id);
       }
     }
 

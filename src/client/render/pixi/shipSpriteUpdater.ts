@@ -13,10 +13,10 @@
  *     .mountAngles`; remotes get the server's authoritative angles
  *     via the snapshot.
  *   - Write pose + tint (damage flash > beam hit > normal).
- *   - Lazy-create + animate the thrust + boost flames as children of
- *     the ship sprite (inherits rotation). The flames stay attached
- *     after first use; toggling thrust/boost flips `.visible` rather
- *     than churning the scene graph.
+ *
+ * Engine exhaust is NOT drawn here — the particle-only `EngineEmitter`
+ * (effects subsystem) is the sole engine visual; the legacy triangle flame
+ * children were removed by the engine-fx pass (plan `majestic-pie`).
  *
  * Pixi convention: world Y is flipped (`sprite.y = -ship.y`) and
  * rotation is negated.
@@ -29,16 +29,12 @@ import {
   DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
   shapeForKind,
-  buildThrustFlameGfx,
-  buildBoostFlameGfx,
 } from './spriteBuilders.js';
 import type { MountVisualManager } from '../MountVisualManager';
 
 export interface ShipSpriteCtx {
   shipContainer: Container;
   sprites: Map<string, Graphics>;
-  thrustFlames: Map<string, Graphics>;
-  boostFlames: Map<string, Graphics>;
   mountVisuals: MountVisualManager;
   /** Filled by the caller from this frame's mirror; passed in to avoid
    *  recomputing per ship. */
@@ -79,41 +75,9 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
       sprite.tint = 0xffffff;
     }
 
-    // Thrust flame (baseline, any acceleration). Child of the ship
-    // sprite so it inherits rotation; lazy-created on first thrust.
-    // Added BEFORE the boost flame so the boost plume layers on top.
-    const isThrusting = mirror.thrustingShips?.has(playerId) ?? false;
-    let thrustFlame = ctx.thrustFlames.get(playerId);
-    if (isThrusting) {
-      if (!thrustFlame) {
-        thrustFlame = buildThrustFlameGfx();
-        sprite.addChild(thrustFlame);
-        ctx.thrustFlames.set(playerId, thrustFlame);
-      }
-      thrustFlame.visible = true;
-      // Per-frame flicker so the plume reads as fire, not a static arrow.
-      thrustFlame.scale.y = 0.85 + Math.random() * 0.4;
-      thrustFlame.alpha = 0.75 + Math.random() * 0.25;
-    } else if (thrustFlame) {
-      thrustFlame.visible = false;
-    }
-
-    // Boost flame — layered ON TOP of thrust when both are active.
-    // Lazily created on first boost; left as a hidden child after-
-    // wards so toggling shift doesn't churn the scene graph.
-    const isBoosting = mirror.boostingShips?.has(playerId) ?? false;
-    let flame = ctx.boostFlames.get(playerId);
-    if (isBoosting) {
-      if (!flame) {
-        flame = buildBoostFlameGfx();
-        sprite.addChild(flame);
-        ctx.boostFlames.set(playerId, flame);
-      }
-      flame.visible = true;
-      flame.scale.y = 0.9 + Math.random() * 0.5;
-      flame.alpha = 0.8 + Math.random() * 0.2;
-    } else if (flame) {
-      flame.visible = false;
-    }
+    // Engine exhaust is no longer a triangle flame child here — the
+    // particle-only `EngineEmitter` (driven off mirror.thrustingShips /
+    // boostingShips by `PixiRenderer.syncEngineContinuousEffects`) is the
+    // sole engine visual.
   }
 }

@@ -85,11 +85,19 @@ describe('EngineEmitter — tier dial', () => {
     expect(low.activeCount().particles).toBeLessThan(high.activeCount().particles);
   });
 
-  it('emits zero particles at "minimal" (legacy Graphics flames are the only visual)', () => {
-    const e = new EngineEmitter(makeParent() as never, () => 'minimal', makeFactories());
-    e.setActive('s', 'thrust', true);
-    for (let i = 0; i < 30; i++) e.tick(0.016, POSE_AT_ORIGIN);
-    expect(e.activeCount().particles).toBe(0);
+  it('emits a SPARSE plume at "minimal" (particle-only: no flame fallback)', () => {
+    // Post flame-removal, minimal must still show some exhaust — but fewer
+    // than high (0.35 rate mul vs 1.0).
+    const minimal = new EngineEmitter(makeParent() as never, () => 'minimal', makeFactories());
+    const high = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());
+    minimal.setActive('s', 'thrust', true);
+    high.setActive('s', 'thrust', true);
+    for (let i = 0; i < 60; i++) {
+      minimal.tick(0.016, POSE_AT_ORIGIN);
+      high.tick(0.016, POSE_AT_ORIGIN);
+    }
+    expect(minimal.activeCount().particles).toBeGreaterThan(0);
+    expect(minimal.activeCount().particles).toBeLessThan(high.activeCount().particles);
   });
 });
 
@@ -215,6 +223,35 @@ describe('EngineEmitter — velocity-coherent streaming (Bug 2b)', () => {
     } finally {
       rnd.mockRestore();
     }
+  });
+});
+
+describe('EngineEmitter — colour-over-life (punch)', () => {
+  it('ramps gfx.tint white-hot → base → smoke and dims over lifetime', () => {
+    const created: Record<string, unknown>[] = [];
+    const e = new EngineEmitter(makeParent() as never, () => 'high', {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        created.push(g);
+        return g as never;
+      }),
+    });
+    e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+    // Spawn one particle (full-rate via a moving pose) + sample its tint early.
+    e.tick(0.02, () => ({ x: 0, y: 0, angle: 0, vx: 0, vy: 600 }));
+    expect(created.length).toBeGreaterThan(0);
+    const g = created[0]!;
+    const earlyTint = g.tint as number; // near white-hot just after birth
+
+    // Age the particle toward death with no new emits (emitter removed).
+    e.setActive('s', 'thrust', false);
+    for (let i = 0; i < 18; i++) e.tick(0.016, () => ({ x: 0, y: 0, angle: 0 }));
+    const lateTint = g.tint as number;
+
+    const brightness = (c: number): number =>
+      ((c >> 16) & 0xff) + ((c >> 8) & 0xff) + (c & 0xff);
+    expect(lateTint).not.toBe(earlyTint); // colour evolves over life
+    expect(brightness(earlyTint)).toBeGreaterThan(brightness(lateTint)); // hot → smoke
   });
 });
 

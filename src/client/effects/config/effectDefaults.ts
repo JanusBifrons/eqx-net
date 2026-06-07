@@ -32,10 +32,10 @@ export const DEFAULT_DESTRUCTION_PARAMS = {
  *  velocity-coherent streaming + additive hot-core colour-over-life. */
 export const DEFAULT_ENGINE_PARAMS = {
   thrustEmitRateHz: 60,
-  thrustLifetimeMs: 350,
+  thrustLifetimeMs: 450,
   thrustSpread: 0.25,
   boostEmitRateHz: 90,
-  boostLifetimeMs: 500,
+  boostLifetimeMs: 600,
   boostSpread: 0.18,
   /** Nozzle-mouth width (game units, before per-kind `plumeScale`). Particles
    *  spawn across this width perpendicular to the thrust axis so the plume
@@ -59,8 +59,14 @@ export const DEFAULT_ENGINE_PARAMS = {
   boostRefSpeed: 550,
   /** Floor on the speed-scaled emit rate so a stationary-but-thrusting engine
    *  still shows exhaust (fraction of the tier rate). */
-  thrustMinRateFrac: 0.35,
-  boostMinRateFrac: 0.45,
+  thrustMinRateFrac: 0.5,
+  boostMinRateFrac: 0.5,
+  /** Colour-over-life endpoints. Particles are baked WHITE + additive; the
+   *  per-frame `gfx.tint` ramps white-hot (birth) → base (mid) → smoke (death).
+   *  Base is the kind hue (thrust orange 0xff8844 / boost blue 0x88ccff, set as
+   *  the pool key); these are the late-life smoke tints it fades toward. */
+  thrustSmokeColor: 0x551a00,
+  boostSmokeColor: 0x101a44,
 } as const;
 
 /** Tuned in M6 — Laser glow. */

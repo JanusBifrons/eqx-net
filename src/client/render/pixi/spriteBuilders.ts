@@ -76,67 +76,11 @@ export function desaturate(color: number): number {
   return (mix(r) << 16) | (mix(g) << 8) | mix(b);
 }
 
-/**
- * Baseline thrust flame — shown whenever a ship is accelerating, regardless
- * of boost. Two concentric tapered triangles (outer orange, inner yellow-white
- * core). Aligned to the ship's local frame; the renderer inherits the ship's
- * rotation by adding the flame as a child of the sprite.
- */
-const THRUST_FLAME_COLOR_OUTER = 0xff7733;
-const THRUST_FLAME_COLOR_CORE = 0xffee99;
-export function buildThrustFlameGfx(): Graphics {
-  const g = new Graphics();
-  // Outer plume — tapered triangle pointing astern (local +y in pixi).
-  // Ship body extends from y=-16 (nose) to y=10 (tail); flame starts at y=10.
-  g.poly([
-    { x: -7, y: 10 },
-    { x:  7, y: 10 },
-    { x:  0, y: 36 },
-  ]);
-  g.fill({ color: THRUST_FLAME_COLOR_OUTER, alpha: 0.85 });
-  // Inner core — brighter, narrower.
-  g.poly([
-    { x: -3, y: 10 },
-    { x:  3, y: 10 },
-    { x:  0, y: 24 },
-  ]);
-  g.fill({ color: THRUST_FLAME_COLOR_CORE, alpha: 0.95 });
-  return g;
-}
-
-/**
- * Boost exhaust flame — layered ON TOP of the thrust flame while a ship is
- * boosting. Longer, wider, with a bluish-white plasma core to read as
- * "hotter / more energetic" than the baseline thrust flame.
- */
-const BOOST_FLAME_COLOR_OUTER = 0xff5511;
-const BOOST_FLAME_COLOR_CORE = 0xffee99;
-const BOOST_FLAME_COLOR_PLASMA = 0x88ccff;
-export function buildBoostFlameGfx(): Graphics {
-  const g = new Graphics();
-  // Extended outer plume — wider base, longer tail.
-  g.poly([
-    { x: -10, y: 10 },
-    { x:  10, y: 10 },
-    { x:   0, y: 54 },
-  ]);
-  g.fill({ color: BOOST_FLAME_COLOR_OUTER, alpha: 0.85 });
-  // Mid yellow-white layer — bridges outer orange to plasma core.
-  g.poly([
-    { x: -5, y: 10 },
-    { x:  5, y: 10 },
-    { x:  0, y: 40 },
-  ]);
-  g.fill({ color: BOOST_FLAME_COLOR_CORE, alpha: 0.95 });
-  // Plasma core — bluish-white spike to suggest extreme heat.
-  g.poly([
-    { x: -2, y: 10 },
-    { x:  2, y: 10 },
-    { x:  0, y: 28 },
-  ]);
-  g.fill({ color: BOOST_FLAME_COLOR_PLASMA, alpha: 0.9 });
-  return g;
-}
+// The legacy triangle thrust/boost flames were REMOVED by the engine-fx pass
+// (plan `majestic-pie`, particle-only decision). The `EngineEmitter` particle
+// plume is now the sole engine visual at every quality tier (the `minimal`
+// tier emits a sparse plume rather than falling back to a flame). See
+// `src/client/effects/perEffect/EngineEmitter.ts`.
 
 export function buildAsteroidGfx(entityId: number, radius: number): Graphics {
   const g = new Graphics();
