@@ -37,7 +37,12 @@
  */
 
 import { Container, Graphics } from 'pixi.js';
-import { getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds';
+import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
+
+/** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
+ *  mountless kind avoids allocating a fresh `[]` literal every time
+ *  `ensureForShip` runs in the per-frame render path (invariant #14). */
+const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 
 /** Bookkeeping per ship — one cluster of mount graphics parented to the
  *  ship's sprite. The cluster `Container` rotates with the ship (because
@@ -103,22 +108,46 @@ export class MountVisualManager {
    * down and rebuilt.
    */
   ensureForShip(shipId: string, kindId: string | undefined, parent: Container | Graphics): Container {
-    const existing = this.clusters.get(shipId);
+    const kind = getShipKind(kindId ?? null);
+    return this.ensureForMounts(shipId, kindId, kind.mounts ?? EMPTY_MOUNTS, kind.shape.color, parent);
+  }
+
+  /**
+   * The single mount-cluster construction path — `ensureForShip` is a thin
+   * wrapper that resolves a ship-kind's mounts + colour and delegates here.
+   *
+   * Takes the `mounts` list and the barrel/aim-line `color` DIRECTLY so a
+   * non-ship entity (structures — kind===2 swarm entities whose tint is a
+   * flat `StructureKind.color`, NOT a `shape.color`) can build the same
+   * barrel + aim-line cluster without owning a `ShipKind`. The cluster is
+   * keyed by `id` and tagged with `kindId` for the idempotency/rebuild
+   * check, exactly as before.
+   *
+   * Idempotent: a cluster already present for `(id, kindId)` is returned
+   * untouched; a `kindId` mismatch tears down + rebuilds.
+   */
+  ensureForMounts(
+    id: string,
+    kindId: string | undefined,
+    mounts: ReadonlyArray<WeaponMount>,
+    color: number,
+    parent: Container | Graphics,
+  ): Container {
+    const existing = this.clusters.get(id);
     if (existing && existing.kindId === kindId) return existing.container;
     if (existing) {
       // Kind changed (theoretical). Destroy and rebuild from scratch.
-      this.removeShip(shipId);
+      this.removeShip(id);
     }
 
-    const kind = getShipKind(kindId ?? null);
     const container = new Container();
     parent.addChild(container);
     const perMount = new Map<string, MountGraphics>();
 
-    if (kind.mounts && kind.mounts.length > 0) {
-      for (const mount of kind.mounts) {
-        const turret = buildTurretGfx(mount, kind);
-        const aimLine = buildAimLineGfx(mount, kind);
+    if (mounts.length > 0) {
+      for (const mount of mounts) {
+        const turret = buildTurretGfx(mount, color);
+        const aimLine = buildAimLineGfx(mount, color);
         // Position in ship-local space. Pixi-up convention: ship-forward is
         // −y, so we flip Y when laying out the local offset.
         turret.x = mount.localX;
@@ -135,7 +164,7 @@ export class MountVisualManager {
       }
     }
 
-    this.clusters.set(shipId, { container, perMount, kindId });
+    this.clusters.set(id, { container, perMount, kindId });
     return container;
   }
 
@@ -202,11 +231,11 @@ export class MountVisualManager {
  * mount-local space). Coloured to match the ship's kind so the visual blends
  * coherently. A darker tip suggests "this end is the muzzle".
  */
-function buildTurretGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
+function buildTurretGfx(_mount: WeaponMount, color: number): Graphics {
   const g = new Graphics();
   // Body of the barrel (origin = mount pivot; barrel extends forward).
   g.rect(-BARREL_HALF_WIDTH, -BARREL_LENGTH, BARREL_HALF_WIDTH * 2, BARREL_LENGTH);
-  g.fill({ color: kind.shape.color, alpha: 0.85 });
+  g.fill({ color, alpha: 0.85 });
   // Dark muzzle tip — last 2 units.
   g.rect(-BARREL_HALF_WIDTH, -BARREL_LENGTH, BARREL_HALF_WIDTH * 2, 2);
   g.fill({ color: 0x000000, alpha: 0.55 });
@@ -229,7 +258,7 @@ function buildTurretGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
  * Phase 4b colours this constant; Phase 4b.3 will modulate the alpha or
  * colour by whether the slot's `pickTarget` has acquired something.
  */
-function buildAimLineGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
+function buildAimLineGfx(_mount: WeaponMount, color: number): Graphics {
   const g = new Graphics();
   const start = BARREL_LENGTH;
   const end = BARREL_LENGTH + AIM_LINE_LENGTH;
@@ -238,6 +267,6 @@ function buildAimLineGfx(_mount: WeaponMount, kind: ShipKind): Graphics {
     const dashEnd = Math.min(s + AIM_LINE_DASH_ON, end);
     g.moveTo(0, -s).lineTo(0, -dashEnd);
   }
-  g.stroke({ color: kind.shape.color, width: 1, alpha: 0.25 });
+  g.stroke({ color, width: 1, alpha: 0.25 });
   return g;
 }

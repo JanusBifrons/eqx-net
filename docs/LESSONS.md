@@ -14,6 +14,50 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-07 — structures — turret/miner had no barrel because the mount-visual branch was `kind===1`-only
+Commit: Item A of the structures follow-ups (plan `majestic-pie` handoff)
+**Symptom (smoke).** A Turret rendered as *only a triangle* (no barrel, no
+aiming visual); a Miner read as a bare/unrecognisable polygon ("invisible").
+
+**Root cause.** `render/pixi/swarmSpriteUpdater.ts` gated the entire
+mount-visual block behind `if (entry.kind === 1 && entry.shipKind)` — drones
+only. Structures are `kind===2`, so `ensureForShip`/`applyMountAngles` were never
+called for them even though TURRET (`barrel`) and MINER (`drill`) carry mounts in
+`structureKinds.ts`. The fix adds a `kind===2` branch that routes structures
+through a new `MountVisualManager.ensureForMounts(id, kindId, mounts, color,
+parent)` (the single construction path; `ensureForShip` became a thin wrapper).
+
+**Load-bearing detail #1 — structures have NO `mountAngles` on the wire.** The
+snapshot structures slice ships only `turretTargetId` / `miningTargetId`, so the
+barrel angle must be **derived client-side** from the target entity's resolved
+mirror pose. Reuse the canonical convention VERBATIM (server `WeaponMountTicker` /
+client `localMountAim`): `worldBearing = atan2(-dx, dy)`, arc-local =
+`clampToArc(wrapPi(worldBearing − bodyAngle − baseAngle))`, then `applyMountAngles`
+applies the single `-(baseAngle + current)` Pixi Y-flip. A sign slip anywhere in
+that chain points the barrel 180° off — so the unit test uses an **off-axis**
+target (correct angle ≠ 0) and asserts both `toBeCloseTo(expected)` AND
+`abs(rotation) > 0.1`; a dead-ahead target (angle 0) can't distinguish "aimed"
+from "never rotated."
+
+**Load-bearing detail #2 — the `?? []` fallback is a hot-loop alloc (invariant
+#14).** `sk.mounts ?? []` runs every frame in `updateSwarmSprites`; for the
+common mountless structures (capital/connector/solar) `.mounts` is undefined, so
+it allocated a fresh `[]` *per frame per structure*. Caught by the adversarial
+verifier, not the implementer's own alloc-notes. Fix: a shared module-scope
+`const EMPTY_MOUNTS: readonly WeaponMount[] = []` used as the fallback (applied to
+the sibling drone line + the `ensureForShip` wrapper too).
+
+**Visual-verification note.** `worker=0` scenario-room screenshots
+(`structure-scenario-test` + `spawnX/spawnY` to put the camera on a structure)
+confirmed the turret renders + actively aims/fires its beam at its drone and the
+miner is a clearly-visible mining structure. The in-game pixi-viewport **clamps
+max zoom**, so the literal barrel-rect is below screenshot resolution — the unit
+test (mount created + correct rotation) + the fact it reuses the *already-visible*
+drone-mount mechanism are the load-bearing proof there; the screenshot proves
+"renders + aims at target," not the sub-sprite detail. On-device smoke (esp. a
+miner built *on* its asteroid — a z-order case the scenario's 350u-apart layout
+doesn't reproduce) remains the real verdict.
+
 ## 2026-06-07 — engine-fx — the exhaust-mirror bug lived at the renderer↔emitter SEAM, not in the emitter
 Commit: feat/engine-particle-fx (plan `majestic-pie`)
 **Symptom (smoke).** Engine exhaust particles appeared on the WRONG side (right
