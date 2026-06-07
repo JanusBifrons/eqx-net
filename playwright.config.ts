@@ -75,6 +75,8 @@ const FEATURE_SPECS: string[] = [
   '**/drawer-galaxy.spec.ts',
   '**/drone-destruction.spec.ts',
   '**/drone-laser-smoothness.spec.ts',
+  '**/engine-particles-probe.spec.ts',
+  '**/engine-particles-flight.spec.ts',
   '**/feel-test-lockstep.spec.ts',
   '**/feel-tuning.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
