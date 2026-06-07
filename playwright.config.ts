@@ -65,6 +65,7 @@ const SMOKE_SPECS: string[] = [
 const FEATURE_SPECS: string[] = [
   '**/asteroid-shape.spec.ts',
   '**/auto-fire.spec.ts',
+  '**/avatar-menu-logout.spec.ts',
   '**/boost-facing.spec.ts',
   '**/combat/*.spec.ts',
   '**/missile-frigate-homing.spec.ts',

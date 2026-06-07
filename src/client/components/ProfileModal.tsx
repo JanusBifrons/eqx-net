@@ -42,7 +42,7 @@ export function ProfileModal({ open, onClose }: Props) {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth data-testid="profile-modal">
       <DialogTitle>Profile</DialogTitle>
       <DialogContent sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
         <Typography variant="caption" color="text.secondary">{user?.email}</Typography>

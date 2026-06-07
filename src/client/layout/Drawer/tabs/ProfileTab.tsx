@@ -3,19 +3,16 @@ import {
   Avatar,
   Box,
   Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogContentText,
-  DialogTitle,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useAuthStore } from '../../../auth/authStore';
+import { useLogout } from '../../../auth/useLogout';
 import { apiUpdateProfile } from '../../../auth/authApi';
 import { useUIStore } from '../../../state/store';
+import { LogoutConfirmDialog } from '../../../components/LogoutConfirmDialog';
 
 function initials(displayName: string | null, email: string | null): string {
   const src = displayName ?? email ?? '?';
@@ -34,9 +31,10 @@ function initials(displayName: string | null, email: string | null): string {
  * needs to drive the phase transition itself.
  */
 export function ProfileTab(): JSX.Element {
-  const { user, token, setAuth, clearAuth } = useAuthStore();
+  const { user, token, setAuth } = useAuthStore();
   const setPhase = useUIStore((s) => s.setPhase);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  const logout = useLogout();
 
   const [displayName, setDisplayName] = useState('');
   const [savingName, setSavingName] = useState(false);
@@ -83,10 +81,8 @@ export function ProfileTab(): JSX.Element {
   };
 
   const onConfirmLogout = (): void => {
-    clearAuth();
-    setPhase('meta');
     setConfirmOpen(false);
-    setDrawerOpen(false);
+    logout();
   };
 
   return (
@@ -147,26 +143,11 @@ export function ProfileTab(): JSX.Element {
         </Button>
       </Box>
 
-      <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)} maxWidth="xs" data-testid="logout-confirm-dialog">
-        <DialogTitle>Log out of EQX Peri?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Your session will end and you&rsquo;ll return to the main menu.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setConfirmOpen(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={onConfirmLogout}
-            data-testid="logout-confirm-button"
-            autoFocus
-          >
-            Log out
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <LogoutConfirmDialog
+        open={confirmOpen}
+        onCancel={() => setConfirmOpen(false)}
+        onConfirm={onConfirmLogout}
+      />
     </Box>
   );
 }

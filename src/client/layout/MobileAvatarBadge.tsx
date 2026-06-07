@@ -1,12 +1,12 @@
-import { Avatar, Tooltip } from '@mui/material';
 import { useAuthStore } from '../auth/authStore.js';
 import { isTouchDevice } from '../input/TouchInput';
+import { AvatarMenu } from '../components/AvatarMenu.js';
 import { Slot } from './Slot';
 
 interface Props {
-  /** Tap handler — typically opens the ProfileModal so the user can see
-   *  display name / email and log out. */
-  onClick: () => void;
+  /** Opens the display-name editor (`ProfileModal`) from the menu's
+   *  "Display name" item. */
+  onProfileClick: () => void;
 }
 
 /**
@@ -18,14 +18,14 @@ interface Props {
  * screen. Only mounted on the meta phase — in-game and on the galaxy map
  * the right-edge drawer's Profile tab already covers this.
  *
+ * The badge now opens the SAME `AvatarMenu` popover (Display name + Logout) as
+ * the desktop header — this component only owns the touch/meta gate and the
+ * layout `Slot`; the trigger styling + menu behaviour live in `AvatarMenu`'s
+ * `mobile` variant.
+ *
  * Renders nothing when not on a touch device or not logged in.
  */
-function initials(user: { displayName: string | null; email: string }): string {
-  const name = user.displayName ?? user.email;
-  return name.slice(0, 2).toUpperCase();
-}
-
-export function MobileAvatarBadge({ onClick }: Props): JSX.Element | null {
+export function MobileAvatarBadge({ onProfileClick }: Props): JSX.Element | null {
   const user = useAuthStore((s) => s.user);
 
   if (!user) return null;
@@ -37,26 +37,7 @@ export function MobileAvatarBadge({ onClick }: Props): JSX.Element | null {
   // is exclusively on the game phase.
   return (
     <Slot anchor="top-right" order={1}>
-      <Tooltip title={user.displayName ?? user.email} placement="left">
-        <Avatar
-          data-testid="mobile-avatar-badge"
-          onClick={onClick}
-          sx={{
-            width: 34,
-            height: 34,
-            fontSize: 13,
-            cursor: 'pointer',
-            bgcolor: 'rgba(0, 255, 136, 0.85)',
-            color: '#000',
-            border: '1px solid rgba(0, 255, 136, 0.55)',
-            boxShadow: '0 0 6px rgba(0, 255, 136, 0.35)',
-            fontWeight: 700,
-            letterSpacing: 0.5,
-          }}
-        >
-          {initials(user)}
-        </Avatar>
-      </Tooltip>
+      <AvatarMenu variant="mobile" onProfileClick={onProfileClick} />
     </Slot>
   );
 }
