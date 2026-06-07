@@ -161,6 +161,9 @@ describe('renderer-worker protocol', () => {
             placementChosenWorldX: 42.5,
             placementChosenWorldY: -17.25,
             placementStuck: true,
+            placementPreviewConnectionCount: 2,
+            selectedPickId: 'swarm-42',
+            selectedPickKind: 'structure',
           },
         },
       },
@@ -188,6 +191,9 @@ describe('renderer-worker protocol', () => {
       if (back.type === 'FEEDBACK') {
         expect(back.feedback.haloArrowCount).toBe(7);
         expect(back.feedback.mountCounts.get('ship-1')).toBe(3);
+        expect(back.feedback.placementPreviewConnectionCount).toBe(2);
+        expect(back.feedback.selectedPickId).toBe('swarm-42');
+        expect(back.feedback.selectedPickKind).toBe('structure');
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

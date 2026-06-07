@@ -147,6 +147,10 @@ export async function bootSectorTestServer(opts: {
   prebuiltStructures?: ReadonlyArray<{ kind: string; x: number; y: number }>;
   scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
   scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+  /** Override the default ambient asteroid field. Pass `[]` for a clean scene
+   *  (no rocks) so a test can seed its own asteroids deterministically. When
+   *  omitted, the room spawns the production `ASTEROIDS` roster. */
+  asteroidConfig?: ReadonlyArray<{ x: number; y: number; vx: number; vy: number; radius: number; mass: number }>;
 } = {}): Promise<SectorTestHarness> {
   // 1. Stub the persistence singletons FIRST. SectorRoom.onCreate
   //    reads these via module-level singletons, so the injection has
@@ -185,6 +189,7 @@ export async function bootSectorTestServer(opts: {
     prebuiltStructures: opts.prebuiltStructures,
     scenarioDrones: opts.scenarioDrones,
     scenarioAsteroids: opts.scenarioAsteroids,
+    asteroidConfig: opts.asteroidConfig,
   });
   await gameServer.listen(port);
 

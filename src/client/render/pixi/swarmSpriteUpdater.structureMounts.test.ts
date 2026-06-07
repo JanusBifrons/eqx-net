@@ -1,0 +1,246 @@
+/**
+ * Structure mount-visual regression lock (structures follow-up Item A,
+ * plan: i-want-you-to-majestic-pie; Invariant #13 — failing test FIRST).
+ *
+ * On-device smoke (2026-06-07): a Turret renders as ONLY its base polygon
+ * (the "triangle") — no barrel, no aim. Root cause: `swarmSpriteUpdater`
+ * gated the mount-visual code behind `if (entry.kind === 1 && entry.shipKind)`
+ * (drones only), so structures (kind===2) — which DO carry a `mounts` entry
+ * in `structureKinds.ts` (TURRET 'barrel', MINER 'drill') — never got a
+ * barrel sprite. Structures carry NO `mountAngles` on any wire; the snapshot
+ * `structures[]` slice ships only `turretTargetId` / `miningTargetId`, so the
+ * barrel angle must be DERIVED client-side from the target id + the target
+ * entity's pose.
+ *
+ * This test reads the REAL drawn artifact (the `MountVisualManager` barrel
+ * cluster + its sprite rotation), NOT a recompute (feedback-test-observable
+ * lesson). It asserts, for BOTH a turret (turretTargetId) and a miner
+ * (miningTargetId):
+ *   1. the structure sprite gained exactly ONE barrel (mountCountForShip === 1)
+ *   2. the barrel sprite rotation is non-zero AND points AT the target
+ *      (validated against the SAME `applyMountAngles` Y-flip convention).
+ *
+ * Before the fix this FAILS at `mountCountForShip === 1` (count is 0 — no
+ * kind===2 branch ever builds the cluster).
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import { Container } from 'pixi.js';
+import type { Graphics } from 'pixi.js';
+import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
+import { MountVisualManager } from '../MountVisualManager.js';
+import type {
+  RenderMirror,
+  SwarmRenderState,
+  StructureRenderState,
+  PoseRingEntry,
+} from '../../../core/contracts/IRenderer.js';
+import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { wrapPi } from '../../../core/ai/WeaponMountController.js';
+
+function emptyPoseRing(): PoseRingEntry[] {
+  const ring: PoseRingEntry[] = [];
+  for (let i = 0; i < POSE_RING_DEPTH; i++) {
+    ring.push({ empty: true, x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0 });
+  }
+  return ring;
+}
+
+/** A static structure swarm entry posed exactly at (x,y,angle). `sleeping:true`
+ *  makes `interpolateSwarmPose` pin to entry.x/y/angle (no ring math), so the
+ *  rendered sprite lands at the deterministic structure pose. */
+function structureEntry(
+  shipKind: string,
+  x: number,
+  y: number,
+  angle: number,
+): SwarmRenderState {
+  return {
+    x, y, vx: 0, vy: 0, angle, angvel: 0,
+    prevX: x, prevY: y, prevAngle: angle,
+    prevArrivalMs: 0, latestArrivalMs: 0,
+    poseRing: emptyPoseRing(), ringHead: 0,
+    radius: 36, kind: 2, shipKind,
+    sleeping: true, lastUpdateTick: 0,
+  };
+}
+
+/** A drone target entry (kind===1) the structure mount should aim at. */
+function droneEntry(x: number, y: number): SwarmRenderState {
+  return {
+    x, y, vx: 0, vy: 0, angle: 0, angvel: 0,
+    prevX: x, prevY: y, prevAngle: 0,
+    prevArrivalMs: 0, latestArrivalMs: 0,
+    poseRing: emptyPoseRing(), ringHead: 0,
+    radius: 12, kind: 1, shipKind: 'fighter',
+    sleeping: true, lastUpdateTick: 0,
+  };
+}
+
+function structureState(over: Partial<StructureRenderState>): StructureRenderState {
+  return {
+    powered: true, netPower: 10, connTo: [], built: true,
+    buildPct: 1, deconstructPct: 0, ...over,
+  };
+}
+
+function makeCtx(): SwarmSpriteCtx {
+  return {
+    shipContainer: new Container(),
+    sprites: new Map<string, Graphics>(),
+    mountVisuals: new MountVisualManager(),
+    swarmPoseScratch: { x: 0, y: 0, angle: 0 },
+    remoteHitTargets: new Set<string>(),
+    localHitTargets: new Set<string>(),
+    seenScratch: new Set<string>(),
+  };
+}
+
+/** The barrel sprite rotation the renderer SHOULD draw for a structure mount
+ *  aiming at `target`, derived independently from the production code via the
+ *  canonical server convention (WeaponMountTicker) + the applyMountAngles
+ *  Y-flip. The structure mount sits at the body centre (localX=localY=0,
+ *  baseAngle=0). */
+function expectedBarrelRotation(
+  bodyX: number,
+  bodyY: number,
+  bodyAngle: number,
+  baseAngle: number,
+  targetX: number,
+  targetY: number,
+): number {
+  const dx = targetX - bodyX;
+  const dy = targetY - bodyY;
+  const worldBearing = Math.atan2(-dx, dy);
+  const arcLocal = wrapPi(worldBearing - bodyAngle - baseAngle);
+  // applyMountAngles: spriteRotation = -(baseAngle + current)
+  return -(baseAngle + arcLocal);
+}
+
+describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
+  let ctx: SwarmSpriteCtx;
+  beforeEach(() => {
+    ctx = makeCtx();
+  });
+
+  it('builds a barrel for a TURRET and aims it at turretTargetId', () => {
+    const turretId = 100;
+    const droneId = 200;
+    // Turret at origin facing forward; target drone straight ahead (+y world).
+    const turret = structureEntry('turret', 0, 0, 0);
+    const target = droneEntry(0, 350);
+    const swarm = new Map<number, SwarmRenderState>([
+      [turretId, turret],
+      [droneId, target],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [turretId, structureState({ turretTargetId: droneId })],
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    updateSwarmSprites(mirror, ctx);
+
+    const key = `swarm-${turretId}`;
+    // (1) the barrel cluster exists — exactly one mount on the turret.
+    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
+
+    // (2) the barrel rotation aims at the target (non-zero + correct sign).
+    const sk = getStructureKind('turret');
+    const mount = sk.mounts![0]!;
+    const cluster = (ctx.mountVisuals as unknown as {
+      clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
+    }).clusters.get(key)!;
+    const barrel = cluster.perMount.get(mount.id)!.turret;
+    const expected = expectedBarrelRotation(0, 0, 0, mount.baseAngle, 0, 350);
+    expect(barrel.rotation).toBeCloseTo(expected, 5);
+    // Target dead ahead (+y, ship-forward) → barrel stays at 0 (forward).
+    // Use an off-axis target to prove the aim actually rotates the barrel.
+  });
+
+  it('aims a TURRET barrel OFF-AXIS at a side target (proves non-zero rotation + correct sign)', () => {
+    const turretId = 101;
+    const droneId = 201;
+    const turret = structureEntry('turret', 0, 0, 0);
+    // Target to the turret's RIGHT (+x). Forward is +y, so a target at +x is
+    // 90° clockwise → the barrel must rotate, and toward the target, not away.
+    const target = droneEntry(400, 0);
+    const swarm = new Map<number, SwarmRenderState>([
+      [turretId, turret],
+      [droneId, target],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [turretId, structureState({ turretTargetId: droneId })],
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    updateSwarmSprites(mirror, ctx);
+
+    const key = `swarm-${turretId}`;
+    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
+
+    const sk = getStructureKind('turret');
+    const mount = sk.mounts![0]!;
+    const cluster = (ctx.mountVisuals as unknown as {
+      clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
+    }).clusters.get(key)!;
+    const barrel = cluster.perMount.get(mount.id)!.turret;
+    const expected = expectedBarrelRotation(0, 0, 0, mount.baseAngle, 400, 0);
+    expect(barrel.rotation).toBeCloseTo(expected, 5);
+    // It must actually have rotated off forward (forward sprite rotation is 0).
+    expect(Math.abs(barrel.rotation)).toBeGreaterThan(0.1);
+  });
+
+  it('builds a barrel for a MINER and aims it at miningTargetId', () => {
+    const minerId = 102;
+    const asteroidId = 202;
+    const miner = structureEntry('miner', 100, 100, 0);
+    // Asteroid (mining target) off to one side.
+    const target = droneEntry(100, 900);
+    target.kind = 0; // mining target is an asteroid (kind 0); resolution is by id.
+    const swarm = new Map<number, SwarmRenderState>([
+      [minerId, miner],
+      [asteroidId, target],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [minerId, structureState({ miningTargetId: asteroidId })],
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    updateSwarmSprites(mirror, ctx);
+
+    const key = `swarm-${minerId}`;
+    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
+
+    const sk = getStructureKind('miner');
+    const mount = sk.mounts![0]!;
+    const cluster = (ctx.mountVisuals as unknown as {
+      clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
+    }).clusters.get(key)!;
+    const barrel = cluster.perMount.get(mount.id)!.turret;
+    const expected = expectedBarrelRotation(100, 100, 0, mount.baseAngle, 100, 900);
+    expect(barrel.rotation).toBeCloseTo(expected, 5);
+  });
+
+  it('leaves the barrel at base when the structure has no target', () => {
+    const turretId = 103;
+    const turret = structureEntry('turret', 0, 0, 0);
+    const swarm = new Map<number, SwarmRenderState>([[turretId, turret]]);
+    const structures = new Map<number, StructureRenderState>([
+      [turretId, structureState({})], // no turretTargetId / miningTargetId
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    updateSwarmSprites(mirror, ctx);
+
+    const key = `swarm-${turretId}`;
+    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
+    const sk = getStructureKind('turret');
+    const mount = sk.mounts![0]!;
+    const cluster = (ctx.mountVisuals as unknown as {
+      clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
+    }).clusters.get(key)!;
+    const barrel = cluster.perMount.get(mount.id)!.turret;
+    // No target → barrel at base angle (0 for the structure mounts).
+    expect(barrel.rotation).toBeCloseTo(-mount.baseAngle, 5);
+  });
+});

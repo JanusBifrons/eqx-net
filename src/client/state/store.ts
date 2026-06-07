@@ -146,6 +146,8 @@ export const useUIStore = create<UIStore>((set, get) => ({
   transitSpoolMs: null,
   activeSlotId: 'primary',
   placementKind: null,
+  selectedEntityId: null,
+  selectedEntityKind: null,
   gridNetPower: 0,
   minerals: 0,
   energyMax: 100,
@@ -210,6 +212,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
   setPlacementKind: (k) => set({ placementKind: k }),
+  setSelectedEntity: (id, kind) => set({ selectedEntityId: id, selectedEntityKind: kind }),
   setGridNetPower: (net) => set({ gridNetPower: net }),
   setMinerals: (n) => set({ minerals: n }),
   setEnergyMax: (max) => set({ energyMax: max }),

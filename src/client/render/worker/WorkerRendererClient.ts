@@ -59,6 +59,9 @@ function emptyFeedback(): RendererFeedback {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementPreviewConnectionCount: 0,
+    selectedPickId: null,
+    selectedPickKind: null,
   };
 }
 
@@ -524,6 +527,10 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementChosenWorldX = msg.feedback.placementChosenWorldX;
         this.feedback.placementChosenWorldY = msg.feedback.placementChosenWorldY;
         this.feedback.placementStuck = msg.feedback.placementStuck;
+        this.feedback.placementPreviewConnectionCount =
+          msg.feedback.placementPreviewConnectionCount;
+        this.feedback.selectedPickId = msg.feedback.selectedPickId;
+        this.feedback.selectedPickKind = msg.feedback.selectedPickKind;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);

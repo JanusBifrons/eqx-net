@@ -1,0 +1,172 @@
+/**
+ * Connection-range PREVIEW lock (structures follow-up Item C, plan:
+ * i-want-you-to-majestic-pie; Invariant #9/#13 — failing test FIRST).
+ *
+ * While the player positions a blueprint ghost (`mirror.pendingPlacementPreview`
+ * set), the ConnectorRenderer draws preview lines from the ghost to the hubs it
+ * WOULD connect to, using the SAME obstacle-aware `canConnect` the server runs
+ * on placement. This test reads the REAL computed count the renderer publishes
+ * (`placementPreviewConnectionCount`) — NOT a recompute (feedback-test-observable
+ * lesson) — and asserts:
+ *
+ *   1. ghost in-range of a hub, asteroid OFF the segment  → count >= 1
+ *   2. an asteroid sitting ON the only segment            → count === 0 (blocked,
+ *      same as the server's obstacle-aware autoConnect)
+ *   3. no preview (pendingPlacementPreview null)          → count === 0
+ *
+ * Before the feature exists this FAILS: `ConnectorRenderer` has no preview pass
+ * and `placementPreviewConnectionCount` is undefined.
+ *
+ * Harness mirrors swarmSpriteUpdater.structureMounts.test.ts: a headless
+ * RenderMirror + Pixi Graphics (no GL needed for `clear()`/`moveTo`/`stroke`).
+ */
+import { describe, it, expect } from 'vitest';
+import { ConnectorRenderer } from './ConnectorRenderer.js';
+import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import type {
+  RenderMirror,
+  SwarmRenderState,
+  StructureRenderState,
+} from '../../../core/contracts/IRenderer.js';
+
+function structureEntry(shipKind: string, x: number, y: number): SwarmRenderState {
+  return {
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    angle: 0,
+    angvel: 0,
+    prevX: x,
+    prevY: y,
+    prevAngle: 0,
+    prevArrivalMs: 0,
+    latestArrivalMs: 0,
+    poseRing: [],
+    ringHead: 0,
+    radius: getStructureKind(shipKind).radius,
+    kind: 2,
+    shipKind,
+    sleeping: true,
+    lastUpdateTick: 0,
+  };
+}
+
+function asteroidEntry(x: number, y: number, radius: number): SwarmRenderState {
+  return {
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    angle: 0,
+    angvel: 0,
+    prevX: x,
+    prevY: y,
+    prevAngle: 0,
+    prevArrivalMs: 0,
+    latestArrivalMs: 0,
+    poseRing: [],
+    ringHead: 0,
+    radius,
+    kind: 0,
+    sleeping: true,
+    lastUpdateTick: 0,
+  };
+}
+
+function structureState(over: Partial<StructureRenderState> = {}): StructureRenderState {
+  return {
+    powered: true,
+    netPower: 50,
+    connTo: [],
+    built: true,
+    buildPct: 1,
+    deconstructPct: 0,
+    ...over,
+  };
+}
+
+describe('ConnectorRenderer — placement connection preview', () => {
+  it('counts >= 1 when the ghost would connect to an in-range hub (asteroid off the segment)', () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([
+      // Capital hub at origin (built, has a free slot).
+      [capitalId, structureEntry('capital', 0, 0)],
+      // Asteroid far off to the side — does NOT block the ghost→capital segment.
+      [2, asteroidEntry(0, 5000, 40)],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [capitalId, structureState({ connTo: [] })],
+    ]);
+    // Ghost connector 300 u above the capital (edge distance well within 600).
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it('counts 0 when an asteroid sits ON the only ghost→hub segment (blocked, server-faithful)', () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([
+      [capitalId, structureEntry('capital', 0, 0)],
+      // Asteroid squarely between the ghost (0,300) and the capital (0,0).
+      [2, asteroidEntry(0, 150, 60)],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [capitalId, structureState({ connTo: [] })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(0);
+  });
+
+  it('counts 0 when there is no placement preview', () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([
+      [capitalId, structureState({ connTo: [] })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: null,
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(0);
+  });
+
+  it('counts 0 when the only hub is out of range (ghost too far)', () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([
+      [capitalId, structureState({ connTo: [] })],
+    ]);
+    // 5000 u away — edge distance far beyond CONNECTION_MAX_RANGE (600).
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 5000, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(0);
+  });
+});

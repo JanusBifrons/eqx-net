@@ -108,6 +108,9 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             placementChosenWorldX: fb.placementChosenWorldX,
             placementChosenWorldY: fb.placementChosenWorldY,
             placementStuck: fb.placementStuck,
+            placementPreviewConnectionCount: fb.placementPreviewConnectionCount,
+            selectedPickId: fb.selectedPickId,
+            selectedPickKind: fb.selectedPickKind,
           },
         });
         // F1 — per-frame sub-cost markers. GATED: only post when

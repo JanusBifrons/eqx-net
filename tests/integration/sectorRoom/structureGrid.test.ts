@@ -46,7 +46,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
   afterEach(async () => { if (harness) await harness.cleanup(); });
 
   it('capital → connector → solar form a powered web (connTo + positive netPower)', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -73,7 +73,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
   }, 20_000);
 
   it('a leaf with no hub in range is unconnected + unpowered (leaf↔leaf rejected)', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -92,7 +92,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
   }, 20_000);
 
   it('destroying the connector severs the solar (it reports unpowered)', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 

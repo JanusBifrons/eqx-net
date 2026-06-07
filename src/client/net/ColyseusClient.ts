@@ -12,7 +12,8 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema } from '@shared-types/messages';
+import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
   shouldForwardPredict,
@@ -1367,6 +1368,17 @@ export class ColyseusGameClient {
         const hi = a < b ? b : a;
         flashes.set(lo * 65536 + hi, until);
       }
+    });
+
+    // Click-to-inspect (structures follow-up Item B5) — live stats for the
+    // locally-selected entity arrive at ~5 Hz. Defensive zod parse (invariant
+    // #3); on success mutate the `selectionStats` module singleton in place (NO
+    // Zustand write — the panel polls the singleton ~1 Hz, avoiding 5 Hz React
+    // re-renders).
+    room.onMessage('entity_stats', (raw: unknown) => {
+      const parsed = EntityStatsSchema.safeParse(raw);
+      if (!parsed.success) return;
+      applySelectionStats(parsed.data);
     });
 
     room.onMessage('damage', (raw: unknown) => {

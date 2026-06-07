@@ -40,7 +40,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
   afterEach(async () => { if (harness) await harness.cleanup(); });
 
   it('a connector blueprint builds up pulse-by-pulse, debiting the capital bank', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -61,7 +61,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
   }, 20_000);
 
   it('construction PAUSES when the bank is empty and RESUMES on refill (no progress lost)', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -85,7 +85,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
   }, 20_000);
 
   it('dead-end: a leaf behind an UNBUILT connector gets nothing until it completes', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -108,7 +108,7 @@ describe('SectorRoom integration — construction flow economy (Phase 3)', () =>
   }, 20_000);
 
   it('repair: a damaged built structure heals over pulses, debiting minerals', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 

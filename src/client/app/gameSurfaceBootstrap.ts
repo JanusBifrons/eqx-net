@@ -48,6 +48,18 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
         ? false
         : !isTouch && supportsOffscreenRenderer();
   const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
+  // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
+  // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is
+  // off-thread); E2E specs run `?worker=0` to use it. Mirrors __eqxGalaxyPick.
+  // Guarded by webdriver/DEV so it never ships a live hook to real players.
+  if (
+    renderer instanceof PixiRenderer
+    && typeof navigator !== 'undefined'
+    && (navigator as { webdriver?: boolean }).webdriver === true
+  ) {
+    (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null })
+      .__eqxSelectAtWorld = (x, y) => renderer.devSelectAtWorld(x, y);
+  }
   logEvent('renderer_path_chosen', {
     useWorker,
     workerParam,

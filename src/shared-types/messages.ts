@@ -65,6 +65,18 @@ export type {
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
 export type { GridPulseEvent } from './messages/gridMessages.js';
 
+// Click-to-inspect selection-scoped stats channel (structures follow-up Item B5)
+export {
+  SelectEntitySchema,
+  DeselectEntitySchema,
+  EntityStatsSchema,
+} from './messages/selectionMessages.js';
+export type {
+  SelectEntityMessage,
+  DeselectEntityMessage,
+  EntityStatsMessage,
+} from './messages/selectionMessages.js';
+
 // Missile subsystem (server → client)
 export {
   MissileFiredEventSchema,

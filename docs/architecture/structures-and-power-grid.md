@@ -75,6 +75,21 @@ so it unit-tests like `TransitOrchestrator`):
 - **Silhouette:** `render/pixi/swarmSpriteUpdater.ts` branches `kind===2` to
   `buildStructureGfx(entry.shipKind, radius)` — a regular polygon tinted from the
   catalogue `color`, sided per subtype.
+- **Mount visuals (barrel / drill):** the same `kind===2` branch routes
+  mount-carrying structures (TURRET `barrel`, MINER `drill`) through
+  `MountVisualManager.ensureForMounts(spriteKey, sk.id, sk.mounts, sk.color,
+  sprite)` — the SAME barrel + aim-line cluster the drone/player turret mounts
+  use, but taking the mounts + flat `StructureKind.color` directly (structures
+  have no `shape.color`). **Structures carry no `mountAngles` on any wire** (the
+  slice ships only `turretTargetId` / `miningTargetId`), so the barrel angle is
+  **derived client-side** from the target entity's resolved mirror pose via the
+  canonical aim convention (`atan2(-dx, dy)` → arc-local `wrapPi(bearing −
+  bodyAngle − baseAngle)` → `clampToArc`), then handed to `applyMountAngles`
+  (single Pixi Y-flip, identical to the player/drone path — a sign error points
+  the barrel 180° away). It SNAPS per frame (no client-side per-tick mount state
+  for structures). Before this landed, structures were gated out of the mount
+  branch (`kind===1`-only), so a turret rendered as a bare triangle with no
+  barrel and a miner as a bare polygon — the 2026-06-07 smoke report.
 - **Build UI:** the speed-dial **Build ▸** sub-menu sets Zustand `placementKind`;
   `StructurePlacementBanner` confirms/cancels. Confirm →
   `structurePlacementClient.placeStructureAhead(kind)` sends `place_structure` at

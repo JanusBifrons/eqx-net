@@ -17,6 +17,8 @@ import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
+import { SelectionBracket } from './SelectionBracket';
+import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
@@ -112,6 +114,16 @@ export class PixiRenderer implements IRenderer {
   private _placementFollowing = true;
   private _placementChosenX: number | null = null;
   private _placementChosenY: number | null = null;
+  /**
+   * Click-to-inspect selection (structures follow-up Item B2). The renderer
+   * OWNS the selected entity — set on a gameplay tap that resolves to an
+   * entity, toggled off on a re-tap of the SAME entity, cleared on an
+   * empty-space tap. Published each frame via `feedback.selectedPickId/Kind`
+   * (the main thread mirrors it into Zustand for panel visibility). The id form
+   * matches the `HealthBarManager`/`SelectionBracket` lookup convention.
+   */
+  private _selectedId: string | null = null;
+  private _selectedKind: PickedEntityKind | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -266,6 +278,7 @@ export class PixiRenderer implements IRenderer {
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
+  private selectionBracket: SelectionBracket | null = null;
   private backgroundGrid: BackgroundGrid | null = null;
   private starfield: StarfieldBackground | null = null;
   /**
@@ -290,6 +303,9 @@ export class PixiRenderer implements IRenderer {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementPreviewConnectionCount: 0,
+    selectedPickId: null,
+    selectedPickKind: null,
   };
 
   /**
@@ -604,6 +620,10 @@ export class PixiRenderer implements IRenderer {
     this.damageNumbers = new DamageNumberManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
+    // Click-to-inspect selection bracket (Item B4). Parented to the world
+    // container (camera-transformed, world space like the health bars) so the
+    // 4-corner bracket tracks the selected entity as it (and the camera) moves.
+    this.selectionBracket = new SelectionBracket(this.world);
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
@@ -727,6 +747,11 @@ export class PixiRenderer implements IRenderer {
         if (result.wasTap && this.onTap) {
           this.onTap(e.offsetX, e.offsetY);
         }
+        // Click-to-inspect (Item B2): a gameplay tap selects an entity, gated
+        // off galaxy + placement so it never cross-fires with warp/picker/build.
+        if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
+          this.handleGameplayTap(e.offsetX, e.offsetY);
+        }
         break;
       }
       case 'pointercancel':
@@ -808,9 +833,18 @@ export class PixiRenderer implements IRenderer {
         case 'pointermove':
           this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
           break;
-        case 'pointerup':
-          this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
+        case 'pointerup': {
+          const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
+          // Click-to-inspect (Item B2): a confirmed gameplay tap (not a drag)
+          // selects an entity. Gated off the galaxy layer + placement so it
+          // never cross-fires. The galaxy `isPanZoomActive` branch above
+          // already returned for the selector; `galaxyTapSuppressed()` also
+          // covers the in-game overlay (warp taps).
+          if (result.wasTap && !this.galaxyTapSuppressed() && !this._placementActive) {
+            this.handleGameplayTap(e.offsetX, e.offsetY);
+          }
           break;
+        }
         case 'pointercancel':
         case 'pointerleave':
           this.camera.onPointerCancel(e.pointerId);
@@ -879,6 +913,70 @@ export class PixiRenderer implements IRenderer {
         this._placementFollowing = false;
         break;
     }
+  }
+
+  /**
+   * Click-to-inspect (Item B2). A confirmed gameplay tap (NOT a drag) resolves
+   * to the nearest entity under the tap via the pure `pickEntityAt`. The
+   * renderer OWNS the selection:
+   *   - tap empty space        → clear selection
+   *   - tap a new entity       → select it
+   *   - re-tap the SAME entity → toggle it off (deselect)
+   * The result is published each frame in `feedback.selectedPickId/Kind`.
+   *
+   * Gated by the callers on `!galaxyTapSuppressed() && !_placementActive` so it
+   * never cross-fires with the galaxy selector/overlay or blueprint placement.
+   * `screenX/Y` are canvas-relative pixels; `screenToWorld` returns pixi-world
+   * coords (y = -gameY), so the pick runs in GAME space.
+   */
+  private handleGameplayTap(screenX: number, screenY: number): void {
+    if (this._lastMirror === null) return;
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const gameX = w.x;
+    const gameY = -w.y;
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    if (hit === null) {
+      this._selectedId = null;
+      this._selectedKind = null;
+    } else if (hit.id === this._selectedId) {
+      this._selectedId = null; // re-tap toggles off
+      this._selectedKind = null;
+    } else {
+      this._selectedId = hit.id;
+      this._selectedKind = hit.kind;
+    }
+  }
+
+  /** True while the galaxy layer should swallow gameplay taps — either the
+   *  full-screen selector (pan/zoom active) OR the in-game additive overlay is
+   *  up (a tap there warps to a neighbour). Selection must not fire in either. */
+  private galaxyTapSuppressed(): boolean {
+    const gl = this._galaxyLayer;
+    return gl !== null && (gl.isPanZoomActive() || gl.visible);
+  }
+
+  /**
+   * DEV/E2E-only deterministic selection at a GAME-space point — bypasses
+   * screen→world projection so a Playwright spec can select an entity at its
+   * known world position without the camera-transform fragility a real screen
+   * tap would carry. Mirrors the `__eqxGalaxyPick` DEV-hook pattern. Runs the
+   * SAME `pickEntityAt` + toggle logic the real tap uses, so it exercises the
+   * full pick → select → bracket → feedback path. Returns the resolved id.
+   */
+  devSelectAtWorld(gameX: number, gameY: number): string | null {
+    if (this._lastMirror === null) return null;
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    if (hit === null) {
+      this._selectedId = null;
+      this._selectedKind = null;
+    } else if (hit.id === this._selectedId) {
+      this._selectedId = null;
+      this._selectedKind = null;
+    } else {
+      this._selectedId = hit.id;
+      this._selectedKind = hit.kind;
+    }
+    return this._selectedId;
   }
 
   update(mirror: RenderMirror): void {
@@ -985,7 +1083,14 @@ export class PixiRenderer implements IRenderer {
 
     // Structures plan, Phase 3 — grid connector web (behind sprites). Joins
     // mirror.structures → mirror.swarm positions; no-op when no structures.
+    // Item C: feed the connector preview the pointer-chosen ghost point (so the
+    // preview lines emanate from where the ghost is actually drawn), then read
+    // the would-connect count back into the feedback channel.
+    this.connectorRenderer.ghostWorldX = this._placementChosenX;
+    this.connectorRenderer.ghostWorldY = this._placementChosenY;
     this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
+    this.feedback.placementPreviewConnectionCount =
+      this.connectorRenderer.placementPreviewConnectionCount;
 
     // Phase 5c swarm sprites (asteroids + drones) — see
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.
@@ -1371,6 +1476,24 @@ export class PixiRenderer implements IRenderer {
       mirror.pendingHealthBarHits.length = 0;
     }
     if (!this._healthBarsDisabled) this.healthBars?.update(mirror);
+
+    // Click-to-inspect selection bracket (Item B4). The renderer owns
+    // `_selectedId`; the bracket resolves its live pose from the mirror each
+    // frame (single pooled Graphics + dirty flag). If the selected entity has
+    // vanished from the mirror (despawned / left interest), the bracket reports
+    // it and we clear the selection so the panel + stats channel tear down.
+    if (this._selectedId !== null) {
+      const stillPresent = this.selectionBracket?.update(mirror, this._selectedId) ?? false;
+      if (!stillPresent) {
+        this._selectedId = null;
+        this._selectedKind = null;
+      }
+    } else {
+      this.selectionBracket?.update(mirror, null);
+    }
+    // Publish the current selection for the main thread → Zustand bridge.
+    this.feedback.selectedPickId = this._selectedId;
+    this.feedback.selectedPickKind = this._selectedKind;
 
     // Drain remote-warp events (warp_in / warp_out broadcasts from the
     // server). Each entry fires the same direction-agnostic one-shot
@@ -1924,6 +2047,7 @@ export class PixiRenderer implements IRenderer {
     this.damageNumbers?.destroy();
     this.healthBars?.destroy();
     this.labels?.destroy();
+    this.selectionBracket?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
     this.backgroundGrid?.destroy();

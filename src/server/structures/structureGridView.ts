@@ -8,7 +8,12 @@
  * half-built node's power.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { canConnect, edgeDistance, type GridNode } from '../../core/structures/Grid.js';
+import {
+  canConnect,
+  edgeDistance,
+  type GridNode,
+  type GridObstacle,
+} from '../../core/structures/Grid.js';
 import { CONNECTION_THROUGHPUT } from '../../core/structures/structureGridConstants.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
@@ -45,8 +50,16 @@ export function buildGridNodes(registry: StructureRegistry): Map<string, GridNod
  *
  * Only links structures owned by the SAME player (connections are per-owner,
  * intra-sector).
+ *
+ * `obstacles` (Item D) — non-structure bodies (asteroids) that block a
+ * connection's line of sight. Optional: omitting it falls back to the
+ * structures-only LOS check (byte-identical to pre-Item-D).
  */
-export function autoConnectStructure(registry: StructureRegistry, newId: string): string | null {
+export function autoConnectStructure(
+  registry: StructureRegistry,
+  newId: string,
+  obstacles?: readonly GridObstacle[],
+): string | null {
   const newRec = registry.get(newId);
   if (!newRec) return null;
   const nodes = buildGridNodes(registry);
@@ -59,7 +72,7 @@ export function autoConnectStructure(registry: StructureRegistry, newId: string)
     if (other.id === newId) continue;
     if (other.owner !== newRec.owner) continue; // per-owner grid
     const otherNode = nodes.get(other.id)!;
-    if (!canConnect(newNode, otherNode, adjacency, nodes).ok) continue;
+    if (!canConnect(newNode, otherNode, adjacency, nodes, obstacles).ok) continue;
     const d = edgeDistance(newNode, otherNode);
     if (d < bestDist) {
       bestDist = d;
