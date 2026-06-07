@@ -6,6 +6,7 @@ import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/pr
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
+import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
@@ -231,6 +232,11 @@ export class PixiRenderer implements IRenderer {
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
+  /** Reused scratch for the `getEntityPose` effects poll — mutated per call
+   *  by `entityPoseFromSprite` (+ vx/vy filled from `_lastMirror`) so the
+   *  per-frame engine/shield pose lookup allocates nothing (Invariant #14).
+   *  Read synchronously inside the effects tick; never stored across frames. */
+  private readonly _enginePoseScratch: EntityPose = { x: 0, y: 0, angle: 0, vx: 0, vy: 0 };
   private readonly _updateRemoteHitTargetsScratch = new Set<string>();
   private readonly _updateLocalHitTargetsScratch = new Set<string>();
   private readonly _updateLingeringPosesView = new Map<string, { x: number; y: number }>();
@@ -545,8 +551,12 @@ export class PixiRenderer implements IRenderer {
         // sprite map (despawned, never spawned, off-interest).
         getEntityPose: (entityId: string) => {
           const sp = this.sprites.get(entityId);
-          if (sp) return { x: sp.x, y: -sp.y, angle: sp.rotation };
-          return null;
+          if (!sp) return null;
+          // Pure seam helper: converts the Pixi sprite pose BACK to game
+          // space (Y-up, angle un-negated). Mutates the reused scratch so
+          // the per-frame poll allocates nothing (Invariant #14); the
+          // emitter reads it synchronously and never stores it.
+          return entityPoseFromSprite(sp, this._enginePoseScratch);
         },
         beams: { liveBeamGfx: this.liveBeamGfx, remoteBeamGfx: this.remoteBeamGfx },
         fxKillSwitches,

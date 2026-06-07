@@ -93,6 +93,37 @@ describe('EngineEmitter — tier dial', () => {
   });
 });
 
+describe('EngineEmitter — spawn side (paired math lock for the mirror fix)', () => {
+  it('spawns the particle ASTERN on the correct side for a diagonal heading', () => {
+    // PAIRED with entityPoseFromSprite.test.ts (Invariant #13): the seam test
+    // proves the renderer now hands a GAME-SPACE angle; this proves the
+    // emitter places the particle astern (un-mirrored) GIVEN a game-space
+    // angle. Together they cover the X-mirror smoke bug.
+    const created: Record<string, unknown>[] = [];
+    const factories: EngineFactories = {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        created.push(g);
+        return g as never;
+      }),
+    };
+    const e = new EngineEmitter(makeParent() as never, () => 'high', factories);
+    e.setActive('s', 'thrust', true);
+    // Game-space heading +π/4. Forward = (-sin, cos); astern = (sin, -cos),
+    // i.e. +X and -Y in game space. With the pre-fix NEGATED angle this would
+    // have spawned at -X (the mirror).
+    const pose: EnginePoseFn = () => ({ x: 0, y: 0, angle: Math.PI / 4 });
+    e.tick(0.05, pose);
+    expect(created.length).toBeGreaterThan(0);
+    const g = created[0]!;
+    // gfx is Pixi-space: gfx.x = gameX, gfx.y = -gameY.
+    const gameX = g.x as number;
+    const gameY = -(g.y as number);
+    expect(gameX).toBeGreaterThan(0); // astern is +X for +π/4 (NOT mirrored to -X)
+    expect(gameY).toBeLessThan(0); // astern is -Y for +π/4
+  });
+});
+
 describe('EngineEmitter — getPose null', () => {
   it('skips emission when getPose returns null (entity not in mirror)', () => {
     const e = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());
