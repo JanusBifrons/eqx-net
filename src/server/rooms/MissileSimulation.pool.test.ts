@@ -141,8 +141,14 @@ describe('MissileSimulation pool', () => {
     sim.spawn('p', 0, 0, 0, -1, HEAT_SEEKER, () => false);
     sim.spawn('p', 0, 0, 0, -1, HEAT_SEEKER, () => false);
     expect(firedCount).toBe(2);
-    // Expire both → 2 detonate events (lifetime expiry path).
+    // Impact-only (smoke handoff 2026-06-06, Issue 2): both missiles fly
+    // out their lifetime WITHOUT a hostile target → they DESPAWN on expiry
+    // with NO detonation broadcast (a missed missile fizzles, it does not
+    // splash in-place). Were the old lifetime-detonate behaviour present,
+    // detonatedCount would be 2.
     for (let i = 0; i < HEAT_SEEKER.lifetimeTicks + 2; i++) sim.advance();
-    expect(detonatedCount).toBe(2);
+    expect(detonatedCount).toBe(0);
+    // …and both are gone from the pool (despawn cap honoured).
+    expect(sim.snapshotSlice()).toBeUndefined();
   });
 });

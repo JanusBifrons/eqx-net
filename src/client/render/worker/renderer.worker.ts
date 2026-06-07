@@ -101,6 +101,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             damageNumberActiveCount: fb.damageNumberActiveCount,
             wreckSpriteCount: fb.wreckSpriteCount,
             firstFrameRendered: fb.firstFrameRendered,
+            liveBeamRenderedFromX: fb.liveBeamRenderedFromX,
+            liveBeamRenderedFromY: fb.liveBeamRenderedFromY,
+            placementScreenX: fb.placementScreenX,
+            placementScreenY: fb.placementScreenY,
           },
         });
         // F1 — per-frame sub-cost markers. GATED: only post when

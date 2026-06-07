@@ -618,13 +618,20 @@ function GameSurface({
        *  where FIRE would be when auto-fire is OFF (MobileControls hides FIRE
        *  while ON). */}
       <Slot anchor="bottom-right" order={5}><AutoFireToggleButton /></Slot>
-      <Slot anchor="bottom-right" order={30}><SpeedDialMenu /></Slot>
-      {/* Structures plan (Phase 2): placement confirm banner — shown only while
-       *  the player is in placement mode (set by the speed-dial Build menu). */}
-      <Slot anchor="bottom-center" order={5}><StructurePlacementBanner /></Slot>
+      {/* Speed-dial at order=1 = the corner-most control (lowest order wins the
+       *  corner in the row-reverse bottom-right anchor), to the right of AUTO
+       *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
+       *  "the speed dial is in the wrong place" → bottom-right corner. */}
+      <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
       {/* Structures plan (Phase 3): grid net-power readout (top-left). */}
       <Slot anchor="top-left" order={40}><GridPowerReadout /></Slot>
       <HyperspaceOverlay onCancel={handleCancelTransit} />
+      {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
+       *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,
+       *  high-z element so it sits ABOVE the thumb-cluster/dial (the old
+       *  bottom-center/Z.hud slot put it UNDER them on mobile). gameRafLoop
+       *  moves it to the projected on-screen position of the blueprint ghost. */}
+      <StructurePlacementBanner />
       <LostConnectionOverlay />
       {galaxyOverviewOpen && (
         <Slot anchor="fullscreen" order={25}>

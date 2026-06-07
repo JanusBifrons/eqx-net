@@ -377,6 +377,17 @@ export interface RenderMirror {
    * Lets you visually confirm whether the server and client are diverging.
    */
   serverGhostPos?: { x: number; y: number } | null;
+  /**
+   * Structure placement preview (smoke handoff 2026-06-06, Issue 5). When the
+   * player is in placement mode the renderer draws a translucent silhouette of
+   * the chosen structure kind at the computed ahead-of-ship world pose, and
+   * projects that pose to screen for the world-anchored confirm. Spatial data
+   * → it lives HERE in the render mirror, NOT Zustand (invariant #2); only the
+   * discrete `placementKind` id stays in Zustand. `null`/absent ⇒ no preview.
+   * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
+   * Structured-cloneable (plain object) so it crosses the worker boundary.
+   */
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number } | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
@@ -490,6 +501,33 @@ export interface RendererFeedback {
    * transition to fire the `pixi_first_frame` diagnostic event.
    */
   firstFrameRendered: boolean;
+  /**
+   * World-space origin of the local player's first live hitscan beam as
+   * ACTUALLY DRAWN this frame (the `BeamSpritePool` sprite transform),
+   * or `null` when no live beam is on screen. E2E test attribute
+   * `data-beam-rendered-from-x/y` reads this.
+   *
+   * Distinct from `data-beam-from-x/y` (which RECOMPUTES the origin from
+   * the live ship pose in `gameRafLoop`): that recompute tracks the ship
+   * perfectly and passes even when the drawn beam is frozen, so it cannot
+   * catch the render-cache detach bug (smoke handoff 2026-06-06, Issue 1
+   * Bug #1). Reading the real sprite transform is the only observable that
+   * fails when the beam stops being redrawn. Test-only surface — not
+   * consumed by gameplay logic.
+   */
+  liveBeamRenderedFromX: number | null;
+  liveBeamRenderedFromY: number | null;
+  /**
+   * Screen-space (CSS px, canvas-relative) projection of the current structure
+   * placement preview pose (`RenderMirror.pendingPlacementPreview`), or `null`
+   * when there's no preview / it's off-screen. Lets the world-anchored
+   * placement confirm (`StructurePlacementBanner`) sit at the blueprint's
+   * on-screen position instead of a fixed HUD slot (smoke handoff 2026-06-06,
+   * Issue 5). Published as `data-placement-screen-x/y`. Test-only / UI-position
+   * surface — not consumed by gameplay logic.
+   */
+  placementScreenX: number | null;
+  placementScreenY: number | null;
 }
 
 export interface IRenderer {

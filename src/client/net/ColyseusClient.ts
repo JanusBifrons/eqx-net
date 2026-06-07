@@ -85,6 +85,7 @@ import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
+import { computePlacementPose, type PlacementPreview } from '../structures/structurePlacementClient.js';
 import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
@@ -657,6 +658,10 @@ export class ColyseusGameClient {
   /** Reused scratch for the active-slot mount-id set in `tickLocalMountAim`
    *  (alloc-free per-frame membership test; invariant #14). */
   private readonly _activeMountIdsScratch = new Set<string>();
+  /** Reused placement-preview object written into `mirror.pendingPlacementPreview`
+   *  (Issue 5). Mutated in place each frame placement mode is active — no
+   *  per-frame allocation (invariant #14). */
+  private readonly _placementPreviewScratch: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
 
   // ── Auto-fire (weapon-autofire-boost-mechanics, Part B/C) ──────────────
   /** Drone-only aim targets (kind=1) built once per frame by
@@ -3177,6 +3182,27 @@ export class ColyseusGameClient {
           entry.angle = drAngle + oa;
         }
 
+        // Structure placement ghost preview (smoke handoff 2026-06-06, Issue
+        // 5). The blueprint silhouette is anchored to the RENDERED local-ship
+        // pose (the same dead-reckoned + lerp pose the sprite is drawn at), so
+        // the ghost tracks the ship. Spatial pose → render mirror, NOT Zustand
+        // (#2 — only the discrete `placementKind` id lives in Zustand). Reuses
+        // `computePlacementPose` so the ghost lands EXACTLY where Confirm will
+        // send (no preview/commit drift). Only active during placement mode, so
+        // the `computePlacementPose` {x,y} alloc is a transient-UI cost.
+        const placementKind = useUIStore.getState().placementKind;
+        if (placementKind) {
+          const pos = computePlacementPose({ x: entry.x, y: entry.y, angle: entry.angle }, placementKind);
+          const pv = this._placementPreviewScratch;
+          pv.kind = placementKind;
+          pv.x = pos.x;
+          pv.y = pos.y;
+          pv.angle = 0;
+          this.mirror.pendingPlacementPreview = pv;
+        } else if (this.mirror.pendingPlacementPreview) {
+          this.mirror.pendingPlacementPreview = null;
+        }
+
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra
         // Phase A, 2026-05-21). This is the EXACT position+angle the
         // renderer will draw this frame — dead-reckoned predWorld +
@@ -4332,8 +4358,16 @@ export class ColyseusGameClient {
     // the synced markHostile ledger / drone-hp), keeping the predicted beam and
     // the authoritative mount angle in lockstep (Invariant #12). Out-of-range /
     // no-hostile ⇒ null ⇒ mounts slew back to forward.
+    // Pick + aim from the RENDERED (mirror) pose the beam is DRAWN from
+    // (`ship.x/y/angle`), NOT the predicted pose (`state.*`). The predWorld
+    // body is kept as the hitscan collision world (the `state` guard above),
+    // but its pose lags the mirror by the reconciler lerp offset (up to
+    // ~0.5 rad mid-turn), so aiming the turret from it leaks that offset
+    // into the beam direction — the secondary laser-detach cause (on-device
+    // smoke handoff 2026-06-06, Issue 1 Bug #2). Locked by
+    // ColyseusClient.liveBeamMountAimPose.test.ts.
     const target = pickTarget(
-      state.x, state.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
+      ship.x, ship.y, targets, this._localSlotTarget, LOCAL_AIM_NOOP_HOSTILE, LOCAL_AIM_OPTS,
     );
     this._localSlotTarget = target?.id ?? null;
 
@@ -4351,7 +4385,7 @@ export class ColyseusGameClient {
     // combat/localMountAim.ts for the index-space contract.
     tickLocalMountAngles(
       angles, catalogueMounts, activeMountIds, target,
-      state.x, state.y, state.angle, dtSec,
+      ship.x, ship.y, ship.angle, dtSec,
     );
   }
 

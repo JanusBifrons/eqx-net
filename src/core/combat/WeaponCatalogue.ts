@@ -41,8 +41,10 @@ export interface MissileWeaponDef extends WeaponDefBase {
   speed: number;
   /** Collision radius for direct-hit sweep. */
   radius: number;
-  /** Lifetime in physics ticks; on expiry the missile detonates in-place
-   *  (no `primaryTarget`, splash-only). */
+  /** Lifetime in physics ticks. On expiry the missile is despawned
+   *  WITHOUT detonating (impact-only — smoke handoff 2026-06-06, Issue 2):
+   *  a missile that never hits fizzles out, it does not splash in-place.
+   *  The cap still exists so a never-hitting missile doesn't fly forever. */
   lifetimeTicks: number;
   /** Maximum homing yaw clamp (rad/sec). Wider turn radius = dodgeable. */
   turnRate: number;
@@ -157,19 +159,24 @@ const HEAT_SEEKER_DEF: MissileWeaponDef = {
   // hitscan beam range of 500). Long enough to make dumb-mode missiles
   // a meaningful waste-of-shot.
   lifetimeTicks: 360,
-  // 1.5 rad/s yaw clamp. A target moving perpendicular at 600 u/s needs
-  // the missile to turn ~60°/s at 500u distance — 1.5 rad/s ≈ 86°/s,
-  // so it CAN catch a target but a sustained dodge wins.
-  turnRate: 1.5,
+  // 1.0 rad/s yaw clamp (looser; was 1.5 — smoke handoff 2026-06-06,
+  // Issue 2: "review the turn speed" → easier to dodge). Turn radius =
+  // speed/turnRate = 400/1.0 = 400 u (was ~267 u), so a target that keeps
+  // turning out-manoeuvres the missile; a straight-line runner is still
+  // caught. Do NOT confuse with the frigate MOUNT rotationSpeed (turret
+  // slew) in shipKinds/missileFrigate.ts — different "turn".
+  turnRate: 1.0,
   splashRadius: 60,
   splashFalloffMin: 10,
   splashImpulse: 30,
   directImpulseBonus: 20,
   splashExcludeOwner: true,
-  // Detonate when within ~60% of the splash radius of the locked target.
-  // Lets dodged missiles still deliver a felt explosion rather than
-  // sailing past uselessly.
-  proximityFuseRadius: 36,
+  // Impact-only (smoke handoff 2026-06-06, Issue 2: "make it only explode
+  // on impact"). 0 disables the proximity fuse → only a direct sweep hit
+  // (`advance()` step 5) detonates; a near-miss flies past without
+  // exploding. Splash still applies on a real hit. Paired with the
+  // non-damaging lifetime expiry in MissileSimulation.advance() step 6.
+  proximityFuseRadius: 0,
 };
 
 export const WEAPONS: ReadonlyMap<WeaponId, WeaponDef> = new Map<WeaponId, WeaponDef>([

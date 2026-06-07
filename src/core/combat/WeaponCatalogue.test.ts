@@ -76,9 +76,12 @@ describe('WeaponCatalogue', () => {
     if (w.mode === 'missile') {
       // Slow + dodgeable speed (one of the load-bearing tuning numbers).
       expect(w.speed).toBe(400);
-      expect(w.turnRate).toBe(1.5);
+      // Looser homing (smoke handoff 2026-06-06, Issue 2: "review turn
+      // speed" → easier to dodge). turnRate 1.5 → 1.0; turn radius =
+      // speed/turnRate = 400 u (was ~267 u).
+      expect(w.turnRate).toBe(1.0);
       // Long enough that dumb-mode missiles waste shots — not a near-miss
-      // toy weapon.
+      // toy weapon. (On expiry the missile now fizzles, not detonates.)
       expect(w.lifetimeTicks).toBe(360);
       // Splash falloff geometry — splashFalloffMin must be > 0 to keep
       // the inverse-square clamp safe.
@@ -87,10 +90,10 @@ describe('WeaponCatalogue', () => {
       // Owner exclusion ON by default (prevents self-splash on
       // point-blank detonations near launch).
       expect(w.splashExcludeOwner).toBe(true);
-      // Proximity-fuse smaller than splash radius (near-misses feel
-      // meaningful but the explosion still hits the target).
-      expect(w.proximityFuseRadius).toBeGreaterThan(0);
-      expect(w.proximityFuseRadius).toBeLessThan(w.splashRadius);
+      // Impact-only (smoke handoff 2026-06-06, Issue 2): proximity fuse
+      // DISABLED — only a direct sweep hit detonates. A near-miss flies
+      // past without exploding.
+      expect(w.proximityFuseRadius).toBe(0);
     }
   });
 

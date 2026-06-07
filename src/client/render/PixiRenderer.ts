@@ -32,7 +32,9 @@ import {
   buildGhostGfx,
   applyMountOffset,
   buildExplosionGfx,
+  buildStructureGfx,
 } from './pixi/spriteBuilders.js';
+import { getStructureKind } from '@shared-types/structureKinds';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -91,6 +93,11 @@ export class PixiRenderer implements IRenderer {
   /** Camera controller — owns world's transform via pointer/wheel events. */
   private camera!: Camera;
   private shipContainer!: Container;
+  /** Structure placement ghost (Issue 5) — lazily built translucent blueprint
+   *  silhouette, rebuilt when the previewed kind changes. Lives in
+   *  `shipContainer` (world space) so it pans/zooms with the structures. */
+  private _placementGhost: Graphics | null = null;
+  private _placementGhostKind: string | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -260,6 +267,10 @@ export class PixiRenderer implements IRenderer {
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
     firstFrameRendered: false,
+    liveBeamRenderedFromX: null,
+    liveBeamRenderedFromY: null,
+    placementScreenX: null,
+    placementScreenY: null,
   };
 
   /**
@@ -935,16 +946,20 @@ export class PixiRenderer implements IRenderer {
     // the pre-refactor "ship.pos + 20 u forward" path.
     if (!this._beamsDisabled && mirror.remoteLasers && mirror.remoteLasers.size > 0 && this._remoteBeamPool) {
 
-      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache, same
-      // shape as liveBeam. Flat pooled slot array; count + per-beam
-      // endpoint/alpha comparison. Sub-pixel drift (epsilon 0.5 world
-      // units, 0.05 alpha) hits the cache; visible motion / new
-      // shooters / fade transitions trigger rebuild.
-      const BEAM_EPSILON = 4.0;
-      const ALPHA_EPSILON = 0.05;
+      // Origin tracking: the shooter pose moves every frame (drones each
+      // tick, players while turning), so we recompute every beam's
+      // endpoints from the live mirror/swarm pose and ALWAYS call
+      // `setBeams`. The old `BEAM_EPSILON` dirty-cache (combat-fx-hunt
+      // 2026-05-31) compared this frame's pose to the PREVIOUS frame, not
+      // to the last DRAWN frame — so coasting under the epsilon froze the
+      // drawn beam while the shooter flew on, snapping to catch up only
+      // when one frame exceeded the threshold (the laser-detach bug, smoke
+      // handoff 2026-06-06, Issue 1 Bug #1). `setBeams` is O(count)
+      // transform writes (no Graphics triangulation), so always-calling
+      // for a handful of beams is free and adds no allocation (invariant
+      // #14 — reuses the pooled slot array + pooled sprites).
       const now = performance.now();
       let slotIdx = 0;
-      let dirty = false;
 
       for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
@@ -1042,22 +1057,11 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Compare against cache slot — mark dirty if mismatch.
+          // Fill the reused pooled slot (no per-beam allocation).
           let slot = this._remoteBeamCache[slotIdx];
           if (!slot) {
             slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
             this._remoteBeamCache[slotIdx] = slot;
-            dirty = true;
-          } else if (!dirty) {
-            if (slot.shooterId !== shooterId
-              || slot.mountId !== mountId
-              || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
-              || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
-              || Math.abs(slot.toX - toX) > BEAM_EPSILON
-              || Math.abs(slot.toY - toY) > BEAM_EPSILON
-              || Math.abs(slot.alpha - alpha) > ALPHA_EPSILON) {
-              dirty = true;
-            }
           }
           slot.shooterId = shooterId;
           slot.mountId = mountId;
@@ -1069,14 +1073,12 @@ export class PixiRenderer implements IRenderer {
           slotIdx++;
         }
       }
-      if (slotIdx !== this._remoteBeamCacheCount) dirty = true;
       this._remoteBeamCacheCount = slotIdx;
 
       // Sprite-pool driven render — no clear/redraw, just transforms.
-      // Pool handles its own pooling + visibility; dirty-flag still
-      // gates the call so a totally-static set of beams doesn't
-      // touch the sprite transforms.
-      if (dirty) this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
+      // Always re-set: the pool resolves its own pooling + visibility and
+      // the transform writes are cheap (see the always-call rationale above).
+      this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
     } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
@@ -1099,21 +1101,17 @@ export class PixiRenderer implements IRenderer {
       const localKind = getShipKind(localShip.kind ?? null);
       const localMounts = localKind.mounts ?? [];
 
-      // Plan: combat-fx-hunt (2026-05-31) — dirty-flag cache. Compute
-      // all current-frame beam endpoints into the cache slot array
-      // and compare against the prior frame's. If every beam's
-      // endpoints are within `BEAM_EPSILON` (0.5 world units) AND the
-      // beam-count is identical, skip the entire `clear() + moveTo +
-      // lineTo + stroke ×2` cycle. Sub-pixel motion (no rotation, no
-      // movement) hits the cache; rotation > ~0.0007 rad still
-      // triggers a rebuild (at the 700u beam endpoint, 0.0007 rad
-      // sweeps 0.5u).
-      const BEAM_EPSILON = 4.0;
-      const incomingCount = mirror.liveBeams.size;
-      let dirty = incomingCount !== this._liveBeamCacheCount;
-
-      // First pass: compute new endpoints; compare to cache. Reuse
-      // pooled slots so we don't allocate per-mount each frame.
+      // Recompute every beam's endpoints from the live ship pose and
+      // ALWAYS call `setBeams`. The old `BEAM_EPSILON` dirty-cache
+      // (combat-fx-hunt 2026-05-31) compared this frame's pose to the
+      // PREVIOUS frame, not to the last DRAWN frame, and overwrote the
+      // cache every frame — so coasting/flying under 4 u/frame never
+      // tripped `dirty`, `setBeams` was never called, and the DRAWN beam
+      // froze in place while the ship flew on (snapping to catch up only
+      // when one frame exceeded 4 u). That is the no-enemy fly-forward
+      // laser-detach repro (smoke handoff 2026-06-06, Issue 1 Bug #1).
+      // `setBeams` is O(count) transform writes — free for 1–2 beams,
+      // adds no allocation (invariant #14 — pooled slots + pooled sprites).
       let slotIdx = 0;
       for (const [mountId, beam] of mirror.liveBeams) {
         const mountIdx = localMounts.findIndex((m) => m.id === mountId);
@@ -1132,15 +1130,6 @@ export class PixiRenderer implements IRenderer {
           slot = { mountId, fromX: 0, fromY: 0, toX: 0, toY: 0 };
           this._liveBeamCache[slotIdx] = slot;
         }
-        if (!dirty) {
-          if (slot.mountId !== mountId
-            || Math.abs(slot.fromX - fromX) > BEAM_EPSILON
-            || Math.abs(slot.fromY - fromY) > BEAM_EPSILON
-            || Math.abs(slot.toX - toX) > BEAM_EPSILON
-            || Math.abs(slot.toY - toY) > BEAM_EPSILON) {
-            dirty = true;
-          }
-        }
         slot.mountId = mountId;
         slot.fromX = fromX;
         slot.fromY = fromY;
@@ -1150,13 +1139,19 @@ export class PixiRenderer implements IRenderer {
       }
       this._liveBeamCacheCount = slotIdx;
 
-      // Sprite-pool driven render (matches remoteBeam path).
-      if (dirty) this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
+      // Sprite-pool driven render (matches remoteBeam path) — always re-set.
+      this._liveBeamPool.setBeams(this._liveBeamCache, slotIdx);
       this.liveBeamGfx!.visible = true;
+      // E2E observable: publish the ACTUAL drawn beam origin (the sprite
+      // transform), not a recompute — this is what catches the detach bug.
+      this.feedback.liveBeamRenderedFromX = this._liveBeamPool.renderedFromX;
+      this.feedback.liveBeamRenderedFromY = this._liveBeamPool.renderedFromY;
     } else {
       if (this.liveBeamGfx) this.liveBeamGfx.visible = false;
       this._liveBeamPool?.hideAll();
       this._liveBeamCacheCount = 0;
+      this.feedback.liveBeamRenderedFromX = null;
+      this.feedback.liveBeamRenderedFromY = null;
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
@@ -1168,6 +1163,42 @@ export class PixiRenderer implements IRenderer {
       // but runs at ticker speed not MIRROR_UPDATE speed. See Camera
       // construction in init() for the rationale.
       this.camera.follow({ x: local.x, y: local.y });
+    }
+
+    // Structure placement ghost + world→screen projection for the confirm
+    // (smoke handoff 2026-06-06, Issue 5). Draw a translucent blueprint
+    // silhouette at the previewed world pose and project that pose to screen
+    // so the world-anchored confirm UI can sit on top of it. The ghost lives
+    // in `shipContainer` (world space) so it pans/zooms with real structures;
+    // Y-flip per the pixiY = -gameY convention. Only active during placement
+    // mode (preview set), so the rebuild + `toScreen` alloc is transient UI,
+    // never steady-state. (Phase-A3: the create/rebuild/hide branching could
+    // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
+    const preview = mirror.pendingPlacementPreview;
+    if (preview) {
+      if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
+        if (this._placementGhost) {
+          this.shipContainer.removeChild(this._placementGhost);
+          this._placementGhost.destroy();
+        }
+        const radius = getStructureKind(preview.kind).radius;
+        const g = buildStructureGfx(preview.kind, radius);
+        g.alpha = 0.4; // translucent blueprint
+        this.shipContainer.addChild(g);
+        this._placementGhost = g;
+        this._placementGhostKind = preview.kind;
+      }
+      this._placementGhost.visible = true;
+      this._placementGhost.x = preview.x;
+      this._placementGhost.y = -preview.y; // Y-flip
+      this._placementGhost.rotation = -preview.angle;
+      const screen = this.camera.toScreen(preview.x, -preview.y);
+      this.feedback.placementScreenX = screen.x;
+      this.feedback.placementScreenY = screen.y;
+    } else {
+      if (this._placementGhost) this._placementGhost.visible = false;
+      this.feedback.placementScreenX = null;
+      this.feedback.placementScreenY = null;
     }
 
     // Background layers — run AFTER moveCenter so they use this frame's
