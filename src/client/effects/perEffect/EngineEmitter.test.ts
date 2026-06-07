@@ -124,6 +124,55 @@ describe('EngineEmitter — spawn side (paired math lock for the mirror fix)', (
   });
 });
 
+describe('EngineEmitter — per-kind nozzle profile', () => {
+  function collectFactories(into: Record<string, unknown>[]): EngineFactories {
+    return {
+      makeParticle: vi.fn(() => {
+        const g = makeStubGfx();
+        into.push(g);
+        return g as never;
+      }),
+    };
+  }
+
+  it('spawns at the supplied per-kind sternOffset (not the legacy 25u)', () => {
+    const created: Record<string, unknown>[] = [];
+    const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
+    // angle 0 → astern is straight "down" (gfx.y = +sternOffset). One frame of
+    // post-emit drift (≤ |v|/60 ≈ 1.7 u, always astern → increases y) is the
+    // only deviation, so gfx.y lands in [10, ~12) — unambiguously the ~10u
+    // rear extent, NOT the legacy 25u (which would put it at ≥ 25).
+    e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
+    e.tick(1 / 60, () => ({ x: 0, y: 0, angle: 0 }));
+    expect(created.length).toBeGreaterThan(0);
+    const y = created[0]!.y as number;
+    expect(y).toBeGreaterThanOrEqual(9.99);
+    expect(y).toBeLessThan(13);
+  });
+
+  it('plumeScale widens the nozzle mouth proportionally', () => {
+    // random=1 → perp = +nozzleWidth/2, and identical velocity for both runs
+    // (velocity is plume-scale-independent), so the constant post-emit x-drift
+    // cancels in the SUBTRACTION x2 - x1 = perpΔ = 0.5·thrustNozzleWidth·(2-1).
+    const rnd = vi.spyOn(Math, 'random').mockReturnValue(1);
+    try {
+      const spawnX = (plumeScale: number): number => {
+        const created: Record<string, unknown>[] = [];
+        const e = new EngineEmitter(makeParent() as never, () => 'high', collectFactories(created));
+        e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale });
+        e.tick(0.02, () => ({ x: 0, y: 0, angle: 0 }));
+        return created[0]!.x as number;
+      };
+      const x1 = spawnX(1);
+      const x2 = spawnX(2);
+      expect(Math.abs(x2)).toBeGreaterThan(Math.abs(x1));
+      expect(Math.abs(x2) - Math.abs(x1)).toBeCloseTo(5, 5); // 0.5 * thrustNozzleWidth(10)
+    } finally {
+      rnd.mockRestore();
+    }
+  });
+});
+
 describe('EngineEmitter — getPose null', () => {
   it('skips emission when getPose returns null (entity not in mirror)', () => {
     const e = new EngineEmitter(makeParent() as never, () => 'high', makeFactories());

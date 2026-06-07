@@ -7,6 +7,7 @@ import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
+import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
 import { updateProjectileSprites, type ProjectileSpriteCtx } from './pixi/projectileSpriteUpdater.js';
@@ -1415,7 +1416,9 @@ export class PixiRenderer implements IRenderer {
     if (thrust) {
       for (const id of thrust) {
         if (!this._activeThrustIds.has(id)) {
-          this.effects.setContinuous(id, 'thrust', true);
+          // Per-kind nozzle offset + plume scale, computed once at
+          // registration (not per frame) from the ship catalogue.
+          this.effects.setContinuous(id, 'thrust', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
           this._activeThrustIds.add(id);
         }
       }
@@ -1433,7 +1436,7 @@ export class PixiRenderer implements IRenderer {
     if (boost) {
       for (const id of boost) {
         if (!this._activeBoostIds.has(id)) {
-          this.effects.setContinuous(id, 'boost', true);
+          this.effects.setContinuous(id, 'boost', true, undefined, engineProfileForKind(mirror.ships.get(id)?.kind));
           this._activeBoostIds.add(id);
         }
       }

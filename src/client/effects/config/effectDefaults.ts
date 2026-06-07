@@ -27,7 +27,9 @@ export const DEFAULT_DESTRUCTION_PARAMS = {
   scatter: 1.0,
 } as const;
 
-/** Tuned in M5 — Engine particles. */
+/** Tuned in M5 — Engine particles. Overhauled by the engine-fx pass
+ *  (plan `majestic-pie`): per-kind nozzle anchoring + speed-scaled emission +
+ *  velocity-coherent streaming + additive hot-core colour-over-life. */
 export const DEFAULT_ENGINE_PARAMS = {
   thrustEmitRateHz: 60,
   thrustLifetimeMs: 350,
@@ -35,6 +37,11 @@ export const DEFAULT_ENGINE_PARAMS = {
   boostEmitRateHz: 90,
   boostLifetimeMs: 500,
   boostSpread: 0.18,
+  /** Nozzle-mouth width (game units, before per-kind `plumeScale`). Particles
+   *  spawn across this width perpendicular to the thrust axis so the plume
+   *  reads as an exhaust mouth, not a single point. */
+  thrustNozzleWidth: 10,
+  boostNozzleWidth: 8,
 } as const;
 
 /** Tuned in M6 — Laser glow. */

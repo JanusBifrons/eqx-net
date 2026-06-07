@@ -45,11 +45,30 @@ export interface EngineFactories {
 /** Pose surface the emitter polls per tick. */
 export type EnginePoseFn = (entityId: string) => { x: number; y: number; angle: number } | null;
 
+/** Per-kind engine geometry handed to `setActive` at registration (computed
+ *  once by the renderer from the ship catalogue — see `engineGeometry.ts`).
+ *  Structurally compatible with `EngineProfile` so the renderer passes it
+ *  directly without coupling this module to the render zone. */
+export interface EngineProfileInput {
+  /** Distance behind ship centre (game units) to the nozzle. */
+  sternOffset: number;
+  /** Plume-size multiplier (nozzle width / particle size / density). */
+  plumeScale: number;
+}
+
+/** Fallback nozzle distance when no profile is supplied (tests / legacy
+ *  callers). Roughly the fighter rear extent. */
+const FALLBACK_STERN_OFFSET = 12;
+
 interface ActiveEmitter {
   entityId: string;
   kind: ContinuousEffectKind;
   /** Wall-clock since last emit (seconds). Drives emit cadence. */
   emitAccumSec: number;
+  /** Per-kind nozzle distance behind ship centre (game units). */
+  sternOffset: number;
+  /** Per-kind plume-size multiplier (nozzle width / particle size / density). */
+  plumeScale: number;
 }
 
 interface EngineParticle {
@@ -112,13 +131,24 @@ export class EngineEmitter {
    * Register or unregister a continuous emitter. Re-entrant: calling with
    * the same (id, kind, active) is a no-op.
    */
-  setActive(entityId: string, kind: ContinuousEffectKind, active: boolean): void {
+  setActive(
+    entityId: string,
+    kind: ContinuousEffectKind,
+    active: boolean,
+    profile?: EngineProfileInput,
+  ): void {
     // Engine emitter only handles 'thrust' and 'boost'. 'shield' is M8.
     if (kind !== 'thrust' && kind !== 'boost') return;
     const key = `${entityId}:${kind}`;
     const exists = this.emitters.has(key);
     if (active && !exists) {
-      this.emitters.set(key, { entityId, kind, emitAccumSec: 0 });
+      this.emitters.set(key, {
+        entityId,
+        kind,
+        emitAccumSec: 0,
+        sternOffset: profile?.sternOffset ?? FALLBACK_STERN_OFFSET,
+        plumeScale: profile?.plumeScale ?? 1,
+      });
     } else if (!active && exists) {
       this.emitters.delete(key);
     }
@@ -145,10 +175,11 @@ export class EngineEmitter {
 
     for (const e of this.emitters.values()) {
       const params = e.kind === 'thrust'
-        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844 }
-        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff };
+        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth }
+        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth };
       if (params.rateHz <= 0) continue;
 
+      const nozzleWidth = params.nozzleWidth * e.plumeScale;
       const intervalSec = 1 / params.rateHz;
       e.emitAccumSec += dtSec;
       // Catch-up cap: never spawn more than 5 particles per tick from one
@@ -157,7 +188,7 @@ export class EngineEmitter {
       while (e.emitAccumSec >= intervalSec && emittedThisTick < 5) {
         const pose = getPose(e.entityId);
         if (!pose) break;
-        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000);
+        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth);
         e.emitAccumSec -= intervalSec;
         emittedThisTick++;
       }
@@ -196,6 +227,8 @@ export class EngineEmitter {
     spread: number,
     tint: number,
     lifetimeS: number,
+    sternOffset: number,
+    nozzleWidth: number,
   ): void {
     if (this.particles.length >= PARTICLE_POOL_CAP) {
       const oldest = this.particles.shift();
@@ -205,14 +238,24 @@ export class EngineEmitter {
       }
     }
 
-    // Ship-relative stern offset (game-space). Ship's forward is
-    // -sin(angle), cos(angle); stern is the opposite direction. We emit
-    // ~25 u behind the ship's centre + some spread.
-    const sternOffsetWorld = -25;
-    const sx = pose.x + Math.sin(pose.angle) * (-sternOffsetWorld); // = pose.x - sin*25 = stern X
-    const sy = pose.y - Math.cos(pose.angle) * (-sternOffsetWorld); // = pose.y + cos*25 = stern Y
+    // Nozzle position (game-space). Forward = (-sin θ, cos θ); the stern
+    // (astern) direction is the opposite, (sin θ, -cos θ). `pose.angle` is
+    // now game-space (the renderer un-negates it — see entityPoseFromSprite),
+    // and `sternOffset` is the per-kind hull rear extent so the plume emerges
+    // AT the engine, not a flat 25 u behind centre.
+    const sinA = Math.sin(pose.angle);
+    const cosA = Math.cos(pose.angle);
+    let sx = pose.x + sinA * sternOffset;
+    let sy = pose.y - cosA * sternOffset;
+    // Positional spread across the nozzle mouth, PERPENDICULAR to the thrust
+    // axis. Perp(astern) = (cos θ, sin θ). Gives the plume width instead of a
+    // single emit point.
+    const perp = (Math.random() - 0.5) * nozzleWidth;
+    sx += cosA * perp;
+    sy += sinA * perp;
 
-    // Velocity: behind the ship with a random spread cone.
+    // Velocity: behind the ship with a random spread cone. (Step 3 layers
+    // ship-velocity inheritance + speed scaling on top of this.)
     const heading = pose.angle + Math.PI; // pointing astern
     const spreadAngle = heading + (Math.random() - 0.5) * spread;
     const speed = 60 + Math.random() * 40;
