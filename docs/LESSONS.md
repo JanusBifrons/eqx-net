@@ -45,6 +45,26 @@ couldn't even SEE velocity (the sprite carries only x/y/rotation) — had to sta
 the frame's mirror (`_lastMirror`) and fill `vx/vy` from `mirror.ships` into the
 reused pose scratch.
 
+**Follow-up (same day): the "coherent streaming" was the SECOND wrong-side bug
+— trust the measurement over the proof.** The Step-3 velocity-inheritance fix
+for "circle when fast" (particle world velocity = `shipVel × streamFactor +
+asternEjection`) rendered the exhaust on the FORWARD side at high ship speed
+(confirmed in-game at 472 u/s AND in the probe). The maddening part: the
+analytic argument is AIRTIGHT that the relative velocity is always astern
+(`(streamFactor−1)·shipVel + ejection`, both terms astern for `streamFactor<1`)
+— I re-derived it five times and it always said astern. The RENDER said forward.
+The resolution was to STOP theorising and instrument: a `__debugEngine` hook
+that reads the particles' actual WORLD positions (camera-independent) showed
+`forward: 5/5` at `streamFactor 0.6` and `astern: 5/5` at `streamFactor 0` —
+conclusive. Removed the inheritance entirely; the plume trails naturally because
+the ship races forward while exhaust shoots astern (pure ejection can never be
+forward). Reusable lesson: when a from-first-principles proof disagrees with a
+screenshot, the screenshot wins — add a camera-independent world-coordinate
+readout and bisect the suspect term, don't keep re-deriving. Also: I had
+dismissed the probe's moving-ship plume as a "camera artifact" — it was THIS
+real bug the whole time; the user catching it in a screenshot I shouldn't have
+sent is what forced the proper investigation.
+
 **Visual-first probe gotcha.** The screenshot probe MUST construct a MAIN-THREAD
 `PixiRenderer` directly — `WorkerRendererClient` (OffscreenCanvas) screenshots
 BLACK *and* bypasses the real `getEntityPose` where the bug lived. A diagonal

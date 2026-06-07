@@ -62,6 +62,9 @@ interface EngineProbeApi {
   /** Wipe live particles + emitter registrations + reset the ship to origin
    *  with no thrust/boost — call between capture scenarios for a clean frame. */
   reset: () => void;
+  /** DEBUG: local ship + engine particle WORLD positions (camera-independent
+   *  ground truth for the exhaust-side investigation). */
+  debug: () => { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null;
 }
 
 declare global {
@@ -139,6 +142,7 @@ async function main(): Promise<void> {
       }
       renderer.update(mirror);
     },
+    debug: () => renderer.__debugEngine(),
   };
 }
 

@@ -202,8 +202,8 @@ export class EngineEmitter {
 
     for (const e of this.emitters.values()) {
       const params = e.kind === 'thrust'
-        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, smokeColor: DEFAULT_ENGINE_PARAMS.thrustSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.thrustEjectSpeed, streamFactor: DEFAULT_ENGINE_PARAMS.thrustStreamFactor, refSpeed: DEFAULT_ENGINE_PARAMS.thrustRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.thrustMinRateFrac }
-        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, smokeColor: DEFAULT_ENGINE_PARAMS.boostSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.boostEjectSpeed, streamFactor: DEFAULT_ENGINE_PARAMS.boostStreamFactor, refSpeed: DEFAULT_ENGINE_PARAMS.boostRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.boostMinRateFrac };
+        ? { rateHz: DEFAULT_ENGINE_PARAMS.thrustEmitRateHz * dial.thrustRateMul, lifetimeMs: DEFAULT_ENGINE_PARAMS.thrustLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.thrustSpread, tint: 0xff8844, smokeColor: DEFAULT_ENGINE_PARAMS.thrustSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.thrustNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.thrustEjectSpeed, refSpeed: DEFAULT_ENGINE_PARAMS.thrustRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.thrustMinRateFrac }
+        : { rateHz: dial.boostEnabled ? DEFAULT_ENGINE_PARAMS.boostEmitRateHz : 0, lifetimeMs: DEFAULT_ENGINE_PARAMS.boostLifetimeMs, spread: DEFAULT_ENGINE_PARAMS.boostSpread, tint: 0x88ccff, smokeColor: DEFAULT_ENGINE_PARAMS.boostSmokeColor, nozzleWidth: DEFAULT_ENGINE_PARAMS.boostNozzleWidth, ejectSpeed: DEFAULT_ENGINE_PARAMS.boostEjectSpeed, refSpeed: DEFAULT_ENGINE_PARAMS.boostRefSpeed, minRateFrac: DEFAULT_ENGINE_PARAMS.boostMinRateFrac };
       if (params.rateHz <= 0) continue;
 
       // Poll the pose ONCE per emitter per tick (not per-particle): all
@@ -227,7 +227,7 @@ export class EngineEmitter {
       // emitter (defensive against long pauses → giant catch-up bursts).
       let emittedThisTick = 0;
       while (e.emitAccumSec >= intervalSec && emittedThisTick < 5) {
-        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth, ejectSpeed, params.streamFactor, params.smokeColor);
+        this.emitParticle(pose, params.spread, params.tint, params.lifetimeMs / 1000, e.sternOffset, nozzleWidth, ejectSpeed, params.smokeColor);
         e.emitAccumSec -= intervalSec;
         emittedThisTick++;
       }
@@ -241,6 +241,21 @@ export class EngineEmitter {
   /** Counts for the budget. */
   activeCount(): { emitters: number; particles: number } {
     return { emitters: this.emitters.size, particles: this.particles.length };
+  }
+
+  /** DEBUG: copy live particle WORLD positions + GAME velocities into `out` as
+   *  [gfxX, gfxY, vx, vy, ...] (gfx.y = -gameY; vx/vy are game-space). Camera-
+   *  independent ground truth for the exhaust-side investigation. Returns count. */
+  debugCopyParticleWorld(out: number[]): number {
+    const n = this.particles.length;
+    for (let i = 0; i < n; i++) {
+      const p = this.particles[i]!;
+      out[i * 4] = p.gfx.x;
+      out[i * 4 + 1] = p.gfx.y;
+      out[i * 4 + 2] = p.vx;
+      out[i * 4 + 3] = p.vy;
+    }
+    return n;
   }
 
   /** Wipe everything on sector handoff. Destroys both live and pooled
@@ -269,7 +284,6 @@ export class EngineEmitter {
     sternOffset: number,
     nozzleWidth: number,
     ejectSpeed: number,
-    streamFactor: number,
     smokeColor: number,
   ): void {
     if (this.particles.length >= PARTICLE_POOL_CAP) {
@@ -296,15 +310,18 @@ export class EngineEmitter {
     sx += cosA * perp;
     sy += sinA * perp;
 
-    // Velocity = a fraction of the ship's own velocity (so the plume TRAILS
-    // the moving ship instead of being deposited in world space — the
-    // "circle/arc when fast" bug) PLUS an astern ejection cone. (-sin, cos)
-    // of (angle+π) is the astern direction.
+    // Velocity = PURE astern ejection (game-space world velocity). (-sin, cos)
+    // of (angle+π) is the astern direction. The plume TRAILS naturally because
+    // the ship races forward while the exhaust shoots astern — faster ship ⇒
+    // longer relative trail. (A previous "velocity-inheritance" term —
+    // `pose.v * streamFactor` — rendered the exhaust on the FORWARD side at
+    // high speed; removed 2026-06-07. Lock: engine-particles-probe.spec.ts
+    // "exhaust stays astern at high ship speed".)
     const heading = pose.angle + Math.PI; // pointing astern
     const spreadAngle = heading + (Math.random() - 0.5) * spread;
     const ejs = ejectSpeed * (0.8 + Math.random() * 0.4); // ±20% per-particle
-    const vx = (pose.vx ?? 0) * streamFactor - Math.sin(spreadAngle) * ejs;
-    const vy = (pose.vy ?? 0) * streamFactor + Math.cos(spreadAngle) * ejs;
+    const vx = -Math.sin(spreadAngle) * ejs;
+    const vy = Math.cos(spreadAngle) * ejs;
 
     const sizeMul = 0.8 + Math.random() * 0.6; // ±, plume variation
 

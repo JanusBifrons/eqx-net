@@ -42,16 +42,13 @@ export const DEFAULT_ENGINE_PARAMS = {
    *  reads as an exhaust mouth, not a single point. */
   thrustNozzleWidth: 10,
   boostNozzleWidth: 8,
-  /** Base astern ejection speed (game u/s) — replaces the old inline 60-100.
-   *  Per-particle ±20% variance is applied at spawn. */
-  thrustEjectSpeed: 120,
-  boostEjectSpeed: 190,
-  /** Fraction of the ship's own velocity each particle inherits, so the plume
-   *  TRAILS the moving ship instead of being deposited in world space (the
-   *  "circle/arc when fast" bug). 0 = ignores ship motion (left behind);
-   *  1 = moves with the ship (no trail). */
-  thrustStreamFactor: 0.6,
-  boostStreamFactor: 0.55,
+  /** Astern ejection speed (game u/s) — the particle's WORLD velocity is pure
+   *  astern ejection (no ship-velocity inheritance; that rendered the plume on
+   *  the forward side at speed — removed 2026-06-07). Per-particle ±20%
+   *  variance at spawn; scaled up mildly with ship speed (see `tick`). The
+   *  plume trails because the ship races forward while exhaust shoots astern. */
+  thrustEjectSpeed: 200,
+  boostEjectSpeed: 280,
   /** Ship speed (game u/s) at which emission reaches full rate + full eject
    *  speed. Below it, rate scales down to `minRateFrac` so a slow/idle engine
    *  sputters and a fast one streams densely (speed-responsive density). */

@@ -272,6 +272,11 @@ export class EffectsService implements IEffects {
     this.shieldAura.pulse(entityId);
   }
 
+  /** DEBUG passthrough — see `EngineEmitter.debugCopyParticleWorld`. */
+  debugCopyEngineParticleWorld(out: number[]): number {
+    return this.engines.debugCopyParticleWorld(out);
+  }
+
   // ── IFilterEffects ──────────────────────────────────────────────────
 
   triggerOneShotFilter(

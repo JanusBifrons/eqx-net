@@ -198,8 +198,12 @@ describe('EngineEmitter — speed-scaled emission (Bug 3)', () => {
   });
 });
 
-describe('EngineEmitter — velocity-coherent streaming (Bug 2b)', () => {
-  it('inherits a fraction of ship velocity so the plume trails the moving ship', () => {
+describe('EngineEmitter — exhaust is pure astern ejection (wrong-side regression)', () => {
+  it('drift stays ASTERN regardless of ship velocity (no forward inheritance)', () => {
+    // The Step-3 velocity-inheritance "streaming" rendered the exhaust on the
+    // FORWARD side at high ship speed (smoke 2026-06-07). The fix: particle
+    // velocity is PURE astern ejection, independent of ship velocity. For an
+    // up-facing ship (angle 0), astern = -y(game) = gfx.y INCREASES.
     const rnd = vi.spyOn(Math, 'random').mockReturnValue(0.5); // no perp, astern-aligned cone
     try {
       const driftY = (vx: number, vy: number): number => {
@@ -213,13 +217,14 @@ describe('EngineEmitter — velocity-coherent streaming (Bug 2b)', () => {
         });
         e.setActive('s', 'thrust', true, { sternOffset: 10, plumeScale: 1 });
         e.tick(0.05, () => ({ x: 0, y: 0, angle: 0, vx, vy }));
-        // gfx.y − spawn offset(10) = the post-emit drift in pixi-y.
+        // gfx.y − spawn offset(10) = post-emit drift in pixi-y; > 0 = astern.
         return (created[0]!.y as number) - 10;
       };
-      const idleDrift = driftY(0, 0); // pure astern → particle moves "down" (gfx.y ↑)
-      const fwdDrift = driftY(0, 600); // ship races +y(game) → particle carried forward (gfx.y ↓)
-      expect(idleDrift).toBeGreaterThan(0);
-      expect(fwdDrift).toBeLessThan(idleDrift); // velocity inheritance pulls it forward
+      const idleDrift = driftY(0, 0);
+      const fastDrift = driftY(0, 600); // FAST forward — the regime that broke
+      expect(idleDrift).toBeGreaterThan(0); // astern at idle
+      expect(fastDrift).toBeGreaterThan(0); // STILL astern at high speed (the fix)
+      expect(fastDrift).toBeGreaterThanOrEqual(idleDrift); // eject speed scales up with speed
     } finally {
       rnd.mockRestore();
     }

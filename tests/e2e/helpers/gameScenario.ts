@@ -84,6 +84,9 @@ export interface GalaxyTestClientOpts {
   /** Force a fresh roster ship (`?newShip=1` → isNewShip). Used to displace
    *  an existing hull into a lingering one in the same browser context. */
   newShip?: boolean;
+  /** Renderer zoom override (`?zoom=`). > 1 zooms IN — handy for visual
+   *  capture specs that want the ship + effects larger on screen. */
+  zoom?: number;
 }
 
 /**
@@ -114,6 +117,7 @@ export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestC
   if (opts.spawnY !== undefined) params.set('spawnY', String(opts.spawnY));
   if (opts.lingerMs !== undefined) params.set('lingerMs', String(opts.lingerMs));
   if (opts.newShip) params.set('newShip', '1');
+  if (opts.zoom !== undefined) params.set('zoom', String(opts.zoom));
   await page.goto(`${BASE_URL}?${params}`);
   // Galaxy rooms lazy-create + boot a physics worker on first join, so allow
   // a longer ready window than the engineering-room helper.

@@ -34,6 +34,7 @@ interface EngineProbeApi {
   setBoost: (on: boolean) => void;
   runFor: (ms: number) => Promise<void>;
   reset: () => void;
+  debug: () => { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null;
 }
 interface ProbeWindow extends Window {
   __engineProbe?: EngineProbeApi;
@@ -123,4 +124,47 @@ test('engine exhaust visual matrix', async ({ page }) => {
   await captureProbe(page, 'axis-still');
 
   expect(errors, errors.join('\n')).toEqual([]);
+});
+
+/**
+ * Regression lock for the wrong-side-at-speed bug (smoke-reported 2026-06-07,
+ * Invariant #13). The Step-3 velocity-inheritance "streaming" rendered the
+ * exhaust on the FORWARD side at high ship speed (probe + real-game 472 u/s).
+ * This reads the particles' WORLD positions (camera-independent ground truth)
+ * and asserts EVERY particle is astern of a fast-moving ship. RED on the
+ * inheritance code, GREEN after it's removed (pure astern ejection).
+ */
+test('exhaust stays astern at high ship speed (no forward bug)', async ({ page }) => {
+  test.setTimeout(30_000);
+  await page.goto(`${BASE_URL}/__offscreen-spike__/engine-particles-probe.html`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 15_000,
+  });
+  await page.waitForFunction(
+    () => (window as unknown as ProbeWindow).__engineProbe !== undefined,
+    { timeout: 15_000 },
+  );
+  const result = await page.evaluate(async () => {
+    const p = (window as unknown as ProbeWindow).__engineProbe!;
+    p.reset();
+    p.setShip(0, 0, 0, 'fighter'); // angle 0 = facing +y (up); astern = -y (down)
+    p.setVelocity(0, 600); // fast forward (up) — the regime that rendered wrong
+    p.setThrust(true);
+    await p.runFor(700);
+    const d = p.debug();
+    if (!d) return { n: 0, astern: 0, forward: 0 };
+    // particles = [gfxX, gfxY, vx, vy, ...]. gfx.y = -gameY. For an up-facing
+    // ship, ASTERN = gameY < shipGameY = gfx.y > ship.gfx.y.
+    let astern = 0;
+    let forward = 0;
+    for (let i = 0; i < d.particles.length; i += 4) {
+      if (d.particles[i + 1]! > d.ship.y) astern++;
+      else forward++;
+    }
+    return { n: d.particles.length / 4, astern, forward };
+  });
+  // eslint-disable-next-line no-console
+  console.log('EXHAUST-SIDE', JSON.stringify(result));
+  expect(result.n, 'expected some particles to exist').toBeGreaterThan(0);
+  expect(result.forward, 'every exhaust particle must be ASTERN of a fast ship').toBe(0);
 });

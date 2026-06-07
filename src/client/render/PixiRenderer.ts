@@ -311,6 +311,20 @@ export class PixiRenderer implements IRenderer {
     return this.frameMarkers;
   }
 
+  /** DEBUG (exhaust-side investigation): the local ship sprite WORLD position
+   *  + engine particle world positions (pixi coords; gfx.y = -gameY). */
+  __debugEngine(): { ship: { x: number; y: number; vx: number; vy: number }; particles: number[] } | null {
+    const localId = this._lastMirror?.localPlayerId;
+    if (!localId || !this.effects) return null;
+    const sp = this.sprites.get(localId);
+    if (!sp) return null;
+    const out: number[] = [];
+    const n = this.effects.debugCopyEngineParticleWorld(out);
+    out.length = n * 4;
+    const sv = this._lastMirror?.ships.get(localId);
+    return { ship: { x: sp.x, y: sp.y, vx: sv?.vx ?? 0, vy: sv?.vy ?? 0 }, particles: out };
+  }
+
   async init(rawContainer: unknown): Promise<void> {
     // Two init modes:
     //   - DOM context (main thread): rawContainer is an HTMLElement —
