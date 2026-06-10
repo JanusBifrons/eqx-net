@@ -53,12 +53,18 @@ export type {
 } from './messages/combatMessages.js';
 
 // Transit lifecycle (server → client; client → server schemas are in clientMessages)
+export {
+  WarpWarningSchema,
+  WarpWarningClearSchema,
+} from './messages/transitMessages.js';
 export type {
   TransitStateLabel,
   TransitCancelReason,
   TransitStateMessage,
   WarpOutEvent,
   WarpInEvent,
+  WarpWarningEvent,
+  WarpWarningClearEvent,
 } from './messages/transitMessages.js';
 
 // Living World (server → client)

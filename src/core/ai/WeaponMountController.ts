@@ -55,6 +55,12 @@ export interface MountTargetView {
    *  yield the same boolean for the same (target, viewer), so server/client
    *  picks stay in lockstep. Undefined ⇒ fall back to the callback. */
   readonly hostile?: boolean;
+  /** Target-class priority bias (wave-system Phase 2). When combined with
+   *  `PickTargetOptions.priorityBias > 0`, a higher `priority` lowers the
+   *  candidate's score (= more preferred), letting a drone's COMBAT pick favour
+   *  STRUCTURES over player ships at comparable distance (req #2 "structures
+   *  primarily"). `0` / undefined ⇒ no bias, byte-identical to pre-Phase-2. */
+  readonly priority?: number;
 }
 
 /** A single mount's static configuration — the subset of `WeaponMount` the
@@ -129,6 +135,13 @@ export interface PickTargetOptions {
    *  `dwellTicks`. Caller-owned per-instance state (kept off the controller for
    *  lockstep, like `prevTargetId`). Defaults to `Infinity` (no active dwell). */
   ticksSincePrevTarget?: number;
+  /** Strength of the per-target `priority` bias (wave-system Phase 2). A
+   *  candidate's score is DIVIDED by `(1 + priorityBias * target.priority)`, so
+   *  a higher-priority target (e.g. a structure) scores lower (= preferred) at
+   *  comparable distance. `0` (default) ⇒ no bias; with every candidate's
+   *  `priority` 0/undefined the divisor is 1 ⇒ byte-identical to pre-Phase-2.
+   *  Server-only today (drone COMBAT pick); the player-turret callers omit it. */
+  priorityBias?: number;
 }
 
 /**
@@ -168,6 +181,7 @@ export function pickTarget(
   const switchMargin = options?.switchMargin ?? factor * factor;
   const dwellTicks = options?.dwellTicks ?? 0;
   const ticksSincePrev = options?.ticksSincePrevTarget ?? Infinity;
+  const priorityBias = options?.priorityBias ?? 0;
   // Pre-square the gate so the hot loop stays sqrt-free.
   const maxD2 = maxDistance === Infinity ? Infinity : maxDistance * maxDistance;
   let best: MountTargetView | null = null;
@@ -195,6 +209,12 @@ export function pickTarget(
       if (frac < 0) frac = 0;
       else if (frac > 1) frac = 1;
       score = d2 * (1 + healthWeight * frac);
+    }
+    // Class-priority bias: a higher-priority target (e.g. a structure) divides
+    // its score down so it's preferred at comparable distance. priorityBias 0
+    // or priority 0/undefined ⇒ divisor 1 ⇒ no change (byte-identical default).
+    if (priorityBias > 0 && t.priority !== undefined && t.priority > 0) {
+      score /= 1 + priorityBias * t.priority;
     }
     if (score < bestScore) {
       bestScore = score;

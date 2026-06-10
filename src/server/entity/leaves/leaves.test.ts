@@ -273,7 +273,7 @@ describe('GEP B1 leaf parity — composed strategy == old DamageRouter branch (b
   // resolver-level concern (locked by the dispatch golden-master branch 5 once
   // B2 re-routes) — there is nothing to run through `applyInteraction` here.
 
-  it('StructureEntity: damageable like a drone (swarm strategy), evict on death', () => {
+  it('StructureEntity: damageable like a drone (swarm strategy), evict on death — but NO markHostile', () => {
     const h = makeHarness();
     const leaf = new StructureEntity(h.shieldHull, h.deps, h.sabF32);
     const rec: SwarmLeafTarget = { id: 'swarm-7', slot: 3, entityId: 7, kind: 2, shipKind: null };
@@ -281,10 +281,14 @@ describe('GEP B1 leaf parity — composed strategy == old DamageRouter branch (b
     h.shieldHull.swarmHealth.set('swarm-7', 5);
     h.shieldHull.swarmShield.set('swarm-7', 0);
     runLeaf(leaf, rec, 'swarm-7', 'swarm-7', 'shooterF', 9999);
+    // Wave-system Phase 0.5: the swarm per-hit `markHostile` is gated on
+    // kind === 1 (drone). A structure (kind 2) has no AiController
+    // registration, so marking it hostile would leak `pendingHostile` forever.
+    // The hit, diag, and evict-on-death all still fire; only markHostile is
+    // suppressed.
     expect(log).toEqual([
       'damage:swarm-7:hp=0:layer=hull:shooter=shooterF',
       'diag:damage_applied:swarm-7',
-      'markHostile:swarm-7<-shooterF',
       'evictSwarm:swarm-7:broadcast=true:emitDestroyed=true',
     ]);
   });

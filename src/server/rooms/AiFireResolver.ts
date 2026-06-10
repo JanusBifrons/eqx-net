@@ -24,6 +24,7 @@ import {
 } from '../../core/combat/WeaponCatalogue.js';
 import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
+import { rayHitsSphere } from '../../core/combat/Weapons.js';
 import type { AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { LaserFiredEvent } from '../../shared-types/messages.js';
 import type { ShipState } from './schema/SectorState.js';
@@ -69,6 +70,13 @@ export interface AiFireResolverDeps {
   ) => number | null;
   /** Damage sink — invoked on a confirmed hit. */
   applyDamage: (targetId: string, shooterId: string, damage: number) => void;
+  /** Wave-system Phase 2 — hostile structures this drone may hit, as static
+   *  circles. Optional: omitted (or empty) ⇒ the beam tests players only
+   *  (pre-wave behaviour, byte-identical). The room supplies the faction-
+   *  filtered, constructed structures the drone's body target already selected
+   *  among. A structure beam hit routes through `applyDamage(structureId,
+   *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
+  structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number }>;
   /** Broadcast a laser_fired event to every client. */
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
   /** Spawn a server-side projectile (delegates to ProjectilePipeline). Bolt
@@ -201,6 +209,21 @@ export class AiFireResolver implements WeaponFireSink {
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
+      }
+    }
+
+    // Wave-system Phase 2: second pass against hostile structures (static
+    // circles). Closest-of-both-passes wins, so a structure in front of a
+    // player takes the beam. Absent/empty source ⇒ this loop never runs ⇒
+    // byte-identical to the player-only path.
+    const structs = d.structureHitTargets?.();
+    if (structs) {
+      for (const s of structs) {
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, s.x, s.y, s.radius);
+        if (dist !== null && dist < hitDist) {
+          hitDist = dist;
+          hitId = s.id;
+        }
       }
     }
 

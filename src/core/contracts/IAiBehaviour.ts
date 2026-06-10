@@ -26,12 +26,45 @@ export interface AiPlayerView {
 }
 
 /**
+ * A static structure the AI may treat as a target (wave-system Phase 2). Same
+ * shape family as `AiPlayerView` minus velocity (structures don't move), plus a
+ * `priority` so the picker can favour a Capital over a Solar without the brain
+ * hard-coding structure kinds (Open/Closed). Server-populated only.
+ */
+export interface AiStructureView {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  /** Hull health + max for health-weighted selection (optional, like players). */
+  readonly health?: number;
+  readonly maxHealth?: number;
+  /** Class-priority weight (higher = attack first). Fed to
+   *  `WeaponMountController.pickTarget` via `priorityBias`. */
+  readonly priority: number;
+}
+
+/**
  * Read-only snapshot the AI controller hands to each behaviour. Behaviours
  * may not retain references past the call — the server may reuse the array.
  */
 export interface AiWorldView {
   /** Live, alive players. Empty when none are present. */
   readonly players: ReadonlyArray<AiPlayerView>;
+  /**
+   * Hostile structures this drone may target (wave-system Phase 2). Empty/absent
+   * for ambient drones and for any sector with no faction "under wave". The
+   * server builds this list ONCE per tick (faction-filtered) and reuses it;
+   * behaviours read it in their COMBAT branch.
+   *
+   * **SERVER-ONLY — no wire bump.** Unlike the chapter-2 Input Symmetry Rule,
+   * the client runs NO drone brain (drones are pure snapshot-interpolated; the
+   * client `HostileDroneBehaviour` is a hostility ledger that is never
+   * `tick()`'d — see `src/core/CLAUDE.md` "AI lockstep — SUPERSEDED FOR
+   * DRONES"). So a behaviour-visible field consumed only inside `tick()` needs
+   * no `SWARM_WIRE_VERSION` bump and creates no lockstep surface. Drone targeting
+   * of structures is resolved entirely server-side.
+   */
+  readonly structures?: ReadonlyArray<AiStructureView>;
   /** Current server tick. Behaviours use this for cooldowns. */
   readonly tick: number;
   readonly dtSec: number;

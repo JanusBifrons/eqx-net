@@ -163,4 +163,33 @@ export class LivingWorldBotHooks {
       });
     }
   }
+
+  /**
+   * Wave-system Phase 4 — mark ONE bot hostile to a whole faction: the faction's
+   * player (so the drone may also engage the pilot, and the owner's radar
+   * colours the drone hostile via `bot_aggro`) AND every structure id the
+   * faction owns (server-only drone targets — no client radar mirror for
+   * structures). Reuses the existing `markHostile` channel; the drone's COMBAT
+   * pick then sees the structures in `view.structures` (which it's already
+   * hostile to) and prioritises them. Re-pulsed each control tick while the
+   * squad attacks, so the 30 s `FORGET_TICKS` decay never drops the siege.
+   */
+  markBotHostileToFaction(botId: string, playerId: string, structureIds: readonly string[]): void {
+    const d = this.deps;
+    const rec = d.swarmRegistry.get(botId);
+    if (!rec) return;
+    const tick = d.serverTick();
+    // The pilot — broadcast bot_aggro so the owner's HaloRadar shows the threat
+    // before first personal contact (req #7).
+    d.aiController.markHostile(botId, playerId, tick);
+    d.broadcastBotAggro({
+      type: 'bot_aggro',
+      botEntityId: `swarm-${rec.entityId}`,
+      targetPlayerId: playerId,
+      tick,
+    });
+    // The owned structures — server-only targets (drones are snapshot-interp on
+    // the client; structure hostility is resolved server-side, no wire surface).
+    for (const sid of structureIds) d.aiController.markHostile(botId, sid, tick);
+  }
 }

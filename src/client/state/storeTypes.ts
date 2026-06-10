@@ -18,6 +18,18 @@ import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+/** A pending warp-in warning shown in the HUD (wave-system Phase 5). Purity-
+ *  clean — no spatial fields. The countdown is `countdownMs` measured from the
+ *  client `observedAtMs` anchor (first-observation, server-clock-skew-free). */
+export interface WarpWarning {
+  id: string;
+  label: string;
+  count: number;
+  countdownMs: number;
+  /** `performance.now()` when the client received the warning. */
+  observedAtMs: number;
+}
+
 /**
  * Server-health gate state for the pre-game UI (2026-05-13).
  *
@@ -123,6 +135,11 @@ export interface UIStore {
   shieldPct: number;
   ammo: number;
   sectorAlert: string | null;
+  /** Wave-system Phase 5 — pending warp-in warnings for THIS sector (a drone
+   *  squad or a player spooling in). Purity-clean: count/label/timing only, NO
+   *  positions (invariant #2). The banner ticks down from `countdownMs` anchored
+   *  at the client `observedAtMs` (first-observation, avoids server-clock skew). */
+  warpWarnings: WarpWarning[];
   playerId: string | null;
   showDevOverlay: boolean;
   showLogPanel: boolean;
@@ -289,6 +306,10 @@ export interface UIStore {
   setShieldPct: (pct: number) => void;
   setAmmo: (ammo: number) => void;
   setSectorAlert: (msg: string | null) => void;
+  /** Add or replace a warp-in warning (keyed by id). Stamps `observedAtMs`. */
+  addWarpWarning: (w: { id: string; label: string; count: number; countdownMs: number }) => void;
+  /** Remove a warp-in warning by id (cancel/abort or countdown elapsed). */
+  removeWarpWarning: (id: string) => void;
   setPlayerId: (id: string) => void;
   setShowDevOverlay: (v: boolean) => void;
   setShowLogPanel: (v: boolean) => void;

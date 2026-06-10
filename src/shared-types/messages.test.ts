@@ -17,6 +17,8 @@ import {
   FireMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  WarpWarningSchema,
+  WarpWarningClearSchema,
 } from './messages.js';
 import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent } from './messages.js';
 
@@ -412,5 +414,52 @@ describe('DamageEventSchema (weapon-hit-prediction Phase 0)', () => {
     void ifaceToSchema;
     const parsed: DamageEvent = DamageEventSchema.parse(valid);
     expect(parsed.hitLayer).toBe('hull');
+  });
+});
+
+describe('WarpWarningSchema (wave-system Phase 5)', () => {
+  const valid = {
+    type: 'warp_warning' as const,
+    id: 'squad-0',
+    label: 'Legionnaire',
+    count: 8,
+    countdownMs: 300_000,
+    kind: 'fighter',
+  };
+
+  it('accepts a well-formed squad warning', () => {
+    expect(WarpWarningSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts a player warning without a kind (count 1)', () => {
+    const { kind: _k, ...rest } = valid;
+    expect(WarpWarningSchema.safeParse({ ...rest, id: 'p1', label: 'Ace', count: 1 }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects count < 1 and non-integer count', () => {
+    expect(WarpWarningSchema.safeParse({ ...valid, count: 0 }).success).toBe(false);
+    expect(WarpWarningSchema.safeParse({ ...valid, count: 2.5 }).success).toBe(false);
+  });
+
+  it('rejects a negative / non-finite countdownMs (would render a garbage banner)', () => {
+    expect(WarpWarningSchema.safeParse({ ...valid, countdownMs: -1 }).success).toBe(false);
+    expect(WarpWarningSchema.safeParse({ ...valid, countdownMs: Infinity }).success).toBe(false);
+  });
+
+  it('rejects an empty label / id and unknown keys (.strict)', () => {
+    expect(WarpWarningSchema.safeParse({ ...valid, label: '' }).success).toBe(false);
+    expect(WarpWarningSchema.safeParse({ ...valid, id: '' }).success).toBe(false);
+    expect(WarpWarningSchema.safeParse({ ...valid, extra: 'nope' }).success).toBe(false);
+  });
+
+  it('WarpWarningClearSchema accepts a bare {type,id} and rejects extras', () => {
+    expect(WarpWarningClearSchema.safeParse({ type: 'warp_warning_clear', id: 'squad-0' }).success).toBe(
+      true,
+    );
+    expect(
+      WarpWarningClearSchema.safeParse({ type: 'warp_warning_clear', id: 'x', extra: 1 }).success,
+    ).toBe(false);
   });
 });
