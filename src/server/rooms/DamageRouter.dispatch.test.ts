@@ -123,6 +123,7 @@ function makeHarness(): Harness {
     evictSwarmEntity: (rec, opts) =>
       log.push(`evictSwarm:${rec.id}:broadcast=${opts.broadcast}:emitDestroyed=${opts.emitDestroyed}`),
     aiController: { markHostile: (droneId, playerId) => log.push(`markHostile:${droneId}<-${playerId}`) },
+    onDroneDamaged: (droneId, sourceId) => log.push(`escalate:${droneId}<-${sourceId}`),
     bus,
     broadcastDamage: (msg) => log.push(`damage:${msg.targetId}:hp=${msg.newHealth}:layer=${msg.hitLayer}:shooter=${msg.shooterId}`),
     broadcastDestroy: (msg) => log.push(`destroy:${msg.targetId}:shooter=${msg.shooterId}`),
@@ -237,6 +238,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
       `damage:swarm-9:hp=${maxHp - 5}:layer=hull:shooter=shooterD`,
       'diag:damage_applied:swarm-9',
       'markHostile:swarm-9<-shooterD',
+      'escalate:swarm-9<-shooterD',
     ]);
   });
 
@@ -251,6 +253,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
       'damage:swarm-9:hp=0:layer=hull:shooter=shooterD',
       'diag:damage_applied:swarm-9',
       'markHostile:swarm-9<-shooterD',
+      'escalate:swarm-9<-shooterD',
       'evictSwarm:swarm-9:broadcast=true:emitDestroyed=true',
     ]);
   });

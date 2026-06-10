@@ -57,6 +57,11 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       // by the FactionLedger seam, not by marking the structure "hostile".
       if (sourceId && rec.kind === 1) {
         deps.aiController.markHostile(rec.id, sourceId, atTick);
+        // Wave-system reactive escalation (req #5): if the shooter belongs to a
+        // faction (player / owned structure), the room flips that faction
+        // hostile + marks this drone hostile to the whole faction. Gated to
+        // drones here; a drone-on-drone hit resolves to no faction in the room.
+        deps.onDroneDamaged?.(rec.id, sourceId, atTick);
       }
     },
   };

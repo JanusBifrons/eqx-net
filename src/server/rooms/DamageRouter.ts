@@ -99,6 +99,9 @@ export interface DamageRouterDeps {
   evictSwarmEntity: (rec: SwarmDmgRecord, opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string }) => void;
   /** Hostility ledger — drone hits flip COMBAT + add shooter. */
   aiController: HostilityLedger;
+  /** Wave-system reactive faction escalation — invoked on an applied DRONE hit
+   *  with `(droneId, sourceId, atTick)`. Optional (test fixtures omit it). */
+  onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;
   /** Broadcast a damage / destroy event to every client. */

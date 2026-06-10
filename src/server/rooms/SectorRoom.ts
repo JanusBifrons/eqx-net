@@ -1166,6 +1166,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec as SwarmEntityRecord, opts),
       aiController: this.aiController,
+      onDroneDamaged: (droneId, sourceId, atTick) =>
+        this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -2676,6 +2678,25 @@ export class SectorRoom extends Room<SectorState> {
     for (const botId of botIds) {
       this.livingWorldBotHooks.markBotHostileToFaction(botId, members.playerId, members.structureIds);
     }
+  }
+
+  /**
+   * Wave-system reactive escalation (req #5). A drone was just damaged by
+   * `sourceId`. If the source belongs to a faction (a player who owns a base
+   * here, or one of their structures — e.g. a turret), the WHOLE faction
+   * becomes hostile to drones: flip the ledger (+ reset the peaceful timer) so
+   * the faction's structures enter the drone-AI target view, and mark THIS drone
+   * hostile to the entire faction (player + owned structures) so it engages the
+   * base it was provoked by — not just the single shooter. A drone-on-drone hit
+   * (`factionOf` → null) escalates nothing (the C3 self-aggro gate). Bounded:
+   * one `factionOf` scan + one faction-mark per applied drone hit.
+   */
+  private escalateFactionOnDroneHit(droneId: string, sourceId: string, atTick: number): void {
+    const factionId = this.factionLedger.factionOf(sourceId);
+    if (factionId === null) return;
+    this.factionLedger.recordFactionDealtDamage(factionId, atTick);
+    const members = this.factionLedger.membersOf(factionId);
+    this.livingWorldBotHooks.markBotHostileToFaction(droneId, members.playerId, members.structureIds);
   }
 
   /** Wave-system Phase 6 — drones stand down from a faction: purge its player +
