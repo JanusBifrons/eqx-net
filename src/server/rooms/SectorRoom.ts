@@ -16,6 +16,7 @@ import {
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
+import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -938,6 +939,9 @@ export class SectorRoom extends Room<SectorState> {
        *  testMode-only; for the mining scenario. */
       scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
     };
+    // Payload-DoS bound (S5): onCreate options are client-suppliable on room
+    // create, so reject oversized seed arrays before they seed the sector.
+    assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
     // Default 1.0 (no acceleration). Only honoured when testMode is true,

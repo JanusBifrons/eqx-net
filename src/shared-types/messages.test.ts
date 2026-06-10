@@ -213,6 +213,47 @@ describe('FireMessageSchema (multi-mount refactor, Phase 2b.1)', () => {
   });
 });
 
+// ── Payload-size bounds (plan squishy-canyon, S5) ──────────────────────────
+// Inbound wire string ids were unbounded `z.string()`, a payload-DoS surface.
+// They are now `.min(1).max(64)`. These locks accept-at-max / reject-over-max.
+describe('wire string-id bounds (S5)', () => {
+  const fire = {
+    type: 'fire' as const,
+    tick: 1,
+    weapon: 'hitscan' as const,
+    dirAngle: 0,
+  };
+  const max64 = 'x'.repeat(64);
+  const over64 = 'x'.repeat(65);
+
+  it('FireMessage.clientShotId accepts at 64, rejects over 64 and empty', () => {
+    expect(FireMessageSchema.safeParse({ ...fire, clientShotId: max64 }).success).toBe(true);
+    expect(FireMessageSchema.safeParse({ ...fire, clientShotId: over64 }).success).toBe(false);
+    expect(FireMessageSchema.safeParse({ ...fire, clientShotId: '' }).success).toBe(false);
+  });
+
+  it('FireMessage.slotId (optional) accepts at 64, rejects over 64', () => {
+    const base = { ...fire, clientShotId: 'shot' };
+    expect(FireMessageSchema.safeParse({ ...base, slotId: max64 }).success).toBe(true);
+    expect(FireMessageSchema.safeParse({ ...base, slotId: over64 }).success).toBe(false);
+  });
+
+  it('EngageTransit.targetSectorKey accepts at 64, rejects over 64', () => {
+    expect(
+      EngageTransitSchema.safeParse({ type: 'engage_transit', targetSectorKey: max64 }).success,
+    ).toBe(true);
+    expect(
+      EngageTransitSchema.safeParse({ type: 'engage_transit', targetSectorKey: over64 }).success,
+    ).toBe(false);
+  });
+
+  it('HitAck.clientShotId accepts at 64, rejects over 64', () => {
+    const base = { type: 'hit_ack' as const, hit: false };
+    expect(HitAckSchema.safeParse({ ...base, clientShotId: max64 }).success).toBe(true);
+    expect(HitAckSchema.safeParse({ ...base, clientShotId: over64 }).success).toBe(false);
+  });
+});
+
 // ── Phase 6a wire contract ─────────────────────────────────────────────────
 //
 // `SnapshotMessage.states` is re-keyed to shipInstanceId (was playerId in

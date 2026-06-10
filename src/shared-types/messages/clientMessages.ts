@@ -30,7 +30,9 @@ export const FireMessageSchema = z
   .object({
     type: z.literal('fire'),
     tick: z.number().int().nonnegative(),
-    clientShotId: z.string(),
+    // Bounded to cap payload size (S5) — a client-generated correlation id,
+    // never longer than a UUID-ish token.
+    clientShotId: z.string().min(1).max(64),
     weapon: z.enum(['hitscan', 'laser', 'heat-seeker']).default('hitscan'),
     /** Fire direction in radians, [-π, π]. Replaces the previous 4-number
      *  `rayFromX/Y, rayDirX/Y` payload (network-discipline P5). The server
@@ -52,7 +54,7 @@ export const FireMessageSchema = z
      *  id against the ship's kind catalogue and silently falls back to
      *  the first slot if it doesn't resolve, so a misbehaving client can't
      *  pin its fire on a non-existent slot. */
-    slotId: z.string().optional(),
+    slotId: z.string().min(1).max(64).optional(),
   })
   .strict();
 
@@ -70,7 +72,9 @@ export const FireMessageSchema = z
 export const EngageTransitSchema = z
   .object({
     type: z.literal('engage_transit'),
-    targetSectorKey: z.string(),
+    // Bounded (S5) — sector keys are short slugs; the server still validates
+    // the value is a real direct-neighbour key.
+    targetSectorKey: z.string().min(1).max(64),
     arrival: z
       .object({
         x: z.number().finite(),
@@ -85,7 +89,7 @@ export const EngageTransitSchema = z
      *  `destination_unavailable`). Absent ⇒ legacy behaviour: the source
      *  ship's pose hydrates into the destination room. Min-length 1 so an
      *  empty string can't sneak past validation as "absent". */
-    shipId: z.string().min(1).optional(),
+    shipId: z.string().min(1).max(64).optional(),
   })
   .strict();
 
@@ -128,7 +132,7 @@ export const PlaceStructureSchema = z
 export const RemoveStructureSchema = z
   .object({
     type: z.literal('remove_structure'),
-    id: z.string().min(1),
+    id: z.string().min(1).max(64),
   })
   .strict();
 
