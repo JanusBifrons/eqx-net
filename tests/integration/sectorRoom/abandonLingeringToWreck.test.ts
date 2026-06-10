@@ -98,8 +98,15 @@ describe('SectorRoom integration — abandon lingering hull → wreck', () => {
     expect(getPlayerShipStore().get(origId)).not.toBeNull();
     getPlayerShipStore().delete(origId);
 
-    // 5) The abandon poll runs every 30 ticks (~500 ms). Allow ~3 cycles.
-    await harness.advance(1500);
+    // 5) The abandon poll runs every 30 ticks (~500 ms at 60 Hz). Outcome-
+    //    gate the wait until the wreck materialises rather than sleeping a
+    //    fixed wall-clock window — the CI runner ticks slower under load, so
+    //    a blind `advance(1500)` is flaky (DETERMINISM.md: never assert on
+    //    tick counts; wait on the outcome).
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && state.wrecks.get(origId) === undefined) {
+      await harness.advance(50);
+    }
 
     // The displaced fighter is now a wreck (RED before the fix — the poll
     // skipped inactive hulls so no wreck appeared).
@@ -126,5 +133,5 @@ describe('SectorRoom integration — abandon lingering hull → wreck', () => {
     expect(getPlayerShipStore().get(activeId)).not.toBeNull();
 
     await harness.disconnectClient(client2);
-  });
+  }, 20_000);
 });
