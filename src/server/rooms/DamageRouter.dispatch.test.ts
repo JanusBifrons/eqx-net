@@ -255,6 +255,26 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     ]);
   });
 
+  it('branch 4 — structure (kind 2): damage + diag but NO markHostile (no AI brain)', () => {
+    // Wave-system Phase 0.5 leak-fix lock: a structure shares the swarm damage
+    // strategy but is NOT registered with the AiController, so marking it
+    // hostile would buffer a `pendingHostile` entry that never drains. The
+    // kind-1 gate suppresses markHostile for structures (and asteroids); the
+    // hit + diag still fire. Reverting the gate re-introduces the leak and
+    // adds a `markHostile:swarm-7<-shooterS` line here.
+    const h = makeHarness();
+    const rec: SwarmDmgRecord = { id: 'swarm-7', slot: 3, entityId: 7, kind: 2, shipKind: null };
+    h.swarm.set('swarm-7', rec);
+    h.shieldHull.swarmHealth.set('swarm-7', 300);
+    h.shieldHull.swarmShield.set('swarm-7', 0);
+    h.router.apply('swarm-7', 'shooterS', 5, 1, 2);
+    expect(log).toEqual([
+      'damage:swarm-7:hp=295:layer=hull:shooter=shooterS',
+      'diag:damage_applied:swarm-7',
+    ]);
+    expect(log.some((l) => l.startsWith('markHostile:'))).toBe(false);
+  });
+
   it('branch 5 — asteroid (no swarmHealth entry): immune, silent no-op', () => {
     const h = makeHarness();
     h.swarm.set('swarm-2', { id: 'swarm-2', slot: 2, entityId: 2, kind: 0, shipKind: null });
