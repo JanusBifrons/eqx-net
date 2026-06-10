@@ -14,6 +14,7 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
+import type { WarpWarningEvent } from '../../shared-types/messages.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -2705,6 +2706,13 @@ export class SectorRoom extends Room<SectorState> {
     const members = this.factionLedger.membersOf(factionId);
     this.aiController.purgeHostility(members.playerId);
     for (const sid of members.structureIds) this.aiController.purgeHostility(sid);
+  }
+
+  /** Wave-system Phase 5 — broadcast a sector-wide warp-in warning to this
+   *  room's occupants (one per incoming squad; the client renders the HUD
+   *  countdown banner). */
+  broadcastWarpWarning(msg: WarpWarningEvent): void {
+    this.broadcast('warp_warning', msg);
   }
 
   private handleRespawn(client: Client): void {

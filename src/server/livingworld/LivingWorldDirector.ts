@@ -30,6 +30,7 @@ import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
 import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT } from './director/SquadPool.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
@@ -103,6 +104,14 @@ export interface LivingWorldOptions {
   initialStaggerMs: number;
   /** Per-bot vulnerable spool length (defaults to the player value). */
   spoolMs: number;
+}
+
+/** Display label for a squad's homogeneous hull in the warp-in warning
+ *  ("8 × Legionnaires"). v1 squads are all `fighter`, shown as "Legionnaire"
+ *  (a flavour codename, NOT a ship-kind — invariant #11; the wire `shipKind`
+ *  stays `fighter`). A future mixed-kind WavePattern extends this map. */
+export function squadDisplayLabel(kind: ShipKindId): string {
+  return kind === 'fighter' ? 'Legionnaire' : kind;
 }
 
 export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
@@ -292,10 +301,26 @@ export class LivingWorldDirector {
         // Coordinated warp: every active member spools from its current sector
         // to the target in the SAME control tick (they arrive together, modulo
         // partial arrival under slot contention / mid-spool death — accepted).
+        let warping = 0;
         for (const botId of step.squad.botIds) {
           const rec = this.pool.get(botId);
           if (!rec || rec.state !== 'active' || rec.sectorKey === step.to) continue;
           this.startSquadMemberTransit(rec, rec.sectorKey, step.to);
+          warping++;
+        }
+        // ONE warp-in warning to the destination sector (not one per bot): the
+        // HUD countdown banner. countdownMs = the spool the bots are serving;
+        // it self-expires ≈ when they arrive, so no explicit clear is needed.
+        const destRoom = this.rooms.get(step.to);
+        if (destRoom && warping > 0) {
+          destRoom.broadcastWarpWarning({
+            type: 'warp_warning',
+            id: step.squad.squadId,
+            label: squadDisplayLabel(step.squad.kind),
+            count: warping,
+            countdownMs: this.opts.spoolMs,
+            kind: step.squad.kind,
+          });
         }
         break;
       }
