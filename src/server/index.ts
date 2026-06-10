@@ -523,7 +523,11 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
     { kind: 'miner', x: -350, y: 0 },
     { kind: 'turret', x: 0, y: -350 },
   ],
-  prebuiltStructuresOwner: 'wave-tester',
+  // Fixed sentinel UUID (the server rejects non-UUID playerIds). The wave spec
+  // joins AS this id so the seeded base is owned by the present player and the
+  // owner-presence gate releases the wave. Kept in sync with
+  // tests/e2e/wave-attack.spec.ts WAVE_OWNER_ID.
+  prebuiltStructuresOwner: 'face0000-0000-4000-8000-000000000001',
   scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
   defaultSpawnX: 0,
   defaultSpawnY: 600,
