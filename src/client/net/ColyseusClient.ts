@@ -13,7 +13,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -1666,6 +1666,22 @@ export class ColyseusGameClient {
     };
     room.onMessage('warp_in', (msg) => handleWarpEvent(msg, 'warp_in'));
     room.onMessage('warp_out', (msg) => handleWarpEvent(msg, 'warp_out'));
+
+    // Wave-system Phase 5 — sector-wide warp-in warning HUD. Drives visible UI,
+    // so we zod-validate + drop malformed packets (invariant #3) — a bad
+    // count/countdownMs would render a garbage banner. Purity-clean: no
+    // positions reach Zustand (invariant #2).
+    room.onMessage('warp_warning', (raw: unknown) => {
+      const parsed = WarpWarningSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const { id, label, count, countdownMs } = parsed.data;
+      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs });
+    });
+    room.onMessage('warp_warning_clear', (raw: unknown) => {
+      const parsed = WarpWarningClearSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().removeWarpWarning(parsed.data.id);
+    });
 
     // Living World — server→client twin of the damage→markHostile mirror.
     // When the director makes a bot proactively hostile to a player, the

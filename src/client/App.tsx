@@ -49,6 +49,7 @@ import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
 import { ShieldHullBar } from './components/ShieldHullBar';
+import { WarpInWarningBanner } from './components/WarpInWarningBanner';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { GalaxyOverviewSelectChrome } from './components/GalaxyOverviewSelectChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
@@ -600,6 +601,7 @@ function GameSurface({
       <Slot anchor="top-left" order={2}><ShieldHullBar /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
       <Slot anchor="top-center" order={1}><EnergyBar /></Slot>
+      <Slot anchor="top-center" order={2}><WarpInWarningBanner /></Slot>
       <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
       <DeathOverlay onRespawn={handleRespawn} />

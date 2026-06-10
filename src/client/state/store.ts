@@ -125,6 +125,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   shieldPct: 100,
   ammo: 20,
   sectorAlert: null,
+  warpWarnings: [],
   playerId: null,
   showDevOverlay: initialDevOverlay,
   showLogPanel: initialLogPanel,
@@ -186,6 +187,15 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShieldPct: (pct) => set({ shieldPct: pct }),
   setAmmo: (ammo) => set({ ammo }),
   setSectorAlert: (msg) => set({ sectorAlert: msg }),
+  addWarpWarning: (w) =>
+    set((s) => ({
+      warpWarnings: [
+        ...s.warpWarnings.filter((e) => e.id !== w.id),
+        { ...w, observedAtMs: (globalThis.performance ?? Date).now() },
+      ],
+    })),
+  removeWarpWarning: (id) =>
+    set((s) => ({ warpWarnings: s.warpWarnings.filter((e) => e.id !== id) })),
   setPlayerId: (id) => set({ playerId: id }),
   setShowDevOverlay:  (v) => { set({ showDevOverlay:  v }); persistSettings(get()); },
   setShowLogPanel:    (v) => { set({ showLogPanel:    v }); persistSettings(get()); },
