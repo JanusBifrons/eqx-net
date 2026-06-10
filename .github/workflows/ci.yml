@@ -7,9 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  # Deterministic gates — run once. typecheck + lint (boundary enforcement) +
-  # unit/integration tests + the production build. These are fast and never
-  # flaky, so they stay a single job.
+  # Deterministic non-test gates — typecheck + lint (boundary enforcement) +
+  # the production build. Fast and never flaky.
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,10 +27,53 @@ jobs:
         run: pnpm run typecheck
       - name: Lint (boundary enforcement)
         run: pnpm run lint
-      - name: Unit tests
-        run: pnpm run test
       - name: Build
         run: pnpm run build
+
+  # Unit + component + scenario suite (`vitest.config.ts`). Pure logic,
+  # schemas, React components, replay/scenario fixtures — no real Colyseus
+  # server. Its own required status check so a unit regression is
+  # distinguishable at a glance from an integration one.
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Unit tests
+        run: pnpm run test
+
+  # Integration suite (`vitest.integration.config.ts`). Boots a real
+  # Colyseus Server + SectorRoom + physics worker + WebSocket transport per
+  # test (single-threaded, no isolation — see the config's header for the
+  # tinypool/decorator/node:sqlite rationale). Separated from the unit job
+  # because it has a different pool configuration and a distinct failure
+  # surface (wire format, broadcast gates, schema diff). Its own required
+  # status check.
+  integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'pnpm'
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Integration tests
+        run: pnpm run test:integration
 
   # E2E gate — the @smoke tier ONLY (deterministic critical-path locks).
   #
