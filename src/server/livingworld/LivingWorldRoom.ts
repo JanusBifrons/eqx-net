@@ -23,6 +23,11 @@ export interface FactionBaseReadiness {
   sectorKey: string;
   /** Base has a constructed Capital + ≥1 Miner + ≥1 Solar + ≥1 Turret (req #3). */
   ready: boolean;
+  /** The faction owner is currently an ACTIVE player in this sector. A wave only
+   *  STARTS against a present owner — the 5-min warning + countdown is pointless
+   *  if they're offline and can't defend (an in-progress wave continues if they
+   *  leave; only assignment is gated). */
+  ownerPresent: boolean;
   /** Surviving constructed Miners — the de-escalation key (req #8). */
   minerCount: number;
   /** Faction is currently hostile to drones (member attacked OR under wave). */

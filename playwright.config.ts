@@ -88,7 +88,6 @@ const FEATURE_SPECS: string[] = [
   '**/halo-radar.spec.ts',
   '**/input-throttle-drift.spec.ts',
   '**/laser-smoothness.spec.ts',
-  '**/living-world.spec.ts',
   '**/prediction-idle-bounded.spec.ts',
   '**/renderer-worker-probe.spec.ts',
   '**/robustness.spec.ts',
@@ -97,6 +96,7 @@ const FEATURE_SPECS: string[] = [
   '**/swarm-jitter.spec.ts',
   '**/swarm-sleep.spec.ts',
   '**/swarm-tidi.spec.ts',
+  '**/wave-attack.spec.ts',
   '**/sync-health.spec.ts',
   '**/t-ship-no-self-collision.spec.ts',
   '**/ramming-probe-armpit.spec.ts',
@@ -194,6 +194,12 @@ export default defineConfig({
           port: 2567,
           reuseExistingServer: true,
           timeout: 30_000,
+          // Wave-system E2E (wave-attack.spec.ts): boot the director-managed
+          // `galaxy-wave-test` room + a fast drone spool so the wave fires in
+          // seconds, not 5 min. Inert for other specs (the wave room only acts
+          // when the base owner is present; no other spec touches it). Merged
+          // onto process.env by Playwright.
+          env: { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000' },
         },
         {
           command: 'pnpm dev:client',

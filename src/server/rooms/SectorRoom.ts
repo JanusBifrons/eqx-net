@@ -969,6 +969,10 @@ export class SectorRoom extends Room<SectorState> {
        *  place-ahead UI (which stacks/overlaps multiple placements) or the
        *  construction wait. Each is born `isConstructed` at full HP. */
       prebuiltStructures?: ReadonlyArray<{ kind: StructureKindId; x: number; y: number }>;
+      /** Wave-system E2E — owner id for `prebuiltStructures` (default `scenario`).
+       *  Set to the joining test player's id so the seeded base is a real
+       *  player-owned faction the WaveDirector can target. testMode-only. */
+      prebuiltStructuresOwner?: string;
       /** Structures plan (Phase 5) — park idle drones at poses (turret targets).
        *  testMode-only; for the turret-fires scenario. */
       scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
@@ -2365,13 +2369,19 @@ export class SectorRoom extends Room<SectorState> {
    *  (which overlaps stacked placements) or the construction wait. */
   private seedStructureScenario(roomOpts: {
     prebuiltStructures?: ReadonlyArray<{ kind: ShipKindId | string; x: number; y: number }>;
+    prebuiltStructuresOwner?: string;
     scenarioDrones?: ReadonlyArray<{ x: number; y: number }>;
     scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
   }): void {
     const prebuilt = roomOpts.prebuiltStructures;
+    // Wave-system E2E: an explicit owner lets a test seed a base the joining
+    // player OWNS (so the FactionLedger sees a player-owned faction the
+    // WaveDirector can wave) instead of the inert `scenario` owner. Default
+    // `scenario` preserves the structure-scenario-test behaviour.
+    const owner = roomOpts.prebuiltStructuresOwner ?? 'scenario';
     if (prebuilt && prebuilt.length > 0) {
       for (const ps of prebuilt) {
-        const id = this.structurePlacement.place('scenario', ps.kind as string, ps.x, ps.y);
+        const id = this.structurePlacement.place(owner, ps.kind as string, ps.x, ps.y);
         if (id === null) {
           logger.warn({ kind: ps.kind, x: ps.x, y: ps.y }, 'scenario prebuilt structure rejected');
           continue;
@@ -2656,6 +2666,8 @@ export class SectorRoom extends Room<SectorState> {
         factionId,
         sectorKey,
         ready: isBaseReady(agg),
+        // The owner is "present" when they have an active hull in this sector.
+        ownerPresent: this.getActiveShip(factionId)?.isActive === true,
         minerCount: agg.minerCount,
         hostileToDrones: state?.hostileToDrones ?? false,
         underWave: state?.underWave ?? false,
