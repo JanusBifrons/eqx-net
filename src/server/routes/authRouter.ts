@@ -20,6 +20,9 @@ import { resolveJwtSecret } from '../auth/jwt.js';
 import { createOAuthState, verifyOAuthState } from '../auth/oauthState.js';
 import { AuthCodeStore } from '../auth/authCodeStore.js';
 import { z } from 'zod';
+import { pino } from 'pino';
+
+const authLogger = pino({ name: 'auth' });
 
 export const authRouter: RouterType = Router();
 
@@ -133,7 +136,7 @@ if (process.env['NODE_ENV'] !== 'production') {
       res.json({ token, user });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown';
-      console.error('[auth/dev/test-token]', msg);
+      authLogger.error({ msg }, 'dev test-token mint failed');
       res.status(500).json({ error: 'dev test-token mint failed' });
     }
   });
@@ -165,7 +168,7 @@ authRouter.get('/google/callback', oauthLimiter, async (req: Request, res: Respo
     res.redirect(`/?authCode=${encodeURIComponent(authCode)}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
-    console.error('[auth/google/callback]', msg);
+    authLogger.error({ msg }, 'OAuth callback failed');
     res.status(500).send(`OAuth error: ${msg}`);
   }
 });

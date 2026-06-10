@@ -105,6 +105,31 @@ export default [
       '@typescript-eslint/no-explicit-any': 'warn',
       'no-unused-vars': 'off',
       'no-undef': 'off',
+      // B5 (plan squishy-canyon, R7): app code routes through pino (server) /
+      // ClientLogger (client), never raw console. The legitimate console homes
+      // (the ClientLogger sink itself, the render/physics workers which have no
+      // DOM logger, debug utilities, offscreen spikes, tests, scripts) are
+      // allow-listed in the override block below. Adding the rule IS the
+      // regression test for the sweep. console.profile/profileEnd are CDP
+      // profiler controls (not logging) and stay allowed everywhere.
+      'no-console': ['error', { allow: ['profile', 'profileEnd'] }],
+    },
+  },
+  {
+    // Legitimate console homes — see the no-console rationale above.
+    files: [
+      '**/*.test.{ts,tsx}',
+      '*.config.{ts,js}',
+      'tests/**',
+      'scripts/**',
+      'benchmarks/**',
+      'src/client/debug/**',
+      'src/client/__offscreen-spike__/**',
+      'src/client/render/worker/**/*.ts',
+      'src/core/physics/worker.ts',
+    ],
+    rules: {
+      'no-console': 'off',
     },
   },
   {

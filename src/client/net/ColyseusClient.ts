@@ -1060,12 +1060,12 @@ export class ColyseusGameClient {
     this.predWorld = await PhysicsWorld.create();
 
     callbacks.onConnectionStatus('connecting');
-    console.log('[ColyseusClient] connecting to', wsUrl, 'playerId:', storedPlayerId);
+    logEvent('cc_connecting', { wsUrl, playerId: storedPlayerId ?? null });
     const client = new Client(wsUrl);
 
     let resolvedRoom: Room;
     try {
-      console.log('[ColyseusClient] calling joinOrCreate…');
+      logEvent('cc_join_attempt', {});
       const { loadToken } = await import('../auth/tokenStorage.js');
       const authToken = loadToken();
       // Pull the player's selected ship kind out of the UI store at the moment
@@ -1084,7 +1084,7 @@ export class ColyseusGameClient {
       );
       resolvedRoom = await Promise.race([joinPromise, timeoutPromise]);
     } catch (err) {
-      console.error('[ColyseusClient] joinOrCreate failed:', err);
+      logEvent('cc_join_failed', { err: String(err) });
       callbacks.onConnectionStatus('error');
       throw err;
     }
@@ -1095,7 +1095,7 @@ export class ColyseusGameClient {
     }
 
     this.room = resolvedRoom;
-    console.log('[ColyseusClient] joinOrCreate resolved, roomId:', this.room.roomId);
+    logEvent('cc_join_resolved', { roomId: this.room.roomId });
 
     // Phase 5e: DEV-only inbound-bandwidth tally exposed on `window` so the
     // swarm-bandwidth E2E can sample bytes/sec without DPI-level WS plumbing.
@@ -1135,11 +1135,11 @@ export class ColyseusGameClient {
     const bindRoomHandlers = (room: Room): void => {
       room.onMessage('welcome', (msg: WelcomeMessage) => {
       const idChanged = storedPlayerId && msg.playerId !== storedPlayerId;
-      console.log(
-        '[ColyseusClient] welcome received, playerId:', msg.playerId,
-        idChanged ? '(server reassigned — collision guard)' : '',
-        'serverTick:', msg.serverTick,
-      );
+      logEvent('cc_welcome', {
+        playerId: msg.playerId,
+        serverReassigned: Boolean(idChanged),
+        serverTick: msg.serverTick,
+      });
       this.serverTickAtWelcome = msg.serverTick;
       this.welcomePerfNow = this.clock.now();
       this.clockAnchorServerTick = msg.serverTick;
@@ -1762,7 +1762,7 @@ export class ColyseusGameClient {
       try {
         await room.leave(true /* consented */);
       } catch (err) {
-        console.warn('[ColyseusClient] source room.leave during transit failed', err);
+        logEvent('cc_transit_leave_failed', { err: String(err) });
       }
       this.transitInstr.mark('leave_room:end');
 
@@ -1864,7 +1864,7 @@ export class ColyseusGameClient {
           }
         }, 2000);
       } catch (err) {
-        console.error('[ColyseusClient] consumeSeatReservation failed', err);
+        logEvent('cc_seat_reservation_failed', { err: String(err) });
         const ui = useUIStore.getState();
         ui.setTransitState('DOCKED');
         ui.setTransitProgress(0);
@@ -1894,7 +1894,7 @@ export class ColyseusGameClient {
     });
 
     room.onLeave((code) => {
-      console.warn('[ColyseusClient] left room, code:', code);
+      logEvent('cc_left_room', { code });
       logEvent('disconnected', { code });
       // Phase 2 swift-otter — close the DataChannel on every onLeave.
       // Sector handoffs short-circuit below, so the transport teardown
@@ -1919,7 +1919,7 @@ export class ColyseusGameClient {
     });
 
     room.onError((code, message) => {
-      console.error('[ColyseusClient] room error', code, message);
+      logEvent('cc_room_error', { code, message });
       logEvent('room_error', { code, message });
       callbacks.onConnectionStatus('error');
     });
@@ -1928,7 +1928,7 @@ export class ColyseusGameClient {
     bindRoomHandlers(this.room);
 
     callbacks.onConnectionStatus('connected');
-    console.log('[ColyseusClient] connected — input loop driven by rAF');
+    logEvent('cc_connected', {});
     this.keyboard = keyboard;
     this.touchInput = touchInput ?? null;
   }
@@ -2160,7 +2160,7 @@ export class ColyseusGameClient {
     useUIStore.getState().setHullPct(100);
     useUIStore.getState().setSectorAlert(null);
 
-    console.log('[ColyseusClient] respawned at', msg.x.toFixed(1), msg.y.toFixed(1));
+    logEvent('cc_respawned', { x: msg.x, y: msg.y });
   }
 
   /** Send a respawn request to the server. Only valid while the local ship is dead. */
@@ -2233,7 +2233,7 @@ export class ColyseusGameClient {
     // when the predWorld + reconciler are live. Idempotent; the
     // setter is a no-op if already true.
     useUIStore.getState().setLocalPoseResolved(true);
-    console.log('[ColyseusClient] prediction world initialised at', existing.x.toFixed(1), existing.y.toFixed(1));
+    logEvent('cc_predworld_init', { x: existing.x, y: existing.y });
     // Retrospectively spawn any remote ships that arrived in the initial Colyseus
     // state patch (before localId was set, so syncMirror skipped predWorld spawn).
     for (const [id, state] of this.mirror.ships) {

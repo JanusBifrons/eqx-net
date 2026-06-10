@@ -441,7 +441,7 @@ function GameSurface({
       overlayMode,
       onSelectorPick: handleSelectorPick,
     }).catch((err: unknown) => {
-      console.error('[GameSurface] connection failed', err);
+      logEvent('game_surface_connect_failed', { err: String(err) });
       setConnectionStatus('error');
     });
 
@@ -479,8 +479,6 @@ function GameSurface({
       // discrete `cleanup_step_failed` event that survives `?diag=0`.
       const stepLog = (step: string, err: unknown): void => {
         const msg = err instanceof Error ? err.message : String(err);
-        // eslint-disable-next-line no-console
-        console.error(`[GameSurface cleanup] ${step} threw:`, err);
         try {
           logEvent('cleanup_step_failed', { step, error: msg });
         } catch { /* ignore — logger may be torn down */ }
