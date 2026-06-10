@@ -1,13 +1,12 @@
 import {
   type AiEntity,
   type AiIntent,
-  type AiPlayerView,
   type AiWorldView,
   type IAiBehaviour,
 } from '../contracts/IAiBehaviour.js';
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
-import { pickTarget } from './WeaponMountController.js';
+import { pickTarget, type MountTargetView } from './WeaponMountController.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -52,6 +51,12 @@ const DRONE_TARGET_HEALTH_WEIGHT = 1.5;
  *  unison every tick as ranges cross. ~0.5 s at 60 Hz. Server-only (deterministic
  *  server tick; the client never ticks the drone brain). */
 const DRONE_TARGET_DWELL_TICKS = 30;
+/** Wave-system Phase 2 — how strongly a drone in COMBAT favours STRUCTURES over
+ *  player ships (req #2 "structures primarily"). Fed to `pickTarget` as
+ *  `priorityBias`; structures carry `priority 1`, players `priority 0`, so a
+ *  structure's score is divided by `(1 + bias)`. With score ∝ d², a bias of 3
+ *  means a structure up to 2× as far as a player still wins the pick. */
+const STRUCTURE_PRIORITY_BIAS = 3;
 /** Target orbit radius for IDLE patrol. Players spawn near the origin so
  *  this is comfortably outside the spawn zone without being so far that
  *  drones are off-screen most of the session. */
@@ -105,6 +110,22 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   /** Server tick at which `prevTargetId` was last (re)acquired — drives the
    *  `DRONE_TARGET_DWELL_TICKS` switch-delay in the body target pick. */
   private prevTargetSinceTick = 0;
+  /** Wave-system Phase 2 — reusable merged COMBAT candidate buffer (players +
+   *  hostile structures). Filled IN PLACE every tick from `view.players` +
+   *  `view.structures`; objects are created only when the buffer grows, never
+   *  per-tick (#14, this is the hot AI loop). Structures carry `vx=vy=0`
+   *  (static) + their class `priority`; players carry `priority 0`. Server-only
+   *  (the client never ticks the drone brain). */
+  private readonly _combatTargets: Array<{
+    id: string;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    health?: number;
+    maxHealth?: number;
+    priority: number;
+  }> = [];
   /** Phase 4c (2026-05-11) — half-arc of the widest rotating mount in
    *  this kind's primary slot, used to widen the body-aim fire gate so
    *  drones with turrets fire even when the body is off-aim by less than
@@ -279,12 +300,58 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     // Part C — smarter selection: bias toward the lowest-health hostile and
     // hold the choice for DRONE_TARGET_DWELL_TICKS before re-evaluating (so a
     // pack focus-fires the wounded instead of all flipping targets per tick).
+    // Wave-system Phase 2: build the merged candidate buffer (players + hostile
+    // structures) in place. With no structures this is just the players copied
+    // through with priority 0, so the pick is byte-identical to pre-Phase-2
+    // (priorityBias has no effect when every priority is 0). Structures only
+    // appear here when the server's faction-filtered view includes them AND
+    // they're in this drone's `hostileTo` set (so a neutral base is never hit).
+    const cand = this._combatTargets;
+    let n = 0;
+    for (const p of view.players) {
+      let c = cand[n];
+      if (!c) {
+        c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0 };
+        cand[n] = c;
+      }
+      c.id = p.id;
+      c.x = p.x;
+      c.y = p.y;
+      c.vx = p.vx;
+      c.vy = p.vy;
+      c.health = p.health;
+      c.maxHealth = p.maxHealth;
+      c.priority = 0;
+      n++;
+    }
+    const structs = view.structures;
+    if (structs) {
+      for (const s of structs) {
+        let c = cand[n];
+        if (!c) {
+          c = { id: '', x: 0, y: 0, vx: 0, vy: 0, priority: 0 };
+          cand[n] = c;
+        }
+        c.id = s.id;
+        c.x = s.x;
+        c.y = s.y;
+        c.vx = 0;
+        c.vy = 0;
+        c.health = s.health;
+        c.maxHealth = s.maxHealth;
+        c.priority = s.priority;
+        n++;
+      }
+    }
+    if (cand.length !== n) cand.length = n;
+
     const target = pickTarget(
-      self.x, self.y, view.players, this.prevTargetId, (id) => this.hostileTo.has(id),
+      self.x, self.y, cand, this.prevTargetId, (id) => this.hostileTo.has(id),
       {
         healthWeight: DRONE_TARGET_HEALTH_WEIGHT,
         dwellTicks: DRONE_TARGET_DWELL_TICKS,
         ticksSincePrevTarget: view.tick - this.prevTargetSinceTick,
+        priorityBias: STRUCTURE_PRIORITY_BIAS,
       },
     );
     const newId = target?.id ?? null;
@@ -347,7 +414,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * Step 3 of the AI plan can layer lead-aim, distance-based boost, and
    * a wider point-blank fire arc on top without mangling the IDLE branch.
    */
-  private tickCombat(self: AiEntity, view: AiWorldView, target: AiPlayerView): AiIntent {
+  private tickCombat(self: AiEntity, view: AiWorldView, target: MountTargetView): AiIntent {
     // Raw geometry to the live target — used for distance-based gating.
     const rawDx = target.x - self.x;
     const rawDy = target.y - self.y;
