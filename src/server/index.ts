@@ -11,7 +11,7 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
@@ -84,6 +84,9 @@ app.get('/healthz', (_req, res) => {
     ready: serverReady,
     tick: Date.now(),
     playersOnline: fakePlayerCount(),
+    // R4 — persistence observability: hydrate failures + live worker-sink
+    // queue depth / critical-lane failures / lost-lane flag. Cheap integer reads.
+    persistence: getPersistenceHealth(),
   });
 });
 
