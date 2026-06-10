@@ -46,6 +46,8 @@ import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
+import { isBaseReady } from '../../core/faction/Faction.js';
+import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -2602,6 +2604,77 @@ export class SectorRoom extends Room<SectorState> {
 
   markBotHostile(botId: string): void {
     this.livingWorldBotHooks.markBotHostile(botId);
+  }
+
+  /**
+   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
+   * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
+   * Engineering rooms (`sectorKey === null`) return [] (waves are galaxy-only).
+   * One entry per player owning ≥1 constructed structure here.
+   */
+  factionBaseReadiness(): FactionBaseReadiness[] {
+    const sectorKey = this.sectorKey;
+    if (sectorKey === null || this.structureRegistry.size === 0) return [];
+    interface Agg {
+      hasCapital: boolean;
+      minerCount: number;
+      solarCount: number;
+      turretCount: number;
+    }
+    const byOwner = new Map<string, Agg>();
+    for (const rec of this.structureRegistry.all()) {
+      if (!rec.isConstructed) continue;
+      let agg = byOwner.get(rec.owner);
+      if (!agg) {
+        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
+        byOwner.set(rec.owner, agg);
+      }
+      switch (rec.kind) {
+        case 'capital':
+          agg.hasCapital = true;
+          break;
+        case 'miner':
+          agg.minerCount++;
+          break;
+        case 'solar':
+          agg.solarCount++;
+          break;
+        case 'turret':
+          agg.turretCount++;
+          break;
+        default:
+          break;
+      }
+    }
+    const out: FactionBaseReadiness[] = [];
+    for (const [factionId, agg] of byOwner) {
+      const state = this.factionLedger.get(factionId);
+      out.push({
+        factionId,
+        sectorKey,
+        ready: isBaseReady(agg),
+        minerCount: agg.minerCount,
+        hostileToDrones: state?.hostileToDrones ?? false,
+        underWave: state?.underWave ?? false,
+        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
+      });
+    }
+    return out;
+  }
+
+  /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
+   *  drone-AI structure-target visibility built in `fillStructureTargets`). */
+  setFactionUnderWave(factionId: string, underWave: boolean): void {
+    this.factionLedger.setUnderWave(factionId, underWave);
+  }
+
+  /** Wave-system Phase 4 — mark a squad's bots hostile to a whole faction
+   *  (player + owned structures). Re-pulsed each control tick while attacking. */
+  markSquadHostileToFaction(botIds: readonly string[], factionId: string): void {
+    const members = this.factionLedger.membersOf(factionId);
+    for (const botId of botIds) {
+      this.livingWorldBotHooks.markBotHostileToFaction(botId, members.playerId, members.structureIds);
+    }
   }
 
   private handleRespawn(client: Client): void {

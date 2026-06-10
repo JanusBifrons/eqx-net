@@ -11,6 +11,28 @@ import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { BotCarry } from './botTypes.js';
 
+/**
+ * Per-(owner, sector) faction base summary the `WaveDirector` polls (wave-system
+ * Phase 4). One entry per player who owns ≥1 structure in this room.
+ */
+export interface FactionBaseReadiness {
+  /** Faction id == owning player id. */
+  factionId: string;
+  /** The sector this base lives in (this room's sectorKey). */
+  sectorKey: string;
+  /** Base has a constructed Capital + ≥1 Miner + ≥1 Solar + ≥1 Turret (req #3). */
+  ready: boolean;
+  /** Surviving constructed Miners — the de-escalation key (req #8). */
+  minerCount: number;
+  /** Faction is currently hostile to drones (member attacked OR under wave). */
+  hostileToDrones: boolean;
+  /** A wave is already assigned/active against this faction. */
+  underWave: boolean;
+  /** Server tick a faction member last dealt damage to a drone (`-Infinity` ⇒
+   *  never) — the peaceful-timeout anchor for `shouldDeEscalate`. */
+  lastDealtDamageTick: number;
+}
+
 export interface LivingWorldRoom {
   eventBus(): Bus;
   playerCount(): number;
@@ -26,4 +48,15 @@ export interface LivingWorldRoom {
   }): boolean;
   despawnLivingWorldBot(botId: string): BotCarry | null;
   markBotHostile(botId: string): void;
+  /** Wave-system Phase 4 — per-faction base summary for wave planning. Empty on
+   *  engineering rooms (`sectorKey === null`; waves are galaxy-only). */
+  factionBaseReadiness(): FactionBaseReadiness[];
+  /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
+   *  drone-AI structure-target visibility). */
+  setFactionUnderWave(factionId: string, underWave: boolean): void;
+  /** Wave-system Phase 4 — mark a squad's bots hostile to a whole faction
+   *  (the faction's player + every owned structure id) AND broadcast bot_aggro
+   *  per bot so the owner's radar colours them (req #7). Re-pulsed each control
+   *  tick while the squad attacks (else 30 s FORGET_TICKS drops the siege). */
+  markSquadHostileToFaction(botIds: readonly string[], factionId: string): void;
 }
