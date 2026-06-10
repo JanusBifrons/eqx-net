@@ -100,6 +100,18 @@ export default defineConfig({
         'src/**/*.d.ts',
         'src/**/__fixtures__/**',
       ],
+      // Coverage floor (plan squishy-canyon, C2). A RATCHET, not an aspiration:
+      // set just under the current measured coverage (50.06 lines / 69.81 funcs
+      // / 83.94 branches at the time of writing) with ~2pt slack for v8 noise,
+      // so coverage can only go up. Bump these UP as Workstream D adds tests;
+      // never lower them to make a red build pass. Wired into the unit-tests CI
+      // job via `pnpm coverage`.
+      thresholds: {
+        statements: 48,
+        lines: 48,
+        functions: 67,
+        branches: 81,
+      },
     },
   },
 });
