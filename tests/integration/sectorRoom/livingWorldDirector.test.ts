@@ -65,8 +65,10 @@ describe('LivingWorldDirector — multi-sector population control', () => {
       6000,
       'squad gathered at home',
     );
-    // Player joins the OTHER sector (no base, no structures).
-    await h.connectAs(randomUUID(), 'orion-belt', { shipKind: KIND });
+    // Player joins the OTHER sector (no base, no structures) as a fully ACTIVE
+    // hull (connectActive sends client_ready so playerCount() counts it — the
+    // no-hunt guarantee must hold for a real, present player, not a lingering one).
+    await h.connectActive(randomUUID(), 'orion-belt', { shipKind: KIND });
     h.events.clear();
     await h.advance(600); // ~10 control ticks at the harness interval
 

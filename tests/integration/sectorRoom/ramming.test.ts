@@ -42,9 +42,9 @@ describe('SectorRoom integration — ramming damage', () => {
   it('two ships rammed together take SYMMETRIC layered damage; a no-health entity is immune', async () => {
     const p1 = randomUUID();
     const p2 = randomUUID();
-    const cr = await harness.connectAs(p1, { shipKind: 'fighter' });
+    const cr = await harness.connectActive(p1, { shipKind: 'fighter' });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === p1 });
-    await harness.connectAs(p2, { shipKind: 'fighter' });
+    await harness.connectActive(p2, { shipKind: 'fighter' });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === p2 });
 
     const room = getRoomById(cr.roomId);

@@ -114,9 +114,15 @@ describe('SectorRoom integration — abandon → wreck conversion', () => {
     // Trigger abandon — same path as devPlayerShipsAbandonHandler.
     getPlayerShipStore().delete(shipId);
 
-    // The abandon-detection poll runs every 30 ticks (~500 ms). Allow
-    // up to 1.5 s for the conversion to land.
-    await harness.advance(1500);
+    // The abandon-detection poll runs every 30 ticks (~500 ms at 60 Hz).
+    // Outcome-gate the wait until the conversion lands rather than sleeping
+    // a fixed wall-clock window — the CI runner ticks slower under load, so
+    // a blind `advance(1500)` is flaky (DETERMINISM.md: never assert on tick
+    // counts; wait on the outcome).
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline && state.wrecks.get(shipId) === undefined) {
+      await harness.advance(50);
+    }
 
     // Wreck must exist in state.wrecks with the same shipInstanceId.
     const wreck = state.wrecks.get(shipId);
@@ -144,7 +150,7 @@ describe('SectorRoom integration — abandon → wreck conversion', () => {
     // The owning client gets a ship_abandoned notification.
     expect(abandonedMsg).not.toBeNull();
     expect(abandonedMsg!.shipInstanceId).toBe(shipId);
-  });
+  }, 20_000);
 
   it('stored ship abandon → row deleted, NO wreck created', async () => {
     const pid = randomUUID();

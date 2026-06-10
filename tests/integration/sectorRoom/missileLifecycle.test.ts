@@ -53,7 +53,7 @@ describe('SectorRoom integration — missile lifecycle', () => {
     spawnY = 0,
   ): Promise<{ pid: string; cr: ClientRoom<SectorState>; room: ServerRoom<SectorState>; state: SectorState; shipInstanceId: string }> {
     const pid = randomUUID();
-    const cr = (await harness.connectAs(pid, { shipKind, spawnX, spawnY })) as ClientRoom<SectorState>;
+    const cr = (await harness.connectActive(pid, { shipKind, spawnX, spawnY })) as ClientRoom<SectorState>;
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;
