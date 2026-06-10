@@ -27,25 +27,32 @@ import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
 import { pickRespawnSector, sectorEdgePose, type Rng } from './population.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
-import { HunterBotPool, type DirectorSnapshot } from './director/HunterBotPool.js';
-import { HunterBotDistribution } from './director/HunterBotDistribution.js';
+import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
+import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT } from './director/SquadPool.js';
+import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
+import { EscalatingWavePattern } from './director/WavePattern.js';
+import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 
 // Re-export the room type so existing imports from this module keep working.
 export type { LivingWorldRoom } from './LivingWorldRoom.js';
 export type { BotRecord, DirectorSnapshot } from './director/HunterBotPool.js';
 
-export const LIVING_WORLD_BOT_COUNT = 25;
+/** Total director-owned bots = squads × members (wave-system Phase 3/4). The
+ *  bots are organised into `LIVING_WORLD_SQUAD_COUNT` homogeneous squads of
+ *  `SQUAD_SIZE`. (Was a flat 25 before the squad refactor.) */
+export const LIVING_WORLD_BOT_COUNT = LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE;
 
 /** Ops kill-switch for the Living World hunter bots. When
  *  `EQX_DISABLE_LIVING_WORLD` is `1`/`true`, the server boot SKIPS constructing
- *  and starting the director — so no hunter bots spawn, migrate, or aggro
- *  players (the director is the single owner of hunter-bot lifecycle, and its
- *  `tick()` step 3 is the only proactive-aggression source). Ambient per-sector
- *  drones are unaffected: they remain NEUTRAL and only fight back if the player
- *  shoots them (the reactive `damage → markHostile` mirror), so building
- *  gameplay is peaceful. Read once at boot — temporary by design: unset the env
- *  var and restart to re-arm. */
+ *  and starting the director — so no hunter bots spawn, migrate, or attack.
+ *  Post wave-refactor (Phase 4) the ONLY proactive-aggression source is the
+ *  WaveDirector declaring a wave against a ready base (the old on-sight
+ *  occupancy aggro is retired). Ambient per-sector drones are unaffected: they
+ *  remain NEUTRAL and only fight back if the player shoots them (the reactive
+ *  `damage → markHostile` mirror), so building gameplay is peaceful with the
+ *  switch set. Read once at boot — temporary by design: unset + restart to
+ *  re-arm. */
 export function isLivingWorldDisabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
@@ -117,8 +124,9 @@ export class LivingWorldDirector {
   private readonly rng: Rng;
   private readonly nowMs: () => number;
   private readonly pool: HunterBotPool;
-  private readonly distribution: HunterBotDistribution;
   private readonly warp: HunterBotWarpController;
+  private readonly squadPool: SquadPool;
+  private readonly waveDirector: WaveDirector;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
@@ -144,12 +152,19 @@ export class LivingWorldDirector {
       rng: this.rng,
       nowMs: this.nowMs,
     });
-    this.distribution = new HunterBotDistribution();
     this.warp = new HunterBotWarpController({
       rooms: this.rooms,
       pool: this.pool,
       rng: this.rng,
       respawnDelayMs: this.opts.respawnDelayMs,
+    });
+    this.squadPool = new SquadPool();
+    this.waveDirector = new WaveDirector({
+      rooms: this.rooms,
+      squadPool: this.squadPool,
+      hunterPool: this.pool,
+      behaviour: new WaveSquadBehaviour(),
+      pattern: new EscalatingWavePattern(),
     });
   }
 
@@ -158,7 +173,25 @@ export class LivingWorldDirector {
    *  prune timer). */
   start(): void {
     if (this.timer) return;
-    this.pool.seed(this.sectorKeys[0] ?? '');
+    const homeSector = this.sectorKeys[0] ?? '';
+    this.pool.seed(homeSector);
+    // Group the pool into homogeneous squads (v1: all 'fighter', shown as
+    // "8 × Legionnaires" in the warp warning). Each member's hull is forced to
+    // its squad's kind so the squad is visually homogeneous and the warning
+    // label is honest (a future WavePattern can vary the kind per squad).
+    const botIds = [...this.pool.values()].map((r) => r.botId);
+    // Spread squads across the galaxy so they don't all pile into one sector;
+    // each squad gathers at its own home until a wave routes it elsewhere.
+    const keys = this.sectorKeys;
+    this.squadPool.seed(
+      botIds,
+      (i) => keys[i % keys.length] ?? homeSector,
+      () => 'fighter',
+    );
+    for (const rec of this.pool.values()) {
+      const squad = this.squadPool.squadOf(rec.botId);
+      if (squad) rec.kind = squad.kind;
+    }
     for (const room of this.rooms.values()) {
       const bus = room.eventBus();
       const onDestroyed = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
@@ -204,61 +237,112 @@ export class LivingWorldDirector {
     });
   }
 
-  /** The control loop — see the class doc + plan for the algorithm. */
+  /**
+   * The control loop. Wave-driven (wave-system Phase 4): the old occupancy
+   * distribution + proactive on-sight aggro (step 3) are RETIRED — drones go
+   * hostile ONLY via the faction ledger (a wave declared against a ready base,
+   * or a faction member attacking a drone). A player with no base roams an
+   * unhunted galaxy (req #6, accepted).
+   */
   private tick(): void {
     const now = this.nowMs();
 
-    // ── 1. respawn / initial seed (gated by shed recovery) ───────────────
+    // ── 1. respawn (squad-aware) + forming/retreating → idle promotion ───
     this.respawnStep(now);
+    this.promoteSquads();
 
-    // ── 2. distribution + migrations ─────────────────────────────────────
-    const livePlayerCounts = new Map<string, number>();
-    for (const [key, room] of this.rooms) livePlayerCounts.set(key, room.playerCount());
-    const { migrations } = this.distribution.plan({
-      sectorKeys: this.sectorKeys,
-      livePlayerCounts,
-      nowMs: now,
-      pool: this.pool,
-      playerStickyMs: this.opts.playerStickyMs,
-      arrivalCooldownMs: this.opts.arrivalCooldownMs,
-      maxMigrationsPerTick: this.opts.maxMigrationsPerTick,
-    });
-    for (const m of migrations) {
-      const rec = this.pool.get(m.botId);
-      if (!rec || rec.state !== 'active') continue;
-      const fromRoom = this.rooms.get(m.from);
-      if (!fromRoom) continue;
-      rec.state = 'in-transit';
-      const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), this.opts.spoolMs);
-      rec.controller = ctrl;
-      fromRoom.eventBus().emit('BOT_TRANSIT_STARTED', {
-        type: 'BOT_TRANSIT_STARTED',
-        botId: rec.botId,
-        from: m.from,
-        to: m.to,
-      });
-      serverLogEvent('bot_transit_start', { botId: rec.botId, from: m.from, to: m.to });
-      ctrl.begin({
-        now: this.nowMs,
-        commit: () => this.warp.doHop(rec, m.from, m.to),
-        outcome: (res) => this.warp.onTransitOutcome(rec, m.from, m.to, res),
-      });
-    }
+    // ── 2. wave planning + squad advancement ─────────────────────────────
+    for (const step of this.waveDirector.plan()) this.executeWaveStep(step);
 
-    // ── 3. proactive hunt: bots in player-occupied sectors aggro ─────────
-    this.distribution.forEachActive(this.pool, (rec) => {
-      const room = this.rooms.get(rec.sectorKey);
-      if (room && room.playerCount() > 0) room.markBotHostile(rec.botId);
-    });
-
-    // ── 4. per-tick population telemetry (diag bucket: 'population') ──────
+    // ── 3. telemetry (population + squad/wave counts) ────────────────────
     const snap = this.snapshot();
+    const squads = this.squadPool.snapshot();
     serverLogEvent('population_report', {
       total: snap.total,
       active: snap.active,
       inTransit: snap.inTransit,
       respawning: snap.respawning,
       perSector: snap.perSector,
+      squads: squads.byState,
+    });
+  }
+
+  /** Promote squads whose members have spawned (forming→idle) and squads that
+   *  have stood down (retreating→idle, ready for a fresh assignment). */
+  private promoteSquads(): void {
+    for (const sq of this.squadPool.all()) {
+      if (sq.state === 'forming') {
+        const active = this.squadPool.activeMemberCount(
+          sq,
+          (id) => this.pool.get(id)?.state === 'active',
+        );
+        if (active > 0) this.squadPool.setState(sq, 'idle');
+      } else if (sq.state === 'retreating') {
+        this.squadPool.setState(sq, 'idle');
+      }
+    }
+  }
+
+  /** Execute one WaveDirector step (the side-effecting half — the planning is
+   *  pure in WaveDirector). */
+  private executeWaveStep(step: WaveStep): void {
+    switch (step.kind) {
+      case 'warp': {
+        this.squadPool.setState(step.squad, 'warping');
+        // Coordinated warp: every active member spools from its current sector
+        // to the target in the SAME control tick (they arrive together, modulo
+        // partial arrival under slot contention / mid-spool death — accepted).
+        for (const botId of step.squad.botIds) {
+          const rec = this.pool.get(botId);
+          if (!rec || rec.state !== 'active' || rec.sectorKey === step.to) continue;
+          this.startSquadMemberTransit(rec, rec.sectorKey, step.to);
+        }
+        break;
+      }
+      case 'attack': {
+        this.squadPool.setState(step.squad, 'attacking');
+        const room = this.rooms.get(step.sectorKey);
+        if (room) {
+          room.setFactionUnderWave(step.factionId, true);
+          // Re-pulsed every control tick while attacking (beats FORGET_TICKS).
+          room.markSquadHostileToFaction(step.squad.botIds, step.factionId);
+        }
+        break;
+      }
+      case 'retreat': {
+        this.squadPool.setState(step.squad, 'retreating');
+        const room = this.rooms.get(step.sectorKey);
+        if (room) {
+          room.setFactionUnderWave(step.factionId, false);
+          room.purgeFactionHostility(step.factionId);
+        }
+        this.squadPool.clearTarget(step.squad);
+        serverLogEvent('wave_deescalated', { factionId: step.factionId, sectorKey: step.sectorKey });
+        break;
+      }
+    }
+  }
+
+  /** Spool one squad member from→to via the proven per-bot transit machinery
+   *  (vulnerable spool, race-guarded outcome routing). Extracted from the old
+   *  distribution-migration loop. */
+  private startSquadMemberTransit(rec: BotRecord, from: string, to: string): void {
+    const fromRoom = this.rooms.get(from);
+    if (!fromRoom) return;
+    rec.state = 'in-transit';
+    const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), this.opts.spoolMs);
+    rec.controller = ctrl;
+    fromRoom.eventBus().emit('BOT_TRANSIT_STARTED', {
+      type: 'BOT_TRANSIT_STARTED',
+      botId: rec.botId,
+      from,
+      to,
+    });
+    serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });
+    ctrl.begin({
+      now: this.nowMs,
+      commit: () => this.warp.doHop(rec, from, to),
+      outcome: (res) => this.warp.onTransitOutcome(rec, from, to, res),
     });
   }
 
@@ -268,7 +352,12 @@ export class LivingWorldDirector {
     const shedRecovered = now - this.lastShedAtMs > this.opts.shedRecoveryMs;
     for (const rec of this.pool.values()) {
       if (rec.state !== 'respawning' || rec.respawnAtMs > now || !shedRecovered) continue;
-      const sector = pickRespawnSector(this.rng, this.sectorKeys);
+      // Squad-aware respawn (hostile-review C4): a member of a committed squad
+      // warps back into ITS squad's sector so "fight together" survives a
+      // death; otherwise (unassigned / still forming) fall back to the ambient
+      // random sector.
+      const sector =
+        this.squadPool.respawnSectorFor(rec.botId) ?? pickRespawnSector(this.rng, this.sectorKeys);
       const room = this.rooms.get(sector);
       if (!room || !room.hasFreeSlot()) {
         rec.respawnAtMs = now; // keep retrying next tick

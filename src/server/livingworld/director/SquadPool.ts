@@ -59,13 +59,17 @@ export class SquadPool {
 
   /**
    * Partition `botIds` into `LIVING_WORLD_SQUAD_COUNT` homogeneous squads of
-   * `SQUAD_SIZE`, each seeded into `initialSectorKey` in the `forming` state.
-   * `pickKind` chooses each squad's homogeneous hull (v1 passes `() => 'fighter'`,
-   * labelled "Legionnaire"); a future `WavePattern` can vary it. Extra bot ids
-   * beyond the squads' capacity are ignored (the director sizes the pool to
-   * match).
+   * `SQUAD_SIZE`, each given a home sector by `sectorForSquad(index)` (the
+   * director spreads squads across the galaxy so they don't all pile into one
+   * sector) and seeded in the `forming` state. `pickKind` chooses each squad's
+   * homogeneous hull (v1 passes `() => 'fighter'`, labelled "Legionnaire"); a
+   * future `WavePattern` can vary it. Extra bot ids beyond capacity are ignored.
    */
-  seed(botIds: readonly string[], initialSectorKey: string, pickKind: () => ShipKindId): void {
+  seed(
+    botIds: readonly string[],
+    sectorForSquad: (squadIndex: number) => string,
+    pickKind: () => ShipKindId,
+  ): void {
     this.squads.clear();
     this.botToSquad.clear();
     let idx = 0;
@@ -82,7 +86,7 @@ export class SquadPool {
         kind: pickKind() ?? DEFAULT_SHIP_KIND,
         botIds: members,
         state: 'forming',
-        sectorKey: initialSectorKey,
+        sectorKey: sectorForSquad(s),
         targetFactionId: null,
       });
     }
@@ -118,16 +122,15 @@ export class SquadPool {
   }
 
   /**
-   * Sector a respawning member should return to so it rejoins its squad
-   * (hostile-review C4). Returns the squad's `sectorKey` for any squad that has
-   * a meaningful location (every state except `forming`); `null` ⇒ the director
-   * falls back to the ambient respawn picker (unassigned bot, or a squad still
-   * forming with no committed sector).
+   * Sector a (re)spawning member should go to so it joins/rejoins its squad
+   * (hostile-review C4). A squad always has a home sector (set at seed and
+   * updated on assignment), so a squad member always returns to its squad —
+   * the initial spawn gathers the squad at its home, and a combat respawn
+   * rejoins it wherever the squad currently is. `null` only for an unassigned
+   * bot (not in any squad) ⇒ the director uses the ambient random picker.
    */
   respawnSectorFor(botId: string): string | null {
-    const squad = this.squadOf(botId);
-    if (!squad || squad.state === 'forming') return null;
-    return squad.sectorKey;
+    return this.squadOf(botId)?.sectorKey ?? null;
   }
 
   /** Count of a squad's members that satisfy `isActive` (derived from the

@@ -31,6 +31,10 @@ export interface FactionBaseReadiness {
   /** Server tick a faction member last dealt damage to a drone (`-Infinity` ⇒
    *  never) — the peaceful-timeout anchor for `shouldDeEscalate`. */
   lastDealtDamageTick: number;
+  /** This room's CURRENT server tick — the `nowTick` the de-escalation
+   *  comparison must use (same room-tick reference as `lastDealtDamageTick`;
+   *  the director's wall-clock control loop is a different reference). */
+  serverTick: number;
 }
 
 export interface LivingWorldRoom {
@@ -59,4 +63,8 @@ export interface LivingWorldRoom {
    *  per bot so the owner's radar colours them (req #7). Re-pulsed each control
    *  tick while the squad attacks (else 30 s FORGET_TICKS drops the siege). */
   markSquadHostileToFaction(botIds: readonly string[], factionId: string): void;
+  /** Wave-system Phase 6 — drones stand down from a faction (de-escalation):
+   *  purge the faction's player + every owned structure id from every drone's
+   *  hostility set. */
+  purgeFactionHostility(factionId: string): void;
 }

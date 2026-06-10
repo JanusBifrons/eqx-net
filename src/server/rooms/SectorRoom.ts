@@ -2657,6 +2657,7 @@ export class SectorRoom extends Room<SectorState> {
         hostileToDrones: state?.hostileToDrones ?? false,
         underWave: state?.underWave ?? false,
         lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
+        serverTick: this.serverTick,
       });
     }
     return out;
@@ -2675,6 +2676,14 @@ export class SectorRoom extends Room<SectorState> {
     for (const botId of botIds) {
       this.livingWorldBotHooks.markBotHostileToFaction(botId, members.playerId, members.structureIds);
     }
+  }
+
+  /** Wave-system Phase 6 — drones stand down from a faction: purge its player +
+   *  owned structure ids from every drone's hostility set (de-escalation). */
+  purgeFactionHostility(factionId: string): void {
+    const members = this.factionLedger.membersOf(factionId);
+    this.aiController.purgeHostility(members.playerId);
+    for (const sid of members.structureIds) this.aiController.purgeHostility(sid);
   }
 
   private handleRespawn(client: Client): void {
