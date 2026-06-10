@@ -148,6 +148,20 @@ describe('WaveDirector — assignment + advancement', () => {
     expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
+  it('re-triggers: a stood-down squad re-engages when the faction rebuilds (req #8)', () => {
+    // After a de-escalation the director clears the squad's target and returns
+    // it to idle. If the faction rebuilds a Miner (ready again), the next plan()
+    // must re-assign + re-warp — no special state, purely readiness-driven.
+    const { wave, squadPool } = setup({ readiness: [readyFaction()] });
+    const sq = squadPool.get('squad-0')!;
+    // Simulate the post-retreat state: idle, target cleared.
+    squadPool.setState(sq, 'idle');
+    sq.targetFactionId = null;
+    const steps = wave.plan();
+    expect(sq.targetFactionId).toBe('alice');
+    expect(steps).toContainEqual({ kind: 'warp', squad: sq, to: 'vega' });
+  });
+
   it('attacking squad whose base vanished entirely → retreat', () => {
     const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
     const { wave, squadPool } = setup({ readiness: [], hunterStates: states });
