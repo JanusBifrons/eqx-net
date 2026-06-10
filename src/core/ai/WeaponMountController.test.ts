@@ -197,6 +197,36 @@ describe('WeaponMountController.pickTarget', () => {
   });
 });
 
+describe('WeaponMountController.pickTarget — priorityBias (wave-system Phase 2)', () => {
+  const tp = (id: string, x: number, y: number, priority: number): MountTargetView => ({
+    id, x, y, vx: 0, vy: 0, priority,
+  });
+
+  it('absent priorityBias ⇒ pure nearest (byte-identical default)', () => {
+    const targets = [tp('struct', -100, 0, 1), tp('player', 90, 0, 0)];
+    // No priorityBias → the nearer one (player at 90) wins despite lower priority.
+    expect(pickTarget(0, 0, targets, null, all())?.id).toBe('player');
+  });
+
+  it('a higher-priority target wins over a nearer low-priority one when biased', () => {
+    const targets = [tp('struct', -100, 0, 1), tp('player', 90, 0, 0)];
+    // struct is farther (100 vs 90) but priority 1 with bias 3 divides its score
+    // by 4 → it wins.
+    expect(pickTarget(0, 0, targets, null, all(), { priorityBias: 3 })?.id).toBe('struct');
+  });
+
+  it('priorityBias has no effect when every candidate has priority 0/undefined', () => {
+    const targets = [t('a', 50, 0), t('b', 120, 0)];
+    expect(pickTarget(0, 0, targets, null, all(), { priorityBias: 5 })?.id).toBe('a');
+  });
+
+  it('a very distant high-priority target still loses (distance² dominates)', () => {
+    const targets = [tp('struct', -1000, 0, 1), tp('player', 50, 0, 0)];
+    // struct score = 1000²/4 = 250000; player score = 50² = 2500 → player wins.
+    expect(pickTarget(0, 0, targets, null, all(), { priorityBias: 3 })?.id).toBe('player');
+  });
+});
+
 describe('WeaponMountController.rotateMountToward', () => {
   /** Standard test mount: ±30° arc, 4 rad/s. */
   const wing: MountConfig = {

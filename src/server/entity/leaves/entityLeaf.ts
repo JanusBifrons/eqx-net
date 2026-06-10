@@ -153,4 +153,12 @@ export interface LeafDeps {
   aiController: HostilityLedger;
   /** Diagnostic ring-buffer sink — `damage_applied` on swarm hits. */
   serverLogEvent: (tag: string, data: Record<string, unknown>) => void;
+  /** Wave-system Phase 4 — reactive faction escalation. Called when a DRONE
+   *  (kind 1) is damaged, with the drone id + the damage source id. The room
+   *  resolves whether the source belongs to a faction (player or owned
+   *  structure) and, if so, flips that faction hostile to drones + records the
+   *  peaceful-timer reset + marks the hit drone hostile to the whole faction.
+   *  A drone-on-drone hit resolves to no faction (factionOf → null) ⇒ no
+   *  escalation (req #5 gate). Optional ⇒ no escalation (e.g. test fixtures). */
+  onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
 }

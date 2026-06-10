@@ -2,6 +2,8 @@
  *  (NOT inbound — see `clientMessages.ts` for `EngageTransitSchema`
  *  + `CancelTransitSchema`). */
 
+import { z } from 'zod';
+
 export type TransitStateLabel = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 export type TransitCancelReason =
   | 'destroyed'
@@ -69,3 +71,49 @@ export interface WarpInEvent {
    *  spawn-handshake commits + new transit-arrival commits. */
   arrivalTick?: number;
 }
+
+/**
+ * Server → client (broadcast, wave-system Phase 5): something is SPOOLING to
+ * warp into THIS sector — show the destination-sector occupants a HUD warning
+ * with a countdown. Emitted ONCE at spool start (carrying the full spool
+ * remaining as `countdownMs`), for BOTH a drone squad (`count` 8, `label`
+ * "Legionnaire") and a player (`count` 1, `label` the display name). A drone
+ * squad's per-bot `warp_in` flashes still fire on arrival; this is the distinct
+ * HUD-banner channel (it carries NO positions → Zustand-safe, invariant #2).
+ *
+ * It drives visible UI, so — unlike `warp_in`/`bot_aggro` — the client zod-
+ * validates it and drops malformed packets (invariant #3): a bad
+ * `count`/`countdownMs` would render a garbage banner. `id` keys the banner so
+ * a cancelled/aborted spool can clear it (`warp_warning_clear`).
+ */
+export const WarpWarningSchema = z
+  .object({
+    type: z.literal('warp_warning'),
+    /** Stable id for this incoming group (the squadId, or the player id). */
+    id: z.string().min(1),
+    /** Display label for the line — e.g. "Legionnaire" or a player name. */
+    label: z.string().min(1).max(64),
+    /** How many ships are inbound (8 for a squad, 1 for a player). */
+    count: z.number().int().min(1).max(64),
+    /** Spool remaining at emit, ms — the countdown the banner ticks down. */
+    countdownMs: z.number().finite().nonnegative(),
+    /** Optional ship-kind id for an icon. */
+    kind: z.string().optional(),
+  })
+  .strict();
+
+export type WarpWarningEvent = z.infer<typeof WarpWarningSchema>;
+
+/**
+ * Server → client (broadcast): clear a pending `warp_warning` (its spool was
+ * cancelled or the warping ship died during the vulnerable spool). `id` matches
+ * the `warp_warning.id` to dismiss.
+ */
+export const WarpWarningClearSchema = z
+  .object({
+    type: z.literal('warp_warning_clear'),
+    id: z.string().min(1),
+  })
+  .strict();
+
+export type WarpWarningClearEvent = z.infer<typeof WarpWarningClearSchema>;

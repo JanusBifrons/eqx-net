@@ -142,6 +142,67 @@ describe('HostileDroneBehaviour — Part C target selection', () => {
   });
 });
 
+describe('HostileDroneBehaviour — wave-system Phase 2 structure targeting', () => {
+  // Same sign-of-turn convention as Part C: a target to the LEFT vs RIGHT
+  // produces opposite-sign turns, so matching a single-target reference tells
+  // us which candidate was picked.
+  const player = (id: string, x: number, y: number): AiWorldView['players'][number] => ({
+    id, x, y, vx: 0, vy: 0, health: 100, maxHealth: 100,
+  });
+  const structure = (
+    id: string, x: number, y: number, priority = 1,
+  ): NonNullable<AiWorldView['structures']>[number] => ({
+    id, x, y, health: 300, maxHealth: 300, priority,
+  });
+  const view = (
+    players: AiWorldView['players'],
+    structures: AiWorldView['structures'],
+    tick = 200,
+  ): AiWorldView => ({ players, structures, tick, dtSec: 1 / 60 });
+  const turnFor = (markIds: string[], v: AiWorldView): number => {
+    const b = new HostileDroneBehaviour();
+    for (const id of markIds) b.markHostile(id, 100);
+    const intent = b.tick(droneAt(0, 0, 0, 0), v);
+    return intent.setAngvel ?? intent.torque ?? 0;
+  };
+
+  it('targets a hostile structure when it is the only candidate', () => {
+    // Structure to the RIGHT, hostile, no players. The drone should steer
+    // toward it (non-zero turn matching a player-at-the-same-spot reference).
+    const structTurn = turnFor(['s1'], view([], [structure('s1', 100, 0)]));
+    const playerRef = turnFor(['p1'], view([player('p1', 100, 0)], []));
+    expect(structTurn).not.toBe(0);
+    expect(Math.sign(structTurn)).toBe(Math.sign(playerRef));
+  });
+
+  it('prefers a structure over an equidistant player (priority bias, req #2)', () => {
+    // player RIGHT (priority 0), structure LEFT (priority 1). Both equidistant,
+    // both hostile, equal health. The structure priority bias must win → turn
+    // sign matches the structure-only reference, opposite the player-only one.
+    const both = turnFor(['p1', 's1'], view([player('p1', 100, 0)], [structure('s1', -100, 0)]));
+    const structOnly = turnFor(['s1'], view([], [structure('s1', -100, 0)]));
+    const playerOnly = turnFor(['p1'], view([player('p1', 100, 0)], []));
+    expect(Math.sign(both)).toBe(Math.sign(structOnly));
+    expect(Math.sign(both)).not.toBe(Math.sign(playerOnly));
+    expect(structOnly).not.toBe(0);
+  });
+
+  it('ignores a structure that is NOT in the hostile set (neutral base)', () => {
+    // Structure present in the view but the drone is only hostile to the player.
+    // It must pick the player, never the un-marked structure.
+    const both = turnFor(['p1'], view([player('p1', 100, 0)], [structure('s1', -100, 0)]));
+    const playerOnly = turnFor(['p1'], view([player('p1', 100, 0)], []));
+    expect(Math.sign(both)).toBe(Math.sign(playerOnly));
+    expect(playerOnly).not.toBe(0);
+  });
+
+  it('absent structures ⇒ identical pick to players-only (byte-identical default)', () => {
+    const withUndefined = turnFor(['p1', 'p2'], view([player('p1', 100, 0), player('p2', -100, 30)], undefined));
+    const withEmpty = turnFor(['p1', 'p2'], view([player('p1', 100, 0), player('p2', -100, 30)], []));
+    expect(withUndefined).toBe(withEmpty);
+  });
+});
+
 describe('HostileDroneBehaviour — hostility lifecycle', () => {
   it('flips to COMBAT after markHostile', () => {
     const b = new HostileDroneBehaviour();

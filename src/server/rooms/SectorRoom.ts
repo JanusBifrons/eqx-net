@@ -14,6 +14,7 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
+import type { WarpWarningEvent } from '../../shared-types/messages.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
@@ -34,7 +35,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
@@ -46,6 +47,9 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
+import { FactionLedger } from '../faction/FactionLedger.js';
+import { isBaseReady } from '../../core/faction/Faction.js';
+import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -373,6 +377,22 @@ interface ProjectileRecord {
   weaponId: WeaponId;
 }
 
+/** Wave-system Phase 2 — drone target priority by structure kind (higher =
+ *  attacked first). The Capital (the "core" / mineral bank) is the prize; the
+ *  Miner is the objective the de-escalation condition keys on; defence + power
+ *  rank below. All are > 0 so every hostile structure outranks a player ship
+ *  (req #2 "structures primarily"). Tunable per difficulty pass. */
+function structurePriority(kind: StructureKindId): number {
+  switch (kind) {
+    case 'capital':
+      return 3;
+    case 'miner':
+      return 2;
+    default:
+      return 1;
+  }
+}
+
 export class SectorRoom extends Room<SectorState> {
   /** Owns the physics worker (lifecycle + message routing + typed
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
@@ -491,6 +511,24 @@ export class SectorRoom extends Room<SectorState> {
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
+  /** Wave-system Phase 1 — per-room faction hostility/peace ledger, membership
+   *  derived live from this room's structure registry. */
+  private readonly factionLedger = new FactionLedger({
+    structures: () => this.structureRegistry.all(),
+  });
+  /** Wave-system Phase 2 — reused per-tick structure target buffers, rebuilt
+   *  ONCE per tick (shared by every drone via AiWorldView; never per-drone).
+   *  `aiStructureScratch` feeds the brain (priority); `hostileStructureCircles`
+   *  feeds the fire-resolver hit test (radius). Both hold only this sector's
+   *  hostile (under-wave / member-attacked), constructed structures. Object
+   *  churn matches the established `aiPlayerScratch` view-build pattern. */
+  private readonly aiStructureScratch: AiStructureView[] = [];
+  private readonly hostileStructureCircles: Array<{
+    id: string;
+    x: number;
+    y: number;
+    radius: number;
+  }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
   /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
@@ -938,6 +976,12 @@ export class SectorRoom extends Room<SectorState> {
       /** Structures plan (Phase 4) — seed asteroids at poses (miner targets).
        *  testMode-only; for the mining scenario. */
       scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+      /** Wave-system (2026-06-10) — override the PLAYER warp spool (ms). The
+       *  production default is `SPOOL_DURATION_MS` (5 min); E2E can't wait that
+       *  long, so testMode rooms inject e.g. 2_000. testMode-only. NOTE: this
+       *  reaches the player `TransitOrchestrator` only — drone-squad spool is
+       *  driven by the director's own `spoolMs` option / `EQX_BOT_SPOOL_MS`. */
+      transitSpoolMsOverride?: number;
     };
     // Payload-DoS bound (S5): onCreate options are client-suppliable on room
     // create, so reject oversized seed arrays before they seed the sector.
@@ -1082,6 +1126,11 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
+      // Wave-system Phase 2: the beam also tests this tick's hostile-structure
+      // circles (rebuilt once per tick by `fillStructureTargets`). Same
+      // faction-filtered set the drone's body target chose among, so the beam
+      // lands on the structure it's pointed at.
+      structureHitTargets: () => this.hostileStructureCircles,
       broadcast: (type, msg) => this.broadcast(type, msg),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
@@ -1122,6 +1171,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       evictSwarmEntity: (rec, opts) => this.evictSwarmEntity(rec as SwarmEntityRecord, opts),
       aiController: this.aiController,
+      onDroneDamaged: (droneId, sourceId, atTick) =>
+        this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -1724,10 +1775,17 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 5 — the orchestrator gets `PlayerShipStore` so it can validate
     // ownership when `engage_transit` carries a `shipId`. Without the store
     // a shipId-carrying request rejects as unknown, which is safe-by-default.
+    // Wave-system: testMode rooms may inject a fast player spool so E2E never
+    // waits the 5-min production `SPOOL_DURATION_MS`. Galaxy gameplay always
+    // gets the real spool (the override is testMode-gated, like testTimeScale).
+    const transitSpoolMs =
+      this.testMode && roomOpts.transitSpoolMsOverride != null
+        ? Math.max(1, roomOpts.transitSpoolMsOverride)
+        : undefined;
     this.transitOrchestrator = new TransitOrchestrator(
       this.asTransitHost(),
       getLimboStore(),
-      undefined,
+      transitSpoolMs,
       getPlayerShipStore(),
     );
 
@@ -2103,6 +2161,36 @@ export class SectorRoom extends Room<SectorState> {
     s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
     s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
     return s;
+  }
+
+  /**
+   * Wave-system Phase 2 — rebuild this tick's hostile-structure target set,
+   * shared by every drone (called ONCE per tick from `runAiTick`, never
+   * per-drone — #14). A structure is a target iff its owning faction is
+   * `hostileToDrones` (member attacked a drone) OR `underWave` (the director
+   * declared a wave) AND it is constructed. Populates BOTH the brain view
+   * (`out` = `aiStructureScratch`, carries `priority`) and the fire-resolver
+   * hit circles (`this.hostileStructureCircles`, carries `radius`) in one
+   * registry pass. Object churn matches the established `aiPlayerScratch`
+   * view-build pattern (small, bounded structure count).
+   */
+  private fillStructureTargets(out: AiStructureView[]): void {
+    const circles = this.hostileStructureCircles;
+    circles.length = 0;
+    if (this.structureRegistry.size === 0) return;
+    for (const rec of this.structureRegistry.all()) {
+      if (!rec.isConstructed) continue;
+      if (!this.factionLedger.isHostileToDrones(rec.owner)) continue;
+      out.push({
+        id: rec.id,
+        x: rec.x,
+        y: rec.y,
+        health: this.swarmHealth.get(rec.id),
+        maxHealth: getStructureKind(rec.kind).maxHealth,
+        priority: structurePriority(rec.kind),
+      });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
+    }
   }
 
   /**
@@ -2523,6 +2611,112 @@ export class SectorRoom extends Room<SectorState> {
 
   markBotHostile(botId: string): void {
     this.livingWorldBotHooks.markBotHostile(botId);
+  }
+
+  /**
+   * Wave-system Phase 4 — per-(owner, sector) faction base summary the
+   * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
+   * Engineering rooms (`sectorKey === null`) return [] (waves are galaxy-only).
+   * One entry per player owning ≥1 constructed structure here.
+   */
+  factionBaseReadiness(): FactionBaseReadiness[] {
+    const sectorKey = this.sectorKey;
+    if (sectorKey === null || this.structureRegistry.size === 0) return [];
+    interface Agg {
+      hasCapital: boolean;
+      minerCount: number;
+      solarCount: number;
+      turretCount: number;
+    }
+    const byOwner = new Map<string, Agg>();
+    for (const rec of this.structureRegistry.all()) {
+      if (!rec.isConstructed) continue;
+      let agg = byOwner.get(rec.owner);
+      if (!agg) {
+        agg = { hasCapital: false, minerCount: 0, solarCount: 0, turretCount: 0 };
+        byOwner.set(rec.owner, agg);
+      }
+      switch (rec.kind) {
+        case 'capital':
+          agg.hasCapital = true;
+          break;
+        case 'miner':
+          agg.minerCount++;
+          break;
+        case 'solar':
+          agg.solarCount++;
+          break;
+        case 'turret':
+          agg.turretCount++;
+          break;
+        default:
+          break;
+      }
+    }
+    const out: FactionBaseReadiness[] = [];
+    for (const [factionId, agg] of byOwner) {
+      const state = this.factionLedger.get(factionId);
+      out.push({
+        factionId,
+        sectorKey,
+        ready: isBaseReady(agg),
+        minerCount: agg.minerCount,
+        hostileToDrones: state?.hostileToDrones ?? false,
+        underWave: state?.underWave ?? false,
+        lastDealtDamageTick: state?.lastDealtDamageTick ?? -Infinity,
+        serverTick: this.serverTick,
+      });
+    }
+    return out;
+  }
+
+  /** Wave-system Phase 4 — set/clear a faction's active-wave flag (gates the
+   *  drone-AI structure-target visibility built in `fillStructureTargets`). */
+  setFactionUnderWave(factionId: string, underWave: boolean): void {
+    this.factionLedger.setUnderWave(factionId, underWave);
+  }
+
+  /** Wave-system Phase 4 — mark a squad's bots hostile to a whole faction
+   *  (player + owned structures). Re-pulsed each control tick while attacking. */
+  markSquadHostileToFaction(botIds: readonly string[], factionId: string): void {
+    const members = this.factionLedger.membersOf(factionId);
+    for (const botId of botIds) {
+      this.livingWorldBotHooks.markBotHostileToFaction(botId, members.playerId, members.structureIds);
+    }
+  }
+
+  /**
+   * Wave-system reactive escalation (req #5). A drone was just damaged by
+   * `sourceId`. If the source belongs to a faction (a player who owns a base
+   * here, or one of their structures — e.g. a turret), the WHOLE faction
+   * becomes hostile to drones: flip the ledger (+ reset the peaceful timer) so
+   * the faction's structures enter the drone-AI target view, and mark THIS drone
+   * hostile to the entire faction (player + owned structures) so it engages the
+   * base it was provoked by — not just the single shooter. A drone-on-drone hit
+   * (`factionOf` → null) escalates nothing (the C3 self-aggro gate). Bounded:
+   * one `factionOf` scan + one faction-mark per applied drone hit.
+   */
+  private escalateFactionOnDroneHit(droneId: string, sourceId: string, atTick: number): void {
+    const factionId = this.factionLedger.factionOf(sourceId);
+    if (factionId === null) return;
+    this.factionLedger.recordFactionDealtDamage(factionId, atTick);
+    const members = this.factionLedger.membersOf(factionId);
+    this.livingWorldBotHooks.markBotHostileToFaction(droneId, members.playerId, members.structureIds);
+  }
+
+  /** Wave-system Phase 6 — drones stand down from a faction: purge its player +
+   *  owned structure ids from every drone's hostility set (de-escalation). */
+  purgeFactionHostility(factionId: string): void {
+    const members = this.factionLedger.membersOf(factionId);
+    this.aiController.purgeHostility(members.playerId);
+    for (const sid of members.structureIds) this.aiController.purgeHostility(sid);
+  }
+
+  /** Wave-system Phase 5 — broadcast a sector-wide warp-in warning to this
+   *  room's occupants (one per incoming squad; the client renders the HUD
+   *  countdown banner). */
+  broadcastWarpWarning(msg: WarpWarningEvent): void {
+    this.broadcast('warp_warning', msg);
   }
 
   private handleRespawn(client: Client): void {
@@ -3814,6 +4008,8 @@ export class SectorRoom extends Room<SectorState> {
       getActiveShip: (id) => this.getActiveShip(id),
       shipPoseCache: this.shipPoseCache,
       aiPlayerScratch: this.aiPlayerScratch,
+      aiStructureScratch: this.aiStructureScratch,
+      fillStructureTargets: (out) => this.fillStructureTargets(out),
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
       phaseTime,

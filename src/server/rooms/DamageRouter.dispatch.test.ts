@@ -123,6 +123,7 @@ function makeHarness(): Harness {
     evictSwarmEntity: (rec, opts) =>
       log.push(`evictSwarm:${rec.id}:broadcast=${opts.broadcast}:emitDestroyed=${opts.emitDestroyed}`),
     aiController: { markHostile: (droneId, playerId) => log.push(`markHostile:${droneId}<-${playerId}`) },
+    onDroneDamaged: (droneId, sourceId) => log.push(`escalate:${droneId}<-${sourceId}`),
     bus,
     broadcastDamage: (msg) => log.push(`damage:${msg.targetId}:hp=${msg.newHealth}:layer=${msg.hitLayer}:shooter=${msg.shooterId}`),
     broadcastDestroy: (msg) => log.push(`destroy:${msg.targetId}:shooter=${msg.shooterId}`),
@@ -237,6 +238,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
       `damage:swarm-9:hp=${maxHp - 5}:layer=hull:shooter=shooterD`,
       'diag:damage_applied:swarm-9',
       'markHostile:swarm-9<-shooterD',
+      'escalate:swarm-9<-shooterD',
     ]);
   });
 
@@ -251,8 +253,29 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
       'damage:swarm-9:hp=0:layer=hull:shooter=shooterD',
       'diag:damage_applied:swarm-9',
       'markHostile:swarm-9<-shooterD',
+      'escalate:swarm-9<-shooterD',
       'evictSwarm:swarm-9:broadcast=true:emitDestroyed=true',
     ]);
+  });
+
+  it('branch 4 — structure (kind 2): damage + diag but NO markHostile (no AI brain)', () => {
+    // Wave-system Phase 0.5 leak-fix lock: a structure shares the swarm damage
+    // strategy but is NOT registered with the AiController, so marking it
+    // hostile would buffer a `pendingHostile` entry that never drains. The
+    // kind-1 gate suppresses markHostile for structures (and asteroids); the
+    // hit + diag still fire. Reverting the gate re-introduces the leak and
+    // adds a `markHostile:swarm-7<-shooterS` line here.
+    const h = makeHarness();
+    const rec: SwarmDmgRecord = { id: 'swarm-7', slot: 3, entityId: 7, kind: 2, shipKind: null };
+    h.swarm.set('swarm-7', rec);
+    h.shieldHull.swarmHealth.set('swarm-7', 300);
+    h.shieldHull.swarmShield.set('swarm-7', 0);
+    h.router.apply('swarm-7', 'shooterS', 5, 1, 2);
+    expect(log).toEqual([
+      'damage:swarm-7:hp=295:layer=hull:shooter=shooterS',
+      'diag:damage_applied:swarm-7',
+    ]);
+    expect(log.some((l) => l.startsWith('markHostile:'))).toBe(false);
   });
 
   it('branch 5 — asteroid (no swarmHealth entry): immune, silent no-op', () => {

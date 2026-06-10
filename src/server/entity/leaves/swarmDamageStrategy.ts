@@ -45,8 +45,23 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
       });
       // A hit flips the entity to COMBAT + adds the shooter; the client mirrors
       // this from its damage-event handler (no wire bump).
-      if (sourceId) {
+      //
+      // Gate on kind === 1 (drone): ONLY drones have an `AiController`
+      // registration + a `HostileDroneBehaviour` to receive the mark. A
+      // structure (kind 2) or asteroid (kind 0) is never registered, so
+      // `markHostile(structureId, …)` would buffer a `(structureId, shooterId)`
+      // entry in `AiController.pendingHostile` that NEVER drains (no register /
+      // unregister for non-drones) — a slow leak in long-lived galaxy rooms,
+      // amplified once drones actively shoot structures (wave system Phase 2).
+      // Faction escalation when a structure is attacked is handled separately
+      // by the FactionLedger seam, not by marking the structure "hostile".
+      if (sourceId && rec.kind === 1) {
         deps.aiController.markHostile(rec.id, sourceId, atTick);
+        // Wave-system reactive escalation (req #5): if the shooter belongs to a
+        // faction (player / owned structure), the room flips that faction
+        // hostile + marks this drone hostile to the whole faction. Gated to
+        // drones here; a drone-on-drone hit resolves to no faction in the room.
+        deps.onDroneDamaged?.(rec.id, sourceId, atTick);
       }
     },
   };

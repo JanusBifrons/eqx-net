@@ -29,45 +29,55 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     h = undefined;
   }, 15_000);
 
-  it('spreads bots evenly across all sectors when nobody is online', async () => {
+  it('seeds a squad into its home sector and HOLDS (no occupancy spread)', async () => {
+    // Wave model: bots gather at their squad's home sector and stay put until a
+    // wave is declared against a ready base. botCount 6 ⇒ one (partial) squad of
+    // 6, whose home is the first sector. They must NOT spread across sectors the
+    // way the retired occupancy distribution did.
     h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt', 'vega-reach'], // mutually adjacent
+      sectors: ['sol-prime', 'orion-belt', 'vega-reach'],
       botCount: 6,
       seed: 7,
     });
-    await h.waitUntil(() => {
-      const s = h!.director.snapshot();
-      return (
-        s.active === 6 &&
-        s.perSector['sol-prime']!.bots === 2 &&
-        s.perSector['orion-belt']!.bots === 2 &&
-        s.perSector['vega-reach']!.bots === 2
-      );
-    }, 8000, 'even 2/2/2 spread');
-
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['sol-prime']!.bots === 6,
+      8000,
+      'all 6 gathered at the squad home',
+    );
     const s = h.director.snapshot();
-    expect(s.total).toBe(6);
     expect(s.active).toBe(6);
+    expect(s.perSector['orion-belt']!.bots).toBe(0);
+    expect(s.perSector['vega-reach']!.bots).toBe(0);
   }, 20_000);
 
-  it('funnels bots toward the sector a player is in', async () => {
+  it('does NOT hunt a player who has no base (Req #6 — occupancy aggro retired)', async () => {
+    // The single most important regression lock for the wave refactor: a player
+    // flying through a sector is NOT enough to trigger drones. Only a wave
+    // declared against a READY base aggros them. With no structures, the squad
+    // must never warp toward or aggro the player.
     h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt'], // direct neighbours (1-hop)
+      sectors: ['sol-prime', 'orion-belt'],
       botCount: 4,
       seed: 3,
     });
-    // Settle the empty-galaxy spread first.
-    await h.waitUntil(() => h!.director.snapshot().active === 4, 6000, 'all 4 active');
-
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['sol-prime']!.bots === 4,
+      6000,
+      'squad gathered at home',
+    );
+    // Player joins the OTHER sector (no base, no structures) as a fully ACTIVE
+    // hull (connectActive sends client_ready so playerCount() counts it — the
+    // no-hunt guarantee must hold for a real, present player, not a lingering one).
     await h.connectActive(randomUUID(), 'orion-belt', { shipKind: KIND });
+    h.events.clear();
+    await h.advance(600); // ~10 control ticks at the harness interval
 
-    await h.waitUntil(() => {
-      const s = h!.director.snapshot();
-      return s.perSector['orion-belt']!.bots === 4 && s.perSector['sol-prime']!.bots === 0;
-    }, 10_000, 'all bots funnelled to the player sector');
-
-    // No bot was lost or duplicated by the cross-room hops.
-    expect(h.director.snapshot().active).toBe(4);
+    // No squad warped toward the player; the pack stayed home.
+    expect(h.events.count({ tag: 'bot_transit_start' })).toBe(0);
+    const s = h.director.snapshot();
+    expect(s.active).toBe(4);
+    expect(s.perSector['sol-prime']!.bots).toBe(4);
+    expect(s.perSector['orion-belt']!.bots).toBe(0);
   }, 25_000);
 
   it('respawns a combat-killed bot from no-origin after the delay', async () => {
@@ -91,71 +101,6 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(s.total).toBe(2);
     expect(s.respawning).toBe(0);
   }, 20_000);
-
-  // Regression lock for the warp-churn the user reported from phone
-  // smoke-testing: "it gets worse the more ships in the sector … fine
-  // until more warp in … it's pretty consistent." Diagnostic capture
-  // diag/captures/2026-05-16T19-31-00-012Z-q272do: a clean-network
-  // session (rtt 0, drift 0) whose population.ndjson showed the SAME bot
-  // IDs cycling out of and back into the player's sector on a rigid
-  // ~1.5 s cadence, with a `disconnected {code:4000}` + rejoin mid-
-  // capture. Root cause: `computeDesiredDistribution` flips from "all
-  // bots to the player's sector" to "even 7-way spread" the instant
-  // `playerCount()` reads 0, and a mobile connection flap drops it to 0
-  // for a few seconds — so the whole pack evacuates then re-funnels,
-  // each leg a periodic warp burst. The fix is `playerStickyMs`
-  // occupancy hysteresis in the director. The bug LIVES in the
-  // director's stateful tick loop reacting to a transient `playerCount`,
-  // crossing the real onLeave→playerCount→director seam — hence an
-  // integration test at this level, not a pure-math unit test (the pure
-  // `computeDesiredDistribution` is stateless and correct per-call).
-  it('does NOT evacuate the pack when the player connection briefly flaps', async () => {
-    h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt'], // direct neighbours (1-hop)
-      botCount: 4,
-      seed: 3,
-    });
-    // Settle the empty-galaxy spread, then funnel everything to the
-    // player's sector and let every in-flight hop land.
-    await h.waitUntil(() => h!.director.snapshot().active === 4, 6000, 'all 4 active');
-    const room = await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
-    await h.waitUntil(() => {
-      const s = h!.director.snapshot();
-      return (
-        s.perSector['sol-prime']!.bots === 4 &&
-        s.perSector['orion-belt']!.bots === 0 &&
-        s.inTransit === 0
-      );
-    }, 10_000, 'pack fully funnelled + settled in the player sector');
-
-    // Scope the assertion window to AFTER the funnel: any sol-prime
-    // departure from here on is pure churn.
-    h.events.clear();
-
-    // The mobile flap: client drops (onLeave → lingering hull,
-    // isActive=false → playerCount()===0), a few control ticks pass with
-    // the sector reading empty, then the same player reconnects. 300 ms
-    // ≈ 5 control ticks (controlIntervalMs 60) — well inside the 2000 ms
-    // harness playerStickyMs, so the fix must absorb it completely.
-    await h.disconnectClient(room);
-    await h.advance(300);
-    await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
-    await h.advance(300);
-
-    // The pack must have stayed put. On pre-fix code the disconnect
-    // flips the desired distribution to an even spread and the planner
-    // streams bots sol-prime→orion-belt at maxMigrationsPerTick — so
-    // this count is ≥1 and the snapshot shows a drained sol-prime.
-    expect(
-      h.events.count({
-        tag: 'bot_transit_start',
-        where: (d) => d['from'] === 'sol-prime',
-      }),
-    ).toBe(0);
-    const s = h.director.snapshot();
-    expect(s.active).toBe(4); // no bot lost or duplicated by the flap
-    expect(s.perSector['sol-prime']!.bots).toBe(4); // pack never evacuated
-  }, 30_000);
 
   it('shed-and-pauses under load, refilling only once sheds stop', async () => {
     h = await bootLivingWorldTestServer({

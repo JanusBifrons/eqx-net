@@ -82,4 +82,14 @@ jobs:
         run: pnpm run e2e:netgate "origin/main" "${{ github.event.inputs.head_ref }}"
         env:
           CI: 'true'
-          NETGATE_REPS: ${{ github.event.inputs.reps || '4' }}
+          # PR runs default to 8 interleaved A/B reps (was 4). The gate is a
+          # MEDIAN over reps; `ticksAhead` (lookahead) is the variance-prone
+          # metric (a single snapshot-starved window on a shared CI runner —
+          # e.g. PR #18 saw HEAD snaps 80 vs baseline 103 → ticksAhead 42 vs 27
+          # on otherwise-equal arms). More reps tightens the median WITHOUT the
+          # bias of a job-level retry-until-green (which would also mask a real
+          # ~60%-reproducing regression). This is a MECHANISM fix, not a margin
+          # widening (anti-flake policy: src/server/CLAUDE.md "Netcode-health
+          # gate"). Characterise a suspected flake via the workflow_dispatch
+          # main-vs-main run (head_ref=origin/main) before tuning further.
+          NETGATE_REPS: ${{ github.event.inputs.reps || '8' }}
