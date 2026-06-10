@@ -36,6 +36,7 @@ const readyFaction = (over: Partial<FactionBaseReadiness> = {}): FactionBaseRead
   factionId: 'alice',
   sectorKey: 'vega',
   ready: true,
+  ownerPresent: true,
   minerCount: 1,
   hostileToDrones: false,
   underWave: false,
@@ -82,6 +83,13 @@ describe('WaveDirector — assignment + advancement', () => {
 
   it('does NOT assign to an unready base', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction({ ready: false })] });
+    squadPool.setState(squadPool.get('squad-0')!, 'idle');
+    expect(wave.plan()).toEqual([]);
+    expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
+  });
+
+  it('does NOT assign to a ready base whose owner is OFFLINE (presence gate)', () => {
+    const { wave, squadPool } = setup({ readiness: [readyFaction({ ownerPresent: false })] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
     expect(wave.plan()).toEqual([]);
     expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();

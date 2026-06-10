@@ -109,7 +109,10 @@ export class WaveDirector {
       if (sq.targetFactionId !== null) assigned.add(sq.targetFactionId);
     }
     for (const [factionId, r] of readiness) {
-      if (!r.ready || assigned.has(factionId)) continue;
+      // Only START a wave against a ready base whose owner is present (online in
+      // the sector) — the warning + countdown is meaningless if they're offline
+      // and can't defend. An already-assigned wave continues regardless.
+      if (!r.ready || !r.ownerPresent || assigned.has(factionId)) continue;
       const wave = (this.waveCount.get(factionId) ?? 0) + 1;
       const spec = this.pattern.nextWave(wave);
       let committed = 0;

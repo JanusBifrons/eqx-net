@@ -513,6 +513,39 @@ gameServer
     maxClients: 4,
   })
   .filterBy(['testId']);
+// Wave-system E2E (tests/e2e/wave-attack.spec.ts) — a DIRECTOR-MANAGED galaxy
+// room (real sectorKey) seeded with a PRE-BUILT, player-owned READY base
+// (Capital + Miner + Solar + Turret, owner `wave-tester`). Single eager
+// instance (NO filterBy) so the LivingWorldDirector can hold a reference (it's
+// added to the director's room map at boot when `EQX_E2E_WAVE=1`). The base is
+// ready at boot but the owner-presence gate holds the wave until the test
+// client joins AS `wave-tester` — killing the pre-join race. Asteroids + a
+// parked drone give the seeded turret + miner something to do. droneCount 0 so
+// the only drones that appear are the incoming wave squad.
+gameServer.define('galaxy-wave-test', SectorRoom, {
+  sectorKey: 'galaxy-wave-test',
+  testMode: true,
+  droneCount: 0,
+  asteroidConfig: [],
+  peacefulDrones: true,
+  structureGridPulseMs: 100,
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0 },
+    { kind: 'solar', x: 250, y: 0 },
+    { kind: 'solar', x: 0, y: 250 },
+    { kind: 'miner', x: -350, y: 0 },
+    { kind: 'turret', x: 0, y: -350 },
+  ],
+  // Fixed sentinel UUID (the server rejects non-UUID playerIds). The wave spec
+  // joins AS this id so the seeded base is owned by the present player and the
+  // owner-presence gate releases the wave. Kept in sync with
+  // tests/e2e/wave-attack.spec.ts WAVE_OWNER_ID.
+  prebuiltStructuresOwner: 'face0000-0000-4000-8000-000000000001',
+  scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
+  defaultSpawnX: 0,
+  defaultSpawnY: 600,
+  maxClients: 4,
+});
 // 2026-05-28 — POSITIVE control for hull-collision-test. Two crossguards
 // at exactly the same world position (0, 0), hull-exposed. The polygons
 // MUST interpenetrate → Rapier MUST emit contact events → server MUST
@@ -723,6 +756,23 @@ async function main(): Promise<void> {
       logger.info({ sectorKey: sector.key }, 'galaxy room created');
     } catch (err) {
       logger.error({ err, sectorKey: sector.key }, 'failed to eagerly create galaxy room');
+    }
+  }
+
+  // Wave-system E2E — when EQX_E2E_WAVE=1, eager-create the player-owned
+  // ready-base room and add it to the director's room map so the WaveDirector
+  // polls it + sends a squad once the owner (`wave-tester`) joins. Boot-gated
+  // so production never spins it up. Added AFTER the galaxy loop so no squad
+  // homes here (squads home at sectorKeys[0..2]); the assigned squad warps IN
+  // → fires the warp_warning banner the spec asserts on.
+  if (process.env['EQX_E2E_WAVE'] === '1') {
+    try {
+      const listing = await matchMaker.createRoom('galaxy-wave-test', {});
+      const room = matchMaker.getLocalRoomById(listing.roomId) as unknown as SectorRoom;
+      galaxyRooms.set('galaxy-wave-test', room);
+      logger.info('E2E wave-attack room created + director-managed (EQX_E2E_WAVE=1)');
+    } catch (err) {
+      logger.error({ err }, 'failed to create E2E wave-attack room');
     }
   }
 
