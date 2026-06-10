@@ -41,6 +41,9 @@ export const LIMBO_DISCONNECT_TTL_MS = 900_000; // 15 min
 export const LIMBO_TRANSIT_TTL_MS = 30_000;
 /** How often the prune timer evicts expired entries. */
 export const LIMBO_PRUNE_INTERVAL_MS = 30_000;
+/** Hard cap on live entries — an adversarial disconnect burst can't grow the
+ *  map unbounded (S8). On overflow the earliest-expiring entry is evicted. */
+export const LIMBO_MAX_ENTRIES = 10_000;
 
 /** All persisted ship state needed to reconstruct a player's ship at the
  *  destination's `onJoin`. Position is preserved exactly across the hop —
@@ -78,18 +81,63 @@ export interface LimboEntry {
   createdAt: number;
 }
 
+/** Minimal logger seam so the overflow warning is observable in tests without
+ *  pulling pino into this pure-ish store. */
+export interface LimboLogger {
+  warn(obj: object, msg: string): void;
+}
+
 export interface LimboStoreOpts {
   /** When set, every mutation shadows through CRITICAL via the sink. */
   persistence?: IPersistenceSink;
+  /** Hard cap on live entries. Defaults to `LIMBO_MAX_ENTRIES`. */
+  maxEntries?: number;
+  /** Optional logger for the sampled cap-overflow warning. */
+  logger?: LimboLogger;
 }
 
 export class LimboStore {
   private map = new Map<string, LimboEntry>();
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
   private readonly persistence: IPersistenceSink | undefined;
+  private readonly maxEntries: number;
+  private readonly logger: LimboLogger | undefined;
+  /** Running count of cap-overflow evictions, for the sampled warn. */
+  private overflowEvictions = 0;
 
   constructor(opts: LimboStoreOpts = {}) {
     this.persistence = opts.persistence;
+    this.maxEntries = opts.maxEntries ?? LIMBO_MAX_ENTRIES;
+    this.logger = opts.logger;
+  }
+
+  /**
+   * Enforce the entry cap before inserting a NEW playerId. Evicts the
+   * earliest-expiring entry (closest to natural prune) so an adversarial
+   * disconnect burst can't grow the map unbounded. Re-puts of an existing
+   * playerId don't grow the map, so they skip this. Warning is sampled (1st,
+   * then every 100th) to stay quiet under a sustained burst.
+   */
+  private enforceCap(now: number): void {
+    if (this.map.size < this.maxEntries) return;
+    let victimId: string | null = null;
+    let victimExpiry = Infinity;
+    for (const [pid, entry] of this.map) {
+      if (entry.expiresAt < victimExpiry) {
+        victimExpiry = entry.expiresAt;
+        victimId = pid;
+      }
+    }
+    if (victimId === null) return;
+    this.map.delete(victimId);
+    this.persistence?.enqueueCritical({ type: 'LIMBO_DELETE', playerId: victimId, ts: now });
+    this.overflowEvictions += 1;
+    if (this.overflowEvictions === 1 || this.overflowEvictions % 100 === 0) {
+      this.logger?.warn(
+        { evictedPlayerId: victimId, size: this.map.size, totalOverflowEvictions: this.overflowEvictions },
+        'LimboStore at capacity — evicted earliest-expiring entry',
+      );
+    }
   }
 
   /** In-memory + persistence-shadowed put. Overwrites any existing entry. */
@@ -99,6 +147,9 @@ export class LimboStore {
     ttlMs: number,
     now: number = Date.now(),
   ): LimboEntry {
+    // Cap is enforced only when inserting a NEW playerId — overwriting an
+    // existing entry doesn't grow the map.
+    if (!this.map.has(playerId)) this.enforceCap(now);
     const entry: LimboEntry = {
       playerId,
       payload,

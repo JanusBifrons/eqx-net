@@ -209,4 +209,44 @@ describe('LimboStore', () => {
     noSink.put('p1', makePayload(), LIMBO_DISCONNECT_TTL_MS);
     expect(noSink.take('p1')).not.toBeNull();
   });
+
+  describe('entry cap (S8)', () => {
+    it('never exceeds maxEntries; evicts the earliest-expiring entry on overflow', () => {
+      const capped = new LimboStore({ persistence: sink, maxEntries: 3 });
+      const t0 = 1_000_000;
+      // p1 expires soonest (shortest TTL), p3 latest.
+      capped.put('p1', makePayload(), 1_000, t0);
+      capped.put('p2', makePayload(), 5_000, t0);
+      capped.put('p3', makePayload(), 9_000, t0);
+      expect(capped.size()).toBe(3);
+      // Fourth distinct player overflows → earliest-expiring (p1) is evicted.
+      capped.put('p4', makePayload(), 7_000, t0);
+      expect(capped.size()).toBe(3);
+      expect(capped.peek('p1', t0)).toBeNull();
+      expect(capped.peek('p2', t0)).not.toBeNull();
+      expect(capped.peek('p4', t0)).not.toBeNull();
+    });
+
+    it('re-putting an existing playerId at cap does not evict (no map growth)', () => {
+      const capped = new LimboStore({ persistence: sink, maxEntries: 2 });
+      const t0 = 1_000_000;
+      capped.put('p1', makePayload(), 1_000, t0);
+      capped.put('p2', makePayload(), 5_000, t0);
+      capped.put('p1', makePayload({ health: 10 }), 9_000, t0); // overwrite, not insert
+      expect(capped.size()).toBe(2);
+      expect(capped.peek('p1', t0)!.payload.health).toBe(10);
+      expect(capped.peek('p2', t0)).not.toBeNull();
+    });
+
+    it('warns (sampled: first eviction) when the cap is breached', () => {
+      const warns: Array<{ obj: object; msg: string }> = [];
+      const logger = { warn: (obj: object, msg: string) => warns.push({ obj, msg }) };
+      const capped = new LimboStore({ persistence: sink, maxEntries: 1, logger });
+      const t0 = 1_000_000;
+      capped.put('p1', makePayload(), 1_000, t0);
+      capped.put('p2', makePayload(), 5_000, t0); // overflow → evict p1, warn
+      expect(warns).toHaveLength(1);
+      expect(warns[0]!.msg).toMatch(/at capacity/);
+    });
+  });
 });

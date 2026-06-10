@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
+import { pino } from 'pino';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -96,7 +97,9 @@ let _limboStore: LimboStore | null = null;
 
 export function getLimboStore(): LimboStore {
   if (_limboStore === null) {
-    _limboStore = new LimboStore({ persistence });
+    // pino is imported lazily so test paths that inject via setLimboStore()
+    // never construct a logger or pull the transport.
+    _limboStore = new LimboStore({ persistence, logger: pino({ name: 'limbo' }) });
   }
   return _limboStore;
 }
