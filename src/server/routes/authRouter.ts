@@ -18,6 +18,8 @@ import {
 import { createRateLimiter, clientIp } from '../net/HttpRateLimit.js';
 import { resolveJwtSecret } from '../auth/jwt.js';
 import { createOAuthState, verifyOAuthState } from '../auth/oauthState.js';
+import { AuthCodeStore } from '../auth/authCodeStore.js';
+import { z } from 'zod';
 
 export const authRouter: RouterType = Router();
 
@@ -108,6 +110,10 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
 // HMAC key is the same fail-closed secret used for session JWTs.
 const oauthStateSecret = resolveJwtSecret();
 
+// Single-use code store for the OAuth code-exchange flow (S3).
+const authCodes = new AuthCodeStore();
+const ExchangeBodySchema = z.object({ code: z.string().min(1).max(64) }).strict();
+
 // Dev-only: mint a real JWT for a deterministic test user. Used by the
 // Playwright globalSetup to bypass the login UI without faking auth state.
 // Hard-gated on NODE_ENV so this can never be reached in production.
@@ -152,10 +158,25 @@ authRouter.get('/google/callback', oauthLimiter, async (req: Request, res: Respo
     const profile = await exchangeCode(code);
     const { token, user } = await findOrCreateGoogleUser(profile);
     recordLoginEvent(profile.email, user.id, true, 'google', clientIp(req));
-    res.redirect(`/?token=${encodeURIComponent(token)}`);
+    // S3: stash the JWT under a single-use code and redirect with that, instead
+    // of putting the token in the URL (browser history / logs / Referer leak).
+    // The SPA POSTs the code to /auth/exchange to pick up the real token.
+    const authCode = authCodes.issue({ token, user });
+    res.redirect(`/?authCode=${encodeURIComponent(authCode)}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
     console.error('[auth/google/callback]', msg);
     res.status(500).send(`OAuth error: ${msg}`);
   }
+});
+
+/** Swap a single-use OAuth `authCode` (from the /?authCode= redirect) for the
+ *  session token + user (S3). Bounded code length; single-use — a replayed or
+ *  expired code returns 401. Limited as an OAuth endpoint. */
+authRouter.post('/exchange', oauthLimiter, (req: Request, res: Response) => {
+  const parsed = ExchangeBodySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: 'Invalid code' }); return; }
+  const payload = authCodes.redeem(parsed.data.code);
+  if (!payload) { res.status(401).json({ error: 'Invalid or expired code' }); return; }
+  res.json(payload);
 });

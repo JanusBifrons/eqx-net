@@ -43,6 +43,16 @@ export async function apiGetMe(token: string): Promise<{ user: AuthUser }> {
   return request('/auth/me', { headers: authHeaders(token) });
 }
 
+/** Swap a single-use OAuth code (from the /?authCode= redirect) for the
+ *  session token + user (S3). Keeps the JWT out of the URL. */
+export async function exchangeAuthCode(code: string): Promise<AuthResponse> {
+  return request('/auth/exchange', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+}
+
 export async function apiUpdateProfile(
   token: string,
   displayName: string,

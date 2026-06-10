@@ -94,25 +94,42 @@ describe('authRouter — /me (A0 lock)', () => {
   });
 });
 
-describe('authRouter — OAuth callback redirect shape (A0 lock; A3 changes this)', () => {
-  it('GET /auth/google/callback puts the JWT in the redirect URL as ?token=', async () => {
+describe('authRouter — OAuth callback code-exchange (A3; was ?token= in A0)', () => {
+  async function callback(ip: string): Promise<string> {
     // Seed CSRF state via /auth/google, then extract it from the redirect.
     const googleRes = await fetch(`${baseUrl}/auth/google`, {
       redirect: 'manual',
-      headers: { 'x-forwarded-for': '10.50.50.50' },
+      headers: { 'x-forwarded-for': ip },
     });
-    const location = googleRes.headers.get('location')!;
-    const state = new URL(location).searchParams.get('state')!;
-
+    const state = new URL(googleRes.headers.get('location')!).searchParams.get('state')!;
     const cbRes = await fetch(
       `${baseUrl}/auth/google/callback?code=abc&state=${encodeURIComponent(state)}`,
-      { redirect: 'manual', headers: { 'x-forwarded-for': '10.50.50.50' } },
+      { redirect: 'manual', headers: { 'x-forwarded-for': ip } },
     );
     expect(cbRes.status).toBe(302);
-    const cbLocation = cbRes.headers.get('location')!;
-    // CURRENT behaviour (S3): token in the URL. A3 will flip this to ?authCode=.
-    expect(cbLocation).toMatch(/^\/\?token=/);
-    expect(cbLocation).toContain('tok-google');
+    return cbRes.headers.get('location')!;
+  }
+
+  it('redirects with ?authCode= and NOT the raw token (S3)', async () => {
+    const location = await callback('10.50.50.50');
+    expect(location).toMatch(/^\/\?authCode=/);
+    expect(location).not.toContain('tok-google'); // token must not leak in the URL
+  });
+
+  it('POST /auth/exchange swaps the code for { token, user } exactly once', async () => {
+    const location = await callback('10.50.50.51');
+    const code = new URL(location, baseUrl).searchParams.get('authCode')!;
+    const ok = await post('/auth/exchange', { code });
+    expect(ok.status).toBe(200);
+    expect((await ok.json() as { token: string }).token).toBe('tok-google');
+    // Replay is rejected (single-use).
+    const replay = await post('/auth/exchange', { code });
+    expect(replay.status).toBe(401);
+  });
+
+  it('POST /auth/exchange with an unknown code returns 401', async () => {
+    const res = await post('/auth/exchange', { code: 'never-issued' });
+    expect(res.status).toBe(401);
   });
 
   it('GET /auth/google/callback with an unknown state is rejected (400)', async () => {
