@@ -937,6 +937,12 @@ export class SectorRoom extends Room<SectorState> {
       /** Structures plan (Phase 4) — seed asteroids at poses (miner targets).
        *  testMode-only; for the mining scenario. */
       scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+      /** Wave-system (2026-06-10) — override the PLAYER warp spool (ms). The
+       *  production default is `SPOOL_DURATION_MS` (5 min); E2E can't wait that
+       *  long, so testMode rooms inject e.g. 2_000. testMode-only. NOTE: this
+       *  reaches the player `TransitOrchestrator` only — drone-squad spool is
+       *  driven by the director's own `spoolMs` option / `EQX_BOT_SPOOL_MS`. */
+      transitSpoolMsOverride?: number;
     };
     this.testMode = roomOpts.testMode ?? false;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -1720,10 +1726,17 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 5 — the orchestrator gets `PlayerShipStore` so it can validate
     // ownership when `engage_transit` carries a `shipId`. Without the store
     // a shipId-carrying request rejects as unknown, which is safe-by-default.
+    // Wave-system: testMode rooms may inject a fast player spool so E2E never
+    // waits the 5-min production `SPOOL_DURATION_MS`. Galaxy gameplay always
+    // gets the real spool (the override is testMode-gated, like testTimeScale).
+    const transitSpoolMs =
+      this.testMode && roomOpts.transitSpoolMsOverride != null
+        ? Math.max(1, roomOpts.transitSpoolMsOverride)
+        : undefined;
     this.transitOrchestrator = new TransitOrchestrator(
       this.asTransitHost(),
       getLimboStore(),
-      undefined,
+      transitSpoolMs,
       getPlayerShipStore(),
     );
 

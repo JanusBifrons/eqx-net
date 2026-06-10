@@ -2,6 +2,7 @@ import { Client, Room } from 'colyseus.js';
 import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
 import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
+import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { FLASH_DURATION_MS as GRID_FLASH_DURATION_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
@@ -1697,7 +1698,7 @@ export class ColyseusGameClient {
       if (msg.state === 'SPOOLING') {
         ui.setTransitProgress(0);
         const start = this.clock.now();
-        const dur = msg.spoolMs ?? 3000;
+        const dur = msg.spoolMs ?? SPOOL_DURATION_MS;
         ui.setTransitSpoolMs(dur);
         // Surface the destination once via the alert toast — the new
         // left-edge hyperspace bar is too narrow to carry the sector name,

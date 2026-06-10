@@ -35,7 +35,22 @@ export type TransitState =
   | 'ARRIVED'
   | 'CANCELLED';
 
-export const SPOOL_DURATION_MS = 30_000;
+/**
+ * Warp spool-up duration (ms). 5 minutes — the long, deliberate "engine
+ * charging" window that (a) gives all players in the destination sector a
+ * meaningful countdown warning before anyone (player or drone squad) warps in,
+ * and (b) is the dramatic spool the wave-attack director uses to telegraph an
+ * incoming drone squad. The ship stays in the SOURCE room and is fully
+ * damageable for the whole window (the deliberate "vulnerable spool" design,
+ * see the class doc) — under active drone waves a player warp can therefore be
+ * aborted by death. This is an accepted gameplay tuning knob.
+ *
+ * NOTE: tests must NOT wait 5 minutes. Two injection points exist:
+ *   - players: the per-room `transitSpoolMsOverride` JoinOption → TransitOrchestrator;
+ *   - drones:  the director-level `spoolMs` option / `EQX_BOT_SPOOL_MS` env →
+ *              BotTransitController (a per-room override does NOT reach the director).
+ */
+export const SPOOL_DURATION_MS = 300_000;
 
 export class TransitStateMachine {
   private _state: TransitState = 'DOCKED';

@@ -114,16 +114,20 @@ describe('TransitStateMachine', () => {
     expect(dflt.scheduledCommitMs).toBe(SPOOL_DURATION_MS);
   });
 
-  it('SPOOL_DURATION_MS is the post-tune 30 s (absolute revert-lock)', () => {
-    // Slow-down-gameplay pass 2026-05-18 (plan: i-d-like-you-to-silly-penguin):
-    // warp spool 10×, 3 s → 30 s. Every OTHER spool assertion is
-    // constant-relative (asserts `=== SPOOL_DURATION_MS` or injects its own
-    // fixture spoolMs), so a revert of the constant would pass them all. This
-    // absolute literal is the regression lock that fails LOUDLY on a revert —
-    // the transit-timing analogue of `ShipKindPhysics.tuning.test.ts`. It
-    // also pins the value the server sends clients in the SPOOLING
-    // `transit_state` message and that `HyperspaceOverlay` counts down from.
-    expect(SPOOL_DURATION_MS).toBe(30_000);
+  it('SPOOL_DURATION_MS is the wave-system 5 min (absolute revert-lock)', () => {
+    // Wave-attack pass 2026-06-10 (plan: i-d-like-you-to-resilient-hellman):
+    // warp spool 30 s → 5 min for ALL warps. The long window is the
+    // telegraph for incoming drone squads (and any player warp) — every
+    // player/drone in the destination sector gets a meaningful countdown.
+    // Every OTHER spool assertion is constant-relative (asserts
+    // `=== SPOOL_DURATION_MS` or injects its own fixture spoolMs), so a
+    // revert would pass them all. This absolute literal is the regression
+    // lock that fails LOUDLY on a revert. It also pins the value the server
+    // sends clients in the SPOOLING `transit_state` message and that
+    // `HyperspaceOverlay` / `WarpInWarningBanner` count down from. Tests
+    // never wait 5 min — they inject a small spoolMs (player: per-room
+    // `transitSpoolMsOverride`; drone: director `spoolMs` / `EQX_BOT_SPOOL_MS`).
+    expect(SPOOL_DURATION_MS).toBe(300_000);
   });
 
   it('works with no bus injected', () => {

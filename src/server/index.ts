@@ -14,7 +14,7 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
-import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
+import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs } from './livingworld/LivingWorldDirector.js';
 
 const logger = pino({
   name: 'server',
@@ -717,10 +717,16 @@ async function main(): Promise<void> {
       'living world DISARMED — no hunter bots will spawn or hunt (EQX_DISABLE_LIVING_WORLD set); unset + restart to re-arm',
     );
   } else {
-    livingWorldDirector = new LivingWorldDirector(galaxyRooms);
+    // Drone-squad spool follows the production `SPOOL_DURATION_MS` (5 min)
+    // unless `EQX_BOT_SPOOL_MS` injects a faster value (E2E convergence).
+    const botSpoolMs = resolveBotSpoolMs();
+    livingWorldDirector = new LivingWorldDirector(
+      galaxyRooms,
+      botSpoolMs !== undefined ? { spoolMs: botSpoolMs } : {},
+    );
     livingWorldDirector.start();
     logger.info(
-      { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT },
+      { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT, botSpoolMs: botSpoolMs ?? 'default' },
       'living world director started',
     );
   }

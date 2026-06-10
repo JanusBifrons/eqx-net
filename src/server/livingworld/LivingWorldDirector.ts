@@ -53,6 +53,24 @@ export function isLivingWorldDisabled(
   return v === '1' || v === 'true';
 }
 
+/** Director-level drone-squad spool override (ms), read from `EQX_BOT_SPOOL_MS`.
+ *  Returns `undefined` (⇒ use `SPOOL_DURATION_MS`, 5 min) when unset/invalid.
+ *
+ *  WHY a director env and not the per-room `transitSpoolMsOverride`: the
+ *  director constructs every `BotTransitController(..., this.opts.spoolMs)`
+ *  itself, so a per-room JoinOption never reaches a bot's spool. Tests that
+ *  exercise the bot warp pipeline through the *production* director
+ *  (`living-world.spec.ts` convergence poll) would otherwise wait 5 min per
+ *  hop — they set this env to a small value. Read once at boot. */
+export function resolveBotSpoolMs(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  const raw = env['EQX_BOT_SPOOL_MS'];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1 ? n : undefined;
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
