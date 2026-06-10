@@ -15,6 +15,7 @@ import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipS
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
+import { resolveAllowedOrigins, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 
 const logger = pino({
   name: 'server',
@@ -30,12 +31,13 @@ const MAX_DEV_EVENTS = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 const app = express();
 
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-  next();
-});
+// CORS origin allowlist + baseline security headers (plan squishy-canyon,
+// findings S1 + S7). `ALLOWED_ORIGINS` (comma-separated) opens specific
+// browser origins; non-production defaults to the Vite dev origin. See
+// src/server/net/httpCors.ts + docs/architecture/security.md.
+const allowedOrigins = resolveAllowedOrigins();
+app.use(securityHeadersMiddleware());
+app.use(corsMiddleware(allowedOrigins));
 
 app.options('*', (_req, res) => { res.sendStatus(204); });
 
