@@ -1,5 +1,4 @@
 import { Router, type Request, type Response, type Router as RouterType } from 'express';
-import { randomUUID } from 'node:crypto';
 import {
   register,
   login,
@@ -17,6 +16,8 @@ import {
   UpdateProfileBodySchema,
 } from '../../shared-types/auth.js';
 import { createRateLimiter, clientIp } from '../net/HttpRateLimit.js';
+import { resolveJwtSecret } from '../auth/jwt.js';
+import { createOAuthState, verifyOAuthState } from '../auth/oauthState.js';
 
 export const authRouter: RouterType = Router();
 
@@ -102,9 +103,10 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
   res.json({ user });
 });
 
-// In-memory state store for CSRF protection on the OAuth round-trip.
-const oauthStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60 * 1000;
+// Stateless signed CSRF state for the OAuth round-trip (S4). Replaces the
+// former in-memory Map (raced, lost on restart, broke multi-instance). The
+// HMAC key is the same fail-closed secret used for session JWTs.
+const oauthStateSecret = resolveJwtSecret();
 
 // Dev-only: mint a real JWT for a deterministic test user. Used by the
 // Playwright globalSetup to bypass the login UI without faking auth state.
@@ -132,8 +134,7 @@ if (process.env['NODE_ENV'] !== 'production') {
 }
 
 authRouter.get('/google', oauthLimiter, (_req: Request, res: Response) => {
-  const state = randomUUID();
-  oauthStates.set(state, Date.now());
+  const state = createOAuthState(oauthStateSecret);
   res.redirect(authorizationUrl(state));
 });
 
@@ -142,12 +143,10 @@ authRouter.get('/google/callback', oauthLimiter, async (req: Request, res: Respo
 
   if (!code || !state) { res.status(400).send('Missing code or state'); return; }
 
-  const issued = oauthStates.get(state);
-  if (!issued || Date.now() - issued > STATE_TTL_MS) {
+  if (!verifyOAuthState(state, oauthStateSecret)) {
     res.status(400).send('Invalid or expired state');
     return;
   }
-  oauthStates.delete(state);
 
   try {
     const profile = await exchangeCode(code);
