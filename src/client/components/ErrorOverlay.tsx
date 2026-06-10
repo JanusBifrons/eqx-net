@@ -2,6 +2,7 @@ import { Component, useEffect, useState, type ErrorInfo, type ReactNode } from '
 import { Box, Button, Typography } from '@mui/material';
 import { captureDiagnostic } from '../debug/diagCapture';
 import { getGameClient } from '../net/clientSingleton';
+import { logEvent } from '../debug/ClientLogger';
 
 /**
  * Catch-all error surface for the client. Three sources feed it:
@@ -99,6 +100,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
       componentStack: info.componentStack ?? undefined,
       capturedAt: Date.now(),
     });
+    // Also route into the diagnostic log ring (B3, plan: squishy-canyon) so a
+    // React crash is captured in the streaming diag, not just the overlay.
+    logEvent('react_error_boundary', { message: error.message, stack: error.stack ?? '(no stack)' });
   }
 
   reset = (): void => {
