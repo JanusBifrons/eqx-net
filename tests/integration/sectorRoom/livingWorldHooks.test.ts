@@ -45,7 +45,7 @@ describe('SectorRoom — Living World Director hooks', () => {
 
   it('spawns, aggros and quietly hands off a bot across the real wire', async () => {
     const pid = randomUUID();
-    const room = await harness.connectAs(pid, { shipKind: KIND });
+    const room = await harness.connectActive(pid, { shipKind: KIND });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
 
     const warpIns: WarpInEvent[] = [];

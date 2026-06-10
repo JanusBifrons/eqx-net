@@ -51,7 +51,7 @@ describe('SectorRoom integration — slot firing + energy authority', () => {
     pid: string; cr: ClientRoom<SectorState>; room: ServerRoom<SectorState>; ship: ShipState;
   }> {
     const pid = randomUUID();
-    const cr = (await harness.connectAs(pid, { shipKind, spawnX: 0, spawnY: 0, ...extra })) as ClientRoom<SectorState>;
+    const cr = (await harness.connectActive(pid, { shipKind, spawnX: 0, spawnY: 0, ...extra })) as ClientRoom<SectorState>;
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pid });
     const room = getRoomById(cr.roomId);
     const state = room.state as SectorState;
@@ -72,12 +72,23 @@ describe('SectorRoom integration — slot firing + energy authority', () => {
     shooter.cr.send('fire', {
       type: 'fire', tick: internals.serverTick, clientShotId: 'e1', weapon: 'hitscan', dirAngle: 0, slotId: 'primary',
     });
-    await harness.advance(80);
-    const after = shooter.ship.energy;
+    // Capture the pool at its TROUGH — the first observed dip after the
+    // spend lands. Energy regenerates every tick with NO post-spend delay
+    // (see Energy.ts `regenEnergyStep`), so reading after a fixed wall-clock
+    // window lets regen mask the single-slot drain and land it on the float
+    // boundary of the lower bound. The first dip is the deepest: the spend
+    // is a single-tick event, later ticks only refill the pool.
+    let trough = before;
+    const deadline = Date.now() + 2000;
+    while (Date.now() < deadline) {
+      const e = shooter.ship.energy;
+      if (e < before - 0.5) { trough = e; break; }
+      await harness.advance(8);
+    }
 
-    const drained = before - after;
-    // Drain is ONE slot cost (modulo a few ticks of regen), never 2× (which
-    // would be the per-mount sum for the twin beams).
+    const drained = before - trough;
+    // Drain is ONE slot cost (modulo at most a tick of regen), never 2×
+    // (which would be the per-mount sum for the twin beams).
     expect(drained).toBeGreaterThan(slotCost - 2);
     expect(drained).toBeLessThan(slotCost * 2 - 1);
   }, 20_000);
@@ -113,8 +124,14 @@ describe('SectorRoom integration — slot firing + energy authority', () => {
     const internals = shooter.room as unknown as EnergyTestInternals;
 
     // Hold boost + thrust on an empty pool. The input handler must strip the
-    // boost bit, so the player never enters the boosting set.
+    // boost bit, so the player never enters the boosting set. The pool is
+    // pinned empty before each input because energy regenerates every tick
+    // with no delay (scout regen 0.2/tick ≪ BOOST_TICK_COST 1.0): without
+    // the reset the `initialEnergy: 0` pool refills above the boost cost
+    // during the join-handshake + test window and the gate (correctly) stops
+    // stripping, defeating the empty-pool premise.
     for (let i = 0; i < 3; i++) {
+      shooter.ship.energy = 0;
       shooter.cr.send('input', {
         type: 'input', tick: internals.serverTick + i,
         thrust: true, turnLeft: false, turnRight: false, boost: true, reverse: false,

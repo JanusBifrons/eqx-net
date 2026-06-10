@@ -1,12 +1,14 @@
 /**
  * Integration coverage for the per-ship warp visual broadcasts.
  *
- * When a ship JOINS a sector, the server emits `warp_in` to every
- * existing occupant (except the joiner). When a ship COMMITS transit
- * OUT of a sector, the server emits `warp_out` to every other occupant
- * (except the leaver). Each carries `{ type, playerId, x, y }`; the
- * client renderer fires a one-shot flash + burst ripple at the world
- * point.
+ * When a ship completes its join handshake (`client_ready`), the server
+ * emits `warp_in` to ALL occupants of the sector — INCLUDING the joiner
+ * (the unified crispy-kazoo handshake: the joiner needs the broadcast to
+ * drop its own warp curtain in sync with the arrival flash everyone else
+ * sees). When a ship COMMITS transit OUT of a sector, the server emits
+ * `warp_out` to every other occupant (except the leaver). Each carries
+ * `{ type, playerId, x, y, arrivalTick? }`; the client renderer fires a
+ * one-shot flash + burst ripple at the world point.
  *
  * Why integration: the broadcast originates in SectorRoom and travels
  * over a real Colyseus WebSocket transport. A pure-unit test of the
@@ -38,44 +40,49 @@ describe('SectorRoom — warp visual broadcasts', () => {
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('emits warp_in to existing occupants when a new player joins (excluding the joiner)', async () => {
+  it('emits warp_in to ALL occupants (including the joiner) on the join handshake', async () => {
     const pidA = randomUUID();
     const pidB = randomUUID();
 
-    const roomA = await harness.connectAs(pidA, { shipKind: 'fighter' });
-    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pidA });
+    // A is an already-present, fully-activated occupant.
+    const roomA = await harness.connectActive(pidA, { shipKind: 'fighter' });
 
     // Subscribe to warp_in BEFORE the second player joins so we don't
-    // miss the broadcast. Capture into an array — the assertion below
-    // just looks at the first one.
+    // miss the broadcast.
     const aReceivedWarpIn: WarpInEvent[] = [];
     roomA.onMessage('warp_in', (msg: WarpInEvent) => {
       aReceivedWarpIn.push(msg);
     });
 
-    // Also subscribe on B's side to verify the joiner does NOT receive
-    // their own warp_in event (server filters with `except: client`).
-    const bReceivedWarpIn: WarpInEvent[] = [];
+    // B connects; we drive its handshake manually so we can subscribe to
+    // warp_in BEFORE `client_ready` triggers the broadcast (the joiner
+    // receives its OWN warp_in under the unified handshake).
     const roomB = await harness.connectAs(pidB, { shipKind: 'fighter' });
+    const bReceivedWarpIn: WarpInEvent[] = [];
     roomB.onMessage('warp_in', (msg: WarpInEvent) => {
       bReceivedWarpIn.push(msg);
     });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === pidB });
 
+    // Complete B's handshake → server broadcasts warp_in to ALL occupants.
+    roomB.send('client_ready', { type: 'client_ready' });
+
     // Allow the broadcast to round-trip.
-    await harness.advance(150);
+    await harness.advance(200);
 
-    expect(aReceivedWarpIn).toHaveLength(1);
-    const evt = aReceivedWarpIn[0]!;
-    expect(evt.type).toBe('warp_in');
-    expect(evt.playerId).toBe(pidB);
-    expect(typeof evt.x).toBe('number');
-    expect(typeof evt.y).toBe('number');
+    // The existing occupant (A) sees B's arrival.
+    const aEvt = aReceivedWarpIn.find((m) => m.playerId === pidB);
+    expect(aEvt, 'A must receive warp_in for B').toBeDefined();
+    expect(aEvt!.type).toBe('warp_in');
+    expect(typeof aEvt!.x).toBe('number');
+    expect(typeof aEvt!.y).toBe('number');
 
-    // The joiner themselves must not see a warp_in for their own
-    // arrival — their local-arrival visual is driven by the welcome /
-    // snapshot machinery, not by this broadcast.
-    expect(bReceivedWarpIn).toHaveLength(0);
+    // The joiner (B) ALSO receives its own warp_in — the unified
+    // handshake broadcasts to ALL with `arrivalTick` so the curtain drop
+    // + warp-in flash fire in sync everywhere (no `except: client`).
+    const bEvt = bReceivedWarpIn.find((m) => m.playerId === pidB);
+    expect(bEvt, 'the joiner B must receive its own warp_in').toBeDefined();
+    expect(bEvt!.type).toBe('warp_in');
   }, 20_000);
 
   /**

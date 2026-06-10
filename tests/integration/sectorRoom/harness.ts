@@ -303,6 +303,17 @@ export interface LivingWorldTestHarness {
     sectorKey: string,
     joinOpts?: Record<string, unknown>,
   ): Promise<ClientRoom<SectorState>>;
+  /** Join AND complete the `client_ready` handshake so the ship activates
+   *  (`isActive=true`). Mirrors the single-sector harness's `connectActive`:
+   *  the bare colyseus.js client doesn't run the browser bootstrap, so
+   *  without an explicit `client_ready` the ship sits `isActive=false`
+   *  until the 30-s watchdog and `playerCount()` keeps reading 0. Use this
+   *  whenever the director must see a live occupant in the sector. */
+  connectActive(
+    playerId: string,
+    sectorKey: string,
+    joinOpts?: Record<string, unknown>,
+  ): Promise<ClientRoom<SectorState>>;
   disconnectClient(room: ClientRoom<SectorState>): Promise<void>;
   /** Poll until `predicate()` is true (or reject after `timeoutMs`).
    *  Outcome-gated waiting per DETERMINISM.md — never assert tick counts. */
@@ -401,6 +412,21 @@ export async function bootLivingWorldTestServer(opts: {
       });
       connectedRooms.push(room);
       return room;
+    },
+    async connectActive(playerId, sectorKey, joinOpts = {}) {
+      const room = await this.connectAs(playerId, sectorKey, joinOpts);
+      room.send('client_ready', { type: 'client_ready' });
+      const server = roomsByKey.get(sectorKey);
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (server) {
+          for (const [, ship] of server.state.ships) {
+            if (ship.playerId === playerId && ship.isActive) return room;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      throw new Error(`connectActive: ship for ${playerId} never activated`);
     },
     async disconnectClient(room) {
       try { await room.leave(); } catch { /* ignore */ }

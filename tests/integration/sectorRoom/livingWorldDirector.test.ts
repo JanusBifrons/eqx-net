@@ -59,7 +59,7 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     // Settle the empty-galaxy spread first.
     await h.waitUntil(() => h!.director.snapshot().active === 4, 6000, 'all 4 active');
 
-    await h.connectAs(randomUUID(), 'orion-belt', { shipKind: KIND });
+    await h.connectActive(randomUUID(), 'orion-belt', { shipKind: KIND });
 
     await h.waitUntil(() => {
       const s = h!.director.snapshot();
@@ -118,7 +118,7 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     // Settle the empty-galaxy spread, then funnel everything to the
     // player's sector and let every in-flight hop land.
     await h.waitUntil(() => h!.director.snapshot().active === 4, 6000, 'all 4 active');
-    const room = await h.connectAs(randomUUID(), 'sol-prime', { shipKind: KIND });
+    const room = await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
     await h.waitUntil(() => {
       const s = h!.director.snapshot();
       return (
@@ -139,7 +139,7 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     // harness playerStickyMs, so the fix must absorb it completely.
     await h.disconnectClient(room);
     await h.advance(300);
-    await h.connectAs(randomUUID(), 'sol-prime', { shipKind: KIND });
+    await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
     await h.advance(300);
 
     // The pack must have stayed put. On pre-fix code the disconnect
