@@ -16,6 +16,7 @@ import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
 import { resolveAllowedOrigins, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
+import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 
 const logger = pino({
   name: 'server',
@@ -210,6 +211,12 @@ for (const sector of GALAXY_SECTORS) {
   gameServer.define(`galaxy-${sector.key}`, SectorRoom, resolveSectorConfig(sector.key));
 }
 
+// Engineering + test rooms (plan squishy-canyon, S6): registered ONLY outside
+// production (or with EQX_ENABLE_TEST_ROOMS=1). They carry testMode overrides
+// (initialHull, testTimeScale, dronePoses, startHostile) and load/burn knobs
+// (swarm-tidi-burn's tickBurnMs is a free CPU-burn DoS) that must never be
+// joinable by a production client. The galaxy rooms above stay unconditional.
+if (shouldRegisterTestRooms()) {
 // Engineering rooms — defined here, NOT pre-created. They lazy-spawn on first
 // `joinOrCreate` and have no persistent identity (sectorKey is undefined),
 // so their state is ephemeral by design.
@@ -656,6 +663,14 @@ gameServer.define('swarm-tidi-burn', SectorRoom, {
   tickBurnMs: 16,
   maxClients: 4,
 });
+} // end shouldRegisterTestRooms() gate (S6)
+
+// A6 (S6): warn loudly if the dev-override bypass is armed in production. It's
+// an E2E-only flag (bypasses testMode gating on JoinOptions); never set it in
+// production. Semantics are unchanged — e2e:phone:stall depends on the flag.
+if (process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1' && process.env['NODE_ENV'] === 'production') {
+  logger.warn('EQX_ALLOW_DEV_OVERRIDES=1 in production — dev override bypass is active (E2E-only flag)');
+}
 
 httpServer.on('upgrade', (req) => {
   logger.info({ url: req.url }, 'WS upgrade received');
