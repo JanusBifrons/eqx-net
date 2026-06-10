@@ -66,8 +66,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
 
   it('lingering hull is excluded from the AI view (aiPlayerScratch)', async () => {
     const pid = randomUUID();
-    const client = await harness.client.joinOrCreate('test-sector', {
-      playerId: pid,
+    const client = await harness.connectActive(pid, {
       shipKind: 'fighter',
       spawnX: 200,
       spawnY: 0,
@@ -107,8 +106,7 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
 
   it('AI view tracks rebind: ship flipped back to isActive=true is visible again', async () => {
     const pid = randomUUID();
-    const client = await harness.client.joinOrCreate('test-sector', {
-      playerId: pid,
+    const client = await harness.connectActive(pid, {
       shipKind: 'fighter',
       spawnX: 250,
       spawnY: 0,
@@ -142,15 +140,14 @@ describe('Phase 6c — drone retargeting (active-only)', () => {
     const activePid = randomUUID();
     const lingerPid = randomUUID();
 
-    const lingerClient = await harness.client.joinOrCreate('test-sector', {
-      playerId: lingerPid,
+    const lingerClient = await harness.connectActive(lingerPid, {
       shipKind: 'fighter',
       spawnX: 200,
       spawnY: 100,
     });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === lingerPid });
 
-    await harness.connectAs(activePid, {
+    await harness.connectActive(activePid, {
       shipKind: 'scout',
       spawnX: -200,
       spawnY: -100,

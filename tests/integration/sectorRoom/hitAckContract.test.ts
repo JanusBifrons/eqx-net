@@ -66,7 +66,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     const targetPid = randomUUID();
 
     // Shooter at origin, angle 0 → forward = +Y.
-    const shooter = (await harness.connectAs(shooterPid, {
+    const shooter = (await harness.connectActive(shooterPid, {
       // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
       // BOLTS (projectiles), which ack hit:false. This contract is about the
       // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
@@ -80,7 +80,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
 
     // Target squarely on the +Y ray, well inside the beam range (250 after
     // the 2026-06-01 rebalance) and clear of the 20 u barrel + self radius.
-    await harness.connectAs(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
+    await harness.connectActive(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
 
     const hitAcks: Array<Record<string, unknown>> = [];
@@ -177,7 +177,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
   it('a STALE-tick fire (tick << serverTick) is honored (clamped+resolved), NOT rejected', async () => {
     const shooterPid = randomUUID();
     const targetPid = randomUUID();
-    const shooter = (await harness.connectAs(shooterPid, {
+    const shooter = (await harness.connectActive(shooterPid, {
       // weapons/energy/AI overhaul (2026-06-01): the fighter now fires
       // BOLTS (projectiles), which ack hit:false. This contract is about the
       // HITSCAN hit_ack ↔ DamageEvent relationship, so the shooter is an
@@ -188,7 +188,7 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
       spawnY: 0,
     })) as ClientRoom<SectorState>;
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === shooterPid });
-    await harness.connectAs(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
+    await harness.connectActive(targetPid, { shipKind: 'fighter', spawnX: 0, spawnY: 120 });
     await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === targetPid });
 
     const hitAcks: Array<Record<string, unknown>> = [];
