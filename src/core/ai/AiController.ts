@@ -1,4 +1,10 @@
-import type { IAiBehaviour, AiEntity, AiPlayerView, AiWorldView } from '../contracts/IAiBehaviour.js';
+import type {
+  IAiBehaviour,
+  AiEntity,
+  AiPlayerView,
+  AiStructureView,
+  AiWorldView,
+} from '../contracts/IAiBehaviour.js';
 
 /**
  * Per-tick fire request emitted by a behaviour. The controller buffers these
@@ -173,6 +179,11 @@ export class AiController {
     dtSec: number,
     players: ReadonlyArray<AiPlayerView>,
     entitySnapshot: (id: string) => AiEntity | null,
+    /** Wave-system Phase 2 — hostile structures the drone AI may target this
+     *  tick (server-only; the caller builds it faction-filtered + reused).
+     *  Omitted ⇒ `view.structures` is undefined ⇒ byte-identical to pre-Phase-2
+     *  (players-only targeting). */
+    structures?: ReadonlyArray<AiStructureView>,
   ): void {
     if (this.entities.size === 0) return;
     // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
@@ -184,7 +195,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, tick, dtSec };
+    const view: AiWorldView = { players, structures, tick, dtSec };
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
     }

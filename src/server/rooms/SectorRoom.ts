@@ -33,7 +33,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
@@ -45,6 +45,7 @@ import type { BotCarry } from '../livingworld/botTypes.js';
 import { getDroneMaxHealth, getDroneShieldMax } from './droneKindHelpers.js';
 import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
+import { FactionLedger } from '../faction/FactionLedger.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -372,6 +373,22 @@ interface ProjectileRecord {
   weaponId: WeaponId;
 }
 
+/** Wave-system Phase 2 — drone target priority by structure kind (higher =
+ *  attacked first). The Capital (the "core" / mineral bank) is the prize; the
+ *  Miner is the objective the de-escalation condition keys on; defence + power
+ *  rank below. All are > 0 so every hostile structure outranks a player ship
+ *  (req #2 "structures primarily"). Tunable per difficulty pass. */
+function structurePriority(kind: StructureKindId): number {
+  switch (kind) {
+    case 'capital':
+      return 3;
+    case 'miner':
+      return 2;
+    default:
+      return 1;
+  }
+}
+
 export class SectorRoom extends Room<SectorState> {
   /** Owns the physics worker (lifecycle + message routing + typed
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
@@ -490,6 +507,24 @@ export class SectorRoom extends Room<SectorState> {
   private aiController!: AiController;
   /** Reused per-tick view for the AI controller — avoids per-tick allocation. */
   private aiPlayerScratch: AiPlayerView[] = [];
+  /** Wave-system Phase 1 — per-room faction hostility/peace ledger, membership
+   *  derived live from this room's structure registry. */
+  private readonly factionLedger = new FactionLedger({
+    structures: () => this.structureRegistry.all(),
+  });
+  /** Wave-system Phase 2 — reused per-tick structure target buffers, rebuilt
+   *  ONCE per tick (shared by every drone via AiWorldView; never per-drone).
+   *  `aiStructureScratch` feeds the brain (priority); `hostileStructureCircles`
+   *  feeds the fire-resolver hit test (radius). Both hold only this sector's
+   *  hostile (under-wave / member-attacked), constructed structures. Object
+   *  churn matches the established `aiPlayerScratch` view-build pattern. */
+  private readonly aiStructureScratch: AiStructureView[] = [];
+  private readonly hostileStructureCircles: Array<{
+    id: string;
+    x: number;
+    y: number;
+    radius: number;
+  }> = [];
 
   // ── Phase 4b.3 (multi-mount turret refactor, 2026-05-11) ────────────────
   /** Authoritative per-mount rotation angle (ship-relative, arc-local) for
@@ -1084,6 +1119,11 @@ export class SectorRoom extends Room<SectorState> {
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
       applyDamage: (targetId, shooterId, damage) =>
         this.applyDamage(targetId, shooterId, damage),
+      // Wave-system Phase 2: the beam also tests this tick's hostile-structure
+      // circles (rebuilt once per tick by `fillStructureTargets`). Same
+      // faction-filtered set the drone's body target chose among, so the beam
+      // lands on the structure it's pointed at.
+      structureHitTargets: () => this.hostileStructureCircles,
       broadcast: (type, msg) => this.broadcast(type, msg),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
@@ -2112,6 +2152,36 @@ export class SectorRoom extends Room<SectorState> {
     s.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
     s.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
     return s;
+  }
+
+  /**
+   * Wave-system Phase 2 — rebuild this tick's hostile-structure target set,
+   * shared by every drone (called ONCE per tick from `runAiTick`, never
+   * per-drone — #14). A structure is a target iff its owning faction is
+   * `hostileToDrones` (member attacked a drone) OR `underWave` (the director
+   * declared a wave) AND it is constructed. Populates BOTH the brain view
+   * (`out` = `aiStructureScratch`, carries `priority`) and the fire-resolver
+   * hit circles (`this.hostileStructureCircles`, carries `radius`) in one
+   * registry pass. Object churn matches the established `aiPlayerScratch`
+   * view-build pattern (small, bounded structure count).
+   */
+  private fillStructureTargets(out: AiStructureView[]): void {
+    const circles = this.hostileStructureCircles;
+    circles.length = 0;
+    if (this.structureRegistry.size === 0) return;
+    for (const rec of this.structureRegistry.all()) {
+      if (!rec.isConstructed) continue;
+      if (!this.factionLedger.isHostileToDrones(rec.owner)) continue;
+      out.push({
+        id: rec.id,
+        x: rec.x,
+        y: rec.y,
+        health: this.swarmHealth.get(rec.id),
+        maxHealth: getStructureKind(rec.kind).maxHealth,
+        priority: structurePriority(rec.kind),
+      });
+      circles.push({ id: rec.id, x: rec.x, y: rec.y, radius: rec.radius });
+    }
   }
 
   /**
@@ -3823,6 +3893,8 @@ export class SectorRoom extends Room<SectorState> {
       getActiveShip: (id) => this.getActiveShip(id),
       shipPoseCache: this.shipPoseCache,
       aiPlayerScratch: this.aiPlayerScratch,
+      aiStructureScratch: this.aiStructureScratch,
+      fillStructureTargets: (out) => this.fillStructureTargets(out),
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
       phaseTime,

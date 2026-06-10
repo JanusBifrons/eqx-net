@@ -20,7 +20,7 @@
  */
 
 import type { AiController } from '../../core/ai/AiController.js';
-import type { AiPlayerView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
 import type { PoseRecord } from './SabPoseMirror.js';
 
 export interface AiFireRequest {
@@ -37,6 +37,14 @@ export interface AiTickCtx {
   getActiveShip: (playerId: string) => { alive: boolean; isActive: boolean; health: number; maxHealth: number } | undefined;
   shipPoseCache: Map<string, PoseRecord>;
   aiPlayerScratch: AiPlayerView[];
+  /** Wave-system Phase 2 — reused per-tick buffer for the faction-filtered
+   *  structure targets fed to the drone AI. Filled by `fillStructureTargets`. */
+  aiStructureScratch: AiStructureView[];
+  /** Wave-system Phase 2 — clear + repopulate `aiStructureScratch` with this
+   *  sector's hostile (under-wave / member-attacked) constructed structures.
+   *  Built ONCE per tick here (not per drone — #14). Omitted ⇒ no structure
+   *  targeting (byte-identical to pre-wave). */
+  fillStructureTargets?: (out: AiStructureView[]) => void;
   swarmEntitySnapshot: (id: string) => AiEntity | null;
   handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number) => void;
   /** Phase-time callback — fires for 'aiTick' after the controller tick
@@ -58,7 +66,18 @@ export function runAiTick(ctx: AiTickCtx): void {
       health: ship.health, maxHealth: ship.maxHealth,
     });
   }
-  ctx.aiController.tick(ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot);
+  // Build the faction-filtered structure target list ONCE per tick (shared by
+  // every drone via the AiWorldView — never per-drone, #14). Empty/absent ⇒
+  // drones target players only.
+  let structures: AiStructureView[] | undefined;
+  if (ctx.fillStructureTargets) {
+    ctx.aiStructureScratch.length = 0;
+    ctx.fillStructureTargets(ctx.aiStructureScratch);
+    if (ctx.aiStructureScratch.length > 0) structures = ctx.aiStructureScratch;
+  }
+  ctx.aiController.tick(
+    ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot, structures,
+  );
   ctx.phaseTime('aiTick');
 
   const fires = ctx.aiController.drainFireRequests();
