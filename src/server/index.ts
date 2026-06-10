@@ -17,6 +17,7 @@ import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled } from './livingworld/LivingWorldDirector.js';
 import { resolveAllowedOrigins, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
+import { installProcessGuards } from './orchestration/processGuards.js';
 
 const logger = pino({
   name: 'server',
@@ -757,7 +758,7 @@ async function main(): Promise<void> {
  * delivers Ctrl+C as a process-group event that tears down the JS process
  * before any handler can complete (see docs/LESSONS.md).
  */
-const shutdown = async (sig: string): Promise<void> => {
+const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
   logger.info({ sig }, 'shutdown received, draining persistence');
   const forceExit = setTimeout(() => {
     logger.error('shutdown hard deadline reached, force-exiting');
@@ -795,7 +796,7 @@ const shutdown = async (sig: string): Promise<void> => {
   } catch (err) {
     logger.error({ err }, 'colyseus graceful shutdown failed');
   }
-  process.exit(0);
+  process.exit(exitCode);
 };
 
 let shuttingDown = false;
@@ -808,6 +809,17 @@ const onSignal = (sig: string): void => {
 };
 process.on('SIGINT', () => onSignal('SIGINT'));
 process.on('SIGTERM', () => onSignal('SIGTERM'));
+
+// R1: catch otherwise-unhandled fatals, drain, and exit non-zero so the
+// supervisor restarts a clean instance (never log-and-continue an authority).
+installProcessGuards({
+  logger,
+  onFatal: (_err, source) => {
+    if (shuttingDown) { process.exit(1); }
+    shuttingDown = true;
+    void shutdown(source, 1);
+  },
+});
 
 if (process.env['NODE_ENV'] !== 'production') {
   // Dev-only deterministic drain trigger — POST /dev/shutdown drains
