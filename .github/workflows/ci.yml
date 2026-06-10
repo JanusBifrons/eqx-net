@@ -90,6 +90,17 @@ jobs:
       - name: Integration tests
         run: pnpm run test:integration
 
+  # E2 (plan squishy-canyon): build-only docker image to catch Dockerfile rot.
+  # No push, no boot smoke (a real boot needs JWT_SECRET + a writable volume and
+  # is a deploy-pipeline step, not a PR gate). See docs/ops/deployment.md.
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: docker build -t eqx-peri-server:ci .
+
   # C3 (plan squishy-canyon): perf benchmarks. `continue-on-error` initially —
   # bench timing is runner-load-sensitive, so a single noisy run must not fail a
   # PR. Promote to blocking once variance data confirms the budgets are stable
