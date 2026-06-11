@@ -24,6 +24,7 @@
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
+import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -98,12 +99,24 @@ export interface GridPulseResult {
 
 export class StructureGridSubsystem {
   private readonly grid = new Grid();
+  /** Structures whose component is currently held `powered` by stored battery
+   *  charge despite a negative generation balance (rebuilt each `pulse()` by
+   *  `processBatteryPower`). The single source of "battery-backed" truth read by
+   *  `powerSummaryFor`, so the gates + the snapshot slice agree. */
+  private readonly batteryRescued = new Set<string>();
 
   constructor(private readonly hooks: StructureGridHooks) {}
 
-  /** Read-only grid query for the snapshot slice (powered / netPower). */
+  /** Effective power for a structure, read by the turret/miner gates AND the
+   *  snapshot slice. `netPower` is the raw generation balance (may be negative
+   *  while batteries carry the load); `powered` is BATTERY-BACKED — a
+   *  capital-connected deficit stays powered while its component's batteries
+   *  hold enough charge to cover the per-pulse shortfall. With no batteries this
+   *  is byte-identical to the raw grid summary. */
   powerSummaryFor(id: string): { netPower: number; powered: boolean } {
-    return this.grid.powerSummaryFor(id);
+    const raw = this.grid.powerSummaryFor(id);
+    if (raw.powered || !this.batteryRescued.has(id)) return raw;
+    return { netPower: raw.netPower, powered: true };
   }
 
   /**
@@ -130,7 +143,7 @@ export class StructureGridSubsystem {
     );
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'turret' || !rec.isConstructed) continue;
-      if (!this.grid.powerSummaryFor(rec.id).powered) {
+      if (!this.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         continue;
       }
@@ -158,6 +171,10 @@ export class StructureGridSubsystem {
       this.grid.rebuild(buildGridNodes(registry), registry.adjacencyMap());
       registry.topologyDirty = false;
     }
+
+    // Batteries charge/discharge BEFORE the power-gated steps so this pulse's
+    // mining/turret gating sees the battery-backed power state.
+    this.processBatteryPower();
 
     const flashed: Array<[string, string]> = [];
     this.processMining();
@@ -189,12 +206,105 @@ export class StructureGridSubsystem {
     }
   }
 
+  /**
+   * Battery charge/discharge (batteries plan). Runs each pulse over every
+   * capital-connected component:
+   *   - a SURPLUS (`netPower > 0`) charges the component's batteries (even split
+   *     across those not yet full, capped at `powerStorageCapacity`);
+   *   - a DEFICIT (`netPower < 0`) is covered by discharging batteries IF their
+   *     combined charge can meet the full per-pulse shortfall — the component
+   *     then stays `powered` (battery-backed) and the shortfall is drained from
+   *     storage; if they can't cover it, the component browns out (raw rule) and
+   *     the batteries hold their charge.
+   * Rebuilds `batteryRescued` from scratch each pulse. Power units are per-pulse
+   * (same scale as the rest of the pulse economy — mining/construction amounts).
+   */
+  private processBatteryPower(): void {
+    this.batteryRescued.clear();
+    const capacity = getStructureKind('battery').powerStorageCapacity ?? 0;
+    if (capacity <= 0) return;
+    this.grid.forEachComponent((members, netPower, hasCapital) => {
+      // A capital-less island is unpowered (raw rule) — batteries inert there.
+      if (!hasCapital) return;
+      if (netPower > 0) this.chargeComponentBatteries(members, capacity, netPower);
+      else if (netPower < 0) this.dischargeComponentBatteries(members, -netPower);
+    });
+  }
+
+  /** Charge a component's not-yet-full batteries with `surplus`, split evenly. */
+  private chargeComponentBatteries(
+    members: readonly string[],
+    capacity: number,
+    surplus: number,
+  ): void {
+    let count = 0;
+    for (const id of members) {
+      const rec = this.hooks.registry.get(id);
+      if (rec && rec.kind === 'battery' && rec.storedPower < capacity) count++;
+    }
+    if (count === 0) return;
+    const share = surplus / count;
+    for (const id of members) {
+      const rec = this.hooks.registry.get(id);
+      if (!rec || rec.kind !== 'battery' || rec.storedPower >= capacity) continue;
+      rec.storedPower = chargeStep(rec.storedPower, capacity, share).stored;
+    }
+  }
+
+  /** Discharge a component's batteries to cover a per-pulse `deficit` — but only
+   *  when their combined charge can meet it in full. Marks the whole component
+   *  battery-backed (`batteryRescued`) for this pulse. */
+  private dischargeComponentBatteries(members: readonly string[], deficit: number): void {
+    let total = 0;
+    for (const id of members) {
+      const rec = this.hooks.registry.get(id);
+      if (rec && rec.kind === 'battery') total += rec.storedPower;
+    }
+    if (total < deficit) return; // can't sustain the load → brownout, hold charge
+    for (const id of members) this.batteryRescued.add(id);
+    let remaining = deficit;
+    for (const id of members) {
+      if (remaining <= 0) break;
+      const rec = this.hooks.registry.get(id);
+      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+      const r = dischargeStep(rec.storedPower, remaining);
+      rec.storedPower = r.stored;
+      remaining -= r.supplied;
+    }
+  }
+
+  /** Total stored battery charge in the connected component containing `id`
+   *  (shield-fence plan — the wall's depletable buffer). 0 if `id` is unbuilt. */
+  componentBatteryCharge(id: string): number {
+    let total = 0;
+    for (const mid of this.grid.componentMembers(id)) {
+      const rec = this.hooks.registry.get(mid);
+      if (rec && rec.kind === 'battery') total += rec.storedPower;
+    }
+    return total;
+  }
+
+  /** Drain up to `amount` from the component's batteries (a shield-wall hit).
+   *  Returns the amount actually drained. */
+  drainComponentBatteries(id: string, amount: number): number {
+    let remaining = amount;
+    for (const mid of this.grid.componentMembers(id)) {
+      if (remaining <= 0) break;
+      const rec = this.hooks.registry.get(mid);
+      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+      const r = drainPower(rec.storedPower, remaining);
+      rec.storedPower = r.stored;
+      remaining -= r.drained;
+    }
+    return amount - remaining;
+  }
+
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the
    *  nearest in-range asteroid into its local buffer (capped by storage). */
   private processMining(): void {
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'miner' || !rec.isConstructed) continue;
-      if (!this.grid.powerSummaryFor(rec.id).powered) {
+      if (!this.powerSummaryFor(rec.id).powered) {
         rec.miningTargetEntityId = undefined;
         continue;
       }

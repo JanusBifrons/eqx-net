@@ -107,6 +107,7 @@ export class StructurePlacementSubsystem {
       constructionCost: kind.constructionCost,
       isDeconstructing: false,
       minerals,
+      storedPower: 0,
     };
     this.hooks.registry.add(rec);
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot

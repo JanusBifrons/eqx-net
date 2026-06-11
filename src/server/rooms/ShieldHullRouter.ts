@@ -90,9 +90,16 @@ export interface SwarmDamageTarget {
 }
 
 /** Narrow view of swarmRegistry — only `get(id)` is needed for regen.
- *  Returns null when the id is not present (matches SwarmEntityRegistry). */
+ *  Returns null when the id is not present (matches SwarmEntityRegistry).
+ *  `kind` is the pose-core kind (0 asteroid / 1 drone / 2 structure) — only
+ *  drones (1) have a shield layer, so the regen pass gates on it. */
 export interface SwarmLookup {
-  get(id: string): { shipKind?: ShipKindId | null; entityId?: number; shieldDown?: boolean } | null | undefined;
+  get(id: string): {
+    kind?: number;
+    shipKind?: ShipKindId | null;
+    entityId?: number;
+    shieldDown?: boolean;
+  } | null | undefined;
 }
 
 export interface ShieldHullRouterDeps {
@@ -248,7 +255,17 @@ export class ShieldHullRouter {
     for (const [id, shieldVal] of this.swarmShield) {
       const rec = d.swarmRegistry.get(id);
       if (!rec) continue;
-      const sMax = getDroneShieldMax(rec.shipKind);
+      // Resolve the entry's shield pool from its OWN catalogue (mirrors
+      // `resolveSwarmShieldHull`): a structure (kind 2) reads `getStructureKind`
+      // — shieldless ⇒ 0 ⇒ it skips on the next line — NOT the forgiving
+      // `getDroneShieldMax`/`getShipKind` FIGHTER fallback, which used to regen a
+      // phantom fighter shield on a DAMAGED structure + post SET_HULL_EXPOSED,
+      // corrupting its collider to a ~12u fighter hull (the unified-entity-hull
+      // "fly into a capital" bug; shield-fence pylons are the first structures
+      // the AI actively shoots, which surfaced it in the regen path).
+      const sMax = rec.kind === 2
+        ? (getStructureKind(rec.shipKind ?? undefined).shieldMax ?? 0)
+        : getDroneShieldMax(rec.shipKind);
       if (shieldVal >= sMax) continue;
       const hull = this.swarmHealth.get(id);
       if (hull === undefined || hull <= 0) continue;

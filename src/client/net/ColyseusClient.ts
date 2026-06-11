@@ -6,6 +6,7 @@ import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { FLASH_DURATION_MS as GRID_FLASH_DURATION_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import { SHIELD_WALL_THICKNESS } from '@core/structures/ShieldWall';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
 import {
@@ -562,6 +563,10 @@ export class ColyseusGameClient {
    *  syncSwarmIntoPredWorld's per-packet "seen" sweep. Pre-fix
    *  allocated `new Set<string>()` per binary swarm packet (~60 Hz). */
   private readonly _swarmSyncSeenScratch = new Set<string>();
+  /** Shield-fence plan — predWorld shield-wall body ids currently spawned, and a
+   *  reused "desired this snapshot" scratch set (syncPredWalls reconciles them). */
+  private readonly _predWallIds = new Set<string>();
+  private readonly _predWallDesired = new Set<string>();
   /** 2026-05-25 heap-growth gate step 8 — pooled `{targetId, damage}`
    *  literal for the per-damage-event reconcileDamageToFeedback call.
    *  Under 25-drone combat at ~75 hits/sec, the pre-fix per-event
@@ -1013,6 +1018,11 @@ export class ColyseusGameClient {
       this._aiController.unregister(`${id}`);
     }
     this._aiRegisteredIds.clear();
+    // Shield-fence plan — drop predWorld shield-wall colliders on handoff; the
+    // destination sector's fences re-sync from its own structure slice.
+    for (const wid of this._predWallIds) this.predWorld?.removeWall(wid);
+    this._predWallIds.clear();
+    this._predWallDesired.clear();
     // Multi-mount/turret refactor (Phase 4b.2): drop the local ship's
     // sticky turret target on sector handoff — the destination sector has
     // a fresh swarm with different ids, so holding the previous pin would
@@ -2868,6 +2878,10 @@ export class ColyseusGameClient {
           deconstructPct: s.deconstructPct ?? 0,
           ...(s.miningTargetId !== undefined ? { miningTargetId: s.miningTargetId } : {}),
           ...(s.turretTargetId !== undefined ? { turretTargetId: s.turretTargetId } : {}),
+          ...(s.storedPower !== undefined ? { storedPower: s.storedPower } : {}),
+          ...(s.storedPowerMax !== undefined ? { storedPowerMax: s.storedPowerMax } : {}),
+          ...(s.shieldWallTo !== undefined ? { shieldWallTo: s.shieldWallTo } : {}),
+          ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
         });
         // Surface the powered grid's net power (members share a component, so
         // the max powered netPower represents the player's live grid).
@@ -2895,6 +2909,46 @@ export class ColyseusGameClient {
       if (this._lastMinerals !== null) {
         this._lastMinerals = null;
         useUIStore.getState().setMinerals(0);
+      }
+    }
+    this.syncPredWalls();
+  }
+
+  /**
+   * Shield-fence plan — keep the local predWorld's shield-wall colliders in sync
+   * with the active fences (the "every collidable entity must be in predWorld"
+   * rule), so the LOCAL player is predicted-blocked by an up wall instead of
+   * predicting through it and rubber-banding to the server. Snapshot cadence
+   * (NOT the per-frame loop): walls are static + low-count, so a reconcile here
+   * is cheap. Geometry derived from the two pylon poses (`mirror.swarm`), exactly
+   * like the server collider + the rendered span. A down wall (stunned /
+   * unpowered) has NO collider so the player passes — matching the server.
+   */
+  private syncPredWalls(): void {
+    if (!this.predWorld) return;
+    const structures = this.mirror.structures;
+    const swarm = this.mirror.swarm;
+    const desired = this._predWallDesired;
+    desired.clear();
+    if (structures && swarm) {
+      for (const [id, st] of structures) {
+        if (st.shieldWallTo === undefined || !st.wallActive) continue;
+        if (id >= st.shieldWallTo) continue; // once per pair (lower id wins)
+        const a = swarm.get(id);
+        const b = swarm.get(st.shieldWallTo);
+        if (!a || !b) continue;
+        const wid = `predwall-${id}-${st.shieldWallTo}`;
+        desired.add(wid);
+        if (!this._predWallIds.has(wid)) {
+          this.predWorld.spawnWall(wid, a.x, a.y, b.x, b.y, SHIELD_WALL_THICKNESS);
+          this._predWallIds.add(wid);
+        }
+      }
+    }
+    for (const wid of this._predWallIds) {
+      if (!desired.has(wid)) {
+        this.predWorld.removeWall(wid);
+        this._predWallIds.delete(wid);
       }
     }
   }

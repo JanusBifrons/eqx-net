@@ -238,7 +238,35 @@ a **bespoke fire path**, NOT `AiFireResolver` (which targets players). The
 testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
 `scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
 room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
-placements; this seeds the end state). See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+placements; this seeds the end state). **Batteries (batteries plan)** add a full
+stored-power buffer: `processBatteryPower()` runs each pulse (before the
+power-gated steps) — a component SURPLUS charges its batteries (`storedPower` on
+`StructureRecord`, capped at the catalogue `powerStorageCapacity`); a DEFICIT
+discharges them to keep the component `powered` IF their combined charge covers
+the per-pulse shortfall, else it browns out. The subsystem's `powerSummaryFor`
+is now **battery-backed** (raw `netPower`, but `powered` stays true while charge
+covers a deficit) — the turret/miner gates AND the `structures[]` snapshot slice
+read it. The slice carries `storedPower`/`storedPowerMax` for batteries
+(inspector CHRG readout); no `SWARM_WIRE_VERSION` bump (JSON slice). The pure
+`Grid` stays instantaneous (its golden tests hold); the battery layer is
+server-side, over `Grid.forEachComponent`/`componentMembers`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
+
+**Shield fence (shield-fence plan).** `shield_pylon` is a HUB; two built+connected
+same-owner pylons project a blocking **shield wall** in their span. The wall is a
+DERIVED collider (geometry from the two pylon poses via the pure
+`core/structures/ShieldWall.ts`), NOT a swarm/wire entity. `ShieldWallManager`
+(`src/server/structures/`) forms/teardowns walls + drives the collider (worker
+`SPAWN_WALL`/`SET_WALL_ACTIVE`/`REMOVE_WALL`; **wall bodies live in `PhysicsWorld`'s
+`wallBodies` map, NOT `this.bodies`**, or the per-tick `getAllShipStates` SAB-write
+hits a slot-less body). Damage = grid SURPLUS soaks → component BATTERIES drain →
+overwhelm both = STUN (collider disabled). Ships block free (static body); weapons
+absorb main-thread (`blockBeamAtWall` in the fire resolvers, `wallBlocksProjectile`
+in `ProjectilePipeline` → `ShieldWallManager.blockShot`/`blockProjectile`). Two
+JSON `structures[]` fields (`shieldWallTo`/`wallActive`) drive the client span +
+predWorld collider (`syncPredWalls`). AI targets pylons (`structurePriority`).
+**Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
+fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
+corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).
 
 **EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
 entity-sync sends in `SectorRoom.update()` now route through ONE

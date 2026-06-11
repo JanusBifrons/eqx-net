@@ -97,6 +97,12 @@ export interface ProjectilePipelineDeps {
     hitX?: number,
     hitY?: number,
   ) => void;
+  /** Shield-fence plan — if this tick's step crosses an ACTIVE shield wall,
+   *  absorb the projectile (apply the wall's grid-power damage) and return true
+   *  so it's dropped. Absent ⇒ no walls (byte-identical). Alloc-free. */
+  wallBlocksProjectile?: (
+    x: number, y: number, stepX: number, stepY: number, damage: number,
+  ) => boolean;
 }
 
 const DT_SEC = 1 / 60;
@@ -215,6 +221,14 @@ export class ProjectilePipeline {
 
       if (bestTargetId !== null) {
         d.applyDamage(bestTargetId, proj.ownerId, proj.damage, bestHitX, bestHitY);
+        this.liveProjectiles.delete(projId);
+        continue;
+      }
+
+      // Shield-fence plan: no target this tick — an ACTIVE wall the step crosses
+      // absorbs the bolt (target ordering is handled across ticks: a closer
+      // target is hit on an earlier step before the projectile reaches the wall).
+      if (d.wallBlocksProjectile?.(proj.x, proj.y, stepX, stepY, proj.damage)) {
         this.liveProjectiles.delete(projId);
         continue;
       }

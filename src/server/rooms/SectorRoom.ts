@@ -52,6 +52,7 @@ import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
+import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
@@ -386,7 +387,12 @@ function structurePriority(kind: StructureKindId): number {
   switch (kind) {
     case 'capital':
       return 3;
+    // The Miner is the wave objective; a shield-fence pylon is a defensive wall
+    // attackers want to dismantle to reach the base — both ranked above the
+    // other leaves so drones actively engage them (the wall absorbs the incoming
+    // fire until its batteries / power give out).
     case 'miner':
+    case 'shield_pylon':
       return 2;
     default:
       return 1;
@@ -497,6 +503,9 @@ export class SectorRoom extends Room<SectorState> {
   private placedStructureCounter = 0;
   /** Power-grid pulse subsystem (structures plan, Phase 3). */
   private structureGrid!: StructureGridSubsystem;
+  /** Shield-wall lifecycle (shield-fence plan) — forms/teardowns the blocking
+   *  span between paired pylons + drives its collider. */
+  private shieldWalls!: ShieldWallManager;
   /** 1 Hz grid heartbeat timer (unref'd; off the physics tick). */
   private structureGridTimer: ReturnType<typeof setInterval> | undefined;
   /** Faster turret aim/fire timer (Phase 5; unref'd). */
@@ -1123,6 +1132,8 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
+        this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
       serverLogEvent,
       logger,
@@ -1149,6 +1160,8 @@ export class SectorRoom extends Room<SectorState> {
       // faction-filtered set the drone's body target chose among, so the beam
       // lands on the structure it's pointed at.
       structureHitTargets: () => this.hostileStructureCircles,
+      blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
+        this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
@@ -1262,6 +1275,8 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      wallBlocksProjectile: (x, y, sx, sy, damage) =>
+        this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
     });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
@@ -1574,6 +1589,19 @@ export class SectorRoom extends Room<SectorState> {
       },
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
+    });
+    // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
+    // Forms the blocking span between paired pylons + drives its physics
+    // collider; updated on the grid pulse + the faster turret tick.
+    this.shieldWalls = new ShieldWallManager({
+      registry: this.structureRegistry,
+      powerSummaryFor: (id) => this.structureGrid.powerSummaryFor(id),
+      componentBatteryCharge: (id) => this.structureGrid.componentBatteryCharge(id),
+      drainComponentBatteries: (id, amount) => this.structureGrid.drainComponentBatteries(id, amount),
+      spawnWall: (id, ax, ay, bx, by, thickness) =>
+        this.postToWorker({ type: 'SPAWN_WALL', id, ax, ay, bx, by, thickness }),
+      setWallActive: (id, active) => this.postToWorker({ type: 'SET_WALL_ACTIVE', id, active }),
+      removeWall: (id) => this.postToWorker({ type: 'REMOVE_WALL', id }),
     });
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
@@ -2356,6 +2384,9 @@ export class SectorRoom extends Room<SectorState> {
   private structureGridTick(): void {
     if (this.structureRegistry.size === 0) return;
     const result = this.structureGrid.pulse(Date.now());
+    // Form/teardown pylon-pair walls + refresh their active state on the fresh
+    // topology BEFORE the slice rebuild so `shieldWallTo`/`wallActive` are current.
+    this.shieldWalls.update(Date.now());
     this.rebuildStructuresSlice();
     if (result.flashed.length > 0) {
       // Map the registry's string-id pairs to dense entityIds for the wire.
@@ -2425,9 +2456,23 @@ export class SectorRoom extends Room<SectorState> {
   private structureTurretTick(): void {
     if (this.structureRegistry.size === 0) return;
     this.structureGrid.tickTurrets(Date.now());
+    // Refresh wall active states at the turret cadence so a stun lifts (and a
+    // power-loss drop registers) within ~100 ms, not a full grid pulse later.
+    this.shieldWalls.update(Date.now());
     // Refresh the slice so the client's turret aim line tracks at the turret
     // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
     this.rebuildStructuresSlice();
+  }
+
+  /** Shield-fence plan — beam-vs-wall absorption seam shared by the player + AI
+   *  hitscan resolvers. If an ACTIVE shield wall lies along the shot ray within
+   *  `maxDist`, the wall takes the hit (grid-power model) and the shot stops
+   *  there; returns the crossing distance, else null. (Ship blocking is the
+   *  worker's static wall body — this is only the main-thread weapon path.) */
+  private blockShotAtWall(
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
+  ): number | null {
+    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
@@ -2527,6 +2572,20 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
       if (rec.turretTargetEntityId !== undefined) entry.turretTargetId = rec.turretTargetEntityId;
+      if (rec.kind === 'battery') {
+        entry.storedPower = rec.storedPower;
+        entry.storedPowerMax = getStructureKind('battery').powerStorageCapacity ?? 0;
+      }
+      if (rec.kind === 'shield_pylon') {
+        const wall = this.shieldWalls.wallStateFor(rec.id, Date.now());
+        if (wall) {
+          const otherEntityId = this.swarmRegistry.get(wall.otherPost)?.entityId;
+          if (otherEntityId !== undefined) {
+            entry.shieldWallTo = otherEntityId;
+            entry.wallActive = wall.active;
+          }
+        }
+      }
       arr.push(entry);
     }
     this.structuresSlice = arr;
@@ -3807,6 +3866,8 @@ export class SectorRoom extends Room<SectorState> {
       clearInterval(this.structureTurretTimer);
       this.structureTurretTimer = undefined;
     }
+    // Shield-fence plan — tear down any wall spans (free their worker bodies).
+    this.shieldWalls?.removeAll();
     // Item B5 — stop the click-to-inspect stats emitter.
     if (this.selectionStatsTimer !== undefined) {
       clearInterval(this.selectionStatsTimer);

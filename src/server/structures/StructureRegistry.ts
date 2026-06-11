@@ -36,6 +36,11 @@ export interface StructureRecord {
    *  `storageCapacity`; it is the bank the construction stream draws from.
    *  A Miner buffers locally here before hauling toward the Capital. */
   minerals: number;
+  /** Stored power for a Battery (0..the kind's `powerStorageCapacity`). It
+   *  charges from the component's surplus each pulse, discharges to keep the
+   *  component `powered` through a deficit, and is drained first by shield-wall
+   *  hits. 0 on every non-battery kind (they have no `powerStorageCapacity`). */
+  storedPower: number;
   /** Phase 4 — the asteroid entityId this Miner is currently extracting from
    *  (for the client beam). Transient; recomputed each pulse, undefined when
    *  not a miner / unpowered / no asteroid in range. */

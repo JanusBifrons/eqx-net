@@ -77,6 +77,13 @@ export interface AiFireResolverDeps {
    *  among. A structure beam hit routes through `applyDamage(structureId,
    *  shooterId, …)` → the StructureEntity leaf (no new damage branch). */
   structureHitTargets?: () => Iterable<{ id: string; x: number; y: number; radius: number }>;
+  /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
+   *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
+   *  return the crossing distance; else null. Absent ⇒ no walls in the sector
+   *  (byte-identical to the pre-fence behaviour). */
+  blockBeamAtWall?: (
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
+  ) => number | null;
   /** Broadcast a laser_fired event to every client. */
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
   /** Spawn a server-side projectile (delegates to ProjectilePipeline). Bolt
@@ -227,12 +234,19 @@ export class AiFireResolver implements WeaponFireSink {
       }
     }
 
-    if (hitId) {
+    // Shield-fence plan: an ACTIVE shield wall in front of the target absorbs
+    // the beam (the wall takes the hit; the target behind takes nothing). Only
+    // walls closer than the resolved target (or the range, with no target) count.
+    const scanDist = hitDist === Infinity ? range : hitDist;
+    const wallDist = d.blockBeamAtWall?.(rayFromX, rayFromY, ndx, ndy, scanDist, damage) ?? null;
+    if (wallDist === null && hitId) {
       d.applyDamage(hitId, this._shooterId, damage);
     }
 
-    const beamEndX = rayFromX + ndx * (hitDist === Infinity ? range : hitDist);
-    const beamEndY = rayFromY + ndy * (hitDist === Infinity ? range : hitDist);
+    const blocked = wallDist !== null;
+    const endDist = blocked ? wallDist : scanDist;
+    const beamEndX = rayFromX + ndx * endDist;
+    const beamEndY = rayFromY + ndy * endDist;
 
     d.broadcast('laser_fired', {
       type: 'laser_fired',
@@ -242,8 +256,8 @@ export class AiFireResolver implements WeaponFireSink {
       fromY: rayFromY,
       toX: beamEndX,
       toY: beamEndY,
-      hit: !!hitId,
-      targetId: hitId ?? undefined,
+      hit: blocked || !!hitId,
+      targetId: blocked ? undefined : (hitId ?? undefined),
     });
   }
 
