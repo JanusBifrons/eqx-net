@@ -5,7 +5,7 @@ import { App } from './App';
 import { useAuthStore } from './auth/authStore';
 import { useUIStore } from './state/store';
 import { loadToken, saveToken } from './auth/tokenStorage';
-import { apiGetMe } from './auth/authApi';
+import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 
 // Expose the Zustand store on window for E2E tests + interactive
 // debugging. Read-only by convention (tests use `getState()` to read +
@@ -48,17 +48,25 @@ const theme = createTheme({
 async function bootstrapAuth(): Promise<void> {
   const { setAuth } = useAuthStore.getState();
 
-  // Google OAuth callback delivers token via ?token= query param.
+  // Google OAuth callback delivers a single-use code via ?authCode= (S3 — the
+  // JWT is no longer placed in the URL). Swap it for the token over a POST.
   const urlParams = new URLSearchParams(window.location.search);
-  const urlToken = urlParams.get('token');
-  if (urlToken) {
-    saveToken(urlToken);
-    urlParams.delete('token');
+  const authCode = urlParams.get('authCode');
+  let exchangedToken: string | null = null;
+  if (authCode) {
+    try {
+      const { token: t } = await exchangeAuthCode(authCode);
+      saveToken(t);
+      exchangedToken = t;
+    } catch {
+      // Invalid / expired / replayed code — fall through to localStorage.
+    }
+    urlParams.delete('authCode');
     const newSearch = urlParams.toString();
     history.replaceState(null, '', window.location.pathname + (newSearch ? `?${newSearch}` : ''));
   }
 
-  const token = urlToken ?? loadToken();
+  const token = exchangedToken ?? loadToken();
   if (!token) return;
 
   try {

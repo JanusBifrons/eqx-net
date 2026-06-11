@@ -21,7 +21,7 @@ import { z } from 'zod';
 export const SelectEntitySchema = z
   .object({
     type: z.literal('select_entity'),
-    id: z.string().min(1),
+    id: z.string().min(1).max(64),
     kind: z.enum(['ship', 'structure']),
   })
   .strict();

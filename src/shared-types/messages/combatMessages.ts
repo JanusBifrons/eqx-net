@@ -151,7 +151,7 @@ export type CollisionResolvedMessage = z.infer<typeof CollisionResolvedMessageSc
 export const HitAckSchema = z
   .object({
     type: z.literal('hit_ack'),
-    clientShotId: z.string(),
+    clientShotId: z.string().min(1).max(64),
     hit: z.boolean(),
     targetId: z.string().optional(),
     /** True only when the server discarded the shot (cooldown / temporal). */

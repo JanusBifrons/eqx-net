@@ -1,5 +1,6 @@
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
+import { pino } from 'pino';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
@@ -34,6 +35,29 @@ class UninitializedSink implements IPersistenceSink {
 }
 
 let _sink: IPersistenceSink = new UninitializedSink();
+
+// Boot-hydrate observability (R4) — the SELECT/parse failures below used to be
+// silent `catch {}`. We count them and surface on /healthz; a non-zero count
+// after boot is a real signal (corrupt rows / a SELECT that isn't a benign
+// first-boot schema race).
+const _hydrateHealth = { selectFailures: 0, corruptRowsSkipped: 0 };
+const _hydrateLogger = pino({ name: 'persistence-hydrate' });
+
+/** Combined persistence health for /healthz. Merges the boot-hydrate counters
+ *  with the live worker-sink health when available (duck-typed — the contract
+ *  doesn't carry health()). Cheap integer reads. */
+export function getPersistenceHealth(): {
+  selectFailures: number;
+  corruptRowsSkipped: number;
+  criticalFailures?: number;
+  queueDepth?: number;
+  volatileDropped?: number;
+  exited?: boolean;
+} {
+  const maybeHealth = (_sink as unknown as { health?: () => Record<string, number | boolean> }).health;
+  const sinkHealth = typeof maybeHealth === 'function' ? maybeHealth.call(_sink) : {};
+  return { ..._hydrateHealth, ...sinkHealth };
+}
 
 export function getPersistence(): IPersistenceSink {
   return _sink;
@@ -96,7 +120,9 @@ let _limboStore: LimboStore | null = null;
 
 export function getLimboStore(): LimboStore {
   if (_limboStore === null) {
-    _limboStore = new LimboStore({ persistence });
+    // pino is imported lazily so test paths that inject via setLimboStore()
+    // never construct a logger or pull the transport.
+    _limboStore = new LimboStore({ persistence, logger: pino({ name: 'limbo' }) });
   }
   return _limboStore;
 }
@@ -125,8 +151,11 @@ export function initLimboStore(now: number = Date.now()): { hydrated: number } {
       'SELECT player_id, user_id, sector_key, payload_json, expires_at, created_at ' +
       'FROM limbo WHERE expires_at > ?',
     ).all(now) as typeof rows;
-  } catch {
-    // First-ever boot may race the worker's schema creation; treat as zero.
+  } catch (err) {
+    // First-ever boot may race the worker's schema creation; treat as zero,
+    // but count + log so a persistent failure isn't invisible (R4).
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err, table: 'limbo' }, 'limbo hydrate SELECT failed (treating as empty)');
     rows = [];
   }
   const entries: LimboEntry[] = [];
@@ -134,7 +163,11 @@ export function initLimboStore(now: number = Date.now()): { hydrated: number } {
     let payload: LimboPayload;
     try {
       payload = JSON.parse(row.payload_json) as LimboPayload;
-    } catch {
+    } catch (err) {
+      _hydrateHealth.corruptRowsSkipped += 1;
+      if (_hydrateHealth.corruptRowsSkipped % 100 === 1) {
+        _hydrateLogger.warn({ err, playerId: row.player_id }, 'limbo payload JSON parse failed — skipping row');
+      }
       continue;
     }
     entries.push({
@@ -200,8 +233,10 @@ export function initPlayerShipStore(): { hydrated: number } {
       'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at ' +
       'FROM player_ships',
     ).all() as typeof rows;
-  } catch {
+  } catch (err) {
     // First-ever boot may race the worker's schema creation; treat as zero.
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err, table: 'player_ships' }, 'player_ships hydrate SELECT failed (treating as empty)');
     rows = [];
   }
   const records: PlayerShipRecord[] = rows.map((row) => ({
@@ -255,7 +290,11 @@ export function initPlayerShipStore(): { hydrated: number } {
       let payload: LimboPayload;
       try {
         payload = JSON.parse(row.payload_json) as LimboPayload;
-      } catch {
+      } catch (err) {
+        _hydrateHealth.corruptRowsSkipped += 1;
+        if (_hydrateHealth.corruptRowsSkipped % 100 === 1) {
+          _hydrateLogger.warn({ err, playerId: row.player_id }, 'backfill payload JSON parse failed — skipping row');
+        }
         continue;
       }
       const now = Date.now();
@@ -287,8 +326,10 @@ export function initPlayerShipStore(): { hydrated: number } {
       store.put(record, now);
       backfilled++;
     }
-  } catch {
-    // First boot or schema-still-creating; skip silently.
+  } catch (err) {
+    // First boot or schema-still-creating; count + log rather than swallow (R4).
+    _hydrateHealth.selectFailures += 1;
+    _hydrateLogger.warn({ err }, 'player_ships backfill from limbo failed (skipping)');
   }
 
   return { hydrated: records.length + backfilled };

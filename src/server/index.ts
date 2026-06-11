@@ -11,10 +11,13 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs } from './livingworld/LivingWorldDirector.js';
+import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
+import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
+import { installProcessGuards } from './orchestration/processGuards.js';
 
 const logger = pino({
   name: 'server',
@@ -30,12 +33,13 @@ const MAX_DEV_EVENTS = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 const app = express();
 
-app.use((_req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, OPTIONS');
-  next();
-});
+// CORS policy + baseline security headers (plan squishy-canyon, S1 + S7).
+// `ALLOWED_ORIGINS` (comma-separated) is the explicit allowlist; non-production
+// reflects any origin (dev/LAN/netgate ergonomics); production is closed by
+// default. See src/server/net/httpCors.ts + docs/architecture/security.md.
+const corsPolicy = resolveCorsPolicy();
+app.use(securityHeadersMiddleware());
+app.use(corsMiddleware(corsPolicy));
 
 app.options('*', (_req, res) => { res.sendStatus(204); });
 
@@ -80,6 +84,9 @@ app.get('/healthz', (_req, res) => {
     ready: serverReady,
     tick: Date.now(),
     playersOnline: fakePlayerCount(),
+    // R4 — persistence observability: hydrate failures + live worker-sink
+    // queue depth / critical-lane failures / lost-lane flag. Cheap integer reads.
+    persistence: getPersistenceHealth(),
   });
 });
 
@@ -208,6 +215,12 @@ for (const sector of GALAXY_SECTORS) {
   gameServer.define(`galaxy-${sector.key}`, SectorRoom, resolveSectorConfig(sector.key));
 }
 
+// Engineering + test rooms (plan squishy-canyon, S6): registered ONLY outside
+// production (or with EQX_ENABLE_TEST_ROOMS=1). They carry testMode overrides
+// (initialHull, testTimeScale, dronePoses, startHostile) and load/burn knobs
+// (swarm-tidi-burn's tickBurnMs is a free CPU-burn DoS) that must never be
+// joinable by a production client. The galaxy rooms above stay unconditional.
+if (shouldRegisterTestRooms()) {
 // Engineering rooms — defined here, NOT pre-created. They lazy-spawn on first
 // `joinOrCreate` and have no persistent identity (sectorKey is undefined),
 // so their state is ephemeral by design.
@@ -687,6 +700,14 @@ gameServer.define('swarm-tidi-burn', SectorRoom, {
   tickBurnMs: 16,
   maxClients: 4,
 });
+} // end shouldRegisterTestRooms() gate (S6)
+
+// A6 (S6): warn loudly if the dev-override bypass is armed in production. It's
+// an E2E-only flag (bypasses testMode gating on JoinOptions); never set it in
+// production. Semantics are unchanged — e2e:phone:stall depends on the flag.
+if (process.env['EQX_ALLOW_DEV_OVERRIDES'] === '1' && process.env['NODE_ENV'] === 'production') {
+  logger.warn('EQX_ALLOW_DEV_OVERRIDES=1 in production — dev override bypass is active (E2E-only flag)');
+}
 
 httpServer.on('upgrade', (req) => {
   logger.info({ url: req.url }, 'WS upgrade received');
@@ -796,7 +817,7 @@ async function main(): Promise<void> {
  * delivers Ctrl+C as a process-group event that tears down the JS process
  * before any handler can complete (see docs/LESSONS.md).
  */
-const shutdown = async (sig: string): Promise<void> => {
+const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
   logger.info({ sig }, 'shutdown received, draining persistence');
   const forceExit = setTimeout(() => {
     logger.error('shutdown hard deadline reached, force-exiting');
@@ -834,7 +855,7 @@ const shutdown = async (sig: string): Promise<void> => {
   } catch (err) {
     logger.error({ err }, 'colyseus graceful shutdown failed');
   }
-  process.exit(0);
+  process.exit(exitCode);
 };
 
 let shuttingDown = false;
@@ -847,6 +868,17 @@ const onSignal = (sig: string): void => {
 };
 process.on('SIGINT', () => onSignal('SIGINT'));
 process.on('SIGTERM', () => onSignal('SIGTERM'));
+
+// R1: catch otherwise-unhandled fatals, drain, and exit non-zero so the
+// supervisor restarts a clean instance (never log-and-continue an authority).
+installProcessGuards({
+  logger,
+  onFatal: (_err, source) => {
+    if (shuttingDown) { process.exit(1); }
+    shuttingDown = true;
+    void shutdown(source, 1);
+  },
+});
 
 if (process.env['NODE_ENV'] !== 'production') {
   // Dev-only deterministic drain trigger — POST /dev/shutdown drains

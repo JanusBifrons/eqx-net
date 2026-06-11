@@ -27,6 +27,17 @@ jobs:
         run: pnpm run typecheck
       - name: Lint (boundary enforcement)
         run: pnpm run lint
+      # C1 (plan squishy-canyon): dependency-cruiser encodes invariant #1 as a
+      # real module graph (blocking — the leak.ts.disabled canary trips it).
+      - name: Dependency graph (boundary DAG, invariant #1)
+        run: pnpm exec depcruise src
+      # C1: knip dead-code report — non-blocking until triaged (--no-exit-code),
+      # promote to blocking after the backlog is cleared.
+      - name: Dead-code report (knip, non-blocking)
+        run: pnpm exec knip --no-exit-code
+      # C4: dependency vulnerability scan. Fails only on high+ severity.
+      - name: Dependency audit (high+)
+        run: pnpm audit --prod --audit-level=high
       - name: Build
         run: pnpm run build
 
@@ -48,8 +59,12 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Unit tests
-        run: pnpm run test
+      # C2 (plan squishy-canyon): run the unit suite WITH coverage so the
+      # coverage floor in vitest.config.ts gates here (coverage is a test run,
+      # so it belongs in this job — not the build-only `verify` job — and it
+      # already excludes *.integration.test.ts, matching this job's scope).
+      - name: Unit tests + coverage floor
+        run: pnpm run coverage
 
   # Integration suite (`vitest.integration.config.ts`). Boots a real
   # Colyseus Server + SectorRoom + physics worker + WebSocket transport per
@@ -74,6 +89,25 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Integration tests
         run: pnpm run test:integration
+
+  # E2 (plan squishy-canyon): build-only docker image to catch Dockerfile rot.
+  # No push, no boot smoke (a real boot needs JWT_SECRET + a writable volume and
+  # is a deploy-pipeline step, not a PR gate). See docs/ops/deployment.md.
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build server image
+        run: docker build -t eqx-peri-server:ci .
+
+  # C3 (plan squishy-canyon) — bench-in-CI DEFERRED. `pnpm bench:check` compares
+  # against a committed baseline.json that is machine-calibrated; on ephemeral CI
+  # runners the absolute hz numbers swing ~7x (host-load variance) and the
+  # baseline is missing newer keys, so it cannot be a meaningful gate without a
+  # per-runner baseline-regeneration strategy. Run it locally (`pnpm bench:check`)
+  # instead. The "mechanism not margin" discipline: don't ship a CI gate that's
+  # red on environment noise. Re-add only with a runner-calibrated baseline.
 
   # E2E gate — the @smoke tier ONLY (deterministic critical-path locks).
   #

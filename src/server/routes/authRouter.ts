@@ -1,5 +1,4 @@
 import { Router, type Request, type Response, type Router as RouterType } from 'express';
-import { randomUUID } from 'node:crypto';
 import {
   register,
   login,
@@ -16,8 +15,27 @@ import {
   LoginBodySchema,
   UpdateProfileBodySchema,
 } from '../../shared-types/auth.js';
+import { createRateLimiter, clientIp } from '../net/HttpRateLimit.js';
+import { resolveJwtSecret } from '../auth/jwt.js';
+import { createOAuthState, verifyOAuthState } from '../auth/oauthState.js';
+import { AuthCodeStore } from '../auth/authCodeStore.js';
+import { z } from 'zod';
+import { pino } from 'pino';
+
+const authLogger = pino({ name: 'auth' });
 
 export const authRouter: RouterType = Router();
+
+// Per-IP fixed-window rate limits (S2) so the bcrypt login/register endpoints
+// can't be used as a CPU brute-force surface. One shared limiter per category
+// gives a combined budget across its routes per IP; cheap routes (/healthz,
+// /diag) are intentionally not limited.
+const AUTH_WRITE_WINDOW_MS = 60_000;
+const AUTH_WRITE_MAX = 10; // login + register, combined, per IP per minute
+const OAUTH_WINDOW_MS = 60_000;
+const OAUTH_MAX = 30; // /auth/google* per IP per minute
+const authWriteLimiter = createRateLimiter({ windowMs: AUTH_WRITE_WINDOW_MS, max: AUTH_WRITE_MAX });
+const oauthLimiter = createRateLimiter({ windowMs: OAUTH_WINDOW_MS, max: OAUTH_MAX });
 
 function bearerToken(req: Request): string | null {
   const auth = req.headers['authorization'];
@@ -25,13 +43,7 @@ function bearerToken(req: Request): string | null {
   return auth.slice(7);
 }
 
-function clientIp(req: Request): string | null {
-  return (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
-    ?? req.socket.remoteAddress
-    ?? null;
-}
-
-authRouter.post('/register', async (req: Request, res: Response) => {
+authRouter.post('/register', authWriteLimiter, async (req: Request, res: Response) => {
   const parsed = RegisterBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.errors[0]?.message ?? 'Invalid input' });
@@ -55,7 +67,7 @@ authRouter.post('/register', async (req: Request, res: Response) => {
   }
 });
 
-authRouter.post('/login', async (req: Request, res: Response) => {
+authRouter.post('/login', authWriteLimiter, async (req: Request, res: Response) => {
   const parsed = LoginBodySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid input' });
@@ -96,9 +108,14 @@ authRouter.patch('/profile', async (req: Request, res: Response) => {
   res.json({ user });
 });
 
-// In-memory state store for CSRF protection on the OAuth round-trip.
-const oauthStates = new Map<string, number>();
-const STATE_TTL_MS = 10 * 60 * 1000;
+// Stateless signed CSRF state for the OAuth round-trip (S4). Replaces the
+// former in-memory Map (raced, lost on restart, broke multi-instance). The
+// HMAC key is the same fail-closed secret used for session JWTs.
+const oauthStateSecret = resolveJwtSecret();
+
+// Single-use code store for the OAuth code-exchange flow (S3).
+const authCodes = new AuthCodeStore();
+const ExchangeBodySchema = z.object({ code: z.string().min(1).max(64) }).strict();
 
 // Dev-only: mint a real JWT for a deterministic test user. Used by the
 // Playwright globalSetup to bypass the login UI without faking auth state.
@@ -119,38 +136,50 @@ if (process.env['NODE_ENV'] !== 'production') {
       res.json({ token, user });
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown';
-      console.error('[auth/dev/test-token]', msg);
+      authLogger.error({ msg }, 'dev test-token mint failed');
       res.status(500).json({ error: 'dev test-token mint failed' });
     }
   });
 }
 
-authRouter.get('/google', (_req: Request, res: Response) => {
-  const state = randomUUID();
-  oauthStates.set(state, Date.now());
+authRouter.get('/google', oauthLimiter, (_req: Request, res: Response) => {
+  const state = createOAuthState(oauthStateSecret);
   res.redirect(authorizationUrl(state));
 });
 
-authRouter.get('/google/callback', async (req: Request, res: Response) => {
+authRouter.get('/google/callback', oauthLimiter, async (req: Request, res: Response) => {
   const { code, state } = req.query as { code?: string; state?: string };
 
   if (!code || !state) { res.status(400).send('Missing code or state'); return; }
 
-  const issued = oauthStates.get(state);
-  if (!issued || Date.now() - issued > STATE_TTL_MS) {
+  if (!verifyOAuthState(state, oauthStateSecret)) {
     res.status(400).send('Invalid or expired state');
     return;
   }
-  oauthStates.delete(state);
 
   try {
     const profile = await exchangeCode(code);
     const { token, user } = await findOrCreateGoogleUser(profile);
     recordLoginEvent(profile.email, user.id, true, 'google', clientIp(req));
-    res.redirect(`/?token=${encodeURIComponent(token)}`);
+    // S3: stash the JWT under a single-use code and redirect with that, instead
+    // of putting the token in the URL (browser history / logs / Referer leak).
+    // The SPA POSTs the code to /auth/exchange to pick up the real token.
+    const authCode = authCodes.issue({ token, user });
+    res.redirect(`/?authCode=${encodeURIComponent(authCode)}`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'unknown';
-    console.error('[auth/google/callback]', msg);
+    authLogger.error({ msg }, 'OAuth callback failed');
     res.status(500).send(`OAuth error: ${msg}`);
   }
+});
+
+/** Swap a single-use OAuth `authCode` (from the /?authCode= redirect) for the
+ *  session token + user (S3). Bounded code length; single-use — a replayed or
+ *  expired code returns 401. Limited as an OAuth endpoint. */
+authRouter.post('/exchange', oauthLimiter, (req: Request, res: Response) => {
+  const parsed = ExchangeBodySchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: 'Invalid code' }); return; }
+  const payload = authCodes.redeem(parsed.data.code);
+  if (!payload) { res.status(401).json({ error: 'Invalid or expired code' }); return; }
+  res.json(payload);
 });

@@ -17,6 +17,7 @@ import { Box, Typography } from '@mui/material';
 import { PixiRenderer } from '../render/PixiRenderer';
 import { Keyboard } from '../input/Keyboard';
 import { LocalGameClient } from '../local/LocalGameClient';
+import { logEvent } from '../debug/ClientLogger';
 
 export function LocalSurface(): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -56,7 +57,7 @@ export function LocalSurface(): JSX.Element {
       };
       animFrameRef.current = requestAnimationFrame(loop);
     })().catch((err: unknown) => {
-      console.error('[LocalSurface] start failed', err);
+      logEvent('local_surface_start_failed', { err: String(err) });
     });
 
     return () => {

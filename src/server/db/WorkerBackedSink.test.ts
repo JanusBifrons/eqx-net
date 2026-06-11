@@ -221,4 +221,32 @@ describe('WorkerBackedSink', () => {
     const err = await settled;
     expect(err).toBeInstanceOf(Error);
   });
+
+  describe('health() observability (R4)', () => {
+    it('starts at zero failures and reports queue depth', async () => {
+      await attachReady(sink, worker);
+      sink.enqueueCritical(KILL_OP);
+      const h = sink.health();
+      expect(h.criticalFailures).toBe(0);
+      expect(h.queueDepth).toBe(1);
+      expect(h.exited).toBe(false);
+    });
+
+    it('increments criticalFailures on a BATCH_ERROR', async () => {
+      await attachReady(sink, worker);
+      sink.enqueueCritical(KILL_OP);
+      await vi.advanceTimersByTimeAsync(50); // flush → BATCH posted
+      const batch = worker.posted.find((m) => m.type === 'BATCH') as { batchId: number };
+      worker.simulateMessage({ type: 'BATCH_ERROR', batchId: batch.batchId, message: 'disk full' });
+      expect(sink.health().criticalFailures).toBe(1);
+    });
+
+    it('flags exited + counts a failure on an unexpected worker exit', async () => {
+      await attachReady(sink, worker);
+      worker.simulateExit(1); // unexpected (not via shutdown())
+      const h = sink.health();
+      expect(h.exited).toBe(true);
+      expect(h.criticalFailures).toBe(1);
+    });
+  });
 });

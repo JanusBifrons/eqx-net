@@ -47,6 +47,9 @@ export class WorkerBackedSink implements IPersistenceSink {
   private readonly pendingCritical: PersistOp[] = [];
   private readonly volatileBuffer: PersistOp[] = [];
   private volatileDropped = 0;
+  /** CRITICAL-lane failures: BATCH_ERROR replies + an unexpected worker exit.
+   *  Surfaced on /healthz so a silently-failing write lane is observable (R4). */
+  private criticalFailures = 0;
 
   private nextBatchId = 1;
   private nextOpId = 1;
@@ -83,6 +86,7 @@ export class WorkerBackedSink implements IPersistenceSink {
         }
         if (msg.type === 'BATCH_ERROR') {
           const message = `DB worker BATCH_ERROR: ${msg.message}`;
+          this.criticalFailures += 1;
           logger.error({ batchId: msg.batchId, message: msg.message }, 'critical batch failure');
           this.pendingBatches.get(msg.batchId)?.reject(new Error(message));
           this.pendingBatches.delete(msg.batchId);
@@ -277,6 +281,7 @@ export class WorkerBackedSink implements IPersistenceSink {
     this.exited = true;
     this.stopFlushTimer();
     if (!this.shuttingDown) {
+      this.criticalFailures += 1;
       logger.error({ code }, 'criticalSinkLost — DB worker exited unexpectedly');
     }
     // Reject any in-flight awaitables; their callers will see the error.
@@ -297,6 +302,20 @@ export class WorkerBackedSink implements IPersistenceSink {
       this.shutdownAck({ drained: 0 });
       this.shutdownAck = null;
     }
+  }
+
+  /**
+   * Persistence health snapshot for /healthz (R4). Cheap integer reads — safe
+   * on the highest-frequency endpoint. `exited === true` means the CRITICAL
+   * write lane is lost (the supervisor should restart).
+   */
+  health(): { criticalFailures: number; queueDepth: number; volatileDropped: number; exited: boolean } {
+    return {
+      criticalFailures: this.criticalFailures,
+      queueDepth: this.pendingCritical.length,
+      volatileDropped: this.volatileDropped,
+      exited: this.exited,
+    };
   }
 
   // Test inspection hooks — exposed for unit tests to verify internal state.

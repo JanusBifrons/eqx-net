@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/client/main.tsx",
+    "src/server/index.ts",
+    "src/core/physics/worker.ts",
+    "src/server/db/dbWorker.ts",
+    "tests/**/*.{test,spec}.{ts,tsx}",
+    "tests/**/run-*.ts",
+    "benchmarks/**/*.bench.ts",
+    "scripts/**/*.{ts,mjs,js}",
+    "*.config.{ts,js}"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": [
+    "src/**/__fixtures__/**",
+    "src/**/__offscreen-spike__/**"
+  ],
+  "ignoreDependencies": []
+}

@@ -17,6 +17,11 @@ import { z } from 'zod';
  *   moved from the client in 2026-05-13 so all visitors see the same
  *   value. Will swap to a real `matchMaker`-summed count later without
  *   changing the wire shape.
+ * - `persistence` — optional ops observability (plan squishy-canyon, R4):
+ *   hydrate + worker-sink failure counters. OPTIONAL + loose because the
+ *   client doesn't consume it and the schema is `.strict()` — without
+ *   declaring it here, adding it server-side would fail the client's
+ *   `safeParse` and silently zero out `playersOnline`/`ready`.
  */
 export const HealthResponseSchema = z
   .object({
@@ -24,6 +29,17 @@ export const HealthResponseSchema = z
     ready: z.boolean(),
     tick: z.number().int().nonnegative(),
     playersOnline: z.number().int().nonnegative(),
+    persistence: z
+      .object({
+        selectFailures: z.number().optional(),
+        corruptRowsSkipped: z.number().optional(),
+        criticalFailures: z.number().optional(),
+        queueDepth: z.number().optional(),
+        volatileDropped: z.number().optional(),
+        exited: z.boolean().optional(),
+      })
+      .partial()
+      .optional(),
   })
   .strict();
 
