@@ -117,6 +117,32 @@ describe('serverHealthPoller', () => {
     expect(h.snapshots[0]!.data?.playersOnline).toBe(750);
   });
 
+  // Regression lock (plan squishy-canyon): the server's /healthz gained an
+  // optional `persistence` ops block (R4). The schema is `.strict()`, so before
+  // it was declared optional the extra key failed safeParse → playersOnline/
+  // ready silently dropped → meta-landing "—" + join CTA stuck disabled (PR #19
+  // e2e-smoke failures). A body WITH persistence must still parse healthy.
+  it('parses a /healthz body that includes the optional persistence block', async () => {
+    const withPersistence = {
+      ...validBody,
+      persistence: { selectFailures: 0, criticalFailures: 0, queueDepth: 0, exited: false },
+    };
+    const h = makeHarness({ responses: [{ ok: true, body: withPersistence }] });
+    const poller = createServerHealthPoller({
+      url: '/healthz',
+      onChange: h.onChange,
+      fetchImpl: h.fetchImpl,
+      setTimeoutImpl: h.setTimeoutImpl,
+      clearTimeoutImpl: h.clearTimeoutImpl,
+    });
+    poller.start();
+    await h.flush();
+    poller.stop();
+
+    expect(h.snapshots[0]!.state).toBe('healthy');
+    expect(h.snapshots[0]!.data?.playersOnline).toBe(750);
+  });
+
   it('emits an unreachable snapshot on network error, with no data', async () => {
     const h = makeHarness({ responses: ['network-error'] });
     const poller = createServerHealthPoller({
