@@ -54,6 +54,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: false,
+    // CI-only flake shield: a real Colyseus server + WS transport per test
+    // means runner-load transients (socket hang up / ECONNRESET) can fail a
+    // test the code didn't break — the same class the harness's bounded
+    // matchmake retry and the netgate's auto-retry ride out. Two retries on
+    // CI; locally zero so flakes stay loud during development.
+    retry: process.env.CI ? 2 : 0,
     include: [
       'tests/integration/**/*.test.ts',
     ],
