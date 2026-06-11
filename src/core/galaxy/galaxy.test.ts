@@ -5,6 +5,8 @@ import {
   getSector,
   getNeighbours,
   isNeighbour,
+  getEntrySectors,
+  isEntrySector,
   axialToPixel,
 } from './galaxy.js';
 
@@ -102,6 +104,32 @@ describe('galaxy graph', () => {
 
     it('returns empty array on unknown source', () => {
       expect(getNeighbours('nonexistent')).toEqual([]);
+    });
+  });
+
+  describe('entry sectors (drone warp-in edge)', () => {
+    it('getEntrySectors returns exactly the 6 ring outers (the map edge), never the centre', () => {
+      const entry = getEntrySectors();
+      expect(entry.length).toBe(6);
+      const keys = entry.map((s) => s.key).sort();
+      expect(keys).toEqual(
+        GALAXY_SECTORS.filter((s) => s.key !== DEFAULT_SECTOR_KEY).map((s) => s.key).sort(),
+      );
+      expect(keys).not.toContain(DEFAULT_SECTOR_KEY);
+    });
+
+    it('isEntrySector is true for every outer + false for the centre', () => {
+      expect(isEntrySector(DEFAULT_SECTOR_KEY)).toBe(false);
+      for (const s of GALAXY_SECTORS) {
+        expect(isEntrySector(s.key)).toBe(s.key !== DEFAULT_SECTOR_KEY);
+      }
+      expect(isEntrySector('not-a-sector')).toBe(false);
+    });
+
+    it('every entry sector is at hex distance 1 from the centre (the outermost ring)', () => {
+      const dist = (h: { q: number; r: number }) =>
+        (Math.abs(h.q) + Math.abs(h.r) + Math.abs(h.q + h.r)) / 2;
+      for (const s of getEntrySectors()) expect(dist(s.hex)).toBe(1);
     });
   });
 

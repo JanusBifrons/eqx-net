@@ -155,6 +155,41 @@ export function isNeighbour(fromKey: string, toKey: string): boolean {
   return src ? src.neighbours.includes(toKey) : false;
 }
 
+/** Axial-hex distance from the centre (Sol Prime at 0,0). */
+function hexDistanceFromCentre(h: AxialHex): number {
+  return (Math.abs(h.q) + Math.abs(h.r) + Math.abs(h.q + h.r)) / 2;
+}
+
+/**
+ * ENTRY (edge-of-galaxy) sectors — where Living World drone squads materialize
+ * (warp in) before hopping INWARD toward a target base, and where a killed
+ * squad respawns. Drones never appear in an interior sector out of nowhere; the
+ * galaxy "edge" is the only ingress (drone-warp-in design).
+ *
+ * Derived as the OUTERMOST ring (sectors at the maximum hex distance from the
+ * centre) rather than a hand-set per-record flag — so the set follows the graph
+ * if the galaxy grows (add a second ring and the edge moves outward with no
+ * bookkeeping). For the current 7-sector sunflower this is the 6 ring outers;
+ * the centre (sol-prime) is never an entry sector. Locked by `galaxy.test.ts`.
+ */
+export function getEntrySectors(): GalaxySector[] {
+  let maxD = 0;
+  for (const s of GALAXY_SECTORS) maxD = Math.max(maxD, hexDistanceFromCentre(s.hex));
+  // maxD === 0 would mean a single-sector galaxy (only the centre); then there
+  // is no edge ring → no entry sectors (the caller falls back / no spawns).
+  if (maxD === 0) return [];
+  return GALAXY_SECTORS.filter((s) => hexDistanceFromCentre(s.hex) === maxD);
+}
+
+/** True iff `key` is an entry (edge) sector — see {@link getEntrySectors}. */
+export function isEntrySector(key: string): boolean {
+  const s = getSector(key);
+  if (!s) return false;
+  let maxD = 0;
+  for (const g of GALAXY_SECTORS) maxD = Math.max(maxD, hexDistanceFromCentre(g.hex));
+  return maxD > 0 && hexDistanceFromCentre(s.hex) === maxD;
+}
+
 /** Standard pointy-top axial→pixel projection. Used by the SVG renderer. */
 export function axialToPixel(hex: AxialHex, size: number): { x: number; y: number } {
   const x = size * Math.sqrt(3) * (hex.q + hex.r / 2);
