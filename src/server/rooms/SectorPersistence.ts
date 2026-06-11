@@ -50,6 +50,11 @@ export class SectorPersistence {
     if (sectorKey === null) return;
     const swarm: SectorSnapshotPayload['swarm'] = [];
     for (const rec of d.swarmRegistry.all()) {
+      // Drones (kind 1) are NO LONGER persisted (drone-warp-in, 2026-06-11):
+      // they are transient — owned by the roaming LivingWorldDirector pool and
+      // re-seeded at entry sectors on boot, so persisting their health is
+      // meaningless (and a cold boot deliberately starts with an empty interior).
+      if (rec.kind === 1) continue;
       // Asteroids aren't tracked in swarmHealth; default to 0
       // (unused on restore because asteroids aren't kill-tracked).
       const health = d.swarmHealth.get(rec.id) ?? 0;

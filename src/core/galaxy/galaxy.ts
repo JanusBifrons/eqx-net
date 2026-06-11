@@ -31,25 +31,28 @@ export interface GalaxySector {
   neighbours: string[];
   /** Asteroid layout key — resolved server-side via asteroidConfigs.ts. */
   asteroidConfigKey: AsteroidConfigKey;
-  /** Ambient patrol-drone floor seeded at room creation so an empty
-   *  sector still feels alive BEFORE the Living World hunter bots route
-   *  in. These are the legacy non-proactive `drone-*` patrol drones; the
-   *  25 cross-sector `lwbot-*` hunters are owned separately by the
-   *  `LivingWorldDirector` and are ADDITIVE to this floor. */
+  /** Boot-seeded patrol-drone count for this galaxy sector. RETIRED to 0
+   *  (drone-warp-in, 2026-06-11): drones no longer materialise in galaxy
+   *  sectors at room creation — they warp in at entry (edge) sectors and the
+   *  `LivingWorldDirector`'s roaming squad pool provides ALL ambient presence.
+   *  Engineering/test rooms still set their own `droneCount` directly. */
   droneCount: number;
   /** Default ship spawn coords for fresh entry into this sector. */
   defaultSpawn: { x: number; y: number };
 }
 
 /**
- * Ambient patrol-drone floor per galaxy sector (Living World, 2026-05-16).
- * Deliberately small: the world's "alive" feeling now comes primarily
- * from the 25 director-owned hunter bots warping between sectors toward
- * players; a couple of patrol drones per sector keep an empty,
- * not-yet-visited sector from looking dead. Pre-Living-World these were
- * 8–20 per sector (a static per-sector garrison) — that role is gone.
+ * Ambient patrol-drone boot-seed floor per galaxy sector. **RETIRED to 0**
+ * (drone-warp-in refactor, 2026-06-11). Previously 2/sector (and 8–20 pre-Living
+ * World); now NO drone is boot-seeded into a galaxy sector. All ambient presence
+ * comes from the `LivingWorldDirector`'s roaming squad pool, which materialises
+ * drones ONLY at entry (edge) sectors and lets them hop inward — so a drone is
+ * never conjured in an interior sector out of nowhere. Kept as a named constant
+ * (rather than an inline 0) so the retirement is explicit at every call site;
+ * re-raising it would re-introduce magic-appearance drones and is a deliberate,
+ * reviewed change.
  */
-export const AMBIENT_DRONE_FLOOR = 2;
+export const AMBIENT_DRONE_FLOOR = 0;
 
 /**
  * 7-sector sunflower: 1 centre + 6 ring outers.

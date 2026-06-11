@@ -10,7 +10,10 @@
  * fresh-spawns from config. See docs/architecture/persistence-and-migrations.md.
  */
 
-export const CURRENT_SCHEMA_VERSION = 1;
+// v2 (drone-warp-in, 2026-06-11): drone (kind 1) rows are no longer persisted —
+// drones are transient/roaming and re-seed at entry sectors on boot. Bumping
+// discards every v1 snapshot (which carried drone rows) and reseeds all sectors.
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
