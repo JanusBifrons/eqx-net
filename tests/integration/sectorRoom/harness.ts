@@ -413,6 +413,8 @@ export async function bootLivingWorldTestServer(opts: {
     // ingress/no-hunt locks stay deterministic; the roam test opts in with a
     // small `roamIntervalMs` via `opts.director`.
     roamIntervalMs: 60_000,
+    // Short dispatch cadence so wave-cadence integration tests re-trigger fast.
+    dispatchIntervalMs: 500,
     ...opts.director,
   });
   director.start();

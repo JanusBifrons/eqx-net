@@ -134,6 +134,9 @@ export interface LivingWorldOptions {
    *  a new one — the slow-roam cadence that replaces the retired ambient patrol
    *  floor. Members stay NEUTRAL while roaming (hostility is wave-only). */
   roamIntervalMs: number;
+  /** Minimum spacing (ms) between squad dispatches against the SAME ready
+   *  faction — the director routes ≤1 squad per this window at a base. */
+  dispatchIntervalMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -161,6 +164,8 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   hopTravelMs: 120_000,
   // ~45 s dwell between roam hops — a slow drift, not a frantic patrol.
   roamIntervalMs: 45_000,
+  // One squad per ready faction per 5 min (then it traverses hop-by-hop).
+  dispatchIntervalMs: 300_000,
 };
 
 export class LivingWorldDirector {
@@ -215,6 +220,7 @@ export class LivingWorldDirector {
       hunterPool: this.pool,
       behaviour: new WaveSquadBehaviour(),
       pattern: new EscalatingWavePattern(),
+      dispatchIntervalMs: this.opts.dispatchIntervalMs,
     });
   }
 
@@ -315,7 +321,7 @@ export class LivingWorldDirector {
     this.promoteSquads();
 
     // ── 2. wave planning + squad advancement ─────────────────────────────
-    for (const step of this.waveDirector.plan()) this.executeWaveStep(step);
+    for (const step of this.waveDirector.plan(now)) this.executeWaveStep(step);
 
     // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
     this.roamStep(now);

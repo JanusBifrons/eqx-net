@@ -48,6 +48,7 @@ const readyFaction = (over: Partial<FactionBaseReadiness> = {}): FactionBaseRead
 function setup(opts: {
   readiness: FactionBaseReadiness[];
   hunterStates?: Map<string, { state: string; sectorKey: string }>;
+  dispatchIntervalMs?: number;
 }): { wave: WaveDirector; squadPool: SquadPool } {
   const squadPool = new SquadPool();
   squadPool.seed(botIds(LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE), () => 'sol-prime', () => 'fighter');
@@ -58,15 +59,19 @@ function setup(opts: {
     hunterPool: fakeHunterPool(opts.hunterStates ?? new Map()),
     behaviour: new WaveSquadBehaviour(),
     pattern: new EscalatingWavePattern(),
+    ...(opts.dispatchIntervalMs !== undefined ? { dispatchIntervalMs: opts.dispatchIntervalMs } : {}),
   });
   return { wave, squadPool };
 }
+
+const countAssignedTo = (squadPool: SquadPool, factionId: string): number =>
+  [...squadPool.all()].filter((s) => s.targetFactionId === factionId).length;
 
 describe('WaveDirector — assignment + advancement', () => {
   it('assigns an idle squad to a ready faction and emits a warp step', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction()] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     const sq = squadPool.get('squad-0')!;
     expect(sq.targetFactionId).toBe('alice');
     expect(sq.sectorKey).toBe('vega');
@@ -76,7 +81,7 @@ describe('WaveDirector — assignment + advancement', () => {
   it('does NOT assign when no squad is idle', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction()] });
     // all squads left 'forming'
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(steps).toEqual([]);
     expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
   });
@@ -84,14 +89,14 @@ describe('WaveDirector — assignment + advancement', () => {
   it('does NOT assign to an unready base', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction({ ready: false })] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
-    expect(wave.plan()).toEqual([]);
+    expect(wave.plan(0)).toEqual([]);
     expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
   });
 
   it('does NOT assign to a ready base whose owner is OFFLINE (presence gate)', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction({ ownerPresent: false })] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
-    expect(wave.plan()).toEqual([]);
+    expect(wave.plan(0)).toEqual([]);
     expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
   });
 
@@ -99,7 +104,7 @@ describe('WaveDirector — assignment + advancement', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction()] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
     squadPool.setState(squadPool.get('squad-1')!, 'idle');
-    wave.plan();
+    wave.plan(0);
     const assigned = [...squadPool.all()].filter((s) => s.targetFactionId === 'alice');
     expect(assigned).toHaveLength(1);
   });
@@ -110,7 +115,7 @@ describe('WaveDirector — assignment + advancement', () => {
     const sq = squadPool.get('squad-0')!;
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'warping');
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
@@ -132,7 +137,7 @@ describe('WaveDirector — assignment + advancement', () => {
     const sq = squadPool.get('squad-0')!;
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
@@ -152,7 +157,7 @@ describe('WaveDirector — assignment + advancement', () => {
     const sq = squadPool.get('squad-0')!;
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
@@ -165,9 +170,31 @@ describe('WaveDirector — assignment + advancement', () => {
     // Simulate the post-retreat state: idle, target cleared.
     squadPool.setState(sq, 'idle');
     sq.targetFactionId = null;
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(sq.targetFactionId).toBe('alice');
     expect(steps).toContainEqual({ kind: 'warp', squad: sq, to: 'vega' });
+  });
+
+  it('rate-caps dispatch to one squad per dispatchIntervalMs per faction', () => {
+    const { wave, squadPool } = setup({ readiness: [readyFaction()], dispatchIntervalMs: 1000 });
+    // First dispatch at t=0 — an idle squad is committed (no prior record).
+    squadPool.setState(squadPool.get('squad-0')!, 'idle');
+    wave.plan(0);
+    expect(countAssignedTo(squadPool, 'alice')).toBe(1);
+
+    // The wave stands down: squad-0 returns to idle, target cleared. A SECOND
+    // idle squad is now available, but within the dispatch window the faction
+    // must NOT receive a fresh squad.
+    const sq0 = squadPool.get('squad-0')!;
+    squadPool.setState(sq0, 'idle');
+    sq0.targetFactionId = null;
+    squadPool.setState(squadPool.get('squad-1')!, 'idle');
+    wave.plan(500); // < 1000 ms since the last dispatch
+    expect(countAssignedTo(squadPool, 'alice')).toBe(0);
+
+    // Once the window elapses, the next plan re-dispatches exactly one squad.
+    wave.plan(1500);
+    expect(countAssignedTo(squadPool, 'alice')).toBe(1);
   });
 
   it('attacking squad whose base vanished entirely → retreat', () => {
@@ -176,7 +203,7 @@ describe('WaveDirector — assignment + advancement', () => {
     const sq = squadPool.get('squad-0')!;
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
-    const steps = wave.plan();
+    const steps = wave.plan(0);
     expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 });
