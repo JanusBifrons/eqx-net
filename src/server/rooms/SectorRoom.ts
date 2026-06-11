@@ -387,7 +387,12 @@ function structurePriority(kind: StructureKindId): number {
   switch (kind) {
     case 'capital':
       return 3;
+    // The Miner is the wave objective; a shield-fence pylon is a defensive wall
+    // attackers want to dismantle to reach the base — both ranked above the
+    // other leaves so drones actively engage them (the wall absorbs the incoming
+    // fire until its batteries / power give out).
     case 'miner':
+    case 'shield_pylon':
       return 2;
     default:
       return 1;
