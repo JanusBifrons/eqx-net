@@ -699,6 +699,10 @@ export class SectorRoom extends Room<SectorState> {
   get _internals(): {
     serverTick: number;
     ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+    /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
+     *  existing-ship integration test assert a lingering hull was evicted
+     *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
+    lingeringSlots: Map<string, number>;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
     applyDamage: (
@@ -731,6 +735,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       serverTick: this.serverTick,
       ownerlessShips: this.ownerlessShips,
+      lingeringSlots: this.lingeringSlots,
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
@@ -3279,6 +3284,25 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null && requestedShipId !== '') {
       const rec = getPlayerShipStore().get(requestedShipId);
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
+        // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
+        // existing ship → locked/broken"). If the requested hull is STILL
+        // LINGERING in this room (the player disconnected, or it was displaced
+        // by a fresh spawn), it owns a `lingeringSlots` entry, a `linger-<id>`
+        // worker body, AND an armed ownerless-evict timer keyed by this same
+        // shipInstanceId. Without tearing those down first, the bind +
+        // `state.ships.set(<id>)` below CLOBBERS the lingering ShipState under
+        // the same key while the orphan body + timer survive: the body pins the
+        // fresh hull (it never reads as active to the client — the user's
+        // "fire/accelerate do nothing, snaps back to a static hull"), and the
+        // surviving timer later DELETES the now-active ship. Reachable from any
+        // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
+        // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
+        // stale schema entry, and markStored's the pose — which the `rec` we read
+        // above already mirrors, so the restore lands at the same place.
+        if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
+          serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
+          this.evictOwnerlessShip(requestedShipId);
+        }
         spawnX = rec.lastX;
         spawnY = rec.lastY;
         // Defensive: a stored health <= 0 should be impossible (the
@@ -3441,6 +3465,18 @@ export class SectorRoom extends Room<SectorState> {
     // any synchronous observer (e.g. a re-entrant fire-handler) can
     // already resolve the player's active hull.
     this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
+    // Tripwire (playtest 2026-06-10 Issue 6): a fresh-spawn bind must never land
+    // on a shipInstanceId already in the schema map — that means a lingering /
+    // wreck hull under the same key was NOT torn down first (the evict-then-
+    // restore above is the guard). Log loudly so any future regression of that
+    // invariant is visible instead of silently clobbering a live ShipState.
+    if (this.state.ships.has(ship.shipInstanceId)) {
+      logger.error(
+        { playerId, shipInstanceId: ship.shipInstanceId, sectorKey: this.sectorKey },
+        'duplicate state.ships key on fresh-spawn bind — lingering hull not evicted (Issue 6)',
+      );
+      serverLogEvent('ships_set_duplicate_key', { playerId, shipInstanceId: ship.shipInstanceId });
+    }
     // Phase 6b — schema map is keyed by shipInstanceId. This supports
     // multiple entries per player (active + lingering hulls). All the
     // `state.ships.get(playerId)` callsites have been migrated to the
