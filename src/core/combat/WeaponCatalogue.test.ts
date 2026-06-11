@@ -76,10 +76,11 @@ describe('WeaponCatalogue', () => {
     if (w.mode === 'missile') {
       // Slow + dodgeable speed (one of the load-bearing tuning numbers).
       expect(w.speed).toBe(400);
-      // Looser homing (smoke handoff 2026-06-06, Issue 2: "review turn
-      // speed" → easier to dodge). turnRate 1.5 → 1.0; turn radius =
-      // speed/turnRate = 400 u (was ~267 u).
-      expect(w.turnRate).toBe(1.0);
+      // Tighter homing (playtest 2026-06-10 Issue 10: "bias tracking the
+      // closest enemy a lot more"). turnRate 1.0 → 1.5; turn radius =
+      // speed/turnRate ≈ 267 u (was 400 u). Paired with mid-flight
+      // re-acquisition in MissileSimulation.advance.
+      expect(w.turnRate).toBe(1.5);
       // Long enough that dumb-mode missiles waste shots — not a near-miss
       // toy weapon. (On expiry the missile now fizzles, not detonates.)
       expect(w.lifetimeTicks).toBe(360);
