@@ -179,11 +179,17 @@ interface ComponentInfo {
   members: number;
 }
 
+/** Shared empty member list so `componentMembers` never allocates on a miss. */
+const NO_MEMBERS: readonly string[] = Object.freeze([]);
+
 export class Grid {
   private nodes: ReadonlyMap<string, GridNode> = new Map();
   private adjacency: ReadonlyMap<string, readonly Connection[]> = new Map();
   private readonly componentOf = new Map<string, number>();
   private readonly componentInfo = new Map<number, ComponentInfo>();
+  /** comp id → its member structure ids (for battery charge/discharge + the
+   *  shield-wall drain, which both operate over a whole component). */
+  private readonly componentMembersMap = new Map<number, string[]>();
   private readonly routeCache = new Map<string, readonly string[] | null>();
 
   /**
@@ -199,6 +205,7 @@ export class Grid {
     this.adjacency = adjacency;
     this.componentOf.clear();
     this.componentInfo.clear();
+    this.componentMembersMap.clear();
     this.routeCache.clear();
 
     let nextComp = 0;
@@ -207,12 +214,14 @@ export class Grid {
       if (this.componentOf.has(node.id)) continue;
       const comp = nextComp++;
       const info: ComponentInfo = { netPower: 0, hasCapital: false, members: 0 };
+      const memberIds: string[] = [];
       const queue: string[] = [node.id];
       this.componentOf.set(node.id, comp);
       while (queue.length > 0) {
         const cur = queue.pop()!;
         const cn = nodes.get(cur)!;
         info.members++;
+        memberIds.push(cur);
         info.netPower += cn.powerOutput - cn.powerConsumption;
         if (cn.isCapital) info.hasCapital = true;
         for (const c of adjacency.get(cur) ?? []) {
@@ -227,6 +236,7 @@ export class Grid {
         }
       }
       this.componentInfo.set(comp, info);
+      this.componentMembersMap.set(comp, memberIds);
     }
   }
 
@@ -239,6 +249,26 @@ export class Grid {
     if (comp === undefined) return { netPower: 0, powered: false };
     const info = this.componentInfo.get(comp)!;
     return { netPower: info.netPower, powered: info.hasCapital && info.netPower >= 0 };
+  }
+
+  /** Member structure ids of the component containing `id` (the shared frozen
+   *  empty list when `id` is unbuilt / unknown). Read-only — do NOT mutate.
+   *  Used by the battery charge/discharge pass and the shield-wall drain, which
+   *  operate over a whole connected component. */
+  componentMembers(id: string): readonly string[] {
+    const comp = this.componentOf.get(id);
+    if (comp === undefined) return NO_MEMBERS;
+    return this.componentMembersMap.get(comp) ?? NO_MEMBERS;
+  }
+
+  /** Iterate each built component exactly once with its member ids + aggregate
+   *  generation balance. The callback must not retain `members` past the call. */
+  forEachComponent(
+    cb: (members: readonly string[], netPower: number, hasCapital: boolean) => void,
+  ): void {
+    for (const [comp, info] of this.componentInfo) {
+      cb(this.componentMembersMap.get(comp) ?? NO_MEMBERS, info.netPower, info.hasCapital);
+    }
   }
 
   /** True if both structures are built and in the same component. */

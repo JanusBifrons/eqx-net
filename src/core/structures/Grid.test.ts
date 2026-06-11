@@ -199,6 +199,34 @@ describe('Grid — components, power, routing, dead-end', () => {
     expect(grid.sameComponent('cap', 'sol')).toBe(true);
   });
 
+  it('componentMembers + forEachComponent expose each built component once', () => {
+    const cap = capital('cap', 0, 0);
+    const con = connector('con', 300, 0);
+    const sol = solar('sol', 600, 0);
+    const lone = solar('lone', 5000, 0); // separate island (no link)
+    const nodes = new Map([['cap', cap], ['con', con], ['sol', sol], ['lone', lone]]);
+    const adj = adjacencyFrom([
+      new Connection(1, 'cap', 'con', CONNECTION_THROUGHPUT),
+      new Connection(2, 'con', 'sol', CONNECTION_THROUGHPUT),
+    ]);
+    const grid = new Grid();
+    grid.rebuild(nodes, adj);
+
+    // Every member of the cap→con→sol component sees the same membership set.
+    expect([...grid.componentMembers('sol')].sort()).toEqual(['cap', 'con', 'sol']);
+    expect([...grid.componentMembers('cap')].sort()).toEqual(['cap', 'con', 'sol']);
+    expect(grid.componentMembers('lone')).toEqual(['lone']);
+    expect(grid.componentMembers('missing')).toEqual([]); // frozen empty on a miss
+
+    // forEachComponent visits both components once, with the right balances.
+    const seen: Array<{ size: number; netPower: number; hasCapital: boolean }> = [];
+    grid.forEachComponent((members, netPower, hasCapital) =>
+      seen.push({ size: members.length, netPower, hasCapital }));
+    expect(seen).toHaveLength(2);
+    expect(seen).toContainEqual({ size: 3, netPower: 80, hasCapital: true });
+    expect(seen).toContainEqual({ size: 1, netPower: 30, hasCapital: false });
+  });
+
   it('a lone built solar (no capital reachable) is unpowered', () => {
     const sol = solar('lone', 0, 0);
     const grid = new Grid();

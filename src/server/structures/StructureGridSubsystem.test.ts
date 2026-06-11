@@ -58,6 +58,69 @@ function makeHarness(
 
 const OWNER = 'player-1';
 
+describe('StructureGridSubsystem — batteries (full power buffer)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  /** Force a placed blueprint straight to its built state (skip the slow
+   *  construction pulses) + dirty topology so the next pulse relays it. */
+  const build = (id: string, kind: string): void => {
+    const rec = h.registry.get(id)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    h.health.set(id, getStructureKind(kind).maxHealth);
+    h.registry.topologyDirty = true;
+  };
+
+  it('charges from a powered grid surplus and caps at capacity', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!; // pre-built, +50 surplus
+    const bat = h.placement.place(OWNER, 'battery', 200, 0)!;
+    build(bat, 'battery');
+    expect(h.registry.get(bat)!.storedPower).toBe(0);
+
+    const capacity = getStructureKind('battery').powerStorageCapacity!; // 300
+    for (let i = 0; i < 6; i++) h.pulse(); // +50/pulse → 300 by pulse 6
+    expect(h.registry.get(bat)!.storedPower).toBe(capacity);
+    h.pulse(); // full → no overflow
+    expect(h.registry.get(bat)!.storedPower).toBe(capacity);
+  });
+
+  it('discharges to keep a deficit grid powered, then browns out when empty', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!; // +50
+    const bat = h.placement.place(OWNER, 'battery', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', -200, 0)!; // -60 once built
+    build(bat, 'battery');
+    // Charge while the miner is still a blueprint (contributes 0): +50/pulse.
+    for (let i = 0; i < 6; i++) h.pulse();
+    expect(h.registry.get(bat)!.storedPower).toBe(300);
+
+    // Bring the miner online → component balance 50 - 60 = -10/pulse.
+    build(miner, 'miner');
+    h.pulse();
+    // Battery covers the shortfall → miner stays powered despite a negative net.
+    expect(h.grid.powerSummaryFor(miner).netPower).toBe(-10);
+    expect(h.grid.powerSummaryFor(miner).powered).toBe(true);
+    expect(h.registry.get(bat)!.storedPower).toBe(290); // 300 - 10
+
+    // 29 more pulses drain the remaining 290 at 10/pulse → empty.
+    for (let i = 0; i < 29; i++) h.pulse();
+    expect(h.registry.get(bat)!.storedPower).toBe(0);
+    // No charge left + a -10 balance → the whole component browns out.
+    h.pulse();
+    expect(h.grid.powerSummaryFor(miner).powered).toBe(false);
+  });
+
+  it('a battery with no capital path stays inert (capital-less island)', () => {
+    // Battery + solar far from any capital → unpowered island, no charge.
+    const sol = h.placement.place(OWNER, 'solar', 4000, 0)!;
+    const bat = h.placement.place(OWNER, 'battery', 4120, 0)!;
+    build(sol, 'solar');
+    build(bat, 'battery');
+    for (let i = 0; i < 5; i++) h.pulse();
+    expect(h.registry.get(bat)!.storedPower).toBe(0);
+  });
+});
+
 describe('StructureGridSubsystem — auto-connect on place', () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });
