@@ -159,13 +159,17 @@ const HEAT_SEEKER_DEF: MissileWeaponDef = {
   // hitscan beam range of 500). Long enough to make dumb-mode missiles
   // a meaningful waste-of-shot.
   lifetimeTicks: 360,
-  // 1.0 rad/s yaw clamp (looser; was 1.5 — smoke handoff 2026-06-06,
-  // Issue 2: "review the turn speed" → easier to dodge). Turn radius =
-  // speed/turnRate = 400/1.0 = 400 u (was ~267 u), so a target that keeps
-  // turning out-manoeuvres the missile; a straight-line runner is still
-  // caught. Do NOT confuse with the frigate MOUNT rotationSpeed (turret
-  // slew) in shipKinds/missileFrigate.ts — different "turn".
-  turnRate: 1.0,
+  // 1.5 rad/s yaw clamp (playtest 2026-06-10 Issue 10: "missiles should bias
+  // tracking the closest enemy a lot more" → tighter homing). Turn radius =
+  // speed/turnRate = 400/1.5 ≈ 267 u (was 400 u at 1.0). Paired with mid-flight
+  // re-acquisition in MissileSimulation.advance (a lost lock re-chases the
+  // nearest hostile instead of flying straight forever) — together they make
+  // missiles meaningfully track. Was briefly 1.0 (smoke 2026-06-06 dodgeability
+  // pass); the playtest found that, combined with no re-acquisition, missiles
+  // felt useless. A turning target can still out-manoeuvre at 1.5; this is a
+  // gameplay knob — revisit after the next playtest. Do NOT confuse with the
+  // frigate MOUNT rotationSpeed (turret slew) in shipKinds/missileFrigate.ts.
+  turnRate: 1.5,
   splashRadius: 60,
   splashFalloffMin: 10,
   splashImpulse: 30,

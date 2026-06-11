@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode, type TouchEvent } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
@@ -14,6 +14,7 @@ import ShieldIcon from '@mui/icons-material/Shield';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { STRUCTURE_KINDS_LIST, type StructureKindId } from '@shared-types/structureKinds';
+import { useTouchClickActivate } from './touchClickActivate';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor, Phase 1).
@@ -69,28 +70,11 @@ export function SpeedDialMenu(): JSX.Element | null {
   // actions on `onTouchStart` so a SECOND simultaneous touch (the dial tapped
   // while a steering joystick touch is held) opens/activates them — mobile
   // browsers only synthesize a `click` for the PRIMARY touch sequence, so the
-  // pure-MUI click path never fired for the second touch. `lastTouchMs` records
-  // the touch so the trailing synthesized click is ignored (the
+  // pure-MUI click path never fired for the second touch. The trailing
+  // synthesized click is dropped within the suppress window (the
   // AutoFireToggleButton double-fire trap); `onClick` stays live for desktop.
-  const lastTouchMs = useRef(0);
-  const touchActivate = useCallback(
-    (fn: () => void) => (e: TouchEvent) => {
-      e.preventDefault(); // best-effort suppress the synthesized click
-      e.stopPropagation();
-      lastTouchMs.current = Date.now();
-      fn();
-    },
-    [],
-  );
-  const clickActivate = useCallback(
-    (fn: () => void) => () => {
-      // Ignore the click some browsers still synthesize shortly after a
-      // touchstart we already handled.
-      if (Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
-      fn();
-    },
-    [],
-  );
+  // Shared with `AutoFireToggleButton` via `useTouchClickActivate` (one impl).
+  const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
   const close = useCallback(() => {
     setOpen(false);
@@ -151,11 +135,11 @@ export function SpeedDialMenu(): JSX.Element | null {
       // letting the trailing click toggle again would immediately undo it.
       // Non-toggle reasons (focus / blur / escape / mouseLeave) still apply.
       onOpen={(_e, reason) => {
-        if (reason === 'toggle' && Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
+        if (reason === 'toggle' && isWithinSuppressWindow()) return;
         setOpen(true);
       }}
       onClose={(_e, reason) => {
-        if (reason === 'toggle' && Date.now() - lastTouchMs.current < TOUCH_CLICK_SUPPRESS_MS) return;
+        if (reason === 'toggle' && isWithinSuppressWindow()) return;
         close();
       }}
       FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
@@ -220,12 +204,6 @@ const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   miner: <DiamondIcon />,
   turret: <ShieldIcon />,
 };
-
-/** Window after a handled `onTouchStart` during which a synthesized `click` is
- *  ignored, so touch activation doesn't double-fire (the AutoFireToggleButton
- *  double-toggle trap). 700 ms comfortably covers the browser's touch→click
- *  delay without swallowing a deliberate follow-up desktop click. */
-const TOUCH_CLICK_SUPPRESS_MS = 700;
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
 

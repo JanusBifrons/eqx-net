@@ -49,6 +49,88 @@ export interface PlacementPreview {
   x: number;
   y: number;
   angle: number;
+  /** True ⇒ this is the dim "sent, awaiting the server entity" ghost shown
+   *  AFTER Confirm (playtest 2026-06-10 Issue 7), not the live positioning
+   *  ghost. The renderer dims it and stops capturing pointers for it. */
+  pending?: boolean;
+}
+
+/**
+ * A confirmed-but-not-yet-visible placement (playtest 2026-06-10 Issue 7 — "when
+ * you place a structure it just kinda vanishes then appears after a second or
+ * two"). The client used to clear the ghost the instant Confirm sent
+ * `place_structure`, leaving a gap (RTT + snapshot cadence) where neither the
+ * ghost nor the real structure was visible. We keep a DIM ghost at the sent
+ * point until the structure lands (the structures-slice count grows) or a
+ * timeout elapses.
+ */
+export interface PendingPlacement {
+  kind: StructureKindId;
+  x: number;
+  y: number;
+  /** `Date.now()` when `place_structure` was sent. */
+  sentAtMs: number;
+  /** `mirror.structures.size` at send time — the dim ghost clears once it grows
+   *  (a new structure appeared) without needing the assigned entityId back. */
+  baselineStructureCount: number;
+}
+
+/** Window to hold the dim "sent, awaiting server" ghost before giving up.
+ *  Covers RTT + snapshot cadence with margin; clears earlier the moment the
+ *  structure actually lands. */
+export const PENDING_PLACEMENT_TIMEOUT_MS = 3000;
+
+/** True when the confirmed placement ghost should stop showing: the structure
+ *  has appeared (slice count grew past the baseline) OR the timeout elapsed. */
+export function pendingPlacementResolved(
+  pending: PendingPlacement,
+  nowMs: number,
+  currentStructureCount: number,
+): boolean {
+  if (currentStructureCount > pending.baselineStructureCount) return true;
+  return nowMs - pending.sentAtMs >= PENDING_PLACEMENT_TIMEOUT_MS;
+}
+
+/** Outcome of {@link resolvePlacementPreviewStatus}. `active` = live positioning
+ *  ghost; `pending` = dim post-Confirm ghost (both mutate the `out` scratch);
+ *  `cleared` = a pending ghost just resolved, caller drops its record + the
+ *  mirror preview; `none` = nothing to show. */
+export type PlacementPreviewStatus = 'active' | 'pending' | 'cleared' | 'none';
+
+/**
+ * Decide this frame's placement-preview ghost, mutating `out` in place when one
+ * should show (alloc-free per frame — invariant #14). Priority: a live
+ * `placementKind` (positioning) beats a `pending` (sent-awaiting) ghost. Pure so
+ * the active/pending/clear branches + the timeout/count logic are unit-locked
+ * without a renderer or live room (the level the Issue-7 gap bug lives at).
+ */
+export function resolvePlacementPreviewStatus(
+  placementKind: StructureKindId | null,
+  localShip: ShipPose | null,
+  pending: PendingPlacement | null,
+  nowMs: number,
+  currentStructureCount: number,
+  out: PlacementPreview,
+): PlacementPreviewStatus {
+  if (placementKind && localShip) {
+    const pos = computePlacementPose(localShip, placementKind);
+    out.kind = placementKind;
+    out.x = pos.x;
+    out.y = pos.y;
+    out.angle = 0;
+    out.pending = false;
+    return 'active';
+  }
+  if (pending) {
+    if (pendingPlacementResolved(pending, nowMs, currentStructureCount)) return 'cleared';
+    out.kind = pending.kind;
+    out.x = pending.x;
+    out.y = pending.y;
+    out.angle = 0;
+    out.pending = true;
+    return 'pending';
+  }
+  return 'none';
 }
 
 /**
@@ -94,5 +176,8 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   const room = client.getRoom();
   if (!room) return false;
   room.send('place_structure', { type: 'place_structure', kind: kindId, x, y });
+  // Keep a dim ghost at the sent point until the structure lands, so the
+  // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
+  client.notePendingPlacement(kindId, x, y);
   return true;
 }

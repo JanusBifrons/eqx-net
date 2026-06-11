@@ -22,7 +22,8 @@
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { Grid } from '../../core/structures/Grid.js';
+import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import type { Connection } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -31,8 +32,37 @@ import {
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
 } from '../../core/structures/structureGridConstants.js';
-import { buildGridNodes } from './structureGridView.js';
+import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
+
+/** Cap on reconnect attempts per pulse so a sector full of permanently-stranded
+ *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
+ *  the whole registry every beat. Bounded work; the next pulse retries the rest. */
+const MAX_RECONNECT_ATTEMPTS_PER_PULSE = 8;
+
+/**
+ * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
+ * Issue 5 — "defence structures fire in pulses instead of constantly, like the
+ * player does"). All laser beam weapons now work the same everywhere: the
+ * turret fires its bound catalogue beam weapon (`mount.weaponId`) on that
+ * weapon's standard cooldown — a steady stream of small hits the client renders
+ * as one continuous beam (its laser TTL > the beam cadence) — instead of one
+ * big lump every `fireRateMs`. Per-hit damage is rebalanced to preserve the
+ * kind's tuned DPS (`weaponDamage / fireRateMs`) across the faster cadence, so
+ * total damage ≈ today's. `fireRateMs`/`weaponDamage` are retired as a PULSE
+ * gate and repurposed as the DPS budget.
+ *
+ * Pure + scalar in/out — unit-locked independent of the room.
+ */
+export function resolveTurretBeam(
+  weaponDamage: number,
+  fireRateMs: number,
+  beamCooldownTicks: number,
+): { cooldownMs: number; perHitDamage: number } {
+  const cooldownMs = (beamCooldownTicks / 60) * 1000;
+  const dps = fireRateMs > 0 ? weaponDamage / (fireRateMs / 1000) : 0;
+  return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
+}
 
 export interface StructureGridHooks {
   registry: StructureRegistry;
@@ -52,6 +82,11 @@ export interface StructureGridHooks {
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string): void;
+  /** Live non-structure obstacles (asteroids) that block a connection's line of
+   *  sight — same source the placement subsystem passes to autoConnectStructure.
+   *  Used by the reconnect sweep so a retry honours current asteroid geometry.
+   *  Optional: omitted ⇒ structures-only LOS (byte-identical). */
+  getObstacles?: () => readonly GridObstacle[];
 }
 
 export interface GridPulseResult {
@@ -80,20 +115,31 @@ export class StructureGridSubsystem {
    */
   tickTurrets(nowMs: number): void {
     if (!this.hooks.findNearestDrone || !this.hooks.applyDamage) return;
+    const kind = getStructureKind('turret');
+    // The turret fires its mount's bound catalogue beam weapon (same model as
+    // ships) on that weapon's standard cooldown — continuous small hits, not a
+    // 600 ms pulse (playtest 2026-06-10 Issue 5). Resolved once per tick (the
+    // kind is constant). `TURRET_TICK_MS` stays the targeting cadence; the beam
+    // cooldown gates actual fire.
+    const mountWeaponId = kind.mounts?.[0]?.weaponId;
+    const beamDef = getWeapon(isWeaponId(mountWeaponId) ? mountWeaponId : 'hitscan');
+    const { cooldownMs, perHitDamage } = resolveTurretBeam(
+      kind.weaponDamage ?? 0,
+      kind.fireRateMs ?? 600,
+      beamDef.cooldownTicks,
+    );
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'turret' || !rec.isConstructed) continue;
       if (!this.grid.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         continue;
       }
-      const kind = getStructureKind('turret');
       const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange ?? 0);
       rec.turretTargetEntityId = target?.entityId;
       if (!target) continue;
-      const cooldown = kind.fireRateMs ?? 600;
-      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldown) continue;
+      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
       rec.lastTurretFireMs = nowMs;
-      this.hooks.applyDamage(target.id, rec.id, kind.weaponDamage ?? 0);
+      this.hooks.applyDamage(target.id, rec.id, perHitDamage);
       this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
     }
   }
@@ -101,6 +147,13 @@ export class StructureGridSubsystem {
   /** One grid heartbeat. `nowMs` stamps connection flashes. */
   pulse(nowMs: number): GridPulseResult {
     const registry = this.hooks.registry;
+    // Reconnect sweep FIRST (playtest 2026-06-10 Issue 2 — "connectors break
+    // between buildings, they just don't connect sometimes"). autoConnectStructure
+    // runs ONCE at placement and never retries, so a structure placed before its
+    // hub, or whose target hub was at capacity, stays stranded forever. Retry any
+    // unconnected structure each pulse; addConnection dirties topology so the
+    // rebuild below picks the new edge up THIS pulse.
+    this.processReconnect();
     if (registry.topologyDirty) {
       this.grid.rebuild(buildGridNodes(registry), registry.adjacencyMap());
       registry.topologyDirty = false;
@@ -113,6 +166,27 @@ export class StructureGridSubsystem {
     this.processRepair(nowMs, flashed);
     this.processDeconstruction(nowMs, flashed);
     return { flashed, material: 'minerals' };
+  }
+
+  /**
+   * Retry auto-connection for any structure with zero connections (playtest
+   * 2026-06-10 Issue 2). Covers the temporal strandings placement-time
+   * connection can't: hub placed AFTER its leaves, a target hub that was at
+   * `maxConnections` when the leaf landed but has since freed a slot, an
+   * asteroid that has since drifted out of the connecting segment. Capped per
+   * pulse. Permanently-blocked geometry (collinear leaves) simply keeps
+   * returning null cheaply. `autoConnectStructure` dirties topology on success.
+   */
+  private processReconnect(): void {
+    const registry = this.hooks.registry;
+    const obstacles = this.hooks.getObstacles?.();
+    let attempts = 0;
+    for (const rec of registry.all()) {
+      if (attempts >= MAX_RECONNECT_ATTEMPTS_PER_PULSE) break;
+      if (registry.connectionCount(rec.id) > 0) continue;
+      attempts++;
+      autoConnectStructure(registry, rec.id, obstacles);
+    }
   }
 
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the

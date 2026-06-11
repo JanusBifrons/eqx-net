@@ -71,6 +71,12 @@ const POOL_CAPACITY = 256;
 
 const DT_SEC = 1 / 60;
 
+/** Re-acquisition cadence for an unlocked missile (playtest 2026-06-10 Issue
+ *  10). ~6 Hz at 60 Hz tick — responsive enough to chase a freshly-appeared
+ *  hostile within a few hundred ms, cheap enough that the candidate scan isn't
+ *  paid every tick for every dumb-flying missile. */
+const MISSILE_REACQUIRE_INTERVAL_TICKS = 10;
+
 /** Owner-skip predicate for splash query: missiles by default do not damage
  *  their owner during splash (the catalogue's `splashExcludeOwner` toggles
  *  this per-weapon). */
@@ -101,6 +107,10 @@ export interface MissileRecord {
   lockedKind: SplashKind | null;
   /** Ticks remaining before lifetime detonation. Decrements each tick. */
   ticksRemaining: number;
+  /** Per-owner hostility predicate, captured at launch so `advance()` can
+   *  RE-ACQUIRE a lost lock onto the nearest remaining hostile (playtest
+   *  2026-06-10 Issue 10). null on a free-list record. */
+  isHostile: ((id: string) => boolean) | null;
   /** Pool flag — true = active; false = on free-list. */
   alive: boolean;
   /** Pool index — stable for the record's lifetime. */
@@ -214,6 +224,7 @@ export class MissileSimulation {
       lockedTargetId: null,
       lockedKind: null,
       ticksRemaining: 0,
+      isHostile: null,
       alive: false,
       poolIndex: index,
     };
@@ -288,6 +299,7 @@ export class MissileSimulation {
     rec.lockedTargetId = lockResult.lock?.id ?? null;
     rec.lockedKind = lockResult.lock?.kind ?? null;
     rec.ticksRemaining = weaponDef.lifetimeTicks;
+    rec.isHostile = isHostile; // for mid-flight re-acquisition (Issue 10)
     rec.alive = true;
 
     // Diag — surfaces the "no lock acquired" smoke-test class. When
@@ -359,7 +371,7 @@ export class MissileSimulation {
         target = this.resolveLockPose(m.lockedTargetId, m.lockedKind!);
         if (target === null) {
           // Diag — lock dropped mid-flight (target died, despawned,
-          // or became inactive). Missile continues straight.
+          // or became inactive).
           this.deps.serverLogEvent?.('missile_lock_lost', {
             missileId: m.id,
             previousTargetId: m.lockedTargetId,
@@ -368,6 +380,31 @@ export class MissileSimulation {
           });
           m.lockedTargetId = null;
           m.lockedKind = null;
+        }
+      }
+
+      // 1b. Re-acquire a lost / never-acquired lock (playtest 2026-06-10
+      // Issue 10 — "missiles should bias tracking the closest enemy a lot
+      // more"). Before this a missile whose target died flew straight forever.
+      // Re-run the SAME closest-hostile selection (pickTarget with no previous
+      // target = pure nearest, no sticky/health bias) from the missile's
+      // CURRENT position, throttled to every MISSILE_REACQUIRE_INTERVAL_TICKS
+      // so the per-missile candidate scan isn't paid every tick.
+      if (target === null && m.isHostile !== null) {
+        const ageTicks = def.lifetimeTicks - m.ticksRemaining;
+        if (ageTicks % MISSILE_REACQUIRE_INTERVAL_TICKS === 0) {
+          const reacq = this.lockOnTarget(m.x, m.y, m.ownerId, m.isHostile, def);
+          if (reacq.lock !== null) {
+            m.lockedTargetId = reacq.lock.id;
+            m.lockedKind = reacq.lock.kind;
+            target = this.resolveLockPose(m.lockedTargetId, m.lockedKind);
+            this.deps.serverLogEvent?.('missile_reacquired', {
+              missileId: m.id,
+              targetId: m.lockedTargetId,
+              targetKind: m.lockedKind,
+              ageTicks,
+            });
+          }
         }
       }
 
@@ -739,6 +776,7 @@ export class MissileSimulation {
     rec.alive = false;
     rec.lockedTargetId = null;
     rec.lockedKind = null;
+    rec.isHostile = null; // drop the captured closure (don't pin owner state)
     // Swap-pop.
     const last = this.liveIndices.length - 1;
     if (i !== last) this.liveIndices[i] = this.liveIndices[last]!;

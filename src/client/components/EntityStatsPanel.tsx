@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { Box } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
+import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
 import { hullColor } from './ShieldHullBar';
 import type { PickedEntityKind } from '../render/pickEntity';
+import type { StructureRenderState } from '@core/contracts/IRenderer';
 
 /**
  * Click-to-inspect live stats panel (structures follow-up Item B6).
@@ -29,6 +31,10 @@ interface PanelData {
   name: string;
   hpPct: number;
   shieldPct: number | null;
+  /** Structure-only extras (playtest 2026-06-10 Issue 8). Undefined otherwise. */
+  buildPct?: number; // [0..1]; < 1 ⇒ under construction
+  powered?: boolean;
+  netPower?: number;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -49,8 +55,17 @@ export function EntityStatsPanel(): JSX.Element | null {
 
   if (selectedId === null || data === null) return null;
 
+  const building = data.buildPct !== undefined && data.buildPct < 1;
   return (
-    <Box data-testid="entity-stats-panel" data-entity-name={data.name} sx={ROOT_SX}>
+    <Box
+      data-testid="entity-stats-panel"
+      data-entity-name={data.name}
+      data-hull-pct={Math.round(data.hpPct)}
+      {...(data.buildPct !== undefined ? { 'data-build-pct': Math.round(data.buildPct * 100) } : {})}
+      {...(data.powered !== undefined ? { 'data-powered': data.powered ? '1' : '0' } : {})}
+      {...(data.netPower !== undefined ? { 'data-net-power': Math.round(data.netPower) } : {})}
+      sx={ROOT_SX}
+    >
       <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
       {data.shieldPct !== null && (
         <>
@@ -60,6 +75,17 @@ export function EntityStatsPanel(): JSX.Element | null {
       )}
       <Cap>HULL</Cap>
       <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
+      {building && (
+        <>
+          <Cap>BUILD</Cap>
+          <Bar pct={(data.buildPct ?? 0) * 100} color={BUILD_COLOR} />
+        </>
+      )}
+      {data.powered !== undefined && (
+        <Box sx={POWER_SX} data-testid="entity-stats-power">
+          {data.powered ? `PWR ${(data.netPower ?? 0) >= 0 ? '+' : ''}${Math.round(data.netPower ?? 0)}` : 'UNPOWERED'}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -69,7 +95,14 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   if (kind === 'ship' || kind === 'structure') {
     // Only trust stats that are FOR this selection (the singleton may briefly
     // hold the prior entity's numbers between a re-select and the next packet).
-    if (selectionStats.id !== id) {
+    // Compare against the WIRE id, not the Zustand selection id: a structure is
+    // selected as `swarm-<entityId>` (mirror form) but the server echoes the
+    // STRIPPED numeric id, so the raw comparison never matched for structures —
+    // the "building health doesn't work when selected" bug (playtest 2026-06-10
+    // Issue 3). `toSelectWire` is the single id-mapping site (ships pass through
+    // unchanged, so ships were always fine).
+    const wireId = toSelectWire(id, kind)?.id ?? id;
+    if (selectionStats.id !== wireId) {
       return { name: kind === 'structure' ? 'Structure' : 'Ship', hpPct: 0, shieldPct: kind === 'ship' ? 0 : null };
     }
     const hpPct = selectionStats.hpMax > 0 ? (selectionStats.hp / selectionStats.hpMax) * 100 : 0;
@@ -77,7 +110,22 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       selectionStats.shield !== undefined && selectionStats.shieldMax !== undefined && selectionStats.shieldMax > 0
         ? (selectionStats.shield / selectionStats.shieldMax) * 100
         : null;
-    return { name: selectionStats.name || (kind === 'structure' ? 'Structure' : 'Ship'), hpPct, shieldPct };
+    const base: PanelData = {
+      name: selectionStats.name || (kind === 'structure' ? 'Structure' : 'Ship'),
+      hpPct,
+      shieldPct,
+    };
+    if (kind === 'structure') {
+      // Richer stats (Issue 8): merge the grid slice for this structure — build
+      // %, powered, net power. Keyed by the numeric entityId in `mirror.structures`.
+      const st = structureSliceFor(id);
+      if (st) {
+        base.buildPct = st.buildPct;
+        base.powered = st.powered;
+        base.netPower = st.netPower;
+      }
+    }
+    return base;
   }
 
   // drone / wreck — read the render mirror directly.
@@ -105,7 +153,19 @@ function droneName(shipKind: string | undefined): string {
   return `${shipKind.charAt(0).toUpperCase()}${shipKind.slice(1)} drone`;
 }
 
+/** The grid slice entry for a selected structure, keyed by the numeric entityId
+ *  (`mirror.structures` uses the bare entityId; the selection id is the mirror
+ *  form `swarm-<entityId>`). Returns undefined if absent. */
+function structureSliceFor(id: string): StructureRenderState | undefined {
+  const client = getGameClient();
+  if (!client) return undefined;
+  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
+  if (Number.isNaN(entityId)) return undefined;
+  return client.mirror.structures?.get(entityId);
+}
+
 const SHIELD_COLOR = '#36c8ff';
+const BUILD_COLOR = '#ffc24d';
 const TRACK_W = 72;
 const BAR_H = 4;
 
@@ -155,5 +215,13 @@ const CAP_SX = {
   fontSize: 8,
   letterSpacing: 0.5,
   color: 'rgba(255,255,255,0.45)',
+  textTransform: 'uppercase' as const,
+};
+const POWER_SX = {
+  gridColumn: '1 / -1',
+  fontSize: 8,
+  fontWeight: 700,
+  letterSpacing: 0.4,
+  color: 'rgba(180,220,255,0.85)',
   textTransform: 'uppercase' as const,
 };
