@@ -55,6 +55,22 @@ export const StructureKindSchema = z
     /** Full hull pool (and `swarmHealth` seed once built). */
     maxHealth: z.number().positive(),
 
+    // -- Optional shield (GENERIC per-kind ENTITY attribute) ----------------
+    /** Optional shield pool. ABSENT ⇒ the kind is SHIELDLESS — hull-only:
+     *  damage goes straight to hull, the collider is always the hull polygon,
+     *  no shield bubble, no 0-cross / `SET_HULL_EXPOSED` swap, no aura.
+     *  Shield-presence is the SAME generic mechanism ships use; a structure
+     *  opts into a shield purely by setting these fields (no code change).
+     *  **No structure declares a shield today** (all ships do; no structures) —
+     *  resolving a structure's OWN (absent) shield is what removes the old
+     *  fighter-shield borrow that corrupted the collider on break. */
+    shieldMax: z.number().nonnegative().optional(),
+    /** Ticks of zero-damage before shield regen begins. Only meaningful with
+     *  `shieldMax`. */
+    shieldRegenDelayTicks: z.number().int().nonnegative().optional(),
+    /** Shield regen per tick once the delay elapses. Only with `shieldMax`. */
+    shieldRegenRate: z.number().nonnegative().optional(),
+
     // -- Grid topology -----------------------------------------------------
     /** Max simultaneous grid connections. Capital 4, Connector 6, leaves 1. */
     maxConnections: z.number().int().positive(),
@@ -242,7 +258,7 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
 );
 
 /** Bump on every catalogue edit (add a kind OR change any numeric field). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 1;
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 2;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
