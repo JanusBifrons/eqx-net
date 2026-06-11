@@ -22,6 +22,7 @@
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import type { Connection } from '../../core/structures/Connection.js';
 import {
@@ -38,6 +39,30 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
  *  the whole registry every beat. Bounded work; the next pulse retries the rest. */
 const MAX_RECONNECT_ATTEMPTS_PER_PULSE = 8;
+
+/**
+ * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
+ * Issue 5 — "defence structures fire in pulses instead of constantly, like the
+ * player does"). All laser beam weapons now work the same everywhere: the
+ * turret fires its bound catalogue beam weapon (`mount.weaponId`) on that
+ * weapon's standard cooldown — a steady stream of small hits the client renders
+ * as one continuous beam (its laser TTL > the beam cadence) — instead of one
+ * big lump every `fireRateMs`. Per-hit damage is rebalanced to preserve the
+ * kind's tuned DPS (`weaponDamage / fireRateMs`) across the faster cadence, so
+ * total damage ≈ today's. `fireRateMs`/`weaponDamage` are retired as a PULSE
+ * gate and repurposed as the DPS budget.
+ *
+ * Pure + scalar in/out — unit-locked independent of the room.
+ */
+export function resolveTurretBeam(
+  weaponDamage: number,
+  fireRateMs: number,
+  beamCooldownTicks: number,
+): { cooldownMs: number; perHitDamage: number } {
+  const cooldownMs = (beamCooldownTicks / 60) * 1000;
+  const dps = fireRateMs > 0 ? weaponDamage / (fireRateMs / 1000) : 0;
+  return { cooldownMs, perHitDamage: dps * (cooldownMs / 1000) };
+}
 
 export interface StructureGridHooks {
   registry: StructureRegistry;
@@ -90,20 +115,31 @@ export class StructureGridSubsystem {
    */
   tickTurrets(nowMs: number): void {
     if (!this.hooks.findNearestDrone || !this.hooks.applyDamage) return;
+    const kind = getStructureKind('turret');
+    // The turret fires its mount's bound catalogue beam weapon (same model as
+    // ships) on that weapon's standard cooldown — continuous small hits, not a
+    // 600 ms pulse (playtest 2026-06-10 Issue 5). Resolved once per tick (the
+    // kind is constant). `TURRET_TICK_MS` stays the targeting cadence; the beam
+    // cooldown gates actual fire.
+    const mountWeaponId = kind.mounts?.[0]?.weaponId;
+    const beamDef = getWeapon(isWeaponId(mountWeaponId) ? mountWeaponId : 'hitscan');
+    const { cooldownMs, perHitDamage } = resolveTurretBeam(
+      kind.weaponDamage ?? 0,
+      kind.fireRateMs ?? 600,
+      beamDef.cooldownTicks,
+    );
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'turret' || !rec.isConstructed) continue;
       if (!this.grid.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         continue;
       }
-      const kind = getStructureKind('turret');
       const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange ?? 0);
       rec.turretTargetEntityId = target?.entityId;
       if (!target) continue;
-      const cooldown = kind.fireRateMs ?? 600;
-      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldown) continue;
+      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
       rec.lastTurretFireMs = nowMs;
-      this.hooks.applyDamage(target.id, rec.id, kind.weaponDamage ?? 0);
+      this.hooks.applyDamage(target.id, rec.id, perHitDamage);
       this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
     }
   }
