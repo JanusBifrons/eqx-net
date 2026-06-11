@@ -140,6 +140,98 @@ handler records `mirror.gridFlashes` (numeric pair key, alloc-free).
 pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
 `swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the HUD chip.
 
+## Batteries — stored-power buffer (batteries plan — shipped)
+
+The `battery` kind is a **leaf that stores power**. It produces and consumes
+nothing itself; it banks a powered grid's surplus and gives it back during a
+deficit, so a base survives a generation dip instead of browning out the instant
+demand exceeds supply. Modelled on eqx-peri's `Battery`, adapted to eqx-net's
+instantaneous (no-stored-power-until-now) grid.
+
+**Catalogue** — `battery` carries `powerStorageCapacity` (the only kind with it;
+absent ⇒ a kind can't store power). Like every leaf: `maxConnections 1`,
+`isHub:false`, `powerOutput/Consumption: 0`.
+
+**Runtime + pure math** — `StructureRecord.storedPower` (0..capacity) is the live
+charge. The arithmetic is zone-pure in `src/core/structures/batteryPower.ts`
+(`chargeStep` / `dischargeStep` / `drainPower` — the last is for the shield-wall
+drain, a later feature). `Grid` gains `componentMembers(id)` + `forEachComponent`
+(iterate a whole connected component once) — the primitive the battery pass needs
+and the one the pure `Grid` lacked.
+
+**The pulse step** — `StructureGridSubsystem.processBatteryPower()` runs each
+pulse, BEFORE the power-gated steps so this pulse's mining/turret gating sees the
+result. Per capital-connected component: a **surplus** (`netPower > 0`) charges
+its batteries (even split across the not-yet-full, capped); a **deficit**
+(`netPower < 0`) discharges them to cover the per-pulse shortfall — but only when
+their combined charge can meet it in **full**, in which case the whole component
+is marked battery-backed; otherwise it browns out and the batteries hold their
+charge. Power units are per-pulse (same scale as construction/mining amounts).
+
+**Effective power** — the subsystem's `powerSummaryFor` now returns the raw
+generation `netPower` (can be negative while batteries carry the load) but a
+**battery-backed `powered`**: true while stored charge covers a deficit. The
+turret + miner gates and the snapshot slice read it, so the whole grid keeps
+running off stored charge through a dip and goes dark when the batteries empty.
+The pure `Grid.powerSummaryFor` stays instantaneous/raw (its golden tests hold);
+the battery layer is entirely server-side.
+
+**Wire + UI** — `SnapshotMessage.structures[]` carries `storedPower` /
+`storedPowerMax` for batteries (no `SWARM_WIRE_VERSION` bump — JSON slice). The
+client mirrors them into `StructureRenderState`; the click-to-inspect
+`EntityStatsPanel` shows a **CHRG** bar (`data-charge-pct`). The build speed-dial
+auto-lists the kind; the sprite is a boxy amber polygon.
+
+## Shield Fence (shield-fence plan — shipped)
+
+A `shield_pylon` is a HUB (so two pylons connect directly under the hub rule) that
+projects a blocking **shield wall** in the span to a paired pylon. Ported from
+eqx-peri's `ShieldWall`, built on the battery buffer above.
+
+**The wall is a DERIVED collider, not a catalogue kind / not a swarm entity.** Its
+geometry is computed on BOTH sides from the two pylon poses
+(`core/structures/ShieldWall.ts` `wallGeometry` — the single source of truth), so
+the server collider, the client predWorld collider, and the rendered span all
+agree without shipping a variable-length entity. Pure pieces in `ShieldWall.ts`:
+geometry, `resolveWallHit` (grid-power model), `isWallActive`, `wallPairKey`,
+`rayCrossesSegment` (beam-vs-wall).
+
+**Server — `ShieldWallManager`** (`src/server/structures/`): forms a wall when two
+same-owner, **built**, connected pylons appear; tears it down when the pair breaks
+(hooked into the grid pulse + the faster turret tick + `evictSwarmEntity`).
+`update()` refreshes each wall's ACTIVE state (`powered && !stunned`) onto its
+collider. **Damage (grid-power/stun):** a hit's `damage` is soaked by the grid
+SURPLUS (free), then by component BATTERY charge (`drainComponentBatteries`);
+overwhelming both **stuns** the wall for `SHIELD_WALL_STUN_MS` (collider disabled →
+passable). (Deviation from eqx-peri: no transient power-SPIKE that browns out other
+consumers — the surplus + batteries ARE the buffer.)
+
+**Collider** — a new core `PhysicsWorld.spawnWall/setWallActive/removeWall` (a
+static cuboid between the two poses) + worker `SPAWN_WALL`/`SET_WALL_ACTIVE`/
+`REMOVE_WALL` commands. **Wall bodies live in a dedicated `wallBodies` map, NOT
+`this.bodies`** — otherwise the worker's per-tick `getAllShipStates` SAB-write
+iterates the slot-less wall. The same `spawnWall` runs in the client predWorld
+(`ColyseusClient.syncPredWalls`) so the LOCAL player is predicted-blocked.
+
+**Blocking** — ships are blocked free (the static body). Weapons are absorbed on
+the MAIN thread (no live server Rapier world): the player + AI hitscan resolvers
+gain `blockBeamAtWall`, and `ProjectilePipeline` checks `wallBlocksProjectile` —
+both route to `ShieldWallManager.blockShot`/`blockProjectile` (a `rayCrossesSegment`
+test over active walls) which absorbs the shot + applies the grid-power hit.
+
+**AI** — drones target the solid **pylons** (`structurePriority('shield_pylon') = 2`)
+via the existing faction/wave gate; the wall in the line of fire absorbs the shots.
+
+**Wire + render** — two JSON `structures[]` fields on each pylon: `shieldWallTo`
+(the paired pylon's entityId) + `wallActive`. The `ConnectorRenderer` draws the
+span (active = 3 layered blue strokes; down = a dim flickering red line).
+
+**Fixed alongside (root cause):** the swarm shield-REGEN pass borrowed a FIGHTER
+shield for any DAMAGED structure (`getDroneShieldMax`/`getShipKind` fall back to a
+ship) and posted `SET_HULL_EXPOSED`, corrupting the collider — the unified-entity-
+hull "fly into a capital" bug. Pylons are the first structures the AI actively
+shoots, which surfaced it; regen is now gated on `rec.kind === 1` (drones only).
+
 ## Mining (Phase 4 — shipped)
 
 `StructureGridSubsystem.pulse()` gained two steps before construction: **mining**

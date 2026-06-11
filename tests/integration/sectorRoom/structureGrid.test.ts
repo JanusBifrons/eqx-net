@@ -126,6 +126,30 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     expect(sliceEntry(slice, capE)?.powered).toBe(true);
   }, 20_000);
 
+  it('a battery rides the slice with storedPower, charging from the capital surplus (batteries plan)', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    const room = await harness.connectAs('player-1');
+    const internals = harness.getServerRoom()!._internals;
+
+    await placeAndWait(harness, room, 'capital', 0, 0);
+    const bat = await placeAndWait(harness, room, 'battery', 250, 0);
+    const batE = eid(harness, bat);
+
+    // Blueprint first: the field is present (battery kind) but empty.
+    expect(sliceEntry(internals.getStructuresSlice(), batE)?.storedPowerMax).toBe(300);
+    expect(sliceEntry(internals.getStructuresSlice(), batE)?.storedPower).toBe(0);
+
+    // Drive construction (cost 600 / 5 per pulse = 120 pulses) then a few more so
+    // the built battery banks the capital's +50/pulse surplus.
+    for (let i = 0; i < 130; i++) internals.pulseStructureGrid();
+
+    const entry = sliceEntry(internals.getStructuresSlice(), batE)!;
+    expect(entry.built).toBe(true);
+    expect(entry.powered).toBe(true); // capital-connected
+    expect(entry.storedPowerMax).toBe(300); // the new wire field round-trips
+    expect(entry.storedPower!).toBeGreaterThan(0); // charged from surplus
+  }, 25_000);
+
   it('destroying a relay HEALS a downstream leaf onto an in-range hub (reconnect sweep, Issue 2)', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');

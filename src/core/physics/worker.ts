@@ -92,7 +92,13 @@ interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; exposed: boo
  *  entityId to a Rapier body and applies the linear impulse. Silent no-op
  *  on despawned entities (drones killed before the impulse lands). */
 interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | MissileImpulseCmd;
+/** Shield-fence plan — spawn / toggle / remove a shield-wall span. A static
+ *  cuboid between two pylon poses that blocks ships; toggled on stun / power
+ *  loss without churning the body. See PhysicsWorld.spawnWall. */
+interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
+interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
+interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -239,6 +245,18 @@ async function main(): Promise<void> {
         // `applyImpulse` silently skips unknown ids — safe for the race
         // where a drone died between detonate and apply.
         physics.applyImpulse(cmd.entityId, cmd.fx, cmd.fy, 0);
+        break;
+      }
+      case 'SPAWN_WALL': {
+        physics.spawnWall(cmd.id, cmd.ax, cmd.ay, cmd.bx, cmd.by, cmd.thickness);
+        break;
+      }
+      case 'SET_WALL_ACTIVE': {
+        physics.setWallActive(cmd.id, cmd.active);
+        break;
+      }
+      case 'REMOVE_WALL': {
+        physics.removeWall(cmd.id);
         break;
       }
     }

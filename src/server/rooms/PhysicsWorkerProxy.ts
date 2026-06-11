@@ -47,7 +47,13 @@ export type WorkerCmd =
    *  (same id used in player→body and drone→body maps) and applies the
    *  impulse via `physics.applyImpulse(id, fx, fy, 0)`. Cleanly no-ops on
    *  despawned entities. See docs/architecture/missile-simulation.md. */
-  | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number };
+  | { type: 'MISSILE_IMPULSE'; entityId: string; fx: number; fy: number }
+  /** Shield-fence plan — manage a shield-wall span (a static cuboid between two
+   *  pylon poses that blocks ships). `SET_WALL_ACTIVE` toggles its collider on
+   *  stun / power loss without churning the body. See PhysicsWorld.spawnWall. */
+  | { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
+  | { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
+  | { type: 'REMOVE_WALL';     id: string };
 
 /** Per-tick contact payload extracted from the worker's CONTACT_BATCH message.
  *  Mirrors `core/physics/contactDrain.ts` `Contact` across the postMessage
