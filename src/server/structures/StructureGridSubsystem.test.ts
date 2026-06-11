@@ -85,6 +85,66 @@ describe('StructureGridSubsystem — auto-connect on place', () => {
   });
 });
 
+describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 2)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  it('leaves placed BEFORE their hub: the hub grabs only the nearest at placement; the pulse links the rest', () => {
+    // Three solars placed first, no hub yet → all auto-connect-on-place to nothing.
+    const s1 = h.placement.place(OWNER, 'solar', 250, 0)!;
+    const s2 = h.placement.place(OWNER, 'solar', 0, 250)!;
+    const s3 = h.placement.place(OWNER, 'solar', -250, 0)!;
+    expect(h.registry.connectionCount(s1)).toBe(0);
+    expect(h.registry.connectionCount(s2)).toBe(0);
+    expect(h.registry.connectionCount(s3)).toBe(0);
+
+    // Capital placed AFTER: auto-connect-on-place links it to exactly ONE
+    // partner (the nearest), so two of the three leaves are STILL stranded.
+    // This is the "connectors break between buildings" report — placement-time
+    // connection runs once and never retries the others.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    expect(h.registry.connectionCount(cap), 'capital grabs only one at placement').toBe(1);
+    const connectedAtPlacement = [s1, s2, s3].filter((s) => h.registry.connectionCount(s) > 0);
+    expect(connectedAtPlacement.length).toBe(1);
+
+    // The 1 Hz pulse's reconnect sweep retries the stranded leaves → all wired.
+    h.pulse();
+    expect(h.registry.hasConnection(s1, cap)).toBe(true);
+    expect(h.registry.hasConnection(s2, cap)).toBe(true);
+    expect(h.registry.hasConnection(s3, cap)).toBe(true);
+  });
+
+  it('a leaf stranded by a hub AT CAPACITY connects once a slot frees', () => {
+    // Capital maxConnections = 4. Fill it with 4 leaf solars (leaves give no
+    // capacity of their own), then a 5th leaf in range can't connect — the only
+    // hub is full.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const fillers = [
+      h.placement.place(OWNER, 'solar', 250, 0)!,
+      h.placement.place(OWNER, 'solar', -250, 0)!,
+      h.placement.place(OWNER, 'solar', 0, 250)!,
+      h.placement.place(OWNER, 'solar', 0, -250)!,
+    ];
+    expect(h.registry.connectionCount(cap)).toBe(4); // full
+    const stranded = h.placement.place(OWNER, 'solar', 180, 180)!;
+    h.pulse();
+    expect(h.registry.connectionCount(stranded)).toBe(0); // hub at capacity
+
+    // Remove one filler → a slot frees → the next pulse reconnects the stranded leaf.
+    h.placement.remove(OWNER, fillers[0]!);
+    h.pulse();
+    expect(h.registry.hasConnection(stranded, cap)).toBe(true);
+  });
+
+  it('the reconnect sweep is bounded — at most MAX_RECONNECT_ATTEMPTS_PER_PULSE retries per pulse', () => {
+    // Many permanently-stranded leaves (no hub at all) must not be expensive:
+    // the sweep caps attempts, so it never connects spuriously and never throws.
+    for (let i = 0; i < 20; i++) h.placement.place(OWNER, 'solar', i * 200, 5000);
+    expect(() => h.pulse()).not.toThrow();
+    for (const rec of h.registry.all()) expect(h.registry.connectionCount(rec.id)).toBe(0);
+  });
+});
+
 describe('StructureGridSubsystem — construction flow economy', () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });

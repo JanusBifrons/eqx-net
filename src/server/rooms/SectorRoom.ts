@@ -1526,23 +1526,11 @@ export class SectorRoom extends Room<SectorState> {
       nextId: () => `pstruct-${this.placedStructureCounter++}`,
       registry: this.structureRegistry,
       // Item D — asteroids (swarm kind=0) block a connector's line of sight, so
-      // a structure never auto-wires straight through a rock. Poses read live
-      // from the SAB (same path as findNearestSwarmOfKind); radius from the
-      // registry record. Off the 60 Hz hot loop (runs only on placement), so the
-      // array build here is fine.
-      getObstacles: () => {
-        const obstacles: GridObstacle[] = [];
-        for (const rec of this.swarmRegistry.all()) {
-          if (rec.kind !== 0) continue; // asteroids only
-          const base = slotBase(rec.slot);
-          obstacles.push({
-            x: this.sabF32[base + SLOT_X_OFF]!,
-            y: this.sabF32[base + SLOT_Y_OFF]!,
-            radius: rec.radius,
-          });
-        }
-        return obstacles;
-      },
+      // a structure never auto-wires straight through a rock. Shared with the
+      // grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2) via
+      // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
+      // pulse only), so the array build is fine.
+      getObstacles: () => this.gatherStructureObstacles(),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -1570,6 +1558,8 @@ export class SectorRoom extends Room<SectorState> {
           targetId,
         });
       },
+      // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
+      getObstacles: () => this.gatherStructureObstacles(),
     });
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
@@ -2424,6 +2414,24 @@ export class SectorRoom extends Room<SectorState> {
     // Refresh the slice so the client's turret aim line tracks at the turret
     // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
     this.rebuildStructuresSlice();
+  }
+
+  /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
+   *  from the SAB. Shared by structure placement (Item D) and the grid-pulse
+   *  reconnect sweep (playtest 2026-06-10 Issue 2). Off the 60 Hz hot loop
+   *  (placement + 1 Hz pulse only), so the array build is acceptable. */
+  private gatherStructureObstacles(): GridObstacle[] {
+    const obstacles: GridObstacle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue; // asteroids only
+      const base = slotBase(rec.slot);
+      obstacles.push({
+        x: this.sabF32[base + SLOT_X_OFF]!,
+        y: this.sabF32[base + SLOT_Y_OFF]!,
+        radius: rec.radius,
+      });
+    }
+    return obstacles;
   }
 
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
