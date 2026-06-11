@@ -40,6 +40,7 @@ export const StructureKindIdSchema = z.enum([
   'solar',
   'miner',
   'turret',
+  'battery',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -72,6 +73,13 @@ export const StructureKindSchema = z
      *  construction stream draws from; the Miner buffers locally before
      *  hauling toward the Capital. */
     storageCapacity: z.number().nonnegative(),
+    /** Stored-power buffer capacity (power-units; charge/discharge measured
+     *  per grid pulse, same scale as `powerOutput`/`powerConsumption`).
+     *  Present only on the Battery. ABSENT ⇒ the kind cannot store power — it
+     *  is a pure generator/consumer/relay. A battery charges from a powered
+     *  grid's surplus and discharges to keep its component `powered` through a
+     *  deficit; the shield-wall damage model drains it first. */
+    powerStorageCapacity: z.number().nonnegative().optional(),
 
     // -- Construction ------------------------------------------------------
     /** Total minerals to fully build from a blueprint (drained gradually by
@@ -217,6 +225,27 @@ export const TURRET: StructureKind = {
   ],
 };
 
+/** Battery — stored-power buffer. A leaf node that produces/consumes no power
+ *  itself; it charges from a powered grid's surplus and discharges to keep its
+ *  component running through a deficit (turrets/miners/shield-walls draw on it
+ *  when generation dips). The shield-wall damage model drains it first. */
+export const BATTERY: StructureKind = {
+  id: 'battery',
+  displayName: 'Battery',
+  description:
+    'Stores surplus power and discharges to keep the grid running through a deficit. A leaf node.',
+  radius: 40,
+  maxHealth: 800,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 0,
+  storageCapacity: 0,
+  constructionCost: 600,
+  color: 0xcc8844,
+  powerStorageCapacity: 300,
+};
+
 /**
  * Canonical catalogue order = wire subtype-byte index. APPEND-ONLY (invariant
  * #11). The structure subtype rides the shared `shipKind` u8 in the binary
@@ -229,6 +258,7 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   SOLAR,
   MINER,
   TURRET,
+  BATTERY,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -242,7 +272,7 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
 );
 
 /** Bump on every catalogue edit (add a kind OR change any numeric field). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 1;
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 2;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';

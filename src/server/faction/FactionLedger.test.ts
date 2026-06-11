@@ -17,6 +17,7 @@ function struct(id: string, owner: string, kind: StructureRecord['kind'] = 'turr
     constructionCost: 0,
     isDeconstructing: false,
     minerals: 0,
+    storedPower: 0,
   };
 }
 

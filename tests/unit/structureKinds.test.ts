@@ -12,13 +12,14 @@ import {
 } from '../../src/shared-types/structureKinds.js';
 
 describe('structureKinds catalogue', () => {
-  it('ships the five planned kinds with stable ids', () => {
+  it('ships the planned kinds with stable, append-only ids', () => {
     expect(STRUCTURE_KINDS_LIST.map((k) => k.id)).toEqual([
       'capital',
       'connector',
       'solar',
       'miner',
       'turret',
+      'battery',
     ]);
   });
 
@@ -47,9 +48,18 @@ describe('structureKinds catalogue', () => {
     expect(hubs.sort()).toEqual(['capital', 'connector']);
     expect(STRUCTURE_KINDS.capital.maxConnections).toBe(4);
     expect(STRUCTURE_KINDS.connector.maxConnections).toBe(6);
-    for (const leaf of ['solar', 'miner', 'turret'] as const) {
+    for (const leaf of ['solar', 'miner', 'turret', 'battery'] as const) {
       expect(STRUCTURE_KINDS[leaf].maxConnections).toBe(1);
       expect(STRUCTURE_KINDS[leaf].isHub).toBe(false);
+    }
+  });
+
+  it('the battery carries a stored-power capacity; nothing else does', () => {
+    expect(STRUCTURE_KINDS.battery.powerStorageCapacity).toBeGreaterThan(0);
+    expect(STRUCTURE_KINDS.battery.powerOutput).toBe(0);
+    expect(STRUCTURE_KINDS.battery.powerConsumption).toBe(0);
+    for (const other of ['capital', 'connector', 'solar', 'miner', 'turret'] as const) {
+      expect(STRUCTURE_KINDS[other].powerStorageCapacity).toBeUndefined();
     }
   });
 
