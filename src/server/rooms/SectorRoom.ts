@@ -740,6 +740,14 @@ export class SectorRoom extends Room<SectorState> {
     /** Phase 5 — seed a drone + drive the turret tick for the turret test. */
     spawnTestDrone: (id: string, x: number, y: number) => boolean;
     tickStructureTurrets: () => void;
+    /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
+     *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
+     *  the fighter fallback. Returns the layered-damage result (reported
+     *  shieldMax/hullMax drive the client stats %). */
+    damageSwarmLayered: (
+      rec: { id: string; entityId: number; kind?: number; shipKind?: ShipKindId | null; shieldDown?: boolean },
+      damage: number,
+    ) => { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null;
   } {
     return {
       serverTick: this.serverTick,
@@ -765,6 +773,7 @@ export class SectorRoom extends Room<SectorState> {
         return ok;
       },
       tickStructureTurrets: () => this.structureTurretTick(),
+      damageSwarmLayered: (rec, damage) => this.damageSwarmLayered(rec, damage),
     };
   }
 
@@ -2290,7 +2299,7 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private damageSwarmLayered(
-    rec: { id: string; entityId: number; shipKind?: ShipKindId | null; shieldDown?: boolean },
+    rec: { id: string; entityId: number; kind?: number; shipKind?: ShipKindId | null; shieldDown?: boolean },
     damage: number,
   ): { newShield: number; shieldMax: number; hullMax: number; hitLayer: 'shield' | 'hull' } | null {
     return this.shieldHullRouter.damageSwarmLayered(rec, damage);

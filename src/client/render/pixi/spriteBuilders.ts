@@ -14,7 +14,7 @@
 import { Graphics } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../../shared-types/shipKinds.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, structureHullPoints } from '../../../shared-types/structureKinds.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
 export const HITBOX_COLOR = 0xff0066;
@@ -129,36 +129,20 @@ export function buildDroneGfx(radius: number): Graphics {
   return g;
 }
 
-/** Regular-polygon side count per structure subtype — gives each kind a
- *  distinct silhouette without bespoke hand-authored hulls. Hubs read as
- *  many-sided (octagon/hexagon); leaves are simpler shapes. */
-const STRUCTURE_SIDES: Record<string, number> = {
-  capital: 8,
-  connector: 6,
-  solar: 4,
-  miner: 5,
-  turret: 3,
-  battery: 4, // boxy like solar, distinguished by its amber tint
-  shield_pylon: 7, // a distinct heptagon; the wall span between a pair is the star
-};
-
 /**
- * Structure visual (pose-core kind 2) — a regular polygon tinted with the
- * subtype's catalogue `color`, sided per `STRUCTURE_SIDES`. Drawn in math space
- * (Y-up) like the other builders; the renderer rotates by `-angle`. An unknown
- * subtype falls back to the Capital's look (matching the catalogue's forgiving
+ * Structure visual (pose-core kind 2) — the regular polygon from the SINGLE
+ * hull-points source (`structureHullPoints`), tinted with the subtype's
+ * catalogue `color`. The SAME points form the polygon collision hull at spawn
+ * (server `SwarmSpawner.spawnStructure` + client `structureClientLeaf`), so the
+ * collider matches this silhouette exactly (unified-hull plan). The renderer
+ * rotates the sprite by `-angle`; the points are symmetric so Pixi-up/math-up
+ * is invariant. Unknown subtype ⇒ the Capital's look (forgiving, like
  * `getStructureKind`).
  */
 export function buildStructureGfx(structureKindId: string | undefined, radius: number): Graphics {
   const g = new Graphics();
   const kind = getStructureKind(structureKindId);
-  const sides = STRUCTURE_SIDES[kind.id] ?? 6;
-  const verts: { x: number; y: number }[] = [];
-  for (let i = 0; i < sides; i++) {
-    // Start at the top (-y in pixi screen space) and go clockwise.
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
-    verts.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
-  }
+  const verts = structureHullPoints(kind.id, radius);
   g.poly(verts);
   g.fill({ color: kind.color });
   g.poly(verts);

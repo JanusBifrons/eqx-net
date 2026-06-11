@@ -5,6 +5,8 @@ import {
   STRUCTURE_KIND_CATALOGUE_VERSION,
   DEFAULT_STRUCTURE_KIND,
   StructureKindSchema,
+  STRUCTURE_SIDES,
+  structureHullPoints,
   getStructureKind,
   isStructureKindId,
   structureKindFromIndex,
@@ -104,5 +106,30 @@ describe('structureKinds catalogue', () => {
 
   it('exposes a catalogue version (bump on any edit — invariant #11)', () => {
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Unified-hull plan — the single hull-points source (render + collider) ──
+  it('structureHullPoints emits the kind\'s regular N-gon at the given radius', () => {
+    for (const id of STRUCTURE_KINDS_LIST.map((k) => k.id)) {
+      const sides = STRUCTURE_SIDES[id];
+      const pts = structureHullPoints(id, 80);
+      expect(pts.length, `${id} vertex count == sides`).toBe(sides);
+      // Every vertex sits on the radius-80 circle (regular polygon).
+      for (const p of pts) {
+        expect(Math.hypot(p.x, p.y), `${id} vertex on radius`).toBeCloseTo(80, 6);
+      }
+      // First vertex at the top (−y, Pixi-up) — matches the renderer's draw.
+      expect(pts[0]!.x).toBeCloseTo(0, 6);
+      expect(pts[0]!.y).toBeCloseTo(-80, 6);
+    }
+  });
+
+  it('structureHullPoints scales with radius + falls back to the Capital for unknown ids', () => {
+    const cap = structureHullPoints('capital', 40);
+    expect(cap.length).toBe(STRUCTURE_SIDES.capital); // 8
+    for (const p of cap) expect(Math.hypot(p.x, p.y)).toBeCloseTo(40, 6);
+    // Unknown id ⇒ the Capital's silhouette (forgiving, like getStructureKind).
+    const unknown = structureHullPoints('not-a-kind', 40);
+    expect(unknown.length).toBe(STRUCTURE_SIDES[DEFAULT_STRUCTURE_KIND]);
   });
 });
