@@ -1,5 +1,23 @@
 # Unified Entity Hull — one points→render+collision path; structures get polygon hulls + optional shield/hull
 
+> ## ⚠️ CORRECTION (2026-06-11, after Phase 4 landed — read this first)
+> The "latent bug … the real 'fly into a capital'" framing BELOW (fighter-shield
+> borrow → `SET_HULL_EXPOSED` → collider shrinks to a fighter shape) is
+> **FALSIFIED.** Structures are seeded **`swarmShield = 0` on spawn** (already
+> hull-only), so they never break a shield, never post `SET_HULL_EXPOSED`, and
+> **block correctly** (`tests/e2e/structure-ram-blocked.spec.ts` — the
+> fly-through does NOT reproduce). What `c2bb51b2` actually fixed (Phase 4) was
+> the **wrong REPORTED `shieldMax`/`hullMax`**: `damageSwarmLayered` resolved a
+> structure subtype through `getShipKind('capital')` → the FIGHTER default
+> (150/150) instead of the capital's 0/5000 — a stats-panel HP% bug, not a
+> collider bug. Phase 4 is DONE (`resolveSwarmShieldHull` + generic optional
+> shield + `structureKinds` optional shield schema, catalogue v2). **REMAINING
+> = Phases 1–3** (the actual unification: structure `shape.points` → render +
+> POLYGON collider, replacing the ball + the procedural `buildStructureGfx`).
+> That work is still the user's directive and still valuable (collider == the
+> rendered silhouette); it is NOT a bug fix. Treat Phase 0's repro as SUPERSEDED
+> by Phase 4's `structureEntity.test.ts` lock.
+
 > **Handoff for a fresh agent.** All paths relative to `C:\Users\alecv\Desktop\eqx-net\eqx-net`.
 > **Step 0 (after approval):** create the branch `feat/unified-entity-hull`
 > **STACKED on `feat/tship-collision-fix`** (PR #23 — this work depends on its
