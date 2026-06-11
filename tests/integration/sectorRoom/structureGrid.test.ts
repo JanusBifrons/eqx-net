@@ -91,14 +91,20 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     expect(sliceEntry(slice, s2E)?.powered).toBe(false);
   }, 20_000);
 
-  it('destroying the connector severs the solar (it reports unpowered)', async () => {
+  it('destroying the connector severs a SOLE-PATH solar (it reports unpowered)', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
     const con = await placeAndWait(harness, room, 'connector', 300, 0);
-    const sol = await placeAndWait(harness, room, 'solar', 600, 0);
+    // Solar at 900: in range of the connector (edge 900−300−24−40 = 536 ≤ 600)
+    // but OUT of direct capital range (edge 900−80−40 = 780 > CONNECTION_MAX_RANGE
+    // 600). The connector is its SOLE path to a hub — so destroying the connector
+    // genuinely strands it, and the 1 Hz reconnect sweep (Issue 2) CANNOT heal it
+    // (no other in-range hub). If the solar were at 600 it would re-wire straight
+    // to the capital — that grid-healing case is the next test.
+    const sol = await placeAndWait(harness, room, 'solar', 900, 0);
     // Capture entityIds BEFORE the connector is destroyed (its swarm record
     // is gone afterwards).
     const [capE, conE, solE] = [eid(harness, cap), eid(harness, con), eid(harness, sol)];
@@ -108,14 +114,43 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     // Destroy the connector via the same damage entry every weapon uses.
     internals.applyDamage(con, 'player-1', 99999);
     expect(internals.structureRegistry.has(con)).toBe(false);
-    internals.pulseStructureGrid();
+    // Pulse a few times so the reconnect sweep gets every chance to (fail to) heal.
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
 
     const slice = internals.getStructuresSlice();
-    // Connector gone; solar severed (no connTo) and unpowered.
+    // Connector gone; solar severed (no connTo) and unpowered — no alternative hub.
     expect(sliceEntry(slice, conE)).toBeUndefined();
     expect(sliceEntry(slice, solE)?.connTo).toBeUndefined();
     expect(sliceEntry(slice, solE)?.powered).toBe(false);
     // Capital still present + powered (its own component).
     expect(sliceEntry(slice, capE)?.powered).toBe(true);
+  }, 20_000);
+
+  it('destroying a relay HEALS a downstream leaf onto an in-range hub (reconnect sweep, Issue 2)', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    const room = await harness.connectAs('player-1');
+    const internals = harness.getServerRoom()!._internals;
+
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    const con = await placeAndWait(harness, room, 'connector', 300, 0);
+    // Solar at 600: nearest hub at placement is the connector (300), but it is
+    // ALSO within direct capital range (edge 600−80−40 = 480 ≤ 600). So when the
+    // connector dies, the reconnect sweep re-wires it straight to the capital
+    // instead of letting it go dark — the grid heals (the Issue 2 fix).
+    const sol = await placeAndWait(harness, room, 'solar', 600, 0);
+    const [capE, solE] = [eid(harness, cap), eid(harness, sol)];
+    for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
+    expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
+
+    internals.applyDamage(con, 'player-1', 99999);
+    expect(internals.structureRegistry.has(con)).toBe(false);
+    // The reconnect sweep runs on the pulse; one pulse re-wires + the topology
+    // rebuild re-powers it.
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+
+    const slice = internals.getStructuresSlice();
+    // Healed: the solar now connects DIRECTLY to the capital and is powered again.
+    expect(sliceEntry(slice, solE)?.connTo).toContain(capE);
+    expect(sliceEntry(slice, solE)?.powered).toBe(true);
   }, 20_000);
 });
