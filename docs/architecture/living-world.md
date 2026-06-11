@@ -161,6 +161,64 @@ purpose — that's where those bugs live and where they run fast and
 deterministic; the E2E covers only the player-facing essence and is
 strictly outcome-gated so a slow env never flakes it.
 
+## Drone warp-in (2026-06-11, plan `goofy-wobbling-brooks` / playtest Issue 12)
+
+The complaint: drones spawned by default in Sol — *"they should never just
+magically appear; they should enter at leaf sectors and take ~5 min of warping
+to reach Sol."* The fix made the director a **roaming population that only ever
+enters the galaxy from the edge**:
+
+- **Entry-only ingress (the headline invariant).** Every *from-nowhere*
+  materialisation — the initial seed AND every combat respawn (`respawnStep`) —
+  happens ONLY at an **entry (edge) sector** (`getEntrySectors()` = the outermost
+  hex ring; `pickEntrySector`/`liveEntrySectors` in `population.ts`, intersected
+  with the director's live rooms + a single-interior fallback so a test harness
+  can't deadlock). A combat respawn during an interior attack therefore warps in
+  at the edge and *travels back* — it does NOT pop into the base. Hop *arrivals*
+  (`bot_transit_commit`) may land anywhere; they're graph traversal, not ingress.
+  The regression lock asserts **every `bot_spawn` sectorKey ∈ entry set / never
+  `sol-prime`**.
+- **Hop-by-hop traversal with emergent travel time.** The old "one warp = land
+  on the target" is gone. `advanceMembersTowardGoal` warps each non-at-goal
+  member ONE `nextHopToward(rec.sectorKey, goal)` hop, re-issued every control
+  tick from BOTH the `warp` and `attack` branches (stragglers + edge-respawned
+  reinforcements keep flowing in independently — the squad's position is just the
+  multiset of member `rec.sectorKey`, no squad-level "current" field). Each hop
+  costs an **invulnerable `hopTravelMs` flight** (default 120 s, env
+  `EQX_BOT_HOP_MS`): `HunterBotWarpController.doHop` was split into `depart`
+  (despawn source + stash carry + arm a per-bot arrival timer) and `arrive`
+  (spawn at dest edge + slot-race self-heal + `markActive`). The bot is fully
+  despawned mid-flight, so the window is invulnerable *by construction*; timers
+  are cleared by `disposePending()` on `stop()`. Travel time is emergent — a base
+  two hops in takes ~2× a one-hop base. (A goal that's a live room *outside* the
+  graph — a synthetic test/engineering sector — gets a single direct hop, still a
+  despawn→spawn pair.)
+- **Roaming replaces the ambient floor.** Idle, unassigned squads slow-drift the
+  graph: `roamStep` picks a random live neighbour (`pickRoamGoal`) every
+  `roamIntervalMs` (default 45 s) once gathered, then advances members toward it.
+  Roaming squads stay **NEUTRAL** — hostility is marked ONLY in the `attack`
+  branch — so a pack drifting through a base-less player's sector does not hunt
+  them. This is why `AMBIENT_DRONE_FLOOR` could retire to 0.
+- **One squad per ~5 min per base.** `WaveDirector.plan(nowMs)` rate-caps
+  assignment to ≤1 dispatch per `dispatchIntervalMs` (default 5 min) per ready
+  faction (first immediate, then capped). The dispatched squad still traverses
+  hop-by-hop from wherever it is, so its arrival is further delayed by travel;
+  coincidental multi-squad convergence is accepted.
+- **Boot-seeding + drone persistence retired.** `AMBIENT_DRONE_FLOOR = 0` →
+  galaxy rooms boot `droneCount: 0`. `SectorPersistence` no longer persists drone
+  (kind 1) rows (they're transient — re-seed at entry on boot); `CURRENT_SCHEMA_-
+  VERSION` 1→2 reseeds cleanly. The persistence system is otherwise unchanged
+  (asteroids/structures/roster/Limbo persist as before).
+- The `warp_warning` banner now fires once per squad on the first FINAL approach
+  (`squad.warned`), `countdownMs = spoolMs + hopTravelMs`.
+
+Locks: `population.test.ts` (entry + roam pickers), `WaveDirector.test.ts`
+(dispatch cadence), `livingWorldDirector.test.ts` (entry-ingress invariant; idle
+squad roams inward via a hop staying neutral; base-less player never triggers
+`warping`/`attacking`). E2E `wave-attack.spec.ts` was updated for the entry route
+(`EQX_BOT_HOP_MS=500`); the netgate still applies (population churn touches the
+swarm broadcast).
+
 ## Future work
 
 - Per-kind hunter loadouts / threat tiers (extend the director's kind

@@ -31,25 +31,28 @@ export interface GalaxySector {
   neighbours: string[];
   /** Asteroid layout key — resolved server-side via asteroidConfigs.ts. */
   asteroidConfigKey: AsteroidConfigKey;
-  /** Ambient patrol-drone floor seeded at room creation so an empty
-   *  sector still feels alive BEFORE the Living World hunter bots route
-   *  in. These are the legacy non-proactive `drone-*` patrol drones; the
-   *  25 cross-sector `lwbot-*` hunters are owned separately by the
-   *  `LivingWorldDirector` and are ADDITIVE to this floor. */
+  /** Boot-seeded patrol-drone count for this galaxy sector. RETIRED to 0
+   *  (drone-warp-in, 2026-06-11): drones no longer materialise in galaxy
+   *  sectors at room creation — they warp in at entry (edge) sectors and the
+   *  `LivingWorldDirector`'s roaming squad pool provides ALL ambient presence.
+   *  Engineering/test rooms still set their own `droneCount` directly. */
   droneCount: number;
   /** Default ship spawn coords for fresh entry into this sector. */
   defaultSpawn: { x: number; y: number };
 }
 
 /**
- * Ambient patrol-drone floor per galaxy sector (Living World, 2026-05-16).
- * Deliberately small: the world's "alive" feeling now comes primarily
- * from the 25 director-owned hunter bots warping between sectors toward
- * players; a couple of patrol drones per sector keep an empty,
- * not-yet-visited sector from looking dead. Pre-Living-World these were
- * 8–20 per sector (a static per-sector garrison) — that role is gone.
+ * Ambient patrol-drone boot-seed floor per galaxy sector. **RETIRED to 0**
+ * (drone-warp-in refactor, 2026-06-11). Previously 2/sector (and 8–20 pre-Living
+ * World); now NO drone is boot-seeded into a galaxy sector. All ambient presence
+ * comes from the `LivingWorldDirector`'s roaming squad pool, which materialises
+ * drones ONLY at entry (edge) sectors and lets them hop inward — so a drone is
+ * never conjured in an interior sector out of nowhere. Kept as a named constant
+ * (rather than an inline 0) so the retirement is explicit at every call site;
+ * re-raising it would re-introduce magic-appearance drones and is a deliberate,
+ * reviewed change.
  */
-export const AMBIENT_DRONE_FLOOR = 2;
+export const AMBIENT_DRONE_FLOOR = 0;
 
 /**
  * 7-sector sunflower: 1 centre + 6 ring outers.
@@ -153,6 +156,41 @@ export function getNeighbours(key: string): GalaxySector[] {
 export function isNeighbour(fromKey: string, toKey: string): boolean {
   const src = getSector(fromKey);
   return src ? src.neighbours.includes(toKey) : false;
+}
+
+/** Axial-hex distance from the centre (Sol Prime at 0,0). */
+function hexDistanceFromCentre(h: AxialHex): number {
+  return (Math.abs(h.q) + Math.abs(h.r) + Math.abs(h.q + h.r)) / 2;
+}
+
+/**
+ * ENTRY (edge-of-galaxy) sectors — where Living World drone squads materialize
+ * (warp in) before hopping INWARD toward a target base, and where a killed
+ * squad respawns. Drones never appear in an interior sector out of nowhere; the
+ * galaxy "edge" is the only ingress (drone-warp-in design).
+ *
+ * Derived as the OUTERMOST ring (sectors at the maximum hex distance from the
+ * centre) rather than a hand-set per-record flag — so the set follows the graph
+ * if the galaxy grows (add a second ring and the edge moves outward with no
+ * bookkeeping). For the current 7-sector sunflower this is the 6 ring outers;
+ * the centre (sol-prime) is never an entry sector. Locked by `galaxy.test.ts`.
+ */
+export function getEntrySectors(): GalaxySector[] {
+  let maxD = 0;
+  for (const s of GALAXY_SECTORS) maxD = Math.max(maxD, hexDistanceFromCentre(s.hex));
+  // maxD === 0 would mean a single-sector galaxy (only the centre); then there
+  // is no edge ring → no entry sectors (the caller falls back / no spawns).
+  if (maxD === 0) return [];
+  return GALAXY_SECTORS.filter((s) => hexDistanceFromCentre(s.hex) === maxD);
+}
+
+/** True iff `key` is an entry (edge) sector — see {@link getEntrySectors}. */
+export function isEntrySector(key: string): boolean {
+  const s = getSector(key);
+  if (!s) return false;
+  let maxD = 0;
+  for (const g of GALAXY_SECTORS) maxD = Math.max(maxD, hexDistanceFromCentre(g.hex));
+  return maxD > 0 && hexDistanceFromCentre(s.hex) === maxD;
 }
 
 /** Standard pointy-top axial→pixel projection. Used by the SVG renderer. */

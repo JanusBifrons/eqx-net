@@ -35,7 +35,15 @@ export interface WaveDirectorOptions {
   pattern: WavePattern;
   /** Peaceful window (ticks) for de-escalation; defaults to the faction const. */
   peacefulTimeoutTicks?: number;
+  /** Minimum wall-clock spacing (ms) between dispatches against the SAME ready
+   *  faction. The director routes at most one squad per this window at a base,
+   *  so a base that's been ready a long time isn't swarmed (drone-warp-in
+   *  design: "one squad per ~5 min"). Defaults to 5 min. */
+  dispatchIntervalMs?: number;
 }
+
+/** Default dispatch cadence: one squad per ready faction per 5 minutes. */
+export const DEFAULT_DISPATCH_INTERVAL_MS = 300_000;
 
 export class WaveDirector {
   private readonly rooms: Map<string, LivingWorldRoom>;
@@ -44,8 +52,12 @@ export class WaveDirector {
   private readonly behaviour: SquadBehaviour;
   private readonly pattern: WavePattern;
   private readonly peacefulTimeoutTicks: number;
+  private readonly dispatchIntervalMs: number;
   /** factionId → wave count (for the WavePattern; v1 unused beyond 1). */
   private readonly waveCount = new Map<string, number>();
+  /** factionId → wall-clock of the last squad dispatch against it (the
+   *  ≤1-per-`dispatchIntervalMs` rate cap anchor). */
+  private readonly lastDispatchAtMs = new Map<string, number>();
 
   constructor(opts: WaveDirectorOptions) {
     this.rooms = opts.rooms;
@@ -54,19 +66,22 @@ export class WaveDirector {
     this.behaviour = opts.behaviour;
     this.pattern = opts.pattern;
     this.peacefulTimeoutTicks = opts.peacefulTimeoutTicks ?? FACTION_PEACEFUL_TIMEOUT_TICKS;
+    this.dispatchIntervalMs = opts.dispatchIntervalMs ?? DEFAULT_DISPATCH_INTERVAL_MS;
   }
 
   /** Plan this control tick. Pure of side effects — returns the steps the
    *  director executes. Each faction's de-escalation uses ITS room's serverTick
-   *  (carried on the readiness entry), not a single director clock. */
-  plan(): WaveStep[] {
+   *  (carried on the readiness entry), not a single director clock. `nowMs` is
+   *  the director's wall-clock, used ONLY for the dispatch rate-cap (the
+   *  de-escalation comparison still uses each room's own serverTick). */
+  plan(nowMs: number): WaveStep[] {
     // Gather readiness across all rooms (one entry per base-owning faction).
     const readiness = new Map<string, FactionBaseReadiness>();
     for (const room of this.rooms.values()) {
       for (const r of room.factionBaseReadiness()) readiness.set(r.factionId, r);
     }
 
-    this.assignReadyFactions(readiness);
+    this.assignReadyFactions(readiness, nowMs);
 
     const steps: WaveStep[] = [];
     for (const sq of this.squadPool.all()) {
@@ -102,8 +117,9 @@ export class WaveDirector {
   }
 
   /** Assign one idle, unassigned squad to each ready, un-waved faction that
-   *  doesn't already have a squad on it (WavePattern decides count; v1 = 1). */
-  private assignReadyFactions(readiness: Map<string, FactionBaseReadiness>): void {
+   *  doesn't already have a squad on it (WavePattern decides count; v1 = 1),
+   *  rate-capped to ≤1 dispatch per `dispatchIntervalMs` per faction. */
+  private assignReadyFactions(readiness: Map<string, FactionBaseReadiness>, nowMs: number): void {
     const assigned = new Set<string>();
     for (const sq of this.squadPool.all()) {
       if (sq.targetFactionId !== null) assigned.add(sq.targetFactionId);
@@ -113,6 +129,13 @@ export class WaveDirector {
       // the sector) — the warning + countdown is meaningless if they're offline
       // and can't defend. An already-assigned wave continues regardless.
       if (!r.ready || !r.ownerPresent || assigned.has(factionId)) continue;
+      // Rate cap: at most one squad per `dispatchIntervalMs` per faction. The
+      // first dispatch (no record) is immediate; after a wave stands down the
+      // next one against the same base waits out the window (drone-warp-in
+      // design: "one squad per ~5 min"). The squad still TRAVERSES hop-by-hop
+      // from wherever it is, so its arrival is further delayed by travel.
+      const last = this.lastDispatchAtMs.get(factionId);
+      if (last !== undefined && nowMs - last < this.dispatchIntervalMs) continue;
       const wave = (this.waveCount.get(factionId) ?? 0) + 1;
       const spec = this.pattern.nextWave(wave);
       let committed = 0;
@@ -124,6 +147,7 @@ export class WaveDirector {
       }
       if (committed > 0) {
         this.waveCount.set(factionId, wave);
+        this.lastDispatchAtMs.set(factionId, nowMs);
         assigned.add(factionId);
       }
     }

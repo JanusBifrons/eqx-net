@@ -198,10 +198,12 @@ export default defineConfig({
           timeout: 30_000,
           // Wave-system E2E (wave-attack.spec.ts): boot the director-managed
           // `galaxy-wave-test` room + a fast drone spool so the wave fires in
-          // seconds, not 5 min. Inert for other specs (the wave room only acts
-          // when the base owner is present; no other spec touches it). Merged
-          // onto process.env by Playwright.
-          env: { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000' },
+          // seconds, not 5 min. `EQX_BOT_HOP_MS=500` collapses the per-hop
+          // inter-sector flight (default 2 min) so the squad's hop-by-hop
+          // traversal to the base completes in-test. Inert for other specs (the
+          // wave room only acts when the base owner is present; no other spec
+          // touches it). Merged onto process.env by Playwright.
+          env: { EQX_E2E_WAVE: '1', EQX_BOT_SPOOL_MS: '5000', EQX_BOT_HOP_MS: '500' },
         },
         {
           command: 'pnpm dev:client',

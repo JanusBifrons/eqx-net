@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
+import { GALAXY_SECTORS, getEntrySectors, isEntrySector } from '../../core/galaxy/galaxy.js';
 import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import {
   apportion,
@@ -9,6 +9,9 @@ import {
   pickRespawnSector,
   sectorEdgePose,
   makeSeededRng,
+  liveEntrySectors,
+  pickEntrySector,
+  pickRoamGoal,
   MIN_PACK_PER_OCCUPIED,
 } from './population.js';
 
@@ -229,6 +232,74 @@ describe('pickRespawnSector', () => {
     const s2 = pickRespawnSector(makeSeededRng(42), KEYS);
     expect(KEYS).toContain(s1);
     expect(s1).toBe(s2);
+  });
+});
+
+describe('liveEntrySectors', () => {
+  const ENTRY = getEntrySectors().map((s) => s.key);
+
+  it('returns the galaxy entry sectors present in the live set, in live order', () => {
+    const live = liveEntrySectors(KEYS);
+    // For the full galaxy the live entry set is exactly the global edge ring.
+    expect([...live].sort()).toEqual([...ENTRY].sort());
+    expect(live).not.toContain('sol-prime'); // the centre is interior
+  });
+
+  it('intersects with the live rooms (a director subset) — drops absent edges', () => {
+    const live = liveEntrySectors(['sol-prime', 'orion-belt', 'vega-reach']);
+    // orion-belt + vega-reach are edge sectors; sol-prime is interior.
+    expect(live).toEqual(['orion-belt', 'vega-reach']);
+  });
+
+  it('FALLS BACK to all live sectors when none of the edge ring is live', () => {
+    // A single-interior-sector test harness has no legal edge ingress — the
+    // fallback keeps the respawn loop from deadlocking.
+    expect(liveEntrySectors(['sol-prime'])).toEqual(['sol-prime']);
+  });
+});
+
+describe('pickEntrySector', () => {
+  it('always returns a galaxy entry sector for the full galaxy', () => {
+    const s = pickEntrySector(makeSeededRng(42), KEYS);
+    expect(isEntrySector(s)).toBe(true);
+    expect(s).not.toBe('sol-prime');
+  });
+
+  it('is deterministic per seed and restricted to the live entry set', () => {
+    const live = ['sol-prime', 'orion-belt', 'vega-reach'];
+    const s1 = pickEntrySector(makeSeededRng(7), live);
+    const s2 = pickEntrySector(makeSeededRng(7), live);
+    expect(s1).toBe(s2);
+    expect(['orion-belt', 'vega-reach']).toContain(s1);
+  });
+
+  it('uses the single-sector fallback when no edge sector is live', () => {
+    expect(pickEntrySector(makeSeededRng(1), ['sol-prime'])).toBe('sol-prime');
+  });
+});
+
+describe('pickRoamGoal', () => {
+  it('returns a real LIVE neighbour of the source (a graph random walk)', () => {
+    // sol-prime neighbours every outer; restrict the live set to two of them.
+    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', ['sol-prime', 'orion-belt', 'vega-reach']);
+    expect(['orion-belt', 'vega-reach']).toContain(goal);
+    expect(goal).not.toBe('sol-prime'); // a neighbour, never self
+  });
+
+  it('never picks a sector the director does not hold (live-room intersection)', () => {
+    // orion-belt's galaxy neighbours are sol-prime, vega-reach, lyra-fringe; only
+    // sol-prime is live, so the walk must go there.
+    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt', 'sol-prime'])).toBe('sol-prime');
+  });
+
+  it('stays put when the source has no live neighbour', () => {
+    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt'])).toBe('orion-belt');
+  });
+
+  it('is deterministic per seed', () => {
+    const a = pickRoamGoal(makeSeededRng(8), 'sol-prime', KEYS);
+    const b = pickRoamGoal(makeSeededRng(8), 'sol-prime', KEYS);
+    expect(a).toBe(b);
   });
 });
 

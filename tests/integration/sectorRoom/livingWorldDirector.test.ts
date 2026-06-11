@@ -19,6 +19,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { bootLivingWorldTestServer, type LivingWorldTestHarness } from './harness.js';
 import { SHIP_KINDS_LIST } from '../../../src/shared-types/shipKinds.js';
+import { isEntrySector } from '../../../src/core/galaxy/galaxy.js';
 
 const KIND = SHIP_KINDS_LIST[0]!.id;
 
@@ -29,55 +30,107 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     h = undefined;
   }, 15_000);
 
-  it('seeds a squad into its home sector and HOLDS (no occupancy spread)', async () => {
-    // Wave model: bots gather at their squad's home sector and stay put until a
-    // wave is declared against a ready base. botCount 6 ⇒ one (partial) squad of
-    // 6, whose home is the first sector. They must NOT spread across sectors the
-    // way the retired occupancy distribution did.
+  it('seeds a squad at an ENTRY (edge) sector — never the interior (drone-warp-in invariant)', async () => {
+    // Entry-only ingress: bots materialise ONLY at entry (edge) sectors and
+    // gather at their squad's home edge until a wave is declared. sol-prime is
+    // the interior centre — NO drone may appear there out of nowhere. For this
+    // live set the entry sectors are orion-belt + vega-reach; the single squad
+    // homes at the first (orion-belt).
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime', 'orion-belt', 'vega-reach'],
       botCount: 6,
       seed: 7,
     });
-    await h.waitUntil(
-      () => h!.director.snapshot().perSector['sol-prime']!.bots === 6,
-      8000,
-      'all 6 gathered at the squad home',
-    );
+    await h.waitUntil(() => h!.director.snapshot().active === 6, 8000, 'all 6 warped in');
+
+    // THE invariant: every from-nowhere spawn (`bot_spawn`) is at an entry
+    // sector, and NONE at the interior sol-prime.
+    const spawns = h.events.all({ tag: 'bot_spawn' });
+    expect(spawns.length).toBeGreaterThanOrEqual(6);
+    for (const e of spawns) {
+      expect(isEntrySector(e.data['sectorKey'] as string)).toBe(true);
+      expect(e.data['sectorKey']).not.toBe('sol-prime');
+    }
+    // The squad gathered at its home edge; no member ingressed into the centre.
     const s = h.director.snapshot();
-    expect(s.active).toBe(6);
-    expect(s.perSector['orion-belt']!.bots).toBe(0);
-    expect(s.perSector['vega-reach']!.bots).toBe(0);
+    expect(s.perSector['sol-prime']!.bots).toBe(0);
+    expect(s.perSector['orion-belt']!.bots).toBe(6);
   }, 20_000);
 
   it('does NOT hunt a player who has no base (Req #6 — occupancy aggro retired)', async () => {
     // The single most important regression lock for the wave refactor: a player
     // flying through a sector is NOT enough to trigger drones. Only a wave
-    // declared against a READY base aggros them. With no structures, the squad
-    // must never warp toward or aggro the player.
+    // declared against a READY base aggros them. With no structures the squad
+    // must never enter `warping`/`attacking`.
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime', 'orion-belt'],
       botCount: 4,
       seed: 3,
     });
+    // orion-belt is the only entry sector in this set, so the squad gathers there.
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['sol-prime']!.bots === 4,
+      () => h!.director.snapshot().perSector['orion-belt']!.bots === 4,
       6000,
-      'squad gathered at home',
+      'squad gathered at its home edge',
     );
-    // Player joins the OTHER sector (no base, no structures) as a fully ACTIVE
+    // Player joins the INTERIOR sector (no base, no structures) as a fully ACTIVE
     // hull (connectActive sends client_ready so playerCount() counts it — the
-    // no-hunt guarantee must hold for a real, present player, not a lingering one).
-    await h.connectActive(randomUUID(), 'orion-belt', { shipKind: KIND });
-    h.events.clear();
+    // no-hunt guarantee must hold for a real, present player).
+    await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
     await h.advance(600); // ~10 control ticks at the harness interval
 
-    // No squad warped toward the player; the pack stayed home.
-    expect(h.events.count({ tag: 'bot_transit_start' })).toBe(0);
+    // Load-bearing: no wave was ever declared against the base-less player — the
+    // squad never left idle/forming (this assertion survives roaming, which
+    // keeps idle squads in the `idle` state). And no drone ingressed into the
+    // player's interior sector.
+    const sq = h.director.squadSnapshot();
+    expect(sq.byState.warping).toBe(0);
+    expect(sq.byState.attacking).toBe(0);
     const s = h.director.snapshot();
     expect(s.active).toBe(4);
-    expect(s.perSector['sol-prime']!.bots).toBe(4);
-    expect(s.perSector['orion-belt']!.bots).toBe(0);
+    expect(s.perSector['sol-prime']!.bots).toBe(0);
+  }, 25_000);
+
+  it('roams an idle squad across the graph (HOP, not ingress) — and stays neutral', async () => {
+    // Roaming replaces the retired ambient patrol floor: an idle, unassigned
+    // squad gathers at its home edge (orion-belt), then slow-drifts the graph.
+    // The only live neighbour here is the interior sol-prime, so the squad
+    // drifts inward — proving roaming reaches interior sectors via real HOPS
+    // (bot_transit_commit), NOT from-nowhere ingress, and never goes hostile.
+    h = await bootLivingWorldTestServer({
+      sectors: ['orion-belt', 'sol-prime'],
+      botCount: 8,
+      seed: 11,
+      director: { roamIntervalMs: 100, hopTravelMs: 40 },
+    });
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['orion-belt']!.bots === 8,
+      6000,
+      'squad gathered at its home edge',
+    );
+    // The squad drifts inward to sol-prime within a roam cycle.
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['sol-prime']!.bots > 0,
+      6000,
+      'a member roamed into the interior via a hop',
+    );
+
+    // Reaching the interior was a HOP (despawn→spawn pair, logged
+    // bot_transit_commit), NEVER a from-nowhere ingress: every bot_spawn is at
+    // the entry edge.
+    const intoSol = h.events.all({
+      tag: 'bot_transit_commit',
+      where: (d) => d['to'] === 'sol-prime',
+    });
+    expect(intoSol.length).toBeGreaterThan(0);
+    for (const e of h.events.all({ tag: 'bot_spawn' })) {
+      expect(isEntrySector(e.data['sectorKey'] as string)).toBe(true);
+    }
+    // Roaming squads stay NEUTRAL — never warping/attacking (hostility is
+    // wave-only).
+    const sq = h.director.squadSnapshot();
+    expect(sq.byState.warping).toBe(0);
+    expect(sq.byState.attacking).toBe(0);
   }, 25_000);
 
   it('respawns a combat-killed bot from no-origin after the delay', async () => {

@@ -10,7 +10,7 @@
  * The `LivingWorldDirector` composes these; it owns the timers, bus
  * subscriptions and room references. This module owns only the decisions.
  */
-import { getSector, getNeighbours } from '../../core/galaxy/galaxy.js';
+import { getSector, getNeighbours, getEntrySectors } from '../../core/galaxy/galaxy.js';
 import { clampToSectorBounds, SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 
 /** A source of randomness in `[0, 1)` — `Math.random` in production, a
@@ -291,6 +291,55 @@ export function pickRespawnSector(rng: Rng, sectorKeys: readonly string[]): stri
   if (sectorKeys.length === 0) throw new Error('pickRespawnSector: no sectors');
   const idx = Math.min(sectorKeys.length - 1, Math.floor(rng() * sectorKeys.length));
   return sectorKeys[idx]!;
+}
+
+/**
+ * The galaxy ENTRY (edge) sectors among the rooms the director actually holds.
+ *
+ * `getEntrySectors()` is galaxy-GLOBAL (reads `GALAXY_SECTORS`), but the
+ * director may run over a subset of live rooms (a test harness boots only some
+ * sectors). We intersect with `liveSectorKeys` and FALL BACK to all live
+ * sectors when none of the global entry sectors are live — so a single-interior
+ * test harness can't deadlock the respawn loop (it would otherwise have no legal
+ * ingress sector at all). Order follows `liveSectorKeys` for determinism.
+ */
+export function liveEntrySectors(liveSectorKeys: readonly string[]): string[] {
+  const entry = new Set(getEntrySectors().map((s) => s.key));
+  const out: string[] = [];
+  for (const k of liveSectorKeys) if (entry.has(k)) out.push(k);
+  return out.length > 0 ? out : [...liveSectorKeys];
+}
+
+/**
+ * A from-nowhere INGRESS sector for a drone "warping in from outside known
+ * space" — a random live entry (edge) sector. All from-nowhere materialisation
+ * (initial seed + combat respawn) routes through here, so drones never appear
+ * in an interior sector out of thin air; they enter at the galaxy edge and hop
+ * inward via the graph (drone-warp-in design). See {@link liveEntrySectors} for
+ * the live-room intersection + single-sector fallback.
+ */
+export function pickEntrySector(rng: Rng, liveSectorKeys: readonly string[]): string {
+  const entry = liveEntrySectors(liveSectorKeys);
+  if (entry.length === 0) throw new Error('pickEntrySector: no sectors');
+  const idx = Math.min(entry.length - 1, Math.floor(rng() * entry.length));
+  return entry[idx]!;
+}
+
+/**
+ * A slow-roam next goal: a random LIVE neighbour of `from` (a galaxy-graph
+ * random walk), or `from` itself when it has no live neighbour. Idle squads
+ * drift the galaxy this way between waves — the move is a real despawn→spawn
+ * HOP (never a from-nowhere ingress), so it can legally land in interior
+ * sectors. Restricted to `liveSectorKeys` so a squad never roams toward a sector
+ * the director doesn't hold a room for. Deterministic given the RNG.
+ */
+export function pickRoamGoal(rng: Rng, from: string, liveSectorKeys: readonly string[]): string {
+  const live = new Set(liveSectorKeys);
+  const neighbours: string[] = [];
+  for (const n of getNeighbours(from)) if (live.has(n.key)) neighbours.push(n.key);
+  if (neighbours.length === 0) return from;
+  const idx = Math.min(neighbours.length - 1, Math.floor(rng() * neighbours.length));
+  return neighbours[idx]!;
 }
 
 export interface EdgePose {

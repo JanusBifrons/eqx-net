@@ -25,11 +25,19 @@ import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
-import { pickRespawnSector, sectorEdgePose, type Rng } from './population.js';
+import {
+  sectorEdgePose,
+  nextHopToward,
+  pickEntrySector,
+  liveEntrySectors,
+  pickRoamGoal,
+  type Rng,
+} from './population.js';
+import { isEntrySector } from '../../core/galaxy/galaxy.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
-import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT } from './director/SquadPool.js';
+import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT, type SquadRecord } from './director/SquadPool.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
@@ -79,6 +87,20 @@ export function resolveBotSpoolMs(
   return Number.isFinite(n) && n >= 1 ? n : undefined;
 }
 
+/** Director-level inter-sector hop-travel override (ms), read from
+ *  `EQX_BOT_HOP_MS`. Returns `undefined` (⇒ use the `hopTravelMs` default) when
+ *  unset/invalid. The drone-warp-in design's emergent travel time per galaxy
+ *  hop; E2E timelines inject a tiny value so a multi-hop traversal completes in
+ *  the test window instead of minutes. Read once at boot. */
+export function resolveBotHopMs(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  const raw = env['EQX_BOT_HOP_MS'];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
@@ -104,6 +126,17 @@ export interface LivingWorldOptions {
   initialStaggerMs: number;
   /** Per-bot vulnerable spool length (defaults to the player value). */
   spoolMs: number;
+  /** Invulnerable inter-sector flight time per galaxy-graph hop (ms). The
+   *  drone-warp-in design's emergent travel: a 2-hop dispatch costs ~2×, so
+   *  farther bases take longer to reach. Override via `EQX_BOT_HOP_MS`. */
+  hopTravelMs: number;
+  /** Dwell (ms) an idle squad waits at its current roam goal before drifting to
+   *  a new one — the slow-roam cadence that replaces the retired ambient patrol
+   *  floor. Members stay NEUTRAL while roaming (hostility is wave-only). */
+  roamIntervalMs: number;
+  /** Minimum spacing (ms) between squad dispatches against the SAME ready
+   *  faction — the director routes ≤1 squad per this window at a base. */
+  dispatchIntervalMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -124,6 +157,15 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   shedRecoveryMs: 10_000,
   initialStaggerMs: 200,
   spoolMs: SPOOL_DURATION_MS,
+  // ~2 min per hop. Every entry sector is 1 hop from sol-prime, so a dispatch
+  // at the home sector telegraphs ~spool+hop ahead; a 2-hop interior base is
+  // ~2× the flight — the "warping in from outside, takes minutes to reach Sol"
+  // feel. Tunable via EQX_BOT_HOP_MS.
+  hopTravelMs: 120_000,
+  // ~45 s dwell between roam hops — a slow drift, not a frantic patrol.
+  roamIntervalMs: 45_000,
+  // One squad per ready faction per 5 min (then it traverses hop-by-hop).
+  dispatchIntervalMs: 300_000,
 };
 
 export class LivingWorldDirector {
@@ -139,6 +181,9 @@ export class LivingWorldDirector {
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
+  /** squadId → wall-clock the squad may next pick a new roam goal (the
+   *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
+  private readonly squadRoamNextAtMs = new Map<string, number>();
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -166,6 +211,7 @@ export class LivingWorldDirector {
       pool: this.pool,
       rng: this.rng,
       respawnDelayMs: this.opts.respawnDelayMs,
+      hopTravelMs: this.opts.hopTravelMs,
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -174,6 +220,7 @@ export class LivingWorldDirector {
       hunterPool: this.pool,
       behaviour: new WaveSquadBehaviour(),
       pattern: new EscalatingWavePattern(),
+      dispatchIntervalMs: this.opts.dispatchIntervalMs,
     });
   }
 
@@ -182,19 +229,24 @@ export class LivingWorldDirector {
    *  prune timer). */
   start(): void {
     if (this.timer) return;
-    const homeSector = this.sectorKeys[0] ?? '';
+    // Squads home at ENTRY (edge) sectors — every drone enters the galaxy from
+    // the edge and hops inward (drone-warp-in design); none is seeded into an
+    // interior sector. `liveEntrySectors` intersects the global edge ring with
+    // the rooms we actually hold (+ falls back to all live rooms for a
+    // single-interior test harness).
+    const entryKeys = liveEntrySectors(this.sectorKeys);
+    const homeSector = entryKeys[0] ?? this.sectorKeys[0] ?? '';
     this.pool.seed(homeSector);
     // Group the pool into homogeneous squads (v1: all 'fighter', shown as
     // "8 × Legionnaires" in the warp warning). Each member's hull is forced to
     // its squad's kind so the squad is visually homogeneous and the warning
     // label is honest (a future WavePattern can vary the kind per squad).
     const botIds = [...this.pool.values()].map((r) => r.botId);
-    // Spread squads across the galaxy so they don't all pile into one sector;
-    // each squad gathers at its own home until a wave routes it elsewhere.
-    const keys = this.sectorKeys;
+    // Spread squad homes across the entry sectors so they don't all pile into
+    // one edge; each squad gathers at its home entry until a wave routes it.
     this.squadPool.seed(
       botIds,
-      (i) => keys[i % keys.length] ?? homeSector,
+      (i) => entryKeys[i % entryKeys.length] ?? homeSector,
       () => 'fighter',
     );
     for (const rec of this.pool.values()) {
@@ -236,6 +288,7 @@ export class LivingWorldDirector {
     }
     this.subs.length = 0;
     this.pool.disposeControllers();
+    this.warp.disposePending();
   }
 
   /** Read-only introspection for tests / the `/dev/population` route. */
@@ -244,6 +297,13 @@ export class LivingWorldDirector {
       const room = this.rooms.get(k);
       return room ? room.playerCount() : 0;
     });
+  }
+
+  /** Read-only squad-state counts (`forming/idle/warping/attacking/retreating`)
+   *  for tests + telemetry — e.g. asserting a base-less player never triggers a
+   *  wave (no `warping`/`attacking` squad). */
+  squadSnapshot(): ReturnType<SquadPool['snapshot']> {
+    return this.squadPool.snapshot();
   }
 
   /**
@@ -261,7 +321,10 @@ export class LivingWorldDirector {
     this.promoteSquads();
 
     // ── 2. wave planning + squad advancement ─────────────────────────────
-    for (const step of this.waveDirector.plan()) this.executeWaveStep(step);
+    for (const step of this.waveDirector.plan(now)) this.executeWaveStep(step);
+
+    // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
+    this.roamStep(now);
 
     // ── 3. telemetry (population + squad/wave counts) ────────────────────
     const snap = this.snapshot();
@@ -288,8 +351,56 @@ export class LivingWorldDirector {
         if (active > 0) this.squadPool.setState(sq, 'idle');
       } else if (sq.state === 'retreating') {
         this.squadPool.setState(sq, 'idle');
+        // Drop the stale roam dwell so a stood-down squad starts drifting again
+        // from wherever it retreated to, rather than waiting on an old schedule.
+        this.squadRoamNextAtMs.delete(sq.squadId);
       }
     }
+  }
+
+  /**
+   * Slow-roam idle, UNASSIGNED squads around the galaxy graph (the ambient
+   * patrol floor replacement). A squad drifts one roam hop per `roamIntervalMs`
+   * once it has gathered at its current goal: pick a random LIVE neighbour as
+   * the new goal, then advance members toward it hop-by-hop. Roaming squads stay
+   * NEUTRAL — hostility is marked ONLY in the wave `attack` branch, never here —
+   * so a roaming pack that drifts through a base-less player's sector does not
+   * hunt them. Roam hops are real despawn→spawn pairs (`bot_transit_commit`),
+   * never from-nowhere ingress, so they may legally enter interior sectors.
+   */
+  private roamStep(now: number): void {
+    for (const sq of this.squadPool.all()) {
+      if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
+      const sched = this.squadRoamNextAtMs.get(sq.squadId);
+      if (sched === undefined) {
+        // First sighting: dwell at the home edge before the first drift.
+        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+      } else if (now >= sched && this.squadGatheredAt(sq, sq.sectorKey)) {
+        sq.sectorKey = pickRoamGoal(this.rng, sq.sectorKey, this.sectorKeys);
+        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+      }
+      // Always drift toward the current goal (no-op once gathered there).
+      this.advanceMembersTowardGoal(sq);
+    }
+  }
+
+  /** True iff the squad has ≥1 active member, ALL its active members are in
+   *  `sector`, and none is in flight — i.e. the squad has fully gathered there.
+   *  Respawning members (warping in from the edge) are ignored: a squad with a
+   *  reinforcement still inbound is "gathered" for roam-decision purposes and
+   *  the reinforcement simply chases the next goal. */
+  private squadGatheredAt(squad: SquadRecord, sector: string): boolean {
+    let active = 0;
+    for (const botId of squad.botIds) {
+      const rec = this.pool.get(botId);
+      if (!rec) continue;
+      if (rec.state === 'in-transit') return false;
+      if (rec.state === 'active') {
+        if (rec.sectorKey !== sector) return false;
+        active++;
+      }
+    }
+    return active > 0;
   }
 
   /** Execute one WaveDirector step (the side-effecting half — the planning is
@@ -298,29 +409,28 @@ export class LivingWorldDirector {
     switch (step.kind) {
       case 'warp': {
         this.squadPool.setState(step.squad, 'warping');
-        // Coordinated warp: every active member spools from its current sector
-        // to the target in the SAME control tick (they arrive together, modulo
-        // partial arrival under slot contention / mid-spool death — accepted).
-        let warping = 0;
-        for (const botId of step.squad.botIds) {
-          const rec = this.pool.get(botId);
-          if (!rec || rec.state !== 'active' || rec.sectorKey === step.to) continue;
-          this.startSquadMemberTransit(rec, rec.sectorKey, step.to);
-          warping++;
-        }
-        // ONE warp-in warning to the destination sector (not one per bot): the
-        // HUD countdown banner. countdownMs = the spool the bots are serving;
-        // it self-expires ≈ when they arrive, so no explicit clear is needed.
-        const destRoom = this.rooms.get(step.to);
-        if (destRoom && warping > 0) {
-          destRoom.broadcastWarpWarning({
-            type: 'warp_warning',
-            id: step.squad.squadId,
-            label: squadDisplayLabel(step.squad.kind),
-            count: warping,
-            countdownMs: this.opts.spoolMs,
-            kind: step.squad.kind,
-          });
+        // Hop-by-hop traversal: advance every member that isn't yet at the goal
+        // ONE galaxy-graph hop toward it. Re-issued every control tick while the
+        // squad is warping, so members traverse independently (stragglers + the
+        // members respawning in from the edge keep flowing toward the goal).
+        const finalApproach = this.advanceMembersTowardGoal(step.squad);
+        // ONE warp-in warning per squad — fired the first tick a member begins
+        // the FINAL leg into the goal sector (the in-sector telegraph). Deduped
+        // via squad.warned so it doesn't re-broadcast every control tick.
+        if (finalApproach > 0 && !step.squad.warned) {
+          step.squad.warned = true;
+          const destRoom = this.rooms.get(step.to);
+          if (destRoom) {
+            destRoom.broadcastWarpWarning({
+              type: 'warp_warning',
+              id: step.squad.squadId,
+              label: squadDisplayLabel(step.squad.kind),
+              count: step.squad.botIds.length,
+              // ≈ time-to-arrival for the final leg: vulnerable spool + flight.
+              countdownMs: this.opts.spoolMs + this.opts.hopTravelMs,
+              kind: step.squad.kind,
+            });
+          }
         }
         break;
       }
@@ -332,6 +442,10 @@ export class LivingWorldDirector {
           // Re-pulsed every control tick while attacking (beats FORGET_TICKS).
           room.markSquadHostileToFaction(step.squad.botIds, step.factionId);
         }
+        // Stragglers keep hopping in while the on-site members fight: the
+        // instant-hop model warped all 8 at once, but hop-by-hop must not strand
+        // members who haven't reached the goal yet.
+        this.advanceMembersTowardGoal(step.squad);
         break;
       }
       case 'retreat': {
@@ -346,6 +460,43 @@ export class LivingWorldDirector {
         break;
       }
     }
+  }
+
+  /**
+   * Warp every active member that isn't yet at the squad's goal (`sq.sectorKey`)
+   * ONE galaxy-graph hop toward it (`nextHopToward`). Re-issued each control
+   * tick while a squad is warping / attacking / roaming, so members traverse the
+   * graph hop-by-hop and independently — a member that respawns in from an entry
+   * sector or straggles behind keeps flowing toward the goal without any
+   * squad-level "current location" bookkeeping (the multiset of member
+   * `rec.sectorKey` IS the squad's position).
+   *
+   * `in-transit` members are skipped (the per-leg `BotTransitController` is
+   * single-use; only `active` members not yet at their next hop are re-tasked).
+   * Returns the number of members that began the FINAL leg (`nextHop === goal`)
+   * this tick — the trigger for the one-shot warp-in warning.
+   */
+  private advanceMembersTowardGoal(squad: { botIds: readonly string[]; sectorKey: string }): number {
+    const goal = squad.sectorKey;
+    let finalApproach = 0;
+    for (const botId of squad.botIds) {
+      const rec = this.pool.get(botId);
+      if (!rec || rec.state !== 'active' || rec.sectorKey === goal) continue;
+      let hop = nextHopToward(rec.sectorKey, goal);
+      if (hop === null) {
+        // No galaxy-graph route from here to the goal. In production every wave
+        // target is a real graph sector, so this only happens for a goal that's
+        // a LIVE room outside the graph (a synthetic test/engineering sector) —
+        // hop directly to it. (Still a despawn→spawn pair, never a from-nowhere
+        // ingress, so the entry-only-ingress invariant holds.) Truly unreachable
+        // ⇒ leave the member.
+        if (this.rooms.has(goal)) hop = goal;
+        else continue;
+      }
+      this.startSquadMemberTransit(rec, rec.sectorKey, hop);
+      if (hop === goal) finalApproach++;
+    }
+    return finalApproach;
   }
 
   /** Spool one squad member from→to via the proven per-bot transit machinery
@@ -366,7 +517,7 @@ export class LivingWorldDirector {
     serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });
     ctrl.begin({
       now: this.nowMs,
-      commit: () => this.warp.doHop(rec, from, to),
+      commit: () => this.warp.depart(rec, from, to),
       outcome: (res) => this.warp.onTransitOutcome(rec, from, to, res),
     });
   }
@@ -377,12 +528,18 @@ export class LivingWorldDirector {
     const shedRecovered = now - this.lastShedAtMs > this.opts.shedRecoveryMs;
     for (const rec of this.pool.values()) {
       if (rec.state !== 'respawning' || rec.respawnAtMs > now || !shedRecovered) continue;
-      // Squad-aware respawn (hostile-review C4): a member of a committed squad
-      // warps back into ITS squad's sector so "fight together" survives a
-      // death; otherwise (unassigned / still forming) fall back to the ambient
-      // random sector.
+      // Ingress is ALWAYS at an entry (edge) sector — a (re)spawning bot "warps
+      // in from outside known space" at the galaxy edge, NEVER in place in an
+      // interior sector (the drone-warp-in invariant). If the squad's goal is
+      // itself a live entry sector (an idle/forming squad gathered at its home
+      // entry), the bot rejoins there directly — cohesive; otherwise (the goal
+      // is an interior base / roam target) it enters at a random edge sector and
+      // traverses back hop-by-hop via `advanceMembersTowardGoal`.
+      const goal = this.squadPool.respawnSectorFor(rec.botId);
       const sector =
-        this.squadPool.respawnSectorFor(rec.botId) ?? pickRespawnSector(this.rng, this.sectorKeys);
+        goal !== null && this.rooms.has(goal) && isEntrySector(goal)
+          ? goal
+          : pickEntrySector(this.rng, this.sectorKeys);
       const room = this.rooms.get(sector);
       if (!room || !room.hasFreeSlot()) {
         rec.respawnAtMs = now; // keep retrying next tick
