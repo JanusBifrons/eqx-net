@@ -20,7 +20,7 @@ load-bearing and must not regress.
 
 | ID | Control | Where |
 |----|---------|-------|
-| S1 | **CORS origin allowlist.** `Access-Control-Allow-Origin: *` replaced by an allowlist driven by `ALLOWED_ORIGINS` (comma-separated). Non-production defaults to `http://localhost:5173`; production defaults to **closed** (no cross-origin browser access) unless configured. | `src/server/net/httpCors.ts` |
+| S1 | **CORS origin policy.** `Access-Control-Allow-Origin: *` replaced by a policy: `ALLOWED_ORIGINS` (comma-separated) is the explicit allowlist; with no list, **non-production reflects any origin** (dev/LAN/netgate ergonomics — dev isn't a security boundary, and a hardcoded `localhost:5173` broke every other dev origin) while **production is closed** (no cross-origin browser reads) unless configured. | `src/server/net/httpCors.ts` |
 | S2 | **Auth rate limiting.** Per-IP fixed-window limiter on the bcrypt endpoints: login+register **10/min/IP** (combined), `/auth/google*` + `/auth/exchange` **30/min/IP**. 429 + `Retry-After`. Cheap routes (`/healthz`, `/diag`) are not limited. | `src/server/net/HttpRateLimit.ts`, applied in `authRouter` |
 | S3 | **OAuth one-time code exchange.** The callback no longer puts the JWT in the redirect URL. It stashes `{ token, user }` under a single-use 60 s code and redirects `/?authCode=<code>`; the SPA POSTs the code to `/auth/exchange` to pick up the token. | `src/server/auth/authCodeStore.ts`, `src/client/auth/authApi.ts` |
 | S4 | **Stateless HMAC CSRF state.** The in-memory `oauthStates` Map (raced, lost on restart, broke multi-instance) replaced by a signed token `nonce.timestamp.HMAC(secret, payload)` verified by signature + 10-min TTL with no server storage. | `src/server/auth/oauthState.ts` |

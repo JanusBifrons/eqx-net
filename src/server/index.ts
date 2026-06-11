@@ -15,7 +15,7 @@ import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipS
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs } from './livingworld/LivingWorldDirector.js';
-import { resolveAllowedOrigins, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
+import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
 
@@ -33,13 +33,13 @@ const MAX_DEV_EVENTS = Number(process.env['EQX_DEV_EVENTS_MAX'] ?? 500);
 
 const app = express();
 
-// CORS origin allowlist + baseline security headers (plan squishy-canyon,
-// findings S1 + S7). `ALLOWED_ORIGINS` (comma-separated) opens specific
-// browser origins; non-production defaults to the Vite dev origin. See
-// src/server/net/httpCors.ts + docs/architecture/security.md.
-const allowedOrigins = resolveAllowedOrigins();
+// CORS policy + baseline security headers (plan squishy-canyon, S1 + S7).
+// `ALLOWED_ORIGINS` (comma-separated) is the explicit allowlist; non-production
+// reflects any origin (dev/LAN/netgate ergonomics); production is closed by
+// default. See src/server/net/httpCors.ts + docs/architecture/security.md.
+const corsPolicy = resolveCorsPolicy();
 app.use(securityHeadersMiddleware());
-app.use(corsMiddleware(allowedOrigins));
+app.use(corsMiddleware(corsPolicy));
 
 app.options('*', (_req, res) => { res.sendStatus(204); });
 

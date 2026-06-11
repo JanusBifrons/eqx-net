@@ -18,47 +18,58 @@ const CORS_ALLOW_METHODS = 'GET, POST, PATCH, OPTIONS';
 const HSTS_VALUE = 'max-age=31536000; includeSubDomains';
 
 /**
- * Resolve the set of browser origins permitted to read cross-origin responses.
- *
- * - `ALLOWED_ORIGINS` (comma-separated) is the explicit allowlist and always
- *   wins when present.
- * - Otherwise, in non-production we default to the Vite dev origin so the local
- *   dev loop works with zero config.
- * - In production with no list configured we return an EMPTY set — the safe
- *   default is "no cross-origin browser access"; an operator opts specific
- *   origins in via `ALLOWED_ORIGINS`.
+ * Resolved CORS policy. `reflectAny` echoes whatever `Origin` the browser sends
+ * (dev/test convenience); otherwise only origins in `allowed` are echoed.
  */
-export function resolveAllowedOrigins(
-  env: NodeJS.ProcessEnv = process.env,
-): Set<string> {
-  const raw = env['ALLOWED_ORIGINS'];
-  if (raw && raw.trim().length > 0) {
-    return new Set(
-      raw
-        .split(',')
-        .map((o) => o.trim())
-        .filter((o) => o.length > 0),
-    );
-  }
-  if (env['NODE_ENV'] !== 'production') {
-    return new Set(['http://localhost:5173']);
-  }
-  return new Set();
+export interface CorsPolicy {
+  reflectAny: boolean;
+  allowed: Set<string>;
 }
 
 /**
- * CORS middleware with an origin allowlist. Echoes the request `Origin` (plus
- * `Vary: Origin`) only when it is in `allowedOrigins`; otherwise emits no
- * `Access-Control-Allow-Origin`, so the browser blocks the cross-origin read.
+ * Resolve the CORS policy (plan squishy-canyon, S1).
+ *
+ * - `ALLOWED_ORIGINS` (comma-separated) is the explicit allowlist and always
+ *   wins, in any environment.
+ * - Otherwise, in **non-production** we reflect ANY origin. Dev/test is not a
+ *   security boundary, and a hardcoded `localhost:5173` broke every non-5173
+ *   dev origin — phones on the LAN (`serverUrl.ts`: `http://192.168.1.5:5173`),
+ *   the netcode-health gate's per-arm ports, alternate dev ports. This restores
+ *   the old `*` ergonomics for dev WITHOUT weakening production.
+ * - In **production** with no list configured we deny all cross-origin browser
+ *   reads (empty allowlist, no reflect) — the safe default; opt origins in via
+ *   `ALLOWED_ORIGINS`.
+ */
+export function resolveCorsPolicy(env: NodeJS.ProcessEnv = process.env): CorsPolicy {
+  const raw = env['ALLOWED_ORIGINS'];
+  if (raw && raw.trim().length > 0) {
+    return {
+      reflectAny: false,
+      allowed: new Set(
+        raw
+          .split(',')
+          .map((o) => o.trim())
+          .filter((o) => o.length > 0),
+      ),
+    };
+  }
+  return { reflectAny: env['NODE_ENV'] !== 'production', allowed: new Set() };
+}
+
+/**
+ * CORS middleware. Echoes the request `Origin` (plus `Vary: Origin`) when the
+ * policy reflects-any (non-prod) OR the origin is in the explicit allowlist;
+ * otherwise emits no `Access-Control-Allow-Origin`, so the browser blocks the
+ * cross-origin read.
  *
  * Same-origin and non-browser requests (no `Origin` header) carry no ACAO under
- * the spec and pass through untouched — `/healthz` polling, server-to-server,
- * and the Playwright global-setup token mint are unaffected.
+ * the spec and pass through untouched — same-origin `/healthz` polling,
+ * server-to-server, and the Playwright global-setup token mint are unaffected.
  */
-export function corsMiddleware(allowedOrigins: Set<string>) {
+export function corsMiddleware(policy: CorsPolicy) {
   return (req: Request, res: Response, next: NextFunction): void => {
     const origin = req.headers['origin'];
-    if (typeof origin === 'string' && allowedOrigins.has(origin)) {
+    if (typeof origin === 'string' && (policy.reflectAny || policy.allowed.has(origin))) {
       res.header('Access-Control-Allow-Origin', origin);
       res.header('Vary', 'Origin');
       res.header('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);

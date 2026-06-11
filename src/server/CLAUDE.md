@@ -37,7 +37,7 @@ Allowed: `colyseus`, `@colyseus/schema`, `@colyseus/ws-transport`, `express`, `z
 Phase 0: placeholder. These tighten as each phase ships:
 
 - **Security (plan squishy-canyon, Workstream A)** — see [docs/architecture/security.md](../../docs/architecture/security.md):
-  - **CORS allowlist** (S1): `ALLOWED_ORIGINS` (comma-separated). Non-prod defaults to `http://localhost:5173`; prod defaults to closed. `src/server/net/httpCors.ts`.
+  - **CORS policy** (S1): `ALLOWED_ORIGINS` (comma-separated) = explicit allowlist; unset ⇒ non-prod reflects ANY origin (dev/LAN/netgate), prod is closed. `src/server/net/httpCors.ts` (`resolveCorsPolicy`).
   - **Auth rate limits** (S2): login+register **10/min/IP** (combined), `/auth/google*` + `/auth/exchange` **30/min/IP**; 429 + `Retry-After`. `/healthz` + `/diag` not limited. `src/server/net/HttpRateLimit.ts`.
   - **Inbound string-id bound** (S5): all inbound wire ids `.min(1).max(64)`. testMode seed arrays bounded ≤ **64** entries at onCreate (`MAX_SEED_ENTRIES`, `src/server/rooms/roomSeedBounds.ts`).
   - **Test-room gating** (S6): non-galaxy rooms register only when `NODE_ENV !== 'production'` OR `EQX_ENABLE_TEST_ROOMS=1` (`src/server/rooms/testRoomGating.ts`). `EQX_ALLOW_DEV_OVERRIDES=1` in production logs a boot warning.
