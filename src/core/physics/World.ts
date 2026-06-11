@@ -1,5 +1,5 @@
 import RAPIER from '@dimforge/rapier2d-compat';
-import { shipCollisionParts } from '../geometry/shipHullDecomp.js';
+import { shipCollisionTriangles } from '../geometry/shipHullDecomp.js';
 import { polygonArea, verticesToFloat32, type Vec2 } from '../swarm/asteroidShape.js';
 import {
   DEFAULT_SHIP_KIND,
@@ -291,15 +291,33 @@ export class PhysicsWorld {
     for (let i = 0; i < body.numColliders(); i++) cols.push(body.collider(i));
     for (const c of cols) this.world.removeCollider(c, true);
     if (exposed) {
-      // 2026-05-28 BISECT ARM A — convexHull per convex part (single
-      // filled polygon, no internal-edge artifacts). Arm B used fan-
-      // triangulated `triangle` colliders which have a shared internal
-      // diagonal between each adjacent triangle pair.
-      for (const part of shipCollisionParts(kind.id)) {
-        const flat = verticesToFloat32(part);
-        const desc = RAPIER.ColliderDesc.convexHull(flat);
-        if (!desc) throw new Error(`convexHull rejected part for kind ${kind.id}`);
-        this.world.createCollider(configureShipCollider(desc), body);
+      // TRIANGLE colliders, fan-triangulated from each convex part
+      // (`shipCollisionTriangles`). The 2026-05-28 `convexHull`-per-part
+      // experiment (BISECT ARM A) was REVERTED on 2026-06-11: in Rapier 2D
+      // ONLY `triangle` shapes fire `CONTACT_FORCE_EVENTS` for two bodies
+      // overlapping at zero closing velocity — `convexHull`/`cuboid` emit
+      // none (the bare-Rapier diagnostic in `hullCollisionNoTouch.test.ts`
+      // proves all three). The ram-damage telemetry AND the
+      // `t-ship-no-self-collision` E2E positive control both depend on those
+      // static-overlap events, so convexHull silently broke them (the
+      // positive control had been RED since 2026-05-28). The convexHull
+      // "interior-diagonal artifact" concern is moot: a body can't reach an
+      // interior fan diagonal without first crossing an exterior edge (which
+      // blocks it), and steady-state penetration is owned by the stiff solver
+      // (`PhysicsWorld.create` — numSolverIterations 16 + small-steps PGS),
+      // not the collider shape. This matches the documented invariant in
+      // src/core/CLAUDE.md ("setHullExposed emits triangle, NOT convexHull").
+      for (const t of shipCollisionTriangles(kind.id)) {
+        this.world.createCollider(
+          configureShipCollider(
+            RAPIER.ColliderDesc.triangle(
+              new RAPIER.Vector2(t[0].x, t[0].y),
+              new RAPIER.Vector2(t[1].x, t[1].y),
+              new RAPIER.Vector2(t[2].x, t[2].y),
+            ),
+          ),
+          body,
+        );
       }
     } else {
       // Shield up — ball collider extends `SHIELD_RADIUS_PAD` past the hull

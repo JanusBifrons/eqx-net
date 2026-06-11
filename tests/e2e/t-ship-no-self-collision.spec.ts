@@ -25,24 +25,38 @@
  * SERVER PHYSICS detects a collision, which is what the concave hull
  * affects.
  *
- * Scenario geometry (entity-local Pixi-up, post `scale: 10`):
+ * Scenario geometry (entity-local Pixi-up, post `scale: 10`; clean
+ * right-angle T as of 2026-06-11 — the elbow slope was removed):
  *   - Crossbar: x ∈ [-140, 140], y ∈ [-160, -100]
- *   - Stem:     x ∈ [ -40,  40], y ∈ [ -80,  120]
+ *   - Stem:     x ∈ [ -40,  40], y ∈ [-100,  120]   (reflex flush at y=-100)
  *
  * World placement (negative control — `hull-collision-test`):
- *   - Drone 0: (x=0, y=-130, angle=0)    regular T — stem-tip at world y = -10
- *   - Drone 1: (x=0, y=+130, angle=π)    inverted T — stem-tip at world y = +10
- *   - Gap between stem-tips: 20 u; both stems at x ∈ [-40, 40].
+ *   - Drone 0 (`pose-drone-0`): (x=-40.5, y= 10.5, angle=0)    upright T
+ *   - Drone 1 (`pose-drone-1`): (x= 40.5, y=-10.5, angle=π)    inverted T
+ *   - EXACT 1 u-gap interlock (Δx=81, Δy=21): the stems sit side-by-side 1 u
+ *     apart AND each stem-end is 1 u from the opposing crossbar — as tight as
+ *     the silhouettes nest without touching. Bounding circles (radius 213)
+ *     overlap by ~120 u. (See the rendered screenshot artifact from
+ *     `tship-collision-probe.spec.ts`.)
  *
  * World placement (positive control — `hull-collision-overlap-test`):
  *   - Drone 0: (x=0, y=0, angle=0)
  *   - Drone 1: (x=0, y=0, angle=π)  ← identical position
  *
- * Per Invariant #13 (failing-test-first): if the concave hull is broken,
- * the negative-control fires non-zero events. The positive-control is
- * the live-surface guard — it MUST fire events, otherwise the test
- * infrastructure isn't actually observing collisions and the negative
- * assertion is meaningless.
+ * COLLIDER SHAPE IS LOAD-BEARING. `World.setHullExposed` emits TRIANGLE
+ * colliders (fan-triangulated convex parts). In Rapier 2D only `triangle`
+ * shapes fire `CONTACT_FORCE_EVENTS` for static (zero-closing-velocity)
+ * overlap — `convexHull`/`cuboid` emit none. The 2026-05-28 convexHull
+ * experiment silently broke this: the POSITIVE control below reported 0
+ * events (always RED) and the negative control's "0 contacts" proved
+ * nothing. Reverted to triangle on 2026-06-11.
+ *
+ * Per Invariant #13 (failing-test-first): if the hull is broken, the
+ * negative control fires non-zero events between the two `pose-drone-*`
+ * test drones (the filter excludes galaxy-room noise that leaks into the
+ * GLOBAL `/dev/events` ring). The positive control is the live-surface
+ * guard — it MUST fire events, otherwise the negative assertion is
+ * meaningless.
  */
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';

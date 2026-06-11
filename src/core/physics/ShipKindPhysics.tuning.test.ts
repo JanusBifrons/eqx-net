@@ -62,7 +62,9 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // 7 → 8 on 2026-06-01: weapons/energy/AI overhaul — per-kind mount
     // weapon reassignment (bolts/beams/missiles), weapon stat rebalance,
     // and new per-kind energyMax / energyRegenRate fields.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(8);
+    // 8 → 9 on 2026-06-11: crossguard polygon cleaned to a true right-angle
+    // T (reflex y=-8 → -10, removing the obsolete ear-clipper elbow slope).
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(9);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {
