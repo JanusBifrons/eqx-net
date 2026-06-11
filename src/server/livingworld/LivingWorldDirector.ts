@@ -30,13 +30,14 @@ import {
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
+  pickRoamGoal,
   type Rng,
 } from './population.js';
 import { isEntrySector } from '../../core/galaxy/galaxy.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
-import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT } from './director/SquadPool.js';
+import { SquadPool, SQUAD_SIZE, LIVING_WORLD_SQUAD_COUNT, type SquadRecord } from './director/SquadPool.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
@@ -129,6 +130,10 @@ export interface LivingWorldOptions {
    *  drone-warp-in design's emergent travel: a 2-hop dispatch costs ~2×, so
    *  farther bases take longer to reach. Override via `EQX_BOT_HOP_MS`. */
   hopTravelMs: number;
+  /** Dwell (ms) an idle squad waits at its current roam goal before drifting to
+   *  a new one — the slow-roam cadence that replaces the retired ambient patrol
+   *  floor. Members stay NEUTRAL while roaming (hostility is wave-only). */
+  roamIntervalMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -154,6 +159,8 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // ~2× the flight — the "warping in from outside, takes minutes to reach Sol"
   // feel. Tunable via EQX_BOT_HOP_MS.
   hopTravelMs: 120_000,
+  // ~45 s dwell between roam hops — a slow drift, not a frantic patrol.
+  roamIntervalMs: 45_000,
 };
 
 export class LivingWorldDirector {
@@ -169,6 +176,9 @@ export class LivingWorldDirector {
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
+  /** squadId → wall-clock the squad may next pick a new roam goal (the
+   *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
+  private readonly squadRoamNextAtMs = new Map<string, number>();
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -307,6 +317,9 @@ export class LivingWorldDirector {
     // ── 2. wave planning + squad advancement ─────────────────────────────
     for (const step of this.waveDirector.plan()) this.executeWaveStep(step);
 
+    // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
+    this.roamStep(now);
+
     // ── 3. telemetry (population + squad/wave counts) ────────────────────
     const snap = this.snapshot();
     const squads = this.squadPool.snapshot();
@@ -332,8 +345,56 @@ export class LivingWorldDirector {
         if (active > 0) this.squadPool.setState(sq, 'idle');
       } else if (sq.state === 'retreating') {
         this.squadPool.setState(sq, 'idle');
+        // Drop the stale roam dwell so a stood-down squad starts drifting again
+        // from wherever it retreated to, rather than waiting on an old schedule.
+        this.squadRoamNextAtMs.delete(sq.squadId);
       }
     }
+  }
+
+  /**
+   * Slow-roam idle, UNASSIGNED squads around the galaxy graph (the ambient
+   * patrol floor replacement). A squad drifts one roam hop per `roamIntervalMs`
+   * once it has gathered at its current goal: pick a random LIVE neighbour as
+   * the new goal, then advance members toward it hop-by-hop. Roaming squads stay
+   * NEUTRAL — hostility is marked ONLY in the wave `attack` branch, never here —
+   * so a roaming pack that drifts through a base-less player's sector does not
+   * hunt them. Roam hops are real despawn→spawn pairs (`bot_transit_commit`),
+   * never from-nowhere ingress, so they may legally enter interior sectors.
+   */
+  private roamStep(now: number): void {
+    for (const sq of this.squadPool.all()) {
+      if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
+      const sched = this.squadRoamNextAtMs.get(sq.squadId);
+      if (sched === undefined) {
+        // First sighting: dwell at the home edge before the first drift.
+        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+      } else if (now >= sched && this.squadGatheredAt(sq, sq.sectorKey)) {
+        sq.sectorKey = pickRoamGoal(this.rng, sq.sectorKey, this.sectorKeys);
+        this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+      }
+      // Always drift toward the current goal (no-op once gathered there).
+      this.advanceMembersTowardGoal(sq);
+    }
+  }
+
+  /** True iff the squad has ≥1 active member, ALL its active members are in
+   *  `sector`, and none is in flight — i.e. the squad has fully gathered there.
+   *  Respawning members (warping in from the edge) are ignored: a squad with a
+   *  reinforcement still inbound is "gathered" for roam-decision purposes and
+   *  the reinforcement simply chases the next goal. */
+  private squadGatheredAt(squad: SquadRecord, sector: string): boolean {
+    let active = 0;
+    for (const botId of squad.botIds) {
+      const rec = this.pool.get(botId);
+      if (!rec) continue;
+      if (rec.state === 'in-transit') return false;
+      if (rec.state === 'active') {
+        if (rec.sectorKey !== sector) return false;
+        active++;
+      }
+    }
+    return active > 0;
   }
 
   /** Execute one WaveDirector step (the side-effecting half — the planning is

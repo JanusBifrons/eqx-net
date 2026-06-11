@@ -11,6 +11,7 @@ import {
   makeSeededRng,
   liveEntrySectors,
   pickEntrySector,
+  pickRoamGoal,
   MIN_PACK_PER_OCCUPIED,
 } from './population.js';
 
@@ -274,6 +275,31 @@ describe('pickEntrySector', () => {
 
   it('uses the single-sector fallback when no edge sector is live', () => {
     expect(pickEntrySector(makeSeededRng(1), ['sol-prime'])).toBe('sol-prime');
+  });
+});
+
+describe('pickRoamGoal', () => {
+  it('returns a real LIVE neighbour of the source (a graph random walk)', () => {
+    // sol-prime neighbours every outer; restrict the live set to two of them.
+    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', ['sol-prime', 'orion-belt', 'vega-reach']);
+    expect(['orion-belt', 'vega-reach']).toContain(goal);
+    expect(goal).not.toBe('sol-prime'); // a neighbour, never self
+  });
+
+  it('never picks a sector the director does not hold (live-room intersection)', () => {
+    // orion-belt's galaxy neighbours are sol-prime, vega-reach, lyra-fringe; only
+    // sol-prime is live, so the walk must go there.
+    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt', 'sol-prime'])).toBe('sol-prime');
+  });
+
+  it('stays put when the source has no live neighbour', () => {
+    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt'])).toBe('orion-belt');
+  });
+
+  it('is deterministic per seed', () => {
+    const a = pickRoamGoal(makeSeededRng(8), 'sol-prime', KEYS);
+    const b = pickRoamGoal(makeSeededRng(8), 'sol-prime', KEYS);
+    expect(a).toBe(b);
   });
 });
 

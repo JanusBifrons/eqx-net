@@ -91,6 +91,48 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(s.perSector['sol-prime']!.bots).toBe(0);
   }, 25_000);
 
+  it('roams an idle squad across the graph (HOP, not ingress) — and stays neutral', async () => {
+    // Roaming replaces the retired ambient patrol floor: an idle, unassigned
+    // squad gathers at its home edge (orion-belt), then slow-drifts the graph.
+    // The only live neighbour here is the interior sol-prime, so the squad
+    // drifts inward — proving roaming reaches interior sectors via real HOPS
+    // (bot_transit_commit), NOT from-nowhere ingress, and never goes hostile.
+    h = await bootLivingWorldTestServer({
+      sectors: ['orion-belt', 'sol-prime'],
+      botCount: 8,
+      seed: 11,
+      director: { roamIntervalMs: 100, hopTravelMs: 40 },
+    });
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['orion-belt']!.bots === 8,
+      6000,
+      'squad gathered at its home edge',
+    );
+    // The squad drifts inward to sol-prime within a roam cycle.
+    await h.waitUntil(
+      () => h!.director.snapshot().perSector['sol-prime']!.bots > 0,
+      6000,
+      'a member roamed into the interior via a hop',
+    );
+
+    // Reaching the interior was a HOP (despawn→spawn pair, logged
+    // bot_transit_commit), NEVER a from-nowhere ingress: every bot_spawn is at
+    // the entry edge.
+    const intoSol = h.events.all({
+      tag: 'bot_transit_commit',
+      where: (d) => d['to'] === 'sol-prime',
+    });
+    expect(intoSol.length).toBeGreaterThan(0);
+    for (const e of h.events.all({ tag: 'bot_spawn' })) {
+      expect(isEntrySector(e.data['sectorKey'] as string)).toBe(true);
+    }
+    // Roaming squads stay NEUTRAL — never warping/attacking (hostility is
+    // wave-only).
+    const sq = h.director.squadSnapshot();
+    expect(sq.byState.warping).toBe(0);
+    expect(sq.byState.attacking).toBe(0);
+  }, 25_000);
+
   it('respawns a combat-killed bot from no-origin after the delay', async () => {
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime'],

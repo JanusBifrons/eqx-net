@@ -325,6 +325,23 @@ export function pickEntrySector(rng: Rng, liveSectorKeys: readonly string[]): st
   return entry[idx]!;
 }
 
+/**
+ * A slow-roam next goal: a random LIVE neighbour of `from` (a galaxy-graph
+ * random walk), or `from` itself when it has no live neighbour. Idle squads
+ * drift the galaxy this way between waves — the move is a real despawn→spawn
+ * HOP (never a from-nowhere ingress), so it can legally land in interior
+ * sectors. Restricted to `liveSectorKeys` so a squad never roams toward a sector
+ * the director doesn't hold a room for. Deterministic given the RNG.
+ */
+export function pickRoamGoal(rng: Rng, from: string, liveSectorKeys: readonly string[]): string {
+  const live = new Set(liveSectorKeys);
+  const neighbours: string[] = [];
+  for (const n of getNeighbours(from)) if (live.has(n.key)) neighbours.push(n.key);
+  if (neighbours.length === 0) return from;
+  const idx = Math.min(neighbours.length - 1, Math.floor(rng() * neighbours.length));
+  return neighbours[idx]!;
+}
+
 export interface EdgePose {
   x: number;
   y: number;

@@ -407,6 +407,12 @@ export async function bootLivingWorldTestServer(opts: {
     shedRecoveryMs: 200,
     initialStaggerMs: 5,
     maxMigrationsPerTick: 4,
+    // Fast inter-sector flight so a multi-hop traversal completes in-test.
+    hopTravelMs: 40,
+    // Roaming OFF by default (interval ≫ a typical short test window) so the
+    // ingress/no-hunt locks stay deterministic; the roam test opts in with a
+    // small `roamIntervalMs` via `opts.director`.
+    roamIntervalMs: 60_000,
     ...opts.director,
   });
   director.start();
