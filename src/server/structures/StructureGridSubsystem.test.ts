@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { StructureRegistry } from './StructureRegistry.js';
 import { StructurePlacementSubsystem } from './StructurePlacementSubsystem.js';
-import { StructureGridSubsystem } from './StructureGridSubsystem.js';
+import { StructureGridSubsystem, resolveTurretBeam } from './StructureGridSubsystem.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
   REPAIR_PULSE_AMOUNT,
@@ -82,6 +83,66 @@ describe('StructureGridSubsystem — auto-connect on place', () => {
     const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
     const con = h.placement.place('player-2', 'connector', 200, 0)!;
     expect(h.registry.hasConnection(cap, con)).toBe(false);
+  });
+});
+
+describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 2)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  it('leaves placed BEFORE their hub: the hub grabs only the nearest at placement; the pulse links the rest', () => {
+    // Three solars placed first, no hub yet → all auto-connect-on-place to nothing.
+    const s1 = h.placement.place(OWNER, 'solar', 250, 0)!;
+    const s2 = h.placement.place(OWNER, 'solar', 0, 250)!;
+    const s3 = h.placement.place(OWNER, 'solar', -250, 0)!;
+    expect(h.registry.connectionCount(s1)).toBe(0);
+    expect(h.registry.connectionCount(s2)).toBe(0);
+    expect(h.registry.connectionCount(s3)).toBe(0);
+
+    // Capital placed AFTER: auto-connect-on-place links it to exactly ONE
+    // partner (the nearest), so two of the three leaves are STILL stranded.
+    // This is the "connectors break between buildings" report — placement-time
+    // connection runs once and never retries the others.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    expect(h.registry.connectionCount(cap), 'capital grabs only one at placement').toBe(1);
+    const connectedAtPlacement = [s1, s2, s3].filter((s) => h.registry.connectionCount(s) > 0);
+    expect(connectedAtPlacement.length).toBe(1);
+
+    // The 1 Hz pulse's reconnect sweep retries the stranded leaves → all wired.
+    h.pulse();
+    expect(h.registry.hasConnection(s1, cap)).toBe(true);
+    expect(h.registry.hasConnection(s2, cap)).toBe(true);
+    expect(h.registry.hasConnection(s3, cap)).toBe(true);
+  });
+
+  it('a leaf stranded by a hub AT CAPACITY connects once a slot frees', () => {
+    // Capital maxConnections = 4. Fill it with 4 leaf solars (leaves give no
+    // capacity of their own), then a 5th leaf in range can't connect — the only
+    // hub is full.
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const fillers = [
+      h.placement.place(OWNER, 'solar', 250, 0)!,
+      h.placement.place(OWNER, 'solar', -250, 0)!,
+      h.placement.place(OWNER, 'solar', 0, 250)!,
+      h.placement.place(OWNER, 'solar', 0, -250)!,
+    ];
+    expect(h.registry.connectionCount(cap)).toBe(4); // full
+    const stranded = h.placement.place(OWNER, 'solar', 180, 180)!;
+    h.pulse();
+    expect(h.registry.connectionCount(stranded)).toBe(0); // hub at capacity
+
+    // Remove one filler → a slot frees → the next pulse reconnects the stranded leaf.
+    h.placement.remove(OWNER, fillers[0]!);
+    h.pulse();
+    expect(h.registry.hasConnection(stranded, cap)).toBe(true);
+  });
+
+  it('the reconnect sweep is bounded — at most MAX_RECONNECT_ATTEMPTS_PER_PULSE retries per pulse', () => {
+    // Many permanently-stranded leaves (no hub at all) must not be expensive:
+    // the sweep caps attempts, so it never connects spuriously and never throws.
+    for (let i = 0; i < 20; i++) h.placement.place(OWNER, 'solar', i * 200, 5000);
+    expect(() => h.pulse()).not.toThrow();
+    for (const rec of h.registry.all()) expect(h.registry.connectionCount(rec.id)).toBe(0);
   });
 });
 
@@ -238,8 +299,25 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
   });
 });
 
+describe('resolveTurretBeam — continuous beam model (playtest 2026-06-10 Issue 5)', () => {
+  it('fires on the beam cooldown with DPS-preserving small per-hit damage', () => {
+    // Turret: weaponDamage 20 / fireRateMs 600 = 33.3 DPS. Beam cooldown 10
+    // ticks @ 60 Hz = 167 ms (6 Hz, same as a player beam).
+    const { cooldownMs, perHitDamage } = resolveTurretBeam(20, 600, 10);
+    expect(cooldownMs).toBeCloseTo(166.67, 1);
+    // Small steady hit, NOT the old 20-damage lump.
+    expect(perHitDamage).toBeLessThan(20);
+    // Total DPS preserved: perHit / cooldownSec ≈ 33.3.
+    expect(perHitDamage / (cooldownMs / 1000)).toBeCloseTo(33.33, 1);
+  });
+
+  it('a zero fireRateMs yields zero damage (no divide-by-zero)', () => {
+    expect(resolveTurretBeam(20, 0, 10).perHitDamage).toBe(0);
+  });
+});
+
 describe('StructureGridSubsystem — turrets (Phase 5)', () => {
-  it('a built + powered turret fires on a drone in range, respecting fireRateMs', () => {
+  it('a built + powered turret fires the beam model — a stream of small hits, not one 600 ms pulse', () => {
     const drone = { id: 'swarm-3', entityId: 3, x: 200, y: 0 };
     const h = makeHarness(undefined, drone);
     h.placement.place(OWNER, 'capital', 0, 0);
@@ -249,17 +327,30 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     expect(h.registry.get(sol)!.isConstructed).toBe(true);
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
 
-    // First tick fires; an immediate second tick is on cooldown (fireRateMs 600).
+    const kind = getStructureKind('turret');
+    const beam = resolveTurretBeam(kind.weaponDamage!, kind.fireRateMs!, getWeapon('hitscan').cooldownTicks);
+
+    // First tick fires; an immediate second tick is on the BEAM cooldown
+    // (~167 ms), not the old 600 ms pulse.
     h.grid.tickTurrets(10_000);
     h.grid.tickTurrets(10_050);
     expect(h.damage.length).toBe(1);
-    expect(h.damage[0]).toMatchObject({ targetId: 'swarm-3', shooterId: turret, amount: 20 });
+    expect(h.damage[0]!.targetId).toBe('swarm-3');
+    expect(h.damage[0]!.shooterId).toBe(turret);
+    // Small per-hit damage (continuous DoT), NOT the old 20-lump.
+    expect(h.damage[0]!.amount).toBeCloseTo(beam.perHitDamage, 3);
+    expect(h.damage[0]!.amount).toBeLessThan(20);
     expect(h.beams.length).toBe(1);
     expect(h.registry.get(turret)!.turretTargetEntityId).toBe(3);
 
-    // After the cooldown elapses it fires again.
-    h.grid.tickTurrets(10_700);
+    // After the beam cooldown elapses it fires again (steady stream).
+    h.grid.tickTurrets(10_000 + beam.cooldownMs + 1);
     expect(h.damage.length).toBe(2);
+
+    // DPS preserved: over a ~600 ms window the turret lands ~today's 33.3 DPS
+    // worth, just spread across multiple small hits instead of one lump.
+    const totalOver600 = h.damage.reduce((s, d) => s + d.amount, 0);
+    expect(totalOver600).toBeCloseTo(2 * beam.perHitDamage, 3);
   });
 
   it('an UNPOWERED turret does not fire', () => {

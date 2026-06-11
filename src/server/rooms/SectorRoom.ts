@@ -699,6 +699,10 @@ export class SectorRoom extends Room<SectorState> {
   get _internals(): {
     serverTick: number;
     ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+    /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
+     *  existing-ship integration test assert a lingering hull was evicted
+     *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
+    lingeringSlots: Map<string, number>;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
     applyDamage: (
@@ -731,6 +735,7 @@ export class SectorRoom extends Room<SectorState> {
     return {
       serverTick: this.serverTick,
       ownerlessShips: this.ownerlessShips,
+      lingeringSlots: this.lingeringSlots,
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
@@ -1526,23 +1531,11 @@ export class SectorRoom extends Room<SectorState> {
       nextId: () => `pstruct-${this.placedStructureCounter++}`,
       registry: this.structureRegistry,
       // Item D — asteroids (swarm kind=0) block a connector's line of sight, so
-      // a structure never auto-wires straight through a rock. Poses read live
-      // from the SAB (same path as findNearestSwarmOfKind); radius from the
-      // registry record. Off the 60 Hz hot loop (runs only on placement), so the
-      // array build here is fine.
-      getObstacles: () => {
-        const obstacles: GridObstacle[] = [];
-        for (const rec of this.swarmRegistry.all()) {
-          if (rec.kind !== 0) continue; // asteroids only
-          const base = slotBase(rec.slot);
-          obstacles.push({
-            x: this.sabF32[base + SLOT_X_OFF]!,
-            y: this.sabF32[base + SLOT_Y_OFF]!,
-            radius: rec.radius,
-          });
-        }
-        return obstacles;
-      },
+      // a structure never auto-wires straight through a rock. Shared with the
+      // grid-pulse reconnect sweep (playtest 2026-06-10 Issue 2) via
+      // `gatherStructureObstacles`. Off the 60 Hz hot loop (placement + 1 Hz
+      // pulse only), so the array build is fine.
+      getObstacles: () => this.gatherStructureObstacles(),
     });
 
     // ── Structure grid pulse (structures plan, Phase 3) ─────────────────
@@ -1570,6 +1563,8 @@ export class SectorRoom extends Room<SectorState> {
           targetId,
         });
       },
+      // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
+      getObstacles: () => this.gatherStructureObstacles(),
     });
     const pulseMs = this.testMode && roomOpts.structureGridPulseMs
       ? Math.max(20, roomOpts.structureGridPulseMs)
@@ -2426,6 +2421,24 @@ export class SectorRoom extends Room<SectorState> {
     this.rebuildStructuresSlice();
   }
 
+  /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read
+   *  from the SAB. Shared by structure placement (Item D) and the grid-pulse
+   *  reconnect sweep (playtest 2026-06-10 Issue 2). Off the 60 Hz hot loop
+   *  (placement + 1 Hz pulse only), so the array build is acceptable. */
+  private gatherStructureObstacles(): GridObstacle[] {
+    const obstacles: GridObstacle[] = [];
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== 0) continue; // asteroids only
+      const base = slotBase(rec.slot);
+      obstacles.push({
+        x: this.sabF32[base + SLOT_X_OFF]!,
+        y: this.sabF32[base + SLOT_Y_OFF]!,
+        radius: rec.radius,
+      });
+    }
+    return obstacles;
+  }
+
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y). Reads authoritative poses from the SAB via each record's slot
    *  (asteroids are static, so this is their spawn pose). Low-frequency (1 Hz
@@ -3271,6 +3284,25 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null && requestedShipId !== '') {
       const rec = getPlayerShipStore().get(requestedShipId);
       if (rec !== null && rec.playerId === playerId && rec.lastSectorKey === this.sectorKey) {
+        // EVICT-THEN-RESTORE (playtest 2026-06-10 Issue 6 — "respawn as an
+        // existing ship → locked/broken"). If the requested hull is STILL
+        // LINGERING in this room (the player disconnected, or it was displaced
+        // by a fresh spawn), it owns a `lingeringSlots` entry, a `linger-<id>`
+        // worker body, AND an armed ownerless-evict timer keyed by this same
+        // shipInstanceId. Without tearing those down first, the bind +
+        // `state.ships.set(<id>)` below CLOBBERS the lingering ShipState under
+        // the same key while the orphan body + timer survive: the body pins the
+        // fresh hull (it never reads as active to the client — the user's
+        // "fire/accelerate do nothing, snaps back to a static hull"), and the
+        // surviving timer later DELETES the now-active ship. Reachable from any
+        // "resume a ship that lingered in the target sector". `evictOwnerlessShip`
+        // despawns `linger-<id>`, cancels the timer, frees the slot, deletes the
+        // stale schema entry, and markStored's the pose — which the `rec` we read
+        // above already mirrors, so the restore lands at the same place.
+        if (this.lingeringSlots.has(requestedShipId) || this.ownerlessShips.has(requestedShipId)) {
+          serverLogEvent('respawn_evict_lingering', { playerId, shipInstanceId: requestedShipId });
+          this.evictOwnerlessShip(requestedShipId);
+        }
         spawnX = rec.lastX;
         spawnY = rec.lastY;
         // Defensive: a stored health <= 0 should be impossible (the
@@ -3433,6 +3465,18 @@ export class SectorRoom extends Room<SectorState> {
     // any synchronous observer (e.g. a re-entrant fire-handler) can
     // already resolve the player's active hull.
     this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
+    // Tripwire (playtest 2026-06-10 Issue 6): a fresh-spawn bind must never land
+    // on a shipInstanceId already in the schema map — that means a lingering /
+    // wreck hull under the same key was NOT torn down first (the evict-then-
+    // restore above is the guard). Log loudly so any future regression of that
+    // invariant is visible instead of silently clobbering a live ShipState.
+    if (this.state.ships.has(ship.shipInstanceId)) {
+      logger.error(
+        { playerId, shipInstanceId: ship.shipInstanceId, sectorKey: this.sectorKey },
+        'duplicate state.ships key on fresh-spawn bind — lingering hull not evicted (Issue 6)',
+      );
+      serverLogEvent('ships_set_duplicate_key', { playerId, shipInstanceId: ship.shipInstanceId });
+    }
     // Phase 6b — schema map is keyed by shipInstanceId. This supports
     // multiple entries per player (active + lingering hulls). All the
     // `state.ships.get(playerId)` callsites have been migrated to the

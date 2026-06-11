@@ -35,6 +35,7 @@ import type {
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/ClientLogger';
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
+import { setCanvasPointerCapture } from '../pointerCapture.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
@@ -68,6 +69,10 @@ function emptyFeedback(): RendererFeedback {
 export class WorkerRendererClient implements IRenderer {
   private worker: Worker | null = null;
   private canvas: HTMLCanvasElement | null = null;
+  /** Mirrors the worker renderer's `_placementActive` (set each `update()` from
+   *  the RenderMirror) so the main-thread pointer listeners can capture the
+   *  pointer during a placement drag (playtest 2026-06-10 Issue 9). */
+  private _placementActive = false;
   private readonly feedback: RendererFeedback = emptyFeedback();
   private onOverlayTap: OverlayTapHandler | null = null;
   private initResolve: (() => void) | null = null;
@@ -180,6 +185,11 @@ export class WorkerRendererClient implements IRenderer {
 
   private installEventListeners(canvas: HTMLCanvasElement): void {
     const onPointer = (e: PointerEvent): void => {
+      // During a structure-placement drag, capture the pointer so a fast drag
+      // that leaves the canvas keeps delivering move/up here — otherwise the
+      // ghost stalls (playtest 2026-06-10 Issue 9). Placement-active is mirrored
+      // from the RenderMirror in `update()` (the worker owns the ghost).
+      if (this._placementActive) setCanvasPointerCapture(canvas, e.type, e.pointerId);
       this.postPointerEvent(serialisePointerEvent(e));
     };
     const onWheel = (e: WheelEvent): void => {
@@ -266,6 +276,13 @@ export class WorkerRendererClient implements IRenderer {
   // pure DPR-aware functions, no `this`-state.
 
   update(mirror: RenderMirror): void {
+    // Cache placement-active for the main-thread pointer-capture decision
+    // (playtest 2026-06-10 Issue 9 — "desktop build-drag breaks"). The worker's
+    // PixiRenderer owns `_placementActive`, but the DOM pointer listeners live
+    // here on the main thread, so we mirror the active (non-pending) flag from
+    // the RenderMirror this frame. A pending (post-Confirm) ghost is inert.
+    const pv = mirror.pendingPlacementPreview;
+    this._placementActive = pv != null && pv.pending !== true;
     // F1 (warp-spool perf — `docs/HANDOFF-warp-spool-perf-followup.md`).
     // `this.post` → `worker.postMessage` runs the structured-clone of
     // the (KB-scale, entity-count-dependent) RenderMirror SYNCHRONOUSLY

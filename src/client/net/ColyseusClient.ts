@@ -87,7 +87,13 @@ import { updateAnchor } from './clockAnchor';
 import { getSector } from '@core/galaxy/galaxy';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, SHIELD_RADIUS_PAD, type WeaponMount } from '@shared-types/shipKinds';
-import { computePlacementPose, type PlacementPreview } from '../structures/structurePlacementClient.js';
+import {
+  resolvePlacementPreviewStatus,
+  type PlacementPreview,
+  type PendingPlacement,
+  type ShipPose,
+} from '../structures/structurePlacementClient.js';
+import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
 
 export interface ColyseusClientCallbacks {
@@ -441,6 +447,19 @@ export class ColyseusGameClient {
   getRoom(): Room | null {
     return this.room;
   }
+
+  /** Record a confirmed structure placement so `updateMirror` keeps a dim ghost
+   *  at the sent point until the structure lands (playtest 2026-06-10 Issue 7).
+   *  Called from `placeStructureAt` right after `place_structure` is sent. */
+  notePendingPlacement(kind: StructureKindId, x: number, y: number): void {
+    this._pendingPlacement = {
+      kind,
+      x,
+      y,
+      sentAtMs: Date.now(),
+      baselineStructureCount: this.mirror.structures?.size ?? 0,
+    };
+  }
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
   private lastSnapshotPos: { x: number; y: number } | null = null;
@@ -663,7 +682,14 @@ export class ColyseusGameClient {
   /** Reused placement-preview object written into `mirror.pendingPlacementPreview`
    *  (Issue 5). Mutated in place each frame placement mode is active — no
    *  per-frame allocation (invariant #14). */
-  private readonly _placementPreviewScratch: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
+  private readonly _placementPreviewScratch: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0, pending: false };
+  /** Reused ship-pose scratch for the placement-preview resolver — avoids a
+   *  per-frame `{x,y,angle}` alloc during placement mode (invariant #14). */
+  private readonly _placementShipScratch: ShipPose = { x: 0, y: 0, angle: 0 };
+  /** A confirmed-but-not-yet-visible placement (playtest 2026-06-10 Issue 7).
+   *  Keeps a dim ghost at the sent point until the structure lands or times
+   *  out, so the blueprint doesn't vanish for ~1 s after Confirm. */
+  private _pendingPlacement: PendingPlacement | null = null;
 
   // ── Auto-fire (weapon-autofire-boost-mechanics, Part B/C) ──────────────
   /** Drone-only aim targets (kind=1) built once per frame by
@@ -3211,25 +3237,34 @@ export class ColyseusGameClient {
           entry.angle = drAngle + oa;
         }
 
-        // Structure placement ghost preview (smoke handoff 2026-06-06, Issue
-        // 5). The blueprint silhouette is anchored to the RENDERED local-ship
-        // pose (the same dead-reckoned + lerp pose the sprite is drawn at), so
-        // the ghost tracks the ship. Spatial pose → render mirror, NOT Zustand
-        // (#2 — only the discrete `placementKind` id lives in Zustand). Reuses
-        // `computePlacementPose` so the ghost lands EXACTLY where Confirm will
-        // send (no preview/commit drift). Only active during placement mode, so
-        // the `computePlacementPose` {x,y} alloc is a transient-UI cost.
+        // Structure placement ghost preview (smoke handoff 2026-06-06, Issue 5;
+        // post-Confirm "pending" ghost added playtest 2026-06-10 Issue 7). The
+        // live (positioning) ghost is anchored to the RENDERED local-ship pose
+        // (the same dead-reckoned + lerp pose the sprite is drawn at) so it
+        // tracks the ship; the dim "pending" ghost sits at the sent point until
+        // the structure lands (slice count grows) or times out — bridging the
+        // RTT+snapshot gap where the blueprint used to vanish. Spatial pose →
+        // render mirror, NOT Zustand (#2 — only the discrete `placementKind` id
+        // lives in Zustand). The resolver reuses `computePlacementPose` so the
+        // live ghost lands EXACTLY where Confirm sends (no preview/commit drift).
         const placementKind = useUIStore.getState().placementKind;
-        if (placementKind) {
-          const pos = computePlacementPose({ x: entry.x, y: entry.y, angle: entry.angle }, placementKind);
-          const pv = this._placementPreviewScratch;
-          pv.kind = placementKind;
-          pv.x = pos.x;
-          pv.y = pos.y;
-          pv.angle = 0;
-          this.mirror.pendingPlacementPreview = pv;
-        } else if (this.mirror.pendingPlacementPreview) {
-          this.mirror.pendingPlacementPreview = null;
+        const ship = this._placementShipScratch;
+        ship.x = entry.x;
+        ship.y = entry.y;
+        ship.angle = entry.angle;
+        const placementStatus = resolvePlacementPreviewStatus(
+          placementKind,
+          placementKind ? ship : null,
+          this._pendingPlacement,
+          Date.now(),
+          this.mirror.structures?.size ?? 0,
+          this._placementPreviewScratch,
+        );
+        if (placementStatus === 'active' || placementStatus === 'pending') {
+          this.mirror.pendingPlacementPreview = this._placementPreviewScratch;
+        } else {
+          if (placementStatus === 'cleared') this._pendingPlacement = null;
+          if (this.mirror.pendingPlacementPreview) this.mirror.pendingPlacementPreview = null;
         }
 
         // Replay-grade per-RAF rendered-pose capture (plan: replay infra

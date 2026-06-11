@@ -182,35 +182,44 @@ export interface StructureRenderState {
   turretTargetId?: number;
 }
 
+/** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to
+ *  cover MISSILE_DISPLAY_DELAY_MS (+ jitter headroom) at the 20 Hz JSON snapshot
+ *  cadence (~50 ms): 100 ms back ≈ 2 intervals, +headroom for the 100–200 ms
+ *  jitter band the smoke captures showed → 6 keeps two bracketing samples
+ *  available so the hot path is a genuine lerp of buffered truth (mirrors the
+ *  drone POSE_RING_DEPTH sizing rule). */
+export const MISSILE_POSE_RING_DEPTH = 6;
+
 /**
- * Heat-seeking missile render state. Authoritative pose plus the two
- * fields the renderer needs that aren't on `SnapshotMessage.missiles[]`
- * directly: the previous-arrival pose (for interpolation) and the
- * arrival timestamps (for the same `interpolateMissilePose` resolution
- * pattern drones use — see `swarmDisplayPose.ts`).
+ * Heat-seeking missile render state. Latest authoritative pose plus a per-missile
+ * pose RING (playtest 2026-06-10 Issue 11) so the renderer interpolates between
+ * BUFFERED authoritative poses at `now − displayDelay` — total immunity to
+ * wire-arrival jitter — instead of dead-reckoning a stale velocity past the
+ * latest snapshot (which diverged from the homing curve on a tight turn and
+ * snapped each packet = the "~20 Hz look"). Same pattern as drones
+ * (`swarmInterpolation.ts`), reusing `PoseRingEntry`.
  *
  * One-pose-per-frame contract: any consumer (sprite, trail emitter,
  * camera-shake source) MUST read the resolved `x/y/angle` via
- * `resolveMissileDisplayPose()`, not re-call `interpolateMissilePose`.
- * Mirrors the drone one-pose rule in src/client/CLAUDE.md.
+ * `resolveMissileDisplayPose()`, not re-walk the ring. Mirrors the drone
+ * one-pose rule in src/client/CLAUDE.md.
  */
 export interface MissileRenderState {
   /** Stable per-sector u32 id from the snapshot. */
   id: number;
-  /** Latest authoritative pose. */
+  /** Latest authoritative pose (the newest ring sample, mirrored for the
+   *  count-1 / first-frame fast path + stale reads). */
   x: number;
   y: number;
   vx: number;
   vy: number;
   angle: number;
-  /** Previous authoritative pose (the snapshot before `latestArrivalMs`).
-   *  Used for inter-snapshot linear interpolation by the renderer. */
-  prevX: number;
-  prevY: number;
-  prevAngle: number;
-  /** Arrival timestamp (renderer clock) of `prev*`. */
-  prevArrivalMs: number;
-  /** Arrival timestamp (renderer clock) of the latest pose. */
+  /** Pose ring of recent authoritative arrivals (newest by `arrivalMs`).
+   *  `resolveMissileDisplayPose` brackets `now − displayDelay` within it. */
+  poseRing: PoseRingEntry[];
+  /** Next ring write slot (cycles 0..MISSILE_POSE_RING_DEPTH-1). */
+  ringHead: number;
+  /** Arrival timestamp (renderer clock) of the latest pose — stale-eviction. */
   latestArrivalMs: number;
   /** Server tick of the latest snapshot — for stale-eviction logic. */
   lastUpdateTick: number;
@@ -387,7 +396,7 @@ export interface RenderMirror {
    * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
    * Structured-cloneable (plain object) so it crosses the worker boundary.
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; pending?: boolean } | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
