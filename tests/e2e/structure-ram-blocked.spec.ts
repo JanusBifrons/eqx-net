@@ -44,8 +44,7 @@ interface ServerLogEntry {
   data: Record<string, unknown>;
 }
 
-/** Structure-test geometry. */
-const STRUCT_X = 0;
+/** Structure-test geometry (the structure sits straight ahead at +Y). */
 const STRUCT_Y = 150;
 const STRUCT_RADIUS = 60;
 /** The deepest a non-penetrating player centre can sit (structure near edge
