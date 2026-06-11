@@ -11,6 +11,7 @@ import {
 import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js';
 import { applyShipInput } from './applyShipInput.js';
 import { castHitscan } from './hitscanRay.js';
+import { wallGeometry } from '../structures/ShieldWall.js';
 
 const FIXED_DT = 1 / 60;
 
@@ -60,6 +61,9 @@ export class PhysicsWorld {
   private bodies = new Map<string, ShipBody>();
   /** Reverse lookup: Rapier rigid-body handle → entity ID, for hitscan results. */
   private handleToId = new Map<number, string>();
+  /** Shield-wall span colliders, keyed by wall id — kept so the wall can be
+   *  toggled (stun / power loss) via `setEnabled` without re-spawning the body. */
+  private wallColliders = new Map<string, RAPIER.Collider>();
   /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
    *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
    *  is called per-drone per-RAF on the client (kinematic follower for
@@ -258,6 +262,46 @@ export class PhysicsWorld {
     this.handleToId.delete(rec.body.handle);
     this.world.removeRigidBody(rec.body);
     this.bodies.delete(id);
+  }
+
+  /**
+   * Spawn a shield-wall span — a STATIC (fixed) cuboid spanning between two pylon
+   * poses (shield-fence plan). It blocks ships physically (an immovable body the
+   * dynamic ship bodies bounce off); weapon absorption is resolved main-thread
+   * (the server has no live Rapier world). The geometry is derived from the two
+   * poses via the shared `wallGeometry` so the server collider, the client
+   * predWorld collider, and the rendered span all agree. Idempotent on `id`.
+   *
+   * NOT given CONTACT_FORCE_EVENTS — a wall never deals ram damage; it just
+   * blocks. Toggle it on stun / power loss via `setWallActive` (cheaper than a
+   * despawn/respawn churn of the body + handle maps).
+   */
+  spawnWall(id: string, ax: number, ay: number, bx: number, by: number, thickness: number): void {
+    if (this.bodies.has(id)) return;
+    const g = wallGeometry(ax, ay, bx, by);
+    if (g.length < 1) return; // degenerate (coincident pylons) — nothing to span
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(g.midX, g.midY).setRotation(g.angle),
+    );
+    const collider = this.world.createCollider(
+      RAPIER.ColliderDesc.cuboid(g.length / 2, thickness / 2).setRestitution(0.4).setFriction(0),
+      body,
+    );
+    this.bodies.set(id, { body, kind: getShipKind(DEFAULT_SHIP_KIND), exposed: false });
+    this.handleToId.set(body.handle, id);
+    this.wallColliders.set(id, collider);
+  }
+
+  /** Enable/disable a wall's collider (stun / power loss → pass-through). A
+   *  no-op for an unknown id. */
+  setWallActive(id: string, active: boolean): void {
+    this.wallColliders.get(id)?.setEnabled(active);
+  }
+
+  /** Remove a wall span entirely (pylon destroyed / pair severed). */
+  removeWall(id: string): void {
+    this.wallColliders.delete(id);
+    this.despawnShip(id); // removes the body + handle map + bodies entry
   }
 
   /**
