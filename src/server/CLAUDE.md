@@ -249,6 +249,23 @@ read it. The slice carries `storedPower`/`storedPowerMax` for batteries
 `Grid` stays instantaneous (its golden tests hold); the battery layer is
 server-side, over `Grid.forEachComponent`/`componentMembers`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md).
 
+**Shield fence (shield-fence plan).** `shield_pylon` is a HUB; two built+connected
+same-owner pylons project a blocking **shield wall** in their span. The wall is a
+DERIVED collider (geometry from the two pylon poses via the pure
+`core/structures/ShieldWall.ts`), NOT a swarm/wire entity. `ShieldWallManager`
+(`src/server/structures/`) forms/teardowns walls + drives the collider (worker
+`SPAWN_WALL`/`SET_WALL_ACTIVE`/`REMOVE_WALL`; **wall bodies live in `PhysicsWorld`'s
+`wallBodies` map, NOT `this.bodies`**, or the per-tick `getAllShipStates` SAB-write
+hits a slot-less body). Damage = grid SURPLUS soaks → component BATTERIES drain →
+overwhelm both = STUN (collider disabled). Ships block free (static body); weapons
+absorb main-thread (`blockBeamAtWall` in the fire resolvers, `wallBlocksProjectile`
+in `ProjectilePipeline` → `ShieldWallManager.blockShot`/`blockProjectile`). Two
+JSON `structures[]` fields (`shieldWallTo`/`wallActive`) drive the client span +
+predWorld collider (`syncPredWalls`). AI targets pylons (`structurePriority`).
+**Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
+fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
+corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).
+
 **EntitySyncRouter (GEP B4) — the per-tick send orchestration seam.** Both
 entity-sync sends in `SectorRoom.update()` now route through ONE
 [EntitySyncRouter](rooms/EntitySyncRouter.ts) `route(phaseTime)` call instead of
