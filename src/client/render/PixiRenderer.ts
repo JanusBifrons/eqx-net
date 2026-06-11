@@ -39,6 +39,7 @@ import {
   buildStructureGfx,
 } from './pixi/spriteBuilders.js';
 import { getStructureKind } from '@shared-types/structureKinds';
+import { setCanvasPointerCapture } from './pointerCapture.js';
 
 // Most colour + builder constants moved to pixi/spriteBuilders.ts;
 // the constants below are PixiRenderer-specific (background tint,
@@ -823,6 +824,12 @@ export class PixiRenderer implements IRenderer {
       // Structure placement: position the blueprint ghost instead of panning.
       // The Camera's `screenToWorld` gives pixi-world coords (y = -gameY).
       if (this._placementActive) {
+        // Capture the pointer for the duration of the placement drag (playtest
+        // 2026-06-10 Issue 9 — "desktop build-drag breaks"). A fast drag that
+        // leaves the canvas (or another element grabbing the pointer) stops
+        // delivering pointermove, stalling the ghost. Capture keeps every
+        // move/up routed here until release.
+        setCanvasPointerCapture(canvas, e.type, e.pointerId);
         this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
         return;
       }

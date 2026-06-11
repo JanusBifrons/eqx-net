@@ -223,6 +223,68 @@ async function tapPlaceAssertAtTap(browser: Browser, useWorker: boolean): Promis
   }
 }
 
+/**
+ * (G) Desktop build-drag robustness (playtest 2026-06-10 Issue 9). The user:
+ * "desktop build-drag breaks — I suspect update events on the object instead of
+ * window." A fast drag that leaves the canvas (over a HUD overlay / off-element)
+ * stops delivering pointermove, stalling the ghost. The fix captures the pointer
+ * on pointerdown during placement so move/up keep routing to the canvas. We drag
+ * from canvas-centre INTO the bottom-right HUD cluster (the speed-dial / AUTO
+ * overlay) and assert the ghost tracked all the way there (world-x moved far
+ * right). On the pre-fix code the ghost stalls when the pointer hits the overlay.
+ * Run on BOTH paths — the desktop default is the WORKER path.
+ */
+async function dragLeavesCanvasTracksGhost(browser: Browser, useWorker: boolean): Promise<void> {
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    const surface = page.locator('[data-testid="game-surface"]');
+    const worldX = async (): Promise<number> =>
+      parseFloat((await surface.getAttribute('data-placement-world-x')) ?? 'NaN');
+
+    // Press near the left of the canvas, then drag rightward in steps ENDING
+    // over the bottom-right HUD overlay (speed-dial / AUTO sit there). Without
+    // pointer capture, the move events stop reaching the canvas once the cursor
+    // is over the overlay → the ghost freezes at its last in-canvas point.
+    await page.mouse.move(260, 400);
+    await page.mouse.down();
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-world-x') != null,
+      undefined,
+      { timeout: 5_000 },
+    );
+    const startX = await worldX();
+
+    for (const x of [500, 800, 1100, 1240]) {
+      await page.mouse.move(x, x < 1100 ? 400 : 770, { steps: 4 });
+    }
+    await page.mouse.up();
+
+    const endX = await worldX();
+    expect(Number.isFinite(startX) && Number.isFinite(endX)).toBe(true);
+    // The ghost tracked across the whole drag (incl. over the HUD overlay), so
+    // its world-x moved a large amount to the right. A stalled ghost barely moves.
+    expect(
+      endX - startX,
+      `ghost world-x should track the full drag (start ${startX}, end ${endX}); a small delta means the drag stalled leaving the canvas`,
+    ).toBeGreaterThan(300);
+  } finally {
+    await ctx.close();
+  }
+}
+
+test('(G) main-thread: placement ghost tracks a drag that leaves the canvas', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await dragLeavesCanvasTracksGhost(browser, false);
+});
+
+test('(H) WORKER path: placement ghost tracks a drag that leaves the canvas', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await dragLeavesCanvasTracksGhost(browser, true);
+});
+
 test('(D) main-thread: Confirm places the structure at the tapped point', async ({ browser }) => {
   test.setTimeout(60_000); // test-sector-fast room cold-boot (infrastructural)
   await tapPlaceAssertAtTap(browser, false);
