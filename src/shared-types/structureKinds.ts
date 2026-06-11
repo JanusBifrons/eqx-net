@@ -292,3 +292,43 @@ export function structureKindFromIndex(index: number): StructureKindId {
   const k = STRUCTURE_KINDS_LIST[index];
   return k ? k.id : DEFAULT_STRUCTURE_KIND;
 }
+
+// ── Unified entity hull (unified-hull plan) ────────────────────────────────
+// A structure's FORM is a regular N-gon. This side-count is the single piece
+// of shape data; `structureHullPoints` turns it into the point-set that drives
+// BOTH the rendered silhouette (`buildStructureGfx`) AND the polygon collision
+// hull (server `SwarmSpawner.spawnStructure` + client `structureClientLeaf`) —
+// so render == collider, and the ball collider + the renderer's old procedural
+// generation are both retired. Hubs read many-sided; leaves simpler.
+export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
+  capital: 8,
+  connector: 6,
+  solar: 4,
+  miner: 5,
+  turret: 3,
+};
+
+/**
+ * The structure's hull POINTS — a regular N-gon at `radius`, first vertex at
+ * the top (−y, Pixi-up) going clockwise (identical to the renderer's former
+ * inline generation, so the silhouette is unchanged). SINGLE SOURCE for the
+ * rendered shape AND the polygon collider. Regular polygons are symmetric, so
+ * the Pixi-up authoring is invariant under the renderer's Y-flip and under
+ * convex-hull collider construction (vertex order doesn't matter) — render and
+ * collider coincide with no per-frame work (called once at sprite-create /
+ * entity-spawn, never in a hot loop). Unknown id ⇒ the Capital's silhouette,
+ * the same forgiving stance as `getStructureKind`.
+ */
+export function structureHullPoints(
+  kindId: string | null | undefined,
+  radius: number,
+): Array<{ x: number; y: number }> {
+  const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
+  const sides = STRUCTURE_SIDES[id];
+  const out: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < sides; i++) {
+    const a = -Math.PI / 2 + (i * 2 * Math.PI) / sides;
+    out.push({ x: Math.cos(a) * radius, y: Math.sin(a) * radius });
+  }
+  return out;
+}
