@@ -6,6 +6,7 @@ import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidSh
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { structureHullPoints } from '../../shared-types/structureKinds.js';
 
 export interface AsteroidSpec {
   id: string;
@@ -185,15 +186,22 @@ export class SwarmSpawner {
   }
 
   /** Spawn one static, damageable STRUCTURE (Generic Entity Pipeline P4). Rides
-   *  the kind=2 pose-core path: no AI, no polygon collider, heavy mass so
-   *  projectile / ram impulse barely moves it. The CALLER seeds `swarmHealth`
-   *  to make it damageable through the EXISTING DamageRouter 'swarm' strategy —
-   *  zero new dispatch code. Returns false if no free slot. */
+   *  the kind=2 pose-core path: no AI, heavy mass so projectile / ram impulse
+   *  barely moves it. The CALLER seeds `swarmHealth` to make it damageable
+   *  through the EXISTING DamageRouter 'swarm' strategy — zero new dispatch
+   *  code. Its collision hull is the regular-polygon `structureHullPoints` (the
+   *  same point-set the renderer draws) → a convexHull collider matching the
+   *  silhouette, replacing the old circular collider (unified-hull plan).
+   *  Returns false if no free slot. */
   spawnStructure(s: { id: string; x: number; y: number; radius: number; mass?: number; shipKind?: string }): boolean {
+    // The subtype rides the shared `shipKind` byte (set below). Compute the
+    // hull polygon from it + the radius here so `spawnOne` can attach the
+    // matching convexHull collider + hit-resolver vertices.
+    const structureVertices = structureHullPoints(s.shipKind, s.radius);
     const spec: AsteroidSpec = {
       id: s.id, x: s.x, y: s.y, vx: 0, vy: 0, radius: s.radius, mass: s.mass ?? STRUCTURE_DEFAULT_MASS,
     };
-    const ok = this.spawnOne(2, spec, undefined);
+    const ok = this.spawnOne(2, spec, undefined, undefined, structureVertices);
     // The structure SUBTYPE rides the shared `shipKind` byte (kind=2 path) so
     // the client decoder can pick the right silhouette + tint. Set it on the
     // freshly-registered record (spawnOne only auto-sets shipKind for drones).
@@ -209,6 +217,7 @@ export class SwarmSpawner {
     a: AsteroidSpec,
     behaviourFactory: ((shipKind: ShipKind) => IAiBehaviour) | (() => IAiBehaviour) | undefined,
     shipKind?: ShipKind,
+    structureVertices?: ReadonlyArray<Vec2>,
   ): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -230,16 +239,22 @@ export class SwarmSpawner {
       rec.shipKind = shipKind.id;
     }
 
-    // Asteroids get a deterministic convex-polygon collider derived from
-    // their stable entityId. Drones stay circular. Vertices are attached to
-    // the registry record so the polygon-aware hit resolver can read them
-    // alongside the rewound pose at fire time.
+    // Asteroids get a deterministic convex-polygon collider derived from their
+    // stable entityId; STRUCTURES get the regular-polygon hull from
+    // `structureHullPoints` (matching the rendered silhouette). Both attach a
+    // convexHull collider in the worker AND set `rec.vertices` so the
+    // polygon-aware hit resolver reads them alongside the rewound pose. Drones
+    // stay circular.
     let vertices: ReadonlyArray<Vec2> | undefined;
     let mass = a.mass;
     if (kind === 0) {
       vertices = generateAsteroidVertices(rec.entityId, a.radius);
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
+    } else if (kind === 2 && structureVertices) {
+      vertices = structureVertices;
+      rec.vertices = vertices;
+      mass ??= STRUCTURE_DEFAULT_MASS;
     } else {
       mass ??= DRONE_DEFAULT_MASS;
     }

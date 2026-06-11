@@ -30,10 +30,36 @@ import {
   getShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
+import { getStructureKind } from '../../shared-types/structureKinds.js';
 import {
   getDroneMaxHealth,
   getDroneShieldMax,
 } from './droneKindHelpers.js';
+
+/** Pose-core kind byte for a structure (vs drone=1, asteroid=0). */
+const SWARM_KIND_STRUCTURE = 2;
+
+/**
+ * Resolve a swarm record's (shieldMax, hullMax) from its OWN catalogue —
+ * generic optional shield (D3). A structure (kind 2) reads the STRUCTURE
+ * catalogue (its `shipKind` byte is a structure subtype); everything else
+ * (drones, kind 1) reads the ship catalogue. A structure with no `shieldMax`
+ * ⇒ shieldMax 0 ⇒ shieldless.
+ *
+ * This replaces the old unconditional `getDroneShieldMax(rec.shipKind)` which,
+ * for a structure subtype like `'capital'`, fell through `getShipKind` to the
+ * FIGHTER default — giving the structure a phantom 90-pt shield, a fighter
+ * `hullMax` (~90, not the capital's 5000), and a shield-break that posted
+ * `SET_HULL_EXPOSED` and corrupted the collider into a tiny fighter shape (the
+ * "fly into a capital after damaging it").
+ */
+function resolveSwarmShieldHull(rec: SwarmDamageTarget): { shieldMax: number; hullMax: number } {
+  if (rec.kind === SWARM_KIND_STRUCTURE) {
+    const k = getStructureKind(rec.shipKind ?? undefined);
+    return { shieldMax: k.shieldMax ?? 0, hullMax: k.maxHealth };
+  }
+  return { shieldMax: getDroneShieldMax(rec.shipKind), hullMax: getDroneMaxHealth(rec.shipKind) ?? 40 };
+}
 import type { ShieldEventMessage } from '../../shared-types/messages.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
@@ -52,6 +78,13 @@ export interface LayeredDamageResult {
 export interface SwarmDamageTarget {
   id: string;
   entityId: number;
+  /** Pose-core kind byte (0 asteroid, 1 drone, 2 structure) — selects which
+   *  catalogue resolves the shield/hull (generic optional shield). The full
+   *  SwarmEntityRecord always carries it; absent ⇒ treated as a drone. */
+  kind?: number;
+  /** For kind 1 this is a ship-kind id; for kind 2 it is a STRUCTURE subtype
+   *  id (the shared `shipKind` byte). Resolve via the kind-appropriate
+   *  catalogue — never cross-resolve. */
   shipKind?: ShipKindId | null;
   shieldDown?: boolean;
 }
@@ -139,7 +172,20 @@ export class ShieldHullRouter {
     const d = this.deps;
     const hull0 = this.swarmHealth.get(rec.id);
     if (hull0 === undefined) return null;
-    const shieldMax = getDroneShieldMax(rec.shipKind);
+    // Resolve from the entity's OWN catalogue (generic optional shield). See
+    // resolveSwarmShieldHull — this is what stops a structure borrowing a
+    // fighter shield + the collider-corruption SET_HULL_EXPOSED on break.
+    const { shieldMax, hullMax } = resolveSwarmShieldHull(rec);
+    if (shieldMax <= 0) {
+      // SHIELDLESS kind (every structure today): hull-only. Drain hull
+      // directly; do NOT create a swarmShield entry (the regen pass would
+      // otherwise resurrect a shield) and NEVER post SET_HULL_EXPOSED — so the
+      // collider stays the spawned hull and can't be swapped/shrunk.
+      const newHull = Math.max(0, hull0 - damage);
+      this.swarmHealth.set(rec.id, newHull);
+      this.swarmShieldLastDmg.set(rec.id, d.serverTick());
+      return { newShield: 0, shieldMax: 0, hullMax, hitLayer: 'hull' };
+    }
     const state: ShieldHullState = {
       shield: this.swarmShield.get(rec.id) ?? shieldMax,
       hull: hull0,
@@ -155,7 +201,7 @@ export class ShieldHullRouter {
       rec.shieldDown = true;
       d.postToWorker({ type: 'SET_HULL_EXPOSED', id: rec.id, exposed: true, kindId: rec.shipKind ?? DEFAULT_SHIP_KIND, tick: d.serverTick() });
     }
-    return { newShield: state.shield, shieldMax, hullMax: getDroneMaxHealth(rec.shipKind) ?? 40, hitLayer: r.hitLayer };
+    return { newShield: state.shield, shieldMax, hullMax, hitLayer: r.hitLayer };
   }
 
   /**

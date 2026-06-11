@@ -142,4 +142,45 @@ describe('SectorRoom integration — structure entity (GEP P4 "for free" proof)'
     expect(internals.swarmRegistry.get(placedId!) ?? null).toBeNull();
     expect(internals.swarmHealth.has(placedId!)).toBe(false);
   }, 15_000);
+
+  // ── Unified-hull plan, Phase 4 — a structure must resolve its OWN shield/hull
+  //    from the STRUCTURE catalogue (generic optional shield), NOT the fighter
+  //    fallback. A structure's `shipKind` byte is a structure subtype
+  //    ('capital'); the old `getDroneShieldMax/getDroneMaxHealth(rec.shipKind)`
+  //    fell through `getShipKind('capital')` to the FIGHTER default → it reported
+  //    `shieldMax`/`hullMax` as 150/150 (fighter) instead of the capital's
+  //    0/5000, which drives the WRONG HP% in the client stats panel.
+  //    (The hull POOL drains correctly either way because structures are seeded
+  //    `swarmShield = 0` on spawn — already hull-only — so this is the reported
+  //    max-values bug, not a collider/blocking bug; structures block fine, locked
+  //    by tests/e2e/structure-ram-blocked.spec.ts.)
+  //    RED before the structure-aware resolution (150/150); GREEN after (0/5000).
+  it('a placed Capital resolves its OWN hull/shield (0 / 5000), not the fighter fallback (150 / 150)', async () => {
+    harness = await bootSectorTestServer({});
+    const room = await harness.connectAs('player-1');
+    const internals = harness.getServerRoom()!._internals;
+
+    room.send('place_structure', { type: 'place_structure', kind: 'capital', x: 1500, y: 0 });
+    const deadline = Date.now() + 3000;
+    let id: string | null = null;
+    while (Date.now() < deadline && id === null) {
+      for (const rec of internals.structureRegistry.all()) { id = rec.id; break; }
+      if (id === null) await harness.advance(40);
+    }
+    expect(id).not.toBeNull();
+
+    const rec = internals.swarmRegistry.get(id!)!;
+    expect(rec.kind).toBe(2); // structure pose-core kind
+    expect(rec.shipKind).toBe('capital'); // structure subtype rides the shipKind byte
+
+    const r = internals.damageSwarmLayered(rec, 30);
+    expect(r, 'damageSwarmLayered must resolve the structure (swarmHealth present)').not.toBeNull();
+    // The REPORTED maxes drive the client stats %. Old code returned the fighter
+    // fallback (getDroneMaxHealth('capital') = 150, shield 150).
+    expect(r!.hullMax, 'capital reports its OWN 5000 hull, not the fighter fallback 150').toBe(
+      getStructureKind('capital').maxHealth,
+    );
+    expect(r!.shieldMax, 'capital has no shield → 0, not the fighter fallback 150').toBe(0);
+    expect(r!.hitLayer, 'shieldless ⇒ damage lands on hull').toBe('hull');
+  }, 15_000);
 });

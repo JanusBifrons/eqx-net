@@ -11,7 +11,7 @@
  *       · asteroid: polygon collider + lock + repose, no AI, no shield;
  *       · drone: circular + catalogue mass + UNLOCKED + AI register + shield
  *         swap, never re-posed (the kinematic follower owns drone pose);
- *       · structure: circular + lock + repose, no AI, no shield;
+ *       · structure: POLYGON (structureHullPoints) + lock + repose, no AI, no shield;
  *   - `staticBody` derives from `!descriptor.sync.interpolated` (only static
  *     kinds re-pose via setShipState).
  *
@@ -25,6 +25,7 @@ import {
   SWARM_KIND_STRUCTURE,
 } from '../../src/shared-types/swarmWireFormat.js';
 import { getShipKind } from '../../src/shared-types/shipKinds.js';
+import { structureHullPoints } from '../../src/shared-types/structureKinds.js';
 import { ClientEntityFactory } from '../../src/client/net/entity/ClientEntityFactory.js';
 import type {
   ClientSpawnCtx,
@@ -158,11 +159,14 @@ describe('DroneClientLeaf (kind 1) — dynamic, AI ledger, shield swap', () => {
 });
 
 describe('StructureClientLeaf (kind 2) — static, no AI, no shield, damageable server-side', () => {
-  it('spawnBody: circular collider + lockBody, never registers AI', () => {
-    const { ctx, pw, ai } = makeCtx(SWARM_KIND_STRUCTURE);
+  it('spawnBody: POLYGON collider (structureHullPoints) + lockBody, never registers AI', () => {
+    const { ctx, pw, ai } = makeCtx(SWARM_KIND_STRUCTURE, 'capital');
     factory.leafFor(SWARM_KIND_STRUCTURE)!.spawnBody(ctx);
     const spawn = pw.calls.find((c) => c.m === 'spawnObstacle')!;
-    expect(spawn.args[5]).toBeUndefined(); // circular (matches the pre-refactor path)
+    // Unified-hull: the structure's polygon hull (from the single hull-points
+    // source) is its collider — matching the rendered silhouette AND the server
+    // collider built from the same points. Replaces the old circular collider.
+    expect(spawn.args[5]).toEqual(structureHullPoints('capital', 24)); // entry radius 24
     expect(pw.calls.some((c) => c.m === 'lockBody')).toBe(true);
     expect(ai.calls.length).toBe(0);
     expect(ctx.registeredAiId).toBeNull();
