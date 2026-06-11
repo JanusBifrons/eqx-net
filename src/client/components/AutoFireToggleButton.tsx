@@ -1,5 +1,6 @@
 import Box from '@mui/material/Box';
 import { useUIStore, useShouldRenderHud } from '../state/store';
+import { useTouchClickActivate } from './touchClickActivate';
 
 /**
  * Auto-fire mode toggle (weapon-autofire-boost-mechanics, Part B4).
@@ -18,6 +19,7 @@ export function AutoFireToggleButton(): JSX.Element | null {
   const isDead = useUIStore((s) => s.isDead);
   const autoFireEnabled = useUIStore((s) => s.autoFireEnabled);
   const setAutoFireEnabled = useUIStore((s) => s.setAutoFireEnabled);
+  const { touchActivate, clickActivate } = useTouchClickActivate();
 
   if (!shouldRender || isDead) return null;
 
@@ -29,13 +31,16 @@ export function AutoFireToggleButton(): JSX.Element | null {
       data-testid="auto-fire-toggle"
       data-state={autoFireEnabled ? 'on' : 'off'}
       aria-pressed={autoFireEnabled}
-      // `onClick` ONLY — a discrete toggle, not a held control. A tap fires a
-      // single click on every platform; adding `onTouchStart` (even with
-      // preventDefault) double-toggled on touch contexts (touchstart + a
-      // still-delivered click), which flipped auto-fire straight back ON — the
-      // CI layout-slots failure. The FIRE/BOOST buttons keep onTouchStart
-      // because they are press-and-HOLD; this is a single-shot toggle.
-      onClick={toggle}
+      // Bind BOTH `onTouchStart` and `onClick` via the shared touch/click
+      // activator (the SpeedDial pattern). `onClick` ALONE was dead on mobile
+      // while steering: a SECOND simultaneous touch (joystick held) never
+      // produces the browser's synthesized click, so the toggle could not be
+      // hit (playtest 2026-06-10 Issue 1). `onTouchStart` toggles on the raw
+      // touch + suppresses the trailing synthesized click so it does not
+      // double-toggle (the historic flip-straight-back-ON trap); `onClick`
+      // stays for desktop.
+      onTouchStart={touchActivate(toggle)}
+      onClick={clickActivate(toggle)}
       sx={autoFireEnabled ? autoOnSx : autoOffSx}
     >
       AUTO
