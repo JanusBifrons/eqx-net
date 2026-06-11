@@ -401,45 +401,40 @@ gameServer.define('shield-test', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
-// 2026-05-28 — Hull-collision engineering room. "I-beam" deterministic
-// scenario: two stationary Crossguards positioned so their stems run
-// SIDE-BY-SIDE (parallel, vertical, 1 u gap) while one crossbar sits at
-// the top of the figure and the other at the bottom, each 1 u away from
-// touching the OTHER ship's stem.
+// 2026-05-28 (poses retuned 2026-06-11) — Hull-collision engineering room.
+// Deterministic "interlock" scenario: two stationary Crossguards nested as
+// tightly as possible WITHOUT their polygons touching — every contact face is
+// exactly 1 u apart. Bounding circles overlap by ~120 u, so the polygon
+// collider's correctness is the only thing keeping them from colliding.
 //
-// Polygon convention (post the 2026-05-28 Y-flip in
-// `shipShapeToPolygon`): the Crossguard polygon (post Y-flip + scale 10)
-// in body-local math frame is:
+// Clean right-angle T (the elbow slope was removed 2026-06-11). The Crossguard
+// polygon (post the `shipShapeToPolygon` Y-flip + scale 10) in body-local math
+// frame is:
 //   - Crossbar: x ∈ [-140, +140], y ∈ [+100, +160]
-//   - Stem:     x ∈ [-40,  +40], y ∈ [-120, +80]
+//   - Stem:     x ∈ [-40,  +40], y ∈ [-120, +100]   (reflex flush at y=+100)
 // "Forward" (math +Y) = direction of the crossbar.
 //
-// Symmetric I-beam geometry. Note: the Crossguard polygon has a SLOPED
-// crossbar underside — at body-local x = ±40 (where the stem meets the
-// crossbar) the polygon's lower edge is at y=+80 (the inner reflex), but
-// at x = ±140 (crossbar outer tip) it's at y=+100. The closest approach
-// between T1's crossbar and T2's stem is at T1's INNER REFLEX (body-local
-// (40, +80)) versus T2's stem top (body-local (-40, -120) post π
-// rotation → (40, +120)). For a 1 u gap at the reflex, body_y must be
-// ±20.5 (not ±10.5 — the latter only accounts for the outer crossbar
-// at y=+100):
-//   - T1 (regular T)  at (-40.5, +20.5), angle 0
-//       stem world:    x ∈ [-80.5, -0.5], y ∈ [-99.5, +100.5]
-//       reflex world:  (-0.5, +100.5)   ← closest to T2's stem
-//   - T2 (inverted T) at (+40.5, -20.5), angle π
-//       stem world:    x ∈ [+0.5, +80.5], y ∈ [-100.5, +99.5]
-//       stem-top world: y = +99.5         ← 1 u below T1 reflex
+// With a clean (flat-bottomed) crossbar the closest crossbar↔stem approach is
+// the OUTER crossbar bottom at y=+100 (no slope), so the exact 1 u-gap offsets
+// are Δx = 81 (stem-width 80 + 1) and Δy = 21:
+//   - T1 (upright T)  at (-40.5, +10.5), angle 0
+//       stem world:    x ∈ [-80.5, -0.5], y ∈ [-109.5, +110.5]
+//       crossbar bottom world: y = +110.5
+//   - T2 (inverted T) at (+40.5, -10.5), angle π
+//       stem world:    x ∈ [+0.5, +80.5], y ∈ [-110.5, +109.5]
+//       crossbar bottom world (inverted → top): y = -110.5
 //
 // All three 1 u minimum gaps:
 //   - Stems  (x): T1 right edge -0.5 to T2 left edge +0.5 → 1 u
-//   - T1 reflex (+100.5) to T2 stem top (+99.5) → 1 u
-//   - T2 reflex (-100.5) to T1 stem bottom (-99.5) → 1 u
+//   - T1 stem bottom (-109.5) to T2 crossbar top (-110.5) → 1 u
+//   - T2 stem top   (+109.5) to T1 crossbar bottom (+110.5) → 1 u
 //
-// Shield bubbles (radius 223 each) still overlap massively; the polygon
-// collider's correctness is what's under test. Any spurious contact at
-// 1 u proximity (because of a wrong-winding triangle filling a gap, or
-// a Y-axis convention mismatch) fires `collision_resolved` and the
-// `tests/e2e/t-ship-no-self-collision.spec.ts` negative-control fails.
+// `setHullExposed` emits TRIANGLE colliders, which DO fire CONTACT_FORCE_EVENTS
+// for static overlap (`convexHull` does not — the 2026-05-28 regression). So a
+// spurious contact at the 1 u interlock (wrong-winding triangle, Y-axis flip, a
+// collider exceeding the silhouette) fires `collision_resolved` and the
+// `tests/e2e/t-ship-no-self-collision.spec.ts` negative-control fails — and the
+// `hull-collision-overlap-test` POSITIVE control proves the events would fire.
 //
 // Use `?room=hull-collision-test&testId=<uuid>` from a browser to load
 // the scenario. `filterBy(['testId'])` so parallel specs each get their
@@ -450,8 +445,8 @@ gameServer
     asteroidConfig: [],
     peacefulDrones: true,
     dronePoses: [
-      { kind: 'crossguard', x: -40.5, y:  20.5, angle: 0,         hullExposed: true },
-      { kind: 'crossguard', x:  40.5, y: -20.5, angle: Math.PI,   hullExposed: true },
+      { kind: 'crossguard', x: -40.5, y:  10.5, angle: 0,         hullExposed: true },
+      { kind: 'crossguard', x:  40.5, y: -10.5, angle: Math.PI,   hullExposed: true },
     ],
     // Spawn the player NEAR the test scene (not at 1500u away) so the
     // initial predWorld-vs-server lerp doesn't visually drag the

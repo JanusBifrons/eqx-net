@@ -95,35 +95,37 @@ export const CROSSGUARD: ShipKind = ShipKindSchema.parse({
     scale: 10,
     // Pixi-up authored (Y goes DOWN on screen; nose at negative Y).
     // The polygon is wound CW in standard math orientation; the
-    // triangulator normalises to CCW so `rayHitsConvexPolygon`'s
+    // decomposer normalises to CCW so `rayHitsConvexPolygon`'s
     // outward-normal formula works either way.
     //
-    //  (-14,-16) ─────────── (14,-16)     ← crossbar top
-    //      │                     │
-    //  (-14,-10)               (14,-10)   ← outer crossbar bottom
-    //          \               /
-    //          (-4,-8) ─── (4,-8)         ← inner crossbar bottom (reflex)
-    //             │           │           ← stem sides
-    //             │   stem    │
-    //          (-4, 12) ─ (4, 12)         ← stem tail
+    //  (-14,-16) ─────────────── (14,-16)   ← crossbar top
+    //      │                         │
+    //  (-14,-10) ──┐           ┌── (14,-10)  ← crossbar bottom (FLAT line)
+    //           (-4,-10) ─── (4,-10)         ← reflex corners — clean 90°
+    //              │     stem    │
+    //              │             │
+    //           (-4, 12) ─── (4, 12)         ← stem tail
     //
-    // Outer crossbar bottom y=-10, inner y=-8: the slight slope is
-    // load-bearing. With all four points on the same y-line (the
-    // first draft put them at y=-8), the ear-clipping triangulator
-    // produced a degenerate 4-collinear-vertex polygon after clipping
-    // the stem, returning 4 triangles for an n=8 polygon (test expects
-    // n-2 = 6). The 2 u y-offset breaks collinearity so the
-    // post-stem polygon is a trapezoid the triangulator can split
-    // cleanly. Two reflex vertices at (-4,-8) and (4,-8) — the only
+    // Clean right-angle T (2026-06-11). The crossbar underside is a single
+    // horizontal line at y=-10 and the stem drops perpendicularly, so the
+    // two reflex vertices sit FLUSH with the crossbar bottom at (±4, -10).
+    // Earlier drafts sloped the inner reflex up to y=-8 purely to dodge a
+    // degeneracy in the OLD in-house ear-clipping triangulator — but that
+    // triangulator was replaced by `poly-decomp` (Bayazit) on 2026-05-28
+    // (`shipHullDecomp.ts`), which splits the clean T into two crisp convex
+    // rectangles (crossbar + stem) with no collinear-vertex trouble (every
+    // vertex here is a real 90°/270° corner, never three-collinear). The
+    // slope rendered as a "weird sloped elbow" on-device (smoke 2026-06-11);
+    // it is now gone. Two reflex vertices at (-4,-10) and (4,-10) — the only
     // concavity.
     points: [
       [-14, -16],
       [14, -16],
       [14, -10],
-      [4, -8],
+      [4, -10],
       [4, 12],
       [-4, 12],
-      [-4, -8],
+      [-4, -10],
       [-14, -10],
     ],
   },

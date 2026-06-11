@@ -99,6 +99,8 @@ const FEATURE_SPECS: string[] = [
   '**/wave-attack.spec.ts',
   '**/sync-health.spec.ts',
   '**/t-ship-no-self-collision.spec.ts',
+  '**/tship-collision-probe.spec.ts',
+  '**/structure-ram-blocked.spec.ts',
   '**/ramming-probe-armpit.spec.ts',
   '**/warp-engage-cancel.spec.ts',
   '**/wreck-render-probe.spec.ts',

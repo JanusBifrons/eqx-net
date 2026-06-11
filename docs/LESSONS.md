@@ -14,6 +14,60 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-11 — collision (playtest Issue 4) — `convexHull` hull colliders silently broke the T-ship E2E + ram telemetry; cleaned the crossguard to a true T
+Commit: B3 of the playtest-2026-06-10 plan
+**Symptom (smoke).** "The collision boxes are just completely broken… the
+existing E2E for the T-shape ship doesn't work." Plus, on inspecting the
+rendered crossguard, a "weird sloped elbow" where the crossbar meets the stem.
+
+**Diagnosis (empirical, screenshot-grounded — NOT the plan's hypothesis).** The
+plan guessed a game-Y-up vs Pixi-Y-down transform sign error. A
+`tship-collision-probe.html` screenshot + the full rotation math BOTH showed the
+render and collider transforms are consistent at every angle (the 2026-05-28
+`shipShapeToPolygon` Y-flip is correct) — the T's spawn in the RIGHT orientation.
+The real defect: commit `c3624b1` (2026-05-28, "investigate: convex-hull ship
+colliders") swapped `World.setHullExposed` from per-`triangle` colliders to one
+`convexHull` per convex part. **In Rapier 2D only `triangle` shapes emit
+`CONTACT_FORCE_EVENTS` for two bodies overlapping at zero closing velocity —
+`convexHull`/`cuboid` emit ZERO** (the bare-Rapier diagnostic in
+`hullCollisionNoTouch.test.ts` prints `triangles: 90 events / convexHull: 0 /
+cuboid: 0`). So the `t-ship-no-self-collision` E2E POSITIVE control
+(`collision_resolved > 0` on two fully-overlapping T-ships) had been RED since
+2026-05-28, which made the negative control's "0 contacts at the interlock"
+prove nothing. The ram-damage / `collision_resolved` telemetry was likewise dead
+for static/slow contacts. `c3624b1`'s `convexHull` was an exploratory "BISECT
+ARM A"; the deep-penetration ramming fix it was chasing was actually delivered
+by the STIFF SOLVER (`PhysicsWorld.create` numSolverIterations 16 +
+small-steps PGS), not the collider shape — so `convexHull` fixed nothing and
+regressed the events. The src/core CLAUDE.md never stopped documenting
+`triangle` as required and literally predicted this failure mode.
+
+**Resolution.**
+1. Reverted `setHullExposed` to TRIANGLE colliders via a restored
+   `shipCollisionTriangles(kindId)` (fan-triangulate each convex part from
+   vertex 0) in `shipHullDecomp.ts`. Positive control → 120 events; negative
+   control → 0 (now meaningful); ramming-probe penetration stayed 0
+   (the solver, not the shape, bounds it).
+2. Cleaned the crossguard polygon to a TRUE right-angle T — moved the reflex
+   vertices y=-8 → -10 so the crossbar underside is one flat line and the stem
+   drops perpendicularly. The slope had been a workaround for the OLD in-house
+   ear-clipping triangulator (replaced by `poly-decomp` in the same `c3624b1`),
+   so it was obsolete dead weight that rendered as the "weird elbow."
+3. The clean T's flat crossbar bottom introduces collinear boundary points
+   `(±14,-10)`+`(±4,-10)`; `poly-decomp` leaves them in a part, which a strict
+   convexity check rejects AND which makes a degenerate fan triangle. Added a
+   shape-preserving `stripCollinear` pass in `decomposeForKind` (drop any vertex
+   whose neighbours are collinear). Runs once at module load.
+4. Bumped `SHIP_KIND_CATALOGUE_VERSION` 8 → 9 (polygon edit).
+
+**Downstream note.** `/dev/events` is a GLOBAL server-wide ring buffer — galaxy
+rooms (with `drone-N` + `lwbot-N` entities) write into the same buffer a test
+room reads. Per-test collision assertions MUST filter by the test entity ids
+(`pose-drone-0/1`); a raw `resolved.length` only works for the same-point
+positive control where the test entities dominate. If you ever re-try
+`convexHull` for hull colliders, the positive control + the bare-Rapier
+diagnostic will fail loudly again — that's by design.
+
 ## 2026-06-07 — structures — turret/miner had no barrel because the mount-visual branch was `kind===1`-only
 Commit: Item A of the structures follow-ups (plan `majestic-pie` handoff)
 **Symptom (smoke).** A Turret rendered as *only a triangle* (no barrel, no

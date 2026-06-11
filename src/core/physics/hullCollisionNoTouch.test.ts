@@ -1,22 +1,36 @@
 /**
- * Hull-collision determinism test — 2026-05-28.
+ * Hull-collision determinism test — 2026-05-28, updated 2026-06-11.
  *
  * Direct PhysicsWorld backup for `tests/e2e/t-ship-no-self-collision.spec.ts`.
- * Spawns two Crossguard T-ships positioned so their shield bubbles overlap
- * massively (bounding circles by 166 u) but their actual polygon
- * silhouettes have a 20 u gap between stem-tips. With both ships in
- * `hullExposed: true` mode, the polygon compound collider is what's under
- * test — a correctly-decomposed concave T leaves the crossbar-tip gaps
- * empty and emits ZERO contacts; a buggy concave hull (filled gap,
- * overlapping triangles, wrong winding) emits non-zero contacts.
+ * Spawns two Crossguard T-ships at the INTERLOCKING poses (the
+ * `hull-collision-test` room geometry): bounding circles overlap massively
+ * but the polygon silhouettes have a 1 u gap. With both ships
+ * `hullExposed: true`, the polygon compound collider (TRIANGLE colliders —
+ * `setHullExposed`) is what's under test: a correctly-decomposed clean T
+ * leaves the interlock gaps empty and emits ZERO contacts; a buggy hull
+ * (filled gap, overlapping triangles, wrong winding, Y-axis flip) emits
+ * non-zero contacts. The positive control proves the surface is live by
+ * stacking two T-ships at the SAME point → they MUST emit contacts.
  *
- * Geometry (entity-local, post `scale: 10`):
+ * Catalogue geometry (entity-local Pixi-up, post `scale: 10`; clean
+ * right-angle T as of 2026-06-11):
  *   - Crossbar: x ∈ [-140, 140], y ∈ [-160, -100]
- *   - Stem:     x ∈ [-40, 40],   y ∈ [-80, 120]
+ *   - Stem:     x ∈ [-40, 40],   y ∈ [-100, 120]   (reflex flush at y=-100)
  *
- * World placement: A at (0, -130, ang=0); B at (0, +130, ang=π).
- *   - Stems face each other along y; 20 u gap (y=-10 to y=+10).
- *   - Centers 260 apart; bounding circles 213+213=426 → 166 u overlap.
+ * EXACT 1 u-gap interlock: A at (-40.5, +10.5, ang=0); B at (40.5, -10.5, π).
+ * Δx = 81 (stem-width 80 + 1), Δy = 21 → all THREE contact faces are 1 u apart
+ * (stem↔stem in X; each stem-end ↔ the opposing crossbar in Y). As tight as
+ * the silhouettes nest without touching. Bounding circles (radius 213) overlap
+ * by ~120 u → any spurious contact at the interlock fires immediately. The
+ * "interlock pushed together" + "same point" positives prove the events DO
+ * fire on real overlap, so the 1 u-gap zero is a meaningful clearance.
+ *
+ * TRIANGLE colliders are load-bearing: in Rapier 2D only `triangle` shapes
+ * emit `CONTACT_FORCE_EVENTS` for static (zero closing velocity) overlap —
+ * `cuboid`/`convexHull` emit none (the bare-Rapier diagnostic below proves
+ * all three). So the positive control can again assert EVENT FIRING (the
+ * 2026-05-28→06-11 convexHull experiment had forced it to a weaker
+ * body-separation proxy; reverting to triangle restored the real signal).
  *
  * Faster than E2E (sub-second) and runs in the inner loop. The E2E spec
  * is the full-stack regression lock; this is the pure-physics lock.
@@ -37,24 +51,26 @@ describe('hull collision determinism — two stationary T-ships', () => {
     const eventQueue = new RAPIER.EventQueue(true);
     const crossguard = getShipKind('crossguard');
 
-    // Post-2026-05-28 polygon Y-flip "I-beam" geometry. The Crossguard
-    // crossbar has a SLOPED underside (inner reflex at body-local
-    // (±40, +80), outer crossbar bottom at (±140, +100)). The closest
-    // approach between T1's crossbar and T2's stem is at the INNER
-    // REFLEX (body-local (40, +80)), not the outer crossbar bottom.
-    // For a 1 u gap at the reflex, body_y offsets must be ±20.5.
+    // Clean right-angle T (2026-06-11 — the elbow slope removed). In the
+    // math-up collider frame (`shipShapeToPolygon` Y-flips ×10): crossbar
+    // y ∈ [100, 160], x ∈ [-140, 140]; stem y ∈ [-120, 100], x ∈ [-40, 40]
+    // (the reflex is FLUSH with the crossbar bottom at y=100, so the crossbar
+    // underside is one flat line — no slope to special-case).
     //
-    // Three 1 u minimum gaps:
-    //   - Stems side-by-side (x: 1 u gap, parallel vertical)
-    //   - T1 reflex (world y +100.5) above T2 stem top (y +99.5) → 1 u
-    //   - T2 reflex (world y -100.5) below T1 stem bottom (y -99.5) → 1 u
-    // Bounding circles (radius 223 each) still overlap. Any spurious
-    // contact at 1 u proximity (concave-hull defect, wrong-winding
-    // triangle, Y-axis mismatch) fires immediately.
-    world.spawnShip('a', -40.5, +20.5, 'crossguard');
-    world.spawnShip('b',  40.5, -20.5, 'crossguard');
-    world.setShipState('a', { x: -40.5, y: +20.5, angle: 0,       vx: 0, vy: 0, angvel: 0 });
-    world.setShipState('b', { x:  40.5, y: -20.5, angle: Math.PI, vx: 0, vy: 0, angvel: 0 });
+    // EXACT 1 u-gap interlock — Δx = 81 (stem-width 80 + 1), Δy = 21, so ALL
+    // THREE contact faces are 1 u apart. At A(-40.5, +10.5, 0), B(40.5, -10.5, π):
+    //   - A.stem x ∈ [-80.5, -0.5]; B.stem x ∈ [0.5, 80.5] → 1 u gap.
+    //   - A.stem bottom y = -109.5 vs B.crossbar top y = -110.5 → 1 u gap.
+    //   - B.stem top y = +109.5 vs A.crossbar bottom y = +110.5 → 1 u gap.
+    // Bounding circles (radius 213) overlap by ~120 u. With TRIANGLE colliders
+    // a real overlap WOULD fire CONTACT_FORCE_EVENTS (the POSITIVE controls
+    // below prove it), so zero contacts here is a meaningful "1 u apart, as
+    // tight as possible without touching" lock — any spurious contact (wrong
+    // winding, Y-axis flip, collider exceeding the silhouette) fires at once.
+    world.spawnShip('a', -40.5, +10.5, 'crossguard');
+    world.spawnShip('b',  40.5, -10.5, 'crossguard');
+    world.setShipState('a', { x: -40.5, y: +10.5, angle: 0,       vx: 0, vy: 0, angvel: 0 });
+    world.setShipState('b', { x:  40.5, y: -10.5, angle: Math.PI, vx: 0, vy: 0, angvel: 0 });
     world.setHullExposed('a', true, crossguard);
     world.setHullExposed('b', true, crossguard);
 
@@ -81,50 +97,72 @@ describe('hull collision determinism — two stationary T-ships', () => {
     world.dispose();
   });
 
-  it('resolver pushes overlapping hulls apart (sanity — proves the collision pipeline is live)', async () => {
-    // Same setup but place B much closer so polygon stems INTERPENETRATE.
-    // At yB=-60 (vs yA=-130 with regular T), A's stem-tip is at y=-10 and
-    // B's stem (inverted at angle π so it points down) extends from y=-180
-    // to y=+20 — overlapping A's stem at x ∈ [-40, 40], y ∈ [-50, -10].
-    //
-    // The positive control used to assert CONTACT_FORCE_EVENTS fired but
-    // that's specific to `triangle` colliders — `convexPolyline` (what
-    // `setHullExposed` emits as of 2026-05-28, fixing the interior-diagonal
-    // normal bug) does NOT emit those events for two STATIC interpenetrating
-    // bodies (zero closing velocity → zero contact force → no event). It
-    // still produces correct contact NORMALS and the resolver still pushes
-    // the bodies apart — which is what gameplay actually depends on. So
-    // we assert BODY SEPARATION rather than event firing, which exercises
-    // the same collision pipeline at the level we care about.
+  it('POSITIVE control: the SAME interlock pushed together (stems overlap) emits contacts', async () => {
+    // The symmetric counterpart to the 1 u-gap negative above: keep A fixed,
+    // pull B in along x from 40.5 → 20.5 (Δx 81 → 61) so the two stems now
+    // OVERLAP by ~19 u instead of clearing by 1 u. Everything else identical.
+    // This proves the boundary directly — the SAME shapes that don't touch at
+    // a 1 u gap DO collide once they overlap (so the negative isn't a false
+    // pass from a dead collider). With TRIANGLE colliders the static overlap
+    // fires CONTACT_FORCE_EVENTS.
     const world = await PhysicsWorld.create();
     const eventQueue = new RAPIER.EventQueue(true);
     const crossguard = getShipKind('crossguard');
 
-    world.spawnShip('a', 0, -130, 'crossguard');
-    world.spawnShip('b', 0, -60,  'crossguard');
-    world.setShipState('a', { x: 0, y: -130, angle: 0,       vx: 0, vy: 0, angvel: 0 });
-    world.setShipState('b', { x: 0, y: -60,  angle: Math.PI, vx: 0, vy: 0, angvel: 0 });
+    world.spawnShip('a', -40.5, +10.5, 'crossguard');
+    world.spawnShip('b',  20.5, -10.5, 'crossguard'); // pulled in: stems overlap
+    world.setShipState('a', { x: -40.5, y: +10.5, angle: 0,       vx: 0, vy: 0, angvel: 0 });
+    world.setShipState('b', { x:  20.5, y: -10.5, angle: Math.PI, vx: 0, vy: 0, angvel: 0 });
     world.setHullExposed('a', true, crossguard);
     world.setHullExposed('b', true, crossguard);
 
-    for (let i = 0; i < 60; i++) world.tick(1 / 60, eventQueue);
+    let totalContacts = 0;
+    for (let i = 0; i < 60; i++) {
+      world.tick(1 / 60, eventQueue);
+      totalContacts += drainContacts(eventQueue, world, 0).length;
+    }
 
-    // DIAGNOSTIC ONLY (2026-05-28 hostile-review). Two stationary
-    // overlapping `convexHull` bodies do NOT separate reliably under
-    // Rapier 2D's static-overlap behaviour — same root cause as the
-    // "0 events for zero closing velocity" note: at zero relative speed
-    // the positional-correction impulse is small and can be dissipated by
-    // linear damping faster than separation accumulates. The bodies can
-    // even pass THROUGH each other when initial overlap is deeper than the
-    // bias can clear in a single step. This is fine for live gameplay —
-    // the ramming probe E2E `tests/e2e/ramming-probe-armpit.spec.ts` is
-    // the positive control we actually depend on (dynamic ball pressed
-    // into a polygon with velocity → impulse > 0 → no penetration).
-    const stateA = world.getShipState('a')!;
-    const stateB = world.getShipState('b')!;
-    const finalSeparation = Math.hypot(stateA.x - stateB.x, stateA.y - stateB.y);
     // eslint-disable-next-line no-console
-    console.log(`[DIAGNOSTIC] static-overlap separation: spawn=70u, final=${finalSeparation.toFixed(1)}u`);
+    console.log(`[POSITIVE interlock-closed] overlapping crossguard stems emitted ${totalContacts} contacts / 60 ticks`);
+    expect(
+      totalContacts,
+      'overlapping interlock must emit contacts (proves the 1 u-gap negative is a real clearance, not a dead collider)',
+    ).toBeGreaterThan(0);
+
+    world.dispose();
+  });
+
+  it('POSITIVE control: two T-ships at the SAME point emit contacts (surface is live)', async () => {
+    // Stack two crossguards at the identical point (0, 0) with hull exposed
+    // → the TRIANGLE compound colliders fully interpenetrate → Rapier emits
+    // CONTACT_FORCE_EVENTS every step. This is the live-surface guard that
+    // makes the negative control above meaningful: if THIS fired zero events
+    // (the 2026-05-28 convexHull regression), "zero contacts" in the
+    // negative test would prove nothing. Mirrors the E2E positive control
+    // (`hull-collision-overlap-test` room).
+    const world = await PhysicsWorld.create();
+    const eventQueue = new RAPIER.EventQueue(true);
+    const crossguard = getShipKind('crossguard');
+
+    world.spawnShip('a', 0, 0, 'crossguard');
+    world.spawnShip('b', 0, 0, 'crossguard');
+    world.setShipState('a', { x: 0, y: 0, angle: 0,       vx: 0, vy: 0, angvel: 0 });
+    world.setShipState('b', { x: 0, y: 0, angle: Math.PI, vx: 0, vy: 0, angvel: 0 });
+    world.setHullExposed('a', true, crossguard);
+    world.setHullExposed('b', true, crossguard);
+
+    let totalContacts = 0;
+    for (let i = 0; i < 60; i++) {
+      world.tick(1 / 60, eventQueue);
+      totalContacts += drainContacts(eventQueue, world, 0).length;
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(`[POSITIVE] same-point crossguards emitted ${totalContacts} contacts / 60 ticks`);
+    expect(
+      totalContacts,
+      'overlapping triangle hulls must emit contacts (convexHull regression would give 0)',
+    ).toBeGreaterThan(0);
 
     world.dispose();
   });
@@ -229,10 +267,9 @@ describe('hull collision determinism — two stationary T-ships', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`[DIAGNOSTIC drone path] same-position spawnObstacle crossguards: ${totalContacts} contacts across 60 ticks, peak force ${peakForce.toFixed(1)} N`);
-    // No event-firing assertion — convexPolyline (2026-05-28) doesn't emit
-    // CONTACT_FORCE_EVENTS for static overlap; we now prove the resolver
-    // is alive via body separation in the "pushes overlapping hulls apart"
-    // test above. This remains diagnostic-only.
+    // Diagnostic-only (no assertion). With TRIANGLE colliders (2026-06-11)
+    // this DOES emit contacts for static overlap; the asserted positive
+    // control is "two T-ships at the SAME point emit contacts" above.
 
     world.dispose();
   });
@@ -264,8 +301,8 @@ describe('hull collision determinism — two stationary T-ships', () => {
     }
     // eslint-disable-next-line no-console
     console.log(`[DIAGNOSTIC] same-position crossguards: ${totalContacts} contacts across 60 ticks, peak force ${peakForce.toFixed(1)} N (worker floor 200)`);
-    // No event-firing assertion — see "pushes overlapping hulls apart"
-    // above for the convexPolyline body-separation positive control.
+    // Diagnostic-only — the asserted positive control ("two T-ships at the
+    // SAME point emit contacts") covers the event-firing guarantee.
 
     world.dispose();
   });
