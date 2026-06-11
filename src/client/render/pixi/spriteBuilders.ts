@@ -139,6 +139,7 @@ const STRUCTURE_SIDES: Record<string, number> = {
   miner: 5,
   turret: 3,
   battery: 4, // boxy like solar, distinguished by its amber tint
+  shield_pylon: 7, // a distinct heptagon; the wall span between a pair is the star
 };
 
 /**

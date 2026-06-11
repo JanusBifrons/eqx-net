@@ -20,6 +20,7 @@ describe('structureKinds catalogue', () => {
       'miner',
       'turret',
       'battery',
+      'shield_pylon',
     ]);
   });
 
@@ -43,11 +44,13 @@ describe('structureKinds catalogue', () => {
     );
   });
 
-  it('hubs are exactly the Capital + Connector; leaves cap at 1 connection', () => {
+  it('hubs are the Capital + Connector + Shield Pylon; leaves cap at 1 connection', () => {
     const hubs = STRUCTURE_KINDS_LIST.filter((k) => k.isHub).map((k) => k.id);
-    expect(hubs.sort()).toEqual(['capital', 'connector']);
+    expect(hubs.sort()).toEqual(['capital', 'connector', 'shield_pylon']);
     expect(STRUCTURE_KINDS.capital.maxConnections).toBe(4);
     expect(STRUCTURE_KINDS.connector.maxConnections).toBe(6);
+    // The pylon is a hub so two pylons can link directly (it pairs into a wall).
+    expect(STRUCTURE_KINDS.shield_pylon.maxConnections).toBe(3);
     for (const leaf of ['solar', 'miner', 'turret', 'battery'] as const) {
       expect(STRUCTURE_KINDS[leaf].maxConnections).toBe(1);
       expect(STRUCTURE_KINDS[leaf].isHub).toBe(false);

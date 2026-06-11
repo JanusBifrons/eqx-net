@@ -12,6 +12,7 @@ import SolarPowerIcon from '@mui/icons-material/SolarPower';
 import DiamondIcon from '@mui/icons-material/Diamond';
 import ShieldIcon from '@mui/icons-material/Shield';
 import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
+import SecurityIcon from '@mui/icons-material/Security';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { STRUCTURE_KINDS_LIST, type StructureKindId } from '@shared-types/structureKinds';
@@ -205,6 +206,7 @@ const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
   miner: <DiamondIcon />,
   turret: <ShieldIcon />,
   battery: <BatteryChargingFullIcon />,
+  shield_pylon: <SecurityIcon />,
 };
 
 // ── Hoisted static sx / props (no per-render allocation) ───────────────────
