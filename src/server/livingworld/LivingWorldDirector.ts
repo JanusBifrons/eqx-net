@@ -25,7 +25,7 @@ import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
-import { pickRespawnSector, sectorEdgePose, type Rng } from './population.js';
+import { pickRespawnSector, sectorEdgePose, nextHopToward, type Rng } from './population.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
@@ -79,6 +79,20 @@ export function resolveBotSpoolMs(
   return Number.isFinite(n) && n >= 1 ? n : undefined;
 }
 
+/** Director-level inter-sector hop-travel override (ms), read from
+ *  `EQX_BOT_HOP_MS`. Returns `undefined` (⇒ use the `hopTravelMs` default) when
+ *  unset/invalid. The drone-warp-in design's emergent travel time per galaxy
+ *  hop; E2E timelines inject a tiny value so a multi-hop traversal completes in
+ *  the test window instead of minutes. Read once at boot. */
+export function resolveBotHopMs(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  const raw = env['EQX_BOT_HOP_MS'];
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
@@ -104,6 +118,10 @@ export interface LivingWorldOptions {
   initialStaggerMs: number;
   /** Per-bot vulnerable spool length (defaults to the player value). */
   spoolMs: number;
+  /** Invulnerable inter-sector flight time per galaxy-graph hop (ms). The
+   *  drone-warp-in design's emergent travel: a 2-hop dispatch costs ~2×, so
+   *  farther bases take longer to reach. Override via `EQX_BOT_HOP_MS`. */
+  hopTravelMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -124,6 +142,11 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   shedRecoveryMs: 10_000,
   initialStaggerMs: 200,
   spoolMs: SPOOL_DURATION_MS,
+  // ~2 min per hop. Every entry sector is 1 hop from sol-prime, so a dispatch
+  // at the home sector telegraphs ~spool+hop ahead; a 2-hop interior base is
+  // ~2× the flight — the "warping in from outside, takes minutes to reach Sol"
+  // feel. Tunable via EQX_BOT_HOP_MS.
+  hopTravelMs: 120_000,
 };
 
 export class LivingWorldDirector {
@@ -166,6 +189,7 @@ export class LivingWorldDirector {
       pool: this.pool,
       rng: this.rng,
       respawnDelayMs: this.opts.respawnDelayMs,
+      hopTravelMs: this.opts.hopTravelMs,
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -236,6 +260,7 @@ export class LivingWorldDirector {
     }
     this.subs.length = 0;
     this.pool.disposeControllers();
+    this.warp.disposePending();
   }
 
   /** Read-only introspection for tests / the `/dev/population` route. */
@@ -298,29 +323,28 @@ export class LivingWorldDirector {
     switch (step.kind) {
       case 'warp': {
         this.squadPool.setState(step.squad, 'warping');
-        // Coordinated warp: every active member spools from its current sector
-        // to the target in the SAME control tick (they arrive together, modulo
-        // partial arrival under slot contention / mid-spool death — accepted).
-        let warping = 0;
-        for (const botId of step.squad.botIds) {
-          const rec = this.pool.get(botId);
-          if (!rec || rec.state !== 'active' || rec.sectorKey === step.to) continue;
-          this.startSquadMemberTransit(rec, rec.sectorKey, step.to);
-          warping++;
-        }
-        // ONE warp-in warning to the destination sector (not one per bot): the
-        // HUD countdown banner. countdownMs = the spool the bots are serving;
-        // it self-expires ≈ when they arrive, so no explicit clear is needed.
-        const destRoom = this.rooms.get(step.to);
-        if (destRoom && warping > 0) {
-          destRoom.broadcastWarpWarning({
-            type: 'warp_warning',
-            id: step.squad.squadId,
-            label: squadDisplayLabel(step.squad.kind),
-            count: warping,
-            countdownMs: this.opts.spoolMs,
-            kind: step.squad.kind,
-          });
+        // Hop-by-hop traversal: advance every member that isn't yet at the goal
+        // ONE galaxy-graph hop toward it. Re-issued every control tick while the
+        // squad is warping, so members traverse independently (stragglers + the
+        // members respawning in from the edge keep flowing toward the goal).
+        const finalApproach = this.advanceMembersTowardGoal(step.squad);
+        // ONE warp-in warning per squad — fired the first tick a member begins
+        // the FINAL leg into the goal sector (the in-sector telegraph). Deduped
+        // via squad.warned so it doesn't re-broadcast every control tick.
+        if (finalApproach > 0 && !step.squad.warned) {
+          step.squad.warned = true;
+          const destRoom = this.rooms.get(step.to);
+          if (destRoom) {
+            destRoom.broadcastWarpWarning({
+              type: 'warp_warning',
+              id: step.squad.squadId,
+              label: squadDisplayLabel(step.squad.kind),
+              count: step.squad.botIds.length,
+              // ≈ time-to-arrival for the final leg: vulnerable spool + flight.
+              countdownMs: this.opts.spoolMs + this.opts.hopTravelMs,
+              kind: step.squad.kind,
+            });
+          }
         }
         break;
       }
@@ -332,6 +356,10 @@ export class LivingWorldDirector {
           // Re-pulsed every control tick while attacking (beats FORGET_TICKS).
           room.markSquadHostileToFaction(step.squad.botIds, step.factionId);
         }
+        // Stragglers keep hopping in while the on-site members fight: the
+        // instant-hop model warped all 8 at once, but hop-by-hop must not strand
+        // members who haven't reached the goal yet.
+        this.advanceMembersTowardGoal(step.squad);
         break;
       }
       case 'retreat': {
@@ -346,6 +374,34 @@ export class LivingWorldDirector {
         break;
       }
     }
+  }
+
+  /**
+   * Warp every active member that isn't yet at the squad's goal (`sq.sectorKey`)
+   * ONE galaxy-graph hop toward it (`nextHopToward`). Re-issued each control
+   * tick while a squad is warping / attacking / roaming, so members traverse the
+   * graph hop-by-hop and independently — a member that respawns in from an entry
+   * sector or straggles behind keeps flowing toward the goal without any
+   * squad-level "current location" bookkeeping (the multiset of member
+   * `rec.sectorKey` IS the squad's position).
+   *
+   * `in-transit` members are skipped (the per-leg `BotTransitController` is
+   * single-use; only `active` members not yet at their next hop are re-tasked).
+   * Returns the number of members that began the FINAL leg (`nextHop === goal`)
+   * this tick — the trigger for the one-shot warp-in warning.
+   */
+  private advanceMembersTowardGoal(squad: { botIds: readonly string[]; sectorKey: string }): number {
+    const goal = squad.sectorKey;
+    let finalApproach = 0;
+    for (const botId of squad.botIds) {
+      const rec = this.pool.get(botId);
+      if (!rec || rec.state !== 'active' || rec.sectorKey === goal) continue;
+      const hop = nextHopToward(rec.sectorKey, goal);
+      if (hop === null) continue; // already there / unreachable — leave it
+      this.startSquadMemberTransit(rec, rec.sectorKey, hop);
+      if (hop === goal) finalApproach++;
+    }
+    return finalApproach;
   }
 
   /** Spool one squad member from→to via the proven per-bot transit machinery
@@ -366,7 +422,7 @@ export class LivingWorldDirector {
     serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });
     ctrl.begin({
       now: this.nowMs,
-      commit: () => this.warp.doHop(rec, from, to),
+      commit: () => this.warp.depart(rec, from, to),
       outcome: (res) => this.warp.onTransitOutcome(rec, from, to, res),
     });
   }

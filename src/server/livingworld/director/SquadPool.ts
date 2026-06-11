@@ -41,10 +41,17 @@ export interface SquadRecord {
   /** Member bot ids. Length ≤ SQUAD_SIZE (shrinks on shed; refilled on respawn). */
   botIds: string[];
   state: SquadState;
-  /** Current sector while idle/attacking/retreating; the TARGET while warping. */
+  /** Current sector while idle/attacking/retreating; the TARGET while warping.
+   *  Under hop-by-hop traversal this is the squad's GOAL — members traverse
+   *  toward it one galaxy-graph hop at a time; the squad's true position is the
+   *  multiset of member `rec.sectorKey`, derived on demand. */
   sectorKey: string;
   /** Faction this squad is tasked against, or null when unassigned. */
   targetFactionId: string | null;
+  /** One-shot warp-in-warning dedupe: set the first tick a member begins the
+   *  FINAL leg into the goal sector, reset on (re)assignment + retreat so each
+   *  wave telegraphs exactly once. */
+  warned: boolean;
 }
 
 export interface SquadSnapshot {
@@ -88,6 +95,7 @@ export class SquadPool {
         state: 'forming',
         sectorKey: sectorForSquad(s),
         targetFactionId: null,
+        warned: false,
       });
     }
   }
@@ -114,11 +122,13 @@ export class SquadPool {
   assignTarget(squad: SquadRecord, sectorKey: string, factionId: string): void {
     squad.sectorKey = sectorKey;
     squad.targetFactionId = factionId;
+    squad.warned = false; // a fresh wave telegraphs once on its final approach
   }
 
   /** Clear a squad's wave assignment (de-escalation / retreat complete). */
   clearTarget(squad: SquadRecord): void {
     squad.targetFactionId = null;
+    squad.warned = false;
   }
 
   /**

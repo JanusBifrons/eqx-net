@@ -14,7 +14,7 @@ import { galaxyRouter } from './routes/galaxyRouter.js';
 import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
-import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs } from './livingworld/LivingWorldDirector.js';
+import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
@@ -784,15 +784,23 @@ async function main(): Promise<void> {
     );
   } else {
     // Drone-squad spool follows the production `SPOOL_DURATION_MS` (5 min)
-    // unless `EQX_BOT_SPOOL_MS` injects a faster value (E2E convergence).
+    // unless `EQX_BOT_SPOOL_MS` injects a faster value (E2E convergence); the
+    // per-hop inter-sector flight uses the `hopTravelMs` default unless
+    // `EQX_BOT_HOP_MS` injects a faster value.
     const botSpoolMs = resolveBotSpoolMs();
-    livingWorldDirector = new LivingWorldDirector(
-      galaxyRooms,
-      botSpoolMs !== undefined ? { spoolMs: botSpoolMs } : {},
-    );
+    const botHopMs = resolveBotHopMs();
+    const directorOpts: Partial<LivingWorldOptions> = {};
+    if (botSpoolMs !== undefined) directorOpts.spoolMs = botSpoolMs;
+    if (botHopMs !== undefined) directorOpts.hopTravelMs = botHopMs;
+    livingWorldDirector = new LivingWorldDirector(galaxyRooms, directorOpts);
     livingWorldDirector.start();
     logger.info(
-      { sectors: galaxyRooms.size, bots: LIVING_WORLD_BOT_COUNT, botSpoolMs: botSpoolMs ?? 'default' },
+      {
+        sectors: galaxyRooms.size,
+        bots: LIVING_WORLD_BOT_COUNT,
+        botSpoolMs: botSpoolMs ?? 'default',
+        botHopMs: botHopMs ?? 'default',
+      },
       'living world director started',
     );
   }
