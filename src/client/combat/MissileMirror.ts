@@ -11,57 +11,83 @@
  * different pose and the sprite/trail/etc. would disagree per-frame
  * (the same jitter class the drone-interpolation pivot eliminated).
  *
- * Interpolation strategy: linear between the previous and latest
- * snapshot poses, with `display-delay` lag so the renderer is reading a
- * pose that's actually arrived (no clock skew). Missiles are
- * short-lived enough that a teleport-guard isn't needed — a missile
- * that warped across the map would be a server bug, not normal
- * gameplay.
+ * **Interpolation strategy — pose ring (playtest 2026-06-10 Issue 11).**
+ * Missiles previously dead-reckoned a STALE velocity forward from the
+ * latest snapshot. At 20 Hz that diverged from the (now tighter, Issue 10)
+ * homing curve between snapshots and snapped on each arrival — the
+ * "missiles lag, like they only update 20 Hz" report. We now buffer recent
+ * authoritative poses in a per-missile ring and INTERPOLATE between the two
+ * that bracket `now − MISSILE_DISPLAY_DELAY_MS`, exactly like drones
+ * (`swarmInterpolation.ts`). The visible motion is a continuous lerp of
+ * buffered truth, immune to wire-arrival jitter ≤ the display delay. Past
+ * the newest sample (arrivals stalled) we dead-reckon forward, capped, then
+ * freeze; a teleport guard snaps across server discontinuities instead of
+ * animating across them.
  */
 
-import type { RenderMirror, MissileRenderState } from '../../core/contracts/IRenderer.js';
+import {
+  MISSILE_POSE_RING_DEPTH,
+  type RenderMirror,
+  type MissileRenderState,
+  type PoseRingEntry,
+} from '../../core/contracts/IRenderer.js';
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages.js';
 
 /**
  * Display-delay lag in milliseconds. The renderer reads missile poses
- * `DISPLAY_DELAY_MS` behind the latest arrival, so it's interpolating
- * between two arrived snapshots rather than extrapolating past the
- * latest. 50 ms is the snapshot cadence (20 Hz); doubling it covers
- * jitter without making missiles feel sluggish.
+ * `MISSILE_DISPLAY_DELAY_MS` behind the latest arrival so it interpolates
+ * between two arrived snapshots rather than extrapolating past the latest.
+ * 100 ms = 2× the 50 ms (20 Hz) snapshot cadence — covers jitter without
+ * making missiles feel sluggish (the drone display-delay floor value).
  */
 export const MISSILE_DISPLAY_DELAY_MS = 100;
 
 /**
- * Maximum velocity-extrapolation window past the latest snapshot. When
- * the next snapshot is late (WiFi jitter, snapshot AOI roll, etc.) the
- * renderer dead-reckons the missile forward using `vx`/`vy` from the
- * latest snapshot so the sprite keeps moving smoothly instead of
- * plateauing. Capped so a missile that has actually left the AOI
- * doesn't keep flying off-screen forever (it freezes after this window,
- * and the 1000 ms stale-eviction backstop removes the sprite).
- *
- * Raised 80 → 250 ms (2026-05-27, post smoke-test #N). Observed
- * snapshot intervalMs distribution from `2026-05-27T16-33-40Z-r0r701`:
- * 5 intervals in 100-200 ms range, 2 in ≥500 ms range. With an 80 ms
- * cap, every gap beyond ~180 ms (DISPLAY_DELAY+CAP) froze the missile
- * sprite — the user's "still jittery" report. 250 ms covers the entire
- * 100-200 ms band and most of the 500 ms tail until the main thread
- * un-stalls. At 400 u/s the cap is 100 u of forward drift; the homing
- * curve still arrives via the next snapshot's pose stamp and the
- * arrival correction is the same regardless of cap.
+ * Maximum dead-reckoning window past the newest ring sample before freezing.
+ * When the next snapshot is late (WiFi jitter, AOI roll) the renderer
+ * extrapolates the missile forward with the newest sample's velocity so the
+ * sprite keeps moving smoothly. Capped so a missile that left the AOI doesn't
+ * fly off-screen forever (it freezes, then the 1000 ms stale-eviction reaps
+ * the sprite). 250 ms covers the observed 100–200 ms jitter band + most of the
+ * 500 ms tail (capture `2026-05-27T16-33-40Z-r0r701`).
  */
 export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
 
+/** Teleport guard (mirrors swarmInterpolation): when two bracketing poses are
+ *  further apart than any missile could plausibly travel in the span, that's a
+ *  server discontinuity (despawn+id-reuse, lock re-acquire SET) — snap to the
+ *  newer pose, never animate across the gap. */
+const TELEPORT_MAX_PLAUSIBLE_SPEED = 2500; // u/s — above any missile speed
+const TELEPORT_FLOOR_U = 64;
+
+const STALE_THRESHOLD_MS = 1000;
+
+/** Allocate a fresh, empty pose ring for a newly-sighted missile. */
+function newRing(): PoseRingEntry[] {
+  const ring = new Array<PoseRingEntry>(MISSILE_POSE_RING_DEPTH);
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    ring[i] = { x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0, arrivalMs: 0, serverTick: 0, sleeping: false, empty: true };
+  }
+  return ring;
+}
+
+/** Write a fresh authoritative pose into the ring at `head`, in place. */
+function writeRing(m: MissileRenderState, x: number, y: number, vx: number, vy: number, angle: number, arrivalMs: number, serverTick: number): void {
+  const slot = m.poseRing[m.ringHead]!;
+  slot.x = x; slot.y = y; slot.angle = angle;
+  slot.vx = vx; slot.vy = vy; slot.angvel = 0;
+  slot.arrivalMs = arrivalMs; slot.serverTick = serverTick;
+  slot.empty = false;
+  m.ringHead = (m.ringHead + 1) % MISSILE_POSE_RING_DEPTH;
+}
+
 /**
- * Apply a snapshot's `missiles[]` slice to `mirror.missiles`. Updates
- * existing entries (sliding prev → latest), inserts new ones, and
- * cleans up entries the snapshot omitted from a full-snapshot view —
- * but we don't have a "full vs delta" bit on the JSON snapshot, so we
- * rely on `missile_detonated` for explicit lifetime end and a
- * 1000 ms stale-eviction backstop for missiles that left the AOI.
+ * Apply a snapshot's `missiles[]` slice to `mirror.missiles`. Pushes each
+ * pose into the missile's ring (sliding the buffer), inserts new missiles,
+ * and stale-evicts entries the snapshot stopped refreshing.
  *
- * `nowMs` is injected so tests can use a deterministic clock; default
- * is `performance.now()`.
+ * `nowMs` is injected so tests can use a deterministic clock; default is
+ * `performance.now()`.
  */
 export function applyMissileSnapshot(
   slice: NonNullable<SnapshotMessage['missiles']> | undefined,
@@ -72,18 +98,10 @@ export function applyMissileSnapshot(
   if (!mirror.missiles) mirror.missiles = new Map();
   const map = mirror.missiles;
 
-  if (!slice || slice.length === 0) {
-    // Nothing in this snapshot — fall through to stale-eviction below.
-  } else {
+  if (slice && slice.length > 0) {
     for (const entry of slice) {
       const existing = map.get(entry.id);
       if (existing) {
-        // Slide previous pose → latest before stamping the new pose.
-        existing.prevX = existing.x;
-        existing.prevY = existing.y;
-        existing.prevAngle = existing.angle;
-        existing.prevArrivalMs = existing.latestArrivalMs;
-        existing.latestArrivalMs = nowMs;
         existing.x = entry.x;
         existing.y = entry.y;
         existing.vx = entry.vx;
@@ -91,30 +109,30 @@ export function applyMissileSnapshot(
         existing.angle = entry.angle;
         existing.lifePct = entry.lifePct;
         existing.lastUpdateTick = serverTick;
+        existing.latestArrivalMs = nowMs;
+        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, nowMs, serverTick);
       } else {
         const fresh: MissileRenderState = {
           id: entry.id,
           x: entry.x, y: entry.y,
           vx: entry.vx, vy: entry.vy,
           angle: entry.angle,
-          prevX: entry.x, prevY: entry.y, prevAngle: entry.angle,
-          prevArrivalMs: nowMs,
+          poseRing: newRing(),
+          ringHead: 0,
           latestArrivalMs: nowMs,
           lastUpdateTick: serverTick,
           ownerId: entry.ownerId,
           weaponId: entry.weaponId,
           lifePct: entry.lifePct,
         };
+        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, nowMs, serverTick);
         map.set(entry.id, fresh);
       }
     }
   }
 
-  // Stale-eviction backstop: missiles that haven't been refreshed for
-  // STALE_THRESHOLD_MS get removed. Covers the case where a missile
-  // leaves the recipient's AOI window without a `missile_detonated`
-  // arriving (the server has already cleaned it up; we just notice).
-  const STALE_THRESHOLD_MS = 1000;
+  // Stale-eviction backstop: missiles that left the AOI without a
+  // `missile_detonated` arriving get reaped after STALE_THRESHOLD_MS.
   for (const [id, m] of map) {
     if (nowMs - m.latestArrivalMs > STALE_THRESHOLD_MS) {
       map.delete(id);
@@ -131,34 +149,21 @@ export function removeMissile(mirror: RenderMirror, missileId: number): void {
   mirror.missiles?.delete(missileId);
 }
 
+/** Module scratch for the populated-ring gather (alloc-free per call; sized to
+ *  the ring depth — single-threaded, once-per-missile-per-frame call shape). */
+const _populated: (PoseRingEntry | null)[] = new Array<PoseRingEntry | null>(MISSILE_POSE_RING_DEPTH).fill(null);
+
+function shortestArc(target: number, source: number): number {
+  let d = target - source;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+}
+
 /**
- * Resolve a missile's display pose at `nowMs`.
- *
- * **PURE velocity-based dead-reckoning from the latest server snapshot.**
- * Replaces the previous lerp-between-prev-and-latest (which used wall-
- * clock arrival times as the lerp span — observed snapshot intervalMs
- * jitter of 29-200 ms made the visible speed CHEAT THE SAME 50 ms of
- * server-side missile motion across varying wall-clock windows → the
- * sprite appeared to speed up / slow down per snapshot = "jittery").
- *
- * The new behaviour: position = `latest + velocity × dt` where `dt` is
- * the wall-clock distance from the latest snapshot's arrival minus the
- * `MISSILE_DISPLAY_DELAY_MS` headroom. Because `vx`/`vy` is the server-
- * authoritative speed, the visible motion is exactly the server's
- * motion — immune to WS arrival jitter. Each new snapshot snaps `latest`
- * to the fresh authoritative pose; for straight flight the snap is
- * invisible (extrap matches actual); for homing turns the snap is at
- * most `turnRate × snapshot_interval ≈ 1.5 × 0.05 ≈ 0.075 rad` of
- * heading drift, far below the human curvature-detection threshold for
- * a moving missile.
- *
- * Bounded BOTH directions:
- *   - Backward by `MISSILE_DISPLAY_DELAY_MS` (the display-delay window).
- *   - Forward by `MISSILE_EXTRAPOLATION_CAP_MS` (so a missile that has
- *     left the AOI doesn't keep flying off-screen; the 1000 ms stale-
- *     eviction backstop removes the sprite shortly after).
- *
- * Returns null when the missile doesn't exist (caller skips drawing).
+ * Resolve a missile's display pose at `nowMs` by interpolating buffered
+ * authoritative poses at `nowMs − MISSILE_DISPLAY_DELAY_MS`. Returns null when
+ * the missile doesn't exist (caller skips drawing).
  */
 export function resolveMissileDisplayPose(
   mirror: RenderMirror,
@@ -167,25 +172,65 @@ export function resolveMissileDisplayPose(
 ): { x: number; y: number; angle: number; lifePct: number } | null {
   const m = mirror.missiles?.get(missileId);
   if (!m) return null;
-  // Wall-clock distance from "now minus display delay" to the latest
-  // snapshot's arrival time. Negative ⇒ rendering BEFORE the latest
-  // snapshot landed (the display-delay buffer); positive ⇒ rendering
-  // AHEAD of latest (no newer snapshot yet, dead-reckon forward).
-  const overshootMs = nowMs - m.latestArrivalMs - MISSILE_DISPLAY_DELAY_MS;
-  const clampedMs = overshootMs < -MISSILE_DISPLAY_DELAY_MS
-    ? -MISSILE_DISPLAY_DELAY_MS
-    : (overshootMs > MISSILE_EXTRAPOLATION_CAP_MS
-        ? MISSILE_EXTRAPOLATION_CAP_MS
-        : overshootMs);
-  const dt = clampedMs / 1000;
+
+  // Gather populated ring entries in arrivalMs-ascending order (insertion sort
+  // during fill — zero alloc, beats Array.sort for n ≤ depth).
+  let count = 0;
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    const e = m.poseRing[i];
+    if (!e || e.empty) continue;
+    let j = count;
+    while (j > 0 && _populated[j - 1]!.arrivalMs > e.arrivalMs) {
+      _populated[j] = _populated[j - 1]!;
+      j--;
+    }
+    _populated[j] = e;
+    count++;
+  }
+
+  if (count === 0) {
+    return { x: m.x, y: m.y, angle: m.angle, lifePct: m.lifePct };
+  }
+
+  const targetMs = nowMs - MISSILE_DISPLAY_DELAY_MS;
+  const newest = _populated[count - 1]!;
+  const oldest = _populated[0]!;
+
+  // Single sample, or render time before our oldest sample: pin to oldest.
+  if (count === 1 || targetMs <= oldest.arrivalMs) {
+    return { x: oldest.x, y: oldest.y, angle: oldest.angle, lifePct: m.lifePct };
+  }
+
+  // Render time past the newest arrival: dead-reckon forward with the newest
+  // sample's velocity, capped, then freeze. Angle held (no angvel for missiles).
+  if (targetMs >= newest.arrivalMs) {
+    const overshootMs = Math.min(MISSILE_EXTRAPOLATION_CAP_MS, targetMs - newest.arrivalMs);
+    const dt = overshootMs / 1000;
+    return { x: newest.x + newest.vx * dt, y: newest.y + newest.vy * dt, angle: newest.angle, lifePct: m.lifePct };
+  }
+
+  // Interpolation window — find adjacent populated entries a,b bracketing target.
+  let a: PoseRingEntry = oldest;
+  let b: PoseRingEntry = _populated[1]!;
+  for (let i = 0; i < count - 1; i++) {
+    const lo = _populated[i]!;
+    const hi = _populated[i + 1]!;
+    if (targetMs >= lo.arrivalMs && targetMs < hi.arrivalMs) { a = lo; b = hi; break; }
+  }
+
+  const span = b.arrivalMs - a.arrivalMs;
+  // Teleport guard: snap across server discontinuities, never animate them.
+  const gap = Math.hypot(b.x - a.x, b.y - a.y);
+  const maxPlausible = Math.max(TELEPORT_FLOOR_U, (TELEPORT_MAX_PLAUSIBLE_SPEED * Math.max(0, span)) / 1000);
+  if (gap > maxPlausible) {
+    return { x: b.x, y: b.y, angle: b.angle, lifePct: m.lifePct };
+  }
+
+  const t = span > 0 ? Math.max(0, Math.min(1, (targetMs - a.arrivalMs) / span)) : 0;
   return {
-    x: m.x + m.vx * dt,
-    y: m.y + m.vy * dt,
-    // Angle is held from the latest snapshot. Predicting the homing
-    // turn locally would diverge from server reality; the small lag
-    // is invisible at typical missile speeds + turn rates.
-    angle: m.angle,
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    angle: a.angle + shortestArc(b.angle, a.angle) * t,
     lifePct: m.lifePct,
   };
 }
-
