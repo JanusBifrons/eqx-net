@@ -482,8 +482,17 @@ export class LivingWorldDirector {
     for (const botId of squad.botIds) {
       const rec = this.pool.get(botId);
       if (!rec || rec.state !== 'active' || rec.sectorKey === goal) continue;
-      const hop = nextHopToward(rec.sectorKey, goal);
-      if (hop === null) continue; // already there / unreachable — leave it
+      let hop = nextHopToward(rec.sectorKey, goal);
+      if (hop === null) {
+        // No galaxy-graph route from here to the goal. In production every wave
+        // target is a real graph sector, so this only happens for a goal that's
+        // a LIVE room outside the graph (a synthetic test/engineering sector) —
+        // hop directly to it. (Still a despawn→spawn pair, never a from-nowhere
+        // ingress, so the entry-only-ingress invariant holds.) Truly unreachable
+        // ⇒ leave the member.
+        if (this.rooms.has(goal)) hop = goal;
+        else continue;
+      }
       this.startSquadMemberTransit(rec, rec.sectorKey, hop);
       if (hop === goal) finalApproach++;
     }

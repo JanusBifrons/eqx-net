@@ -67,7 +67,20 @@ SUPERSEDED the old occupancy-hunter model. Key pieces (all under
 - Envs: `EQX_BOT_SPOOL_MS` (squad-spool override) already exists; add an
   `EQX_BOT_HOP_MS`-style override for hop-travel (fast E2E timeline).
 
-## REMAINING — Phases 2–5 (the director refactor)
+## ✅ DONE — Phases 2–5 (the director refactor), 2026-06-11 (plan `goofy-wobbling-brooks`)
+Shipped on branch **`feat/drone-warp-in-director`** (off `feat/drone-warp-in`),
+commits `645cec7` (A: hop-travel + hop-by-hop), `b4c2373` (B: entry-only
+ingress), `ce280d8` (C: roaming), `7ce0021` (D: dispatch cadence), `e65b38e`
+(E: retire boot-seeding + drone persistence), + Phase F (locks/docs). All
+deterministic gates green (typecheck + lint + the touched unit/integration
+suites) + a clean 8 s server boot. The authoritative current-state writeup is
+`src/server/CLAUDE.md` (Living-World "Drone warp-in refactor" bullet) +
+`docs/architecture/living-world.md` ("Drone warp-in" section). The full
+`pnpm test`/`e2e` suite + ONE `pnpm e2e:netgate` are deferred to PR CI (per the
+standing preference); on-device smoke is the playability verdict. The
+section below is the ORIGINAL plan, preserved for provenance.
+
+## REMAINING (historical) — Phases 2–5 (the director refactor)
 **Phase 2 — hop-travel mechanism (split depart/arrive; default fast-equivalent).**
 Today the cross-room hop is instantaneous at spool end (`BotTransitController` /
 squad warp lands directly on target). Add a `hopTravelMs`: depart = despawn
