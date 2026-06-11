@@ -2868,6 +2868,8 @@ export class ColyseusGameClient {
           deconstructPct: s.deconstructPct ?? 0,
           ...(s.miningTargetId !== undefined ? { miningTargetId: s.miningTargetId } : {}),
           ...(s.turretTargetId !== undefined ? { turretTargetId: s.turretTargetId } : {}),
+          ...(s.storedPower !== undefined ? { storedPower: s.storedPower } : {}),
+          ...(s.storedPowerMax !== undefined ? { storedPowerMax: s.storedPowerMax } : {}),
         });
         // Surface the powered grid's net power (members share a component, so
         // the max powered netPower represents the player's live grid).

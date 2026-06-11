@@ -138,6 +138,7 @@ const STRUCTURE_SIDES: Record<string, number> = {
   solar: 4,
   miner: 5,
   turret: 3,
+  battery: 4, // boxy like solar, distinguished by its amber tint
 };
 
 /**

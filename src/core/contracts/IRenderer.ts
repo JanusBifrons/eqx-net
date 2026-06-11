@@ -180,6 +180,10 @@ export interface StructureRenderState {
   /** Phase 5 — drone entityId a Turret is aiming at (draws the aim line), or
    *  undefined. */
   turretTargetId?: number;
+  /** Batteries plan — current stored power (Battery only; undefined elsewhere). */
+  storedPower?: number;
+  /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
+  storedPowerMax?: number;
 }
 
 /** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to

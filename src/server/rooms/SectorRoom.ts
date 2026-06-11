@@ -2518,6 +2518,10 @@ export class SectorRoom extends Room<SectorState> {
       }
       if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
       if (rec.turretTargetEntityId !== undefined) entry.turretTargetId = rec.turretTargetEntityId;
+      if (rec.kind === 'battery') {
+        entry.storedPower = rec.storedPower;
+        entry.storedPowerMax = getStructureKind('battery').powerStorageCapacity ?? 0;
+      }
       arr.push(entry);
     }
     this.structuresSlice = arr;

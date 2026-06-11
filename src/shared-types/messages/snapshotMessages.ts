@@ -219,5 +219,11 @@ export interface SnapshotMessage {
     /** Phase 5 — the drone entityId a Turret is aiming at (draws the aim line;
      *  the fire beam itself arrives as a discrete `laser_fired`). */
     turretTargetId?: number;
+    /** Batteries plan — current stored power (Battery only; omitted on every
+     *  other kind). Drives the inspector charge readout. */
+    storedPower?: number;
+    /** Batteries plan — the Battery's `powerStorageCapacity` (the readout
+     *  denominator). Present only alongside `storedPower`. */
+    storedPowerMax?: number;
   }>;
 }

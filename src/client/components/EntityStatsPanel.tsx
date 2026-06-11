@@ -35,6 +35,9 @@ interface PanelData {
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   powered?: boolean;
   netPower?: number;
+  /** Battery-only — stored power + capacity (batteries plan). */
+  storedPower?: number;
+  storedPowerMax?: number;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -56,6 +59,8 @@ export function EntityStatsPanel(): JSX.Element | null {
   if (selectedId === null || data === null) return null;
 
   const building = data.buildPct !== undefined && data.buildPct < 1;
+  const hasCharge = data.storedPowerMax !== undefined && data.storedPowerMax > 0;
+  const chargePct = hasCharge ? ((data.storedPower ?? 0) / data.storedPowerMax!) * 100 : 0;
   return (
     <Box
       data-testid="entity-stats-panel"
@@ -64,6 +69,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.buildPct !== undefined ? { 'data-build-pct': Math.round(data.buildPct * 100) } : {})}
       {...(data.powered !== undefined ? { 'data-powered': data.powered ? '1' : '0' } : {})}
       {...(data.netPower !== undefined ? { 'data-net-power': Math.round(data.netPower) } : {})}
+      {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
       sx={ROOT_SX}
     >
       <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
@@ -79,6 +85,12 @@ export function EntityStatsPanel(): JSX.Element | null {
         <>
           <Cap>BUILD</Cap>
           <Bar pct={(data.buildPct ?? 0) * 100} color={BUILD_COLOR} />
+        </>
+      )}
+      {hasCharge && (
+        <>
+          <Cap>CHRG</Cap>
+          <Bar pct={chargePct} color={CHARGE_COLOR} />
         </>
       )}
       {data.powered !== undefined && (
@@ -123,6 +135,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         base.buildPct = st.buildPct;
         base.powered = st.powered;
         base.netPower = st.netPower;
+        base.storedPower = st.storedPower;
+        base.storedPowerMax = st.storedPowerMax;
       }
     }
     return base;
@@ -166,6 +180,7 @@ function structureSliceFor(id: string): StructureRenderState | undefined {
 
 const SHIELD_COLOR = '#36c8ff';
 const BUILD_COLOR = '#ffc24d';
+const CHARGE_COLOR = '#cc8844';
 const TRACK_W = 72;
 const BAR_H = 4;
 
