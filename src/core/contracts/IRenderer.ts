@@ -387,7 +387,7 @@ export interface RenderMirror {
    * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
    * Structured-cloneable (plain object) so it crosses the worker boundary.
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; pending?: boolean } | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */

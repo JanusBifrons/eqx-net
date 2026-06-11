@@ -1375,7 +1375,11 @@ export class PixiRenderer implements IRenderer {
     // never steady-state. (Phase-A3: the create/rebuild/hide branching could
     // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
     const preview = mirror.pendingPlacementPreview;
-    this._placementActive = preview != null;
+    // A "pending" preview is the dim post-Confirm ghost (playtest 2026-06-10
+    // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
+    // pans again) and it draws at the SENT point, dimmer.
+    const pendingGhost = preview != null && preview.pending === true;
+    this._placementActive = preview != null && !pendingGhost;
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
         if (this._placementGhost) {
@@ -1384,15 +1388,16 @@ export class PixiRenderer implements IRenderer {
         }
         const radius = getStructureKind(preview.kind).radius;
         const g = buildStructureGfx(preview.kind, radius);
-        g.alpha = 0.4; // translucent blueprint
         this.shipContainer.addChild(g);
         this._placementGhost = g;
         this._placementGhostKind = preview.kind;
       }
-      // Draw at the pointer-chosen world point once the player has positioned
-      // it; before that fall back to the ahead-of-ship preview pose.
-      const gx = this._placementChosenX ?? preview.x;
-      const gy = this._placementChosenY ?? preview.y;
+      // Live ghost: draw at the pointer-chosen world point once positioned,
+      // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
+      // Dim the pending ghost so it reads as "sent, awaiting" vs positioning.
+      this._placementGhost.alpha = pendingGhost ? 0.18 : 0.4;
+      const gx = pendingGhost ? preview.x : (this._placementChosenX ?? preview.x);
+      const gy = pendingGhost ? preview.y : (this._placementChosenY ?? preview.y);
       this._placementGhost.visible = true;
       this._placementGhost.x = gx;
       this._placementGhost.y = -gy; // Y-flip
