@@ -100,6 +100,35 @@ describe('ShieldWallManager', () => {
     expect(mgr.onWallHit('wall-a|b', 80, 2100)).toBe(false);
   });
 
+  it('blockShot absorbs a beam crossing an up wall (and stops at the crossing)', () => {
+    // Wall span a(0,0)→b(200,0). A beam from (100,-50) heading +y crosses at y=0.
+    const { mgr, seedPair, getDrained } = makeManager({ netPower: 50, charge: 0 });
+    seedPair();
+    mgr.update(1000);
+    const dist = mgr.blockShot(100, -50, 0, 1, 250, 80, 2000);
+    expect(dist).toBe(50); // crosses the wall 50u ahead
+    // The hit was applied (surplus 50 < 80 damage → drained 0, but stunned).
+    expect(mgr.wallStateFor('a', 2000)?.active).toBe(false);
+    expect(getDrained()).toBe(0);
+  });
+
+  it('blockShot ignores a beam that misses the span / a down wall', () => {
+    const { mgr, seedPair } = makeManager({ powered: false }); // wall down (unpowered)
+    seedPair();
+    mgr.update(1000);
+    expect(mgr.blockShot(100, -50, 0, 1, 250, 80, 2000)).toBeNull(); // down → passes
+  });
+
+  it('blockProjectile absorbs a step that crosses an up wall', () => {
+    const { mgr, seedPair } = makeManager();
+    seedPair();
+    mgr.update(1000);
+    // Step from (100,-10) moving +y by 20 → crosses the wall at y=0.
+    expect(mgr.blockProjectile(100, -10, 0, 20, 30, 2000)).toBe(true);
+    // A step that doesn't reach the wall passes.
+    expect(mgr.blockProjectile(100, -50, 0, 5, 30, 2100)).toBe(false);
+  });
+
   it('forEachActiveWall yields the live segment of an up wall only', () => {
     const { mgr, seedPair } = makeManager();
     seedPair();

@@ -4,6 +4,7 @@ import {
   resolveWallHit,
   isWallActive,
   wallPairKey,
+  rayCrossesSegment,
   SHIELD_WALL_STUN_MS,
 } from './ShieldWall.js';
 
@@ -65,5 +66,22 @@ describe('ShieldWall — pure span geometry + grid-power model', () => {
   it('wallPairKey is order-independent', () => {
     expect(wallPairKey('a', 'b')).toBe(wallPairKey('b', 'a'));
     expect(wallPairKey('struct-9', 'struct-2')).toBe('struct-2|struct-9');
+  });
+
+  describe('rayCrossesSegment (beam-vs-wall absorption)', () => {
+    // Wall span A(-50,100)→B(50,100). Ray from origin straight up (+y unit).
+    it('returns the distance where a ray crosses the wall span', () => {
+      expect(rayCrossesSegment(0, 0, 0, 1, -50, 100, 50, 100)).toBe(100);
+    });
+    it('misses when the crossing is off the segment ends', () => {
+      // Ray up at x=200 — passes the wall's infinite line but off the segment.
+      expect(rayCrossesSegment(200, 0, 0, 1, -50, 100, 50, 100)).toBeNull();
+    });
+    it('misses when the wall is behind the ray origin (t < 0)', () => {
+      expect(rayCrossesSegment(0, 200, 0, 1, -50, 100, 50, 100)).toBeNull();
+    });
+    it('returns null for a ray parallel to the wall', () => {
+      expect(rayCrossesSegment(0, 0, 1, 0, -50, 100, 50, 100)).toBeNull();
+    });
   });
 });

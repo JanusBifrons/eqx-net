@@ -85,3 +85,25 @@ export function isWallActive(powered: boolean, stunnedUntilMs: number, nowMs: nu
 export function wallPairKey(aId: string, bId: string): string {
   return aId < bId ? `${aId}|${bId}` : `${bId}|${aId}`;
 }
+
+/**
+ * Distance along a UNIT ray `(ox,oy) + t·(dx,dy)` at which it first crosses the
+ * segment A→B, or null if it never does (parallel, or the crossing is behind the
+ * origin / off the segment). `(dx,dy)` MUST be unit length so `t` is a world
+ * distance. Used to absorb a beam at a wall span (a thin segment for hitscan).
+ */
+export function rayCrossesSegment(
+  ox: number, oy: number, dx: number, dy: number,
+  ax: number, ay: number, bx: number, by: number,
+): number | null {
+  const ex = bx - ax;
+  const ey = by - ay;
+  const denom = dx * ey - dy * ex;
+  if (Math.abs(denom) < 1e-9) return null; // parallel to the wall
+  const cx = ax - ox;
+  const cy = ay - oy;
+  const t = (cx * ey - cy * ex) / denom; // distance along the ray
+  const u = (cx * dy - cy * dx) / denom; // param along the segment [0,1]
+  if (t >= 0 && u >= 0 && u <= 1) return t;
+  return null;
+}

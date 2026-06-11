@@ -153,6 +153,12 @@ export interface PlayerFireResolverDeps {
     hitX?: number,
     hitY?: number,
   ) => void;
+  /** Shield-fence plan — if an ACTIVE shield wall lies along the beam within
+   *  `maxDist`, absorb the shot (apply the wall's grid-power damage model) and
+   *  return the crossing distance; else null. Absent ⇒ no walls (byte-identical). */
+  blockBeamAtWall?: (
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
+  ) => number | null;
   /** Broadcast a laser_fired event to every client. */
   broadcast: (type: 'laser_fired', msg: LaserFiredEvent) => void;
   /** Diagnostic log sink. */
@@ -409,7 +415,14 @@ export class PlayerFireResolver implements WeaponFireSink {
       if (rec) wireTargetId = `swarm-${rec.entityId}`;
     }
 
-    if (mountHitId) {
+    // Shield-fence plan: an ACTIVE shield wall in front of the target absorbs
+    // the beam (the wall takes the hit; the target behind takes nothing). Only
+    // walls closer than the resolved target (or the range) count.
+    const scanDist = mountHitDist === Infinity ? range : mountHitDist;
+    const wallDist = d.blockBeamAtWall?.(rayFromX, rayFromY, ndx, ndy, scanDist, damage) ?? null;
+    const blocked = wallDist !== null;
+
+    if (!blocked && mountHitId) {
       if (Math.random() < 0.01) {
         d.logger.info({ shooterId, mountId: ctx.mountId, hitId: mountHitId, hitIsObstacle: mountHitIsObstacle }, 'LASER_FIRED (1% sample)');
       }
@@ -424,8 +437,9 @@ export class PlayerFireResolver implements WeaponFireSink {
       }
     }
 
-    const beamEndX = rayFromX + ndx * (mountHitDist === Infinity ? range : mountHitDist);
-    const beamEndY = rayFromY + ndy * (mountHitDist === Infinity ? range : mountHitDist);
+    const endDist = blocked ? wallDist : scanDist;
+    const beamEndX = rayFromX + ndx * endDist;
+    const beamEndY = rayFromY + ndy * endDist;
     d.broadcast('laser_fired', {
       type: 'laser_fired',
       shooterId,
@@ -434,8 +448,8 @@ export class PlayerFireResolver implements WeaponFireSink {
       fromY: rayFromY,
       toX: beamEndX,
       toY: beamEndY,
-      hit: !!mountHitId,
-      targetId: wireTargetId,
+      hit: blocked || !!mountHitId,
+      targetId: blocked ? undefined : wireTargetId,
     });
   }
 

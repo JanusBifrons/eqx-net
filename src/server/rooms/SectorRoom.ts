@@ -1118,6 +1118,8 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerMissile(ownerId, x, y, dx, dy, def),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
+        this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
       serverLogEvent,
       logger,
@@ -1144,6 +1146,8 @@ export class SectorRoom extends Room<SectorState> {
       // faction-filtered set the drone's body target chose among, so the beam
       // lands on the structure it's pointed at.
       structureHitTargets: () => this.hostileStructureCircles,
+      blockBeamAtWall: (fx, fy, dx, dy, maxDist, damage) =>
+        this.blockShotAtWall(fx, fy, dx, dy, maxDist, damage),
       broadcast: (type, msg) => this.broadcast(type, msg),
       spawnServerProjectile: (ownerId, x, y, vx, vy, dmg, r, mt, wId) =>
         this.spawnServerProjectile(ownerId, x, y, vx, vy, dmg, r, mt, wId),
@@ -1257,6 +1261,8 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
+      wallBlocksProjectile: (x, y, sx, sy, damage) =>
+        this.shieldWalls.blockProjectile(x, y, sx, sy, damage, Date.now()),
     });
 
     // Missile subsystem — guidance, splash damage, impulse queue. The
@@ -2442,6 +2448,17 @@ export class SectorRoom extends Room<SectorState> {
     // Refresh the slice so the client's turret aim line tracks at the turret
     // cadence (not just the 1 Hz pulse). Cheap — few structures, off the tick.
     this.rebuildStructuresSlice();
+  }
+
+  /** Shield-fence plan — beam-vs-wall absorption seam shared by the player + AI
+   *  hitscan resolvers. If an ACTIVE shield wall lies along the shot ray within
+   *  `maxDist`, the wall takes the hit (grid-power model) and the shot stops
+   *  there; returns the crossing distance, else null. (Ship blocking is the
+   *  worker's static wall body — this is only the main-thread weapon path.) */
+  private blockShotAtWall(
+    fromX: number, fromY: number, dirX: number, dirY: number, maxDist: number, damage: number,
+  ): number | null {
+    return this.shieldWalls.blockShot(fromX, fromY, dirX, dirY, maxDist, damage, Date.now());
   }
 
   /** Live asteroid obstacles (swarm kind=0) for connection line-of-sight, read

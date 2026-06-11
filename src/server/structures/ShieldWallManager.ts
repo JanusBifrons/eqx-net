@@ -25,6 +25,7 @@ import {
   SHIELD_WALL_THICKNESS,
   SHIELD_WALL_STUN_MS,
   isWallActive,
+  rayCrossesSegment,
   resolveWallHit,
   wallPairKey,
 } from '../../core/structures/ShieldWall.js';
@@ -149,6 +150,45 @@ export class ShieldWallManager {
       return { otherPost: other, active: isWallActive(powered, w.stunnedUntilMs, nowMs) };
     }
     return undefined;
+  }
+
+  /**
+   * If an ACTIVE wall lies along a shot's UNIT ray within `maxDist`, absorb the
+   * shot at the NEAREST such wall (apply its grid-power damage model) and return
+   * the crossing distance; else null. The server has no live Rapier world, so
+   * beam-vs-wall absorption is this main-thread segment test (ship blocking is
+   * the worker's static body). Used by the player + AI hitscan resolvers.
+   */
+  blockShot(
+    fromX: number, fromY: number, dirX: number, dirY: number,
+    maxDist: number, damage: number, nowMs: number,
+  ): number | null {
+    let nearestDist = Infinity;
+    let nearestId = '';
+    for (const w of this.walls.values()) {
+      if (!isWallActive(this.hooks.powerSummaryFor(w.postA).powered, w.stunnedUntilMs, nowMs)) continue;
+      const a = this.hooks.registry.get(w.postA);
+      const b = this.hooks.registry.get(w.postB);
+      if (!a || !b) continue;
+      const t = rayCrossesSegment(fromX, fromY, dirX, dirY, a.x, a.y, b.x, b.y);
+      if (t !== null && t <= maxDist && t < nearestDist) {
+        nearestDist = t;
+        nearestId = w.id;
+      }
+    }
+    if (nearestId === '') return null;
+    this.onWallHit(nearestId, damage, nowMs);
+    return nearestDist;
+  }
+
+  /** Whether a projectile's one-tick step `(x,y)→(x+stepX,y+stepY)` crosses an
+   *  ACTIVE wall — if so, absorb it (apply the wall's grid-power damage) and
+   *  return true so the caller drops the projectile. Alloc-free (delegates to
+   *  the for-loop `blockShot`) — safe in the per-tick projectile advance. */
+  blockProjectile(x: number, y: number, stepX: number, stepY: number, damage: number, nowMs: number): boolean {
+    const len = Math.hypot(stepX, stepY);
+    if (len < 1e-6) return false;
+    return this.blockShot(x, y, stepX / len, stepY / len, len, damage, nowMs) !== null;
   }
 
   /** Active wall segments (pylon-to-pylon), for the main-thread weapon-vs-wall
