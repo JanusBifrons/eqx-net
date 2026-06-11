@@ -24,7 +24,7 @@
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
-import { chargeStep, dischargeStep } from '../../core/structures/batteryPower.js';
+import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection } from '../../core/structures/Connection.js';
 import {
   CONSTRUCTION_PULSE_AMOUNT,
@@ -271,6 +271,32 @@ export class StructureGridSubsystem {
       rec.storedPower = r.stored;
       remaining -= r.supplied;
     }
+  }
+
+  /** Total stored battery charge in the connected component containing `id`
+   *  (shield-fence plan — the wall's depletable buffer). 0 if `id` is unbuilt. */
+  componentBatteryCharge(id: string): number {
+    let total = 0;
+    for (const mid of this.grid.componentMembers(id)) {
+      const rec = this.hooks.registry.get(mid);
+      if (rec && rec.kind === 'battery') total += rec.storedPower;
+    }
+    return total;
+  }
+
+  /** Drain up to `amount` from the component's batteries (a shield-wall hit).
+   *  Returns the amount actually drained. */
+  drainComponentBatteries(id: string, amount: number): number {
+    let remaining = amount;
+    for (const mid of this.grid.componentMembers(id)) {
+      if (remaining <= 0) break;
+      const rec = this.hooks.registry.get(mid);
+      if (!rec || rec.kind !== 'battery' || rec.storedPower <= 0) continue;
+      const r = drainPower(rec.storedPower, remaining);
+      rec.storedPower = r.stored;
+      remaining -= r.drained;
+    }
+    return amount - remaining;
   }
 
   /** Phase 4 — each built + powered Miner extracts `miningRate` from the

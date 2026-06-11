@@ -225,5 +225,12 @@ export interface SnapshotMessage {
     /** Batteries plan — the Battery's `powerStorageCapacity` (the readout
      *  denominator). Present only alongside `storedPower`. */
     storedPowerMax?: number;
+    /** Shield-fence plan — the paired pylon's entityId this pylon projects a
+     *  shield-wall span to (Shield Pylons only). The client derives the span
+     *  geometry from the two pylon poses + renders/predicts the wall. */
+    shieldWallTo?: number;
+    /** Shield-fence plan — whether that wall is currently ACTIVE (blocking). A
+     *  down wall (stunned / unpowered) renders dim + is passable. */
+    wallActive?: boolean;
   }>;
 }
