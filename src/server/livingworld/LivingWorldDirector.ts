@@ -25,7 +25,14 @@ import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
-import { pickRespawnSector, sectorEdgePose, nextHopToward, type Rng } from './population.js';
+import {
+  sectorEdgePose,
+  nextHopToward,
+  pickEntrySector,
+  liveEntrySectors,
+  type Rng,
+} from './population.js';
+import { isEntrySector } from '../../core/galaxy/galaxy.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
@@ -206,19 +213,24 @@ export class LivingWorldDirector {
    *  prune timer). */
   start(): void {
     if (this.timer) return;
-    const homeSector = this.sectorKeys[0] ?? '';
+    // Squads home at ENTRY (edge) sectors — every drone enters the galaxy from
+    // the edge and hops inward (drone-warp-in design); none is seeded into an
+    // interior sector. `liveEntrySectors` intersects the global edge ring with
+    // the rooms we actually hold (+ falls back to all live rooms for a
+    // single-interior test harness).
+    const entryKeys = liveEntrySectors(this.sectorKeys);
+    const homeSector = entryKeys[0] ?? this.sectorKeys[0] ?? '';
     this.pool.seed(homeSector);
     // Group the pool into homogeneous squads (v1: all 'fighter', shown as
     // "8 × Legionnaires" in the warp warning). Each member's hull is forced to
     // its squad's kind so the squad is visually homogeneous and the warning
     // label is honest (a future WavePattern can vary the kind per squad).
     const botIds = [...this.pool.values()].map((r) => r.botId);
-    // Spread squads across the galaxy so they don't all pile into one sector;
-    // each squad gathers at its own home until a wave routes it elsewhere.
-    const keys = this.sectorKeys;
+    // Spread squad homes across the entry sectors so they don't all pile into
+    // one edge; each squad gathers at its home entry until a wave routes it.
     this.squadPool.seed(
       botIds,
-      (i) => keys[i % keys.length] ?? homeSector,
+      (i) => entryKeys[i % entryKeys.length] ?? homeSector,
       () => 'fighter',
     );
     for (const rec of this.pool.values()) {
@@ -269,6 +281,13 @@ export class LivingWorldDirector {
       const room = this.rooms.get(k);
       return room ? room.playerCount() : 0;
     });
+  }
+
+  /** Read-only squad-state counts (`forming/idle/warping/attacking/retreating`)
+   *  for tests + telemetry — e.g. asserting a base-less player never triggers a
+   *  wave (no `warping`/`attacking` squad). */
+  squadSnapshot(): ReturnType<SquadPool['snapshot']> {
+    return this.squadPool.snapshot();
   }
 
   /**
@@ -433,12 +452,18 @@ export class LivingWorldDirector {
     const shedRecovered = now - this.lastShedAtMs > this.opts.shedRecoveryMs;
     for (const rec of this.pool.values()) {
       if (rec.state !== 'respawning' || rec.respawnAtMs > now || !shedRecovered) continue;
-      // Squad-aware respawn (hostile-review C4): a member of a committed squad
-      // warps back into ITS squad's sector so "fight together" survives a
-      // death; otherwise (unassigned / still forming) fall back to the ambient
-      // random sector.
+      // Ingress is ALWAYS at an entry (edge) sector — a (re)spawning bot "warps
+      // in from outside known space" at the galaxy edge, NEVER in place in an
+      // interior sector (the drone-warp-in invariant). If the squad's goal is
+      // itself a live entry sector (an idle/forming squad gathered at its home
+      // entry), the bot rejoins there directly — cohesive; otherwise (the goal
+      // is an interior base / roam target) it enters at a random edge sector and
+      // traverses back hop-by-hop via `advanceMembersTowardGoal`.
+      const goal = this.squadPool.respawnSectorFor(rec.botId);
       const sector =
-        this.squadPool.respawnSectorFor(rec.botId) ?? pickRespawnSector(this.rng, this.sectorKeys);
+        goal !== null && this.rooms.has(goal) && isEntrySector(goal)
+          ? goal
+          : pickEntrySector(this.rng, this.sectorKeys);
       const room = this.rooms.get(sector);
       if (!room || !room.hasFreeSlot()) {
         rec.respawnAtMs = now; // keep retrying next tick
