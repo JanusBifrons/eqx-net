@@ -184,6 +184,12 @@ export interface StructureRenderState {
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
   storedPowerMax?: number;
+  /** Shield-fence plan — the paired pylon's entityId this Shield Pylon projects
+   *  a wall span to (undefined when unpaired). Joined to `mirror.swarm` for the
+   *  pair's pose to draw + predict the span. */
+  shieldWallTo?: number;
+  /** Shield-fence plan — whether that wall is currently blocking (active). */
+  wallActive?: boolean;
 }
 
 /** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to

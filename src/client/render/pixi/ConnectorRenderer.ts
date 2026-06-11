@@ -119,6 +119,32 @@ export class ConnectorRenderer {
         g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
       }
 
+      // Shield-fence plan — the blocking shield-wall span between this pylon and
+      // its pair. Drawn ONCE from the lower-entityId side (both pylons carry the
+      // reciprocal `shieldWallTo`). eqx-peri's look: active = 3 layered blue
+      // strokes (glow → core → bright inner); down (stunned / unpowered) = a dim
+      // flickering red line that ships can pass.
+      if (st.shieldWallTo !== undefined && id < st.shieldWallTo) {
+        const wb = swarm.get(st.shieldWallTo);
+        if (wb) {
+          const wx = wb.x;
+          const wy = -wb.y;
+          const w = Math.max(2 / scale, 6);
+          if (st.wallActive) {
+            g.moveTo(ax, ay); g.lineTo(wx, wy);
+            g.stroke({ color: 0x4488ff, alpha: 0.18, width: w * 2.5 });
+            g.moveTo(ax, ay); g.lineTo(wx, wy);
+            g.stroke({ color: 0x6699ff, alpha: 0.7, width: w });
+            g.moveTo(ax, ay); g.lineTo(wx, wy);
+            g.stroke({ color: 0xaaccff, alpha: 0.9, width: Math.max(1, w * 0.4) });
+          } else {
+            const flicker = Math.sin(nowMs * 0.01) * 0.12 + 0.18;
+            g.moveTo(ax, ay); g.lineTo(wx, wy);
+            g.stroke({ color: 0x664444, alpha: flicker, width: w });
+          }
+        }
+      }
+
       // Phase 4 — mining beam from a miner to its target asteroid (positions
       // joined from the swarm mirror by entityId).
       if (st.miningTargetId !== undefined) {
