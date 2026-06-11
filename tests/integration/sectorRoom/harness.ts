@@ -216,16 +216,34 @@ export async function bootSectorTestServer(opts: {
       return firstServerRoomCache;
     },
     async connectAs(playerId, joinOpts = {}) {
-      const room = await client.joinOrCreate<SectorState>('test-sector', {
-        playerId,
-        ...joinOpts,
-      });
-      connectedRooms.push(room);
+      // The matchmake HTTP request occasionally drops its connection under CI
+      // load ('socket hang up' / ECONNRESET) — a transient, NOT a logic failure
+      // (the same flake class the netgate rides out with its runner-load
+      // auto-retry). Retry a bounded number of times on connection-level errors
+      // only; a real rejection (bad room / schema) is rethrown immediately so we
+      // never mask a genuine failure.
+      const MAX_ATTEMPTS = 3;
+      let room: ClientRoom<SectorState> | null = null;
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+          room = await client.joinOrCreate<SectorState>('test-sector', {
+            playerId,
+            ...joinOpts,
+          });
+          break;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const transient = /socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|network|timed out/i.test(msg);
+          if (!transient || attempt === MAX_ATTEMPTS) throw err;
+          await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+        }
+      }
+      connectedRooms.push(room!);
       // Cache the room id from the first successful join so the
       // sync `getServerRoom()` lookup can resolve to the server-side
       // Room instance without an async matchMaker.query.
-      if (!firstRoomId) firstRoomId = room.roomId;
-      return room;
+      if (!firstRoomId) firstRoomId = room!.roomId;
+      return room!;
     },
     async connectActive(playerId, joinOpts = {}) {
       const room = await this.connectAs(playerId, joinOpts);
