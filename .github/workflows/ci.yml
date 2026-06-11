@@ -101,27 +101,13 @@ jobs:
       - name: Build server image
         run: docker build -t eqx-peri-server:ci .
 
-  # C3 (plan squishy-canyon): perf benchmarks. `continue-on-error` initially —
-  # bench timing is runner-load-sensitive, so a single noisy run must not fail a
-  # PR. Promote to blocking once variance data confirms the budgets are stable
-  # on CI runners (bench:check is relative/budgeted, so promotion is feasible).
-  bench:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22.x'
-          cache: 'pnpm'
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Benchmarks (budget check)
-        run: pnpm run bench:check
+  # C3 (plan squishy-canyon) — bench-in-CI DEFERRED. `pnpm bench:check` compares
+  # against a committed baseline.json that is machine-calibrated; on ephemeral CI
+  # runners the absolute hz numbers swing ~7x (host-load variance) and the
+  # baseline is missing newer keys, so it cannot be a meaningful gate without a
+  # per-runner baseline-regeneration strategy. Run it locally (`pnpm bench:check`)
+  # instead. The "mechanism not margin" discipline: don't ship a CI gate that's
+  # red on environment noise. Re-add only with a runner-calibrated baseline.
 
   # E2E gate — the @smoke tier ONLY (deterministic critical-path locks).
   #

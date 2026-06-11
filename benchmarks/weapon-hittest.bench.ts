@@ -5,7 +5,7 @@
  *
  * The perf GUARANTEE: a shield-UP target costs exactly as much as before
  * the refactor — one rayHitsSphere / projectileSweepCircle plus a single
- * `shield > 0` short-circuit, ZERO polygon work, ZERO shipCollisionTriangles
+ * `shield > 0` short-circuit, ZERO polygon work, ZERO shipCollisionParts
  * lookup. Only a shield-DOWN target that the cheap circle broadphase says
  * could hit pays for the exact hull-polygon refinement. These benches make
  * that profile observable for the invariant #8 gate:
@@ -21,9 +21,9 @@ import {
   sweptSegmentHitsShipPolygon,
   SHIP_COLLISION_RADIUS,
 } from '../src/core/combat/Weapons.js';
-import { shipCollisionTriangles } from '../src/core/geometry/triangulate.js';
+import { shipCollisionParts } from '../src/core/geometry/shipHullDecomp.js';
 
-const TRIS = shipCollisionTriangles('fighter');
+const TRIS = shipCollisionParts('fighter');
 // A ray that passes through the bounding circle AND the hull (worst case:
 // the polygon refinement actually runs and iterates every triangle).
 const F = { fx: 0, fy: -100, dx: 0, dy: 1, max: 200, cx: 0, cy: 0, ang: 0 };
