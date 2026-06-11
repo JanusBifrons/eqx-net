@@ -8,30 +8,23 @@ name: Netgate
 # `origin/main` baseline arm on the SAME runner (so host noise hits both arms
 # equally — the anti-flake design is mechanism, not margin).
 #
-# PATH-FILTERED: runs ONLY when a PR touches the live loop (client net /
-# prediction / physics / render loop / snapshot decode-interpolate / mount aim /
-# SectorRoom tick+snapshot / the wire contracts those ride). Doc/test/unrelated
-# PRs skip it. See src/server/CLAUDE.md "Netcode-health gate".
-#
-# This job is intended to be a REQUIRED status check in branch protection.
+# PATH-FILTERED *inside* the workflow (required-check pattern): `netgate` is a
+# REQUIRED status check in branch protection, and a required check that never
+# reports blocks the PR forever ("Expected — waiting for status"). `on.paths`
+# filtering therefore CANNOT gate this workflow — a docs-only PR would never
+# satisfy the check. Instead the workflow triggers on every PR; the cheap
+# `changes` job decides whether live-loop paths changed (client net /
+# prediction / physics / render loop / snapshot decode-interpolate / mount aim
+# / SectorRoom tick+snapshot / the wire contracts those ride); the heavy
+# `netgate-run` job runs only when they did; and the `netgate` summary job —
+# the one branch protection requires — ALWAYS reports: success when the gate
+# passed or was legitimately skipped, failure when it ran and failed (or the
+# path detection itself broke — fail-closed). See src/server/CLAUDE.md
+# "Netcode-health gate".
 
 on:
   pull_request:
     branches: [main]
-    paths:
-      - 'src/client/net/**'
-      - 'src/client/render/**'
-      - 'src/core/prediction/**'
-      - 'src/core/physics/**'
-      - 'src/core/ai/WeaponMountController.ts'
-      - 'src/server/rooms/SectorRoom.ts'
-      - 'src/server/rooms/SnapshotBroadcaster.ts'
-      - 'src/server/rooms/EntitySyncRouter.ts'
-      - 'src/server/net/**'
-      - 'src/shared-types/swarmWireFormat.ts'
-      - 'src/shared-types/messages/**'
-      - 'tests/netgate/**'
-      - 'tests/e2e/netcode-health.spec.ts'
   # Manual runs for VARIANCE CHARACTERISATION + bisecting. `head_ref` selects
   # the HEAD arm; set it to `origin/main` for a main-vs-main run (two identical
   # arms) to measure a metric's natural run-to-run variance on the CI runner —
@@ -50,7 +43,50 @@ on:
         default: '4'
 
 jobs:
-  netgate:
+  # Cheap path filter — the single source of truth for "what is the live
+  # loop". Reads the PR's changed files via the API (no checkout needed).
+  # workflow_dispatch always counts as live-loop (manual runs are deliberate).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      liveloop: ${{ steps.filter.outputs.liveloop }}
+    steps:
+      - name: Detect live-loop changes
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "manual dispatch — netgate always runs"
+            echo "liveloop=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Keep this list in sync with the live-loop definition in
+          # src/server/CLAUDE.md "Netcode-health gate" (it mirrors the old
+          # on.paths list verbatim).
+          PATTERN='^src/client/net/|^src/client/render/|^src/core/prediction/|^src/core/physics/|^src/core/ai/WeaponMountController\.ts$|^src/server/rooms/SectorRoom\.ts$|^src/server/rooms/SnapshotBroadcaster\.ts$|^src/server/rooms/EntitySyncRouter\.ts$|^src/server/net/|^src/shared-types/swarmWireFormat\.ts$|^src/shared-types/messages/|^tests/netgate/|^tests/e2e/netcode-health\.spec\.ts$'
+          FILES=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          echo "changed files:"
+          echo "$FILES"
+          if echo "$FILES" | grep -E -q "$PATTERN"; then
+            echo "live-loop paths changed — netgate will run"
+            echo "liveloop=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no live-loop paths changed — netgate will be skipped"
+            echo "liveloop=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The heavy gate. Runs only when the PR touches the live loop (or on manual
+  # dispatch). NOT the required check — `netgate` below is.
+  netgate-run:
+    needs: changes
+    if: needs.changes.outputs.liveloop == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -93,3 +129,31 @@ jobs:
           # gate"). Characterise a suspected flake via the workflow_dispatch
           # main-vs-main run (head_ref=origin/main) before tuning further.
           NETGATE_REPS: ${{ github.event.inputs.reps || '8' }}
+
+  # The REQUIRED status check (branch protection requires the check named
+  # `netgate`). Always reports: pass when the gate passed OR was legitimately
+  # skipped (no live-loop paths); fail when the gate ran and failed, or when
+  # anything upstream broke (fail-closed — a skipped gate must never read as
+  # healthy unless the path filter explicitly said "not live-loop").
+  netgate:
+    needs: [changes, netgate-run]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve gate result
+        env:
+          RUN_RESULT: ${{ needs.netgate-run.result }}
+          LIVELOOP: ${{ needs.changes.outputs.liveloop }}
+        run: |
+          set -euo pipefail
+          if [ "$RUN_RESULT" = "success" ]; then
+            echo "netgate PASS"
+            exit 0
+          fi
+          if [ "$RUN_RESULT" = "skipped" ] && [ "$LIVELOOP" = "false" ]; then
+            echo "netgate skipped — no live-loop paths changed"
+            exit 0
+          fi
+          echo "netgate FAILED (run result=$RUN_RESULT, liveloop=$LIVELOOP)"
+          exit 1
