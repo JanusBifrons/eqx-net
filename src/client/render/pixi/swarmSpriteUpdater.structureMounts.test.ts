@@ -221,6 +221,47 @@ describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
     expect(barrel.rotation).toBeCloseTo(expected, 5);
   });
 
+  it('attaches a mining-range ring to a MINER sprite, but not to a TURRET (WS-4 Phase 5 / R2.16)', () => {
+    const minerId = 104;
+    const turretId = 105;
+    const miner = structureEntry('miner', 0, 0, 0);
+    const turret = structureEntry('turret', 500, 0, 0);
+    const swarm = new Map<number, SwarmRenderState>([
+      [minerId, miner],
+      [turretId, turret],
+    ]);
+    const structures = new Map<number, StructureRenderState>([
+      [minerId, structureState({})],
+      [turretId, structureState({})],
+    ]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    updateSwarmSprites(mirror, ctx);
+
+    // The miner sprite carries exactly one ring child (label-tagged), built
+    // once in the sprite-create path — the real drawn artifact, not a recompute.
+    const minerSprite = ctx.sprites.get(`swarm-${minerId}`)!;
+    const rings = minerSprite.children.filter((c) => c.label === 'minerRangeRing');
+    expect(rings.length).toBe(1);
+
+    // The turret has no miningRange → no ring.
+    const turretSprite = ctx.sprites.get(`swarm-${turretId}`)!;
+    expect(turretSprite.children.filter((c) => c.label === 'minerRangeRing').length).toBe(0);
+  });
+
+  it('builds the miner ring exactly ONCE across many frames (invariant #14 — not per-frame)', () => {
+    const minerId = 106;
+    const miner = structureEntry('miner', 0, 0, 0);
+    const swarm = new Map<number, SwarmRenderState>([[minerId, miner]]);
+    const structures = new Map<number, StructureRenderState>([[minerId, structureState({})]]);
+    const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
+
+    for (let f = 0; f < 5; f++) updateSwarmSprites(mirror, ctx);
+
+    const minerSprite = ctx.sprites.get(`swarm-${minerId}`)!;
+    expect(minerSprite.children.filter((c) => c.label === 'minerRangeRing').length).toBe(1);
+  });
+
   it('leaves the barrel at base when the structure has no target', () => {
     const turretId = 103;
     const turret = structureEntry('turret', 0, 0, 0);

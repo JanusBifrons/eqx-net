@@ -153,6 +153,36 @@ export function buildStructureGfx(structureKindId: string | undefined, radius: n
   return g;
 }
 
+/**
+ * Mining-range ring (WS-4 Phase 5 / R2.16) — a faint dashed circle at the
+ * Miner's `miningRange` radius, showing where it can extract from asteroids.
+ * Built ONCE per miner sprite (never per-frame, invariant #14) and parented to
+ * the structure sprite so it tracks the body; the ring is symmetric so the
+ * sprite's `-angle` rotation is invisible. Tagged `label = 'minerRangeRing'`
+ * so the renderer's once-per-sprite create path + the test can find it.
+ *
+ * Pixi v8 has no native dashed stroke, so the ring is a chain of ~40 short
+ * independent chord dashes (each its own moveTo+lineTo, so the gaps stay clean
+ * — consecutive arcs would draw a connecting line across each gap). At the
+ * Miner's 800 u radius a half-degree-ish chord is visually indistinguishable
+ * from an arc. Faint amber, low alpha — purely informational, never dominant.
+ */
+export function buildMinerRangeRingGfx(miningRange: number): Graphics {
+  const g = new Graphics();
+  g.label = 'minerRangeRing';
+  if (!(miningRange > 0)) return g; // defensive — caller only passes miner ranges
+  const dashes = 40;
+  const dashArc = (Math.PI * 2) / dashes / 2; // half on / half off → even dotted ring
+  for (let i = 0; i < dashes; i++) {
+    const a0 = (i * 2 * Math.PI) / dashes;
+    const a1 = a0 + dashArc;
+    g.moveTo(Math.cos(a0) * miningRange, Math.sin(a0) * miningRange);
+    g.lineTo(Math.cos(a1) * miningRange, Math.sin(a1) * miningRange);
+  }
+  g.stroke({ color: 0xeeaa66, width: 2, alpha: 0.22 });
+  return g;
+}
+
 export function buildGhostGfx(): Graphics {
   const g = new Graphics();
   g.poly([{ x: 0, y: -14 }, { x: 10, y: 0 }, { x: 0, y: 14 }, { x: -10, y: 0 }]);

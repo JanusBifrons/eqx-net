@@ -38,7 +38,9 @@ import {
   buildAsteroidGfx,
   buildDroneGfx,
   buildStructureGfx,
+  buildMinerRangeRingGfx,
 } from './spriteBuilders.js';
+import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
   interpolateSwarmPose,
@@ -90,6 +92,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Structures (pose-core kind 2): a per-subtype tinted polygon read from
         // the shared shipKind byte (structures plan, Phase 2).
         sprite = buildStructureGfx(entry.shipKind, entry.radius);
+        // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
+        // at its `miningRange` radius. Built HERE (the once-per-sprite create
+        // path, invariant #14 — never per-frame) and parented to the body so it
+        // tracks the structure. Only the Miner has a miningRange; others skip.
+        const miningRange = minerRangeForKind(entry.shipKind);
+        if (miningRange) sprite.addChild(buildMinerRangeRingGfx(miningRange));
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
       }
