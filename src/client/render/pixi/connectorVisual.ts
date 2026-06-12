@@ -225,3 +225,83 @@ export function cometSegment(
   out.y1 = ay + dy * t1;
   return out;
 }
+
+// ── R2.19 — shield-wall visuals (make it read as an energy BARRIER, not a wire)
+/** Cyan-white shield-wall core — deliberately OUTSIDE the connector palette
+ *  (idle 0x4488aa / mineral 0xee8844 / flow-pulse gold 0xffe08a) so the wall is
+ *  never confused with a connector link (R2.19). */
+export const SHIELD_WALL_CORE_COLOR = 0x99eeff;
+/** Saturated cyan field-glow behind the rails. */
+export const SHIELD_WALL_GLOW_COLOR = 0x33ccff;
+/** Near-white travelling shimmer (the "live energy" sweep). */
+export const SHIELD_WALL_SHIMMER_COLOR = 0xeaffff;
+/** Down (stunned / unpowered) wall — a dim flickering red line ships pass. */
+export const SHIELD_WALL_DOWN_COLOR = 0x664444;
+/** Shimmer sweep period (ms). */
+export const SHIELD_WALL_SHIMMER_PERIOD_MS = 1200;
+
+export interface ShieldWallVisual {
+  active: boolean;
+  glowColor: number;
+  glowAlpha: number;
+  glowWidth: number;
+  railColor: number;
+  railAlpha: number;
+  railWidth: number;
+  /** Perpendicular half-offset (world units) of the two band rails from the
+   *  centreline — 0 ⇒ a single centre line (the down state). The band slab is
+   *  what reads as an area BARRIER rather than a 1-D wire. */
+  halfThickness: number;
+  /** Travelling shimmer phase [0,1) along the span (active only). */
+  shimmerT: number;
+  shimmerColor: number;
+  shimmerAlpha: number;
+  shimmerWidth: number;
+}
+
+/**
+ * R2.19 — pure visual params for the shield wall, written INTO `out` (no alloc).
+ * ACTIVE: a translucent cyan-white energy BARRIER — a glow field + two parallel
+ * rails offset along the span normal (the renderer applies `halfThickness`) +
+ * an animated shimmer sweeping the span. DOWN: the existing dim red flicker (a
+ * single line, `halfThickness = 0`) ships can pass. The hue + the band geometry
+ * + the shimmer together make it unmistakable next to a thin connector link.
+ */
+export function shieldWallVisualParams(
+  out: ShieldWallVisual,
+  active: boolean,
+  nowMs: number,
+  scale: number,
+): ShieldWallVisual {
+  const safeScale = scale > 0 ? scale : 1;
+  const w = Math.max(2 / safeScale, 6);
+  if (active) {
+    out.active = true;
+    out.glowColor = SHIELD_WALL_GLOW_COLOR;
+    // Slow "breathing" of the field so an idle-but-up wall still reads as live.
+    out.glowAlpha = 0.16 + 0.06 * Math.sin(nowMs * 0.004);
+    out.glowWidth = w * 3.5;
+    out.railColor = SHIELD_WALL_CORE_COLOR;
+    out.railAlpha = 0.85;
+    out.railWidth = Math.max(1.5 / safeScale, 2.5);
+    out.halfThickness = w * 0.9;
+    out.shimmerT = fract(nowMs / SHIELD_WALL_SHIMMER_PERIOD_MS);
+    out.shimmerColor = SHIELD_WALL_SHIMMER_COLOR;
+    out.shimmerAlpha = 0.9;
+    out.shimmerWidth = w * 0.6;
+    return out;
+  }
+  out.active = false;
+  out.glowColor = SHIELD_WALL_DOWN_COLOR;
+  out.glowAlpha = 0;
+  out.glowWidth = 0;
+  out.railColor = SHIELD_WALL_DOWN_COLOR;
+  out.railAlpha = Math.sin(nowMs * 0.01) * 0.12 + 0.18; // dim red flicker
+  out.railWidth = w;
+  out.halfThickness = 0; // single line, not a band
+  out.shimmerT = 0;
+  out.shimmerColor = SHIELD_WALL_DOWN_COLOR;
+  out.shimmerAlpha = 0;
+  out.shimmerWidth = 0;
+  return out;
+}

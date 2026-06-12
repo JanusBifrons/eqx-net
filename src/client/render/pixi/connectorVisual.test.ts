@@ -3,17 +3,27 @@ import {
   connectorVisualParams,
   connectorVisualInto,
   cometSegment,
+  shieldWallVisualParams,
   previewLineVisualParams,
   CONNECTOR_IDLE_COLOR,
   CONNECTOR_MINERAL_COLOR,
   CONNECTOR_FLOW_PULSE_COLOR,
   CONNECTOR_PULSE_PERIOD_MS,
+  SHIELD_WALL_CORE_COLOR,
+  SHIELD_WALL_DOWN_COLOR,
   PREVIEW_OK_COLOR,
   PREVIEW_BLOCKED_COLOR,
   PREVIEW_OVERFLOW_COLOR,
   type ConnectorVisual,
   type CometSegment,
+  type ShieldWallVisual,
 } from './connectorVisual.js';
+
+const blankShield = (): ShieldWallVisual => ({
+  active: false, glowColor: 0, glowAlpha: 0, glowWidth: 0,
+  railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0,
+  shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0,
+});
 import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstants.js';
 
 const blankVisual = (): ConnectorVisual => ({
@@ -108,6 +118,40 @@ describe('cometSegment — travels source→dest (R2.2 direction lock)', () => {
     expect(near).toBeGreaterThan(far); // reversed: small phase near b, large near a
     expect(near).toBeGreaterThan(50);
     expect(far).toBeLessThan(50);
+  });
+});
+
+describe('shieldWallVisualParams — distinct from connector lines (R2.19)', () => {
+  it('active wall hue is OUTSIDE the connector palette (cyan-white, not blue/gold)', () => {
+    const v = shieldWallVisualParams(blankShield(), true, 1000, 1);
+    expect(v.active).toBe(true);
+    expect(v.railColor).toBe(SHIELD_WALL_CORE_COLOR);
+    expect(v.railColor).not.toBe(CONNECTOR_IDLE_COLOR); // ≠ idle blue
+    expect(v.railColor).not.toBe(CONNECTOR_MINERAL_COLOR); // ≠ mineral orange
+    expect(v.railColor).not.toBe(CONNECTOR_FLOW_PULSE_COLOR); // ≠ flow-pulse gold
+  });
+
+  it('active wall is a BAND (two offset rails) with a glow field + shimmer', () => {
+    const v = shieldWallVisualParams(blankShield(), true, 1000, 1);
+    expect(v.halfThickness).toBeGreaterThan(0); // a slab, not a 1-D wire
+    expect(v.glowAlpha).toBeGreaterThan(0);
+    expect(v.shimmerAlpha).toBeGreaterThan(0);
+  });
+
+  it('down wall is the dim red flicker — a single line, no band, no shimmer', () => {
+    const v = shieldWallVisualParams(blankShield(), false, 1000, 1);
+    expect(v.active).toBe(false);
+    expect(v.railColor).toBe(SHIELD_WALL_DOWN_COLOR);
+    expect(v.halfThickness).toBe(0); // single line, not a band
+    expect(v.shimmerAlpha).toBe(0);
+    expect(v.glowAlpha).toBe(0);
+  });
+
+  it('active wall shimmer + glow animate with time (reads as live, not static)', () => {
+    const a = shieldWallVisualParams(blankShield(), true, 0, 1);
+    const b = shieldWallVisualParams(blankShield(), true, 300, 1);
+    expect(b.shimmerT).not.toBe(a.shimmerT); // shimmer sweeps
+    expect(b.glowAlpha).not.toBe(a.glowAlpha); // field breathes
   });
 });
 
