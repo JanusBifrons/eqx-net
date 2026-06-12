@@ -26,7 +26,9 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     radius: rec.radius,
     isHub: kind.isHub,
     isCapital: rec.kind === 'capital',
+    isConnector: rec.kind === 'connector',
     maxConnections: kind.maxConnections,
+    connectionRange: kind.connectionRange,
     // The isConstructed gate: a blueprint is inert (0 power) until built.
     powerOutput: rec.isConstructed ? kind.powerOutput : 0,
     powerConsumption: rec.isConstructed ? kind.powerConsumption : 0,

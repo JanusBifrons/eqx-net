@@ -32,7 +32,7 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
   afterEach(async () => { if (harness) await harness.cleanup(); });
 
   it('a powered turret damages a drone in range; an idle one (no drone) does not', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
@@ -40,6 +40,9 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     expect(internals.spawnTestDrone('mob-1', 250, 0)).toBe(true);
 
     await placeAndWait(harness, room, 'capital', 0, 0);
+    // WS-5: leaves route via a Connector relay. Diagonal offset (120,120) so its
+    // LOS clears the Capital to BOTH the close +x solar and the +y turret.
+    await placeAndWait(harness, room, 'connector', 120, 120);
     const sol = await placeAndWait(harness, room, 'solar', 150, 0); // offsets turret draw
     const turret = await placeAndWait(harness, room, 'turret', 0, 250);
     for (let i = 0; i < 120; i++) internals.pulseStructureGrid();
@@ -63,12 +66,15 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
   }, 25_000);
 
   it('an unpowered turret (overdrawn grid) does not fire', async () => {
-    harness = await bootSectorTestServer({});
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
     internals.spawnTestDrone('mob-2', 250, 0);
 
     await placeAndWait(harness, room, 'capital', 0, 0);
+    // WS-5: relay offset on +x so its LOS clears the Capital to BOTH the +y
+    // turret and the −y miner (both on the y-axis, opposite the Capital).
+    await placeAndWait(harness, room, 'connector', 140, 0);
     const turret = await placeAndWait(harness, room, 'turret', 0, 250);
     // A miner far enough not to overlap, to push the grid negative.
     const miner = await placeAndWait(harness, room, 'miner', 0, -300);

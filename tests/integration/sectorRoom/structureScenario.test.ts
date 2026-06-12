@@ -21,6 +21,11 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
+        // WS-5 (R2.10): leaves route through Connector relays, not the Capital.
+        // Two offset relays (NE → solars, SW → miner + turret) keep the grid
+        // powered while honouring capital-only-connectors.
+        { kind: 'connector', x: 150, y: 60 },
+        { kind: 'connector', x: -100, y: -100 },
         { kind: 'solar', x: 250, y: 0 },
         { kind: 'solar', x: 0, y: 250 },
         { kind: 'miner', x: -350, y: 0 },
@@ -32,14 +37,16 @@ describe('SectorRoom integration — structure scenario seeding (Phase 3-5)', ()
     await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    // All five structures exist, built, and the grid is powered.
+    // All seven structures exist (capital + 2 connector relays + 4 leaves),
+    // built, and the grid is powered (WS-5 capital-only-connectors topology).
     const structures = [...internals.structureRegistry.all()];
-    expect(structures.length).toBe(5);
+    expect(structures.length).toBe(7);
     for (const s of structures) expect(s.isConstructed).toBe(true);
     const capital = structures.find((s) => s.kind === 'capital')!;
     const miner = structures.find((s) => s.kind === 'miner')!;
     const turret = structures.find((s) => s.kind === 'turret')!;
-    expect(internals.structureRegistry.connectionCount(capital.id)).toBe(4); // 4 leaves
+    // The Capital links to the 2 Connector relays (leaves hang off the relays).
+    expect(internals.structureRegistry.connectionCount(capital.id)).toBe(2);
 
     // Mining: a pulse grows the bank (miner powered, asteroid in range).
     const bankBefore = capital.minerals;

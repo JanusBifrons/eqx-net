@@ -40,6 +40,9 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     expect(internals.spawnTestAsteroid('mine-rock', 0, 600, 30)).toBe(true);
 
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    // WS-5 capital-only-connectors: leaves route through a Connector relay
+    // offset above the Capital (its LOS clears for both the +x solar + +y miner).
+    await placeAndWait(harness, room, 'connector', 0, 140);
     const sol = await placeAndWait(harness, room, 'solar', 200, 0); // offsets miner power draw
     const miner = await placeAndWait(harness, room, 'miner', 0, 300);
     const capRec = internals.structureRegistry.get(cap)!;
@@ -64,7 +67,10 @@ describe('SectorRoom integration — mining (Phase 4)', () => {
     internals.spawnTestAsteroid('mine-rock', 0, 600, 30);
 
     // Capital + miner, NO solar: capital 50 − miner 60 = −10 ⇒ unpowered grid.
+    // WS-5: the miner routes via a Connector relay (still draws the grid
+    // negative, so the component stays unpowered — the behaviour under test).
     const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'connector', 0, 140);
     const miner = await placeAndWait(harness, room, 'miner', 0, 300);
     const capRec = internals.structureRegistry.get(cap)!;
     const minerRec = internals.structureRegistry.get(miner)!;

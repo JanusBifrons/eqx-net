@@ -18,8 +18,19 @@ export const SCAFFOLDING_HP_FRACTION = 0.1;
 // ── Connections (Phase 3) ──────────────────────────────────────────────────
 
 /** Max edge-to-edge (AABB) distance for a connection, world units. Beyond this
- *  two structures can't link — the player bridges the gap with a Connector. */
+ *  two structures can't link — the player bridges the gap with a Connector.
+ *  The global default; a kind may shorten its OWN reach via `connectionRange`
+ *  (only the Capital does today — see `CAPITAL_CONNECTION_RANGE`). */
 export const CONNECTION_MAX_RANGE = 600;
+
+/** WS-5 (R2.10) — the Capital's SHORTER connection range, world units. Half the
+ *  global 600 so the Capital is a tight anchor: distant structures must chain
+ *  out through interior Connectors rather than reaching the core directly.
+ *  `canConnect` takes `min` of the two endpoints' ranges, so this caps EVERY
+ *  pair the Capital is part of (including the Capital↔Connector bridge). The
+ *  catalogue can't import this (shared-types must not import core), so
+ *  `CAPITAL.connectionRange` carries the literal `300` with a back-reference. */
+export const CAPITAL_CONNECTION_RANGE = 300;
 
 /** Per-connection units/pulse cap on material flow (Phase 4 hauling). Large by
  *  default — the throughput ceiling rarely bites with one mineral type. */

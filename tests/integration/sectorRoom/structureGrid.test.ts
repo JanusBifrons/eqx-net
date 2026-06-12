@@ -132,6 +132,7 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const internals = harness.getServerRoom()!._internals;
 
     await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'connector', 0, 140); // WS-5: battery routes via a relay
     const bat = await placeAndWait(harness, room, 'battery', 250, 0);
     const batE = eid(harness, bat);
 
@@ -139,9 +140,10 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     expect(sliceEntry(internals.getStructuresSlice(), batE)?.storedPowerMax).toBe(300);
     expect(sliceEntry(internals.getStructuresSlice(), batE)?.storedPower).toBe(0);
 
-    // Drive construction (cost 600 / 5 per pulse = 120 pulses) then a few more so
-    // the built battery banks the capital's +50/pulse surplus.
-    for (let i = 0; i < 130; i++) internals.pulseStructureGrid();
+    // Drive construction (cost 600 / 5 per pulse = 120 pulses; +16 for the relay
+    // Connector that must build FIRST under WS-5) then a few more so the built
+    // battery banks the capital's +50/pulse surplus.
+    for (let i = 0; i < 160; i++) internals.pulseStructureGrid();
 
     const entry = sliceEntry(internals.getStructuresSlice(), batE)!;
     expect(entry.built).toBe(true);
@@ -155,26 +157,27 @@ describe('SectorRoom integration — structure grid (Phase 3)', () => {
     const room = await harness.connectAs('player-1');
     const internals = harness.getServerRoom()!._internals;
 
-    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
-    const con = await placeAndWait(harness, room, 'connector', 300, 0);
-    // Solar at 600: nearest hub at placement is the connector (300), but it is
-    // ALSO within direct capital range (edge 600−80−40 = 480 ≤ 600). So when the
-    // connector dies, the reconnect sweep re-wires it straight to the capital
-    // instead of letting it go dark — the grid heals (the Issue 2 fix).
-    const sol = await placeAndWait(harness, room, 'solar', 600, 0);
-    const [capE, solE] = [eid(harness, cap), eid(harness, sol)];
+    await placeAndWait(harness, room, 'capital', 0, 0);
+    // WS-5 capital-only-connectors: a leaf can no longer heal onto the Capital
+    // directly — it heals onto ANOTHER Connector. con1 is the solar's nearest
+    // hub at placement; con2 (also Capital-connected, so it survives con1's
+    // death) is the backup the reconnect sweep re-wires onto.
+    const con1 = await placeAndWait(harness, room, 'connector', 200, 0);
+    const con2 = await placeAndWait(harness, room, 'connector', 0, 250);
+    const sol = await placeAndWait(harness, room, 'solar', 250, 150);
+    const [con2E, solE] = [eid(harness, con2), eid(harness, sol)];
     for (let i = 0; i < 60; i++) internals.pulseStructureGrid();
     expect(sliceEntry(internals.getStructuresSlice(), solE)?.powered).toBe(true);
 
-    internals.applyDamage(con, 'player-1', 99999);
-    expect(internals.structureRegistry.has(con)).toBe(false);
+    internals.applyDamage(con1, 'player-1', 99999);
+    expect(internals.structureRegistry.has(con1)).toBe(false);
     // The reconnect sweep runs on the pulse; one pulse re-wires + the topology
     // rebuild re-powers it.
     for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
 
     const slice = internals.getStructuresSlice();
-    // Healed: the solar now connects DIRECTLY to the capital and is powered again.
-    expect(sliceEntry(slice, solE)?.connTo).toContain(capE);
+    // Healed: the solar now connects to the SURVIVING Connector and is powered.
+    expect(sliceEntry(slice, solE)?.connTo).toContain(con2E);
     expect(sliceEntry(slice, solE)?.powered).toBe(true);
   }, 20_000);
 });

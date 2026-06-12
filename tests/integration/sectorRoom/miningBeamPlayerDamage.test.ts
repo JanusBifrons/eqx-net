@@ -33,6 +33,11 @@ describe('SectorRoom integration — mining beam player hazard (WS-4 Phase 3 / R
       asteroidConfig: [], // rock-free sector — the scenario seeds the only rock
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
+        // WS-5 capital-only-connectors: the solar + miner route through a
+        // Connector relay offset on +y (its LOS clears the Capital to both the
+        // +x solar and the −x miner). The miner→rock beam (along −x at y=0) is
+        // unaffected by the relay.
+        { kind: 'connector', x: 0, y: 140 },
         { kind: 'solar', x: 200, y: 0 },
         { kind: 'miner', x: -350, y: 0 },
       ],
