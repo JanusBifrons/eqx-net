@@ -42,7 +42,12 @@ function getRoomById(roomId: string): ServerRoom<SectorState> {
 describe('SectorRoom integration — missile lifecycle', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true });
+    // asteroidConfig:[] = a rock-FREE sector. sol-prime's default 'dense' field
+    // would otherwise litter the missile corridors with asteroids, which — now
+    // that missiles collide with rock (WS-2b) — detonate a missile before it
+    // reaches its intended target (e.g. the lingering hull at 600,0). Tests that
+    // need a rock seed their OWN via _internals.spawnTestAsteroid (deterministic).
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
   }, 15_000);
   afterEach(async () => {
     if (harness) await harness.cleanup();
@@ -180,6 +185,41 @@ describe('SectorRoom integration — missile lifecycle', () => {
 
     await harness.disconnectClient(reconnected);
   }, 25_000);
+
+  it('WS-2b/R2.22 symptom 2: a missile DETONATES on an asteroid (does not pass through; deals 0 HP)', async () => {
+    // Asteroid model ADR (docs/architecture/asteroid-interaction-model.md):
+    // asteroids are solid, indestructible rock — a missile must detonate +
+    // despawn ON contact (0 HP to the immune rock), NOT pass through.
+    const shooter = await joinPlayer('missile-frigate', 0, 0);
+    const internals = shooter.room as unknown as MissileTestInternals;
+    const sectorRoom = shooter.room as unknown as SectorRoom;
+
+    // Solid rock squarely on the +Y missile path.
+    sectorRoom._internals.spawnTestAsteroid('ws2b-rock', 0, 400, 50);
+    await harness.advance(150);
+
+    // A missile_detonated broadcast fires ONLY on a real detonation (sweep /
+    // fuse), never on lifetime expiry — so it discriminates "hit the rock"
+    // from "flew through and timed out".
+    const detonations: Array<Record<string, unknown>> = [];
+    shooter.cr.onMessage('missile_detonated', (e: Record<string, unknown>) => detonations.push(e));
+
+    const heatSeeker = getWeapon('heat-seeker') as MissileWeaponDef;
+    const missileId = internals.spawnServerMissile(shooter.pid, 0, 0, 0, 1, heatSeeker);
+    expect(missileId).not.toBeNull();
+
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      if (detonations.length > 0) break;
+      if (internals.missileSim.size() === 0) break;
+      await harness.advance(100);
+    }
+
+    // FAILS on current main: sweepCollision skips kind===0, so the missile
+    // sweeps THROUGH the rock and expires (size→0) with NO detonation broadcast.
+    expect(detonations.length, 'missile detonated on the asteroid (did not pass through)').toBeGreaterThan(0);
+    expect(internals.missileSim.size()).toBe(0);
+  }, 20_000);
 
   it('missile pool overflow → spawnServerMissile returns null', async () => {
     const shooter = await joinPlayer('missile-frigate', 0, 0);

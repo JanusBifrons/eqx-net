@@ -217,8 +217,20 @@ Scope: this is **collision only** — `lockOnTarget` still does NOT home
 onto lingering hulls (the hostility predicate is keyed by `playerId`, not
 `shipInstanceId`, so homing would entangle the targeting system; an
 in-flight missile colliding with an abandoned hull is the reported bug
-and the right-sized fix). The asteroid (`kind===0`) skip is untouched —
-that is gated on the separate asteroid-interaction-model ADR (WS-4).
+and the right-sized fix).
+
+## Asteroids are solid — missiles detonate, never pass through (WS-2b / R2.22 symptom 2)
+
+`sweepCollision` includes asteroids (swarm `kind === 0`), not just drones. Per
+the [asteroid-interaction-model ADR](asteroid-interaction-model.md), asteroids
+are SOLID, indestructible rock: a missile sweeping into one **detonates +
+despawns on contact** (impact VFX) and deals **0 HP** — `applyDamage` no-ops on
+the immune asteroid id (no `swarmHealth`), which is correct; the bug being fixed
+was the missile *passing through*, not the zero damage. Asteroids remain **not
+lockable** — `lockOnTarget` keeps its `kind === 0` skip, so a missile never
+*homes* on rock; it only can't fly through it. Lock:
+`missileLifecycle.test.ts` (a missile fired at an asteroid emits a
+`missile_detonated` broadcast instead of expiring).
 
 ## Proximity fuse
 
