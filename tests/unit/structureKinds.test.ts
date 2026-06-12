@@ -127,7 +127,9 @@ describe('structureKinds catalogue', () => {
       for (const p of pts) {
         expect(Math.hypot(p.x, p.y), `${id} vertex on radius`).toBeCloseTo(80, 6);
       }
-      // First vertex at the top (−y, Pixi-up) — matches the renderer's draw.
+      // First vertex at game (0, −radius) [GAME space, Y-up — the collider's
+      // frame]; the renderer applies pixiY=−gameY via `structureRenderVerts`
+      // before drawing (R2.13), so this is the collider point, not the drawn one.
       expect(pts[0]!.x).toBeCloseTo(0, 6);
       expect(pts[0]!.y).toBeCloseTo(-80, 6);
     }

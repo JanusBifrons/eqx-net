@@ -382,14 +382,18 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
 
 /**
  * The structure's hull POINTS — a regular N-gon at `radius`, first vertex at
- * the top (−y, Pixi-up) going clockwise (identical to the renderer's former
- * inline generation, so the silhouette is unchanged). SINGLE SOURCE for the
- * rendered shape AND the polygon collider. Regular polygons are symmetric, so
- * the Pixi-up authoring is invariant under the renderer's Y-flip and under
- * convex-hull collider construction (vertex order doesn't matter) — render and
- * collider coincide with no per-frame work (called once at sprite-create /
- * entity-spawn, never in a hot loop). Unknown id ⇒ the Capital's silhouette,
- * the same forgiving stance as `getStructureKind`.
+ * `(0, -radius)` going clockwise. SINGLE SOURCE for the polygon COLLIDER (server
+ * `SwarmSpawner.spawnStructure` + client `structureClientLeaf`, consumed in GAME
+ * space, Y-up) AND — via the renderer's `structureRenderVerts` (`pixiY = -gameY`,
+ * the flip every entity obeys) — the rendered silhouette. **A regular polygon is
+ * Y-flip-invariant ONLY for an EVEN side-count.** The ODD-sided structures
+ * (turret 3, miner 5, shield_pylon 7) are NOT, so the renderer MUST apply the
+ * flip or the silhouette renders MIRRORED vs the collider — the R2.13 "the
+ * collision box is right but the turret appears upside down" bug, which is why
+ * `buildStructureGfx` no longer draws these points directly. The convex-hull
+ * collider is vertex-order-invariant, so ONLY the render flip matters. Called
+ * once at sprite-create / entity-spawn, never in a hot loop. Unknown id ⇒ the
+ * Capital's silhouette, the same forgiving stance as `getStructureKind`.
  */
 export function structureHullPoints(
   kindId: string | null | undefined,

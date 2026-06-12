@@ -130,19 +130,43 @@ export function buildDroneGfx(radius: number): Graphics {
 }
 
 /**
- * Structure visual (pose-core kind 2) — the regular polygon from the SINGLE
- * hull-points source (`structureHullPoints`), tinted with the subtype's
- * catalogue `color`. The SAME points form the polygon collision hull at spawn
- * (server `SwarmSpawner.spawnStructure` + client `structureClientLeaf`), so the
- * collider matches this silhouette exactly (unified-hull plan). The renderer
- * rotates the sprite by `-angle`; the points are symmetric so Pixi-up/math-up
- * is invariant. Unknown subtype ⇒ the Capital's look (forgiving, like
+ * The structure silhouette's RENDER vertices — `structureHullPoints` (the
+ * game-space, Y-up collider source) converted to Pixi space via the standard
+ * `pixiY = -gameY` flip EVERY entity obeys (ships included). **Load-bearing for
+ * ODD-sided structures** (turret = 3, miner = 5, shield_pylon = 7): a regular
+ * polygon is NOT Y-flip-invariant unless its side-count is even, so drawing the
+ * collider points DIRECTLY (the old `buildStructureGfx`, no flip) rendered the
+ * triangle turret + pentagon miner UPSIDE-DOWN relative to their colliders —
+ * R2.13: "the collision box is mostly right but the turret appears upside down".
+ * Even-sided structures (capital 8 / connector 6 / solar 4 / battery 4) are
+ * unchanged. `structureHullPoints` returns a FRESH array, so negating Y in place
+ * is safe (the collider calls it separately). Called once per sprite create —
+ * NOT a hot loop.
+ */
+export function structureRenderVerts(
+  structureKindId: string | undefined,
+  radius: number,
+): Array<{ x: number; y: number }> {
+  const kind = getStructureKind(structureKindId);
+  const pts = structureHullPoints(kind.id, radius);
+  for (let i = 0; i < pts.length; i++) pts[i]!.y = -pts[i]!.y;
+  return pts;
+}
+
+/**
+ * Structure visual (pose-core kind 2) — the regular polygon tinted with the
+ * subtype's catalogue `color`. The silhouette is `structureRenderVerts` (the
+ * game→Pixi Y-flip of the SINGLE hull-points source `structureHullPoints`, which
+ * also forms the polygon collider at spawn — server `SwarmSpawner.spawnStructure`
+ * + client `structureClientLeaf`), so the render matches the collider for
+ * odd-sided shapes too (R2.13). The renderer additionally rotates the sprite by
+ * `-angle`. Unknown subtype ⇒ the Capital's look (forgiving, like
  * `getStructureKind`).
  */
 export function buildStructureGfx(structureKindId: string | undefined, radius: number): Graphics {
   const g = new Graphics();
   const kind = getStructureKind(structureKindId);
-  const verts = structureHullPoints(kind.id, radius);
+  const verts = structureRenderVerts(kind.id, radius);
   g.poly(verts);
   g.fill({ color: kind.color });
   g.poly(verts);
