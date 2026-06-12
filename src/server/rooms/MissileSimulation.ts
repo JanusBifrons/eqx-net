@@ -629,15 +629,15 @@ export class MissileSimulation {
       }
     }
 
-    // Swarm — drones only. Asteroids (kind=0) are excluded for the
-    // same reason as `lockOnTarget`: no `swarmHealth` entry means the
-    // damage broadcast is silently dropped. A missile sweeping past
-    // an asteroid would otherwise detonate-on-rock (explosion VFX +
-    // zero damage), which is the user's "fires/aims/hits but does
-    // nothing" symptom in any asteroid-dense galaxy sector.
+    // Swarm — drones AND asteroids. Per the asteroid-interaction-model ADR
+    // (R2.22 symptom 2 / WS-2b), asteroids are SOLID indestructible rock: a
+    // missile must DETONATE on contact + despawn, NOT pass through. The 0-HP
+    // detonation on the immune rock is CORRECT (applyDamage no-ops on the
+    // asteroid id — no swarmHealth); the bug was the pass-through. Asteroids
+    // are still NOT lockable (lockOnTarget keeps the kind===0 skip — you don't
+    // home on rock, you just can't fly through it).
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === m.ownerId) continue;
-      if (rec.kind === 0) continue;
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;

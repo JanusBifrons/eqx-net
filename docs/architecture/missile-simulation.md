@@ -200,6 +200,19 @@ The `splashFalloffMin` clamp is what keeps the formula numerically
 stable AND keeps direct hits from delivering wildly variable damage
 based on sub-unit position differences.
 
+## Asteroids are solid — missiles detonate, never pass through (WS-2b / R2.22)
+
+`sweepCollision` includes asteroids (swarm `kind === 0`), not just drones. Per
+the [asteroid-interaction-model ADR](asteroid-interaction-model.md), asteroids
+are SOLID, indestructible rock: a missile sweeping into one **detonates +
+despawns on contact** (impact VFX) and deals **0 HP** — `applyDamage` no-ops on
+the immune asteroid id (no `swarmHealth`), which is correct; the bug being fixed
+was the missile *passing through*, not the zero damage. Asteroids remain **not
+lockable** — `lockOnTarget` keeps its `kind === 0` skip, so a missile never
+*homes* on rock; it only can't fly through it. Lock:
+`missileLifecycle.test.ts` (a missile fired at an asteroid emits a
+`missile_detonated` broadcast instead of expiring).
+
 ## Proximity fuse
 
 The proximity-fuse check runs **before** guidance each tick. If the
