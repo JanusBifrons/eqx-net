@@ -44,6 +44,14 @@ export interface Contact {
    *  model (`aggregateRamming`) gates on this. Undefined when no `preVel` was
    *  passed — damage then falls back to a force-derived estimate. */
   impactSpeed?: number;
+  /** FOLDED total mass (Rapier `RigidBody.mass()`) of bodies `a` / `b`, read
+   *  from the world at drain time. The ramming model (`Ramming.ts`) keys its
+   *  ASYMMETRIC, mass-differential damage off these: the lighter body in a
+   *  high-speed collision takes the damage, the heavier takes ~0, and an
+   *  equal-mass pair takes nothing (R2.31). Undefined for an unregistered body
+   *  (the damage model then treats the pair as having no differential ⇒ 0). */
+  aMass?: number;
+  bMass?: number;
 }
 
 /** A read-only pre-step velocity lookup, keyed by entity id. */
@@ -99,6 +107,10 @@ export function drainContacts(
       vBxPost: b.vx,
       vByPost: b.vy,
       forceMagnitude: force,
+      // Mass-differential ramming (R2.31). Scalar reads off the same body
+      // records already resolved above — allocation-free (Invariant #14).
+      aMass: world.getBodyMass(aId),
+      bMass: world.getBodyMass(bId),
     };
     if (preVel !== null) {
       const preA = preVel.get(aId);

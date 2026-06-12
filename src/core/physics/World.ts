@@ -527,6 +527,22 @@ export class PhysicsWorld {
     return { x: t.x, y: t.y, angle: body.rotation(), vx: v.x, vy: v.y, angvel: body.angvel() };
   }
 
+  /**
+   * The body's FOLDED total mass (Rapier `RigidBody.mass()`). This is the
+   * correct mass source for the ramming model (`core/combat/Ramming.ts`):
+   * it reflects the per-kind `setAdditionalMassProperties` pin for ships
+   * AND the area-density mass for asteroids AND the structure mass — unlike
+   * a `kind.mass` catalogue read, which is undefined for non-ship bodies.
+   * Returns `undefined` for an unregistered id (the damage model then treats
+   * the contact as mass-less and deals no differential damage). Allocation-
+   * free — a single accessor on the body record `drainContacts` already holds.
+   */
+  getBodyMass(id: string): number | undefined {
+    const rec = this.bodies.get(id);
+    if (!rec) return undefined;
+    return rec.body.mass();
+  }
+
   getAllShipStates(): Map<string, ShipPhysicsState> {
     const result = new Map<string, ShipPhysicsState>();
     for (const [id, rec] of this.bodies) {
