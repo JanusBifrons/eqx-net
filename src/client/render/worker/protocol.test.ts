@@ -164,6 +164,7 @@ describe('renderer-worker protocol', () => {
             placementPreviewConnectionCount: 2,
             selectedPickId: 'swarm-42',
             selectedPickKind: 'structure',
+            miningBeamCount: 1,
           },
         },
       },
@@ -194,6 +195,7 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.placementPreviewConnectionCount).toBe(2);
         expect(back.feedback.selectedPickId).toBe('swarm-42');
         expect(back.feedback.selectedPickKind).toBe('structure');
+        expect(back.feedback.miningBeamCount).toBe(1);
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

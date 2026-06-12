@@ -23,6 +23,7 @@
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { MINING_BEAM_PLAYER_DPS } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection } from '../../core/structures/Connection.js';
@@ -32,6 +33,7 @@ import {
   REPAIR_COST_PER_HP,
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
+  MINING_BEAM_CADENCE_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -76,13 +78,22 @@ export interface StructureGridHooks {
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y), or null. Returns the asteroid's dense entityId + pose. */
   findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number } | null;
+  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's FINITE resource pool;
+   *  returns the amount ACTUALLY mined (0 once exhausted). Absent ⇒ infinite
+   *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
+   *  combat never depletes asteroid resources (asteroid-interaction-model ADR). */
+  drawAsteroidResources?(entityId: number, amount: number): number;
   /** Phase 5 — nearest drone (swarm kind 1) within `range` of (x, y), or null.
    *  Returns the drone's registry id (for damage) + entityId + pose. */
   findNearestDrone?(x: number, y: number, range: number): { id: string; entityId: number; x: number; y: number } | null;
   /** Phase 5 — apply turret damage to a target through the standard path. */
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
-  broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string): void;
+  broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
+  /** WS-4 Phase 3 — apply the mining beam's light player-damage RAY: any player
+   *  ship intersecting the miner→asteroid segment takes `perHitDamage`. A thin
+   *  damage ray, NOT a physics collider (movement is unblocked). Absent ⇒ no-op. */
+  damagePlayersInBeam?(minerId: string, fromX: number, fromY: number, toX: number, toY: number, perHitDamage: number): void;
   /** Live non-structure obstacles (asteroids) that block a connection's line of
    *  sight — same source the placement subsystem passes to autoConnectStructure.
    *  Used by the reconnect sweep so a retry honours current asteroid geometry.
@@ -305,15 +316,84 @@ export class StructureGridSubsystem {
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'miner' || !rec.isConstructed) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
-        rec.miningTargetEntityId = undefined;
+        this.clearMiningTarget(rec);
         continue;
       }
       const kind = getStructureKind('miner');
+      // findNearestAsteroid SKIPS exhausted rocks (resources<=0), so an
+      // exhausted asteroid is never returned and the miner auto-retargets to a
+      // fresh in-range rock (or clears its target → the beam stops).
       const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
-      rec.miningTargetEntityId = target?.entityId;
-      if (!target) continue;
-      // Mining never damages the asteroid (effectively infinite, first cut).
-      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + (kind.miningRate ?? 0));
+      if (!target) { this.clearMiningTarget(rec); continue; }
+      // Cache the target + its (static) pose so the faster mining-beam tick
+      // (tickMiners) can broadcast the beam endpoint without re-scanning. Build
+      // the `swarm-<eid>` wire id ONLY when the target rock CHANGES, so the
+      // steady-state (mining one rock) never allocates a template string — the
+      // ~5 Hz tickMiners reads the cached `miningTargetWireId` (invariant #14).
+      if (rec.miningTargetEntityId !== target.entityId) {
+        rec.miningTargetWireId = 'swarm-' + target.entityId;
+      }
+      rec.miningTargetEntityId = target.entityId;
+      rec.miningTargetX = target.x;
+      rec.miningTargetY = target.y;
+      // WS-4 / R2.27 — draw from the asteroid's FINITE resource pool, capped by
+      // the miner's per-pulse rate AND its remaining storage (don't burn finite
+      // ore into full storage). drawAsteroidResources decrements the pool and
+      // returns the amount actually mined; absent hook ⇒ flat rate (pre-WS-4 /
+      // unit-harness fallback). Combat never reaches this hook (ADR boundary).
+      const want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      const drawn = this.hooks.drawAsteroidResources
+        ? this.hooks.drawAsteroidResources(target.entityId, want)
+        : want;
+      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + drawn);
+    }
+  }
+
+  /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
+   *  mining beam stops on the next tick. */
+  private clearMiningTarget(rec: StructureRecord): void {
+    rec.miningTargetEntityId = undefined;
+    rec.miningTargetX = undefined;
+    rec.miningTargetY = undefined;
+    rec.miningTargetWireId = undefined;
+  }
+
+  /**
+   * WS-4 Phase 2 (R2.27) — broadcast each built+powered Miner's MINING BEAM
+   * (`laser_fired`, mountId `drill`) from the miner to its cached target asteroid
+   * pose, on the `MINING_BEAM_CADENCE_MS` gate. Mirrors `tickTurrets`; ticked
+   * from the same `structureTurretTick` timer (faster than the 1 Hz pulse so the
+   * CONTINUOUS beam doesn't flicker under the client's ~400 ms laser TTL).
+   *
+   * The drill mount is NOT slewed: a structure shooter's beam renders from the
+   * WIRE endpoints (miner → asteroid), so a mount-angle slew would have zero
+   * render effect AND would add a second mount-angle ownership site (Invariant
+   * #12). The endpoint pose is the static asteroid pose cached by `processMining`.
+   * Allocation-free (invariant #14): per-record scalar cadence compare + the
+   * target's `swarm-<eid>` wire id is READ from `rec.miningTargetWireId` (built
+   * by `processMining` only when the target rock changes), so a steady mining
+   * broadcast allocates nothing.
+   */
+  tickMiners(nowMs: number): void {
+    if (!this.hooks.broadcastBeam) return;
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind !== 'miner' || !rec.isConstructed) continue;
+      if (rec.miningTargetEntityId === undefined || rec.miningTargetX === undefined || rec.miningTargetY === undefined) continue;
+      if (rec.miningTargetWireId === undefined) continue;
+      if (!this.powerSummaryFor(rec.id).powered) continue;
+      if (nowMs - (rec.lastMiningBeamMs ?? -Infinity) < MINING_BEAM_CADENCE_MS) continue;
+      rec.lastMiningBeamMs = nowMs;
+      this.hooks.broadcastBeam(
+        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
+        rec.miningTargetWireId, 'drill',
+      );
+      // WS-4 Phase 3 — light player-damage ray along the same beam. Per-broadcast
+      // chip = DPS × cadence so the effective DPS is constant regardless of the
+      // beam cadence (the resolveTurretBeam-style DPS-preserving model).
+      this.hooks.damagePlayersInBeam?.(
+        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
+        MINING_BEAM_PLAYER_DPS * (MINING_BEAM_CADENCE_MS / 1000),
+      );
     }
   }
 

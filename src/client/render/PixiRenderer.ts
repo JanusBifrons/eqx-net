@@ -23,6 +23,7 @@ import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUp
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { BeamSpritePool } from './BeamSpritePool';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -204,6 +205,13 @@ export class PixiRenderer implements IRenderer {
   private _galaxyLayer: GalaxyMapLayer | null = null;
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
+  /** WS-4 Phase 4 (R2.27) — dedicated pool for the Miner's mining beam
+   *  (`laser_fired` mountId `drill`). Separate from `_remoteBeamPool` so it can
+   *  be tinted as a distinct fat amber drill beam AND so an E2E can isolate its
+   *  `liveCount` (the shared remote pool can't tell a drill beam from a combat
+   *  laser). The faint always-on link hint stays in `ConnectorRenderer`. */
+  private _miningBeamPool: BeamSpritePool | null = null;
+  private miningBeamGfx: Container | null = null;
   /**
    * Plan: combat-fx-hunt (2026-05-31) — beam endpoint cache for the
    * dirty-flag check on the per-frame Graphics rebuild path.
@@ -239,6 +247,19 @@ export class PixiRenderer implements IRenderer {
     alpha: number;
   }> = [];
   private _remoteBeamCacheCount = 0;
+  /** WS-4 Phase 4 — drill-beam slots routed out of the remote-laser loop into
+   *  the dedicated mining pool. Same slot shape as `_remoteBeamCache` (the pool
+   *  reads only the BeamView subset); reused in place (invariant #14). */
+  private readonly _miningBeamCache: Array<{
+    shooterId: string;
+    mountId: string;
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    alpha: number;
+  }> = [];
+  private _miningBeamCacheCount = 0;
   private initialized = false;
   /** Reused per-frame so swarm interpolation doesn't allocate. */
   private readonly swarmPoseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
@@ -307,6 +328,7 @@ export class PixiRenderer implements IRenderer {
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
+    miningBeamCount: 0,
   };
 
   /**
@@ -575,9 +597,16 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1 });
       this.liveBeamGfx = this._liveBeamPool.container;
       this.shipContainer.addChild(this.liveBeamGfx);
-      this._remoteBeamPool = new BeamSpritePool({ tint: 0xffaa44, width: 2, alpha: 1 });
+      this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx);
+      // WS-4 Phase 4 — the Miner's mining beam: a distinct fat warm-amber drill
+      // beam, separate pool so its `liveCount` is isolatable + its look differs
+      // from the combat laser. Styles are named consts (beamStyles.ts) so the
+      // distinction is greppable + regression-locked. Sits behind the sprites.
+      this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
+      this.miningBeamGfx = this._miningBeamPool.container;
+      this.shipContainer.addChild(this.miningBeamGfx);
 
       this.effects = new EffectsService({
         app: this.app,
@@ -1167,6 +1196,8 @@ export class PixiRenderer implements IRenderer {
       // #14 — reuses the pooled slot array + pooled sprites).
       const now = performance.now();
       let slotIdx = 0;
+      // WS-4 Phase 4 — drill beams route to the dedicated mining pool instead.
+      let miningIdx = 0;
 
       for (const [shooterId, perShooter] of mirror.remoteLasers) {
         // Player shooters track their live ship pose; the beam sweeps with the
@@ -1264,11 +1295,17 @@ export class PixiRenderer implements IRenderer {
             toX = laser.toX;
             toY = laser.toY;
           }
-          // Fill the reused pooled slot (no per-beam allocation).
-          let slot = this._remoteBeamCache[slotIdx];
+          // Fill the reused pooled slot (no per-beam allocation). The Miner's
+          // mining beam (mountId 'drill') routes into the dedicated mining pool
+          // (WS-4 Phase 4) so it draws as a distinct fat amber drill beam and is
+          // isolatable for the E2E; everything else stays in the remote pool.
+          const isMining = mountId === 'drill';
+          const cache = isMining ? this._miningBeamCache : this._remoteBeamCache;
+          const idx = isMining ? miningIdx : slotIdx;
+          let slot = cache[idx];
           if (!slot) {
             slot = { shooterId, mountId, fromX, fromY, toX, toY, alpha };
-            this._remoteBeamCache[slotIdx] = slot;
+            cache[idx] = slot;
           }
           slot.shooterId = shooterId;
           slot.mountId = mountId;
@@ -1277,20 +1314,33 @@ export class PixiRenderer implements IRenderer {
           slot.toX = toX;
           slot.toY = toY;
           slot.alpha = alpha;
-          slotIdx++;
+          if (isMining) miningIdx++;
+          else slotIdx++;
         }
       }
       this._remoteBeamCacheCount = slotIdx;
+      this._miningBeamCacheCount = miningIdx;
 
       // Sprite-pool driven render — no clear/redraw, just transforms.
       // Always re-set: the pool resolves its own pooling + visibility and
       // the transform writes are cheap (see the always-call rationale above).
       this._remoteBeamPool.setBeams(this._remoteBeamCache, slotIdx);
       this.remoteBeamGfx!.visible = true;
+      if (this._miningBeamPool && this.miningBeamGfx) {
+        this._miningBeamPool.setBeams(this._miningBeamCache, miningIdx);
+        this.miningBeamGfx.visible = miningIdx > 0;
+        this.feedback.miningBeamCount = this._miningBeamPool.liveCount;
+      }
     } else if (this._remoteBeamPool && this.remoteBeamGfx) {
       this.remoteBeamGfx.visible = false;
       this._remoteBeamPool.hideAll();
       this._remoteBeamCacheCount = 0;
+      if (this._miningBeamPool && this.miningBeamGfx) {
+        this.miningBeamGfx.visible = false;
+        this._miningBeamPool.hideAll();
+        this._miningBeamCacheCount = 0;
+        this.feedback.miningBeamCount = 0;
+      }
     }
 
     // Live hitscan beams — one per mount in the local ship's active slot.

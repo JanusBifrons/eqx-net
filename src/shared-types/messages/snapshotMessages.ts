@@ -154,6 +154,22 @@ export interface SnapshotMessage {
      *  until they re-enter interest and the next snapshot updates them. */
     mountAngles?: number[];
   }>;
+  /** WS-4 Phase 6 (R2.23 enabler) — slim resource slice for in-interest MINED
+   *  asteroids. POSE/physics flow on the binary swarm channel; this carries only
+   *  the finite resource pool the binary wire can't. Emitted ONLY for asteroids
+   *  with `resources < resourcesMax` (actively being extracted) so untouched
+   *  sectors pay zero bytes — the same emit-when-changed discipline as
+   *  `drones[].hp`. NO `SWARM_WIRE_VERSION` bump (JSON slice). `id` is the dense
+   *  u16 entityId matching the binary swarm channel; the client joins it to the
+   *  swarm mirror by entityId. `mass` is RESERVED (optional) for the WS-9
+   *  inspector — the broadcaster doesn't carry body mass today, so it is omitted
+   *  for now; resources/resourcesMax are the load-bearing inspector data. */
+  asteroids?: Array<{
+    id: number;
+    resources?: number;
+    resourcesMax?: number;
+    mass?: number;
+  }>;
   /** Phase 4 — abandoned-ship wrecks in this sector. Each entry is the
    *  per-tick pose for a wreck currently owning a SAB slot (the worker
    *  continues to step it; wrecks have inertia and drift). Identity

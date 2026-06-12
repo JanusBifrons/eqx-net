@@ -132,3 +132,16 @@ export function polygonArea(verts: ReadonlyArray<Vec2>): number {
   }
   return Math.abs(sum) * 0.5;
 }
+
+/** Mineable resource units per unit of asteroid silhouette AREA (WS-4 / R2.27 —
+ *  the asteroid-interaction-model ADR's finite `resources` pool). A bigger rock
+ *  holds proportionally more ore. Tuned so a typical mid-size rock lasts a
+ *  couple of minutes under one Miner at miningRate~1000/pulse (~1 Hz) — a
+ *  smoke-tune knob, not load-bearing for the regression locks. */
+export const ASTEROID_RESOURCES_PER_AREA = 40;
+
+/** Finite mineable resource pool for an asteroid, derived deterministically
+ *  from its polygon silhouette area. Pure; whole units. */
+export function asteroidResources(verts: ReadonlyArray<Vec2>): number {
+  return Math.round(polygonArea(verts) * ASTEROID_RESOURCES_PER_AREA);
+}

@@ -1,6 +1,7 @@
 import { Room, Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
+import { playerInMiningBeam, MINING_BEAM_HALF_WIDTH } from '../../core/combat/miningBeamHazard.js';
 // clampFireTick now used inside PlayerFireResolver.ts
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -1578,17 +1579,24 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmShield.delete(id);
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
+      drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
-      broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId) => {
+      broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
           shooterId,
           fromX, fromY, toX, toY,
           hit: true,
           targetId,
+          // WS-4: the Miner's mining beam passes mountId 'drill' so the client
+          // routes/tints it distinctly; the turret omits it (undefined → dropped
+          // on the wire). undefined is JSON-omitted, so byte-identical for turrets.
+          mountId,
         });
       },
+      damagePlayersInBeam: (minerId, fromX, fromY, toX, toY, perHit) =>
+        this.damagePlayersInMiningBeam(minerId, fromX, fromY, toX, toY, perHit),
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
     });
@@ -2457,7 +2465,11 @@ export class SectorRoom extends Room<SectorState> {
    *  No-op when the sector has no structures. */
   private structureTurretTick(): void {
     if (this.structureRegistry.size === 0) return;
-    this.structureGrid.tickTurrets(Date.now());
+    const nowMs = Date.now();
+    this.structureGrid.tickTurrets(nowMs);
+    // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
+    // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
+    this.structureGrid.tickMiners(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.
     this.shieldWalls.update(Date.now());
@@ -2504,7 +2516,53 @@ export class SectorRoom extends Room<SectorState> {
     y: number,
     range: number,
   ): { entityId: number; x: number; y: number } | null {
-    return this.findNearestSwarmOfKind(x, y, range, 0);
+    // WS-4 / R2.27 — skip EXHAUSTED asteroids (resources<=0) so a Miner
+    // auto-retargets to a rock that still has ore (and its mining beam stops on
+    // the dead rock). `resources===undefined` ⇒ available (un-seeded / legacy).
+    return this.findNearestSwarmOfKind(x, y, range, 0, this._asteroidNotExhausted);
+  }
+
+  /** Stable (alloc-once) predicate: an asteroid is mineable while its finite
+   *  resource pool is non-empty. Class field so `findNearestAsteroid` doesn't
+   *  allocate a closure per call (it runs per-miner per grid-pulse). */
+  private readonly _asteroidNotExhausted = (rec: SwarmEntityRecord): boolean =>
+    rec.resources === undefined || rec.resources > 0;
+
+  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's finite resource pool;
+   *  returns the amount ACTUALLY mined (0 once exhausted). The ONLY path that
+   *  depletes asteroid resources — combat never reaches it (asteroid-interaction
+   *  -model ADR). `resources===undefined` (un-seeded) ⇒ treat as infinite
+   *  (returns the full `amount`, the pre-WS-4 behaviour). */
+  private drawAsteroidResources(entityId: number, amount: number): number {
+    const rec = this.swarmRegistry.getByEntityId(entityId);
+    if (!rec || rec.resources === undefined) return amount;
+    const drawn = Math.min(amount, rec.resources);
+    rec.resources -= drawn;
+    return drawn;
+  }
+
+  /** WS-4 Phase 3 / R2.27 — apply the mining beam's light player-damage RAY:
+   *  any ACTIVE player ship whose pose intersects the miner→asteroid segment
+   *  (widened by `MINING_BEAM_HALF_WIDTH`) takes `perHit` via the standard
+   *  applyDamage path, attributed to the Miner. A thin damage ray, NOT a
+   *  physics collider — movement is unblocked. Low-frequency (mining-beam
+   *  cadence, off the 60 Hz tick); the scalar point-to-segment test allocates
+   *  nothing. */
+  private damagePlayersInMiningBeam(
+    minerId: string,
+    fromX: number, fromY: number, toX: number, toY: number,
+    perHit: number,
+  ): void {
+    const shipR = 12; // approx ship collision radius (SHIP_COLLISION_RADIUS retired)
+    for (const [playerId] of this.playerToSlot) {
+      const ship = this.getActiveShip(playerId);
+      if (!ship || !ship.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      if (playerInMiningBeam(fromX, fromY, toX, toY, pose.x, pose.y, shipR, MINING_BEAM_HALF_WIDTH)) {
+        this.applyDamage(playerId, minerId, perHit);
+      }
+    }
   }
 
   /** Nearest swarm entity of `swarmKind` (0=asteroid, 1=drone) within `range`
@@ -2516,11 +2574,13 @@ export class SectorRoom extends Room<SectorState> {
     y: number,
     range: number,
     swarmKind: number,
+    filter?: (rec: SwarmEntityRecord) => boolean,
   ): { id: string; entityId: number; x: number; y: number } | null {
     let best: { id: string; entityId: number; x: number; y: number } | null = null;
     let bestD2 = range * range;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== swarmKind) continue;
+      if (filter && !filter(rec)) continue;
       const base = slotBase(rec.slot);
       const sx = this.sabF32[base + SLOT_X_OFF]!;
       const sy = this.sabF32[base + SLOT_Y_OFF]!;

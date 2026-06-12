@@ -2,7 +2,7 @@ import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_FLAGS_OFF, FLAG_
 import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
-import { generateAsteroidVertices, type Vec2 } from '../../core/swarm/asteroidShape.js';
+import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
@@ -251,6 +251,12 @@ export class SwarmSpawner {
       vertices = generateAsteroidVertices(rec.entityId, a.radius);
       rec.vertices = vertices;
       mass ??= ASTEROID_DEFAULT_MASS;
+      // WS-4 / R2.27 — seed the finite mineable resource pool from the
+      // silhouette area (a bigger rock holds more ore). Mining draws it down;
+      // combat never touches it. Per-session (not persisted — first cut).
+      const pool = asteroidResources(vertices);
+      rec.resources = pool;
+      rec.resourcesMax = pool;
     } else if (kind === 2 && structureVertices) {
       vertices = structureVertices;
       rec.vertices = vertices;

@@ -58,3 +58,10 @@ export const CAPITAL_STARTING_MINERALS = 5000;
  *  so turrets track + engage drones responsively; actual shots are gated by the
  *  per-kind `fireRateMs`. */
 export const TURRET_TICK_MS = 100;
+
+/** WS-4 — mining-beam re-broadcast interval, ms. The Miner's beam is a
+ *  CONTINUOUS visual, so it must refresh faster than the client's ~400 ms
+ *  laser_fired TTL or it would flicker; 200 ms (5 Hz) keeps it solid with
+ *  headroom while halving the wire vs the 100 ms turret tick. Ticked from the
+ *  same `structureTurretTick` timer, gated per-Miner by `lastMiningBeamMs`. */
+export const MINING_BEAM_CADENCE_MS = 200;

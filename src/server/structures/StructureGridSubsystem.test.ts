@@ -8,19 +8,20 @@ import {
   CONSTRUCTION_PULSE_AMOUNT,
   REPAIR_PULSE_AMOUNT,
   REPAIR_COST_PER_HP,
+  MINING_BEAM_CADENCE_MS,
 } from '../../core/structures/structureGridConstants.js';
 
 /** Shared harness: a real registry + health map, with placement + grid wired
  *  over the same state (the way SectorRoom wires them). */
 function makeHarness(
-  asteroid?: { entityId: number; x: number; y: number; range?: number },
+  asteroid?: { entityId: number; x: number; y: number; range?: number; resources?: number },
   drone?: { id: string; entityId: number; x: number; y: number },
 ) {
   const registry = new StructureRegistry();
   const health = new Map<string, number>();
   const despawned: string[] = [];
   const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
-  const beams: Array<{ shooterId: string; targetId: string }> = [];
+  const beams: Array<{ shooterId: string; targetId: string; mountId?: string; fromX: number; fromY: number; toX: number; toY: number }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -39,8 +40,16 @@ function makeHarness(
     despawn: (id) => { despawned.push(id); health.delete(id); },
     findNearestAsteroid: (x, y, range) => {
       if (!asteroid) return null;
+      // WS-4: skip exhausted rocks (mirrors SectorRoom.findNearestAsteroid).
+      if (asteroid.resources !== undefined && asteroid.resources <= 0) return null;
       if (Math.hypot(asteroid.x - x, asteroid.y - y) > range) return null;
       return { entityId: asteroid.entityId, x: asteroid.x, y: asteroid.y };
+    },
+    drawAsteroidResources: (entityId, amount) => {
+      if (!asteroid || asteroid.entityId !== entityId || asteroid.resources === undefined) return amount;
+      const drawn = Math.min(amount, asteroid.resources);
+      asteroid.resources -= drawn;
+      return drawn;
     },
     findNearestDrone: (x, y, range) => {
       if (!drone) return null;
@@ -48,12 +57,13 @@ function makeHarness(
       return { id: drone.id, entityId: drone.entityId, x: drone.x, y: drone.y };
     },
     applyDamage: (targetId, shooterId, amount) => damage.push({ targetId, shooterId, amount }),
-    broadcastBeam: (shooterId, _fx, _fy, _tx, _ty, targetId) => beams.push({ shooterId, targetId }),
+    broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) =>
+      beams.push({ shooterId, targetId, mountId, fromX, fromY, toX, toY }),
   });
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, placement, grid, pulse };
+  return { registry, health, despawned, damage, beams, placement, grid, pulse, asteroid };
 }
 
 const OWNER = 'player-1';
@@ -359,6 +369,121 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     h.pulse();
     expect(minerRec.miningTargetEntityId).toBeUndefined();
     expect(minerRec.minerals).toBe(0);
+  });
+
+  it('WS-4/R2.27 Phase 1: draws down a FINITE asteroid pool, then stops + clears the target on exhaustion', () => {
+    const RATE = getStructureKind('miner').miningRate ?? 0;
+    expect(RATE).toBeGreaterThan(0);
+    const POOL = 2 * RATE; // exactly two pulses' worth of ore
+    // Asteroid in range with a finite pool; capital(+50)+solar(+30)−miner(60) = +20 → powered.
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: POOL });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    // Force solar + miner BUILT (skip the slow construction pulses) so mining
+    // starts on a known pulse — otherwise the build-loop tail would mine the
+    // small pool before we can observe the draw-down.
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+    const minerRec = h.registry.get(miner)!;
+
+    // Pulse 1: mine one RATE → pool drops by RATE, target still the rock.
+    h.pulse();
+    expect(h.asteroid!.resources).toBe(POOL - RATE);
+    expect(minerRec.miningTargetEntityId).toBe(7);
+    // Pulse 2: mine the last RATE → pool exhausted (0).
+    h.pulse();
+    expect(h.asteroid!.resources).toBe(0);
+    // Pulse 3: the exhausted rock is skipped by findNearestAsteroid → the miner
+    // clears its target (the beam will stop). RED on current code: processMining
+    // adds a flat miningRate forever with no resource read, so the pool never
+    // depletes and miningTargetEntityId stays pinned to 7.
+    h.pulse();
+    expect(minerRec.miningTargetEntityId).toBeUndefined();
+  });
+
+  it('WS-4/R2.27 Phase 2: a built+powered miner broadcasts a mining beam (mountId drill) on the cadence; targetless does NOT', () => {
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: 1_000_000 }); // plenty of ore
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    // Force solar + miner built (capital+50 + solar+30 − miner 60 = +20 → powered).
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+    // A grid pulse sets the miner's target + cached pose (processMining).
+    h.pulse();
+    expect(h.registry.get(miner)!.miningTargetEntityId).toBe(7);
+
+    // tickMiners broadcasts the mining beam from the miner to the asteroid.
+    // RED on current code: tickMiners + the mining beam don't exist (mining is
+    // silent — only the turret ever broadcasts a beam).
+    h.grid.tickMiners(10_000);
+    expect(h.beams.length).toBe(1);
+    expect(h.beams[0]!.shooterId).toBe(miner);
+    expect(h.beams[0]!.mountId).toBe('drill');
+    expect(h.beams[0]!.targetId).toBe('swarm-7'); // asteroid wire id
+
+    // Cadence gate: an immediate re-tick within MINING_BEAM_CADENCE_MS is suppressed.
+    h.grid.tickMiners(10_050);
+    expect(h.beams.length).toBe(1);
+    // …then it broadcasts again once the cadence elapses (continuous beam).
+    h.grid.tickMiners(10_000 + MINING_BEAM_CADENCE_MS + 1);
+    expect(h.beams.length).toBe(2);
+
+    // A miner with no target broadcasts nothing.
+    const mr = h.registry.get(miner)!;
+    mr.miningTargetEntityId = undefined;
+    mr.miningTargetX = undefined;
+    mr.miningTargetY = undefined;
+    const before = h.beams.length;
+    h.grid.tickMiners(20_000);
+    expect(h.beams.length).toBe(before);
+  });
+
+  it('WS-4/R2.27 Phase 2: the mining-beam endpoint is the CACHED rock pose — it does NOT re-scan the live asteroid (beam stays pinned as rocks drift)', () => {
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: 1_000_000 });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+
+    // A grid pulse caches the rock's pose (250, 0) onto the miner.
+    h.pulse();
+    h.grid.tickMiners(10_000);
+    expect(h.beams.length).toBe(1);
+    expect(h.beams[0]!.toX).toBe(250);
+    expect(h.beams[0]!.toY).toBe(0);
+    expect(h.beams[0]!.targetId).toBe('swarm-7');
+
+    // The asteroid's LIVE pose moves, but NO new grid pulse refreshes the cache.
+    // tickMiners must keep broadcasting the CACHED endpoint (250, 0) — it must
+    // NOT re-scan the live asteroid. A live re-lookup would make the beam jitter
+    // as rocks drift (and here would even find the rock out of range). This is
+    // the regression lock for the cached-pose design (guards a future switch
+    // from the cached fields back to a per-tick findNearestAsteroid).
+    h.asteroid!.x = 999;
+    h.asteroid!.y = 999;
+    h.grid.tickMiners(10_000 + MINING_BEAM_CADENCE_MS + 1);
+    expect(h.beams.length).toBe(2);
+    expect(h.beams[1]!.toX).toBe(250); // still the cached pose, NOT 999
+    expect(h.beams[1]!.toY).toBe(0);
+    expect(h.beams[1]!.targetId).toBe('swarm-7'); // cached wire id, not rebuilt
   });
 });
 

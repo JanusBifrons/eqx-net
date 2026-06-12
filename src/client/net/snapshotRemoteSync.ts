@@ -139,3 +139,23 @@ export function applyDroneMountAngles(snap: SnapshotMessage, mirror: RenderMirro
     sw.healthFrac = d.hp !== undefined ? d.hp / 100 : 1;
   }
 }
+
+/**
+ * Asteroid resource slice (WS-4 Phase 6 / R2.23 enabler). Mirrors the slim
+ * `snap.asteroids[]` slice (in-interest MINED rocks only) into the swarm mirror
+ * by entityId, so the WS-9 inspector can read a rock's remaining-fraction. Pose
+ * stays on the binary channel; this is a slim non-pose field like the drone
+ * `hp`. The server emits an entry ONLY while a rock is mined, so an entry's
+ * presence IS the "has been mined" signal — there is no full-pool reset to
+ * absent (a fully-mined-then-untouched rock keeps its last shipped values until
+ * it leaves interest). Absent slice ⇒ no-op.
+ */
+export function applyAsteroidResources(snap: SnapshotMessage, mirror: RenderMirror): void {
+  if (!snap.asteroids || snap.asteroids.length === 0) return;
+  for (const a of snap.asteroids) {
+    const sw = mirror.swarm?.get(a.id);
+    if (!sw) continue;
+    if (a.resources !== undefined) sw.resources = a.resources;
+    if (a.resourcesMax !== undefined) sw.resourcesMax = a.resourcesMax;
+  }
+}

@@ -398,6 +398,12 @@ function writeE2EDataset(
     delete el.dataset['beamRenderedFromY'];
   }
 
+  // WS-4 Phase 4 (R2.27) — count of mining beams actually drawn in the
+  // dedicated amber `_miningBeamPool` (the pool's liveCount). Published as
+  // `data-mining-beam-count` so the structure-scenario E2E can assert the
+  // Miner's beam renders distinctly (NOT the shared remote/live pool).
+  el.dataset['miningBeamCount'] = String(feedback.miningBeamCount);
+
   // Structure placement confirm — world-anchored (smoke handoff 2026-06-06,
   // Issue 5). Move the (position:fixed) confirm banner to the renderer's
   // projected on-screen position of the blueprint ghost, so it sits over the

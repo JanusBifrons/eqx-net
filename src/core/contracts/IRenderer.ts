@@ -142,6 +142,13 @@ export interface SwarmRenderState {
    *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
    *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
   healthFrac?: number;
+  /** Mineable resource pool for an asteroid (kind 0), decoded from the snapshot
+   *  `asteroids[]` slice (WS-4 Phase 6 / R2.23 enabler). The server emits these
+   *  ONLY for MINED in-interest asteroids (`resources < resourcesMax`), so
+   *  absent ⇒ untouched/full. Feeds the WS-9 inspector's remaining-fraction
+   *  readout. Low-cadence (snapshot rate), not per-frame. */
+  resources?: number;
+  resourcesMax?: number;
   /** Per-mount rotation angle, ship-relative AND already biased past
    *  `mount.baseAngle`. Indexed by catalogue mount-order. Multi-mount/
    *  turret refactor Phase 4c (2026-05-11): authoritative angles arrive in
@@ -588,6 +595,19 @@ export interface RendererFeedback {
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
    *  read health from the mirror directly). `null` when nothing is selected. */
   selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
+  /**
+   * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
+   * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as
+   * ACTUALLY rendered this frame (the pool's `liveCount`). WS-4 Phase 4 / R2.27.
+   *
+   * A dedicated pool (separate from the combat `_remoteBeamPool`) is what lets
+   * an E2E isolate the mining beam — `liveBeamRenderedFromX` / the shared remote
+   * pool can't distinguish a drill beam from a turret/laser beam. Published as
+   * `data-mining-beam-count`. Reads the real drawn-sprite count, never a
+   * recompute (the "test observable reads actual output" rule). Test-only
+   * surface — not consumed by gameplay logic.
+   */
+  miningBeamCount: number;
 }
 
 export interface IRenderer {
