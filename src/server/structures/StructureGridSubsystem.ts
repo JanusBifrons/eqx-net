@@ -32,6 +32,7 @@ import {
   REPAIR_COST_PER_HP,
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
+  MINING_BEAM_CADENCE_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -87,7 +88,7 @@ export interface StructureGridHooks {
   /** Phase 5 — apply turret damage to a target through the standard path. */
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
-  broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string): void;
+  broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
   /** Live non-structure obstacles (asteroids) that block a connection's line of
    *  sight — same source the placement subsystem passes to autoConnectStructure.
    *  Used by the reconnect sweep so a retry honours current asteroid geometry.
@@ -310,7 +311,7 @@ export class StructureGridSubsystem {
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'miner' || !rec.isConstructed) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
-        rec.miningTargetEntityId = undefined;
+        this.clearMiningTarget(rec);
         continue;
       }
       const kind = getStructureKind('miner');
@@ -318,8 +319,12 @@ export class StructureGridSubsystem {
       // exhausted asteroid is never returned and the miner auto-retargets to a
       // fresh in-range rock (or clears its target → the beam stops).
       const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
-      rec.miningTargetEntityId = target?.entityId;
-      if (!target) continue;
+      if (!target) { this.clearMiningTarget(rec); continue; }
+      // Cache the target + its (static) pose so the faster mining-beam tick
+      // (tickMiners) can broadcast the beam endpoint without re-scanning.
+      rec.miningTargetEntityId = target.entityId;
+      rec.miningTargetX = target.x;
+      rec.miningTargetY = target.y;
       // WS-4 / R2.27 — draw from the asteroid's FINITE resource pool, capped by
       // the miner's per-pulse rate AND its remaining storage (don't burn finite
       // ore into full storage). drawAsteroidResources decrements the pool and
@@ -330,6 +335,44 @@ export class StructureGridSubsystem {
         ? this.hooks.drawAsteroidResources(target.entityId, want)
         : want;
       rec.minerals = Math.min(kind.storageCapacity, rec.minerals + drawn);
+    }
+  }
+
+  /** Clear a Miner's target + cached pose (unpowered / no in-range rock) so the
+   *  mining beam stops on the next tick. */
+  private clearMiningTarget(rec: StructureRecord): void {
+    rec.miningTargetEntityId = undefined;
+    rec.miningTargetX = undefined;
+    rec.miningTargetY = undefined;
+  }
+
+  /**
+   * WS-4 Phase 2 (R2.27) — broadcast each built+powered Miner's MINING BEAM
+   * (`laser_fired`, mountId `drill`) from the miner to its cached target asteroid
+   * pose, on the `MINING_BEAM_CADENCE_MS` gate. Mirrors `tickTurrets`; ticked
+   * from the same `structureTurretTick` timer (faster than the 1 Hz pulse so the
+   * CONTINUOUS beam doesn't flicker under the client's ~400 ms laser TTL).
+   *
+   * The drill mount is NOT slewed: a structure shooter's beam renders from the
+   * WIRE endpoints (miner → asteroid), so a mount-angle slew would have zero
+   * render effect AND would add a second mount-angle ownership site (Invariant
+   * #12). The endpoint pose is the static asteroid pose cached by `processMining`.
+   * Allocation-free: a per-record scalar cadence compare + the wire-id template
+   * is the only string (the beam itself is broadcast infrequently, off the 60 Hz
+   * tick).
+   */
+  tickMiners(nowMs: number): void {
+    if (!this.hooks.broadcastBeam) return;
+    for (const rec of this.hooks.registry.all()) {
+      if (rec.kind !== 'miner' || !rec.isConstructed) continue;
+      if (rec.miningTargetEntityId === undefined || rec.miningTargetX === undefined || rec.miningTargetY === undefined) continue;
+      if (!this.powerSummaryFor(rec.id).powered) continue;
+      if (nowMs - (rec.lastMiningBeamMs ?? -Infinity) < MINING_BEAM_CADENCE_MS) continue;
+      rec.lastMiningBeamMs = nowMs;
+      this.hooks.broadcastBeam(
+        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
+        `swarm-${rec.miningTargetEntityId}`, 'drill',
+      );
     }
   }
 

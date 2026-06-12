@@ -8,6 +8,7 @@ import {
   CONSTRUCTION_PULSE_AMOUNT,
   REPAIR_PULSE_AMOUNT,
   REPAIR_COST_PER_HP,
+  MINING_BEAM_CADENCE_MS,
 } from '../../core/structures/structureGridConstants.js';
 
 /** Shared harness: a real registry + health map, with placement + grid wired
@@ -20,7 +21,7 @@ function makeHarness(
   const health = new Map<string, number>();
   const despawned: string[] = [];
   const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
-  const beams: Array<{ shooterId: string; targetId: string }> = [];
+  const beams: Array<{ shooterId: string; targetId: string; mountId?: string }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -56,7 +57,7 @@ function makeHarness(
       return { id: drone.id, entityId: drone.entityId, x: drone.x, y: drone.y };
     },
     applyDamage: (targetId, shooterId, amount) => damage.push({ targetId, shooterId, amount }),
-    broadcastBeam: (shooterId, _fx, _fy, _tx, _ty, targetId) => beams.push({ shooterId, targetId }),
+    broadcastBeam: (shooterId, _fx, _fy, _tx, _ty, targetId, mountId) => beams.push({ shooterId, targetId, mountId }),
   });
 
   let now = 0;
@@ -403,6 +404,49 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     // depletes and miningTargetEntityId stays pinned to 7.
     h.pulse();
     expect(minerRec.miningTargetEntityId).toBeUndefined();
+  });
+
+  it('WS-4/R2.27 Phase 2: a built+powered miner broadcasts a mining beam (mountId drill) on the cadence; targetless does NOT', () => {
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: 1_000_000 }); // plenty of ore
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    // Force solar + miner built (capital+50 + solar+30 − miner 60 = +20 → powered).
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+    // A grid pulse sets the miner's target + cached pose (processMining).
+    h.pulse();
+    expect(h.registry.get(miner)!.miningTargetEntityId).toBe(7);
+
+    // tickMiners broadcasts the mining beam from the miner to the asteroid.
+    // RED on current code: tickMiners + the mining beam don't exist (mining is
+    // silent — only the turret ever broadcasts a beam).
+    h.grid.tickMiners(10_000);
+    expect(h.beams.length).toBe(1);
+    expect(h.beams[0]!.shooterId).toBe(miner);
+    expect(h.beams[0]!.mountId).toBe('drill');
+    expect(h.beams[0]!.targetId).toBe('swarm-7'); // asteroid wire id
+
+    // Cadence gate: an immediate re-tick within MINING_BEAM_CADENCE_MS is suppressed.
+    h.grid.tickMiners(10_050);
+    expect(h.beams.length).toBe(1);
+    // …then it broadcasts again once the cadence elapses (continuous beam).
+    h.grid.tickMiners(10_000 + MINING_BEAM_CADENCE_MS + 1);
+    expect(h.beams.length).toBe(2);
+
+    // A miner with no target broadcasts nothing.
+    const mr = h.registry.get(miner)!;
+    mr.miningTargetEntityId = undefined;
+    mr.miningTargetX = undefined;
+    mr.miningTargetY = undefined;
+    const before = h.beams.length;
+    h.grid.tickMiners(20_000);
+    expect(h.beams.length).toBe(before);
   });
 });
 

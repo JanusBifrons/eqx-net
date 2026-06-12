@@ -1581,13 +1581,17 @@ export class SectorRoom extends Room<SectorState> {
       drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
-      broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId) => {
+      broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) => {
         this.broadcast('laser_fired', {
           type: 'laser_fired',
           shooterId,
           fromX, fromY, toX, toY,
           hit: true,
           targetId,
+          // WS-4: the Miner's mining beam passes mountId 'drill' so the client
+          // routes/tints it distinctly; the turret omits it (undefined → dropped
+          // on the wire). undefined is JSON-omitted, so byte-identical for turrets.
+          mountId,
         });
       },
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
@@ -2458,7 +2462,11 @@ export class SectorRoom extends Room<SectorState> {
    *  No-op when the sector has no structures. */
   private structureTurretTick(): void {
     if (this.structureRegistry.size === 0) return;
-    this.structureGrid.tickTurrets(Date.now());
+    const nowMs = Date.now();
+    this.structureGrid.tickTurrets(nowMs);
+    // WS-4 — re-broadcast each Miner's mining beam on the same fast cadence so
+    // the continuous beam tracks + doesn't flicker (gated per-Miner internally).
+    this.structureGrid.tickMiners(nowMs);
     // Refresh wall active states at the turret cadence so a stun lifts (and a
     // power-loss drop registers) within ~100 ms, not a full grid pulse later.
     this.shieldWalls.update(Date.now());

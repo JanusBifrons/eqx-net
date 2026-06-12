@@ -45,6 +45,15 @@ export interface StructureRecord {
    *  (for the client beam). Transient; recomputed each pulse, undefined when
    *  not a miner / unpowered / no asteroid in range. */
   miningTargetEntityId?: number;
+  /** WS-4 Phase 2 — cached pose of the target asteroid (static, so the 1 Hz
+   *  pulse's value is stable between pulses), so the faster mining-beam tick
+   *  can broadcast the beam endpoint without re-scanning. Cleared with the
+   *  target. */
+  miningTargetX?: number;
+  miningTargetY?: number;
+  /** WS-4 Phase 2 — wall-clock ms of this Miner's last mining-beam broadcast
+   *  (the beam cadence gate, keeps the beam continuous without spamming wire). */
+  lastMiningBeamMs?: number;
   /** Phase 5 — the drone entityId this Turret is aiming at (for the client aim
    *  line). Transient; recomputed each turret tick. */
   turretTargetEntityId?: number;
