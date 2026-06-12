@@ -16,6 +16,13 @@ export const CONNECTOR_IDLE_COLOR = 0x4488aa;
 export const CONNECTOR_MINERAL_COLOR = 0xee8844;
 /** Power-flow tint (reserved — power is aggregated, not flashed, in Phase 3). */
 export const CONNECTOR_POWER_COLOR = 0x44ddff;
+/** R2.2 — the travelling flow-pulse "packet" tint: a bright warm gold, distinct
+ *  from both the idle wire and the mineral brighten so it reads as a moving
+ *  energy packet, not just a brighter line. */
+export const CONNECTOR_FLOW_PULSE_COLOR = 0xffe08a;
+/** R2.2 — flow-pulse traversal period (ms): one packet crosses an edge in
+ *  ~0.85 s (a touch faster than the 1 Hz grid pulse so the flow reads lively). */
+export const CONNECTOR_PULSE_PERIOD_MS = 850;
 
 export interface ConnectorVisual {
   color: number;
@@ -25,6 +32,23 @@ export interface ConnectorVisual {
   glowAlpha: number;
   /** Glow overlay width. */
   glowWidth: number;
+  // ── R2.2 directional flow pulse (only set by `connectorVisualInto`) ───────
+  /** Draw the travelling comet this frame? (false on idle / preview lines). */
+  pulseActive?: boolean;
+  /** Comet phase position [0,1) along the client-local pulse clock (the renderer
+   *  maps it onto SOURCE→DEST). */
+  pulseT?: number;
+  pulseColor?: number;
+  pulseAlpha?: number;
+  pulseWidth?: number;
+}
+
+/** Comet segment endpoints (reused-into scratch — the renderer holds one). */
+export interface CometSegment {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
 /** Preview-line tints for the placement connection preview (Item C / WS-5
@@ -91,33 +115,113 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
   return { color: PREVIEW_OK_COLOR, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
 }
 
+/** Positive fractional part (`x - floor(x)`, always in [0,1)). */
+function fract(x: number): number {
+  const f = x - Math.floor(x);
+  return f < 0 ? f + 1 : f;
+}
+
 /**
- * Visual params for a connection given its flash window. `scale` is the
- * viewport zoom (line widths are kept ≥ 1 device px by dividing by scale).
+ * Visual params for a connection given its flash window — written INTO `out`
+ * (no allocation; the renderer hot path holds one scratch struct, invariant
+ * #14). Fills the base-line style (idle muted-blue, brightening + glowing while
+ * flowing and fading over the last `FLASH_DURATION_MS`) AND the R2.2 directional
+ * flow-pulse fields (a travelling comet, continuous phase clock; `phaseOffset`
+ * ∈ [0,1) desynchronises edges so the grid reads as organic flow, not a global
+ * strobe). The comet's source→dest direction is resolved by the renderer via
+ * `cometSegment` (it knows which endpoint is the flow source).
+ */
+export function connectorVisualInto(
+  out: ConnectorVisual,
+  flashUntilMs: number,
+  nowMs: number,
+  scale: number,
+  phaseOffset = 0,
+): ConnectorVisual {
+  const safeScale = scale > 0 ? scale : 1;
+  if (nowMs >= flashUntilMs) {
+    out.color = CONNECTOR_IDLE_COLOR;
+    out.alpha = 0.3;
+    out.width = Math.max(1 / safeScale, 1);
+    out.glowAlpha = 0;
+    out.glowWidth = 0;
+    out.pulseActive = false;
+    out.pulseT = 0;
+    out.pulseColor = CONNECTOR_FLOW_PULSE_COLOR;
+    out.pulseAlpha = 0;
+    out.pulseWidth = 0;
+    return out;
+  }
+  // flashProgress 0 (just flashed) → 1 (about to go idle).
+  const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
+  const width = Math.max(1 / safeScale, 2.5);
+  out.color = CONNECTOR_MINERAL_COLOR;
+  out.alpha = 0.9 - flashProgress * 0.5;
+  out.width = width;
+  out.glowAlpha = (1 - flashProgress) * 0.3;
+  out.glowWidth = width * 3;
+  // Travelling comet — continuous client phase clock; dims as the flow stops
+  // (flashProgress → 1 in the window's last FLASH_DURATION_MS).
+  out.pulseActive = true;
+  out.pulseT = fract(nowMs / CONNECTOR_PULSE_PERIOD_MS + phaseOffset);
+  out.pulseColor = CONNECTOR_FLOW_PULSE_COLOR;
+  out.pulseAlpha = 0.95 * (1 - flashProgress);
+  out.pulseWidth = Math.max(2 / safeScale, 3.5);
+  return out;
+}
+
+/**
+ * Allocating wrapper for `connectorVisualInto` — returns a fresh struct. Used by
+ * tests and any non-hot caller; the per-frame renderer path uses
+ * `connectorVisualInto` with a reused scratch.
  */
 export function connectorVisualParams(
   flashUntilMs: number,
   nowMs: number,
   scale: number,
 ): ConnectorVisual {
+  return connectorVisualInto(
+    { color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 },
+    flashUntilMs,
+    nowMs,
+    scale,
+  );
+}
+
+/** Comet "packet" half-length in screen pixels (kept ~constant on screen by
+ *  dividing by zoom). */
+const COMET_HALF_PX = 12;
+
+/**
+ * R2.2 — the travelling-comet segment endpoints along an edge, written INTO
+ * `out` (no allocation). `t` is the pulse phase [0,1); `sourceIsLo` is whether
+ * the lower-id endpoint `(ax,ay)` is the flow SOURCE — when true the comet runs
+ * a→b as phase 0→1, otherwise it runs b→a (so it ALWAYS travels source→dest,
+ * the visible direction cue). Coords are in whatever space the caller passes
+ * (the renderer passes Pixi-space, already Y-negated) — pure linear interp, so
+ * the space is irrelevant. The segment is clamped to the edge at the ends.
+ */
+export function cometSegment(
+  out: CometSegment,
+  t: number,
+  sourceIsLo: boolean,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  scale: number,
+): CometSegment {
+  const tt = sourceIsLo ? t : 1 - t;
+  const dx = bx - ax;
+  const dy = by - ay;
+  const edgeLen = Math.hypot(dx, dy);
   const safeScale = scale > 0 ? scale : 1;
-  if (nowMs >= flashUntilMs) {
-    return {
-      color: CONNECTOR_IDLE_COLOR,
-      alpha: 0.3,
-      width: Math.max(1 / safeScale, 1),
-      glowAlpha: 0,
-      glowWidth: 0,
-    };
-  }
-  // flashProgress 0 (just flashed) → 1 (about to go idle).
-  const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
-  const width = Math.max(1 / safeScale, 2.5);
-  return {
-    color: CONNECTOR_MINERAL_COLOR,
-    alpha: 0.9 - flashProgress * 0.5,
-    width,
-    glowAlpha: (1 - flashProgress) * 0.3,
-    glowWidth: width * 3,
-  };
+  const dt = edgeLen > 0.001 ? Math.min(0.45, Math.max(COMET_HALF_PX / safeScale, COMET_HALF_PX) / edgeLen) : 0;
+  const t0 = Math.max(0, tt - dt);
+  const t1 = Math.min(1, tt + dt);
+  out.x0 = ax + dx * t0;
+  out.y0 = ay + dy * t0;
+  out.x1 = ax + dx * t1;
+  out.y1 = ay + dy * t1;
+  return out;
 }

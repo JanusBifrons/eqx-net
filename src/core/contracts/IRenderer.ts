@@ -314,6 +314,13 @@ export interface RenderMirror {
    *  renderer); value is the `performance.now()` ms until which the segment
    *  renders "flowing". */
   gridFlashes?: Map<number, number>;
+  /** R2.2 — per-edge flow DIRECTION for the travelling-pulse comet. Same packed
+   *  `min * 65536 + max` key as `gridFlashes`; value is the entityId that was
+   *  the route SOURCE for the latest pulse (the `grid_pulse.flashed` pairs are
+   *  ordered source→dest, but the sorted key discards that — this recovers it).
+   *  Absent ⇒ the comet defaults to running lower-id → higher-id. Plain numbers,
+   *  so it crosses the worker boundary like `gridFlashes`. */
+  gridFlowSrc?: Map<number, number>;
   /** Projectiles: both server-authoritative and client ghost entries. */
   projectiles?: Map<string, ProjectileRenderState>;
   /** In-flight heat-seeking missiles. Server-authoritative pose mirrored
