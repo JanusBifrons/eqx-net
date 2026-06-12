@@ -22,7 +22,7 @@
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, isWeaponId, type WeaponDef, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
@@ -90,6 +90,10 @@ export interface StructureGridHooks {
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
+  /** WS-8 (R2.15) — spawn a server PROJECTILE bolt from a Bolt Turret toward its
+   *  target (the player/AI fire path's `spawnServerProjectile`, ownerId = the
+   *  turret's `pstruct-` id). Absent ⇒ no bolt (unit-harness fallback). */
+  spawnProjectile?(shooterId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void;
   /** WS-4 Phase 3 — apply the mining beam's light player-damage RAY: any player
    *  ship intersecting the miner→asteroid segment takes `perHitDamage`. A thin
    *  damage ray, NOT a physics collider (movement is unblocked). Absent ⇒ no-op. */
@@ -139,33 +143,86 @@ export class StructureGridSubsystem {
    */
   tickTurrets(nowMs: number): void {
     if (!this.hooks.findNearestDrone || !this.hooks.applyDamage) return;
-    const kind = getStructureKind('turret');
-    // The turret fires its mount's bound catalogue beam weapon (same model as
-    // ships) on that weapon's standard cooldown — continuous small hits, not a
-    // 600 ms pulse (playtest 2026-06-10 Issue 5). Resolved once per tick (the
-    // kind is constant). `TURRET_TICK_MS` stays the targeting cadence; the beam
-    // cooldown gates actual fire.
-    const mountWeaponId = kind.mounts?.[0]?.weaponId;
-    const beamDef = getWeapon(isWeaponId(mountWeaponId) ? mountWeaponId : 'hitscan');
-    const { cooldownMs, perHitDamage } = resolveTurretBeam(
-      kind.weaponDamage ?? 0,
-      kind.fireRateMs ?? 600,
-      beamDef.cooldownTicks,
-    );
+    // WS-8 (R2.15) — generalised from the hard-coded 'turret' kind to ANY defence
+    // turret, dispatched by its bound weapon's MODE: hitscan = the continuous
+    // beam (existing); projectile = a dodgeable bolt (Bolt Turret); missile = a
+    // homing missile (Missile Turret). `TURRET_TICK_MS` stays the targeting
+    // cadence; the per-mode cooldown gates the actual shot.
     for (const rec of this.hooks.registry.all()) {
-      if (rec.kind !== 'turret' || !rec.isConstructed) continue;
+      if (!rec.isConstructed) continue;
+      const kind = getStructureKind(rec.kind);
+      const mountWeaponId = kind.mounts?.[0]?.weaponId;
+      // A DEFENCE TURRET = a structure with a `weaponRange` AND a weaponised
+      // mount. Data-driven (Open/Closed): auto-includes turret/laser_bolt_turret/
+      // missile_turret and EXCLUDES the Miner (it has `miningRange` + a 'laser'
+      // DRILL, driven by tickMiners — NOT a `weaponRange`).
+      if (kind.weaponRange == null || !isWeaponId(mountWeaponId)) continue;
       if (!this.powerSummaryFor(rec.id).powered) {
         rec.turretTargetEntityId = undefined;
         continue;
       }
-      const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange ?? 0);
+      const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange);
       rec.turretTargetEntityId = target?.entityId;
       if (!target) continue;
-      if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
-      rec.lastTurretFireMs = nowMs;
-      this.hooks.applyDamage(target.id, rec.id, perHitDamage);
-      this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
+      const def = getWeapon(mountWeaponId);
+      if (def.mode === 'hitscan') {
+        // Continuous beam: a steady stream of small hits the client renders as
+        // one beam (Issue 5). DPS-budget DoT on the beam cadence.
+        const { cooldownMs, perHitDamage } = resolveTurretBeam(
+          kind.weaponDamage ?? 0,
+          kind.fireRateMs ?? 600,
+          def.cooldownTicks,
+        );
+        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cooldownMs) continue;
+        rec.lastTurretFireMs = nowMs;
+        this.hooks.applyDamage!(target.id, rec.id, perHitDamage);
+        this.hooks.broadcastBeam?.(rec.id, rec.x, rec.y, target.x, target.y, target.id);
+      } else if (def.mode === 'projectile') {
+        // SHOT model: one dodgeable bolt per the KIND's `fireRateMs` (NOT the
+        // weapon's rapid player cooldown — at 10 ticks that would be a firehose).
+        // Damage lands on impact via the projectile sim; the client renders the
+        // bolt off the `projectiles[]` slice (pose-authoritative).
+        const cadence = kind.fireRateMs ?? 600;
+        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        rec.lastTurretFireMs = nowMs;
+        this.fireTurretShot(rec, kind.radius, kind.weaponDamage, def, target.x, target.y);
+      }
+      // def.mode === 'missile' → WS-8 step 3 (needs the drones-only targeting
+      // branch in isMissileTargetHostile before it can ship).
     }
+  }
+
+  /** WS-8 — spawn ONE bolt from a projectile turret toward (tx, ty), offset
+   *  ahead of the barrel so it clears the firing structure's own collider (the
+   *  projectile pipeline also skips the firing owner). Alloc-free (scalars). */
+  private fireTurretShot(
+    rec: StructureRecord,
+    radius: number,
+    weaponDamage: number | undefined,
+    def: WeaponDef,
+    tx: number,
+    ty: number,
+  ): void {
+    if (!this.hooks.spawnProjectile || def.mode !== 'projectile') return;
+    const dx = tx - rec.x;
+    const dy = ty - rec.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ndx = dx / dist;
+    const ndy = dy / dist;
+    // Emerge from the barrel tip (clear the turret radius) — a static structure
+    // has no velocity to inherit, so the bolt velocity is pure aim × speed.
+    const muzzle = radius + 8;
+    this.hooks.spawnProjectile(
+      rec.id,
+      rec.x + ndx * muzzle,
+      rec.y + ndy * muzzle,
+      ndx * def.speed,
+      ndy * def.speed,
+      weaponDamage ?? def.damage,
+      def.radius,
+      def.maxTicks,
+      def.id,
+    );
   }
 
   /** One grid heartbeat. `nowMs` stamps connection flashes. */

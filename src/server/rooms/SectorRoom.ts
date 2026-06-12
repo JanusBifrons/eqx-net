@@ -1597,6 +1597,10 @@ export class SectorRoom extends Room<SectorState> {
       },
       damagePlayersInBeam: (minerId, fromX, fromY, toX, toY, perHit) =>
         this.damagePlayersInMiningBeam(minerId, fromX, fromY, toX, toY, perHit),
+      // WS-8 (R2.15) — a Bolt Turret spawns a server projectile toward its drone
+      // target (ownerId = the turret's pstruct- id; the pipeline skips the owner).
+      spawnProjectile: (shooterId, x, y, vx, vy, dmg, r, mt, wId) =>
+        this.spawnServerProjectile(shooterId, x, y, vx, vy, dmg, r, mt, wId),
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
     });

@@ -22,6 +22,7 @@ function makeHarness(
   const despawned: string[] = [];
   const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
   const beams: Array<{ shooterId: string; targetId: string; mountId?: string; fromX: number; fromY: number; toX: number; toY: number }> = [];
+  const projectiles: Array<{ shooterId: string; x: number; y: number; vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: string }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -59,11 +60,13 @@ function makeHarness(
     applyDamage: (targetId, shooterId, amount) => damage.push({ targetId, shooterId, amount }),
     broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) =>
       beams.push({ shooterId, targetId, mountId, fromX, fromY, toX, toY }),
+    spawnProjectile: (shooterId, x, y, vx, vy, dmg, radius, maxTicks, weaponId) =>
+      projectiles.push({ shooterId, x, y, vx, vy, damage: dmg, radius, maxTicks, weaponId }),
   });
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, placement, grid, pulse, asteroid };
+  return { registry, health, despawned, damage, beams, projectiles, placement, grid, pulse, asteroid };
 }
 
 const OWNER = 'player-1';
@@ -622,6 +625,43 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     expect(h.registry.get(turret)!.isConstructed).toBe(true);
     h.grid.tickTurrets(10_000);
     expect(h.damage.length).toBe(0);
+  });
+
+  it('a Bolt Turret fires a dodgeable PROJECTILE on its fireRateMs cadence — no stutter (WS-8 §C)', () => {
+    // Drone straight +y of the turret so the bolt velocity is a clean (0, +speed).
+    const drone = { id: 'swarm-7', entityId: 7, x: 0, y: 500 };
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnector(h, 120, 120);
+    h.placement.place(OWNER, 'solar', 150, 0); // power the grid
+    const bolt = h.placement.place(OWNER, 'laser_bolt_turret', 0, 200)!;
+    for (let i = 0; i < 120; i++) h.pulse();
+    expect(h.registry.get(bolt)!.isConstructed).toBe(true);
+
+    const kind = getStructureKind('laser_bolt_turret');
+    const def = getWeapon('laser'); // the bound projectile
+    const speed = def.mode === 'projectile' ? def.speed : 0;
+
+    // First tick spawns ONE bolt; an immediate second tick is within the kind's
+    // fireRateMs cadence → NO second bolt (not the weapon's 167 ms firehose).
+    h.grid.tickTurrets(10_000);
+    h.grid.tickTurrets(10_050);
+    expect(h.projectiles.length).toBe(1);
+    expect(h.damage.length).toBe(0); // SHOT model — damage lands on impact, not here
+    expect(h.beams.length).toBe(0); // a bolt, NOT a beam
+    const p = h.projectiles[0]!;
+    expect(p.shooterId).toBe(bolt);
+    expect(p.weaponId).toBe('laser');
+    expect(p.damage).toBe(kind.weaponDamage); // per-kind tuned (18), not the player 12
+    // Aimed at the drone (+y) at the weapon's speed; spawned ahead of the barrel.
+    expect(p.vx).toBeCloseTo(0, 3);
+    expect(p.vy).toBeCloseTo(speed, 0);
+    expect(p.y).toBeGreaterThan(200); // emerged ahead of the turret toward the drone
+    expect(h.registry.get(bolt)!.turretTargetEntityId).toBe(7);
+
+    // After fireRateMs elapses it fires the NEXT bolt (steady cadence, no skipped window).
+    h.grid.tickTurrets(10_000 + kind.fireRateMs! + 1);
+    expect(h.projectiles.length).toBe(2);
   });
 });
 
