@@ -23,6 +23,7 @@
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, isWeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { MINING_BEAM_PLAYER_DPS } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection } from '../../core/structures/Connection.js';
@@ -89,6 +90,10 @@ export interface StructureGridHooks {
   applyDamage?(targetId: string, shooterId: string, damage: number): void;
   /** Phase 5 — broadcast the turret fire beam (laser_fired). */
   broadcastBeam?(shooterId: string, fromX: number, fromY: number, toX: number, toY: number, targetId: string, mountId?: string): void;
+  /** WS-4 Phase 3 — apply the mining beam's light player-damage RAY: any player
+   *  ship intersecting the miner→asteroid segment takes `perHitDamage`. A thin
+   *  damage ray, NOT a physics collider (movement is unblocked). Absent ⇒ no-op. */
+  damagePlayersInBeam?(minerId: string, fromX: number, fromY: number, toX: number, toY: number, perHitDamage: number): void;
   /** Live non-structure obstacles (asteroids) that block a connection's line of
    *  sight — same source the placement subsystem passes to autoConnectStructure.
    *  Used by the reconnect sweep so a retry honours current asteroid geometry.
@@ -372,6 +377,13 @@ export class StructureGridSubsystem {
       this.hooks.broadcastBeam(
         rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
         `swarm-${rec.miningTargetEntityId}`, 'drill',
+      );
+      // WS-4 Phase 3 — light player-damage ray along the same beam. Per-broadcast
+      // chip = DPS × cadence so the effective DPS is constant regardless of the
+      // beam cadence (the resolveTurretBeam-style DPS-preserving model).
+      this.hooks.damagePlayersInBeam?.(
+        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
+        MINING_BEAM_PLAYER_DPS * (MINING_BEAM_CADENCE_MS / 1000),
       );
     }
   }

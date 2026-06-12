@@ -1,6 +1,7 @@
 import { Room, Client } from 'colyseus';
 import { randomUUID } from 'node:crypto';
 import { aggregateRamming } from '../../core/combat/Ramming.js';
+import { playerInMiningBeam, MINING_BEAM_HALF_WIDTH } from '../../core/combat/miningBeamHazard.js';
 // clampFireTick now used inside PlayerFireResolver.ts
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -1594,6 +1595,8 @@ export class SectorRoom extends Room<SectorState> {
           mountId,
         });
       },
+      damagePlayersInBeam: (minerId, fromX, fromY, toX, toY, perHit) =>
+        this.damagePlayersInMiningBeam(minerId, fromX, fromY, toX, toY, perHit),
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
     });
@@ -2536,6 +2539,30 @@ export class SectorRoom extends Room<SectorState> {
     const drawn = Math.min(amount, rec.resources);
     rec.resources -= drawn;
     return drawn;
+  }
+
+  /** WS-4 Phase 3 / R2.27 — apply the mining beam's light player-damage RAY:
+   *  any ACTIVE player ship whose pose intersects the miner→asteroid segment
+   *  (widened by `MINING_BEAM_HALF_WIDTH`) takes `perHit` via the standard
+   *  applyDamage path, attributed to the Miner. A thin damage ray, NOT a
+   *  physics collider — movement is unblocked. Low-frequency (mining-beam
+   *  cadence, off the 60 Hz tick); the scalar point-to-segment test allocates
+   *  nothing. */
+  private damagePlayersInMiningBeam(
+    minerId: string,
+    fromX: number, fromY: number, toX: number, toY: number,
+    perHit: number,
+  ): void {
+    const shipR = 12; // approx ship collision radius (SHIP_COLLISION_RADIUS retired)
+    for (const [playerId] of this.playerToSlot) {
+      const ship = this.getActiveShip(playerId);
+      if (!ship || !ship.alive || !ship.isActive) continue;
+      const pose = this.shipPoseCache.get(playerId);
+      if (!pose) continue;
+      if (playerInMiningBeam(fromX, fromY, toX, toY, pose.x, pose.y, shipR, MINING_BEAM_HALF_WIDTH)) {
+        this.applyDamage(playerId, minerId, perHit);
+      }
+    }
   }
 
   /** Nearest swarm entity of `swarmKind` (0=asteroid, 1=drone) within `range`
