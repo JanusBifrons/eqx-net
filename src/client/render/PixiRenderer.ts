@@ -23,6 +23,7 @@ import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUp
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
 import { readFxKillSwitches } from './fxKillSwitches';
 import { BeamSpritePool } from './BeamSpritePool';
+import { REMOTE_BEAM_STYLE, MINING_BEAM_STYLE } from './beamStyles';
 import { MountVisualManager } from './MountVisualManager';
 import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
@@ -596,13 +597,14 @@ export class PixiRenderer implements IRenderer {
       this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1 });
       this.liveBeamGfx = this._liveBeamPool.container;
       this.shipContainer.addChild(this.liveBeamGfx);
-      this._remoteBeamPool = new BeamSpritePool({ tint: 0xffaa44, width: 2, alpha: 1 });
+      this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);
       this.remoteBeamGfx = this._remoteBeamPool.container;
       this.shipContainer.addChild(this.remoteBeamGfx);
       // WS-4 Phase 4 — the Miner's mining beam: a distinct fat warm-amber drill
       // beam, separate pool so its `liveCount` is isolatable + its look differs
-      // from the combat laser. Sits behind the ship sprites like the others.
-      this._miningBeamPool = new BeamSpritePool({ tint: 0xffb24d, width: 3.5, alpha: 0.9 });
+      // from the combat laser. Styles are named consts (beamStyles.ts) so the
+      // distinction is greppable + regression-locked. Sits behind the sprites.
+      this._miningBeamPool = new BeamSpritePool(MINING_BEAM_STYLE);
       this.miningBeamGfx = this._miningBeamPool.container;
       this.shipContainer.addChild(this.miningBeamGfx);
 

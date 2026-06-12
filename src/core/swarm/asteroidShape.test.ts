@@ -4,6 +4,8 @@ import {
   mulberry32,
   polygonArea,
   verticesToFloat32,
+  asteroidResources,
+  ASTEROID_RESOURCES_PER_AREA,
   type Vec2,
 } from './asteroidShape.js';
 import {
@@ -144,5 +146,31 @@ describe('polygonArea', () => {
     // polygon never reaches the full circle.
     expect(area).toBeGreaterThan(circleArea * 0.4);
     expect(area).toBeLessThan(circleArea * 1.0);
+  });
+});
+
+describe('asteroidResources (WS-4 Phase 1 / R2.27 — finite mineable pool)', () => {
+  it('is area × the per-area rate, rounded (not a magic number)', () => {
+    const verts = generateAsteroidVertices(7, 32);
+    expect(asteroidResources(verts)).toBe(Math.round(polygonArea(verts) * ASTEROID_RESOURCES_PER_AREA));
+  });
+
+  it('is deterministic per shape', () => {
+    const a = generateAsteroidVertices(42, 24);
+    const b = generateAsteroidVertices(42, 24);
+    expect(asteroidResources(a)).toBe(asteroidResources(b));
+  });
+
+  it('is positive for a real asteroid and scales with area (bigger rock ⇒ more ore)', () => {
+    const small = asteroidResources(generateAsteroidVertices(99, 12));
+    const large = asteroidResources(generateAsteroidVertices(99, 48));
+    expect(small).toBeGreaterThan(0);
+    // 4× radius ⇒ ~16× area ⇒ strictly more resources.
+    expect(large).toBeGreaterThan(small);
+  });
+
+  it('is 0 for a degenerate (zero-area) polygon', () => {
+    expect(asteroidResources([])).toBe(0);
+    expect(asteroidResources([{ x: 0, y: 0 }, { x: 1, y: 0 }])).toBe(0);
   });
 });

@@ -21,7 +21,7 @@ function makeHarness(
   const health = new Map<string, number>();
   const despawned: string[] = [];
   const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
-  const beams: Array<{ shooterId: string; targetId: string; mountId?: string }> = [];
+  const beams: Array<{ shooterId: string; targetId: string; mountId?: string; fromX: number; fromY: number; toX: number; toY: number }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -57,7 +57,8 @@ function makeHarness(
       return { id: drone.id, entityId: drone.entityId, x: drone.x, y: drone.y };
     },
     applyDamage: (targetId, shooterId, amount) => damage.push({ targetId, shooterId, amount }),
-    broadcastBeam: (shooterId, _fx, _fy, _tx, _ty, targetId, mountId) => beams.push({ shooterId, targetId, mountId }),
+    broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId, mountId) =>
+      beams.push({ shooterId, targetId, mountId, fromX, fromY, toX, toY }),
   });
 
   let now = 0;
@@ -447,6 +448,42 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     const before = h.beams.length;
     h.grid.tickMiners(20_000);
     expect(h.beams.length).toBe(before);
+  });
+
+  it('WS-4/R2.27 Phase 2: the mining-beam endpoint is the CACHED rock pose — it does NOT re-scan the live asteroid (beam stays pinned as rocks drift)', () => {
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: 1_000_000 });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+
+    // A grid pulse caches the rock's pose (250, 0) onto the miner.
+    h.pulse();
+    h.grid.tickMiners(10_000);
+    expect(h.beams.length).toBe(1);
+    expect(h.beams[0]!.toX).toBe(250);
+    expect(h.beams[0]!.toY).toBe(0);
+    expect(h.beams[0]!.targetId).toBe('swarm-7');
+
+    // The asteroid's LIVE pose moves, but NO new grid pulse refreshes the cache.
+    // tickMiners must keep broadcasting the CACHED endpoint (250, 0) — it must
+    // NOT re-scan the live asteroid. A live re-lookup would make the beam jitter
+    // as rocks drift (and here would even find the rock out of range). This is
+    // the regression lock for the cached-pose design (guards a future switch
+    // from the cached fields back to a per-tick findNearestAsteroid).
+    h.asteroid!.x = 999;
+    h.asteroid!.y = 999;
+    h.grid.tickMiners(10_000 + MINING_BEAM_CADENCE_MS + 1);
+    expect(h.beams.length).toBe(2);
+    expect(h.beams[1]!.toX).toBe(250); // still the cached pose, NOT 999
+    expect(h.beams[1]!.toY).toBe(0);
+    expect(h.beams[1]!.targetId).toBe('swarm-7'); // cached wire id, not rebuilt
   });
 });
 
