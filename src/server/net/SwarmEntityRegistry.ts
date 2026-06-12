@@ -30,6 +30,15 @@ export interface SwarmEntityRecord {
    *  u8 index into `SHIP_KINDS_LIST`; client renders the matching silhouette
    *  + colour. */
   shipKind?: string;
+  /** Finite mineable resource pool (WS-4 / R2.27), only set for `kind === 0`
+   *  asteroids — seeded from the silhouette area at spawn (`asteroidResources`).
+   *  A Miner draws this down via `drawAsteroidResources`; an exhausted asteroid
+   *  (`resources <= 0`) stops yielding but stays a solid obstacle (combat NEVER
+   *  touches it — only mining). `resourcesMax` is the seed value (for the
+   *  inspector / a remaining-fraction readout). Server-side state; surfaced to
+   *  the client on a JSON slice in WS-4 Phase 6 (no `SWARM_WIRE_VERSION` bump). */
+  resources?: number;
+  resourcesMax?: number;
   /** Last pose actually included in a swarm packet, for delta detection.
    *  v3 (2026-05-09 AI lockstep) adds `angvel` so the encoder ships when a
    *  drone's spin rate changes even if its position is steady — the client AI

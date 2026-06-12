@@ -1578,6 +1578,7 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmShield.delete(id);
       },
       findNearestAsteroid: (x, y, range) => this.findNearestAsteroid(x, y, range),
+      drawAsteroidResources: (entityId, amount) => this.drawAsteroidResources(entityId, amount),
       findNearestDrone: (x, y, range) => this.findNearestSwarmOfKind(x, y, range, 1),
       applyDamage: (targetId, shooterId, damage) => this.applyDamage(targetId, shooterId, damage),
       broadcastBeam: (shooterId, fromX, fromY, toX, toY, targetId) => {
@@ -2504,7 +2505,29 @@ export class SectorRoom extends Room<SectorState> {
     y: number,
     range: number,
   ): { entityId: number; x: number; y: number } | null {
-    return this.findNearestSwarmOfKind(x, y, range, 0);
+    // WS-4 / R2.27 — skip EXHAUSTED asteroids (resources<=0) so a Miner
+    // auto-retargets to a rock that still has ore (and its mining beam stops on
+    // the dead rock). `resources===undefined` ⇒ available (un-seeded / legacy).
+    return this.findNearestSwarmOfKind(x, y, range, 0, this._asteroidNotExhausted);
+  }
+
+  /** Stable (alloc-once) predicate: an asteroid is mineable while its finite
+   *  resource pool is non-empty. Class field so `findNearestAsteroid` doesn't
+   *  allocate a closure per call (it runs per-miner per grid-pulse). */
+  private readonly _asteroidNotExhausted = (rec: SwarmEntityRecord): boolean =>
+    rec.resources === undefined || rec.resources > 0;
+
+  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's finite resource pool;
+   *  returns the amount ACTUALLY mined (0 once exhausted). The ONLY path that
+   *  depletes asteroid resources — combat never reaches it (asteroid-interaction
+   *  -model ADR). `resources===undefined` (un-seeded) ⇒ treat as infinite
+   *  (returns the full `amount`, the pre-WS-4 behaviour). */
+  private drawAsteroidResources(entityId: number, amount: number): number {
+    const rec = this.swarmRegistry.getByEntityId(entityId);
+    if (!rec || rec.resources === undefined) return amount;
+    const drawn = Math.min(amount, rec.resources);
+    rec.resources -= drawn;
+    return drawn;
   }
 
   /** Nearest swarm entity of `swarmKind` (0=asteroid, 1=drone) within `range`
@@ -2516,11 +2539,13 @@ export class SectorRoom extends Room<SectorState> {
     y: number,
     range: number,
     swarmKind: number,
+    filter?: (rec: SwarmEntityRecord) => boolean,
   ): { id: string; entityId: number; x: number; y: number } | null {
     let best: { id: string; entityId: number; x: number; y: number } | null = null;
     let bestD2 = range * range;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== swarmKind) continue;
+      if (filter && !filter(rec)) continue;
       const base = slotBase(rec.slot);
       const sx = this.sabF32[base + SLOT_X_OFF]!;
       const sy = this.sabF32[base + SLOT_Y_OFF]!;

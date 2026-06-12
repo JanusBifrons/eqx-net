@@ -76,6 +76,11 @@ export interface StructureGridHooks {
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y), or null. Returns the asteroid's dense entityId + pose. */
   findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number } | null;
+  /** WS-4 / R2.27 — draw up to `amount` from an asteroid's FINITE resource pool;
+   *  returns the amount ACTUALLY mined (0 once exhausted). Absent ⇒ infinite
+   *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
+   *  combat never depletes asteroid resources (asteroid-interaction-model ADR). */
+  drawAsteroidResources?(entityId: number, amount: number): number;
   /** Phase 5 — nearest drone (swarm kind 1) within `range` of (x, y), or null.
    *  Returns the drone's registry id (for damage) + entityId + pose. */
   findNearestDrone?(x: number, y: number, range: number): { id: string; entityId: number; x: number; y: number } | null;
@@ -309,11 +314,22 @@ export class StructureGridSubsystem {
         continue;
       }
       const kind = getStructureKind('miner');
+      // findNearestAsteroid SKIPS exhausted rocks (resources<=0), so an
+      // exhausted asteroid is never returned and the miner auto-retargets to a
+      // fresh in-range rock (or clears its target → the beam stops).
       const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
       rec.miningTargetEntityId = target?.entityId;
       if (!target) continue;
-      // Mining never damages the asteroid (effectively infinite, first cut).
-      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + (kind.miningRate ?? 0));
+      // WS-4 / R2.27 — draw from the asteroid's FINITE resource pool, capped by
+      // the miner's per-pulse rate AND its remaining storage (don't burn finite
+      // ore into full storage). drawAsteroidResources decrements the pool and
+      // returns the amount actually mined; absent hook ⇒ flat rate (pre-WS-4 /
+      // unit-harness fallback). Combat never reaches this hook (ADR boundary).
+      const want = Math.min(kind.miningRate ?? 0, kind.storageCapacity - rec.minerals);
+      const drawn = this.hooks.drawAsteroidResources
+        ? this.hooks.drawAsteroidResources(target.entityId, want)
+        : want;
+      rec.minerals = Math.min(kind.storageCapacity, rec.minerals + drawn);
     }
   }
 

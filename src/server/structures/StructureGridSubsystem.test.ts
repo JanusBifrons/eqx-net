@@ -13,7 +13,7 @@ import {
 /** Shared harness: a real registry + health map, with placement + grid wired
  *  over the same state (the way SectorRoom wires them). */
 function makeHarness(
-  asteroid?: { entityId: number; x: number; y: number; range?: number },
+  asteroid?: { entityId: number; x: number; y: number; range?: number; resources?: number },
   drone?: { id: string; entityId: number; x: number; y: number },
 ) {
   const registry = new StructureRegistry();
@@ -39,8 +39,16 @@ function makeHarness(
     despawn: (id) => { despawned.push(id); health.delete(id); },
     findNearestAsteroid: (x, y, range) => {
       if (!asteroid) return null;
+      // WS-4: skip exhausted rocks (mirrors SectorRoom.findNearestAsteroid).
+      if (asteroid.resources !== undefined && asteroid.resources <= 0) return null;
       if (Math.hypot(asteroid.x - x, asteroid.y - y) > range) return null;
       return { entityId: asteroid.entityId, x: asteroid.x, y: asteroid.y };
+    },
+    drawAsteroidResources: (entityId, amount) => {
+      if (!asteroid || asteroid.entityId !== entityId || asteroid.resources === undefined) return amount;
+      const drawn = Math.min(amount, asteroid.resources);
+      asteroid.resources -= drawn;
+      return drawn;
     },
     findNearestDrone: (x, y, range) => {
       if (!drone) return null;
@@ -53,7 +61,7 @@ function makeHarness(
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, placement, grid, pulse };
+  return { registry, health, despawned, damage, beams, placement, grid, pulse, asteroid };
 }
 
 const OWNER = 'player-1';
@@ -359,6 +367,42 @@ describe('StructureGridSubsystem — mining (Phase 4)', () => {
     h.pulse();
     expect(minerRec.miningTargetEntityId).toBeUndefined();
     expect(minerRec.minerals).toBe(0);
+  });
+
+  it('WS-4/R2.27 Phase 1: draws down a FINITE asteroid pool, then stops + clears the target on exhaustion', () => {
+    const RATE = getStructureKind('miner').miningRate ?? 0;
+    expect(RATE).toBeGreaterThan(0);
+    const POOL = 2 * RATE; // exactly two pulses' worth of ore
+    // Asteroid in range with a finite pool; capital(+50)+solar(+30)−miner(60) = +20 → powered.
+    const h = makeHarness({ entityId: 7, x: 250, y: 0, resources: POOL });
+    h.placement.place(OWNER, 'capital', 0, 0);
+    const sol = h.placement.place(OWNER, 'solar', 200, 0)!;
+    const miner = h.placement.place(OWNER, 'miner', 0, 300)!;
+    // Force solar + miner BUILT (skip the slow construction pulses) so mining
+    // starts on a known pulse — otherwise the build-loop tail would mine the
+    // small pool before we can observe the draw-down.
+    for (const [id, kind] of [[sol, 'solar'], [miner, 'miner']] as const) {
+      const r = h.registry.get(id)!;
+      r.isConstructed = true;
+      r.constructionProgress = r.constructionCost;
+      h.health.set(id, getStructureKind(kind).maxHealth);
+    }
+    h.registry.topologyDirty = true;
+    const minerRec = h.registry.get(miner)!;
+
+    // Pulse 1: mine one RATE → pool drops by RATE, target still the rock.
+    h.pulse();
+    expect(h.asteroid!.resources).toBe(POOL - RATE);
+    expect(minerRec.miningTargetEntityId).toBe(7);
+    // Pulse 2: mine the last RATE → pool exhausted (0).
+    h.pulse();
+    expect(h.asteroid!.resources).toBe(0);
+    // Pulse 3: the exhausted rock is skipped by findNearestAsteroid → the miner
+    // clears its target (the beam will stop). RED on current code: processMining
+    // adds a flat miningRate forever with no resource read, so the pool never
+    // depletes and miningTargetEntityId stays pinned to 7.
+    h.pulse();
+    expect(minerRec.miningTargetEntityId).toBeUndefined();
   });
 });
 
