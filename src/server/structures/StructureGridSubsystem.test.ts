@@ -23,6 +23,7 @@ function makeHarness(
   const damage: Array<{ targetId: string; shooterId: string; amount: number }> = [];
   const beams: Array<{ shooterId: string; targetId: string; mountId?: string; fromX: number; fromY: number; toX: number; toY: number }> = [];
   const projectiles: Array<{ shooterId: string; x: number; y: number; vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: string }> = [];
+  const missiles: Array<{ shooterId: string; x: number; y: number; dirX: number; dirY: number; weaponId: string }> = [];
   let counter = 0;
 
   const placement = new StructurePlacementSubsystem({
@@ -62,11 +63,13 @@ function makeHarness(
       beams.push({ shooterId, targetId, mountId, fromX, fromY, toX, toY }),
     spawnProjectile: (shooterId, x, y, vx, vy, dmg, radius, maxTicks, weaponId) =>
       projectiles.push({ shooterId, x, y, vx, vy, damage: dmg, radius, maxTicks, weaponId }),
+    spawnMissile: (shooterId, x, y, dirX, dirY, def) =>
+      missiles.push({ shooterId, x, y, dirX, dirY, weaponId: def.id }),
   });
 
   let now = 0;
   const pulse = () => { now += 1000; return grid.pulse(now); };
-  return { registry, health, despawned, damage, beams, projectiles, placement, grid, pulse, asteroid };
+  return { registry, health, despawned, damage, beams, projectiles, missiles, placement, grid, pulse, asteroid };
 }
 
 const OWNER = 'player-1';
@@ -662,6 +665,39 @@ describe('StructureGridSubsystem — turrets (Phase 5)', () => {
     // After fireRateMs elapses it fires the NEXT bolt (steady cadence, no skipped window).
     h.grid.tickTurrets(10_000 + kind.fireRateMs! + 1);
     expect(h.projectiles.length).toBe(2);
+  });
+
+  it('a Missile Turret launches a homing MISSILE on its slow fireRateMs cadence (WS-8)', () => {
+    const drone = { id: 'swarm-8', entityId: 8, x: 0, y: 800 }; // straight +y, in range (1200)
+    const h = makeHarness(undefined, drone);
+    h.placement.place(OWNER, 'capital', 0, 0);
+    relayConnector(h, 120, 120);
+    h.placement.place(OWNER, 'solar', 150, 0); // power the grid (missile turret draws 30)
+    const mt = h.placement.place(OWNER, 'missile_turret', 0, 200)!;
+    // Force-build (the FIRE path is under test, not the slow 600-cost construction).
+    const rec = h.registry.get(mt)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    h.health.set(mt, getStructureKind('missile_turret').maxHealth);
+    h.registry.topologyDirty = true;
+    for (let i = 0; i < 5; i++) h.pulse(); // rebuild grid + settle power
+
+    const kind = getStructureKind('missile_turret');
+    h.grid.tickTurrets(10_000);
+    h.grid.tickTurrets(10_050);
+    expect(h.missiles.length).toBe(1); // one missile; immediate 2nd tick is within cadence
+    expect(h.projectiles.length).toBe(0);
+    expect(h.beams.length).toBe(0);
+    const m = h.missiles[0]!;
+    expect(m.shooterId).toBe(mt);
+    expect(m.weaponId).toBe('heat-seeker');
+    expect(m.dirX).toBeCloseTo(0, 3); // UNIT aim direction toward the +y drone
+    expect(m.dirY).toBeCloseTo(1, 3);
+    expect(h.registry.get(mt)!.turretTargetEntityId).toBe(8);
+
+    // After the slow fireRateMs (1.5 s) elapses, the next missile launches.
+    h.grid.tickTurrets(10_000 + kind.fireRateMs! + 1);
+    expect(h.missiles.length).toBe(2);
   });
 });
 

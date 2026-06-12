@@ -22,7 +22,7 @@
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
-import { getWeapon, isWeaponId, type WeaponDef, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
+import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
@@ -94,6 +94,11 @@ export interface StructureGridHooks {
    *  target (the player/AI fire path's `spawnServerProjectile`, ownerId = the
    *  turret's `pstruct-` id). Absent ⇒ no bolt (unit-harness fallback). */
   spawnProjectile?(shooterId: string, x: number, y: number, vx: number, vy: number, damage: number, radius: number, maxTicks: number, weaponId: WeaponId): void;
+  /** WS-8 (R2.15) — launch a homing MISSILE from a Missile Turret toward its
+   *  target (the player/AI fire path's `spawnServerMissile`; ownerId = the
+   *  turret's `pstruct-` id, which the missile targeting restricts to drones).
+   *  `dirX`/`dirY` are the UNIT aim direction. Absent ⇒ no missile. */
+  spawnMissile?(shooterId: string, x: number, y: number, dirX: number, dirY: number, def: MissileWeaponDef): void;
   /** WS-4 Phase 3 — apply the mining beam's light player-damage RAY: any player
    *  ship intersecting the miner→asteroid segment takes `perHitDamage`. A thin
    *  damage ray, NOT a physics collider (movement is unblocked). Absent ⇒ no-op. */
@@ -186,9 +191,17 @@ export class StructureGridSubsystem {
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
         rec.lastTurretFireMs = nowMs;
         this.fireTurretShot(rec, kind.radius, kind.weaponDamage, def, target.x, target.y);
+      } else if (def.mode === 'missile') {
+        // SHOT model: one homing missile per the kind's `fireRateMs` (a slow
+        // salvo). The missile homes via MissileSimulation — restricted to DRONES
+        // for a pstruct- owner (SectorRoom.isMissileTargetHostile) — and renders
+        // off the `missiles[]` slice. Its splash CAN hit the owner's own base
+        // (realistic, by user choice — no friendly-structure skip).
+        const cadence = kind.fireRateMs ?? 1500;
+        if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
+        rec.lastTurretFireMs = nowMs;
+        this.fireTurretMissile(rec, kind.radius, def, target.x, target.y);
       }
-      // def.mode === 'missile' → WS-8 step 3 (needs the drones-only targeting
-      // branch in isMissileTargetHostile before it can ship).
     }
   }
 
@@ -223,6 +236,26 @@ export class StructureGridSubsystem {
       def.maxTicks,
       def.id,
     );
+  }
+
+  /** WS-8 — launch ONE homing missile from a missile turret toward (tx, ty),
+   *  offset ahead of the launcher. `dirX`/`dirY` are the UNIT aim direction (the
+   *  missile sim owns speed). Alloc-free (scalars). */
+  private fireTurretMissile(
+    rec: StructureRecord,
+    radius: number,
+    def: WeaponDef,
+    tx: number,
+    ty: number,
+  ): void {
+    if (!this.hooks.spawnMissile || def.mode !== 'missile') return;
+    const dx = tx - rec.x;
+    const dy = ty - rec.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const ndx = dx / dist;
+    const ndy = dy / dist;
+    const muzzle = radius + 8;
+    this.hooks.spawnMissile(rec.id, rec.x + ndx * muzzle, rec.y + ndy * muzzle, ndx, ndy, def);
   }
 
   /** One grid heartbeat. `nowMs` stamps connection flashes. */
