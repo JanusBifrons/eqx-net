@@ -117,3 +117,24 @@ export const WarpWarningClearSchema = z
   .strict();
 
 export type WarpWarningClearEvent = z.infer<typeof WarpWarningClearSchema>;
+
+/**
+ * Server → client (broadcast): a faction's base FIRST became "ready" enough to
+ * draw drone waves (Capital + Miner + Solar + Turret all built). WS-11 (R2.24
+ * Part B) — drives a one-shot owner-only toast so the player learns their base
+ * is now a wave target. A DISCRETE broadcast (not the snapshot/binary path),
+ * exactly like `warp_warning`; the client zod-validates + shows the toast only
+ * when `factionId` is the local player. Fired once per ready transition (the
+ * server `FactionLedger.markReadyNotified` one-shot).
+ */
+export const BaseReadySchema = z
+  .object({
+    type: z.literal('base_ready'),
+    /** The owning player's id (== the faction id). */
+    factionId: z.string().min(1).max(64),
+    /** Sector the base is in. */
+    sectorKey: z.string().min(1).max(64),
+  })
+  .strict();
+
+export type BaseReadyEvent = z.infer<typeof BaseReadySchema>;

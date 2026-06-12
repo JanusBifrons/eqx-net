@@ -29,6 +29,38 @@ function makeLedger(structures: StructureRecord[]) {
   return { ledger, store };
 }
 
+// WS-11 (R2.24 Part B) — base-ready one-shot latch: the "your base is
+// operational" toast fires EXACTLY ONCE per ready transition.
+describe('FactionLedger — base-ready one-shot (R2.24 Part B)', () => {
+  it('markReadyNotified returns true exactly ONCE, then false', () => {
+    const { ledger } = makeLedger([]);
+    expect(ledger.markReadyNotified('alice')).toBe(true); // first ready → toast
+    expect(ledger.markReadyNotified('alice')).toBe(false); // stays latched
+    expect(ledger.markReadyNotified('alice')).toBe(false);
+  });
+
+  it('clearReadyNotified re-arms the latch (razed-then-rebuilt base re-toasts)', () => {
+    const { ledger } = makeLedger([]);
+    expect(ledger.markReadyNotified('alice')).toBe(true);
+    ledger.clearReadyNotified('alice'); // base dropped below ready
+    expect(ledger.markReadyNotified('alice')).toBe(true); // toasts again on re-qualify
+  });
+
+  it('clearReadyNotified on an unobserved faction is a safe no-op', () => {
+    const { ledger } = makeLedger([]);
+    expect(() => ledger.clearReadyNotified('nobody')).not.toThrow();
+    // First observation still toasts.
+    expect(ledger.markReadyNotified('nobody')).toBe(true);
+  });
+
+  it('the latch is per-faction', () => {
+    const { ledger } = makeLedger([]);
+    expect(ledger.markReadyNotified('alice')).toBe(true);
+    expect(ledger.markReadyNotified('bob')).toBe(true); // independent
+    expect(ledger.markReadyNotified('alice')).toBe(false);
+  });
+});
+
 describe('FactionLedger — membership derivation', () => {
   it('membersOf returns the player + their owned structures, derived live', () => {
     const { ledger, store } = makeLedger([

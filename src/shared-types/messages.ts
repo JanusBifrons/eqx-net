@@ -56,6 +56,7 @@ export type {
 export {
   WarpWarningSchema,
   WarpWarningClearSchema,
+  BaseReadySchema,
 } from './messages/transitMessages.js';
 export type {
   TransitStateLabel,
@@ -65,6 +66,7 @@ export type {
   WarpInEvent,
   WarpWarningEvent,
   WarpWarningClearEvent,
+  BaseReadyEvent,
 } from './messages/transitMessages.js';
 
 // Living World (server → client)

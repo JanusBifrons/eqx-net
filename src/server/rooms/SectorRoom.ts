@@ -2839,11 +2839,24 @@ export class SectorRoom extends Room<SectorState> {
     }
     const out: FactionBaseReadiness[] = [];
     for (const [factionId, agg] of byOwner) {
+      const ready = isBaseReady(agg);
+      // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the
+      // first time a base qualifies for waves; re-arm when it drops below ready
+      // (a razed-then-rebuilt base re-toasts). Evaluated at the director's
+      // control cadence (this method is the canonical readiness poll), so it
+      // fires within ~one control tick of the base completing.
+      if (ready) {
+        if (this.factionLedger.markReadyNotified(factionId)) {
+          this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey });
+        }
+      } else {
+        this.factionLedger.clearReadyNotified(factionId);
+      }
       const state = this.factionLedger.get(factionId);
       out.push({
         factionId,
         sectorKey,
-        ready: isBaseReady(agg),
+        ready,
         // The owner is "present" when they have an active hull in this sector.
         ownerPresent: this.getActiveShip(factionId)?.isActive === true,
         minerCount: agg.minerCount,

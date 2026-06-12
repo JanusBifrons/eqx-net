@@ -19,6 +19,7 @@ import {
   DamageEventSchema,
   WarpWarningSchema,
   WarpWarningClearSchema,
+  BaseReadySchema,
 } from './messages.js';
 import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent } from './messages.js';
 
@@ -502,5 +503,23 @@ describe('WarpWarningSchema (wave-system Phase 5)', () => {
     expect(
       WarpWarningClearSchema.safeParse({ type: 'warp_warning_clear', id: 'x', extra: 1 }).success,
     ).toBe(false);
+  });
+});
+
+describe('BaseReadySchema (WS-11 R2.24 Part B)', () => {
+  const valid = { type: 'base_ready' as const, factionId: 'alice', sectorKey: 'sol-prime' };
+
+  it('accepts a well-formed base-ready broadcast', () => {
+    expect(BaseReadySchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects empty factionId / sectorKey and unknown keys (.strict)', () => {
+    expect(BaseReadySchema.safeParse({ ...valid, factionId: '' }).success).toBe(false);
+    expect(BaseReadySchema.safeParse({ ...valid, sectorKey: '' }).success).toBe(false);
+    expect(BaseReadySchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('rejects a wrong type literal', () => {
+    expect(BaseReadySchema.safeParse({ ...valid, type: 'warp_warning' }).success).toBe(false);
   });
 });
