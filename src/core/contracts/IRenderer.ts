@@ -142,6 +142,13 @@ export interface SwarmRenderState {
    *  auto-fire). Absent ⇒ treated as 1 (full): the server omits `hp` for
    *  undamaged drones. Low-cadence (snapshot rate), not per-frame. */
   healthFrac?: number;
+  /** Mineable resource pool for an asteroid (kind 0), decoded from the snapshot
+   *  `asteroids[]` slice (WS-4 Phase 6 / R2.23 enabler). The server emits these
+   *  ONLY for MINED in-interest asteroids (`resources < resourcesMax`), so
+   *  absent ⇒ untouched/full. Feeds the WS-9 inspector's remaining-fraction
+   *  readout. Low-cadence (snapshot rate), not per-frame. */
+  resources?: number;
+  resourcesMax?: number;
   /** Per-mount rotation angle, ship-relative AND already biased past
    *  `mount.baseAngle`. Indexed by catalogue mount-order. Multi-mount/
    *  turret refactor Phase 4c (2026-05-11): authoritative angles arrive in

@@ -55,13 +55,17 @@ import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 
-/** Subset of SwarmEntityRecord the drone slice reads. */
+/** Subset of SwarmEntityRecord the drone + asteroid slices read. */
 export interface SwarmDroneRec {
   id: string;
   kind: number;
   shieldDown?: boolean;
   /** Ship-kind id — used to resolve max health for the `hp` percent (Part C). */
   shipKind?: string;
+  /** WS-4 Phase 6 — asteroid (kind 0) finite mineable pool. Present once a rock
+   *  has been mined; drives the slim `asteroids[]` slice (emit-when-mined). */
+  resources?: number;
+  resourcesMax?: number;
 }
 
 export interface SwarmLookupByEid {
@@ -176,6 +180,13 @@ type MutableDroneEntry = {
   hp?: number;
 };
 
+type MutableAsteroidEntry = {
+  id: number;
+  resources?: number;
+  resourcesMax?: number;
+  mass?: number;
+};
+
 type MutableWreckEntry = {
   id: string; x: number; y: number; vx: number; vy: number;
   angle: number; angvel: number;
@@ -195,6 +206,7 @@ type MutableSnapshotMessage = {
   projectiles?: SnapshotMessage['projectiles'];
   missiles?: SnapshotMessage['missiles'];
   drones?: SnapshotMessage['drones'];
+  asteroids?: SnapshotMessage['asteroids'];
   wrecks?: SnapshotMessage['wrecks'];
   structures?: SnapshotMessage['structures'];
 };
@@ -261,6 +273,7 @@ export class SnapshotBroadcaster {
   private readonly _projectilesScratch: MutableProjectileEntry[] = [];
   private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
+  private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
   private readonly _wrecksScratch: MutableWreckEntry[] = [];
   private readonly _mountAnglesPool = new Map<number, number[]>();
   /** Fresh Record per recipient is unavoidable — notepack.io would
@@ -378,6 +391,33 @@ export class SnapshotBroadcaster {
     else delete slot.shieldDown;
     if (hp !== undefined) slot.hp = hp;
     else delete slot.hp;
+  }
+
+  /** WS-4 Phase 6 — write a MINED-asteroid resource slot (pooled, mutate-in-
+   *  place, invariant #14). Mirrors `writeDroneSlot`: optional fields are
+   *  cleared via `delete` on reuse so a prior occupant can't leak onto the
+   *  wire. `mass` is carried but the loop omits it for now (reserved). */
+  private static writeAsteroidSlot(
+    arr: MutableAsteroidEntry[], i: number,
+    id: number, resources: number | undefined, resourcesMax: number | undefined,
+    mass: number | undefined,
+  ): void {
+    const slot = arr[i];
+    if (!slot) {
+      const fresh: MutableAsteroidEntry = { id };
+      if (resources !== undefined) fresh.resources = resources;
+      if (resourcesMax !== undefined) fresh.resourcesMax = resourcesMax;
+      if (mass !== undefined) fresh.mass = mass;
+      arr[i] = fresh;
+      return;
+    }
+    slot.id = id;
+    if (resources !== undefined) slot.resources = resources;
+    else delete slot.resources;
+    if (resourcesMax !== undefined) slot.resourcesMax = resourcesMax;
+    else delete slot.resourcesMax;
+    if (mass !== undefined) slot.mass = mass;
+    else delete slot.mass;
   }
 
   private static writeWreckSlot(
@@ -659,6 +699,30 @@ export class SnapshotBroadcaster {
       }
       dronesScratch.length = dronesCount;
 
+      // WS-4 Phase 6 (R2.23 enabler) — slim resource slice for MINED asteroids
+      // in this recipient's interest window. Reuses the SAME `interest` set the
+      // drone loop just read (no second query). Emits ONLY rocks with
+      // `resources < resourcesMax` (actively mined) so untouched sectors add
+      // zero bytes — the emit-when-changed discipline mirroring `drones[].hp`.
+      // Pooled scratch, mutate-in-place (invariant #14). NO wire-version bump
+      // (JSON slice; pose stays on the binary channel).
+      const asteroidsScratch = this._asteroidsScratch;
+      let asteroidsCount = 0;
+      if (interest && interest.size > 0) {
+        for (const eid of interest) {
+          const rec = d.swarmRegistry.getByEntityId(eid);
+          if (!rec || rec.kind !== 0) continue; // kind 0 === asteroid
+          if (rec.resources === undefined || rec.resourcesMax === undefined) continue;
+          if (rec.resources >= rec.resourcesMax) continue; // full / untouched → omit
+          SnapshotBroadcaster.writeAsteroidSlot(
+            asteroidsScratch, asteroidsCount,
+            eid, rec.resources, rec.resourcesMax, undefined, // mass reserved (see slice JSDoc)
+          );
+          asteroidsCount++;
+        }
+      }
+      asteroidsScratch.length = asteroidsCount;
+
       const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
       // Phase 4 — wreck poses for every wreck in the sector. No
       // interest filtering: wreck count per sector is bounded (one per
@@ -692,6 +756,7 @@ export class SnapshotBroadcaster {
       snap.projectiles = projectilesCount > 0 ? projectilesScratch : undefined;
       snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
       snap.drones = dronesCount > 0 ? dronesScratch : undefined;
+      snap.asteroids = asteroidsCount > 0 ? asteroidsScratch : undefined;
       snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
       // Structures plan, Phase 3 — the same cached slice array (rebuilt at the
       // 1 Hz pulse, NOT per tick) is attached by reference to every recipient.
