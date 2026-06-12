@@ -191,6 +191,9 @@ export interface StructureRenderState {
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
   storedPowerMax?: number;
+  /** WS-9 (R2.12) — minerals stored at this structure (the Capital's bank). Drives
+   *  the world-space capital resource readout. Undefined ⇒ not surfaced. */
+  minerals?: number;
   /** Shield-fence plan — the paired pylon's entityId this Shield Pylon projects
    *  a wall span to (undefined when unpaired). Joined to `mirror.swarm` for the
    *  pair's pose to draw + predict the span. */

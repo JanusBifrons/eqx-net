@@ -11,7 +11,7 @@
  * HITBOX_COLOR / DAMAGE_FLASH_COLOR / SERVER_GHOST_COLOR via re-export.
  */
 
-import { Graphics } from 'pixi.js';
+import { Graphics, Text, TextStyle } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
 import { getShipKind, type ShipShape, type WeaponMount } from '../../../shared-types/shipKinds.js';
 import { getStructureKind, structureHullPoints } from '../../../shared-types/structureKinds.js';
@@ -175,6 +175,35 @@ export function buildStructureGfx(structureKindId: string | undefined, radius: n
   g.circle(0, 0, Math.max(2, radius * 0.18));
   g.fill({ color: 0xffffff, alpha: 0.85 });
   return g;
+}
+
+/** WS-9 (R2.12) — short-form resource count for the Capital's world readout:
+ *  999 → "999", 12_345 → "12.3k", 2_300_000 → "2.3M". A fraction-bar is useless
+ *  (storageCapacity is 2,000,000), so the Capital shows the NUMBER. */
+export function formatResources(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${Math.round(n)}`;
+}
+
+let _capitalResStyle: TextStyle | undefined;
+/** WS-9 (R2.12) — the Capital's world-space mineral-bank readout (a short amber
+ *  number below the body). Built ONCE per capital sprite (invariant #14); the
+ *  caller mutates `.text` only when the value changes (no per-frame re-raster).
+ *  Tagged `label = 'capitalResource'`. */
+export function buildCapitalResourceText(radius: number): Text {
+  _capitalResStyle ??= new TextStyle({
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: 13,
+    fontWeight: '700',
+    fill: 0xffe08a,
+    stroke: { color: 0x000000, width: 3 },
+  });
+  const t = new Text({ text: '', style: _capitalResStyle });
+  t.anchor.set(0.5, 0);
+  t.y = radius + 4; // below the body (Pixi y-down)
+  t.label = 'capitalResource';
+  return t;
 }
 
 /**

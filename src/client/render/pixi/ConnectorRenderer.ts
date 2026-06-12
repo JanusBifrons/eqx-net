@@ -269,6 +269,35 @@ export class ConnectorRenderer {
         g.fill({ color: 0x000000, alpha: 0.5 });
         g.rect(bx0, by0, barW * Math.min(1, Math.max(0, 1 - st.deconstructPct)), barH);
         g.fill({ color: 0xff5555, alpha: 0.9 });
+      } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0) {
+        // WS-9 (R2.12) — a Battery's always-on CHARGE bar above the built body
+        // (amber, matching the panel CHRG colour). Immediate-mode like the fill-bar.
+        const r = a.radius;
+        const barW = r * 2;
+        const barH = Math.max(3, r * 0.18);
+        const bx0 = ax - r;
+        const by0 = ay - r - barH - 4;
+        const frac = Math.min(1, Math.max(0, (st.storedPower ?? 0) / st.storedPowerMax));
+        g.rect(bx0, by0, barW, barH);
+        g.fill({ color: 0x000000, alpha: 0.5 });
+        g.rect(bx0, by0, barW * frac, barH);
+        g.fill({ color: 0xcc8844, alpha: 0.9 });
+      }
+
+      // WS-9 (R2.20) — out-of-power indicator: a red "disabled" ring (circle +
+      // slash) above a BUILT but UNPOWERED structure. Immediate-mode, zero-alloc.
+      if (st.built && st.powered === false) {
+        const r = a.radius;
+        const cx = ax;
+        const cy = ay - r - 12;
+        const ir = Math.max(4, r * 0.22);
+        const w = Math.max(1.5 / scale, 2);
+        g.circle(cx, cy, ir);
+        g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
+        const d = ir * 0.7;
+        g.moveTo(cx - d, cy - d);
+        g.lineTo(cx + d, cy + d);
+        g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
       }
     }
   }
