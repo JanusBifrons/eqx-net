@@ -56,6 +56,7 @@ import {
 import { wrapPi } from '../../core/ai/WeaponMountController.js';
 import type { MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import type { ShipState } from './schema/SectorState.js';
+import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { Bus } from '../../core/events/Bus.js';
 import type {
   MissileFiredEvent,
@@ -161,6 +162,15 @@ export interface MissileSimulationDeps {
   playerToSlot: Iterable<[string, number]>;
   getActiveShip: (playerId: string) => ShipState | undefined;
   shipPoseCache: Map<string, { x: number; y: number; vx: number; vy: number }>;
+  /** Phase 6b lingering hulls (R2.22 symptom 3). `lingeringSlots` is the
+   *  authoritative set of lingering hulls (`shipInstanceId` → SAB slot);
+   *  `lingeringPoseCache` carries each one's live mirror pose (lazily written
+   *  by `SabPoseMirror`). Missiles COLLIDE with + splash-damage lingering hulls
+   *  exactly like active hulls — a fired missile must not pass through an
+   *  abandoned hull. Iterate `lingeringSlots`, read the pose from the cache
+   *  (skip if not yet mirrored), mirroring `PlayerFireResolver`. */
+  lingeringSlots: Map<string, number>;
+  lingeringPoseCache: Map<string, ShipPhysicsState>;
   swarmRegistry: SwarmRecLookup;
   /** Damage sink — same one ProjectilePipeline + handleFire use. Routes
    *  through `damageRouter` to shield/hull layered application. */
@@ -629,6 +639,24 @@ export class MissileSimulation {
       }
     }
 
+    // Lingering hulls (disconnected / fresh-spawn-displaced, isActive=false).
+    // They are NOT in the active playerToSlot set above but are still solid
+    // world objects (R2.22 symptom 3) — a missile must COLLIDE with them, not
+    // pass through. Alloc-free for-of over the slot set; pose from the mirror
+    // cache (skip if not yet written). Returns the shipInstanceId so
+    // EntityResolver routes the hit to the lingering leaf.
+    for (const [shipInstanceId] of this.deps.lingeringSlots) {
+      const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
+      if (!pose) continue;
+      const dx = pose.x - m.x;
+      const dy = pose.y - m.y;
+      const shipR = 12;
+      const combined = m.weaponDef.radius + shipR;
+      if (dx * dx + dy * dy <= combined * combined) {
+        return { id: shipInstanceId, kind: 'ship', x: m.x, y: m.y };
+      }
+    }
+
     // Swarm — drones only. Asteroids (kind=0) are excluded for the
     // same reason as `lockOnTarget`: no `swarmHealth` entry means the
     // damage broadcast is silently dropped. A missile sweeping past
@@ -700,6 +728,21 @@ export class MissileSimulation {
       const dist2 = px * px + py * py;
       if (dist2 > r2) continue;
       this.applySplash(m, playerId, primaryKind === 'ship' && primaryId === playerId, dx, dy, pose.x, pose.y, dist2);
+    }
+
+    // Splash against lingering hulls (R2.22 symptom 3) — identical to the
+    // active-player loop minus the isActive gate. The struck lingering hull is
+    // the primary; applySplash routes applyDamage by shipInstanceId →
+    // EntityResolver's lingering leaf. Alloc-free for-of over the slot set.
+    for (const [shipInstanceId] of this.deps.lingeringSlots) {
+      if (shipInstanceId === ownerSkip) continue;
+      const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
+      if (!pose) continue;
+      const px = pose.x - dx;
+      const py = pose.y - dy;
+      const dist2 = px * px + py * py;
+      if (dist2 > r2) continue;
+      this.applySplash(m, shipInstanceId, primaryKind === 'ship' && primaryId === shipInstanceId, dx, dy, pose.x, pose.y, dist2);
     }
 
     // Splash against swarm.

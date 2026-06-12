@@ -1288,6 +1288,8 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
       swarmRegistry: this.swarmRegistry,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
