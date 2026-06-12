@@ -27,24 +27,32 @@ export interface ConnectorVisual {
   glowWidth: number;
 }
 
-/** Preview-line tints for the placement connection preview (Item C). Green ⇒
- *  the ghost WOULD connect here on placement; dim red ⇒ in range but the line
- *  of sight is blocked (asteroid / structure on the segment). Out-of-range
- *  segments are not drawn at all (skipped), so they need no colour. */
+/** Preview-line tints for the placement connection preview (Item C / WS-5
+ *  R2.17). Green ⇒ the ghost WOULD connect here on placement; dim red ⇒ in range
+ *  but the line of sight is blocked (asteroid / structure on the segment);
+ *  bright red ⇒ would connect but is past the placement connection cap (overflow
+ *  — the link will NOT form). Out-of-range segments are not drawn at all
+ *  (skipped), so they need no colour. */
 export const PREVIEW_OK_COLOR = 0x66ff88;
 export const PREVIEW_BLOCKED_COLOR = 0xcc4444;
+/** WS-5 (R2.17) — over-cap "would-connect" overflow. A saturated red, distinct
+ *  from the dim LOS-blocked red, so the player reads "in range + legal but the
+ *  cap is full, this one won't link". */
+export const PREVIEW_OVERFLOW_COLOR = 0xff4422;
 
 /** A placement-preview segment's outcome, mirroring `canConnect`'s result
- *  partition collapsed to what the preview draws. */
-export type PreviewLineKind = 'ok' | 'blocked' | 'skip';
+ *  partition collapsed to what the preview draws. `overflow` (WS-5 R2.17) is a
+ *  segment that WOULD connect but is past the `PLACEMENT_MAX_CONNECTIONS` cap. */
+export type PreviewLineKind = 'ok' | 'blocked' | 'overflow' | 'skip';
 
 /**
  * Pure visual params for ONE placement-preview segment (ghost → existing
  * structure). Mirrors `connectorVisualParams` (scale-aware line width) but keyed
  * off the `canConnect` outcome rather than a flash window:
- *   - `ok`      → solid green (would connect)
- *   - `blocked` → dim/dashed-feel red (in range, LOS blocked)
- *   - `skip`    → alpha 0 (caller should not draw — out of range / ineligible)
+ *   - `ok`       → solid green (would connect, counted)
+ *   - `blocked`  → dim red (in range, LOS blocked)
+ *   - `overflow` → bright red (would connect but past the 6 cap — won't link)
+ *   - `skip`     → alpha 0 (caller should not draw — out of range / ineligible)
  */
 export function previewLineVisualParams(kind: PreviewLineKind, scale: number): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
@@ -56,6 +64,18 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
       width,
       glowAlpha: 0.25,
       glowWidth: width * 3,
+    };
+  }
+  if (kind === 'overflow') {
+    // Same weight as `ok` (it's a real, in-range, legal pairing) but red + a
+    // fainter glow so it reads as "denied by the cap", not "would connect".
+    const width = Math.max(1 / safeScale, 2);
+    return {
+      color: PREVIEW_OVERFLOW_COLOR,
+      alpha: 0.6,
+      width,
+      glowAlpha: 0.18,
+      glowWidth: width * 2.5,
     };
   }
   if (kind === 'blocked') {

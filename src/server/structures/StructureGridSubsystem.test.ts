@@ -190,7 +190,7 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });
 
-  it('leaves placed BEFORE their hub: the hub grabs only the nearest at placement; the pulse links the rest', () => {
+  it('a Connector placed near pre-existing leaves multi-connects to ALL of them at placement (WS-5 R2.17)', () => {
     // Three solars placed first, no hub yet → all auto-connect-on-place to nothing.
     const s1 = h.placement.place(OWNER, 'solar', 250, 0)!;
     const s2 = h.placement.place(OWNER, 'solar', 0, 250)!;
@@ -199,20 +199,26 @@ describe('StructureGridSubsystem — reconnect sweep (playtest 2026-06-10 Issue 
     expect(h.registry.connectionCount(s2)).toBe(0);
     expect(h.registry.connectionCount(s3)).toBe(0);
 
-    // WS-5: leaves attach to a CONNECTOR, not the Capital. Place the Capital,
-    // then a Connector hub (offset above the Capital so it sees all 3 solars).
-    // The Connector's placement-connect grabs its NEAREST partner (the Capital),
-    // so no solar is wired yet — the placement-time connection runs once and
-    // never retries the leaves.
+    // Place the Capital, then a Connector hub (offset above the Capital so it
+    // sees the Capital AND all 3 solars). WS-5 R2.17 multi-connect: the
+    // Connector's placement-connect grabs EVERY in-range legal partner at once —
+    // the Capital (Connector↔Capital is legal) plus all 3 solars (Connector↔leaf)
+    // — up to its cap of 6. (Pre-R2.17 nearest-only grabbed JUST the Capital and
+    // the solars waited for the 1 Hz reconnect sweep; multi-connect wires them
+    // immediately, which is the more direct fix for the 2026-06-10 Issue-2
+    // "I placed a relay near my panels but they don't light up" complaint.)
     const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
     const con = h.placement.place(OWNER, 'connector', 0, 140)!;
     expect(h.registry.hasConnection(con, cap), 'connector links to the capital').toBe(true);
-    const connectedAtPlacement = [s1, s2, s3].filter((s) => h.registry.connectionCount(s) > 0);
-    expect(connectedAtPlacement.length).toBe(0);
+    expect(h.registry.hasConnection(s1, con)).toBe(true);
+    expect(h.registry.hasConnection(s2, con)).toBe(true);
+    expect(h.registry.hasConnection(s3, con)).toBe(true);
+    expect(h.registry.connectionCount(con)).toBe(4); // capital + 3 solars, within cap 6
 
-    // The 1 Hz pulse's reconnect sweep retries the stranded leaves → all wired
-    // to the Connector relay.
+    // The reconnect sweep is now a no-op for this scene (everything wired at
+    // placement) — it must not double-link or sever.
     h.pulse();
+    expect(h.registry.connectionCount(con)).toBe(4);
     expect(h.registry.hasConnection(s1, con)).toBe(true);
     expect(h.registry.hasConnection(s2, con)).toBe(true);
     expect(h.registry.hasConnection(s3, con)).toBe(true);

@@ -116,8 +116,21 @@ so it unit-tests like `TransitOrchestrator`):
 - `StructureRegistry` carries the connection adjacency (+ flat conn map),
   `topologyDirty`, and per-structure `minerals`; `remove()` severs (no leaks).
 - `structureGridView.ts` projects each record → a `GridNode` (the
-  `isConstructed` power gate lives here) and `autoConnectStructure` (nearest
-  in-range hub, per-owner) runs on every place.
+  `isConstructed` power gate lives here) and `autoConnectStructure` runs on every
+  place, per-owner. **WS-5 R2.10 legality:** `canConnect` enforces
+  capital-only-connectors (the Capital links ONLY to a Connector — keyed on
+  `GridNode.isConnector`, so Shield Pylons do NOT count) + per-kind
+  `connectionRange` (the Capital's shorter `CAPITAL_CONNECTION_RANGE = 300`;
+  `canConnect` uses the `min` of the two endpoints' ranges). **WS-5 R2.17
+  multi-connect:** a placed structure links to EVERY in-range legal hub (not just
+  the nearest) in `(edgeDistance, id)` order, capped by its own `maxConnections`
+  AND the global `PLACEMENT_MAX_CONNECTIONS = 6` (re-checking `canConnect` each
+  iteration against the live adjacency). A leaf (cap 1) still grabs only the
+  nearest; wide hubs (Connector, cap 6) fan out. The client preview
+  (`ConnectorRenderer.drawPlacementPreview`) mirrors this: GREEN would-connect
+  lines capped at 6, the rest drawn RED **overflow** (`placementPreviewConnection
+  Count` / `placementPreviewOverflowCount`). Multi-connect grows the
+  `structures[].connTo` slice length → netgate applies (invariant #8).
 - `StructureGridSubsystem` — the 1 Hz `pulse()` (directly callable for
   deterministic tests; off the 60 Hz tick, `unref`'d): rebuild topology if
   dirty → **construction flow** (each blueprint drains up to

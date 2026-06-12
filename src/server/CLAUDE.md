@@ -219,8 +219,26 @@ for the integration test.
 
 **Power grid (structures plan, Phase 3).** `StructureRegistry` carries the
 connection adjacency (+ `topologyDirty` + per-structure `minerals`; `remove()`
-severs). `structureGridView.autoConnectStructure` runs on every place (nearest
-in-range hub, per-owner). `StructureGridSubsystem.pulse()` is the **1 Hz
+severs). `structureGridView.autoConnectStructure` runs on every place, per-owner.
+**WS-5 R2.17 — it MULTI-connects:** it links the placed structure to EVERY
+in-range legal hub (not just the nearest) in deterministic `(edgeDistance, id)`
+order, until the structure's own `maxConnections` OR the global
+`PLACEMENT_MAX_CONNECTIONS = 6` cap is hit (re-checking `canConnect` each
+iteration against the live adjacency, so a hub filling mid-loop is respected). A
+leaf (cap 1) therefore still grabs only the nearest hub — only wide hubs
+(Connector, cap 6) fan out. It returns the NEAREST connected id (back-compatible
+single-id return). Legality is WS-5 R2.10's `canConnect`: capital-only-connectors
+(the Capital links ONLY to a Connector — keyed on `GridNode.isConnector`, NOT
+pylons) + per-kind `connectionRange` (the Capital's is `CAPITAL_CONNECTION_RANGE
+= 300`; `canConnect` takes the `min` of the two endpoints' ranges). The same
+`autoConnectStructure` drives the 1 Hz reconnect sweep (`StructureGridSubsystem`
+retries stranded leaves) and the `structure-scenario-test` seed. The client
+PLACEMENT PREVIEW mirrors this: `ConnectorRenderer.drawPlacementPreview` caps the
+GREEN would-connect lines at `PLACEMENT_MAX_CONNECTIONS` and draws the rest as
+RED **overflow** (`placementPreviewConnectionCount` = green ≤ 6,
+`placementPreviewOverflowCount` = the over-cap remainder). **Multi-connect grows
+the `structures[].connTo` JSON slice length → netgate (invariant #8) applies to
+R2.17.** `StructureGridSubsystem.pulse()` is the **1 Hz
 heartbeat** — directly callable so integration tests drive it deterministically
 (no wall-clock wait), `unref`'d + OFF the 60 Hz tick: rebuild-if-dirty →
 construction flow (drain a routable Capital; complete ⇒ build + reset HP + dirty;
