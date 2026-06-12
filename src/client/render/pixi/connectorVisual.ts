@@ -115,6 +115,26 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
   return { color: PREVIEW_OK_COLOR, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0 };
 }
 
+// ── WS-10 (R2.3) — placement connection-RANGE ring ──────────────────────────
+/** The ghost's connection-range ring tint — a soft cyan, dimmer + cooler than
+ *  the green `ok` preview lines so it reads as "reach", not "would connect". */
+export const RANGE_CIRCLE_COLOR = 0x66bbdd;
+
+/** Pure visual params for the placement connection-range ring (R2.3) — the faint
+ *  circle around the blueprint ghost showing how far it can connect. Colour +
+ *  alpha are constant; the line stays ~1 screen-px by dividing by zoom (same
+ *  scale-aware width idiom as the connector/preview lines). The RADIUS is
+ *  geometry (per-kind `connectionRange` + ghost radius) and lives in the
+ *  renderer, NOT here. */
+export function rangeCircleVisualParams(scale: number): {
+  color: number;
+  alpha: number;
+  width: number;
+} {
+  const safeScale = scale > 0 ? scale : 1;
+  return { color: RANGE_CIRCLE_COLOR, alpha: 0.22, width: Math.max(1 / safeScale, 1) };
+}
+
 /** Positive fractional part (`x - floor(x)`, always in [0,1)). */
 function fract(x: number): number {
   const f = x - Math.floor(x);

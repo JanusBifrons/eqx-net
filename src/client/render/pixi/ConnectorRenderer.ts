@@ -15,6 +15,7 @@ import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRe
 import {
   connectorVisualInto,
   previewLineVisualParams,
+  rangeCircleVisualParams,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
@@ -28,7 +29,10 @@ import {
   type GridNode,
   type GridObstacle,
 } from '../../../core/structures/Grid.js';
-import { PLACEMENT_MAX_CONNECTIONS } from '../../../core/structures/structureGridConstants.js';
+import {
+  PLACEMENT_MAX_CONNECTIONS,
+  CONNECTION_MAX_RANGE,
+} from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
 import {
   structureMirrorToGridNode,
@@ -74,6 +78,16 @@ export class ConnectorRenderer {
    * inspectable, so this is the observable — feedback-test-observable lesson).
    */
   placementPreviewOverflowCount = 0;
+
+  /**
+   * WS-10 (R2.3) — the world-unit RADIUS of the connection-range ring the LAST
+   * `update()` drew around the placement ghost (`ghost edge-to-edge reach` =
+   * `min(kind.connectionRange, CONNECTION_MAX_RANGE) + ghostRadius`), or 0 when
+   * no preview is up. The renderer-field test hook (the drawn ring isn't
+   * headlessly inspectable — same observable pattern as
+   * `placementPreviewConnectionCount`); read by the unit lock.
+   */
+  lastRangeCircleRadius = 0;
 
   // ── Item C preview-pass module-scratch (invariant #14) ────────────────────
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
@@ -131,6 +145,7 @@ export class ConnectorRenderer {
     // preview always publishes 0.
     this.placementPreviewConnectionCount = 0;
     this.placementPreviewOverflowCount = 0;
+    this.lastRangeCircleRadius = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) return;
     const flashes = mirror.gridFlashes;
@@ -366,6 +381,24 @@ export class ConnectorRenderer {
 
     const ax = ghostX;
     const ay = -ghostY; // Pixi screen space is Y-down; world is Y-up.
+
+    // WS-10 (R2.3) — the connection-RANGE ring around the ghost: how far this
+    // kind can reach. Edge-to-edge reach to a zero-radius partner = the kind's
+    // `connectionRange` (capped at the global CONNECTION_MAX_RANGE) + the ghost's
+    // own radius (measured centre-out). Drawn FIRST so the preview lines + web
+    // overlay it. `this._ghostNode` already carries `radius` + `connectionRange`
+    // (populated by `ghostToGridNode`), so no second catalogue lookup. Symmetric
+    // circle → the Y-flip on `ay` doesn't affect the radius. Alloc-free immediate
+    // mode (one `rangeCircleVisualParams` return per frame, placement-only).
+    const ghostRange =
+      ghost.connectionRange !== undefined
+        ? Math.min(ghost.connectionRange, CONNECTION_MAX_RANGE)
+        : CONNECTION_MAX_RANGE;
+    const circleR = ghostRange + ghost.radius;
+    this.lastRangeCircleRadius = circleR;
+    const rc = rangeCircleVisualParams(scale);
+    this.gfx.circle(ax, ay, circleR);
+    this.gfx.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
 
     // WS-5 (R2.17) — gather the 'ok' (would-connect) hubs into scratch so we can
     // sort them by distance and split GREEN (nearest, within the cap) vs RED
