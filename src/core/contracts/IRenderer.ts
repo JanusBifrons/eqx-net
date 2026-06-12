@@ -588,6 +588,19 @@ export interface RendererFeedback {
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
    *  read health from the mirror directly). `null` when nothing is selected. */
   selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
+  /**
+   * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
+   * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as
+   * ACTUALLY rendered this frame (the pool's `liveCount`). WS-4 Phase 4 / R2.27.
+   *
+   * A dedicated pool (separate from the combat `_remoteBeamPool`) is what lets
+   * an E2E isolate the mining beam — `liveBeamRenderedFromX` / the shared remote
+   * pool can't distinguish a drill beam from a turret/laser beam. Published as
+   * `data-mining-beam-count`. Reads the real drawn-sprite count, never a
+   * recompute (the "test observable reads actual output" rule). Test-only
+   * surface — not consumed by gameplay logic.
+   */
+  miningBeamCount: number;
 }
 
 export interface IRenderer {

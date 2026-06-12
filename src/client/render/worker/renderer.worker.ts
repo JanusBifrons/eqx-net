@@ -111,6 +111,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             placementPreviewConnectionCount: fb.placementPreviewConnectionCount,
             selectedPickId: fb.selectedPickId,
             selectedPickKind: fb.selectedPickKind,
+            miningBeamCount: fb.miningBeamCount,
           },
         });
         // F1 — per-frame sub-cost markers. GATED: only post when

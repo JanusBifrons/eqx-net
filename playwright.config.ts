@@ -110,6 +110,7 @@ const FEATURE_SPECS: string[] = [
   '**/structure-placement-ghost.spec.ts',
   '**/structure-grid-web.spec.ts',
   '**/structure-scenario.spec.ts',
+  '**/structure-mining-beam.spec.ts',
   '**/linger/*.spec.ts',
 ];
 
