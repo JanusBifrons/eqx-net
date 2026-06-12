@@ -427,6 +427,14 @@ export class Camera {
     };
   }
 
+  /** Allocation-free `toScreen` — writes into `out` (WS-9 R2.30: the selection
+   *  projection runs EVERY FRAME while something is selected, so the allocating
+   *  `toScreen` would violate invariant #14). */
+  toScreenInto(worldX: number, worldY: number, out: { x: number; y: number }): void {
+    out.x = this.target.x + worldX * this.target.scale.x;
+    out.y = this.target.y + worldY * this.target.scale.y;
+  }
+
   /**
    * Pixi parent of the camera's world container — typically `app.stage`.
    * `HaloRadar` etc. attach screen-space children here so they sit

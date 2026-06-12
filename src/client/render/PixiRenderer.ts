@@ -301,6 +301,8 @@ export class PixiRenderer implements IRenderer {
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
+  /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
+  private readonly _selScreenScratch = { x: 0, y: 0 };
   private backgroundGrid: BackgroundGrid | null = null;
   private starfield: StarfieldBackground | null = null;
   /**
@@ -322,6 +324,8 @@ export class PixiRenderer implements IRenderer {
     liveBeamRenderedFromY: null,
     placementScreenX: null,
     placementScreenY: null,
+    selectionScreenX: null,
+    selectionScreenY: null,
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
@@ -1556,6 +1560,18 @@ export class PixiRenderer implements IRenderer {
     // Publish the current selection for the main thread → Zustand bridge.
     this.feedback.selectedPickId = this._selectedId;
     this.feedback.selectedPickKind = this._selectedKind;
+    // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
+    // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
+    const selWX = this.selectionBracket?.lastWorldX ?? null;
+    const selWY = this.selectionBracket?.lastWorldY ?? null;
+    if (selWX !== null && selWY !== null) {
+      this.camera.toScreenInto(selWX, selWY, this._selScreenScratch);
+      this.feedback.selectionScreenX = this._selScreenScratch.x;
+      this.feedback.selectionScreenY = this._selScreenScratch.y;
+    } else {
+      this.feedback.selectionScreenX = null;
+      this.feedback.selectionScreenY = null;
+    }
 
     // Drain remote-warp events (warp_in / warp_out broadcasts from the
     // server). Each entry fires the same direction-agnostic one-shot
