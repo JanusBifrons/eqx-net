@@ -8,9 +8,10 @@
  *   - tap on the OWN active ship → null (excluded via the localPlayerId key)
  *   - empty space → null
  *   - overlapping candidates → the NEAREST centre wins
- *   - asteroids (kind 0) are NOT selectable
+ *   - asteroids (kind 0) ARE selectable (WS-9/R2.23)
  *   - structures (kind 2) ARE selectable
  *   - wrecks ARE selectable
+ *   - lingering hulls ARE selectable (WS-9/R2.23, by shipInstanceId)
  */
 import { describe, it, expect } from 'vitest';
 import type {
@@ -36,6 +37,10 @@ function swarm(x: number, y: number, kind: number, radius = 30): SwarmRenderStat
 
 function wreck(x: number, y: number, kind = 'fighter'): WreckRenderState {
   return { shipInstanceId: '', x, y, vx: 0, vy: 0, angle: 0, angvel: 0, kind, health: 50, maxHealth: 100 };
+}
+
+function lingering(x: number, y: number, ownerPlayerId: string, kind = 'fighter'): ShipRenderState & { ownerPlayerId: string } {
+  return { x, y, angle: 0, vx: 0, vy: 0, kind, ownerPlayerId };
 }
 
 function mirror(over: Partial<RenderMirror>): RenderMirror {
@@ -95,10 +100,27 @@ describe('pickEntityAt', () => {
     expect(hit).toEqual({ id: 'swarm-1', kind: 'drone' });
   });
 
-  it('asteroids (kind 0) are NOT selectable', () => {
+  it('asteroids (kind 0) ARE selectable (WS-9/R2.23)', () => {
     const m = mirror({ swarm: new Map([[7, swarm(0, 0, 0, 50)]]) });
     const hit = pickEntityAt(0, 0, m);
-    expect(hit).toBeNull();
+    expect(hit).toEqual({ id: 'swarm-7', kind: 'asteroid' });
+  });
+
+  it('lingering hulls ARE selectable by shipInstanceId (WS-9/R2.23)', () => {
+    const m = mirror({
+      lingeringShips: new Map([['linger-xyz', lingering(300, 300, 'owner-1')]]),
+    });
+    const hit = pickEntityAt(302, 298, m);
+    expect(hit).toEqual({ id: 'linger-xyz', kind: 'lingering' });
+  });
+
+  it('a closer drone beats a lingering hull across buckets', () => {
+    const m = mirror({
+      swarm: new Map([[1, swarm(10, 0, 1, 40)]]), // drone centre 10 from origin
+      lingeringShips: new Map([['linger-far', lingering(100, 0, 'owner-2')]]), // 100 away
+    });
+    const hit = pickEntityAt(0, 0, m);
+    expect(hit).toEqual({ id: 'swarm-1', kind: 'drone' });
   });
 
   it('structures (kind 2) ARE selectable', () => {

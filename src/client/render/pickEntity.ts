@@ -16,17 +16,22 @@
  *     `localPlayerId`" because `mirror.ships` carries no instanceId; the
  *     displaced-player case it warns about is structurally impossible to
  *     mis-handle here precisely because lingering hulls aren't in `mirror.ships`.)
- *   - DRONES (`mirror.swarm`, `kind === 1`) and STRUCTURES (`kind === 2`).
- *   - WRECKS (`mirror.wrecks`).
+ *   - DRONES (`mirror.swarm`, `kind === 1`), STRUCTURES (`kind === 2`) and
+ *     ASTEROIDS (`kind === 0`, WS-9/R2.23 — "every entity should be selectable
+ *     except weapons fire").
+ *   - WRECKS (`mirror.wrecks`) and LINGERING HULLS (`mirror.lingeringShips`,
+ *     WS-9/R2.23 — surface the owner).
  *
- * Explicitly NOT selectable: asteroids (`mirror.swarm`, `kind === 0`).
+ * Explicitly NOT selectable: weapons fire (projectiles / missiles / beams live
+ * in their own mirror maps, never scanned here).
  *
  * Returned ids mirror the `HealthBarManager` lookup convention so a downstream
  * consumer (the selection bracket) can resolve the entity's live pose every
  * frame the same way:
  *   - ship  → `playerId` (key in `mirror.ships`)
- *   - drone / structure → `swarm-${entityId}`
+ *   - drone / structure / asteroid → `swarm-${entityId}`
  *   - wreck → `shipInstanceId` (key in `mirror.wrecks`)
+ *   - lingering → `shipInstanceId` (key in `mirror.lingeringShips`)
  *
  * Radius model: swarm entries carry a `radius`; ships/wrecks derive theirs from
  * the ship-kind catalogue collision radius. The hit test is "distance to centre
@@ -36,9 +41,11 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 
-/** Selectable entity classes. `drone`/`wreck` read health from the mirror
- *  directly (no server stats channel); `ship`/`structure` use `entity_stats`. */
-export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'wreck';
+/** Selectable entity classes. `drone`/`wreck`/`asteroid`/`lingering` read from
+ *  the mirror directly (no server stats channel); `ship`/`structure` use
+ *  `entity_stats` for hp/shield (structures also read their slice from the
+ *  mirror — WS-9/R2.8). */
+export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering';
 
 export interface PickedEntity {
   /** Mirror-resolvable id (see module docstring for the per-kind form). */
@@ -81,10 +88,11 @@ export function pickEntityAt(
     }
   }
 
-  // ── Swarm: drones (kind 1) + structures (kind 2). Asteroids (kind 0) skip. ──
+  // ── Swarm: asteroids (kind 0), drones (kind 1), structures (kind 2). ──
+  // WS-9/R2.23 — asteroids are now selectable (size/resources readout).
   if (mirror.swarm) {
     for (const [entityId, sw] of mirror.swarm) {
-      if (sw.kind !== 1 && sw.kind !== 2) continue; // asteroids not selectable
+      if (sw.kind !== 0 && sw.kind !== 1 && sw.kind !== 2) continue; // unknown kind
       const dx = sw.x - worldX;
       const dy = sw.y - worldY;
       const distSq = dx * dx + dy * dy;
@@ -92,7 +100,7 @@ export function pickEntityAt(
       if (distSq <= reach * reach && distSq < bestDistSq) {
         bestDistSq = distSq;
         bestId = `swarm-${entityId}`;
-        bestKind = sw.kind === 1 ? 'drone' : 'structure';
+        bestKind = sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
       }
     }
   }
@@ -109,6 +117,23 @@ export function pickEntityAt(
         bestDistSq = distSq;
         bestId = shipInstanceId;
         bestKind = 'wreck';
+      }
+    }
+  }
+
+  // ── Lingering hulls (shipInstanceId-keyed; displaced/disconnected players).
+  // WS-9/R2.23 — selectable to surface whose hull it is. ──
+  if (mirror.lingeringShips) {
+    for (const [shipInstanceId, l] of mirror.lingeringShips) {
+      const radius = shipRadius(l.kind);
+      const dx = l.x - worldX;
+      const dy = l.y - worldY;
+      const distSq = dx * dx + dy * dy;
+      const reach = radius + TAP_SLOP;
+      if (distSq <= reach * reach && distSq < bestDistSq) {
+        bestDistSq = distSq;
+        bestId = shipInstanceId;
+        bestKind = 'lingering';
       }
     }
   }

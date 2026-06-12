@@ -601,7 +601,7 @@ export interface RendererFeedback {
   /** Kind of the selected entity (drives the stats-channel routing: only
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
    *  read health from the mirror directly). `null` when nothing is selected. */
-  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
   /**
    * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
    * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as
