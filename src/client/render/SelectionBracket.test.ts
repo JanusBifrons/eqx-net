@@ -114,4 +114,24 @@ describe('SelectionBracket', () => {
     bracket.update(m2, 'p1');
     expect(g.clear.mock.calls.length).toBeGreaterThan(after1);
   });
+
+  it('resolves a lingering hull from mirror.lingeringShips (WS-9/R2.23)', () => {
+    const m = mirror({
+      lingeringShips: new Map([['linger-1', { x: 11, y: 22, angle: 0, vx: 0, vy: 0, kind: 'fighter', ownerPlayerId: 'o1' }]]) as never,
+    });
+    expect(bracket.update(m, 'linger-1')).toBe(true);
+    expect(gfxOf(bracket).x).toBe(11);
+  });
+
+  it('exposes the above-entity projection point; null when nothing resolved (WS-9/R2.30)', () => {
+    const m = mirror({ ships: new Map([['p1', { x: 100, y: 200, angle: 0, vx: 0, vy: 0, kind: 'fighter' }]]) as never });
+    bracket.update(m, 'p1');
+    expect(bracket.lastWorldX).toBe(100); // game x (= pixi x)
+    expect(bracket.lastWorldY).not.toBeNull();
+    expect(bracket.lastWorldY!).toBeLessThan(-200); // ABOVE the entity (pixiY of the bracket top)
+    // Cleared when the selection drops.
+    bracket.update(m, null);
+    expect(bracket.lastWorldX).toBeNull();
+    expect(bracket.lastWorldY).toBeNull();
+  });
 });

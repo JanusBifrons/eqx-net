@@ -627,8 +627,10 @@ function GameSurface({
       {/* Structures plan (Phase 3): grid net-power readout (top-left). */}
       <Slot anchor="top-left" order={40}><GridPowerReadout /></Slot>
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
-       *  only while an entity is selected. */}
-      <Slot anchor="top-center" order={2}><EntityStatsPanel /></Slot>
+       *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
+       *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
+       *  moves to the renderer's projection of the selected entity (any kind). */}
+      <EntityStatsPanel />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
        *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,

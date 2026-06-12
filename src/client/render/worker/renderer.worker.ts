@@ -105,6 +105,8 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             liveBeamRenderedFromY: fb.liveBeamRenderedFromY,
             placementScreenX: fb.placementScreenX,
             placementScreenY: fb.placementScreenY,
+            selectionScreenX: fb.selectionScreenX,
+            selectionScreenY: fb.selectionScreenY,
             placementChosenWorldX: fb.placementChosenWorldX,
             placementChosenWorldY: fb.placementChosenWorldY,
             placementStuck: fb.placementStuck,

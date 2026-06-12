@@ -48,6 +48,12 @@ export class SelectionBracket {
   private readonly gfx: Graphics;
   /** Last-drawn half-size — the dirty-flag sentinel. -1 forces a first rebuild. */
   private drawnHalf = -1;
+  /** WS-9 (R2.30) — the Pixi-WORLD point just ABOVE the selected entity (the
+   *  bracket top), or null when nothing is resolved. The renderer projects this
+   *  to screen each frame so the world-anchored stats box floats over the
+   *  entity. Pixi-world coords (x = gameX, y = -(gameY + half)). */
+  lastWorldX: number | null = null;
+  lastWorldY: number | null = null;
 
   constructor(parent: Container) {
     this.gfx = new Graphics();
@@ -62,6 +68,8 @@ export class SelectionBracket {
   update(mirror: RenderMirror, selectedId: string | null): boolean {
     if (selectedId === null) {
       this.gfx.visible = false;
+      this.lastWorldX = null;
+      this.lastWorldY = null;
       return false;
     }
 
@@ -94,17 +102,24 @@ export class SelectionBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.wrecks) {
-      const wreck = mirror.wrecks.get(selectedId);
-      if (wreck) {
-        ex = wreck.x;
-        ey = wreck.y;
-        radius = shipRadius(wreck.kind);
-      }
+    } else if (mirror.wrecks?.has(selectedId)) {
+      const wreck = mirror.wrecks.get(selectedId)!;
+      ex = wreck.x;
+      ey = wreck.y;
+      radius = shipRadius(wreck.kind);
+    } else if (mirror.lingeringShips?.has(selectedId)) {
+      // WS-9 (R2.23/R2.30) — a selected lingering hull resolves from its own map
+      // (the wreck branch above now uses `.has`, so it no longer swallows this).
+      const l = mirror.lingeringShips.get(selectedId)!;
+      ex = l.x;
+      ey = l.y;
+      radius = shipRadius(l.kind);
     }
 
     if (ex === undefined || ey === undefined) {
       this.gfx.visible = false;
+      this.lastWorldX = null;
+      this.lastWorldY = null;
       return false;
     }
 
@@ -113,6 +128,10 @@ export class SelectionBracket {
     this.gfx.x = ex;
     this.gfx.y = -ey;
     this.gfx.visible = true;
+    // WS-9 (R2.30) — expose the Pixi-world point just ABOVE the bracket so the
+    // renderer can screen-project it for the world-anchored stats box.
+    this.lastWorldX = ex;
+    this.lastWorldY = -(ey + half);
 
     // Rebuild corner geometry only when the size changed (dirty flag).
     if (half !== this.drawnHalf) {

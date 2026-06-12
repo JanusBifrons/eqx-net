@@ -565,6 +565,14 @@ export interface RendererFeedback {
   placementScreenX: number | null;
   placementScreenY: number | null;
   /**
+   * WS-9 (R2.30) — the on-screen point just ABOVE the currently-SELECTED entity
+   * (any kind), or null when nothing is selected / it's off-screen. Lets the
+   * `EntityStatsPanel` float over the entity in world-space instead of a fixed
+   * HUD slot. Published as `data-selection-screen-x/y`. UI-position surface only.
+   */
+  selectionScreenX: number | null;
+  selectionScreenY: number | null;
+  /**
    * Tap/drag-to-position placement (2026-06-07). The renderer owns the
    * pointer-follow because it holds the camera (`screenToWorld`) and sees
    * pointer events on BOTH the main-thread and worker paths.

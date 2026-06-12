@@ -289,6 +289,26 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       }
     }
 
+    // ── WS-9 (R2.30) — world-anchored stats panel ──────────────────────────
+    // Float the (position:fixed) EntityStatsPanel over the selected entity each
+    // frame from the renderer's screen-projection (mirrors the placement banner).
+    const ssx = selFb.selectionScreenX;
+    const ssy = selFb.selectionScreenY;
+    if (typeof ssx === 'number' && typeof ssy === 'number') {
+      const panel = document.querySelector('[data-testid="entity-stats-panel"]') as HTMLElement | null;
+      if (panel) {
+        panel.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, ssx))}px`;
+        panel.style.top = `${Math.max(56, Math.min(window.innerHeight - 8, ssy))}px`;
+      }
+      if (writeE2E) {
+        el.dataset['selectionScreenX'] = ssx.toFixed(1);
+        el.dataset['selectionScreenY'] = ssy.toFixed(1);
+      }
+    } else if (writeE2E && el.dataset['selectionScreenX'] !== undefined) {
+      delete el.dataset['selectionScreenX'];
+      delete el.dataset['selectionScreenY'];
+    }
+
     animFrameRef.current = requestAnimationFrame(loop);
   };
 
