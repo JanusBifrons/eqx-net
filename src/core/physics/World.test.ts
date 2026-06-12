@@ -110,4 +110,34 @@ describe('PhysicsWorld.spawnObstacle (polygon path)', () => {
     world.tick(1 / 60);
     expect(world.getShipState('legacy-asteroid')).not.toBeNull();
   });
+
+  // WS-11 (R2.25) — the STRUCTURAL mechanism behind the drone "float / coast away
+  // forever" bug. Drones spawn via spawnObstacle, whose AI-impulse path bypasses
+  // the player's max-speed clamp; with ZERO linear damping a drone that overshoots
+  // coasts away at constant velocity FOREVER (the standoff brake goes to thrust=0
+  // once it's past the target, and nothing bleeds the residual speed). The fix
+  // gives drone bodies a nonzero `linearDamping` so velocity dissipates. A pure
+  // mechanism lock — no AI, no weapon profile, no feel judgement.
+  it('a body with linearDamping sheds coasting velocity; damping 0 coasts forever (R2.25)', () => {
+    // Two identical bodies given the same eastward speed, then coasted with NO
+    // further impulse. The undamped one (asteroid/structure regime) keeps its
+    // speed; the damped one (the drone fix) bleeds it off.
+    world.spawnObstacle('coast-zero', -8000, 0, 12, 2, undefined, 0);
+    world.spawnObstacle('coast-damped', -8000, 200, 12, 2, undefined, 0.5);
+    const v0 = 200;
+    world.setShipState('coast-zero', { x: -8000, y: 0, angle: 0, vx: v0, vy: 0 });
+    world.setShipState('coast-damped', { x: -8000, y: 200, angle: 0, vx: v0, vy: 0 });
+    for (let i = 0; i < 120; i++) world.tick(1 / 60); // 2 s of pure coasting
+
+    const zero = world.getShipState('coast-zero')!;
+    const damped = world.getShipState('coast-damped')!;
+    const zeroSpeed = Math.hypot(zero.vx, zero.vy);
+    const dampedSpeed = Math.hypot(damped.vx, damped.vy);
+    // Undamped keeps almost all of it (no friction → coasts forever).
+    expect(zeroSpeed).toBeGreaterThan(v0 * 0.9);
+    // Damped has shed most of it (the dissipation the brake settles against).
+    // Pre-fix, spawnObstacle ignored the damping arg → this body also coasted at
+    // ~v0 and this assertion FAILED.
+    expect(dampedSpeed).toBeLessThan(v0 * 0.5);
+  });
 });

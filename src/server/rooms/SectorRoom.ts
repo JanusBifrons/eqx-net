@@ -1512,8 +1512,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
