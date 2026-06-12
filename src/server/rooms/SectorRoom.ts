@@ -1288,6 +1288,8 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       getActiveShip: (pid) => this.getActiveShip(pid),
       shipPoseCache: this.shipPoseCache,
+      lingeringSlots: this.lingeringSlots,
+      lingeringPoseCache: this.lingeringPoseCache,
       swarmRegistry: this.swarmRegistry,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -3043,23 +3045,25 @@ export class SectorRoom extends Room<SectorState> {
             impulse: parseFloat(p.force.toFixed(3)),
             tick,
           });
-          // Ramming damage (Phase 4). Symmetric: each side takes the
-          // damage; the OTHER id is the "shooter" (kill-feed +
-          // hostility attribution). applyDamage already no-ops on
-          // asteroids (immune - no swarmHealth entry) while still
-          // damaging the ship they hit, so "asteroids deal but do not
-          // take" falls out for free. Applied once per pair per tick.
-          if (p.damage > 0 && !this.disableCollisionDamage) {
+          // Ramming damage (Phase 4; WS-1/R2.31 mass-differential model).
+          // ASYMMETRIC: each side takes its OWN damage (the lighter body in a
+          // high-speed collision is crushed, the heavier takes ~0, equal masses
+          // take nothing); the OTHER id is the "shooter" (kill-feed + hostility
+          // attribution). applyDamage already no-ops on asteroids (immune - no
+          // swarmHealth entry), so "asteroids deal but do not take" still holds.
+          // Applied once per pair per tick.
+          if ((p.damageA > 0 || p.damageB > 0) && !this.disableCollisionDamage) {
             serverLogEvent('ram_damage', {
               aId: p.aId,
               bId: p.bId,
               force: parseFloat(p.force.toFixed(1)),
               impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
-              damage: parseFloat(p.damage.toFixed(2)),
+              damageA: parseFloat(p.damageA.toFixed(2)),
+              damageB: parseFloat(p.damageB.toFixed(2)),
               tick,
             });
-            this.applyDamage(p.aId, p.bId, p.damage);
-            this.applyDamage(p.bId, p.aId, p.damage);
+            if (p.damageA > 0) this.applyDamage(p.aId, p.bId, p.damageA);
+            if (p.damageB > 0) this.applyDamage(p.bId, p.aId, p.damageB);
           }
         }
       },

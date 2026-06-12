@@ -20,6 +20,13 @@ interface WeaponDefBase {
 export interface HitscanWeaponDef extends WeaponDefBase {
   mode: 'hitscan';
   range: number;
+  /** Optional REVERSE-SQUARE damage falloff over `range` (R2.29). When present,
+   *  applied damage scales from full `damage` at point-blank to
+   *  `minDamageFrac × damage` at max range, as the SQUARE of normalized
+   *  distance. Absent ⇒ flat damage (byte-identical to pre-R2.29).
+   *  SERVER-AUTHORITATIVE — reflected to the client via the `DamageEvent`,
+   *  never predicted client-side (avoids prediction desync). */
+  falloff?: { minDamageFrac: number };
 }
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
@@ -102,6 +109,11 @@ const HITSCAN_DEF: HitscanWeaponDef = {
   damage: 13,
   cooldownTicks: 10,
   range: 250,
+  // R2.29 — reverse-square damage gradient: full 13 at point-blank falling to
+  // 40 % (≈5.2) at the 250 u max range. Makes the beam a true knife-fight
+  // weapon (rewards closing the distance) and gives a visible reason for the
+  // tapered beam render. Tunable; server-authoritative.
+  falloff: { minDamageFrac: 0.4 },
   // Beam slot trigger cost — interceptor full-pool sustain ≈ 6 s
   // (energyMax 180 / (5 × 6 Hz)). One slot trigger drains 5 regardless
   // of the twin mounts.
@@ -232,4 +244,19 @@ export function weaponAutoFireRange(def: WeaponDef): number {
       return _exhaustive as never;
     }
   }
+}
+
+/**
+ * Reverse-square hitscan damage falloff fraction in [minDamageFrac, 1] (R2.29).
+ * 1.0 at point-blank, falling as the SQUARE of normalized distance to
+ * `minDamageFrac` at (and beyond) `range`. Pure + allocation-free (scalar
+ * in/out) — safe on the fire-resolution path. Multiply the weapon's flat
+ * `damage` by this to get the distance-scaled damage. A `range <= 0` (or no
+ * caller-supplied falloff) yields 1.0 = flat damage.
+ */
+export function hitscanFalloffFrac(dist: number, range: number, minDamageFrac: number): number {
+  if (range <= 0) return 1;
+  const t = dist <= 0 ? 0 : dist >= range ? 1 : dist / range;
+  const frac = 1 - (1 - minDamageFrac) * t * t;
+  return frac < minDamageFrac ? minDamageFrac : frac > 1 ? 1 : frac;
 }

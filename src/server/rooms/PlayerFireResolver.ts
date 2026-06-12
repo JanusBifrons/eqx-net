@@ -31,6 +31,7 @@ import {
   MissileWeaponDef,
   WeaponId,
   getWeapon,
+  hitscanFalloffFrac,
 } from '../../core/combat/WeaponCatalogue.js';
 import {
   rayHitsSphere,
@@ -333,7 +334,7 @@ export class PlayerFireResolver implements WeaponFireSink {
 
   /** Beam: the 4-pass lag-comp candidate sweep + applyDamage + laser_fired,
    *  updating the best-hit accumulator for the aggregate hit_ack. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number): void {
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void {
     const d = this.deps;
     const rayFromX = ctx.fromX;
     const rayFromY = ctx.fromY;
@@ -428,11 +429,16 @@ export class PlayerFireResolver implements WeaponFireSink {
       }
       const hitX = rayFromX + ndx * mountHitDist;
       const hitY = rayFromY + ndy * mountHitDist;
-      d.applyDamage(mountHitId, shooterId, damage, hitX, hitY);
+      // R2.29 — reverse-square damage falloff over range (server-authoritative;
+      // the client reads the scaled number off the DamageEvent, never predicts it).
+      const effDamage = falloffMinDamageFrac !== undefined
+        ? damage * hitscanFalloffFrac(mountHitDist, range, falloffMinDamageFrac)
+        : damage;
+      d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY);
       if (mountHitDist < this._bestHitDist) {
         this._bestHitDist = mountHitDist;
         this._bestHitId = mountHitId;
-        this._bestHitDamage = damage;
+        this._bestHitDamage = effDamage;
         this._bestHitWireId = wireTargetId;
       }
     }

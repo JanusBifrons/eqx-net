@@ -42,7 +42,12 @@ function getRoomById(roomId: string): ServerRoom<SectorState> {
 describe('SectorRoom integration — missile lifecycle', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
-    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true });
+    // asteroidConfig:[] = a rock-FREE sector. sol-prime's default 'dense' field
+    // would otherwise litter the missile corridors with asteroids, which — now
+    // that missiles collide with rock (WS-2b) — detonate a missile before it
+    // reaches its intended target (e.g. the lingering hull at 600,0). Tests that
+    // need a rock seed their OWN via _internals.spawnTestAsteroid (deterministic).
+    harness = await bootSectorTestServer({ sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [] });
   }, 15_000);
   afterEach(async () => {
     if (harness) await harness.cleanup();
@@ -121,6 +126,65 @@ describe('SectorRoom integration — missile lifecycle', () => {
     const hullDelta = hullBefore - ship.health;
     expect(shieldDelta + hullDelta).toBeGreaterThan(0);
   }, 20_000);
+
+  it('WS-2/R2.22 symptom 3: a missile COLLIDES with and DAMAGES a lingering hull (does not pass through)', async () => {
+    // Shooter (frigate) at origin; victim (fighter) parked far down +x.
+    const shooter = await joinPlayer('missile-frigate', 0, 0);
+    const victim = await joinPlayer('fighter', 600, 0);
+    const internals = shooter.room as unknown as MissileTestInternals;
+    const sectorRoom = shooter.room as unknown as SectorRoom;
+    const victimShipId = victim.shipInstanceId;
+
+    await harness.advance(150);
+
+    // Force the victim into a LINGERING hull via the proven fresh-spawn-displace
+    // path (lingering.test.ts): disconnect → reconnect with isNewShip. The OLD
+    // hull (victimShipId) displaces into lingeringSlots (isActive=false) and
+    // stays parked at ~(600,0); SabPoseMirror writes its pose into
+    // lingeringPoseCache each tick.
+    await harness.disconnectClient(victim.cr);
+    await harness.events.waitFor({ tag: 'player_lingered', where: (d) => d['playerId'] === victim.pid });
+    const reconnected = await harness.connectActive(victim.pid, { isNewShip: true, shipKind: 'fighter' });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === victim.pid });
+
+    // Park the NEW active hull far OFF the +x missile corridor so the missile
+    // can only encounter the lingering hull at ~(600,0).
+    sectorRoom._internals.postToWorker({ type: 'SET_POSITION', entityId: victim.pid, x: 0, y: -8000, angle: 0, vx: 0, vy: 0, angvel: 0 });
+    await harness.advance(200);
+
+    const lingering = victim.state.ships.get(victimShipId);
+    expect(lingering, 'lingering hull still present').toBeDefined();
+    expect(lingering!.isActive).toBe(false);
+    const shieldBefore = lingering!.shield;
+    const hullBefore = lingering!.health;
+
+    // Fire a missile straight down +x from the origin. lockOnTarget excludes the
+    // lingering hull (and the new active hull is parked off-corridor), so the
+    // missile flies straight through (600,0) — where it must COLLIDE with the
+    // lingering hull rather than pass through it.
+    const heatSeeker = getWeapon('heat-seeker') as MissileWeaponDef;
+    const missileId = internals.spawnServerMissile(shooter.pid, 0, 0, 1, 0, heatSeeker);
+    expect(missileId).not.toBeNull();
+
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline) {
+      const cur = victim.state.ships.get(victimShipId);
+      if (cur && (cur.shield < shieldBefore || cur.health < hullBefore)) break;
+      if (internals.missileSim.size() === 0) break;
+      await harness.advance(100);
+    }
+
+    // The lingering hull took damage — the missile collided, it did not pass
+    // through. FAILS on current main: sweepCollision + detonate skip
+    // isActive=false hulls, so the missile flies through and expires.
+    const after = victim.state.ships.get(victimShipId);
+    expect(after, 'lingering hull still tracked').toBeDefined();
+    const shieldDelta = shieldBefore - after!.shield;
+    const hullDelta = hullBefore - after!.health;
+    expect(shieldDelta + hullDelta, 'lingering hull lost shield/hull to the missile').toBeGreaterThan(0);
+
+    await harness.disconnectClient(reconnected);
+  }, 25_000);
 
   it('WS-2b/R2.22 symptom 2: a missile DETONATES on an asteroid (does not pass through; deals 0 HP)', async () => {
     // Asteroid model ADR (docs/architecture/asteroid-interaction-model.md):

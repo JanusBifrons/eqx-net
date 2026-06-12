@@ -118,12 +118,16 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     expect(ack['targetId']).toBe(targetPid);
     expect(dmg['targetId']).toBe(targetPid);
     expect(ack['targetId']).toBe(dmg['targetId']);
-    // Phase 0 — the de-dupe contract: the ack's damage is exactly what the
+    // Phase 0 — the de-dupe contract: the ack's damage is EXACTLY what the
     // authoritative DamageEvent carries (so a confirmed prediction replaces,
-    // never double-counts).
-    expect(ack['damage']).toBe(HITSCAN_DAMAGE);
-    expect(dmg['damage']).toBe(HITSCAN_DAMAGE);
+    // never double-counts). This relationship is the real invariant.
     expect(ack['damage']).toBe(dmg['damage']);
+    // R2.29 — the beam now applies reverse-square distance falloff, so at this
+    // ~100 u hit range the applied damage is LESS than the flat catalogue value
+    // (was exactly HITSCAN_DAMAGE pre-falloff — this also locks that falloff is
+    // active on the live fire path).
+    expect(ack['damage']).toBeGreaterThan(0);
+    expect(ack['damage']).toBeLessThan(HITSCAN_DAMAGE);
   }, 20_000);
 
   it('a miss fire: hit_ack.hit === false, NO damage field, NO DamageEvent (damage rides only hit:true)', async () => {
