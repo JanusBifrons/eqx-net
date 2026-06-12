@@ -97,8 +97,44 @@ Ramming.ts` sums force per **unordered pair per tick** BEFORE the floor +
 damage curve + the (now single) `collision_resolved` broadcast — without
 this, per-event damage would N-multiply (orientation-dependent) and a
 hard ram could fall under the force floor split across triangles.
-Symmetric (both ships take it); asteroids deal but don't take (the
-no-health no-op falls out of `applyDamage`).
+Asteroids deal but don't take (the no-health no-op falls out of
+`applyDamage`).
+
+### Damage curve — asymmetric mass-differential (WS-1 / R2.31, 2026-06-12)
+
+The original curve was symmetric and **linear on closing speed** (`(speed −
+floor) × k`), so two equal ships brushing at speed both lost a chunk and ram
+damage felt "too high." The model is now the player-requested shape: a ram
+only hurts when there is **both** a huge closing speed **and** a large mass
+gap, and the damage is **asymmetric**.
+
+```
+damageTo(self) = RAM_DAMAGE_MAX
+               × ramSpeedFactor(closingSpeed)              // reverse-square, 0..1
+               × ramMassDifferentialFactor(mSelf, mOther)  // asymmetric, 0..1
+```
+
+- **`ramSpeedFactor`** — `0` at/below `RAM_MIN_IMPACT_SPEED` (50 u/s; a slow
+  drift / docking tap is free), then `((speed − floor)/(RAM_SPEED_FULL −
+  floor))²` saturating at `1` at `RAM_SPEED_FULL` (700). Quadratic ⇒ moderate
+  speeds deal a *small fraction* of the cap. The input is the **relative**
+  closing speed (`Contact.impactSpeed`), not absolute — two ships flying fast
+  *together* that touch deal nothing.
+- **`ramMassDifferentialFactor`** — `(mOther − mSelf)/(mOther + mSelf)` clamped
+  to `[0, 1]`. `0` for equal masses (two equal ships at any speed = nothing),
+  → `1` as the other body gets much heavier. It clamps to `0` for the *heavier*
+  body, so it is asymmetric: a fighter flying into a capital is crushed while
+  the capital is untouched. Per-side results ride `RamPair.damageA`/`damageB`
+  and are applied independently in `SectorRoom.onContactBatch`.
+
+Masses are the **folded Rapier body masses** (`World.getBodyMass`, read
+alloc-free in `drainContacts` and threaded via `Contact.aMass`/`bMass`) — the
+correct source for ships, drones, structures, and asteroids alike (a `kind.mass`
+catalogue read is undefined for non-ship bodies). Regression locks:
+`src/core/combat/Ramming.test.ts` (curve goldens, hand-derived) +
+`tests/integration/sectorRoom/ramming.test.ts` (equal-mass fighters take 0; a
+light fighter into a heavy crossguard is crushed while the crossguard is
+untouched). 🔴 netgate (contact→damage live-loop).
 
 ## Body-lifecycle exposed-state
 
