@@ -203,7 +203,7 @@ The visible bug when this rule was broken: the local player's interceptor showed
 
 `BARREL_LENGTH = 20` deliberately matches the 20 u server-side self-hit clearance in `SectorRoom.handleFire`/`handleAiFire` so beams emerge from the *visible* barrel tip. Don't change one without the other.
 
-The aim-line preview is drawn as a dotted chain (Pixi v8 `Graphics` has no native dashed stroke — we draw short segments manually). 500 u long, `6 u on / 4 u off`, alpha 0.25. The dash chain rotates with the parent mount container; no per-frame redraw.
+The aim-line preview is drawn as a dotted chain (Pixi v8 `Graphics` has no native dashed stroke — we draw short segments manually). Its length is **per-mount, = the bound weapon's effective reach** via the pure `aimLineLengthForMount` (`render/aimLineLength.ts` → `weaponAutoFireRange`: hitscan→`range` e.g. 250, projectile→0.85× max travel, missile→0.5× max travel). It used to be a hardcoded 500 for every mount, so the interceptor beam (range 250) drew its guide at 2× the actual reach (R2.14, 2026-06-12). `6 u on / 4 u off`, alpha 0.25; the dash chain rotates with the parent mount container; no per-frame redraw. Lock: `aimLineLength.test.ts`.
 
 See [docs/architecture/weapon-mounts.md](../../docs/architecture/weapon-mounts.md) for the call-graph and the "do not add a second correction path" rule.
 

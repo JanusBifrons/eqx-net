@@ -17,6 +17,6 @@ export class HitscanWeapon extends Weapon {
   }
 
   resolveFire(ctx: WeaponFireContext, sink: WeaponFireSink): void {
-    sink.hitscan(ctx, this.def.range, this.def.damage);
+    sink.hitscan(ctx, this.def.range, this.def.damage, this.def.falloff?.minDamageFrac);
   }
 }
