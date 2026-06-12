@@ -446,6 +446,12 @@ function writeE2EDataset(
   // Miner's beam renders distinctly (NOT the shared remote/live pool).
   el.dataset['miningBeamCount'] = String(feedback.miningBeamCount);
 
+  // WS-10 (R2.4) — the entity the desktop pointer is hovering over (the lighter
+  // HoverBracket outline target), so the hover-outline E2E can assert it tracks
+  // the cursor. '' when over empty space / on touch. Renderer-owned; never
+  // Zustand (#2 — it updates at pointer-move cadence).
+  el.dataset['hoverPickId'] = feedback.hoveredPickId ?? '';
+
   // Structure placement confirm — world-anchored (smoke handoff 2026-06-06,
   // Issue 5). Move the (position:fixed) confirm banner to the renderer's
   // projected on-screen position of the blueprint ghost, so it sits over the

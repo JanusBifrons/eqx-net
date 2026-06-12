@@ -18,6 +18,7 @@ import { DamageNumberManager } from './DamageNumbers';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
+import { HoverBracket } from './HoverBracket';
 import { pickEntityAt, type PickedEntityKind } from './pickEntity';
 import { decideLingeringSpriteAction, decideExplosionPosition } from './spriteUpdateDecisions';
 import { EffectsService, effectsDisabledByUrl } from '../effects/EffectsService';
@@ -126,6 +127,10 @@ export class PixiRenderer implements IRenderer {
    */
   private _selectedId: string | null = null;
   private _selectedKind: PickedEntityKind | null = null;
+  /** WS-10 (R2.4) — the entity the desktop pointer is HOVERING over (set from
+   *  pointer-move via `pickEntityAt`). Renderer-local, NEVER Zustand (updates at
+   *  move cadence — invariant #2). Drives the lighter `HoverBracket` outline. */
+  private _hoveredId: string | null = null;
   /** Structures plan, Phase 3 — grid connector web renderer. */
   private connectorRenderer!: ConnectorRenderer;
   /**
@@ -301,6 +306,7 @@ export class PixiRenderer implements IRenderer {
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
+  private hoverBracket: HoverBracket | null = null;
   /** WS-9 (R2.30) — reused scratch for the selection screen-projection (#14). */
   private readonly _selScreenScratch = { x: 0, y: 0 };
   private backgroundGrid: BackgroundGrid | null = null;
@@ -333,6 +339,7 @@ export class PixiRenderer implements IRenderer {
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
+    hoveredPickId: null,
     miningBeamCount: 0,
   };
 
@@ -659,6 +666,7 @@ export class PixiRenderer implements IRenderer {
     // container (camera-transformed, world space like the health bars) so the
     // 4-corner bracket tracks the selected entity as it (and the camera) moves.
     this.selectionBracket = new SelectionBracket(this.world);
+    this.hoverBracket = new HoverBracket(this.world);
 
     // Drive Camera momentum + follow each frame (works in both contexts).
     this.app.ticker.add(() => {
@@ -772,6 +780,11 @@ export class PixiRenderer implements IRenderer {
         break;
       case 'pointermove':
         this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+        // WS-10 (R2.4) — desktop hover outline. Renderer-local; gated like
+        // selection so it never fires over the galaxy layer / during placement.
+        if (!this.galaxyTapSuppressed() && !this._placementActive) {
+          this.handleGameplayHover(e.offsetX, e.offsetY);
+        }
         break;
       case 'pointerup': {
         const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, e.stamp);
@@ -873,6 +886,10 @@ export class PixiRenderer implements IRenderer {
           break;
         case 'pointermove':
           this.camera.onPointerMove(e.pointerId, e.offsetX, e.offsetY);
+          // WS-10 (R2.4) — desktop hover outline (main-thread render path).
+          if (!this.galaxyTapSuppressed() && !this._placementActive) {
+            this.handleGameplayHover(e.offsetX, e.offsetY);
+          }
           break;
         case 'pointerup': {
           const result = this.camera.onPointerUp(e.pointerId, e.offsetX, e.offsetY, stamp);
@@ -1004,6 +1021,39 @@ export class PixiRenderer implements IRenderer {
       this._selectedId = hit.id;
       this._selectedKind = hit.kind;
     }
+  }
+
+  /**
+   * Hover outline (WS-10 / R2.4). On desktop pointer-MOVE (no button), resolve
+   * the entity under the cursor via the SAME pure `pickEntityAt` the tap uses and
+   * stash it in `_hoveredId` (renderer-local — NEVER Zustand, #2). The per-frame
+   * `update()` draws the lighter `HoverBracket` around it. Reads the already-
+   * resolved `_lastMirror` (one-pose-per-frame; pickEntityAt reads `entry.x/y`
+   * for kind 1/2, never re-interpolates). Gated by the callers on
+   * `!galaxyTapSuppressed() && !_placementActive` (same as selection) so it never
+   * fires over the galaxy layer or during blueprint placement.
+   */
+  private handleGameplayHover(screenX: number, screenY: number): void {
+    if (this._lastMirror === null) {
+      this._hoveredId = null;
+      return;
+    }
+    const w = this.camera.screenToWorld(screenX, screenY);
+    const hit = pickEntityAt(w.x, -w.y, this._lastMirror);
+    this._hoveredId = hit?.id ?? null;
+  }
+
+  /**
+   * DEV/E2E-only deterministic hover at a GAME-space point — bypasses
+   * screen→world projection (camera-transform fragility) so a Playwright spec can
+   * hover an entity at its known world position. Mirrors `devSelectAtWorld`; runs
+   * the SAME `pickEntityAt` the real pointer-move hover uses. Returns the id.
+   */
+  devHoverAtWorld(gameX: number, gameY: number): string | null {
+    if (this._lastMirror === null) return null;
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    this._hoveredId = hit?.id ?? null;
+    return this._hoveredId;
   }
 
   /** True while the galaxy layer should swallow gameplay taps — either the
@@ -1579,6 +1629,19 @@ export class PixiRenderer implements IRenderer {
     // Publish the current selection for the main thread → Zustand bridge.
     this.feedback.selectedPickId = this._selectedId;
     this.feedback.selectedPickKind = this._selectedKind;
+
+    // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
+    // the two brackets never stack on the same target. If the hovered entity
+    // vanished from the mirror, clear `_hoveredId`. Renderer-local id published
+    // for the E2E bridge (data-hover-pick-id) — NEVER Zustand (#2).
+    const hoverTarget = this._hoveredId === this._selectedId ? null : this._hoveredId;
+    if (hoverTarget !== null) {
+      const stillHovered = this.hoverBracket?.update(mirror, hoverTarget) ?? false;
+      if (!stillHovered) this._hoveredId = null;
+    } else {
+      this.hoverBracket?.update(mirror, null);
+    }
+    this.feedback.hoveredPickId = this._hoveredId;
     // WS-9 (R2.30) — project the bracket's above-entity point to SCREEN so the
     // stats box floats over the entity (any kind). Alloc-free toScreenInto (#14).
     const selWX = this.selectionBracket?.lastWorldX ?? null;
@@ -2145,6 +2208,7 @@ export class PixiRenderer implements IRenderer {
     this.healthBars?.destroy();
     this.labels?.destroy();
     this.selectionBracket?.destroy();
+    this.hoverBracket?.destroy();
     this.mountVisuals.disposeAll();
     this.halo.destroy();
     this.backgroundGrid?.destroy();

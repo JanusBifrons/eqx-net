@@ -165,6 +165,7 @@ describe('renderer-worker protocol', () => {
             placementPreviewConnectionCount: 2,
             selectedPickId: 'swarm-42',
             selectedPickKind: 'structure',
+            hoveredPickId: 'swarm-7',
             miningBeamCount: 1,
           },
         },

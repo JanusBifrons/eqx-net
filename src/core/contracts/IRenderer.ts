@@ -626,6 +626,15 @@ export interface RendererFeedback {
    *  read health from the mirror directly). `null` when nothing is selected. */
   selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
   /**
+   * WS-10 (R2.4) — the id of the entity the desktop pointer is HOVERING over
+   * (set from pointer-move via `pickEntityAt`), or null when the cursor is over
+   * empty space / on touch (no hover). Drives the lighter `HoverBracket` outline
+   * and is published as `data-hover-pick-id` for the E2E. Renderer-local /
+   * UI-affordance only — NEVER mirrored into Zustand (it updates at pointer-move
+   * cadence; invariant #2). Same id form as `selectedPickId`.
+   */
+  hoveredPickId: string | null;
+  /**
    * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
    * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as
    * ACTUALLY rendered this frame (the pool's `liveCount`). WS-4 Phase 4 / R2.27.

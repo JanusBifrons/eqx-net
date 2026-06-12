@@ -59,6 +59,12 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   ) {
     (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null })
       .__eqxSelectAtWorld = (x, y) => renderer.devSelectAtWorld(x, y);
+    // WS-10 (R2.4) — deterministic hover hook (peer of __eqxSelectAtWorld), so the
+    // hover-outline E2E can hover an entity at its known world position without
+    // camera-projection fragility. Runs the SAME pickEntityAt the pointer-move
+    // hover uses.
+    (window as unknown as { __eqxHoverAtWorld?: (x: number, y: number) => string | null })
+      .__eqxHoverAtWorld = (x, y) => renderer.devHoverAtWorld(x, y);
   }
   logEvent('renderer_path_chosen', {
     useWorker,
