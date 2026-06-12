@@ -200,6 +200,26 @@ The `splashFalloffMin` clamp is what keeps the formula numerically
 stable AND keeps direct hits from delivering wildly variable damage
 based on sub-unit position differences.
 
+## Lingering hulls are collidable (WS-2 / R2.22 symptom 3, 2026-06-12)
+
+A **lingering hull** (a disconnected / fresh-spawn-displaced ship,
+`isActive=false`) is still a solid world object — a fired missile must
+collide with it, not pass through. Both the per-tick `sweepCollision`
+and the `detonate` splash loop iterate `lingeringSlots` (the
+authoritative set of lingering hulls) and read each one's live pose from
+`lingeringPoseCache` (written per-tick by `SabPoseMirror`), mirroring
+`PlayerFireResolver`'s lingering-hit path. On a hit the missile returns
+the **`shipInstanceId`** (not a `playerId`), which `EntityResolver`
+routes to the lingering leaf so layered shield/hull damage lands. The
+loops are allocation-free (`for…of` over the slot map, scalar scratch).
+
+Scope: this is **collision only** — `lockOnTarget` still does NOT home
+onto lingering hulls (the hostility predicate is keyed by `playerId`, not
+`shipInstanceId`, so homing would entangle the targeting system; an
+in-flight missile colliding with an abandoned hull is the reported bug
+and the right-sized fix). The asteroid (`kind===0`) skip is untouched —
+that is gated on the separate asteroid-interaction-model ADR (WS-4).
+
 ## Proximity fuse
 
 The proximity-fuse check runs **before** guidance each tick. If the

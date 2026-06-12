@@ -24,6 +24,8 @@ function makeSim(): { sim: MissileSimulation; impulses: number; broadcasts: numb
     playerToSlot: [],
     getActiveShip: () => undefined,
     shipPoseCache: new Map(),
+    lingeringSlots: new Map(),
+    lingeringPoseCache: new Map(),
     swarmRegistry: {
       get: () => null,
       all: function* () { /* empty */ },
@@ -132,6 +134,8 @@ describe('MissileSimulation pool', () => {
       playerToSlot: [],
       getActiveShip: () => undefined,
       shipPoseCache: new Map(),
+      lingeringSlots: new Map(),
+      lingeringPoseCache: new Map(),
       swarmRegistry: { get: () => null, all: function* () {} },
       applyDamage: () => {},
       broadcastFired: () => { firedCount++; },

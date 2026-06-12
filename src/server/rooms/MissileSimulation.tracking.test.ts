@@ -45,6 +45,8 @@ function makeSim() {
     playerToSlot: [],
     getActiveShip: () => undefined,
     shipPoseCache: new Map(),
+    lingeringSlots: new Map(),
+    lingeringPoseCache: new Map(),
     swarmRegistry: {
       get: (id) => drones.get(id) ?? null,
       all: function* () { yield* drones.values(); },
