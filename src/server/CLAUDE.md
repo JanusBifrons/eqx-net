@@ -312,8 +312,16 @@ the netgate + the existing integration suite.
   on the snapshot. `SwarmEntityRecord.shieldDown` maintained event-driven.
 - Ramming (`src/core/combat/Ramming.ts`): CONTACT_BATCH aggregated per
   unordered {aId,bId} per tick BEFORE floor/damage/broadcast (a
-  shield-down hull is N triangle colliders → N sub-events). Symmetric;
-  asteroids deal but don't take.
+  shield-down hull is N triangle colliders → N sub-events). **WS-1/R2.31
+  (2026-06-12) replaced the old symmetric-linear curve with an ASYMMETRIC
+  mass-differential model:** `damageTo(self) = RAM_DAMAGE_MAX ×
+  ramSpeedFactor(closing)² × ramMassDifferentialFactor(mSelf, mOther)`. A ram
+  only hurts with BOTH a huge closing speed AND a large mass gap; the LIGHTER
+  body takes the damage, the heavier ~0, and EQUAL-mass ships deal nothing at
+  any speed (the per-side `RamPair.damageA`/`damageB` are applied independently
+  in `onContactBatch`). Masses are the folded Rapier body masses threaded via
+  `Contact.aMass`/`bMass` (`World.getBodyMass`); asteroids still deal but don't
+  take (no `swarmHealth`). 🔴 netgate (contact→damage live-loop).
 - `feel-test-lockstep.spec.ts` is host-load sensitive — confirm on a
   quiet host/CI (it fails on pre-shield HEAD too in a loaded session;
   see docs/LESSONS.md 2026-05-16). Catalogue version bumped 1→2.
