@@ -42,6 +42,9 @@ export const StructureKindIdSchema = z.enum([
   'turret',
   'battery',
   'shield_pylon',
+  // WS-8 (R2.15) — two new defence turrets. APPEND-ONLY (wire subtype index).
+  'laser_bolt_turret',
+  'missile_turret',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -299,6 +302,77 @@ export const SHIELD_PYLON: StructureKind = {
   color: 0x4488ff,
 };
 
+/** Bolt Turret (WS-8 / R2.15) — fires dodgeable PROJECTILE bolts (the existing
+ *  `laser` weapon) at hostile drones, rather than the instant beam the hitscan
+ *  `turret` uses. A leaf. Orange + square silhouette so it reads apart from the
+ *  red triangle beam turret. Cadence/damage are the per-kind `fireRateMs` /
+ *  `weaponDamage`; the bolt travels + collides via the projectile sim. */
+export const LASER_BOLT_TURRET: StructureKind = {
+  id: 'laser_bolt_turret',
+  displayName: 'Bolt Turret',
+  description: 'Fires travelling bolts at hostile drones in range (power-gated). A leaf node.',
+  radius: 36,
+  maxHealth: 600,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 18,
+  storageCapacity: 0,
+  constructionCost: 350,
+  color: 0xff8844,
+  weaponRange: 900,
+  fireRateMs: 600,
+  weaponDamage: 18,
+  mounts: [
+    {
+      id: 'barrel',
+      localX: 0,
+      localY: 0,
+      baseAngle: 0,
+      arcMin: -Math.PI,
+      arcMax: Math.PI,
+      rotationSpeed: 3,
+      weaponId: 'laser',
+    },
+  ],
+};
+
+/** Missile Turret (WS-8 / R2.15) — launches homing MISSILES (the existing
+ *  `heat-seeker`) at hostile drones; slow salvo, heavy power draw, big splash
+ *  (which CAN hit your own base — realistic, by user choice). A leaf. Teal +
+ *  larger hexagon so it reads as a heavy emplacement. The missile homes via the
+ *  shared MissileSimulation; a structure-owned missile locks onto DRONES ONLY
+ *  (the server-fire path adds the pstruct-owner targeting branch). */
+export const MISSILE_TURRET: StructureKind = {
+  id: 'missile_turret',
+  displayName: 'Missile Turret',
+  description: 'Launches homing missiles at hostile drones in range (power-gated). A leaf node.',
+  radius: 44,
+  maxHealth: 800,
+  maxConnections: 1,
+  isHub: false,
+  powerOutput: 0,
+  powerConsumption: 30,
+  storageCapacity: 0,
+  constructionCost: 600,
+  color: 0x66ccaa,
+  weaponRange: 1200,
+  fireRateMs: 1500,
+  weaponDamage: 150,
+  mounts: [
+    {
+      id: 'launcher',
+      localX: 0,
+      localY: 0,
+      baseAngle: 0,
+      arcMin: -Math.PI,
+      arcMax: Math.PI,
+      rotationSpeed: 2,
+      weaponId: 'heat-seeker',
+    },
+  ],
+};
+
 /**
  * Canonical catalogue order = wire subtype-byte index. APPEND-ONLY (invariant
  * #11). The structure subtype rides the shared `shipKind` u8 in the binary
@@ -313,6 +387,9 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   TURRET,
   BATTERY,
   SHIELD_PYLON,
+  // WS-8 (R2.15) — APPENDED at the tail (wire indices 7, 8). Never reorder.
+  LASER_BOLT_TURRET,
+  MISSILE_TURRET,
 ]);
 
 /** Id-keyed lookup, derived from the canonical list (the list is the source of
@@ -327,8 +404,9 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
 
 /** Bump on every catalogue edit (add a kind OR change any numeric field).
  *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10).
- *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 5;
+ *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
+ *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 6;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
@@ -378,6 +456,10 @@ export const STRUCTURE_SIDES: Record<StructureKindId, number> = {
   turret: 3,
   battery: 4, // boxy like the solar, distinguished by its amber tint
   shield_pylon: 7, // a distinct heptagon; the wall span between a pair is the star
+  // WS-8 (R2.15) — the two new defence turrets read apart from the red triangle
+  // beam turret by SHAPE + tint: bolt = orange square, missile = teal hexagon.
+  laser_bolt_turret: 4,
+  missile_turret: 6,
 };
 
 /**
