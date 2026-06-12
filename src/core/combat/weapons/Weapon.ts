@@ -53,8 +53,11 @@ export interface WeaponFireContext {
  */
 export interface WeaponFireSink {
   /** Resolve an instant beam: cast a ray of `range` and apply `damage` to the
-   *  nearest hit, then broadcast the beam. (Server: the candidate sweep.) */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number): void;
+   *  nearest hit, then broadcast the beam. (Server: the candidate sweep.)
+   *  `falloffMinDamageFrac` (R2.29) — when defined, the sink scales `damage` by
+   *  the reverse-square `hitscanFalloffFrac(hitDist, range, frac)`; undefined ⇒
+   *  flat damage (back-compat). */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void;
   /** Spawn a server projectile with the given velocity + ballistics. */
   spawnProjectile(
     ctx: WeaponFireContext,

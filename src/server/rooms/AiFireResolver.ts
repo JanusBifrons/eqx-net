@@ -19,6 +19,7 @@
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKind, type WeaponMount } from '../../shared-types/shipKinds.js';
 import {
   getWeapon,
+  hitscanFalloffFrac,
   type MissileWeaponDef,
   type WeaponId,
 } from '../../core/combat/WeaponCatalogue.js';
@@ -199,7 +200,7 @@ export class AiFireResolver implements WeaponFireSink {
   /** Beam: instant lag-comp-free hit test against live player poses; on hit,
    *  applyDamage (internal shooter id); always broadcast laser_fired on the
    *  WIRE shooter id. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number): void {
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void {
     const d = this.deps;
     const rayFromX = ctx.fromX;
     const rayFromY = ctx.fromY;
@@ -240,7 +241,11 @@ export class AiFireResolver implements WeaponFireSink {
     const scanDist = hitDist === Infinity ? range : hitDist;
     const wallDist = d.blockBeamAtWall?.(rayFromX, rayFromY, ndx, ndy, scanDist, damage) ?? null;
     if (wallDist === null && hitId) {
-      d.applyDamage(hitId, this._shooterId, damage);
+      // R2.29 — reverse-square damage falloff over range (server-authoritative).
+      const effDamage = falloffMinDamageFrac !== undefined
+        ? damage * hitscanFalloffFrac(hitDist, range, falloffMinDamageFrac)
+        : damage;
+      d.applyDamage(hitId, this._shooterId, effDamage);
     }
 
     const blocked = wallDist !== null;
