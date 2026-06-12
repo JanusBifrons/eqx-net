@@ -32,8 +32,17 @@ export interface GridNode {
   isHub: boolean;
   /** The grid root + storage source (the Capital). Drives `powered`. */
   isCapital: boolean;
+  /** WS-5 (R2.10) — true for the Connector kind specifically. The Capital may
+   *  ONLY link to a Connector (`capital-only` rule); `isHub && !isCapital` is
+   *  NOT a sufficient test because Shield Pylons are also non-capital hubs, and
+   *  the rule is Connectors-ONLY. Projected from the kind by each view. */
+  isConnector: boolean;
   /** Per-kind connection cap (Connector 6, Capital 4, leaves 1). */
   maxConnections: number;
+  /** WS-5 (R2.10) — per-kind max edge-to-edge connection range (world units).
+   *  ABSENT ⇒ the global `CONNECTION_MAX_RANGE`. `canConnect` uses the `min` of
+   *  the two endpoints' ranges (symmetric). Only the Capital sets it today. */
+  connectionRange?: number;
   /** Inert (0) until built — the `isConstructed` gate is the caller's job to
    *  reflect here (a blueprint should project `powerOutput/Consumption = 0`). */
   powerOutput: number;
@@ -46,6 +55,7 @@ export type CanConnectReason =
   | 'self'
   | 'duplicate'
   | 'hub-required'
+  | 'capital-only'
   | 'a-full'
   | 'b-full'
   | 'out-of-range'
@@ -160,6 +170,15 @@ export function canConnect(
   // can NEVER attach to another leaf.
   if (!a.isHub && !b.isHub) return { ok: false, reason: 'hub-required' };
 
+  // WS-5 (R2.10) — capital-only-connectors: the Capital may ONLY link to a
+  // Connector. Anything else attaching to it (a leaf, OR a non-connector hub
+  // such as a Shield Pylon) is rejected — route through a Connector relay. This
+  // is checked BEFORE the cap/duplicate gates so the reason is unambiguous (a
+  // leaf at a full Capital reads `capital-only`, not `a-full`).
+  if ((a.isCapital && !b.isConnector) || (b.isCapital && !a.isConnector)) {
+    return { ok: false, reason: 'capital-only' };
+  }
+
   const aConns = adjacency.get(a.id) ?? [];
   if (aConns.some((c) => c.getOtherNode(a.id) === b.id)) {
     return { ok: false, reason: 'duplicate' };
@@ -168,7 +187,14 @@ export function canConnect(
   const bConns = adjacency.get(b.id) ?? [];
   if (bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
 
-  if (edgeDistance(a, b) > CONNECTION_MAX_RANGE) return { ok: false, reason: 'out-of-range' };
+  // WS-5 (R2.10) — per-endpoint range: the tighter of the two kinds' ranges
+  // wins (symmetric, so canConnect(a,b) === canConnect(b,a)). Only the Capital
+  // shortens its reach today; every other pair keeps the global 600 u.
+  const maxRange = Math.min(
+    a.connectionRange ?? CONNECTION_MAX_RANGE,
+    b.connectionRange ?? CONNECTION_MAX_RANGE,
+  );
+  if (edgeDistance(a, b) > maxRange) return { ok: false, reason: 'out-of-range' };
   if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
   return { ok: true };
 }

@@ -496,6 +496,12 @@ gameServer
     structureGridPulseMs: 100,
     prebuiltStructures: [
       { kind: 'capital', x: 0, y: 0 },
+      // WS-5 (R2.10): leaves can no longer attach DIRECTLY to the Capital
+      // (capital-only-connectors). Two Connector relays, offset to clear the
+      // Capital's line-of-sight, carry the grid — NE relay → the +x/+y solars,
+      // SW relay → the −x miner + −y turret. Capital uses 2 of its 4 slots.
+      { kind: 'connector', x: 150, y: 60 },
+      { kind: 'connector', x: -100, y: -100 },
       { kind: 'solar', x: 250, y: 0 },
       { kind: 'solar', x: 0, y: 250 },
       { kind: 'miner', x: -350, y: 0 },
@@ -526,6 +532,11 @@ gameServer.define('galaxy-wave-test', SectorRoom, {
   structureGridPulseMs: 100,
   prebuiltStructures: [
     { kind: 'capital', x: 0, y: 0 },
+    // WS-5 (R2.10): capital-only-connectors — two offset Connector relays carry
+    // the grid (NE → solars, SW → miner + turret) since leaves can't attach to
+    // the Capital directly. Keeps this base READY (powered) for the wave gate.
+    { kind: 'connector', x: 150, y: 60 },
+    { kind: 'connector', x: -100, y: -100 },
     { kind: 'solar', x: 250, y: 0 },
     { kind: 'solar', x: 0, y: 250 },
     { kind: 'miner', x: -350, y: 0 },

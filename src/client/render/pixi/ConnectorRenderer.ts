@@ -35,6 +35,7 @@ function blankGridNode(): GridNode {
     radius: 0,
     isHub: false,
     isCapital: false,
+    isConnector: false,
     maxConnections: 0,
     powerOutput: 0,
     powerConsumption: 0,

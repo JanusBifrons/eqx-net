@@ -80,6 +80,12 @@ export const StructureKindSchema = z
      *  (Capital or Connector). Leaves (solar/miner/turret) can only attach to
      *  a hub, never to each other. This is the eqx-peri rule verbatim. */
     isHub: z.boolean(),
+    /** WS-5 (R2.10) — optional per-kind max edge-to-edge connection range
+     *  (world units). ABSENT ⇒ the global `CONNECTION_MAX_RANGE` (600) applies.
+     *  Only the Capital overrides today (a shorter reach forces relay chaining).
+     *  `Grid.canConnect` takes the `min` of both endpoints' ranges, so a short
+     *  range caps every pair the kind is part of. */
+    connectionRange: z.number().positive().optional(),
 
     // -- Power economy (all gated behind `isConstructed` at runtime) --------
     /** Power produced per pulse once built. */
@@ -142,6 +148,10 @@ export const CAPITAL: StructureKind = {
   maxHealth: 5000,
   maxConnections: 4,
   isHub: true,
+  // WS-5 (R2.10) — the Capital reaches a SHORTER distance than the global 600 u
+  // (= CAPITAL_CONNECTION_RANGE in src/core/structures/structureGridConstants.ts;
+  // shared-types must not import core, so the literal is mirrored here).
+  connectionRange: 300,
   powerOutput: 50,
   powerConsumption: 0,
   storageCapacity: 2_000_000,
@@ -310,8 +320,9 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
   >,
 );
 
-/** Bump on every catalogue edit (add a kind OR change any numeric field). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 3;
+/** Bump on every catalogue edit (add a kind OR change any numeric field).
+ *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 4;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';
