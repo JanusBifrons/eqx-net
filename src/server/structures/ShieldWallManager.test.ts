@@ -5,7 +5,7 @@ import { CONNECTION_THROUGHPUT } from '../../core/structures/structureGridConsta
 
 function pylon(id: string, x: number, y: number, owner = 'p1', built = true): StructureRecord {
   return {
-    id, owner, kind: 'shield_pylon', subtypeIndex: 0, x, y, radius: 30,
+    id, owner, kind: 'shield_pylon', subtypeIndex: 0, x, y, radius: 12,
     isConstructed: built, constructionProgress: built ? 500 : 0, constructionCost: 500,
     isDeconstructing: false, minerals: 0, storedPower: 0,
   };

@@ -108,6 +108,15 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(1);
   });
 
+  it('WS-6 (R2.11/R2.18) shrank the Connector + Shield Pylon to tiny nodes', () => {
+    // Intentional, version-pinned radii — the shrink is a behavioural change
+    // (radius drives the collider + grid edge-distance), so lock the values.
+    // The 4→5 catalogue bump rides these two edits.
+    expect(STRUCTURE_KINDS.connector.radius).toBe(10);
+    expect(STRUCTURE_KINDS.shield_pylon.radius).toBe(12);
+    expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(5);
+  });
+
   // ── Unified-hull plan — the single hull-points source (render + collider) ──
   it('structureHullPoints emits the kind\'s regular N-gon at the given radius', () => {
     for (const id of STRUCTURE_KINDS_LIST.map((k) => k.id)) {

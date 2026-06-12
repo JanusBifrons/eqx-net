@@ -35,7 +35,7 @@ function node(id: string, opts: Partial<GridNode> = {}): GridNode {
 const capital = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built, connectionRange: CAPITAL_CONNECTION_RANGE });
 const connector = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 24, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
+  node(id, { x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
 const solar = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 40, maxConnections: 1, powerOutput: 30, isConstructed: built });
 
@@ -143,26 +143,26 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
   it('enforces the Capital shorter connectionRange (WS-5 R2.10)', () => {
     // A Connector at edge-distance 450 u from the Capital: within the global
     // 600 u, but OUTSIDE the Capital's 300 u reach → rejected (the Capital's
-    // range caps the pair via min-of-ranges). Capital r80 + connector r24 = 104
-    // centre-to-edge slack, so centre x = 104 + 450 gives a 450 u edge gap.
-    const conFar = connector('conFar', 104 + 450, 0);
+    // range caps the pair via min-of-ranges). Capital r80 + connector r10 = 90
+    // centre-to-edge slack, so centre x = 90 + 450 gives a 450 u edge gap.
+    const conFar = connector('conFar', 90 + 450, 0);
     expect(edgeDistance(cap, conFar)).toBeCloseTo(450, 6);
     expect(canConnect(cap, conFar, new Map(), new Map([['cap', cap], ['conFar', conFar]])))
       .toEqual({ ok: false, reason: 'out-of-range' });
     // The SAME 450 u gap between two NON-capital connectors stays legal — the
     // global 600 u applies; the short reach is the Capital's alone.
+    // Two connectors r10 each ⇒ 20 u centre-to-edge slack, so centre x = 20 + 450.
     const conA = connector('cA', 0, 0);
-    const conB = connector('cB', 48 + 450, 0);
+    const conB = connector('cB', 20 + 450, 0);
     expect(edgeDistance(conA, conB)).toBeCloseTo(450, 6);
     expect(canConnect(conA, conB, new Map(), new Map([['cA', conA], ['cB', conB]])).ok).toBe(true);
   });
 
   it('rejects a line-of-sight-blocked link', () => {
-    // Within range (edge dist 600 - (80+24) = 496 ≤ 600) so the LOS rule, not
-    // the range gate, is what rejects.
+    // Within range so the LOS rule, not the range gate, is what rejects.
     // Two Connectors (not the Capital) so the global 600 u range applies — at
-    // 552 u edge they're in range, so the LOS/obstacle rule is what rejects,
-    // not the Capital's shorter 300 u reach (WS-5).
+    // 580 u edge (600 centre − 2·r10) they're in range, so the LOS/obstacle
+    // rule is what rejects, not the Capital's shorter 300 u reach (WS-5).
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
     const blocker = connector('blk', 0, 0, true);
@@ -187,10 +187,10 @@ describe('canConnect / isConnectionLineBlocked — obstacle blocking (Item D)', 
   });
 
   it('canConnect: an asteroid on the connecting segment ⇒ blocked', () => {
-    // Two in-range hubs (edge dist 600 - (80+24) = 496 ≤ CONNECTION_MAX_RANGE),
+    // Two in-range hubs (edge dist 580 = 600 − 2·r10 ≤ CONNECTION_MAX_RANGE),
     // nothing between them in the nodes map — only the asteroid blocks LOS.
     // Two Connectors (not the Capital) so the global 600 u range applies — at
-    // 552 u edge they're in range, so the LOS/obstacle rule is what rejects,
+    // 580 u edge they're in range, so the LOS/obstacle rule is what rejects,
     // not the Capital's shorter 300 u reach (WS-5).
     const a = connector('a', -300, 0);
     const b = connector('b', 300, 0);
