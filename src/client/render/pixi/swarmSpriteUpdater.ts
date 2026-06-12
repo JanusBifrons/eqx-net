@@ -39,7 +39,10 @@ import {
   buildDroneGfx,
   buildStructureGfx,
   buildMinerRangeRingGfx,
+  buildCapitalResourceText,
+  formatResources,
 } from './spriteBuilders.js';
+import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
 import type { MountVisualManager } from '../MountVisualManager';
 import {
@@ -98,6 +101,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // tracks the structure. Only the Miner has a miningRange; others skip.
         const miningRange = minerRangeForKind(entry.shipKind);
         if (miningRange) sprite.addChild(buildMinerRangeRingGfx(miningRange));
+        // WS-9 (R2.12) — the Capital shows its mineral bank as a world-space
+        // number below the body. Built ONCE here (invariant #14).
+        if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
       }
@@ -185,6 +191,15 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     if (entry.kind === 2) {
       const st = mirror.structures?.get(entityId);
       sprite.alpha = st && !st.built ? 0.45 : 1;
+      // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
+      // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
+      if (entry.shipKind === 'capital') {
+        const capText = sprite.getChildByLabel('capitalResource') as Text | null;
+        if (capText) {
+          const next = st?.minerals !== undefined ? formatResources(st.minerals) : '';
+          if (capText.text !== next) capText.text = next;
+        }
+      }
     }
     // Sleeping entries stop interpolating; their pose is whatever the
     // server last shipped.

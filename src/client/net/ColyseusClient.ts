@@ -2894,6 +2894,7 @@ export class ColyseusGameClient {
           ...(s.turretTargetId !== undefined ? { turretTargetId: s.turretTargetId } : {}),
           ...(s.storedPower !== undefined ? { storedPower: s.storedPower } : {}),
           ...(s.storedPowerMax !== undefined ? { storedPowerMax: s.storedPowerMax } : {}),
+          ...(s.minerals !== undefined ? { minerals: s.minerals } : {}), // WS-9 R2.12 (capital readout)
           ...(s.shieldWallTo !== undefined ? { shieldWallTo: s.shieldWallTo } : {}),
           ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
         });

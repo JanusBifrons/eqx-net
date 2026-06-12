@@ -191,6 +191,9 @@ export interface StructureRenderState {
   storedPower?: number;
   /** Batteries plan — the Battery's stored-power capacity (readout denominator). */
   storedPowerMax?: number;
+  /** WS-9 (R2.12) — minerals stored at this structure (the Capital's bank). Drives
+   *  the world-space capital resource readout. Undefined ⇒ not surfaced. */
+  minerals?: number;
   /** Shield-fence plan — the paired pylon's entityId this Shield Pylon projects
    *  a wall span to (undefined when unpaired). Joined to `mirror.swarm` for the
    *  pair's pose to draw + predict the span. */
@@ -601,7 +604,7 @@ export interface RendererFeedback {
   /** Kind of the selected entity (drives the stats-channel routing: only
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
    *  read health from the mirror directly). `null` when nothing is selected. */
-  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | null;
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
   /**
    * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
    * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as

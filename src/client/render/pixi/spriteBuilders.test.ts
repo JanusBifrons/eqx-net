@@ -1,6 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { structureRenderVerts } from './spriteBuilders.js';
+import { structureRenderVerts, formatResources } from './spriteBuilders.js';
 import { structureHullPoints, STRUCTURE_SIDES } from '../../../shared-types/structureKinds.js';
+
+describe('formatResources (WS-9/R2.12 capital readout)', () => {
+  it('is short-form so a 2,000,000-cap bank reads legibly', () => {
+    expect(formatResources(0)).toBe('0');
+    expect(formatResources(999)).toBe('999');
+    expect(formatResources(12_345)).toBe('12.3k');
+    expect(formatResources(2_300_000)).toBe('2.3M');
+    expect(formatResources(1_000)).toBe('1.0k');
+  });
+});
 
 /**
  * R2.13 (WS-7) — the structure SILHOUETTE must match its COLLIDER. The collider
