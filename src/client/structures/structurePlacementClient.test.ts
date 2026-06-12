@@ -61,16 +61,26 @@ const SENT: PendingPlacement = { kind: 'capital', x: 200, y: -150, sentAtMs: 100
 
 describe('pendingPlacementResolved', () => {
   it('stays UNRESOLVED while the structure has not appeared and within the window', () => {
-    expect(pendingPlacementResolved(SENT, 1000, 3)).toBe(false);
-    expect(pendingPlacementResolved(SENT, 1000 + PENDING_PLACEMENT_TIMEOUT_MS - 1, 3)).toBe(false);
+    expect(pendingPlacementResolved(SENT, 1000, 3, true)).toBe(false);
+    expect(pendingPlacementResolved(SENT, 1000 + PENDING_PLACEMENT_TIMEOUT_MS - 1, 3, true)).toBe(false);
   });
 
-  it('resolves the instant a new structure appears (count grows past baseline)', () => {
-    expect(pendingPlacementResolved(SENT, 1100, 4)).toBe(true);
+  it('resolves when a new structure appears AND it is renderable (count grew + swarm pose present)', () => {
+    expect(pendingPlacementResolved(SENT, 1100, 4, true)).toBe(true);
   });
 
-  it('resolves on timeout even if no structure ever appears (rejected / lost)', () => {
-    expect(pendingPlacementResolved(SENT, 1000 + PENDING_PLACEMENT_TIMEOUT_MS, 3)).toBe(true);
+  // R2.1 regression lock — the vanish-then-reappear race. The JSON structures
+  // slice (count) grows on a SEPARATE channel from the binary swarm pose the
+  // sprite needs. Clearing the ghost on count-grew alone left a window where the
+  // slice had grown but no sprite existed yet → vanish. Gating on renderability
+  // keeps the ghost up until the structure can actually draw. Pre-fix code
+  // (count-only) returned true here → the bug.
+  it('STAYS UNRESOLVED when the count grew but the structure is NOT renderable yet (no swarm pose)', () => {
+    expect(pendingPlacementResolved(SENT, 1100, 4, false)).toBe(false);
+  });
+
+  it('resolves on timeout even if never renderable (rejected / AOI-evicted) — no permanent stuck', () => {
+    expect(pendingPlacementResolved(SENT, 1000 + PENDING_PLACEMENT_TIMEOUT_MS, 3, false)).toBe(true);
   });
 });
 
@@ -80,7 +90,7 @@ describe('resolvePlacementPreviewStatus', () => {
   it('ACTIVE: a live placementKind shows the ahead-of-ship positioning ghost', () => {
     const out = scratch();
     const ship = { x: 0, y: 0, angle: 0 };
-    const status = resolvePlacementPreviewStatus('solar', ship, null, 1000, 3, out);
+    const status = resolvePlacementPreviewStatus('solar', ship, null, 1000, 3, true, out);
     expect(status).toBe('active');
     expect(out.pending).toBe(false);
     const pose = computePlacementPose(ship, 'solar');
@@ -91,7 +101,7 @@ describe('resolvePlacementPreviewStatus', () => {
   it('PENDING: after Confirm (placementKind cleared) the dim ghost stays at the sent point — the gap fix', () => {
     const out = scratch();
     // No placementKind, but a pending placement that has not landed yet + within window.
-    const status = resolvePlacementPreviewStatus(null, null, SENT, 1500, 3, out);
+    const status = resolvePlacementPreviewStatus(null, null, SENT, 1500, 3, true, out);
     expect(status).toBe('pending');
     expect(out.pending).toBe(true);
     expect(out.kind).toBe('capital');
@@ -99,21 +109,30 @@ describe('resolvePlacementPreviewStatus', () => {
     expect(out.y).toBe(-150);
   });
 
-  it('CLEARED: once the structure lands, the pending ghost resolves (caller drops it)', () => {
+  it('CLEARED: once the structure lands AND is renderable, the pending ghost resolves (caller drops it)', () => {
     const out = scratch();
-    const status = resolvePlacementPreviewStatus(null, null, SENT, 1500, 4, out);
+    const status = resolvePlacementPreviewStatus(null, null, SENT, 1500, 4, true, out);
     expect(status).toBe('cleared');
+  });
+
+  // R2.1 — the count grew but the swarm pose hasn't landed: the ghost must STAY
+  // (status 'pending'), not clear, or the blueprint vanishes for the channel gap.
+  it('PENDING (not cleared) when the count grew but the structure is NOT renderable yet', () => {
+    const out = scratch();
+    const status = resolvePlacementPreviewStatus(null, null, SENT, 1500, 4, false, out);
+    expect(status).toBe('pending');
+    expect(out.pending).toBe(true);
   });
 
   it('ACTIVE beats PENDING: a fresh placement takes priority over a stale pending ghost', () => {
     const out = scratch();
-    const status = resolvePlacementPreviewStatus('turret', { x: 0, y: 0, angle: 0 }, SENT, 1500, 3, out);
+    const status = resolvePlacementPreviewStatus('turret', { x: 0, y: 0, angle: 0 }, SENT, 1500, 3, true, out);
     expect(status).toBe('active');
     expect(out.kind).toBe('turret');
   });
 
   it('NONE: nothing to show with no placementKind and no pending', () => {
     const out = scratch();
-    expect(resolvePlacementPreviewStatus(null, null, null, 1500, 3, out)).toBe('none');
+    expect(resolvePlacementPreviewStatus(null, null, null, 1500, 3, true, out)).toBe('none');
   });
 });

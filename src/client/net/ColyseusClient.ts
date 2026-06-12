@@ -3321,12 +3321,37 @@ export class ColyseusGameClient {
         ship.x = entry.x;
         ship.y = entry.y;
         ship.angle = entry.angle;
+        // R2.1 — a structure RENDERS only when its entityId has a swarm pose
+        // (mirror.swarm, kind 2); the JSON structures slice that grows the count
+        // arrives on a SEPARATE channel. The pending ghost must persist until the
+        // structure is actually renderable (every slice entry has a swarm pose),
+        // not merely until the slice count grew, or it vanishes for the channel
+        // gap. Computed alloc-free (Map keys() iterator, reused maps) and ONLY
+        // while a placement is pending — the common no-pending frame pays nothing.
+        let allRenderable = true;
+        if (this._pendingPlacement) {
+          const structs = this.mirror.structures;
+          const sw = this.mirror.swarm;
+          if (structs && structs.size > 0) {
+            if (!sw) {
+              allRenderable = false;
+            } else {
+              for (const id of structs.keys()) {
+                if (!sw.has(id)) {
+                  allRenderable = false;
+                  break;
+                }
+              }
+            }
+          }
+        }
         const placementStatus = resolvePlacementPreviewStatus(
           placementKind,
           placementKind ? ship : null,
           this._pendingPlacement,
           Date.now(),
           this.mirror.structures?.size ?? 0,
+          allRenderable,
           this._placementPreviewScratch,
         );
         if (placementStatus === 'active' || placementStatus === 'pending') {
