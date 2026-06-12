@@ -282,6 +282,18 @@ absorb main-thread (`blockBeamAtWall` in the fire resolvers, `wallBlocksProjecti
 in `ProjectilePipeline` → `ShieldWallManager.blockShot`/`blockProjectile`). Two
 JSON `structures[]` fields (`shieldWallTo`/`wallActive`) drive the client span +
 predWorld collider (`syncPredWalls`). AI targets pylons (`structurePriority`).
+**R2.18 (WS-6) — a pylon is UNDAMAGEABLE while ANY of its walls is up.** The
+single damage choke point `SectorRoom.applyDamage` guards: if the target is a
+`shield_pylon` and `ShieldWallManager.absorbForPylon` finds an ACTIVE wall, the
+hit is routed into that wall (via the SAME `onWallHit` grid-power model
+span-crossing shots use → surplus soak → battery drain → stun) and the pylon
+takes 0 (no damage event). Covers EVERY source — beams/turrets/projectiles AND
+ramming all funnel through `applyDamage`. `absorbForPylon` iterates ALL walls on
+the pylon and absorbs at the first ACTIVE one (NOT `wallStateFor`, which returns
+only the first wall's state — a 3-wall pylon must stay protected if any single
+wall is up). So a pylon-with-active-wall takes TWO lethal hits to kill: the
+first stuns the wall, the second (now wall-down) lands. Wall stun timing is
+wall-clock (`Date.now`), matching every other `shieldWalls` call site.
 **Root-cause fix shipped alongside:** the swarm shield-regen pass borrowed a
 fighter shield for damaged structures + posted `SET_HULL_EXPOSED` (collider
 corruption); now gated on `rec.kind === 1`. See [docs/architecture/structures-and-power-grid.md](../../docs/architecture/structures-and-power-grid.md) + [docs/features/shield-fence.md](../../docs/features/shield-fence.md).

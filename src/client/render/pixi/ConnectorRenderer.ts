@@ -13,8 +13,13 @@
 import { Graphics } from 'pixi.js';
 import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import {
-  connectorVisualParams,
+  connectorVisualInto,
   previewLineVisualParams,
+  cometSegment,
+  shieldWallVisualParams,
+  type ConnectorVisual,
+  type CometSegment,
+  type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
 import {
@@ -98,6 +103,22 @@ export class ConnectorRenderer {
   private readonly _okHubScratch: GridNode[] = [];
   private readonly _okDistScratch: number[] = [];
 
+  /** R2.2 — reused per-edge connector-visual scratch (base line + comet params),
+   *  written in place every edge every frame (invariant #14). */
+  private readonly _edgeVisual: ConnectorVisual = {
+    color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0,
+    pulseActive: false, pulseT: 0, pulseColor: 0, pulseAlpha: 0, pulseWidth: 0,
+  };
+  /** R2.2 — reused travelling-comet segment scratch (connector pulse + shield
+   *  shimmer both write it). */
+  private readonly _comet: CometSegment = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** R2.19 — reused shield-wall visual scratch, written per wall per frame (#14). */
+  private readonly _shieldVisual: ShieldWallVisual = {
+    active: false, glowColor: 0, glowAlpha: 0, glowWidth: 0,
+    railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0,
+    shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0,
+  };
+
   /** Redraw the web for this frame. `scale` is the viewport zoom. */
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
@@ -113,6 +134,7 @@ export class ConnectorRenderer {
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) return;
     const flashes = mirror.gridFlashes;
+    const flowSrc = mirror.gridFlowSrc;
 
     for (const [id, st] of structures) {
       const a = swarm.get(id);
@@ -126,10 +148,14 @@ export class ConnectorRenderer {
         if (id > otherId) continue;
         const b = swarm.get(otherId);
         if (!b) continue;
-        const lo = id < otherId ? id : otherId;
-        const hi = id < otherId ? otherId : id;
-        const flashUntil = flashes ? (flashes.get(lo * 65536 + hi) ?? 0) : 0;
-        const v = connectorVisualParams(flashUntil, nowMs, scale);
+        // id < otherId here, so the packed key's lo = id (the (ax,ay) end).
+        const key = id * 65536 + otherId;
+        const flashUntil = flashes ? (flashes.get(key) ?? 0) : 0;
+        const src = flowSrc ? flowSrc.get(key) : undefined;
+        // R2.2 — desync edges by source id so the grid reads as organic flow,
+        // not a global strobe (a coherent hop-distance wavefront is future polish).
+        const phaseOffset = src !== undefined ? (src & 7) / 8 : 0;
+        const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset);
         const bx = b.x;
         const by = -b.y;
         // Glow underlay first (so the core line sits on top).
@@ -141,30 +167,57 @@ export class ConnectorRenderer {
         g.moveTo(ax, ay);
         g.lineTo(bx, by);
         g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+        // R2.2 — the travelling-comet flow pulse (always runs source→dest).
+        // sourceIsLo ⇒ the flow source is the lower-id endpoint (id = the (ax,ay)
+        // end); default forward when the direction wasn't recorded.
+        if (v.pulseActive && (v.pulseAlpha ?? 0) > 0) {
+          const sourceIsLo = src === undefined || src === id;
+          const c = cometSegment(this._comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale);
+          g.moveTo(c.x0, c.y0);
+          g.lineTo(c.x1, c.y1);
+          g.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
+        }
       }
 
-      // Shield-fence plan — the blocking shield-wall span between this pylon and
-      // its pair. Drawn ONCE from the lower-entityId side (both pylons carry the
-      // reciprocal `shieldWallTo`). eqx-peri's look: active = 3 layered blue
-      // strokes (glow → core → bright inner); down (stunned / unpowered) = a dim
-      // flickering red line that ships can pass.
+      // Shield-fence — the blocking shield-wall span between this pylon and its
+      // pair. Drawn ONCE from the lower-entityId side (both pylons carry the
+      // reciprocal `shieldWallTo`). R2.19: a distinct cyan-white energy BARRIER
+      // — a glow field + two parallel rails (the band slab) + a sweeping shimmer
+      // — so it never reads as a connector link. Down = the dim red flicker.
       if (st.shieldWallTo !== undefined && id < st.shieldWallTo) {
         const wb = swarm.get(st.shieldWallTo);
         if (wb) {
           const wx = wb.x;
           const wy = -wb.y;
-          const w = Math.max(2 / scale, 6);
-          if (st.wallActive) {
+          const sv = shieldWallVisualParams(this._shieldVisual, st.wallActive === true, nowMs, scale);
+          // Glow field down the centreline (drawn first, behind the rails).
+          if (sv.glowAlpha > 0) {
             g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: 0x4488ff, alpha: 0.18, width: w * 2.5 });
-            g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: 0x6699ff, alpha: 0.7, width: w });
-            g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: 0xaaccff, alpha: 0.9, width: Math.max(1, w * 0.4) });
+            g.stroke({ color: sv.glowColor, alpha: sv.glowAlpha, width: sv.glowWidth });
+          }
+          if (sv.halfThickness > 0) {
+            // Band: two rails offset by ±halfThickness along the span NORMAL.
+            const dx = wx - ax;
+            const dy = wy - ay;
+            const len = Math.hypot(dx, dy);
+            if (len > 0.001) {
+              const nx = (-dy / len) * sv.halfThickness;
+              const ny = (dx / len) * sv.halfThickness;
+              g.moveTo(ax + nx, ay + ny); g.lineTo(wx + nx, wy + ny);
+              g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+              g.moveTo(ax - nx, ay - ny); g.lineTo(wx - nx, wy - ny);
+              g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
+            }
+            // Travelling shimmer along the centreline (the "live energy" sweep).
+            if (sv.shimmerAlpha > 0) {
+              const c = cometSegment(this._comet, sv.shimmerT, true, ax, ay, wx, wy, scale);
+              g.moveTo(c.x0, c.y0); g.lineTo(c.x1, c.y1);
+              g.stroke({ color: sv.shimmerColor, alpha: sv.shimmerAlpha, width: sv.shimmerWidth });
+            }
           } else {
-            const flicker = Math.sin(nowMs * 0.01) * 0.12 + 0.18;
+            // Down: a single dim flickering red line ships can pass.
             g.moveTo(ax, ay); g.lineTo(wx, wy);
-            g.stroke({ color: 0x664444, alpha: flicker, width: w });
+            g.stroke({ color: sv.railColor, alpha: sv.railAlpha, width: sv.railWidth });
           }
         }
       }

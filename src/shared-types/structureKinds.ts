@@ -164,7 +164,9 @@ export const CONNECTOR: StructureKind = {
   id: 'connector',
   displayName: 'Connector',
   description: 'A relay. Tiny pure hub (≤6 links) that lets power + minerals flow between structures.',
-  radius: 24,
+  // WS-6 (R2.11) — shrunk 24→10: a relay should read as a small node, not a
+  // building. Floored well above the ~8 u collider/core-dot degeneracy point.
+  radius: 10,
   maxHealth: 200,
   maxConnections: 6,
   isHub: true,
@@ -283,7 +285,10 @@ export const SHIELD_PYLON: StructureKind = {
   displayName: 'Shield Pylon',
   description:
     'Pairs with another pylon to project a blocking shield wall between them. A powered hub.',
-  radius: 30,
+  // WS-6 (R2.18) — shrunk 30→12: the WALL SPAN is the visual, not the post; a
+  // tiny pylon de-emphasises the node. The wall geometry is pose-to-pose
+  // (ShieldWall.ts centre-to-centre), so a smaller post does NOT shrink the wall.
+  radius: 12,
   maxHealth: 800,
   maxConnections: 3,
   isHub: true,
@@ -321,8 +326,9 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
 );
 
 /** Bump on every catalogue edit (add a kind OR change any numeric field).
- *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 4;
+ *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10).
+ *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 5;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';

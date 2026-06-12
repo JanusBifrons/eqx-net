@@ -4,7 +4,7 @@ import type { IAudio } from '@core/contracts/IAudio';
 import { REAL_CLOCK, type Clock } from '@core/clock/Clock';
 import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
-import { FLASH_DURATION_MS as GRID_FLASH_DURATION_MS } from '@core/structures/structureGridConstants';
+import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import { SHIELD_WALL_THICKNESS } from '@core/structures/ShieldWall';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
@@ -1396,14 +1396,25 @@ export class ColyseusGameClient {
       if (!msg || !Array.isArray(msg.flashed)) return;
       let flashes = this.mirror.gridFlashes;
       if (!flashes) { flashes = new Map(); this.mirror.gridFlashes = flashes; }
-      const until = this.clock.now() + GRID_FLASH_DURATION_MS;
+      // R2.2 — recover the flow DIRECTION the sorted key throws away (the comet
+      // travels source→dest). Sibling map keyed identically; value = the source.
+      let flowSrc = this.mirror.gridFlowSrc;
+      if (!flowSrc) { flowSrc = new Map(); this.mirror.gridFlowSrc = flowSrc; }
+      // R2.2 — keep the edge lit for a FULL pulse period so consecutive 1 Hz
+      // pulses read as continuous flow (not a 300 ms blink + 700 ms gap); it
+      // fades ~1 s after the flow actually stops being re-stamped.
+      const until = this.clock.now() + GRID_PULSE_WINDOW_MS;
       for (const pair of msg.flashed) {
         const a = pair[0];
         const b = pair[1];
         if (typeof a !== 'number' || typeof b !== 'number') continue;
         const lo = a < b ? a : b;
         const hi = a < b ? b : a;
-        flashes.set(lo * 65536 + hi, until);
+        const key = lo * 65536 + hi;
+        flashes.set(key, until);
+        // `a` is the route SOURCE (StructureGridSubsystem.flashRoute pushes
+        // [route[i], route[i+1]] in source→dest order; SectorRoom preserves it).
+        flowSrc.set(key, a);
       }
     });
 
