@@ -110,9 +110,11 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             placementChosenWorldX: fb.placementChosenWorldX,
             placementChosenWorldY: fb.placementChosenWorldY,
             placementStuck: fb.placementStuck,
+            placementConfirmSeq: fb.placementConfirmSeq,
             placementPreviewConnectionCount: fb.placementPreviewConnectionCount,
             selectedPickId: fb.selectedPickId,
             selectedPickKind: fb.selectedPickKind,
+            hoveredPickId: fb.hoveredPickId,
             miningBeamCount: fb.miningBeamCount,
           },
         });

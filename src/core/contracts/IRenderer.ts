@@ -587,6 +587,18 @@ export interface RendererFeedback {
   placementChosenWorldY: number | null;
   placementStuck: boolean;
   /**
+   * WS-10 (R2.5) — DESKTOP one-click placement. A monotonic counter the renderer
+   * bumps each time a MOUSE left-click (pointerup, button 0, pointerType 'mouse')
+   * lands while placement is active — i.e. the player clicked to COMMIT the
+   * blueprint at the cursor. `gameRafLoop` edge-detects a change and commits the
+   * placement at `placementChosenWorldX/Y`, then clears `placementKind`. A
+   * monotonic seq (not a one-shot bool) is robust to the worker FEEDBACK cache
+   * being read across several RAFs before the next post — the value only changes
+   * on a real click, so the drain fires exactly once per click. TOUCH never bumps
+   * it (touch keeps the tap-to-position → Confirm-banner flow). Starts at 0.
+   */
+  placementConfirmSeq: number;
+  /**
    * Structure placement connection-range preview (structures follow-up Item C).
    * The number of existing structures the placement ghost WOULD connect to if
    * placed at its current position — computed by the `ConnectorRenderer` preview
@@ -613,6 +625,15 @@ export interface RendererFeedback {
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
    *  read health from the mirror directly). `null` when nothing is selected. */
   selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
+  /**
+   * WS-10 (R2.4) — the id of the entity the desktop pointer is HOVERING over
+   * (set from pointer-move via `pickEntityAt`), or null when the cursor is over
+   * empty space / on touch (no hover). Drives the lighter `HoverBracket` outline
+   * and is published as `data-hover-pick-id` for the E2E. Renderer-local /
+   * UI-affordance only — NEVER mirrored into Zustand (it updates at pointer-move
+   * cadence; invariant #2). Same id form as `selectedPickId`.
+   */
+  hoveredPickId: string | null;
   /**
    * Number of mining beams (`laser_fired` with `mountId === 'drill'`) currently
    * drawn in the DEDICATED amber mining-beam pool (`_miningBeamPool`), as

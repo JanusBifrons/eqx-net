@@ -412,8 +412,27 @@ function GameSurface({
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
         toggleGalaxyMap();
       }
+      // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
+      // level so it works on BOTH render paths (the renderer can't touch
+      // Zustand). No-op when not placing.
+      if (e.key === 'Escape' && useUIStore.getState().placementKind) {
+        useUIStore.getState().setPlacementKind(null);
+      }
     };
     window.addEventListener('keydown', onKey);
+
+    // WS-10 (R2.5) — right-click cancels structure placement (and suppresses the
+    // browser context menu while placing). Window-level so it catches the
+    // right-click on the gameplay canvas regardless of which thread renders it
+    // (the canvas DOM element + its events live on the main thread on both
+    // paths). Outside placement we leave the native menu alone.
+    const onContextMenu = (e: MouseEvent): void => {
+      if (useUIStore.getState().placementKind) {
+        e.preventDefault();
+        useUIStore.getState().setPlacementKind(null);
+      }
+    };
+    window.addEventListener('contextmenu', onContextMenu);
 
     // Anchor for the join-render diagnostics (see `pixi_first_frame` /
     // `local_pose_resolved` / `join_chain_complete` events). The
@@ -461,6 +480,7 @@ function GameSurface({
       disposed = true;
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('contextmenu', onContextMenu);
       layerRO.disconnect();
       // Plan: crispy-kazoo, Commit 6 — cleanup ordering.
       // 1. Null the singleton FIRST so consumers reaching for the client

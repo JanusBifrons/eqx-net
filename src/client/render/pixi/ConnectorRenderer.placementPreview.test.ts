@@ -200,6 +200,57 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.placementPreviewOverflowCount).toBe(2);
   });
 
+  // ── WS-10 (R2.3) — connection-range ring radius ──────────────────────────
+  // The ring radius is the kind's per-kind connectionRange (capped at the
+  // global 600) PLUS the ghost's own radius (centre-out reach to a zero-radius
+  // partner edge). Reads the REAL renderer field, not a recompute.
+  it('draws the range ring at the per-kind connectionRange + ghost radius (capital = 300+80)', () => {
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      // Capital has connectionRange 300 + radius 80.
+      pendingPlacementPreview: { kind: 'capital', x: 0, y: 1000, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.lastRangeCircleRadius).toBe(300 + getStructureKind('capital').radius);
+  });
+
+  it('falls back to the global CONNECTION_MAX_RANGE (600) + radius for a kind with no per-kind range (solar = 600+40)', () => {
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      // Solar has no connectionRange → global 600 + radius 40.
+      pendingPlacementPreview: { kind: 'solar', x: 0, y: 1000, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.lastRangeCircleRadius).toBe(600 + getStructureKind('solar').radius);
+  });
+
+  it('range ring radius is 0 when there is no placement preview', () => {
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: null,
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.lastRangeCircleRadius).toBe(0);
+  });
+
   it('no overflow when in-range hubs are at or below the 6 cap', () => {
     // 4 legal hubs → all green, zero overflow.
     const swarm = new Map<number, SwarmRenderState>();

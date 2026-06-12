@@ -62,9 +62,11 @@ function emptyFeedback(): RendererFeedback {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementConfirmSeq: 0,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
+    hoveredPickId: null,
     miningBeamCount: 0,
   };
 }
@@ -549,10 +551,12 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementChosenWorldX = msg.feedback.placementChosenWorldX;
         this.feedback.placementChosenWorldY = msg.feedback.placementChosenWorldY;
         this.feedback.placementStuck = msg.feedback.placementStuck;
+        this.feedback.placementConfirmSeq = msg.feedback.placementConfirmSeq;
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;
         this.feedback.selectedPickKind = msg.feedback.selectedPickKind;
+        this.feedback.hoveredPickId = msg.feedback.hoveredPickId;
         this.feedback.miningBeamCount = msg.feedback.miningBeamCount;
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {

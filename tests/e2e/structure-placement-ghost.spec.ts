@@ -1,34 +1,24 @@
 /**
- * Structure placement: world ghost + world-anchored confirm (smoke handoff
- * 2026-06-06, Issue 5).
+ * Structure placement: world ghost, desktop one-click place, cancel, and the
+ * world-anchored touch confirm (smoke handoff 2026-06-06 Issue 5 + WS-10 R2.5).
  *
- * User report: "buildings don't really work … verify it places a GHOST (it
- * does NOT) and the confirm dialog is visible and clickable (it ISN'T — it's
- * UNDER the UI; I think it should be in WORLD space)."
+ * Desktop placement contract (WS-10 / R2.5, user-chosen one-click model):
+ *   - pick a kind → translucent blueprint GHOST follows the pointer on HOVER
+ *   - LEFT-CLICK places the structure at the cursor immediately (RTS-style)
+ *   - RIGHT-CLICK or ESCAPE cancels placement
+ * Touch keeps the two-step tap-to-position → Confirm-banner flow (case B) — a
+ * mouse pointerup commits, a touch pointerup only parks the ghost.
  *
- * Two distinct defects, two tests:
- *
- *  (A) NO GHOST — `placementKind` had zero render consumers; the world ghost
- *      was the deferred follow-up. Now the renderer draws a translucent
- *      blueprint silhouette at `RenderMirror.pendingPlacementPreview` and
- *      projects it to screen (`RendererFeedback.placementScreenX/Y` →
- *      `data-placement-screen-x/y`). The pipeline running end-to-end is the
- *      ghost being drawn — we read the projected coord (the REAL artifact)
- *      and back it with a screenshot.
- *
- *  (B) CONFIRM OCCLUDED — the confirm banner portaled into `bottom-center` at
- *      `Z.hud` (10), UNDER the `Z.mobileControls` (15) thumb cluster + dial on
- *      a phone. Now it's a `position:fixed` element at z 1450, world-anchored
- *      to the ghost. Test B runs at a MOBILE viewport (390×844) — the existing
- *      `structure-build-placement.spec.ts` passes only because it runs at
- *      1280×800 where bottom-center is clear. A real `.click()` on the confirm
- *      at a phone viewport is the occlusion lock: Playwright's actionability
- *      check IS the occlusion detector (it fails if another element intercepts
- *      the pointer).
+ * Tests read the REAL artifacts (the projected ghost `data-placement-screen-x/y`,
+ * the parked-point `data-placement-world-x/y`, the landed `data-swarm-detail`
+ * kind-2 entry, the `structure_place_confirm` log) — never a recompute (the
+ * test-observable-reads-actual-output lesson).
  *
  * ⚠️ AUTHORED, UNVERIFIED in the CI container (Playwright browsers blocked).
  * Run on a browser-capable host. `?worker=0` forces the main-thread renderer
- * (the OffscreenCanvas worker path screenshots black).
+ * (the OffscreenCanvas worker path screenshots black); `?worker=1` exercises the
+ * worker path (pointer events forwarded via POINTER_EVENT → forwardPointerEvent,
+ * the one-click confirm seq crosses the worker FEEDBACK boundary).
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
@@ -37,7 +27,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function joinAndOpenBuild(
   browser: Browser,
-  opts: { mobile: boolean; worker?: boolean },
+  opts: { mobile: boolean; worker?: boolean; extraQuery?: string },
 ): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   const ctx = await browser.newContext(
     opts.mobile
@@ -45,11 +35,11 @@ async function joinAndOpenBuild(
       : { viewport: { width: 1280, height: 800 } },
   );
   const page = await ctx.newPage();
-  // `worker !== false` → force the main-thread renderer (?worker=0); pass
-  // `worker:true` to exercise the OffscreenCanvas WORKER path (pointer events
-  // forwarded via POINTER_EVENT → forwardPointerEvent).
+  // `worker !== true` → force the main-thread renderer (?worker=0); pass
+  // `worker:true` to exercise the OffscreenCanvas WORKER path.
   const workerParam = opts.worker === true ? '&worker=1' : '&worker=0';
-  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout${workerParam}`);
+  const extra = opts.extraQuery ?? '';
+  await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout${workerParam}${extra}`);
   await page.waitForFunction(
     () => {
       const el = document.querySelector('[data-testid="game-surface"]');
@@ -69,6 +59,9 @@ function swarmCount(page: Page): Promise<number> {
     .then((t) => parseInt((t ?? '0').replace(/\D/g, '') || '0', 10));
 }
 
+const surfaceAttr = (page: Page, name: string): Promise<string | null> =>
+  page.locator('[data-testid="game-surface"]').getAttribute(name);
+
 test('(A) picking a kind draws + projects the world ghost (data-placement-screen present)', async ({ browser }) => {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
@@ -76,9 +69,7 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
     await page.locator('[data-testid="build-capital"]').click();
 
     // The ghost is drawn in the world and its pose projected to screen — the
-    // REAL artifact (read what's drawn/projected, not a recompute). A numeric
-    // data-placement-screen-x proves: placementKind → pendingPlacementPreview
-    // → renderer drew the ghost + projected it → feedback → gameRafLoop.
+    // REAL artifact (read what's drawn/projected, not a recompute).
     await page.waitForFunction(
       () => {
         const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-screen-x');
@@ -87,12 +78,11 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
       undefined,
       { timeout: 5_000 },
     );
-    const sx = await page.locator('[data-testid="game-surface"]').getAttribute('data-placement-screen-x');
-    const sy = await page.locator('[data-testid="game-surface"]').getAttribute('data-placement-screen-y');
+    const sx = await surfaceAttr(page, 'data-placement-screen-x');
+    const sy = await surfaceAttr(page, 'data-placement-screen-y');
     expect(Number.isFinite(parseFloat(sx ?? 'NaN'))).toBe(true);
     expect(Number.isFinite(parseFloat(sy ?? 'NaN'))).toBe(true);
 
-    // Supplementary visual evidence (the user asked for screenshots).
     await expect(page.locator('[data-testid="game-surface"]')).toHaveScreenshot('placement-ghost-capital.png', {
       maxDiffPixelRatio: 0.05,
     });
@@ -101,7 +91,7 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
   }
 });
 
-test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE viewport', async ({ browser }) => {
+test('(B) TOUCH: tap-to-position parks the ghost, then confirm is clickable at a MOBILE viewport', async ({ browser }) => {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
   try {
     const before = await swarmCount(page);
@@ -109,9 +99,9 @@ test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"]').click();
 
-    // Tap-to-position (2026-06-07): the Confirm banner is HIDDEN until the ghost
-    // is parked (pointer released), so it never sits under a dragging finger.
-    // A tap on the world canvas positions + parks the blueprint there.
+    // Tap-to-position (touch keeps the two-step flow): a touch tap on the world
+    // canvas positions + PARKS the blueprint (it does NOT one-click place — only
+    // a mouse pointerup commits). The Confirm banner is HIDDEN until parked.
     await page.touchscreen.tap(195, 220); // clear of the centred ship
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
@@ -121,11 +111,8 @@ test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE
 
     const confirm = page.locator('[data-testid="placement-confirm"]');
     await expect(confirm).toBeVisible({ timeout: 5_000 });
-    // A REAL click — Playwright's actionability check fails if the thumb
-    // cluster / dial intercepts the pointer (the occlusion the user hit).
     await confirm.click();
 
-    // Placement landed → swarm count climbs (kind=2 structure path).
     await page.waitForFunction(
       (b) => {
         const t = document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0';
@@ -140,64 +127,68 @@ test('(B) tap-to-position parks the ghost, then confirm is clickable at a MOBILE
   }
 });
 
-test('(C) the blueprint ghost FOLLOWS the tap position (tap-to-position)', async ({ browser }) => {
-  // The smoke complaint: "it doesn't move to where I click." The ghost must
-  // track the chosen world point. Tap left vs right and assert the projected
-  // ghost screen-x moves the same way.
+test('(C) DESKTOP: the blueprint ghost FOLLOWS the pointer on hover (no button)', async ({ browser }) => {
+  // One-click model: a bare hover (no button held) must make the ghost track the
+  // cursor. Move left vs right and assert the projected ghost screen-x follows —
+  // with NO click (a click would place + end placement).
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"]').click();
 
-    const surface = page.locator('[data-testid="game-surface"]');
-    const screenXAfterTapAt = async (x: number): Promise<number> => {
-      await page.mouse.click(x, 400);
-      await page.waitForFunction(
-        () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
-        undefined,
-        { timeout: 5_000 },
-      );
-      return parseFloat((await surface.getAttribute('data-placement-screen-x')) ?? 'NaN');
+    const screenXAfterHoverAt = async (x: number): Promise<number> => {
+      await page.mouse.move(x, 400);
+      // Let a couple of frames publish the projected ghost position.
+      await page.waitForTimeout(120);
+      return parseFloat((await surfaceAttr(page, 'data-placement-screen-x')) ?? 'NaN');
     };
 
-    const left = await screenXAfterTapAt(350);
-    const right = await screenXAfterTapAt(900);
+    const left = await screenXAfterHoverAt(350);
+    const right = await screenXAfterHoverAt(900);
     expect(Number.isFinite(left)).toBe(true);
     expect(Number.isFinite(right)).toBe(true);
-    // Tapping further right parks the ghost further right (it FOLLOWS the tap).
+    // Hovering further right tracks the ghost further right (it FOLLOWS, no click).
     expect(right).toBeGreaterThan(left + 200);
+    // Nothing was placed — placement is still active.
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
   } finally {
     await ctx.close();
   }
 });
 
 /**
- * The end-to-end position lock the B/C tests MISSED: tap a point, confirm, and
- * assert the placed STRUCTURE lands at the tapped point (not ahead-of-ship —
- * the smoke bug "the capital just placed in front of the ship"). Run on BOTH
- * renderer paths because the worker path forwards pointer events differently.
+ * (D)/(E) Desktop one-click place: a LEFT-CLICK on the canvas places the
+ * structure AT the cursor (no separate Confirm). We hover to the point first to
+ * read the chosen world coord (the renderer's own screenToWorld of the cursor),
+ * then click the SAME point and assert the landed kind-2 structure is there.
+ * Runs on BOTH renderer paths — the worker path forwards the click + crosses the
+ * confirm-seq FEEDBACK boundary.
  */
-async function tapPlaceAssertAtTap(browser: Browser, useWorker: boolean): Promise<void> {
+async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Promise<void> {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
     await page.locator('[data-testid="build-capital"]').click();
 
-    const surface = page.locator('[data-testid="game-surface"]');
-    // Tap well off-centre so the chosen point is clearly NOT the ahead-of-ship
-    // default (a fixed clearance along the ship facing).
-    await page.mouse.click(950, 250);
+    // Hover well off-centre so the chosen point is clearly NOT the ahead-of-ship
+    // default, then read the renderer's chosen world point BEFORE the click
+    // commits (the click clears placement + the dataset).
+    await page.mouse.move(950, 250);
     await page.waitForFunction(
-      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      () => {
+        const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-world-x');
+        return v !== null && v !== '' && Number.isFinite(parseFloat(v));
+      },
       undefined,
       { timeout: 6_000 },
     );
-    const chosenX = parseFloat((await surface.getAttribute('data-placement-world-x')) ?? 'NaN');
-    const chosenY = parseFloat((await surface.getAttribute('data-placement-world-y')) ?? 'NaN');
+    const chosenX = parseFloat((await surfaceAttr(page, 'data-placement-world-x')) ?? 'NaN');
+    const chosenY = parseFloat((await surfaceAttr(page, 'data-placement-world-y')) ?? 'NaN');
     expect(Number.isFinite(chosenX), 'chosen world X published').toBe(true);
     expect(Number.isFinite(chosenY), 'chosen world Y published').toBe(true);
 
-    await page.locator('[data-testid="placement-confirm"]').click();
+    // One left-click places — no Confirm button.
+    await page.mouse.click(950, 250);
 
     const placed = await page.waitForFunction(
       () => {
@@ -214,24 +205,70 @@ async function tapPlaceAssertAtTap(browser: Browser, useWorker: boolean): Promis
       { timeout: 10_000 },
     );
     const pos = await placed.jsonValue();
-    // eslint-disable-next-line no-console
     console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
     const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
-    expect(distToChosen, `structure should be at the tapped point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
+    expect(distToChosen, `structure should be at the clicked point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
+    // Placement mode exited on the one-click place.
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0, { timeout: 5_000 });
   } finally {
     await ctx.close();
   }
 }
 
+test('(D) main-thread: left-click places the structure at the clicked point', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await clickPlaceAssertAtClick(browser, false);
+});
+
+test('(E) WORKER path: left-click places the structure at the clicked point', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await clickPlaceAssertAtClick(browser, true);
+});
+
 /**
- * (G) Desktop build-drag robustness (playtest 2026-06-10 Issue 9). The user:
- * "desktop build-drag breaks — I suspect update events on the object instead of
- * window." A fast drag that leaves the canvas (over a HUD overlay / off-element)
- * stops delivering pointermove, stalling the ghost. The fix captures the pointer
- * on pointerdown during placement so move/up keep routing to the canvas. We drag
- * from canvas-centre INTO the bottom-right HUD cluster (the speed-dial / AUTO
- * overlay) and assert the ghost tracked all the way there (world-x moved far
- * right). On the pre-fix code the ghost stalls when the pointer hits the overlay.
+ * (F) The PRODUCTION channel (smoke 2026-06-07 capture kuytvy): the chosen point
+ * must flow on the `placementChosen` module singleton, NOT the
+ * `navigator.webdriver`-gated dataset. `?noE2EDataset=1` turns the dataset OFF
+ * even under Playwright, reproducing the on-device condition where Confirm read
+ * an empty dataset and placed ahead-of-ship. A one-click place must still log
+ * `structure_place_confirm` with hasChosen=true + finite coords.
+ */
+test('(F) PRODUCTION channel: one-click place uses the chosen point with the E2E dataset OFF', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: false, extraQuery: '&noE2EDataset=1' });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    // Hover off-centre (NOT the ahead-of-ship default) so placementChosen holds
+    // a real pointer point, then one-click to place.
+    await page.mouse.move(950, 250);
+    await page.waitForTimeout(120);
+    await page.mouse.click(950, 250);
+
+    const confirmLog = await page.waitForFunction(
+      () => {
+        const logs = (window as unknown as { __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }> }).__eqxLogs ?? [];
+        return logs.find((l) => l.tag === 'structure_place_confirm')?.data ?? null;
+      },
+      undefined,
+      { timeout: 8_000 },
+    );
+    const data = (await confirmLog.jsonValue()) as { hasChosen: boolean; x: number | null; y: number | null };
+    expect(data.hasChosen, 'one-click place must use the pointer-chosen point, not ahead-of-ship').toBe(true);
+    expect(Number.isFinite(data.x as number)).toBe(true);
+    expect(Number.isFinite(data.y as number)).toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+/**
+ * (G)/(H) Desktop build-drag robustness (playtest 2026-06-10 Issue 9). A fast
+ * drag that leaves the canvas (over a HUD overlay / off-element) must keep
+ * tracking the ghost — the pointer is captured on pointerdown during placement.
+ * Under the one-click model the release PLACES, so we assert the ghost tracked
+ * the full drag by reading `data-placement-world-x` mid-drag (BEFORE release).
  * Run on BOTH paths — the desktop default is the WORKER path.
  */
 async function dragLeavesCanvasTracksGhost(browser: Browser, useWorker: boolean): Promise<void> {
@@ -240,14 +277,13 @@ async function dragLeavesCanvasTracksGhost(browser: Browser, useWorker: boolean)
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
     await page.locator('[data-testid="build-capital"]').click();
 
-    const surface = page.locator('[data-testid="game-surface"]');
     const worldX = async (): Promise<number> =>
-      parseFloat((await surface.getAttribute('data-placement-world-x')) ?? 'NaN');
+      parseFloat((await surfaceAttr(page, 'data-placement-world-x')) ?? 'NaN');
 
-    // Press near the left of the canvas, then drag rightward in steps ENDING
-    // over the bottom-right HUD overlay (speed-dial / AUTO sit there). Without
-    // pointer capture, the move events stop reaching the canvas once the cursor
-    // is over the overlay → the ghost freezes at its last in-canvas point.
+    // Press near the left of the canvas, then drag rightward in steps ENDING over
+    // the bottom-right HUD overlay (speed-dial / AUTO sit there). Without pointer
+    // capture, the move events stop reaching the canvas once the cursor is over
+    // the overlay → the ghost freezes at its last in-canvas point.
     await page.mouse.move(260, 400);
     await page.mouse.down();
     await page.waitForFunction(
@@ -260,12 +296,12 @@ async function dragLeavesCanvasTracksGhost(browser: Browser, useWorker: boolean)
     for (const x of [500, 800, 1100, 1240]) {
       await page.mouse.move(x, x < 1100 ? 400 : 770, { steps: 4 });
     }
+    // Read mid-drag, BEFORE release (the release one-click places + clears the
+    // dataset).
+    const endX = await worldX();
     await page.mouse.up();
 
-    const endX = await worldX();
     expect(Number.isFinite(startX) && Number.isFinite(endX)).toBe(true);
-    // The ghost tracked across the whole drag (incl. over the HUD overlay), so
-    // its world-x moved a large amount to the right. A stalled ghost barely moves.
     expect(
       endX - startX,
       `ghost world-x should track the full drag (start ${startX}, end ${endX}); a small delta means the drag stalled leaving the canvas`,
@@ -285,67 +321,44 @@ test('(H) WORKER path: placement ghost tracks a drag that leaves the canvas', as
   await dragLeavesCanvasTracksGhost(browser, true);
 });
 
-test('(D) main-thread: Confirm places the structure at the tapped point', async ({ browser }) => {
-  test.setTimeout(60_000); // test-sector-fast room cold-boot (infrastructural)
-  await tapPlaceAssertAtTap(browser, false);
-});
-
-test('(E) WORKER path: Confirm places the structure at the tapped point', async ({ browser }) => {
-  test.setTimeout(60_000);
-  await tapPlaceAssertAtTap(browser, true);
-});
-
 /**
- * (F) The gap D/E missed — and why this bug shipped (smoke 2026-06-07 capture
- * kuytvy). D/E read the chosen point from `data-placement-world-x`, but that
- * whole dataset surface is gated behind `navigator.webdriver` (gameRafLoop's
- * `resolveE2EDatasetEnabled`). Playwright sets webdriver=true, so D/E saw a
- * channel NO real phone has — on-device, Confirm read an empty dataset and
- * placed ahead-of-ship. `?noE2EDataset=1` turns that dataset OFF even under
- * Playwright, reproducing the PRODUCTION condition. The fix routes the chosen
- * point through the `placementChosen` module singleton (populated by gameRafLoop
- * regardless of webdriver), so Confirm's `structure_place_confirm` log must
- * report hasChosen=true with finite coords. Asserts via `window.__eqxLogs`
- * (always-on diag), never the (now-off) dataset.
+ * (I)/(J) Desktop cancel (WS-10 / R2.5). Right-click and Escape both exit
+ * placement WITHOUT placing — main-thread window listeners that work on either
+ * render path. The banner detaches (placementKind cleared) and no structure
+ * lands.
  */
-test('(F) PRODUCTION channel: Confirm uses the chosen point with the E2E dataset OFF', async ({ browser }) => {
-  test.setTimeout(60_000);
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-  const page = await ctx.newPage();
+async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'escape'): Promise<void> {
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
-    await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout&worker=0&noE2EDataset=1`);
-    await page.waitForFunction(
-      () => {
-        const el = document.querySelector('[data-testid="game-surface"]');
-        return el !== null && el.getAttribute('data-local-player-id') !== '';
-      },
-      { timeout: 12_000 },
-    );
-    await page.locator('[data-testid="speed-dial-fab"]').click();
-    await page.locator('[data-testid="speed-dial-build"]').click();
+    const before = await swarmCount(page);
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
     await page.locator('[data-testid="build-capital"]').click();
+    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
-    // Position the ghost well off-centre (NOT the ahead-of-ship default). The
-    // banner anchors over the ghost via the un-gated production bridge, so the
-    // Confirm button is hit-testable even with the dataset off (Playwright's
-    // actionability wait also gives the placementChosen ref a frame to populate).
-    await page.mouse.click(950, 250);
-    await page.locator('[data-testid="placement-confirm"]').click();
+    // Hover so the ghost is positioned, then cancel.
+    await page.mouse.move(700, 300);
+    await page.waitForTimeout(80);
+    if (how === 'right-click') {
+      await page.mouse.click(700, 300, { button: 'right' });
+    } else {
+      await page.keyboard.press('Escape');
+    }
 
-    const confirmLog = await page.waitForFunction(
-      () => {
-        const logs = (window as unknown as { __eqxLogs?: Array<{ tag: string; data: Record<string, unknown> }> }).__eqxLogs ?? [];
-        return logs.find((l) => l.tag === 'structure_place_confirm')?.data ?? null;
-      },
-      undefined,
-      { timeout: 8_000 },
-    );
-    const data = (await confirmLog.jsonValue()) as { hasChosen: boolean; x: number | null; y: number | null };
-    expect(data.hasChosen, 'Confirm must use the pointer-chosen point, not the ahead-of-ship fallback').toBe(true);
-    expect(Number.isFinite(data.x as number)).toBe(true);
-    expect(Number.isFinite(data.y as number)).toBe(true);
+    // Banner gone (placementKind cleared) and nothing was placed.
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0, { timeout: 5_000 });
+    await page.waitForTimeout(300);
+    expect(await swarmCount(page)).toBe(before);
   } finally {
     await ctx.close();
   }
+}
+
+test('(I) DESKTOP: right-click cancels placement (no structure placed)', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await cancelExitsPlacement(browser, 'right-click');
+});
+
+test('(J) DESKTOP: Escape cancels placement (no structure placed)', async ({ browser }) => {
+  test.setTimeout(60_000);
+  await cancelExitsPlacement(browser, 'escape');
 });

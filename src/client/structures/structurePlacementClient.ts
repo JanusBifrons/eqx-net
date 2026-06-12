@@ -15,6 +15,8 @@
  */
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { getGameClient } from '../net/clientSingleton.js';
+import { placementChosen } from './placementChosen.js';
+import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
  *  edge when dropping ahead. Keeps the blueprint clear of the hull collider. */
@@ -80,14 +82,29 @@ export interface PendingPlacement {
  *  structure actually lands. */
 export const PENDING_PLACEMENT_TIMEOUT_MS = 3000;
 
-/** True when the confirmed placement ghost should stop showing: the structure
- *  has appeared (slice count grew past the baseline) OR the timeout elapsed. */
+/**
+ * True when the confirmed placement ghost should stop showing: the structure is
+ * now actually RENDERABLE (the slice count grew past baseline AND every
+ * structure in the slice has a swarm pose) OR the timeout elapsed.
+ *
+ * `allStructuresRenderable` is the load-bearing addition (R2.1): a structure
+ * sprite is drawn ONLY when its entityId is present in the binary swarm channel
+ * (`mirror.swarm`, kind 2), but the JSON structures slice (`mirror.structures`)
+ * that grows the count arrives on a SEPARATE channel with independent timing.
+ * Clearing on count-grew alone left a window where the slice had grown but the
+ * swarm pose hadn't landed yet — neither ghost nor sprite drawn → the
+ * "vanishes then reappears after a second or two" bug. Gating on renderability
+ * makes the clear-gate the SAME condition as the render-gate. The timeout
+ * remains an upper bound so a rejected / AOI-evicted placement never strands the
+ * ghost forever.
+ */
 export function pendingPlacementResolved(
   pending: PendingPlacement,
   nowMs: number,
   currentStructureCount: number,
+  allStructuresRenderable: boolean,
 ): boolean {
-  if (currentStructureCount > pending.baselineStructureCount) return true;
+  if (currentStructureCount > pending.baselineStructureCount && allStructuresRenderable) return true;
   return nowMs - pending.sentAtMs >= PENDING_PLACEMENT_TIMEOUT_MS;
 }
 
@@ -110,6 +127,7 @@ export function resolvePlacementPreviewStatus(
   pending: PendingPlacement | null,
   nowMs: number,
   currentStructureCount: number,
+  allStructuresRenderable: boolean,
   out: PlacementPreview,
 ): PlacementPreviewStatus {
   if (placementKind && localShip) {
@@ -122,7 +140,9 @@ export function resolvePlacementPreviewStatus(
     return 'active';
   }
   if (pending) {
-    if (pendingPlacementResolved(pending, nowMs, currentStructureCount)) return 'cleared';
+    if (pendingPlacementResolved(pending, nowMs, currentStructureCount, allStructuresRenderable)) {
+      return 'cleared';
+    }
     out.kind = pending.kind;
     out.x = pending.x;
     out.y = pending.y;
@@ -180,4 +200,32 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
   client.notePendingPlacement(kindId, x, y);
   return true;
+}
+
+/**
+ * Commit a placement at the player's currently-CHOSEN world point (the
+ * production `placementChosen` channel gameRafLoop writes every frame while the
+ * ghost is up), falling back to the ahead-of-ship pose if the player confirmed
+ * before positioning. The SINGLE commit path shared by BOTH the touch Confirm
+ * banner AND the WS-10 (R2.5) desktop one-click place — so the log + send +
+ * pending-ghost behaviour is identical regardless of how the player committed.
+ * Does NOT clear `placementKind` (Zustand) — the caller owns that, since the
+ * banner reads it via a hook and gameRafLoop via `getState()`.
+ */
+export function commitChosenPlacement(kindId: StructureKindId): void {
+  const cx = placementChosen.worldX;
+  const cy = placementChosen.worldY;
+  const hasChosen = cx !== null && cy !== null;
+  logEvent('structure_place_confirm', {
+    kind: kindId,
+    hasChosen,
+    x: cx,
+    y: cy,
+    stuck: placementChosen.stuck,
+  });
+  if (hasChosen) {
+    placeStructureAt(kindId, cx, cy);
+  } else {
+    placeStructureAhead(kindId);
+  }
 }

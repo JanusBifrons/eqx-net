@@ -5,6 +5,8 @@ import {
   cometSegment,
   shieldWallVisualParams,
   previewLineVisualParams,
+  rangeCircleVisualParams,
+  RANGE_CIRCLE_COLOR,
   CONNECTOR_IDLE_COLOR,
   CONNECTOR_MINERAL_COLOR,
   CONNECTOR_FLOW_PULSE_COLOR,
@@ -29,6 +31,27 @@ import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstan
 const blankVisual = (): ConnectorVisual => ({
   color: 0, alpha: 0, width: 0, glowAlpha: 0, glowWidth: 0,
   pulseActive: false, pulseT: 0, pulseColor: 0, pulseAlpha: 0, pulseWidth: 0,
+});
+
+describe('rangeCircleVisualParams (WS-10 R2.3)', () => {
+  it('uses the range-ring colour, a visible alpha, and a positive width', () => {
+    const v = rangeCircleVisualParams(1);
+    expect(v.color).toBe(RANGE_CIRCLE_COLOR);
+    expect(v.alpha).toBeGreaterThan(0);
+    expect(v.width).toBeGreaterThanOrEqual(1);
+  });
+
+  it('keeps the line ~constant on screen — width shrinks (in world units) as zoom grows', () => {
+    const zoomedOut = rangeCircleVisualParams(0.5).width; // max(1/0.5,1) = 2
+    const zoomedIn = rangeCircleVisualParams(4).width; // max(1/4,1) = 1
+    expect(zoomedOut).toBeGreaterThan(zoomedIn);
+  });
+
+  it('guards a non-positive scale (never divides by zero)', () => {
+    const v = rangeCircleVisualParams(0);
+    expect(Number.isFinite(v.width)).toBe(true);
+    expect(v.width).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('connectorVisualParams', () => {

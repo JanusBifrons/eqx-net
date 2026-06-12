@@ -31,6 +31,7 @@ import {
   computeIsLoadingActive,
 } from '../state/store.js';
 import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
+import { commitChosenPlacement } from '../structures/structurePlacementClient.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
@@ -42,6 +43,13 @@ import type { IRenderer } from '@core/contracts/IRenderer';
  *  session and this never needs to survive a teardown (a fresh selection on the
  *  next session re-syncs naturally from null). */
 let _lastPublishedSelectedId: string | null = null;
+
+/** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
+ *  the seq on a DESKTOP mouse left-click during placement; when it changes we
+ *  commit the placement at the chosen point + clear `placementKind`. A monotonic
+ *  counter (not a one-shot bool) edge-detects cleanly across the worker FEEDBACK
+ *  cache lag — the value only moves on a real click, so we commit once per click. */
+let _lastPlacementConfirmSeq = 0;
 
 // plan: imperative-taco — Playwright sets `navigator.webdriver=true`;
 // a real player's browser leaves it undefined/false. The heavy E2E
@@ -242,6 +250,20 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       placementChosen.worldY =
         typeof feedback.placementChosenWorldY === 'number' ? feedback.placementChosenWorldY : null;
       placementChosen.stuck = feedback.placementStuck;
+      // WS-10 (R2.5) — DESKTOP one-click place: the renderer bumped the confirm
+      // seq on a mouse left-click. Commit at the chosen point (just written
+      // above, so it's this click's point) via the SAME path the touch Confirm
+      // banner uses, then clear `placementKind`. Edge-detect on the seq so a
+      // single click commits exactly once even though the worker FEEDBACK cache
+      // may report the same seq across a couple of RAFs.
+      if (feedback.placementConfirmSeq !== _lastPlacementConfirmSeq) {
+        _lastPlacementConfirmSeq = feedback.placementConfirmSeq;
+        const kind = useUIStore.getState().placementKind;
+        if (kind) {
+          commitChosenPlacement(kind);
+          useUIStore.getState().setPlacementKind(null);
+        }
+      }
       // Anchor the Confirm banner over the ghost's projected screen position.
       const psx = feedback.placementScreenX;
       const psy = feedback.placementScreenY;
@@ -423,6 +445,12 @@ function writeE2EDataset(
   // `data-mining-beam-count` so the structure-scenario E2E can assert the
   // Miner's beam renders distinctly (NOT the shared remote/live pool).
   el.dataset['miningBeamCount'] = String(feedback.miningBeamCount);
+
+  // WS-10 (R2.4) — the entity the desktop pointer is hovering over (the lighter
+  // HoverBracket outline target), so the hover-outline E2E can assert it tracks
+  // the cursor. '' when over empty space / on touch. Renderer-owned; never
+  // Zustand (#2 — it updates at pointer-move cadence).
+  el.dataset['hoverPickId'] = feedback.hoveredPickId ?? '';
 
   // Structure placement confirm — world-anchored (smoke handoff 2026-06-06,
   // Issue 5). Move the (position:fixed) confirm banner to the renderer's
