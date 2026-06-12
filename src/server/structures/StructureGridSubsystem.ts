@@ -326,7 +326,13 @@ export class StructureGridSubsystem {
       const target = this.hooks.findNearestAsteroid(rec.x, rec.y, kind.miningRange ?? 0);
       if (!target) { this.clearMiningTarget(rec); continue; }
       // Cache the target + its (static) pose so the faster mining-beam tick
-      // (tickMiners) can broadcast the beam endpoint without re-scanning.
+      // (tickMiners) can broadcast the beam endpoint without re-scanning. Build
+      // the `swarm-<eid>` wire id ONLY when the target rock CHANGES, so the
+      // steady-state (mining one rock) never allocates a template string — the
+      // ~5 Hz tickMiners reads the cached `miningTargetWireId` (invariant #14).
+      if (rec.miningTargetEntityId !== target.entityId) {
+        rec.miningTargetWireId = 'swarm-' + target.entityId;
+      }
       rec.miningTargetEntityId = target.entityId;
       rec.miningTargetX = target.x;
       rec.miningTargetY = target.y;
@@ -349,6 +355,7 @@ export class StructureGridSubsystem {
     rec.miningTargetEntityId = undefined;
     rec.miningTargetX = undefined;
     rec.miningTargetY = undefined;
+    rec.miningTargetWireId = undefined;
   }
 
   /**
@@ -362,21 +369,23 @@ export class StructureGridSubsystem {
    * WIRE endpoints (miner → asteroid), so a mount-angle slew would have zero
    * render effect AND would add a second mount-angle ownership site (Invariant
    * #12). The endpoint pose is the static asteroid pose cached by `processMining`.
-   * Allocation-free: a per-record scalar cadence compare + the wire-id template
-   * is the only string (the beam itself is broadcast infrequently, off the 60 Hz
-   * tick).
+   * Allocation-free (invariant #14): per-record scalar cadence compare + the
+   * target's `swarm-<eid>` wire id is READ from `rec.miningTargetWireId` (built
+   * by `processMining` only when the target rock changes), so a steady mining
+   * broadcast allocates nothing.
    */
   tickMiners(nowMs: number): void {
     if (!this.hooks.broadcastBeam) return;
     for (const rec of this.hooks.registry.all()) {
       if (rec.kind !== 'miner' || !rec.isConstructed) continue;
       if (rec.miningTargetEntityId === undefined || rec.miningTargetX === undefined || rec.miningTargetY === undefined) continue;
+      if (rec.miningTargetWireId === undefined) continue;
       if (!this.powerSummaryFor(rec.id).powered) continue;
       if (nowMs - (rec.lastMiningBeamMs ?? -Infinity) < MINING_BEAM_CADENCE_MS) continue;
       rec.lastMiningBeamMs = nowMs;
       this.hooks.broadcastBeam(
         rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
-        `swarm-${rec.miningTargetEntityId}`, 'drill',
+        rec.miningTargetWireId, 'drill',
       );
       // WS-4 Phase 3 — light player-damage ray along the same beam. Per-broadcast
       // chip = DPS × cadence so the effective DPS is constant regardless of the

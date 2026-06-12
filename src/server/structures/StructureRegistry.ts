@@ -51,6 +51,12 @@ export interface StructureRecord {
    *  target. */
   miningTargetX?: number;
   miningTargetY?: number;
+  /** WS-4 — pre-built `swarm-<entityId>` wire id for the mining-beam target,
+   *  cached so `tickMiners` (the ~5 Hz broadcast) never allocates a template
+   *  string. Rebuilt by `processMining` ONLY when the target rock CHANGES (the
+   *  steady-state mining a single rock allocates nothing). Cleared with the
+   *  target. */
+  miningTargetWireId?: string;
   /** WS-4 Phase 2 — wall-clock ms of this Miner's last mining-beam broadcast
    *  (the beam cadence gate, keeps the beam continuous without spamming wire). */
   lastMiningBeamMs?: number;
