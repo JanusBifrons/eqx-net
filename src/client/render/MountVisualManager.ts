@@ -38,6 +38,7 @@
 
 import { Container, Graphics } from 'pixi.js';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
+import { aimLineLengthForMount } from './aimLineLength';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
  *  mountless kind avoids allocating a fresh `[]` literal every time
@@ -68,12 +69,6 @@ interface MountGraphics {
   aimLine: Graphics;
 }
 
-/** Length (in world units) of the aim-line preview drawn from a mount's
- *  barrel tip. Sized to the hitscan range so it traces the entire path a
- *  beam would travel — the user explicitly asked for this as a permanent
- *  "where will this weapon fire" indicator. The dotted style (see
- *  buildAimLineGfx) plus low alpha keeps it visible without dominating. */
-const AIM_LINE_LENGTH = 500;
 /** Dotted-line dash and gap lengths (world units). 6 u on / 4 u off reads
  *  as a clear dotted preview at typical zoom levels without becoming a
  *  visual centipede on long runs. */
@@ -258,10 +253,13 @@ function buildTurretGfx(_mount: WeaponMount, color: number): Graphics {
  * Phase 4b colours this constant; Phase 4b.3 will modulate the alpha or
  * colour by whether the slot's `pickTarget` has acquired something.
  */
-function buildAimLineGfx(_mount: WeaponMount, color: number): Graphics {
+function buildAimLineGfx(mount: WeaponMount, color: number): Graphics {
   const g = new Graphics();
   const start = BARREL_LENGTH;
-  const end = BARREL_LENGTH + AIM_LINE_LENGTH;
+  // R2.14 — length tracks the mount's bound weapon's effective reach (the pure
+  // `aimLineLengthForMount`) instead of a hardcoded 500 (which drew the
+  // interceptor's beam guide at 2× its 250 hitscan range).
+  const end = BARREL_LENGTH + aimLineLengthForMount(mount);
   const step = AIM_LINE_DASH_ON + AIM_LINE_DASH_OFF;
   for (let s = start; s < end; s += step) {
     const dashEnd = Math.min(s + AIM_LINE_DASH_ON, end);

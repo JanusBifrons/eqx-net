@@ -126,10 +126,17 @@ The per-frame `mirror.ships.set()` rebuild in [src/client/net/ColyseusClient.ts:
 Every mount renders three Pixi `Graphics` children parented to the host sprite via `MountVisualManager`:
 
 1. **Turret sprite** — a small 1.2 × 20 unit barrel at `(mount.localX, mount.localY)`, rotated by `-(baseAngle + currentMountAngle)` (Pixi y-flip). Coloured to match the ship's `kind.color`.
-2. **Aim line** — a dotted 6/4 dash chain from the barrel tip extending 500 u along the mount's current fire direction. Alpha 0.25 so it doesn't dominate the screen.
+2. **Aim line** — a dotted 6/4 dash chain from the barrel tip extending along the mount's current fire direction, **for the bound weapon's effective reach** (pure `aimLineLengthForMount` → `weaponAutoFireRange`; hitscan→`range`, projectile→0.85×, missile→0.5×). Alpha 0.25 so it doesn't dominate. (Was a hardcoded 500 u for every mount — the interceptor beam, range 250, drew its guide at 2× reach: R2.14, 2026-06-12.)
 3. (Phase 4b plan) **Aim arc indicator** — a faint wedge from `arcMin..arcMax`. Currently deferred; was descoped from Phase 4b because static aim-line + visible turret rotation made it redundant for the smoke-test feel. Re-instate if a future iteration wants explicit arc visibility.
 
 `BARREL_LENGTH = 20` deliberately matches the 20 u server-side self-hit clearance offset in `handleFire`/`handleAiFire` — so the beam emerges from the visible barrel tip rather than 12 u past it. **Don't change one without the other.**
+
+## Equinox R2 beam fixes (2026-06-12)
+
+- **Beams stop at shield walls — client predicted beam (R2.28).** The server already absorbed beams at an active shield wall (`PlayerFireResolver`/`AiFireResolver` → `blockBeamAtWall` → `ShieldWallManager.blockShot`), but the LOCAL player's predicted live beam drew straight THROUGH an up wall: `castHitscan` resolved hits via `handleToId`, and wall span bodies are deliberately kept out of it, so a wall hit returned `null` → `updateLiveBeam` ran the beam to full `HITSCAN_RANGE`. Fix: `PhysicsWorld` keeps a separate `wallHandleToId` map (populated in `spawnWall`, cleared in `removeWall`) consulted in `castHitscan`'s miss-fallback to return a `wall-${id}` sentinel; a disabled (down) wall is excluded from `castRay` by Rapier so it stays passable. `shieldEdgeDist` already returns `hit.dist` for a non-ship/non-swarm hitId, so the predicted beam terminates exactly at the wall with no client edit. Lock: `World.wall.test.ts`.
+- **Reverse-square damage falloff (R2.29).** `HitscanWeaponDef` gains an optional `falloff: { minDamageFrac }`; `hitscanFalloffFrac(dist, range, minFrac)` (pure, `WeaponCatalogue.ts`) scales applied damage from full at point-blank to `minFrac × damage` at max range as the SQUARE of normalized distance. Threaded through `WeaponFireSink.hitscan`'s optional 4th param; both resolvers scale damage (and the `hit_ack`/`_bestHitDamage`) at the hit distance. **Server-authoritative** — the client reads the scaled value off the `DamageEvent`, never predicts it (no prediction desync). The beam (`hitscan`) ships `minDamageFrac: 0.4`. Absent field ⇒ flat damage (back-compat). Locks: `hitscanFalloff.test.ts` (curve) + `hitAckContract.test.ts` (damage < flat at ~100 u, and `hit_ack == DamageEvent`).
+- **Aim-line length follows weapon reach (R2.14)** — see the Visual representation section above.
+- **Deferred (flagged):** the `BeamSpritePool` visual *taper* (a fading gradient along the beam to read the falloff visually) is NOT yet shipped — it would change the documented single-`Texture.WHITE`/single-drawcall batch contract and needs visual sign-off. The gameplay falloff is fully active without it.
 
 ## AI fire-gate widening (Phase 4c)
 
