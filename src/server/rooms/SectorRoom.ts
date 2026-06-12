@@ -1597,6 +1597,14 @@ export class SectorRoom extends Room<SectorState> {
       },
       damagePlayersInBeam: (minerId, fromX, fromY, toX, toY, perHit) =>
         this.damagePlayersInMiningBeam(minerId, fromX, fromY, toX, toY, perHit),
+      // WS-8 (R2.15) — a Bolt Turret spawns a server projectile toward its drone
+      // target (ownerId = the turret's pstruct- id; the pipeline skips the owner).
+      spawnProjectile: (shooterId, x, y, vx, vy, dmg, r, mt, wId) =>
+        this.spawnServerProjectile(shooterId, x, y, vx, vy, dmg, r, mt, wId),
+      // WS-8 (R2.15) — a Missile Turret launches a homing missile (ownerId = the
+      // turret's pstruct- id, which isMissileTargetHostile restricts to drones).
+      spawnMissile: (shooterId, x, y, dx, dy, def) =>
+        this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
     });
@@ -2271,6 +2279,15 @@ export class SectorRoom extends Room<SectorState> {
    *  bots only fire at players they've already been antagonised by.
    */
   private isMissileTargetHostile(ownerId: string): (targetId: string) => boolean {
+    // WS-8 (R2.15) — a STRUCTURE-fired (`pstruct-`) missile is a DEFENCE weapon:
+    // it locks onto HOSTILE DRONES ONLY (swarm kind 1), matching the beam/bolt
+    // turret's `findNearestDrone`. Without this branch a `pstruct-` owner falls
+    // through to the player-shooter case below and would target other players +
+    // friendly structures (the candidate set includes kind 1 AND kind 2). Kind
+    // is the source of truth (lwbot drones are kind 1 too, swarm-/lwbot-prefixed).
+    if (ownerId.startsWith('pstruct-')) {
+      return (id) => this.swarmRegistry.get(id)?.kind === 1;
+    }
     const isPlayerShooter = !ownerId.startsWith('swarm-') && !ownerId.startsWith('lwbot-');
     if (isPlayerShooter) {
       return (id) => id !== ownerId;

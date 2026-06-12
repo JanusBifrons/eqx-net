@@ -12,6 +12,7 @@ import {
   structureKindFromIndex,
   structureKindToIndex,
 } from '../../src/shared-types/structureKinds.js';
+import { getWeapon } from '../../src/core/combat/WeaponCatalogue.js';
 
 describe('structureKinds catalogue', () => {
   it('ships the planned kinds with stable, append-only ids', () => {
@@ -23,6 +24,8 @@ describe('structureKinds catalogue', () => {
       'turret',
       'battery',
       'shield_pylon',
+      'laser_bolt_turret', // WS-8 (R2.15) — appended at the tail
+      'missile_turret',
     ]);
   });
 
@@ -53,7 +56,7 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KINDS.connector.maxConnections).toBe(6);
     // The pylon is a hub so two pylons can link directly (it pairs into a wall).
     expect(STRUCTURE_KINDS.shield_pylon.maxConnections).toBe(3);
-    for (const leaf of ['solar', 'miner', 'turret', 'battery'] as const) {
+    for (const leaf of ['solar', 'miner', 'turret', 'battery', 'laser_bolt_turret', 'missile_turret'] as const) {
       expect(STRUCTURE_KINDS[leaf].maxConnections).toBe(1);
       expect(STRUCTURE_KINDS[leaf].isHub).toBe(false);
     }
@@ -63,7 +66,7 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KINDS.battery.powerStorageCapacity).toBeGreaterThan(0);
     expect(STRUCTURE_KINDS.battery.powerOutput).toBe(0);
     expect(STRUCTURE_KINDS.battery.powerConsumption).toBe(0);
-    for (const other of ['capital', 'connector', 'solar', 'miner', 'turret'] as const) {
+    for (const other of ['capital', 'connector', 'solar', 'miner', 'turret', 'laser_bolt_turret', 'missile_turret'] as const) {
       expect(STRUCTURE_KINDS[other].powerStorageCapacity).toBeUndefined();
     }
   });
@@ -115,6 +118,25 @@ describe('structureKinds catalogue', () => {
     expect(STRUCTURE_KINDS.connector.radius).toBe(10);
     expect(STRUCTURE_KINDS.shield_pylon.radius).toBe(12);
     expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(5);
+  });
+
+  it('WS-8 (R2.15) added the two defence turrets, each binding the right weapon', () => {
+    // The bolt turret fires a PROJECTILE (the existing 'laser' Bolt); the missile
+    // turret fires a MISSILE (the existing 'heat-seeker'). A typo binding
+    // 'hitscan' (the beam turret's weapon) would make them instant-damage — lock
+    // the mode so the SHOT model is wired to a travelling weapon.
+    const bolt = STRUCTURE_KINDS.laser_bolt_turret;
+    const missile = STRUCTURE_KINDS.missile_turret;
+    expect(bolt.mounts?.length).toBe(1);
+    expect(missile.mounts?.length).toBe(1);
+    expect(getWeapon(bolt.mounts![0]!.weaponId!).mode).toBe('projectile');
+    expect(getWeapon(missile.mounts![0]!.weaponId!).mode).toBe('missile');
+    // Both carry a targeting range + a per-kind shot cadence (fireRateMs).
+    expect(bolt.weaponRange).toBeGreaterThan(0);
+    expect(missile.weaponRange).toBeGreaterThan(0);
+    expect(bolt.fireRateMs).toBeGreaterThan(0);
+    expect(missile.fireRateMs).toBeGreaterThan(0);
+    expect(STRUCTURE_KIND_CATALOGUE_VERSION).toBeGreaterThanOrEqual(6); // the 5→6 bump
   });
 
   // ── Unified-hull plan — the single hull-points source (render + collider) ──

@@ -6,6 +6,14 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 
+/** Room-PRIVATE collaborators the WS-8 shot tests observe — `missileSim` +
+ *  `projectiles.liveProjectiles` are private fields (not on the `_internals`
+ *  surface), reached by the same room-cast the missileLifecycle test uses. */
+interface RoomShotPrivates {
+  missileSim: { size(): number };
+  projectiles: { liveProjectiles: Map<string, { ownerId: string }> };
+}
+
 async function placeAndWait(
   harness: SectorTestHarness,
   room: Awaited<ReturnType<SectorTestHarness['connectAs']>>,
@@ -64,6 +72,62 @@ describe('SectorRoom integration — turret (Phase 5)', () => {
     // The turret locked onto the drone (aim line target set).
     expect(internals.structureRegistry.get(turret)!.turretTargetEntityId).toBeDefined();
   }, 25_000);
+
+  it('a Bolt Turret SPAWNS a travelling projectile owned by the turret (WS-8, real room)', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    const room = await harness.connectAs('player-1');
+    const serverRoom = harness.getServerRoom()!;
+    const internals = serverRoom._internals;
+    const priv = serverRoom as unknown as RoomShotPrivates;
+    internals.spawnTestDrone('mob-bolt', 250, 0);
+
+    await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'connector', 120, 120);
+    await placeAndWait(harness, room, 'solar', 150, 0);
+    const bolt = await placeAndWait(harness, room, 'laser_bolt_turret', 0, 250);
+    for (let i = 0; i < 150; i++) internals.pulseStructureGrid();
+    expect(internals.structureRegistry.get(bolt)!.isConstructed).toBe(true);
+
+    // A Bolt Turret SPAWNS a travelling projectile owned by the turret (NOT the
+    // existing turret's instant hitscan damage). Observe the spawn directly off
+    // the projectile pipeline — robust, no flight-timing dependency.
+    const before = priv.projectiles.liveProjectiles.size;
+    internals.tickStructureTurrets();
+    expect(priv.projectiles.liveProjectiles.size).toBe(before + 1);
+    let ownedByTurret = false;
+    for (const p of priv.projectiles.liveProjectiles.values()) if (p.ownerId === bolt) ownedByTurret = true;
+    expect(ownedByTurret).toBe(true);
+    expect(internals.structureRegistry.get(bolt)!.turretTargetEntityId).toBeDefined();
+  }, 25_000);
+
+  it('a Missile Turret LAUNCHES a homing missile; it never targets the friendly Capital (WS-8 drones-only)', async () => {
+    harness = await bootSectorTestServer({ asteroidConfig: [] });
+    const room = await harness.connectAs('player-1');
+    const serverRoom = harness.getServerRoom()!;
+    const internals = serverRoom._internals;
+    const priv = serverRoom as unknown as RoomShotPrivates;
+    internals.spawnTestDrone('mob-msl', 250, 0);
+
+    const cap = await placeAndWait(harness, room, 'capital', 0, 0);
+    await placeAndWait(harness, room, 'connector', 120, 120);
+    await placeAndWait(harness, room, 'solar', 150, 0);
+    await placeAndWait(harness, room, 'solar', -150, 0); // extra power (missile draws 30)
+    const mt = await placeAndWait(harness, room, 'missile_turret', 0, 250);
+    for (let i = 0; i < 250; i++) internals.pulseStructureGrid();
+    expect(internals.structureRegistry.get(mt)!.isConstructed).toBe(true);
+
+    const capBefore = internals.swarmHealth.get(cap)!;
+    const before = priv.missileSim.size();
+    internals.tickStructureTurrets();
+    // The turret LAUNCHES a homing missile (not a beam/bolt) + locks onto the drone.
+    expect(priv.missileSim.size()).toBe(before + 1);
+    expect(internals.structureRegistry.get(mt)!.turretTargetEntityId).toBeDefined();
+    // Let it fly. The Capital (0,0) is CLOSER to the turret (250 u) than the drone
+    // (354 u): a broken "any-non-owner" missile would home on the Capital. With
+    // drones-only it flies AWAY toward the drone, so the Capital stays untouched.
+    await harness.advance(1500);
+    expect(internals.swarmHealth.get(cap)).toBe(capBefore);
+  }, 30_000);
 
   it('an unpowered turret (overdrawn grid) does not fire', async () => {
     harness = await bootSectorTestServer({ asteroidConfig: [] });

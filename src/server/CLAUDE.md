@@ -252,8 +252,23 @@ changes.** Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
 hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
 `tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
 the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);
-a **bespoke fire path**, NOT `AiFireResolver` (which targets players). The
-testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
+a **bespoke fire path**, NOT `AiFireResolver` (which targets players). **WS-8
+(R2.15) generalised `tickTurrets`** from the hard-coded `'turret'` kind to a
+data-driven predicate (a structure with a `weaponRange` + a weaponised mount —
+auto-includes the new `laser_bolt_turret`/`missile_turret`, EXCLUDES the Miner)
+and dispatches on the bound weapon's `mode`: `hitscan` → the continuous beam
+(unchanged); `projectile` → a dodgeable bolt via `spawnServerProjectile`;
+`missile` → a homing missile via `spawnServerMissile`. The new kinds use the
+SHOT model — one shot per the KIND's `fireRateMs` (NOT the weapon's rapid player
+cooldown, which would firehose) — damage landing on impact via the
+projectile/missile sim (rendered off `projectiles[]`/`missiles[]`). Two guards:
+the projectile swarm-pass skips the firing owner (`rec.id === proj.ownerId`) so
+a bolt can't detonate on its own turret; and `isMissileTargetHostile` gives a
+`pstruct-` owner a **drones-only** (swarm kind 1) homing predicate — without it
+a structure missile falls through to the player-shooter branch and targets other
+players + friendly structures. Missile SPLASH is unchanged (CAN hit the owner's
+base — realistic, by user choice). 🔴 netgate (new projectile/missile
+spawn+broadcast). The testMode **scenario trigger** (`prebuiltStructures`/`scenarioDrones`/
 `scenarioAsteroids` → `seedStructureScenario`, the `structure-scenario-test`
 room) seeds a pre-built powered grid for E2E (the place-ahead UI overlaps stacked
 placements; this seeds the end state). **Batteries (batteries plan)** add a full

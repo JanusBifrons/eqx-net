@@ -176,8 +176,13 @@ export class ProjectilePipeline {
         }
       }
 
-      // 2. Swarm (drones + asteroids — sphere).
+      // 2. Swarm (drones + asteroids + structures — sphere).
       for (const rec of d.swarmRegistry.all()) {
+        // WS-8 — a structure-fired bolt (ownerId = pstruct-) must not detonate on
+        // the FIRING turret (a kind-2 swarm entity at the spawn point). Mirrors
+        // the lingering-hull owner skip below. Sibling structures in the line of
+        // fire are still hit (realistic — place defence turrets at the perimeter).
+        if (rec.id === proj.ownerId) continue;
         const b = slotBase(rec.slot);
         const cx = d.sabF32[b + SLOT_X_OFF]!;
         const cy = d.sabF32[b + SLOT_Y_OFF]!;
