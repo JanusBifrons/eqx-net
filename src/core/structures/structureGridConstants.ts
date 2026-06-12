@@ -32,6 +32,15 @@ export const CONNECTION_MAX_RANGE = 600;
  *  `CAPITAL.connectionRange` carries the literal `300` with a back-reference. */
 export const CAPITAL_CONNECTION_RANGE = 300;
 
+/** WS-5 (R2.17) — the global cap on how many hubs a single freshly-placed
+ *  structure auto-connects to on placement. A structure's OWN `maxConnections`
+ *  (Connector 6, Capital 4, leaves 1) already bounds it; this is the additional
+ *  safety ceiling so a future high-cap hub can't fan out unboundedly at placement
+ *  time. 6 = the Connector cap, so today it coincides with the own-cap for every
+ *  kind (no kind exceeds 6). Open Decision 4 chose a global `core` constant over
+ *  a per-kind catalogue field (no second catalogue-version bump in PR 2). */
+export const PLACEMENT_MAX_CONNECTIONS = 6;
+
 /** Per-connection units/pulse cap on material flow (Phase 4 hauling). Large by
  *  default — the throughput ceiling rarely bites with one mineral type. */
 export const CONNECTION_THROUGHPUT = 100_000;

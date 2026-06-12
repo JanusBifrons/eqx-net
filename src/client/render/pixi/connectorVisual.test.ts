@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   connectorVisualParams,
+  previewLineVisualParams,
   CONNECTOR_IDLE_COLOR,
   CONNECTOR_MINERAL_COLOR,
+  PREVIEW_OK_COLOR,
+  PREVIEW_BLOCKED_COLOR,
+  PREVIEW_OVERFLOW_COLOR,
 } from './connectorVisual.js';
 import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstants.js';
 
@@ -37,5 +41,34 @@ describe('connectorVisualParams', () => {
     expect(idleZoomedOut.width).toBeCloseTo(4, 6); // max(1/0.25, 1) = 4
     const idleZoomedIn = connectorVisualParams(0, 1000, 4);
     expect(idleZoomedIn.width).toBe(1); // max(1/4, 1) = 1
+  });
+});
+
+describe('previewLineVisualParams (WS-5 R2.17)', () => {
+  it('ok → green, visible, glowing', () => {
+    const v = previewLineVisualParams('ok', 1);
+    expect(v.color).toBe(PREVIEW_OK_COLOR);
+    expect(v.alpha).toBeGreaterThan(0);
+    expect(v.glowAlpha).toBeGreaterThan(0);
+  });
+
+  it('overflow → a DISTINCT red (≠ ok green, ≠ blocked red), drawn', () => {
+    const v = previewLineVisualParams('overflow', 1);
+    expect(v.color).toBe(PREVIEW_OVERFLOW_COLOR);
+    expect(v.color).not.toBe(PREVIEW_OK_COLOR);
+    expect(v.color).not.toBe(PREVIEW_BLOCKED_COLOR);
+    expect(v.alpha).toBeGreaterThan(0); // unlike 'skip', overflow IS drawn
+  });
+
+  it('blocked → dim red, no glow', () => {
+    const v = previewLineVisualParams('blocked', 1);
+    expect(v.color).toBe(PREVIEW_BLOCKED_COLOR);
+    expect(v.glowAlpha).toBe(0);
+  });
+
+  it('skip → alpha 0 (not drawn)', () => {
+    const v = previewLineVisualParams('skip', 1);
+    expect(v.alpha).toBe(0);
+    expect(v.width).toBe(0);
   });
 });

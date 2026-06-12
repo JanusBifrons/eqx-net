@@ -169,4 +169,57 @@ describe('ConnectorRenderer — placement connection preview', () => {
 
     expect(r.placementPreviewConnectionCount).toBe(0);
   });
+
+  it('caps green preview lines at 6 and classes the 7th+ as RED overflow (WS-5 R2.17)', () => {
+    // 8 in-range, legal connector hubs around the ghost on distinct 45° angles
+    // (radial spokes never cross another hub; edge distances well within 600).
+    // The placement cap is PLACEMENT_MAX_CONNECTIONS = 6, so the preview must
+    // class exactly 6 as green (counted) and the remaining 2 as overflow.
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    const HUB_COUNT = 8;
+    for (let i = 0; i < HUB_COUNT; i++) {
+      const angle = (i / HUB_COUNT) * Math.PI * 2;
+      const id = i + 1; // entityIds 1..8
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 200, Math.sin(angle) * 200));
+      structures.set(id, structureState({ connTo: [] }));
+    }
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      // Ghost connector at the origin — equidistant-ish to all 8 hubs, all legal.
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 0, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    // Read the REAL published counts (not a recompute — feedback-test-observable
+    // lesson): 6 green + 2 overflow.
+    expect(r.placementPreviewConnectionCount).toBe(6);
+    expect(r.placementPreviewOverflowCount).toBe(2);
+  });
+
+  it('no overflow when in-range hubs are at or below the 6 cap', () => {
+    // 4 legal hubs → all green, zero overflow.
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2;
+      const id = i + 1;
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 200, Math.sin(angle) * 200));
+      structures.set(id, structureState({ connTo: [] }));
+    }
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 0, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(4);
+    expect(r.placementPreviewOverflowCount).toBe(0);
+  });
 });

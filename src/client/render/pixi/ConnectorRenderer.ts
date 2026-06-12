@@ -12,12 +12,18 @@
  */
 import { Graphics } from 'pixi.js';
 import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
-import { connectorVisualParams, previewLineVisualParams } from './connectorVisual.js';
+import {
+  connectorVisualParams,
+  previewLineVisualParams,
+  type PreviewLineKind,
+} from './connectorVisual.js';
 import {
   canConnect,
+  edgeDistance,
   type GridNode,
   type GridObstacle,
 } from '../../../core/structures/Grid.js';
+import { PLACEMENT_MAX_CONNECTIONS } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
 import {
   structureMirrorToGridNode,
@@ -47,12 +53,22 @@ export class ConnectorRenderer {
   readonly gfx = new Graphics();
 
   /**
-   * Item C — number of 'ok' (would-connect) preview lines the LAST `update()`
-   * drew for the current placement ghost. 0 when no preview is up. The
+   * Item C — number of 'ok' (would-connect, GREEN, counted) preview lines the
+   * LAST `update()` drew for the current placement ghost, capped at
+   * `PLACEMENT_MAX_CONNECTIONS` (WS-5 R2.17). 0 when no preview is up. The
    * `PixiRenderer` reads this into `RendererFeedback.placementPreviewConnectionCount`
    * each frame; the renderer-level E2E asserts on it.
    */
   placementPreviewConnectionCount = 0;
+
+  /**
+   * WS-5 (R2.17) — number of 'overflow' (would-connect but past the cap, RED,
+   * NOT counted) preview lines the LAST `update()` drew. 0 when no preview is up
+   * or the in-range legal hubs are at/below the cap. Sibling test hook to
+   * `placementPreviewConnectionCount` (the drawn lines aren't headlessly
+   * inspectable, so this is the observable — feedback-test-observable lesson).
+   */
+  placementPreviewOverflowCount = 0;
 
   // ── Item C preview-pass module-scratch (invariant #14) ────────────────────
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
@@ -75,6 +91,12 @@ export class ConnectorRenderer {
   private readonly _previewAdjacency = new Map<string, readonly Connection[]>();
   /** Growable pool of length-only adjacency arrays (one per structure). */
   private readonly _adjPool: Connection[][] = [];
+  /** WS-5 (R2.17) — reused scratch for the 'ok' hubs of the current preview
+   *  frame, sorted by edge-distance so the nearest `PLACEMENT_MAX_CONNECTIONS`
+   *  draw GREEN and the rest draw RED overflow. Parallel arrays (node refs +
+   *  their distances) so the in-place insertion sort never allocates (#14). */
+  private readonly _okHubScratch: GridNode[] = [];
+  private readonly _okDistScratch: number[] = [];
 
   /** Redraw the web for this frame. `scale` is the viewport zoom. */
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -84,9 +106,10 @@ export class ConnectorRenderer {
     const swarm = mirror.swarm;
     // The preview can run even with zero PLACED structures (the ghost still
     // wants to know there's nothing to connect to), but it needs the swarm to
-    // resolve poses + asteroids. Reset the count up front so a frame with no
+    // resolve poses + asteroids. Reset the counts up front so a frame with no
     // preview always publishes 0.
     this.placementPreviewConnectionCount = 0;
+    this.placementPreviewOverflowCount = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) return;
     const flashes = mirror.gridFlashes;
@@ -259,36 +282,77 @@ export class ConnectorRenderer {
       }
     }
 
-    const g = this.gfx;
     const ax = ghostX;
     const ay = -ghostY; // Pixi screen space is Y-down; world is Y-up.
-    let okCount = 0;
+
+    // WS-5 (R2.17) — gather the 'ok' (would-connect) hubs into scratch so we can
+    // sort them by distance and split GREEN (nearest, within the cap) vs RED
+    // overflow (past the cap). 'blocked' hubs draw immediately (class is fixed);
+    // everything else is skipped.
+    const okHubs = this._okHubScratch;
+    const okDists = this._okDistScratch;
+    okHubs.length = 0;
+    okDists.length = 0;
     for (const node of nodes.values()) {
       const res = canConnect(ghost, node, adjacency, nodes, obstacles);
-      let lineKind: 'ok' | 'blocked' | 'skip';
       if (res.ok) {
-        lineKind = 'ok';
-        okCount++;
+        okHubs.push(node);
+        okDists.push(edgeDistance(ghost, node));
       } else if (res.reason === 'blocked') {
-        lineKind = 'blocked';
-      } else {
-        // out-of-range / hub-required / full / self / duplicate → not drawn.
-        lineKind = 'skip';
+        this.drawPreviewSegment(ax, ay, node, 'blocked', scale);
       }
-      if (lineKind === 'skip') continue;
-      const v = previewLineVisualParams(lineKind, scale);
-      const bx = node.x;
-      const by = -node.y;
-      if (v.glowAlpha > 0) {
-        g.moveTo(ax, ay);
-        g.lineTo(bx, by);
-        g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
+      // else out-of-range / hub-required / full / self / duplicate → not drawn.
+    }
+
+    // Sort ok-hubs nearest-first, ties broken by id (matches the server's
+    // deterministic multi-connect order). In-place insertion sort over the
+    // parallel node+distance scratch — no per-frame allocation (#14).
+    for (let i = 1; i < okHubs.length; i++) {
+      // Indices are provably in-bounds (i < length); `!` quiets noUncheckedIndexedAccess.
+      const hn = okHubs[i]!;
+      const hd = okDists[i]!;
+      let j = i - 1;
+      while (j >= 0 && (okDists[j]! > hd || (okDists[j]! === hd && okHubs[j]!.id > hn.id))) {
+        okHubs[j + 1] = okHubs[j]!;
+        okDists[j + 1] = okDists[j]!;
+        j--;
       }
+      okHubs[j + 1] = hn;
+      okDists[j + 1] = hd;
+    }
+
+    // The nearest PLACEMENT_MAX_CONNECTIONS draw GREEN + are counted; the rest
+    // are legal + in range but past the cap → RED overflow (won't link).
+    const greenCount = Math.min(okHubs.length, PLACEMENT_MAX_CONNECTIONS);
+    for (let i = 0; i < okHubs.length; i++) {
+      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'ok' : 'overflow', scale);
+    }
+    this.placementPreviewConnectionCount = greenCount;
+    this.placementPreviewOverflowCount = okHubs.length - greenCount;
+  }
+
+  /** Draw ONE placement-preview segment (ghost → hub) for the given outcome
+   *  class (glow underlay first, then the core line — same layering as the web).
+   */
+  private drawPreviewSegment(
+    ax: number,
+    ay: number,
+    node: GridNode,
+    lineKind: PreviewLineKind,
+    scale: number,
+  ): void {
+    const v = previewLineVisualParams(lineKind, scale);
+    const g = this.gfx;
+    const bx = node.x;
+    const by = -node.y; // Pixi screen space is Y-down; world is Y-up.
+    if (v.glowAlpha > 0) {
       g.moveTo(ax, ay);
       g.lineTo(bx, by);
-      g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+      g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
     }
-    this.placementPreviewConnectionCount = okCount;
+    g.moveTo(ax, ay);
+    g.lineTo(bx, by);
+    g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
   }
 
   /** Item C — override the ghost world position (pointer-chosen point) so the
