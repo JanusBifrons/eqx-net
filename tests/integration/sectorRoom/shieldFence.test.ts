@@ -66,12 +66,34 @@ describe('SectorRoom integration — shield fence (shield-fence plan)', () => {
     expect(a.wallActive).toBe(false); // but unpowered → down (passable)
   }, 25_000);
 
-  it('destroying a pylon tears the wall down', async () => {
+  it('a Shield Pylon is UNDAMAGEABLE while its wall is up (R2.18)', async () => {
+    const { internals, pylons, eidOf } = await bootFence();
+    for (let i = 0; i < 3; i++) internals.pulseStructureGrid();
+    const ea = eidOf(pylons[0]!.id);
+    expect(entry(internals.getStructuresSlice(), ea)?.wallActive).toBe(true); // wall up
+    // A LETHAL hit on the pylon body is absorbed by the wall → the pylon
+    // SURVIVES and still projects its wall. Without the R2.18 guard the pylon
+    // would be destroyed and removed from the registry (the failing-first lock).
+    internals.applyDamage(pylons[0]!.id, 'player-1', 999_999);
+    for (let i = 0; i < 2; i++) internals.pulseStructureGrid();
+    expect(internals.structureRegistry.get(pylons[0]!.id)).toBeDefined(); // not destroyed
+    expect(entry(internals.getStructuresSlice(), ea)?.shieldWallTo).toBeDefined(); // wall intact
+  }, 25_000);
+
+  it('destroying a pylon tears the wall down — but only once the wall is DOWN (R2.18)', async () => {
     const { internals, pylons, eidOf } = await bootFence();
     for (let i = 0; i < 2; i++) internals.pulseStructureGrid();
     const survivor = eidOf(pylons[1]!.id);
-    internals.applyDamage(pylons[0]!.id, 'player-1', 999_999); // destroy one pylon
+    // R2.18 — the pylon is undamageable while its wall is up, so down the wall
+    // first (kill the Capital → grid unpowered), THEN the lethal hit lands and
+    // the destroyed pylon's wall tears down. (This is also the negative control
+    // for the test above: the protection is the WALL, not blanket immunity.)
+    const cap = [...internals.structureRegistry.all()].find((s) => s.kind === 'capital')!;
+    internals.applyDamage(cap.id, 'player-1', 999_999);
+    for (let i = 0; i < 2; i++) internals.pulseStructureGrid(); // wall → unpowered/down
+    internals.applyDamage(pylons[0]!.id, 'player-1', 999_999); // now destroyable
     for (let i = 0; i < 2; i++) internals.pulseStructureGrid();
+    expect(internals.structureRegistry.get(pylons[0]!.id)).toBeUndefined(); // destroyed
     // The survivor no longer projects a wall (its pair is gone).
     expect(entry(internals.getStructuresSlice(), survivor)?.shieldWallTo).toBeUndefined();
   }, 25_000);

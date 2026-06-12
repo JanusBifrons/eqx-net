@@ -100,6 +100,44 @@ describe('ShieldWallManager', () => {
     expect(mgr.onWallHit('wall-a|b', 80, 2100)).toBe(false);
   });
 
+  it('absorbForPylon: a hit on the pylon BODY is absorbed by its active wall (R2.18)', () => {
+    const { mgr, seedPair, getDrained } = makeManager({ netPower: 50, charge: 100 });
+    seedPair();
+    mgr.update(1000);
+    // Same grid-power model as a span-crossing shot (delegates to onWallHit):
+    // 80 damage, 50 surplus → 30 drained from batteries, wall stays up.
+    expect(mgr.absorbForPylon('a', 80, 2000)).toBe(true);
+    expect(getDrained()).toBe(30);
+    expect(mgr.wallStateFor('a', 2000)?.active).toBe(true);
+    // Symmetric for the OTHER post of the same wall.
+    expect(mgr.absorbForPylon('b', 10, 2100)).toBe(true);
+  });
+
+  it('absorbForPylon: returns false when the pylon has no UP wall (⇒ it is damageable)', () => {
+    const { mgr, seedPair, getDrained } = makeManager({ powered: false }); // wall down
+    seedPair();
+    mgr.update(1000);
+    expect(mgr.absorbForPylon('a', 80, 2000)).toBe(false);
+    expect(getDrained()).toBe(0); // nothing absorbed
+  });
+
+  it('absorbForPylon: a multi-wall pylon stays protected if ANY wall is up (not just the first)', () => {
+    // Pylon 'a' anchors TWO walls (a|b inserted first, a|c second). Stun a|b so
+    // the FIRST-iterated wall is DOWN while a|c is still up — wallStateFor('a')
+    // reports the (down) first wall, but the pylon must still be protected.
+    const { registry, mgr } = makeManager({ netPower: 0, charge: 0 });
+    registry.add(pylon('a', 0, 0));
+    registry.add(pylon('b', 200, 0));
+    registry.add(pylon('c', 0, 200));
+    registry.addConnection('a', 'b', CONNECTION_THROUGHPUT);
+    registry.addConnection('a', 'c', CONNECTION_THROUGHPUT);
+    mgr.update(1000);
+    expect(mgr.onWallHit('wall-a|b', 10, 2000)).toBe(true); // overwhelms → stuns a|b
+    expect(mgr.wallStateFor('a', 2000)?.active).toBe(false); // first wall (a|b) reads down
+    // …yet absorbForPylon finds the still-up a|c and protects the pylon.
+    expect(mgr.absorbForPylon('a', 5, 2000)).toBe(true);
+  });
+
   it('blockShot absorbs a beam crossing an up wall (and stops at the crossing)', () => {
     // Wall span a(0,0)→b(200,0). A beam from (100,-50) heading +y crosses at y=0.
     const { mgr, seedPair, getDrained } = makeManager({ netPower: 50, charge: 0 });

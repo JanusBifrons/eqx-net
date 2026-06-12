@@ -139,6 +139,29 @@ export class ShieldWallManager {
     return true;
   }
 
+  /**
+   * R2.18 — a Shield Pylon is undamageable while ANY of its walls is up: route
+   * damage aimed at the PYLON BODY into an active wall instead (the same
+   * grid-power model span-crossing shots use, via `onWallHit` — so a hit on the
+   * pylon and a hit through the span drain the SAME component buffer and can
+   * both eventually stun the wall). Returns true if ABSORBED (⇒ the pylon takes
+   * 0 damage). Iterates ALL walls anchored on the pylon and absorbs at the FIRST
+   * ACTIVE one, so a multi-wall pylon stays protected when any single wall is up
+   * (NOT just the first-iterated, which may be stunned). Returns false when no
+   * wall is up ⇒ the pylon is damageable normally.
+   */
+  absorbForPylon(pylonId: string, damage: number, nowMs: number): boolean {
+    for (const w of this.walls.values()) {
+      if (w.postA !== pylonId && w.postB !== pylonId) continue;
+      const powered = this.hooks.powerSummaryFor(w.postA).powered;
+      if (!isWallActive(powered, w.stunnedUntilMs, nowMs)) continue;
+      // Delegate to onWallHit (keyed off postA's component) so body-directed and
+      // span-crossing absorption stay byte-identical in their grid effect.
+      return this.onWallHit(w.id, damage, nowMs);
+    }
+    return false;
+  }
+
   /** The `(otherPost, active)` for a pylon, for the snapshot slice. The pylon
    *  may anchor more than one wall (≤3 connections); the FIRST is surfaced
    *  (one span rendered per pair; the client dedups by pair anyway). */

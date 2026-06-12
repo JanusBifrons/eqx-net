@@ -2344,6 +2344,20 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   private applyDamage(targetId: string, shooterId: string, damage: number, hitX?: number, hitY?: number): void {
+    // R2.18 — a Shield Pylon is undamageable while its wall is up: route the hit
+    // into an active wall (drains the grid/batteries, can stun it) and skip the
+    // pylon damage entirely (no damage event for the pylon). This single choke
+    // point funnels EVERY damage source — player/AI beams, turrets, projectiles,
+    // AND ramming (SectorRoom.ts ram-contact path) — so the pylon is protected
+    // against all of them while any of its walls is up. Wall stun timing is
+    // wall-clock (Date.now), matching every other shieldWalls call site.
+    if (damage > 0) {
+      const s = this.structureRegistry.get(targetId);
+      if (s !== undefined && s.kind === 'shield_pylon' &&
+          this.shieldWalls.absorbForPylon(targetId, damage, Date.now())) {
+        return;
+      }
+    }
     this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
   }
 
