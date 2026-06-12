@@ -25,6 +25,13 @@ export function castHitscan(
   dirY: number,
   maxDist: number,
   excludeBody: RAPIER.RigidBody | undefined,
+  /** Optional wall-body handle → `wall-${id}` sentinel map. Shield-wall span
+   *  bodies are deliberately kept OUT of `handleToId` (they are static,
+   *  slot-less, pose-broadcast-free — see World.ts) but a beam must still
+   *  TERMINATE at an up wall (R2.28). When `handleToId` misses, this map
+   *  resolves a wall hit to its sentinel id. A DISABLED (down) wall is excluded
+   *  from `castRay` by Rapier, so it is naturally passable. */
+  wallHandleToId?: ReadonlyMap<number, string>,
 ): { hitId: string; dist: number } | null {
   const ray = new RAPIER.Ray({ x: fromX, y: fromY }, { x: dirX, y: dirY });
   const hit = world.castRay(
@@ -39,7 +46,7 @@ export function castHitscan(
   if (!hit) return null;
   const parentBody = hit.collider.parent();
   if (!parentBody) return null;
-  const hitId = handleToId.get(parentBody.handle);
+  const hitId = handleToId.get(parentBody.handle) ?? wallHandleToId?.get(parentBody.handle);
   if (!hitId) return null;
   return { hitId, dist: hit.timeOfImpact };
 }

@@ -69,6 +69,14 @@ export class PhysicsWorld {
    *  `setEnabled` without re-spawning the body. */
   private readonly wallBodies = new Map<string, RAPIER.RigidBody>();
   private readonly wallColliders = new Map<string, RAPIER.Collider>();
+  /** Wall-body Rapier handle → `wall-${id}` sentinel. Walls are kept out of
+   *  `handleToId` (above), but a hitscan beam must still TERMINATE at an up
+   *  wall (R2.28 — the client predicted beam previously ran through it because
+   *  `castHitscan` resolved only via `handleToId`). Consulted ONLY in
+   *  `castHitscan`'s miss-fallback so a wall contact can never mis-resolve to a
+   *  ship id elsewhere. Cleared in `removeWall`; a disabled (down) wall is
+   *  excluded from `castRay` by Rapier so it stays passable without a map edit. */
+  private readonly wallHandleToId = new Map<number, string>();
   /** 2026-05-25 heap-growth fix — per-tick pooled scratches for the
    *  Rapier `setTranslation` / `setLinvel` Vector2 arguments. `setShipState`
    *  is called per-drone per-RAF on the client (kinematic follower for
@@ -294,6 +302,7 @@ export class PhysicsWorld {
     );
     this.wallBodies.set(id, body);
     this.wallColliders.set(id, collider);
+    this.wallHandleToId.set(body.handle, 'wall-' + id);
   }
 
   /** Enable/disable a wall's collider (stun / power loss → pass-through). A
@@ -306,6 +315,7 @@ export class PhysicsWorld {
   removeWall(id: string): void {
     const body = this.wallBodies.get(id);
     if (!body) return;
+    this.wallHandleToId.delete(body.handle);
     this.world.removeRigidBody(body); // removes the body AND its collider
     this.wallBodies.delete(id);
     this.wallColliders.delete(id);
@@ -622,6 +632,7 @@ export class PhysicsWorld {
       dirY,
       maxDist,
       excludeRec?.body,
+      this.wallHandleToId,
     );
   }
 
