@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Box } from '@mui/material';
+import { Box, CircularProgress } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
 import { hullColor } from './ShieldHullBar';
+import { getStructureKind } from '@shared-types/structureKinds';
 import type { PickedEntityKind } from '../render/pickEntity';
 import type { StructureRenderState } from '@core/contracts/IRenderer';
 
@@ -25,12 +26,23 @@ import type { StructureRenderState } from '@core/contracts/IRenderer';
  *     snapshot already carries drone `healthFrac` + wreck `health`, so no server
  *     stats channel is used.
  */
-const POLL_MS = 1000;
+// WS-9/R2.8 — was 1000 ms ("stats pop in after a second"); 150 ms makes the
+// worst-case re-read ~150 ms behind the 200 ms server push. The client-resident
+// data (structure slice, asteroid/lingering) shows INSTANTLY on selection
+// regardless of the poll; only the server-only hp/shield wait a packet.
+const POLL_MS = 150;
 
 interface PanelData {
   name: string;
   hpPct: number;
   shieldPct: number | null;
+  /** WS-9/R2.8 — hp/shield are awaiting the FIRST server `entity_stats` packet;
+   *  show a spinner for those bars (the rest renders instantly). */
+  pending?: boolean;
+  /** WS-9/R2.23 — asteroid/lingering have no hull bar; show `infoLine` instead. */
+  noHull?: boolean;
+  /** Asteroid size/resources OR lingering-hull owner readout. */
+  infoLine?: string;
   /** Structure-only extras (playtest 2026-06-10 Issue 8). Undefined otherwise. */
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   powered?: boolean;
@@ -70,17 +82,31 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.powered !== undefined ? { 'data-powered': data.powered ? '1' : '0' } : {})}
       {...(data.netPower !== undefined ? { 'data-net-power': Math.round(data.netPower) } : {})}
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
+      {...(data.pending ? { 'data-stats-pending': '1' } : {})}
+      {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
     >
       <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
-      {data.shieldPct !== null && (
+      {data.noHull ? (
+        // R2.23 — asteroid (size/resources) or lingering hull (owner): no bars.
+        <Box sx={INFO_SX} data-testid="entity-stats-info">{data.infoLine}</Box>
+      ) : data.pending ? (
+        // R2.8 — hp/shield awaiting the first server packet: a spinner, not a 0-bar.
+        <Box sx={PENDING_SX} data-testid="entity-stats-spinner">
+          <CircularProgress size={12} thickness={6} sx={SPINNER_SX} />
+        </Box>
+      ) : (
         <>
-          <Cap>SHLD</Cap>
-          <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
+          {data.shieldPct !== null && (
+            <>
+              <Cap>SHLD</Cap>
+              <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
+            </>
+          )}
+          <Cap>HULL</Cap>
+          <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
         </>
       )}
-      <Cap>HULL</Cap>
-      <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
       {building && (
         <>
           <Cap>BUILD</Cap>
@@ -104,45 +130,47 @@ export function EntityStatsPanel(): JSX.Element | null {
 
 /** Resolve the display data for the current selection (pure-ish read). */
 function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
-  if (kind === 'ship' || kind === 'structure') {
-    // Only trust stats that are FOR this selection (the singleton may briefly
-    // hold the prior entity's numbers between a re-select and the next packet).
-    // Compare against the WIRE id, not the Zustand selection id: a structure is
-    // selected as `swarm-<entityId>` (mirror form) but the server echoes the
-    // STRIPPED numeric id, so the raw comparison never matched for structures —
-    // the "building health doesn't work when selected" bug (playtest 2026-06-10
-    // Issue 3). `toSelectWire` is the single id-mapping site (ships pass through
-    // unchanged, so ships were always fine).
-    const wireId = toSelectWire(id, kind)?.id ?? id;
-    if (selectionStats.id !== wireId) {
-      return { name: kind === 'structure' ? 'Structure' : 'Ship', hpPct: 0, shieldPct: kind === 'ship' ? 0 : null };
+  // The id-match guard: the singleton may briefly hold the PRIOR entity's
+  // numbers between a re-select and the next packet. Compare against the WIRE id
+  // (`toSelectWire`) — a structure is selected as `swarm-<id>` but the server
+  // echoes the stripped numeric id (the 2026-06-10 Issue 3 bug). `haveStats`
+  // gates ONLY the server-only hp/shield; everything client-resident is instant.
+  const haveStats = (k: PickedEntityKind): boolean =>
+    selectionStats.id === (toSelectWire(id, k)?.id ?? id);
+
+  // STRUCTURE (R2.8 instant) — the grid slice (build %, power, charge) is
+  // client-resident and renders IMMEDIATELY; only hull awaits the server packet.
+  if (kind === 'structure') {
+    const got = haveStats('structure');
+    const data: PanelData = {
+      name: (got && selectionStats.name) || structureName(id) || 'Structure',
+      hpPct: got && selectionStats.hpMax > 0 ? (selectionStats.hp / selectionStats.hpMax) * 100 : 0,
+      shieldPct: null, // structures are shieldless
+      pending: !got, // hull spinner until the first entity_stats packet (~150 ms)
+    };
+    const st = structureSliceFor(id);
+    if (st) {
+      data.buildPct = st.buildPct;
+      data.powered = st.powered;
+      data.netPower = st.netPower;
+      data.storedPower = st.storedPower;
+      data.storedPowerMax = st.storedPowerMax;
     }
+    return data;
+  }
+
+  // SHIP — hp/shield are SERVER-only; spinner until the first packet (R2.8).
+  if (kind === 'ship') {
+    if (!haveStats('ship')) return { name: selectionStats.name || 'Ship', hpPct: 0, shieldPct: 0, pending: true };
     const hpPct = selectionStats.hpMax > 0 ? (selectionStats.hp / selectionStats.hpMax) * 100 : 0;
     const shieldPct =
       selectionStats.shield !== undefined && selectionStats.shieldMax !== undefined && selectionStats.shieldMax > 0
         ? (selectionStats.shield / selectionStats.shieldMax) * 100
         : null;
-    const base: PanelData = {
-      name: selectionStats.name || (kind === 'structure' ? 'Structure' : 'Ship'),
-      hpPct,
-      shieldPct,
-    };
-    if (kind === 'structure') {
-      // Richer stats (Issue 8): merge the grid slice for this structure — build
-      // %, powered, net power. Keyed by the numeric entityId in `mirror.structures`.
-      const st = structureSliceFor(id);
-      if (st) {
-        base.buildPct = st.buildPct;
-        base.powered = st.powered;
-        base.netPower = st.netPower;
-        base.storedPower = st.storedPower;
-        base.storedPowerMax = st.storedPowerMax;
-      }
-    }
-    return base;
+    return { name: selectionStats.name || 'Ship', hpPct, shieldPct };
   }
 
-  // drone / wreck — read the render mirror directly.
+  // The rest read the render mirror directly (no server stats channel).
   const client = getGameClient();
   if (!client) return null;
   if (kind === 'drone' && id.startsWith('swarm-')) {
@@ -158,7 +186,49 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     const hpPct = w.maxHealth > 0 ? (w.health / w.maxHealth) * 100 : 0;
     return { name: 'Wreck', hpPct, shieldPct: null };
   }
+  // ASTEROID (R2.23) — indestructible rock: no hull bar; show resources when the
+  // rock is being mined, else a SIZE proxy from radius (untouched rocks carry no
+  // resources/mass on the wire — real mass is a future server-touching change).
+  if (kind === 'asteroid' && id.startsWith('swarm-')) {
+    const swarmId = parseInt(id.slice('swarm-'.length), 10);
+    const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
+    if (!sw) return null;
+    const hasRes = sw.resourcesMax !== undefined && sw.resourcesMax > 0;
+    return {
+      name: 'Asteroid',
+      hpPct: 0,
+      shieldPct: null,
+      noHull: true,
+      infoLine: hasRes
+        ? `RES ${Math.round(sw.resources ?? 0)} / ${Math.round(sw.resourcesMax!)}`
+        : `SIZE ${Math.round(sw.radius)}`,
+    };
+  }
+  // LINGERING HULL (R2.23) — show WHOSE displaced hull it is (no live hp on the mirror).
+  if (kind === 'lingering') {
+    const l = client.mirror.lingeringShips?.get(id);
+    if (!l) return null;
+    const owner = l.ownerPlayerId.length > 10 ? `${l.ownerPlayerId.slice(0, 8)}…` : l.ownerPlayerId;
+    return {
+      name: l.displayName || 'Abandoned hull',
+      hpPct: 0,
+      shieldPct: null,
+      noHull: true,
+      infoLine: `${l.kind ?? 'ship'} · ${owner}`,
+    };
+  }
   return null;
+}
+
+/** A structure's catalogue display name (INSTANT — from the swarm mirror's
+ *  subtype byte), so the panel names it before the first server packet. */
+function structureName(id: string): string | undefined {
+  const client = getGameClient();
+  if (!client) return undefined;
+  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
+  if (Number.isNaN(entityId)) return undefined;
+  const sw = client.mirror.swarm?.get(entityId);
+  return sw?.shipKind ? getStructureKind(sw.shipKind).displayName : undefined;
 }
 
 function droneName(shipKind: string | undefined): string {
@@ -240,3 +310,18 @@ const POWER_SX = {
   color: 'rgba(180,220,255,0.85)',
   textTransform: 'uppercase' as const,
 };
+const INFO_SX = {
+  gridColumn: '1 / -1',
+  fontSize: 9,
+  fontWeight: 600,
+  letterSpacing: 0.3,
+  color: 'rgba(200,225,255,0.9)',
+  whiteSpace: 'nowrap' as const,
+};
+const PENDING_SX = {
+  gridColumn: '1 / -1',
+  display: 'flex',
+  justifyContent: 'center',
+  py: '2px',
+};
+const SPINNER_SX = { color: 'rgba(180,220,255,0.8)' };
