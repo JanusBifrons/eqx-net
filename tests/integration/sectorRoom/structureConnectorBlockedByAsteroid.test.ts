@@ -51,10 +51,12 @@ describe('SectorRoom integration — connector blocked by asteroid (Item D)', ()
     // Rock sits dead-centre between the two structure positions, on the segment.
     expect(internals.spawnTestAsteroid('blocker-rock', 0, 0, 60)).toBe(true);
 
-    // Capital at (-300,0), connector at (300,0): edge dist 600-(80+24)=496 ≤ 600
-    // so absent the rock they WOULD auto-connect. The asteroid is on the segment.
-    const capId = await placeAndWait(room, 'capital', -300, 0);
-    const conId = await placeAndWait(room, 'connector', 300, 0);
+    // Capital at (-150,0), connector at (150,0): edge dist 300-(80+24)=196, within
+    // the Capital's WS-5 300 u reach, so absent the rock they WOULD auto-connect
+    // (Capital↔Connector is legal under capital-only). The asteroid is on the
+    // segment, so the LOS rule — not the range gate — is what blocks here.
+    const capId = await placeAndWait(room, 'capital', -150, 0);
+    const conId = await placeAndWait(room, 'connector', 150, 0);
 
     // The connector must NOT have auto-wired to the capital through the rock.
     expect(internals.structureRegistry.hasConnection(capId, conId)).toBe(false);
@@ -71,8 +73,8 @@ describe('SectorRoom integration — connector blocked by asteroid (Item D)', ()
     // Same geometry, but the rock is well off the (-300,0)→(300,0) segment.
     expect(internals.spawnTestAsteroid('side-rock', 0, 600, 60)).toBe(true);
 
-    const capId = await placeAndWait(room, 'capital', -300, 0);
-    const conId = await placeAndWait(room, 'connector', 300, 0);
+    const capId = await placeAndWait(room, 'capital', -150, 0);
+    const conId = await placeAndWait(room, 'connector', 150, 0);
 
     expect(internals.structureRegistry.hasConnection(capId, conId)).toBe(true);
     expect(internals.structureRegistry.connectionCount(conId)).toBe(1);

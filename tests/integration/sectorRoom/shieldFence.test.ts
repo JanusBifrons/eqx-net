@@ -26,6 +26,11 @@ describe('SectorRoom integration — shield fence (shield-fence plan)', () => {
       asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
+        // WS-5 capital-only-connectors: a Shield Pylon is a HUB but NOT a
+        // Connector, so it can't attach to the Capital directly — a Connector
+        // relay carries power out to pylon A, which links pylon B (the pair
+        // forms the wall). Relay on +x so its LOS to A clears the Capital.
+        { kind: 'connector', x: 120, y: 0 },
         { kind: 'shield_pylon', x: 250, y: 0 },
         { kind: 'shield_pylon', x: 250, y: 240 },
       ],
