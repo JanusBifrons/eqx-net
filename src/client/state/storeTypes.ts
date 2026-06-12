@@ -21,6 +21,12 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'er
 /** A pending warp-in warning shown in the HUD (wave-system Phase 5). Purity-
  *  clean — no spatial fields. The countdown is `countdownMs` measured from the
  *  client `observedAtMs` anchor (first-observation, server-clock-skew-free). */
+/** WS-10... WS-11 (R2.21) — who's warping in, relative to the local player, so
+ *  the persistent warp indicator can colour by threat (hostile=red, neutral=amber,
+ *  friendly=green). A discrete enum (not spatial) — Zustand-safe (#2). Today every
+ *  live warning is a hostile drone wave, so the store defaults absent → 'hostile'. */
+export type WarpRelation = 'hostile' | 'neutral' | 'friendly';
+
 export interface WarpWarning {
   id: string;
   label: string;
@@ -28,6 +34,9 @@ export interface WarpWarning {
   countdownMs: number;
   /** `performance.now()` when the client received the warning. */
   observedAtMs: number;
+  /** Threat relation → banner colour (R2.21). Defaults to 'hostile' in the store
+   *  setter when absent (every live producer is a hostile wave). */
+  relation: WarpRelation;
 }
 
 /**
@@ -306,8 +315,15 @@ export interface UIStore {
   setShieldPct: (pct: number) => void;
   setAmmo: (ammo: number) => void;
   setSectorAlert: (msg: string | null) => void;
-  /** Add or replace a warp-in warning (keyed by id). Stamps `observedAtMs`. */
-  addWarpWarning: (w: { id: string; label: string; count: number; countdownMs: number }) => void;
+  /** Add or replace a warp-in warning (keyed by id). Stamps `observedAtMs`;
+   *  `relation` defaults to 'hostile' when absent (R2.21). */
+  addWarpWarning: (w: {
+    id: string;
+    label: string;
+    count: number;
+    countdownMs: number;
+    relation?: WarpRelation;
+  }) => void;
   /** Remove a warp-in warning by id (cancel/abort or countdown elapsed). */
   removeWarpWarning: (id: string) => void;
   setPlayerId: (id: string) => void;

@@ -109,6 +109,24 @@ export class FactionLedger {
     return this.byId.get(id)?.hostileToDrones ?? false;
   }
 
+  /** WS-11 (R2.24 Part B) — one-shot base-ready latch. Returns true EXACTLY ONCE
+   *  for the first call after the base becomes ready (then stays false until
+   *  `clearReadyNotified` re-arms it), so the caller broadcasts the "your base is
+   *  operational" toast once per ready transition. */
+  markReadyNotified(id: string): boolean {
+    const s = this.ensure(id);
+    if (s.notifiedReady) return false;
+    s.notifiedReady = true;
+    return true;
+  }
+
+  /** Re-arm the base-ready one-shot (the base dropped below ready — a razed base
+   *  re-toasts when rebuilt). Safe for an unobserved id. */
+  clearReadyNotified(id: string): void {
+    const s = this.byId.get(id);
+    if (s) s.notifiedReady = false;
+  }
+
   /** Drop a faction's state (base fully destroyed / owner gone). Keeps the map
    *  bounded; safe to call for an unknown id. */
   forget(id: string): void {

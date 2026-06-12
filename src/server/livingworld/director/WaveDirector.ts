@@ -178,6 +178,9 @@ export class WaveDirector {
             hostileToDrones: r.hostileToDrones,
             lastDealtDamageTick: r.lastDealtDamageTick,
             underWave: r.underWave,
+            // shouldDeEscalate reads only lastDealtDamageTick; the base-ready
+            // one-shot is irrelevant here (the readiness entry doesn't carry it).
+            notifiedReady: false,
           },
           {
             minerCount: r.minerCount,

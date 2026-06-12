@@ -14,6 +14,7 @@ import {
 interface PostedCmd {
   slot: number; id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number;
   vertices?: ReadonlyArray<Vec2>;
+  linearDamping?: number;
 }
 
 describe('SwarmSpawner', () => {
@@ -35,12 +36,31 @@ describe('SwarmSpawner', () => {
     lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices) =>
-        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping }),
       sabF32: f32,
       sabU32: u32,
       registerLagComp: (id) => lagCompRegistered.push(id),
     });
+  });
+
+  // WS-11 (R2.25) — drones get their per-kind linearDamping so the AI brake has
+  // friction to settle against (the "float / coast away forever" fix); asteroids
+  // + structures stay ballistic (0). Pre-fix, spawnObstacle hard-coded 0 for all.
+  it('drone spawn passes the kind linearDamping; asteroid stays ballistic (0)', () => {
+    spawner.spawnDrone({ id: 'drone-f', x: 0, y: 0, kind: 'fighter' });
+    spawner.spawnAsteroid({ id: 'rock', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    const drone = posted.find((p) => p.id === 'drone-f')!;
+    const rock = posted.find((p) => p.id === 'rock')!;
+    expect(drone.linearDamping).toBe(SHIP_KINDS.fighter.linearDamping);
+    expect(drone.linearDamping).toBeGreaterThan(0); // the load-bearing fix
+    expect(rock.linearDamping).toBe(0); // asteroids never get friction
+  });
+
+  it('a heavy drone gets ITS kind damping (not the fighter default)', () => {
+    spawner.spawnDrone({ id: 'drone-h', x: 0, y: 0, kind: 'heavy' });
+    const drone = posted.find((p) => p.id === 'drone-h')!;
+    expect(drone.linearDamping).toBe(SHIP_KINDS.heavy.linearDamping);
   });
 
   it('seeds an asteroid roster, registers each, primes SAB and posts spawn commands', () => {

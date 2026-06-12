@@ -8,13 +8,14 @@ import {
 } from './Faction.js';
 
 describe('Faction — createFactionState', () => {
-  it('starts peaceful, no wave, never-damaged', () => {
+  it('starts peaceful, no wave, never-damaged, not-yet-notified-ready', () => {
     const s = createFactionState('p1');
     expect(s).toEqual({
       id: 'p1',
       hostileToDrones: false,
       lastDealtDamageTick: -Infinity,
       underWave: false,
+      notifiedReady: false,
     });
   });
 });

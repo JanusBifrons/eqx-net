@@ -14,7 +14,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -1728,6 +1728,24 @@ export class ColyseusGameClient {
       const parsed = WarpWarningClearSchema.safeParse(raw);
       if (!parsed.success) return;
       useUIStore.getState().removeWarpWarning(parsed.data.id);
+    });
+
+    // WS-11 (R2.24 Part B) — one-shot "your base is operational" toast the first
+    // time the local player's base qualifies for waves. Broadcast to the whole
+    // sector; OWNER-ONLY (it's a personal base milestone). Reuses the transient
+    // `sectorAlert` HUD line (the existing toast mechanism). zod-validated
+    // (invariant #3); purity-clean (a discrete string, no spatial field, #2).
+    room.onMessage('base_ready', (raw: unknown) => {
+      const parsed = BaseReadySchema.safeParse(raw);
+      if (!parsed.success) return;
+      if (parsed.data.factionId !== this.mirror.localPlayerId) return;
+      const msg = '⚔ Base operational — defend against incoming waves';
+      useUIStore.getState().setSectorAlert(msg);
+      // Auto-clear after ~6 s, but only if it's still OUR message (don't clobber
+      // a newer alert set in the meantime).
+      window.setTimeout(() => {
+        if (useUIStore.getState().sectorAlert === msg) useUIStore.getState().setSectorAlert(null);
+      }, 6000);
     });
 
     // Living World — server→client twin of the damage→markHostile mirror.

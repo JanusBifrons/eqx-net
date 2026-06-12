@@ -207,10 +207,19 @@ export class PhysicsWorld {
     radius = 24,
     mass = 3,
     vertices?: ReadonlyArray<Vec2>,
+    linearDamping = 0,
   ): void {
+    // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
+    // stay ballistic (no friction), but DRONES pass their per-kind
+    // `ShipKind.linearDamping` (exactly like `spawnShip` does, World.ts:152) so
+    // the AI standoff/brake has something to settle against. Before this, drone
+    // bodies had ZERO damping and the AI-impulse path bypasses the player's
+    // max-speed clamp, so once a drone overshot its target it coasted away
+    // FOREVER (thrust=0 inside the standoff + no friction) — the "flies past /
+    // floats / never approaches" bug.
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(x, y)
-      .setLinearDamping(0)
+      .setLinearDamping(linearDamping)
       .setAngularDamping(0);
     const body = this.world.createRigidBody(bodyDesc);
 

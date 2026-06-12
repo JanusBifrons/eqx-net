@@ -34,11 +34,22 @@ export interface FactionState {
   /** True while the director has an active wave assigned against this faction.
    *  Gates the drone-AI structure-target visibility (Phase 2 scratch build). */
   underWave: boolean;
+  /** WS-11 (R2.24 Part B) — one-shot latch so the "your base is operational"
+   *  toast fires EXACTLY ONCE per ready transition. Set true when the base first
+   *  becomes `isBaseReady`; reset to false when it drops below ready (so a
+   *  rebuilt-after-razing base re-toasts). */
+  notifiedReady: boolean;
 }
 
 /** Fresh state for a newly-observed faction (peaceful, no wave). */
 export function createFactionState(id: string): FactionState {
-  return { id, hostileToDrones: false, lastDealtDamageTick: -Infinity, underWave: false };
+  return {
+    id,
+    hostileToDrones: false,
+    lastDealtDamageTick: -Infinity,
+    underWave: false,
+    notifiedReady: false,
+  };
 }
 
 /** Inputs to the de-escalation decision (all server-supplied). */
