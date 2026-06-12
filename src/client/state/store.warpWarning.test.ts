@@ -26,6 +26,16 @@ describe('UIStore — warpWarnings (wave-system Phase 5)', () => {
     expect(typeof ws[0]!.observedAtMs).toBe('number');
   });
 
+  it('addWarpWarning defaults relation to "hostile" when absent (R2.21)', () => {
+    useUIStore.getState().addWarpWarning({ id: 'squad-0', label: 'Legionnaire', count: 8, countdownMs: 300_000 });
+    expect(useUIStore.getState().warpWarnings[0]!.relation).toBe('hostile');
+  });
+
+  it('addWarpWarning preserves an explicit relation (R2.21)', () => {
+    useUIStore.getState().addWarpWarning({ id: 'p1', label: 'Ace', count: 1, countdownMs: 60_000, relation: 'neutral' });
+    expect(useUIStore.getState().warpWarnings[0]!.relation).toBe('neutral');
+  });
+
   it('addWarpWarning with an existing id replaces it (no duplicate)', () => {
     const add = useUIStore.getState().addWarpWarning;
     add({ id: 'squad-0', label: 'Legionnaire', count: 8, countdownMs: 300_000 });

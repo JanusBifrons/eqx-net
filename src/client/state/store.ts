@@ -191,7 +191,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
     set((s) => ({
       warpWarnings: [
         ...s.warpWarnings.filter((e) => e.id !== w.id),
-        { ...w, observedAtMs: (globalThis.performance ?? Date).now() },
+        {
+          ...w,
+          // R2.21 — default to 'hostile' (every live producer is a drone wave);
+          // a future friendly/neutral producer passes its own relation.
+          relation: w.relation ?? 'hostile',
+          observedAtMs: (globalThis.performance ?? Date).now(),
+        },
       ],
     })),
   removeWarpWarning: (id) =>
