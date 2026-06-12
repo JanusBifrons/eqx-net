@@ -15,6 +15,8 @@
  */
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { getGameClient } from '../net/clientSingleton.js';
+import { placementChosen } from './placementChosen.js';
+import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
  *  edge when dropping ahead. Keeps the blueprint clear of the hull collider. */
@@ -198,4 +200,32 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
   client.notePendingPlacement(kindId, x, y);
   return true;
+}
+
+/**
+ * Commit a placement at the player's currently-CHOSEN world point (the
+ * production `placementChosen` channel gameRafLoop writes every frame while the
+ * ghost is up), falling back to the ahead-of-ship pose if the player confirmed
+ * before positioning. The SINGLE commit path shared by BOTH the touch Confirm
+ * banner AND the WS-10 (R2.5) desktop one-click place — so the log + send +
+ * pending-ghost behaviour is identical regardless of how the player committed.
+ * Does NOT clear `placementKind` (Zustand) — the caller owns that, since the
+ * banner reads it via a hook and gameRafLoop via `getState()`.
+ */
+export function commitChosenPlacement(kindId: StructureKindId): void {
+  const cx = placementChosen.worldX;
+  const cy = placementChosen.worldY;
+  const hasChosen = cx !== null && cy !== null;
+  logEvent('structure_place_confirm', {
+    kind: kindId,
+    hasChosen,
+    x: cx,
+    y: cy,
+    stuck: placementChosen.stuck,
+  });
+  if (hasChosen) {
+    placeStructureAt(kindId, cx, cy);
+  } else {
+    placeStructureAhead(kindId);
+  }
 }

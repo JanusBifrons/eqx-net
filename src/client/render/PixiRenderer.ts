@@ -329,6 +329,7 @@ export class PixiRenderer implements IRenderer {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementConfirmSeq: 0,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -745,7 +746,7 @@ export class PixiRenderer implements IRenderer {
    * Worker-context entry point for synthesised pointer events forwarded
    * from the main thread. The Camera consumes via its state machine.
    */
-  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number }): void {
+  forwardPointerEvent(e: { type: string; pointerId: number; offsetX: number; offsetY: number; stamp: number; button?: number; pointerType?: string }): void {
     // Galaxy selector (spawn/warp picker) owns pointer input for free
     // pan/zoom; a tap is resolved to a sector inside the layer. Otherwise
     // the world camera consumes it (gameplay pan/zoom + tap).
@@ -762,7 +763,7 @@ export class PixiRenderer implements IRenderer {
     }
     // Structure placement positions the ghost instead of panning (worker path).
     if (this._placementActive) {
-      this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+      this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button ?? -1, e.pointerType ?? 'mouse');
       return;
     }
     switch (e.type) {
@@ -863,7 +864,7 @@ export class PixiRenderer implements IRenderer {
         // delivering pointermove, stalling the ghost. Capture keeps every
         // move/up routed here until release.
         setCanvasPointerCapture(canvas, e.type, e.pointerId);
-        this.routePlacementPointer(e.type, e.offsetX, e.offsetY);
+        this.routePlacementPointer(e.type, e.offsetX, e.offsetY, e.button, e.pointerType);
         return;
       }
       switch (e.type) {
@@ -924,10 +925,22 @@ export class PixiRenderer implements IRenderer {
    *
    * Follow model: `_placementFollowing` starts true when placement begins, so
    * the ghost tracks the pointer (desktop HOVER move / mobile DRAG). Releasing
-   * (pointer-up) parks the ghost (`following = false`) → the Confirm banner
-   * appears. A fresh press re-enters following to re-position.
+   * (pointer-up) parks the ghost (`following = false`).
+   *
+   * WS-10 (R2.5) — DESKTOP one-click placement: a MOUSE left-click (pointerup,
+   * `button === 0`, `pointerType === 'mouse'`) COMMITS the blueprint at the
+   * cursor by bumping `feedback.placementConfirmSeq` (gameRafLoop edge-detects it
+   * and places at the chosen point, then clears `placementKind`). TOUCH never
+   * commits here — a touch pointer-up just parks the ghost so the Confirm banner
+   * appears (the tap-to-position flow), so the two-step touch UX is unchanged.
    */
-  private routePlacementPointer(type: string, screenX: number, screenY: number): void {
+  private routePlacementPointer(
+    type: string,
+    screenX: number,
+    screenY: number,
+    button: number,
+    pointerType: string,
+  ): void {
     const w = this.camera.screenToWorld(screenX, screenY);
     const gameX = w.x;
     const gameY = -w.y;
@@ -947,6 +960,12 @@ export class PixiRenderer implements IRenderer {
         this._placementChosenX = gameX;
         this._placementChosenY = gameY;
         this._placementFollowing = false;
+        // Desktop one-click place: a left-button mouse release commits the
+        // blueprint at the release point. Bump the monotonic confirm seq the
+        // main thread drains. Touch keeps the park → Confirm-banner flow.
+        if (pointerType === 'mouse' && button === 0) {
+          this.feedback.placementConfirmSeq++;
+        }
         break;
       case 'pointercancel':
       case 'pointerleave':

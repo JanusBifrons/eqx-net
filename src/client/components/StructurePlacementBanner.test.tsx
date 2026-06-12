@@ -2,62 +2,48 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
 import { StructurePlacementBanner } from './StructurePlacementBanner.js';
 import { useUIStore } from '../state/store.js';
-import { placementChosen, resetPlacementChosen } from '../structures/placementChosen.js';
 
 /**
- * Smoke 2026-06-07 (capture kuytvy): on a REAL phone, Confirm placed the
- * structure ahead-of-ship, ignoring where the player positioned the ghost —
- * while the E2E (D/E in structure-placement-ghost.spec.ts) passed. Root cause:
- * the banner read the chosen point from `data-placement-world-x`, but that whole
- * dataset surface is gated behind `navigator.webdriver` (E2E-only — see
- * gameRafLoop's `writeE2E`). Playwright sets webdriver=true so the dataset
- * existed; a real player leaves it undefined so Confirm read nothing and fell
- * back to ahead-of-ship.
- *
- * This test reproduces the DEVICE condition: jsdom has no game-surface element
- * and no dataset writer, so the old (dataset-reading) banner falls back to
- * ahead-of-ship → it FAILS the first assertion. The fix routes the chosen point
- * through the `placementChosen` module singleton (populated by gameRafLoop
- * regardless of navigator.webdriver), which IS present here → it passes. This is
- * the right level: an E2E can't express "navigator.webdriver is absent" because
- * Playwright IS webdriver.
+ * The banner's Confirm delegates to the shared `commitChosenPlacement` (the
+ * single commit path also used by the WS-10 desktop one-click place), then
+ * clears `placementKind`. The "Confirm reads the PRODUCTION `placementChosen`
+ * channel, not the webdriver-gated dataset" regression (smoke 2026-06-07
+ * capture kuytvy) now lives where that logic lives — the `commitChosenPlacement`
+ * unit test in `structurePlacementClient.test.ts`. Here we lock the wiring: a
+ * Confirm click commits the active kind + exits placement mode.
  */
-const placeStructureAt = vi.fn();
-const placeStructureAhead = vi.fn();
+const commitChosenPlacement = vi.fn();
 vi.mock('../structures/structurePlacementClient', () => ({
-  placeStructureAt: (...a: unknown[]) => placeStructureAt(...a),
-  placeStructureAhead: (...a: unknown[]) => placeStructureAhead(...a),
+  commitChosenPlacement: (...a: unknown[]) => commitChosenPlacement(...a),
 }));
 
-describe('StructurePlacementBanner — Confirm reads the production channel', () => {
+describe('StructurePlacementBanner', () => {
   beforeEach(() => {
     cleanup();
-    placeStructureAt.mockClear();
-    placeStructureAhead.mockClear();
-    resetPlacementChosen();
+    commitChosenPlacement.mockClear();
     useUIStore.setState({ placementKind: 'capital' });
   });
 
-  it('places at the pointer-chosen point from placementChosen (NOT the E2E-only dataset)', () => {
-    placementChosen.worldX = 1234.5;
-    placementChosen.worldY = -678.25;
-    placementChosen.stuck = true;
-
+  it('Confirm commits the active kind via the shared path and exits placement', () => {
     const { getByTestId } = render(<StructurePlacementBanner />);
     fireEvent.click(getByTestId('placement-confirm'));
 
-    expect(placeStructureAt).toHaveBeenCalledTimes(1);
-    expect(placeStructureAt).toHaveBeenCalledWith('capital', 1234.5, -678.25);
-    expect(placeStructureAhead).not.toHaveBeenCalled();
+    expect(commitChosenPlacement).toHaveBeenCalledTimes(1);
+    expect(commitChosenPlacement).toHaveBeenCalledWith('capital');
+    expect(useUIStore.getState().placementKind).toBeNull();
   });
 
-  it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
-    // placementChosen left null by resetPlacementChosen() in beforeEach.
+  it('Cancel exits placement without committing', () => {
     const { getByTestId } = render(<StructurePlacementBanner />);
-    fireEvent.click(getByTestId('placement-confirm'));
+    fireEvent.click(getByTestId('placement-cancel'));
 
-    expect(placeStructureAhead).toHaveBeenCalledTimes(1);
-    expect(placeStructureAhead).toHaveBeenCalledWith('capital');
-    expect(placeStructureAt).not.toHaveBeenCalled();
+    expect(commitChosenPlacement).not.toHaveBeenCalled();
+    expect(useUIStore.getState().placementKind).toBeNull();
+  });
+
+  it('renders nothing when not in placement mode', () => {
+    useUIStore.setState({ placementKind: null });
+    const { container } = render(<StructurePlacementBanner />);
+    expect(container.querySelector('[data-testid="placement-banner"]')).toBeNull();
   });
 });

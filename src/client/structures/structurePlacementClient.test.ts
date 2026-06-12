@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   computePlacementPose,
   computePlacementPreview,
+  commitChosenPlacement,
   PLACEMENT_AHEAD_GAP,
   PENDING_PLACEMENT_TIMEOUT_MS,
   pendingPlacementResolved,
@@ -10,6 +11,21 @@ import {
   type PlacementPreview,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { placementChosen, resetPlacementChosen } from './placementChosen.js';
+
+// Mock the game-client singleton so commitChosenPlacement's send path is
+// observable (placeStructureAt → room.send; placeStructureAhead → mirror pose).
+const send = vi.fn();
+const notePendingPlacement = vi.fn();
+let mockLocalId: string | null = 'p1';
+const mockShips = new Map<string, { x: number; y: number; angle: number }>();
+vi.mock('../net/clientSingleton.js', () => ({
+  getGameClient: () => ({
+    mirror: { localPlayerId: mockLocalId, ships: mockShips },
+    getRoom: () => ({ send }),
+    notePendingPlacement,
+  }),
+}));
 
 describe('computePlacementPose', () => {
   it('drops the structure straight ahead (+y) at angle 0', () => {
@@ -134,5 +150,53 @@ describe('resolvePlacementPreviewStatus', () => {
   it('NONE: nothing to show with no placementKind and no pending', () => {
     const out = scratch();
     expect(resolvePlacementPreviewStatus(null, null, null, 1500, 3, true, out)).toBe('none');
+  });
+});
+
+// ── commitChosenPlacement (WS-10 R2.5 + kuytvy regression) ───────────────────
+// The SHARED commit path used by BOTH the touch Confirm banner AND the desktop
+// one-click place. It MUST send at the production `placementChosen` point (not
+// the webdriver-gated dataset — smoke 2026-06-07 capture kuytvy), falling back
+// to the ahead-of-ship pose only when the ghost was never positioned.
+describe('commitChosenPlacement', () => {
+  beforeEach(() => {
+    send.mockClear();
+    notePendingPlacement.mockClear();
+    resetPlacementChosen();
+    mockLocalId = 'p1';
+    mockShips.clear();
+    mockShips.set('p1', { x: 0, y: 0, angle: 0 });
+  });
+
+  it('sends place_structure at the CHOSEN world point (production channel)', () => {
+    placementChosen.worldX = 1234.5;
+    placementChosen.worldY = -678.25;
+    placementChosen.stuck = true;
+
+    commitChosenPlacement('capital');
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('place_structure', {
+      type: 'place_structure',
+      kind: 'capital',
+      x: 1234.5,
+      y: -678.25,
+    });
+    // The dim pending ghost is recorded so it bridges the render gap (R2.1).
+    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25);
+  });
+
+  it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
+    // placementChosen left null by resetPlacementChosen() in beforeEach.
+    commitChosenPlacement('connector');
+
+    const ahead = computePlacementPose({ x: 0, y: 0, angle: 0 }, 'connector');
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith('place_structure', {
+      type: 'place_structure',
+      kind: 'connector',
+      x: ahead.x,
+      y: ahead.y,
+    });
   });
 });

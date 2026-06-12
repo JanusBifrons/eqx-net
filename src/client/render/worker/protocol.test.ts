@@ -161,6 +161,7 @@ describe('renderer-worker protocol', () => {
             placementChosenWorldX: 42.5,
             placementChosenWorldY: -17.25,
             placementStuck: true,
+            placementConfirmSeq: 5,
             placementPreviewConnectionCount: 2,
             selectedPickId: 'swarm-42',
             selectedPickKind: 'structure',

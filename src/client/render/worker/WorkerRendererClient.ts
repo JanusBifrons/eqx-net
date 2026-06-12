@@ -62,6 +62,7 @@ function emptyFeedback(): RendererFeedback {
     placementChosenWorldX: null,
     placementChosenWorldY: null,
     placementStuck: false,
+    placementConfirmSeq: 0,
     placementPreviewConnectionCount: 0,
     selectedPickId: null,
     selectedPickKind: null,
@@ -549,6 +550,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.placementChosenWorldX = msg.feedback.placementChosenWorldX;
         this.feedback.placementChosenWorldY = msg.feedback.placementChosenWorldY;
         this.feedback.placementStuck = msg.feedback.placementStuck;
+        this.feedback.placementConfirmSeq = msg.feedback.placementConfirmSeq;
         this.feedback.placementPreviewConnectionCount =
           msg.feedback.placementPreviewConnectionCount;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;
