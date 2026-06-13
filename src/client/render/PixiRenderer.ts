@@ -853,6 +853,9 @@ export class PixiRenderer implements IRenderer {
    * suppressed via `{ passive: false }` + `preventDefault`.
    */
   private readonly canvasListeners: Array<{ type: string; handler: EventListener; options?: AddEventListenerOptions }> = [];
+  /** P3.5 — the window-level placement-drag pointermove handler (so the ghost
+   *  follows the pointer off-canvas / over overlays). Removed in dispose(). */
+  private _placementWindowMoveHandler: EventListener | null = null;
   private installCanvasEventListeners(canvas: HTMLCanvasElement): void {
     const onPointer = (e: PointerEvent): void => {
       const stamp = Date.now();
@@ -932,6 +935,26 @@ export class PixiRenderer implements IRenderer {
     add('pointerleave', onPointer as EventListener);
     add('wheel', onWheel as EventListener, { passive: false });
     add('touchmove', onTouchMove as EventListener, { passive: false });
+
+    // P3.5 — desktop placement drag: while placing, the ghost must keep
+    // following the pointer even when it leaves the canvas or crosses an HUD
+    // overlay (canvas `pointermove` isn't delivered there — the user's repeated
+    // "desktop drag breaks"). ALSO listen on the WINDOW and route window moves
+    // (converted to canvas-local) to the ghost while placement is active.
+    // GATE on `e.target !== canvas`: moves OVER the canvas are already routed by
+    // the canvas listener above using the native, canvas-relative `e.offsetX`.
+    // Re-routing those here with `clientX - rect.left` would DOUBLE-handle them,
+    // and the window (bubble-phase) value would clobber the canvas one — on the
+    // worker path the two computations diverge, so the chosen point snapped to a
+    // wrong world coord (feature E regression). Only handle the off-canvas /
+    // over-overlay case the canvas listener can't see. Removed in dispose().
+    const onWindowPlacementMove = (e: PointerEvent): void => {
+      if (!this._placementActive || e.target === canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      this.routePlacementPointer('pointermove', e.clientX - rect.left, e.clientY - rect.top, e.button, e.pointerType);
+    };
+    window.addEventListener('pointermove', onWindowPlacementMove);
+    this._placementWindowMoveHandler = onWindowPlacementMove as EventListener;
   }
 
   /**
@@ -2224,6 +2247,11 @@ export class PixiRenderer implements IRenderer {
       }
     }
     this.canvasListeners.length = 0;
+    // P3.5 — the window-level placement-drag pointermove (lives on `window`).
+    if (this._placementWindowMoveHandler) {
+      window.removeEventListener('pointermove', this._placementWindowMoveHandler);
+      this._placementWindowMoveHandler = null;
+    }
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];
     if (typeof handler === 'function') {
       window.removeEventListener('resize', handler as EventListener);
