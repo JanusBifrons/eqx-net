@@ -170,6 +170,15 @@ export class ShieldAura {
     return this.rings.size;
   }
 
+  /** Rings currently DRAWN (visible) — a ring whose entity pose couldn't be
+   *  resolved this frame is registered but `visible=false` (see `tick`). The
+   *  drawn-artefact signal for the worker-boundary lingering-aura lock. */
+  visibleRingCount(): number {
+    let n = 0;
+    for (const r of this.rings.values()) if (r.gfx.visible) n++;
+    return n;
+  }
+
   resetForSectorHandoff(): void {
     for (const r of this.rings.values()) {
       this.auraContainer?.removeChild(r.gfx);

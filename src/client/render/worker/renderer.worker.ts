@@ -100,6 +100,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             haloArrowCount: fb.haloArrowCount,
             damageNumberActiveCount: fb.damageNumberActiveCount,
             wreckSpriteCount: fb.wreckSpriteCount,
+            shieldRingVisibleCount: fb.shieldRingVisibleCount,
             firstFrameRendered: fb.firstFrameRendered,
             liveBeamRenderedFromX: fb.liveBeamRenderedFromX,
             liveBeamRenderedFromY: fb.liveBeamRenderedFromY,

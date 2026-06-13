@@ -52,6 +52,7 @@ function emptyFeedback(): RendererFeedback {
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
+    shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
@@ -217,6 +218,31 @@ export class WorkerRendererClient implements IRenderer {
     this.addListener(canvas, 'pointerleave', onPointer as EventListener);
     this.addListener(canvas, 'wheel', onWheel as EventListener, { passive: false });
     this.addListener(canvas, 'touchmove', onTouchMove as EventListener, { passive: false });
+
+    // P3.5 — desktop placement drag: while placing, the ghost must keep
+    // following the pointer even when it leaves the canvas or crosses an HUD
+    // overlay. Canvas `pointermove` + `setPointerCapture` was NOT enough (the
+    // user's repeated "desktop drag breaks"), so ALSO listen on the WINDOW and
+    // forward window moves — converted to canvas-local offset — while placement
+    // is active. The worker's `forwardPointerEvent` routes them to the ghost.
+    // GATE on `e.target !== canvas`: moves OVER the canvas are already forwarded
+    // by the canvas listener above with the native, canvas-relative `e.offsetX`.
+    // Re-forwarding them here with `clientX - rect.left` double-handles the move
+    // and the window (bubble-phase) value wins — the two computations diverge on
+    // this path, snapping the chosen point to a wrong world coord (feature E
+    // regression). Only handle the off-canvas / over-overlay case. Removed on
+    // teardown via `windowListeners`.
+    const onWindowPlacementMove = (e: PointerEvent): void => {
+      if (!this._placementActive || !this.canvas || e.target === this.canvas) return;
+      const rect = this.canvas.getBoundingClientRect();
+      this.postPointerEvent({
+        ...serialisePointerEvent(e),
+        offsetX: e.clientX - rect.left,
+        offsetY: e.clientY - rect.top,
+      });
+    };
+    window.addEventListener('pointermove', onWindowPlacementMove);
+    this.windowListeners.push({ target: window, event: 'pointermove', handler: onWindowPlacementMove as EventListener });
   }
 
   /** Window-level + container-level resize listeners. Mirrors the
@@ -541,6 +567,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
+        this.feedback.shieldRingVisibleCount = msg.feedback.shieldRingVisibleCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
         this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;
