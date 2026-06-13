@@ -341,6 +341,14 @@ const DIAL_SX = {
     border: '1px solid rgba(255,255,255,0.16)',
     '&:hover': { bgcolor: 'rgba(5,7,15,0.9)' },
   },
+  // P3.1 — the always-on (tooltipOpen) action labels must NEVER wrap. The
+  // static tooltip label defaults to a narrow max-width that wrapped longer
+  // names ("Shield Pylon" etc.) onto two lines; force a single line with room
+  // to breathe.
+  '& .MuiSpeedDialAction-staticTooltipLabel': {
+    whiteSpace: 'nowrap',
+    maxWidth: 'none',
+  },
 } as const;
 
 const FAB_PROPS = { size: 'small', 'data-testid': 'speed-dial-fab' } as const;
