@@ -45,6 +45,21 @@ describe('shipKinds catalogue', () => {
     }
   });
 
+  it('drone AI thrust is a meaningful fraction of the player thrust — drones do not crawl (P3.11b)', () => {
+    // P3.11b: ai.thrust was ~0.1× the player `thrustImpulse`, so a pursuing
+    // drone's terminal speed was ~1/8 the player's and it "barely moved". The
+    // AI-impulse path bypasses the maxSpeed clamp, so terminal pursuit speed
+    // ≈ 60 × ai.thrust / linearDamping — the ratio to player thrust is the
+    // load-bearing knob. Locked at ≥ 0.35× (set to ≈0.45×) so a future retune
+    // can't crater it again. The standoff cap + brake still settle the drone
+    // in weapons range (HostileDroneBehaviour); this only fixes the FAR phase.
+    for (const id of ['fighter', 'scout', 'heavy', 'interceptor', 'gunship', 'missile-frigate'] as const) {
+      const k = SHIP_KINDS[id];
+      const ratio = k.ai.thrust / k.thrustImpulse;
+      expect(ratio, `${id} ai.thrust/thrustImpulse (${k.ai.thrust}/${k.thrustImpulse})`).toBeGreaterThanOrEqual(0.35);
+    }
+  });
+
   it('Heavy has the highest top speed (boosted terminal); Scout has the lowest', () => {
     // Boosted terminal velocity = thrust * boost / (1 - e^(-d/60))
     const terminal = (k: typeof SHIP_KINDS.fighter): number =>
