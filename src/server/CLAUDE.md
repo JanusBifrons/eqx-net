@@ -260,7 +260,13 @@ absent when none), broadcasts `grid_pulse`, severs on structure death via
 `evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
 the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
 touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
-changes.** Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+changes.** **Phase-4 C3 — the slice carries `hpPct` (0-100 INTEGER percent, the
+`drones[].hp` convention) for EVERY structure**, sourced in `rebuildStructuresSlice`
+from `swarmHealth` ÷ `getStructureKind(kind).maxHealth`. The client decodes it to
+`StructureRenderState.hpPct` (0..1) so the inspector renders the hull bar on the
+FIRST polled frame after selection — killing the "hull pops in" round-trip lag
+(the `entity_stats` packet now only refines it). 🔴 netgate (slice byte change;
+PASS confirmed). Lock: `entity-inspect.spec.ts` first-frame no-spinner assertion. Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
 hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
 `tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
 the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);

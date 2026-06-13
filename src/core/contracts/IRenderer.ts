@@ -169,6 +169,11 @@ export interface SwarmRenderState {
  * HUD power readout. Pure UI state — no spatial fields (those live in `swarm`).
  */
 export interface StructureRenderState {
+  /** Phase-4 C3 — hull health fraction [0..1], decoded from the slice's 0-100
+   *  `hpPct`. Lets the inspector render the hull bar instantly on selection
+   *  (no `entity_stats` round-trip). Absent ⇒ unknown (panel falls back to the
+   *  server stats packet). */
+  hpPct?: number;
   /** Component net power ≥ 0 AND reachable to a Capital. */
   powered: boolean;
   /** Component net power (Σ output − Σ consumption over built members). */

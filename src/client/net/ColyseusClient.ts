@@ -2916,6 +2916,7 @@ export class ColyseusGameClient {
           powered: s.powered,
           netPower: s.netPower ?? 0,
           connTo: s.connTo ?? [],
+          ...(s.hpPct !== undefined ? { hpPct: s.hpPct / 100 } : {}), // C3 — 0-100 int → [0..1] fraction
           built: s.built ?? false,
           buildPct: s.built ? 1 : (s.buildPct ?? 0),
           deconstructPct: s.deconstructPct ?? 0,
