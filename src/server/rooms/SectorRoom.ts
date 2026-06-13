@@ -15,7 +15,8 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
-import type { WarpWarningEvent } from '../../shared-types/messages.js';
+import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
+import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
@@ -2920,6 +2921,12 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('warp_warning', msg);
   }
 
+  /** Phase-4 P0 — clear a pending warp-in warning (the inbound arrived / retreated
+   *  / cancelled). Companion to `broadcastWarpWarning`. */
+  broadcastWarpWarningClear(msg: WarpWarningClearEvent): void {
+    this.broadcast('warp_warning_clear', msg);
+  }
+
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
   }
@@ -2963,6 +2970,11 @@ export class SectorRoom extends Room<SectorState> {
       y: pending.spawnY,
       arrivalTick,
     });
+
+    // Phase-4 P0 — the player has ARRIVED; clear any friendly "incoming" banner
+    // their transit raised in this sector. Idempotent (non-transit joins clear a
+    // non-existent entry harmlessly); galaxy-only (engineering rooms have no key).
+    if (this.sectorKey) getIncomingPlayerSink()?.clearIncomingPlayer(playerId, this.sectorKey);
 
     serverLogEvent('client_ready_received', {
       playerId,

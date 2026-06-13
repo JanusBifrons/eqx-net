@@ -1721,8 +1721,19 @@ export class ColyseusGameClient {
     room.onMessage('warp_warning', (raw: unknown) => {
       const parsed = WarpWarningSchema.safeParse(raw);
       if (!parsed.success) return;
-      const { id, label, count, countdownMs } = parsed.data;
-      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs });
+      const { id, label, count, countdownMs, disposition } = parsed.data;
+      // Phase-4 P0 — colour the banner by the inbound's relation. The wire speaks
+      // `enemy`/`neutral`/`friendly`; the store/banner speak `hostile`/`neutral`/
+      // `friendly`. Absent ⇒ store default (hostile), back-compat with old servers.
+      const relation =
+        disposition === 'enemy'
+          ? 'hostile'
+          : disposition === 'friendly'
+            ? 'friendly'
+            : disposition === 'neutral'
+              ? 'neutral'
+              : undefined;
+      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
     });
     room.onMessage('warp_warning_clear', (raw: unknown) => {
       const parsed = WarpWarningClearSchema.safeParse(raw);

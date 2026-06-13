@@ -78,6 +78,10 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
   const banner = page.locator('[data-testid="warp-warning"][data-warning-count="8"]');
   await expect(banner).toBeVisible({ timeout: 45_000 });
   await expect(banner).toContainText('Legionnaire');
+  // Phase-4 P0 — a wave squad is an ENEMY inbound, so the banner reads red
+  // (relation=hostile). The warning now rides the universal warp-decision feed
+  // (IncomingRegistry), not the retired wave-only final-approach branch.
+  await expect(banner).toHaveAttribute('data-warning-relation', 'hostile');
 
   // 2. The squad actually warps IN: in-interest drones populate the swarm
   //    mirror, so the HUD swarm count goes positive.

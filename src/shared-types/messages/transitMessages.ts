@@ -86,6 +86,16 @@ export interface WarpInEvent {
  * `count`/`countdownMs` would render a garbage banner. `id` keys the banner so
  * a cancelled/aborted spool can clear it (`warp_warning_clear`).
  */
+/**
+ * Threat relation of an inbound ship, RELATIVE to the destination sector's
+ * occupants. `enemy` = a wave squad tasked against a base here (red); `neutral`
+ * = a roaming/unassigned pack just drifting through (amber); `friendly` = an
+ * inbound player (green). Optional on the wire for back-compat — the client maps
+ * `enemy → 'hostile'` and treats an absent value as the store default (hostile).
+ */
+export const WarpDispositionSchema = z.enum(['enemy', 'neutral', 'friendly']);
+export type WarpDisposition = z.infer<typeof WarpDispositionSchema>;
+
 export const WarpWarningSchema = z
   .object({
     type: z.literal('warp_warning'),
@@ -99,6 +109,8 @@ export const WarpWarningSchema = z
     countdownMs: z.number().finite().nonnegative(),
     /** Optional ship-kind id for an icon. */
     kind: z.string().optional(),
+    /** Threat relation for the banner colour. Absent ⇒ client default (hostile). */
+    disposition: WarpDispositionSchema.optional(),
   })
   .strict();
 
