@@ -71,13 +71,6 @@ export interface WarpParams {
    *  0 at this range. Reads camera world centre (i.e. local-ship
    *  position in production) as the viewer. 0–8000. */
   flashRangeMax: number;
-
-  // ---- Bloom: amplifies the bright wavefront during climax + burst ----
-  /** Peak BloomFilter `strength` at climax + burst. Bloom amplifies
-   *  bright pixels (the wavefront has its own `brightness` uniform) so
-   *  the wave reads as a glowing line that distant viewers can spot
-   *  even before the displacement reaches their screen. 0–8. 0 = off. */
-  bloomStrengthMax: number;
 }
 
 /**
@@ -121,9 +114,11 @@ export const DEFAULT_WARP_PARAMS: WarpParams = {
   climaxBrightness: 1.4,
   climaxZoomBlur: 0.35,
 
-  // Burst + flash: toned down 2026-05-27 (M3): amplitude 440→220, bloom
-  // 6→1.5, flashAlpha 0.85→0.55. Still legible at perimeter (speed/range
-  // unchanged) but no longer dominates the screen.
+  // Burst + flash: toned down 2026-05-27 (M3): amplitude 440→220,
+  // flashAlpha 0.85→0.55. Still legible at perimeter (speed/range
+  // unchanged) but no longer dominates the screen. The bloom/glow pass
+  // was removed entirely in WS-14/R2.9 (the white arrival flash is the
+  // reveal).
   burstDurationMs: 1500,
   burstAmplitude: 220,
   burstSpeed: 2800,
@@ -132,5 +127,4 @@ export const DEFAULT_WARP_PARAMS: WarpParams = {
   flashAlphaMax: 0.55,
   flashDurationMs: 380,
   flashRangeMax: 2500,
-  bloomStrengthMax: 1.5,
 };
