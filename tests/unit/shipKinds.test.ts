@@ -4,6 +4,7 @@ import {
   SHIP_KINDS_LIST,
   GAMEPLAY_SHIP_KINDS_LIST,
   DEFAULT_SHIP_KIND,
+  SHIP_KIND_CATALOGUE_VERSION,
   ShipKindSchema,
   ShipShapeSchema,
   WeaponMountSchema,
@@ -110,12 +111,14 @@ describe('ShipShapeSchema — discriminated union (composite-ships Phase 0)', ()
     if (result.success) expect(result.data.kind).toBe('composite');
   });
 
-  it('every shipped kind still parses as a polygon shape', () => {
+  it('every shipped kind parses as a valid shape; only havok is composite', () => {
     for (const kind of SHIP_KINDS_LIST) {
       const result = ShipShapeSchema.safeParse(kind.shape);
       expect(result.success, `${kind.id} shape parses`).toBe(true);
-      // Phase 0: every shipped kind stays a polygon shape (composite is additive).
-      expect(kind.shape.kind, `${kind.id} stays polygon`).toBe('polygon');
+      // Phase 1: havok is the first (and only) composite kind; the original
+      // eight stay polygon (the union is otherwise additive).
+      const expected = kind.id === 'havok' ? 'composite' : 'polygon';
+      expect(kind.shape.kind, `${kind.id} shape kind`).toBe(expected);
     }
   });
 
@@ -416,5 +419,36 @@ describe('engineeringOnly flag — keep test fixtures out of galaxy spawn pool (
   it('GAMEPLAY_SHIP_KINDS_LIST is non-empty and contains fighter (the default)', () => {
     expect(GAMEPLAY_SHIP_KINDS_LIST.length).toBeGreaterThan(0);
     expect(GAMEPLAY_SHIP_KINDS_LIST.find((k) => k.id === DEFAULT_SHIP_KIND)).toBeDefined();
+  });
+});
+
+describe('havok composite kind — catalogue registration (composite-ships Phase 1)', () => {
+  it('SHIP_KINDS_LIST now ends with havok (append-only)', () => {
+    expect(SHIP_KINDS_LIST[SHIP_KINDS_LIST.length - 1]!.id).toBe('havok');
+  });
+
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 11', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(11);
+  });
+
+  it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {
+    expect(SHIP_KINDS.havok).toBeDefined();
+    expect(() => ShipKindSchema.parse(SHIP_KINDS.havok)).not.toThrow();
+  });
+
+  it('HAVOK shape is composite with 23 parts (7 silhouettes + 16 detail shapes) and a hull', () => {
+    const shape = SHIP_KINDS.havok.shape;
+    expect(shape.kind).toBe('composite');
+    if (shape.kind !== 'composite') return;
+    // 7 primary-filled component silhouettes (2 rear wings, 2 wings, 2 pads,
+    // 1 cockpit) + 16 secondary detail shapes ported from each component's
+    // draw() (strips, wing circles, cockpit tip/strip/dome/tail).
+    expect(shape.parts).toHaveLength(23);
+    expect(shape.hull.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('havok round-trips through the swarm wire index at the end of the list', () => {
+    expect(shipKindToIndex('havok')).toBe(SHIP_KINDS_LIST.length - 1);
+    expect(shipKindFromIndex(shipKindToIndex('havok'))).toBe('havok');
   });
 });

@@ -54,6 +54,7 @@ export { SCOUT, FIGHTER } from './shipKinds/fighters.js';
 export { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
 export { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 export { CROSSGUARD } from './shipKinds/crossguard.js';
+export { HAVOK } from './shipKinds/composite/havok.js';
 
 // Re-export the canonical-order list.
 export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
@@ -67,6 +68,7 @@ import { HEAVY, INTERCEPTOR, GUNSHIP } from './shipKinds/heavyClass.js';
 import { MISSILE_FRIGATE } from './shipKinds/missileFrigate.js';
 import { CROSSGUARD } from './shipKinds/crossguard.js';
 import { L_SHAPE } from './shipKinds/lShape.js';
+import { HAVOK } from './shipKinds/composite/havok.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import type { ShipKind, ShipKindId } from './shipKinds/types.js';
 
@@ -107,6 +109,7 @@ export const SHIP_KINDS = Object.freeze({
   'missile-frigate': MISSILE_FRIGATE,
   crossguard: CROSSGUARD,
   el: L_SHAPE,
+  havok: HAVOK,
 } as const) satisfies Readonly<Record<string, ShipKind>>;
 
 /**
@@ -128,7 +131,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 10;
+export const SHIP_KIND_CATALOGUE_VERSION = 11;
 
 /** Shield bubble pad — how far PAST each kind's hull `radius` the shield
  *  bubble extends. Shared across:
