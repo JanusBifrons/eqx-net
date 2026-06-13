@@ -1,5 +1,5 @@
 /**
- * Warp visual effect — the shockwave + bloom + flash + load-curtain
+ * Warp visual effect — the shockwave + flash + load-curtain
  * filter chain hosted on its own `warpStage` container above the world.
  *
  * Two-phase envelope driven by `setMode(true)`:
@@ -32,7 +32,7 @@
  */
 
 import { Application, Container, Graphics } from 'pixi.js';
-import { ShockwaveFilter, ZoomBlurFilter, BloomFilter } from 'pixi-filters';
+import { ShockwaveFilter, ZoomBlurFilter } from 'pixi-filters';
 import {
   shouldDetachWarpVisual,
   warpEventFiresBurst,
@@ -95,7 +95,6 @@ export class WarpFilterChain {
   private loadCurtainTargetAlpha = 0;
   private loadCurtainTweenStartedAt = 0;
   private loadCurtainTweenFromAlpha = 0;
-  private warpBloom: BloomFilter | null = null;
   private warpStandaloneBurst = false;
 
   constructor(
@@ -203,11 +202,6 @@ export class WarpFilterChain {
       radius: -1,
       time: 0,
     });
-    this.warpBloom = new BloomFilter({
-      strength: 0,
-      quality: 2,
-      kernelSize: 5,
-    });
     this.loadCurtain = new Graphics();
     this.loadCurtain.rect(-2048, -2048, 8192, 8192);
     this.loadCurtain.fill({ color: BACKGROUND_COLOR, alpha: 1 });
@@ -243,22 +237,20 @@ export class WarpFilterChain {
 
   private attachFilters(): void {
     if (this.forcedDisabled) return; // kill switch (plan: melodic-engelbart Step 2c)
-    if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
+    if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst) return;
     // Re-enabled 2026-05-27 (M3 of effects-subsystem plan wiggly-puppy)
     // after being disabled 2026-05-21 (commit `Render-jitter-fix Phase 1b`).
     // The disable rationale was duty-cycle cost on mobile — the re-enable
     // is paired with toned-down DEFAULT_WARP_PARAMS (spoolCount 4→2,
-    // climaxAmplitude 220→70, bloomStrengthMax 6→1.5) AND a budget tier
-    // dial via `applyQuality` below (medium drops bloom; low drops zoom
-    // blur; minimal detaches the chain entirely, matching the 2026-05-21
-    // safe state). Mobile-default `medium` (touch-device pin) means the
-    // bloom shader pass — the most expensive single contributor — is
-    // never attached on touch in production.
+    // climaxAmplitude 220→70) AND a budget tier dial via `applyQuality`
+    // below (low drops zoom-blur; minimal detaches the chain entirely,
+    // matching the 2026-05-21 safe state). The bloom/glow pass was REMOVED
+    // entirely (WS-14 / R2.9 — "remove warp glow"); the single subtle white
+    // arrival flash (`warpFlash`, fired by `triggerWarpIn`) is the reveal.
     const filters: import('pixi.js').Filter[] = [];
     for (const sw of this.warpShockwaves) filters.push(sw);
     filters.push(this.warpBurst);
     if (this.qualityIncludesZoomBlur()) filters.push(this.warpZoomBlur);
-    if (this.qualityIncludesBloom()) filters.push(this.warpBloom);
     this.app.stage.filters = filters;
   }
 
@@ -270,9 +262,10 @@ export class WarpFilterChain {
    * warp surface.
    *
    * Dials per tier:
-   *  - high    : full chain (shockwaves + zoom-blur + bloom + burst)
-   *  - medium  : drop bloom (the heaviest shader pass)
-   *  - low     : drop bloom AND zoom-blur (keep shockwaves only)
+   *  - high    : full chain (shockwaves + zoom-blur + burst)
+   *  - medium  : same as high (bloom — the former high-only pass — was
+   *              removed entirely in WS-14/R2.9)
+   *  - low     : drop zoom-blur (shockwaves + burst only)
    *  - minimal : detach all filters (matches the 2026-05-21 safe state)
    *
    * The chain is re-built lazily by ensureStage()/buildShockwaveStack;
@@ -318,7 +311,6 @@ export class WarpFilterChain {
 
   private forcedDisabled = false;
   private qualityLevel: 'high' | 'medium' | 'low' | 'minimal' = 'high';
-  private qualityIncludesBloom(): boolean { return this.qualityLevel === 'high'; }
   private qualityIncludesZoomBlur(): boolean { return this.qualityLevel === 'high' || this.qualityLevel === 'medium'; }
 
   /** Ticker callback (arrow form so `this` is bound). */
@@ -524,11 +516,5 @@ export class WarpFilterChain {
     this.warpZoomBlur.center = { x: cx, y: cy };
     this.warpZoomBlur.strength = blurStrength;
     this.warpZoomBlur.innerRadius = p.zoomBlurInnerRadius;
-
-    if (this.warpBloom) {
-      const climaxBloom = phase === 'climax' ? phaseProgress * k : 0;
-      const bloomFactor = Math.max(climaxBloom, burstFalloff);
-      this.warpBloom.strength = p.bloomStrengthMax * bloomFactor;
-    }
   }
 }
