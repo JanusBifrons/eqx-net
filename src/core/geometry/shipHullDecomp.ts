@@ -41,6 +41,7 @@ import {
   type ShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
+import { shipHullOutline, shipShapeScale } from './shipHullOutline.js';
 
 /** One convex sub-polygon of a ship hull. Always CCW (positive signed area). */
 export type ConvexPart = readonly Vec2[];
@@ -90,8 +91,8 @@ export function signedArea(poly: ReadonlyArray<Vec2>): number {
  * Polygon and mount are now consistent.
  */
 export function shipShapeToPolygon(kind: ShipKind): Vec2[] {
-  const s = kind.shape.scale;
-  return kind.shape.points.map(([x, y]) => ({ x: x * s, y: -y * s }));
+  const s = shipShapeScale(kind);
+  return shipHullOutline(kind).map(([x, y]) => ({ x: x * s, y: -y * s }));
 }
 
 /**

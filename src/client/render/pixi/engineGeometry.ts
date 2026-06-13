@@ -17,6 +17,7 @@
  */
 
 import { getShipKind, DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds';
+import { shipHullOutline, shipShapeScale } from '@core/geometry/shipHullOutline';
 
 export interface EngineProfile {
   /** Distance behind ship centre (game units), along the astern direction,
@@ -36,10 +37,10 @@ export function engineProfileForKind(kindId: string | null | undefined): EngineP
   // Rear extent = the polygon's largest +y (nose is at -y; stern at +y),
   // scaled by the shape's draw scale.
   let rearExtent = 0;
-  for (const pt of kind.shape.points) {
+  for (const pt of shipHullOutline(kind)) {
     if (pt[1] > rearExtent) rearExtent = pt[1];
   }
-  rearExtent *= kind.shape.scale;
+  rearExtent *= shipShapeScale(kind);
   const sternOffset = rearExtent > 0 ? rearExtent : kind.radius;
   const plumeScale = kind.radius / REFERENCE_RADIUS;
   return { sternOffset, plumeScale };

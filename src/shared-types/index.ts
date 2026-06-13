@@ -48,6 +48,9 @@ export {
 
 export {
   ShipShapeSchema,
+  ShipPolygonShapeSchema,
+  ShipCompositeShapeSchema,
+  ShipPartSchema,
   ShipKindSchema,
   SHIP_KINDS,
   SHIP_KINDS_LIST,
@@ -58,7 +61,14 @@ export {
   shipKindToIndex,
   shipKindFromIndex,
 } from './shipKinds.js';
-export type { ShipKind, ShipKindId, ShipShape } from './shipKinds.js';
+export type {
+  ShipKind,
+  ShipKindId,
+  ShipShape,
+  ShipPolygonShape,
+  ShipCompositeShape,
+  ShipPart,
+} from './shipKinds.js';
 
 export { SECTOR_PLAYABLE_HALF_EXTENT, clampToSectorBounds } from './sectorBounds.js';
 export type { ClampResult } from './sectorBounds.js';

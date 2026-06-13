@@ -30,6 +30,7 @@ import {
   SLOT_Y_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
+import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import type { ShipState, WreckState } from '../rooms/schema/SectorState.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShieldHullRouter } from '../rooms/ShieldHullRouter.js';
@@ -157,7 +158,11 @@ export class EntityResolver {
     const rec = d.swarmRegistry.get(targetId);
     if (!rec) return null;
     let leaf: DamageableSwarmLeaf;
-    if (rec.kind === 1) {
+    if (rec.kind === 1 || rec.kind === SWARM_KIND_SCRAP) {
+      // Drones (1) AND scrap (3) take layered swarm damage via the drone leaf.
+      // Scrap carries no shield (swarmShield seeded 0 on spawn) so a hit lands
+      // on hull → destroyed. A dying scrap piece does NOT recursively shatter:
+      // SectorRoom.spawnScrapFromDrone guards the death-respawn hook to kind 1.
       leaf = this.drone;
     } else if (rec.kind === 2) {
       leaf = this.structure;

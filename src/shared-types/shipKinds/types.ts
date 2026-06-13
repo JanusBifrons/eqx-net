@@ -11,12 +11,23 @@
 import { z } from 'zod';
 
 // ---------------------------------------------------------------------------
-// Visual shape — a polygon in entity-local space, Pixi-up convention
-// (nose at -y, tail at +y). Same convention as `buildShipGfx` /
-// `buildDroneGfx` in `src/client/render/PixiRenderer.ts`.
+// Visual shape — a discriminated union (2026-06-13, composite-ships Phase 0).
+//
+//   - 'polygon'   : a single polygon in entity-local space, Pixi-up convention
+//                   (nose at -y, tail at +y). The ONLY variant shipped today;
+//                   every catalogue kind stays a polygon and renders/collides
+//                   exactly as before this union landed. Same convention as
+//                   `buildShipGfx` / `buildDroneGfx` in `PixiRenderer.ts`.
+//   - 'composite' : a ship authored from multiple visual components ("parts")
+//                   over a single gross collision `hull`. Phase 1 fills in the
+//                   renderer + authors the first composite kind; Phase 0 only
+//                   makes the union representable (additive — no kind uses it).
 // ---------------------------------------------------------------------------
 
-export const ShipShapeSchema = z
+/** Single-polygon ship shape — the legacy (and currently only) variant. The
+ *  schema object was historically named `ShipShapeSchema`; the union now wears
+ *  that name and this is the polygon member. */
+export const ShipPolygonShapeSchema = z
   .object({
     kind: z.literal('polygon'),
     /** Local-space points, [x, y]. Nose typically at (0, -radius). */
@@ -27,6 +38,75 @@ export const ShipShapeSchema = z
     scale: z.number().positive().default(1),
   })
   .strict();
+export type ShipPolygonShape = z.infer<typeof ShipPolygonShapeSchema>;
+
+/** One visual component of a composite ship. A part is a polygon in
+ *  entity-local space, placed at an offset + optional rotation/scale/mirror,
+ *  with its own fill (and optional stroke) colour. Parts are PURELY VISUAL —
+ *  per-part live collision is intentionally NOT modelled (the composite's gross
+ *  `hull` is the single collider; see `ShipCompositeShapeSchema`). The
+ *  optional `role` / `mass` / `canScrap` fields are forward-looking hooks for
+ *  a later "ship authored from salvageable components" feature and carry no
+ *  Phase 0/1 behaviour. */
+export const ShipPartSchema = z
+  .object({
+    /** Local-space points, [x, y], for this component's polygon (≥ 3). */
+    points: z.array(z.tuple([z.number(), z.number()])).min(3),
+    /** Fill colour as a 24-bit RGB integer. */
+    color: z.number().int().nonnegative(),
+    /** Optional outline colour (24-bit RGB). */
+    stroke: z.number().int().nonnegative().optional(),
+    /** Optional outline width in entity-local units. */
+    strokeWidth: z.number().positive().optional(),
+    /** Component offset from the ship origin, entity-local X. */
+    offsetX: z.number().finite(),
+    /** Component offset from the ship origin, entity-local Y. */
+    offsetY: z.number().finite(),
+    /** Optional rotation of the component about its offset, radians. */
+    rotation: z.number().finite().optional(),
+    /** Optional per-component uniform scale (multiplies the shape scale). */
+    scale: z.number().positive().optional(),
+    /** Optional mirror flag (e.g. for a left/right wing pair authored once). */
+    mirror: z.boolean().optional(),
+    /** Optional semantic role tag (forward-looking; unused in Phase 0/1). */
+    role: z.string().optional(),
+    /** Optional component mass contribution (forward-looking; unused). */
+    mass: z.number().positive().optional(),
+    /** Optional "this part can be scrapped/salvaged" flag (forward-looking). */
+    canScrap: z.boolean().optional(),
+  })
+  .strict();
+export type ShipPart = z.infer<typeof ShipPartSchema>;
+
+/** Composite ship shape — a ship authored from multiple visual `parts` over a
+ *  single gross collision `hull`.
+ *
+ *  - `hull`  : the GROSS collision outline (Pixi-up convention, like a
+ *              polygon shape's `points`). This is the single collider the
+ *              physics + hitscan see — per-part live collision is intentionally
+ *              NOT modelled.
+ *  - `parts` : the visual components, each a polygon placed at an offset. They
+ *              drive ONLY rendering; the renderer arm for this variant lands in
+ *              Phase 1 (Phase 0 makes it representable but no kind uses it). */
+export const ShipCompositeShapeSchema = z
+  .object({
+    kind: z.literal('composite'),
+    /** Uniform scale applied to the hull + parts at draw time. Default 1. */
+    scale: z.number().positive().default(1),
+    /** Gross collision outline (Pixi-up), [x, y] points (≥ 3). */
+    hull: z.array(z.tuple([z.number(), z.number()])).min(3),
+    /** Visual components (≥ 1). Purely visual; no per-part collision. */
+    parts: z.array(ShipPartSchema).min(1),
+  })
+  .strict();
+export type ShipCompositeShape = z.infer<typeof ShipCompositeShapeSchema>;
+
+/** Visual shape of a ship — a discriminated union over `kind`. Polygon is the
+ *  only variant shipped today; composite is additive (Phase 0). */
+export const ShipShapeSchema = z.discriminatedUnion('kind', [
+  ShipPolygonShapeSchema,
+  ShipCompositeShapeSchema,
+]);
 export type ShipShape = z.infer<typeof ShipShapeSchema>;
 
 // ---------------------------------------------------------------------------

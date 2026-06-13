@@ -26,6 +26,7 @@ import { HEAVY, INTERCEPTOR, GUNSHIP } from './heavyClass.js';
 import { MISSILE_FRIGATE } from './missileFrigate.js';
 import { CROSSGUARD } from './crossguard.js';
 import { L_SHAPE } from './lShape.js';
+import { HAVOK } from './composite/havok.js';
 
 /**
  * Insertion order = canonical catalogue order. Fighter is first so it
@@ -42,4 +43,6 @@ export const SHIP_KINDS_LIST: readonly ShipKind[] = Object.freeze([
   MISSILE_FRIGATE,
   CROSSGUARD,
   L_SHAPE,
+  // composite-ships Phase 1: first composite kind. APPEND ONLY — never reorder.
+  HAVOK,
 ]);

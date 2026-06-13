@@ -92,6 +92,19 @@ const SEED: readonly EntityKindDescriptor[] = [
     // per-subtype silhouette + tint. Must survive the per-frame mirror rebuild.
     render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind'], interpolated: false },
   },
+  {
+    // Scrap-on-death Phase 2a "scrap for free": a salvage piece shed by a
+    // composite ship on death. Mirrors the ASTEROID sync/render shape (static,
+    // NOT interpolated, swarm bucket) EXCEPT poseCoreKind = 3 and damageable.
+    // The shared `shipKind` byte carries the PARENT ship-kind id and the new
+    // trailing `componentIndex` byte selects which scrap group of that parent
+    // this piece is — both preserved so the per-frame mirror rebuild keeps the
+    // sub-shape palette. Appended, never reordered (invariant #11).
+    tag: 'scrap',
+    damageable: true,
+    sync: { transport: 'pose-core', poseCoreKind: 3, interpolated: false },
+    render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind', 'componentIndex'], interpolated: false },
+  },
 ];
 
 const BY_TAG = new Map<EntityKindTag, EntityKindDescriptor>();

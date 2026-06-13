@@ -38,7 +38,8 @@ export type EntityKindTag =
   | 'asteroid'
   | 'projectile'
   | 'missile'
-  | 'structure'; // P4 — a static, damageable world object (pose-core kind 2)
+  | 'structure' // P4 — a static, damageable world object (pose-core kind 2)
+  | 'scrap'; // scrap-on-death Phase 2a — a salvage piece shed on death (pose-core kind 3)
 
 /**
  * Scratch-filled pose. Callers own the object and reuse it across entities

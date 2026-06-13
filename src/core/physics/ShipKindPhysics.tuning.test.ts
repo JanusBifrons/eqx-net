@@ -49,7 +49,7 @@ async function measureCruise(kindKey: keyof typeof EXPECTED): Promise<number> {
 }
 
 describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
-  it('catalogue version was bumped to 8', () => {
+  it('catalogue version lock', () => {
     // 3 → 4 on 2026-05-27: appended `missile-frigate` kind (heat-seeker
     // weapon platform).
     // 4 → 5 on 2026-05-27: appended `crossguard` kind (the T-ship for
@@ -68,7 +68,10 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // `ai.thrust` ≈3.6× (to ≈0.45× the player thrustImpulse) so pursuing
     // drones stop crawling. PLAYER thrustImpulse/maxHealth are unchanged, so
     // the cruise/hull literals below still hold.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(10);
+    // 10 → 11 on 2026-06-13 (composite-ships P1): appended composite kind
+    // `havok` (Equinox debug.js port). Pure append — no existing kind's
+    // physics changed, so the cruise/hull literals below still hold.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(11);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

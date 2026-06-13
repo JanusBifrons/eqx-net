@@ -19,6 +19,7 @@ import {
   SLOT_Y_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
+import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { db } from '../db/Database.js';
 import { saveSnapshot } from '../stats/StatsService.js';
 import {
@@ -55,6 +56,11 @@ export class SectorPersistence {
       // re-seeded at entry sectors on boot, so persisting their health is
       // meaningless (and a cold boot deliberately starts with an empty interior).
       if (rec.kind === 1) continue;
+      // Scrap (kind 3, scrap-on-death) is transient debris from a death event —
+      // permanent in-session but never persisted. A cold boot deliberately
+      // starts with no scrap (it re-accumulates as ships die). Excluding it also
+      // keeps the snapshot from carrying rows the hydrate side ignores anyway.
+      if (rec.kind === SWARM_KIND_SCRAP) continue;
       // Asteroids aren't tracked in swarmHealth; default to 0
       // (unused on restore because asteroids aren't kill-tracked).
       const health = d.swarmHealth.get(rec.id) ?? 0;

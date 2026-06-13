@@ -13,7 +13,15 @@
 
 import { Graphics, Text, TextStyle } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
-import { getShipKind, type ShipShape, type WeaponMount } from '../../../shared-types/shipKinds.js';
+import { shipScrapGroups } from '@core/geometry/shipScrapGroups';
+import { shipShapeScale } from '@core/geometry/shipHullOutline';
+import {
+  getShipKind,
+  type ShipShape,
+  type ShipCompositeShape,
+  type ShipPart,
+  type WeaponMount,
+} from '../../../shared-types/shipKinds.js';
 import { getStructureKind, structureHullPoints } from '../../../shared-types/structureKinds.js';
 
 export const SHIP_HITBOX_RADIUS = 12; // must match World.ts SHIP_RADIUS
@@ -48,10 +56,62 @@ export const DAMAGE_FLASH_COLOR = 0xffaaaa;
  * visual extent so collisions feel honest.
  */
 export function buildShipGfxFromShape(shape: ShipShape, tintOverride?: number): Graphics {
+  // Composite ships (multi-part silhouette over one gross collision hull) take
+  // a dedicated build path; everything else is the legacy single polygon.
+  if (shape.kind === 'composite') return buildCompositeShipGfx(shape, tintOverride);
   const g = new Graphics();
   const scale = shape.scale;
   g.poly(shape.points.map(([x, y]) => ({ x: x * scale, y: y * scale })));
   g.fill({ color: tintOverride ?? shape.color });
+  g.circle(0, 0, SHIP_HITBOX_RADIUS);
+  g.stroke({ color: HITBOX_COLOR, width: 1, alpha: 0.6 });
+  return g;
+}
+
+/**
+ * Pure per-part point transform — the `{x:(px+offsetX)*scale, y:(py+offsetY)*scale}`
+ * mapping a composite part's local points go through before they hit
+ * `Graphics.poly`. Extracted (like `spriteUpdateDecisions.ts`) so the geometry
+ * is unit-testable without constructing a Pixi `Graphics` (not node-constructible).
+ *
+ * Same no-Y-flip convention as the polygon branch — the sprite transform owns
+ * the world Y-flip (`sprite.y = -ship.y`), so the builder draws in catalogue
+ * (Pixi-up) local space directly.
+ */
+export function transformCompositePartPoints(
+  part: ShipPart,
+  scale: number,
+): Array<{ x: number; y: number }> {
+  return part.points.map(([px, py]) => ({
+    x: (px + part.offsetX) * scale,
+    y: (py + part.offsetY) * scale,
+  }));
+}
+
+/**
+ * Build a composite ship's `Graphics` — ONE Graphics, one `poly`/`fill`(/`stroke`)
+ * per part (drawn in part order so later parts layer on top), then the shared
+ * dashed hitbox circle once at the end. `tintOverride` replaces every part's
+ * fill colour exactly like the polygon branch's tint (local = green, etc.).
+ *
+ * The parts are drawn in catalogue (Pixi-up) local space at `shape.scale`; the
+ * sprite transform handles the world Y-flip (same convention as the polygon
+ * branch). Per-part `stroke` (with `strokeWidth ?? 1`) is drawn after the fill
+ * when present.
+ */
+export function buildCompositeShipGfx(shape: ShipCompositeShape, tintOverride?: number): Graphics {
+  const g = new Graphics();
+  const scale = shape.scale;
+  for (const part of shape.parts) {
+    const pts = transformCompositePartPoints(part, scale);
+    g.poly(pts);
+    g.fill({ color: tintOverride ?? part.color });
+    if (part.stroke != null) {
+      g.poly(pts);
+      g.stroke({ color: part.stroke, width: part.strokeWidth ?? 1 });
+    }
+  }
+  // Shared dashed hitbox circle once at the end (same as the polygon path).
   g.circle(0, 0, SHIP_HITBOX_RADIUS);
   g.stroke({ color: HITBOX_COLOR, width: 1, alpha: 0.6 });
   return g;
@@ -97,6 +157,44 @@ export function buildAsteroidGfx(entityId: number, radius: number): Graphics {
   g.fill({ color: ASTEROID_COLOR });
   g.poly(screenVerts);
   g.stroke({ color: ASTEROID_OUTLINE, width: 1.5 });
+  return g;
+}
+
+/**
+ * Scrap visual (pose-core kind 3): one composite COMPONENT broken off a dying
+ * ship. Renders that component's recentred sub-shapes (silhouette + details)
+ * from `shipScrapGroups(parentKind)[componentIndex]`, scaled by the parent's
+ * `shape.scale`, in Pixi-up local space (the sprite transform handles the world
+ * Y-flip, same convention as `buildCompositeShipGfx`). The piece keeps its part
+ * colours so a destroyed ship visibly comes apart into its own pieces. Falls
+ * back to a small grey chunk if the parent kind / component is unknown.
+ */
+export function buildScrapGfx(
+  parentKindId: string | undefined,
+  componentIndex: number,
+): Graphics {
+  const g = new Graphics();
+  const group = shipScrapGroups(parentKindId)[componentIndex];
+  if (!group) {
+    g.poly([
+      { x: -4, y: -4 },
+      { x: 4, y: -4 },
+      { x: 4, y: 4 },
+      { x: -4, y: 4 },
+    ]);
+    g.fill({ color: 0x777777 });
+    return g;
+  }
+  const scale = shipShapeScale(getShipKind(parentKindId));
+  for (const part of group.parts) {
+    const pts = part.points.map(([x, y]) => ({ x: x * scale, y: y * scale }));
+    g.poly(pts);
+    g.fill({ color: part.color });
+    if (part.stroke != null) {
+      g.poly(pts);
+      g.stroke({ color: part.stroke, width: part.strokeWidth ?? 1 });
+    }
+  }
   return g;
 }
 

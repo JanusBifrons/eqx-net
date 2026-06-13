@@ -102,6 +102,10 @@ export interface DamageRouterDeps {
   /** Wave-system reactive faction escalation — invoked on an applied DRONE hit
    *  with `(droneId, sourceId, atTick)`. Optional (test fixtures omit it). */
   onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
+  /** Scrap-on-death (Phase 2b-ii) — invoked for a DRONE just before it's
+   *  evicted on death, so a composite-kind drone breaks into scrap. Optional
+   *  (test fixtures / engineering rooms without a ScrapSpawner omit it). */
+  spawnScrapFromDrone?: (rec: SwarmDmgRecord) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;
   /** Broadcast a damage / destroy event to every client. */

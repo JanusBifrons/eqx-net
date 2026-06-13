@@ -38,6 +38,7 @@ import {
   buildAsteroidGfx,
   buildDroneGfx,
   buildStructureGfx,
+  buildScrapGfx,
   buildMinerRangeRingGfx,
   buildCapitalResourceText,
   formatResources,
@@ -115,6 +116,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // WS-9 (R2.12) — the Capital shows its mineral bank as a world-space
         // number below the body. Built ONCE here (invariant #14).
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
+      } else if (entry.kind === 3) {
+        // Scrap (pose-core kind 3, scrap-on-death): one component of a dead
+        // ship. Renders that component's recentred sub-shapes from the parent
+        // ship-kind (entry.shipKind) + componentIndex, so the piece looks like
+        // the part it broke off. Pose path below uses interpolateSwarmPose
+        // (the non-drone branch) for smooth drift.
+        sprite = buildScrapGfx(entry.shipKind, entry.componentIndex ?? 0);
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
       }

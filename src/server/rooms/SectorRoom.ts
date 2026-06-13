@@ -30,6 +30,7 @@ import {
   type IdleTracker,
 } from '../net/snapshotScheduler.js';
 import { SwarmSpawner, type AsteroidSpec } from '../spawn/SwarmSpawner.js';
+import { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 // Vec2 was used by the inline WorkerCmd union; now in PhysicsWorkerProxy.
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { AiController } from '../../core/ai/AiController.js';
@@ -43,6 +44,8 @@ import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
+import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
+import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -498,6 +501,9 @@ export class SectorRoom extends Room<SectorState> {
   /** Player onLeave handler (lingering / transit / despawn branches). Extracted to `LeaveHandler.ts`. */
   private leaveHandler!: LeaveHandler;
   private swarmSpawner!: SwarmSpawner;
+  /** Scrap-on-death (Phase 2b-ii) — breaks a dying composite ship/drone into
+   *  floating scrap pieces; owns the global FIFO cap. */
+  private scrapSpawner!: ScrapSpawner;
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
   private structurePlacement!: StructurePlacementSubsystem;
@@ -741,8 +747,10 @@ export class SectorRoom extends Room<SectorState> {
     getStructuresSlice: () => SnapshotMessage['structures'];
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
     spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
-    /** Phase 5 — seed a drone + drive the turret tick for the turret test. */
-    spawnTestDrone: (id: string, x: number, y: number) => boolean;
+    /** Phase 5 — seed a drone + drive the turret tick for the turret test.
+     *  `kind` (default 'fighter') lets a test seed a COMPOSITE-kind drone (e.g.
+     *  'havok') to exercise scrap-on-death (Phase 2b-ii). */
+    spawnTestDrone: (id: string, x: number, y: number, kind?: ShipKindId) => boolean;
     tickStructureTurrets: () => void;
     /** Unified-hull plan, Phase 4 — assert a structure resolves its OWN
      *  shield/hull (generic optional shield) from the STRUCTURE catalogue, not
@@ -768,10 +776,10 @@ export class SectorRoom extends Room<SectorState> {
       getStructuresSlice: () => this.structuresSlice,
       spawnTestAsteroid: (id, x, y, radius) =>
         this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
-      spawnTestDrone: (id, x, y) => {
-        const ok = this.swarmSpawner.spawnDrone({ id, x, y, kind: 'fighter' });
+      spawnTestDrone: (id, x, y, kind = 'fighter') => {
+        const ok = this.swarmSpawner.spawnDrone({ id, x, y, kind });
         if (ok) {
-          this.swarmHealth.set(id, getDroneMaxHealth('fighter') ?? 40);
+          this.swarmHealth.set(id, getDroneMaxHealth(kind) ?? 40);
           this.swarmShield.set(id, 0); // hull exposed so turret damage lands
         }
         return ok;
@@ -1208,6 +1216,10 @@ export class SectorRoom extends Room<SectorState> {
       aiController: this.aiController,
       onDroneDamaged: (droneId, sourceId, atTick) =>
         this.escalateFactionOnDroneHit(droneId, sourceId, atTick),
+      // Scrap-on-death (Phase 2b-ii) — a composite-kind drone breaks into scrap
+      // the instant before it's evicted on death. Deferred-eval closure (the
+      // ScrapSpawner is constructed later in the ctor, before any death fires).
+      spawnScrapFromDrone: (rec) => this.spawnScrapFromDrone(rec as SwarmEntityRecord),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -1515,8 +1527,8 @@ export class SectorRoom extends Room<SectorState> {
       : undefined;
     this.swarmSpawner = new SwarmSpawner(this.swarmRegistry, {
       takeSlot: () => this.freeSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody) =>
-        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle) =>
+        this.postToWorker({ type: 'SPAWN_OBSTACLE', slot, obstacleId: id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle }),
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       registerAi: (id, slot, behaviour) => this.aiController.register(id, slot, behaviour),
@@ -1536,6 +1548,29 @@ export class SectorRoom extends Room<SectorState> {
     if (seeded < asteroidRoster.length) {
       logger.error({ requested: asteroidRoster.length, seeded }, 'swarm spawner: not all asteroids seeded (slot pool exhausted)');
     }
+
+    // ── Scrap-on-death (Phase 2b-ii) ────────────────────────────────────
+    // Breaks a dying COMPOSITE ship (player or drone) into floating scrap
+    // pieces — one per `shipScrapGroups(kind)` component. Decision logic over
+    // injected hooks (spawn / health-seed / FIFO-evict), like TransitOrchestrator.
+    // `seedHealth` uses the SAME swarmHealth map the drone seed uses, so scrap is
+    // damageable through the existing swarm damage path. `evictScrap` quietly
+    // despawns the oldest scrap when the global cap (MAX_LIVE_SCRAP) is hit.
+    this.scrapSpawner = new ScrapSpawner({
+      spawnScrap: (spec) => this.swarmSpawner.spawnScrap(spec),
+      // Seed health AND a zero shield so scrap is damageable through the swarm
+      // layered-damage path (the drone leaf reads swarmShield; scrap has none,
+      // so a hit lands on hull and a destroyed piece is evicted). Mirrors the
+      // structure seed (swarmShield 0).
+      seedHealth: (id, hp) => {
+        this.swarmHealth.set(id, hp);
+        this.swarmShield.set(id, 0);
+      },
+      evictScrap: (id) => {
+        const rec = this.swarmRegistry.get(id);
+        if (rec) this.evictSwarmEntity(rec, { broadcast: true, emitDestroyed: false });
+      },
+    });
 
     // ── Structure placement (structures plan, Phase 2) ──────────────────
     // Decision logic over injected concretions (spawn / health-seed / despawn /
@@ -2042,6 +2077,33 @@ export class SectorRoom extends Room<SectorState> {
       if (destroyedShip !== undefined && this.ownerlessShips.has(destroyedShip.shipInstanceId)) {
         this.evictOwnerlessShip(destroyedShip.shipInstanceId);
       }
+
+      // Scrap-on-death (Phase 2b-ii) — break a dying ACTIVE composite hull into
+      // floating scrap. Only the active-hull case (we have a playerId-keyed slot
+      // + pose); lingering hulls are skipped (their slot bookkeeping is already
+      // torn down by the lingering death policy). Spawn BEFORE the slot is freed
+      // by the despawn/wreck poll — at SHIP_DESTROYED time the active slot is
+      // still allocated (the death policy only sets `ship.alive = false`). Read
+      // the death pose from shipPoseCache ?? SAB, exactly like
+      // WreckLifecycleCoordinator.convertShipToWreck.
+      if (activeHull !== undefined && shipScrapGroups(activeHull.kind).length > 0) {
+        const slot = this.playerToSlot.get(evt.targetId);
+        if (slot !== undefined) {
+          const b = slotBase(slot);
+          const pose = this.shipPoseCache.get(evt.targetId) ?? {
+            x:     this.sabF32[b + SLOT_X_OFF]!,
+            y:     this.sabF32[b + SLOT_Y_OFF]!,
+            vx:    this.sabF32[b + SLOT_VX_OFF]!,
+            vy:    this.sabF32[b + SLOT_VY_OFF]!,
+            angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+          };
+          this.scrapSpawner.spawnFromDeath(
+            activeHull.kind as ShipKindId,
+            { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle },
+            `scrap-${activeHull.shipInstanceId}`,
+          );
+        }
+      }
     });
 
     // Hi-res tick loop. Colyseus's `setSimulationInterval` uses `setInterval`,
@@ -2398,6 +2460,35 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
+   * Scrap-on-death (Phase 2b-ii) — break a dying DRONE into floating scrap.
+   * Called from the swarm death policy (`createSwarmDeath`) the instant before
+   * `evictSwarmEntity` frees the slot, so the dying drone's pose is still live
+   * in the SAB. Composite-kind drones (e.g. havok) yield one scrap body per
+   * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
+   * off the SAB via `rec.slot` (exactly like WreckLifecycleCoordinator reads a
+   * dying ship's pose).
+   */
+  private spawnScrapFromDrone(rec: SwarmEntityRecord): void {
+    // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
+    // drone-leaf death policy, but its rec.shipKind is the PARENT composite
+    // kind (which has scrap groups) — without this guard a destroyed scrap
+    // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
+    // spawns scrap here.
+    if (rec.kind === SWARM_KIND_SCRAP) return;
+    const kind = getShipKind(rec.shipKind);
+    if (shipScrapGroups(kind.id).length === 0) return; // polygon kind ⇒ no scrap
+    const b = slotBase(rec.slot);
+    const pose = {
+      x:     this.sabF32[b + SLOT_X_OFF]!,
+      y:     this.sabF32[b + SLOT_Y_OFF]!,
+      vx:    this.sabF32[b + SLOT_VX_OFF]!,
+      vy:    this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+    };
+    this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+  }
+
+  /**
    * Tear down a swarm entity. Combat kills pass `broadcast: true` so the client
    * flashes destruction and the kill-feed/SFX path runs. Phase 6 LoadShedder
    * passes `broadcast: false` so eviction for budget is invisible to players —
@@ -2416,6 +2507,13 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureRegistry.has(rec.id)) {
       this.structureRegistry.remove(rec.id);
       this.rebuildStructuresSlice();
+    }
+    // Scrap-on-death (Phase 2b-ii) — a SCRAP entity (kind 3) leaving the world
+    // (combat death OR FIFO cap) must drop out of the ScrapSpawner's live list
+    // so the global cap accounting stays correct. Harmless no-op when this
+    // eviction IS the FIFO path (the id was already shifted off the list).
+    if (rec.kind === SWARM_KIND_SCRAP) {
+      this.scrapSpawner.notifyRemoved(rec.id);
     }
     this.swarmEvictor.evict(rec, opts);
   }

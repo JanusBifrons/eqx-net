@@ -11,7 +11,11 @@
 
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 
-export type SwarmKind = 0 /* asteroid */ | 1 /* drone */ | 2 /* structure (GEP P4) */;
+export type SwarmKind =
+  | 0 /* asteroid */
+  | 1 /* drone */
+  | 2 /* structure (GEP P4) */
+  | 3 /* scrap (scrap-on-death Phase 2a) */;
 
 export interface SwarmEntityRecord {
   id: string;
@@ -30,6 +34,12 @@ export interface SwarmEntityRecord {
    *  u8 index into `SHIP_KINDS_LIST`; client renders the matching silhouette
    *  + colour. */
   shipKind?: string;
+  /** Scrap-component index (scrap-on-death Phase 2a), only meaningful when
+   *  `kind === 3` (scrap). Selects WHICH scrap group of the parent ship-kind
+   *  (`shipKind` carries the parent id) this piece is — the index into
+   *  `shipScrapGroups(parentKind)`. Encoded on the wire as the trailing u8 at
+   *  `SWARM_REC_COMPONENT_INDEX_OFF`; absent / 0 for every other kind. */
+  componentIndex?: number;
   /** Finite mineable resource pool (WS-4 / R2.27), only set for `kind === 0`
    *  asteroids — seeded from the silhouette area at spawn (`asteroidResources`).
    *  A Miner draws this down via `drawAsteroidResources`; an exhausted asteroid

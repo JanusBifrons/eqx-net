@@ -17,12 +17,14 @@ import {
   SWARM_REC_ANGVEL_OFF,
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
+  SWARM_REC_COMPONENT_INDEX_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
   SWARM_KIND_DRONE,
   SWARM_KIND_STRUCTURE,
+  SWARM_KIND_SCRAP,
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
@@ -107,21 +109,30 @@ export function decodeSwarmPacket(
     // v3: angvel at +24 (NEW), radius shifted to +28, shipKind to +32.
     const angvel = view.getFloat32(off + SWARM_REC_ANGVEL_OFF, true);
     const radius = view.getFloat32(off + SWARM_REC_RADIUS_OFF, true);
-    // Trailing u8 shipKind index (only meaningful when kind === drone).
+    // Trailing u8 shipKind index (shared subtype byte; demuxed on kind below).
     const shipKindByte = view.getUint8(off + SWARM_REC_SHIP_KIND_OFF);
+    // v4: componentIndex — meaningful only for scrap records, 0 otherwise.
+    const componentIndex = view.getUint8(off + SWARM_REC_COMPONENT_INDEX_OFF);
     off += SWARM_RECORD_BYTES;
 
     const sleeping = (recFlags & SWARM_RECORD_FLAG_SLEEPING) !== 0;
     const shieldDown = (recFlags & SWARM_RECORD_FLAG_SHIELD_DOWN) !== 0;
     // The shared subtype byte demuxes on `kind`: a drone decodes a ship-kind
     // id, a structure decodes a structure-kind id (both drive the silhouette +
-    // tint), an asteroid ignores it.
+    // tint), a scrap piece decodes its PARENT ship-kind id (drives its sub-shape
+    // palette), an asteroid ignores it.
     const shipKindId =
       kind === SWARM_KIND_DRONE
         ? shipKindFromIndex(shipKindByte)
         : kind === SWARM_KIND_STRUCTURE
           ? structureKindFromIndex(shipKindByte)
-          : undefined;
+          : kind === SWARM_KIND_SCRAP
+            ? shipKindFromIndex(shipKindByte)
+            : undefined;
+    // Only scrap records carry a meaningful componentIndex; leave it undefined
+    // for every other kind so the render-state entry stays minimal.
+    const componentIndexForEntry =
+      kind === SWARM_KIND_SCRAP ? componentIndex : undefined;
 
     let entry = swarm.get(entityId);
     if (!entry) {
@@ -137,6 +148,7 @@ export function decodeSwarmPacket(
       entry = {
         x, y, vx, vy, angle, angvel, radius, kind, sleeping, shieldDown, lastUpdateTick: tick,
         ...(shipKindId ? { shipKind: shipKindId } : {}),
+        ...(componentIndexForEntry !== undefined ? { componentIndex: componentIndexForEntry } : {}),
         prevX: x, prevY: y, prevAngle: angle,
         prevArrivalMs: nowMs, latestArrivalMs: nowMs,
         poseRing: ring,
@@ -162,6 +174,7 @@ export function decodeSwarmPacket(
       entry.radius = radius;
       entry.kind = kind;
       if (shipKindId) entry.shipKind = shipKindId;
+      if (componentIndexForEntry !== undefined) entry.componentIndex = componentIndexForEntry;
       entry.sleeping = sleeping;
       entry.shieldDown = shieldDown;
       entry.lastUpdateTick = tick;

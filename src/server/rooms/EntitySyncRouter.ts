@@ -34,6 +34,7 @@ import {
   SWARM_KIND_ASTEROID,
   SWARM_KIND_DRONE,
   SWARM_KIND_STRUCTURE,
+  SWARM_KIND_SCRAP,
 } from '../../shared-types/swarmWireFormat.js';
 import type { SwarmBroadcaster } from './SwarmBroadcaster.js';
 import type { SnapshotBroadcaster } from './SnapshotBroadcaster.js';
@@ -80,6 +81,7 @@ function assertTransportGovernance(): void {
     asteroid: SWARM_KIND_ASTEROID,
     drone: SWARM_KIND_DRONE,
     structure: SWARM_KIND_STRUCTURE,
+    scrap: SWARM_KIND_SCRAP,
   };
   for (const d of entityKinds()) {
     const t = d.sync.transport;

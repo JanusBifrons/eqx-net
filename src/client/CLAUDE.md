@@ -339,3 +339,25 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
 - The single-flash arrival-only policy (2026-05-16 Phase G3) is unchanged. The `pendingWarpEvents` drain still calls `renderer.triggerWarpIn`. M3 only changes the FILTERS attached during the active warp envelope; it does NOT change which events fire bursts.
 
 **Do not re-disable the chain wholesale** if a mobile regression appears post-M3 — first instrument the budget to confirm which tier is active during the regression, and dial `minimal` per-device if needed via the touch-default pin. The 2026-05-21 disable was a hammer; the budget tier dial is the surgical replacement.
+
+## Composite ship + scrap render (2026-06-13)
+
+- **Composite ships**: `buildCompositeShipGfx` (`render/pixi/spriteBuilders.ts`)
+  bakes a `ShipShape` `composite`'s `parts[]` into ONE `Graphics` (one sprite /
+  one draw); `buildShipGfxFromShape` delegates to it. Pixi-up local space (the
+  sprite transform handles the world Y-flip). `shipShapeSvg.tsx` renders the
+  picker silhouette the same way.
+- **Scrap (pose-core kind 3)** is a new client leaf
+  (`net/entity/leaves/scrapClientLeaf.ts`) routed by `ClientEntityFactory`
+  (`case SWARM_KIND_SCRAP`). It is asteroid-like: a convexHull predWorld collider
+  built from the parent kind's component collider
+  (`shipScrapGroups(entry.shipKind)[entry.componentIndex].collider`, mapped
+  `x*scale,-y*scale` — IDENTICAL to the server `ScrapSpawner`), in
+  `SCRAP_COLLISION_GROUPS`, LOCKED + reposed (the smooth drift comes from
+  `interpolateSwarmPose`, not the body). `buildScrapGfx(parentKind, componentIndex)`
+  renders the component's recentred sub-shapes from the catalogue, keeping the
+  part colours so a dead ship visibly comes apart. `swarmSpriteUpdater` has a
+  kind-3 create branch; the pose path is the existing non-drone
+  `interpolateSwarmPose`. Scrap geometry is NEVER on the wire — looked up by
+  `(parentShipKind, componentIndex)`. See
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).

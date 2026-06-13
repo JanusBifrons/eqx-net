@@ -300,3 +300,25 @@ reintroduces the spiral the 500-target cannot afford. Full story:
   Queries()` (diverges from client predWorld).
 - Full internals + the feel-test-lockstep env-noise caveat:
   [docs/architecture/collision-layers.md](../../docs/architecture/collision-layers.md).
+
+## Composite ships + scrap geometry (2026-06-13)
+
+- `ShipShape` is a discriminated union (`polygon | composite`). The
+  `shipHullOutline(kind)` seam (`geometry/shipHullOutline.ts`) returns the
+  composite `hull` or the polygon `points` — **every collision/physics reader
+  goes through it**, so polygon kinds are byte-identical. The
+  "silhouette == collider" invariant is RELAXED for composites: the collider is
+  the authored gross `hull`; the visual `parts[]` are detail (per-part live
+  collision is intentionally NOT modelled). `shipShapeScale` / `shipPrimaryColor`
+  are the sibling accessors.
+- `geometry/shipScrapGroups.ts` precomputes ONCE at module load (like
+  `shipHullDecomp`) one scrap GROUP per composite component — a silhouette
+  (`canScrap:true`) + its detail parts (role-prefix), each recentred on the
+  component centroid, with a convex-hull collider. Polygon kinds → empty. The
+  death→scrap path (server) and `buildScrapGfx` (client) both read it.
+- `physics/collisionGroups.ts` `SCRAP_COLLISION_GROUPS` (membership bit 1 /
+  filter ~bit 1) makes scrap NOT collide with other scrap but collide with
+  everything else. Threaded through `World.spawnObstacle`'s optional
+  `collisionGroups` param (→ worker `SPAWN_OBSTACLE`). `swarm/scrapConstants.ts`
+  holds the tuning (burst/damping/HP/MAX_LIVE_SCRAP). Full story:
+  [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).
