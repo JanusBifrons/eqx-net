@@ -280,6 +280,60 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.lastRangeCircleRadius).toBe(0);
   });
 
+  // ── Phase-4 C4 — collapse the candidate web on click-to-place ─────────────
+  // After Confirm, the preview is swapped to a dim `pending:true` ghost held for
+  // up to PENDING_PLACEMENT_TIMEOUT_MS (the Issue-7 anti-vanish bridge). The user
+  // wants "when you click to place it should remove all but the green" — so the
+  // candidate green/red/overflow web AND the range ring must collapse the instant
+  // the ghost goes pending (the real green edge then re-appears via the placed
+  // structure's `connTo` web once the server echoes it). Pre-fix
+  // `drawPlacementPreview` ignored `preview.pending`, so a pending ghost still ran
+  // the full pass and these counts were NON-zero → this FAILS on current main.
+  it('collapses ALL candidate lines + the range ring once the ghost is PENDING (C4)', () => {
+    // 8 in-range legal connector hubs → without the pending gate this is 6 green
+    // + 2 overflow + a non-zero range ring (the steady-state asserted above).
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2;
+      const id = i + 1;
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 200, Math.sin(angle) * 200));
+      structures.set(id, structureState({ connTo: [] }));
+    }
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      // pending:true ⇒ the committed/awaiting-server ghost, NOT a live positioning ghost.
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 0, angle: 0, pending: true },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(0);
+    expect(r.placementPreviewOverflowCount).toBe(0);
+    expect(r.lastRangeCircleRadius).toBe(0);
+  });
+
+  it('STILL draws the candidate web for a LIVE (non-pending) positioning ghost', () => {
+    // The collapse is pending-only — the live positioning preview (pending absent
+    // / false) keeps its green-chosen + red-candidate behaviour the user wants to
+    // KEEP before the click.
+    const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0, pending: false },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBeGreaterThanOrEqual(1);
+    expect(r.lastRangeCircleRadius).toBeGreaterThan(0);
+  });
+
   it('no overflow when in-range hubs are at or below the 6 cap', () => {
     // 4 legal hubs → all green, zero overflow.
     const swarm = new Map<number, SwarmRenderState>();
