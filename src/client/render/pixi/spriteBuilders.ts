@@ -13,6 +13,8 @@
 
 import { Graphics, Text, TextStyle } from 'pixi.js';
 import { generateAsteroidVertices } from '@core/swarm/asteroidShape';
+import { shipScrapGroups } from '@core/geometry/shipScrapGroups';
+import { shipShapeScale } from '@core/geometry/shipHullOutline';
 import {
   getShipKind,
   type ShipShape,
@@ -155,6 +157,44 @@ export function buildAsteroidGfx(entityId: number, radius: number): Graphics {
   g.fill({ color: ASTEROID_COLOR });
   g.poly(screenVerts);
   g.stroke({ color: ASTEROID_OUTLINE, width: 1.5 });
+  return g;
+}
+
+/**
+ * Scrap visual (pose-core kind 3): one composite COMPONENT broken off a dying
+ * ship. Renders that component's recentred sub-shapes (silhouette + details)
+ * from `shipScrapGroups(parentKind)[componentIndex]`, scaled by the parent's
+ * `shape.scale`, in Pixi-up local space (the sprite transform handles the world
+ * Y-flip, same convention as `buildCompositeShipGfx`). The piece keeps its part
+ * colours so a destroyed ship visibly comes apart into its own pieces. Falls
+ * back to a small grey chunk if the parent kind / component is unknown.
+ */
+export function buildScrapGfx(
+  parentKindId: string | undefined,
+  componentIndex: number,
+): Graphics {
+  const g = new Graphics();
+  const group = shipScrapGroups(parentKindId)[componentIndex];
+  if (!group) {
+    g.poly([
+      { x: -4, y: -4 },
+      { x: 4, y: -4 },
+      { x: 4, y: 4 },
+      { x: -4, y: 4 },
+    ]);
+    g.fill({ color: 0x777777 });
+    return g;
+  }
+  const scale = shipShapeScale(getShipKind(parentKindId));
+  for (const part of group.parts) {
+    const pts = part.points.map(([x, y]) => ({ x: x * scale, y: y * scale }));
+    g.poly(pts);
+    g.fill({ color: part.color });
+    if (part.stroke != null) {
+      g.poly(pts);
+      g.stroke({ color: part.stroke, width: part.strokeWidth ?? 1 });
+    }
+  }
   return g;
 }
 

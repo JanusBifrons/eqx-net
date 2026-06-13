@@ -13,16 +13,19 @@ import {
   SWARM_KIND_ASTEROID,
   SWARM_KIND_DRONE,
   SWARM_KIND_STRUCTURE,
+  SWARM_KIND_SCRAP,
 } from '@shared-types/swarmWireFormat';
 import { AsteroidClientLeaf } from './leaves/asteroidClientLeaf.js';
 import { DroneClientLeaf } from './leaves/droneClientLeaf.js';
 import { StructureClientLeaf } from './leaves/structureClientLeaf.js';
+import { ScrapClientLeaf } from './leaves/scrapClientLeaf.js';
 import type { IClientEntityLeaf } from './IClientEntityLeaf.js';
 
 export class ClientEntityFactory {
   private readonly asteroid = new AsteroidClientLeaf();
   private readonly drone = new DroneClientLeaf();
   private readonly structure = new StructureClientLeaf();
+  private readonly scrap = new ScrapClientLeaf();
 
   constructor() {
     // Cross-check the core registry's pose-core bytes (each leaf reads its own
@@ -31,6 +34,7 @@ export class ClientEntityFactory {
     assertPoseCoreKind(this.asteroid, SWARM_KIND_ASTEROID);
     assertPoseCoreKind(this.drone, SWARM_KIND_DRONE);
     assertPoseCoreKind(this.structure, SWARM_KIND_STRUCTURE);
+    assertPoseCoreKind(this.scrap, SWARM_KIND_SCRAP);
   }
 
   /** The client leaf for a pose-core `kind` byte, or `null` for an unrecognised
@@ -44,6 +48,8 @@ export class ClientEntityFactory {
         return this.drone;
       case SWARM_KIND_STRUCTURE:
         return this.structure;
+      case SWARM_KIND_SCRAP:
+        return this.scrap;
       default:
         return null;
     }
