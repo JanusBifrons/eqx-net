@@ -366,7 +366,13 @@ the netgate + the existing integration suite.
   any speed (the per-side `RamPair.damageA`/`damageB` are applied independently
   in `onContactBatch`). Masses are the folded Rapier body masses threaded via
   `Contact.aMass`/`bMass` (`World.getBodyMass`); asteroids still deal but don't
-  take (no `swarmHealth`). 🔴 netgate (contact→damage live-loop).
+  take (no `swarmHealth`). **P3.3 (2026-06-13): damage is `Math.round`ed BEFORE
+  the emit guard in `onContactBatch`** — a sub-0.5 collision emits NO `ram_damage`
+  / no DamageEvent (so no client sparks + no "0" damage number; "sparks and
+  damage still show… it just now shows 0s"). The applied damage now matches the
+  client's displayed integer. Lock: `ramming.test.ts` (a low-speed fractional
+  collision fires `collision_resolved` but no `ram_damage`). 🔴 netgate
+  (contact→damage live-loop).
 - `feel-test-lockstep.spec.ts` is host-load sensitive — confirm on a
   quiet host/CI (it fails on pre-shield HEAD too in a loaded session;
   see docs/LESSONS.md 2026-05-16). Catalogue version bumped 1→2.

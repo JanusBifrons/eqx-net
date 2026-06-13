@@ -132,6 +132,47 @@ describe('SectorRoom integration — ramming damage (mass-differential model, WS
     expect(findShip(state, heavy).shield).toBe(CROSSGUARD.shieldMax);
   }, 30_000);
 
+  it('a LOW-speed collision computing fractional (<0.5) damage emits NO ram_damage — the pipeline aborts (P3.3)', async () => {
+    // P3.3 — after WS-1 most light bumps compute a tiny fractional damage
+    // (e.g. 0.1). The old guard tested the raw float `> 0`, so 0.1 PASSED →
+    // a DamageEvent broadcast → the client drew impact sparks + a damage
+    // number that rounded to "0" ("Sparks and damage still show… it just now
+    // shows 0s"). The fix rounds damage BEFORE the guard, so sub-0.5 emits
+    // nothing. Repro: a light fighter (mass 1) drifts into a heavy crossguard
+    // (mass 30) at ~90 u/s closing — above RAM_MIN_IMPACT_SPEED (50, so the
+    // contact registers) but the reverse-square speed factor at ~90 is tiny:
+    // 50 × ((~85−50)/650)² × massDiff(1,30) ≈ 0.13 → rounds to 0. The CONTACT
+    // still fires (collision_resolved); the DAMAGE pipeline must not.
+    const light = randomUUID();
+    const heavy = randomUUID();
+    const cr = await harness.connectActive(light, { shipKind: 'fighter' });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === light });
+    await harness.connectActive(heavy, { shipKind: 'crossguard' });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === heavy });
+
+    const room = getRoomById(cr.roomId);
+    const state = room.state as SectorState;
+    const internal = room._internals;
+    const pair = (d: Record<string, unknown>): boolean =>
+      (d['aId'] === light && d['bId'] === heavy) || (d['aId'] === heavy && d['bId'] === light);
+
+    // Heavy parked at origin; light drifts in along +y at a LOW closing speed.
+    internal.postToWorker({ type: 'SET_POSITION', entityId: heavy, x: 0, y: 0, angle: 0, vx: 0, vy: 0, angvel: 0 });
+    internal.postToWorker({ type: 'SET_POSITION', entityId: light, x: 0, y: -250, angle: 0, vx: 0, vy: 90, angvel: 0 });
+
+    // The contact MUST register (proves the collision is real, not a miss).
+    await harness.events.waitFor({ tag: 'collision_resolved', where: pair }, { timeoutMs: 4000 });
+    // Give any (incorrect) ram_damage time to fire across the contact window.
+    await harness.advance(80);
+
+    // The fix: a fractional-damage collision emits NO ram_damage (so no
+    // DamageEvent → no sparks → no "0" number). Pre-fix the raw 0.13 > 0 fired
+    // ram_damage and this count was > 0.
+    expect(harness.events.count({ tag: 'ram_damage', where: pair }), 'a sub-0.5 collision must NOT emit ram_damage').toBe(0);
+    // Outcome: no shield was scratched off the light ship.
+    expect(findShip(state, light).shield).toBe(FIGHTER.shieldMax);
+  }, 30_000);
+
   it('a no-health target is immune: applyDamage is a safe no-op', async () => {
     const p1 = randomUUID();
     const cr = await harness.connectActive(p1, { shipKind: 'fighter' });

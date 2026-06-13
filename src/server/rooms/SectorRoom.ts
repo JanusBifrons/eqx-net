@@ -3158,18 +3158,28 @@ export class SectorRoom extends Room<SectorState> {
           // attribution). applyDamage already no-ops on asteroids (immune - no
           // swarmHealth entry), so "asteroids deal but do not take" still holds.
           // Applied once per pair per tick.
-          if ((p.damageA > 0 || p.damageB > 0) && !this.disableCollisionDamage) {
+          // P3.3 — ROUND the damage BEFORE the guard so a fractional collision
+          // (the post-WS-1 light-bump regime, e.g. 0.13) emits NOTHING. The old
+          // guard tested the raw float `> 0`, so 0.13 passed → a DamageEvent
+          // broadcast → the client drew impact sparks + a damage number that
+          // rounded to "0" ("sparks and damage still show… it just now shows
+          // 0s"). Gating on the ROUNDED value aborts the whole pipeline (no
+          // applyDamage → no DamageEvent → no sparks) for any sub-0.5 hit, and
+          // makes the applied damage match what the client displays.
+          const damageA = Math.round(p.damageA);
+          const damageB = Math.round(p.damageB);
+          if ((damageA > 0 || damageB > 0) && !this.disableCollisionDamage) {
             serverLogEvent('ram_damage', {
               aId: p.aId,
               bId: p.bId,
               force: parseFloat(p.force.toFixed(1)),
               impactSpeed: parseFloat(p.impactSpeed.toFixed(1)),
-              damageA: parseFloat(p.damageA.toFixed(2)),
-              damageB: parseFloat(p.damageB.toFixed(2)),
+              damageA,
+              damageB,
               tick,
             });
-            if (p.damageA > 0) this.applyDamage(p.aId, p.bId, p.damageA);
-            if (p.damageB > 0) this.applyDamage(p.bId, p.aId, p.damageB);
+            if (damageA > 0) this.applyDamage(p.aId, p.bId, damageA);
+            if (damageB > 0) this.applyDamage(p.bId, p.aId, damageB);
           }
         }
       },
