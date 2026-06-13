@@ -19,10 +19,10 @@
  * policy — see `src/client/CLAUDE.md` 2026-05-16 Phase G3); the
  * arrival reveal is the only legitimate burst.
  *
- * `setLoadCurtain(active)` tweens the full-canvas dark overlay (200 ms
- * rise / 380 ms fade) to hide the canvas during join + transit load.
- * Independent of the warp filter chain — the curtain alone runs with
- * filters detached.
+ * `setLoadCurtain(active)` drives the full-canvas dark overlay (INSTANT
+ * rise / 380 ms fade — see `curtainAlphaAt`) to hide the canvas during
+ * join + transit load. Independent of the warp filter chain — the curtain
+ * alone runs with filters detached.
  *
  * Composes the pure helpers `shouldDetachWarpVisual`,
  * `warpEventFiresBurst`, `resolveWarpFilterCenter` (all exported from
@@ -70,8 +70,25 @@ const BACKGROUND_COLOR = 0x05070f;
 // matches the background so a black opaque overlay reads as "starfield
 // dimmed", same visual intent as the 0.97 variant.
 const CURTAIN_PEAK_ALPHA = 1.0;
-const CURTAIN_RISE_MS = 200;
 const CURTAIN_FADE_MS = 380;
+
+/**
+ * Load-curtain alpha during its tween (WS-14 / R2.26-curtain).
+ *
+ * The RISE (cover going up, target ≥ from) is **instant**: the curtain must be
+ * fully opaque BEFORE the destination sector is revealed, or the destination
+ * sprites flash through the still-rising semi-transparent curtain (R2.26
+ * "ship-change briefly flashes the sector" — the rise used to tween over 200 ms
+ * while the destination's first frame rendered sooner). Only the FADE-OUT (the
+ * arrival reveal, target < from) is tweened over `CURTAIN_FADE_MS` so the new
+ * sector fades in smoothly. This is the curtain only — the single-flash arrival
+ * burst (`triggerWarpIn` → `warpFlash`) is untouched.
+ */
+export function curtainAlphaAt(fromAlpha: number, targetAlpha: number, elapsedMs: number): number {
+  if (targetAlpha >= fromAlpha) return targetAlpha; // rising (or no change) → snap opaque
+  if (elapsedMs >= CURTAIN_FADE_MS) return targetAlpha; // fade-out complete
+  return fromAlpha + (targetAlpha - fromAlpha) * (elapsedMs / CURTAIN_FADE_MS);
+}
 
 export class WarpFilterChain {
   // ── State (was on PixiRenderer) ──────────────────────────────────────
@@ -332,17 +349,13 @@ export class WarpFilterChain {
     const p = this.warpParams;
 
     // ---- Load curtain alpha tween (runs unconditionally) ----
+    // Instant RISE (opaque before the destination reveals), smooth FADE-OUT.
     if (this.loadCurtainTargetAlpha !== this.loadCurtain.alpha) {
-      const rising = this.loadCurtainTargetAlpha > this.loadCurtainTweenFromAlpha;
-      const dur = rising ? CURTAIN_RISE_MS : CURTAIN_FADE_MS;
-      const elapsed = now - this.loadCurtainTweenStartedAt;
-      if (elapsed >= dur) {
-        this.loadCurtain.alpha = this.loadCurtainTargetAlpha;
-      } else {
-        const t = elapsed / Math.max(1, dur);
-        this.loadCurtain.alpha = this.loadCurtainTweenFromAlpha
-          + (this.loadCurtainTargetAlpha - this.loadCurtainTweenFromAlpha) * t;
-      }
+      this.loadCurtain.alpha = curtainAlphaAt(
+        this.loadCurtainTweenFromAlpha,
+        this.loadCurtainTargetAlpha,
+        now - this.loadCurtainTweenStartedAt,
+      );
     }
 
     // ---- Burst + flash decay ----
