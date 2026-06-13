@@ -11,8 +11,9 @@
  */
 import type { BeamSpriteStyle } from './BeamSpritePool.js';
 
-/** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber. */
-export const REMOTE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffaa44, width: 2, alpha: 1 };
+/** Remote players' / drones' / turrets' combat hitscan beam — thin warm amber.
+ *  `taper` (P3.13) — combat beams fade toward the tip of their range. */
+export const REMOTE_BEAM_STYLE: BeamSpriteStyle = { tint: 0xffaa44, width: 2, alpha: 1, taper: true };
 
 /** The Miner's mining (drill) beam — deliberately DISTINCT from the combat
  *  beam: a fatter, warmer amber at lower alpha so a player reads "mining laser",

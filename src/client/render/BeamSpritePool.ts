@@ -47,6 +47,54 @@ export interface BeamSpriteStyle {
   width: number;
   /** Sprite alpha. */
   alpha: number;
+  /** P3.13 — when true, the beam uses a horizontal GRADIENT texture that fades
+   *  from opaque at the base to transparent at the tip, so a combat beam tapers
+   *  off toward the end of its range (the beam is drawn to the weapon's max
+   *  range; the tip fades to nothing). Absent/false ⇒ the flat white texture
+   *  (the mining DRILL beam stays a solid connection). */
+  taper?: boolean;
+}
+
+/**
+ * Lazily-built SHARED horizontal gradient texture (P3.13): opaque white for the
+ * inner ~55 %, ramping to fully transparent at the right edge. Stretched along
+ * the beam's +X by `scale.x`, it tapers the beam toward its tip. Shared across
+ * all tapering pools so the beams still batch into one drawcall. Falls back to
+ * the flat WHITE texture wherever a 2D canvas isn't available (headless / unit
+ * tests / a renderer backend without canvas), so construction never throws.
+ */
+let _beamGradientTexture: Texture | null = null;
+function beamGradientTexture(): Texture {
+  if (_beamGradientTexture) return _beamGradientTexture;
+  try {
+    const W = 256;
+    const canvas =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(W, 1)
+        : typeof document !== 'undefined'
+          ? Object.assign(document.createElement('canvas'), { width: W, height: 1 })
+          : null;
+    const ctx = canvas?.getContext('2d') as
+      | CanvasRenderingContext2D
+      | OffscreenCanvasRenderingContext2D
+      | null
+      | undefined;
+    if (!canvas || !ctx) {
+      _beamGradientTexture = Texture.WHITE;
+      return _beamGradientTexture;
+    }
+    const grad = ctx.createLinearGradient(0, 0, W, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,1)');
+    grad.addColorStop(0.55, 'rgba(255,255,255,1)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, 1);
+    _beamGradientTexture = Texture.from(canvas as unknown as HTMLCanvasElement);
+    return _beamGradientTexture;
+  } catch {
+    _beamGradientTexture = Texture.WHITE;
+    return _beamGradientTexture;
+  }
 }
 
 export class BeamSpritePool {
@@ -59,10 +107,10 @@ export class BeamSpritePool {
 
   constructor(style: BeamSpriteStyle) {
     this._style = { ...style };
-    // Use the WHITE singleton texture — every BeamSpritePool shares
-    // it, so the renderer can batch all beams across pools into a
-    // single drawcall when they sit under the same parent container.
-    this._texture = Texture.WHITE;
+    // Combat beams (taper) use the shared gradient texture so they fade toward
+    // the tip; everything else uses the WHITE singleton. Both are shared, so a
+    // pool's beams still batch into a single drawcall (P3.13).
+    this._texture = style.taper ? beamGradientTexture() : Texture.WHITE;
     this.container = new Container();
     this.container.label = 'BeamSpritePool';
   }
