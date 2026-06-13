@@ -72,7 +72,15 @@ export function createSwarmPerHit(deps: LeafDeps): PerHitEffect {
 export function createSwarmDeath(deps: LeafDeps): DeathPolicy {
   return {
     onDestroyed(target, _targetId, _wireTargetId, sourceId) {
-      deps.evictSwarmEntity(target as SwarmLeafTarget, {
+      const rec = target as SwarmLeafTarget;
+      // Scrap-on-death (Phase 2b-ii): break a COMPOSITE-kind drone into floating
+      // scrap pieces BEFORE the slot is freed/despawned by evictSwarmEntity (the
+      // room reads the dying pose off the still-live SAB slot). The hook is
+      // drone-only at the call site below; the room's resolver guards composites
+      // (a polygon kind / non-drone yields nothing). Mirrors the optional
+      // onDroneDamaged seam — absent ⇒ no scrap (test fixtures).
+      deps.spawnScrapFromDrone?.(rec);
+      deps.evictSwarmEntity(rec, {
         broadcast: true,
         emitDestroyed: true,
         shooterId: sourceId,

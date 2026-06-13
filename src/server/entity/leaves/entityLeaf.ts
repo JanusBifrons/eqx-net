@@ -161,4 +161,11 @@ export interface LeafDeps {
    *  A drone-on-drone hit resolves to no faction (factionOf → null) ⇒ no
    *  escalation (req #5 gate). Optional ⇒ no escalation (e.g. test fixtures). */
   onDroneDamaged?: (droneId: string, sourceId: string, atTick: number) => void;
+  /** Scrap-on-death (Phase 2b-ii) — called for a DRONE (kind 1) the instant
+   *  before it's evicted on a hull 0-cross, so a COMPOSITE-kind drone (e.g.
+   *  havok) breaks into floating scrap pieces. The room reads the dying drone's
+   *  pose from the SAB via `rec.slot` and calls `ScrapSpawner.spawnFromDeath`.
+   *  A polygon kind (fighter/scout/…) yields zero scrap. Optional ⇒ no scrap
+   *  (e.g. test fixtures / engineering rooms without a ScrapSpawner). */
+  spawnScrapFromDrone?: (rec: SwarmLeafTarget) => void;
 }

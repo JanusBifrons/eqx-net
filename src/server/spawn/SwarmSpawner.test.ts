@@ -10,7 +10,7 @@ import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
   SAB_TOTAL_BYTES,
   slotBase,
-  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_FLAGS_OFF,
+  SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF,
   FLAG_IS_SWARM, FLAG_KIND_DRONE,
 } from '../../shared-types/sabLayout.js';
 
@@ -20,6 +20,7 @@ interface PostedCmd {
   linearDamping?: number;
   staticBody?: boolean;
   collisionGroups?: number;
+  angle?: number;
 }
 
 describe('SwarmSpawner', () => {
@@ -41,8 +42,8 @@ describe('SwarmSpawner', () => {
     lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups) =>
-        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups, angle }),
       sabF32: f32,
       sabU32: u32,
       registerLagComp: (id) => lagCompRegistered.push(id),
@@ -100,7 +101,7 @@ describe('SwarmSpawner', () => {
       { x: -10, y: 8 },
     ];
     const ok = spawner.spawnScrap({
-      id: 'scrap-0', x: 120, y: -40, vx: 5, vy: -3, radius: 12,
+      id: 'scrap-0', x: 120, y: -40, vx: 5, vy: -3, angle: 0.7, radius: 12,
       parentShipKind: 'havok', componentIndex: 2, vertices: verts,
     });
     expect(ok).toBe(true);
@@ -124,11 +125,15 @@ describe('SwarmSpawner', () => {
     expect(cmd.vertices).toBe(verts); // convex-hull collider from the passed poly
     expect(cmd.vx).toBe(5);
     expect(cmd.vy).toBe(-3);
+    // Scrap spawns rotated to the dying ship's angle: posted to the worker AND
+    // primed into the SAB pose angle slot so the first update() reads it.
+    expect(cmd.angle).toBeCloseTo(0.7, 6);
+    expect(f32[slotBase(rec.slot) + SLOT_ANGLE_OFF]).toBeCloseTo(0.7, 6);
   });
 
   it('spawnScrap: mass defaults to SCRAP_DEFAULT_MASS when omitted', () => {
     spawner.spawnScrap({
-      id: 'scrap-m', x: 0, y: 0, vx: 0, vy: 0, radius: 10,
+      id: 'scrap-m', x: 0, y: 0, vx: 0, vy: 0, angle: 0, radius: 10,
       parentShipKind: 'havok', componentIndex: 0,
       vertices: [{ x: -5, y: -5 }, { x: 5, y: -5 }, { x: 0, y: 5 }],
     });

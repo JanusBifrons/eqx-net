@@ -1,4 +1,4 @@
-import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
+import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, SLOT_FLAGS_OFF, FLAG_IS_SWARM, FLAG_KIND_DRONE, slotBase } from '../../shared-types/sabLayout.js';
 import { SwarmEntityRegistry, type SwarmKind } from '../net/SwarmEntityRegistry.js';
 import type { IAiBehaviour } from '../../core/contracts/IAiBehaviour.js';
 import type { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -48,8 +48,11 @@ export interface SpawnerHooks {
    *  and remain ball colliders. `staticBody` (structures, kind=2) locks the
    *  body so a ram can't move it (P3.10). `collisionGroups` (scrap, kind=3)
    *  carries a Rapier collision-group mask so scrap doesn't collide with other
-   *  scrap but does collide with everything else (scrap-on-death Phase 2b-i). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number) => void;
+   *  scrap but does collide with everything else (scrap-on-death Phase 2b-i).
+   *  `angle` (scrap, kind=3) rotates the body at spawn so a recentred scrap
+   *  collider is oriented to match the dying ship; every other caller passes 0
+   *  / undefined (legacy axis-aligned spawn). */
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number, angle?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -233,6 +236,9 @@ export class SwarmSpawner {
     y: number;
     vx: number;
     vy: number;
+    /** Spawn angle (radians, world math-up). The dying ship's angle so the
+     *  recentred scrap-group collider is oriented correctly. */
+    angle: number;
     radius: number;
     mass?: number;
     parentShipKind: ShipKindId;
@@ -245,8 +251,9 @@ export class SwarmSpawner {
     // Mirror spawnStructure: spawnOne attaches the convexHull collider from the
     // passed vertices; the parent ship-kind + component index are set on the
     // freshly-registered record below (spawnOne only auto-sets shipKind for
-    // drones). The behaviour factory is undefined (scrap has no AI).
-    const ok = this.spawnOne(SWARM_KIND_SCRAP, a, undefined, undefined, spec.vertices);
+    // drones). The behaviour factory is undefined (scrap has no AI). `angle`
+    // is threaded into the SAB pose + the worker spawn so the body is rotated.
+    const ok = this.spawnOne(SWARM_KIND_SCRAP, a, undefined, undefined, spec.vertices, spec.angle);
     if (ok) {
       const rec = this.registry.get(spec.id);
       if (rec) {
@@ -263,6 +270,7 @@ export class SwarmSpawner {
     behaviourFactory: ((shipKind: ShipKind) => IAiBehaviour) | (() => IAiBehaviour) | undefined,
     shipKind?: ShipKind,
     structureVertices?: ReadonlyArray<Vec2>,
+    angle = 0,
   ): boolean {
     const slot = this.hooks.takeSlot();
     if (slot === undefined) return false;
@@ -272,6 +280,14 @@ export class SwarmSpawner {
     this.hooks.sabF32[base + SLOT_Y_OFF]  = a.y;
     this.hooks.sabF32[base + SLOT_VX_OFF] = a.vx;
     this.hooks.sabF32[base + SLOT_VY_OFF] = a.vy;
+    // SCRAP (kind 3) spawns rotated to the dying ship's angle so its recentred
+    // collider is oriented correctly; prime the SAB pose angle slot so the
+    // first update() tick reads it (mirrors the x/y/vx/vy priming above). The
+    // worker SET_HULL/setShipState in the SPAWN_OBSTACLE handler applies the
+    // same angle to the Rapier body. Other kinds keep the angle-0 default.
+    if (kind === SWARM_KIND_SCRAP && angle !== 0) {
+      this.hooks.sabF32[base + SLOT_ANGLE_OFF] = angle;
+    }
     // Set IS_SWARM and KIND_DRONE flag bits on the SAB slot. These bits are
     // owned by the main thread (set on spawn, cleared on despawn); the worker
     // only ever toggles FLAG_SLEEPING.
@@ -334,7 +350,10 @@ export class SwarmSpawner {
     // other scrap but does collide with everything else. Every other kind passes
     // undefined ⇒ Rapier's default groups (collide with all).
     const collisionGroups = kind === SWARM_KIND_SCRAP ? SCRAP_COLLISION_GROUPS : undefined;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups);
+    // SCRAP (kind 3) carries its spawn angle so the worker rotates the body to
+    // match the dying ship. Other kinds pass 0 (legacy axis-aligned spawn).
+    const spawnAngle = kind === SWARM_KIND_SCRAP ? angle : 0;
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups, spawnAngle);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's
