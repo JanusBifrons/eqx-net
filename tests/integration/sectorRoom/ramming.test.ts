@@ -141,8 +141,9 @@ describe('SectorRoom integration — ramming damage (mass-differential model, WS
     // nothing. Repro: a light fighter (mass 1) drifts into a heavy crossguard
     // (mass 30) at ~90 u/s closing — above RAM_MIN_IMPACT_SPEED (50, so the
     // contact registers) but the reverse-square speed factor at ~90 is tiny:
-    // 50 × ((~85−50)/650)² × massDiff(1,30) ≈ 0.13 → rounds to 0. The CONTACT
-    // still fires (collision_resolved); the DAMAGE pipeline must not.
+    // RAM_DAMAGE_MAX(10) × ((~85−50)/650)² × massDiff(1,30) ≈ 0.03 → rounds to 0
+    // (even smaller after the Phase-4 ×5 cut). The CONTACT still fires
+    // (collision_resolved); the DAMAGE pipeline must not.
     const light = randomUUID();
     const heavy = randomUUID();
     const cr = await harness.connectActive(light, { shipKind: 'fighter' });
