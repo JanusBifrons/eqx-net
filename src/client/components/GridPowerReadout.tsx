@@ -21,7 +21,7 @@ export function GridPowerReadout(): JSX.Element | null {
   return (
     <Box sx={ROW_SX}>
       <Box data-testid="grid-power" data-net-power={netPower} sx={positive ? CHIP_SX : CHIP_LOW_SX}>
-        ⚡ {netPower > 0 ? '+' : ''}{netPower}
+        GRID ⚡ {netPower > 0 ? '+' : ''}{netPower}
       </Box>
       <Box data-testid="grid-minerals" data-minerals={minerals} sx={MINERAL_SX}>
         ⛏ {Math.floor(minerals).toLocaleString()}

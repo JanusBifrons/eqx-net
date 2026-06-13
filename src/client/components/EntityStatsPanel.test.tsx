@@ -14,12 +14,6 @@ import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import type { StructureRenderState } from '@core/contracts/IRenderer';
-
-/** Minimal fake client exposing just `mirror.structures` for the richer-stats read. */
-function fakeClientWithStructure(entityId: number, st: StructureRenderState): ColyseusGameClient {
-  return { mirror: { structures: new Map([[entityId, st]]) } } as unknown as ColyseusGameClient;
-}
 
 /** Flexible fake client — seed any mirror maps the panel reads (swarm /
  *  lingeringShips / structures). */
@@ -94,15 +88,13 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-hull-pct', '80');
   });
 
-  it('merges richer structure stats — build %, powered, net power (Issue 8)', () => {
+  it('merges richer structure stats — build %, powered, PER-BUILDING power (Issue 8 + Phase-4 C5)', () => {
     setGameClient(
-      fakeClientWithStructure(7, {
-        powered: true,
-        netPower: 12,
-        connTo: [],
-        built: false,
-        buildPct: 0.5,
-        deconstructPct: 0,
+      fakeClient({
+        // The grid AGGREGATE netPower (12) stays on the slice + the data-net-power
+        // attr; the visible PWR line is now the building's OWN +gen/-drain (C5).
+        structures: new Map([[7, { powered: true, netPower: 12, connTo: [], built: false, buildPct: 0.5, deconstructPct: 0 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
       }),
     );
     applySelectionStats({ id: '7', name: 'Solar', hp: 300, hpMax: 300 });
@@ -111,9 +103,42 @@ describe('EntityStatsPanel', () => {
     const panel = screen.getByTestId('entity-stats-panel');
     expect(panel).toHaveAttribute('data-build-pct', '50');
     expect(panel).toHaveAttribute('data-powered', '1');
-    expect(panel).toHaveAttribute('data-net-power', '12');
+    expect(panel).toHaveAttribute('data-net-power', '12'); // grid aggregate (unchanged attr)
     expect(screen.getByText('BUILD')).toBeInTheDocument(); // mid-construction bar shown
-    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +12');
+    // C5 — the PWR line is the SOLAR's own generation (+30), NOT the grid total (+12).
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +30');
+    expect(panel).toHaveAttribute('data-self-power', '30');
+  });
+
+  // ── Phase-4 C5 — the panel shows the SELECTED building's own drain/surplus,
+  // not the shared grid aggregate (which was identical for every building in a
+  // grid). Pure catalogue lookup (powerOutput − powerConsumption). ──
+  it('shows a CONSUMER building its own negative draw — turret PWR -15 (C5)', () => {
+    setGameClient(
+      fakeClient({
+        // Grid aggregate +35, but the turret itself DRAINS 15.
+        structures: new Map([[9, { powered: true, netPower: 35, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        swarm: new Map([[9, { kind: 2, shipKind: 'turret', radius: 36, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '9', name: 'Turret', hp: 600, hpMax: 600 });
+    useUIStore.setState({ selectedEntityId: 'swarm-9', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
+    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-self-power', '-15');
+  });
+
+  it('shows the Capital its own generation — PWR +50 (C5)', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([[1, { powered: true, netPower: 35, connTo: [], built: true, buildPct: 1, deconstructPct: 0 }]]),
+        swarm: new Map([[1, { kind: 2, shipKind: 'capital', radius: 80, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '1', name: 'Capital', hp: 5000, hpMax: 5000 });
+    useUIStore.setState({ selectedEntityId: 'swarm-1', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR +50');
   });
 
   // ── WS-9/R2.8 — structure stats are INSTANT (slice is client-resident); only
@@ -136,6 +161,70 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-spinner')).toBeInTheDocument();
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Turret'); // instant name
     expect(screen.queryByText('HULL')).toBeNull(); // hull bar replaced by the spinner
+  });
+
+  // ── Phase-4 C3 — structure hull renders INSTANTLY from the slice (no pop-in) ─
+  // Pre-fix the structure hull came ONLY from the server entity_stats round-trip,
+  // so the bar showed a spinner (data-stats-pending=1, hull 0) until a packet
+  // landed ~one RTT later — the "hull UI pops in" report. The slice now carries
+  // hpPct (0..1 on the mirror), so hull is non-zero on the FIRST polled frame
+  // with NO matching server packet. FAILS on current main (slice has no hpPct →
+  // spinner).
+  it('renders structure hull from the SLICE on the first frame, no spinner (C3)', () => {
+    setGameClient(
+      fakeClient({
+        // hpPct 0.8 ⇒ 80 % hull, client-resident — no server stats needed.
+        structures: new Map([[7, { powered: true, netPower: 30, connTo: [], built: true, buildPct: 1, deconstructPct: 0, hpPct: 0.8 }]]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    // NO matching stats packet (the singleton holds a different id).
+    selectionStats.id = 'nomatch';
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    const panel = screen.getByTestId('entity-stats-panel');
+    expect(panel).toHaveAttribute('data-hull-pct', '80'); // instant from the slice
+    expect(panel).not.toHaveAttribute('data-stats-pending'); // no spinner pop-in
+    expect(screen.queryByTestId('entity-stats-spinner')).toBeNull();
+    expect(screen.getByText('HULL')).toBeInTheDocument(); // the hull bar, not a spinner
+  });
+
+  // ── Phase-4 C4 — connector connection count "N / 6" (QOL, connectors ONLY) ──
+  // The user asked for a connection count on CONNECTORS specifically ("It
+  // shouldn't really apply to other structures"). It reads the client-resident
+  // slice (connTo.length) + the catalogue maxConnections (6) — instant, no server
+  // round-trip. Detection is the swarm subtype byte (shipKind === 'connector').
+  it('shows a CONN "N / 6" count for a selected CONNECTOR (C4)', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([
+          [7, { powered: true, netPower: 0, connTo: [3, 5], built: true, buildPct: 1, deconstructPct: 0 }],
+        ]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'connector', radius: 10, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    const conn = screen.getByTestId('entity-stats-conn');
+    expect(conn).toHaveTextContent('CONN 2 / 6');
+    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-conn-count', '2');
+  });
+
+  it('does NOT show the CONN count for a non-connector structure (solar) (C4)', () => {
+    setGameClient(
+      fakeClient({
+        structures: new Map([
+          [8, { powered: true, netPower: 30, connTo: [3], built: true, buildPct: 1, deconstructPct: 0 }],
+        ]),
+        swarm: new Map([[8, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '8', name: 'Solar Panel', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('entity-stats-conn')).toBeNull();
+    expect(screen.getByTestId('entity-stats-panel')).not.toHaveAttribute('data-conn-count');
   });
 
   // ── WS-9/R2.23 — asteroids + lingering hulls are selectable, read from the

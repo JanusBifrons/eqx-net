@@ -3,6 +3,7 @@ import { StructurePlacementSubsystem, type StructurePlacementHooks } from './Str
 import { StructureRegistry } from './StructureRegistry.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { SCAFFOLDING_HP_FRACTION } from '../../core/structures/structureGridConstants.js';
+import type { GridObstacle } from '../../core/structures/Grid.js';
 
 interface Spawned {
   id: string;
@@ -12,7 +13,9 @@ interface Spawned {
   shipKind: string;
 }
 
-function makeHarness(opts: { spawnOk?: boolean; clampTo?: { x: number; y: number } } = {}) {
+function makeHarness(
+  opts: { spawnOk?: boolean; clampTo?: { x: number; y: number }; obstacles?: GridObstacle[] } = {},
+) {
   const registry = new StructureRegistry();
   const spawned: Spawned[] = [];
   const seeded = new Map<string, number>();
@@ -29,6 +32,9 @@ function makeHarness(opts: { spawnOk?: boolean; clampTo?: { x: number; y: number
     clamp: (x, y) => opts.clampTo ?? { x, y },
     nextId: () => `pstruct-${counter++}`,
     registry,
+    // Phase-4 C2 — asteroid/obstacle poses, the same hook the room populates from
+    // `gatherStructureObstacles()`. Absent ⇒ legacy structures-only validation.
+    ...(opts.obstacles ? { getObstacles: () => opts.obstacles! } : {}),
   };
   const sub = new StructurePlacementSubsystem(hooks);
   return { sub, registry, spawned, seeded, despawned };
@@ -83,6 +89,29 @@ describe('StructurePlacementSubsystem', () => {
     const far = h.sub.place('player-1', 'connector', 5000, 5000);
     expect(far).not.toBeNull();
     expect(h.registry.size).toBe(2);
+  });
+
+  // ── Phase-4 C2 — placement must reject overlapping an ASTEROID, not just
+  // another structure. Pre-fix the overlap loop iterated structures ONLY, so a
+  // capital dropped on a rock LANDED ("places on an asteroid"). ──
+  it('rejects a placement overlapping an ASTEROID obstacle (C2)', () => {
+    // An asteroid (radius 120) parked at the origin; the capital (radius 80)
+    // dropped centred on it overlaps (0 < 200) → must be rejected, nothing spawned.
+    const withRock = makeHarness({ obstacles: [{ x: 0, y: 0, radius: 120 }] });
+    const onRock = withRock.sub.place('player-1', 'capital', 0, 0);
+    expect(onRock).toBeNull();
+    expect(withRock.spawned.length).toBe(0);
+    expect(withRock.registry.size).toBe(0);
+    // Well clear of the rock → accepted.
+    const clear = withRock.sub.place('player-1', 'capital', 5000, 5000);
+    expect(clear).not.toBeNull();
+    expect(withRock.registry.size).toBe(1);
+  });
+
+  it('still places normally when no obstacle hook is supplied (legacy back-compat)', () => {
+    const id = h.sub.place('player-1', 'capital', 0, 0); // h has no obstacles
+    expect(id).not.toBeNull();
+    expect(h.registry.size).toBe(1);
   });
 
   it('returns null and records nothing when the slot pool is exhausted', () => {

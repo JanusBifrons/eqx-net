@@ -51,6 +51,18 @@ export interface StructureRecord {
    *  target. */
   miningTargetX?: number;
   miningTargetY?: number;
+  /** P1b — cached radius of the target asteroid, so the mining beam can be
+   *  CLIPPED at its surface (cut at impact) rather than driven to the centre. */
+  miningTargetRadius?: number;
+  /** P1b — the RESOLVED mining-beam endpoint: the asteroid surface, OR the nearest
+   *  structure that blocks the line of sight to it (so the beam stops AT a
+   *  building instead of shooting through). Cached by `processMining`, broadcast
+   *  by `tickMiners`. */
+  miningClipX?: number;
+  miningClipY?: number;
+  /** P1b — true when a built structure sits between the Miner and its target
+   *  asteroid (the beam is blocked) ⇒ no ore is drawn that pulse. */
+  miningBeamBlocked?: boolean;
   /** WS-4 — pre-built `swarm-<entityId>` wire id for the mining-beam target,
    *  cached so `tickMiners` (the ~5 Hz broadcast) never allocates a template
    *  string. Rebuilt by `processMining` ONLY when the target rock CHANGES (the

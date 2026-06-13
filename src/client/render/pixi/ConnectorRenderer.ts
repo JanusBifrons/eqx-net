@@ -338,7 +338,16 @@ export class ConnectorRenderer {
     scale: number,
   ): void {
     const preview = mirror.pendingPlacementPreview;
-    if (!preview) return;
+    // Phase-4 C4 — once the player clicks to place, the preview is swapped to a
+    // dim `pending:true` ghost (the Issue-7 anti-vanish bridge) held for up to
+    // PENDING_PLACEMENT_TIMEOUT_MS. The candidate green/red/overflow web + the
+    // range ring are a decision aid for POSITIONING — irrelevant after commit, so
+    // collapse them the instant the ghost goes pending ("when you click to place
+    // it should remove all but the green"). The real green edge re-appears via the
+    // normal placed-structure `connTo` web (update()'s st.connTo loop) once the
+    // server echoes the connection. The counts were reset to 0 by the caller, so
+    // an early return correctly publishes 0 green / 0 overflow / 0 ring radius.
+    if (!preview || preview.pending === true) return;
 
     const ghostX = this.ghostWorldX ?? preview.x;
     const ghostY = this.ghostWorldY ?? preview.y;

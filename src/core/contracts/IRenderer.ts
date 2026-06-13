@@ -175,6 +175,11 @@ export interface SwarmRenderState {
  * HUD power readout. Pure UI state — no spatial fields (those live in `swarm`).
  */
 export interface StructureRenderState {
+  /** Phase-4 C3 — hull health fraction [0..1], decoded from the slice's 0-100
+   *  `hpPct`. Lets the inspector render the hull bar instantly on selection
+   *  (no `entity_stats` round-trip). Absent ⇒ unknown (panel falls back to the
+   *  server stats packet). */
+  hpPct?: number;
   /** Component net power ≥ 0 AND reachable to a Capital. */
   powered: boolean;
   /** Component net power (Σ output − Σ consumption over built members). */
@@ -455,7 +460,14 @@ export interface RenderMirror {
    * `liveBeam` field. For legacy single-mount fighter/scout/heavy the map
    * has exactly one entry keyed by `'forward'`.
    */
-  liveBeams?: Map<string, { dist: number; hitId?: string }>;
+  /**
+   * `dist` is the full drawn length; `solidDist` (Phase-4 P1a) is the distance up
+   * to which the beam is full-strength SOLID — beyond it (to `dist`) the beam
+   * fades to nothing (the "optimal range + falloff" taper: solid to the weapon's
+   * optimal range, fading to 0 at its max range; clipped solid at any real hit so
+   * `solidDist === dist`). Absent ⇒ the whole beam is solid (legacy look).
+   */
+  liveBeams?: Map<string, { dist: number; solidDist?: number; hitId?: string }>;
   /** When false, the renderer hides the orange server-ghost diamond. Default true. */
   showServerGhost?: boolean;
   /**

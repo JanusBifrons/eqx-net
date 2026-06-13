@@ -56,6 +56,7 @@ export type {
 export {
   WarpWarningSchema,
   WarpWarningClearSchema,
+  WarpDispositionSchema,
   BaseReadySchema,
 } from './messages/transitMessages.js';
 export type {
@@ -66,6 +67,7 @@ export type {
   WarpInEvent,
   WarpWarningEvent,
   WarpWarningClearEvent,
+  WarpDisposition,
   BaseReadyEvent,
 } from './messages/transitMessages.js';
 

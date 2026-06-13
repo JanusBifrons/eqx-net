@@ -1721,8 +1721,19 @@ export class ColyseusGameClient {
     room.onMessage('warp_warning', (raw: unknown) => {
       const parsed = WarpWarningSchema.safeParse(raw);
       if (!parsed.success) return;
-      const { id, label, count, countdownMs } = parsed.data;
-      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs });
+      const { id, label, count, countdownMs, disposition } = parsed.data;
+      // Phase-4 P0 — colour the banner by the inbound's relation. The wire speaks
+      // `enemy`/`neutral`/`friendly`; the store/banner speak `hostile`/`neutral`/
+      // `friendly`. Absent ⇒ store default (hostile), back-compat with old servers.
+      const relation =
+        disposition === 'enemy'
+          ? 'hostile'
+          : disposition === 'friendly'
+            ? 'friendly'
+            : disposition === 'neutral'
+              ? 'neutral'
+              : undefined;
+      useUIStore.getState().addWarpWarning({ id, label, count, countdownMs, ...(relation ? { relation } : {}) });
     });
     room.onMessage('warp_warning_clear', (raw: unknown) => {
       const parsed = WarpWarningClearSchema.safeParse(raw);
@@ -2905,6 +2916,7 @@ export class ColyseusGameClient {
           powered: s.powered,
           netPower: s.netPower ?? 0,
           connTo: s.connTo ?? [],
+          ...(s.hpPct !== undefined ? { hpPct: s.hpPct / 100 } : {}), // C3 — 0-100 int → [0..1] fraction
           built: s.built ?? false,
           buildPct: s.built ? 1 : (s.buildPct ?? 0),
           deconstructPct: s.deconstructPct ?? 0,
@@ -4634,10 +4646,16 @@ export class ColyseusGameClient {
       // tip beyond the optimal/aim-line range. Server damage falloff matches
       // (A3a). Alloc-free: getWeapon is a cached lookup + scalar maths (#14).
       const wdef = getWeapon(mount.weaponId);
+      // The OPTIMAL range = the full-strength solid length (== the aim guide).
+      // The MAX range = optimal × maxRangeMul = how far the ray reaches (the
+      // reverse-square falloff band). The visual is SOLID to optimal, then fades
+      // to nothing across optimal→max (P1a — the beam used to draw SOLID all the
+      // way to max, reading as "goes forever and doesn't hit past the guide").
+      const optimalDist = wdef.mode === 'hitscan' ? wdef.range : HITSCAN_RANGE;
       const beamMax =
         wdef.mode === 'hitscan' && wdef.falloff?.maxRangeMul && wdef.falloff.maxRangeMul > 1
           ? wdef.range * wdef.falloff.maxRangeMul
-          : HITSCAN_RANGE;
+          : optimalDist;
       const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
@@ -4653,8 +4671,13 @@ export class ColyseusGameClient {
           logEvent('beam_hit_origin', { hitId: hit.hitId, x: hitPose.x, y: hitPose.y });
         }
       }
+      // Clipped at a real hit ⇒ solid all the way to the target (solidDist===dist,
+      // no fade). No hit ⇒ draw to max with the solid part capped at the optimal
+      // range and a fade beyond it to nothing.
+      const drawDist = hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax) : beamMax;
       liveBeams.set(mount.id, {
-        dist: hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax) : beamMax,
+        dist: drawDist,
+        solidDist: hit ? drawDist : Math.min(optimalDist, drawDist),
         hitId: hit?.hitId,
       });
     }

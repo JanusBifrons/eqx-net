@@ -15,6 +15,7 @@ import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipS
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
+import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
@@ -805,6 +806,10 @@ async function main(): Promise<void> {
     if (botHopMs !== undefined) directorOpts.hopTravelMs = botHopMs;
     livingWorldDirector = new LivingWorldDirector(galaxyRooms, directorOpts);
     livingWorldDirector.start();
+    // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
+    // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
+    // without an import cycle. Null when the Living World is disabled.
+    setIncomingPlayerSink(livingWorldDirector);
     logger.info(
       {
         sectors: galaxyRooms.size,
@@ -853,6 +858,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
   // transits, unsubscribe the bus listeners. (The loop is unref'd, but
   // an explicit stop keeps a graceful shutdown clean and deterministic.)
   try {
+    setIncomingPlayerSink(null);
     livingWorldDirector?.stop();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.stop threw');
