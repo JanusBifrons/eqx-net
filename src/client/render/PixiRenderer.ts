@@ -276,6 +276,15 @@ export class PixiRenderer implements IRenderer {
    *  Pre-fix: 5 containers + N{x,y} entries per frame = real allocator
    *  pressure under combat (see capture lnnkkh, 2026-05-25). */
   private readonly _updateSeenScratch = new Set<string>();
+  /** P3.8 — per-structure slewed mount (barrel/drill) arc-local angles, keyed by
+   *  `swarm-<entityId>`. Persists across frames so the structure barrel SLEWS
+   *  toward its target (rotateMountToward) instead of SNAPPING in one frame (the
+   *  "places at a weird angle then snaps" bug). Swept alongside `sprites` in the
+   *  swarm teardown loop so it can't leak across despawns. */
+  private readonly _structureMountSlew = new Map<string, number[]>();
+  /** Wall-clock (performance.now) of the previous swarm-sprite update — the dt
+   *  source for the structure mount slew (P3.8). 0 ⇒ first frame (one 60 Hz step). */
+  private _lastSwarmUpdateNow = 0;
   /** Reused scratch for the `getEntityPose` effects poll — mutated per call
    *  by `entityPoseFromSprite` (+ vx/vy filled from `_lastMirror`) so the
    *  per-frame engine/shield pose lookup allocates nothing (Invariant #14).
@@ -583,6 +592,8 @@ export class PixiRenderer implements IRenderer {
       remoteHitTargets: this._updateRemoteHitTargetsScratch,
       localHitTargets: this._updateLocalHitTargetsScratch,
       seenScratch: this._updateSeenScratch,
+      structureMountAngles: this._structureMountSlew,
+      slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
     };
     this._projectileUpdaterCtx = {
       shipContainer: this.shipContainer,
@@ -1232,6 +1243,14 @@ export class PixiRenderer implements IRenderer {
 
     // Phase 5c swarm sprites (asteroids + drones) — see
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.
+    // P3.8 — feed the structure-mount slew its dt (clamped so a tab-resume /
+    // first-frame gap eases rather than teleporting).
+    const swarmNow = performance.now();
+    this._swarmUpdaterCtx.slewDtSec =
+      this._lastSwarmUpdateNow > 0
+        ? Math.min(0.05, Math.max(0, (swarmNow - this._lastSwarmUpdateNow) / 1000))
+        : 1 / 60;
+    this._lastSwarmUpdateNow = swarmNow;
     updateSwarmSprites(mirror, this._swarmUpdaterCtx);
 
     for (const [id, sprite] of this.sprites) {
@@ -1243,6 +1262,7 @@ export class PixiRenderer implements IRenderer {
         this.mountVisuals.removeShip(id);
         sprite.destroy({ children: true });
         this.sprites.delete(id);
+        this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
       }
     }
 
