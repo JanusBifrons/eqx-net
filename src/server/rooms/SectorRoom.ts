@@ -687,10 +687,12 @@ export class SectorRoom extends Room<SectorState> {
    *  playerId) would fire against the player's NEW active hull. The fix was
    *  to cancel the timer at the fresh-spawn-displace point — but that left
    *  displaced lingering hulls with no auto-evict, leaking them until room
-   *  dispose. Now keyed by the hull's stable shipInstanceId, so the displaced
-   *  hull's timer keeps firing correctly whether or not the player has
-   *  re-bound or fresh-spawned in the meantime. */
-  private readonly ownerlessShips = new Map<string, ReturnType<typeof setTimeout>>();
+   *  dispose. Keyed by the hull's stable shipInstanceId. WS-12 / R2.26: a
+   *  lingering hull is recorded with a `null` value — a persist-forever
+   *  presence marker with NO despawn timer (the hull never times out of the
+   *  world; it leaves only via combat destruction, respawn-evict, or abandon →
+   *  wreck). The map type allows a real Timeout for any other arm site. */
+  private readonly ownerlessShips = new Map<string, ReturnType<typeof setTimeout> | null>();
 
   /** Test-only per-player disconnect-linger TTL override (ms), captured
    *  from the `lingerMs` JoinOption in testMode rooms. LeaveHandler reads
@@ -708,7 +710,7 @@ export class SectorRoom extends Room<SectorState> {
    */
   get _internals(): {
     serverTick: number;
-    ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+    ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
     /** Lingering-hull slot map (shipInstanceId → slot). Lets the resume-as-
      *  existing-ship integration test assert a lingering hull was evicted
      *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
@@ -3248,13 +3250,12 @@ export class SectorRoom extends Room<SectorState> {
         // it; clear the active indirection so the fresh ship can take
         // playerToActiveShipInstance[playerId] in its onJoin path.
         //
-        // Phase 6b cleanup (2026-05-13) — the ownerlessShips timer is now
-        // keyed by the lingering hull's shipInstanceId (not playerId), so
-        // we DO NOT cancel it here. The timer keeps pointing at the
-        // displaced hull's id and will correctly fire `evictOwnerlessShip`
-        // for THAT hull at the 15-min mark — independent of whatever fresh
-        // hull the player has bound in the meantime. This closes the
-        // "displaced lingering hulls have no auto-evict" leak.
+        // The ownerlessShips entry is keyed by the lingering hull's
+        // shipInstanceId, so the displaced hull keeps its presence marker
+        // across this transition (the player's fresh hull is tracked
+        // separately). WS-12 / R2.26: that marker is a persist-forever `null`
+        // (no despawn timer) — the displaced hull stays in the world until the
+        // owner abandons it (→ wreck) or it is destroyed; it never times out.
         const lingeringSlot = this.playerToSlot.get(playerId);
         if (lingeringSlot !== undefined && existingShip && existingShip.shipInstanceId !== '') {
           this.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
@@ -3299,8 +3300,10 @@ export class SectorRoom extends Room<SectorState> {
         // playerToSlot[playerId] gets overwritten with the new slot.
       } else {
         // Original rebind behaviour: reattach to the existing slot.
-        // Phase 6b cleanup — ownerlessShips keyed by shipInstanceId.
-        clearTimeout(ownerlessTimer);
+        // Phase 6b cleanup — ownerlessShips keyed by shipInstanceId. R2.26: a
+        // persist-forever lingering hull holds a `null` marker (no timer) — only
+        // a real Timeout needs clearing; the presence entry is always deleted.
+        if (ownerlessTimer) clearTimeout(ownerlessTimer);
         if (lingeringShipId !== undefined) this.ownerlessShips.delete(lingeringShipId);
         const existingSlot = this.playerToSlot.get(playerId);
         if (existingSlot !== undefined && existingShip) {
@@ -3992,10 +3995,12 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 8 sub-phase B — abort any in-flight transits so no orphan timers
     // or seat reservations linger past room teardown.
     this.transitOrchestrator?.cancelAll('manual');
-    // Clear lingering-ship eviction timers — the room is being torn down,
-    // so the timers would fire against a dead `this`. The ships' Limbo
-    // entries stay on disk so a server-restart restore can find them.
-    for (const timer of this.ownerlessShips.values()) clearTimeout(timer);
+    // Clear any lingering-ship eviction timers — the room is being torn down,
+    // so a timer would fire against a dead `this`. R2.26: persist-forever
+    // lingering hulls hold a `null` marker (no timer) — only legacy/real
+    // Timeouts need clearing. The ships' Limbo entries stay on disk so a
+    // server-restart restore can find them.
+    for (const timer of this.ownerlessShips.values()) if (timer) clearTimeout(timer);
     this.ownerlessShips.clear();
     // Phase 8 — final snapshot before tear-down so swarm health survives
     // a graceful shutdown. `persistence.shutdown` (called from index.ts on

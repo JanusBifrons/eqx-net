@@ -142,13 +142,13 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     expect(ownerless.has(PID_A)).toBe(false); // NOT keyed by playerId
   });
 
-  it('fresh-spawn-displaces preserves the original hull\'s evict timer', async () => {
-    // Phase 6b cleanup regression lock — the pre-cleanup code cancelled
-    // the ownerlessShips timer at the fresh-spawn-displace point to avoid
-    // it firing against the player's NEW active hull. That fix worked but
-    // leaked displaced hulls forever. The cleanup rekeys the map to
-    // shipInstanceId so the timer can keep pointing at the displaced hull;
-    // this test fails if a future change re-introduces the cancel.
+  it('fresh-spawn-displaces keeps the displaced hull\'s lingering presence', async () => {
+    // The ownerlessShips map is keyed by the lingering hull's shipInstanceId,
+    // so a fresh-spawn that displaces the hull keeps its presence entry (the
+    // rebind / restore gates read it). WS-12 / R2.26: that entry is now a
+    // persist-forever `null` marker — there is NO despawn timer — so the
+    // displaced hull stays in the world until abandoned (→ wreck) or destroyed.
+    // This locks that the displace transition does NOT drop the presence entry.
     const client1 = await harness.connectActive(PID_B, { shipKind: 'fighter' });
     await harness.advance(150);
     const room = harness.getServerRoom()!;
@@ -166,7 +166,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     await harness.advance(200);
 
     expect(state.ships.size).toBe(2);
-    expect(ownerless.has(originalShipId)).toBe(true); // timer still alive
+    expect(ownerless.has(originalShipId)).toBe(true); // presence marker survives (no timer, R2.26)
     await harness.disconnectClient(client2);
   });
 
