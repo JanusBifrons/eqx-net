@@ -122,12 +122,13 @@ describe('SectorRoom integration — hit_ack ↔ DamageEvent contract (weapon-hi
     // authoritative DamageEvent carries (so a confirmed prediction replaces,
     // never double-counts). This relationship is the real invariant.
     expect(ack['damage']).toBe(dmg['damage']);
-    // R2.29 — the beam now applies reverse-square distance falloff, so at this
-    // ~100 u hit range the applied damage is LESS than the flat catalogue value
-    // (was exactly HITSCAN_DAMAGE pre-falloff — this also locks that falloff is
-    // active on the live fire path).
-    expect(ack['damage']).toBeGreaterThan(0);
-    expect(ack['damage']).toBeLessThan(HITSCAN_DAMAGE);
+    // P3.13 — "optimal + beyond": FULL damage within the OPTIMAL range. This
+    // ~100 u hit is well inside the 250 u optimal range, so the applied damage
+    // is the flat catalogue value. The reverse-square falloff applies only
+    // BEYOND optimal (out to maxRange) — that curve is unit-locked in
+    // `hitscanFalloff.test.ts`. (Pre-P3.13/R2.29 this asserted < HITSCAN_DAMAGE
+    // because the old model tapered WITHIN range.)
+    expect(ack['damage']).toBe(HITSCAN_DAMAGE);
   }, 20_000);
 
   it('a miss fire: hit_ack.hit === false, NO damage field, NO DamageEvent (damage rides only hit:true)', async () => {
