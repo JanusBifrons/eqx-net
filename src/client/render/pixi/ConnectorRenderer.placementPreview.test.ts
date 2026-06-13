@@ -200,6 +200,34 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.placementPreviewOverflowCount).toBe(2);
   });
 
+  it('caps GREEN at the PLACED kind\'s own maxConnections — a leaf shows 1 green + the rest RED (P3.7)', () => {
+    // A leaf (solar, maxConnections 1) near 3 in-range connectors: the server's
+    // autoConnectStructure links it to just ONE (its own cap), so the preview
+    // must class exactly 1 GREEN + 2 RED overflow — NOT 3 green ("they show 4
+    // connections and then only connect to 1"). Pre-fix greenCount was
+    // min(okHubs, PLACEMENT_MAX_CONNECTIONS=6) = 3, which this asserts against.
+    const swarm = new Map<number, SwarmRenderState>();
+    const structures = new Map<number, StructureRenderState>();
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      const id = i + 1;
+      swarm.set(id, structureEntry('connector', Math.cos(angle) * 200, Math.sin(angle) * 200));
+      structures.set(id, structureState({ connTo: [] }));
+    }
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      pendingPlacementPreview: { kind: 'solar', x: 0, y: 0, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(getStructureKind('solar').maxConnections).toBe(1); // precondition: leaf cap
+    expect(r.placementPreviewConnectionCount).toBe(1);
+    expect(r.placementPreviewOverflowCount).toBe(2);
+  });
+
   // ── WS-10 (R2.3) — connection-range ring radius ──────────────────────────
   // The ring radius is the kind's per-kind connectionRange (capped at the
   // global 600) PLUS the ghost's own radius (centre-out reach to a zero-radius
