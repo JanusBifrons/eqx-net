@@ -1711,6 +1711,15 @@ export class PixiRenderer implements IRenderer {
       const count = this.mountVisuals.mountCountForShip(shipId);
       if (count > 0) this.feedback.mountCounts.set(shipId, count);
     }
+    // R2.32 — lingering (parked) hulls also carry weapon-barrel clusters; surface
+    // their mount counts (reusing the existing mountCounts feedback field) so the
+    // worker-boundary probe can assert the barrels actually render.
+    if (mirror.lingeringShips) {
+      for (const id of mirror.lingeringShips.keys()) {
+        const count = this.mountVisuals.mountCountForShip(id);
+        if (count > 0) this.feedback.mountCounts.set(id, count);
+      }
+    }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
     this.feedback.wreckSpriteCount = this.wreckSprites.size;
@@ -1862,6 +1871,14 @@ export class PixiRenderer implements IRenderer {
         if (sw.shieldDown !== true && sw.kind === 1) seen.add(`swarm-${id}`);
       }
     }
+    // R2.32 — lingering (parked) hulls render their shield aura too. They are
+    // shipInstanceId-keyed (no `swarm-` prefix) and kept OUT of mirror.ships, so
+    // the radius lookup below also falls back to mirror.lingeringShips.
+    if (mirror.lingeringShips) {
+      for (const [id, ship] of mirror.lingeringShips) {
+        if (ship.shieldDown !== true) seen.add(id);
+      }
+    }
 
     for (const id of seen) {
       if (!this._activeShieldIds.has(id)) {
@@ -1877,7 +1894,9 @@ export class PixiRenderer implements IRenderer {
           const sw = mirror.swarm?.get(swarmId);
           if (sw) auraRadius = sw.radius;
         } else {
-          const ship = mirror.ships.get(id);
+          // mirror.ships for an active hull; mirror.lingeringShips for a parked
+          // one (lingering hulls are shipInstanceId-keyed + kept out of ships).
+          const ship = mirror.ships.get(id) ?? mirror.lingeringShips?.get(id);
           if (ship?.kind) auraRadius = getShipKind(ship.kind).radius;
         }
         this.effects.setContinuous(id, 'shield', true, auraRadius);
@@ -1934,7 +1953,10 @@ export class PixiRenderer implements IRenderer {
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
-        for (const entry of this.lingeringSprites.values()) entry.sprite.destroy();
+        for (const [id, entry] of this.lingeringSprites) {
+          this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
+          entry.sprite.destroy();
+        }
         this.lingeringSprites.clear();
       }
       return;
@@ -1952,6 +1974,7 @@ export class PixiRenderer implements IRenderer {
       });
       let entry = this.lingeringSprites.get(shipInstanceId);
       if (decision.action === 'rebuild') {
+        this.mountVisuals.removeShip(shipInstanceId); // drop the old cluster before its sprite dies
         entry!.sprite.destroy();
         this.lingeringSprites.delete(shipInstanceId);
         entry = undefined;
@@ -1961,6 +1984,10 @@ export class PixiRenderer implements IRenderer {
         const sprite = buildShipGfxFromShape(shape, shape.color);
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
+        // R2.32 — give the parked hull its weapon barrels. Parented to the
+        // sprite so they inherit its pose; frozen at baseAngle (no
+        // applyMountAngles call — an abandoned hull isn't aiming).
+        this.mountVisuals.ensureForShip(shipInstanceId, decision.kind, sprite);
         entry = { sprite, kind: decision.kind, stamp: frameId };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
@@ -1974,6 +2001,7 @@ export class PixiRenderer implements IRenderer {
     }
     for (const [id, entry] of this.lingeringSprites) {
       if (entry.stamp !== frameId) {
+        this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
         entry.sprite.destroy();
         this.lingeringSprites.delete(id);
       }

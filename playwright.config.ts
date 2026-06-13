@@ -112,6 +112,8 @@ const FEATURE_SPECS: string[] = [
   '**/structure-scenario.spec.ts',
   '**/structure-mining-beam.spec.ts',
   '**/linger/*.spec.ts',
+  // Lingering-hull weapon-barrel render across the worker boundary (WS-12 / R2.32).
+  '**/lingering-render.spec.ts',
   // Speed-dial UX (WS-13 / R2.6 — Build category tier + stay-open + labels).
   '**/speed-dial.spec.ts',
 ];
