@@ -38,6 +38,7 @@
 
 import { Container, Graphics } from 'pixi.js';
 import { getShipKind, type WeaponMount } from '../../shared-types/shipKinds';
+import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import { aimLineLengthForMount } from './aimLineLength';
 
 /** Shared frozen empty mount-list. The `?? EMPTY_MOUNTS` fallback for a
@@ -104,7 +105,7 @@ export class MountVisualManager {
    */
   ensureForShip(shipId: string, kindId: string | undefined, parent: Container | Graphics): Container {
     const kind = getShipKind(kindId ?? null);
-    return this.ensureForMounts(shipId, kindId, kind.mounts ?? EMPTY_MOUNTS, kind.shape.color, parent);
+    return this.ensureForMounts(shipId, kindId, kind.mounts ?? EMPTY_MOUNTS, shipPrimaryColor(kind), parent);
   }
 
   /**

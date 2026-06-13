@@ -7,7 +7,12 @@ import {
   type ConvexPart,
 } from './shipHullDecomp.js';
 import { polygonArea, convexHullCCW, type Vec2 } from '../swarm/asteroidShape.js';
-import { SHIP_KINDS, SHIP_KINDS_LIST, DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
+import {
+  SHIP_KINDS,
+  SHIP_KINDS_LIST,
+  DEFAULT_SHIP_KIND,
+  type ShipKind,
+} from '../../shared-types/shipKinds.js';
 
 const partArea = (p: ConvexPart): number => signedArea(p);
 const sumArea = (ps: readonly ConvexPart[]): number => ps.reduce((s, p) => s + partArea(p), 0);
@@ -90,6 +95,40 @@ describe('concavity is preserved (not filled)', () => {
     expect(parts.length, 'heavy convex pentagon should not be split').toBe(1);
     const heavy = shipShapeToPolygon(SHIP_KINDS.heavy);
     expect(parts[0]!.length, 'heavy part vertex count matches input').toBe(heavy.length);
+  });
+});
+
+describe('composite hull == polygon points ⇒ identical collision geometry (Phase 0)', () => {
+  // A composite ship's gross collision `hull` flows through the EXACT same
+  // `shipShapeToPolygon` seam as a polygon kind's `points` (the decomposition
+  // + fan-triangulation are pure + deterministic on that polygon). So a
+  // composite kind whose hull mirrors a polygon kind's points — at the same
+  // scale — must produce identical collision input, hence identical triangles.
+  const fighter = SHIP_KINDS.fighter;
+  // Phase 0: every shipped kind is a polygon. Pull the fighter's points to
+  // build the composite hull mirror.
+  const fighterPoints =
+    fighter.shape.kind === 'polygon' ? fighter.shape.points : [];
+
+  const compositeFighter: ShipKind = {
+    ...fighter,
+    shape: {
+      kind: 'composite',
+      scale: fighter.shape.scale,
+      hull: fighterPoints.map(([x, y]): [number, number] => [x, y]),
+      parts: [
+        {
+          points: fighterPoints.map(([x, y]): [number, number] => [x, y]),
+          color: 0x00ff88,
+          offsetX: 0,
+          offsetY: 0,
+        },
+      ],
+    },
+  };
+
+  it('shipShapeToPolygon(composite) deep-equals shipShapeToPolygon(polygon)', () => {
+    expect(shipShapeToPolygon(compositeFighter)).toEqual(shipShapeToPolygon(fighter));
   });
 });
 

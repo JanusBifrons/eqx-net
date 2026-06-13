@@ -26,7 +26,11 @@ export function ShipSilhouette({
   shape,
   viewBoxHalf = 20,
   size = 64,
-}: ShipSilhouetteProps): JSX.Element {
+}: ShipSilhouetteProps): JSX.Element | null {
+  // Composite-shape silhouettes land in Phase 1; no catalogue kind uses the
+  // composite variant in Phase 0, so this branch is unreachable today. Narrow
+  // to the polygon variant for the body below.
+  if (shape.kind !== 'polygon') return null;
   const points = shape.points
     .map(([x, y]) => `${x * shape.scale},${-y * shape.scale}`)
     .join(' ');

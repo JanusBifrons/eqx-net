@@ -5,6 +5,7 @@ import {
   GAMEPLAY_SHIP_KINDS_LIST,
   DEFAULT_SHIP_KIND,
   ShipKindSchema,
+  ShipShapeSchema,
   WeaponMountSchema,
   WeaponSlotSchema,
   MountWeaponIdSchema,
@@ -79,6 +80,57 @@ describe('shipKinds catalogue', () => {
   it('Heavy has the most hull; Scout the least', () => {
     expect(SHIP_KINDS.heavy.maxHealth).toBeGreaterThan(SHIP_KINDS.fighter.maxHealth);
     expect(SHIP_KINDS.fighter.maxHealth).toBeGreaterThan(SHIP_KINDS.scout.maxHealth);
+  });
+});
+
+describe('ShipShapeSchema — discriminated union (composite-ships Phase 0)', () => {
+  it('parses a polygon shape fixture', () => {
+    const polygon = {
+      kind: 'polygon' as const,
+      points: [[0, -10], [10, 10], [-10, 10]] as [number, number][],
+      color: 0x00ff88,
+      scale: 1,
+    };
+    const result = ShipShapeSchema.safeParse(polygon);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.kind).toBe('polygon');
+  });
+
+  it('parses a minimal composite shape fixture', () => {
+    const composite = {
+      kind: 'composite' as const,
+      scale: 1,
+      hull: [[0, -10], [10, 10], [-10, 10]] as [number, number][],
+      parts: [
+        { points: [[0, -10], [10, 10], [-10, 10]] as [number, number][], color: 0x00ff88, offsetX: 0, offsetY: 0 },
+      ],
+    };
+    const result = ShipShapeSchema.safeParse(composite);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.kind).toBe('composite');
+  });
+
+  it('every shipped kind still parses as a polygon shape', () => {
+    for (const kind of SHIP_KINDS_LIST) {
+      const result = ShipShapeSchema.safeParse(kind.shape);
+      expect(result.success, `${kind.id} shape parses`).toBe(true);
+      // Phase 0: every shipped kind stays a polygon shape (composite is additive).
+      expect(kind.shape.kind, `${kind.id} stays polygon`).toBe('polygon');
+    }
+  });
+
+  it('rejects a shape with an unknown discriminant', () => {
+    expect(ShipShapeSchema.safeParse({ kind: 'sprite', points: [], color: 0 }).success).toBe(false);
+  });
+
+  it('rejects a composite with an empty parts list', () => {
+    const result = ShipShapeSchema.safeParse({
+      kind: 'composite',
+      scale: 1,
+      hull: [[0, -10], [10, 10], [-10, 10]],
+      parts: [],
+    });
+    expect(result.success).toBe(false);
   });
 });
 

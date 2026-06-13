@@ -28,6 +28,9 @@
 // Re-export schemas + types + legacy mount templates from the family files.
 export {
   ShipShapeSchema,
+  ShipPolygonShapeSchema,
+  ShipCompositeShapeSchema,
+  ShipPartSchema,
   MountWeaponIdSchema,
   WeaponMountSchema,
   WeaponSlotSchema,
@@ -37,6 +40,9 @@ export {
 } from './shipKinds/types.js';
 export type {
   ShipShape,
+  ShipPolygonShape,
+  ShipCompositeShape,
+  ShipPart,
   WeaponMount,
   WeaponSlot,
   ShipKind,

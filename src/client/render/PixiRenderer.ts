@@ -31,6 +31,7 @@ import { BackgroundGrid } from './BackgroundGrid';
 import { StarfieldBackground } from './StarfieldBackground';
 import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
+import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
   DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
@@ -2027,7 +2028,7 @@ export class PixiRenderer implements IRenderer {
       }
       if (decision.action === 'create' || decision.action === 'rebuild') {
         const shape = shapeForKind(decision.kind);
-        const sprite = buildShipGfxFromShape(shape, shape.color);
+        const sprite = buildShipGfxFromShape(shape, shipPrimaryColor(getShipKind(decision.kind)));
         sprite.alpha = 0.75;
         this.shipContainer.addChild(sprite);
         // R2.32 — give the parked hull its weapon barrels. Parented to the
@@ -2069,7 +2070,7 @@ export class PixiRenderer implements IRenderer {
       let sprite = this.wreckSprites.get(shipInstanceId);
       if (!sprite) {
         const shape = shapeForKind(w.kind);
-        sprite = buildShipGfxFromShape(shape, desaturate(shape.color));
+        sprite = buildShipGfxFromShape(shape, desaturate(shipPrimaryColor(getShipKind(w.kind))));
         sprite.alpha = 0.55;
         this.shipContainer.addChild(sprite);
         this.wreckSprites.set(shipInstanceId, sprite);

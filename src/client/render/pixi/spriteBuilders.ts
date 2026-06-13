@@ -48,6 +48,10 @@ export const DAMAGE_FLASH_COLOR = 0xffaaaa;
  * visual extent so collisions feel honest.
  */
 export function buildShipGfxFromShape(shape: ShipShape, tintOverride?: number): Graphics {
+  // Composite ship rendering lands in Phase 1; no catalogue kind uses the
+  // composite variant in Phase 0, so this guard is unreachable today. It also
+  // narrows `shape` to the polygon variant for the body below.
+  if (shape.kind !== 'polygon') throw new Error('composite ship rendering lands in Phase 1');
   const g = new Graphics();
   const scale = shape.scale;
   g.poly(shape.points.map(([x, y]) => ({ x: x * scale, y: y * scale })));
