@@ -436,9 +436,14 @@ export class ConnectorRenderer {
       okDists[j + 1] = hd;
     }
 
-    // The nearest PLACEMENT_MAX_CONNECTIONS draw GREEN + are counted; the rest
-    // are legal + in range but past the cap → RED overflow (won't link).
-    const greenCount = Math.min(okHubs.length, PLACEMENT_MAX_CONNECTIONS);
+    // P3.7 — GREEN marks ONLY the links that will ACTUALLY form on confirm.
+    // `autoConnectStructure` caps a placed structure at its OWN `maxConnections`
+    // (1 for a leaf) AS WELL AS the global PLACEMENT_MAX_CONNECTIONS, so the
+    // preview must too — otherwise a leaf shows N green lines but connects to
+    // just one ("shows 4 connections and then only connect to 1"). The nearest
+    // `min(ghost.maxConnections, cap)` draw GREEN; the rest are legal + in range
+    // but past the cap → RED overflow (won't link).
+    const greenCount = Math.min(okHubs.length, ghost.maxConnections, PLACEMENT_MAX_CONNECTIONS);
     for (let i = 0; i < okHubs.length; i++) {
       this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'ok' : 'overflow', scale);
     }
