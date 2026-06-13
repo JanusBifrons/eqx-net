@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, Box } from '@mui/material';
 import type { AlertColor } from '@mui/material';
-import { useUIStore } from '../state/store';
+import { useUIStore, useIsLoadingActive } from '../state/store';
 import type { WarpRelation } from '../state/storeTypes';
 
 /**
@@ -53,6 +53,13 @@ export function severityForRelation(relation: WarpRelation): AlertColor {
 export function WarpInWarningBanner(): JSX.Element {
   const warpWarnings = useUIStore((s) => s.warpWarnings);
   const removeWarpWarning = useUIStore((s) => s.removeWarpWarning);
+  // Phase-4 — the load curtain (warp / initial-join) is an OPAQUE full-screen
+  // overlay; the always-mounted banner used to bleed THROUGH it ("the 'nothing
+  // incoming' banner appears over the curtain"). Hide the banner while the curtain
+  // is up — it's irrelevant on the loading screen and reappears the instant the
+  // curtain drops. (Supersedes the P3.9 "stays visible during transit" stance for
+  // the curtain phase specifically.)
+  const isLoadingActive = useIsLoadingActive();
   // A monotonic tick to re-render the countdown ~5 Hz without per-warning RAF.
   const [, setTick] = useState(0);
 
@@ -61,6 +68,12 @@ export function WarpInWarningBanner(): JSX.Element {
     const id = window.setInterval(() => setTick((t) => t + 1), 200);
     return () => window.clearInterval(id);
   }, [warpWarnings.length]);
+
+  // Render nothing visible while the curtain is up (the testid stays for the
+  // always-mounted contract; no content ⇒ nothing over the curtain).
+  if (isLoadingActive) {
+    return <Box sx={STACK_SX} data-testid="warp-warning-banner" data-warning-active="0" />;
+  }
 
   const now = (globalThis.performance ?? Date).now();
   // ALWAYS-MOUNTED + ALWAYS-VISIBLE (P3.9): the outer container persists, and the
