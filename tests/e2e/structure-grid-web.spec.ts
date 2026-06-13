@@ -36,21 +36,30 @@ test('Build ▸ Capital lights the grid-power + minerals HUD', async ({ browser 
     await expect(page.locator('[data-testid="grid-power"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="grid-minerals"]')).toHaveCount(0);
 
-    // Open dial → Build ▸ → Capital → confirm.
+    // Open dial → Build ▸ → Core ▸ → Capital → confirm.
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
+    await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
 
-    // Capital is pre-built + powered + has a starting bank.
+    // Capital is pre-built + powered + has a starting bank. The net-power and
+    // minerals values are filled by the 1 Hz grid pulse AFTER placement, so the
+    // HUD element can appear a frame or two before the first pulse populates
+    // them — poll the attribute rather than reading it once (read-once raced when
+    // the dial-open timing shifted Confirm relative to the pulse).
     const power = page.locator('[data-testid="grid-power"]');
     await expect(power).toBeVisible({ timeout: 10_000 });
-    expect(Number(await power.getAttribute('data-net-power'))).toBeGreaterThan(0);
+    await expect
+      .poll(async () => Number(await power.getAttribute('data-net-power')), { timeout: 5_000 })
+      .toBeGreaterThan(0);
 
     const minerals = page.locator('[data-testid="grid-minerals"]');
     await expect(minerals).toBeVisible({ timeout: 10_000 });
-    expect(Number(await minerals.getAttribute('data-minerals'))).toBeGreaterThan(0);
+    await expect
+      .poll(async () => Number(await minerals.getAttribute('data-minerals')), { timeout: 5_000 })
+      .toBeGreaterThan(0);
   } finally {
     await ctx.close();
   }

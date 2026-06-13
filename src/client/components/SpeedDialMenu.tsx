@@ -2,10 +2,12 @@ import { useCallback, useState, type ReactNode } from 'react';
 import SpeedDial from '@mui/material/SpeedDial';
 import SpeedDialAction from '@mui/material/SpeedDialAction';
 import SpeedDialIcon from '@mui/material/SpeedDialIcon';
+import type { FabProps } from '@mui/material/Fab';
 import MenuIcon from '@mui/icons-material/Menu';
 import MapIcon from '@mui/icons-material/Map';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import ConstructionIcon from '@mui/icons-material/Construction';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import HexagonIcon from '@mui/icons-material/Hexagon';
 import HubIcon from '@mui/icons-material/Hub';
 import SolarPowerIcon from '@mui/icons-material/SolarPower';
@@ -17,11 +19,20 @@ import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
-import { STRUCTURE_KINDS_LIST, type StructureKindId } from '@shared-types/structureKinds';
+import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
+import {
+  BUILD_CATEGORIES,
+  CATEGORY_ICON,
+  ROOT_VIEW,
+  categoryById,
+  goBackView,
+  type BuildCategoryId,
+  type DialView,
+} from './buildCategories';
 import { useTouchClickActivate } from './touchClickActivate';
 
 /**
- * Consolidated bottom-right action menu (speed-dial UI refactor, Phase 1).
+ * Consolidated bottom-right action menu (speed-dial UI refactor).
  *
  * A single MUI `SpeedDial` FAB that hosts the game's *discrete* (tap, not
  * held) HUD actions — what used to be scattered across the bottom-center MAP
@@ -35,24 +46,34 @@ import { useTouchClickActivate } from './touchClickActivate';
  * LOWEST order, which is the corner-most slot in the row-reverse bottom-right
  * anchor. So the dial sits in the bottom-right CORNER, to the right of the AUTO
  * toggle (order 5) and the FIRE/BOOST cluster (orders 10/20), on both touch and
- * desktop (smoke handoff 2026-06-06, Issue 3 — "the speed dial is in the wrong
- * place" → corner). The dial expands UPWARD (`direction="up"`) so its actions
- * grow away from the bottom bezel.
+ * desktop. The dial expands UPWARD (`direction="up"`).
  *
- * Multitouch (same handoff): MUI `SpeedDial` opens via a synthesized CLICK,
- * which mobile browsers only emit for the PRIMARY touch — so a second
- * simultaneous touch (tapping the dial while the joystick is held) never
- * opened it. The FAB + each action therefore also bind `onTouchStart` (the raw
- * touch IS delivered to a second touch point, exactly like FIRE/BOOST in
- * MobileControls), with a short post-touch click-suppression window so the
- * trailing synthesized click doesn't double-fire the action (the
- * AutoFireToggleButton double-toggle trap). `onClick` is kept for desktop.
+ * Multitouch (smoke handoff 2026-06-06): MUI `SpeedDial` opens via a synthesized
+ * CLICK, which mobile browsers only emit for the PRIMARY touch — so a second
+ * simultaneous touch (tapping the dial while the joystick is held) never opened
+ * it. The FAB + each action therefore also bind `onTouchStart` (delivered to a
+ * second touch point, like FIRE/BOOST), with a short post-touch click-suppression
+ * window so the trailing synthesized click doesn't double-fire. `onClick` stays
+ * live for desktop. **Every test-observable / handler prop is passed through
+ * `FabProps`, not as a direct prop** — with `tooltipOpen` set (always-visible
+ * labels, WS-13) each action takes MUI's static-tooltip branch where direct
+ * props spread onto the label wrapper span, not the Fab; routing through
+ * `FabProps` (`slotProps.fab`) keeps `data-testid` / `aria-pressed` / handlers on
+ * the Fab button, identical to the pre-tooltipOpen placement.
  *
- * Phase 2 will append a "Build ▸" set of structure-placement actions here.
+ * Build tree (WS-13 / R2.6): the Build action drills a 3-level nav — main ▸
+ * categories ▸ kinds — via the local `view` discriminated union (`buildCategories.tsx`).
+ * The FAB stays the open/close toggle; a dedicated back ACTION pops one level; the
+ * FAB icon reflects the drilled category at the `kinds` level. Picking a kind sets
+ * `placementKind` and KEEPS the dial open (only a deliberate FAB toggle / Escape
+ * closes it — `blur` / `mouseLeave` from clicking the canvas to position the ghost
+ * are ignored in onClose), so several structures place in a row with no Build ▸
+ * category re-drill (the old close-on-pick was the bug). Categories live client-side
+ * only (no wire catalogue field, no version bump, no netgate).
  *
  * Perf: all static `sx` is hoisted to module-level consts (no per-render alloc,
- * per the drawer-perf rules). The dial's open/closed state is local React
- * state — it is pure presentation and never belongs in Zustand.
+ * per the drawer-perf rules). The dial's open/closed + drilled view are local
+ * React state — pure presentation, never Zustand (invariant #2).
  */
 export function SpeedDialMenu(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
@@ -66,23 +87,19 @@ export function SpeedDialMenu(): JSX.Element | null {
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
   const [open, setOpen] = useState(false);
-  // `build` swaps the dial's actions to the structure-kind picker (a "Build ▸"
-  // sub-menu, since MUI SpeedDial doesn't nest). Reset whenever the dial closes.
-  const [buildMode, setBuildMode] = useState(false);
+  // The dial's drilled view (pure presentation — local state, never Zustand).
+  // Reset to ROOT whenever the dial closes so re-opening starts at the main menu.
+  const [view, setView] = useState<DialView>(ROOT_VIEW);
 
-  // Multitouch support (smoke handoff 2026-06-06, Issue 3). We drive the FAB +
-  // actions on `onTouchStart` so a SECOND simultaneous touch (the dial tapped
-  // while a steering joystick touch is held) opens/activates them — mobile
-  // browsers only synthesize a `click` for the PRIMARY touch sequence, so the
-  // pure-MUI click path never fired for the second touch. The trailing
-  // synthesized click is dropped within the suppress window (the
-  // AutoFireToggleButton double-fire trap); `onClick` stays live for desktop.
-  // Shared with `AutoFireToggleButton` via `useTouchClickActivate` (one impl).
+  // Multitouch support (smoke handoff 2026-06-06). We drive the FAB + actions on
+  // `onTouchStart` so a SECOND simultaneous touch opens/activates them; the
+  // trailing synthesized click is dropped within the suppress window. `onClick`
+  // stays live for desktop. Shared with `AutoFireToggleButton` (one impl).
   const { touchActivate, clickActivate, isWithinSuppressWindow } = useTouchClickActivate();
 
   const close = useCallback(() => {
     setOpen(false);
-    setBuildMode(false);
+    setView(ROOT_VIEW);
   }, []);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
@@ -110,15 +127,25 @@ export function SpeedDialMenu(): JSX.Element | null {
     if (next) setActiveSlotId(next.id);
   }, [close, shipKindId, activeSlotId, setActiveSlotId]);
 
-  // Enter the Build sub-menu (keep the dial open so the kind actions show).
-  const handleBuild = useCallback(() => setBuildMode(true), []);
+  // Build-tree navigation — pure view transitions, the dial stays open.
+  const enterCategories = useCallback(() => setView({ level: 'categories' }), []);
+  const enterKinds = useCallback(
+    (category: BuildCategoryId) => setView({ level: 'kinds', category }),
+    [],
+  );
+  const goBack = useCallback(() => setView((v) => goBackView(v)), []);
 
+  // Pick a kind to place: raise the placement ghost. Does NOT close the dial —
+  // it STAYS OPEN at the kinds level so the player can place several structures
+  // in a row (the old close() here reset to root, forcing a full Build ▸ category
+  // ▸ kind re-drill for every structure — the R2.6 complaint). The onClose handler
+  // ignores 'blur'/'mouseLeave', so clicking the canvas to position the ghost (or
+  // the Confirm banner) doesn't dismiss the menu.
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);
-      close();
     },
-    [close, setPlacementKind],
+    [setPlacementKind],
   );
 
   if (!shouldRender || isDead) return null;
@@ -127,11 +154,118 @@ export function SpeedDialMenu(): JSX.Element | null {
   const activeSlot = slots.find((s) => s.id === activeSlotId) ?? slots[0];
   const weaponLabel = activeSlot ? `Weapon: ${activeSlot.displayName}` : 'Weapon';
 
+  // The back action — prepended at every non-root level. Pops one level (the FAB
+  // never takes on the back role, so the open/close toggle is never overloaded).
+  const backAction = (
+    <SpeedDialAction
+      key="back"
+      icon={<ArrowBackIcon />}
+      tooltipTitle="Back"
+      tooltipOpen
+      FabProps={fab(ACTION_FAB_BASE, {
+        'data-testid': 'speed-dial-back',
+        onClick: clickActivate(goBack),
+        onTouchStart: touchActivate(goBack),
+      })}
+    />
+  );
+
+  let actions: ReactNode;
+  if (view.level === 'categories') {
+    actions = [
+      backAction,
+      ...BUILD_CATEGORIES.map((c) => (
+        <SpeedDialAction
+          key={c.id}
+          icon={c.icon}
+          tooltipTitle={c.label}
+          tooltipOpen
+          FabProps={fab(ACTION_FAB_BASE, {
+            'data-testid': `build-cat-${c.id}`,
+            onClick: clickActivate(() => enterKinds(c.id)),
+            onTouchStart: touchActivate(() => enterKinds(c.id)),
+          })}
+        />
+      )),
+    ];
+  } else if (view.level === 'kinds') {
+    actions = [
+      backAction,
+      ...categoryById(view.category).kinds.map((kindId) => (
+        <SpeedDialAction
+          key={kindId}
+          icon={BUILD_ICONS[kindId] ?? <ConstructionIcon />}
+          tooltipTitle={getStructureKind(kindId).displayName}
+          tooltipOpen
+          FabProps={fab(ACTION_FAB_BASE, {
+            'data-testid': `build-${kindId}`,
+            onClick: clickActivate(() => handlePickBuild(kindId)),
+            onTouchStart: touchActivate(() => handlePickBuild(kindId)),
+          })}
+        />
+      )),
+    ];
+  } else {
+    actions = [
+      <SpeedDialAction
+        key="menu"
+        icon={<MenuIcon />}
+        tooltipTitle="Panels"
+        tooltipOpen
+        FabProps={fab(MENU_ACTION_FAB_PROPS, {
+          'data-testid': 'speed-dial-menu',
+          onClick: clickActivate(handleMenu),
+          onTouchStart: touchActivate(handleMenu),
+        })}
+      />,
+      <SpeedDialAction
+        key="map"
+        icon={<MapIcon />}
+        tooltipTitle="Map"
+        tooltipOpen
+        FabProps={fab(mapActionFabProps(isGalaxyMapOpen), {
+          'data-testid': 'galaxy-map-toggle',
+          'aria-pressed': isGalaxyMapOpen,
+          onClick: clickActivate(handleMap),
+          onTouchStart: touchActivate(handleMap),
+        })}
+      />,
+      <SpeedDialAction
+        key="weapon"
+        icon={<GpsFixedIcon />}
+        tooltipTitle={weaponLabel}
+        tooltipOpen
+        FabProps={fab(WEAPON_ACTION_FAB_PROPS, {
+          'data-testid': 'slot-selector',
+          'data-slot-id': activeSlot?.id,
+          onClick: clickActivate(handleWeapon),
+          onTouchStart: touchActivate(handleWeapon),
+        })}
+      />,
+      <SpeedDialAction
+        key="build"
+        icon={<ConstructionIcon />}
+        tooltipTitle="Build ▸"
+        tooltipOpen
+        FabProps={fab(ACTION_FAB_BASE, {
+          'data-testid': 'speed-dial-build',
+          onClick: clickActivate(enterCategories),
+          onTouchStart: touchActivate(enterCategories),
+        })}
+      />,
+    ];
+  }
+
+  // The FAB reflects the drilled-into category at the `kinds` level (the dial
+  // stays open there while placing, so a plain category icon shows the context);
+  // otherwise the standard +/× SpeedDialIcon morph signals open/close.
+  const fabIcon = view.level === 'kinds' ? CATEGORY_ICON[view.category] : <SpeedDialIcon />;
+
   return (
     <SpeedDial
       ariaLabel="Game actions"
       data-testid="speed-dial"
-      icon={<SpeedDialIcon />}
+      icon={fabIcon}
       direction="up"
       open={open}
       // Ignore the MUI 'toggle' reason (its synthesized-click open/close) within
@@ -142,62 +276,42 @@ export function SpeedDialMenu(): JSX.Element | null {
         if (reason === 'toggle' && isWithinSuppressWindow()) return;
         setOpen(true);
       }}
+      // The dial STAYS OPEN across a placement (R2.6): picking a kind raises the
+      // ghost but leaves the dial expanded so the next structure is one tap away.
+      // MUI fires onClose on 'blur' / 'mouseLeave' too — e.g. when the player
+      // clicks the canvas to position the ghost or taps the Confirm banner — and
+      // we IGNORE those so an incidental focus change doesn't dismiss the build
+      // menu. Only a deliberate FAB toggle or Escape closes it (resetting to the
+      // root menu); the terminal actions (Panels/Map/Weapon) close via close().
       onClose={(_e, reason) => {
-        if (reason === 'toggle' && isWithinSuppressWindow()) return;
-        close();
+        if (reason === 'toggle') {
+          if (isWithinSuppressWindow()) return;
+          close();
+        } else if (reason === 'escapeKeyDown') {
+          close();
+        }
+        // 'blur' / 'mouseLeave' → ignored: the dial stays open.
       }}
       FabProps={{ ...FAB_PROPS, onTouchStart: touchActivate(toggleOpen) }}
       sx={DIAL_SX}
     >
-      {buildMode
-        ? STRUCTURE_KINDS_LIST.map((k) => (
-            <SpeedDialAction
-              key={k.id}
-              icon={BUILD_ICONS[k.id] ?? <ConstructionIcon />}
-              tooltipTitle={`Build ${k.displayName}`}
-              data-testid={`build-${k.id}`}
-              onClick={clickActivate(() => handlePickBuild(k.id))}
-              FabProps={{ ...ACTION_FAB_BASE, onTouchStart: touchActivate(() => handlePickBuild(k.id)) }}
-            />
-          ))
-        : [
-            <SpeedDialAction
-              key="menu"
-              icon={<MenuIcon />}
-              tooltipTitle="Panels"
-              data-testid="speed-dial-menu"
-              onClick={clickActivate(handleMenu)}
-              FabProps={{ ...MENU_ACTION_FAB_PROPS, onTouchStart: touchActivate(handleMenu) }}
-            />,
-            <SpeedDialAction
-              key="map"
-              icon={<MapIcon />}
-              tooltipTitle="Map"
-              data-testid="galaxy-map-toggle"
-              aria-pressed={isGalaxyMapOpen}
-              onClick={clickActivate(handleMap)}
-              FabProps={{ ...mapActionFabProps(isGalaxyMapOpen), onTouchStart: touchActivate(handleMap) }}
-            />,
-            <SpeedDialAction
-              key="weapon"
-              icon={<GpsFixedIcon />}
-              tooltipTitle={weaponLabel}
-              data-testid="slot-selector"
-              data-slot-id={activeSlot?.id}
-              onClick={clickActivate(handleWeapon)}
-              FabProps={{ ...WEAPON_ACTION_FAB_PROPS, onTouchStart: touchActivate(handleWeapon) }}
-            />,
-            <SpeedDialAction
-              key="build"
-              icon={<ConstructionIcon />}
-              tooltipTitle="Build ▸"
-              data-testid="speed-dial-build"
-              onClick={clickActivate(handleBuild)}
-              FabProps={{ ...ACTION_FAB_BASE, onTouchStart: touchActivate(handleBuild) }}
-            />,
-          ]}
+      {actions}
     </SpeedDial>
   );
+}
+
+/**
+ * Build the per-action Fab props. MUI's `Partial<FabProps>` carries no data- or
+ * aria- index signature, but the Fab forwards arbitrary DOM attrs at runtime —
+ * so we merge through one cast. Routing `data-testid` / `aria-pressed` / handlers
+ * via `FabProps` (not as direct `SpeedDialAction` props) is LOAD-BEARING under
+ * `tooltipOpen`: in MUI's static-tooltip branch a direct prop spreads onto the
+ * label wrapper span, not the Fab button — which would move every E2E selector
+ * off the button. Spreading into `FabProps` keeps them on the Fab in both the
+ * static and hover branches (verified against the installed @mui/material/Fab).
+ */
+function fab(base: object, extra: Record<string, unknown>): Partial<FabProps> {
+  return { ...base, ...extra } as Partial<FabProps>;
 }
 
 /** Per-kind Build icon. */

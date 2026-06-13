@@ -112,6 +112,8 @@ const FEATURE_SPECS: string[] = [
   '**/structure-scenario.spec.ts',
   '**/structure-mining-beam.spec.ts',
   '**/linger/*.spec.ts',
+  // Speed-dial UX (WS-13 / R2.6 — Build category tier + stay-open + labels).
+  '**/speed-dial.spec.ts',
 ];
 
 const GATE_SPECS: string[] = ['**/netcode-health.spec.ts'];
