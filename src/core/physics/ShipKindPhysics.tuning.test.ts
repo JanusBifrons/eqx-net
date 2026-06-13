@@ -64,7 +64,11 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // and new per-kind energyMax / energyRegenRate fields.
     // 8 → 9 on 2026-06-11: crossguard polygon cleaned to a true right-angle
     // T (reflex y=-8 → -10, removing the obsolete ear-clipper elbow slope).
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(9);
+    // 9 → 10 on 2026-06-13 (P3.11b): raised every gameplay kind's DRONE
+    // `ai.thrust` ≈3.6× (to ≈0.45× the player thrustImpulse) so pursuing
+    // drones stop crawling. PLAYER thrustImpulse/maxHealth are unchanged, so
+    // the cruise/hull literals below still hold.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(10);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {
