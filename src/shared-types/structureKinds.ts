@@ -151,10 +151,10 @@ export const CAPITAL: StructureKind = {
   maxHealth: 5000,
   maxConnections: 4,
   isHub: true,
-  // WS-5 (R2.10) — the Capital reaches a SHORTER distance than the global 600 u
-  // (= CAPITAL_CONNECTION_RANGE in src/core/structures/structureGridConstants.ts;
-  // shared-types must not import core, so the literal is mirrored here).
-  connectionRange: 300,
+  // P3.2 — the Capital uses the SAME connection range as every other kind: no
+  // per-kind override (the R2.10 shorter-reach was reverted — "everything has
+  // the same range connectors"). With no kind setting `connectionRange`, every
+  // pair uses the global CONNECTION_MAX_RANGE.
   powerOutput: 50,
   powerConsumption: 0,
   storageCapacity: 2_000_000,
@@ -405,8 +405,9 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
 /** Bump on every catalogue edit (add a kind OR change any numeric field).
  *  3→4 (WS-5): added `CAPITAL.connectionRange = 300` (R2.10).
  *  4→5 (WS-6): shrank CONNECTOR.radius 24→10 + SHIELD_PYLON.radius 30→12 (R2.11/R2.18).
- *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 6;
+ *  5→6 (WS-8): appended LASER_BOLT_TURRET + MISSILE_TURRET defence kinds (R2.15).
+ *  6→7 (P3.2): removed CAPITAL.connectionRange — uniform connection range. */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 7;
 
 /** The pre-built anchor every base starts from. */
 export const DEFAULT_STRUCTURE_KIND: StructureKindId = 'capital';

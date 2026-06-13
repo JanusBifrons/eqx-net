@@ -12,7 +12,6 @@ import { Connection } from './Connection.js';
 import {
   CONNECTION_MAX_RANGE,
   CONNECTION_THROUGHPUT,
-  CAPITAL_CONNECTION_RANGE,
 } from './structureGridConstants.js';
 
 // ── Test node factory ──────────────────────────────────────────────────────
@@ -33,7 +32,7 @@ function node(id: string, opts: Partial<GridNode> = {}): GridNode {
   };
 }
 const capital = (id: string, x: number, y: number, built = true): GridNode =>
-  node(id, { x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built, connectionRange: CAPITAL_CONNECTION_RANGE });
+  node(id, { x, y, radius: 80, isHub: true, isCapital: true, maxConnections: 4, powerOutput: 50, isConstructed: built });
 const connector = (id: string, x: number, y: number, built = true): GridNode =>
   node(id, { x, y, radius: 10, isHub: true, isConnector: true, maxConnections: 6, isConstructed: built });
 const solar = (id: string, x: number, y: number, built = true): GridNode =>
@@ -140,22 +139,19 @@ describe('canConnect — the hub model (eqx-peri rules)', () => {
     expect(r).toEqual({ ok: false, reason: 'out-of-range' });
   });
 
-  it('enforces the Capital shorter connectionRange (WS-5 R2.10)', () => {
-    // A Connector at edge-distance 450 u from the Capital: within the global
-    // 600 u, but OUTSIDE the Capital's 300 u reach → rejected (the Capital's
-    // range caps the pair via min-of-ranges). Capital r80 + connector r10 = 90
-    // centre-to-edge slack, so centre x = 90 + 450 gives a 450 u edge gap.
+  it('the Capital uses the UNIFORM global range — no per-kind shortening (P3.2)', () => {
+    // P3.2 reverted the R2.10 Capital short-reach: every kind now uses the
+    // global 600 u. A Connector 450 u edge-distance from the Capital — OUTSIDE
+    // the old 300 u reach (rejected pre-P3.2) — is now LEGAL. Capital r80 +
+    // connector r10 = 90 centre-to-edge slack, so centre x = 90 + 450.
     const conFar = connector('conFar', 90 + 450, 0);
     expect(edgeDistance(cap, conFar)).toBeCloseTo(450, 6);
-    expect(canConnect(cap, conFar, new Map(), new Map([['cap', cap], ['conFar', conFar]])))
+    expect(canConnect(cap, conFar, new Map(), new Map([['cap', cap], ['conFar', conFar]])).ok).toBe(true);
+    // The global 600 u still bounds it: a Connector beyond 600 u edge is out of
+    // range for the Capital, exactly as for any other pair.
+    const conBeyond = connector('conBeyond', 90 + CONNECTION_MAX_RANGE + 50, 0);
+    expect(canConnect(cap, conBeyond, new Map(), new Map([['cap', cap], ['conBeyond', conBeyond]])))
       .toEqual({ ok: false, reason: 'out-of-range' });
-    // The SAME 450 u gap between two NON-capital connectors stays legal — the
-    // global 600 u applies; the short reach is the Capital's alone.
-    // Two connectors r10 each ⇒ 20 u centre-to-edge slack, so centre x = 20 + 450.
-    const conA = connector('cA', 0, 0);
-    const conB = connector('cB', 20 + 450, 0);
-    expect(edgeDistance(conA, conB)).toBeCloseTo(450, 6);
-    expect(canConnect(conA, conB, new Map(), new Map([['cA', conA], ['cB', conB]])).ok).toBe(true);
   });
 
   it('rejects a line-of-sight-blocked link', () => {

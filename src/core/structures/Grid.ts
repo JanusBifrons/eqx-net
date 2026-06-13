@@ -187,9 +187,11 @@ export function canConnect(
   const bConns = adjacency.get(b.id) ?? [];
   if (bConns.length >= b.maxConnections) return { ok: false, reason: 'b-full' };
 
-  // WS-5 (R2.10) — per-endpoint range: the tighter of the two kinds' ranges
-  // wins (symmetric, so canConnect(a,b) === canConnect(b,a)). Only the Capital
-  // shortens its reach today; every other pair keeps the global 600 u.
+  // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
+  // R2.10 Capital short-reach was reverted, "everything has the same range").
+  // `connectionRange` stays an optional per-kind override seam (the `min` of the
+  // two endpoints, symmetric) but no kind sets it today, so this collapses to
+  // the global for every pair.
   const maxRange = Math.min(
     a.connectionRange ?? CONNECTION_MAX_RANGE,
     b.connectionRange ?? CONNECTION_MAX_RANGE,
