@@ -2,6 +2,7 @@ import { Box, Button } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { commitChosenPlacement } from '../structures/structurePlacementClient';
+import { isTouchDevice } from '../input/TouchInput';
 
 /**
  * Placement confirm banner (speed-dial-resource-structures plan, Phase 2;
@@ -30,7 +31,15 @@ export function StructurePlacementBanner(): JSX.Element | null {
   const placementKind = useUIStore((s) => s.placementKind);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
 
-  if (!placementKind) return null;
+  // TOUCH-ONLY affordance (P3.6 / WS-C4b). The banner is the two-step
+  // tap-to-position → Confirm/Cancel flow for touch devices. On DESKTOP the
+  // one-click model (hover-follow + left-click places, right-click / Escape
+  // cancels — WS-10) needs no banner, so showing the mobile Confirm/Cancel on
+  // desktop is wrong ("the desktop placement still shows the Confirm/Cancel
+  // from mobile"). Gate it off for pointer devices. The desktop "placement
+  // active" E2E signal is `data-placement-screen-x` (published by gameRafLoop
+  // on both render paths), NOT this banner.
+  if (!placementKind || !isTouchDevice()) return null;
   const kind = getStructureKind(placementKind);
 
   const onConfirm = (): void => {
