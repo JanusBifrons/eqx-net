@@ -54,6 +54,9 @@ interface LingerProbeApi {
   postFrame: () => void;
   /** The REAL drawn mount-cluster size for the lingering hull (0 = no barrels). */
   getMountCount: () => number;
+  /** The REAL count of DRAWN shield-aura rings (0 = aura registered but never
+   *  positioned — the P3.12 lingering-aura bug). */
+  getShieldRingCount: () => number;
 }
 
 declare global {
@@ -88,6 +91,7 @@ async function main(): Promise<void> {
       renderer.update(mirror);
     },
     getMountCount: (): number => renderer.getFeedback().mountCounts.get(LINGER_ID) ?? 0,
+    getShieldRingCount: (): number => renderer.getFeedback().shieldRingVisibleCount,
   };
 
   log('[probe] window.__lingerProbe ready');

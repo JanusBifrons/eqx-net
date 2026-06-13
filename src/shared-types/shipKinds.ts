@@ -122,7 +122,7 @@ export const SHIP_KINDS = Object.freeze({
  * MUST bump this value by 1 in the same PR. Mount-layout changes are not
  * auto-handled — they require a separate migration story.
  */
-export const SHIP_KIND_CATALOGUE_VERSION = 9;
+export const SHIP_KIND_CATALOGUE_VERSION = 10;
 
 /** Shield bubble pad — how far PAST each kind's hull `radius` the shield
  *  bubble extends. Shared across:

@@ -186,6 +186,12 @@ export function formatResources(n: number): string {
   return `${Math.round(n)}`;
 }
 
+/** P3.4 — oversample world-space structure text so it stays crisp when the
+ *  camera zooms in. Pixi bakes glyph textures at the renderer's 1× resolution
+ *  by default, which softens under magnification (the same low-res complaint
+ *  the galaxy map had). Mirrors the galaxy-map label fix's oversample factor. */
+const STRUCTURE_LABEL_RESOLUTION = 3;
+
 let _capitalResStyle: TextStyle | undefined;
 /** WS-9 (R2.12) — the Capital's world-space mineral-bank readout (a short amber
  *  number below the body). Built ONCE per capital sprite (invariant #14); the
@@ -199,7 +205,8 @@ export function buildCapitalResourceText(radius: number): Text {
     fill: 0xffe08a,
     stroke: { color: 0x000000, width: 3 },
   });
-  const t = new Text({ text: '', style: _capitalResStyle });
+  // resolution + roundPixels: crisp under camera zoom (P3.4).
+  const t = new Text({ text: '', style: _capitalResStyle, resolution: STRUCTURE_LABEL_RESOLUTION, roundPixels: true });
   t.anchor.set(0.5, 0);
   t.y = radius + 4; // below the body (Pixi y-down)
   t.label = 'capitalResource';

@@ -52,6 +52,7 @@ function emptyFeedback(): RendererFeedback {
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
+    shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
@@ -566,6 +567,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
         this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
+        this.feedback.shieldRingVisibleCount = msg.feedback.shieldRingVisibleCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
         this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;

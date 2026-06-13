@@ -272,6 +272,12 @@ export class EffectsService implements IEffects {
     this.shieldAura.pulse(entityId);
   }
 
+  /** Shield-aura rings currently DRAWN this frame (the drawn-artefact signal
+   *  for the worker-boundary lingering-aura lock — P3.12 / WS-C3). */
+  shieldRingVisibleCount(): number {
+    return this.shieldAura.visibleRingCount();
+  }
+
   /** DEBUG passthrough — see `EngineEmitter.debugCopyParticleWorld`. */
   debugCopyEngineParticleWorld(out: number[]): number {
     return this.engines.debugCopyParticleWorld(out);

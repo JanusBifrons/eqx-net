@@ -325,6 +325,7 @@ export class PixiRenderer implements IRenderer {
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
     wreckSpriteCount: 0,
+    shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
@@ -633,7 +634,12 @@ export class PixiRenderer implements IRenderer {
         // updateSwarmSprites). Returns null for entities not in the
         // sprite map (despawned, never spawned, off-interest).
         getEntityPose: (entityId: string) => {
-          const sp = this.sprites.get(entityId);
+          // Active ships + drones live in `this.sprites`; PARKED lingering hulls
+          // live in the SEPARATE `this.lingeringSprites` map. Effects registered
+          // for a lingering hull (the shield aura — P3.12 / WS-C3) must resolve
+          // its pose too, or the ring registers but `ShieldAura` hides it every
+          // frame (the "lingering ships don't draw a shield" bug). Fall back.
+          const sp = this.sprites.get(entityId) ?? this.lingeringSprites.get(entityId)?.sprite;
           if (!sp) return null;
           // Pure seam helper: converts the Pixi sprite pose BACK to game
           // space (Y-up, angle un-negated). Mutates the reused scratch so
@@ -1801,6 +1807,11 @@ export class PixiRenderer implements IRenderer {
       // lag is negligible vs the 500 ms budget hysteresis hold.
       this.effects.tick(nowMs, dtMs, this.frameMarkers.rendererUpdateMs);
       this.lastEffectsTickNowMs = nowMs;
+      // Drawn-artefact signal for the worker-boundary lingering-aura lock
+      // (P3.12 / WS-C3) — read AFTER tick(), which sets each ring's visibility.
+      this.feedback.shieldRingVisibleCount = this.effects.shieldRingVisibleCount();
+    } else {
+      this.feedback.shieldRingVisibleCount = 0;
     }
 
     this.frameMarkers.rendererUpdateMs = performance.now() - updateStart;
