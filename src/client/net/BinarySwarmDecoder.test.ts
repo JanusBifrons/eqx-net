@@ -6,21 +6,27 @@ import {
   SWARM_REC_ANGVEL_OFF,
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
+  SWARM_REC_COMPONENT_INDEX_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
   SWARM_WIRE_VERSION,
   SWARM_KIND_STRUCTURE,
+  SWARM_KIND_SCRAP,
 } from '../../shared-types/swarmWireFormat.js';
 import { structureKindToIndex } from '../../shared-types/structureKinds.js';
+import { shipKindToIndex } from '../../shared-types/shipKinds.js';
 
 interface SwarmRecord {
   entityId: number;
   kind: number;
   recFlags: number;
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number; radius: number;
-  /** Shared subtype byte (drone ship-kind index OR structure-kind index). */
+  /** Shared subtype byte (drone ship-kind index OR structure-kind index OR
+   *  scrap parent-ship-kind index). */
   shipKindByte?: number;
+  /** Trailing componentIndex byte — meaningful only for scrap (kind=3). */
+  componentIndex?: number;
 }
 
 /**
@@ -49,6 +55,7 @@ function buildPacket(tick: number, isFull: boolean, records: SwarmRecord[]): Uin
     view.setFloat32(off + SWARM_REC_ANGVEL_OFF, r.angvel, true);
     view.setFloat32(off + SWARM_REC_RADIUS_OFF, r.radius, true);
     view.setUint8(off + SWARM_REC_SHIP_KIND_OFF, r.shipKindByte ?? 0);
+    view.setUint8(off + SWARM_REC_COMPONENT_INDEX_OFF, r.componentIndex ?? 0);
     off += SWARM_RECORD_BYTES;
   }
   return new Uint8Array(buf);
@@ -97,6 +104,54 @@ describe('decodeSwarmPacket', () => {
     expect(s.kind).toBe(SWARM_KIND_STRUCTURE);
     expect(s.shipKind).toBe('turret');
     expect(mirror.swarm!.get(43)!.shipKind).toBeUndefined();
+  });
+
+  it('decodes a SCRAP record: parent ship-kind + componentIndex (Phase 2a)', () => {
+    const mirror = makeMirror();
+    const packet = buildPacket(60, true, [
+      {
+        entityId: 77,
+        kind: SWARM_KIND_SCRAP,
+        recFlags: 0,
+        x: 50, y: -25, vx: 1, vy: 2, angle: 0.3, angvel: 0, radius: 8,
+        shipKindByte: shipKindToIndex('havok'),
+        componentIndex: 5,
+      },
+      // A drone (kind 1) carries no componentIndex even when the byte is set.
+      {
+        entityId: 78,
+        kind: 1,
+        recFlags: 0,
+        x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 14,
+        shipKindByte: shipKindToIndex('fighter'),
+        componentIndex: 9,
+      },
+    ]);
+    decodeSwarmPacket(packet, mirror);
+    const scrap = mirror.swarm!.get(77)!;
+    expect(scrap.kind).toBe(SWARM_KIND_SCRAP);
+    // The shared byte decodes to the PARENT ship-kind id.
+    expect(scrap.shipKind).toBe('havok');
+    expect(scrap.componentIndex).toBe(5);
+    // A non-scrap record leaves componentIndex undefined.
+    const drone = mirror.swarm!.get(78)!;
+    expect(drone.shipKind).toBe('fighter');
+    expect(drone.componentIndex).toBeUndefined();
+  });
+
+  it('rejects a v3 packet (wrong version → dropped, no fallback)', () => {
+    const mirror = makeMirror();
+    // Hand-build a v3-shaped packet: version byte 3, the old 33-byte stride.
+    const V3_RECORD_BYTES = 33;
+    const buf = new ArrayBuffer(SWARM_HEADER_BYTES + V3_RECORD_BYTES);
+    const view = new DataView(buf);
+    view.setUint8(0, 3); // v3 — the decoder hard-fails this
+    view.setUint8(1, SWARM_FLAG_FULL);
+    view.setUint16(2, 1, true);
+    view.setUint32(4, 60, true);
+    decodeSwarmPacket(buf, mirror);
+    // The packet was dropped: mirror.swarm is never even lazily created.
+    expect(mirror.swarm).toBeUndefined();
   });
 
   it('mirrors a full snapshot into mirror.swarm', () => {

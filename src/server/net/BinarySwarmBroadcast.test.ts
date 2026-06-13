@@ -12,11 +12,14 @@ import {
   SWARM_REC_ANGVEL_OFF,
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
+  SWARM_REC_COMPONENT_INDEX_OFF,
   SWARM_FLAG_FULL, SWARM_RECORD_FLAG_SLEEPING,
   SWARM_WIRE_VERSION,
   SWARM_KIND_STRUCTURE,
+  SWARM_KIND_SCRAP,
 } from '../../shared-types/swarmWireFormat.js';
 import { structureKindToIndex } from '../../shared-types/structureKinds.js';
+import { shipKindToIndex } from '../../shared-types/shipKinds.js';
 
 const SLOT_A = 5;
 const SLOT_B = 7;
@@ -309,5 +312,40 @@ describe('BinarySwarmBroadcast — encoder', () => {
     expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_SHIP_KIND_OFF)).toBe(
       structureKindToIndex('turret'),
     );
+    // componentIndex byte is 0 for non-scrap records.
+    expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_COMPONENT_INDEX_OFF)).toBe(0);
+  });
+
+  it('header carries the bumped wire version (v4) and the 34-byte stride', () => {
+    expect(SWARM_WIRE_VERSION).toBe(4);
+    expect(SWARM_RECORD_BYTES).toBe(34);
+    expect(SWARM_REC_COMPONENT_INDEX_OFF).toBe(33);
+    registry.register('a', SLOT_A, 0, 32, 0, 0, 0);
+    setSlotPose(f32, SLOT_A, 1, 0, 0, 0, 0);
+    const packet = encoder.encode(registry, f32, u32, 60);
+    expect(packet).not.toBeNull();
+    const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
+    expect(view.getUint8(0)).toBe(4);
+    expect(packet!.byteLength).toBe(SWARM_HEADER_BYTES + SWARM_RECORD_BYTES);
+  });
+
+  it('encodes a SCRAP record: parent ship-kind into the shared byte + componentIndex (Phase 2a)', () => {
+    // kind=3 (scrap); rec.shipKind holds the PARENT ship-kind id, componentIndex
+    // selects which scrap group of that parent this piece is.
+    const rec = registry.register('scrap-0', SLOT_A, SWARM_KIND_SCRAP, 8, 100, 200, 0);
+    rec.shipKind = 'havok';
+    rec.componentIndex = 5;
+    setSlotPose(f32, SLOT_A, 100, 200, 0, 0, 0);
+
+    const packet = encoder.encode(registry, f32, u32, 60); // full-snapshot tick
+    expect(packet).not.toBeNull();
+    const view = new DataView(packet!.buffer, packet!.byteOffset, packet!.byteLength);
+    expect(view.getUint8(SWARM_HEADER_BYTES + 2)).toBe(SWARM_KIND_SCRAP);
+    // Shared byte carries the PARENT ship-kind index.
+    expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_SHIP_KIND_OFF)).toBe(
+      shipKindToIndex('havok'),
+    );
+    // Trailing componentIndex byte carries which scrap group.
+    expect(view.getUint8(SWARM_HEADER_BYTES + SWARM_REC_COMPONENT_INDEX_OFF)).toBe(5);
   });
 });

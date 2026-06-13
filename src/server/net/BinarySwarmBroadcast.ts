@@ -20,6 +20,7 @@ import {
   SWARM_REC_ANGVEL_OFF,
   SWARM_REC_RADIUS_OFF,
   SWARM_REC_SHIP_KIND_OFF,
+  SWARM_REC_COMPONENT_INDEX_OFF,
   SWARM_FLAG_FULL,
   SWARM_RECORD_FLAG_SLEEPING,
   SWARM_RECORD_FLAG_SHIELD_DOWN,
@@ -28,7 +29,7 @@ import {
 } from '../../shared-types/swarmWireFormat.js';
 import { shipKindToIndex, isShipKindId } from '../../shared-types/shipKinds.js';
 import { structureKindToIndex, isStructureKindId } from '../../shared-types/structureKinds.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from './SwarmEntityRegistry.js';
 
 /** Tick cadence at which a full snapshot is forced regardless of changes. */
@@ -168,16 +169,22 @@ export class BinarySwarmBroadcast {
       this.view.setFloat32(writeOffset + SWARM_REC_RADIUS_OFF, rec.radius, true);
       // Trailing byte: the shared subtype index. For a DRONE it's the
       // ship-kind index into SHIP_KINDS_LIST; for a STRUCTURE it's the
-      // structure-kind index into STRUCTURE_KINDS_LIST (the byte is shared —
-      // the client decoder demuxes on `kind`). Asteroids write 0 (the decoder
-      // ignores the byte for kind=0 records anyway).
+      // structure-kind index into STRUCTURE_KINDS_LIST; for a SCRAP piece it's
+      // the PARENT ship-kind index into SHIP_KINDS_LIST (the composite the
+      // scrap broke off of). The byte is shared — the client decoder demuxes
+      // on `kind`. Asteroids write 0 (the decoder ignores the byte for kind=0).
       let shipKindIdx = 0;
       if (rec.kind === SWARM_KIND_DRONE && rec.shipKind && isShipKindId(rec.shipKind)) {
         shipKindIdx = shipKindToIndex(rec.shipKind);
       } else if (rec.kind === SWARM_KIND_STRUCTURE && rec.shipKind && isStructureKindId(rec.shipKind)) {
         shipKindIdx = structureKindToIndex(rec.shipKind);
+      } else if (rec.kind === SWARM_KIND_SCRAP && rec.shipKind && isShipKindId(rec.shipKind)) {
+        shipKindIdx = shipKindToIndex(rec.shipKind);
       }
       this.view.setUint8(writeOffset + SWARM_REC_SHIP_KIND_OFF, shipKindIdx);
+      // v4: componentIndex — which scrap group of the parent ship-kind this
+      // piece is. Meaningful ONLY for kind=scrap; 0 for every other record.
+      this.view.setUint8(writeOffset + SWARM_REC_COMPONENT_INDEX_OFF, rec.componentIndex ?? 0);
       writeOffset += SWARM_RECORD_BYTES;
 
       // Update bookkeeping so future deltas are computed against this pose.

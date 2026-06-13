@@ -19,6 +19,7 @@ const ALL_TAGS: readonly EntityKindTag[] = [
   'projectile',
   'missile',
   'structure',
+  'scrap',
 ];
 
 describe('EntityKindRegistry', () => {
@@ -62,6 +63,8 @@ describe('EntityKindRegistry', () => {
     expect(getEntityKind('missile').damageable).toBe(false);
     // P4: the structure is the new pose-core damageable kind.
     expect(getEntityKind('structure').damageable).toBe(true);
+    // Scrap-on-death Phase 2a: scrap is a pose-core damageable kind too.
+    expect(getEntityKind('scrap').damageable).toBe(true);
   });
 
   it('the structure rides pose-core kind byte 2 (P4 "for free" proof)', () => {
@@ -70,6 +73,18 @@ describe('EntityKindRegistry', () => {
     expect(structure.sync.poseCoreKind).toBe(2);
     expect(structure.sync.interpolated).toBe(false); // static, like an asteroid
     expect(entityKindByPoseCore(2)).toBe('structure');
+  });
+
+  it('scrap rides pose-core kind byte 3 (scrap-on-death Phase 2a)', () => {
+    const scrap = getEntityKind('scrap');
+    expect(scrap.sync.transport).toBe('pose-core');
+    expect(scrap.sync.poseCoreKind).toBe(3);
+    expect(scrap.sync.interpolated).toBe(false); // static, like an asteroid
+    expect(entityKindByPoseCore(3)).toBe('scrap');
+    // The parent ship-kind id (`shipKind`) + the scrap-group `componentIndex`
+    // must survive the per-frame mirror rebuild.
+    expect(scrap.render.preservedFields).toContain('shipKind');
+    expect(scrap.render.preservedFields).toContain('componentIndex');
   });
 
   it('every kind carries a render bucket and a preservedFields array', () => {
