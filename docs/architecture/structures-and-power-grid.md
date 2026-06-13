@@ -126,9 +126,12 @@ so it unit-tests like `TransitOrchestrator`):
   `isConstructed` power gate lives here) and `autoConnectStructure` runs on every
   place, per-owner. **WS-5 R2.10 legality:** `canConnect` enforces
   capital-only-connectors (the Capital links ONLY to a Connector — keyed on
-  `GridNode.isConnector`, so Shield Pylons do NOT count) + per-kind
-  `connectionRange` (the Capital's shorter `CAPITAL_CONNECTION_RANGE = 300`;
-  `canConnect` uses the `min` of the two endpoints' ranges). **WS-5 R2.17
+  `GridNode.isConnector`, so Shield Pylons do NOT count). **P3.2 — connection
+  range is now UNIFORM** (`CONNECTION_MAX_RANGE = 600` for every kind; the R2.10
+  Capital short-reach `CAPITAL_CONNECTION_RANGE` was removed — "everything has
+  the same range connectors"). `GridNode.connectionRange` stays an optional
+  per-kind override seam (`canConnect` still takes the `min` of the two
+  endpoints) but no kind sets it today. **WS-5 R2.17
   multi-connect:** a placed structure links to EVERY in-range legal hub (not just
   the nearest) in `(edgeDistance, id)` order, capped by its own `maxConnections`
   AND the global `PLACEMENT_MAX_CONNECTIONS = 6` (re-checking `canConnect` each

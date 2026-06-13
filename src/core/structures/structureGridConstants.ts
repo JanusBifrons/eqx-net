@@ -19,18 +19,11 @@ export const SCAFFOLDING_HP_FRACTION = 0.1;
 
 /** Max edge-to-edge (AABB) distance for a connection, world units. Beyond this
  *  two structures can't link — the player bridges the gap with a Connector.
- *  The global default; a kind may shorten its OWN reach via `connectionRange`
- *  (only the Capital does today — see `CAPITAL_CONNECTION_RANGE`). */
+ *  The UNIFORM range for EVERY kind (P3.2 — "everything has the same range
+ *  connectors"). `GridNode.connectionRange` remains an optional per-kind
+ *  override seam for the future, but no kind sets it today, so `canConnect`'s
+ *  `min`-of-endpoints collapses to this for every pair. */
 export const CONNECTION_MAX_RANGE = 600;
-
-/** WS-5 (R2.10) — the Capital's SHORTER connection range, world units. Half the
- *  global 600 so the Capital is a tight anchor: distant structures must chain
- *  out through interior Connectors rather than reaching the core directly.
- *  `canConnect` takes `min` of the two endpoints' ranges, so this caps EVERY
- *  pair the Capital is part of (including the Capital↔Connector bridge). The
- *  catalogue can't import this (shared-types must not import core), so
- *  `CAPITAL.connectionRange` carries the literal `300` with a back-reference. */
-export const CAPITAL_CONNECTION_RANGE = 300;
 
 /** WS-5 (R2.17) — the global cap on how many hubs a single freshly-placed
  *  structure auto-connects to on placement. A structure's OWN `maxConnections`

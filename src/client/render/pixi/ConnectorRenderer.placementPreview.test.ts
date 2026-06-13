@@ -204,20 +204,21 @@ describe('ConnectorRenderer — placement connection preview', () => {
   // The ring radius is the kind's per-kind connectionRange (capped at the
   // global 600) PLUS the ghost's own radius (centre-out reach to a zero-radius
   // partner edge). Reads the REAL renderer field, not a recompute.
-  it('draws the range ring at the per-kind connectionRange + ghost radius (capital = 300+80)', () => {
+  it('draws the range ring at the UNIFORM global range + ghost radius (capital = 600+80, P3.2)', () => {
     const swarm = new Map<number, SwarmRenderState>([[1, structureEntry('capital', 0, 0)]]);
     const structures = new Map<number, StructureRenderState>([[1, structureState({ connTo: [] })]]);
     const mirror: RenderMirror = {
       swarm,
       structures,
-      // Capital has connectionRange 300 + radius 80.
+      // P3.2 — the Capital no longer has a shorter per-kind range; it uses the
+      // global 600 like every kind. Ring = 600 + radius 80 (was 300+80).
       pendingPlacementPreview: { kind: 'capital', x: 0, y: 1000, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
     r.update(mirror, 1, 0);
 
-    expect(r.lastRangeCircleRadius).toBe(300 + getStructureKind('capital').radius);
+    expect(r.lastRangeCircleRadius).toBe(600 + getStructureKind('capital').radius);
   });
 
   it('falls back to the global CONNECTION_MAX_RANGE (600) + radius for a kind with no per-kind range (solar = 600+40)', () => {
