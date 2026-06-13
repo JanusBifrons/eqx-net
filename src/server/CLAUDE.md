@@ -216,6 +216,16 @@ the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprin
 can be placed with an empty bank and waits. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
+**Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
+PLACED STRUCTURES only, so a Capital dropped on a rock LANDED ("places on an
+asteroid"). It now routes BOTH the structure AND the asteroid check through the
+shared pure [`canPlaceStructureAt`/`placementRejection`](../core/structures/placementRules.ts)
+(sum-of-radii circle, the same `getObstacles` → `gatherStructureObstacles` hook
+the auto-connect LOS already used). Low-frequency message path — no wire change,
+NO netgate. The client ghost can call the SAME predicate for a red-invalid tint
+(deferred). Locks: `placementRules.test.ts` (pure), `StructurePlacementSubsystem.test.ts`
+(obstacle reject), `tests/integration/sectorRoom/structurePlacementValidation.test.ts`
+(the real `getObstacles` wiring, capital-on-asteroid rejected end-to-end).
 `SectorRoom._internals` exposes `structureRegistry` + the swarm record `shipKind`
 for the integration test.
 
