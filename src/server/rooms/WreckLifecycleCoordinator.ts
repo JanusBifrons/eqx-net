@@ -59,7 +59,7 @@ export interface WreckLifecycleCoordinatorDeps {
    *  pose from here, and cancels its pending auto-evict timer. */
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
-  ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+  ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
   /** Slot bookkeeping (room owns the canonical maps). */
   playerToSlot: Map<string, number>;
   slotToPlayer: Map<number, string>;
@@ -259,7 +259,7 @@ export class WreckLifecycleCoordinator {
     d.lingeringPoseCache.delete(shipInstanceId);
     const timer = d.ownerlessShips.get(shipInstanceId);
     if (timer !== undefined) {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer); // R2.26: a persist-forever marker is null (no timer)
       d.ownerlessShips.delete(shipInstanceId);
     }
     d.state.ships.delete(shipInstanceId);

@@ -140,6 +140,9 @@ interface AllShipEntry {
   /** Current energy pool (weapons/energy/AI overhaul §3.2). Emitted on the
    *  wire ONLY for the recipient's own active ship. 0 for lingering hulls. */
   energy: number;
+  /** WS-12 / R2.32 — shield down (hull exposed). Drives the client shield
+   *  aura for both active AND lingering hulls. */
+  shieldDown: boolean;
 }
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
@@ -158,6 +161,7 @@ type MutableStateEntry = {
   lastInput?: ShipInputBits;
   mountAngles?: number[];
   energy?: number;
+  shieldDown?: boolean;
 };
 
 type MutableProjectileEntry = {
@@ -451,6 +455,7 @@ export class SnapshotBroadcaster {
         pose: undefined as unknown as ShipPhysicsState,
         lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
         energy: 0,
+        shieldDown: false,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -502,6 +507,7 @@ export class SnapshotBroadcaster {
       entry.lastInput.boost     = !!(flags & FLAG_INPUT_BOOST);
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
       entry.energy = ship.energy;
+      entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -526,6 +532,9 @@ export class SnapshotBroadcaster {
       entry.lastInput.boost = false;
       entry.lastInput.reverse = false;
       entry.energy = 0;
+      // R2.32 — a lingering hull keeps its at-disconnect shield state so a
+      // parked hull whose shield was broken still renders hull-exposed.
+      entry.shieldDown = ship.shield <= 0;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -606,6 +615,9 @@ export class SnapshotBroadcaster {
         entry.energy = (ship.playerId === recipientPlayerId && ship.isActive)
           ? Math.round(ship.energy)
           : undefined;
+        // R2.32 — emit shieldDown only when true (notepack skips undefined →
+        // zero bytes for an undamaged sector); clear the pooled entry otherwise.
+        entry.shieldDown = ship.shieldDown ? true : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

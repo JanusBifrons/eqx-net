@@ -101,6 +101,13 @@ export interface SnapshotMessage {
        *  snapshot; `energyMax` (the bar denominator) is read from the kind
        *  catalogue client-side, never on the wire. */
       energy?: number;
+      /** WS-12 / R2.32 — true when this hull's shield is DOWN (hull exposed).
+       *  Emitted for BOTH active AND lingering hulls so the client can render
+       *  the shield aura on a parked lingering hull (previously the lingering
+       *  mirror entry carried no shield state, so it never showed an aura).
+       *  Emit-when-true only (notepack skips `undefined`); absent ⇒ shield up.
+       *  Byte-additive — an undamaged sector pays zero extra bytes. */
+      shieldDown?: boolean;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

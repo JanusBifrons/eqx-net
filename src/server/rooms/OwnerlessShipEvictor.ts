@@ -48,7 +48,7 @@ export interface OwnerlessShipEvictorDeps {
   sabF32: Float32Array;
   sectorKey: () => string | null;
   shipsMap: MapSchema<ShipState>;
-  ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+  ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
   playerToSlot: Map<string, number>;
@@ -75,7 +75,7 @@ export class OwnerlessShipEvictor {
     const d = this.deps;
     const timer = d.ownerlessShips.get(shipInstanceId);
     if (timer !== undefined) {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer); // R2.26: a persist-forever marker is null (no timer)
       d.ownerlessShips.delete(shipInstanceId);
     }
 

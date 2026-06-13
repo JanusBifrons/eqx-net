@@ -97,6 +97,8 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
           x: entry.x, y: entry.y, vx: entry.vx, vy: entry.vy,
           angle: entry.angle,
           ownerPlayerId: entry.playerId,
+          // R2.32 — carry the shield state so the parked hull renders its aura.
+          shieldDown: entry.shieldDown,
         };
         mirror.lingeringShips.set(shipInstanceId, lingerEntry);
       } else {
@@ -106,6 +108,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
         lingerEntry.vy = entry.vy;
         lingerEntry.angle = entry.angle;
         lingerEntry.ownerPlayerId = entry.playerId;
+        lingerEntry.shieldDown = entry.shieldDown;
       }
       lingeringSeen.add(shipInstanceId);
       // Phase 6b — spawn / refresh the predWorld body so the local

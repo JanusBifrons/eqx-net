@@ -60,7 +60,9 @@ export interface LeaveHandlerDeps {
   playerToUser: Map<string, unknown>;
   playerToActiveShipInstance: Map<string, string>;
   playerToTransitInFlight: Set<string>;
-  ownerlessShips: Map<string, ReturnType<typeof setTimeout>>;
+  // R2.26: value is `null` for a persist-forever lingering hull (presence
+  // marker, no despawn timer); a real Timeout only on legacy/other arm sites.
+  ownerlessShips: Map<string, ReturnType<typeof setTimeout> | null>;
   boostingPlayers: Set<string>;
   thrustingPlayers: Set<string>;
   snapshotBroadcaster: SnapshotBroadcaster;
@@ -165,15 +167,16 @@ export class LeaveHandler {
         health: payload.health, lastFireClientTick: payload.lastFireClientTick,
       });
 
-      // Phase 6b cleanup — keyed by shipInstanceId.
+      // Phase 6b cleanup — keyed by shipInstanceId. WS-12 / R2.26: lingering
+      // hulls PERSIST IN THE WORLD FOREVER — there is NO timed despawn. We
+      // record a `null` presence marker (so the rebind / restore / displace
+      // gates that check `ownerlessShips` still detect the lingering hull) but
+      // arm NO eviction timer. The hull leaves the world ONLY via the existing
+      // explicit paths: combat destruction, the owner resuming a different
+      // roster ship (respawn-evict), or abandonment → wreck (unchanged). The
+      // `ttlMs` above still bounds the Limbo reconnect-DATA window, not the hull.
       const shipInstanceId = ship!.shipInstanceId;
-      const evictTimer = setTimeout(() => {
-        d.evictOwnerlessShip(shipInstanceId);
-      }, ttlMs);
-      if (typeof evictTimer === 'object' && evictTimer !== null && 'unref' in evictTimer) {
-        (evictTimer as { unref: () => void }).unref();
-      }
-      d.ownerlessShips.set(shipInstanceId, evictTimer);
+      d.ownerlessShips.set(shipInstanceId, null);
 
       // Phase 6b — flip the schema's isActive=false. The slot stays in
       // playerToSlot for rebind. lingeringSlots fills only on
