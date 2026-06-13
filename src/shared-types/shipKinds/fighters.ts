@@ -71,7 +71,11 @@ export const SCOUT: ShipKind = ShipKindSchema.parse({
   // `maxAngvel = 3.0` we need `maxTorque ≈ 4.5`. `turnKp` bumped from
   // 5.0 → 8.0 so the P-controller actually asks for the new headroom
   // at modest bearing errors instead of saturating only when way off.
-  ai: { thrust: 0.35, turnKp: 8.0, maxTorque: 4.5 },
+  // P3.11b — thrust raised ≈0.45× the player thrustImpulse (was 0.35) so a
+  // pursuing drone closes the gap at ~0.7× player cruise instead of crawling
+  // (the AI-impulse path bypasses maxSpeed; the standoff cap + brake still
+  // settle it in weapons range).
+  ai: { thrust: 1.35, turnKp: 8.0, maxTorque: 4.5 },
   shape: {
     kind: 'polygon',
     color: 0x00d4ff,
@@ -119,7 +123,7 @@ export const FIGHTER: ShipKind = ShipKindSchema.parse({
   energyRegenRate: 0.25,
   // Phase-1 agility uplift (2026-05-10): match player `maxAngvel = 2.0`
   // — terminal angvel = maxTorque / 1.5, so maxTorque = 3.0.
-  ai: { thrust: 0.25, turnKp: 6.0, maxTorque: 3.0 },
+  ai: { thrust: 0.9, turnKp: 6.0, maxTorque: 3.0 }, // P3.11b: ≈0.45× player thrust (was 0.25)
   shape: {
     kind: 'polygon',
     color: 0x00ff88,
