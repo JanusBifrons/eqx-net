@@ -135,6 +135,17 @@ function makeManager(opts: {
     iceDeadlineMs: opts.iceDeadlineMs,
   });
 
+  // De-flake (2026-06-13): the per-send latency clock defaults to the real
+  // `performance.now()`, so the `pack` + send bracketed by it measures real
+  // wall-clock — under CI load (GC / scheduling jitter) a normally-instant send
+  // exceeds the 2 ms `SLOW_SEND_MS` threshold and bumps `dcSlowSends`, flaking
+  // the routing/backpressure tests that assert `dcSlowSends: 0` (it tripped CI
+  // on PRs #46/#55/#58 — all unrelated client changes). Pin it to a FIXED clock
+  // so dt is deterministically 0; the dedicated "logs webrtc_slow_send" test
+  // overrides `_perfNowForTests` AFTER this with its own advancing stub, so the
+  // slow-send threshold logic stays covered.
+  (manager as unknown as { _perfNowForTests: () => number })._perfNowForTests = () => 0;
+
   return { manager, pcs, sink, logEvents };
 }
 
