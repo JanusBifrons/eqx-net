@@ -4629,7 +4629,16 @@ export class ColyseusGameClient {
       const fwdY = Math.cos(mountAngle);
       const fromX = mountWorldX + fwdX * 20;
       const fromY = mountWorldY + fwdY * 20;
-      const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, localId);
+      // P3.13 — the beam VISUALLY reaches the weapon's MAX range (optimal ×
+      // maxRangeMul), so the gradient texture (A3b) fades it to nothing at the
+      // tip beyond the optimal/aim-line range. Server damage falloff matches
+      // (A3a). Alloc-free: getWeapon is a cached lookup + scalar maths (#14).
+      const wdef = getWeapon(mount.weaponId);
+      const beamMax =
+        wdef.mode === 'hitscan' && wdef.falloff?.maxRangeMul && wdef.falloff.maxRangeMul > 1
+          ? wdef.range * wdef.falloff.maxRangeMul
+          : HITSCAN_RANGE;
+      const hit = skipHitscan ? null : this.predWorld.hitscan(fromX, fromY, fwdX, fwdY, beamMax, localId);
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
@@ -4645,7 +4654,7 @@ export class ColyseusGameClient {
         }
       }
       liveBeams.set(mount.id, {
-        dist: hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY) : HITSCAN_RANGE,
+        dist: hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax) : beamMax,
         hitId: hit?.hitId,
       });
     }
@@ -4667,13 +4676,14 @@ export class ColyseusGameClient {
   private shieldEdgeDist(
     hit: { hitId: string; dist: number },
     fromX: number, fromY: number, fwdX: number, fwdY: number,
+    maxRange: number = HITSCAN_RANGE,
   ): number {
     const hitId = hit.hitId;
     if (hitId.startsWith('swarm-')) {
       const sw = this.mirror.swarm?.get(Number(hitId.slice(6)));
       // Drones only (kind===1); asteroids (kind===0) have no shield.
       if (sw && sw.kind === 1 && sw.shieldDown !== true) {
-        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, sw.x, sw.y, sw.radius + SHIELD_RADIUS_PAD);
+        const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, sw.x, sw.y, sw.radius + SHIELD_RADIUS_PAD);
         if (d !== null) return d;
       }
       return hit.dist;
@@ -4681,7 +4691,7 @@ export class ColyseusGameClient {
     const ship = this.mirror.ships.get(hitId);
     if (ship && ship.shieldDown !== true) {
       const r = getShipKind(ship.kind ?? null).radius + SHIELD_RADIUS_PAD;
-      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, HITSCAN_RANGE, ship.x, ship.y, r);
+      const d = rayHitsSphere(fromX, fromY, fwdX, fwdY, maxRange, ship.x, ship.y, r);
       if (d !== null) return d;
     }
     return hit.dist;

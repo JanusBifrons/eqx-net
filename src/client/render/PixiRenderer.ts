@@ -606,7 +606,7 @@ export class PixiRenderer implements IRenderer {
       // `liveBeamGfx` / `remoteBeamGfx` so LaserGlow can attach a
       // GlowFilter to it at construct time. Empty pools render as
       // nothing — no visual change before first beam.
-      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1 });
+      this._liveBeamPool = new BeamSpritePool({ tint: LASER_CORE_COLOR, width: 2, alpha: 1, taper: true });
       this.liveBeamGfx = this._liveBeamPool.container;
       this.shipContainer.addChild(this.liveBeamGfx);
       this._remoteBeamPool = new BeamSpritePool(REMOTE_BEAM_STYLE);

@@ -25,4 +25,11 @@ describe('beam styles — mining vs combat distinction (WS-4 Phase 4)', () => {
       expect(s.alpha).toBeLessThanOrEqual(1);
     }
   });
+
+  it('the combat beam TAPERS toward the tip; the mining drill stays solid (P3.13)', () => {
+    // Combat beams fade to nothing at the end of their range (gradient texture);
+    // the mining beam is a sustained solid connection to the asteroid.
+    expect(REMOTE_BEAM_STYLE.taper).toBe(true);
+    expect(MINING_BEAM_STYLE.taper).toBeFalsy();
+  });
 });
