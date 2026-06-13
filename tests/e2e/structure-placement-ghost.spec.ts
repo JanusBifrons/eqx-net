@@ -49,6 +49,10 @@ async function joinAndOpenBuild(
   );
   await page.locator('[data-testid="speed-dial-fab"]').click();
   await page.locator('[data-testid="speed-dial-build"]').click();
+  // WS-13: the Build menu now drills Build ▸ category ▸ kind. Every test here
+  // builds a Capital (Core category), so enter Core and leave the dial at the
+  // kinds level for the per-test `build-capital` click.
+  await page.locator('[data-testid="build-cat-core"]').click();
   return { ctx, page };
 }
 

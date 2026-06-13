@@ -51,6 +51,7 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     // Open the dial → enter the Build sub-menu → pick Capital.
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
+    await page.locator('[data-testid="build-cat-core"]').click();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"]').click();
 
@@ -95,6 +96,7 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
 
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
+    await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
@@ -152,6 +154,7 @@ test('placement Cancel exits placement mode without placing', async ({ browser }
 
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
+    await page.locator('[data-testid="build-cat-economy"]').click();
     await page.locator('[data-testid="build-solar"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
