@@ -66,6 +66,30 @@ function swarmCount(page: Page): Promise<number> {
 const surfaceAttr = (page: Page, name: string): Promise<string | null> =>
   page.locator('[data-testid="game-surface"]').getAttribute(name);
 
+// P3.6 / WS-C4b — the Confirm/Cancel banner is now TOUCH-ONLY, so DESKTOP tests
+// can no longer use `placement-banner` visibility as the "placement active"
+// signal. `data-placement-screen-x` is the render-path-independent signal
+// gameRafLoop publishes while the blueprint ghost is up (set during placement,
+// deleted on commit/cancel). These wait on it instead.
+const waitPlacementActive = (page: Page): Promise<unknown> =>
+  page.waitForFunction(
+    () => {
+      const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-screen-x');
+      return v !== null && v !== '' && Number.isFinite(parseFloat(v));
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
+const waitPlacementCleared = (page: Page): Promise<unknown> =>
+  page.waitForFunction(
+    () => {
+      const v = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-screen-x');
+      return v === null || v === '';
+    },
+    undefined,
+    { timeout: 5_000 },
+  );
+
 test('(A) picking a kind draws + projects the world ghost (data-placement-screen present)', async ({ browser }) => {
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
@@ -153,8 +177,11 @@ test('(C) DESKTOP: the blueprint ghost FOLLOWS the pointer on hover (no button)'
     expect(Number.isFinite(right)).toBe(true);
     // Hovering further right tracks the ghost further right (it FOLLOWS, no click).
     expect(right).toBeGreaterThan(left + 200);
-    // Nothing was placed — placement is still active.
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
+    // Nothing was placed — placement is still active. On DESKTOP the banner is
+    // gone (P3.6), so read the render-path-independent placement-active signal;
+    // and assert the touch-only banner is NOT present here.
+    await waitPlacementActive(page);
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -212,8 +239,9 @@ async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Pr
     console.log('PLACEMENT-DEBUG', JSON.stringify({ worker: useWorker, chosen: [chosenX, chosenY], placed: pos }));
     const distToChosen = Math.hypot(pos.x - chosenX, pos.y - chosenY);
     expect(distToChosen, `structure should be at the clicked point, not ${JSON.stringify(pos)}`).toBeLessThan(60);
-    // Placement mode exited on the one-click place.
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0, { timeout: 5_000 });
+    // Placement mode exited on the one-click place — the placement-active signal
+    // clears (the touch-only banner was never shown on desktop — P3.6).
+    await waitPlacementCleared(page);
   } finally {
     await ctx.close();
   }
@@ -337,7 +365,8 @@ async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'esca
     const before = await swarmCount(page);
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
     await page.locator('[data-testid="build-capital"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    // Placement active (desktop has NO banner — P3.6); read the signal instead.
+    await waitPlacementActive(page);
 
     // Hover so the ghost is positioned, then cancel.
     await page.mouse.move(700, 300);
@@ -348,8 +377,8 @@ async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'esca
       await page.keyboard.press('Escape');
     }
 
-    // Banner gone (placementKind cleared) and nothing was placed.
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0, { timeout: 5_000 });
+    // Placement cleared (placementKind null → ghost gone) and nothing was placed.
+    await waitPlacementCleared(page);
     await page.waitForTimeout(300);
     expect(await swarmCount(page)).toBe(before);
   } finally {
@@ -365,4 +394,34 @@ test('(I) DESKTOP: right-click cancels placement (no structure placed)', async (
 test('(J) DESKTOP: Escape cancels placement (no structure placed)', async ({ browser }) => {
   test.setTimeout(60_000);
   await cancelExitsPlacement(browser, 'escape');
+});
+
+/**
+ * (K) P3.6 / WS-C4b — on DESKTOP the mobile Confirm/Cancel banner must NOT
+ * appear during placement (the one-click model needs no banner; the leaked
+ * mobile banner was the bug: "the desktop placement still shows the
+ * Confirm/Cancel from mobile"). Placement is genuinely ACTIVE (the ghost is
+ * projected) yet the touch-only banner + its buttons stay unmounted. The
+ * mobile counterpart — banner DOES appear on touch — is locked by case (B).
+ */
+test('(K) DESKTOP: placement shows NO mobile Confirm/Cancel banner (P3.6)', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    // Placement is active (the ghost is drawn + projected) ...
+    await waitPlacementActive(page);
+    await page.mouse.move(700, 400);
+    await page.waitForTimeout(120);
+    await waitPlacementActive(page);
+
+    // ... but NO touch-only Confirm/Cancel banner mounts on a pointer device.
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="placement-confirm"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="placement-cancel"]')).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
 });
