@@ -376,3 +376,25 @@ the netgate + the existing integration suite.
 - `feel-test-lockstep.spec.ts` is host-load sensitive — confirm on a
   quiet host/CI (it fails on pre-shield HEAD too in a loaded session;
   see docs/LESSONS.md 2026-05-16). Catalogue version bumped 1→2.
+
+## Scrap-on-death (2026-06-13)
+
+A composite ship breaks into one **scrap** swarm entity (kind 3) per component
+on death — both players AND drones. `ScrapSpawner` (`spawn/ScrapSpawner.ts`,
+hand-rolled-mock testable) owns the decision: per `shipScrapGroups(kind)`
+component it spawns at the component's world pose (catalogue Pixi-up → world
+math-up via `x*scale,-y*scale`, rotate by ship angle, translate — matching
+`shipShapeToPolygon`), inheriting ship velocity + a radial `SCRAP_BURST_SPEED`
+drift, at the ship's angle. Death hooks (BOTH spawn BEFORE the slot is freed so
+the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s new
+optional `spawnScrapFromDrone` `LeafDeps` seam; player via the `SHIP_DESTROYED`
+handler in `SectorRoom` (active hull, pose from `shipPoseCache`/SAB). Polygon
+kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
+and `EntityResolver` routes kind 3 to the drone leaf (hits hull → destroyed) —
+GUARDED so a dying scrap piece does NOT recursively shatter
+(`SectorRoom.spawnScrapFromDrone` returns early for kind 3). No time-decay; a
+global FIFO cap (`MAX_LIVE_SCRAP`, `notifyRemoved` on eviction) bounds it. Scrap
+is EXCLUDED from `SectorPersistence` (transient debris). Wire: `SWARM_KIND_SCRAP`
++ a `componentIndex` byte bumped `SWARM_WIRE_VERSION 3 → 4` → **netgate applies**
+(invariant #8). Locks: `ScrapSpawner.test.ts` + `scrapOnDeath.test.ts`
+(integration). See [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).

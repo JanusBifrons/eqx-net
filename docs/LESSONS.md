@@ -14,6 +14,36 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-13 — composite-ships + scrap-on-death — three non-obvious traps
+Commit: composite-ships-havok Phases 0–2c
+
+**1. The "wreck" is an ABANDONMENT remnant, not a DEATH remnant.** The plan
+assumed combat death left a wreck we could re-skin into scrap. It doesn't:
+`ShipEntity` death (`shipEntity.ts`) just broadcasts `destroy` + `SHIP_DESTROYED`
+and the hull DESPAWNS; the wreck is created only by the 30-tick abandon poll for
+still-ALIVE abandoned ships, and `convertShipToWreck` explicitly no-ops on dead
+ships. So scrap-on-death had to be a genuinely new spawn path (the per-part
+pipeline), hooked into the player `SHIP_DESTROYED` handler + the drone
+`createSwarmDeath` policy — NOT the wreck system. Check the actual death flow
+before assuming an existing remnant exists.
+
+**2. Equinox components are CENTROID-centred (`adjustCenter`), not
+origin-anchored.** Porting Havok by placing each component's `(0,0)` at its
+offset spread the ship out (pads drifted forward, wings too far apart, parts
+looked small in a sparse hull — the user spotted it instantly from a preview).
+Equinox's `Component.adjustCenter` re-centres each scaled component on its
+CENTROID and places THAT at the offset. Reproducing it in `equinoxPartPoints`
+fixed the assembly. Also: the visible styling (highlight strips, wing portholes,
+cockpit dome) lives in each component's `draw()`, NOT its `createPoints()`
+collision hull — porting only `createPoints` gave a flat, detail-less silhouette.
+
+**3. Damageable scrap recurses unless guarded.** Routing scrap (kind 3) to the
+drone leaf in `EntityResolver` (so it's shootable) means a dying scrap piece runs
+`createSwarmDeath` → `spawnScrapFromDrone`; since a scrap rec's `shipKind` is the
+PARENT composite kind (which HAS scrap groups), it would shatter into more scrap
+forever. Guard: `SectorRoom.spawnScrapFromDrone` returns early for kind 3. Locked
+by `scrapOnDeath.test.ts` "destroyed scrap removed, no recursion".
+
 ## 2026-06-11 — collision (playtest Issue 4) — `convexHull` hull colliders silently broke the T-ship E2E + ram telemetry; cleaned the crossguard to a true T
 Commit: B3 of the playtest-2026-06-10 plan
 **Symptom (smoke).** "The collision boxes are just completely broken… the
