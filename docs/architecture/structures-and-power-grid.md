@@ -63,6 +63,13 @@ so it unit-tests like `TransitOrchestrator`):
 - Spawn the kind=2 swarm entity (`SwarmSpawner.spawnStructure` now carries the
   subtype id onto `rec.shipKind`), seed `swarmHealth` (presence = damageable
   through the unchanged `DamageRouter` 'swarm' strategy) + `swarmShield=0`.
+  **Structures spawn as LOCKED bodies (immovable, P3.10):** `spawnOne` flags
+  kind-2 `staticBody`, threaded through `SPAWN_OBSTACLE` so the worker
+  `lockBody`s it — the authoritative body had been dynamic + damping-0, so a ram
+  drifted it forever ("I hit a pylon and it MOVED"). The client predWorld already
+  locked structures (`structureClientLeaf` = `spawnObstacle` + `lockBody`); the
+  server now matches. A locked body still blocks ships and keeps its mass (the
+  ram-damage model is unchanged); it just can't be translated.
 - Record ownership + construction state in
   [`StructureRegistry`](../../src/server/structures/StructureRegistry.ts).
   `remove` is owner-gated (anti-grief).

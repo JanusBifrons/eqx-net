@@ -141,3 +141,32 @@ describe('PhysicsWorld.spawnObstacle (polygon path)', () => {
     expect(dampedSpeed).toBeLessThan(v0 * 0.5);
   });
 });
+
+describe('PhysicsWorld.lockBody — structures are immovable (P3.10)', () => {
+  // The mechanism behind the P0 structure-movement fix: a structure body is
+  // `lockBody`'d (translations + rotations locked) so a ram can't shove it. A
+  // dynamic (unlocked) body in the same scenario IS shoved — that was the
+  // "I hit a pylon and it started MOVING" bug. The server now locks kind-2
+  // bodies exactly like the client predWorld already did.
+  it('a locked obstacle holds position when rammed; an unlocked one is shoved', () => {
+    // Locked structure regime — placed in a fresh region (shared `world`).
+    world.spawnObstacle('lock-struct', 12000, 0, 30, 5);
+    world.lockBody('lock-struct');
+    world.spawnObstacle('lock-rammer', 12000, -120, 12, 5);
+    world.setShipState('lock-rammer', { x: 12000, y: -120, angle: 0, vx: 0, vy: 600 });
+
+    // Control: identical scenario but the target is NOT locked.
+    world.spawnObstacle('free-struct', 13000, 0, 30, 5);
+    world.spawnObstacle('free-rammer', 13000, -120, 12, 5);
+    world.setShipState('free-rammer', { x: 13000, y: -120, angle: 0, vx: 0, vy: 600 });
+
+    for (let i = 0; i < 90; i++) world.tick(1 / 60); // 1.5 s — ram + steady press
+
+    const locked = world.getShipState('lock-struct')!;
+    const free = world.getShipState('free-struct')!;
+    // Locked body did not move (the structure fix).
+    expect(Math.hypot(locked.x - 12000, locked.y)).toBeLessThan(1);
+    // Unlocked body was shoved (the pre-fix structure behaviour).
+    expect(Math.hypot(free.x - 13000, free.y)).toBeGreaterThan(1);
+  });
+});

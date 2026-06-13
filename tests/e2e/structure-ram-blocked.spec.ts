@@ -52,6 +52,12 @@ const STRUCT_RADIUS = 60;
  *  lerp overshoot that a healthy block still shows briefly. A genuine
  *  fly-through drives y toward/past the structure CENTRE (150). */
 const MAX_PLAYER_Y = STRUCT_Y - STRUCT_RADIUS + 20; // 110
+/** P3.10 (P0) — a structure must be IMMOVABLE. Rendered from the swarm mirror
+ *  (interpolated off the authoritative pose), a locked structure stays put; a
+ *  ram that shoves it (the "I hit a pylon and it MOVED" bug) drifts it well past
+ *  this tolerance. Small tolerance covers interpolation/quantisation jitter on a
+ *  truly-static pose. */
+const MAX_STRUCT_DRIFT = 12;
 
 // Infra budget: cold Vite compile of the structure-test page + join/snapshot
 // settle + the ram sampling loop. NOT a game-time wait (the player reaches the
@@ -116,6 +122,32 @@ test('player ramming a structure is BLOCKED, not flown through (Issue 4)', async
     for (const y of ys) if (y > peakY) peakY = y;
   };
 
+  // P3.10 — read the structure's rendered pose (the kind-2 swarm entry; the
+  // mirror is keyed `swarm-<numericId>`, so locate it by `kind`, not 'struct-0').
+  const readStructPose = async (): Promise<{ x: number; y: number } | null> =>
+    page.evaluate(() => {
+      const raw = document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-swarm-detail');
+      if (!raw) return null;
+      try {
+        const m = JSON.parse(raw) as Record<string, { x: number; y: number; kind: number }>;
+        const s = Object.values(m).find((e) => e.kind === 2);
+        return s ? { x: s.x, y: s.y } : null;
+      } catch {
+        return null;
+      }
+    });
+
+  // Baseline the structure's pre-ram pose, then track the worst drift from it.
+  const structBase = await readStructPose();
+  let structPeakDrift = 0;
+  const sampleStruct = async (): Promise<void> => {
+    if (!structBase) return;
+    const p = await readStructPose();
+    if (!p) return;
+    const d = Math.hypot(p.x - structBase.x, p.y - structBase.y);
+    if (d > structPeakDrift) structPeakDrift = d;
+  };
+
   await page.keyboard.down('w');
   await page.keyboard.down('Shift');
   // ~1.6 s of thrust: the player covers the ~78 u gap in well under a second,
@@ -124,10 +156,12 @@ test('player ramming a structure is BLOCKED, not flown through (Issue 4)', async
   for (let i = 0; i < 16; i++) {
     await page.waitForTimeout(100);
     await sampleY();
+    await sampleStruct();
   }
   await page.keyboard.up('w');
   await page.keyboard.up('Shift');
   await sampleY();
+  await sampleStruct();
 
   const res = await fetch(`${SERVER_URL}/dev/events?limit=500`);
   const events = ((await res.json()) as { events: ServerLogEntry[] }).events;
@@ -136,12 +170,15 @@ test('player ramming a structure is BLOCKED, not flown through (Issue 4)', async
   );
 
   // eslint-disable-next-line no-console
-  console.log(`\n=== Structure ram — peak rendered player Y = ${peakY.toFixed(1)} (structure at y=${STRUCT_Y}, r=${STRUCT_RADIUS}, block-line ≈ ${STRUCT_Y - STRUCT_RADIUS}); struct-0 collision_resolved = ${structContacts.length} ===\n`);
+  console.log(`\n=== Structure ram — peak rendered player Y = ${peakY.toFixed(1)} (structure at y=${STRUCT_Y}, r=${STRUCT_RADIUS}, block-line ≈ ${STRUCT_Y - STRUCT_RADIUS}); struct-0 collision_resolved = ${structContacts.length}; structure peak drift = ${structPeakDrift.toFixed(1)} ===\n`);
 
   // 1) Server registered the contact (structure is a solid, event-emitting body).
   expect(structContacts.length, 'server must log a collision_resolved involving struct-0 (structure blocks)').toBeGreaterThan(0);
   // 2) The player did not fly through — rendered Y stayed short of the structure body.
   expect(peakY, `rendered player must not penetrate the structure (peakY ${peakY.toFixed(1)} should stay < ${MAX_PLAYER_Y})`).toBeLessThan(MAX_PLAYER_Y);
+  // 3) P3.10 (P0) — the structure itself did NOT move when rammed (locked body).
+  expect(structBase, 'structure pose must be observable in the swarm mirror (kind-2 entry)').not.toBeNull();
+  expect(structPeakDrift, `structure must not move when rammed (peak drift ${structPeakDrift.toFixed(1)} should stay < ${MAX_STRUCT_DRIFT})`).toBeLessThan(MAX_STRUCT_DRIFT);
 
   await ctx.close();
 });

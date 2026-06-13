@@ -15,6 +15,7 @@ interface PostedCmd {
   slot: number; id: string; x: number; y: number; vx: number; vy: number; radius: number; mass: number;
   vertices?: ReadonlyArray<Vec2>;
   linearDamping?: number;
+  staticBody?: boolean;
 }
 
 describe('SwarmSpawner', () => {
@@ -36,12 +37,31 @@ describe('SwarmSpawner', () => {
     lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping) =>
-        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody }),
       sabF32: f32,
       sabU32: u32,
       registerLagComp: (id) => lagCompRegistered.push(id),
     });
+  });
+
+  // P3.10 (P0) — structures must be IMMOVABLE. They spawn through the same
+  // `spawnObstacle` path as drones/asteroids (dynamic Rapier bodies), so a ram
+  // imparted velocity and the (damping-0) structure coasted away forever — the
+  // "I hit a pylon and it started MOVING" bug. The fix flags kind-2 spawns
+  // `staticBody: true` so the worker locks the body (mirroring the client
+  // predWorld's existing `spawnObstacle` + `lockBody` for structures). Drones +
+  // asteroids stay dynamic — they're meant to move / be bumped (R2.33).
+  it('structure spawns flagged staticBody; drones + asteroids stay dynamic (P3.10)', () => {
+    spawner.spawnStructure({ id: 'cap', x: 0, y: 0, radius: 60, shipKind: 'capital' });
+    spawner.spawnDrone({ id: 'drone-s', x: 0, y: 0, kind: 'fighter' });
+    spawner.spawnAsteroid({ id: 'rock-s', x: 0, y: 0, vx: 0, vy: 0, radius: 30 });
+    const cap = posted.find((p) => p.id === 'cap')!;
+    const drone = posted.find((p) => p.id === 'drone-s')!;
+    const rock = posted.find((p) => p.id === 'rock-s')!;
+    expect(cap.staticBody).toBe(true); // the P0 fix — structures never move
+    expect(drone.staticBody).toBeFalsy(); // drones fly
+    expect(rock.staticBody).toBeFalsy(); // asteroids stay dynamic / bump-able
   });
 
   // WS-11 (R2.25) — drones get their per-kind linearDamping so the AI brake has
