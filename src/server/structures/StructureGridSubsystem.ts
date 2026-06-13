@@ -23,7 +23,7 @@
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
-import { MINING_BEAM_PLAYER_DPS } from '../../core/combat/miningBeamHazard.js';
+import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
 import { chargeStep, dischargeStep, drainPower } from '../../core/structures/batteryPower.js';
 import type { Connection } from '../../core/structures/Connection.js';
@@ -42,6 +42,10 @@ import type { StructureRecord, StructureRegistry } from './StructureRegistry.js'
  *  structures (e.g. collinear-blocked leaves) can't make the 1 Hz pulse rescan
  *  the whole registry every beat. Bounded work; the next pulse retries the rest. */
 const MAX_RECONNECT_ATTEMPTS_PER_PULSE = 8;
+
+/** Shared empty obstacle list for the mining-beam surface clip (the building-block
+ *  leg is deferred — see `resolveMiningClip`). Module const ⇒ no per-pulse alloc. */
+const EMPTY_MINING_OBSTACLES: readonly MiningBeamObstacle[] = [];
 
 /**
  * Resolve a laser turret's CONTINUOUS-beam firing params (playtest 2026-06-10
@@ -77,7 +81,7 @@ export interface StructureGridHooks {
   despawn(id: string): void;
   /** Phase 4 — nearest mineable asteroid (swarm kind 0) within `range` of
    *  (x, y), or null. Returns the asteroid's dense entityId + pose. */
-  findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number } | null;
+  findNearestAsteroid(x: number, y: number, range: number): { entityId: number; x: number; y: number; radius: number } | null;
   /** WS-4 / R2.27 — draw up to `amount` from an asteroid's FINITE resource pool;
    *  returns the amount ACTUALLY mined (0 once exhausted). Absent ⇒ infinite
    *  (pre-WS-4 / unit-harness fallback). MUST be reachable only from mining —
@@ -426,6 +430,10 @@ export class StructureGridSubsystem {
       rec.miningTargetEntityId = target.entityId;
       rec.miningTargetX = target.x;
       rec.miningTargetY = target.y;
+      rec.miningTargetRadius = target.radius;
+      // P1b — resolve the beam endpoint: clip at the asteroid SURFACE so the beam
+      // cuts at the point of impact instead of plunging to the centre.
+      this.resolveMiningClip(rec);
       // WS-4 / R2.27 — draw from the asteroid's FINITE resource pool, capped by
       // the miner's per-pulse rate AND its remaining storage (don't burn finite
       // ore into full storage). drawAsteroidResources decrements the pool and
@@ -445,7 +453,41 @@ export class StructureGridSubsystem {
     rec.miningTargetEntityId = undefined;
     rec.miningTargetX = undefined;
     rec.miningTargetY = undefined;
+    rec.miningTargetRadius = undefined;
+    rec.miningClipX = undefined;
+    rec.miningClipY = undefined;
+    rec.miningBeamBlocked = undefined;
     rec.miningTargetWireId = undefined;
+  }
+
+  /**
+   * P1b — resolve a Miner's mining-beam endpoint (`miningClipX/Y`) + whether it is
+   * blocked (`miningBeamBlocked`). The beam, like a real laser, stops at the first
+   * solid thing it meets along the miner→asteroid line:
+   *   - default: the asteroid SURFACE (centre − radius), so it visibly CUTS at the
+   *     point of impact instead of plunging to the centre;
+   *   - sooner: any OTHER built structure whose collider the ray enters first — the
+   *     beam stops at that building (it no longer shoots through), and a blocked
+   *     beam mines nothing.
+   * Pure scalar `rayHitsSphere` per other structure; runs on the 1 Hz pulse (off
+   * the 60 Hz tick), so the linear scan over the small structure set is fine.
+   */
+  private resolveMiningClip(rec: StructureRecord): void {
+    // Cut at the asteroid SURFACE (P1b). The building-block leg of the same
+    // complaint ("don't shoot THROUGH buildings") is intentionally NOT wired here
+    // yet: `resolveMiningBeamEndpoint` supports + unit-tests the obstacle clip, but
+    // a miner's OWN base structures sit near its beam line, so a naive block stops
+    // legitimate mining — wiring it needs an own-faction-exclusion policy. Pass NO
+    // obstacles for now (surface clip only). `EMPTY_OBSTACLES` avoids a per-pulse
+    // alloc.
+    const result = resolveMiningBeamEndpoint(
+      rec.x, rec.y,
+      rec.miningTargetX ?? rec.x, rec.miningTargetY ?? rec.y, rec.miningTargetRadius ?? 0,
+      EMPTY_MINING_OBSTACLES,
+    );
+    rec.miningClipX = result.x;
+    rec.miningClipY = result.y;
+    rec.miningBeamBlocked = result.blocked;
   }
 
   /**
@@ -473,15 +515,18 @@ export class StructureGridSubsystem {
       if (!this.powerSummaryFor(rec.id).powered) continue;
       if (nowMs - (rec.lastMiningBeamMs ?? -Infinity) < MINING_BEAM_CADENCE_MS) continue;
       rec.lastMiningBeamMs = nowMs;
-      this.hooks.broadcastBeam(
-        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
-        rec.miningTargetWireId, 'drill',
-      );
-      // WS-4 Phase 3 — light player-damage ray along the same beam. Per-broadcast
-      // chip = DPS × cadence so the effective DPS is constant regardless of the
-      // beam cadence (the resolveTurretBeam-style DPS-preserving model).
+      // P1b — broadcast to the CLIPPED endpoint (asteroid surface, or a structure
+      // blocking the line of sight) so the beam cuts at the point of impact instead
+      // of plunging through the rock / through buildings. Falls back to the centre
+      // before the first pulse resolves the clip.
+      const toX = rec.miningClipX ?? rec.miningTargetX;
+      const toY = rec.miningClipY ?? rec.miningTargetY;
+      this.hooks.broadcastBeam(rec.id, rec.x, rec.y, toX, toY, rec.miningTargetWireId, 'drill');
+      // WS-4 Phase 3 — light player-damage ray along the same (clipped) beam.
+      // Per-broadcast chip = DPS × cadence so the effective DPS is constant
+      // regardless of the beam cadence (the resolveTurretBeam-style DPS model).
       this.hooks.damagePlayersInBeam?.(
-        rec.id, rec.x, rec.y, rec.miningTargetX, rec.miningTargetY,
+        rec.id, rec.x, rec.y, toX, toY,
         MINING_BEAM_PLAYER_DPS * (MINING_BEAM_CADENCE_MS / 1000),
       );
     }

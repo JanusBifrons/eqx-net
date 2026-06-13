@@ -2549,7 +2549,7 @@ export class SectorRoom extends Room<SectorState> {
     x: number,
     y: number,
     range: number,
-  ): { entityId: number; x: number; y: number } | null {
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
     // WS-4 / R2.27 — skip EXHAUSTED asteroids (resources<=0) so a Miner
     // auto-retargets to a rock that still has ore (and its mining beam stops on
     // the dead rock). `resources===undefined` ⇒ available (un-seeded / legacy).
@@ -2609,8 +2609,8 @@ export class SectorRoom extends Room<SectorState> {
     range: number,
     swarmKind: number,
     filter?: (rec: SwarmEntityRecord) => boolean,
-  ): { id: string; entityId: number; x: number; y: number } | null {
-    let best: { id: string; entityId: number; x: number; y: number } | null = null;
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
+    let best: { id: string; entityId: number; x: number; y: number; radius: number } | null = null;
     let bestD2 = range * range;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== swarmKind) continue;
@@ -2623,7 +2623,7 @@ export class SectorRoom extends Room<SectorState> {
       const d2 = dx * dx + dy * dy;
       if (d2 <= bestD2) {
         bestD2 = d2;
-        best = { id: rec.id, entityId: rec.entityId, x: sx, y: sy };
+        best = { id: rec.id, entityId: rec.entityId, x: sx, y: sy, radius: rec.radius };
       }
     }
     return best;
