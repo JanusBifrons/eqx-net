@@ -210,7 +210,8 @@ enters the galaxy from the edge**:
   VERSION` 1→2 reseeds cleanly. The persistence system is otherwise unchanged
   (asteroids/structures/roster/Limbo persist as before).
 - The `warp_warning` banner now fires once per squad on the first FINAL approach
-  (`squad.warned`), `countdownMs = spoolMs + hopTravelMs`.
+  (`squad.warned`), `countdownMs = spoolMs + hopTravelMs`. **(Superseded — see
+  "Incoming-warp feed" below.)**
 
 Locks: `population.test.ts` (entry + roam pickers), `WaveDirector.test.ts`
 (dispatch cadence), `livingWorldDirector.test.ts` (entry-ingress invariant; idle
@@ -218,6 +219,46 @@ squad roams inward via a hop staying neutral; base-less player never triggers
 `warping`/`attacking`). E2E `wave-attack.spec.ts` was updated for the entry route
 (`EQX_BOT_HOP_MS=500`); the netgate still applies (population churn touches the
 swarm broadcast).
+
+## Incoming-warp feed (2026-06-13, Phase-4 P0)
+
+The "sector incoming" HUD banner read **"Nothing incoming"** even while ships
+warped into the player's sector (user's 3rd failed-fix report; diagnostic
+`2026-06-13T15-48-18Z-84rbl1` captured 8 remote `warp_in` arrivals and zero
+warnings). The cause was structural: the ONLY `warp_warning` broadcast lived in
+the wave step's final-approach branch (`finalApproach > 0 && !squad.warned`), so a
+roaming squad, a lone fighter, or a player never produced one.
+
+The fix moves the trigger off the wave special case onto the **single universal
+cross-sector hop choke point** — `startSquadMemberTransit` — which every hop
+(wave, attack-straggler, and roam) already funnels through. At the decision
+instant it registers the departing squad as inbound to its next-hop sector in the
+new **`IncomingRegistry`** (`src/server/livingworld/IncomingRegistry.ts`, owned by
+the director — the only object spanning every galaxy room). The registry:
+
+- broadcasts `warp_warning` to the destination room (deduped: 8 members departing
+  for the same sector in one tick → ONE banner; a re-tasked squad's old
+  destination is cleared so the banner follows the ship);
+- broadcasts `warp_warning_clear` on arrival (a `reconcileIncoming()` sweep at the
+  `tick()` tail — squad gathered / no member still inbound) or on retreat;
+- colours each inbound by `disposition`: a wave (`targetFactionId !== null`) is
+  `enemy` (red), an idle/roaming pack is `neutral` (amber), a player is `friendly`
+  (green). The wire field is optional (`WarpWarningSchema.disposition`); the client
+  maps `enemy → 'hostile'`.
+
+Inbound **players** feed the same registry through a cycle-safe singleton
+(`incomingPlayerSink.ts`, `set/getIncomingPlayerSink` — the `getLimboStore`
+pattern): `TransitOrchestrator.beginTransit` registers a friendly inbound,
+`cancelTransit` and the destination room's `client_ready` (`handleClientReady`)
+clear it. A null sink (Living World disabled / test harness) simply means no
+player banner.
+
+Why it won't fail a 4th time: there is no second "did we remember to warn for this
+departure kind?" surface left — the warning is co-located with the one
+"I am leaving for another sector" event. Locks: `IncomingRegistry.test.ts`,
+`tests/integration/sectorRoom/incomingWarp.test.ts` (the headline roamer
+regression — must fail pre-fix), `wave-attack.spec.ts` (now asserts the red
+`data-warning-relation="hostile"`). Netgate applies (the broadcast is live-loop).
 
 ## Future work
 

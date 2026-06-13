@@ -26,13 +26,19 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
     expect(screen.queryByTestId('warp-warning')).toBeNull();
   });
 
-  // P3.9 — the banner does NOT unmount during the load curtain (it dropped its
-  // `useShouldRenderHud` gate): even with the HUD marked not-visible it renders.
-  it('stays mounted even when the HUD is not in its visible state', () => {
-    useUIStore.setState({ loadingCosmeticOnly: false });
+  // Phase-4 — the banner HIDES its content over the load curtain (supersedes the
+  // P3.9 "stays visible during the curtain" stance): the opaque full-screen
+  // curtain shouldn't have the banner bleeding over it ("the 'nothing incoming'
+  // banner appears over the curtain"). The container stays mounted (the testid
+  // persists for the always-mounted contract) but no idle/warning CONTENT renders.
+  it('hides its content over the load curtain (Phase-4)', () => {
+    useUIStore.getState().addWarpWarning({ id: 's1', label: 'Legionnaire', count: 8, countdownMs: 60_000 });
+    // Curtain up: loadingCosmeticOnly off + the connecting phase ⇒ isLoadingActive.
+    useUIStore.setState({ loadingCosmeticOnly: false, phase: 'connecting' });
     render(<WarpInWarningBanner />);
-    expect(screen.getByTestId('warp-warning-banner')).not.toBeNull();
-    expect(screen.getByTestId('warp-warning-idle')).not.toBeNull();
+    expect(screen.getByTestId('warp-warning-banner')).not.toBeNull(); // still mounted
+    expect(screen.queryByTestId('warp-warning-idle')).toBeNull();
+    expect(screen.queryByTestId('warp-warning')).toBeNull(); // no content over the curtain
   });
 
   // R2.21 — a hostile drone wave (the default relation) reads RED (error).

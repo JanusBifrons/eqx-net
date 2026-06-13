@@ -42,6 +42,8 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WaveSquadBehaviour } from './director/SquadBehaviour.js';
 import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
+import { IncomingRegistry } from './IncomingRegistry.js';
+import type { WarpDisposition } from '../../shared-types/messages.js';
 
 // Re-export the room type so existing imports from this module keep working.
 export type { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -178,6 +180,9 @@ export class LivingWorldDirector {
   private readonly warp: HunterBotWarpController;
   private readonly squadPool: SquadPool;
   private readonly waveDirector: WaveDirector;
+  /** Phase-4 P0 — the single per-destination "incoming ships" feed behind the
+   *  HUD banner. Fed off the universal hop choke point + the player-transit path. */
+  private readonly incoming: IncomingRegistry;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
@@ -222,6 +227,7 @@ export class LivingWorldDirector {
       pattern: new EscalatingWavePattern(),
       dispatchIntervalMs: this.opts.dispatchIntervalMs,
     });
+    this.incoming = new IncomingRegistry(this.rooms);
   }
 
   /** Begin the control loop. Idempotent. The interval is `unref`'d so it
@@ -289,6 +295,7 @@ export class LivingWorldDirector {
     this.subs.length = 0;
     this.pool.disposeControllers();
     this.warp.disposePending();
+    this.incoming.reset();
   }
 
   /** Read-only introspection for tests / the `/dev/population` route. */
@@ -325,6 +332,9 @@ export class LivingWorldDirector {
 
     // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
     this.roamStep(now);
+
+    // ── 2c. clear "incoming" banners for squads that have arrived ────────
+    this.reconcileIncoming();
 
     // ── 3. telemetry (population + squad/wave counts) ────────────────────
     const snap = this.snapshot();
@@ -413,25 +423,14 @@ export class LivingWorldDirector {
         // ONE galaxy-graph hop toward it. Re-issued every control tick while the
         // squad is warping, so members traverse independently (stragglers + the
         // members respawning in from the edge keep flowing toward the goal).
-        const finalApproach = this.advanceMembersTowardGoal(step.squad);
-        // ONE warp-in warning per squad — fired the first tick a member begins
-        // the FINAL leg into the goal sector (the in-sector telegraph). Deduped
-        // via squad.warned so it doesn't re-broadcast every control tick.
-        if (finalApproach > 0 && !step.squad.warned) {
-          step.squad.warned = true;
-          const destRoom = this.rooms.get(step.to);
-          if (destRoom) {
-            destRoom.broadcastWarpWarning({
-              type: 'warp_warning',
-              id: step.squad.squadId,
-              label: squadDisplayLabel(step.squad.kind),
-              count: step.squad.botIds.length,
-              // ≈ time-to-arrival for the final leg: vulnerable spool + flight.
-              countdownMs: this.opts.spoolMs + this.opts.hopTravelMs,
-              kind: step.squad.kind,
-            });
-          }
-        }
+        //
+        // The warp-in HUD warning is NO LONGER fired here (Phase-4 P0). The old
+        // wave-only final-approach broadcast missed roamers / lone fighters /
+        // players — the banner read "Nothing incoming" while ships arrived. The
+        // warning now rides the SINGLE universal hop choke point
+        // (`startSquadMemberTransit` → `IncomingRegistry`), so this branch's hops
+        // are announced there by construction, alongside roam + traversal hops.
+        this.advanceMembersTowardGoal(step.squad);
         break;
       }
       case 'attack': {
@@ -455,6 +454,9 @@ export class LivingWorldDirector {
           room.setFactionUnderWave(step.factionId, false);
           room.purgeFactionHostility(step.factionId);
         }
+        // Drop any lingering "incoming" banner for this squad's target sector — a
+        // stood-down squad is no longer warping in.
+        this.incoming.clear(step.squad.squadId, step.sectorKey);
         this.squadPool.clearTarget(step.squad);
         serverLogEvent('wave_deescalated', { factionId: step.factionId, sectorKey: step.sectorKey });
         break;
@@ -514,12 +516,93 @@ export class LivingWorldDirector {
       from,
       to,
     });
+    // Phase-4 P0 — the decision instant: this bot has ELECTED to warp into `to`
+    // from another sector. Announce its squad as inbound to `to` (deduped on
+    // squadId so 8 members = ONE banner entry; the registry follows a re-tasked
+    // squad to a new goal). Covers wave, roam, AND traversal hops — the single
+    // place the old wave-only warning missed.
+    const squad = this.squadPool.squadOf(rec.botId);
+    this.incoming.register({
+      id: squad ? squad.squadId : rec.botId,
+      destSectorKey: to,
+      sourceSectorKey: from,
+      label: squadDisplayLabel(squad ? squad.kind : rec.kind),
+      count: squad ? squad.botIds.length : 1,
+      disposition: this.dispositionForSquad(squad),
+      // ≈ time-to-arrival for this leg: vulnerable spool + invulnerable flight.
+      etaMs: this.opts.spoolMs + this.opts.hopTravelMs,
+      kind: squad ? squad.kind : rec.kind,
+    });
     serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });
     ctrl.begin({
       now: this.nowMs,
       commit: () => this.warp.depart(rec, from, to),
       outcome: (res) => this.warp.onTransitOutcome(rec, from, to, res),
     });
+  }
+
+  /** Phase-4 P0 — a squad's coarse threat relation for the incoming banner. A
+   *  wave (tasked against a faction) is an ENEMY (red); an idle/roaming pack is
+   *  NEUTRAL (amber). Per-recipient PvP refinement is a future nicety — the
+   *  wave-dispatch `ownerPresent` gate already makes the present player the
+   *  target, so coarse `enemy` is correct in practice. */
+  private dispositionForSquad(squad: SquadRecord | undefined): WarpDisposition {
+    return squad && squad.targetFactionId !== null ? 'enemy' : 'neutral';
+  }
+
+  /** Tail of `tick`: clear the "incoming" banner for any squad that has arrived
+   *  (gathered at the entry's destination). Self-correcting against a missed
+   *  edge — iterates the tiny registry, not the bot pool. Player entries are
+   *  owned by the transit/arrival hooks and skipped here. */
+  private reconcileIncoming(): void {
+    for (const e of [...this.incoming.all()]) {
+      if (e.player) continue;
+      const squad = this.squadPool.get(e.id);
+      // The squad is gone, or it has fully gathered at the destination, or no
+      // member is still inbound to it ⇒ the warp-in is over.
+      if (!squad || this.squadGatheredAt(squad, e.destSectorKey) || !this.anyMemberInboundTo(squad, e.destSectorKey)) {
+        this.incoming.clear(e.id, e.destSectorKey);
+      }
+    }
+  }
+
+  /** True iff at least one of the squad's members is in-transit OR active-but-not-
+   *  yet-arrived toward `dest` — i.e. the warp-in is still in progress. */
+  private anyMemberInboundTo(squad: SquadRecord, dest: string): boolean {
+    for (const botId of squad.botIds) {
+      const rec = this.pool.get(botId);
+      if (!rec) continue;
+      if (rec.state === 'in-transit') return true;
+      if (rec.state === 'active' && rec.sectorKey !== dest && squad.sectorKey === dest) return true;
+    }
+    return false;
+  }
+
+  /** Phase-4 P0 — player-transit back-channel: a player has begun spooling toward
+   *  `destSectorKey`. Announce them as a FRIENDLY inbound to that sector's
+   *  occupants. Called from `TransitOrchestrator` via the index.ts accessor. */
+  registerIncomingPlayer(spec: {
+    playerId: string;
+    destSectorKey: string;
+    sourceSectorKey: string;
+    label: string;
+    etaMs: number;
+  }): void {
+    this.incoming.register({
+      id: spec.playerId,
+      destSectorKey: spec.destSectorKey,
+      sourceSectorKey: spec.sourceSectorKey,
+      label: spec.label,
+      count: 1,
+      disposition: 'friendly',
+      etaMs: spec.etaMs,
+      player: true,
+    });
+  }
+
+  /** Phase-4 P0 — clear an inbound player (arrival / cancel / abort). */
+  clearIncomingPlayer(playerId: string, destSectorKey: string): void {
+    this.incoming.clear(playerId, destSectorKey);
   }
 
   /** Step 1 of `tick`: warp-in respawning bots when their delay elapses

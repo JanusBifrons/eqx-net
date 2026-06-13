@@ -9,7 +9,7 @@
 
 import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import type { WarpWarningEvent } from '../../shared-types/messages.js';
+import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import type { BotCarry } from './botTypes.js';
 
 /**
@@ -76,4 +76,7 @@ export interface LivingWorldRoom {
   /** Wave-system Phase 5 — broadcast a sector-wide warp-in warning to this
    *  room's occupants (the HUD countdown banner). One per incoming squad. */
   broadcastWarpWarning(msg: WarpWarningEvent): void;
+  /** Phase-4 P0 — clear a pending warp-in warning (the inbound arrived / retreated
+   *  / cancelled). Companion to `broadcastWarpWarning`; keyed by the same `id`. */
+  broadcastWarpWarningClear(msg: WarpWarningClearEvent): void;
 }

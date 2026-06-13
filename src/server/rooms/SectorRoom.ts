@@ -15,7 +15,8 @@ import {
   type GcPauseEvent,
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
-import type { WarpWarningEvent } from '../../shared-types/messages.js';
+import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
+import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
@@ -2548,7 +2549,7 @@ export class SectorRoom extends Room<SectorState> {
     x: number,
     y: number,
     range: number,
-  ): { entityId: number; x: number; y: number } | null {
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
     // WS-4 / R2.27 — skip EXHAUSTED asteroids (resources<=0) so a Miner
     // auto-retargets to a rock that still has ore (and its mining beam stops on
     // the dead rock). `resources===undefined` ⇒ available (un-seeded / legacy).
@@ -2608,8 +2609,8 @@ export class SectorRoom extends Room<SectorState> {
     range: number,
     swarmKind: number,
     filter?: (rec: SwarmEntityRecord) => boolean,
-  ): { id: string; entityId: number; x: number; y: number } | null {
-    let best: { id: string; entityId: number; x: number; y: number } | null = null;
+  ): { id: string; entityId: number; x: number; y: number; radius: number } | null {
+    let best: { id: string; entityId: number; x: number; y: number; radius: number } | null = null;
     let bestD2 = range * range;
     for (const rec of this.swarmRegistry.all()) {
       if (rec.kind !== swarmKind) continue;
@@ -2622,7 +2623,7 @@ export class SectorRoom extends Room<SectorState> {
       const d2 = dx * dx + dy * dy;
       if (d2 <= bestD2) {
         bestD2 = d2;
-        best = { id: rec.id, entityId: rec.entityId, x: sx, y: sy };
+        best = { id: rec.id, entityId: rec.entityId, x: sx, y: sy, radius: rec.radius };
       }
     }
     return best;
@@ -2920,6 +2921,12 @@ export class SectorRoom extends Room<SectorState> {
     this.broadcast('warp_warning', msg);
   }
 
+  /** Phase-4 P0 — clear a pending warp-in warning (the inbound arrived / retreated
+   *  / cancelled). Companion to `broadcastWarpWarning`. */
+  broadcastWarpWarningClear(msg: WarpWarningClearEvent): void {
+    this.broadcast('warp_warning_clear', msg);
+  }
+
   private handleRespawn(client: Client): void {
     this.respawnHandler.handle(client);
   }
@@ -2963,6 +2970,11 @@ export class SectorRoom extends Room<SectorState> {
       y: pending.spawnY,
       arrivalTick,
     });
+
+    // Phase-4 P0 — the player has ARRIVED; clear any friendly "incoming" banner
+    // their transit raised in this sector. Idempotent (non-transit joins clear a
+    // non-existent entry harmlessly); galaxy-only (engineering rooms have no key).
+    if (this.sectorKey) getIncomingPlayerSink()?.clearIncomingPlayer(playerId, this.sectorKey);
 
     serverLogEvent('client_ready_received', {
       playerId,

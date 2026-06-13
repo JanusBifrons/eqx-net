@@ -94,8 +94,8 @@ describe('ramDamageTo (cap × speed-factor × mass-differential)', () => {
   });
 
   it('crushes the LIGHT body and spares the HEAVY one at full speed', () => {
-    // self=1, other=3, speed=full → 50 × 1 × 0.5 = 25 (hand-derived).
-    expect(ramDamageTo(RAM_SPEED_FULL, 1, 3)).toBeCloseTo(25, 9);
+    // self=1, other=3, speed=full → RAM_DAMAGE_MAX × 1 × 0.5 (hand-derived).
+    expect(ramDamageTo(RAM_SPEED_FULL, 1, 3)).toBeCloseTo(RAM_DAMAGE_MAX * 0.5, 9);
     // The heavy side (self=3, other=1) → 50 × 1 × 0 = 0.
     expect(ramDamageTo(RAM_SPEED_FULL, 3, 1)).toBe(0);
   });
@@ -105,8 +105,8 @@ describe('ramDamageTo (cap × speed-factor × mass-differential)', () => {
   });
 
   it('a moderate-speed light-into-heavy is disproportionately gentle', () => {
-    // self=1, other=3, speed=375 (mid) → 50 × 0.25 × 0.5 = 6.25.
-    expect(ramDamageTo(375, 1, 3)).toBeCloseTo(6.25, 9);
+    // self=1, other=3, speed=375 (mid) → RAM_DAMAGE_MAX × 0.25 × 0.5.
+    expect(ramDamageTo(375, 1, 3)).toBeCloseTo(RAM_DAMAGE_MAX * 0.25 * 0.5, 9);
   });
 
   it('never exceeds RAM_DAMAGE_MAX', () => {
@@ -135,8 +135,10 @@ describe('aggregateRamming', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.force).toBe(1200);
     expect(out[0]!.impactSpeed).toBe(RAM_SPEED_FULL);
-    // a is the LIGHT body (mass 1 vs 3) → takes 25; b (heavy) → 0.
-    expect(out[0]!.damageA).toBeCloseTo(25, 9);
+    // a is the LIGHT body (mass 1 vs 3) → takes RAM_DAMAGE_MAX × massDiff(1,3) =
+    // RAM_DAMAGE_MAX × 0.5; b (heavy) → 0. Expressed against the constant so the
+    // Phase-4 ×5 reduction (50 → 10) doesn't break the shape lock.
+    expect(out[0]!.damageA).toBeCloseTo(RAM_DAMAGE_MAX * 0.5, 9);
     expect(out[0]!.damageB).toBe(0);
   });
 

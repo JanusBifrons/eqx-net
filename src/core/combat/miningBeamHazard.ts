@@ -9,6 +9,47 @@
  *
  * Pure + allocation-free (scalar in/out) — safe on the structure tick path.
  */
+import { rayHitsSphere } from './Weapons.js';
+
+/** A solid circle the mining beam can stop against (a built structure). */
+export interface MiningBeamObstacle {
+  x: number;
+  y: number;
+  radius: number;
+}
+
+/**
+ * P1b — resolve where a Miner's mining beam ENDS. Like a real laser it stops at
+ * the first solid thing along the miner→asteroid line:
+ *   - the asteroid SURFACE (`centre − radius`) by default, so the beam CUTS at the
+ *     point of impact instead of plunging to the asteroid centre;
+ *   - SOONER if an obstacle (a built structure, the miner excluded by the caller)
+ *     intersects the ray first — the beam stops at that building (`blocked`),
+ *     instead of shooting through it, and a blocked beam mines no ore.
+ * Returns the clipped endpoint + whether an obstacle blocked it. Pure scalar.
+ */
+export function resolveMiningBeamEndpoint(
+  minerX: number, minerY: number,
+  astX: number, astY: number, astRadius: number,
+  obstacles: Iterable<MiningBeamObstacle>,
+): { x: number; y: number; blocked: boolean } {
+  const dx = astX - minerX;
+  const dy = astY - minerY;
+  const dist = Math.hypot(dx, dy);
+  if (dist < 1e-3) return { x: astX, y: astY, blocked: false };
+  const dirX = dx / dist;
+  const dirY = dy / dist;
+  let clip = Math.max(0, dist - astRadius); // asteroid surface (cut at impact)
+  let blocked = false;
+  for (const o of obstacles) {
+    const hit = rayHitsSphere(minerX, minerY, dirX, dirY, clip, o.x, o.y, o.radius);
+    if (hit !== null && hit < clip) {
+      clip = hit;
+      blocked = true;
+    }
+  }
+  return { x: minerX + dirX * clip, y: minerY + dirY * clip, blocked };
+}
 
 /** Gentle damage-per-second a mining beam deals to a player in its path. Per
  *  the ADR (resolved decision #2) ~1–2 HP/tick-equivalent — a hazard, not a

@@ -39,6 +39,7 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import { SHIP_MAX_HEALTH } from '../../core/combat/Weapons.js';
+import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 
 /**
  * Narrow interface the orchestrator needs from its host room. SectorRoom
@@ -87,6 +88,20 @@ interface InFlight {
   commitTimer: ReturnType<typeof setTimeout>;
   /** One-shot bus listener — must be unsubscribed on cancel + commit. */
   onShipDestroyed: (evt: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string }) => void;
+}
+
+/**
+ * Phase-4 P0 — a cosmetic display label for an inbound player on the "incoming"
+ * banner. Uses the userId (email-ish) trimmed to the local part, capped at the
+ * wire's 64-char label bound; falls back to "Pilot" when anonymous. Label only —
+ * never an identity.
+ */
+function incomingPlayerLabel(userId: string | null | undefined): string {
+  if (!userId) return 'Pilot';
+  const local = userId.includes('@') ? userId.slice(0, userId.indexOf('@')) : userId;
+  const trimmed = local.trim();
+  if (trimmed.length === 0) return 'Pilot';
+  return trimmed.slice(0, 64);
 }
 
 /**
@@ -218,6 +233,19 @@ export class TransitOrchestrator {
       spoolMs: this.spoolMs,
       targetSectorKey,
     });
+
+    // Phase-4 P0 — announce this player as a FRIENDLY inbound to the destination
+    // sector's occupants the moment they elect to warp (spool start). Cleared on
+    // arrival (destination `client_ready`) or abort (`cancelTransit`). Null-safe:
+    // no sink ⇒ no banner (Living World disabled / test harness). `src` is the
+    // source sectorKey (non-null — engineering rooms returned early above).
+    getIncomingPlayerSink()?.registerIncomingPlayer({
+      playerId,
+      destSectorKey: targetSectorKey,
+      sourceSectorKey: src,
+      label: incomingPlayerLabel(this.room.playerToUser.get(playerId)),
+      etaMs: this.spoolMs,
+    });
     return true;
   }
 
@@ -231,6 +259,8 @@ export class TransitOrchestrator {
     this.room.bus.off('SHIP_DESTROYED', inFlight.onShipDestroyed);
     inFlight.machine.cancel();
     this.inFlight.delete(playerId);
+    // Phase-4 P0 — the spool aborted; clear the friendly inbound banner.
+    getIncomingPlayerSink()?.clearIncomingPlayer(playerId, inFlight.targetSectorKey);
     this.sendState(playerId, {
       type: 'transit_state',
       state: 'DOCKED',

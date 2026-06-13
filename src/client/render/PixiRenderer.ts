@@ -236,6 +236,7 @@ export class PixiRenderer implements IRenderer {
     fromY: number;
     toX: number;
     toY: number;
+    solidLen?: number;
   }> = [];
   private _liveBeamCacheCount = 0;
   /** Same dirty-flag cache for remote shooters' beams (per-shooter +
@@ -1506,6 +1507,9 @@ export class PixiRenderer implements IRenderer {
         slot.fromY = fromY;
         slot.toX = toX;
         slot.toY = toY;
+        // P1a — the full-strength solid length (== aim guide / optimal range when
+        // not clipped); beyond it the pool fades the beam to nothing.
+        slot.solidLen = beam.solidDist;
         slotIdx++;
       }
       this._liveBeamCacheCount = slotIdx;
