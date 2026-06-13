@@ -46,10 +46,22 @@ interface PanelData {
   /** Structure-only extras (playtest 2026-06-10 Issue 8). Undefined otherwise. */
   buildPct?: number; // [0..1]; < 1 ⇒ under construction
   powered?: boolean;
+  /** Component (whole-grid) net power — kept on the `data-net-power` attr.
+   *  NOT the visible PWR line (that's `selfPower`, per Phase-4 C5). */
   netPower?: number;
+  /** Phase-4 C5 — this BUILDING's own power figure (catalogue
+   *  `powerOutput − powerConsumption`): +gen for a solar/capital, −drain for a
+   *  turret/miner/pylon, 0 for a passive node. Shown on the PWR line so each
+   *  building reads its OWN draw, not the shared grid aggregate. */
+  selfPower?: number;
   /** Battery-only — stored power + capacity (batteries plan). */
   storedPower?: number;
   storedPowerMax?: number;
+  /** Connector-only (Phase-4 C4) — current vs max grid connections ("N / 6").
+   *  Set ONLY for a selected CONNECTOR; absent for every other structure/entity
+   *  (the user: "It shouldn't really apply to other structures"). */
+  connCount?: number;
+  connMax?: number;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -81,7 +93,9 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.buildPct !== undefined ? { 'data-build-pct': Math.round(data.buildPct * 100) } : {})}
       {...(data.powered !== undefined ? { 'data-powered': data.powered ? '1' : '0' } : {})}
       {...(data.netPower !== undefined ? { 'data-net-power': Math.round(data.netPower) } : {})}
+      {...(data.selfPower !== undefined ? { 'data-self-power': Math.round(data.selfPower) } : {})}
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
+      {...(data.connCount !== undefined ? { 'data-conn-count': data.connCount } : {})}
       {...(data.pending ? { 'data-stats-pending': '1' } : {})}
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
@@ -120,8 +134,16 @@ export function EntityStatsPanel(): JSX.Element | null {
         </>
       )}
       {data.powered !== undefined && (
+        // C5 — the PWR line is this BUILDING's own gen/drain (`selfPower`), not
+        // the grid aggregate. UNPOWERED (grid-unreachable) is orthogonal + kept.
         <Box sx={POWER_SX} data-testid="entity-stats-power">
-          {data.powered ? `PWR ${(data.netPower ?? 0) >= 0 ? '+' : ''}${Math.round(data.netPower ?? 0)}` : 'UNPOWERED'}
+          {data.powered ? `PWR ${(data.selfPower ?? 0) >= 0 ? '+' : ''}${Math.round(data.selfPower ?? 0)}` : 'UNPOWERED'}
+        </Box>
+      )}
+      {data.connCount !== undefined && (
+        // C4 — connector-only connection count. Same muted POWER_SX styling.
+        <Box sx={POWER_SX} data-testid="entity-stats-conn">
+          {`CONN ${data.connCount} / ${data.connMax ?? 0}`}
         </Box>
       )}
     </Box>
@@ -142,19 +164,44 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   // client-resident and renders IMMEDIATELY; only hull awaits the server packet.
   if (kind === 'structure') {
     const got = haveStats('structure');
+    const st = structureSliceFor(id);
+    // C3 — hull from the CLIENT-RESIDENT slice first (instant, no round-trip);
+    // the server entity_stats packet only refines it. The spinner shows ONLY when
+    // neither the slice nor a server packet has hull yet (was: spinner until the
+    // packet ALWAYS → the "hull pops in" lag).
+    const sliceHull = st?.hpPct; // [0..1] or undefined
     const data: PanelData = {
       name: (got && selectionStats.name) || structureName(id) || 'Structure',
-      hpPct: got && selectionStats.hpMax > 0 ? (selectionStats.hp / selectionStats.hpMax) * 100 : 0,
+      hpPct:
+        sliceHull !== undefined
+          ? sliceHull * 100
+          : got && selectionStats.hpMax > 0
+            ? (selectionStats.hp / selectionStats.hpMax) * 100
+            : 0,
       shieldPct: null, // structures are shieldless
-      pending: !got, // hull spinner until the first entity_stats packet (~150 ms)
+      pending: sliceHull === undefined && !got, // spinner only if NEITHER source has hull
     };
-    const st = structureSliceFor(id);
     if (st) {
       data.buildPct = st.buildPct;
       data.powered = st.powered;
       data.netPower = st.netPower;
       data.storedPower = st.storedPower;
       data.storedPowerMax = st.storedPowerMax;
+      const subtype = structureSubtype(id);
+      // C5 — the building's OWN power figure (catalogue gen − drain), so each
+      // structure reads its own +/- rather than the grid aggregate every member
+      // shares. Pure catalogue lookup → instant, no server round-trip.
+      if (subtype) {
+        const k = getStructureKind(subtype);
+        data.selfPower = k.powerOutput - k.powerConsumption;
+      }
+      // C4 — connection count "N / 6", CONNECTORS ONLY. Client-resident (slice
+      // connTo.length + catalogue maxConnections), so it renders instantly with
+      // no server round-trip; never surfaced for other kinds.
+      if (subtype === 'connector') {
+        data.connCount = st.connTo.length;
+        data.connMax = getStructureKind('connector').maxConnections;
+      }
     }
     return data;
   }
@@ -229,6 +276,16 @@ function structureName(id: string): string | undefined {
   if (Number.isNaN(entityId)) return undefined;
   const sw = client.mirror.swarm?.get(entityId);
   return sw?.shipKind ? getStructureKind(sw.shipKind).displayName : undefined;
+}
+
+/** A structure's raw subtype id (the swarm `shipKind` byte) — used to gate the
+ *  connector-only connection count (C4). Undefined when the swarm entry is gone. */
+function structureSubtype(id: string): string | undefined {
+  const client = getGameClient();
+  if (!client) return undefined;
+  const entityId = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
+  if (Number.isNaN(entityId)) return undefined;
+  return client.mirror.swarm?.get(entityId)?.shipKind;
 }
 
 function droneName(shipKind: string | undefined): string {

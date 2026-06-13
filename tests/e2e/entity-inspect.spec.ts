@@ -167,8 +167,19 @@ test('selecting a structure shows a NON-ZERO hull bar + power/build stats (playt
   const panel = page.locator('[data-testid="entity-stats-panel"]');
   await expect(panel).toBeVisible({ timeout: 5000 });
 
-  // The fix: hull reads non-zero once the WIRE-id stats packet matches the
-  // selection. On the pre-fix code this stays at 0 (placeholder).
+  // Phase-4 C3 — hull is CLIENT-RESIDENT (the slice's `hpPct`), so it renders on
+  // the FIRST frame after selection with NO entity_stats round-trip: the loading
+  // spinner (`data-stats-pending`) must NEVER show and hull is already > 0. On the
+  // pre-fix code the slice carried no hpPct, so this first-frame read was a
+  // spinner (pending='1') with hull 0 — the "hull UI pops in" report.
+  expect(await panel.getAttribute('data-stats-pending'), 'no hull spinner — slice is instant').toBeNull();
+  expect(
+    parseInt((await panel.getAttribute('data-hull-pct')) ?? '0', 10),
+    'hull non-zero on the first frame (from the slice)',
+  ).toBeGreaterThan(0);
+
+  // The structure also stays non-zero as the WIRE-id stats packet refines it
+  // (Issue 3 — the round-trip path remains correct).
   await expect
     .poll(async () => parseInt((await panel.getAttribute('data-hull-pct')) ?? '0', 10), { timeout: 5000 })
     .toBeGreaterThan(0);

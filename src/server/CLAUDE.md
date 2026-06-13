@@ -216,6 +216,16 @@ the cost is drained DURING construction by the Phase-3 grid pulse, so a blueprin
 can be placed with an empty bank and waits. The structure subtype rides the
 **shared `shipKind` byte** (kind=2 path; `SwarmSpawner.spawnStructure` sets
 `rec.shipKind`) — no stride/`SWARM_WIRE_VERSION` bump. `remove` is owner-gated.
+**Phase-4 C2 — placement is OBSTACLE-aware.** `place()` rejected overlap against
+PLACED STRUCTURES only, so a Capital dropped on a rock LANDED ("places on an
+asteroid"). It now routes BOTH the structure AND the asteroid check through the
+shared pure [`canPlaceStructureAt`/`placementRejection`](../core/structures/placementRules.ts)
+(sum-of-radii circle, the same `getObstacles` → `gatherStructureObstacles` hook
+the auto-connect LOS already used). Low-frequency message path — no wire change,
+NO netgate. The client ghost can call the SAME predicate for a red-invalid tint
+(deferred). Locks: `placementRules.test.ts` (pure), `StructurePlacementSubsystem.test.ts`
+(obstacle reject), `tests/integration/sectorRoom/structurePlacementValidation.test.ts`
+(the real `getObstacles` wiring, capital-on-asteroid rejected end-to-end).
 `SectorRoom._internals` exposes `structureRegistry` + the swarm record `shipKind`
 for the integration test.
 
@@ -250,7 +260,13 @@ absent when none), broadcasts `grid_pulse`, severs on structure death via
 `evictSwarmEntity`. `_internals.pulseStructureGrid` + `getStructuresSlice` are
 the test seams. **Netgate (invariant #8): the `structures[]` slice + `grid_pulse`
 touch the snapshot/broadcast path, so `pnpm e2e:netgate` is required for grid
-changes.** Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
+changes.** **Phase-4 C3 — the slice carries `hpPct` (0-100 INTEGER percent, the
+`drones[].hp` convention) for EVERY structure**, sourced in `rebuildStructuresSlice`
+from `swarmHealth` ÷ `getStructureKind(kind).maxHealth`. The client decodes it to
+`StructureRenderState.hpPct` (0..1) so the inspector renders the hull bar on the
+FIRST polled frame after selection — killing the "hull pops in" round-trip lag
+(the `entity_stats` packet now only refines it). 🔴 netgate (slice byte change;
+PASS confirmed). Lock: `entity-inspect.spec.ts` first-frame no-spinner assertion. Phase 4 adds the mining + transfer pulse steps (`findNearestAsteroid`
 hook; power-gated extraction → local buffer → haul to Capital). Phase 5 adds
 `tickTurrets` on a faster `TURRET_TICK_MS` timer — built+powered turrets target
 the nearest drone (`findNearestDrone`) and fire (`applyDamage` + `laser_fired`);

@@ -2643,8 +2643,14 @@ export class SectorRoom extends Room<SectorState> {
       if (entityId === undefined) continue; // swarm entity gone — skip
       const summary = this.structureGrid.powerSummaryFor(rec.id);
       const conns = this.structureRegistry.connectionsOf(rec.id);
+      // C3 — hull percent (0-100 int) so the client inspector renders hull on
+      // the first frame after selection, no entity_stats round-trip. Off the
+      // 60 Hz tick (1 Hz pulse + on placement), so the integer math is free.
+      const hpMax = getStructureKind(rec.kind).maxHealth;
+      const hp = this.swarmHealth.get(rec.id) ?? hpMax;
       const entry: NonNullable<SnapshotMessage['structures']>[number] = {
         id: entityId,
+        hpPct: Math.round((Math.max(0, hp) / hpMax) * 100),
         powered: summary.powered,
         netPower: summary.netPower,
         built: rec.isConstructed,

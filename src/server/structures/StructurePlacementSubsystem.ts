@@ -28,6 +28,7 @@ import {
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
+import { placementRejection } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure } from './structureGridView.js';
 
@@ -64,12 +65,12 @@ export class StructurePlacementSubsystem {
     const pos = this.hooks.clamp(x, y);
 
     // No-overlap: reject if the new footprint would intersect an existing
-    // structure's footprint (centre distance < sum of radii).
-    for (const s of this.hooks.registry.all()) {
-      const dx = s.x - pos.x;
-      const dy = s.y - pos.y;
-      const minDist = s.radius + kind.radius;
-      if (dx * dx + dy * dy < minDist * minDist) return null;
+    // structure's footprint OR an asteroid/obstacle (Phase-4 C2 — the obstacle
+    // pass is the fix for "places on an asteroid"; the same `getObstacles` hook
+    // the auto-connect LOS check already uses). Shared pure predicate so the
+    // client ghost can validate identically.
+    if (placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.()) !== null) {
+      return null;
     }
 
     const preBuilt = kind.constructionCost <= 0;

@@ -221,6 +221,12 @@ export interface SnapshotMessage {
    *  (which carries the pose) by entityId. */
   structures?: Array<{
     id: number;
+    /** Phase-4 C3 — hull health as a 0-100 INTEGER percent (matches the
+     *  `drones[].hp` convention). Emitted for every structure so the client
+     *  renders the inspector hull bar on the FIRST polled frame after selection
+     *  (no `entity_stats` round-trip → no "hull pops in" lag). Slim JSON field,
+     *  no SWARM_WIRE_VERSION bump (pose flows on the binary channel). */
+    hpPct?: number;
     /** Component net power ≥ 0 AND reachable to a Capital. */
     powered: boolean;
     /** Component net power (Σ output − Σ consumption over built members). */
