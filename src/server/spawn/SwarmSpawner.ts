@@ -42,8 +42,9 @@ export interface SpawnerHooks {
   /** Send a SPAWN_OBSTACLE-shape command to the physics worker. The optional
    *  `vertices` array carries the asteroid polygon's local-space points so the
    *  worker can build a `convexHull` collider. Drones (kind=1) pass `undefined`
-   *  and remain ball colliders. */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number) => void;
+   *  and remain ball colliders. `staticBody` (structures, kind=2) locks the
+   *  body so a ram can't move it (P3.10). */
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -269,7 +270,11 @@ export class SwarmSpawner {
     // AI standoff/brake has friction to settle against (matching `spawnShip`);
     // ASTEROIDS (kind 0) + STRUCTURES (kind 2) stay ballistic (damping 0).
     const linearDamping = kind === 1 && shipKind ? shipKind.linearDamping : 0;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping);
+    // P3.10 (P0) — STRUCTURES (kind 2) spawn as LOCKED bodies: immovable under
+    // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
+    // (0) stay dynamic — drones fly, asteroids are bump-able (R2.33).
+    const staticBody = kind === 2;
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's
