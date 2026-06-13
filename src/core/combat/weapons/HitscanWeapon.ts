@@ -17,6 +17,11 @@ export class HitscanWeapon extends Weapon {
   }
 
   resolveFire(ctx: WeaponFireContext, sink: WeaponFireSink): void {
-    sink.hitscan(ctx, this.def.range, this.def.damage, this.def.falloff?.minDamageFrac);
+    // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
+    // `range × maxRangeMul` (maxRange) with reverse-square falloff beyond
+    // optimal. maxRangeMul absent/≤1 ⇒ maxRange = range (flat, back-compat).
+    const f = this.def.falloff;
+    const maxRange = f?.maxRangeMul && f.maxRangeMul > 1 ? this.def.range * f.maxRangeMul : this.def.range;
+    sink.hitscan(ctx, this.def.range, this.def.damage, f?.minDamageFrac, maxRange);
   }
 }

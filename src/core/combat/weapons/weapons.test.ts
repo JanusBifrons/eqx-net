@@ -26,13 +26,13 @@ function makeCtx(over: Partial<WeaponFireContext> = {}): WeaponFireContext {
 
 class RecordingSink implements WeaponFireSink {
   calls: string[] = [];
-  hitscanArgs?: { range: number; damage: number };
+  hitscanArgs?: { range: number; damage: number; falloffMinDamageFrac?: number; maxRange?: number };
   projArgs?: { vx: number; vy: number; damage: number; radius: number; maxTicks: number; weaponId: WeaponId };
   missileDef?: MissileWeaponDef;
 
-  hitscan(_ctx: WeaponFireContext, range: number, damage: number): void {
+  hitscan(_ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
     this.calls.push('hitscan');
-    this.hitscanArgs = { range, damage };
+    this.hitscanArgs = { range, damage, falloffMinDamageFrac, maxRange };
   }
   spawnProjectile(
     _ctx: WeaponFireContext,
@@ -53,12 +53,22 @@ class RecordingSink implements WeaponFireSink {
 }
 
 describe('GEP B3 weapon flyweights — resolveFire parity with the fire-resolver per-mode logic', () => {
-  it('HitscanWeapon casts a ray of its range with its damage (== resolver hitscan branch)', () => {
+  it('HitscanWeapon casts a ray to optimal range + maxRange with its damage (== resolver hitscan branch)', () => {
     const sink = new RecordingSink();
     getWeaponObject('hitscan').resolveFire(makeCtx(), sink);
     const def = getWeapon('hitscan') as HitscanWeaponDef;
     expect(sink.calls).toEqual(['hitscan']);
-    expect(sink.hitscanArgs).toEqual({ range: def.range, damage: def.damage });
+    // P3.13 — `range` is the optimal (full-damage) range; `maxRange` extends it
+    // by `falloff.maxRangeMul` (the ray reach for the reverse-square fringe).
+    const expectedMax = def.falloff?.maxRangeMul && def.falloff.maxRangeMul > 1
+      ? def.range * def.falloff.maxRangeMul
+      : def.range;
+    expect(sink.hitscanArgs).toEqual({
+      range: def.range,
+      damage: def.damage,
+      falloffMinDamageFrac: def.falloff?.minDamageFrac,
+      maxRange: expectedMax,
+    });
   });
 
   it('ProjectileWeapon spawns with shooterV + dir*speed + the def ballistics (== resolver projectile branch)', () => {

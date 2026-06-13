@@ -334,8 +334,11 @@ export class PlayerFireResolver implements WeaponFireSink {
 
   /** Beam: the 4-pass lag-comp candidate sweep + applyDamage + laser_fired,
    *  updating the best-hit accumulator for the aggregate hit_ack. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void {
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
     const d = this.deps;
+    // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
+    // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
+    const rayRange = maxRange ?? range;
     const rayFromX = ctx.fromX;
     const rayFromY = ctx.fromY;
     const ndx = ctx.dirX;
@@ -356,7 +359,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const cx = rewound?.x ?? fallback?.x;
       const cy = rewound?.y ?? fallback?.y;
       if (cx === undefined || cy === undefined) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, range, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rewound?.angle ?? fallback?.angle ?? 0);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = targetId;
@@ -368,7 +371,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     for (const [shipInstanceId] of d.lingeringSlots) {
       const lingeringPose = d.lingeringPoseCache.get(shipInstanceId);
       if (!lingeringPose) continue;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, lingeringPose.x, lingeringPose.y, SHIP_COLLISION_RADIUS);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = shipInstanceId;
@@ -385,9 +388,9 @@ export class PlayerFireResolver implements WeaponFireSink {
       const ca = rewound?.angle ?? d.sabF32[b + SLOT_ANGLE_OFF]!;
       let dist: number | null;
       if (rec.kind === 0 && rec.vertices) {
-        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, range, cx, cy, ca, rec.vertices);
+        dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices);
       } else {
-        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, cx, cy, rec.radius);
+        dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.radius);
       }
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
@@ -401,7 +404,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       const b = slotBase(slot);
       const cx = d.sabF32[b + SLOT_X_OFF]!;
       const cy = d.sabF32[b + SLOT_Y_OFF]!;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, cx, cy, SHIP_COLLISION_RADIUS);
+      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, SHIP_COLLISION_RADIUS);
       if (dist !== null && dist < mountHitDist) {
         mountHitDist = dist;
         mountHitId = `wreck-${shipInstanceId}`;
@@ -419,7 +422,7 @@ export class PlayerFireResolver implements WeaponFireSink {
     // Shield-fence plan: an ACTIVE shield wall in front of the target absorbs
     // the beam (the wall takes the hit; the target behind takes nothing). Only
     // walls closer than the resolved target (or the range) count.
-    const scanDist = mountHitDist === Infinity ? range : mountHitDist;
+    const scanDist = mountHitDist === Infinity ? rayRange : mountHitDist;
     const wallDist = d.blockBeamAtWall?.(rayFromX, rayFromY, ndx, ndy, scanDist, damage) ?? null;
     const blocked = wallDist !== null;
 
@@ -432,7 +435,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       // R2.29 — reverse-square damage falloff over range (server-authoritative;
       // the client reads the scaled number off the DamageEvent, never predicts it).
       const effDamage = falloffMinDamageFrac !== undefined
-        ? damage * hitscanFalloffFrac(mountHitDist, range, falloffMinDamageFrac)
+        ? damage * hitscanFalloffFrac(mountHitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
       d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY);
       if (mountHitDist < this._bestHitDist) {

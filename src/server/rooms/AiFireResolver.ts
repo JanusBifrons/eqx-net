@@ -200,8 +200,11 @@ export class AiFireResolver implements WeaponFireSink {
   /** Beam: instant lag-comp-free hit test against live player poses; on hit,
    *  applyDamage (internal shooter id); always broadcast laser_fired on the
    *  WIRE shooter id. */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void {
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void {
     const d = this.deps;
+    // P3.13 — `range` is the OPTIMAL (full-damage) range; the ray reaches
+    // `maxRange` (≥ range) and damage falls off reverse-square BEYOND optimal.
+    const rayRange = maxRange ?? range;
     const rayFromX = ctx.fromX;
     const rayFromY = ctx.fromY;
     const ndx = ctx.dirX;
@@ -213,7 +216,7 @@ export class AiFireResolver implements WeaponFireSink {
       if (!targetShip || !targetShip.alive) continue;
       const pose = d.shipPoseCache.get(targetId);
       if (!pose) continue;
-      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, range, pose.x, pose.y, pose.angle);
+      const dist = d.playerHitscanDist(targetShip, rayFromX, rayFromY, ndx, ndy, rayRange, pose.x, pose.y, pose.angle);
       if (dist !== null && dist < hitDist) {
         hitDist = dist;
         hitId = targetId;
@@ -227,7 +230,7 @@ export class AiFireResolver implements WeaponFireSink {
     const structs = d.structureHitTargets?.();
     if (structs) {
       for (const s of structs) {
-        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, range, s.x, s.y, s.radius);
+        const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, s.x, s.y, s.radius);
         if (dist !== null && dist < hitDist) {
           hitDist = dist;
           hitId = s.id;
@@ -238,12 +241,13 @@ export class AiFireResolver implements WeaponFireSink {
     // Shield-fence plan: an ACTIVE shield wall in front of the target absorbs
     // the beam (the wall takes the hit; the target behind takes nothing). Only
     // walls closer than the resolved target (or the range, with no target) count.
-    const scanDist = hitDist === Infinity ? range : hitDist;
+    const scanDist = hitDist === Infinity ? rayRange : hitDist;
     const wallDist = d.blockBeamAtWall?.(rayFromX, rayFromY, ndx, ndy, scanDist, damage) ?? null;
     if (wallDist === null && hitId) {
-      // R2.29 — reverse-square damage falloff over range (server-authoritative).
+      // P3.13 — full to optimal `range`, reverse-square falloff to maxRange
+      // (server-authoritative; the client never predicts beam damage).
       const effDamage = falloffMinDamageFrac !== undefined
-        ? damage * hitscanFalloffFrac(hitDist, range, falloffMinDamageFrac)
+        ? damage * hitscanFalloffFrac(hitDist, range, rayRange, falloffMinDamageFrac)
         : damage;
       d.applyDamage(hitId, this._shooterId, effDamage);
     }

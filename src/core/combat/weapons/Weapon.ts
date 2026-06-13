@@ -52,12 +52,14 @@ export interface WeaponFireContext {
  * sink owns shooter identity + per-fire-event state (set before the salvo).
  */
 export interface WeaponFireSink {
-  /** Resolve an instant beam: cast a ray of `range` and apply `damage` to the
-   *  nearest hit, then broadcast the beam. (Server: the candidate sweep.)
-   *  `falloffMinDamageFrac` (R2.29) — when defined, the sink scales `damage` by
-   *  the reverse-square `hitscanFalloffFrac(hitDist, range, frac)`; undefined ⇒
-   *  flat damage (back-compat). */
-  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number): void;
+  /** Resolve an instant beam: cast a ray and apply `damage` to the nearest hit,
+   *  then broadcast the beam. (Server: the candidate sweep.) `range` is the
+   *  OPTIMAL range (FULL damage). `maxRange` (P3.13) — when > `range`, the ray
+   *  casts that far and `falloffMinDamageFrac` scales `damage` reverse-square
+   *  from full at `range` to the floor at `maxRange` (`hitscanFalloffFrac(hitDist,
+   *  range, maxRange, frac)`). Omit `maxRange`/`falloffMinDamageFrac` ⇒ a flat
+   *  beam of `range` (back-compat). */
+  hitscan(ctx: WeaponFireContext, range: number, damage: number, falloffMinDamageFrac?: number, maxRange?: number): void;
   /** Spawn a server projectile with the given velocity + ballistics. */
   spawnProjectile(
     ctx: WeaponFireContext,

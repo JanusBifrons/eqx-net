@@ -20,13 +20,14 @@ interface WeaponDefBase {
 export interface HitscanWeaponDef extends WeaponDefBase {
   mode: 'hitscan';
   range: number;
-  /** Optional REVERSE-SQUARE damage falloff over `range` (R2.29). When present,
-   *  applied damage scales from full `damage` at point-blank to
-   *  `minDamageFrac × damage` at max range, as the SQUARE of normalized
-   *  distance. Absent ⇒ flat damage (byte-identical to pre-R2.29).
-   *  SERVER-AUTHORITATIVE — reflected to the client via the `DamageEvent`,
-   *  never predicted client-side (avoids prediction desync). */
-  falloff?: { minDamageFrac: number };
+  /** Optional "optimal + beyond" damage falloff (P3.13). `range` is the OPTIMAL
+   *  range: FULL `damage` out to it. BEYOND it, applied damage falls REVERSE-
+   *  SQUARE to `minDamageFrac × damage` at `range × maxRangeMul` — the max reach
+   *  the ray casts to; past that there is no hit. `maxRangeMul` defaults to 1
+   *  (no beyond-optimal band ⇒ flat full damage everywhere in range). Absent
+   *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
+   *  number off the `DamageEvent`, never predicts it (avoids desync). */
+  falloff?: { minDamageFrac: number; maxRangeMul?: number };
 }
 
 export interface ProjectileWeaponDef extends WeaponDefBase {
@@ -109,11 +110,12 @@ const HITSCAN_DEF: HitscanWeaponDef = {
   damage: 13,
   cooldownTicks: 10,
   range: 250,
-  // R2.29 — reverse-square damage gradient: full 13 at point-blank falling to
-  // 40 % (≈5.2) at the 250 u max range. Makes the beam a true knife-fight
-  // weapon (rewards closing the distance) and gives a visible reason for the
-  // tapered beam render. Tunable; server-authoritative.
-  falloff: { minDamageFrac: 0.4 },
+  // P3.13 — "optimal + beyond": FULL 13 damage out to the 250 u OPTIMAL range,
+  // then a reverse-square drop-off to 15 % (≈2) at maxRange = 250×1.5 = 375 u
+  // (where the ray ends). Gives the beam a reliable knife-fight range with a
+  // tapering fringe beyond — and a visible reason for the tapered render
+  // (WS-A3b). Tunable; server-authoritative.
+  falloff: { minDamageFrac: 0.15, maxRangeMul: 1.5 },
   // Beam slot trigger cost — interceptor full-pool sustain ≈ 6 s
   // (energyMax 180 / (5 × 6 Hz)). One slot trigger drains 5 regardless
   // of the twin mounts.
@@ -247,16 +249,19 @@ export function weaponAutoFireRange(def: WeaponDef): number {
 }
 
 /**
- * Reverse-square hitscan damage falloff fraction in [minDamageFrac, 1] (R2.29).
- * 1.0 at point-blank, falling as the SQUARE of normalized distance to
- * `minDamageFrac` at (and beyond) `range`. Pure + allocation-free (scalar
- * in/out) — safe on the fire-resolution path. Multiply the weapon's flat
- * `damage` by this to get the distance-scaled damage. A `range <= 0` (or no
- * caller-supplied falloff) yields 1.0 = flat damage.
+ * "Optimal + beyond" hitscan damage falloff fraction in [minDamageFrac, 1]
+ * (P3.13). FULL (1.0) out to `optimalRange`, then falling as the SQUARE of the
+ * normalized over-optimal distance to `minDamageFrac` at `maxRange`, clamped to
+ * `minDamageFrac` past it. Pure + allocation-free (scalar in/out) — safe on the
+ * fire-resolution path. Multiply the weapon's flat `damage` by this to get the
+ * distance-scaled damage. A degenerate band (`maxRange <= optimalRange`) yields
+ * 1.0 = flat full damage.
  */
-export function hitscanFalloffFrac(dist: number, range: number, minDamageFrac: number): number {
-  if (range <= 0) return 1;
-  const t = dist <= 0 ? 0 : dist >= range ? 1 : dist / range;
+export function hitscanFalloffFrac(dist: number, optimalRange: number, maxRange: number, minDamageFrac: number): number {
+  if (dist <= optimalRange) return 1;
+  if (maxRange <= optimalRange) return 1;
+  if (dist >= maxRange) return minDamageFrac;
+  const t = (dist - optimalRange) / (maxRange - optimalRange);
   const frac = 1 - (1 - minDamageFrac) * t * t;
   return frac < minDamageFrac ? minDamageFrac : frac > 1 ? 1 : frac;
 }
