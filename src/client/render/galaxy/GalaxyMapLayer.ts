@@ -31,6 +31,20 @@ import { Camera } from '../worker/Camera';
  */
 
 const HEX_SIZE_BASE = 64;
+
+/**
+ * Glyph rasterization resolution for the sector labels (WS-14 / R2.7 — "map
+ * looks low-res / blurry"). The whole `clusterRoot` is fractionally downscaled
+ * to fit (≈0.6 overlay / 0.85 selector), and a Pixi `Text` is a BAKED texture —
+ * downscaling it off its native grid softens it (vector hex strokes stay
+ * GPU-crisp; only the text texture blurs). Oversampling the glyph texture (≥ the
+ * device pixel ratio of common phones) keeps the downscaled label crisp without
+ * threading DPR into the worker-side layer; `roundPixels` snaps the final sprite
+ * to integer device pixels so edges don't sub-pixel-blur. The on-device eye is
+ * the [V] verdict (the blur is DPR-dependent and barely shows on a low-DPR dev box).
+ */
+export const MAP_LABEL_RESOLUTION = 3;
+
 const COLOR_HIGHLIGHT = 0x00ff88;
 const COLOR_SELECTABLE_FILL = 0x0a3322;
 const COLOR_SELECTABLE_STROKE = 0x1f7a4d;
@@ -291,6 +305,9 @@ export class GalaxyMapLayer extends Container {
 
       const label = new Text({
         text: p.s.name,
+        // Oversample + snap so the fractional cluster downscale stays crisp (R2.7).
+        resolution: MAP_LABEL_RESOLUTION,
+        roundPixels: true,
         style: new TextStyle({
           fontFamily: 'sans-serif',
           fontSize: 12,
