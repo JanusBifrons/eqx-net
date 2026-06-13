@@ -15,7 +15,7 @@ export const DEFAULT_WARP_TONING = {
   spoolAmplitude: 12, // was 24
   spoolBrightness: 1.06, // was 1.15
   climaxAmplitude: 70, // was 120
-  bloomStrengthMax: 1.5, // was 4
+  // bloom removed entirely in WS-14/R2.9 ("remove warp glow")
   flashAlphaMax: 0.55, // was 0.9
 } as const;
 

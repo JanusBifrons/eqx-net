@@ -1,5 +1,5 @@
 /**
- * Warp visual effect — the shockwave + bloom + flash + load-curtain
+ * Warp visual effect — the shockwave + flash + load-curtain
  * filter chain hosted on its own `warpStage` container above the world.
  *
  * Two-phase envelope driven by `setMode(true)`:
@@ -19,10 +19,10 @@
  * policy — see `src/client/CLAUDE.md` 2026-05-16 Phase G3); the
  * arrival reveal is the only legitimate burst.
  *
- * `setLoadCurtain(active)` tweens the full-canvas dark overlay (200 ms
- * rise / 380 ms fade) to hide the canvas during join + transit load.
- * Independent of the warp filter chain — the curtain alone runs with
- * filters detached.
+ * `setLoadCurtain(active)` drives the full-canvas dark overlay (INSTANT
+ * rise / 380 ms fade — see `curtainAlphaAt`) to hide the canvas during
+ * join + transit load. Independent of the warp filter chain — the curtain
+ * alone runs with filters detached.
  *
  * Composes the pure helpers `shouldDetachWarpVisual`,
  * `warpEventFiresBurst`, `resolveWarpFilterCenter` (all exported from
@@ -32,7 +32,7 @@
  */
 
 import { Application, Container, Graphics } from 'pixi.js';
-import { ShockwaveFilter, ZoomBlurFilter, BloomFilter } from 'pixi-filters';
+import { ShockwaveFilter, ZoomBlurFilter } from 'pixi-filters';
 import {
   shouldDetachWarpVisual,
   warpEventFiresBurst,
@@ -70,8 +70,25 @@ const BACKGROUND_COLOR = 0x05070f;
 // matches the background so a black opaque overlay reads as "starfield
 // dimmed", same visual intent as the 0.97 variant.
 const CURTAIN_PEAK_ALPHA = 1.0;
-const CURTAIN_RISE_MS = 200;
 const CURTAIN_FADE_MS = 380;
+
+/**
+ * Load-curtain alpha during its tween (WS-14 / R2.26-curtain).
+ *
+ * The RISE (cover going up, target ≥ from) is **instant**: the curtain must be
+ * fully opaque BEFORE the destination sector is revealed, or the destination
+ * sprites flash through the still-rising semi-transparent curtain (R2.26
+ * "ship-change briefly flashes the sector" — the rise used to tween over 200 ms
+ * while the destination's first frame rendered sooner). Only the FADE-OUT (the
+ * arrival reveal, target < from) is tweened over `CURTAIN_FADE_MS` so the new
+ * sector fades in smoothly. This is the curtain only — the single-flash arrival
+ * burst (`triggerWarpIn` → `warpFlash`) is untouched.
+ */
+export function curtainAlphaAt(fromAlpha: number, targetAlpha: number, elapsedMs: number): number {
+  if (targetAlpha >= fromAlpha) return targetAlpha; // rising (or no change) → snap opaque
+  if (elapsedMs >= CURTAIN_FADE_MS) return targetAlpha; // fade-out complete
+  return fromAlpha + (targetAlpha - fromAlpha) * (elapsedMs / CURTAIN_FADE_MS);
+}
 
 export class WarpFilterChain {
   // ── State (was on PixiRenderer) ──────────────────────────────────────
@@ -95,7 +112,6 @@ export class WarpFilterChain {
   private loadCurtainTargetAlpha = 0;
   private loadCurtainTweenStartedAt = 0;
   private loadCurtainTweenFromAlpha = 0;
-  private warpBloom: BloomFilter | null = null;
   private warpStandaloneBurst = false;
 
   constructor(
@@ -203,11 +219,6 @@ export class WarpFilterChain {
       radius: -1,
       time: 0,
     });
-    this.warpBloom = new BloomFilter({
-      strength: 0,
-      quality: 2,
-      kernelSize: 5,
-    });
     this.loadCurtain = new Graphics();
     this.loadCurtain.rect(-2048, -2048, 8192, 8192);
     this.loadCurtain.fill({ color: BACKGROUND_COLOR, alpha: 1 });
@@ -243,22 +254,20 @@ export class WarpFilterChain {
 
   private attachFilters(): void {
     if (this.forcedDisabled) return; // kill switch (plan: melodic-engelbart Step 2c)
-    if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst || !this.warpBloom) return;
+    if (!this.warpShockwaves || !this.warpZoomBlur || !this.warpBurst) return;
     // Re-enabled 2026-05-27 (M3 of effects-subsystem plan wiggly-puppy)
     // after being disabled 2026-05-21 (commit `Render-jitter-fix Phase 1b`).
     // The disable rationale was duty-cycle cost on mobile — the re-enable
     // is paired with toned-down DEFAULT_WARP_PARAMS (spoolCount 4→2,
-    // climaxAmplitude 220→70, bloomStrengthMax 6→1.5) AND a budget tier
-    // dial via `applyQuality` below (medium drops bloom; low drops zoom
-    // blur; minimal detaches the chain entirely, matching the 2026-05-21
-    // safe state). Mobile-default `medium` (touch-device pin) means the
-    // bloom shader pass — the most expensive single contributor — is
-    // never attached on touch in production.
+    // climaxAmplitude 220→70) AND a budget tier dial via `applyQuality`
+    // below (low drops zoom-blur; minimal detaches the chain entirely,
+    // matching the 2026-05-21 safe state). The bloom/glow pass was REMOVED
+    // entirely (WS-14 / R2.9 — "remove warp glow"); the single subtle white
+    // arrival flash (`warpFlash`, fired by `triggerWarpIn`) is the reveal.
     const filters: import('pixi.js').Filter[] = [];
     for (const sw of this.warpShockwaves) filters.push(sw);
     filters.push(this.warpBurst);
     if (this.qualityIncludesZoomBlur()) filters.push(this.warpZoomBlur);
-    if (this.qualityIncludesBloom()) filters.push(this.warpBloom);
     this.app.stage.filters = filters;
   }
 
@@ -270,9 +279,10 @@ export class WarpFilterChain {
    * warp surface.
    *
    * Dials per tier:
-   *  - high    : full chain (shockwaves + zoom-blur + bloom + burst)
-   *  - medium  : drop bloom (the heaviest shader pass)
-   *  - low     : drop bloom AND zoom-blur (keep shockwaves only)
+   *  - high    : full chain (shockwaves + zoom-blur + burst)
+   *  - medium  : same as high (bloom — the former high-only pass — was
+   *              removed entirely in WS-14/R2.9)
+   *  - low     : drop zoom-blur (shockwaves + burst only)
    *  - minimal : detach all filters (matches the 2026-05-21 safe state)
    *
    * The chain is re-built lazily by ensureStage()/buildShockwaveStack;
@@ -318,7 +328,6 @@ export class WarpFilterChain {
 
   private forcedDisabled = false;
   private qualityLevel: 'high' | 'medium' | 'low' | 'minimal' = 'high';
-  private qualityIncludesBloom(): boolean { return this.qualityLevel === 'high'; }
   private qualityIncludesZoomBlur(): boolean { return this.qualityLevel === 'high' || this.qualityLevel === 'medium'; }
 
   /** Ticker callback (arrow form so `this` is bound). */
@@ -340,17 +349,13 @@ export class WarpFilterChain {
     const p = this.warpParams;
 
     // ---- Load curtain alpha tween (runs unconditionally) ----
+    // Instant RISE (opaque before the destination reveals), smooth FADE-OUT.
     if (this.loadCurtainTargetAlpha !== this.loadCurtain.alpha) {
-      const rising = this.loadCurtainTargetAlpha > this.loadCurtainTweenFromAlpha;
-      const dur = rising ? CURTAIN_RISE_MS : CURTAIN_FADE_MS;
-      const elapsed = now - this.loadCurtainTweenStartedAt;
-      if (elapsed >= dur) {
-        this.loadCurtain.alpha = this.loadCurtainTargetAlpha;
-      } else {
-        const t = elapsed / Math.max(1, dur);
-        this.loadCurtain.alpha = this.loadCurtainTweenFromAlpha
-          + (this.loadCurtainTargetAlpha - this.loadCurtainTweenFromAlpha) * t;
-      }
+      this.loadCurtain.alpha = curtainAlphaAt(
+        this.loadCurtainTweenFromAlpha,
+        this.loadCurtainTargetAlpha,
+        now - this.loadCurtainTweenStartedAt,
+      );
     }
 
     // ---- Burst + flash decay ----
@@ -524,11 +529,5 @@ export class WarpFilterChain {
     this.warpZoomBlur.center = { x: cx, y: cy };
     this.warpZoomBlur.strength = blurStrength;
     this.warpZoomBlur.innerRadius = p.zoomBlurInnerRadius;
-
-    if (this.warpBloom) {
-      const climaxBloom = phase === 'climax' ? phaseProgress * k : 0;
-      const bloomFactor = Math.max(climaxBloom, burstFalloff);
-      this.warpBloom.strength = p.bloomStrengthMax * bloomFactor;
-    }
   }
 }

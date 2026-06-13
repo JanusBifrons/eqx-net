@@ -88,7 +88,6 @@ const WARP_SLIDERS: SliderSpec[] = [
   { key: 'flashAlphaMax',       label: 'flash: alphaMax',     min: 0,    max: 1,     step: 0.02, format: (v) => v.toFixed(2) },
   { key: 'flashDurationMs',     label: 'flash: durationMs',   min: 100,  max: 800,   step: 20 },
   { key: 'flashRangeMax',       label: 'flash: rangeMax (world)', min: 0, max: 8000, step: 100 },
-  { key: 'bloomStrengthMax',    label: 'bloom: strengthMax',  min: 0,    max: 8,     step: 0.1, format: (v) => v.toFixed(1) },
 ];
 
 // ---------- Renderer state ----------
