@@ -10,16 +10,29 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
   });
   afterEach(() => cleanup());
 
-  // R2.21 — the banner is ALWAYS MOUNTED while the HUD is up: an idle (no
-  // incoming) state renders a stable empty container, NOT null. (Pre-R2.21 this
-  // returned null; this assertion FAILS on that code.)
-  it('renders a stable idle container (always-mounted) when there are no warnings', () => {
+  // P3.9 — the banner is ALWAYS MOUNTED and its idle state is VISIBLE: when
+  // there are no incoming warps it shows a "nothing incoming" chip with TEXT,
+  // not an invisible empty <Box> (the R2.21 idle the user "never saw").
+  it('renders a VISIBLE idle chip (always-mounted) when there are no warnings', () => {
     render(<WarpInWarningBanner />);
     const banner = screen.getByTestId('warp-warning-banner');
     expect(banner).not.toBeNull();
     expect(banner.getAttribute('data-warning-active')).toBe('0');
-    expect(screen.getByTestId('warp-warning-idle')).not.toBeNull();
+    const idle = screen.getByTestId('warp-warning-idle');
+    expect(idle).not.toBeNull();
+    // The idle readout must carry visible text (pre-fix it was an empty Box,
+    // so this FAILS on that code).
+    expect((idle.textContent ?? '').toLowerCase()).toMatch(/incoming|clear|nothing/);
     expect(screen.queryByTestId('warp-warning')).toBeNull();
+  });
+
+  // P3.9 — the banner does NOT unmount during the load curtain (it dropped its
+  // `useShouldRenderHud` gate): even with the HUD marked not-visible it renders.
+  it('stays mounted even when the HUD is not in its visible state', () => {
+    useUIStore.setState({ loadingCosmeticOnly: false });
+    render(<WarpInWarningBanner />);
+    expect(screen.getByTestId('warp-warning-banner')).not.toBeNull();
+    expect(screen.getByTestId('warp-warning-idle')).not.toBeNull();
   });
 
   // R2.21 — a hostile drone wave (the default relation) reads RED (error).
