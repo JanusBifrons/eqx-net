@@ -526,6 +526,18 @@ export interface RendererFeedback {
    */
   wreckSpriteCount: number;
   /**
+   * Number of shield-aura rings currently DRAWN (visible) this frame. A ring
+   * is registered via `setContinuous(id,'shield',…)` but only becomes visible
+   * once the effects subsystem resolves the entity's pose — so this is the
+   * drawn-artefact signal (NOT the registered count). Lets the worker-boundary
+   * lingering-render probe assert a parked hull's shield aura actually draws
+   * (P3.12 / WS-C3): pre-fix `getEntityPose` returned null for lingering hulls
+   * (their sprites live in `lingeringSprites`, not `sprites`), so the ring
+   * registered but stayed `visible=false` → this count was 0. Mirrors
+   * `wreckSpriteCount` / `damageNumberActiveCount` as a test-observable.
+   */
+  shieldRingVisibleCount: number;
+  /**
    * Latches `true` the first time the renderer's `update()` runs with a
    * non-null `mirror.localPlayerId` AND `mirror.ships.size > 0`. Stays
    * true for the lifetime of the renderer instance.
