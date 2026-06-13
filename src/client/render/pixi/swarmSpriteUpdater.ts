@@ -30,7 +30,7 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
 import { getStructureKind } from '../../../shared-types/structureKinds';
-import { clampToArc, wrapPi } from '../../../core/ai/WeaponMountController';
+import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
@@ -59,6 +59,16 @@ export interface SwarmSpriteCtx {
   remoteHitTargets: Set<string>;
   localHitTargets: Set<string>;
   seenScratch: Set<string>;
+  /** P3.8 — per-structure SLEWED mount (barrel/drill) arc-local angles, keyed by
+   *  `swarm-<entityId>`, persisted across frames so the barrel rotates toward
+   *  its target instead of SNAPPING. Owned + swept by the renderer (deleted with
+   *  the sprite on despawn). */
+  structureMountAngles: Map<string, number[]>;
+  /** P3.8 — seconds since the previous call; the structure-mount slew rate input
+   *  (`rotateMountToward` advances ≤ `rotationSpeed * slewDtSec` per call). The
+   *  renderer computes it (clamped) from wall-clock; tests inject a fixed value
+   *  for a deterministic slew. */
+  slewDtSec: number;
 }
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -78,6 +88,7 @@ const EMPTY_MOUNTS: readonly WeaponMount[] = [];
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
+  const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
   for (const [entityId, entry] of mirror.swarm) {
     const spriteKey = `swarm-${entityId}`;
     ctx.seenScratch.add(spriteKey);
@@ -144,9 +155,27 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const bodyX = lerped.x;
         const bodyY = lerped.y;
         const bodyAngle = lerped.angle;
+        // P3.8 — persistent SLEWED arc-local angle per mount, created once + reused
+        // (invariant #14). The barrel SLEWS toward its target via the shared
+        // `rotateMountToward` instead of SNAPPING in one frame — the user's
+        // "structures place at a weird angle then snap to the right position":
+        // a blueprint turret/miner has no target so the barrel sits at base
+        // (arc-local 0, "up"); the instant it acquired one it jumped to the
+        // bearing. Now it eases over `rotationSpeed * dt`. No target ⇒ slew back
+        // to base (0).
+        let slew = ctx.structureMountAngles.get(spriteKey);
+        if (!slew) {
+          slew = [];
+          for (let i = 0; i < structMounts.length; i++) slew.push(0);
+          ctx.structureMountAngles.set(spriteKey, slew);
+        }
         for (let i = 0; i < structMounts.length; i++) {
           const mount = structMounts[i]!;
-          let arcLocal = 0;
+          // Desired bearing in the mount's arc-local frame (canonical aim
+          // convention forward = +y, right = +x ⇒ worldBearing = atan2(-dx, dy)),
+          // or 0 (base) with no target. `rotateMountToward` clamps to the arc +
+          // limits per-frame travel; `applyMountAngles` draws -(baseAngle+arc).
+          let desiredArc = 0;
           if (targetEntry) {
             // Mount pivot in world space (structure mounts sit at the body
             // centre, localX=localY=0, but compute generally for correctness).
@@ -156,22 +185,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
             const mountWorldY = bodyY + (mount.localX * sinA + mount.localY * cosA);
             const dx = targetEntry.x - mountWorldX;
             const dy = targetEntry.y - mountWorldY;
-            // Canonical aim convention (WeaponMountTicker / localMountAim):
-            // forward = +y, right = +x ⇒ worldBearing = atan2(-dx, dy); then
-            // rotate into the mount's arc-local frame and clamp to the arc.
             const worldBearing = Math.atan2(-dx, dy);
-            // NOTE: structures carry no per-tick mount-angle state client-side,
-            // so this SNAPS the barrel to the clamped target each frame rather
-            // than slewing via `rotateMountToward` like the player/drone path.
-            // Fine for a stateless visual; revisit if a structure mount ever
-            // gains a tight arc + rotationSpeed (the snap would read instant).
-            arcLocal = clampToArc(wrapPi(worldBearing - bodyAngle - mount.baseAngle), mount);
+            desiredArc = wrapPi(worldBearing - bodyAngle - mount.baseAngle);
           }
-          _structureMountAngles.push(arcLocal);
+          const nextArc = rotateMountToward(slew[i] ?? 0, desiredArc, mount, slewDtSec);
+          slew[i] = nextArc;
+          _structureMountAngles.push(nextArc);
         }
-        // applyMountAngles applies spriteRotation = -(mount.baseAngle + current),
-        // exactly matching the player/drone path — so the barrel points AT the
-        // target (a sign error here would point it 180° away).
         ctx.mountVisuals.applyMountAngles(spriteKey, structMounts, _structureMountAngles);
       }
     }

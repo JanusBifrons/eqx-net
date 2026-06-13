@@ -93,6 +93,11 @@ function makeCtx(): SwarmSpriteCtx {
     remoteHitTargets: new Set<string>(),
     localHitTargets: new Set<string>(),
     seenScratch: new Set<string>(),
+    structureMountAngles: new Map<string, number[]>(),
+    // P3.8 — a LARGE default dt so a single updateSwarmSprites call slews all the
+    // way to the target (the dead-ahead aim tests below assert the converged
+    // angle); the dedicated slew test overrides this with a small per-frame dt.
+    slewDtSec: 100,
   };
 }
 
@@ -157,12 +162,17 @@ describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
     // Use an off-axis target to prove the aim actually rotates the barrel.
   });
 
-  it('aims a TURRET barrel OFF-AXIS at a side target (proves non-zero rotation + correct sign)', () => {
+  it('SLEWS a TURRET barrel toward an off-axis target — eases, does NOT snap (P3.8)', () => {
+    // P3.8 regression lock: a structure barrel must SLEW toward its target over
+    // frames (rotateMountToward), NOT jump to it in one frame. The pre-fix code
+    // snapped — a blueprint turret/miner sat at base ("up") and the instant it
+    // acquired a target the barrel jumped to the bearing ("places at a weird
+    // angle then snaps"). This drives a 90° off-axis target and asserts a single
+    // frame moves only PART of the way, then converges over many frames.
     const turretId = 101;
     const droneId = 201;
     const turret = structureEntry('turret', 0, 0, 0);
-    // Target to the turret's RIGHT (+x). Forward is +y, so a target at +x is
-    // 90° clockwise → the barrel must rotate, and toward the target, not away.
+    // Target to the turret's RIGHT (+x). Forward is +y → a +x target is 90° off.
     const target = droneEntry(400, 0);
     const swarm = new Map<number, SwarmRenderState>([
       [turretId, turret],
@@ -173,21 +183,31 @@ describe('updateSwarmSprites — structure mount visuals (kind===2)', () => {
     ]);
     const mirror: RenderMirror = { swarm, structures } as unknown as RenderMirror;
 
-    updateSwarmSprites(mirror, ctx);
-
-    const key = `swarm-${turretId}`;
-    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
-
     const sk = getStructureKind('turret');
     const mount = sk.mounts![0]!;
-    const cluster = (ctx.mountVisuals as unknown as {
-      clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
-    }).clusters.get(key)!;
-    const barrel = cluster.perMount.get(mount.id)!.turret;
-    const expected = expectedBarrelRotation(0, 0, 0, mount.baseAngle, 400, 0);
-    expect(barrel.rotation).toBeCloseTo(expected, 5);
-    // It must actually have rotated off forward (forward sprite rotation is 0).
-    expect(Math.abs(barrel.rotation)).toBeGreaterThan(0.1);
+    const aimed = expectedBarrelRotation(0, 0, 0, mount.baseAngle, 400, 0);
+    expect(Math.abs(aimed)).toBeGreaterThan(1); // sanity: target really is ~90° off
+
+    const key = `swarm-${turretId}`;
+    const barrelOf = (): Graphics =>
+      (ctx.mountVisuals as unknown as {
+        clusters: Map<string, { perMount: Map<string, { turret: Graphics }> }>;
+      }).clusters.get(key)!.perMount.get(mount.id)!.turret;
+
+    // ONE 60 Hz frame: the barrel has moved OFF base toward the target, but is
+    // NOWHERE near it yet (a snap would land exactly on `aimed` in one frame —
+    // this assertion FAILS on the pre-fix snap behaviour).
+    ctx.slewDtSec = 1 / 60;
+    updateSwarmSprites(mirror, ctx);
+    expect(ctx.mountVisuals.mountCountForShip(key)).toBe(1);
+    const afterOne = barrelOf().rotation;
+    expect(Math.abs(afterOne), 'barrel moved off base (forward = 0)').toBeGreaterThan(0);
+    expect(Math.abs(afterOne - aimed), 'barrel must NOT snap to the target in one frame').toBeGreaterThan(0.2);
+    expect(Math.sign(afterOne), 'slewed TOWARD the target, not away').toBe(Math.sign(aimed));
+
+    // Over many frames it converges to the full aim.
+    for (let f = 0; f < 300; f++) updateSwarmSprites(mirror, ctx);
+    expect(barrelOf().rotation).toBeCloseTo(aimed, 3);
   });
 
   it('builds a barrel for a MINER and aims it at miningTargetId', () => {
