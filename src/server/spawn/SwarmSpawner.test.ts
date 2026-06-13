@@ -2,6 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { SwarmSpawner, type AsteroidSpec, pickRandomShipKind } from './SwarmSpawner.js';
 import { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
+import { SCRAP_LINEAR_DAMPING, SCRAP_DEFAULT_MASS } from '../../core/swarm/scrapConstants.js';
+import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS, SHIP_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
 import {
@@ -16,6 +19,7 @@ interface PostedCmd {
   vertices?: ReadonlyArray<Vec2>;
   linearDamping?: number;
   staticBody?: boolean;
+  collisionGroups?: number;
 }
 
 describe('SwarmSpawner', () => {
@@ -37,8 +41,8 @@ describe('SwarmSpawner', () => {
     lagCompRegistered = [];
     spawner = new SwarmSpawner(registry, {
       takeSlot: () => availableSlots.pop(),
-      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody) =>
-        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody }),
+      postSpawnObstacle: (slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups) =>
+        posted.push({ slot, id, x, y, vx, vy, radius, mass, vertices, linearDamping, staticBody, collisionGroups }),
       sabF32: f32,
       sabU32: u32,
       registerLagComp: (id) => lagCompRegistered.push(id),
@@ -81,6 +85,64 @@ describe('SwarmSpawner', () => {
     spawner.spawnDrone({ id: 'drone-h', x: 0, y: 0, kind: 'heavy' });
     const drone = posted.find((p) => p.id === 'drone-h')!;
     expect(drone.linearDamping).toBe(SHIP_KINDS.heavy.linearDamping);
+  });
+
+  // Scrap-on-death (Phase 2b-i) — a scrap piece spawns as a kind-3, dynamic,
+  // damageable body that carries the passed convex-hull vertices, the parent
+  // ship-kind (on rec.shipKind) + componentIndex, and is posted to the worker
+  // with SCRAP_COLLISION_GROUPS + SCRAP_LINEAR_DAMPING + staticBody false (so
+  // scrap doesn't collide with scrap but drifts off everything else).
+  it('spawnScrap: kind 3 record, dynamic, carries vertices/parentKind/componentIndex; posted with scrap groups + damping', () => {
+    const verts: Vec2[] = [
+      { x: -10, y: -8 },
+      { x: 10, y: -8 },
+      { x: 10, y: 8 },
+      { x: -10, y: 8 },
+    ];
+    const ok = spawner.spawnScrap({
+      id: 'scrap-0', x: 120, y: -40, vx: 5, vy: -3, radius: 12,
+      parentShipKind: 'havok', componentIndex: 2, vertices: verts,
+    });
+    expect(ok).toBe(true);
+
+    const rec = registry.get('scrap-0')!;
+    expect(rec.kind).toBe(SWARM_KIND_SCRAP); // kind 3
+    expect(rec.kind).toBe(3);
+    expect(rec.shipKind).toBe('havok'); // parent ship-kind on the shared byte
+    expect(rec.componentIndex).toBe(2);
+    expect(rec.vertices).toBe(verts); // single source of truth: same array
+
+    // KIND_DRONE flag must NOT be set for scrap (only FLAG_IS_SWARM).
+    const flags = u32[slotBase(rec.slot) + SLOT_FLAGS_OFF] ?? 0;
+    expect(flags & FLAG_IS_SWARM).toBe(FLAG_IS_SWARM);
+    expect(flags & FLAG_KIND_DRONE).toBe(0);
+
+    const cmd = posted.find((p) => p.id === 'scrap-0')!;
+    expect(cmd.collisionGroups).toBe(SCRAP_COLLISION_GROUPS);
+    expect(cmd.linearDamping).toBe(SCRAP_LINEAR_DAMPING);
+    expect(cmd.staticBody).toBeFalsy(); // scrap is dynamic — it drifts
+    expect(cmd.vertices).toBe(verts); // convex-hull collider from the passed poly
+    expect(cmd.vx).toBe(5);
+    expect(cmd.vy).toBe(-3);
+  });
+
+  it('spawnScrap: mass defaults to SCRAP_DEFAULT_MASS when omitted', () => {
+    spawner.spawnScrap({
+      id: 'scrap-m', x: 0, y: 0, vx: 0, vy: 0, radius: 10,
+      parentShipKind: 'havok', componentIndex: 0,
+      vertices: [{ x: -5, y: -5 }, { x: 5, y: -5 }, { x: 0, y: 5 }],
+    });
+    const cmd = posted.find((p) => p.id === 'scrap-m')!;
+    expect(cmd.mass).toBe(SCRAP_DEFAULT_MASS);
+  });
+
+  it('spawnScrap: every other kind is posted WITHOUT collisionGroups (default Rapier groups)', () => {
+    spawner.spawnDrone({ id: 'd-cg', x: 0, y: 0, kind: 'fighter' });
+    spawner.spawnAsteroid({ id: 'a-cg', x: 0, y: 0, vx: 0, vy: 0, radius: 20 });
+    spawner.spawnStructure({ id: 's-cg', x: 0, y: 0, radius: 60, shipKind: 'capital' });
+    expect(posted.find((p) => p.id === 'd-cg')!.collisionGroups).toBeUndefined();
+    expect(posted.find((p) => p.id === 'a-cg')!.collisionGroups).toBeUndefined();
+    expect(posted.find((p) => p.id === 's-cg')!.collisionGroups).toBeUndefined();
   });
 
   it('seeds an asteroid roster, registers each, primes SAB and posts spawn commands', () => {

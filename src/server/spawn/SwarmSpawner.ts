@@ -5,6 +5,9 @@ import type { SpatialGrid } from '../interest/SpatialGrid.js';
 import { generateAsteroidVertices, asteroidResources, type Vec2 } from '../../core/swarm/asteroidShape.js';
 import { ASTEROID_DEFAULT_MASS } from '../../core/swarm/asteroidConstants.js';
 import { STRUCTURE_DEFAULT_MASS } from '../../core/swarm/structureConstants.js';
+import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrapConstants.js';
+import { SCRAP_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
+import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { structureHullPoints } from '../../shared-types/structureKinds.js';
 
@@ -43,8 +46,10 @@ export interface SpawnerHooks {
    *  `vertices` array carries the asteroid polygon's local-space points so the
    *  worker can build a `convexHull` collider. Drones (kind=1) pass `undefined`
    *  and remain ball colliders. `staticBody` (structures, kind=2) locks the
-   *  body so a ram can't move it (P3.10). */
-  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean) => void;
+   *  body so a ram can't move it (P3.10). `collisionGroups` (scrap, kind=3)
+   *  carries a Rapier collision-group mask so scrap doesn't collide with other
+   *  scrap but does collide with everything else (scrap-on-death Phase 2b-i). */
+  postSpawnObstacle: (slot: number, id: string, x: number, y: number, vx: number, vy: number, radius: number, mass: number, vertices?: ReadonlyArray<Vec2>, linearDamping?: number, staticBody?: boolean, collisionGroups?: number) => void;
   /** Direct write into the SAB so the first update() tick reads a sane pose. */
   sabF32: Float32Array;
   sabU32: Uint32Array;
@@ -213,6 +218,45 @@ export class SwarmSpawner {
     return ok;
   }
 
+  /** Spawn one dynamic, damageable SCRAP body (scrap-on-death Phase 2b-i) —
+   *  one component of a destroyed composite ship. Rides the kind=3 pose-core
+   *  path: no AI, light mass, a small `SCRAP_LINEAR_DAMPING` so it coasts then
+   *  slows, and `SCRAP_COLLISION_GROUPS` so scrap does NOT collide with other
+   *  scrap but DOES collide with everything else. Its collision hull is the
+   *  passed convex-hull `vertices` (the recentred scrap-group collider). The
+   *  parent ship-kind rides the shared `shipKind` byte and `componentIndex`
+   *  selects which `shipScrapGroups(parentKind)` group this piece is. Returns
+   *  false if no free slot. */
+  spawnScrap(spec: {
+    id: string;
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    radius: number;
+    mass?: number;
+    parentShipKind: ShipKindId;
+    componentIndex: number;
+    vertices: ReadonlyArray<Vec2>;
+  }): boolean {
+    const a: AsteroidSpec = {
+      id: spec.id, x: spec.x, y: spec.y, vx: spec.vx, vy: spec.vy, radius: spec.radius, mass: spec.mass,
+    };
+    // Mirror spawnStructure: spawnOne attaches the convexHull collider from the
+    // passed vertices; the parent ship-kind + component index are set on the
+    // freshly-registered record below (spawnOne only auto-sets shipKind for
+    // drones). The behaviour factory is undefined (scrap has no AI).
+    const ok = this.spawnOne(SWARM_KIND_SCRAP, a, undefined, undefined, spec.vertices);
+    if (ok) {
+      const rec = this.registry.get(spec.id);
+      if (rec) {
+        rec.shipKind = spec.parentShipKind;
+        rec.componentIndex = spec.componentIndex;
+      }
+    }
+    return ok;
+  }
+
   private spawnOne(
     kind: SwarmKind,
     a: AsteroidSpec,
@@ -262,19 +306,35 @@ export class SwarmSpawner {
       vertices = structureVertices;
       rec.vertices = vertices;
       mass ??= STRUCTURE_DEFAULT_MASS;
+    } else if (kind === SWARM_KIND_SCRAP && structureVertices) {
+      // SCRAP (kind 3, scrap-on-death Phase 2b-i) — the passed convex-hull
+      // collider (the recentred scrap-group polygon). NO asteroid generation,
+      // NO resource pool. Light default mass; it's just drifting debris.
+      vertices = structureVertices;
+      rec.vertices = vertices;
+      mass ??= SCRAP_DEFAULT_MASS;
     } else {
       mass ??= DRONE_DEFAULT_MASS;
     }
 
     // WS-11 (R2.25) — DRONES (kind 1) get their per-kind `linearDamping` so the
     // AI standoff/brake has friction to settle against (matching `spawnShip`);
-    // ASTEROIDS (kind 0) + STRUCTURES (kind 2) stay ballistic (damping 0).
-    const linearDamping = kind === 1 && shipKind ? shipKind.linearDamping : 0;
+    // ASTEROIDS (kind 0) + STRUCTURES (kind 2) stay ballistic (damping 0). SCRAP
+    // (kind 3) coasts then slows (SCRAP_LINEAR_DAMPING) so a death-burst settles.
+    const linearDamping =
+      kind === 1 && shipKind ? shipKind.linearDamping
+        : kind === SWARM_KIND_SCRAP ? SCRAP_LINEAR_DAMPING
+          : 0;
     // P3.10 (P0) — STRUCTURES (kind 2) spawn as LOCKED bodies: immovable under
     // ram impulses (the "I hit a pylon and it MOVED" bug). Drones (1) + asteroids
-    // (0) stay dynamic — drones fly, asteroids are bump-able (R2.33).
+    // (0) + scrap (3) stay dynamic — drones fly, asteroids are bump-able (R2.33),
+    // scrap drifts.
     const staticBody = kind === 2;
-    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody);
+    // SCRAP (kind 3) carries a collision-group mask so scrap doesn't collide with
+    // other scrap but does collide with everything else. Every other kind passes
+    // undefined ⇒ Rapier's default groups (collide with all).
+    const collisionGroups = kind === SWARM_KIND_SCRAP ? SCRAP_COLLISION_GROUPS : undefined;
+    this.hooks.postSpawnObstacle(slot, a.id, a.x, a.y, a.vx, a.vy, a.radius, mass, vertices, linearDamping, staticBody, collisionGroups);
 
     // Phase 5d: insert into the interest grid so this entity participates in
     // per-client filtering. Indexed by the dense u16 entityId since that's

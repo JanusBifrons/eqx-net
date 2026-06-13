@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { PhysicsWorld } from './World.js';
 import { generateAsteroidVertices } from '../swarm/asteroidShape.js';
+import { SCRAP_COLLISION_GROUPS } from './collisionGroups.js';
 
 let world: PhysicsWorld;
 
@@ -139,6 +140,51 @@ describe('PhysicsWorld.spawnObstacle (polygon path)', () => {
     // Pre-fix, spawnObstacle ignored the damping arg → this body also coasted at
     // ~v0 and this assertion FAILED.
     expect(dampedSpeed).toBeLessThan(v0 * 0.5);
+  });
+});
+
+describe('PhysicsWorld.spawnObstacle — scrap collision groups (scrap-on-death 2b-i)', () => {
+  // SCRAP bodies carry SCRAP_COLLISION_GROUPS so scrap does NOT collide with
+  // other scrap (a death-burst of overlapping pieces passes cleanly through
+  // itself) but DOES collide with everything else (it still bumps off ships /
+  // drones / asteroids / structures). These two tests prove both halves with
+  // overlapping bodies: scrap-vs-scrap must NOT push apart; scrap-vs-default
+  // MUST push apart.
+  it('two overlapping scrap bodies do NOT push apart (scrap vs scrap = no collide)', () => {
+    // Placed in a fresh region of the shared `world`, heavily overlapping
+    // (centres 4 u apart, radius 24). With NO collision between them they sit
+    // still; with collision they would shove apart hard.
+    world.spawnObstacle('scrap-a', 20000, 0, 24, 1, undefined, 0.15, SCRAP_COLLISION_GROUPS);
+    world.spawnObstacle('scrap-b', 20004, 0, 24, 1, undefined, 0.15, SCRAP_COLLISION_GROUPS);
+    for (let i = 0; i < 60; i++) world.tick(1 / 60); // 1 s
+
+    const a = world.getShipState('scrap-a')!;
+    const b = world.getShipState('scrap-b')!;
+    // Neither body should have been displaced — no contact force between them.
+    expect(Math.hypot(a.x - 20000, a.y)).toBeLessThan(1);
+    expect(Math.hypot(b.x - 20004, b.y)).toBeLessThan(1);
+    // And they should not have gained any push-apart velocity.
+    expect(Math.hypot(a.vx, a.vy)).toBeLessThan(0.5);
+    expect(Math.hypot(b.vx, b.vy)).toBeLessThan(0.5);
+  });
+
+  it('an overlapping scrap body and a DEFAULT body DO push apart (scrap vs default = collide)', () => {
+    // Same overlap geometry, but the second body uses Rapier's default groups
+    // (no collisionGroups arg). The contact resolver must shove them apart.
+    world.spawnObstacle('scrap-c', 21000, 0, 24, 1, undefined, 0.15, SCRAP_COLLISION_GROUPS);
+    world.spawnObstacle('default-d', 21004, 0, 24, 1); // default groups
+    for (let i = 0; i < 60; i++) world.tick(1 / 60); // 1 s
+
+    const c = world.getShipState('scrap-c')!;
+    const d = world.getShipState('default-d')!;
+    // The pair was overlapping and must have separated — their centre distance
+    // grew well past the initial 4 u.
+    const sep = Math.hypot(c.x - d.x, c.y - d.y);
+    expect(sep).toBeGreaterThan(4);
+    // At least one of them moved off its spawn point (push-apart impulse).
+    const cMoved = Math.hypot(c.x - 21000, c.y);
+    const dMoved = Math.hypot(d.x - 21004, d.y);
+    expect(cMoved + dMoved).toBeGreaterThan(1);
   });
 });
 

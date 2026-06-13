@@ -208,6 +208,7 @@ export class PhysicsWorld {
     mass = 3,
     vertices?: ReadonlyArray<Vec2>,
     linearDamping = 0,
+    collisionGroups?: number,
   ): void {
     // WS-11 (R2.25) — `linearDamping` defaults to 0 so ASTEROIDS + STRUCTURES
     // stay ballistic (no friction), but DRONES pass their per-kind
@@ -249,6 +250,11 @@ export class PhysicsWorld {
     collider
       .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
       .setContactForceEventThreshold(10);
+    // Scrap-on-death (Phase 2b-i) — an optional collision-group mask. Used by
+    // SCRAP bodies (SCRAP_COLLISION_GROUPS) so scrap does NOT collide with
+    // other scrap but DOES collide with everything else. Omitted ⇒ Rapier's
+    // default groups (collide with all), so every existing caller is unchanged.
+    if (collisionGroups !== undefined) collider.setCollisionGroups(collisionGroups);
     this.world.createCollider(collider, body);
     if (isBall) {
       // Pin mass to the disc-equivalent (mass param, I = 0.5 m r^2),
