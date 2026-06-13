@@ -7,6 +7,7 @@ import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
+import { decidePlacementPointer } from './placementPointerDecision.js';
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
@@ -950,16 +951,24 @@ export class PixiRenderer implements IRenderer {
     // GATE on `e.target !== canvas`: moves OVER the canvas are already routed by
     // the canvas listener above using the native, canvas-relative `e.offsetX`.
     // Re-routing those here with `clientX - rect.left` would DOUBLE-handle them,
-    // and the window (bubble-phase) value would clobber the canvas one — on the
-    // worker path the two computations diverge, so the chosen point snapped to a
-    // wrong world coord (feature E regression). Only handle the off-canvas /
-    // over-overlay case the canvas listener can't see. Removed in dispose().
+    // and the window value would clobber the canvas one — on the worker path the
+    // two computations diverge, so the chosen point snapped to a wrong world
+    // coord (feature E regression). Only handle the off-canvas / over-overlay
+    // case the canvas listener can't see.
+    //
+    // CAPTURE PHASE (P3.5 follow-still-broken, 2026-06-13): registered with
+    // `{ capture: true }` so it fires on the way DOWN, BEFORE any element under
+    // the pointer (the MUI speed-dial / its tooltips) can `stopPropagation` a
+    // bubble-phase listener away. `window` is the outermost capture target, so
+    // nothing can intercept it — this is the true "connect to the ENTIRE window
+    // mouse move" the placement follow needs. Removed (with matching capture
+    // flag) in dispose().
     const onWindowPlacementMove = (e: PointerEvent): void => {
       if (!this._placementActive || e.target === canvas) return;
       const rect = canvas.getBoundingClientRect();
       this.routePlacementPointer('pointermove', e.clientX - rect.left, e.clientY - rect.top, e.button, e.pointerType);
     };
-    window.addEventListener('pointermove', onWindowPlacementMove);
+    window.addEventListener('pointermove', onWindowPlacementMove, true);
     this._placementWindowMoveHandler = onWindowPlacementMove as EventListener;
   }
 
@@ -990,34 +999,17 @@ export class PixiRenderer implements IRenderer {
     const w = this.camera.screenToWorld(screenX, screenY);
     const gameX = w.x;
     const gameY = -w.y;
-    switch (type) {
-      case 'pointerdown':
-        this._placementFollowing = true;
-        this._placementChosenX = gameX;
-        this._placementChosenY = gameY;
-        break;
-      case 'pointermove':
-        if (this._placementFollowing) {
-          this._placementChosenX = gameX;
-          this._placementChosenY = gameY;
-        }
-        break;
-      case 'pointerup':
-        this._placementChosenX = gameX;
-        this._placementChosenY = gameY;
-        this._placementFollowing = false;
-        // Desktop one-click place: a left-button mouse release commits the
-        // blueprint at the release point. Bump the monotonic confirm seq the
-        // main thread drains. Touch keeps the park → Confirm-banner flow.
-        if (pointerType === 'mouse' && button === 0) {
-          this.feedback.placementConfirmSeq++;
-        }
-        break;
-      case 'pointercancel':
-      case 'pointerleave':
-        this._placementFollowing = false;
-        break;
+    // Pure state machine (placementPointerDecision.ts) — the load-bearing rule
+    // is that `pointerleave` does NOT park the follow (P3.5 follow-still-broken):
+    // desktop hover-follow has no pointer capture, so leaving the canvas (over
+    // the speed-dial / off-screen) must not break the lock. Unit-locked.
+    const outcome = decidePlacementPointer(type, pointerType, button, this._placementFollowing);
+    if (outcome.following !== null) this._placementFollowing = outcome.following;
+    if (outcome.updateChosen) {
+      this._placementChosenX = gameX;
+      this._placementChosenY = gameY;
     }
+    if (outcome.commit) this.feedback.placementConfirmSeq++;
   }
 
   /**
@@ -2258,9 +2250,10 @@ export class PixiRenderer implements IRenderer {
       }
     }
     this.canvasListeners.length = 0;
-    // P3.5 — the window-level placement-drag pointermove (lives on `window`).
+    // P3.5 — the window-level placement-drag pointermove (lives on `window`,
+    // capture phase — the removal flag MUST match the add or it won't detach).
     if (this._placementWindowMoveHandler) {
-      window.removeEventListener('pointermove', this._placementWindowMoveHandler);
+      window.removeEventListener('pointermove', this._placementWindowMoveHandler, true);
       this._placementWindowMoveHandler = null;
     }
     const handler = (this.app as unknown as Record<string, unknown>)['_resizeHandler'];

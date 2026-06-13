@@ -92,7 +92,7 @@ export class WorkerRendererClient implements IRenderer {
   // Window/visualViewport-level listeners for viewport rotation +
   // browser-chrome resize. Tracked separately because they live on
   // `window`/`visualViewport`, not the canvas.
-  private windowListeners: Array<{ target: Window | VisualViewport | null; event: string; handler: EventListener }> = [];
+  private windowListeners: Array<{ target: Window | VisualViewport | null; event: string; handler: EventListener; options?: boolean | AddEventListenerOptions }> = [];
   private resizeObserver: ResizeObserver | null = null;
   private canvasHost: HTMLElement | null = null;
 
@@ -228,10 +228,15 @@ export class WorkerRendererClient implements IRenderer {
     // GATE on `e.target !== canvas`: moves OVER the canvas are already forwarded
     // by the canvas listener above with the native, canvas-relative `e.offsetX`.
     // Re-forwarding them here with `clientX - rect.left` double-handles the move
-    // and the window (bubble-phase) value wins — the two computations diverge on
-    // this path, snapping the chosen point to a wrong world coord (feature E
-    // regression). Only handle the off-canvas / over-overlay case. Removed on
-    // teardown via `windowListeners`.
+    // and the window value wins — the two computations diverge on this path,
+    // snapping the chosen point to a wrong world coord (feature E regression).
+    // Only handle the off-canvas / over-overlay case. Removed on teardown via
+    // `windowListeners`.
+    //
+    // CAPTURE PHASE (P3.5 follow-still-broken, 2026-06-13): `{ capture: true }`
+    // so it fires before any element under the pointer (the MUI speed-dial) can
+    // stopPropagation a bubble-phase listener away — `window` is the outermost
+    // capture target, so the placement follow can never be intercepted.
     const onWindowPlacementMove = (e: PointerEvent): void => {
       if (!this._placementActive || !this.canvas || e.target === this.canvas) return;
       const rect = this.canvas.getBoundingClientRect();
@@ -241,8 +246,8 @@ export class WorkerRendererClient implements IRenderer {
         offsetY: e.clientY - rect.top,
       });
     };
-    window.addEventListener('pointermove', onWindowPlacementMove);
-    this.windowListeners.push({ target: window, event: 'pointermove', handler: onWindowPlacementMove as EventListener });
+    window.addEventListener('pointermove', onWindowPlacementMove, true);
+    this.windowListeners.push({ target: window, event: 'pointermove', handler: onWindowPlacementMove as EventListener, options: true });
   }
 
   /** Window-level + container-level resize listeners. Mirrors the
@@ -521,8 +526,8 @@ export class WorkerRendererClient implements IRenderer {
       }
       this.listeners.length = 0;
     }
-    for (const { target, event, handler } of this.windowListeners) {
-      target?.removeEventListener(event, handler);
+    for (const { target, event, handler, options } of this.windowListeners) {
+      target?.removeEventListener(event, handler, options);
     }
     this.windowListeners.length = 0;
     this.resizeObserver?.disconnect();
