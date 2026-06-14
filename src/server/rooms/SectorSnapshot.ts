@@ -11,14 +11,13 @@
  */
 
 // v3 (Phase 5 2026-06-14): structures FULLY persisted + reconstructed.
-// v4 (Phase 5 2026-06-14): SCRAP now persists too (pose + parent ship-kind +
-// componentIndex + health; collider re-derived on hydrate). The persistence
-// model is opt-out: the world persists by default; the blacklist is only
-// genuinely transient/externally-owned things — projectiles/missiles
-// (ephemeral) and roaming DRONES (kind 1, owned by the LivingWorldDirector,
-// which persists + re-dispatches them itself, NOT via the sector snapshot).
-// Bumping discards every older snapshot and reseeds all sectors.
-export const CURRENT_SCHEMA_VERSION = 4;
+// v4 (Phase 5 2026-06-14): SCRAP persists too.
+// v5 (Phase 5 2026-06-14): LINGERING HULLS persist too — a disconnected /
+// displaced ship reappears in its sector "where you left it" after a restart
+// (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
+// ships persist once spawned until abandoned (→ wreck). Bumping discards every
+// older snapshot and reseeds all sectors.
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +86,28 @@ export interface SectorSnapshotScrap {
   health: number;
 }
 
+/**
+ * A lingering hull (a disconnected / fresh-spawn-displaced ship, `isActive=false`,
+ * still drifting in the sector). Persisted so it reappears in-world after a
+ * server restart (Phase 5 v5). The `shipInstanceId` is the roster shipId — the
+ * stable hull identity across disconnect↔reconnect↔abandon — so reconnect rebinds
+ * to the reconstructed hull and abandon→wreck still keys correctly.
+ */
+export interface SectorSnapshotLingeringHull {
+  shipInstanceId: string;
+  playerId: string;
+  kind: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
+  health: number;
+  /** True if the shield was down at persist time (hull exposed). */
+  shieldDown: boolean;
+}
+
 export interface SectorSnapshotPayload {
   schemaVersion: number;
   sectorKey: string;
@@ -97,6 +118,9 @@ export interface SectorSnapshotPayload {
   structures?: SectorSnapshotStructure[];
   /** Free-floating scrap pieces (Phase 5 v4). Absent when none. */
   scrap?: SectorSnapshotScrap[];
+  /** Lingering hulls (Phase 5 v5 — "lingers forever where you left it"). Absent
+   *  when none. */
+  lingeringHulls?: SectorSnapshotLingeringHull[];
 }
 
 /**
