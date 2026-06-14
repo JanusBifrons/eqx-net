@@ -82,6 +82,7 @@ const FEATURE_SPECS: string[] = [
   '**/engine-particles-demo.spec.ts',
   '**/feel-test-lockstep.spec.ts',
   '**/feel-tuning.spec.ts',
+  '**/galaxy-living-map.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
   '**/galaxy-map-pan-zoom.spec.ts',
   '**/galaxy-polish.spec.ts',

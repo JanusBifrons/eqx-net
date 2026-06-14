@@ -90,6 +90,11 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // thread (DOM) path only; the worker hosts its own layer.
   (window as unknown as { __eqxGalaxyTransform?: () => { x: number; y: number; scale: number } })
     .__eqxGalaxyTransform = () => galaxyLayer.getDebugTransform();
+  // DEV/E2E hook (Living Galaxy P4a): the REAL drawn per-territory shrink scale
+  // (factionId → clusterRoot sub-container scale.x), so a spec can assert the
+  // hovered contiguous territory shrinks as one unit. Main-thread (DOM) path only.
+  (window as unknown as { __eqxGalaxyTerritoryScale?: () => Record<string, number> })
+    .__eqxGalaxyTerritoryScale = () => galaxyLayer.getDebugTerritoryScales();
   renderer.addOverlayContainer(galaxyLayer);
   galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);
