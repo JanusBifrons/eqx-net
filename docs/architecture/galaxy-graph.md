@@ -1,179 +1,216 @@
 # Galaxy Graph
 
-The persistent EQX Peri galaxy is a 7-sector hexagonal sunflower hard-coded
-at [src/core/galaxy/galaxy.ts](../../src/core/galaxy/galaxy.ts). One centre
-(Sol Prime) connects to all 6 outers; each outer connects to the centre and
-to its two ring-adjacent siblings. This shape gives a maximum of 6 neighbours
-(centre's case) and a minimum of 3 (each outer), which matches the design
-intent stated when Phase 8 was scoped: each sector can have **up to 6**
-sibling connections, and the early galaxy should feel like a small world the
-player can navigate end-to-end without endless travel.
+The persistent EQX Peri galaxy is a **~21-sector** graph defined at
+[src/core/galaxy/galaxy.ts](../../src/core/galaxy/galaxy.ts): a home **core**
+region (Sol Dominion) plus three **frontier regions** — _Verdant Reach_,
+_Crimson Expanse_, _Azure Deep_ — each reachable from the core through a single
+**chokepoint** gateway. This replaced the original 7-sector hexagonal sunflower
+(Living Galaxy Phase 1). The chokepoint shape gives the wave/transit gameplay
+real geography: a drone wave must funnel through a gateway, and each region is a
+natural home for cosmetic faction territory now (and contested ownership later).
+
+The sector/faction/entry data is **generated** — see
+[Regenerating the galaxy](#regenerating-the-galaxy). The design vision and the
+full phased roadmap live in
+[docs/architecture/living-galaxy.md](living-galaxy.md).
 
 ## Topology
 
 ```
-            orion-belt
-           /          \
-   lyra-fringe ── sol-prime ── vega-reach
-   |     \           |           /     |
-   |      \      sol-prime      /      |
-   |       \         |         /       |
-   andromeda-rim ── (centre) ── cygnus-arm
-            \        |        /
-             \       |       /
-              kepler-spur
+                       Verdant Reach
+        greenfall ─ emerald-span ─ verdance
+                                \      |
+                          bloomgate ─ thornfield
+                                \      /
+                              orion-belt  (chokepoint)
+                                   │
+   Crimson Expanse                 │            Azure Deep
+   ashfront                    vega-reach        kepler-spur (chokepoint)
+      \                         /   │   \           │
+   cinderpath ─ scoria-drift  /     │    \      tideglass ─ coralward
+        \         |          /      │     \         │   \      │
+   andromeda-rim ─ emberwake       │   lyra-fringe  deepcurrent ─ marrow-trench
+            \                      │      /                          │
+          cygnus-arm ───────── sol-prime                       abyssal-gate
+          (chokepoint)         (core hub)
 ```
 
-In axial-hex coords: Sol Prime at `(0, 0)`; the six outers at every axial
-neighbour of the origin. Pixel layout in the SVG renderer comes from the
-standard pointy-top axial→pixel projection (see
-[`axialToPixel`](../../src/core/galaxy/galaxy.ts) — the same helper used by
-both the landing screen and the in-game overlay).
+- **Core (Sol Dominion):** `sol-prime` (hub, `0,0`), `vega-reach`, `lyra-fringe`
+  — a tight, mutually-adjacent triangle. Lowest drone presence, the safe harbour
+  players spawn into.
+- **Verdant Reach** (chokepoint `orion-belt` ↔ `vega-reach`): asteroid-rich
+  growth country.
+- **Crimson Expanse** (chokepoint `cygnus-arm` ↔ `sol-prime`): ember-lit open
+  void.
+- **Azure Deep** (chokepoint `kepler-spur` ↔ `lyra-fringe`): a cold trench
+  plunging into the abyss.
+
+Each frontier region connects to the core through **exactly one** edge (its
+chokepoint) — enforced by `galaxy.test.ts`. There are no cross-region back-routes
+in v1 (pure hub-and-spoke); the generator supports adding 1–2 later.
+
+Hex coordinates are axial (`q` east, `r` south-east; `(0,0)` = Sol Prime) and are
+used **only** for the map's visual layout (pixel projection via `axialToPixel`).
+The gameplay graph is the explicit `neighbours` set, decoupled from hex distance.
+
+### Faction territory (cosmetic v1)
+
+Every sector carries a `region` field (== faction id) and `GALAXY_FACTIONS` maps
+each id to a `displayName`. In v1 this is **cosmetic and static** — it drives the
+map's territory tint and the contiguous-territory hover-shrink (Phase 4). The
+data model is *capable* of real ownership; the expansion ladder (derived
+ownership → named factions → conquest) is documented in
+[living-galaxy.md](living-galaxy.md). Each region is **graph-contiguous by
+construction** (a hard generator invariant), which is what makes the hover-shrink
+BFS-over-same-faction-neighbours meaningful.
+
+### Environmental features
+
+Each sector carries a static `features` list (`asteroid | nebula | minerals |
+blackhole | station`) — the map glyph vocabulary that gives each sector
+character. Static + cosmetic; baked into the graph, so no wire cost (Phase 4
+renders them).
+
+## Entry (drone warp-in) sectors
+
+`ENTRY_SECTOR_KEYS` is the **baked** set of frontier-edge sectors where Living
+World drone squads warp in before hopping inward, and where a killed squad
+respawns (drone-warp-in design — drones never appear in an interior sector out of
+nowhere). v1 entries: `greenfall` (Verdant), `ashfront` (Crimson),
+`abyssal-gate` (Azure) — one per region, the frontier-most sector of each.
+
+This is baked, **not** max-hex-distance-derived: with a multi-region shape the
+regions sit at different hex distances, so a max-distance rule would pick only
+the single farthest region's edge. `getEntrySectors()` / `isEntrySector()` read
+the baked set; their signatures are unchanged from the sunflower era, so
+[population.ts](../../src/server/livingworld/population.ts) and the
+`LivingWorldDirector` are untouched.
 
 ## What "persistent" means here
 
 Each galaxy sector has a stable string identity (`sectorKey`) — `'sol-prime'`,
 `'orion-belt'`, etc. — distinct from Colyseus's autogenerated `roomId`, which
-rotates every restart. Persistence rows
-(`game_sessions.sector_id`, `player_kills.sector_id`, `game_snapshots.sector_id`)
-reference this stable key. Engineering rooms (`sector`, `test-sector`,
-`swarm-soak`, `swarm-tidi`, `swarm-tidi-burn`) keep `sectorKey === null` and
-write ephemeral `roomId`-scoped rows, so they don't pollute the persistent
-meta-game.
+rotates every restart. Persistence rows (`game_snapshots.sector_id`, roster
+`last_sector_key`, kill rows) reference this stable key. **The expansion kept all
+seven original keys** (`sol-prime`, `orion-belt`, `vega-reach`, `cygnus-arm`,
+`kepler-spur`, `andromeda-rim`, `lyra-fringe`) so persisted snapshots and roster
+rows keep their continuity; adjacency is re-derived at runtime (never persisted),
+so re-wiring them into the new shape is safe. Engineering rooms (`sector`,
+`test-sector`, `swarm-soak`, …) keep `sectorKey === null` and write ephemeral
+`roomId`-scoped rows.
 
 State that survives across server restarts is captured in
-[docs/architecture/persistence-and-migrations.md](persistence-and-migrations.md).
+[persistence-and-migrations.md](persistence-and-migrations.md).
 
 ## How rooms are wired
 
-[src/server/index.ts](../../src/server/index.ts) iterates `GALAXY_SECTORS`
-and calls:
+[src/server/index.ts](../../src/server/index.ts) iterates `GALAXY_SECTORS` and:
 
 ```ts
 gameServer.define(`galaxy-${sector.key}`, SectorRoom, resolveSectorConfig(sector.key));
-```
-
-…then, after `httpServer.listen` resolves, eagerly creates a live room
-instance for each:
-
-```ts
+// …then, after httpServer.listen resolves:
 await matchMaker.createRoom(`galaxy-${sector.key}`, {});
 ```
 
-Eager creation matters because:
-
-1. Snapshots hydrate at boot, not on first traveller. Cold-start latency
-   stays off the player's path.
-2. Sub-phase B's `matchMaker.reserveSeatFor` call always finds a live target
-   room — no lazy-creation race during transit.
-3. `SectorRoom.update()` keeps ticking (galaxy sectors only — the dual-zero
-   short-circuit is gated on `sectorKey === null`), so drones still patrol
-   and asteroids still drift while no player is connected. The broadcast
-   loop short-circuits separately when `clients.length === 0`, so the cost
-   is just the sim step.
+This scales automatically off `GALAXY_SECTORS` — a clean boot now prints
+`galaxy room created` ×21. Eager creation matters because (1) snapshots hydrate
+at boot, not on first traveller; (2) `matchMaker.reserveSeatFor` during transit
+always finds a live target room; (3) galaxy `SectorRoom.update()` keeps ticking
+while empty (the broadcast loop short-circuits at 0 clients), so the world feels
+alive. An empty galaxy room with `droneCount: 0` holds no entities until a squad
+roams in, so its per-tick cost is near-zero — the real population cost is the
+director, not the room count.
 
 `resolveSectorConfig` lives in
 [src/server/galaxy/GalaxyRegistry.ts](../../src/server/galaxy/GalaxyRegistry.ts);
-it maps a sector key to the SectorRoom-ready options bag (asteroid layout
-key, drone count, max clients).
+it maps a sector key to the SectorRoom-ready options bag (asteroid layout key,
+drone count, max clients).
 
-## How to add or rewire a sector
+## Regenerating the galaxy
 
-1. Edit `GALAXY_SECTORS` in `src/core/galaxy/galaxy.ts`. Pick valid axial-hex
-   coords (no collisions with existing entries). Make `neighbours` symmetric
-   — every edge `A→B` must also exist as `B→A`. The unit test
-   [galaxy.test.ts](../../src/core/galaxy/galaxy.test.ts) enforces this and
-   will fail before merge if you forget.
-2. Pick an `asteroidConfigKey` — currently `'sparse' | 'dense' | 'none'`
-   defined in
-   [src/server/galaxy/asteroidConfigs.ts](../../src/server/galaxy/asteroidConfigs.ts).
-   Add a new key there if you need a new layout.
-3. Pick a `droneCount`.
-4. **If the change alters the shape of persisted sector state** (snapshot
-   payload structure changes, or the meaning of an entityId changes):
-   bump `CURRENT_SCHEMA_VERSION` in
-   [src/server/rooms/SectorSnapshot.ts](../../src/server/rooms/SectorSnapshot.ts)
-   so old snapshots discard cleanly on next boot. See
-   [persistence-and-migrations.md](persistence-and-migrations.md).
-5. Run `pnpm test src/core/galaxy/galaxy.test.ts` and confirm green.
-6. `pnpm dev:server`; expect `galaxy room created sectorKey=...` × N where
-   N is the new sector count.
+The `GALAXY_SECTORS` / `GALAXY_FACTIONS` / `ENTRY_SECTOR_KEYS` literals in
+`galaxy.ts` are **generated** by
+[scripts/generate-galaxy.ts](../../scripts/generate-galaxy.ts). To grow or
+reshape the galaxy:
+
+1. Edit the spec in the generator — `SECTOR_SPECS` (per-sector key, name, region,
+   hex, asteroid config, features, entry flag), `REGIONS`, `CHOKEPOINTS`, and
+   `CROSS_LINKS`.
+2. Re-run and bake:
+   ```
+   pnpm tsx scripts/generate-galaxy.ts > src/core/galaxy/galaxy.ts
+   ```
+   The generator **validates every invariant** as it builds (unique keys/hexes,
+   symmetric edges, connected graph, contiguous factions, exactly one chokepoint
+   per frontier region, ≥1 entry per region, legacy keys preserved) and **fails
+   loudly** if the spec is malformed — so a coordinate slip never reaches prod.
+3. Run `pnpm vitest run src/core/galaxy/galaxy.test.ts` (the invariants are
+   re-locked independently of the generator).
+4. **If the change alters the shape of persisted sector state**, bump
+   `CURRENT_SCHEMA_VERSION` in
+   [src/server/rooms/SectorSnapshot.ts](../../src/server/rooms/SectorSnapshot.ts).
+   Adding/reshaping sectors does **not** change snapshot *shape* — a new sector
+   simply has no prior row → fresh spawn — so no bump is needed for that alone.
+5. `pnpm dev:server`; expect `galaxy room created` ×N for the new sector count.
+
+Do **not** hand-edit the generated literals in `galaxy.ts`; the types + helper
+functions (`getSector`, `getNeighbours`, `getFaction`, `axialToPixel`, …) are
+hand-maintained and safe to edit.
 
 ## Runtime APIs
 
-- `GET /galaxy/sectors` — public route, returns
-  `{ sectors: GalaxySector[], defaultSectorKey: string }`. Used by the client
-  landing screen and the in-game galaxy-map overlay (sub-phase B).
-- `getSector(key)`, `getNeighbours(key)`, `isNeighbour(from, to)` — pure
-  lookups exported from `src/core/galaxy/galaxy.ts`. Server-side transit
-  validation (sub-phase B) uses `isNeighbour` as a defence-in-depth check
-  against malformed `engage_transit` requests.
+- `GET /galaxy/sectors` — public route, the static graph. (The live per-sector
+  counts endpoint `GET /galaxy/snapshot` arrives in Phase 3.)
+- `getSector(key)`, `getNeighbours(key)`, `isNeighbour(from, to)`,
+  `getFaction(id)`, `getEntrySectors()`, `isEntrySector(key)` — pure lookups
+  exported from `src/core/galaxy/galaxy.ts`. Server-side transit validation uses
+  `isNeighbour` as defence-in-depth against malformed `engage_transit` requests
+  (rejecting non-neighbour hops with `reason: 'not_neighbour'`).
 
-## Active-Limbo UX
+## The galaxy map (single shared canvas)
 
-If the player has an active Limbo entry (their ship is held in a sector for
-the 5-min disconnect TTL), the spawn-select Galaxy Overview ([Map A](
-../../src/client/components/GalaxyOverviewScreen.tsx) in `mode='spawn'`)
-constrains its selectable set to that single sector; the limbo hex animates
-a "RESUME" pulse drawn into the Pixi canvas, and a React banner above the
-canvas (`data-testid="limbo-resume-banner"`) carries the stats grid + the
-"Resume ship" button for E2E parity. The wrapper queries `/dev/limbo`
-itself; an `activeLimboSectorKey` prop is available for tests that pass a
-pre-resolved value.
+There is exactly **one** Pixi galaxy renderer —
+[`GalaxyMapLayer`](../../src/client/render/galaxy/GalaxyMapLayer.ts) — on the one
+shared gameplay canvas (the former second `Application` / `GalaxyOverviewScreen`
+"Map A" was deleted in the 2026-06-05 single-canvas refactor; do not
+re-introduce a second `Application`). It has two modes (selectability decided by
+the pure
+[`galaxyLayerDecisions.ts`](../../src/client/render/galaxy/galaxyLayerDecisions.ts)):
 
-## Two in-game maps (2026-05-10 refactor)
+- **`selector`** — the full-screen spawn/warp picker: every sector tappable,
+  free pan/zoom.
+- **`overlay`** — the in-game transparent HUD: only docked neighbours of the
+  current sector are tappable; non-neighbours render as faint outlines.
 
-The original SVG `<HexGalaxyMap>` was retired in favour of **two distinct
-Pixi-rendered maps**, both consuming this graph:
+The layer lives worker-side; state crosses via the
+`SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / SET_OVERLAY_MODE /
+RESIZE` protocol. Phase 4 of the Living Galaxy roadmap adds the faction
+territory tint, the contiguous-territory hover-shrink, and the live/feature
+icons to this layer.
 
-- **Map A — `GalaxyOverviewScreen` warp-mode**: full-screen Pixi canvas with
-  drag/pinch/wheel pan & zoom (own `Application` + `pixi-viewport`). Reached
-  in-game from the drawer's Galaxy tab. Only sectors adjacent to the current
-  sector are tappable; non-neighbours render as faint outlines so the
-  player keeps full spatial context for where they are in the galaxy.
-- **Map B — `GalaxyMapLayer`** ([src/client/render/galaxy/GalaxyMapLayer.ts](
-  ../../src/client/render/galaxy/GalaxyMapLayer.ts)): a screen-space Pixi
-  `Container` attached to the **gameplay canvas's `app.stage`** above the
-  viewport via the `IRenderer.addOverlayContainer` seam. Highly transparent
-  (alpha ~0.30) so gameplay continues fully visible underneath; the player
-  can keep flying while choosing a destination. Toggled by the bottom-center
-  HUD MAP button or the `M` keyboard shortcut.
+## Why generated TS, not a SQLite-backed graph
 
-Both maps consume `isNeighbour(currentSectorKey, sec.key)` for selectability;
-the server's `TransitOrchestrator` re-validates server-side as defence in
-depth (rejecting non-neighbour `engage_transit` with `reason: 'not_neighbour'`).
+For a ~21-sector galaxy the trade-offs still favour a pure, generated TS module:
 
-## Why hard-coded TS, not SQLite-backed
-
-For a 7-sector starter galaxy, the trade-offs favour pure TS:
-
-- **Zero schema churn** — no new tables, no migrations, no admin route.
-- **Design-time editable** — graph changes are PR-reviewable diffs.
+- **Zero schema churn** — no tables, no migrations, no admin route.
+- **Design-time editable + reviewable** — the generator spec is a PR-reviewable
+  diff, and the baked output is a deterministic artefact.
 - **Pure module** — usable from `src/core` without breaking the boundary
-  invariant (no `node:sqlite` import in core).
-- **Multi-VM-trivial later** — every VM ships the same code, so the graph is
-  trivially consistent across a future cluster.
+  invariant (no `node:sqlite` in core).
+- **Multi-VM-trivial** — every VM ships the same code, so the graph is
+  consistent across a future cluster.
 
-The cost is that growing the graph requires a deploy. That's fine for the
-foreseeable game design — there's no admin tool requirement yet, and the
-graph is small enough that hand-curation is faster than a CRUD UI would be.
+The cost is that reshaping the graph requires a deploy — fine for the foreseeable
+design (no admin-tool requirement yet).
 
 ## Future plans
 
-- **SQLite-backed runtime-mutable graph.** When an admin tool becomes a
-  goal — e.g. seasonal galaxy reshuffles, faction-controlled territory — add
-  `galaxy_sectors` and `galaxy_edges` tables, seed from the TS module on
-  boot, and build a CRUD endpoint. The pure-TS module shape (`GalaxySector`)
-  is already the right contract for this swap.
-- **Per-edge arrival points.** Phase 8 preserves `(x, y)` exactly across a
-  hop. Sector layouts are designed with the centre clear so that's safe, but
-  for game feel a future phase can add arrival points along each edge so
-  warp-in visuals match the direction of travel.
-- **Admin overlay tools.** A galaxy-state dashboard showing current player
-  count, recent kill counts, and snapshot age per sector. A read-only
-  precursor route is `GET /galaxy/sectors`; a future `/admin/galaxy` route
-  with auth would expose the live state.
-- **Larger topologies.** Multi-ring sunflowers (centre + 6 + 12), branching
-  trees, fully connected meshes. Whatever the shape, the unit-test
-  invariants (edge symmetry, no self-loops, all neighbours resolve) keep it
-  honest.
+- **Live per-sector intel.** `GET /galaxy/snapshot` (Phase 3) + the map's live
+  count/feature icons (Phase 4) — see [living-galaxy.md](living-galaxy.md).
+- **Derived + named-faction ownership, then conquest** — the `region`/faction
+  seam is built to carry it (the four-rung ladder in `living-galaxy.md`).
+- **Cross-region back-routes.** The generator's `CROSS_LINKS` hook supports 1–2
+  shared-chokepoint links between adjacent frontier regions; v1 ships none.
+- **SQLite-backed runtime-mutable graph** — only if seasonal reshuffles / an
+  admin tool become a goal; the `GalaxySector` shape is already the right
+  contract for that swap.

@@ -1,22 +1,87 @@
 import { describe, it, expect } from 'vitest';
 import {
   GALAXY_SECTORS,
+  GALAXY_FACTIONS,
+  ENTRY_SECTOR_KEYS,
   DEFAULT_SECTOR_KEY,
   getSector,
+  getFaction,
   getNeighbours,
   isNeighbour,
   getEntrySectors,
   isEntrySector,
   axialToPixel,
+  type AxialHex,
 } from './galaxy.js';
 
+/** Current baked sector count (Living Galaxy P1). The galaxy is "tunable 20-25";
+ *  bump this when scripts/generate-galaxy.ts is re-run with a different size. */
+const EXPECTED_SECTOR_COUNT = 21;
+
+/** The home/core faction id (the rest are frontier regions). */
+const CORE_FACTION = 'core';
+
+/** Keys that pre-date the multi-region expansion and MUST survive — they are
+ *  persistence identities (game_snapshots.sector_id + roster last_sector_key). */
+const LEGACY_KEYS = [
+  'sol-prime',
+  'orion-belt',
+  'vega-reach',
+  'cygnus-arm',
+  'kepler-spur',
+  'andromeda-rim',
+  'lyra-fringe',
+];
+
+const hexDistance = (a: AxialHex, b: AxialHex): number =>
+  (Math.abs(a.q - b.q) + Math.abs(a.r - b.r) + Math.abs(a.q + a.r - b.q - b.r)) / 2;
+
+/** BFS over the galaxy graph, restricted to sectors `accept`s. */
+function reachable(start: string, accept: (key: string) => boolean): Set<string> {
+  const seen = new Set<string>([start]);
+  const queue = [start];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const n of getNeighbours(cur)) {
+      if (seen.has(n.key) || !accept(n.key)) continue;
+      seen.add(n.key);
+      queue.push(n.key);
+    }
+  }
+  return seen;
+}
+
+const frontierFactions = (): string[] =>
+  GALAXY_FACTIONS.map((f) => f.id).filter((id) => id !== CORE_FACTION);
+
 describe('galaxy graph', () => {
-  it('has exactly 7 sectors (1 centre + 6 outers)', () => {
-    expect(GALAXY_SECTORS).toHaveLength(7);
+  it(`has the baked number of sectors (${EXPECTED_SECTOR_COUNT}, within the tunable 20-25 range)`, () => {
+    expect(GALAXY_SECTORS).toHaveLength(EXPECTED_SECTOR_COUNT);
+    expect(GALAXY_SECTORS.length).toBeGreaterThanOrEqual(20);
+    expect(GALAXY_SECTORS.length).toBeLessThanOrEqual(25);
   });
 
-  it('default sector key resolves', () => {
-    expect(getSector(DEFAULT_SECTOR_KEY)).toBeDefined();
+  it('default sector key resolves and is the core hub at the origin', () => {
+    const sol = getSector(DEFAULT_SECTOR_KEY);
+    expect(sol).toBeDefined();
+    expect(sol!.hex).toEqual({ q: 0, r: 0 });
+    expect(sol!.region).toBe(CORE_FACTION);
+  });
+
+  it('preserves every legacy sector key (persistence identities)', () => {
+    for (const k of LEGACY_KEYS) {
+      expect(getSector(k), `legacy key '${k}' must still exist`).toBeDefined();
+    }
+  });
+
+  it('every sector key is unique', () => {
+    const keys = GALAXY_SECTORS.map((s) => s.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('every hex coordinate is unique', () => {
+    const coords = GALAXY_SECTORS.map((s) => `${s.hex.q},${s.hex.r}`);
+    expect(new Set(coords).size).toBe(coords.length);
   });
 
   it('every neighbour key resolves to an existing sector (no dangling edges)', () => {
@@ -32,7 +97,7 @@ describe('galaxy graph', () => {
       for (const bKey of a.neighbours) {
         const b = getSector(bKey);
         expect(b, `${bKey} should exist`).toBeDefined();
-        expect(b!.neighbours, `${bKey} should list ${a.key} as neighbour`).toContain(a.key);
+        expect(b!.neighbours, `${bKey} should list ${a.key}`).toContain(a.key);
       }
     }
   });
@@ -43,51 +108,113 @@ describe('galaxy graph', () => {
     }
   });
 
-  it('sol-prime is the centre and has exactly 6 neighbours', () => {
-    const sol = getSector('sol-prime');
-    expect(sol).toBeDefined();
-    expect(sol!.hex).toEqual({ q: 0, r: 0 });
-    expect(sol!.neighbours).toHaveLength(6);
-  });
-
-  it('every outer sector has exactly 3 neighbours and is at hex distance 1 from sol-prime', () => {
+  it('every sector has at least one neighbour', () => {
     for (const sec of GALAXY_SECTORS) {
-      if (sec.key === 'sol-prime') continue;
-      expect(sec.neighbours, `${sec.key} should have 3 neighbours`).toHaveLength(3);
-      // Axial hex distance: max(|q|, |r|, |q+r|)
-      const dist = Math.max(Math.abs(sec.hex.q), Math.abs(sec.hex.r), Math.abs(sec.hex.q + sec.hex.r));
-      expect(dist, `${sec.key} should be hex distance 1 from sol-prime`).toBe(1);
+      expect(sec.neighbours.length, `${sec.key} is isolated`).toBeGreaterThan(0);
     }
   });
 
-  it('every outer sector lists sol-prime as a neighbour', () => {
+  it('the whole graph is connected (reachable from sol-prime)', () => {
+    const reached = reachable(DEFAULT_SECTOR_KEY, () => true);
+    expect(reached.size).toBe(GALAXY_SECTORS.length);
+  });
+
+  it('every edge connects hex-adjacent sectors (no long lines on the map)', () => {
+    for (const a of GALAXY_SECTORS) {
+      for (const bKey of a.neighbours) {
+        const b = getSector(bKey)!;
+        expect(hexDistance(a.hex, b.hex), `${a.key} ↔ ${bKey} not hex-adjacent`).toBe(1);
+      }
+    }
+  });
+});
+
+describe('factions / regions', () => {
+  it('every sector belongs to a known faction', () => {
     for (const sec of GALAXY_SECTORS) {
-      if (sec.key === 'sol-prime') continue;
-      expect(sec.neighbours).toContain('sol-prime');
+      expect(getFaction(sec.region), `${sec.key} has unknown region '${sec.region}'`).toBeDefined();
     }
   });
 
-  it('every sector key is unique', () => {
-    const keys = GALAXY_SECTORS.map((s) => s.key);
-    expect(new Set(keys).size).toBe(keys.length);
+  it('has a core faction plus >= 1 frontier faction, each with a display name', () => {
+    expect(getFaction(CORE_FACTION)).toBeDefined();
+    expect(frontierFactions().length).toBeGreaterThanOrEqual(1);
+    for (const f of GALAXY_FACTIONS) {
+      expect(f.displayName.length).toBeGreaterThan(0);
+    }
   });
 
-  it('every hex coordinate is unique', () => {
-    const coords = GALAXY_SECTORS.map((s) => `${s.hex.q},${s.hex.r}`);
-    expect(new Set(coords).size).toBe(coords.length);
+  it('every faction is graph-contiguous (the hover-shrink territory invariant)', () => {
+    // A whole same-faction region must be reachable via same-faction neighbours
+    // (P4 collects the territory by BFS over same-faction neighbours).
+    for (const f of GALAXY_FACTIONS) {
+      const members = GALAXY_SECTORS.filter((s) => s.region === f.id);
+      if (members.length === 0) continue;
+      const reached = reachable(members[0]!.key, (k) => getSector(k)!.region === f.id);
+      expect(reached.size, `faction '${f.id}' is not contiguous`).toBe(members.length);
+    }
   });
 
+  it('each frontier region connects to the core through exactly one chokepoint', () => {
+    for (const region of frontierFactions()) {
+      let coreEdges = 0;
+      for (const sec of GALAXY_SECTORS) {
+        if (sec.region !== region) continue;
+        for (const nKey of sec.neighbours) {
+          if (getSector(nKey)!.region === CORE_FACTION) coreEdges++;
+        }
+      }
+      expect(coreEdges, `region '${region}' should have exactly one core edge`).toBe(1);
+    }
+  });
+});
+
+describe('entry sectors (drone warp-in edge)', () => {
+  it('ENTRY_SECTOR_KEYS is non-empty and every key resolves', () => {
+    expect(ENTRY_SECTOR_KEYS.size).toBeGreaterThan(0);
+    for (const k of ENTRY_SECTOR_KEYS) {
+      expect(getSector(k), `entry key '${k}' must resolve`).toBeDefined();
+    }
+  });
+
+  it('getEntrySectors returns exactly the baked entry set', () => {
+    const got = getEntrySectors().map((s) => s.key).sort();
+    expect(got).toEqual([...ENTRY_SECTOR_KEYS].sort());
+  });
+
+  it('isEntrySector matches set membership; unknown keys are false', () => {
+    for (const s of GALAXY_SECTORS) {
+      expect(isEntrySector(s.key)).toBe(ENTRY_SECTOR_KEYS.has(s.key));
+    }
+    expect(isEntrySector('not-a-sector')).toBe(false);
+  });
+
+  it('no entry sector is a core sector', () => {
+    for (const k of ENTRY_SECTOR_KEYS) {
+      expect(getSector(k)!.region, `entry '${k}' must not be core`).not.toBe(CORE_FACTION);
+    }
+  });
+
+  it('every frontier region has at least one entry sector', () => {
+    for (const region of frontierFactions()) {
+      const entries = GALAXY_SECTORS.filter((s) => s.region === region && isEntrySector(s.key));
+      expect(entries.length, `region '${region}' has no entry sector`).toBeGreaterThanOrEqual(1);
+    }
+  });
+});
+
+describe('lookups', () => {
   describe('isNeighbour', () => {
-    it('returns true for adjacent sectors', () => {
-      expect(isNeighbour('sol-prime', 'orion-belt')).toBe(true);
-      expect(isNeighbour('orion-belt', 'sol-prime')).toBe(true);
+    it('returns true for adjacent sectors (incl. a chokepoint)', () => {
+      expect(isNeighbour('sol-prime', 'vega-reach')).toBe(true);
+      expect(isNeighbour('vega-reach', 'orion-belt')).toBe(true); // Verdant chokepoint
+      expect(isNeighbour('orion-belt', 'vega-reach')).toBe(true);
     });
 
-    it('returns false for non-adjacent sectors', () => {
-      // Two outers that share sol-prime but are NOT ring-adjacent.
-      // orion-belt is at top; cygnus-arm is at bottom-right; they are 2 hexes apart on the ring.
-      expect(isNeighbour('orion-belt', 'cygnus-arm')).toBe(false);
-      expect(isNeighbour('orion-belt', 'kepler-spur')).toBe(false);
+    it('returns false across a chokepoint barrier / for distant sectors', () => {
+      // orion-belt reaches the core only via vega-reach, never sol-prime directly.
+      expect(isNeighbour('orion-belt', 'sol-prime')).toBe(false);
+      expect(isNeighbour('sol-prime', 'greenfall')).toBe(false);
     });
 
     it('returns false for unknown source', () => {
@@ -98,7 +225,7 @@ describe('galaxy graph', () => {
   describe('getNeighbours', () => {
     it('returns resolved sector entries', () => {
       const ns = getNeighbours('sol-prime');
-      expect(ns).toHaveLength(6);
+      expect(ns.length).toBeGreaterThan(0);
       expect(ns.every((s) => typeof s.key === 'string')).toBe(true);
     });
 
@@ -107,47 +234,27 @@ describe('galaxy graph', () => {
     });
   });
 
-  describe('entry sectors (drone warp-in edge)', () => {
-    it('getEntrySectors returns exactly the 6 ring outers (the map edge), never the centre', () => {
-      const entry = getEntrySectors();
-      expect(entry.length).toBe(6);
-      const keys = entry.map((s) => s.key).sort();
-      expect(keys).toEqual(
-        GALAXY_SECTORS.filter((s) => s.key !== DEFAULT_SECTOR_KEY).map((s) => s.key).sort(),
-      );
-      expect(keys).not.toContain(DEFAULT_SECTOR_KEY);
-    });
-
-    it('isEntrySector is true for every outer + false for the centre', () => {
-      expect(isEntrySector(DEFAULT_SECTOR_KEY)).toBe(false);
-      for (const s of GALAXY_SECTORS) {
-        expect(isEntrySector(s.key)).toBe(s.key !== DEFAULT_SECTOR_KEY);
-      }
-      expect(isEntrySector('not-a-sector')).toBe(false);
-    });
-
-    it('every entry sector is at hex distance 1 from the centre (the outermost ring)', () => {
-      const dist = (h: { q: number; r: number }) =>
-        (Math.abs(h.q) + Math.abs(h.r) + Math.abs(h.q + h.r)) / 2;
-      for (const s of getEntrySectors()) expect(dist(s.hex)).toBe(1);
+  describe('getFaction', () => {
+    it('resolves a known faction and returns undefined otherwise', () => {
+      expect(getFaction(CORE_FACTION)).toBeDefined();
+      expect(getFaction('not-a-faction')).toBeUndefined();
     });
   });
+});
 
-  describe('axialToPixel', () => {
-    it('places sol-prime at origin', () => {
-      const p = axialToPixel({ q: 0, r: 0 }, 50);
-      expect(p).toEqual({ x: 0, y: 0 });
-    });
+describe('axialToPixel', () => {
+  it('places sol-prime at origin', () => {
+    expect(axialToPixel({ q: 0, r: 0 }, 50)).toEqual({ x: 0, y: 0 });
+  });
 
-    it('places (q=1, r=0) east of origin', () => {
-      const p = axialToPixel({ q: 1, r: 0 }, 50);
-      expect(p.x).toBeGreaterThan(0);
-      expect(p.y).toBe(0);
-    });
+  it('places (q=1, r=0) east of origin', () => {
+    const p = axialToPixel({ q: 1, r: 0 }, 50);
+    expect(p.x).toBeGreaterThan(0);
+    expect(p.y).toBe(0);
+  });
 
-    it('places (q=0, r=1) south of origin', () => {
-      const p = axialToPixel({ q: 0, r: 1 }, 50);
-      expect(p.y).toBeGreaterThan(0);
-    });
+  it('places (q=0, r=1) south of origin', () => {
+    const p = axialToPixel({ q: 0, r: 1 }, 50);
+    expect(p.y).toBeGreaterThan(0);
   });
 });

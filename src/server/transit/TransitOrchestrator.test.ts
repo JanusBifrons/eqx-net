@@ -92,7 +92,7 @@ describe('TransitOrchestrator', () => {
     it('rejects when source room has no sectorKey', () => {
       const { room, sent } = makeRoom({ sectorKey: null, playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      const ok = orch.beginTransit('p1', 'orion-belt');
+      const ok = orch.beginTransit('p1', 'cygnus-arm');
       expect(ok).toBe(false);
       expect(sent).toHaveLength(1);
       const msg = sent[0]!.msg as { state: string; reason?: string };
@@ -112,19 +112,19 @@ describe('TransitOrchestrator', () => {
     it('accepts a valid neighbour and emits SPOOLING', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      const ok = orch.beginTransit('p1', 'orion-belt');
+      const ok = orch.beginTransit('p1', 'cygnus-arm');
       expect(ok).toBe(true);
       expect(orch.isInFlight('p1')).toBe(true);
       const msg = sent[0]!.msg as { state: string; targetSectorKey?: string; spoolMs?: number };
       expect(msg.state).toBe('SPOOLING');
-      expect(msg.targetSectorKey).toBe('orion-belt');
+      expect(msg.targetSectorKey).toBe('cygnus-arm');
       expect(msg.spoolMs).toBe(SPOOL_DURATION_MS);
     });
 
     it('a second beginTransit while in flight is a no-op', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       const ok = orch.beginTransit('p1', 'vega-reach');
       expect(ok).toBe(false);
@@ -136,7 +136,7 @@ describe('TransitOrchestrator', () => {
     it('aborts when SHIP_DESTROYED fires for the spooling player', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       room.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId: 'p1', shooterId: 'enemy' });
       expect(orch.isInFlight('p1')).toBe(false);
@@ -148,7 +148,7 @@ describe('TransitOrchestrator', () => {
     it('SHIP_DESTROYED for a different player does not abort', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       room.bus.emit('SHIP_DESTROYED', { type: 'SHIP_DESTROYED', targetId: 'p2', shooterId: 'enemy' });
       expect(orch.isInFlight('p1')).toBe(true);
@@ -160,7 +160,7 @@ describe('TransitOrchestrator', () => {
     it('cancelTransit during SPOOLING transitions back to DOCKED with reason', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       orch.cancelTransit('p1', 'manual');
       expect(orch.isInFlight('p1')).toBe(false);
@@ -207,7 +207,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue(reservation);
       const { orch, room, store, shipId, sent, setHealth } = withFakeReserve(reserve);
       setHealth(42);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       // Skip ahead to commit.
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
@@ -216,7 +216,7 @@ describe('TransitOrchestrator', () => {
 
       // Roster row re-homed to the destination sector with the SAB pose.
       const rec = store.get(shipId)!;
-      expect(rec.lastSectorKey).toBe('orion-belt');
+      expect(rec.lastSectorKey).toBe('cygnus-arm');
       expect(rec.lastX).toBe(100);
       expect(rec.lastVx).toBe(1);
       expect(rec.health).toBe(42);
@@ -241,21 +241,21 @@ describe('TransitOrchestrator', () => {
     it('reserves the seat for the destination galaxy room (threading the active shipId)', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(reserve).toHaveBeenCalledTimes(1);
       const args = reserve.mock.calls[0]!;
       // First arg is the room name; second is the options bag carrying the
       // resolved active shipId so the destination binds via the shipId path.
-      expect(args[0]).toBe('galaxy-orion-belt');
+      expect(args[0]).toBe('galaxy-cygnus-arm');
       expect(args[1]).toEqual(expect.objectContaining({ playerId: 'p1', shipId: 'ship-p1' }));
     });
 
     it('falls through to destination_unavailable when reserveSeatFor rejects', async () => {
       const reserve = vi.fn().mockRejectedValue(new Error('full'));
       const { orch, room, store, shipId, sent } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       sent.length = 0;
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
@@ -273,7 +273,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, store, shipId } = withFakeReserve(reserve);
       // Departure pose was 100/200 (set by makeRoom). Request arrival at 500/-300.
-      orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
+      orch.beginTransit('p1', 'cygnus-arm', { x: 500, y: -300 });
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const rec = store.get(shipId)!;
@@ -290,7 +290,7 @@ describe('TransitOrchestrator', () => {
     it('clamps out-of-bounds arrival to sector half-extent', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, store, shipId } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt', { x: 999_999, y: -50_000 });
+      orch.beginTransit('p1', 'cygnus-arm', { x: 999_999, y: -50_000 });
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const rec = store.get(shipId)!;
@@ -302,7 +302,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, store, shipId } = withFakeReserve(reserve);
       // No third arg — legacy PC behaviour.
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const rec = store.get(shipId)!;
@@ -314,7 +314,7 @@ describe('TransitOrchestrator', () => {
     it('player vanishing mid-spool (no slot) skips reservation cleanly', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, room, store, shipId } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       // Simulate disconnect: clear the slot map.
       (room.playerToSlot as Map<string, number>).delete('p1');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
@@ -332,7 +332,7 @@ describe('TransitOrchestrator', () => {
     it('broadcasts warp_out at the leaver\'s SAB pose, excluding the leaver', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, broadcasts } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
 
@@ -354,7 +354,7 @@ describe('TransitOrchestrator', () => {
       // Client requests an arrival at (500, -300) but observers should
       // see the burst at the leaver's CURRENT position (100, 200), not
       // at the destination arrival point.
-      orch.beginTransit('p1', 'orion-belt', { x: 500, y: -300 });
+      orch.beginTransit('p1', 'cygnus-arm', { x: 500, y: -300 });
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const warpOut = broadcasts.find((b) => b.type === 'warp_out');
@@ -366,7 +366,7 @@ describe('TransitOrchestrator', () => {
     it('does NOT broadcast warp_out when reservation fails (no transit committed)', async () => {
       const reserve = vi.fn().mockRejectedValue(new Error('destination unavailable'));
       const { orch, broadcasts } = withFakeReserve(reserve);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(broadcasts.find((b) => b.type === 'warp_out')).toBeUndefined();
@@ -380,7 +380,7 @@ describe('TransitOrchestrator', () => {
       (r1.room.playerToSlot as Map<string, number>).set('p2', 1);
       (r1.room.playerToUser as Map<string, string | null>).set('p2', null);
       const orch = new TransitOrchestrator(r1.room);
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       orch.beginTransit('p2', 'vega-reach');
       r1.sent.length = 0;
       orch.cancelAll('manual');
@@ -420,7 +420,7 @@ describe('TransitOrchestrator', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const playerShipStore = new PlayerShipStore({});
       const orch = new TransitOrchestrator(room, undefined, playerShipStore);
-      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'unknown-ship');
+      const ok = orch.beginTransit('p1', 'cygnus-arm', undefined, 'unknown-ship');
       expect(ok).toBe(false);
       const msg = sent[0]!.msg as { state: string; reason?: string };
       expect(msg.state).toBe('DOCKED');
@@ -431,7 +431,7 @@ describe('TransitOrchestrator', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const playerShipStore = makePlayerShipStore('OTHER-PLAYER', 'foreign-ship', 'orion-belt');
       const orch = new TransitOrchestrator(room, undefined, playerShipStore);
-      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'foreign-ship');
+      const ok = orch.beginTransit('p1', 'cygnus-arm', undefined, 'foreign-ship');
       expect(ok).toBe(false);
       const msg = sent[0]!.msg as { state: string; reason?: string };
       expect(msg.state).toBe('DOCKED');
@@ -445,12 +445,12 @@ describe('TransitOrchestrator', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const playerShipStore = makePlayerShipStore('p1', 'own-ship', 'orion-belt');
       const orch = new TransitOrchestrator(room, undefined, playerShipStore);
-      const ok = orch.beginTransit('p1', 'orion-belt', undefined, 'own-ship');
+      const ok = orch.beginTransit('p1', 'cygnus-arm', undefined, 'own-ship');
       expect(ok).toBe(true);
       expect(orch.isInFlight('p1')).toBe(true);
       const msg = sent[0]!.msg as { state: string; targetSectorKey?: string };
       expect(msg.state).toBe('SPOOLING');
-      expect(msg.targetSectorKey).toBe('orion-belt');
+      expect(msg.targetSectorKey).toBe('cygnus-arm');
     });
 
     it('commit passes the explicit shipId through to reserveSeatFor without re-homing it', async () => {
@@ -459,12 +459,12 @@ describe('TransitOrchestrator', () => {
       const orch = new TransitOrchestrator(room, undefined, playerShipStore);
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
-      orch.beginTransit('p1', 'orion-belt', undefined, 'own-ship');
+      orch.beginTransit('p1', 'cygnus-arm', undefined, 'own-ship');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       expect(reserve).toHaveBeenCalledTimes(1);
       const args = reserve.mock.calls[0]!;
-      expect(args[0]).toBe('galaxy-orion-belt');
+      expect(args[0]).toBe('galaxy-cygnus-arm');
       // The reservation options carry the shipId so the destination room's
       // onJoin binds the named roster entry instead of the source ship.
       expect(args[1]).toEqual(expect.objectContaining({ playerId: 'p1', shipId: 'own-ship' }));
@@ -481,7 +481,7 @@ describe('TransitOrchestrator', () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       orch.setReserveByNameOverride(reserve as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
       // No shipId arg AND playerToActiveShipInstance is empty → nothing to thread.
-      orch.beginTransit('p1', 'orion-belt');
+      orch.beginTransit('p1', 'cygnus-arm');
       vi.advanceTimersByTime(SPOOL_DURATION_MS);
       await vi.runAllTimersAsync();
       const opts = reserve.mock.calls[0]![1] as Record<string, unknown>;

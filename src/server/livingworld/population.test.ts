@@ -17,8 +17,11 @@ import {
 } from './population.js';
 
 const KEYS = GALAXY_SECTORS.map((s) => s.key);
-// Canonical order asserted so the largest-remainder tie-break math below
-// stays anchored if the galaxy is ever reordered.
+// A FIXED 7-key list for the PURE apportionment / distribution tests, so their
+// largest-remainder math stays anchored independently of the live galaxy size
+// (which grew 7 → 21 in the Living Galaxy expansion). The graph-walk tests
+// below use the real KEYS / real sector adjacencies.
+const PKEYS = ['pk0', 'pk1', 'pk2', 'pk3', 'pk4', 'pk5', 'pk6'];
 const sum = (m: ReadonlyMap<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
 
 describe('hopDistance (galaxy-graph BFS depth)', () => {
@@ -26,15 +29,18 @@ describe('hopDistance (galaxy-graph BFS depth)', () => {
     expect(hopDistance('sol-prime', 'sol-prime')).toBe(0);
   });
 
-  it('is 1 from the centre to any outer ring sector, and symmetric', () => {
-    expect(hopDistance('sol-prime', 'orion-belt')).toBe(1);
-    expect(hopDistance('orion-belt', 'sol-prime')).toBe(1);
+  it('is 1 between adjacent core sectors, and symmetric', () => {
+    expect(hopDistance('sol-prime', 'vega-reach')).toBe(1);
+    expect(hopDistance('vega-reach', 'sol-prime')).toBe(1);
   });
 
-  it('is >= 2 between two outers that route via the centre', () => {
-    // Every outer is 1 hop from the centre, so two outers are at least 2 apart.
-    const d = hopDistance('orion-belt', 'kepler-spur');
-    expect(d).toBeGreaterThanOrEqual(2);
+  it('counts multi-hop routes through a chokepoint', () => {
+    // orion-belt sits one hop beyond its chokepoint (vega-reach), so it is
+    // 2 hops from the core hub.
+    expect(hopDistance('sol-prime', 'orion-belt')).toBe(2);
+    // Across two regions: orion-belt → vega-reach → sol-prime → cygnus-arm = 3 hops.
+    const d = hopDistance('orion-belt', 'cygnus-arm');
+    expect(d).toBe(3);
     expect(Number.isFinite(d)).toBe(true);
   });
 
@@ -46,36 +52,36 @@ describe('hopDistance (galaxy-graph BFS depth)', () => {
 
 describe('apportion (largest-remainder)', () => {
   it('sums to total and splits evenly when weights are equal', () => {
-    const w = new Map(KEYS.map((k) => [k, 1] as const));
-    const out = apportion(w, 25, KEYS);
+    const w = new Map(PKEYS.map((k) => [k, 1] as const));
+    const out = apportion(w, 25, PKEYS);
     expect(sum(out)).toBe(25);
     // 25/7 = 3 each + 4 remainder seats to the first 4 keys in order.
-    expect(out.get(KEYS[0]!)).toBe(4);
-    expect(out.get(KEYS[3]!)).toBe(4);
-    expect(out.get(KEYS[4]!)).toBe(3);
-    expect(out.get(KEYS[6]!)).toBe(3);
+    expect(out.get(PKEYS[0]!)).toBe(4);
+    expect(out.get(PKEYS[3]!)).toBe(4);
+    expect(out.get(PKEYS[4]!)).toBe(3);
+    expect(out.get(PKEYS[6]!)).toBe(3);
   });
 
   it('is proportional to weights', () => {
     const w = new Map<string, number>([
-      [KEYS[0]!, 1],
-      [KEYS[1]!, 3],
+      [PKEYS[0]!, 1],
+      [PKEYS[1]!, 3],
     ]);
-    const out = apportion(w, 8, [KEYS[0]!, KEYS[1]!]);
-    expect(out.get(KEYS[0]!)).toBe(2);
-    expect(out.get(KEYS[1]!)).toBe(6);
+    const out = apportion(w, 8, [PKEYS[0]!, PKEYS[1]!]);
+    expect(out.get(PKEYS[0]!)).toBe(2);
+    expect(out.get(PKEYS[1]!)).toBe(6);
     expect(sum(out)).toBe(8);
   });
 
   it('all-zero weights degrades to an even split', () => {
-    const w = new Map(KEYS.map((k) => [k, 0] as const));
-    const out = apportion(w, 7, KEYS);
+    const w = new Map(PKEYS.map((k) => [k, 0] as const));
+    const out = apportion(w, 7, PKEYS);
     expect(sum(out)).toBe(7);
-    for (const k of KEYS) expect(out.get(k)).toBe(1);
+    for (const k of PKEYS) expect(out.get(k)).toBe(1);
   });
 
   it('total 0 and empty keys are no-ops', () => {
-    expect(sum(apportion(new Map(), 0, KEYS))).toBe(0);
+    expect(sum(apportion(new Map(), 0, PKEYS))).toBe(0);
     expect(apportion(new Map(), 10, []).size).toBe(0);
   });
 });
@@ -83,34 +89,34 @@ describe('apportion (largest-remainder)', () => {
 describe('computeDesiredDistribution', () => {
   it('spreads evenly across every sector when no players are online', () => {
     const out = computeDesiredDistribution({
-      sectorKeys: KEYS,
+      sectorKeys: PKEYS,
       playerCounts: new Map(),
       budget: 25,
     });
     expect(sum(out)).toBe(25);
     // Same shape as the equal-weight apportionment.
-    expect(out.get(KEYS[0]!)).toBe(4);
-    expect(out.get(KEYS[6]!)).toBe(3);
+    expect(out.get(PKEYS[0]!)).toBe(4);
+    expect(out.get(PKEYS[6]!)).toBe(3);
     expect([...out.values()].every((v) => v >= 3)).toBe(true);
   });
 
   it('funnels the whole budget toward the only player-occupied sector', () => {
-    const target = KEYS[3]!;
+    const target = PKEYS[3]!;
     const out = computeDesiredDistribution({
-      sectorKeys: KEYS,
+      sectorKeys: PKEYS,
       playerCounts: new Map([[target, 2]]),
       budget: 25,
     });
     expect(sum(out)).toBe(25);
     expect(out.get(target)).toBe(25);
-    for (const k of KEYS) if (k !== target) expect(out.get(k)).toBe(0);
+    for (const k of PKEYS) if (k !== target) expect(out.get(k)).toBe(0);
   });
 
   it('splits proportionally across occupied sectors with a min-pack floor', () => {
-    const a = KEYS[0]!;
-    const b = KEYS[3]!;
+    const a = PKEYS[0]!;
+    const b = PKEYS[3]!;
     const out = computeDesiredDistribution({
-      sectorKeys: KEYS,
+      sectorKeys: PKEYS,
       playerCounts: new Map([
         [a, 1],
         [b, 3],
@@ -122,13 +128,13 @@ describe('computeDesiredDistribution', () => {
     expect(out.get(b)!).toBeGreaterThanOrEqual(MIN_PACK_PER_OCCUPIED);
     // 3× player weight ⇒ the busier sector gets the larger pack.
     expect(out.get(b)!).toBeGreaterThan(out.get(a)!);
-    for (const k of KEYS) if (k !== a && k !== b) expect(out.get(k)).toBe(0);
+    for (const k of PKEYS) if (k !== a && k !== b) expect(out.get(k)).toBe(0);
   });
 
   it('degrades to pure proportional when the budget cannot floor everyone', () => {
-    const occ = [KEYS[1]!, KEYS[2]!, KEYS[3]!];
+    const occ = [PKEYS[1]!, PKEYS[2]!, PKEYS[3]!];
     const out = computeDesiredDistribution({
-      sectorKeys: KEYS,
+      sectorKeys: PKEYS,
       playerCounts: new Map([
         [occ[0]!, 1],
         [occ[1]!, 1],
@@ -138,13 +144,13 @@ describe('computeDesiredDistribution', () => {
     });
     expect(sum(out)).toBe(4);
     expect(out.get(occ[2]!)!).toBeGreaterThanOrEqual(out.get(occ[0]!)!);
-    for (const k of KEYS) if (!occ.includes(k)) expect(out.get(k)).toBe(0);
+    for (const k of PKEYS) if (!occ.includes(k)) expect(out.get(k)).toBe(0);
   });
 
   it('places nothing when the budget is exhausted', () => {
     const out = computeDesiredDistribution({
-      sectorKeys: KEYS,
-      playerCounts: new Map([[KEYS[0]!, 5]]),
+      sectorKeys: PKEYS,
+      playerCounts: new Map([[PKEYS[0]!, 5]]),
       budget: 0,
     });
     expect(sum(out)).toBe(0);
@@ -153,13 +159,15 @@ describe('computeDesiredDistribution', () => {
 
 describe('nextHopToward (galaxy BFS)', () => {
   it('returns the destination directly when it is a neighbour', () => {
-    // sol-prime is the hub: every outer is a direct neighbour.
-    expect(nextHopToward('sol-prime', 'orion-belt')).toBe('orion-belt');
+    // vega-reach is a direct core neighbour of sol-prime.
+    expect(nextHopToward('sol-prime', 'vega-reach')).toBe('vega-reach');
   });
 
-  it('routes a 2-hop path through the hub deterministically', () => {
-    // orion-belt → cygnus-arm is 2 hops; the hub is the first step.
-    expect(nextHopToward('orion-belt', 'cygnus-arm')).toBe('sol-prime');
+  it('routes a multi-hop path through the chokepoint deterministically', () => {
+    // sol-prime → orion-belt routes through the Verdant chokepoint (vega-reach).
+    expect(nextHopToward('sol-prime', 'orion-belt')).toBe('vega-reach');
+    // orion-belt → cygnus-arm (cross-region): first hop back toward the core.
+    expect(nextHopToward('orion-belt', 'cygnus-arm')).toBe('vega-reach');
   });
 
   it('returns null for same-sector or unknown keys', () => {
@@ -176,14 +184,14 @@ describe('planMigrations', () => {
       current: new Map([['sol-prime', ['b1', 'b2', 'b3']]]),
       desired: new Map([
         ['sol-prime', 1],
-        ['orion-belt', 2],
+        ['vega-reach', 2],
       ]),
       maxPerTick: 5,
     });
     expect(out).toHaveLength(2);
     for (const m of out) {
       expect(m.from).toBe('sol-prime');
-      expect(m.to).toBe('orion-belt'); // direct neighbour
+      expect(m.to).toBe('vega-reach'); // direct neighbour
     }
     expect(new Set(out.map((m) => m.botId)).size).toBe(2);
   });
@@ -222,7 +230,7 @@ describe('planMigrations', () => {
       current: new Map([['sol-prime', ['b1', 'b2', 'b3']]]),
       desired: new Map([
         ['sol-prime', 1],
-        ['orion-belt', 2],
+        ['vega-reach', 2],
       ]),
       maxPerTick: 5,
       frozen: new Set(['b1', 'b2']), // only b3 is movable
@@ -230,7 +238,7 @@ describe('planMigrations', () => {
     expect(out).toHaveLength(1);
     expect(out[0]!.botId).toBe('b3');
     expect(out[0]!.from).toBe('sol-prime');
-    expect(out[0]!.to).toBe('orion-belt');
+    expect(out[0]!.to).toBe('vega-reach');
   });
 
   it('does nothing when supply already matches demand (hysteresis)', () => {
@@ -270,9 +278,9 @@ describe('liveEntrySectors', () => {
   });
 
   it('intersects with the live rooms (a director subset) — drops absent edges', () => {
-    const live = liveEntrySectors(['sol-prime', 'orion-belt', 'vega-reach']);
-    // orion-belt + vega-reach are edge sectors; sol-prime is interior.
-    expect(live).toEqual(['orion-belt', 'vega-reach']);
+    const live = liveEntrySectors(['sol-prime', 'greenfall', 'ashfront']);
+    // greenfall + ashfront are entry (edge) sectors; sol-prime is interior.
+    expect(live).toEqual(['greenfall', 'ashfront']);
   });
 
   it('FALLS BACK to all live sectors when none of the edge ring is live', () => {
@@ -290,11 +298,11 @@ describe('pickEntrySector', () => {
   });
 
   it('is deterministic per seed and restricted to the live entry set', () => {
-    const live = ['sol-prime', 'orion-belt', 'vega-reach'];
+    const live = ['sol-prime', 'greenfall', 'ashfront'];
     const s1 = pickEntrySector(makeSeededRng(7), live);
     const s2 = pickEntrySector(makeSeededRng(7), live);
     expect(s1).toBe(s2);
-    expect(['orion-belt', 'vega-reach']).toContain(s1);
+    expect(['greenfall', 'ashfront']).toContain(s1);
   });
 
   it('uses the single-sector fallback when no edge sector is live', () => {
@@ -304,16 +312,16 @@ describe('pickEntrySector', () => {
 
 describe('pickRoamGoal', () => {
   it('returns a real LIVE neighbour of the source (a graph random walk)', () => {
-    // sol-prime neighbours every outer; restrict the live set to two of them.
-    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', ['sol-prime', 'orion-belt', 'vega-reach']);
-    expect(['orion-belt', 'vega-reach']).toContain(goal);
+    // sol-prime's neighbours are vega-reach, lyra-fringe, cygnus-arm.
+    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', ['sol-prime', 'vega-reach', 'cygnus-arm']);
+    expect(['vega-reach', 'cygnus-arm']).toContain(goal);
     expect(goal).not.toBe('sol-prime'); // a neighbour, never self
   });
 
   it('never picks a sector the director does not hold (live-room intersection)', () => {
-    // orion-belt's galaxy neighbours are sol-prime, vega-reach, lyra-fringe; only
-    // sol-prime is live, so the walk must go there.
-    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt', 'sol-prime'])).toBe('sol-prime');
+    // orion-belt's galaxy neighbours are vega-reach, thornfield, bloomgate; only
+    // vega-reach is live, so the walk must go there.
+    expect(pickRoamGoal(makeSeededRng(5), 'orion-belt', ['orion-belt', 'vega-reach'])).toBe('vega-reach');
   });
 
   it('stays put when the source has no live neighbour', () => {
