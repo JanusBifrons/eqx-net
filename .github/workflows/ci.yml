@@ -7,38 +7,97 @@ on:
     branches: [main]
 
 jobs:
+  # Cheap path filter — decides whether a PR changed any CODE (vs pure
+  # documentation). A docs-only PR (only `**/*.md` — incl. the per-zone
+  # CLAUDE.md files — plus `docs/**` / `LICENSE`) does NOT need the build,
+  # unit/integration/e2e suites or the docker image: nothing they validate
+  # changed. The heavy jobs below `needs: changes` and gate their EXPENSIVE
+  # steps on `code == 'true'` — they still RUN (so each required status check
+  # reports green and never hangs as "Expected — waiting", the same
+  # required-check pattern the netgate workflow documents), but for a docs-only
+  # change they just check out and finish in seconds.
+  #
+  # Non-PR events (push to main) always count as code (no PR file list to read,
+  # and the merge commit deserves validation).
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Detect code (non-documentation) changes
+        id: filter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            echo "non-PR event ($GITHUB_EVENT_NAME) — suites always run"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          FILES=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename')
+          echo "changed files:"
+          echo "$FILES"
+          # DOCS = markdown anywhere (incl. src/**/CLAUDE.md) + docs/** + LICENSE.
+          # Anything else (src, tests, benchmarks, scripts, configs,
+          # package.json, the lockfile, the Dockerfile, .github/workflows) is
+          # CODE and runs the full suite.
+          NONDOC=$(echo "$FILES" | grep -vE '(\.md$|^docs/|^LICENSE$)' || true)
+          if [ -n "$NONDOC" ]; then
+            echo "non-doc files changed — suites will run"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "documentation-only change — build/unit/integration/e2e/docker skipped"
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Deterministic non-test gates — typecheck + lint (boundary enforcement) +
   # the production build. Fast and never flaky.
   verify:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           version: 9.15.0
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: '22.x'
           cache: 'pnpm'
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
       - name: Typecheck
+        if: needs.changes.outputs.code == 'true'
         run: pnpm run typecheck
       - name: Lint (boundary enforcement)
+        if: needs.changes.outputs.code == 'true'
         run: pnpm run lint
       # C1 (plan squishy-canyon): dependency-cruiser encodes invariant #1 as a
       # real module graph (blocking — the leak.ts.disabled canary trips it).
       - name: Dependency graph (boundary DAG, invariant #1)
+        if: needs.changes.outputs.code == 'true'
         run: pnpm exec depcruise src
       # C1: knip dead-code report — non-blocking until triaged (--no-exit-code),
       # promote to blocking after the backlog is cleared.
       - name: Dead-code report (knip, non-blocking)
+        if: needs.changes.outputs.code == 'true'
         run: pnpm exec knip --no-exit-code
       # C4: dependency vulnerability scan. Fails only on high+ severity.
       - name: Dependency audit (high+)
+        if: needs.changes.outputs.code == 'true'
         run: pnpm audit --prod --audit-level=high
       - name: Build
+        if: needs.changes.outputs.code == 'true'
         run: pnpm run build
 
   # Unit + component + scenario suite (`vitest.config.ts`). Pure logic,
@@ -46,24 +105,29 @@ jobs:
   # server. Its own required status check so a unit regression is
   # distinguishable at a glance from an integration one.
   unit-tests:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           version: 9.15.0
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: '22.x'
           cache: 'pnpm'
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
       # C2 (plan squishy-canyon): run the unit suite WITH coverage so the
       # coverage floor in vitest.config.ts gates here (coverage is a test run,
       # so it belongs in this job — not the build-only `verify` job — and it
       # already excludes *.integration.test.ts, matching this job's scope).
       - name: Unit tests + coverage floor
+        if: needs.changes.outputs.code == 'true'
         run: pnpm run coverage
 
   # Integration suite (`vitest.integration.config.ts`). Boots a real
@@ -74,31 +138,38 @@ jobs:
   # surface (wire format, broadcast gates, schema diff). Its own required
   # status check.
   integration-tests:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           version: 9.15.0
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: '22.x'
           cache: 'pnpm'
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
       - name: Integration tests
+        if: needs.changes.outputs.code == 'true'
         run: pnpm run test:integration
 
   # E2 (plan squishy-canyon): build-only docker image to catch Dockerfile rot.
   # No push, no boot smoke (a real boot needs JWT_SECRET + a writable volume and
   # is a deploy-pipeline step, not a PR gate). See docs/ops/deployment.md.
   docker-build:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Build server image
+        if: needs.changes.outputs.code == 'true'
         run: docker build -t eqx-peri-server:ci .
 
   # C3 (plan squishy-canyon) — bench-in-CI DEFERRED. `pnpm bench:check` compares
@@ -130,6 +201,7 @@ jobs:
   # stays 0 retries per the repo's anti-flake policy — this override is the
   # documented "known-flaky environment" escape hatch in playwright.config.ts.)
   e2e-smoke:
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -139,21 +211,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           version: 9.15.0
       - uses: actions/setup-node@v4
+        if: needs.changes.outputs.code == 'true'
         with:
           node-version: '22.x'
           cache: 'pnpm'
       - name: Install dependencies
+        if: needs.changes.outputs.code == 'true'
         run: pnpm install --frozen-lockfile
       - name: Install Playwright browsers
+        if: needs.changes.outputs.code == 'true'
         run: pnpm exec playwright install --with-deps chromium
       # Call Playwright directly (NOT `pnpm run e2e:smoke -- --shard=…`) — pnpm
       # forwards the `--` separator literally, so playwright received "--" and
       # "--shard=1/2" as positional path filters and matched zero tests
       # ("No tests found"). `pnpm exec` passes --shard as a real flag.
       - name: Playwright E2E (smoke, shard ${{ matrix.shard }}/2)
+        if: needs.changes.outputs.code == 'true'
         run: pnpm exec playwright test --project=smoke --shard=${{ matrix.shard }}/2
         env:
           CI: 'true'
