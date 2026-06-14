@@ -3621,22 +3621,25 @@ export class ColyseusGameClient {
     // have no client prediction — server-authoritative @ 60 Hz lerped between
     // received frames. The renderer reads mirror.swarm directly each frame.
 
-    // Drones (kind=1): PURE snapshot interpolation off the decoder-fed
-    // `poseRing` (drone-snapshot-interpolation pivot, 2026-05-18). The
-    // SAME `interpolateSwarmPose` the renderer uses (display-delay buffer
-    // + teleport guard), computed ONCE here and written into the mirror
-    // entry so every reader — renderer, HaloRadar, labels, health bars,
-    // MountVisualManager, damage numbers — sees one consistent pose. We
-    // also drive the predWorld drone body KINEMATICALLY to that same
-    // interpolated pose so the local player's predicted ship collides
-    // with the drone where it is drawn (the folded "kinematic follower").
-    // No client AI, no re-sim, no reconcile anchor — the server stays
-    // fully hit-authoritative (there is no client drone ray), so this
-    // body is presentation/collision only.
+    // Drones (kind=1) AND scrap (kind=3): PURE snapshot interpolation off the
+    // decoder-fed `poseRing` (drone-snapshot-interpolation pivot, 2026-05-18;
+    // scrap joined this path in the Phase-5 desync fix, 2026-06-14). The SAME
+    // `interpolateSwarmPose` the renderer uses (display-delay buffer + teleport
+    // guard), computed ONCE here and written into the mirror entry so every
+    // reader — renderer, HaloRadar, labels, health bars, MountVisualManager,
+    // damage numbers — sees one consistent pose. We also drive the predWorld
+    // body KINEMATICALLY to that same interpolated pose so the local player's
+    // predicted ship collides with the entity where it is drawn (the folded
+    // "kinematic follower"). For scrap this is what fixes the desync: the
+    // server simulates scrap as a dynamic mass-1 body, and an UNLOCKED follower
+    // at the interpolated pose makes render == collision and the player's
+    // predicted deflection match the server (a locked body was an infinite-mass
+    // wall — the "huge spike in corrections"). No client AI, no re-sim, no
+    // reconcile anchor — the server stays fully hit-authoritative.
     //
-    // Asteroids (kind=0) keep their predWorld pose from the binary packet
-    // (set in `syncSwarmIntoPredWorld`) and the renderer interpolates them
-    // off the same poseRing — nothing to do for them here.
+    // Asteroids (kind=0) + structures (kind=2) keep their predWorld pose from
+    // the binary packet (set in `syncSwarmIntoPredWorld`) and the renderer
+    // interpolates them off the same poseRing — nothing to do for them here.
     if (this.predWorld && this.mirror.swarm) {
       const nowMs = this.clock.now();
       // 2026-05-25 heap-growth gate step 5: pooled outer state object
@@ -3646,7 +3649,7 @@ export class ColyseusGameClient {
       const kinematicScratch = this._swarmKinematicScratch;
       const keyCache = this._swarmBodyKeyCache;
       for (const [entityId, entry] of this.mirror.swarm) {
-        if (entry.kind !== 1) continue;
+        if (entry.kind !== 1 && entry.kind !== 3) continue;
         interpolateSwarmPose(entry, nowMs, this._swarmInterpScratch);
         entry.x = this._swarmInterpScratch.x;
         entry.y = this._swarmInterpScratch.y;

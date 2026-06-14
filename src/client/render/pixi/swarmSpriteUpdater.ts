@@ -120,8 +120,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Scrap (pose-core kind 3, scrap-on-death): one component of a dead
         // ship. Renders that component's recentred sub-shapes from the parent
         // ship-kind (entry.shipKind) + componentIndex, so the piece looks like
-        // the part it broke off. Pose path below uses interpolateSwarmPose
-        // (the non-drone branch) for smooth drift.
+        // the part it broke off. Pose path below reads the resolved
+        // single-per-frame pose (the drone kinematic-follower branch) so the
+        // sprite matches the predWorld collision body (Phase-5 desync fix).
         sprite = buildScrapGfx(entry.shipKind, entry.componentIndex ?? 0);
       } else {
         sprite = buildAsteroidGfx(entityId, entry.radius);
@@ -129,9 +130,13 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
     }
-    // Drones: read the already-resolved single-per-frame pose; asteroids:
-    // render-now interpolation (see file docstring).
-    const lerped = entry.kind === 1
+    // Drones (kind 1) AND scrap (kind 3): read the already-resolved
+    // single-per-frame pose that `ColyseusClient.updateMirror` wrote (the
+    // kinematic-follower path — so the sprite matches the predWorld collision
+    // body, one-pose-per-frame). Asteroids (0) + structures (2): render-now
+    // interpolation off the poseRing (they are static server-side — see the
+    // file docstring).
+    const lerped = entry.kind === 1 || entry.kind === 3
       ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
       : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
     sprite.x = lerped.x;

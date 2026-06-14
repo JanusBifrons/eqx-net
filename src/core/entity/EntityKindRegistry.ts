@@ -94,16 +94,22 @@ const SEED: readonly EntityKindDescriptor[] = [
   },
   {
     // Scrap-on-death Phase 2a "scrap for free": a salvage piece shed by a
-    // composite ship on death. Mirrors the ASTEROID sync/render shape (static,
-    // NOT interpolated, swarm bucket) EXCEPT poseCoreKind = 3 and damageable.
-    // The shared `shipKind` byte carries the PARENT ship-kind id and the new
+    // composite ship on death. Rides pose-core kind byte 3, damageable.
+    // INTERPOLATED like a DRONE — NOT static like an asteroid (Phase-5 scrap
+    // desync fix, 2026-06-14): the server simulates scrap as a DYNAMIC mass-1
+    // body that drifts and is shoved by ships, so the client must follow that
+    // interpolated pose with an UNLOCKED kinematic-follower body (render ==
+    // collision, mass matches the server). Locking it client-side made it an
+    // infinite-mass wall the player bounced off while the server let them shove
+    // it — every snapshot then reconciled the divergence as a correction spike.
+    // The shared `shipKind` byte carries the PARENT ship-kind id and the
     // trailing `componentIndex` byte selects which scrap group of that parent
     // this piece is — both preserved so the per-frame mirror rebuild keeps the
     // sub-shape palette. Appended, never reordered (invariant #11).
     tag: 'scrap',
     damageable: true,
-    sync: { transport: 'pose-core', poseCoreKind: 3, interpolated: false },
-    render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind', 'componentIndex'], interpolated: false },
+    sync: { transport: 'pose-core', poseCoreKind: 3, interpolated: true },
+    render: { bucket: 'swarm', preservedFields: ['kind', 'shipKind', 'componentIndex'], interpolated: true },
   },
 ];
 
