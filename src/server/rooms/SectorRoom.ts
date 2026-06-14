@@ -3672,13 +3672,14 @@ export class SectorRoom extends Room<SectorState> {
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
-        // Take the Limbo entry to clear the active-Limbo UI gate. The
-        // payload is irrelevant on this path — the live ShipState/SAB is
-        // the source of truth — but the userId carried in Limbo is the
-        // anonymous-reconnect fallback for `playerToUser`.
-        const limbo = getLimboStore().take(playerId);
-        const resumedUserId = limbo?.payload.userId ?? null;
-        const effectiveUserId = userId ?? resumedUserId;
+        // WS-B (Phase 5): Limbo is retired. The live ShipState/SAB is the
+        // source of truth for the rebound hull; the anonymous-reconnect userId
+        // fallback now comes from the userId retained on this room from the
+        // original session, else the roster row (markLinger preserved it).
+        const rosterUserId = existingShip
+          ? (getPlayerShipStore().get(existingShip.shipInstanceId)?.userId ?? null)
+          : null;
+        const effectiveUserId = userId ?? this.playerToUser.get(playerId) ?? rosterUserId;
         this.playerToUser.set(playerId, effectiveUserId);
 
         // lastFireClientTick is already retained from the original session;

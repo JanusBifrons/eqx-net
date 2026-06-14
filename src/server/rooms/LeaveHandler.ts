@@ -34,8 +34,6 @@ import {
   SLOT_ANGVEL_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
-import { getLimboStore } from '../db/PersistenceWorker.js';
-import { LIMBO_DISCONNECT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
 import { clearSession } from '../transit/sessionRegistry.js';
 import { recordGameLeave } from '../stats/StatsService.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
@@ -136,12 +134,14 @@ export class LeaveHandler {
 
     if (shouldLinger) {
       const sectorKey = d.sectorKey()!;
-      // Test rooms may shorten the linger window via the `lingerMs`
-      // JoinOption; production uses the 15-min LIMBO_DISCONNECT_TTL_MS for
-      // both the Limbo reconnect window AND the ownerless-evict timer.
-      const ttlMs = d.lingerMs(playerId) ?? LIMBO_DISCONNECT_TTL_MS;
+      // WS-B (Phase 5): the disconnect Limbo entry is RETIRED. The roster
+      // `markLinger` below is now the SINGLE source of reconnect/restore state —
+      // the hull also persists in-world (`lingeringHulls[]` in the sector
+      // snapshot) and a returning player resumes by shipId. The roster has no
+      // enforced TTL (no prune sweep), so the hull effectively lingers forever
+      // (R2.26) until combat / respawn-evict / abandon → wreck.
       const b = slotBase(slot!);
-      const payload: LimboPayload = {
+      d.rosterPersistence.markLinger(ship!.shipInstanceId, {
         x:      d.sabF32[b + SLOT_X_OFF]!,
         y:      d.sabF32[b + SLOT_Y_OFF]!,
         vx:     d.sabF32[b + SLOT_VX_OFF]!,
@@ -150,21 +150,6 @@ export class LeaveHandler {
         angvel: d.sabF32[b + SLOT_ANGVEL_OFF]!,
         health: ship!.health,
         lastFireClientTick: d.lastFireClientTick.get(playerId) ?? 0,
-        userId: (d.playerToUser.get(playerId) ?? null) as string | null,
-        sectorKey,
-        kind: ship!.kind,
-      };
-      try {
-        getLimboStore().put(playerId, payload, ttlMs);
-      } catch (err) {
-        d.logger.warn({ err, playerId }, 'Limbo put on leave failed');
-      }
-
-      // Phase 3 dual-write — roster mirror.
-      d.rosterPersistence.markLinger(ship!.shipInstanceId, {
-        x: payload.x, y: payload.y, vx: payload.vx, vy: payload.vy,
-        angle: payload.angle, angvel: payload.angvel,
-        health: payload.health, lastFireClientTick: payload.lastFireClientTick,
       });
 
       // Phase 6b cleanup — keyed by shipInstanceId. WS-12 / R2.26: lingering

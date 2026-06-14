@@ -12,8 +12,7 @@
 
 import type { Logger } from 'pino';
 import { getPlayerShipStore } from '../db/PersistenceWorker.js';
-import { RosterFullError } from '../playerShips/PlayerShipStore.js';
-import { LIMBO_DISCONNECT_TTL_MS } from '../limbo/LimboStore.js';
+import { RosterFullError, PLAYER_SHIP_ACTIVE_LINGER_MS } from '../playerShips/PlayerShipStore.js';
 
 export interface RosterPose {
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -101,13 +100,16 @@ export class RosterPersistence {
     }
   }
 
-  /** Linger: pose freeze at disconnect, expiresAt = now + 15 min. */
+  /** Linger: pose freeze at disconnect, expiresAt = now + 15 min. The roster
+   *  `expiresAt` is unenforced (no prune sweep), so post-WS-B this is the only
+   *  "linger window" — effectively forever (R2.26), until combat / respawn-evict
+   *  / abandon → wreck. The value is kept for symmetry / a future prune. */
   markLinger(shipInstanceId: string, pose: RosterPose): void {
     const d = this.deps;
     if (d.sectorKey() === null || shipInstanceId === '') return;
     const store = getPlayerShipStore();
     if (store.get(shipInstanceId) === null) return;
-    store.markActive(shipInstanceId, d.roomId(), pose, Date.now() + LIMBO_DISCONNECT_TTL_MS);
+    store.markActive(shipInstanceId, d.roomId(), pose, Date.now() + PLAYER_SHIP_ACTIVE_LINGER_MS);
   }
 
   /** Mirror an eviction — `is_active=true` → `is_active=false` with
