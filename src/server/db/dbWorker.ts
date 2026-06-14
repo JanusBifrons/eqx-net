@@ -83,6 +83,11 @@ const stmts = {
     'expires_at=excluded.expires_at, updated_at=excluded.updated_at',
   ),
   PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
+  // Phase 5 director-state persistence shadow. Singleton row (id = 1).
+  DIRECTOR_STATE_PUT: db.prepare(
+    'INSERT INTO director_state (id, payload_json, created_at, updated_at) VALUES (1, ?, ?, ?) ' +
+    'ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
+  ),
 };
 
 let drainedCount = 0;
@@ -184,6 +189,10 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'PLAYER_SHIP_DELETE': {
       stmts.PLAYER_SHIP_DELETE.run(op.shipId);
+      return {};
+    }
+    case 'DIRECTOR_STATE_PUT': {
+      stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
       return {};
     }
   }

@@ -54,7 +54,14 @@ export type PersistOp =
       expiresAt: number;
       ts: number;
     }
-  | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number };
+  | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number }
+  // Director-state persistence (Phase 5). The process-global LivingWorldDirector
+  // shadows its abstract squad continuity (per-squad {sectorKey,target,state} +
+  // wave bookkeeping) here so a server restart resumes the living world where it
+  // left off instead of re-seeding from scratch. Single UPSERT row (id=1).
+  // `payloadJson` is JSON.stringify'd DirectorStatePayload. Boot hydration reads
+  // via the read-only main-thread connection, never through the worker.
+  | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number };
 
 export type PersistOpType = PersistOp['type'];
 
