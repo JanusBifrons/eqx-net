@@ -28,7 +28,6 @@
 import { matchMaker, type Client } from 'colyseus';
 import { TransitStateMachine, SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import type { Bus } from '../../core/events/Bus.js';
-import { LimboStore, LIMBO_TRANSIT_TTL_MS, type LimboPayload } from '../limbo/LimboStore.js';
 import type { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { isNeighbour } from '../../core/galaxy/galaxy.js';
 import type { TransitStateMessage, TransitCancelReason } from '../../shared-types/messages.js';
@@ -53,6 +52,10 @@ export interface TransitHostRoom {
   /** Per-player SAB slot — used to read pose for the LimboPayload. */
   readonly playerToSlot: ReadonlyMap<string, number>;
   readonly playerToUser: ReadonlyMap<string, string | null>;
+  /** Per-player active ship-instance id (the roster shipId of the live hull).
+   *  WS-B: `commitTransit` re-homes the transit reservation onto this roster
+   *  row (markStored at the destination sector) instead of writing Limbo. */
+  readonly playerToActiveShipInstance: ReadonlyMap<string, string>;
   readonly lastFireClientTick: ReadonlyMap<string, number>;
   /** Per-room schema map — used to read live health (not in SAB). */
   getShipHealth(playerId: string): number;
@@ -131,13 +134,12 @@ export class TransitOrchestrator {
 
   constructor(
     private readonly room: TransitHostRoom,
-    private readonly limboStore: LimboStore,
     private readonly spoolMs: number = SPOOL_DURATION_MS,
-    /** Phase 5 — optional PlayerShipStore used to validate roster
-     *  ownership when `beginTransit` is called with a `shipId`. When
-     *  omitted (test fixtures that don't exercise the shipId path), any
-     *  `shipId` argument is rejected as unknown — same outcome as a
-     *  foreign id. */
+    /** PlayerShipStore — validates roster ownership when `beginTransit` is
+     *  called with a `shipId` (Phase 5), AND (WS-B) is where `commitTransit`
+     *  re-homes the transit reservation (markStored at the destination sector).
+     *  Required in production; when omitted (legacy test fixtures), a `shipId`
+     *  argument is rejected as unknown and the re-home is skipped. */
     private readonly playerShipStore?: PlayerShipStore,
   ) {}
 
@@ -270,8 +272,9 @@ export class TransitOrchestrator {
   }
 
   /** Internal — fired by the spool timer. Reserves the destination seat,
-   *  writes Limbo, sends `transit_state` IN_TRANSIT (the client triggers
-   *  consumeSeatReservation off the same message via `targetSectorKey`). */
+   *  re-homes the ship onto the roster at the destination sector (WS-B; the
+   *  transit Limbo entry is retired), sends `transit_state` IN_TRANSIT (the
+   *  client triggers consumeSeatReservation off the same message). */
   async commitTransit(playerId: string): Promise<void> {
     const inFlight = this.inFlight.get(playerId);
     if (!inFlight) return;
@@ -281,8 +284,8 @@ export class TransitOrchestrator {
 
     const slot = this.room.playerToSlot.get(playerId);
     if (slot === undefined) {
-      // Player vanished mid-spool (disconnect). Don't bother reserving —
-      // their normal onLeave Limbo put will handle it (with disconnect TTL).
+      // Player vanished mid-spool (disconnect). Don't bother reserving — their
+      // normal onLeave lingering path (roster markLinger) will handle it.
       this.inFlight.delete(playerId);
       return;
     }
@@ -296,35 +299,24 @@ export class TransitOrchestrator {
     const arrivalPos = inFlight.arrival
       ? clampToSectorBounds(inFlight.arrival.x, inFlight.arrival.y)
       : null;
-    const payload: LimboPayload = {
-      x:      arrivalPos ? arrivalPos.x : sabX,
-      y:      arrivalPos ? arrivalPos.y : sabY,
-      vx:     this.room.sabF32[b + SLOT_VX_OFF]!,
-      vy:     this.room.sabF32[b + SLOT_VY_OFF]!,
-      angle:  this.room.sabF32[b + SLOT_ANGLE_OFF]!,
-      angvel: this.room.sabF32[b + SLOT_ANGVEL_OFF]!,
-      health: this.room.getShipHealth(playerId) ?? SHIP_MAX_HEALTH,
-      lastFireClientTick: this.room.lastFireClientTick.get(playerId) ?? 0,
-      userId: this.room.playerToUser.get(playerId) ?? null,
-      sectorKey: inFlight.targetSectorKey,
-      kind: this.room.getShipKind(playerId),
-    };
+    // WS-B (Phase 5): the hopping ship is an explicit roster-switch `shipId`, else
+    // the player's active hull's roster id. Threaded through reserveSeatFor so the
+    // destination's onJoin binds it via the shipId-restore path (Limbo retired).
+    const shipInstanceId =
+      inFlight.shipId ?? this.room.playerToActiveShipInstance.get(playerId) ?? null;
 
-    // Reserve the seat BEFORE writing Limbo: if reservation fails, we want
-    // to bail out without leaving a stale Limbo entry that misroutes a
-    // future reconnect. (Limbo `take` would still expire after 30 s but the
-    // operator-facing log noise is worth avoiding.)
+    // Reserve the seat BEFORE re-homing the roster row: if reservation fails we
+    // bail out without having moved the ship's roster sector.
     let reservation: unknown = null;
     try {
-      // Phase 5 — when an in-flight transit carries a `shipId`, thread it
-      // through reserveSeatFor options so the destination's `onJoin` can
-      // bind the named roster entry instead of the source ship. Absent ⇒
-      // legacy options shape (regression locked by the test suite).
+      // Thread the resolved shipId through reserveSeatFor options so the
+      // destination's `onJoin` binds the named roster entry via the
+      // shipId-restore path (WS-B: this is now the path for ALL transits).
       const reserveOpts: { playerId: string; transitToken: string; shipId?: string } = {
         playerId,
         transitToken: inFlight.transitToken,
       };
-      if (inFlight.shipId !== null) reserveOpts.shipId = inFlight.shipId;
+      if (shipInstanceId !== null) reserveOpts.shipId = shipInstanceId;
       reservation = await this.reserveByNameFn(
         `galaxy-${inFlight.targetSectorKey}`,
         reserveOpts,
@@ -340,7 +332,26 @@ export class TransitOrchestrator {
       return;
     }
 
-    this.limboStore.put(playerId, payload, LIMBO_TRANSIT_TTL_MS);
+    // WS-B: re-home the reservation onto the ROSTER (Limbo retired). For the
+    // LEGACY case (the active hull continues into the destination) freeze the
+    // commit pose at the destination sector so the destination's onJoin
+    // shipId-restore lands it exactly where the Limbo entry used to. A
+    // roster-switch `shipId` keeps its OWN stored pose (don't clobber it). The
+    // roster has no TTL, so an aborted hop just leaves the ship stored at the
+    // destination (reclaimable) instead of expiring after 30 s.
+    if (inFlight.shipId === null && shipInstanceId !== null) {
+      this.playerShipStore?.markStored(shipInstanceId, {
+        x:      arrivalPos ? arrivalPos.x : sabX,
+        y:      arrivalPos ? arrivalPos.y : sabY,
+        vx:     this.room.sabF32[b + SLOT_VX_OFF]!,
+        vy:     this.room.sabF32[b + SLOT_VY_OFF]!,
+        angle:  this.room.sabF32[b + SLOT_ANGLE_OFF]!,
+        angvel: this.room.sabF32[b + SLOT_ANGVEL_OFF]!,
+        health: this.room.getShipHealth(playerId) ?? SHIP_MAX_HEALTH,
+        lastFireClientTick: this.room.lastFireClientTick.get(playerId) ?? 0,
+        sectorKey: inFlight.targetSectorKey,
+      });
+    }
     this.room.playerToTransitInFlight.add(playerId);
 
     inFlight.machine.beginTransit();

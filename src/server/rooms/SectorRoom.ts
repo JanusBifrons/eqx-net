@@ -127,8 +127,7 @@ import type {
   SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
-import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
-// LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
+import { getPlayerShipStore } from '../db/PersistenceWorker.js';
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';
@@ -1899,7 +1898,6 @@ export class SectorRoom extends Room<SectorState> {
         : undefined;
     this.transitOrchestrator = new TransitOrchestrator(
       this.asTransitHost(),
-      getLimboStore(),
       transitSpoolMs,
       getPlayerShipStore(),
     );
@@ -3672,13 +3670,14 @@ export class SectorRoom extends Room<SectorState> {
         this.sessionToPlayer.set(client.sessionId, playerId);
         this.playerToSession.set(playerId, client.sessionId);
 
-        // Take the Limbo entry to clear the active-Limbo UI gate. The
-        // payload is irrelevant on this path — the live ShipState/SAB is
-        // the source of truth — but the userId carried in Limbo is the
-        // anonymous-reconnect fallback for `playerToUser`.
-        const limbo = getLimboStore().take(playerId);
-        const resumedUserId = limbo?.payload.userId ?? null;
-        const effectiveUserId = userId ?? resumedUserId;
+        // WS-B (Phase 5): Limbo is retired. The live ShipState/SAB is the
+        // source of truth for the rebound hull; the anonymous-reconnect userId
+        // fallback now comes from the userId retained on this room from the
+        // original session, else the roster row (markLinger preserved it).
+        const rosterUserId = existingShip
+          ? (getPlayerShipStore().get(existingShip.shipInstanceId)?.userId ?? null)
+          : null;
+        const effectiveUserId = userId ?? this.playerToUser.get(playerId) ?? rosterUserId;
         this.playerToUser.set(playerId, effectiveUserId);
 
         // lastFireClientTick is already retained from the original session;
@@ -3788,7 +3787,7 @@ export class SectorRoom extends Room<SectorState> {
     let resumedVy = 0;
     let resumedAngle = 0;
     let resumedAngvel = 0;
-    let resumedFromLimbo = false;
+    let resumedFromStore = false;
     /** Phase 3 — when the client supplied a valid `shipId` in JoinOptions,
      *  the bindRosterEntry call resolves to this exact row instead of the
      *  most-recent-updated default. Empty string means "no preference". */
@@ -3852,70 +3851,30 @@ export class SectorRoom extends Room<SectorState> {
         resumedVy = rec.lastVy;
         resumedAngle = rec.lastAngle;
         resumedAngvel = rec.lastAngvel;
-        resumedFromLimbo = true;
+        resumedFromStore = true;
         chosenKind = rec.kind;
         preferredShipId = rec.shipId;
-        // Drop any stale Limbo entry (we're binding by shipId, not by limbo).
-        try { getLimboStore().take(playerId); } catch { /* best-effort */ }
         logger.info(
           { playerId, shipId: rec.shipId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
           'restored from roster shipId',
         );
       } else if (rec === null) {
-        logger.warn({ playerId, shipId: requestedShipId }, 'JoinOptions.shipId not found; falling back to limbo');
+        logger.warn({ playerId, shipId: requestedShipId }, 'JoinOptions.shipId not found; fresh spawn');
       } else if (rec.playerId !== playerId) {
-        logger.warn({ playerId, shipOwner: rec.playerId }, 'JoinOptions.shipId not owned by caller; falling back');
+        logger.warn({ playerId, shipOwner: rec.playerId }, 'JoinOptions.shipId not owned by caller; fresh spawn');
       } else {
         logger.warn(
           { playerId, shipId: requestedShipId, shipSector: rec.lastSectorKey, joinSector: this.sectorKey },
-          'JoinOptions.shipId is in a different sector; falling back',
+          'JoinOptions.shipId is in a different sector; fresh spawn',
         );
       }
     }
 
-    // Phase 8 sub-phase B — Limbo restore. Only galaxy rooms participate
-    // in Limbo; engineering rooms continue to fresh-spawn on every join.
-    // The destination's `onJoin` consumes the entry whether it was created
-    // by a disconnect (5 min TTL) or by a transit commit (30 s TTL); the
-    // sectorKey gate ensures we only consume entries destined for THIS room.
-    // Skipped when a valid shipId already hydrated above. Also skipped when
-    // `isNewShip` is set — Phase 3 multi-ship: clicking a sector on the
-    // galaxy map to spawn a *fresh* ship must NOT silently restore a
-    // lingering ship from Limbo; the player can resume that one via the
-    // roster panel separately.
-    const isNewShipRequest = parsed.success && parsed.data.isNewShip === true;
-    if (this.sectorKey !== null && !resumedFromLimbo && !isNewShipRequest) {
-      const limbo = getLimboStore().take(playerId);
-      if (limbo && limbo.payload.sectorKey === this.sectorKey) {
-        spawnX = limbo.payload.x;
-        spawnY = limbo.payload.y;
-        resumedHealth = limbo.payload.health;
-        resumedUserId = limbo.payload.userId;
-        resumedLastFireTick = limbo.payload.lastFireClientTick;
-        resumedVx = limbo.payload.vx;
-        resumedVy = limbo.payload.vy;
-        resumedAngle = limbo.payload.angle;
-        resumedAngvel = limbo.payload.angvel;
-        resumedFromLimbo = true;
-        // Resumed kind dominates the requested kind on Limbo paths — a player
-        // who disconnected mid-session must come back in the same ship. Tolerant
-        // decode for Limbo entries written by older builds (no kind field).
-        if (typeof limbo.payload.kind === 'string' && isShipKindId(limbo.payload.kind)) {
-          chosenKind = limbo.payload.kind;
-        }
-        logger.info(
-          { playerId, sectorKey: this.sectorKey, x: spawnX, y: spawnY, health: resumedHealth },
-          'restored from Limbo',
-        );
-      } else if (limbo) {
-        // Entry exists but for a different sector — put it back. This is
-        // unusual (the landing screen restricts the player to the entry's
-        // sector) but defensive: if a player navigates by raw URL to a
-        // sector they don't belong in, we don't want to silently discard
-        // their existing-ship state.
-        getLimboStore().put(playerId, limbo.payload, limbo.expiresAt - Date.now());
-      }
-    }
+    // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
+    // resumes by shipId — the roster shipId-restore above, which is now the
+    // path for BOTH reconnect and transit-arrival — and a lingering hull
+    // persists in-world via the sector snapshot (`lingeringHulls[]`). A join
+    // without a resolvable owned shipId fresh-spawns.
 
     this.initialSpawnPositions.set(playerId, { x: spawnX, y: spawnY });
 
@@ -3924,7 +3883,7 @@ export class SectorRoom extends Room<SectorState> {
     const base = slotBase(slot);
     this.sabF32[base + SLOT_X_OFF] = spawnX;
     this.sabF32[base + SLOT_Y_OFF] = spawnY;
-    if (resumedFromLimbo) {
+    if (resumedFromStore) {
       this.sabF32[base + SLOT_VX_OFF]     = resumedVx;
       this.sabF32[base + SLOT_VY_OFF]     = resumedVy;
       this.sabF32[base + SLOT_ANGLE_OFF]  = resumedAngle;
@@ -3957,10 +3916,10 @@ export class SectorRoom extends Room<SectorState> {
     ship.shipInstanceId = this.bindRosterEntry(playerId, userId ?? resumedUserId, chosenKind, {
       x: spawnX,
       y: spawnY,
-      vx: resumedFromLimbo ? resumedVx : 0,
-      vy: resumedFromLimbo ? resumedVy : 0,
-      angle: resumedFromLimbo ? resumedAngle : 0,
-      angvel: resumedFromLimbo ? resumedAngvel : 0,
+      vx: resumedFromStore ? resumedVx : 0,
+      vy: resumedFromStore ? resumedVy : 0,
+      angle: resumedFromStore ? resumedAngle : 0,
+      angvel: resumedFromStore ? resumedAngvel : 0,
       health: resumedHealth ?? ship.health,
       lastFireClientTick: resumedLastFireTick ?? 0,
     }, preferredShipId, forceFreshCreate);
@@ -4070,10 +4029,10 @@ export class SectorRoom extends Room<SectorState> {
     this.shipPoseCache.set(playerId, {
       x: spawnX,
       y: spawnY,
-      vx: resumedFromLimbo ? resumedVx : 0,
-      vy: resumedFromLimbo ? resumedVy : 0,
-      angle: resumedFromLimbo ? resumedAngle : 0,
-      angvel: resumedFromLimbo ? resumedAngvel : 0,
+      vx: resumedFromStore ? resumedVx : 0,
+      vy: resumedFromStore ? resumedVy : 0,
+      angle: resumedFromStore ? resumedAngle : 0,
+      angvel: resumedFromStore ? resumedAngvel : 0,
     });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
@@ -4145,7 +4104,7 @@ export class SectorRoom extends Room<SectorState> {
     this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
     logger.info(
-      { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromLimbo },
+      { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromStore },
       'player joined',
     );
 
@@ -4398,6 +4357,7 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       playerToSlot: this.playerToSlot,
       playerToUser: this.playerToUser,
+      playerToActiveShipInstance: this.playerToActiveShipInstance,
       lastFireClientTick: this.lastFireClientTick,
       getShipHealth: (playerId: string): number => {
         const ship = this.getActiveShip(playerId);
