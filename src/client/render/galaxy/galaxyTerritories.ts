@@ -95,3 +95,58 @@ export const DEFAULT_FACTION_COLOR = 0x8893a6;
 export function factionColor(factionId: string): number {
   return FACTION_COLORS[factionId] ?? DEFAULT_FACTION_COLOR;
 }
+
+/**
+ * Faction → BORDER colour — a brighter / more saturated sibling of the fill,
+ * used for the bold outer-territory outline (the eqx-peri "territory outline,
+ * not per-cell grid" look). Brighter than {@link factionColor} so the perimeter
+ * reads over the muted fill.
+ */
+const FACTION_BORDER_COLORS: Readonly<Record<string, number>> = {
+  core: 0x6ea0e8,
+  'verdant-reach': 0x4fdc7a,
+  'crimson-expanse': 0xff6b5e,
+  'azure-deep': 0x3fd6d6,
+};
+
+export const DEFAULT_FACTION_BORDER_COLOR = 0xb8c2d6;
+
+export function factionBorderColor(factionId: string): number {
+  return FACTION_BORDER_COLORS[factionId] ?? DEFAULT_FACTION_BORDER_COLOR;
+}
+
+/**
+ * Axial neighbour offset across hex-edge `ei`, where edge `ei` runs from
+ * `GalaxyMapLayer.hexVertices` vertex `ei` → vertex `(ei+1) % 6` (vertex angles
+ * 30°, 90°, 150°, 210°, 270°, 330°). The neighbour across an edge sits in the
+ * edge's outward-normal direction. **MUST stay in sync with `hexVertices`** —
+ * locked by galaxyTerritories.test.ts against the live vertex order + the core
+ * `axialToPixel` projection (the highest-risk detail of the border port).
+ */
+export const HEX_EDGE_NEIGHBOUR_DIRS: ReadonlyArray<{ q: number; r: number }> = [
+  { q: 0, r: 1 }, // edge 0 (30°→90°): lower-right
+  { q: -1, r: 1 }, // edge 1 (90°→150°): lower-left
+  { q: -1, r: 0 }, // edge 2 (150°→210°): left
+  { q: 0, r: -1 }, // edge 3 (210°→270°): upper-left
+  { q: 1, r: -1 }, // edge 4 (270°→330°): upper-right
+  { q: 1, r: 0 }, // edge 5 (330°→30°): right
+];
+
+/**
+ * The hex-edge indices of `sector` that lie on its faction's OUTER perimeter —
+ * i.e. the hex across that edge is absent or a DIFFERENT faction. Drawing only
+ * these (in the faction border colour) yields one continuous outline per
+ * contiguous territory; shared interior edges are suppressed on both sides.
+ * `factionAt(q, r)` returns the faction id at a hex position, or null.
+ */
+export function boundaryEdges(
+  sector: { hex: { q: number; r: number }; region: string },
+  factionAt: (q: number, r: number) => string | null,
+): number[] {
+  const out: number[] = [];
+  for (let ei = 0; ei < HEX_EDGE_NEIGHBOUR_DIRS.length; ei++) {
+    const d = HEX_EDGE_NEIGHBOUR_DIRS[ei]!;
+    if (factionAt(sector.hex.q + d.q, sector.hex.r + d.r) !== sector.region) out.push(ei);
+  }
+  return out;
+}

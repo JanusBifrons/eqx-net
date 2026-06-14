@@ -4,6 +4,10 @@ import {
   computeTerritories,
   factionColor,
   DEFAULT_FACTION_COLOR,
+  factionBorderColor,
+  DEFAULT_FACTION_BORDER_COLOR,
+  boundaryEdges,
+  HEX_EDGE_NEIGHBOUR_DIRS,
 } from './galaxyTerritories';
 
 function sec(key: string, region: string, q: number, r: number, neighbours: string[]): GalaxySector {
@@ -83,5 +87,56 @@ describe('factionColor', () => {
 
   it('falls back to the neutral default for an unknown faction', () => {
     expect(factionColor('not-a-faction')).toBe(DEFAULT_FACTION_COLOR);
+  });
+});
+
+// Replicates GalaxyMapLayer.hexVertices EXACTLY (vertex angles 30°/90°/…/330°);
+// the border port's correctness hinges on this matching the live layer.
+function hexVerts(size: number): Array<{ x: number; y: number }> {
+  const out: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 6 + (i * Math.PI) / 3;
+    out.push({ x: size * Math.cos(a), y: size * Math.sin(a) });
+  }
+  return out;
+}
+
+describe('faction outer-edge outline', () => {
+  it('HEX_EDGE_NEIGHBOUR_DIRS agrees with hexVertices edge order (each edge normal points at its neighbour)', () => {
+    const v = hexVerts(64);
+    for (let ei = 0; ei < 6; ei++) {
+      const a = v[ei]!;
+      const b = v[(ei + 1) % 6]!;
+      // Edge midpoint (from centre) IS the edge's outward normal direction.
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const d = HEX_EDGE_NEIGHBOUR_DIRS[ei]!;
+      const np = axialToPixel({ q: d.q, r: d.r }, 64); // the neighbour's pixel direction
+      const dot =
+        (mid.x * np.x + mid.y * np.y) / (Math.hypot(mid.x, mid.y) * Math.hypot(np.x, np.y));
+      expect(dot, `edge ${ei} normal must point at neighbour dir ${d.q},${d.r}`).toBeGreaterThan(0.99);
+    }
+  });
+
+  it('boundaryEdges: a hex fully surrounded by its own faction has no border edges', () => {
+    expect(boundaryEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, () => 'fA')).toEqual([]);
+  });
+
+  it('boundaryEdges: an isolated hex borders on all six edges', () => {
+    const at = (q: number, r: number): string | null => (q === 0 && r === 0 ? 'fA' : null);
+    expect(boundaryEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, at)).toEqual([0, 1, 2, 3, 4, 5]);
+  });
+
+  it('boundaryEdges: one different-faction neighbour marks exactly that edge', () => {
+    // The neighbour across edge 5 is (1,0); make only it a different faction.
+    const at = (q: number, r: number): string | null => (q === 1 && r === 0 ? 'fB' : 'fA');
+    expect(boundaryEdges({ hex: { q: 0, r: 0 }, region: 'fA' }, at)).toEqual([5]);
+  });
+});
+
+describe('factionBorderColor', () => {
+  it('returns a distinct (brighter) colour per faction + a default for unknown', () => {
+    const colors = GALAXY_FACTIONS.map((f) => factionBorderColor(f.id));
+    expect(new Set(colors).size).toBe(GALAXY_FACTIONS.length);
+    expect(factionBorderColor('not-a-faction')).toBe(DEFAULT_FACTION_BORDER_COLOR);
   });
 });

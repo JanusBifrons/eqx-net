@@ -10,7 +10,13 @@ import {
   clusterFitFraction,
   type GalaxyLayerMode,
 } from './galaxyLayerDecisions';
-import { computeTerritories, factionColor, type Territory } from './galaxyTerritories';
+import {
+  computeTerritories,
+  factionColor,
+  factionBorderColor,
+  boundaryEdges,
+  type Territory,
+} from './galaxyTerritories';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import { Camera } from '../worker/Camera';
 
@@ -52,6 +58,9 @@ const COLOR_HIGHLIGHT = 0x00ff88;
 const COLOR_SELECTABLE_STROKE = 0x8fe9c0;
 const COLOR_LOCKED_STROKE = 0x2a2f40;
 const COLOR_LABEL = 0xdffff0;
+
+/** Bold faction-coloured outer-territory perimeter stroke width (eqx-peri value). */
+const FACTION_OUTLINE_WIDTH = 3.5;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -353,6 +362,13 @@ export class GalaxyMapLayer extends Container {
       for (const key of t.sectorKeys) territoryOf.set(key, i);
     }
 
+    // Hex-position → faction lookup for the bold outer-territory outline
+    // (eqx-peri faction-coloured perimeter; HEX-adjacency based, not graph edges,
+    // so a faction boundary — including a chokepoint — is stroked on both sides).
+    const hexFaction = new Map<string, string>();
+    for (const s of GALAXY_SECTORS) hexFaction.set(`${s.hex.q},${s.hex.r}`, s.region);
+    const factionAt = (q: number, r: number): string | null => hexFaction.get(`${q},${r}`) ?? null;
+
     for (const s of GALAXY_SECTORS) {
       const pos = axialToPixel(s.hex, HEX_SIZE_BASE);
       const ti = territoryOf.get(s.key) ?? 0;
@@ -367,6 +383,22 @@ export class GalaxyMapLayer extends Container {
         if (this.isSelectable(s)) this.onSelect(s.key);
       });
       container.addChild(hex);
+
+      // Bold faction-coloured outline on this hex's OUTER-perimeter edges (edges
+      // whose across-neighbour is absent or a different faction). Drawn ONCE —
+      // the faction layout is static. Sits above the fill, below the label.
+      const boundary = boundaryEdges(s, factionAt);
+      if (boundary.length > 0) {
+        const outline = new Graphics();
+        outline.x = ox;
+        outline.y = oy;
+        const ov = hexVertices(HEX_SIZE_BASE);
+        for (const ei of boundary) {
+          outline.moveTo(ov[ei]!.x, ov[ei]!.y).lineTo(ov[(ei + 1) % 6]!.x, ov[(ei + 1) % 6]!.y);
+        }
+        outline.stroke({ color: factionBorderColor(s.region), width: FACTION_OUTLINE_WIDTH, alpha: 0.95 });
+        container.addChild(outline);
+      }
 
       const label = new Text({
         text: s.name,
@@ -468,14 +500,16 @@ export class GalaxyMapLayer extends Container {
         color: factionColor(sector.region),
         alpha: (highlighted ? 0.5 : selectable ? 0.38 : 0.22) * fillBoost,
       });
-      // 2) State stroke layered on top.
+      // 2) Faint inner per-hex border for cell separation (under the bold
+      //    faction outer-territory outline drawn in buildHexes); the current
+      //    sector keeps a brighter ring as the "you are here" marker.
       hex.poly(verts);
       if (highlighted) {
-        hex.stroke({ color: COLOR_HIGHLIGHT, width: 3, alpha: 0.9 });
+        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 0.9 });
       } else if (selectable) {
-        hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 2, alpha: 0.8 });
+        hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1, alpha: 0.4 });
       } else {
-        hex.stroke({ color: COLOR_LOCKED_STROKE, width: 1.5, alpha: 0.45 });
+        hex.stroke({ color: COLOR_LOCKED_STROKE, width: 0.8, alpha: 0.25 });
       }
 
       hex.eventMode = this.mode === 'overlay' && selectable ? 'static' : 'none';
