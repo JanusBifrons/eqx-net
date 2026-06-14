@@ -62,6 +62,10 @@ interface PanelData {
    *  (the user: "It shouldn't really apply to other structures"). */
   connCount?: number;
   connMax?: number;
+  /** Owning playerId in display form ("you" for the local player, else a
+   *  truncated id) — set for structures so players can identify whose base it is
+   *  (other players' bases are a core part of the game, not a bug). */
+  owner?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -96,6 +100,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.selfPower !== undefined ? { 'data-self-power': Math.round(data.selfPower) } : {})}
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
       {...(data.connCount !== undefined ? { 'data-conn-count': data.connCount } : {})}
+      {...(data.owner !== undefined ? { 'data-structure-owner': data.owner } : {})}
       {...(data.pending ? { 'data-stats-pending': '1' } : {})}
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
@@ -144,6 +149,12 @@ export function EntityStatsPanel(): JSX.Element | null {
         // C4 — connector-only connection count. Same muted POWER_SX styling.
         <Box sx={POWER_SX} data-testid="entity-stats-conn">
           {`CONN ${data.connCount} / ${data.connMax ?? 0}`}
+        </Box>
+      )}
+      {data.owner !== undefined && (
+        // Owner readout — identifies whose base this is ("you" vs a truncated id).
+        <Box sx={POWER_SX} data-testid="entity-stats-owner">
+          {`OWNER ${data.owner}`}
         </Box>
       )}
     </Box>
@@ -202,6 +213,14 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.connCount = st.connTo.length;
         data.connMax = getStructureKind('connector').maxConnections;
       }
+      // Owner readout — the player's DISPLAY NAME so you can identify whose base
+      // it is ("you" for the local player). An absent ownerName means the owner
+      // didn't resolve to a DB user — an orphaned structure (the server logs it)
+      // → "Unknown". NEVER a raw playerId.
+      if (st.owner) {
+        const localId = getGameClient()?.mirror.localPlayerId ?? null;
+        data.owner = st.owner === localId ? 'you' : (st.ownerName ?? 'Unknown');
+      }
     }
     return data;
   }
@@ -251,17 +270,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         : `SIZE ${Math.round(sw.radius)}`,
     };
   }
-  // LINGERING HULL (R2.23) — show WHOSE displaced hull it is (no live hp on the mirror).
+  // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
+  // owner's server-propagated display name); never surface the raw ownerPlayerId
+  // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
   if (kind === 'lingering') {
     const l = client.mirror.lingeringShips?.get(id);
     if (!l) return null;
-    const owner = l.ownerPlayerId.length > 10 ? `${l.ownerPlayerId.slice(0, 8)}…` : l.ownerPlayerId;
     return {
       name: l.displayName || 'Abandoned hull',
       hpPct: 0,
       shieldPct: null,
       noHull: true,
-      infoLine: `${l.kind ?? 'ship'} · ${owner}`,
+      infoLine: `${l.kind ?? 'ship'}`,
     };
   }
   return null;

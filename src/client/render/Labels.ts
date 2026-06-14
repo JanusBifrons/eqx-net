@@ -6,9 +6,10 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
  * remote ship and every drone:
  *
  *   - Players: `displayName` (or `email`) propagated from the server's
- *     `ShipState.displayName`, with a `Pilot ${id}` fallback for anonymous
- *     joins. The local player's own ship intentionally has no label —
- *     you don't need to be told who you are.
+ *     `ShipState.displayName`, with a plain `Pilot` fallback (NEVER any part of
+ *     the id — no ids in the UI) for the rare pre-sync / edge case. The local
+ *     player's own ship intentionally has no label — you don't need to be told
+ *     who you are.
  *   - Drones: `AI XXX` where XXX is the entityId in 3-char zero-padded
  *     uppercase hex. Stable per drone, deterministic from the wire's
  *     entityId; small numbers will look like `AI 001`, `AI 00F`, etc.
@@ -46,7 +47,10 @@ export function formatDroneName(entityId: number): string {
  *  the unit test in `Labels.test.ts`. */
 export function formatPlayerLabel(playerId: string, displayName?: string): string {
   if (displayName && displayName.trim().length > 0) return displayName.trim();
-  return `Pilot ${playerId.slice(0, 4).toUpperCase()}`;
+  // No ids in the UI: every player has a display name, so this fallback is a
+  // pre-sync / edge safety net only — a plain "Pilot", never a slice of the id.
+  void playerId;
+  return 'Pilot';
 }
 
 const PLAYER_TEXT_STYLE = new TextStyle({

@@ -2927,6 +2927,34 @@ export class SectorRoom extends Room<SectorState> {
   /** Rebuild the cached structures snapshot slice from the registry + grid.
    *  Called at the 1 Hz pulse and after each placement/removal — never on the
    *  60 Hz tick, so the array allocation here is off the hot loop. */
+  /** playerId → resolved owner display name (or null = orphan). Cached: structure
+   *  owners are static, so we resolve + log-orphan-once per owner, not every pulse. */
+  private readonly _ownerNameCache = new Map<string, string | null>();
+
+  /** Resolve a structure owner's DISPLAY NAME (DB-backed). Online via
+   *  `playerToUser`, offline via the persistent roster (playerId→userId→user).
+   *  Every owner SHOULD map to a DB user; a null result is an ORPHANED structure
+   *  (owner gone / never a real user) — logged ONCE per owner as an issue. */
+  private resolveOwnerName(owner: string): string | null {
+    const cached = this._ownerNameCache.get(owner);
+    if (cached !== undefined) return cached;
+    const userId =
+      this.playerToUser.get(owner) ??
+      getPlayerShipStore().listByPlayer(owner)[0]?.userId ??
+      null;
+    const user = userId ? getUser(userId) : null;
+    const name = user ? (user.displayName ?? user.email ?? null) : null;
+    this._ownerNameCache.set(owner, name);
+    if (name === null) {
+      serverLogEvent('structure_owner_unresolved', { owner, sectorKey: this.sectorKey ?? '' });
+      logger.warn(
+        { owner, sectorKey: this.sectorKey },
+        'structure owner does not map to a DB user — orphaned structure',
+      );
+    }
+    return name;
+  }
+
   private rebuildStructuresSlice(): void {
     if (this.structureRegistry.size === 0) {
       this.structuresSlice = undefined;
@@ -2948,8 +2976,15 @@ export class SectorRoom extends Room<SectorState> {
         hpPct: Math.round((Math.max(0, hp) / hpMax) * 100),
         powered: summary.powered,
         netPower: summary.netPower,
+        // Owning playerId — the client uses it for the "is this mine?" check +
+        // the same-owner connection/preview-line filter.
+        owner: rec.owner,
         built: rec.isConstructed,
       };
+      // Owner DISPLAY NAME for the inspector (DB-resolved + cached; absent ⇒
+      // orphaned owner, already logged, client shows "Unknown").
+      const ownerName = this.resolveOwnerName(rec.owner);
+      if (ownerName !== null) entry.ownerName = ownerName;
       if (conns.length > 0) {
         const connTo: number[] = [];
         for (const c of conns) {

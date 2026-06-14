@@ -2935,6 +2935,8 @@ export class ColyseusGameClient {
           ...(s.minerals !== undefined ? { minerals: s.minerals } : {}), // WS-9 R2.12 (capital readout)
           ...(s.shieldWallTo !== undefined ? { shieldWallTo: s.shieldWallTo } : {}),
           ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
+          ...(s.owner !== undefined ? { owner: s.owner } : {}),
+          ...(s.ownerName !== undefined ? { ownerName: s.ownerName } : {}),
         });
         // Surface the powered grid's net power (members share a component, so
         // the max powered netPower represents the player's live grid).

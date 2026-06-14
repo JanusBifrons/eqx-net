@@ -362,11 +362,17 @@ export class ConnectorRenderer {
     const adjacency = this._previewAdjacency;
     adjacency.clear();
     const structures = mirror.structures;
+    const localOwner = mirror.localPlayerId;
     let poolIdx = 0;
     if (structures) {
       for (const [id, st] of structures) {
         const entry = swarm.get(id);
         if (!entry) continue;
+        // Never preview a would-connect line to ANOTHER player's structure: the
+        // grid is per-owner server-side (you can't connect to someone else's
+        // base), so a cross-owner structure is skipped entirely from the candidate
+        // web — no green, no red overflow, no line of any kind.
+        if (st.owner !== undefined && localOwner !== null && st.owner !== localOwner) continue;
         let node = this._nodePool[poolIdx];
         if (node === undefined) {
           node = blankGridNode();

@@ -67,6 +67,44 @@ test('the miner grows the mineral bank (HUD climbs)', async ({ browser }) => {
   }
 });
 
+test("clicking another player's structure shows its OWNER in the inspector (not 'you')", async ({ browser }) => {
+  // Other players' structures are a core part of the game — the inspector must
+  // identify WHOSE base a clicked structure is. The scenario grid is owned by the
+  // synthetic seed identity (NOT this freshly-joined player AND not a real DB
+  // user), so the Capital reads as another player's base: the owner LABEL is
+  // shown (the server-resolved display name, or "Unknown" for this orphaned
+  // synthetic owner) and is NEVER "you". Locks the wire path: rebuildStructuresSlice
+  // owner/ownerName → slice → mirror → EntityStatsPanel.
+  const { ctx, page } = await joinScenario(browser);
+  try {
+    // Wait for the full scene (5 structures + asteroid + drone).
+    await page.waitForFunction(
+      () => parseInt((document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0').replace(/\D/g, '') || '0', 10) >= 6,
+      undefined,
+      { timeout: 12_000 },
+    );
+    // Select the scenario Capital at world (0,0) — worker=0 makes the
+    // deterministic __eqxSelectAtWorld hook available.
+    await page.waitForFunction(
+      () => {
+        const sel = (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null }).__eqxSelectAtWorld;
+        return typeof sel === 'function' && sel(0, 0) !== null;
+      },
+      undefined,
+      { timeout: 8_000 },
+    );
+    const panel = page.locator('[data-testid="entity-stats-panel"]');
+    await expect(panel).toBeVisible({ timeout: 8_000 });
+    const owner = page.locator('[data-testid="entity-stats-owner"]');
+    await expect(owner).toBeVisible({ timeout: 8_000 });
+    // It's ANOTHER player's base → an owner id is shown, never "you".
+    await expect(owner).not.toHaveText(/you/i);
+    expect(((await panel.getAttribute('data-structure-owner')) ?? '').length).toBeGreaterThan(0);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('the turret destroys the parked drone (swarm count drops)', async ({ browser }) => {
   const { ctx, page } = await joinScenario(browser);
   try {
