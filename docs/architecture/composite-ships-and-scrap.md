@@ -76,8 +76,13 @@ free-floating scrap piece.
   the `EntityResolver` routes kind 3 to the drone leaf, so it can be shot and
   destroyed. A dying scrap piece does NOT recursively shatter (guarded in
   `SectorRoom.spawnScrapFromDrone`). There is no time-decay; a global FIFO cap
-  (`MAX_LIVE_SCRAP`) bounds accumulation. Scrap is excluded from persistence
-  (transient debris; a cold boot starts with none).
+  (`MAX_LIVE_SCRAP`) bounds accumulation. **Scrap now PERSISTS across a server
+  restart (Phase 5 v4):** the sector snapshot's `scrap[]` array carries each
+  piece's drifted pose + `parentShipKind` + `componentIndex` + health, and the
+  collider re-derives on hydrate from `(parentShipKind, componentIndex)` via the
+  shared pure `scrapColliderFor` (so it's never persisted nor on the wire).
+  Restored scrap is not re-added to the FIFO (a bounded snapshot set; the slot
+  pool hard-caps).
 - **Client render**: `scrapClientLeaf` builds the predWorld collider (same
   component collider + scrap group). It is **DRONE-like, NOT asteroid-like**
   (Phase-5 desync fix, 2026-06-14): the body is spawned **UNLOCKED** at the

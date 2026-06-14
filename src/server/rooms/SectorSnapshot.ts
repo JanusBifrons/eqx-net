@@ -10,13 +10,15 @@
  * fresh-spawns from config. See docs/architecture/persistence-and-migrations.md.
  */
 
-// v3 (persistence blacklist, Phase 5 2026-06-14): structures are now FULLY
-// persisted + reconstructed on hydrate (owner / subtype / pose / construction /
-// minerals / power), fixing "structures are lost after server reset". Inverts
-// the model toward opt-out: the world persists by default; only genuinely
-// transient things (projectiles / scrap / roaming drones) are excluded. Bumping
-// discards every v2 snapshot and reseeds all sectors.
-export const CURRENT_SCHEMA_VERSION = 3;
+// v3 (Phase 5 2026-06-14): structures FULLY persisted + reconstructed.
+// v4 (Phase 5 2026-06-14): SCRAP now persists too (pose + parent ship-kind +
+// componentIndex + health; collider re-derived on hydrate). The persistence
+// model is opt-out: the world persists by default; the blacklist is only
+// genuinely transient/externally-owned things — projectiles/missiles
+// (ephemeral) and roaming DRONES (kind 1, owned by the LivingWorldDirector,
+// which persists + re-dispatches them itself, NOT via the sector snapshot).
+// Bumping discards every older snapshot and reseeds all sectors.
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
@@ -63,6 +65,28 @@ export interface SectorSnapshotStructure {
   storedPower: number;
 }
 
+/**
+ * A free-floating scrap piece (kind 3, scrap-on-death). Persisted with its
+ * drifted pose + parent ship-kind + scrap-group component index; the convex-hull
+ * collider is RE-DERIVED on hydrate from `(parentShipKind, componentIndex)` (the
+ * same `scrapColliderFor` mapping the death path uses), so it is never on the
+ * wire NOR in the snapshot — only the small identifying fields are.
+ */
+export interface SectorSnapshotScrap {
+  entityId: string;
+  /** Parent ship-kind id the piece broke off of (rides the shared shipKind byte). */
+  parentShipKind: string;
+  /** Index into `shipScrapGroups(parentShipKind)`. */
+  componentIndex: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** World math-up angle. */
+  angle: number;
+  health: number;
+}
+
 export interface SectorSnapshotPayload {
   schemaVersion: number;
   sectorKey: string;
@@ -71,6 +95,8 @@ export interface SectorSnapshotPayload {
   /** Placed structures, fully reconstructable (Phase 5 — was previously lost on
    *  restart). Absent on a sector that has none. */
   structures?: SectorSnapshotStructure[];
+  /** Free-floating scrap pieces (Phase 5 v4). Absent when none. */
+  scrap?: SectorSnapshotScrap[];
 }
 
 /**
