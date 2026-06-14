@@ -46,7 +46,6 @@ import {
 import {
   PLAYER_SHIP_ACTIVE_LINGER_MS,
 } from '../../../src/server/playerShips/PlayerShipStore.js';
-import { LIMBO_DISCONNECT_TTL_MS } from '../../../src/server/limbo/LimboStore.js';
 import type { Request, Response } from 'express';
 
 function makeReq(query: Record<string, unknown> = {}): Request {
@@ -78,13 +77,11 @@ describe('PlayerShipStore × SectorRoom integration — spawn → store row → 
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('LIMBO_DISCONNECT_TTL_MS and PLAYER_SHIP_ACTIVE_LINGER_MS are both exactly 15 min', () => {
-    // Compile-time constants — locked here so a typo (e.g. 90_000 vs
-    // 900_000) is caught even without exercising the timer. The two
-    // constants must stay in sync: SectorRoom.markRosterLinger uses
-    // LIMBO_DISCONNECT_TTL_MS to compute the expiresAt it writes into
-    // the PlayerShipStore row.
-    expect(LIMBO_DISCONNECT_TTL_MS).toBe(900_000);
+  it('PLAYER_SHIP_ACTIVE_LINGER_MS is exactly 15 min', () => {
+    // Compile-time constant — locked here so a typo (e.g. 90_000 vs 900_000) is
+    // caught even without exercising the timer. Post-WS-B (Limbo retired) this is
+    // the SOLE linger-window constant; markLinger writes it as the roster
+    // expiresAt (currently unenforced — no prune sweep — so effectively forever).
     expect(PLAYER_SHIP_ACTIVE_LINGER_MS).toBe(900_000);
   });
 

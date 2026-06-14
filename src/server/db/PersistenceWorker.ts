@@ -4,8 +4,15 @@ import { pino } from 'pino';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
-import { LimboStore, LIMBO_DISCONNECT_TTL_MS, type LimboEntry, type LimboPayload } from '../limbo/LimboStore.js';
-import { PlayerShipStore, type PlayerShipRecord } from '../playerShips/PlayerShipStore.js';
+import { PlayerShipStore, PLAYER_SHIP_ACTIVE_LINGER_MS, type PlayerShipRecord } from '../playerShips/PlayerShipStore.js';
+
+/** Shape of a legacy `limbo` row's payload_json — kept only for the one-release
+ *  backfill that migrates surviving limbo rows into the roster (WS-B retired the
+ *  LimboStore; the `limbo` table + this backfill drop a release later). */
+type LegacyLimboPayload = {
+  x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
+  health: number; lastFireClientTick: number; sectorKey: string; kind?: string;
+};
 import { SHIP_KIND_CATALOGUE_VERSION } from '../../shared-types/shipKinds.js';
 import { db } from './Database.js';
 
@@ -102,84 +109,6 @@ export async function initWorker(opts: { dbPath: string }): Promise<void> {
   const sink = new WorkerBackedSink();
   await sink.attach(worker as unknown as WorkerHandle);
   setPersistence(sink);
-}
-
-// ── Phase 8 sub-phase B — Limbo store singleton ────────────────────────
-
-/**
- * Process-global LimboStore. Hot path is in-memory; every put/delete
- * shadows through `persistence.enqueueCritical`. Created lazily on first
- * `getLimboStore()` so unit tests that don't `initLimboStore()` still
- * compile / typecheck.
- *
- * Production boot (`src/server/index.ts`): after `initWorker()` resolves,
- * call `initLimboStore()` to hydrate from `SELECT ... WHERE expires_at > now`
- * and start the prune timer.
- */
-let _limboStore: LimboStore | null = null;
-
-export function getLimboStore(): LimboStore {
-  if (_limboStore === null) {
-    // pino is imported lazily so test paths that inject via setLimboStore()
-    // never construct a logger or pull the transport.
-    _limboStore = new LimboStore({ persistence, logger: pino({ name: 'limbo' }) });
-  }
-  return _limboStore;
-}
-
-/** Test seam — replace the store with an injected one. */
-export function setLimboStore(store: LimboStore): void {
-  _limboStore = store;
-}
-
-/**
- * Boot hydrate. Reads the surviving rows from the read-only main-thread
- * connection and starts the prune timer.
- */
-export function initLimboStore(now: number = Date.now()): { hydrated: number } {
-  const store = getLimboStore();
-  let rows: Array<{
-    player_id: string;
-    user_id: string | null;
-    sector_key: string;
-    payload_json: string;
-    expires_at: number;
-    created_at: number;
-  }> = [];
-  try {
-    rows = db.prepare(
-      'SELECT player_id, user_id, sector_key, payload_json, expires_at, created_at ' +
-      'FROM limbo WHERE expires_at > ?',
-    ).all(now) as typeof rows;
-  } catch (err) {
-    // First-ever boot may race the worker's schema creation; treat as zero,
-    // but count + log so a persistent failure isn't invisible (R4).
-    _hydrateHealth.selectFailures += 1;
-    _hydrateLogger.warn({ err, table: 'limbo' }, 'limbo hydrate SELECT failed (treating as empty)');
-    rows = [];
-  }
-  const entries: LimboEntry[] = [];
-  for (const row of rows) {
-    let payload: LimboPayload;
-    try {
-      payload = JSON.parse(row.payload_json) as LimboPayload;
-    } catch (err) {
-      _hydrateHealth.corruptRowsSkipped += 1;
-      if (_hydrateHealth.corruptRowsSkipped % 100 === 1) {
-        _hydrateLogger.warn({ err, playerId: row.player_id }, 'limbo payload JSON parse failed — skipping row');
-      }
-      continue;
-    }
-    entries.push({
-      playerId: row.player_id,
-      payload,
-      expiresAt: row.expires_at,
-      createdAt: row.created_at,
-    });
-  }
-  store.hydrate(entries);
-  store.startPruneTimer();
-  return { hydrated: entries.length };
 }
 
 // ── Phase 2 — PlayerShipStore singleton ────────────────────────────────
@@ -287,9 +216,9 @@ export function initPlayerShipStore(): { hydrated: number } {
     ).all(Date.now()) as LimboRow[];
     for (const row of limboRows) {
       if (store.listByPlayer(row.player_id).length > 0) continue;
-      let payload: LimboPayload;
+      let payload: LegacyLimboPayload;
       try {
-        payload = JSON.parse(row.payload_json) as LimboPayload;
+        payload = JSON.parse(row.payload_json) as LegacyLimboPayload;
       } catch (err) {
         _hydrateHealth.corruptRowsSkipped += 1;
         if (_hydrateHealth.corruptRowsSkipped % 100 === 1) {
@@ -316,7 +245,7 @@ export function initPlayerShipStore(): { hydrated: number } {
         lastFireClientTick: payload.lastFireClientTick,
         isActive: true,
         activeRoomId: null,
-        expiresAt: now + LIMBO_DISCONNECT_TTL_MS,
+        expiresAt: now + PLAYER_SHIP_ACTIVE_LINGER_MS,
         createdAt: row.created_at,
         updatedAt: now,
       };

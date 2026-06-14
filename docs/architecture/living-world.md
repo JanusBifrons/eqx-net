@@ -292,6 +292,51 @@ tick. The formation tunables (`FORMATION_DEST_RANGE/ARRIVE/SPACING`,
 `steering.test.ts`, `formation.test.ts`, `HostileDroneBehaviour.moveTarget.test.ts`,
 `tests/integration/sectorRoom/livingWorldFormation.test.ts`.
 
+## Director-state persistence (Phase 5 — "restart from any state")
+
+The user's directive was that the director should "pick up and restart from any
+state" — when the server reboots, review the squads it has and resume, not start
+the galaxy from a blank slate. Half of this shipped earlier (the `WaveDirector`
+dispatches the NEAREST roaming squad to a ready base); this is the other half:
+**the director survives a server restart.**
+
+Because drones are director-owned (NOT in the per-sector snapshot — persisting
+them there would orphan them from the director), the director persists its OWN
+**abstract squad continuity** on its own lane (see
+[persistence-and-migrations.md](persistence-and-migrations.md) "Director-state
+lane"):
+
+- per squad: `{squadId, kind, sectorKey, targetFactionId, state}`;
+- the `WaveDirector`'s `waveCount` + `lastDispatchAtMs` bookkeeping.
+
+`LivingWorldDirector.persistState()` writes it (graceful shutdown + a throttled
+60 s control-loop heartbeat for crash defence — both off the 60 Hz live loop).
+`restoreFromPersistence()` reads it once inside `start()`, AFTER the fresh seed:
+`SquadPool.restoreStates` + `WaveDirector.restore` overlay the persisted state,
+then the **existing** machinery does the rest — `respawnStep` re-spawns each
+squad's bots at its restored `sectorKey` (entry sector → direct; interior →
+edge-ingress + hop-traverse, so the entry-only-ingress invariant holds), and the
+next `waveDirector.plan` RESUMES an in-progress wave or cleanly de-escalates per
+LIVE readiness (a base that lost its miners during downtime stands the squad down
+for free).
+
+**What is deliberately abstract (and why):** individual bot poses and in-flight
+`BotTransitController` warps are NOT serialized — a mid-flight hop simply resets to
+the squad's sector on restart. Persisting exact bot poses was rejected as
+director-orphaning and not trivially serializable for in-flight transits. The
+fixed 24-bot pool is always re-seeded; only squad ASSIGNMENTS carry over. A
+`DIRECTOR_STATE_VERSION` bump (or any unknown squad id) discards the row for a
+clean reseed.
+
+Locks: `DirectorPersistence.test.ts` (round-trip + version/staleness/corrupt →
+fresh seed), `SquadPool`/`WaveDirector.test.ts` (serialize/restore, incl. the
+rate-cap surviving a restart), and
+`tests/integration/sectorRoom/livingWorldDirectorPersistence.test.ts` — a
+two-boot *faithful* restart (boot #1 roams a squad into the interior + persists;
+boot #2 brings up fresh rooms with roaming OFF and the squad resumes at the
+interior, which only the restore can produce — verified against a no-row
+fresh-seed control arm).
+
 ## Future work
 
 - Per-kind hunter loadouts / threat tiers (extend the director's kind

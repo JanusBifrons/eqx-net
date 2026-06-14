@@ -25,7 +25,6 @@
  *  - `setPersistence(CaptureSink)` — every enqueueCritical/Volatile
  *    is captured into an array (assertable as a side effect) and
  *    discarded; no SQLite, no DB worker.
- *  - `setLimboStore(new LimboStore({}))` — in-memory, no shadow.
  *  - `setPlayerShipStore(new PlayerShipStore({ generateShipId }))`
  *    — deterministic ids for stable test assertions.
  *
@@ -52,14 +51,13 @@ import {
   LivingWorldDirector,
   type LivingWorldOptions,
 } from '../../../src/server/livingworld/LivingWorldDirector.js';
+import type { DirectorPersistence } from '../../../src/server/livingworld/DirectorPersistence.js';
 import { makeSeededRng } from '../../../src/server/livingworld/population.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import {
   setPersistence,
-  setLimboStore,
   setPlayerShipStore,
 } from '../../../src/server/db/PersistenceWorker.js';
-import { LimboStore } from '../../../src/server/limbo/LimboStore.js';
 import { PlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
 import type {
   IPersistenceSink,
@@ -157,7 +155,6 @@ export async function bootSectorTestServer(opts: {
   //    to land before the room is constructed.
   const sink = new CaptureSink();
   setPersistence(sink);
-  setLimboStore(new LimboStore({}));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -299,7 +296,6 @@ export async function bootSectorTestServer(opts: {
       try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }
       try { httpServer.close(); } catch { /* ignore */ }
       // Reset the singletons.
-      setLimboStore(new LimboStore({}));
       setPlayerShipStore(new PlayerShipStore({}));
     },
   };
@@ -354,10 +350,12 @@ export async function bootLivingWorldTestServer(opts: {
   botCount: number;
   seed?: number;
   director?: Partial<LivingWorldOptions>;
+  /** Phase 5 — inject to exercise director-state persist/restore across a
+   *  (two-boot) "restart". Omit ⇒ stateless director (today's fresh seed). */
+  directorPersistence?: DirectorPersistence;
 }): Promise<LivingWorldTestHarness> {
   const sink = new CaptureSink();
   setPersistence(sink);
-  setLimboStore(new LimboStore({}));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -416,6 +414,7 @@ export async function bootLivingWorldTestServer(opts: {
     // Short dispatch cadence so wave-cadence integration tests re-trigger fast.
     dispatchIntervalMs: 500,
     ...opts.director,
+    ...(opts.directorPersistence ? { directorPersistence: opts.directorPersistence } : {}),
   });
   director.start();
 
@@ -479,7 +478,6 @@ export async function bootLivingWorldTestServer(opts: {
       connectedRooms.length = 0;
       try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }
       try { httpServer.close(); } catch { /* ignore */ }
-      setLimboStore(new LimboStore({}));
       setPlayerShipStore(new PlayerShipStore({}));
     },
   };

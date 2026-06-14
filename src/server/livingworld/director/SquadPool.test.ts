@@ -114,3 +114,67 @@ describe('SquadPool — snapshot', () => {
     expect(snap.byState.forming).toBe(1);
   });
 });
+
+describe('SquadPool — serialize/restore (director-state persistence, Phase 5)', () => {
+  const mutated = (): SquadPool => {
+    const pool = new SquadPool();
+    pool.seed(botIds(LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE), (i) => `home-${i}`, () => 'fighter');
+    // squad-0 mid-attack at vega; squad-1 warping to rigel; squad-2 left forming.
+    pool.assignTarget(pool.get('squad-0')!, 'vega', 'alice');
+    pool.setState(pool.get('squad-0')!, 'attacking');
+    pool.assignTarget(pool.get('squad-1')!, 'rigel', 'bob');
+    pool.setState(pool.get('squad-1')!, 'warping');
+    return pool;
+  };
+
+  it('serialize captures each squad continuity (no botIds/warned)', () => {
+    const rows = mutated().serialize();
+    expect(rows).toHaveLength(LIVING_WORLD_SQUAD_COUNT);
+    const byId = new Map(rows.map((r) => [r.squadId, r]));
+    expect(byId.get('squad-0')).toEqual({
+      squadId: 'squad-0',
+      kind: 'fighter',
+      sectorKey: 'vega',
+      targetFactionId: 'alice',
+      state: 'attacking',
+    });
+    expect(byId.get('squad-1')).toEqual({
+      squadId: 'squad-1',
+      kind: 'fighter',
+      sectorKey: 'rigel',
+      targetFactionId: 'bob',
+      state: 'warping',
+    });
+    expect(byId.get('squad-2')?.state).toBe('forming');
+  });
+
+  it('restoreStates re-applies sector/target/state onto a freshly seeded pool', () => {
+    const saved = mutated().serialize();
+    // Fresh boot: pool re-seeds (squads forming at entry sectors), THEN restore.
+    const pool = new SquadPool();
+    pool.seed(botIds(LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE), () => 'entry', () => 'fighter');
+    pool.restoreStates(saved);
+    const sq0 = pool.get('squad-0')!;
+    expect(sq0.sectorKey).toBe('vega');
+    expect(sq0.targetFactionId).toBe('alice');
+    expect(sq0.state).toBe('attacking');
+    // membership re-derived by seed (not persisted) — squad still has its bots.
+    expect(sq0.botIds).toHaveLength(SQUAD_SIZE);
+    const sq1 = pool.get('squad-1')!;
+    expect(sq1.sectorKey).toBe('rigel');
+    expect(sq1.state).toBe('warping');
+  });
+
+  it('restoreStates skips unknown squad ids (defensive)', () => {
+    const pool = new SquadPool();
+    pool.seed(botIds(8), () => 'entry', () => 'fighter'); // only squad-0 populated
+    expect(() =>
+      pool.restoreStates([
+        { squadId: 'squad-0', kind: 'fighter', sectorKey: 'vega', targetFactionId: 'alice', state: 'attacking' },
+        { squadId: 'squad-99', kind: 'fighter', sectorKey: 'nope', targetFactionId: 'x', state: 'idle' },
+      ]),
+    ).not.toThrow();
+    expect(pool.get('squad-0')?.sectorKey).toBe('vega');
+    expect(pool.get('squad-99')).toBeUndefined();
+  });
+});

@@ -18,6 +18,7 @@
  */
 
 import { DEFAULT_SHIP_KIND, type ShipKindId } from '../../../shared-types/shipKinds.js';
+import type { DirectorSquadState } from '../DirectorPersistence.js';
 
 /** Members per squad. Part of the "8 × Legionnaires" wave identity. */
 export const SQUAD_SIZE = 8;
@@ -129,6 +130,48 @@ export class SquadPool {
   clearTarget(squad: SquadRecord): void {
     squad.targetFactionId = null;
     squad.warned = false;
+  }
+
+  /**
+   * Serialize each squad's abstract continuity for director-state persistence
+   * (Phase 5 — "restart from any state"). `botIds` is OMITTED (re-derived by
+   * `seed` on the next boot) and `warned` is a per-wave one-shot. The mapped
+   * `state` (SquadState) flows into `DirectorSquadState.state` — this site fails
+   * to typecheck if the two unions ever drift.
+   */
+  serialize(): DirectorSquadState[] {
+    const out: DirectorSquadState[] = [];
+    for (const sq of this.squads.values()) {
+      out.push({
+        squadId: sq.squadId,
+        kind: sq.kind,
+        sectorKey: sq.sectorKey,
+        targetFactionId: sq.targetFactionId,
+        state: sq.state,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Restore persisted squad continuity onto the freshly-seeded pool (Phase 5).
+   * MUST run AFTER `seed()` (which creates the squad records + membership and
+   * sets `kind`); this overwrites each KNOWN squad's `sectorKey` / `targetFactionId`
+   * / `state` so the existing respawn path re-homes its bots at the restored
+   * sector. `kind` is NOT restored — the pool re-seeds it and the director forces
+   * each member's `rec.kind` to the squad's seeded kind, so restoring kind here
+   * would desync the record from its bots (v1 is homogeneous anyway). Unknown
+   * squad ids are skipped (defensive against a squad-count change without a
+   * DIRECTOR_STATE_VERSION bump).
+   */
+  restoreStates(states: readonly DirectorSquadState[]): void {
+    for (const s of states) {
+      const sq = this.squads.get(s.squadId);
+      if (!sq) continue;
+      sq.sectorKey = s.sectorKey;
+      sq.targetFactionId = s.targetFactionId;
+      sq.state = s.state;
+    }
   }
 
   /**

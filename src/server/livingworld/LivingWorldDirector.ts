@@ -50,6 +50,7 @@ import { EscalatingWavePattern } from './director/WavePattern.js';
 import { WaveDirector, type WaveStep } from './director/WaveDirector.js';
 import { IncomingRegistry } from './IncomingRegistry.js';
 import type { WarpDisposition } from '../../shared-types/messages.js';
+import { DIRECTOR_STATE_VERSION, type DirectorPersistence } from './DirectorPersistence.js';
 
 // Re-export the room type so existing imports from this module keep working.
 export type { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -186,6 +187,13 @@ const FORMATION_DEST_ARRIVE = 250;
 /** World-unit spacing between adjacent formation slots (a Legionnaire wedge). */
 const FORMATION_SPACING = 140;
 
+/** Throttle (ms) for the director's crash-defence state persist inside the
+ *  control loop — matches the 60 s sector-snapshot cadence. The PRIMARY persist
+ *  is on graceful shutdown (index.ts); this bounds loss if the process is killed
+ *  uncleanly. It's a CRITICAL enqueue from the 1.5 s control loop, NOT the 60 Hz
+ *  `update()`, so it stays off the live loop. */
+const DIRECTOR_PERSIST_INTERVAL_MS = 60_000;
+
 export class LivingWorldDirector {
   private readonly rooms: Map<string, LivingWorldRoom>;
   private readonly sectorKeys: string[];
@@ -199,9 +207,14 @@ export class LivingWorldDirector {
   /** Phase-4 P0 — the single per-destination "incoming ships" feed behind the
    *  HUD banner. Fed off the universal hop choke point + the player-transit path. */
   private readonly incoming: IncomingRegistry;
+  /** Phase 5 — optional director-state persistence ("restart from any state").
+   *  Null in tests / when no sink is injected (⇒ today's fresh seed every boot). */
+  private readonly directorPersistence: DirectorPersistence | null;
 
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastShedAtMs = -Infinity;
+  /** Wall-clock of the last in-loop crash-defence persist (throttle anchor). */
+  private lastPersistAtMs = -Infinity;
   /** squadId → wall-clock the squad may next pick a new roam goal (the
    *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
   private readonly squadRoamNextAtMs = new Map<string, number>();
@@ -221,13 +234,20 @@ export class LivingWorldDirector {
 
   constructor(
     rooms: Map<string, LivingWorldRoom>,
-    options: Partial<LivingWorldOptions> & { rng?: Rng; nowMs?: () => number } = {},
+    options: Partial<LivingWorldOptions> & {
+      rng?: Rng;
+      nowMs?: () => number;
+      /** Phase 5 — inject to make the director persist + restore its squad
+       *  continuity across a restart. Omit ⇒ stateless (today's fresh seed). */
+      directorPersistence?: DirectorPersistence;
+    } = {},
   ) {
     this.rooms = rooms;
     this.sectorKeys = [...rooms.keys()];
     this.opts = { ...DEFAULT_LIVING_WORLD_OPTIONS, ...options };
     this.rng = options.rng ?? Math.random;
     this.nowMs = options.nowMs ?? Date.now;
+    this.directorPersistence = options.directorPersistence ?? null;
     this.pool = new HunterBotPool({
       botCount: this.opts.botCount,
       initialStaggerMs: this.opts.initialStaggerMs,
@@ -282,6 +302,12 @@ export class LivingWorldDirector {
       const squad = this.squadPool.squadOf(rec.botId);
       if (squad) rec.kind = squad.kind;
     }
+    // Phase 5 — "restart from any state": overlay persisted squad continuity onto
+    // the fresh seed (sectors / targets / states + wave bookkeeping). Bots stay
+    // `respawning` from `pool.seed`; the first `tick()` respawns each at its
+    // squad's RESTORED sector and `waveDirector.plan` resumes the wave (or cleanly
+    // stands down per live readiness). No-op (today's fresh seed) when no row.
+    this.restoreFromPersistence();
     for (const room of this.rooms.values()) {
       const bus = room.eventBus();
       const onDestroyed = (e: { type: 'ENTITY_DESTROYED'; entityId: string }): void => {
@@ -337,6 +363,40 @@ export class LivingWorldDirector {
   }
 
   /**
+   * Phase 5 — overlay persisted squad continuity onto the freshly-seeded pool.
+   * Runs inside `start()` AFTER seeding (squads + membership exist), BEFORE the
+   * control loop starts. Hydrate → null ⇒ keep today's fresh seed; else restore
+   * each known squad's sector/target/state + the wave bookkeeping. The existing
+   * respawn + plan machinery then re-spawns bots at the restored sectors and
+   * resumes / stands down.
+   */
+  private restoreFromPersistence(): void {
+    const p = this.directorPersistence?.hydrate();
+    if (!p) return;
+    this.squadPool.restoreStates(p.squads);
+    this.waveDirector.restore({ waveCount: p.waveCount, lastDispatchAtMs: p.lastDispatchAtMs });
+    serverLogEvent('director_state_restored', { squads: p.squads.length });
+  }
+
+  /**
+   * Persist the director's ABSTRACT continuity (per-squad sector/target/state +
+   * wave bookkeeping). Called on graceful shutdown (index.ts) and throttled from
+   * the control loop. No-op when no persistence sink is injected.
+   */
+  persistState(): void {
+    const dp = this.directorPersistence;
+    if (!dp) return;
+    const wave = this.waveDirector.serialize();
+    dp.persist({
+      version: DIRECTOR_STATE_VERSION,
+      savedAtMs: this.nowMs(),
+      squads: this.squadPool.serialize(),
+      waveCount: wave.waveCount,
+      lastDispatchAtMs: wave.lastDispatchAtMs,
+    });
+  }
+
+  /**
    * The control loop. Wave-driven (wave-system Phase 4): the old occupancy
    * distribution + proactive on-sight aggro (step 3) are RETIRED — drones go
    * hostile ONLY via the faction ledger (a wave declared against a ready base,
@@ -373,6 +433,12 @@ export class LivingWorldDirector {
       perSector: snap.perSector,
       squads: squads.byState,
     });
+
+    // ── 4. throttled crash-defence persist (off the 60 Hz live loop) ─────
+    if (this.directorPersistence && now - this.lastPersistAtMs >= DIRECTOR_PERSIST_INTERVAL_MS) {
+      this.lastPersistAtMs = now;
+      this.persistState();
+    }
   }
 
   /** Promote squads whose members have spawned (forming→idle) and squads that
