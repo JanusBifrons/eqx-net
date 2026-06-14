@@ -58,6 +58,15 @@ export interface LivingWorldRoom {
   }): boolean;
   despawnLivingWorldBot(botId: string): BotCarry | null;
   markBotHostile(botId: string): void;
+  /** Roaming-formation (Phase 5): the live pose of a living-world bot in this
+   *  room (SAB ground truth), or null if it has no slot here. The director reads
+   *  the squad LEADER's pose to anchor the formation frame each control tick. */
+  getBotPose(botId: string): { x: number; y: number; angle: number } | null;
+  /** Roaming-formation (Phase 5): assign a bot's in-sector MOVE target — its
+   *  formation slot (followers) or the squad destination (leader). The drone's
+   *  IDLE behaviour flies to it via an arrive ramp. No-op if the bot isn't an
+   *  in-sector drone here. */
+  setBotMoveTarget(botId: string, x: number, y: number): void;
   /** Wave-system Phase 4 — per-faction base summary for wave planning. Empty on
    *  engineering rooms (`sectorKey === null`; waves are galaxy-only). */
   factionBaseReadiness(): FactionBaseReadiness[];

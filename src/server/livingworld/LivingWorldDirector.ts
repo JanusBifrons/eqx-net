@@ -34,6 +34,12 @@ import {
   type Rng,
 } from './population.js';
 import { isEntrySector } from '../../core/galaxy/galaxy.js';
+import {
+  formationSlotOffset,
+  formationSlotWorldPose,
+  makeSlotOffset,
+  type WorldPoint,
+} from '../../core/ai/formation.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
@@ -170,6 +176,16 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   dispatchIntervalMs: 300_000,
 };
 
+/** Roaming-formation (Phase 5) tunables. Half-extent (game units) of the box
+ *  the leader's in-sector A→B destinations are drawn from — well inside the
+ *  ±5000 sector bounds and around the spawn zone so the squad stays readable. */
+const FORMATION_DEST_RANGE = 2000;
+/** Re-pick the squad destination once the leader is within this distance of it
+ *  (so the formation continuously flies new A→B legs rather than parking). */
+const FORMATION_DEST_ARRIVE = 250;
+/** World-unit spacing between adjacent formation slots (a Legionnaire wedge). */
+const FORMATION_SPACING = 140;
+
 export class LivingWorldDirector {
   private readonly rooms: Map<string, LivingWorldRoom>;
   private readonly sectorKeys: string[];
@@ -189,6 +205,13 @@ export class LivingWorldDirector {
   /** squadId → wall-clock the squad may next pick a new roam goal (the
    *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
   private readonly squadRoamNextAtMs = new Map<string, number>();
+  /** Roaming-formation (Phase 5): squadId → the squad's current IN-SECTOR A→B
+   *  destination (the leader flies to it; followers fly their formation slots).
+   *  Re-picked once the leader arrives. Reused scratch keeps the step alloc-free. */
+  private readonly squadFormationDest = new Map<string, { x: number; y: number }>();
+  private readonly _formationMembers: string[] = [];
+  private readonly _slotOffset = makeSlotOffset();
+  private readonly _slotWorld: WorldPoint = { x: 0, y: 0 };
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -333,6 +356,9 @@ export class LivingWorldDirector {
     // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
     this.roamStep(now);
 
+    // ── 2b-ii. fly gathered idle squads in formation toward in-sector A→B ──
+    this.formationStep();
+
     // ── 2c. clear "incoming" banners for squads that have arrived ────────
     this.reconcileIncoming();
 
@@ -411,6 +437,67 @@ export class LivingWorldDirector {
       }
     }
     return active > 0;
+  }
+
+  /**
+   * Roaming-formation (Phase 5 / playtest "AI bots which are 'roaming' just sort
+   * of sit there… make a formation and set arbitrary A-to-B destinations and fly
+   * in formation"). For every IDLE, unassigned squad whose active members are
+   * gathered in one sector, designate a leader, fly it toward an arbitrary
+   * in-sector A→B destination, and place each follower in a wedge slot relative
+   * to the leader's live pose (so the wedge faces the travel direction). The
+   * drones' `HostileDroneBehaviour` `arrive`s at the slot and slows to a stop.
+   *
+   * Members stay together, so the squad gathers + spools + warps as ONE unit
+   * (the roam hop in `roamStep` only fires once gathered, and starts every
+   * member's transit in the same control tick).
+   *
+   * Combat overrides this: a hostile (waved) drone is in COMBAT state and never
+   * reads the move target, so a squad under attack pursues normally.
+   */
+  private formationStep(): void {
+    for (const sq of this.squadPool.all()) {
+      if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
+      const room = this.rooms.get(sq.sectorKey);
+      if (!room) continue;
+
+      // Active members present in this sector, in stable botIds order so the
+      // leader + slot assignment is deterministic.
+      const members = this._formationMembers;
+      members.length = 0;
+      for (const botId of sq.botIds) {
+        const rec = this.pool.get(botId);
+        if (rec && rec.state === 'active' && rec.sectorKey === sq.sectorKey) members.push(botId);
+      }
+      if (members.length === 0) continue;
+
+      const leaderId = members[0]!;
+      const leaderPose = room.getBotPose(leaderId);
+      if (!leaderPose) continue;
+
+      // Pick / refresh the squad's in-sector destination: a fresh random A→B
+      // point once the leader has arrived (or if it has none yet).
+      let dest = this.squadFormationDest.get(sq.squadId);
+      if (
+        dest === undefined ||
+        Math.hypot(dest.x - leaderPose.x, dest.y - leaderPose.y) < FORMATION_DEST_ARRIVE
+      ) {
+        dest = {
+          x: (this.rng() * 2 - 1) * FORMATION_DEST_RANGE,
+          y: (this.rng() * 2 - 1) * FORMATION_DEST_RANGE,
+        };
+        this.squadFormationDest.set(sq.squadId, dest);
+      }
+
+      // Leader chases the destination; followers chase their wedge slot rotated
+      // into the leader's frame (so the formation faces the travel direction).
+      room.setBotMoveTarget(leaderId, dest.x, dest.y);
+      for (let i = 1; i < members.length; i++) {
+        formationSlotOffset('wedge', i, members.length, FORMATION_SPACING, this._slotOffset);
+        formationSlotWorldPose(leaderPose.x, leaderPose.y, leaderPose.angle, this._slotOffset, this._slotWorld);
+        room.setBotMoveTarget(members[i]!, this._slotWorld.x, this._slotWorld.y);
+      }
+    }
   }
 
   /** Execute one WaveDirector step (the side-effecting half — the planning is

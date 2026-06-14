@@ -2948,6 +2948,25 @@ export class SectorRoom extends Room<SectorState> {
     this.livingWorldBotHooks.markBotHostile(botId);
   }
 
+  /** Roaming-formation (Phase 5) — live SAB pose of a living-world bot here. */
+  getBotPose(botId: string): { x: number; y: number; angle: number } | null {
+    const rec = this.swarmRegistry.get(botId);
+    if (!rec) return null;
+    const b = slotBase(rec.slot);
+    return {
+      x: this.sabF32[b + SLOT_X_OFF]!,
+      y: this.sabF32[b + SLOT_Y_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+    };
+  }
+
+  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
+   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
+   *  bot with no behaviour registered here (e.g. mid-transit). */
+  setBotMoveTarget(botId: string, x: number, y: number): void {
+    this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
+  }
+
   /**
    * Wave-system Phase 4 — per-(owner, sector) faction base summary the
    * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).

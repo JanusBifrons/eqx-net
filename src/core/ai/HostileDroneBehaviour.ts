@@ -7,6 +7,7 @@ import {
 import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import { pickTarget, type MountTargetView } from './WeaponMountController.js';
+import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -68,6 +69,10 @@ const PATROL_THRUST_SCALE = 0.5;
 /** Strength of the inward bias applied when the drone is outside
  *  `PATROL_RADIUS`. Blends from 0 at the radius to 1 at 2 × radius. */
 const PATROL_INWARD_GAIN = 1.0;
+/** Roaming-formation (Phase 5): distance to the assigned move target within
+ *  which the drone ramps thrust down so per-kind damping brakes it to a stop
+ *  (the "slow down and come to a stop in formation, don't float past" feel). */
+const MOVE_ARRIVE_SLOW_RADIUS = 300;
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -87,6 +92,14 @@ export type DroneState = 'IDLE' | 'COMBAT';
 export class HostileDroneBehaviour implements IAiBehaviour {
   private lastFireTick = -1_000_000;
   private readonly kind: ShipKind;
+
+  /** Roaming-formation (Phase 5): the in-sector point the director wants this
+   *  drone to fly to while IDLE (its formation slot / the squad destination for
+   *  the leader). `null` ⇒ default origin orbit. Server-only — set via the
+   *  `setMoveTarget` hook; the client never ticks the drone brain. */
+  private moveTarget: { x: number; y: number } | null = null;
+  /** Reused arrive() output (alloc-free hot path, invariant #14). */
+  private readonly _steerScratch: SteerOutput = makeSteerOutput();
 
   // ── Phase 1: hostility / state machine ────────────────────────────────
   /** Behaviour state. Driven by `markHostile`/`purgeHostility` external
@@ -371,6 +384,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * "drone drifted to (4 133 782, -1 093 669) over a long session" bug.
    */
   private tickPatrol(self: AiEntity): AiIntent {
+    // Roaming-formation (Phase 5): when the director has assigned a move target
+    // (formation slot / squad destination), fly to it and slow to a stop there,
+    // instead of the default origin orbit. This is how a roaming squad flies in
+    // formation toward an arbitrary A→B destination.
+    if (this.moveTarget !== null) return this.tickMoveTo(self, this.moveTarget.x, this.moveTarget.y);
     const r = Math.hypot(self.x, self.y);
     const safeR = Math.max(r, 1);
 
@@ -563,6 +581,46 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * Linear ramp inside `±TURN_RAMP_WINDOW` so the drone slows into
    * the bearing instead of overshooting.
    */
+  /** Roaming-formation (Phase 5): set/clear the in-sector move target. The
+   *  director re-issues this each control tick (followers chase a slot that
+   *  moves with the leader; the leader chases the squad destination). */
+  setMoveTarget(x: number, y: number): void {
+    if (this.moveTarget === null) this.moveTarget = { x, y };
+    else { this.moveTarget.x = x; this.moveTarget.y = y; }
+  }
+
+  clearMoveTarget(): void {
+    this.moveTarget = null;
+  }
+
+  /** Steer to (tx, ty) with an arrive ramp: turn toward it, thrust forward
+   *  scaled down within the slow radius so damping brakes the drone to a stop at
+   *  the slot. Reuses the per-kind turn (`angvelTarget`) + thrust the orbit uses.
+   */
+  private tickMoveTo(self: AiEntity, tx: number, ty: number): AiIntent {
+    const steer = arrive(self.x, self.y, tx, ty, MOVE_ARRIVE_SLOW_RADIUS, this._steerScratch);
+    const out = this._intentScratch;
+    out.torque = 0;
+    out.fire = undefined;
+    if (steer.thrustScale <= 0) {
+      // At the slot — hold position (let damping settle), no turn.
+      out.fx = 0;
+      out.fy = 0;
+      out.setAngvel = 0;
+      return out;
+    }
+    // Desired facing toward the slot (same convention as tickPatrol: a ship at
+    // angle θ noses along (-sin θ, cos θ)).
+    const desiredAngle = Math.atan2(-steer.dirX, steer.dirY);
+    out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
+    const fwdX = -Math.sin(self.angle);
+    const fwdY = Math.cos(self.angle);
+    const thrustMag = this.kind.ai.thrust * steer.thrustScale;
+    out.fx = fwdX * thrustMag;
+    out.fy = fwdY * thrustMag;
+    return out;
+  }
+
   private angvelTarget(rawError: number): number {
     const err = wrapPi(rawError);
     if (Math.abs(err) <= TURN_DEADZONE) return 0;
