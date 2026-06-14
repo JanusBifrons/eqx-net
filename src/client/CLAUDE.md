@@ -349,15 +349,24 @@ Recovery thresholds are 2 ms lower than the downshift trigger AND require a 3× 
   picker silhouette the same way.
 - **Scrap (pose-core kind 3)** is a new client leaf
   (`net/entity/leaves/scrapClientLeaf.ts`) routed by `ClientEntityFactory`
-  (`case SWARM_KIND_SCRAP`). It is asteroid-like: a convexHull predWorld collider
+  (`case SWARM_KIND_SCRAP`). It is a convexHull predWorld collider
   built from the parent kind's component collider
   (`shipScrapGroups(entry.shipKind)[entry.componentIndex].collider`, mapped
   `x*scale,-y*scale` — IDENTICAL to the server `ScrapSpawner`), in
-  `SCRAP_COLLISION_GROUPS`, LOCKED + reposed (the smooth drift comes from
-  `interpolateSwarmPose`, not the body). `buildScrapGfx(parentKind, componentIndex)`
+  `SCRAP_COLLISION_GROUPS`. **It is DRONE-like, NOT asteroid-like (Phase-5
+  desync fix, 2026-06-14):** spawned **UNLOCKED** at the server's
+  `SCRAP_DEFAULT_MASS` and driven KINEMATICALLY each frame by `updateMirror` to
+  the single interpolated pose — `entry.kind === 3` joins the `=== 1` branch in
+  BOTH the `updateMirror` follower AND `swarmSpriteUpdater`'s pose path
+  (`resolveEntityDisplayPose`, not a second render-now `interpolateSwarmPose`),
+  so render == collision and the local player's predicted deflection matches the
+  server's dynamic mass-1 scrap. **Locking it (the old asteroid-like behaviour)
+  made it an infinite-mass wall the player bounced off in prediction while the
+  server let them shove it — every snapshot reconciled that divergence as the
+  user's "huge spike in corrections".** `buildScrapGfx(parentKind, componentIndex)`
   renders the component's recentred sub-shapes from the catalogue, keeping the
   part colours so a dead ship visibly comes apart. `swarmSpriteUpdater` has a
-  kind-3 create branch; the pose path is the existing non-drone
-  `interpolateSwarmPose`. Scrap geometry is NEVER on the wire — looked up by
-  `(parentShipKind, componentIndex)`. See
+  kind-3 create branch. Scrap geometry is NEVER on the wire — looked up by
+  `(parentShipKind, componentIndex)`. Lock: `scrapClientLeaf.test.ts` (a ship
+  driven into a scrap fragment must shove it, not bounce). See
   [docs/architecture/composite-ships-and-scrap.md](../../docs/architecture/composite-ships-and-scrap.md).

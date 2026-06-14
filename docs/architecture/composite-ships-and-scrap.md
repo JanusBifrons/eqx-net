@@ -79,10 +79,21 @@ free-floating scrap piece.
   (`MAX_LIVE_SCRAP`) bounds accumulation. Scrap is excluded from persistence
   (transient debris; a cold boot starts with none).
 - **Client render**: `scrapClientLeaf` builds the predWorld collider (same
-  component collider + scrap group, locked + reposed), and `buildScrapGfx`
-  renders the component's recentred sub-shapes from the catalogue (keeping their
-  colours so a dead ship visibly comes apart). Smooth drift comes from
-  `interpolateSwarmPose`. Preview: `pnpm tsx scripts/render-scrap-preview.mjs`.
+  component collider + scrap group). It is **DRONE-like, NOT asteroid-like**
+  (Phase-5 desync fix, 2026-06-14): the body is spawned **UNLOCKED** at the
+  server's `SCRAP_DEFAULT_MASS` and is a **kinematic follower** driven each frame
+  by `ColyseusClient.updateMirror` to the single interpolated pose (the
+  one-pose-per-frame rule — `entry.kind === 3` joins the `=== 1` branch), so
+  render == collision and the local player's predicted deflection matches the
+  server's dynamic mass-1 scrap. **Why it changed:** scrap was originally
+  locked + reposed like an asteroid, making it an infinite-mass wall the player
+  bounced off in prediction while the server let them shove it — every snapshot
+  reconciled that divergence as a "huge spike in corrections" (the user's
+  report). `buildScrapGfx` renders the component's recentred sub-shapes from the
+  catalogue (keeping their colours so a dead ship visibly comes apart). Lock:
+  `scrapClientLeaf.test.ts` (drives a ship into a scrap fragment in the real
+  predWorld; the fragment must be shoved, not immovable). Preview:
+  `pnpm tsx scripts/render-scrap-preview.mjs`.
 
 ## Deferred
 

@@ -54,18 +54,28 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
 - **Payload**: defined by
   [SectorSnapshotPayload](../../src/server/rooms/SectorSnapshot.ts):
   ```
-  { schemaVersion, sectorKey, savedAtMs, swarm: [{ entityId, kind, x, y, health }] }
+  { schemaVersion, sectorKey, savedAtMs,
+    swarm: [{ entityId, kind, x, y, health }],
+    structures?: [{ entityId, owner, kind, x, y, health,
+                    isConstructed, constructionProgress, minerals, storedPower }] }
   ```
-- **What's persisted**: swarm health (drones; asteroids carry `health: 0`
-  for diagnostics but aren't tracked). **What's not**: ships
-  (those go to Limbo, not snapshots — see sub-phase B), projectiles
-  (short-lived), positions (deterministic from the seed; restoring positions
-  would re-introduce the entity-id-stability problem on shape changes).
+- **What's persisted**: asteroid swarm health, AND (Phase 5, schema v3) the FULL
+  state of placed **structures** — owner / subtype / pose / construction /
+  minerals / power. Structure positions DO persist (they are player-placed, not
+  seed-deterministic). Connections are NOT persisted — they re-derive from the
+  auto-connect sweep once the structures are re-placed on hydrate. **What's
+  not**: roaming drones (kind 1, re-seeded at entry sectors by the warp-in
+  director), scrap (kind 3, transient debris), projectiles (short-lived), and
+  active ships (those go to Limbo / the roster, not the sector snapshot).
+  *(The Phase-5 blacklist overhaul intends drones / scrap / lingering hulls to
+  persist too; structure persistence landed first.)*
 - **Hydration on `onCreate`**: query the most recent row for this
   `sectorKey`, run it through `parseSnapshot`. If schema mismatches or
   the row is older than 24 h (`SNAPSHOT_STALENESS_MS`), discard and
-  fresh-spawn from config. Otherwise restore swarm health for entities
-  whose IDs are still in the registry.
+  fresh-spawn from config. Otherwise restore asteroid swarm health for entities
+  whose IDs are still in the registry, and RECONSTRUCT each persisted structure
+  (re-place via `structurePlacement.place`, restore its construction / minerals
+  / power / health, then one grid pulse re-forms the connection web).
 
 The 24 h cap prevents zombie state from a long downtime — a sector that
 sat untouched for a week shouldn't come back with stale drone wreckage.

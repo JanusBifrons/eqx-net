@@ -79,7 +79,12 @@ describe('EntityKindRegistry', () => {
     const scrap = getEntityKind('scrap');
     expect(scrap.sync.transport).toBe('pose-core');
     expect(scrap.sync.poseCoreKind).toBe(3);
-    expect(scrap.sync.interpolated).toBe(false); // static, like an asteroid
+    // Phase-5 desync fix: scrap is INTERPOLATED like a drone (dynamic, pushable
+    // kinematic follower), NOT static like an asteroid — the server simulates it
+    // as a dynamic mass-1 body, so the client must follow that interpolated pose
+    // with an unlocked body (render == collision).
+    expect(scrap.sync.interpolated).toBe(true);
+    expect(scrap.render.interpolated).toBe(true);
     expect(entityKindByPoseCore(3)).toBe('scrap');
     // The parent ship-kind id (`shipKind`) + the scrap-group `componentIndex`
     // must survive the per-frame mirror rebuild.

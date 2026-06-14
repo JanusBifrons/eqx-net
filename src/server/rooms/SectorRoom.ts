@@ -119,8 +119,9 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
-import { recordGameJoin, recordKill } from '../stats/StatsService.js';
-// db / saveSnapshot / SectorSnapshot.* now used inside SectorPersistence.ts
+import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
+import { db } from '../db/Database.js';
+import type { SectorSnapshotStructure } from './SectorSnapshot.js';
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
 // RosterFullError is handled inside RosterPersistence.ts
@@ -1465,6 +1466,15 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.shieldHullRouter.swarmHealth,
+      structures: () => this.structureRegistry.all(),
+      restoreStructures: (rows) => this.restoreStructuresFromSnapshot(rows),
+      saveRow: (key, payload) => saveSnapshot(key, payload),
+      loadRow: (key) =>
+        db
+          .prepare(
+            'SELECT snapshot, created_at FROM game_snapshots WHERE sector_id = ? ORDER BY created_at DESC LIMIT 1',
+          )
+          .get(key) as { snapshot: string; created_at: number } | undefined,
       logger,
     });
 
@@ -2590,6 +2600,40 @@ export class SectorRoom extends Room<SectorState> {
         this.swarmHealth.set(droneId, getDroneMaxHealth('fighter') ?? 40);
         this.swarmShield.set(droneId, 0); // hull exposed so turret damage lands
       }
+    }
+  }
+
+  /**
+   * Phase 5 (persistence) — reconstruct placed structures from a hydrated
+   * snapshot. Reuses the SAME placement seam `seedStructureScenario` uses
+   * (`structurePlacement.place` → spawn body + fresh registry record), then
+   * restores the persisted construction / minerals / power / health and rebuilds
+   * the grid so connections re-derive via the auto-connect sweep. A fresh server
+   * mints new entity ids — nothing references the saved ids across a restart.
+   */
+  private restoreStructuresFromSnapshot(rows: readonly SectorSnapshotStructure[]): void {
+    let restored = 0;
+    for (const r of rows) {
+      const id = this.structurePlacement.place(r.owner, r.kind, r.x, r.y);
+      if (id === null) {
+        logger.warn({ kind: r.kind, x: r.x, y: r.y }, 'persisted structure rejected on hydrate');
+        continue;
+      }
+      const rec = this.structureRegistry.get(id);
+      if (rec) {
+        rec.isConstructed = r.isConstructed;
+        rec.constructionProgress = r.constructionProgress;
+        rec.minerals = r.minerals;
+        rec.storedPower = r.storedPower;
+      }
+      this.swarmHealth.set(id, r.health);
+      restored += 1;
+    }
+    if (restored > 0) {
+      this.structureRegistry.topologyDirty = true;
+      // One pulse re-forms the connection web (auto-connect sweep) + powers the
+      // grid + refreshes the structures[] slice.
+      this.structureGridTick();
     }
   }
 
