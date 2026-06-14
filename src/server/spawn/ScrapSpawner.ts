@@ -30,6 +30,7 @@
 
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
+import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { SCRAP_BURST_SPEED, SCRAP_HP, MAX_LIVE_SCRAP } from '../../core/swarm/scrapConstants.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
@@ -120,13 +121,11 @@ export class ScrapSpawner {
       const worldY = pose.y + lx * sin + ly * cos;
 
       //   3. scrap-LOCAL math-up collider (recentred group collider, scaled +
-      //      Y-flipped to math-up). Object form for SwarmSpawner.spawnScrap.
-      const vertices: Vec2[] = g.collider.map(([x, y]) => ({ x: x * scale, y: -y * scale }));
-      let radius = 0;
-      for (const v of vertices) {
-        const h = Math.hypot(v.x, v.y);
-        if (h > radius) radius = h;
-      }
+      //      Y-flipped to math-up). Shared with the persistence hydrate path via
+      //      `scrapColliderFor` so a restored scrap collider is byte-identical.
+      const geom = scrapColliderFor(parentKindId, i)!; // non-null: i < groups.length
+      const vertices = geom.vertices;
+      const radius = geom.radius;
 
       // Radial drift OUTWARD from the ship centre through this component, on top
       // of the ship's own velocity. A component sitting exactly on the centre

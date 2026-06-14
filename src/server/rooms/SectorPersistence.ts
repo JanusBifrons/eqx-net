@@ -31,6 +31,7 @@ import {
   parseSnapshot,
   type SectorSnapshotPayload,
   type SectorSnapshotStructure,
+  type SectorSnapshotScrap,
 } from './SectorSnapshot.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
@@ -60,6 +61,12 @@ export interface SectorPersistenceDeps {
   /** Reconstruct the placed structures on hydrate (re-place + restore state +
    *  rebuild the grid). Owned by `SectorRoom` (it holds the spawn machinery). */
   restoreStructures: (rows: readonly SectorSnapshotStructure[]) => void;
+  /** Free-floating scrap pieces to persist (pose from SAB + parent kind +
+   *  componentIndex + health). Owned by `SectorRoom` (it reads the SAB). */
+  scrapEntities: () => Iterable<SectorSnapshotScrap>;
+  /** Reconstruct the scrap pieces on hydrate (re-derive collider + spawn +
+   *  seed health). Owned by `SectorRoom`. */
+  restoreScrap: (rows: readonly SectorSnapshotScrap[]) => void;
   /** Write a snapshot row for this sector (production: `saveSnapshot`). */
   saveRow: (sectorKey: string, payload: SectorSnapshotPayload) => void;
   /** Load the most-recent snapshot row for this sector (production: a sqlite
@@ -78,13 +85,15 @@ export class SectorPersistence {
     if (sectorKey === null) return;
     const swarm: SectorSnapshotPayload['swarm'] = [];
     for (const rec of d.swarmRegistry.all()) {
-      // Drones (kind 1) are NOT persisted (drone-warp-in, 2026-06-11): they are
-      // owned by the roaming LivingWorldDirector pool and re-seed at entry
-      // sectors on boot. Scrap (kind 3) is transient debris from a death event.
+      // The persistence BLACKLIST (opt-out model). Drones (kind 1) are NOT
+      // persisted via the sector snapshot — they are owned by the
+      // LivingWorldDirector, which persists + re-dispatches its squad pool
+      // itself (NOT here). Structures (kind 2) and scrap (kind 3) DO persist,
+      // but via their richer dedicated arrays below (the bare swarm row lacks
+      // owner/construction for a structure, parent-kind/componentIndex for
+      // scrap). So the generic swarm[] row carries only asteroids (kind 0).
       if (rec.kind === 1) continue;
       if (rec.kind === SWARM_KIND_SCRAP) continue;
-      // Structures (kind 2) persist via the richer `structures` array below, not
-      // the swarm row (which lacks owner / construction / minerals / power).
       if (rec.kind === 2) continue;
       // Asteroids (kind 0): pose + health. Position isn't restored (deterministic
       // from the seed) but is recorded for diagnostics.
@@ -113,12 +122,15 @@ export class SectorPersistence {
         storedPower: s.storedPower,
       });
     }
+    const scrap: SectorSnapshotScrap[] = [];
+    for (const s of d.scrapEntities()) scrap.push(s);
     const payload: SectorSnapshotPayload = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       sectorKey,
       savedAtMs: Date.now(),
       swarm,
       ...(structures.length > 0 ? { structures } : {}),
+      ...(scrap.length > 0 ? { scrap } : {}),
     };
     try {
       d.saveRow(sectorKey, payload);
@@ -178,8 +190,16 @@ export class SectorPersistence {
         d.logger.warn({ err, sectorKey }, 'structure restore failed — partial hydrate');
       }
     }
+    const scrap = payload.scrap ?? [];
+    if (scrap.length > 0) {
+      try {
+        d.restoreScrap(scrap);
+      } catch (err) {
+        d.logger.warn({ err, sectorKey }, 'scrap restore failed — partial hydrate');
+      }
+    }
     d.logger.info(
-      { sectorKey, ageMs, restored, structures: structures.length },
+      { sectorKey, ageMs, restored, structures: structures.length, scrap: scrap.length },
       'sector hydrated from snapshot',
     );
   }

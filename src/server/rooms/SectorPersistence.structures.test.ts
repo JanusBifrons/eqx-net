@@ -14,7 +14,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { Logger } from 'pino';
 import { SectorPersistence, type PersistableStructure } from './SectorPersistence.js';
-import type { SectorSnapshotPayload, SectorSnapshotStructure } from './SectorSnapshot.js';
+import type {
+  SectorSnapshotPayload,
+  SectorSnapshotStructure,
+  SectorSnapshotScrap,
+} from './SectorSnapshot.js';
 import { CURRENT_SCHEMA_VERSION } from './SectorSnapshot.js';
 
 const noopLogger = { info: () => undefined, warn: () => undefined } as unknown as Logger;
@@ -34,7 +38,12 @@ function makeStructure(over: Partial<PersistableStructure> = {}): PersistableStr
   };
 }
 
-function makeDeps(structures: PersistableStructure[], restore: (rows: readonly SectorSnapshotStructure[]) => void) {
+function makeDeps(
+  structures: PersistableStructure[],
+  restore: (rows: readonly SectorSnapshotStructure[]) => void,
+  scrap: SectorSnapshotScrap[] = [],
+  restoreScrap: (rows: readonly SectorSnapshotScrap[]) => void = () => undefined,
+) {
   let storedRow: { snapshot: string; created_at: number } | undefined;
   const swarmHealth = new Map<string, number>();
   for (const s of structures) swarmHealth.set(s.id, 333);
@@ -46,6 +55,8 @@ function makeDeps(structures: PersistableStructure[], restore: (rows: readonly S
       swarmHealth,
       structures: () => structures,
       restoreStructures: restore,
+      scrapEntities: () => scrap,
+      restoreScrap,
       saveRow: (_key: string, payload: SectorSnapshotPayload) => {
         storedRow = { snapshot: JSON.stringify(payload), created_at: Date.now() };
       },
@@ -53,6 +64,21 @@ function makeDeps(structures: PersistableStructure[], restore: (rows: readonly S
       logger: noopLogger,
     },
     readStored: () => storedRow,
+  };
+}
+
+function makeScrap(over: Partial<SectorSnapshotScrap> = {}): SectorSnapshotScrap {
+  return {
+    entityId: 'scrap-3-0',
+    parentShipKind: 'havok',
+    componentIndex: 1,
+    x: 700,
+    y: -200,
+    vx: 12,
+    vy: -3,
+    angle: 0.5,
+    health: 18,
+    ...over,
   };
 }
 
@@ -100,5 +126,43 @@ describe('SectorPersistence — structures survive a server restart', () => {
     persistence.persist();
     persistence.hydrate();
     expect(restore).not.toHaveBeenCalled();
+  });
+});
+
+describe('SectorPersistence — scrap survives a server restart (v4)', () => {
+  it('persist() writes scrap into the payload and hydrate() hands it to restoreScrap', () => {
+    const scrap = makeScrap();
+    const restoreScrap = vi.fn();
+    const { deps, readStored } = makeDeps([], () => undefined, [scrap], restoreScrap);
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(payload.scrap).toHaveLength(1);
+    expect(payload.scrap![0]).toMatchObject({
+      entityId: 'scrap-3-0',
+      parentShipKind: 'havok',
+      componentIndex: 1,
+      x: 700,
+      y: -200,
+      vx: 12,
+      vy: -3,
+      angle: 0.5,
+      health: 18,
+    });
+
+    persistence.hydrate();
+    expect(restoreScrap).toHaveBeenCalledTimes(1);
+    const rows = restoreScrap.mock.calls[0]![0] as readonly SectorSnapshotScrap[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ entityId: 'scrap-3-0', parentShipKind: 'havok', health: 18 });
+  });
+
+  it('omits the scrap array entirely when there is none', () => {
+    const { deps, readStored } = makeDeps([], () => undefined, []);
+    new SectorPersistence(deps).persist();
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.scrap).toBeUndefined();
   });
 });

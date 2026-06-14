@@ -121,7 +121,8 @@ import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 import { validateToken, getUser } from '../auth/AuthService.js';
 import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
 import { db } from '../db/Database.js';
-import type { SectorSnapshotStructure } from './SectorSnapshot.js';
+import type { SectorSnapshotStructure, SectorSnapshotScrap } from './SectorSnapshot.js';
+import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
 // RosterFullError is handled inside RosterPersistence.ts
@@ -1468,6 +1469,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmHealth: this.shieldHullRouter.swarmHealth,
       structures: () => this.structureRegistry.all(),
       restoreStructures: (rows) => this.restoreStructuresFromSnapshot(rows),
+      scrapEntities: () => this.scrapEntitiesForSnapshot(),
+      restoreScrap: (rows) => this.restoreScrapFromSnapshot(rows),
       saveRow: (key, payload) => saveSnapshot(key, payload),
       loadRow: (key) =>
         db
@@ -2634,6 +2637,53 @@ export class SectorRoom extends Room<SectorState> {
       // One pulse re-forms the connection web (auto-connect sweep) + powers the
       // grid + refreshes the structures[] slice.
       this.structureGridTick();
+    }
+  }
+
+  /** Phase 5 (persistence v4) — the free-floating scrap pieces to persist: their
+   *  drifted SAB pose + parent ship-kind + scrap-group component index + health.
+   *  The collider is re-derived on hydrate, so it's NOT persisted. */
+  private *scrapEntitiesForSnapshot(): Iterable<SectorSnapshotScrap> {
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_SCRAP) continue;
+      if (rec.shipKind === undefined || rec.componentIndex === undefined) continue;
+      const b = slotBase(rec.slot);
+      yield {
+        entityId: rec.id,
+        parentShipKind: rec.shipKind,
+        componentIndex: rec.componentIndex,
+        x: this.sabF32[b + SLOT_X_OFF]!,
+        y: this.sabF32[b + SLOT_Y_OFF]!,
+        vx: this.sabF32[b + SLOT_VX_OFF]!,
+        vy: this.sabF32[b + SLOT_VY_OFF]!,
+        angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+        health: this.swarmHealth.get(rec.id) ?? 0,
+      };
+    }
+  }
+
+  /** Phase 5 (persistence v4) — reconstruct persisted scrap on hydrate. The
+   *  convex-hull collider is RE-DERIVED from (parentShipKind, componentIndex) via
+   *  the SAME `scrapColliderFor` the death path uses, so the restored body is
+   *  byte-identical. Restored scrap is NOT re-registered in the ScrapSpawner FIFO
+   *  (it's a bounded set from the snapshot; the slot pool still hard-caps it). */
+  private restoreScrapFromSnapshot(rows: readonly SectorSnapshotScrap[]): void {
+    for (const r of rows) {
+      const geom = scrapColliderFor(r.parentShipKind as ShipKindId, r.componentIndex);
+      if (geom === null) continue; // parent kind no longer scraps / index gone
+      const ok = this.swarmSpawner.spawnScrap({
+        id: r.entityId,
+        x: r.x,
+        y: r.y,
+        vx: r.vx,
+        vy: r.vy,
+        angle: r.angle,
+        radius: geom.radius,
+        parentShipKind: r.parentShipKind as ShipKindId,
+        componentIndex: r.componentIndex,
+        vertices: geom.vertices,
+      });
+      if (ok) this.swarmHealth.set(r.entityId, r.health);
     }
   }
 
