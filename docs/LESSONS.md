@@ -14,6 +14,50 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-14 — Equinox laser issue — a 256× texture-scale bug that headless tests could NOT see (4 failed "fixes")
+Commit: plan `i-d-like-you-to-typed-cray`
+
+The "laser beam renders infinitely / flies off the screen / never tapers" report
+survived **four rounds** of the Equinox-Bugs doc — each time "fixed" and "verified
+with screenshots", each time still broken on-device. The reasons are the lesson:
+
+**1. The real bug was a texture-width scale error, invisible to headless tests.**
+`BeamSpritePool` stretches a `Sprite` to draw each beam: a Pixi sprite renders
+`worldLen = scale.x × texture.width`, so the length must be `scale.x = worldLen /
+texture.width`. The solid core uses the 1×1 `Texture.WHITE` (÷1, correct), but the
+**gradient + fade textures are 256 px wide** (they encode the horizontal fade).
+`scale.x = worldLen` on those rendered the fade tail **256× too long** — a 75 u
+tail became ~19 200 u, so the "fade" stretched off ANY screen at ANY zoom and the
+beam looked solid to infinity. The unit tests (`BeamSpritePool.solidTaper.test.ts`)
+construct the pool **headless**, where the canvas textures fall back to
+`Texture.WHITE` (1×1) → `texture.width === 1` → the bug is mathematically absent.
+So every deterministic test passed while the production browser render was broken.
+This is Invariant #13 in the negative: **the bug lived at the browser render with
+a real 256-px texture; a test that can't instantiate that texture can't catch it.**
+The lock now injects a genuine 256-px `Texture` (`new Texture({ source: new
+TextureSource({ width: 256, height: 1 }) })`) and asserts the DRAWN world length.
+
+**2. Stop reasoning about render output — MEASURE it.** Three iterations were
+burned inferring beam length from eyeballed screenshot pixels, fooled by a second
+confound: the **spawn camera-zoom ease**. Captures taken mid-ease landed at
+different scales (0.5 → ~1.1×), so a before/after "difference" was zoom, not code,
+and a too-timid `maxRangeMul` 1.5→1.3 tweak (13 %) read as "zero difference". The
+breakthrough was reading the actual numbers at runtime: `worldScaleX=0.5, dpr=1,
+beam dist=325` ⇒ the beam MUST be 162 px but rendered ~370 px ⇒ a 2× render error,
+not a data error. Then logging the sprite's `texture.width` (256) named the cause.
+For deterministic captures, force `?zoom=` (the spec does) so the camera can't ease
+the comparison out from under you.
+
+**3. The two requested changes were trivial; the hidden render bug was the whole
+problem.** Damage falloff reverse-square → LINEAR was a one-line change in
+`hitscanFalloffFrac` + a test. The visual taper amount is a one-constant client
+knob (`VISUAL_BEAM_SOLID_FRAC`, purely visual — `solidDist` never feeds damage).
+Neither would have helped until the 256× texture bug was found. When a "simple"
+fix fails repeatedly, the bug is almost certainly somewhere other than where the
+request points — go get a measurement at the layer the user actually sees.
+
+---
+
 ## 2026-06-13 — composite-ships + scrap-on-death — three non-obvious traps
 Commit: composite-ships-havok Phases 0–2c
 

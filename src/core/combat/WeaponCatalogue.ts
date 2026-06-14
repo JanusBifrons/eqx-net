@@ -20,9 +20,9 @@ interface WeaponDefBase {
 export interface HitscanWeaponDef extends WeaponDefBase {
   mode: 'hitscan';
   range: number;
-  /** Optional "optimal + beyond" damage falloff (P3.13). `range` is the OPTIMAL
-   *  range: FULL `damage` out to it. BEYOND it, applied damage falls REVERSE-
-   *  SQUARE to `minDamageFrac × damage` at `range × maxRangeMul` — the max reach
+  /** Optional "optimal + beyond" damage falloff. `range` is the OPTIMAL
+   *  range: FULL `damage` out to it. BEYOND it, applied damage falls LINEARLY
+   *  to `minDamageFrac × damage` at `range × maxRangeMul` — the max reach
    *  the ray casts to; past that there is no hit. `maxRangeMul` defaults to 1
    *  (no beyond-optimal band ⇒ flat full damage everywhere in range). Absent
    *  falloff ⇒ flat damage. SERVER-AUTHORITATIVE — the client reads the scaled
@@ -110,12 +110,16 @@ const HITSCAN_DEF: HitscanWeaponDef = {
   damage: 13,
   cooldownTicks: 10,
   range: 250,
-  // P3.13 — "optimal + beyond": FULL 13 damage out to the 250 u OPTIMAL range,
-  // then a reverse-square drop-off to 15 % (≈2) at maxRange = 250×1.5 = 375 u
-  // (where the ray ends). Gives the beam a reliable knife-fight range with a
-  // tapering fringe beyond — and a visible reason for the tapered render
-  // (WS-A3b). Tunable; server-authoritative.
-  falloff: { minDamageFrac: 0.15, maxRangeMul: 1.5 },
+  // "optimal + beyond", LINEAR (Equinox laser issue, 2026-06-14): FULL 13 damage
+  // out to the 250 u OPTIMAL range, then a LINEAR drop-off to 15 % (≈2) at
+  // maxRange = 250×1.3 = 325 u (where the ray ends). maxRangeMul tightened
+  // 1.5 → 1.3 so the beam's beyond-optimal fringe is a SHORT, clearly-terminating
+  // tail that fades to nothing well within view — the 1.5× (375 u) tail ran to the
+  // screen edge and read as "renders infinitely". The CLIENT beam visual taper
+  // (BeamSpritePool) draws solid to optimal then fades to nothing across
+  // optimal→maxRange, so the visible taper == this damage band. Tunable;
+  // server-authoritative (client reads the scaled damage off DamageEvent).
+  falloff: { minDamageFrac: 0.15, maxRangeMul: 1.3 },
   // Beam slot trigger cost — interceptor full-pool sustain ≈ 6 s
   // (energyMax 180 / (5 × 6 Hz)). One slot trigger drains 5 regardless
   // of the twin mounts.
@@ -249,13 +253,19 @@ export function weaponAutoFireRange(def: WeaponDef): number {
 }
 
 /**
- * "Optimal + beyond" hitscan damage falloff fraction in [minDamageFrac, 1]
- * (P3.13; LINEAR since Phase-5 2026-06-14 — was reverse-square). FULL (1.0) out
- * to `optimalRange`, then falling LINEARLY with the normalized over-optimal
- * distance to `minDamageFrac` at `maxRange`, clamped to `minDamageFrac` past it.
- * Pure + allocation-free (scalar in/out) — safe on the fire-resolution path.
- * Multiply the weapon's flat `damage` by this to get the distance-scaled damage.
- * A degenerate band (`maxRange <= optimalRange`) yields 1.0 = flat full damage.
+ * "Optimal + beyond" hitscan damage falloff fraction in [minDamageFrac, 1].
+ * FULL (1.0) out to `optimalRange`, then falling LINEARLY in the normalized
+ * over-optimal distance to `minDamageFrac` at `maxRange`, clamped to
+ * `minDamageFrac` past it. Pure + allocation-free (scalar in/out) — safe on the
+ * fire-resolution path. Multiply the weapon's flat `damage` by this to get the
+ * distance-scaled damage. A degenerate band (`maxRange <= optimalRange`) yields
+ * 1.0 = flat full damage.
+ *
+ * LINEAR (Equinox laser issue, 2026-06-14; supersedes the P3.13 reverse-square).
+ * The user's decision: a constant fall per unit of over-range distance reads as a
+ * smooth, predictable taper that matches the visual beam taper — the reverse-
+ * square's "slow then cliff" convex shape felt like damage "drops to 0 almost
+ * instantly beyond range". Equal-width sub-bands now drop equal amounts.
  */
 export function hitscanFalloffFrac(dist: number, optimalRange: number, maxRange: number, minDamageFrac: number): number {
   if (dist <= optimalRange) return 1;

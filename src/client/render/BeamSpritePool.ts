@@ -220,7 +220,14 @@ export class BeamSpritePool {
         // "goes forever / solid past the guide / never tapers").
         const solidLen = Math.max(0, Math.min(b.solidLen, len));
         sprite.texture = this._solidTexture;
-        sprite.scale.set(Math.max(solidLen, 0.0001), this._style.width);
+        // scale.x renders `world units = scale.x × texture.width`, so the world
+        // length must be DIVIDED by the texture width. The solid core uses the
+        // 1×1 WHITE texture (÷1 = no-op), but the fade tail below uses the 256-px
+        // gradient texture — without the division it rendered 256× too long, so
+        // the "fade" stretched ~19 200 u and the beam looked solid to infinity /
+        // ran off the screen (the "renders infinitely" bug; headless tests use
+        // the 1×1 WHITE fallback so they never saw it). textures are 1 px tall.
+        sprite.scale.set(Math.max(solidLen, 0.0001) / this._solidTexture.width, this._style.width);
         const tailLen = len - solidLen;
         let fade = this._fadePool[i];
         if (tailLen > 0.01) {
@@ -236,15 +243,18 @@ export class BeamSpritePool {
           fade.x = b.fromX + Math.cos(rot) * solidLen;
           fade.y = -b.fromY + Math.sin(rot) * solidLen;
           fade.rotation = rot;
-          fade.scale.set(tailLen, this._style.width);
+          // ÷ texture width (256 for the real gradient) — see the solid-core note.
+          fade.scale.set(tailLen / this._fadeTexture!.width, this._style.width);
         } else if (fade) {
           fade.visible = false;
         }
       } else {
         // Legacy single-sprite path: the per-style texture (gradient if taper,
         // else WHITE) stretched to the full length. Used by remote/mining beams.
+        // ÷ texture width (256 for the taper gradient) — see the solid-core note;
+        // without it remote/enemy beams rendered 256× too long too.
         sprite.texture = this._texture;
-        sprite.scale.set(len, this._style.width);
+        sprite.scale.set(len / this._texture.width, this._style.width);
         const fade = this._fadePool[i];
         if (fade) fade.visible = false;
       }
@@ -295,18 +305,20 @@ export class BeamSpritePool {
     return this._pool.length;
   }
 
-  /** Test-only (P1a): the drawn SOLID-core length (sprite scale.x) for beam `i`,
-   *  or null when no such sprite is visible. */
+  /** Test-only (P1a): the drawn SOLID-core WORLD length for beam `i` (= scale.x ×
+   *  texture width, so it's correct for any texture width — see the setBeams
+   *  texture-width note), or null when no such sprite is visible. */
   solidLenAt(i: number): number | null {
     const s = this._pool[i];
-    return s && s.visible ? s.scale.x : null;
+    return s && s.visible ? s.scale.x * s.texture.width : null;
   }
 
   /** Test-only (P1a): the falloff-TAIL sprite state for beam `i` — visibility,
-   *  drawn length (scale.x) and pixi-space start x — or null when the pool has no
-   *  tail sprite for that index. */
+   *  drawn WORLD length (= scale.x × texture width, correct for any texture
+   *  width) and pixi-space start x — or null when the pool has no tail sprite for
+   *  that index. */
   fadeTailAt(i: number): { visible: boolean; lenX: number; x: number } | null {
     const f = this._fadePool[i];
-    return f ? { visible: f.visible, lenX: f.scale.x, x: f.x } : null;
+    return f ? { visible: f.visible, lenX: f.scale.x * f.texture.width, x: f.x } : null;
   }
 }
