@@ -213,17 +213,13 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.connCount = st.connTo.length;
         data.connMax = getStructureKind('connector').maxConnections;
       }
-      // Owner readout — "you" for the local player's base, else a truncated id so
-      // a player can identify whose structure they clicked (mirrors the
-      // lingering-hull owner line). Static per structure, client-resident → instant.
+      // Owner readout — the player's DISPLAY NAME so you can identify whose base
+      // it is ("you" for the local player). An absent ownerName means the owner
+      // didn't resolve to a DB user — an orphaned structure (the server logs it)
+      // → "Unknown". NEVER a raw playerId.
       if (st.owner) {
         const localId = getGameClient()?.mirror.localPlayerId ?? null;
-        data.owner =
-          st.owner === localId
-            ? 'you'
-            : st.owner.length > 10
-              ? `${st.owner.slice(0, 8)}…`
-              : st.owner;
+        data.owner = st.owner === localId ? 'you' : (st.ownerName ?? 'Unknown');
       }
     }
     return data;

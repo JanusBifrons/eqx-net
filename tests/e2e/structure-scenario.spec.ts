@@ -70,9 +70,11 @@ test('the miner grows the mineral bank (HUD climbs)', async ({ browser }) => {
 test("clicking another player's structure shows its OWNER in the inspector (not 'you')", async ({ browser }) => {
   // Other players' structures are a core part of the game — the inspector must
   // identify WHOSE base a clicked structure is. The scenario grid is owned by the
-  // seed identity, NOT by this freshly-joined player, so the Capital reads as
-  // another player's base (a truncated owner id, never "you"). Locks the wire
-  // path: rebuildStructuresSlice owner → slice → mirror → EntityStatsPanel.
+  // synthetic seed identity (NOT this freshly-joined player AND not a real DB
+  // user), so the Capital reads as another player's base: the owner LABEL is
+  // shown (the server-resolved display name, or "Unknown" for this orphaned
+  // synthetic owner) and is NEVER "you". Locks the wire path: rebuildStructuresSlice
+  // owner/ownerName → slice → mirror → EntityStatsPanel.
   const { ctx, page } = await joinScenario(browser);
   try {
     // Wait for the full scene (5 structures + asteroid + drone).

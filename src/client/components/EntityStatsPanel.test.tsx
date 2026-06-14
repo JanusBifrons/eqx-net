@@ -258,12 +258,12 @@ describe('EntityStatsPanel', () => {
   // structures are a core part of the game, not a bug). "you" for the local
   // player's own base, else a truncated owner id. Reads the slice `owner` field
   // + `mirror.localPlayerId`, client-resident → instant. ──
-  it("shows OWNER <truncated id> for another player's structure", () => {
+  it("shows OWNER <display name> for another player's structure (never a raw id)", () => {
     setGameClient(
       fakeClient({
         localPlayerId: '7bc27d53-mine',
         structures: new Map([
-          [7, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: '7fc842fe-9e44-49e6-other' }],
+          [7, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: '7fc842fe-other', ownerName: 'Nova' }],
         ]),
         swarm: new Map([[7, { kind: 2, shipKind: 'capital', radius: 80, x: 0, y: 0 }]]),
       }),
@@ -272,9 +272,28 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
     render(<EntityStatsPanel />);
     const owner = screen.getByTestId('entity-stats-owner');
-    expect(owner).toHaveTextContent('OWNER 7fc842fe…'); // truncated, NOT "you"
+    expect(owner).toHaveTextContent('OWNER Nova'); // the player's display name
     expect(owner).not.toHaveTextContent('you');
-    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-owner', '7fc842fe…');
+    expect(owner).not.toHaveTextContent('7fc842fe'); // NEVER a raw playerId
+    expect(screen.getByTestId('entity-stats-panel')).toHaveAttribute('data-structure-owner', 'Nova');
+  });
+
+  it("shows OWNER Unknown for an orphaned structure (owner doesn't resolve to a user)", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        // owner present but NO ownerName → the server couldn't resolve it to a DB
+        // user (an orphaned structure, which the server logs).
+        structures: new Map([
+          [7, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'gone-player' }],
+        ]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'capital', radius: 80, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Capital', hp: 5000, hpMax: 5000 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER Unknown');
   });
 
   it("shows OWNER you for the local player's own structure", () => {

@@ -267,5 +267,10 @@ export interface SnapshotMessage {
      *  connection line to the local player's grid. Static per structure; slim
      *  JSON field, no SWARM_WIRE_VERSION bump (pose flows on the binary channel). */
     owner?: string;
+    /** The owner's resolved DISPLAY NAME (server-side; online via the session,
+     *  offline via the persistent roster's playerId→userId→user). Absent when the
+     *  owner doesn't map to a DB user — an orphaned structure (the server logs
+     *  it). The client shows the name, "you" for the local player, else "Unknown". */
+    ownerName?: string;
   }>;
 }
