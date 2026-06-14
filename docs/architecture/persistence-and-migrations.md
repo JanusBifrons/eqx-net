@@ -39,7 +39,8 @@ The `PersistOp` discriminated union at
 enumerates every shape that can hit disk. Adding a new op is a code-review
 event — bump the version in `dbWorker.ts`'s prepared-statement table and
 the `applyOp` switch. Sub-phase B adds `LIMBO_PUT` / `LIMBO_DELETE` /
-`LIMBO_GET` here.
+`LIMBO_GET` here; Phase 2 adds `PLAYER_SHIP_PUT` / `PLAYER_SHIP_DELETE`; Phase 5
+adds `DIRECTOR_STATE_PUT` (the Director-state lane below).
 
 ## Phase 8 sub-phase A: sector snapshots
 
@@ -227,6 +228,41 @@ returns `{ exists, sectorKey, expiresAt }` for E2E inspection. It deliberately
 **does NOT** return the payload; the payload is consumed only by the
 destination room's `onJoin` and we don't want to leak ship pose to a side
 channel.
+
+## Director-state lane (Phase 5 — "restart from any state")
+
+The process-global `LivingWorldDirector` owns the hunter-bot squads, and drones
+are deliberately NOT in the per-sector snapshot (they're director-owned, re-seeded
+at entry sectors). So the director persists its OWN continuity, on its own lane.
+
+[`DirectorPersistence`](../../src/server/livingworld/DirectorPersistence.ts)
+mirrors `SectorPersistence`: an injected `saveRow`/`loadRow` round-trip, a
+`DIRECTOR_STATE_VERSION` (tear-down-on-change, like `schemaVersion`) and a 24 h
+staleness gate. It shadows only the ABSTRACT squad continuity into a **singleton**
+`director_state` row (`id = 1`, UPSERT) via the new `DIRECTOR_STATE_PUT` CRITICAL
+op:
+
+- per squad: `{squadId, kind, sectorKey, targetFactionId, state}` (membership is
+  re-derived by `SquadPool.seed`; the per-wave `warned` one-shot is dropped);
+- the `WaveDirector`'s `waveCount` + `lastDispatchAtMs` maps (absolute wall-clock,
+  so the dispatch rate-cap still gates correctly across a restart).
+
+**When it writes:** on graceful shutdown (`index.ts`, before the persistence
+drain) and throttled from the 1.5 s control-loop tail (`DIRECTOR_PERSIST_INTERVAL_MS`
+60 s, crash defence). Both are CRITICAL enqueues off the 60 Hz `update()` path —
+no netgate.
+
+**When it reads:** once, inside `LivingWorldDirector.start()`, AFTER the fresh
+seed. A `null` hydrate (no row / stale / version-mismatch / corrupt) falls through
+to today's fresh seed — so an empty DB or a `DIRECTOR_STATE_VERSION` bump is a
+clean reseed. On a hit, `SquadPool.restoreStates` + `WaveDirector.restore` overlay
+the continuity and the existing `respawnStep` re-spawns bots at each squad's
+restored sector (entry-only-ingress preserved: interior goals ingress at the edge
+and hop-traverse inward).
+
+**Not persisted:** individual bot poses + in-flight `BotTransitController` warps
+(a mid-flight hop resets to the squad's sector on restart). The fixed 24-bot pool
+is always re-seeded — only squad ASSIGNMENTS persist.
 
 ## Ship-kind catalogue drift (`player_ships.kindVersion`)
 
