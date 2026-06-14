@@ -177,6 +177,34 @@ export function nextHopToward(from: string, goal: string): string | null {
   return step;
 }
 
+/**
+ * Galaxy-graph hop distance (BFS depth) from `from` to `goal`. 0 when equal,
+ * `Infinity` when unreachable or either sector is unknown. Pure. Used by the
+ * WaveDirector to dispatch the NEAREST roaming squad toward a ready base
+ * (the "review the pools, direct the nearest roaming groups" directive).
+ */
+export function hopDistance(from: string, goal: string): number {
+  if (from === goal) return 0;
+  if (!getSector(from) || !getSector(goal)) return Infinity;
+  const visited = new Set<string>([from]);
+  let frontier: string[] = [from];
+  let depth = 0;
+  while (frontier.length > 0) {
+    depth++;
+    const next: string[] = [];
+    for (const cur of frontier) {
+      for (const n of getNeighbours(cur)) {
+        if (n.key === goal) return depth;
+        if (visited.has(n.key)) continue;
+        visited.add(n.key);
+        next.push(n.key);
+      }
+    }
+    frontier = next;
+  }
+  return Infinity;
+}
+
 export interface MigrationPlanInput {
   readonly sectorKeys: readonly string[];
   /** sectorKey → ALL bots physically present there (active in that

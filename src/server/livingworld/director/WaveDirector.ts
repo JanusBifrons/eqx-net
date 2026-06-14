@@ -16,6 +16,7 @@
  */
 
 import { shouldDeEscalate, FACTION_PEACEFUL_TIMEOUT_TICKS } from '../../../core/faction/Faction.js';
+import { hopDistance } from '../population.js';
 import type { FactionBaseReadiness, LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { HunterBotPool } from './HunterBotPool.js';
 import { SquadPool, type SquadRecord } from './SquadPool.js';
@@ -138,11 +139,20 @@ export class WaveDirector {
       if (last !== undefined && nowMs - last < this.dispatchIntervalMs) continue;
       const wave = (this.waveCount.get(factionId) ?? 0) + 1;
       const spec = this.pattern.nextWave(wave);
-      let committed = 0;
+      // Dispatch the NEAREST idle squads (the user's directive: "review the
+      // pools of drones … direct the nearest roaming groups towards the
+      // player"). Sort spare squads by galaxy-graph hop distance to the ready
+      // base, deterministic tie-break by squadId, then commit the closest N.
+      const candidates: { sq: SquadRecord; dist: number }[] = [];
       for (const sq of this.squadPool.all()) {
-        if (committed >= spec.squadCount) break;
         if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
-        this.squadPool.assignTarget(sq, r.sectorKey, factionId);
+        candidates.push({ sq, dist: hopDistance(sq.sectorKey, r.sectorKey) });
+      }
+      candidates.sort((a, b) => a.dist - b.dist || (a.sq.squadId < b.sq.squadId ? -1 : 1));
+      let committed = 0;
+      for (const c of candidates) {
+        if (committed >= spec.squadCount) break;
+        this.squadPool.assignTarget(c.sq, r.sectorKey, factionId);
         committed++;
       }
       if (committed > 0) {
