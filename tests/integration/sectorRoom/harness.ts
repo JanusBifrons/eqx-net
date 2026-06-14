@@ -52,6 +52,7 @@ import {
   LivingWorldDirector,
   type LivingWorldOptions,
 } from '../../../src/server/livingworld/LivingWorldDirector.js';
+import type { DirectorPersistence } from '../../../src/server/livingworld/DirectorPersistence.js';
 import { makeSeededRng } from '../../../src/server/livingworld/population.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import {
@@ -354,6 +355,9 @@ export async function bootLivingWorldTestServer(opts: {
   botCount: number;
   seed?: number;
   director?: Partial<LivingWorldOptions>;
+  /** Phase 5 — inject to exercise director-state persist/restore across a
+   *  (two-boot) "restart". Omit ⇒ stateless director (today's fresh seed). */
+  directorPersistence?: DirectorPersistence;
 }): Promise<LivingWorldTestHarness> {
   const sink = new CaptureSink();
   setPersistence(sink);
@@ -416,6 +420,7 @@ export async function bootLivingWorldTestServer(opts: {
     // Short dispatch cadence so wave-cadence integration tests re-trigger fast.
     dispatchIntervalMs: 500,
     ...opts.director,
+    ...(opts.directorPersistence ? { directorPersistence: opts.directorPersistence } : {}),
   });
   director.start();
 
