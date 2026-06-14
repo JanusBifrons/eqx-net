@@ -16,6 +16,7 @@ import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
+import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
 import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
@@ -828,6 +829,9 @@ async function main(): Promise<void> {
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
     // without an import cycle. Null when the Living World is disabled.
     setIncomingPlayerSink(livingWorldDirector);
+    // Phase-3 — serve live per-sector counts at GET /galaxy/snapshot from the
+    // director's control-tick cache (null when the Living World is disabled).
+    setGalaxyStatsProvider(livingWorldDirector);
     logger.info(
       {
         sectors: galaxyRooms.size,
@@ -867,6 +871,7 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
   // an explicit stop keeps a graceful shutdown clean and deterministic.)
   try {
     setIncomingPlayerSink(null);
+    setGalaxyStatsProvider(null);
     // Phase 5 — flush the director's abstract squad continuity onto the CRITICAL
     // lane BEFORE the persistence drain below, so a restart resumes where we left
     // off (the throttled in-loop persist only bounds loss on an unclean kill).

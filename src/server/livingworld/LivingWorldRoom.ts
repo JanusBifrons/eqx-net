@@ -43,9 +43,29 @@ export interface FactionBaseReadiness {
   serverTick: number;
 }
 
+/**
+ * Phase-3 live per-sector counts for the `/galaxy/snapshot` aggregation. The
+ * room owns the counting (it holds the swarm registry + structure registry +
+ * hostility ledger); the director stamps the static faction + caches the result.
+ * Read on the director's ~1.5 s control tick — NEVER the 60 Hz update loop.
+ */
+export interface SectorLiveCounts {
+  /** Active player hulls in this room. */
+  players: number;
+  /** Drones (kind 1) hostile to a present active player (an active wave). */
+  enemies: number;
+  /** Drones (kind 1) not hostile to any present player (roaming neutrals). */
+  neutrals: number;
+  /** Placed structures (StructureRegistry size). */
+  structures: number;
+}
+
 export interface LivingWorldRoom {
   eventBus(): Bus;
   playerCount(): number;
+  /** Phase-3 — live per-sector counts for `/galaxy/snapshot`. OPTIONAL: a mock
+   *  room may omit it and the director falls back to `playerCount()` + zeros. */
+  liveCounts?(): SectorLiveCounts;
   hasFreeSlot(): boolean;
   spawnLivingWorldBot(spec: {
     botId: string;

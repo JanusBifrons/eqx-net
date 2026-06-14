@@ -159,8 +159,14 @@ hand-maintained and safe to edit.
 
 ## Runtime APIs
 
-- `GET /galaxy/sectors` — public route, the static graph. (The live per-sector
-  counts endpoint `GET /galaxy/snapshot` arrives in Phase 3.)
+- `GET /galaxy/sectors` — public route, the static graph.
+- `GET /galaxy/snapshot` — public route, LIVE per-sector state (`SectorLiveState[]`:
+  players / enemies / neutrals / structures + the static region faction as `owner`,
+  cosmetic v1). Aggregated by the `LivingWorldDirector` on its ~1.5 s control tick and
+  cached (O(1) per request) behind the injected `galaxyStatsProvider` singleton;
+  null-guarded to the static graph + zero counts when the Living World is disabled
+  (`EQX_DISABLE_LIVING_WORLD`). Client polls every 3–5 s (Phase 4). Shape + zod live in
+  `src/shared-types/galaxySnapshot.ts`.
 - `getSector(key)`, `getNeighbours(key)`, `isNeighbour(from, to)`,
   `getFaction(id)`, `getEntrySectors()`, `isEntrySector(key)` — pure lookups
   exported from `src/core/galaxy/galaxy.ts`. Server-side transit validation uses
@@ -205,8 +211,8 @@ design (no admin-tool requirement yet).
 
 ## Future plans
 
-- **Live per-sector intel.** `GET /galaxy/snapshot` (Phase 3) + the map's live
-  count/feature icons (Phase 4) — see [living-galaxy.md](living-galaxy.md).
+- **Live map intel.** `GET /galaxy/snapshot` shipped (Phase 3); the map's live
+  count + feature icons (Phase 4) consume it — see [living-galaxy.md](living-galaxy.md).
 - **Derived + named-faction ownership, then conquest** — the `region`/faction
   seam is built to carry it (the four-rung ladder in `living-galaxy.md`).
 - **Cross-region back-routes.** The generator's `CROSS_LINKS` hook supports 1–2

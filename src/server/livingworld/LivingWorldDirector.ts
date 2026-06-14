@@ -33,7 +33,8 @@ import {
   pickRoamGoal,
   type Rng,
 } from './population.js';
-import { isEntrySector } from '../../core/galaxy/galaxy.js';
+import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
+import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import {
   formationSlotOffset,
   formationSlotWorldPose,
@@ -215,6 +216,9 @@ export class LivingWorldDirector {
   private lastShedAtMs = -Infinity;
   /** Wall-clock of the last in-loop crash-defence persist (throttle anchor). */
   private lastPersistAtMs = -Infinity;
+  /** Phase-3 — cached live per-sector snapshot for `GET /galaxy/snapshot`,
+   *  recomputed once per ~1.5 s control tick so HTTP requests are O(1). */
+  private galaxyStatsCache: SectorLiveState[] = [];
   /** squadId → wall-clock the squad may next pick a new roam goal (the
    *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
   private readonly squadRoamNextAtMs = new Map<string, number>();
@@ -329,6 +333,9 @@ export class LivingWorldDirector {
     const timer = setInterval(() => this.tick(), this.opts.controlIntervalMs);
     (timer as unknown as { unref?: () => void }).unref?.();
     this.timer = timer;
+    // Populate the snapshot cache once so `/galaxy/snapshot` answers with live
+    // counts before the first control tick fires.
+    this.recomputeGalaxyStats();
   }
 
   /** Stop the loop, abandon in-flight transits, unsubscribe. Idempotent. */
@@ -434,11 +441,49 @@ export class LivingWorldDirector {
       squads: squads.byState,
     });
 
+    // ── 3b. refresh the cached /galaxy/snapshot live counts (O(1) HTTP reads) ──
+    this.recomputeGalaxyStats();
+
     // ── 4. throttled crash-defence persist (off the 60 Hz live loop) ─────
     if (this.directorPersistence && now - this.lastPersistAtMs >= DIRECTOR_PERSIST_INTERVAL_MS) {
       this.lastPersistAtMs = now;
       this.persistState();
     }
+  }
+
+  /** Recompute the cached `/galaxy/snapshot` live state — one entry per galaxy
+   *  room: the room's live counts (players / enemies / neutrals / structures)
+   *  stamped with the sector's static region faction (cosmetic v1). Allocating
+   *  here is fine — it runs on the ~1.5 s control tick, never the 60 Hz loop. */
+  private recomputeGalaxyStats(): void {
+    const out: SectorLiveState[] = [];
+    for (const [key, room] of this.rooms) {
+      const counts = room.liveCounts?.() ?? {
+        players: room.playerCount(),
+        enemies: 0,
+        neutrals: 0,
+        structures: 0,
+      };
+      const region = getSector(key)?.region ?? null;
+      out.push({
+        key,
+        players: counts.players,
+        enemies: counts.enemies,
+        neutrals: counts.neutrals,
+        structures: counts.structures,
+        // Cosmetic/static v1: ownership IS the sector's region faction; the shape
+        // carries `null` for the FUTURE "unclaimed" case (shared-types/galaxySnapshot.ts).
+        owner: region ? { factionId: region, contested: false } : null,
+      });
+    }
+    this.galaxyStatsCache = out;
+  }
+
+  /** Phase-3 — the cached live per-sector snapshot (structurally satisfies
+   *  `GalaxyStatsProvider`; wired to `GET /galaxy/snapshot` in index.ts via
+   *  `setGalaxyStatsProvider`). O(1): served from the control-tick cache. */
+  galaxySnapshot(): SectorLiveState[] {
+    return this.galaxyStatsCache;
   }
 
   /** Promote squads whose members have spawned (forming→idle) and squads that

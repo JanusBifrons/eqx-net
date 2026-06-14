@@ -45,7 +45,7 @@ import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type S
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
-import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -54,7 +54,7 @@ import { STRUCTURE_DEFAULT_HEALTH } from '../../core/swarm/structureConstants.js
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
-import type { FactionBaseReadiness } from '../livingworld/LivingWorldRoom.js';
+import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
@@ -3054,6 +3054,37 @@ export class SectorRoom extends Room<SectorState> {
       if (ship?.alive && ship.isActive) n++;
     }
     return n;
+  }
+
+  /** Phase-3 — live per-sector counts for the `/galaxy/snapshot` aggregation.
+   *  Read by the LivingWorldDirector on its ~1.5 s control tick (NOT the 60 Hz
+   *  update loop), so the small per-call allocation + O(drones × players) scan is
+   *  fine. A drone is an "enemy" iff it is hostile to a present active player (an
+   *  active wave); a roaming neutral squad — hostile to nobody present — counts as
+   *  `neutrals`, which matches the wave design (roamers are neutral until they
+   *  attack a based, present owner). */
+  liveCounts(): SectorLiveCounts {
+    // Present active players — the same "who counts as present" filter playerCount uses.
+    const present: string[] = [];
+    for (const [pid] of this.playerToSlot) {
+      const ship = this.getActiveShip(pid);
+      if (ship?.alive && ship.isActive) present.push(pid);
+    }
+    let enemies = 0;
+    let neutrals = 0;
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_DRONE) continue;
+      let hostile = false;
+      for (const pid of present) {
+        if (this.aiController.isEntityHostileToPlayer(rec.id, pid)) {
+          hostile = true;
+          break;
+        }
+      }
+      if (hostile) enemies++;
+      else neutrals++;
+    }
+    return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size };
   }
 
   /** Whether a SAB slot is free for one more swarm entity. The director
