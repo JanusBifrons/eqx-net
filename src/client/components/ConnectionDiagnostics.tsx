@@ -21,7 +21,6 @@ export function ConnectionDiagnostics(): JSX.Element {
   const shipCount = useUIStore((s) => s.shipCount);
   const swarmCount = useUIStore((s) => s.swarmCount);
   const correctionRate = useUIStore((s) => s.correctionRate);
-  const playerId = useUIStore((s) => s.playerId);
   const devData = useUIStore((s) => s.devData);
 
   return (
@@ -63,9 +62,6 @@ export function ConnectionDiagnostics(): JSX.Element {
         value={`${devData.significantCorrectionCount}/${devData.snapshotCount} (${(correctionRate * 100).toFixed(0)}%)`}
         valueColor={correctionRate === 0 ? '#0f8' : correctionRate < 0.2 ? '#ff0' : '#f44'}
       />
-      {playerId && (
-        <Row label="ID" value={playerId.slice(0, 8)} valueColor="#888" />
-      )}
     </Box>
   );
 }

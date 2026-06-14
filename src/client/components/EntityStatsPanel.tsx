@@ -270,17 +270,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         : `SIZE ${Math.round(sw.radius)}`,
     };
   }
-  // LINGERING HULL (R2.23) — show WHOSE displaced hull it is (no live hp on the mirror).
+  // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
+  // owner's server-propagated display name); never surface the raw ownerPlayerId
+  // (no ids in the UI). Absent name ⇒ "Abandoned hull"; the info line is the kind.
   if (kind === 'lingering') {
     const l = client.mirror.lingeringShips?.get(id);
     if (!l) return null;
-    const owner = l.ownerPlayerId.length > 10 ? `${l.ownerPlayerId.slice(0, 8)}…` : l.ownerPlayerId;
     return {
       name: l.displayName || 'Abandoned hull',
       hpPct: 0,
       shieldPct: null,
       noHull: true,
-      infoLine: `${l.kind ?? 'ship'} · ${owner}`,
+      infoLine: `${l.kind ?? 'ship'}`,
     };
   }
   return null;

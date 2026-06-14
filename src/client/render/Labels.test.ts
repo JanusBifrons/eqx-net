@@ -34,14 +34,11 @@ describe('formatPlayerLabel', () => {
     expect(formatPlayerLabel('player-abc', '  Alice  ')).toBe('Alice');
   });
 
-  it('falls back to a Pilot label using the first 4 chars of the playerId', () => {
-    // playerId.slice(0,4) → first four chars; uppercased.
-    expect(formatPlayerLabel('abcd-efghij')).toBe('Pilot ABCD');
-    expect(formatPlayerLabel('abcd-efghij', '')).toBe('Pilot ABCD');
-    expect(formatPlayerLabel('abcd-efghij', '   ')).toBe('Pilot ABCD');
-  });
-
-  it('uppercases the fallback id slice', () => {
-    expect(formatPlayerLabel('xyzw-rest')).toBe('Pilot XYZW');
+  it('falls back to a plain "Pilot" label — NEVER any part of the playerId', () => {
+    // No ids in the UI: the fallback must not leak even a slice of the id.
+    expect(formatPlayerLabel('abcd-efghij')).toBe('Pilot');
+    expect(formatPlayerLabel('abcd-efghij', '')).toBe('Pilot');
+    expect(formatPlayerLabel('abcd-efghij', '   ')).toBe('Pilot');
+    expect(formatPlayerLabel('xyzw-rest')).toBe('Pilot');
   });
 });
