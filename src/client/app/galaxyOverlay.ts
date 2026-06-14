@@ -31,6 +31,7 @@ import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
+import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 
 export interface InstallGalaxyOverlayOpts {
   renderer: IRenderer;
@@ -162,5 +163,21 @@ export function syncGalaxyMode(
   galaxyLayer?.setMode(mode);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerMode(mode);
+  }
+}
+
+/**
+ * Live per-sector stats sync (Phase 4b) — routes BOTH the DOM-mode layer and the
+ * worker-hosted layer. Stats are polled by `useGalaxyStats` (GET /galaxy/snapshot)
+ * and pushed through here whenever the store slice changes.
+ */
+export function syncGalaxyStats(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  stats: SectorLiveState[],
+): void {
+  galaxyLayer?.setGalaxyStats(stats);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerGalaxyStats(stats);
   }
 }

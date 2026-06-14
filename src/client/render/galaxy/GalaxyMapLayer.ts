@@ -11,6 +11,7 @@ import {
   type GalaxyLayerMode,
 } from './galaxyLayerDecisions';
 import { computeTerritories, factionColor, type Territory } from './galaxyTerritories';
+import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import { Camera } from '../worker/Camera';
 
 /**
@@ -67,6 +68,9 @@ interface HexEntry {
   y: number;
   hex: Graphics;
   label: Text;
+  /** Live per-sector count readout (enemies / players / structures), updated by
+   *  setGalaxyStats; hidden when the sector has no activity. */
+  countText: Text;
   /** Index into `territories` / `territoryContainers`. */
   territoryIndex: number;
 }
@@ -199,6 +203,33 @@ export class GalaxyMapLayer extends Container {
     if (this.isDocked === docked) return;
     this.isDocked = docked;
     this.repaint();
+  }
+
+  /**
+   * Live per-sector counts (Phase 4b) — updates each sector's count readout
+   * (enemies / players / structures) beneath its feature glyphs, colour-coded by
+   * danger (red enemies → green players → grey). Called ~every 3-5 s from the
+   * useGalaxyStats poll (NOT the render loop), so the small per-call allocation
+   * is fine. Sectors with no activity hide their readout.
+   */
+  setGalaxyStats(stats: readonly SectorLiveState[]): void {
+    const byKey = new Map<string, SectorLiveState>();
+    for (const s of stats) byKey.set(s.key, s);
+    for (const entry of this.entries) {
+      const ct = entry.countText;
+      const st = byKey.get(entry.sector.key);
+      if (!st || (st.enemies === 0 && st.players === 0 && st.structures === 0)) {
+        ct.visible = false;
+        continue;
+      }
+      const parts: string[] = [];
+      if (st.enemies > 0) parts.push(`E${st.enemies}`);
+      if (st.players > 0) parts.push(`P${st.players}`);
+      if (st.structures > 0) parts.push(`S${st.structures}`);
+      ct.text = parts.join('  ');
+      ct.style.fill = st.enemies > 0 ? 0xff6b6b : st.players > 0 ? 0x6bff9b : 0xaab0c0;
+      ct.visible = true;
+    }
   }
 
   /**
@@ -366,7 +397,27 @@ export class GalaxyMapLayer extends Container {
       this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.46);
       container.addChild(glyphs);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, territoryIndex: ti });
+      // Live count readout (Phase 4b), beneath the feature glyphs. Empty/hidden
+      // until setGalaxyStats reports activity.
+      const countText = new Text({
+        text: '',
+        resolution: MAP_LABEL_RESOLUTION,
+        roundPixels: true,
+        style: new TextStyle({
+          fontFamily: 'sans-serif',
+          fontSize: 10,
+          fontWeight: '700',
+          fill: 0xaab0c0,
+          letterSpacing: 0.5,
+        }),
+      });
+      countText.anchor.set(0.5);
+      countText.x = ox;
+      countText.y = oy + HEX_SIZE_BASE * 0.46 + 13;
+      countText.visible = false;
+      container.addChild(countText);
+
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, territoryIndex: ti });
     }
     this.repaint();
   }

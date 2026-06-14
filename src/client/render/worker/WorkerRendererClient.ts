@@ -511,6 +511,10 @@ export class WorkerRendererClient implements IRenderer {
   setLayerMode(mode: 'overlay' | 'selector'): void {
     this.post({ type: 'SET_OVERLAY_MODE', mode });
   }
+  /** Push live per-sector galaxy stats to the worker-hosted layer (Phase 4b). */
+  setLayerGalaxyStats(stats: import('../../../shared-types/galaxySnapshot.js').SectorLiveState[]): void {
+    this.post({ type: 'SET_GALAXY_STATS', stats });
+  }
 
   /** Notify the worker of a canvas-host resize. */
   resize(width: number, height: number, dpr: number): void {

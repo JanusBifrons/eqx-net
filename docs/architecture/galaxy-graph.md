@@ -190,9 +190,11 @@ the pure
 
 The layer lives worker-side; state crosses via the
 `SET_VISIBLE / SET_CURRENT_SECTOR / SET_TRANSIT_DOCKED / SET_OVERLAY_MODE /
-RESIZE` protocol. Phase 4 of the Living Galaxy roadmap adds the faction
-territory tint, the contiguous-territory hover-shrink, and the live/feature
-icons to this layer.
+SET_GALAXY_STATS / RESIZE` protocol. Phase 4 of the Living Galaxy roadmap
+**shipped** the faction territory tint, the contiguous-territory hover-shrink
+(per-territory sub-containers; pure `galaxyTerritories.ts`), static per-sector
+feature glyphs, and the live count glyphs (polled off `/galaxy/snapshot` by
+`app/useGalaxyStats.ts`). See `src/client/CLAUDE.md` + `living-galaxy.md`.
 
 ## Why generated TS, not a SQLite-backed graph
 

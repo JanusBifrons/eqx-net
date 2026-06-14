@@ -14,6 +14,10 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-14 — Living Galaxy P4b — a top-level `src/client/<name>/` dir whose name matches a Vite proxy prefix → module 404 → blank app
+Commit: feat/living-galaxy-map (P4b)
+Added the `useGalaxyStats` poll hook at `src/client/galaxy/useGalaxyStats.ts`. The app booted to a BLANK page — no `pageerror`, just one console `Failed to load resource: 404`. The 404 URL was the tell: `http://localhost:5173/galaxy/useGalaxyStats.ts`. Vite's web root is `src/client`, so a NEW top-level `src/client/galaxy/` dir is served at `/galaxy/…` — which COLLIDES with the `/galaxy` HTTP proxy in `vite.config.ts` (→ game server :2567). The proxy hijacked the ESM module request, forwarded it to the server, got 404, the module never loaded, and `App` never mounted. Silent, because **a 404 on an ESM import is a console error, NOT a `pageerror`** — a `page.on('pageerror')` guard misses it entirely; assert on a 404 `response` or the rendered body instead. Fix: move the file out of the proxy-named dir (`galaxy/` → `app/`) — same relative-import depth, zero other changes. **Rule: never name a top-level `src/client/<dir>` after a route prefix `vite.config.ts` proxies** (`/matchmake`, `/auth`, `/healthz`, `/diag`, `/dev`, `/galaxy`). Galaxy client code lives under `src/client/render/galaxy/` (served at `/render/galaxy/…`, no collision) or `src/client/app/`. Diagnostic shortcut: blank body + a lone 404 + no pageerror ⇒ a hijacked/missing ESM module → read the 404 URL.
+
 ## 2026-06-14 — Equinox laser issue — a 256× texture-scale bug that headless tests could NOT see (4 failed "fixes")
 Commit: plan `i-d-like-you-to-typed-cray`
 
