@@ -86,7 +86,6 @@ function hexVertices(size: number): Array<{ x: number; y: number }> {
 
 export class GalaxyMapLayer extends Container {
   private readonly onSelect: (sectorKey: string) => void;
-  private readonly edgeLayer = new Container();
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
   private readonly entries: HexEntry[] = [];
@@ -101,8 +100,6 @@ export class GalaxyMapLayer extends Container {
    *  -1. The tick eases this one toward HOVER_SCALE; -1 falls back to the
    *  current sector's territory. */
   private hoveredTerritory = -1;
-  /** Dedup scratch for `repaintEdges` (invariant #14). */
-  private readonly _edgeDedupScratch = new Set<string>();
   private currentSectorKey: string | null = null;
   private isDocked = true;
   private mode: GalaxyLayerMode = 'overlay';
@@ -127,7 +124,6 @@ export class GalaxyMapLayer extends Container {
     this.onSelect = opts.onSelect;
     this.visible = false;
     this.eventMode = 'passive';
-    this.clusterRoot.addChild(this.edgeLayer);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
@@ -486,36 +482,6 @@ export class GalaxyMapLayer extends Container {
       hex.cursor = selectable ? 'pointer' : 'default';
       label.alpha = highlighted ? 0.95 : selectable ? 0.85 : 0.5;
     }
-    this.repaintEdges();
-  }
-
-  private repaintEdges(): void {
-    const removed = this.edgeLayer.removeChildren();
-    for (const c of removed) c.destroy();
-    const edges = new Graphics();
-    const seen = this._edgeDedupScratch;
-    seen.clear();
-    for (const entry of this.entries) {
-      for (const nKey of entry.sector.neighbours) {
-        const a = entry.sector.key;
-        const b = nKey;
-        const id = a < b ? `${a}|${b}` : `${b}|${a}`;
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const target = this.entries.find((e) => e.sector.key === nKey);
-        if (!target) continue;
-        const aActive = this.isSelectable(entry.sector) || a === this.currentSectorKey;
-        const bActive = this.isSelectable(target.sector) || b === this.currentSectorKey;
-        const active = aActive && bActive;
-        edges.moveTo(entry.x, entry.y).lineTo(target.x, target.y);
-        edges.stroke({
-          color: active ? COLOR_SELECTABLE_STROKE : COLOR_LOCKED_STROKE,
-          width: 1.5,
-          alpha: active ? 0.6 : 0.28,
-        });
-      }
-    }
-    this.edgeLayer.addChild(edges);
   }
 
   /** The territory index of the current "you are here" sector, or -1. */
