@@ -13,6 +13,7 @@
  * WORLD units to the optimal→max range — not a fraction of the drawn length.
  */
 import { describe, it, expect } from 'vitest';
+import { Texture, TextureSource } from 'pixi.js';
 import { BeamSpritePool } from './BeamSpritePool';
 
 const TAPER_STYLE = { tint: 0x66ccff, width: 2, alpha: 1, taper: true } as const;
@@ -77,5 +78,36 @@ describe('BeamSpritePool — solid core + falloff taper (P1a)', () => {
     pool.setBeams([horizontalBeam(120, 120)], 1); // frame 2: hit at 120 → tail off
     expect(pool.solidLenAt(0)).toBeCloseTo(120, 3);
     expect(pool.fadeTailAt(0)!.visible).toBe(false);
+  });
+
+  // ── Texture-width independence (Equinox laser issue, 2026-06-14) ──
+  // The "renders infinitely / never tapers" root cause: the real gradient + fade
+  // textures are 256 px WIDE, but the sprite length was set as `scale.x = worldLen`
+  // — which renders `worldLen × textureWidth` (256× too long, ~19 000 u), so the
+  // fade stretched off any screen and the beam looked solid to infinity. Headless
+  // tests fall back to the 1×1 WHITE texture, so the bug was INVISIBLE to the cases
+  // above. These cases inject a genuinely 256-px-wide texture to lock the fix:
+  // the DRAWN world length (scale.x × texture.width) must equal the intended length
+  // regardless of texture width.
+  it('fade tail renders the intended WORLD length with a WIDE (256px) gradient texture', () => {
+    const wide = new Texture({ source: new TextureSource({ width: 256, height: 1 }) });
+    expect(wide.width).toBe(256); // precondition: a genuinely wide texture
+    const pool = new BeamSpritePool(TAPER_STYLE);
+    // Force the pool's fade texture to the wide one BEFORE any sprite is built.
+    (pool as unknown as { _fadeTexture: Texture })._fadeTexture = wide;
+    pool.setBeams([horizontalBeam(375, 250)], 1); // solid 250, fade tail 125
+    const tail = pool.fadeTailAt(0);
+    expect(tail!.visible).toBe(true);
+    // Without the ÷ texture-width fix this would be 125 × 256 = 32 000.
+    expect(tail!.lenX).toBeCloseTo(125, 1);
+  });
+
+  it('legacy single-sprite renders the intended WORLD length with a WIDE texture', () => {
+    const wide = new Texture({ source: new TextureSource({ width: 256, height: 1 }) });
+    const pool = new BeamSpritePool(TAPER_STYLE);
+    (pool as unknown as { _texture: Texture })._texture = wide;
+    pool.setBeams([horizontalBeam(300)], 1); // remote-style: no solidLen → legacy path
+    // Without the ÷ texture-width fix this would be 300 × 256 = 76 800.
+    expect(pool.solidLenAt(0)).toBeCloseTo(300, 1);
   });
 });

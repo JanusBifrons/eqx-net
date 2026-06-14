@@ -170,6 +170,14 @@ function nextShotId(): string {
  *  drop on idle. */
 const INPUT_HEARTBEAT_MS = 250;
 
+/** Visual-only (Equinox laser issue): in EMPTY SPACE (no hit) the live beam's
+ *  full-strength SOLID core is only this fraction of the optimal range; beyond
+ *  it the beam fades to nothing at maxRange. A small fraction ⇒ a long, gradual
+ *  visual taper (the "more taper" the user asked for). PURELY visual — `solidDist`
+ *  feeds only the `BeamSpritePool` solid/fade split, never damage (which stays
+ *  server-authoritative). A real hit ignores this and stays solid to the target. */
+const VISUAL_BEAM_SOLID_FRAC = 0.4;
+
 // Pure rounding helpers used in the per-snapshot replay-grade capture
 // block. Pre-fix these were declared as `const px = (n) => ...` closures
 // inside `handleSnapshot`, allocating a function pair per snapshot
@@ -4677,7 +4685,10 @@ export class ColyseusGameClient {
       const drawDist = hit ? this.shieldEdgeDist(hit, fromX, fromY, fwdX, fwdY, beamMax) : beamMax;
       liveBeams.set(mount.id, {
         dist: drawDist,
-        solidDist: hit ? drawDist : Math.min(optimalDist, drawDist),
+        // No hit ⇒ the SOLID core is only VISUAL_BEAM_SOLID_FRAC of the optimal
+        // range so the beam fades over a long, gradual tail to nothing at maxRange
+        // (visual taper only — never affects damage). A hit stays solid to target.
+        solidDist: hit ? drawDist : Math.min(optimalDist * VISUAL_BEAM_SOLID_FRAC, drawDist),
         hitId: hit?.hitId,
       });
     }
