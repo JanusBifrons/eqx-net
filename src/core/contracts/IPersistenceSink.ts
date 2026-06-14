@@ -21,14 +21,6 @@ export type PersistOp =
   | { type: 'USER_UPDATE_DISPLAY_NAME'; userId: string; displayName: string; ts: number }
   | { type: 'TELEMETRY_SHED'; entityId: string; sectorId: string; ts: number }
   | { type: 'TELEMETRY_SLEEP'; entityId: string; sleeping: boolean; sectorId: string; ts: number }
-  // Phase 8 sub-phase B — Limbo persistence shadow. Hot path is the in-memory
-  // LimboStore; every mutation also enqueues here so a server crash doesn't
-  // lose held ship state. `payloadJson` is JSON.stringify'd LimboPayload.
-  // `LIMBO_GET` is in the union for type completeness only — boot hydration
-  // reads via the read-only main-thread connection, never through the worker.
-  | { type: 'LIMBO_PUT'; playerId: string; userId: string | null; sectorKey: string; payloadJson: string; expiresAt: number; ts: number }
-  | { type: 'LIMBO_DELETE'; playerId: string; ts: number }
-  | { type: 'LIMBO_GET'; playerId: string }
   // Phase 2 multi-ship roster. Hot path is the in-memory `PlayerShipStore`;
   // every mutation also enqueues here so a server crash doesn't lose the
   // roster. `PLAYER_SHIP_PUT` is an UPSERT keyed on `shipId` — fields cover

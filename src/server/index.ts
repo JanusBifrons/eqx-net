@@ -11,7 +11,7 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
@@ -739,13 +739,6 @@ async function main(): Promise<void> {
     });
   });
 
-  // Phase 8 sub-phase B — hydrate the LimboStore from on-disk rows that
-  // survived the last shutdown, then start the prune timer. Done before
-  // the eager-create loop so any galaxy room's onJoin can `take` a fresh
-  // hydrated entry without a race.
-  const { hydrated } = initLimboStore();
-  logger.info({ hydrated }, 'Limbo hydrated from disk');
-
   // Phase 2 multi-ship roster — same boot ordering. Reads the
   // `player_ships` rows and seeds the in-memory PlayerShipStore so any
   // galaxy room's onJoin can resolve a shipId without a race.
@@ -868,16 +861,6 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     process.exit(2);
   }, 10_000);
   forceExit.unref();
-
-  // Phase 8 sub-phase B — stop the Limbo prune timer first so it doesn't
-  // race the persistence drain. The persistence shadow already mirrored
-  // every Limbo mutation through CRITICAL, so the existing drain handles
-  // them; nothing else to flush.
-  try {
-    getLimboStore().stopPruneTimer();
-  } catch (err) {
-    logger.warn({ err }, 'limboStore.stopPruneTimer threw');
-  }
 
   // Living World — stop the control loop, abandon in-flight bot
   // transits, unsubscribe the bus listeners. (The loop is unref'd, but

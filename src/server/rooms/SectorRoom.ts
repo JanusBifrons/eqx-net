@@ -128,7 +128,6 @@ import type {
 } from './SectorSnapshot.js';
 import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getPlayerShipStore } from '../db/PersistenceWorker.js';
-// LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
 // RosterFullError is handled inside RosterPersistence.ts
 import { TransitOrchestrator } from '../transit/TransitOrchestrator.js';
 import { setSession } from '../transit/sessionRegistry.js';

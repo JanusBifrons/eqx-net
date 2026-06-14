@@ -23,7 +23,6 @@ import { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 const storeRef = { current: null as PlayerShipStore | null };
 
 vi.mock('../db/PersistenceWorker.js', () => ({
-  getLimboStore: () => ({ peek: () => null }),
   getPlayerShipStore: () => {
     if (storeRef.current === null) throw new Error('test bug: store not set before handler call');
     return storeRef.current;

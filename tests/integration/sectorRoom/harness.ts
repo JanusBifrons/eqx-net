@@ -25,7 +25,6 @@
  *  - `setPersistence(CaptureSink)` — every enqueueCritical/Volatile
  *    is captured into an array (assertable as a side effect) and
  *    discarded; no SQLite, no DB worker.
- *  - `setLimboStore(new LimboStore({}))` — in-memory, no shadow.
  *  - `setPlayerShipStore(new PlayerShipStore({ generateShipId }))`
  *    — deterministic ids for stable test assertions.
  *
@@ -57,10 +56,8 @@ import { makeSeededRng } from '../../../src/server/livingworld/population.js';
 import type { SectorState } from '../../../src/server/rooms/schema/SectorState.js';
 import {
   setPersistence,
-  setLimboStore,
   setPlayerShipStore,
 } from '../../../src/server/db/PersistenceWorker.js';
-import { LimboStore } from '../../../src/server/limbo/LimboStore.js';
 import { PlayerShipStore } from '../../../src/server/playerShips/PlayerShipStore.js';
 import type {
   IPersistenceSink,
@@ -158,7 +155,6 @@ export async function bootSectorTestServer(opts: {
   //    to land before the room is constructed.
   const sink = new CaptureSink();
   setPersistence(sink);
-  setLimboStore(new LimboStore({}));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -300,7 +296,6 @@ export async function bootSectorTestServer(opts: {
       try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }
       try { httpServer.close(); } catch { /* ignore */ }
       // Reset the singletons.
-      setLimboStore(new LimboStore({}));
       setPlayerShipStore(new PlayerShipStore({}));
     },
   };
@@ -361,7 +356,6 @@ export async function bootLivingWorldTestServer(opts: {
 }): Promise<LivingWorldTestHarness> {
   const sink = new CaptureSink();
   setPersistence(sink);
-  setLimboStore(new LimboStore({}));
   setPlayerShipStore(new PlayerShipStore({
     generateShipId: ((): () => string => {
       let n = 0;
@@ -484,7 +478,6 @@ export async function bootLivingWorldTestServer(opts: {
       connectedRooms.length = 0;
       try { await gameServer.gracefullyShutdown(false); } catch { /* ignore */ }
       try { httpServer.close(); } catch { /* ignore */ }
-      setLimboStore(new LimboStore({}));
       setPlayerShipStore(new PlayerShipStore({}));
     },
   };
