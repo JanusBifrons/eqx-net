@@ -128,6 +128,17 @@ export interface IAiBehaviour {
    * Pure / side-effect-free; safe to call every frame.
    */
   isHostileToPlayer?(playerId: string): boolean;
+  /**
+   * Optional in-sector MOVE target (roaming-formation system, Phase 5).
+   * SERVER-ONLY: the `LivingWorldDirector` assigns each squad member a
+   * formation-slot world point each control tick; while IDLE (neutral/roaming)
+   * the drone flies to it via an arrive behaviour (slows to a stop), instead of
+   * the default origin orbit. The client never ticks the drone brain, so this
+   * creates no lockstep surface and needs no wire bump. `clearMoveTarget`
+   * reverts to the orbit.
+   */
+  setMoveTarget?(x: number, y: number): void;
+  clearMoveTarget?(): void;
 }
 
 /** Returns the nearest player to (x, y), or null when no players are present. */
