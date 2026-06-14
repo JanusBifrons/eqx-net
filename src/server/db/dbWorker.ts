@@ -61,12 +61,6 @@ const stmts = {
   USER_UPDATE_DISPLAY_NAME: db.prepare(
     'UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?',
   ),
-  // Phase 8 sub-phase B — Limbo persistence shadow.
-  LIMBO_PUT: db.prepare(
-    'INSERT INTO limbo (player_id, user_id, sector_key, payload_json, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ' +
-    'ON CONFLICT(player_id) DO UPDATE SET user_id=excluded.user_id, sector_key=excluded.sector_key, payload_json=excluded.payload_json, expires_at=excluded.expires_at, updated_at=excluded.updated_at',
-  ),
-  LIMBO_DELETE: db.prepare('DELETE FROM limbo WHERE player_id = ?'),
   // Phase 2 multi-ship roster persistence shadow.
   PLAYER_SHIP_PUT: db.prepare(
     'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
@@ -83,6 +77,11 @@ const stmts = {
     'expires_at=excluded.expires_at, updated_at=excluded.updated_at',
   ),
   PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
+  // Phase 5 director-state persistence shadow. Singleton row (id = 1).
+  DIRECTOR_STATE_PUT: db.prepare(
+    'INSERT INTO director_state (id, payload_json, created_at, updated_at) VALUES (1, ?, ?, ?) ' +
+    'ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
+  ),
 };
 
 let drainedCount = 0;
@@ -135,29 +134,6 @@ function applyOp(op: PersistOp): { rowId?: number } {
       // these are silent no-ops so VOLATILE flow is exercised end-to-end.
       return {};
     }
-    case 'LIMBO_PUT': {
-      stmts.LIMBO_PUT.run(
-        op.playerId,
-        op.userId,
-        op.sectorKey,
-        op.payloadJson,
-        op.expiresAt,
-        op.ts,
-        op.ts,
-      );
-      return {};
-    }
-    case 'LIMBO_DELETE': {
-      stmts.LIMBO_DELETE.run(op.playerId);
-      return {};
-    }
-    case 'LIMBO_GET': {
-      // LIMBO_GET is a type-completeness placeholder. Boot hydration reads
-      // via the read-only main-thread connection (see LimboStore.hydrate);
-      // it never flows through this worker. Silent no-op so a misrouted
-      // LIMBO_GET doesn't crash the BATCH transaction.
-      return {};
-    }
     case 'PLAYER_SHIP_PUT': {
       stmts.PLAYER_SHIP_PUT.run(
         op.shipId,
@@ -184,6 +160,10 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'PLAYER_SHIP_DELETE': {
       stmts.PLAYER_SHIP_DELETE.run(op.shipId);
+      return {};
+    }
+    case 'DIRECTOR_STATE_PUT': {
+      stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
       return {};
     }
   }

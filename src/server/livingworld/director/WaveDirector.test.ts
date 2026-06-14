@@ -224,3 +224,47 @@ describe('WaveDirector — assignment + advancement', () => {
     expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 });
+
+describe('WaveDirector — serialize/restore (director-state persistence, Phase 5)', () => {
+  it('serialize captures the wave bookkeeping maps; restore round-trips', () => {
+    const { wave, squadPool } = setup({ readiness: [readyFaction()], dispatchIntervalMs: 1000 });
+    squadPool.setState(squadPool.get('squad-0')!, 'idle');
+    wave.plan(0); // dispatches → waveCount{alice:1}, lastDispatchAtMs{alice:0}
+    const saved = wave.serialize();
+    expect(saved.waveCount).toEqual([['alice', 1]]);
+    expect(saved.lastDispatchAtMs).toEqual([['alice', 0]]);
+
+    const { wave: fresh } = setup({ readiness: [readyFaction()], dispatchIntervalMs: 1000 });
+    fresh.restore(saved);
+    expect(fresh.serialize()).toEqual(saved);
+  });
+
+  it('restore clears prior maps before repopulating', () => {
+    const { wave } = setup({ readiness: [readyFaction()] });
+    wave.restore({ waveCount: [['old', 5]], lastDispatchAtMs: [['old', 99]] });
+    expect(wave.serialize()).toEqual({ waveCount: [['old', 5]], lastDispatchAtMs: [['old', 99]] });
+    wave.restore({ waveCount: [], lastDispatchAtMs: [] });
+    expect(wave.serialize()).toEqual({ waveCount: [], lastDispatchAtMs: [] });
+  });
+
+  it('restored lastDispatchAtMs still gates the rate-cap across a "restart"', () => {
+    // Dispatch once, persist, then rebuild the director (fresh squadPool +
+    // WaveDirector) and restore. The restored last-dispatch wall-clock must
+    // still rate-cap an immediate re-dispatch, then release after the window.
+    const { wave, squadPool } = setup({ readiness: [readyFaction()], dispatchIntervalMs: 1000 });
+    squadPool.setState(squadPool.get('squad-0')!, 'idle');
+    wave.plan(0);
+    const saved = wave.serialize();
+
+    const { wave: rebuilt, squadPool: pool2 } = setup({
+      readiness: [readyFaction()],
+      dispatchIntervalMs: 1000,
+    });
+    rebuilt.restore(saved);
+    pool2.setState(pool2.get('squad-0')!, 'idle');
+    rebuilt.plan(500); // < 1000 ms since the persisted dispatch ⇒ capped
+    expect(countAssignedTo(pool2, 'alice')).toBe(0);
+    rebuilt.plan(1500); // window elapsed ⇒ re-dispatch
+    expect(countAssignedTo(pool2, 'alice')).toBe(1);
+  });
+});

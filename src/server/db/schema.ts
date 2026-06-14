@@ -90,4 +90,16 @@ CREATE TABLE IF NOT EXISTS player_ships (
 CREATE INDEX IF NOT EXISTS idx_player_ships_player  ON player_ships(player_id);
 CREATE INDEX IF NOT EXISTS idx_player_ships_expires ON player_ships(expires_at);
 CREATE INDEX IF NOT EXISTS idx_player_ships_active  ON player_ships(is_active, last_sector_key);
+
+-- Phase 5 director-state persistence. A single row (id = 1) holding the
+-- process-global LivingWorldDirector's abstract squad continuity, so a server
+-- restart resumes the living world (squad sectors / targets / states + wave
+-- bookkeeping) instead of re-seeding from scratch. payload_json is a
+-- JSON.stringify'd DirectorStatePayload; only the latest write is kept (UPSERT).
+CREATE TABLE IF NOT EXISTS director_state (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  payload_json TEXT NOT NULL,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
 `;

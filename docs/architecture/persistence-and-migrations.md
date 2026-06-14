@@ -39,7 +39,8 @@ The `PersistOp` discriminated union at
 enumerates every shape that can hit disk. Adding a new op is a code-review
 event — bump the version in `dbWorker.ts`'s prepared-statement table and
 the `applyOp` switch. Sub-phase B adds `LIMBO_PUT` / `LIMBO_DELETE` /
-`LIMBO_GET` here.
+`LIMBO_GET` here; Phase 2 adds `PLAYER_SHIP_PUT` / `PLAYER_SHIP_DELETE`; Phase 5
+adds `DIRECTOR_STATE_PUT` (the Director-state lane below).
 
 ## Phase 8 sub-phase A: sector snapshots
 
@@ -180,53 +181,65 @@ covers:
 When you register a real migration, add tests covering both the migration
 path and the no-op path (current-version payload still passes through).
 
-## Limbo lane (Phase 8 sub-phase B)
+## Limbo lane — RETIRED (Phase 5 / WS-B, 2026-06-14)
 
-`LimboStore` ([src/server/limbo/LimboStore.ts](../../src/server/limbo/LimboStore.ts))
-holds a player's ship state in two distinct cases:
+`LimboStore` is **deleted**. It previously held a player's ship state in two
+cases — a 15-min disconnect reconnect window and a 30-s transit-in-flight
+reservation — as an in-memory map shadowed through `LIMBO_PUT`/`LIMBO_DELETE`.
+Both roles are now served by the **roster** (`PlayerShipStore`):
 
-- **Disconnect** (TTL = `LIMBO_DISCONNECT_TTL_MS = 5 min`): the WS dropped.
-  Reconnect within the window → resume ship at last-known pose with
-  cooldowns and userId binding intact. After expiry, prune evicts and the
-  player respawns fresh on next connect.
-- **Transit-in-flight** (TTL = `LIMBO_TRANSIT_TTL_MS = 30 s`): pilot just
-  spooled out of source toward destination. Destination's `onJoin` consumes
-  within hundreds of ms; the 30 s cap is just enough for seat-reservation +
-  WS handshake jitter.
+- **Disconnect** → `RosterPersistence.markLinger` freezes the roster row at the
+  last pose; the in-world hull also persists via `lingeringHulls[]` in the sector
+  snapshot, and a returning player resumes by shipId (the `onJoin` shipId-restore
+  path). The roster `expiresAt` is **unenforced** (no prune sweep), so a lingering
+  hull persists forever (R2.26) until combat / respawn-evict / abandon → wreck.
+- **Transit-in-flight** → `TransitOrchestrator.commitTransit` `markStored`s the
+  roster row at the destination sector with the commit pose and threads the shipId
+  through `reserveSeatFor`; the destination `onJoin` shipId-restore is the single
+  path for BOTH reconnect and transit-arrival. No 30-s expiry — an aborted hop
+  just leaves the ship stored at the destination (reclaimable).
 
-The schema row is identical for both — only `expires_at` differs. The store
-is **in-memory primary, persistence shadow on every mutation**: every put
-and delete calls `enqueueCritical({ type: 'LIMBO_PUT' | 'LIMBO_DELETE', ... })`.
-The hot path is zero-I/O; SQLite is the durability spine. On boot,
-`initLimboStore()` runs `SELECT player_id, ... FROM limbo WHERE expires_at > ?`
-against the read-only main-thread connection and rehydrates the in-memory
-map, then starts a 30 s prune timer (`unref`'d so it doesn't keep the
-process alive on its own).
+Removed: the `LIMBO_PUT`/`LIMBO_DELETE`/`LIMBO_GET` ops, `initLimboStore` + the
+prune timer, and the boot/shutdown Limbo wiring. `/dev/limbo` is a back-compat
+stub (`{ exists: false }`) so the client + E2E stay green. The `limbo` SQLite
+table + a one-release `limbo`→roster backfill (in `initPlayerShipStore`) are
+kept for ONE release so in-flight entries from the pre-deploy build migrate into
+the roster, then both are dropped in a follow-up.
 
-**Boot sequence** (in `src/server/index.ts:main()`): `await initWorker()` →
-`httpServer.listen` → `initLimboStore()` → eager `matchMaker.createRoom`
-per galaxy sector. The order matters: `initLimboStore` reads through the
-DB connection that `initWorker` lazy-opens, and the eager-create loop
-relies on the worker being READY for the schema-version check on first
-boot.
+## Director-state lane (Phase 5 — "restart from any state")
 
-**Shutdown drain**: SIGINT / SIGTERM / `POST /dev/shutdown` runs
-`getLimboStore().stopPruneTimer()` first, then `await persistence.shutdown({ timeoutMs: 8000 })`.
-The persistence shadow already mirrored every Limbo mutation through
-CRITICAL, so the existing drain handles them — no separate Limbo flush.
+The process-global `LivingWorldDirector` owns the hunter-bot squads, and drones
+are deliberately NOT in the per-sector snapshot (they're director-owned, re-seeded
+at entry sectors). So the director persists its OWN continuity, on its own lane.
 
-**Atomic `take`**: `LimboStore.take(playerId)` is the only operation that
-needs atomic semantics (get + delete must not race). The in-memory `Map.get`
-+ `Map.delete` is implicitly atomic under V8's single-threaded event loop.
-A future Redis-backed `LimboStore` will need `WATCH/MULTI/EXEC` or a Lua
-script for the same guarantee — the contract surface (`put`, `take`,
-`peek`, `delete`, `prune`, `hydrate`) is shaped for that swap.
+[`DirectorPersistence`](../../src/server/livingworld/DirectorPersistence.ts)
+mirrors `SectorPersistence`: an injected `saveRow`/`loadRow` round-trip, a
+`DIRECTOR_STATE_VERSION` (tear-down-on-change, like `schemaVersion`) and a 24 h
+staleness gate. It shadows only the ABSTRACT squad continuity into a **singleton**
+`director_state` row (`id = 1`, UPSERT) via the new `DIRECTOR_STATE_PUT` CRITICAL
+op:
 
-**`/dev/limbo?playerId=`** ([diagRouter.devLimboHandler](../../src/server/routes/diagRouter.ts))
-returns `{ exists, sectorKey, expiresAt }` for E2E inspection. It deliberately
-**does NOT** return the payload; the payload is consumed only by the
-destination room's `onJoin` and we don't want to leak ship pose to a side
-channel.
+- per squad: `{squadId, kind, sectorKey, targetFactionId, state}` (membership is
+  re-derived by `SquadPool.seed`; the per-wave `warned` one-shot is dropped);
+- the `WaveDirector`'s `waveCount` + `lastDispatchAtMs` maps (absolute wall-clock,
+  so the dispatch rate-cap still gates correctly across a restart).
+
+**When it writes:** on graceful shutdown (`index.ts`, before the persistence
+drain) and throttled from the 1.5 s control-loop tail (`DIRECTOR_PERSIST_INTERVAL_MS`
+60 s, crash defence). Both are CRITICAL enqueues off the 60 Hz `update()` path —
+no netgate.
+
+**When it reads:** once, inside `LivingWorldDirector.start()`, AFTER the fresh
+seed. A `null` hydrate (no row / stale / version-mismatch / corrupt) falls through
+to today's fresh seed — so an empty DB or a `DIRECTOR_STATE_VERSION` bump is a
+clean reseed. On a hit, `SquadPool.restoreStates` + `WaveDirector.restore` overlay
+the continuity and the existing `respawnStep` re-spawns bots at each squad's
+restored sector (entry-only-ingress preserved: interior goals ingress at the edge
+and hop-traverse inward).
+
+**Not persisted:** individual bot poses + in-flight `BotTransitController` warps
+(a mid-flight hop resets to the squad's sector on restart). The fixed 24-bot pool
+is always re-seeded — only squad ASSIGNMENTS persist.
 
 ## Ship-kind catalogue drift (`player_ships.kindVersion`)
 

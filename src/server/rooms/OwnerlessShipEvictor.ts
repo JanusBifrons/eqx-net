@@ -41,7 +41,6 @@ import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { WeaponMountTicker } from './WeaponMountTicker.js';
 import type { RosterPersistence, RosterPose } from './RosterPersistence.js';
-import { getLimboStore } from '../db/PersistenceWorker.js';
 import { recordGameLeave } from '../stats/StatsService.js';
 
 export interface OwnerlessShipEvictorDeps {
@@ -142,13 +141,6 @@ export class OwnerlessShipEvictor {
       }
       d.shipPoseCache.delete(playerId);
       d.playerToUser.delete(playerId);
-
-      // Clear the active-Limbo UI gate.
-      try {
-        getLimboStore().delete(playerId);
-      } catch (err) {
-        d.logger.warn({ err, playerId }, 'Limbo delete on eviction failed');
-      }
 
       recordGameLeave(playerId);
     }

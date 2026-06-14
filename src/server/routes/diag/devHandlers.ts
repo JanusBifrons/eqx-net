@@ -13,7 +13,7 @@
 import type { Request, Response } from 'express';
 import { matchMaker } from 'colyseus';
 import { db } from '../../db/Database.js';
-import { getLimboStore, getPlayerShipStore } from '../../db/PersistenceWorker.js';
+import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
 
 /**
@@ -167,22 +167,10 @@ export function devLimboHandler(req: Request, res: Response): void {
     res.status(400).json({ error: 'playerId required' });
     return;
   }
-  const entry = getLimboStore().peek(playerId);
-  if (!entry) {
-    res.json({ exists: false });
-    return;
-  }
-  const p = entry.payload;
-  res.json({
-    exists: true,
-    sectorKey: p.sectorKey,
-    expiresAt: entry.expiresAt,
-    createdAt: entry.createdAt,
-    x: p.x,
-    y: p.y,
-    health: p.health,
-    userId: p.userId,
-  });
+  // WS-B (Phase 5): the LimboStore is retired — the roster (/dev/player-ships)
+  // is the source of truth for lingering ships now. Kept as a back-compat stub
+  // for the client's GalaxyPickerChrome fetch + E2E; always reports no entry.
+  res.json({ exists: false });
 }
 
 /**

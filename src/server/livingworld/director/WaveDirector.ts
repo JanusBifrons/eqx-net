@@ -70,6 +70,34 @@ export class WaveDirector {
     this.dispatchIntervalMs = opts.dispatchIntervalMs ?? DEFAULT_DISPATCH_INTERVAL_MS;
   }
 
+  /**
+   * Serialize the wave bookkeeping for director-state persistence (Phase 5 —
+   * "restart from any state"). `waveCount` is monotonic and `lastDispatchAtMs`
+   * is absolute wall-clock, so both restore meaningfully across a restart: a
+   * base dispatched just before shutdown stays rate-capped on the next boot,
+   * while a long-quiet base is immediately dispatchable.
+   */
+  serialize(): {
+    waveCount: Array<[string, number]>;
+    lastDispatchAtMs: Array<[string, number]>;
+  } {
+    return {
+      waveCount: [...this.waveCount.entries()],
+      lastDispatchAtMs: [...this.lastDispatchAtMs.entries()],
+    };
+  }
+
+  /** Restore wave bookkeeping (Phase 5). Clears then repopulates both maps. */
+  restore(state: {
+    waveCount: ReadonlyArray<readonly [string, number]>;
+    lastDispatchAtMs: ReadonlyArray<readonly [string, number]>;
+  }): void {
+    this.waveCount.clear();
+    for (const [factionId, n] of state.waveCount) this.waveCount.set(factionId, n);
+    this.lastDispatchAtMs.clear();
+    for (const [factionId, ms] of state.lastDispatchAtMs) this.lastDispatchAtMs.set(factionId, ms);
+  }
+
   /** Plan this control tick. Pure of side effects — returns the steps the
    *  director executes. Each faction's de-escalation uses ITS room's serverTick
    *  (carried on the readiness entry), not a single director clock. `nowMs` is

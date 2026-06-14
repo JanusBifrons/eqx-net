@@ -11,11 +11,13 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
-import { initWorker, persistence, initLimboStore, getLimboStore, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
+import { initWorker, persistence, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
 import { LivingWorldDirector, LIVING_WORLD_BOT_COUNT, isLivingWorldDisabled, resolveBotSpoolMs, resolveBotHopMs, type LivingWorldOptions } from './livingworld/LivingWorldDirector.js';
 import { setIncomingPlayerSink } from './livingworld/incomingPlayerSink.js';
+import { DirectorPersistence, type DirectorStatePayload } from './livingworld/DirectorPersistence.js';
+import { db } from './db/Database.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
 import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
@@ -737,13 +739,6 @@ async function main(): Promise<void> {
     });
   });
 
-  // Phase 8 sub-phase B — hydrate the LimboStore from on-disk rows that
-  // survived the last shutdown, then start the prune timer. Done before
-  // the eager-create loop so any galaxy room's onJoin can `take` a fresh
-  // hydrated entry without a race.
-  const { hydrated } = initLimboStore();
-  logger.info({ hydrated }, 'Limbo hydrated from disk');
-
   // Phase 2 multi-ship roster — same boot ordering. Reads the
   // `player_ships` rows and seeds the in-memory PlayerShipStore so any
   // galaxy room's onJoin can resolve a shipId without a race.
@@ -804,7 +799,30 @@ async function main(): Promise<void> {
     const directorOpts: Partial<LivingWorldOptions> = {};
     if (botSpoolMs !== undefined) directorOpts.spoolMs = botSpoolMs;
     if (botHopMs !== undefined) directorOpts.hopTravelMs = botHopMs;
-    livingWorldDirector = new LivingWorldDirector(galaxyRooms, directorOpts);
+    // Phase 5 — director-state persistence ("restart from any state"): shadow the
+    // abstract squad continuity on the CRITICAL lane (same model as Limbo/roster)
+    // and hydrate it from the read-only main-thread connection inside start(). The
+    // singleton director_state row's table is created by the worker's schema
+    // bootstrap (initWorker, above); a first-boot SELECT miss is caught in
+    // hydrate() → fresh seed.
+    const directorPersistence = new DirectorPersistence({
+      saveRow: (payload: DirectorStatePayload) => {
+        persistence.enqueueCritical({
+          type: 'DIRECTOR_STATE_PUT',
+          payloadJson: JSON.stringify(payload),
+          ts: Date.now(),
+        });
+      },
+      loadRow: () =>
+        db
+          .prepare('SELECT payload_json, created_at FROM director_state WHERE id = 1')
+          .get() as { payload_json: string; created_at: number } | undefined,
+      logger,
+    });
+    livingWorldDirector = new LivingWorldDirector(galaxyRooms, {
+      ...directorOpts,
+      directorPersistence,
+    });
     livingWorldDirector.start();
     // Phase-4 P0 — let the per-room TransitOrchestrator + destination rooms feed
     // inbound PLAYERS into the director's IncomingRegistry (the "incoming" banner)
@@ -844,24 +862,18 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
   }, 10_000);
   forceExit.unref();
 
-  // Phase 8 sub-phase B — stop the Limbo prune timer first so it doesn't
-  // race the persistence drain. The persistence shadow already mirrored
-  // every Limbo mutation through CRITICAL, so the existing drain handles
-  // them; nothing else to flush.
-  try {
-    getLimboStore().stopPruneTimer();
-  } catch (err) {
-    logger.warn({ err }, 'limboStore.stopPruneTimer threw');
-  }
-
   // Living World — stop the control loop, abandon in-flight bot
   // transits, unsubscribe the bus listeners. (The loop is unref'd, but
   // an explicit stop keeps a graceful shutdown clean and deterministic.)
   try {
     setIncomingPlayerSink(null);
+    // Phase 5 — flush the director's abstract squad continuity onto the CRITICAL
+    // lane BEFORE the persistence drain below, so a restart resumes where we left
+    // off (the throttled in-loop persist only bounds loss on an unclean kill).
+    livingWorldDirector?.persistState();
     livingWorldDirector?.stop();
   } catch (err) {
-    logger.warn({ err }, 'livingWorldDirector.stop threw');
+    logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');
   }
 
   try {
