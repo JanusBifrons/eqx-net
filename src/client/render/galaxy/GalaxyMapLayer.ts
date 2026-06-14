@@ -3,6 +3,7 @@ import {
   GALAXY_SECTORS,
   axialToPixel,
   type GalaxySector,
+  type SectorFeature,
 } from '@core/galaxy/galaxy';
 import {
   isSectorSelectable,
@@ -357,9 +358,50 @@ export class GalaxyMapLayer extends Container {
       label.y = oy;
       container.addChild(label);
 
+      // Static environmental-feature glyphs (asteroid / nebula / minerals /
+      // black-hole / station) — baked per sector in galaxy.ts, drawn once. Live
+      // count glyphs (structures / enemy / neutral / player) are layered in
+      // separately by setGalaxyStats (Phase 4b).
+      const glyphs = new Graphics();
+      this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.46);
+      container.addChild(glyphs);
+
       this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, territoryIndex: ti });
     }
     this.repaint();
+  }
+
+  /** Draw a sector's static feature glyphs in a small centred row at (cx, cy). */
+  private drawFeatureGlyphs(g: Graphics, features: readonly SectorFeature[], cx: number, cy: number): void {
+    if (features.length === 0) return;
+    const spacing = 13;
+    const startX = cx - ((features.length - 1) * spacing) / 2;
+    for (let i = 0; i < features.length; i++) {
+      this.drawFeatureGlyph(g, features[i]!, startX + i * spacing, cy, 5);
+    }
+  }
+
+  /** One small procedural feature glyph (Pixi v8 Graphics). Kept tiny + legible
+   *  per the "start tiny" UI rule; tunable. */
+  private drawFeatureGlyph(g: Graphics, feature: SectorFeature, x: number, y: number, r: number): void {
+    switch (feature) {
+      case 'asteroid':
+        g.ellipse(x, y, r * 1.1, r * 0.8).fill({ color: 0xaa9977 });
+        break;
+      case 'nebula':
+        g.circle(x, y, r).fill({ color: 0xcc88ff, alpha: 0.7 });
+        break;
+      case 'minerals':
+        g.poly([x, y - r, x + r * 0.7, y, x, y + r * 0.8, x - r * 0.7, y]).fill({ color: 0xffdd33 });
+        break;
+      case 'blackhole':
+        g.circle(x, y, r).stroke({ color: 0xff4466, width: 1.5, alpha: 0.9 });
+        g.circle(x, y, r * 0.5).fill({ color: 0x080010 });
+        break;
+      case 'station':
+        g.rect(x - r * 0.7, y - r * 0.7, r * 1.4, r * 1.4).fill({ color: 0xddeeff });
+        break;
+    }
   }
 
   private repaint(): void {
