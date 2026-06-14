@@ -356,4 +356,49 @@ describe('ConnectorRenderer — placement connection preview', () => {
     expect(r.placementPreviewConnectionCount).toBe(4);
     expect(r.placementPreviewOverflowCount).toBe(0);
   });
+
+  // ── Cross-owner filter — never preview a would-connect line to ANOTHER
+  // player's structure. The grid is per-owner server-side (you can't connect to
+  // someone else's base), so the candidate web must skip a cross-owner hub
+  // entirely — no green, no red overflow, no line of any kind ("don't even SHOW
+  // connections to another player's structure"). ──
+  it("skips a CROSS-owner hub entirely — no green, no overflow", () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([
+      // In-range + legal, but owned by a DIFFERENT player than the local one.
+      [capitalId, structureState({ connTo: [], owner: 'other-player' })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      localPlayerId: 'me',
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBe(0);
+    expect(r.placementPreviewOverflowCount).toBe(0);
+  });
+
+  it("STILL previews a SAME-owner hub (control for the cross-owner skip)", () => {
+    const capitalId = 1;
+    const swarm = new Map<number, SwarmRenderState>([[capitalId, structureEntry('capital', 0, 0)]]);
+    const structures = new Map<number, StructureRenderState>([
+      [capitalId, structureState({ connTo: [], owner: 'me' })],
+    ]);
+    const mirror: RenderMirror = {
+      swarm,
+      structures,
+      localPlayerId: 'me',
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: 300, angle: 0 },
+    } as unknown as RenderMirror;
+
+    const r = new ConnectorRenderer();
+    r.update(mirror, 1, 0);
+
+    expect(r.placementPreviewConnectionCount).toBeGreaterThanOrEqual(1);
+  });
 });
