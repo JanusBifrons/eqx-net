@@ -250,18 +250,18 @@ export function weaponAutoFireRange(def: WeaponDef): number {
 
 /**
  * "Optimal + beyond" hitscan damage falloff fraction in [minDamageFrac, 1]
- * (P3.13). FULL (1.0) out to `optimalRange`, then falling as the SQUARE of the
- * normalized over-optimal distance to `minDamageFrac` at `maxRange`, clamped to
- * `minDamageFrac` past it. Pure + allocation-free (scalar in/out) — safe on the
- * fire-resolution path. Multiply the weapon's flat `damage` by this to get the
- * distance-scaled damage. A degenerate band (`maxRange <= optimalRange`) yields
- * 1.0 = flat full damage.
+ * (P3.13; LINEAR since Phase-5 2026-06-14 — was reverse-square). FULL (1.0) out
+ * to `optimalRange`, then falling LINEARLY with the normalized over-optimal
+ * distance to `minDamageFrac` at `maxRange`, clamped to `minDamageFrac` past it.
+ * Pure + allocation-free (scalar in/out) — safe on the fire-resolution path.
+ * Multiply the weapon's flat `damage` by this to get the distance-scaled damage.
+ * A degenerate band (`maxRange <= optimalRange`) yields 1.0 = flat full damage.
  */
 export function hitscanFalloffFrac(dist: number, optimalRange: number, maxRange: number, minDamageFrac: number): number {
   if (dist <= optimalRange) return 1;
   if (maxRange <= optimalRange) return 1;
   if (dist >= maxRange) return minDamageFrac;
   const t = (dist - optimalRange) / (maxRange - optimalRange);
-  const frac = 1 - (1 - minDamageFrac) * t * t;
+  const frac = 1 - (1 - minDamageFrac) * t;
   return frac < minDamageFrac ? minDamageFrac : frac > 1 ? 1 : frac;
 }
