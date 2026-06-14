@@ -5,6 +5,7 @@ import {
   apportion,
   computeDesiredDistribution,
   nextHopToward,
+  hopDistance,
   planMigrations,
   pickRespawnSector,
   sectorEdgePose,
@@ -19,6 +20,29 @@ const KEYS = GALAXY_SECTORS.map((s) => s.key);
 // Canonical order asserted so the largest-remainder tie-break math below
 // stays anchored if the galaxy is ever reordered.
 const sum = (m: ReadonlyMap<string, number>): number => [...m.values()].reduce((a, b) => a + b, 0);
+
+describe('hopDistance (galaxy-graph BFS depth)', () => {
+  it('is 0 for the same sector', () => {
+    expect(hopDistance('sol-prime', 'sol-prime')).toBe(0);
+  });
+
+  it('is 1 from the centre to any outer ring sector, and symmetric', () => {
+    expect(hopDistance('sol-prime', 'orion-belt')).toBe(1);
+    expect(hopDistance('orion-belt', 'sol-prime')).toBe(1);
+  });
+
+  it('is >= 2 between two outers that route via the centre', () => {
+    // Every outer is 1 hop from the centre, so two outers are at least 2 apart.
+    const d = hopDistance('orion-belt', 'kepler-spur');
+    expect(d).toBeGreaterThanOrEqual(2);
+    expect(Number.isFinite(d)).toBe(true);
+  });
+
+  it('is Infinity for an unknown sector', () => {
+    expect(hopDistance('sol-prime', 'no-such-sector')).toBe(Infinity);
+    expect(hopDistance('no-such-sector', 'sol-prime')).toBe(Infinity);
+  });
+});
 
 describe('apportion (largest-remainder)', () => {
   it('sums to total and splits evenly when weights are equal', () => {
