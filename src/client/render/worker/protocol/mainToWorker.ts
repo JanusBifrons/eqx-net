@@ -8,6 +8,7 @@ import type { RenderMirror, WarpCenter } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
+import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
 
 /**
  * Initialise the worker. Sent once after `new Worker(...)`.
@@ -60,6 +61,14 @@ export interface SetTransitDockedMsg { type: 'SET_TRANSIT_DOCKED'; docked: boole
  * convention every other message here follows.
  */
 export interface SetOverlayModeMsg { type: 'SET_OVERLAY_MODE'; mode: 'overlay' | 'selector' }
+
+/**
+ * Live per-sector galaxy stats for the worker-hosted GalaxyMapLayer (Living
+ * Galaxy P4b). `SectorLiveState` is a plain structured-cloneable shape from
+ * shared-types (no Pixi/DOM/functions) — polled main-side by `useGalaxyStats`
+ * off `GET /galaxy/snapshot` and pushed here for the live count glyphs.
+ */
+export interface SetGalaxyStatsMsg { type: 'SET_GALAXY_STATS'; stats: SectorLiveState[] }
 
 /**
  * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
@@ -250,6 +259,7 @@ export type MainToWorkerMsg =
   | SetCurrentSectorMsg
   | SetTransitDockedMsg
   | SetOverlayModeMsg
+  | SetGalaxyStatsMsg
   | ResizeMsg
   | SetTickerFpsMsg
   | SetWarpModeMsg

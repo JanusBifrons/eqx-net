@@ -11,11 +11,12 @@ import { describe, it, expect } from 'vitest';
 import { isSectorSelectable, clusterFitFraction } from './galaxyLayerDecisions';
 import { isNeighbour } from '@core/galaxy/galaxy';
 
-// Concrete galaxy facts (galaxy.ts hard-codes the 7-sector sunflower):
-// sol-prime is the centre, neighbour to every outer; no sector neighbours
-// itself (no self-loop — enforced by galaxy.test.ts).
+// Concrete galaxy facts: sol-prime (the core hub) is graph-adjacent to
+// vega-reach; no sector neighbours itself (no self-loop — enforced by
+// galaxy.test.ts). Uses a real adjacency so the selectability contract is
+// exercised against the live multi-region graph.
 const CENTRE = 'sol-prime';
-const OUTER = 'orion-belt';
+const OUTER = 'vega-reach';
 
 describe('isSectorSelectable', () => {
   it('selector mode: every sector is selectable, regardless of dock/current', () => {

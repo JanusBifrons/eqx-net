@@ -31,6 +31,7 @@ import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
+import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 
 export interface InstallGalaxyOverlayOpts {
   renderer: IRenderer;
@@ -90,6 +91,11 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // thread (DOM) path only; the worker hosts its own layer.
   (window as unknown as { __eqxGalaxyTransform?: () => { x: number; y: number; scale: number } })
     .__eqxGalaxyTransform = () => galaxyLayer.getDebugTransform();
+  // DEV/E2E hook (Living Galaxy P4a): the REAL drawn per-territory shrink scale
+  // (factionId → clusterRoot sub-container scale.x), so a spec can assert the
+  // hovered contiguous territory shrinks as one unit. Main-thread (DOM) path only.
+  (window as unknown as { __eqxGalaxyTerritoryScale?: () => Record<string, number> })
+    .__eqxGalaxyTerritoryScale = () => galaxyLayer.getDebugTerritoryScales();
   renderer.addOverlayContainer(galaxyLayer);
   galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);
@@ -157,5 +163,21 @@ export function syncGalaxyMode(
   galaxyLayer?.setMode(mode);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerMode(mode);
+  }
+}
+
+/**
+ * Live per-sector stats sync (Phase 4b) — routes BOTH the DOM-mode layer and the
+ * worker-hosted layer. Stats are polled by `useGalaxyStats` (GET /galaxy/snapshot)
+ * and pushed through here whenever the store slice changes.
+ */
+export function syncGalaxyStats(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  stats: SectorLiveState[],
+): void {
+  galaxyLayer?.setGalaxyStats(stats);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerGalaxyStats(stats);
   }
 }

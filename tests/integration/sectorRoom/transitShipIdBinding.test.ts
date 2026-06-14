@@ -77,7 +77,7 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
       playerId: ownerPid,
       userId: null,
       kind: 'fighter',
-      sectorKey: 'orion-belt',
+      sectorKey: 'vega-reach',
       x: 0,
       y: 0,
       health: 100,
@@ -97,7 +97,7 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
 
     room.send('engage_transit', {
       type: 'engage_transit',
-      targetSectorKey: 'orion-belt',
+      targetSectorKey: 'vega-reach',
       shipId: foreignShip.shipId,
     });
 
@@ -119,7 +119,7 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
 
     room.send('engage_transit', {
       type: 'engage_transit',
-      targetSectorKey: 'orion-belt',
+      targetSectorKey: 'vega-reach',
       shipId: 'nonexistent-' + randomUUID(),
     });
 
@@ -138,15 +138,9 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
       3000,
     );
 
-    // 'andromeda-rim' is NOT a neighbour of itself — but it is a
-    // valid galaxy key. Wait, andromeda-rim IS a neighbour of sol-prime.
-    // Pick a sector that ISN'T a neighbour of sol-prime: there isn't one
-    // (sol-prime is the centre, connected to all 6 outers). So pick an
-    // outer pair instead. Skip if no truly-non-neighbour pair exists.
-    //
-    // Better: use an entirely fictitious sectorKey. The neighbour check
-    // calls `isNeighbour(src, target)` which returns false for any
-    // unknown target.
+    // A fictitious sectorKey is the simplest non-neighbour: the gate calls
+    // `isNeighbour('sol-prime', target)`, which returns false for any key not
+    // in sol-prime's neighbour list (vega-reach / lyra-fringe / cygnus-arm).
     room.send('engage_transit', {
       type: 'engage_transit',
       targetSectorKey: 'not-a-real-sector',
@@ -167,7 +161,7 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
       playerId: pid,
       userId: null,
       kind: 'fighter',
-      sectorKey: 'orion-belt',
+      sectorKey: 'vega-reach',
       x: 0,
       y: 0,
       health: 100,
@@ -175,23 +169,23 @@ describe('SectorRoom × TransitOrchestrator × PlayerShipStore — shipId wiring
 
     const spoolPromise = waitForTransitState(
       room,
-      (m) => m.state === 'SPOOLING' && m.targetSectorKey === 'orion-belt',
+      (m) => m.state === 'SPOOLING' && m.targetSectorKey === 'vega-reach',
       3000,
     );
 
     room.send('engage_transit', {
       type: 'engage_transit',
-      targetSectorKey: 'orion-belt',
+      targetSectorKey: 'vega-reach',
       shipId: own.shipId,
     });
 
     const spoolMsg = await spoolPromise;
     expect(spoolMsg.state).toBe('SPOOLING');
-    expect(spoolMsg.targetSectorKey).toBe('orion-belt');
+    expect(spoolMsg.targetSectorKey).toBe('vega-reach');
     expect(typeof spoolMsg.spoolMs).toBe('number');
 
     // Cancel so the 3 s timer doesn't fire commitTransit → reserveSeatFor
-    // → matchMaker lookup for 'galaxy-orion-belt' which doesn't exist
+    // → matchMaker lookup for 'galaxy-vega-reach' which doesn't exist
     // in our single-room harness.
     room.send('cancel_transit', { type: 'cancel_transit' });
     await harness.advance(200);

@@ -15,6 +15,7 @@
 import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -246,6 +247,10 @@ export interface UIStore {
    *  highly transparent galaxy hex layer ON the gameplay canvas — gameplay
    *  continues underneath. */
   isGalaxyMapOpen: boolean;
+  /** Live per-sector galaxy stats (Phase 4b) from GET /galaxy/snapshot. Discrete,
+   *  non-spatial → Zustand-safe (#2). Polled by useGalaxyStats while a galaxy map
+   *  is on screen; consumed by the GalaxyMapLayer count glyphs. */
+  galaxyStats: SectorLiveState[];
   /** Standalone Galaxy Overview (Map A) open state in-game. Toggled by the
    *  drawer's Galaxy tab. Replaces the gameplay canvas full-screen with a
    *  Pixi-rendered overview that supports drag/pinch/wheel pan & zoom. The
@@ -360,6 +365,7 @@ export interface UIStore {
   setDrawerTab: (id: string) => void;
   setPhase: (p: Phase) => void;
   setGalaxyMapOpen: (v: boolean) => void;
+  setGalaxyStats: (stats: SectorLiveState[]) => void;
   toggleGalaxyMapOpen: () => void;
   setGalaxyOverviewOpen: (v: boolean) => void;
   toggleGalaxyOverviewOpen: () => void;

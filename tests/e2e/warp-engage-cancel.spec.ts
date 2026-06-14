@@ -26,7 +26,7 @@
  * What this locks (in one ≤10 s test):
  *   1. The `engage_transit` Colyseus message reaches the orchestrator
  *      from a real client room (`room.send('engage_transit', { type: ...,
- *      target: 'orion-belt' })`).
+ *      target: 'cygnus-arm' })`).
  *   2. The orchestrator broadcasts `transit_state SPOOLING` back, the
  *      client's `ColyseusClient` translates it into the Zustand
  *      `transitState='SPOOLING'` + `transitSpoolMs`, and React mounts
@@ -48,10 +48,10 @@
  *
  * Boot strategy: same `?galaxy=sol-prime` autojoin used by
  * `join-warp-screen.spec.ts` / `mobile-joystick-ship-swap.spec.ts` etc.
- * — Sol Prime is the centre hex with 6 neighbours (`src/core/galaxy/galaxy.ts:66`);
- * `orion-belt` is the first listed. The engage_transit ownership check
+ * — Sol Prime is the core hub; post Living Galaxy P1 its graph neighbours are
+ * vega-reach / lyra-fringe / cygnus-arm. The engage_transit ownership check
  * passes because we leave `shipId` unset (legacy SAB-pose path) and
- * `target: 'orion-belt'` is a real neighbour.
+ * `target: 'cygnus-arm'` is a real neighbour.
  */
 import { test, expect, type Page } from '@playwright/test';
 
@@ -102,8 +102,8 @@ test('warp engage → SPOOLING overlay → cancel → DOCKED (state-machine roun
   // dev mode so it's available. `getRoom()` is a sanctioned accessor
   // (`ColyseusClient.ts:453`) and the engage_transit message shape is
   // `EngageTransitSchema` — type + target + optional arrival/shipId.
-  // Orion-belt is the first listed neighbour of sol-prime
-  // (`src/core/galaxy/galaxy.ts:66`).
+  // cygnus-arm is a real graph neighbour of sol-prime (the Crimson chokepoint;
+  // post Living Galaxy P1 the core hub links to vega-reach / lyra-fringe / cygnus-arm).
   const dispatched = await page.evaluate(() => {
     interface ClientWithRoom {
       getRoom?: () => { send: (channel: string, msg: unknown) => void } | null;
@@ -115,7 +115,7 @@ test('warp engage → SPOOLING overlay → cancel → DOCKED (state-machine roun
     if (!room) return { ok: false, reason: 'no room' };
     room.send('engage_transit', {
       type: 'engage_transit',
-      targetSectorKey: 'orion-belt',
+      targetSectorKey: 'cygnus-arm',
     });
     return { ok: true };
   });

@@ -20,9 +20,11 @@ import {
   syncGalaxyVisibility,
   syncGalaxyCurrentSector,
   syncGalaxyTransitDocked,
+  syncGalaxyStats,
 } from './app/galaxyOverlay';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
+import { useGalaxyStats } from './app/useGalaxyStats';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
@@ -524,6 +526,10 @@ function GameSurface({
   // the first paint.
   const galaxyLayerCurrentSectorKey = useUIStore((s) => s.currentSectorKey);
   const galaxyLayerTransitState = useUIStore((s) => s.transitState);
+  const galaxyStats = useUIStore((s) => s.galaxyStats);
+  // Poll GET /galaxy/snapshot while a galaxy map is on screen (idle selector or
+  // the in-game overlay open) → store.galaxyStats → the layer's count glyphs.
+  useGalaxyStats(idle || galaxyMapOpen);
   // Each effect routes BOTH paths: `galaxyLayerRef.current` is set
   // only in DOM-renderer mode (Safari fallback). In worker-renderer
   // mode the layer lives inside the worker; state crosses via the
@@ -539,6 +545,9 @@ function GameSurface({
   useEffect(() => {
     syncGalaxyTransitDocked(galaxyLayerRef.current, rendererRef.current, galaxyLayerTransitState === 'DOCKED');
   }, [galaxyLayerTransitState]);
+  useEffect(() => {
+    syncGalaxyStats(galaxyLayerRef.current, rendererRef.current, galaxyStats);
+  }, [galaxyStats]);
 
   // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the
   // main thread is saturated enough that Playwright's CDP roundtrip

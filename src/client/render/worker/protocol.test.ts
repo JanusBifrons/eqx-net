@@ -115,6 +115,16 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_TRANSIT_DOCKED', msg: { type: 'SET_TRANSIT_DOCKED', docked: true } },
       { name: 'SET_OVERLAY_MODE overlay', msg: { type: 'SET_OVERLAY_MODE', mode: 'overlay' } },
       { name: 'SET_OVERLAY_MODE selector', msg: { type: 'SET_OVERLAY_MODE', mode: 'selector' } },
+      {
+        name: 'SET_GALAXY_STATS',
+        msg: {
+          type: 'SET_GALAXY_STATS',
+          stats: [
+            { key: 'sol-prime', players: 1, enemies: 2, neutrals: 3, structures: 4, owner: { factionId: 'core', contested: false } },
+            { key: 'greenfall', players: 0, enemies: 0, neutrals: 0, structures: 0, owner: null },
+          ],
+        },
+      },
       { name: 'RESIZE', msg: { type: 'RESIZE', width: 1024, height: 768, dpr: 1.5 } },
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },
@@ -227,6 +237,7 @@ describe('renderer-worker protocol', () => {
           case 'SET_CURRENT_SECTOR':
           case 'SET_TRANSIT_DOCKED':
           case 'SET_OVERLAY_MODE':
+          case 'SET_GALAXY_STATS':
           case 'RESIZE':
           case 'SET_TICKER_FPS':
           case 'SET_WARP_MODE':

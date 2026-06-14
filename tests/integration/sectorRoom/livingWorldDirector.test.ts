@@ -32,12 +32,12 @@ describe('LivingWorldDirector — multi-sector population control', () => {
 
   it('seeds a squad at an ENTRY (edge) sector — never the interior (drone-warp-in invariant)', async () => {
     // Entry-only ingress: bots materialise ONLY at entry (edge) sectors and
-    // gather at their squad's home edge until a wave is declared. sol-prime is
-    // the interior centre — NO drone may appear there out of nowhere. For this
-    // live set the entry sectors are orion-belt + vega-reach; the single squad
-    // homes at the first (orion-belt).
+    // gather at their squad's home edge until a wave is declared. In this live
+    // set the only galaxy ENTRY sector is greenfall (the Verdant frontier);
+    // emerald-span + verdance are interior — NO drone may appear there out of
+    // nowhere. The single squad homes at the entry (greenfall).
     h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt', 'vega-reach'],
+      sectors: ['greenfall', 'emerald-span', 'verdance'],
       botCount: 6,
       seed: 7,
     });
@@ -53,8 +53,8 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     }
     // The squad gathered at its home edge; no member ingressed into the centre.
     const s = h.director.snapshot();
-    expect(s.perSector['sol-prime']!.bots).toBe(0);
-    expect(s.perSector['orion-belt']!.bots).toBe(6);
+    expect(s.perSector['verdance']!.bots).toBe(0);
+    expect(s.perSector['greenfall']!.bots).toBe(6);
   }, 20_000);
 
   it('does NOT hunt a player who has no base (Req #6 — occupancy aggro retired)', async () => {
@@ -63,20 +63,20 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     // declared against a READY base aggros them. With no structures the squad
     // must never enter `warping`/`attacking`.
     h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 4,
       seed: 3,
     });
-    // orion-belt is the only entry sector in this set, so the squad gathers there.
+    // greenfall is the only entry sector in this set, so the squad gathers there.
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['orion-belt']!.bots === 4,
+      () => h!.director.snapshot().perSector['greenfall']!.bots === 4,
       6000,
       'squad gathered at its home edge',
     );
-    // Player joins the INTERIOR sector (no base, no structures) as a fully ACTIVE
+    // Player joins the OTHER sector (no base, no structures) as a fully ACTIVE
     // hull (connectActive sends client_ready so playerCount() counts it — the
     // no-hunt guarantee must hold for a real, present player).
-    await h.connectActive(randomUUID(), 'sol-prime', { shipKind: KIND });
+    await h.connectActive(randomUUID(), 'emerald-span', { shipKind: KIND });
     await h.advance(600); // ~10 control ticks at the harness interval
 
     // Load-bearing: no wave was ever declared against the base-less player — the
@@ -88,29 +88,29 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(sq.byState.attacking).toBe(0);
     const s = h.director.snapshot();
     expect(s.active).toBe(4);
-    expect(s.perSector['sol-prime']!.bots).toBe(0);
+    expect(s.perSector['emerald-span']!.bots).toBe(0);
   }, 25_000);
 
   it('roams an idle squad across the graph (HOP, not ingress) — and stays neutral', async () => {
     // Roaming replaces the retired ambient patrol floor: an idle, unassigned
-    // squad gathers at its home edge (orion-belt), then slow-drifts the graph.
-    // The only live neighbour here is the interior sol-prime, so the squad
-    // drifts inward — proving roaming reaches interior sectors via real HOPS
-    // (bot_transit_commit), NOT from-nowhere ingress, and never goes hostile.
+    // squad gathers at its home edge (greenfall, the Verdant entry), then
+    // slow-drifts the graph. greenfall's only live neighbour is emerald-span, so
+    // the squad drifts inward — proving roaming reaches interior sectors via real
+    // HOPS (bot_transit_commit), NOT from-nowhere ingress, and never goes hostile.
     h = await bootLivingWorldTestServer({
-      sectors: ['orion-belt', 'sol-prime'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 8,
       seed: 11,
       director: { roamIntervalMs: 100, hopTravelMs: 40 },
     });
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['orion-belt']!.bots === 8,
+      () => h!.director.snapshot().perSector['greenfall']!.bots === 8,
       6000,
       'squad gathered at its home edge',
     );
-    // The squad drifts inward to sol-prime within a roam cycle.
+    // The squad drifts inward to emerald-span within a roam cycle.
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['sol-prime']!.bots > 0,
+      () => h!.director.snapshot().perSector['emerald-span']!.bots > 0,
       6000,
       'a member roamed into the interior via a hop',
     );
@@ -118,11 +118,11 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     // Reaching the interior was a HOP (despawn→spawn pair, logged
     // bot_transit_commit), NEVER a from-nowhere ingress: every bot_spawn is at
     // the entry edge.
-    const intoSol = h.events.all({
+    const intoInterior = h.events.all({
       tag: 'bot_transit_commit',
-      where: (d) => d['to'] === 'sol-prime',
+      where: (d) => d['to'] === 'emerald-span',
     });
-    expect(intoSol.length).toBeGreaterThan(0);
+    expect(intoInterior.length).toBeGreaterThan(0);
     for (const e of h.events.all({ tag: 'bot_spawn' })) {
       expect(isEntrySector(e.data['sectorKey'] as string)).toBe(true);
     }
