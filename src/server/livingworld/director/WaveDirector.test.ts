@@ -78,6 +78,23 @@ describe('WaveDirector — assignment + advancement', () => {
     expect(steps).toContainEqual({ kind: 'warp', squad: sq, to: 'vega' });
   });
 
+  it('dispatches the NEAREST idle squad to the ready base (graph distance)', () => {
+    // The user's directive: "review the pools of drones … direct the nearest
+    // roaming groups towards the player." Two idle squads at different sectors;
+    // the one CLOSEST to the ready base (by galaxy-graph hops) is assigned.
+    const { wave, squadPool } = setup({ readiness: [readyFaction({ sectorKey: 'orion-belt' })] });
+    const far = squadPool.get('squad-0')!; // seeded at sol-prime → 1 hop to orion-belt
+    const near = squadPool.get('squad-1')!;
+    near.sectorKey = 'orion-belt'; // already at the base → 0 hops
+    squadPool.setState(far, 'idle');
+    squadPool.setState(near, 'idle');
+
+    wave.plan(0);
+
+    expect(near.targetFactionId).toBe('alice'); // nearest wins
+    expect(far.targetFactionId).toBeNull(); // farther squad stays idle (v1 = 1 squad)
+  });
+
   it('does NOT assign when no squad is idle', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction()] });
     // all squads left 'forming'

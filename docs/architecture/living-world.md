@@ -260,6 +260,38 @@ departure kind?" surface left — the warning is co-located with the one
 regression — must fail pre-fix), `wave-attack.spec.ts` (now asserts the red
 `data-warning-relation="hostile"`). Netgate applies (the broadcast is live-loop).
 
+## In-sector squad formation (Phase 5 WS-4)
+
+Roaming squads no longer have each drone orbit the origin independently
+(the "they just sort of sit there menacingly" complaint). A gathered, IDLE,
+unassigned squad **flies in formation** toward arbitrary in-sector A→B
+destinations:
+
+- `LivingWorldDirector.formationStep()` (each control tick, after `roamStep`)
+  designates a **leader** (first active member in `botIds` order), picks/refreshes
+  a random in-sector destination, and assigns each follower a **wedge slot**
+  rotated into the leader's live pose frame (so the wedge faces the travel
+  direction).
+- Targets reach the drones via two new `LivingWorldRoom` hooks —
+  `getBotPose(botId)` (SAB pose, for the leader) and `setBotMoveTarget(botId,x,y)`
+  (→ the drone's `HostileDroneBehaviour.setMoveTarget`).
+- The drone's IDLE behaviour flies to its target with the pure `arrive`
+  (`src/core/ai/steering.ts`): full thrust far out, ramping to 0 within
+  `MOVE_ARRIVE_SLOW_RADIUS` so per-kind `linearDamping` brakes it to a STOP at the
+  slot — the "slow down and come to a stop, don't float past" feel. The slot
+  geometry is the pure `formation.ts` (wedge/line/column).
+- The move target is the optional, **server-only** `IAiBehaviour.setMoveTarget`
+  seam (the client never ticks the drone brain → no lockstep surface, no wire
+  bump). COMBAT overrides it: a waved/hostile drone pursues normally.
+
+Because a formation-flying squad stays clustered, it **gathers + spools + warps
+between sectors as one unit** — the roam hop only fires once gathered, and
+`advanceMembersTowardGoal` starts every member's transit in the same control
+tick. The formation tunables (`FORMATION_DEST_RANGE/ARRIVE/SPACING`,
+`MOVE_ARRIVE_SLOW_RADIUS`) are a FEEL knob — confirm on-device. Locks:
+`steering.test.ts`, `formation.test.ts`, `HostileDroneBehaviour.moveTarget.test.ts`,
+`tests/integration/sectorRoom/livingWorldFormation.test.ts`.
+
 ## Future work
 
 - Per-kind hunter loadouts / threat tiers (extend the director's kind

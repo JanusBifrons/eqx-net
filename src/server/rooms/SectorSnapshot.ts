@@ -10,10 +10,14 @@
  * fresh-spawns from config. See docs/architecture/persistence-and-migrations.md.
  */
 
-// v2 (drone-warp-in, 2026-06-11): drone (kind 1) rows are no longer persisted —
-// drones are transient/roaming and re-seed at entry sectors on boot. Bumping
-// discards every v1 snapshot (which carried drone rows) and reseeds all sectors.
-export const CURRENT_SCHEMA_VERSION = 2;
+// v3 (Phase 5 2026-06-14): structures FULLY persisted + reconstructed.
+// v4 (Phase 5 2026-06-14): SCRAP persists too.
+// v5 (Phase 5 2026-06-14): LINGERING HULLS persist too — a disconnected /
+// displaced ship reappears in its sector "where you left it" after a restart
+// (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
+// ships persist once spawned until abandoned (→ wreck). Bumping discards every
+// older snapshot and reseeds all sectors.
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
@@ -31,11 +35,92 @@ export interface SectorSnapshotEntity {
   health: number;
 }
 
+/**
+ * A placed structure, with the FULL state needed to reconstruct it on hydrate
+ * (the swarm record only carries pose + health — owner / subtype / construction
+ * / minerals / power live in the server `StructureRegistry`). Position IS
+ * restored (structures are player-placed, NOT deterministic from the config
+ * seed). Connections are NOT persisted — they re-derive from the auto-connect
+ * sweep once the structures are re-placed.
+ */
+export interface SectorSnapshotStructure {
+  /** Swarm entity id (also the binary-wire id) at save time. */
+  entityId: string;
+  /** Owning playerId. */
+  owner: string;
+  /** Structure subtype id (`StructureKindId`). */
+  kind: string;
+  x: number;
+  y: number;
+  /** Hull HP at save time. */
+  health: number;
+  /** Built vs blueprint. */
+  isConstructed: boolean;
+  /** Minerals delivered toward construction (0..constructionCost). */
+  constructionProgress: number;
+  /** Minerals stored here (the Capital bank / a Miner buffer). */
+  minerals: number;
+  /** Stored power (batteries). */
+  storedPower: number;
+}
+
+/**
+ * A free-floating scrap piece (kind 3, scrap-on-death). Persisted with its
+ * drifted pose + parent ship-kind + scrap-group component index; the convex-hull
+ * collider is RE-DERIVED on hydrate from `(parentShipKind, componentIndex)` (the
+ * same `scrapColliderFor` mapping the death path uses), so it is never on the
+ * wire NOR in the snapshot — only the small identifying fields are.
+ */
+export interface SectorSnapshotScrap {
+  entityId: string;
+  /** Parent ship-kind id the piece broke off of (rides the shared shipKind byte). */
+  parentShipKind: string;
+  /** Index into `shipScrapGroups(parentShipKind)`. */
+  componentIndex: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  /** World math-up angle. */
+  angle: number;
+  health: number;
+}
+
+/**
+ * A lingering hull (a disconnected / fresh-spawn-displaced ship, `isActive=false`,
+ * still drifting in the sector). Persisted so it reappears in-world after a
+ * server restart (Phase 5 v5). The `shipInstanceId` is the roster shipId — the
+ * stable hull identity across disconnect↔reconnect↔abandon — so reconnect rebinds
+ * to the reconstructed hull and abandon→wreck still keys correctly.
+ */
+export interface SectorSnapshotLingeringHull {
+  shipInstanceId: string;
+  playerId: string;
+  kind: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
+  health: number;
+  /** True if the shield was down at persist time (hull exposed). */
+  shieldDown: boolean;
+}
+
 export interface SectorSnapshotPayload {
   schemaVersion: number;
   sectorKey: string;
   savedAtMs: number;
   swarm: SectorSnapshotEntity[];
+  /** Placed structures, fully reconstructable (Phase 5 — was previously lost on
+   *  restart). Absent on a sector that has none. */
+  structures?: SectorSnapshotStructure[];
+  /** Free-floating scrap pieces (Phase 5 v4). Absent when none. */
+  scrap?: SectorSnapshotScrap[];
+  /** Lingering hulls (Phase 5 v5 — "lingers forever where you left it"). Absent
+   *  when none. */
+  lingeringHulls?: SectorSnapshotLingeringHull[];
 }
 
 /**

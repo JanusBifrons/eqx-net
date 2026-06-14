@@ -119,8 +119,14 @@ import {
 import { SnapshotRing } from '../lagcomp/SnapshotRing.js';
 // checkBackpressure now used inside SnapshotBroadcaster.ts + SwarmBroadcaster.ts
 import { validateToken, getUser } from '../auth/AuthService.js';
-import { recordGameJoin, recordKill } from '../stats/StatsService.js';
-// db / saveSnapshot / SectorSnapshot.* now used inside SectorPersistence.ts
+import { recordGameJoin, recordKill, saveSnapshot } from '../stats/StatsService.js';
+import { db } from '../db/Database.js';
+import type {
+  SectorSnapshotStructure,
+  SectorSnapshotScrap,
+  SectorSnapshotLingeringHull,
+} from './SectorSnapshot.js';
+import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getLimboStore, getPlayerShipStore } from '../db/PersistenceWorker.js';
 // LIMBO_DISCONNECT_TTL_MS + LimboPayload now used inside LeaveHandler.ts
 // RosterFullError is handled inside RosterPersistence.ts
@@ -722,6 +728,9 @@ export class SectorRoom extends Room<SectorState> {
      *  existing-ship integration test assert a lingering hull was evicted
      *  before the fresh-spawn restore (playtest 2026-06-10 Issue 6). */
     lingeringSlots: Map<string, number>;
+    /** Phase 5 (persistence v5) — drive the lingering-hull boot reconstruction
+     *  directly (no DB cycle) for the round-trip integration test. */
+    restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
     aiPlayerScratch: AiPlayerView[];
     postToWorker: (cmd: WorkerCmd) => void;
     applyDamage: (
@@ -765,6 +774,7 @@ export class SectorRoom extends Room<SectorState> {
       serverTick: this.serverTick,
       ownerlessShips: this.ownerlessShips,
       lingeringSlots: this.lingeringSlots,
+      restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
       aiPlayerScratch: this.aiPlayerScratch,
       postToWorker: (cmd) => this.postToWorker(cmd),
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
@@ -1465,6 +1475,19 @@ export class SectorRoom extends Room<SectorState> {
       sabF32: this.sabF32,
       swarmRegistry: this.swarmRegistry,
       swarmHealth: this.shieldHullRouter.swarmHealth,
+      structures: () => this.structureRegistry.all(),
+      restoreStructures: (rows) => this.restoreStructuresFromSnapshot(rows),
+      scrapEntities: () => this.scrapEntitiesForSnapshot(),
+      restoreScrap: (rows) => this.restoreScrapFromSnapshot(rows),
+      lingeringHulls: () => this.lingeringHullsForSnapshot(),
+      restoreLingeringHulls: (rows) => this.restoreLingeringHullsFromSnapshot(rows),
+      saveRow: (key, payload) => saveSnapshot(key, payload),
+      loadRow: (key) =>
+        db
+          .prepare(
+            'SELECT snapshot, created_at FROM game_snapshots WHERE sector_id = ? ORDER BY created_at DESC LIMIT 1',
+          )
+          .get(key) as { snapshot: string; created_at: number } | undefined,
       logger,
     });
 
@@ -2593,6 +2616,182 @@ export class SectorRoom extends Room<SectorState> {
     }
   }
 
+  /**
+   * Phase 5 (persistence) — reconstruct placed structures from a hydrated
+   * snapshot. Reuses the SAME placement seam `seedStructureScenario` uses
+   * (`structurePlacement.place` → spawn body + fresh registry record), then
+   * restores the persisted construction / minerals / power / health and rebuilds
+   * the grid so connections re-derive via the auto-connect sweep. A fresh server
+   * mints new entity ids — nothing references the saved ids across a restart.
+   */
+  private restoreStructuresFromSnapshot(rows: readonly SectorSnapshotStructure[]): void {
+    let restored = 0;
+    for (const r of rows) {
+      const id = this.structurePlacement.place(r.owner, r.kind, r.x, r.y);
+      if (id === null) {
+        logger.warn({ kind: r.kind, x: r.x, y: r.y }, 'persisted structure rejected on hydrate');
+        continue;
+      }
+      const rec = this.structureRegistry.get(id);
+      if (rec) {
+        rec.isConstructed = r.isConstructed;
+        rec.constructionProgress = r.constructionProgress;
+        rec.minerals = r.minerals;
+        rec.storedPower = r.storedPower;
+      }
+      this.swarmHealth.set(id, r.health);
+      restored += 1;
+    }
+    if (restored > 0) {
+      this.structureRegistry.topologyDirty = true;
+      // One pulse re-forms the connection web (auto-connect sweep) + powers the
+      // grid + refreshes the structures[] slice.
+      this.structureGridTick();
+    }
+  }
+
+  /** Phase 5 (persistence v4) — the free-floating scrap pieces to persist: their
+   *  drifted SAB pose + parent ship-kind + scrap-group component index + health.
+   *  The collider is re-derived on hydrate, so it's NOT persisted. */
+  private *scrapEntitiesForSnapshot(): Iterable<SectorSnapshotScrap> {
+    for (const rec of this.swarmRegistry.all()) {
+      if (rec.kind !== SWARM_KIND_SCRAP) continue;
+      if (rec.shipKind === undefined || rec.componentIndex === undefined) continue;
+      const b = slotBase(rec.slot);
+      yield {
+        entityId: rec.id,
+        parentShipKind: rec.shipKind,
+        componentIndex: rec.componentIndex,
+        x: this.sabF32[b + SLOT_X_OFF]!,
+        y: this.sabF32[b + SLOT_Y_OFF]!,
+        vx: this.sabF32[b + SLOT_VX_OFF]!,
+        vy: this.sabF32[b + SLOT_VY_OFF]!,
+        angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+        health: this.swarmHealth.get(rec.id) ?? 0,
+      };
+    }
+  }
+
+  /** Phase 5 (persistence v4) — reconstruct persisted scrap on hydrate. The
+   *  convex-hull collider is RE-DERIVED from (parentShipKind, componentIndex) via
+   *  the SAME `scrapColliderFor` the death path uses, so the restored body is
+   *  byte-identical. Restored scrap is NOT re-registered in the ScrapSpawner FIFO
+   *  (it's a bounded set from the snapshot; the slot pool still hard-caps it). */
+  private restoreScrapFromSnapshot(rows: readonly SectorSnapshotScrap[]): void {
+    for (const r of rows) {
+      const geom = scrapColliderFor(r.parentShipKind as ShipKindId, r.componentIndex);
+      if (geom === null) continue; // parent kind no longer scraps / index gone
+      const ok = this.swarmSpawner.spawnScrap({
+        id: r.entityId,
+        x: r.x,
+        y: r.y,
+        vx: r.vx,
+        vy: r.vy,
+        angle: r.angle,
+        radius: geom.radius,
+        parentShipKind: r.parentShipKind as ShipKindId,
+        componentIndex: r.componentIndex,
+        vertices: geom.vertices,
+      });
+      if (ok) this.swarmHealth.set(r.entityId, r.health);
+    }
+  }
+
+  /** Phase 5 (persistence v5) — the lingering hulls to persist: the in-world
+   *  disconnected / fresh-spawn-displaced ships. Identity is the shipInstanceId
+   *  (= roster shipId); pose is the per-tick lingering cache; identity + health +
+   *  shield come from the schema entry. */
+  private *lingeringHullsForSnapshot(): Iterable<SectorSnapshotLingeringHull> {
+    for (const [shipInstanceId] of this.lingeringSlots) {
+      const ship = this.state.ships.get(shipInstanceId);
+      if (ship === undefined || !ship.alive) continue;
+      const pose = this.lingeringPoseCache.get(shipInstanceId);
+      if (pose === undefined) continue;
+      yield {
+        shipInstanceId,
+        playerId: ship.playerId,
+        kind: ship.kind,
+        x: pose.x,
+        y: pose.y,
+        vx: pose.vx,
+        vy: pose.vy,
+        angle: pose.angle,
+        angvel: pose.angvel ?? 0,
+        health: ship.health,
+        shieldDown: ship.shield <= 0,
+      };
+    }
+  }
+
+  /**
+   * Phase 5 (persistence v5) — reconstruct lingering hulls in-world on hydrate,
+   * so a disconnected/displaced ship reappears "where you left it" after a
+   * restart (visible to others, reclaimable by the owner). Runs during hydrate
+   * (before any onJoin), so a reconnecting owner rebinds to the reconstructed
+   * hull rather than spawning a duplicate. Mirrors the disconnect-linger machine:
+   * a schema `isActive=false` entry + SAB pose + `linger-<id>` worker body +
+   * lingering bookkeeping. Skips a hull whose roster row is gone (abandoned → the
+   * abandon→wreck flow owns it) or whose identity is already live.
+   */
+  private restoreLingeringHullsFromSnapshot(rows: readonly SectorSnapshotLingeringHull[]): void {
+    for (const r of rows) {
+      if (r.shipInstanceId === '' || r.health <= 0) continue;
+      if (this.state.ships.has(r.shipInstanceId)) continue;
+      // Roster row gone ⇒ abandoned before shutdown ⇒ do NOT resurrect it as a
+      // lingering hull (the abandon→wreck flow owns it).
+      if (getPlayerShipStore().get(r.shipInstanceId) === null) continue;
+      const kind = getShipKind(r.kind);
+      const slot = this.freeSlots.pop();
+      if (slot === undefined) {
+        logger.error({ shipInstanceId: r.shipInstanceId }, 'no free slot for lingering-hull reconstruction');
+        continue;
+      }
+      // Schema entry — a lingering (isActive=false) hull.
+      const ship = new ShipState();
+      ship.playerId = r.playerId;
+      ship.shipInstanceId = r.shipInstanceId;
+      ship.kind = r.kind;
+      ship.maxHealth = kind.maxHealth;
+      ship.health = r.health;
+      ship.shield = r.shieldDown ? 0 : kind.shieldMax;
+      ship.shieldLastDamageTick = this.serverTick;
+      ship.alive = true;
+      ship.isActive = false;
+      this.state.ships.set(r.shipInstanceId, ship);
+      // SAB pose seed.
+      const b = slotBase(slot);
+      this.sabF32[b + SLOT_X_OFF] = r.x;
+      this.sabF32[b + SLOT_Y_OFF] = r.y;
+      this.sabF32[b + SLOT_VX_OFF] = r.vx;
+      this.sabF32[b + SLOT_VY_OFF] = r.vy;
+      this.sabF32[b + SLOT_ANGLE_OFF] = r.angle;
+      this.sabF32[b + SLOT_ANGVEL_OFF] = r.angvel;
+      // Lingering bookkeeping (shipInstanceId-keyed). `null` = persist-forever
+      // marker (R2.26; no evict timer).
+      this.lingeringSlots.set(r.shipInstanceId, slot);
+      this.lingeringPoseCache.set(r.shipInstanceId, {
+        x: r.x, y: r.y, vx: r.vx, vy: r.vy, angle: r.angle, angvel: r.angvel,
+      });
+      this.ownerlessShips.set(r.shipInstanceId, null);
+      this.snapshotRing.registerEntity(r.shipInstanceId);
+      // Worker body keyed `linger-<id>` (the REKEY invariant the fresh-spawn-
+      // displace + abandon→wreck paths rely on). SPAWN creates at angle 0; a
+      // SET_POSITION applies the full persisted pose.
+      const bodyKey = `linger-${r.shipInstanceId}`;
+      this.postToWorker({ type: 'SPAWN', slot, playerId: bodyKey, x: r.x, y: r.y, kindId: r.kind });
+      this.postToWorker({
+        type: 'SET_POSITION',
+        entityId: bodyKey,
+        x: r.x, y: r.y, angle: r.angle, vx: r.vx, vy: r.vy, angvel: r.angvel,
+      });
+      serverLogEvent('lingering_hull_reconstructed', {
+        shipInstanceId: r.shipInstanceId,
+        playerId: r.playerId,
+        sectorKey: this.sectorKey,
+      });
+    }
+  }
+
   /** Phase 5 — turret aim/fire tick (faster cadence than the grid pulse).
    *  No-op when the sector has no structures. */
   private structureTurretTick(): void {
@@ -2902,6 +3101,25 @@ export class SectorRoom extends Room<SectorState> {
 
   markBotHostile(botId: string): void {
     this.livingWorldBotHooks.markBotHostile(botId);
+  }
+
+  /** Roaming-formation (Phase 5) — live SAB pose of a living-world bot here. */
+  getBotPose(botId: string): { x: number; y: number; angle: number } | null {
+    const rec = this.swarmRegistry.get(botId);
+    if (!rec) return null;
+    const b = slotBase(rec.slot);
+    return {
+      x: this.sabF32[b + SLOT_X_OFF]!,
+      y: this.sabF32[b + SLOT_Y_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+    };
+  }
+
+  /** Roaming-formation (Phase 5) — assign a bot's in-sector move target. The
+   *  drone's IDLE `HostileDroneBehaviour` flies to it (arrive ramp). No-op for a
+   *  bot with no behaviour registered here (e.g. mid-transit). */
+  setBotMoveTarget(botId: string, x: number, y: number): void {
+    this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
   }
 
   /**
