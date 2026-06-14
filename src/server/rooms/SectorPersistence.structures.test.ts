@@ -18,6 +18,7 @@ import type {
   SectorSnapshotPayload,
   SectorSnapshotStructure,
   SectorSnapshotScrap,
+  SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 import { CURRENT_SCHEMA_VERSION } from './SectorSnapshot.js';
 
@@ -43,6 +44,8 @@ function makeDeps(
   restore: (rows: readonly SectorSnapshotStructure[]) => void,
   scrap: SectorSnapshotScrap[] = [],
   restoreScrap: (rows: readonly SectorSnapshotScrap[]) => void = () => undefined,
+  lingeringHulls: SectorSnapshotLingeringHull[] = [],
+  restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void = () => undefined,
 ) {
   let storedRow: { snapshot: string; created_at: number } | undefined;
   const swarmHealth = new Map<string, number>();
@@ -57,6 +60,8 @@ function makeDeps(
       restoreStructures: restore,
       scrapEntities: () => scrap,
       restoreScrap,
+      lingeringHulls: () => lingeringHulls,
+      restoreLingeringHulls,
       saveRow: (_key: string, payload: SectorSnapshotPayload) => {
         storedRow = { snapshot: JSON.stringify(payload), created_at: Date.now() };
       },
@@ -64,6 +69,23 @@ function makeDeps(
       logger: noopLogger,
     },
     readStored: () => storedRow,
+  };
+}
+
+function makeLingeringHull(over: Partial<SectorSnapshotLingeringHull> = {}): SectorSnapshotLingeringHull {
+  return {
+    shipInstanceId: 'ship-abc',
+    playerId: 'player-bob',
+    kind: 'fighter',
+    x: 111,
+    y: 222,
+    vx: 1,
+    vy: 2,
+    angle: 0.3,
+    angvel: 0.01,
+    health: 400,
+    shieldDown: false,
+    ...over,
   };
 }
 
@@ -164,5 +186,41 @@ describe('SectorPersistence — scrap survives a server restart (v4)', () => {
     new SectorPersistence(deps).persist();
     const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
     expect(payload.scrap).toBeUndefined();
+  });
+});
+
+describe('SectorPersistence — lingering hulls survive a server restart (v5)', () => {
+  it('persist() writes lingering hulls and hydrate() hands them to the restore callback', () => {
+    const hull = makeLingeringHull();
+    const restoreHulls = vi.fn();
+    const { deps, readStored } = makeDeps([], () => undefined, [], () => undefined, [hull], restoreHulls);
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(payload.lingeringHulls).toHaveLength(1);
+    expect(payload.lingeringHulls![0]).toMatchObject({
+      shipInstanceId: 'ship-abc',
+      playerId: 'player-bob',
+      kind: 'fighter',
+      x: 111,
+      y: 222,
+      health: 400,
+      shieldDown: false,
+    });
+
+    persistence.hydrate();
+    expect(restoreHulls).toHaveBeenCalledTimes(1);
+    const rows = restoreHulls.mock.calls[0]![0] as readonly SectorSnapshotLingeringHull[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ shipInstanceId: 'ship-abc', playerId: 'player-bob', health: 400 });
+  });
+
+  it('omits the lingeringHulls array when there is none', () => {
+    const { deps, readStored } = makeDeps([], () => undefined, [], () => undefined, []);
+    new SectorPersistence(deps).persist();
+    const payload = JSON.parse(readStored()!.snapshot) as SectorSnapshotPayload;
+    expect(payload.lingeringHulls).toBeUndefined();
   });
 });

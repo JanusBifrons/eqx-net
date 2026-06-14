@@ -58,7 +58,9 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
     swarm: [{ entityId, kind, x, y, health }],
     structures?: [{ entityId, owner, kind, x, y, health,
                     isConstructed, constructionProgress, minerals, storedPower }],
-    scrap?: [{ entityId, parentShipKind, componentIndex, x, y, vx, vy, angle, health }] }
+    scrap?: [{ entityId, parentShipKind, componentIndex, x, y, vx, vy, angle, health }],
+    lingeringHulls?: [{ shipInstanceId, playerId, kind, x, y, vx, vy, angle, angvel,
+                        health, shieldDown }] }
   ```
 - **What's persisted** (opt-out / BLACKLIST model — the world persists by default):
   asteroid swarm health; (schema v3) the FULL state of placed **structures**
@@ -66,22 +68,30 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
   persist, they're player-placed; connections re-derive from the auto-connect
   sweep); (schema v4) **scrap** (drifted pose + parent ship-kind + componentIndex
   + health — the collider re-derives on hydrate from `(parentShipKind,
-  componentIndex)` via `scrapColliderFor`, so it's never persisted).
+  componentIndex)` via `scrapColliderFor`, so it's never persisted); and (schema
+  v5) **lingering hulls** (a disconnected/displaced `isActive=false` ship) so they
+  reappear in-world "where you left it" after a restart, reclaimable until
+  abandoned (→ wreck). Sector-keyed, NOT a roster scan — `markActive` doesn't
+  update the roster `lastSectorKey`, so the snapshot's stable `sectorKey` is the
+  reliable source.
 - **What's NOT persisted via the sector snapshot**: projectiles/missiles
-  (ephemeral); active ships + lingering hulls (the roster / Limbo path, NOT the
-  sector snapshot — *making lingering hulls persist forever is a pending Phase-5
-  follow-up*); and **roaming DRONES (kind 1)** — these are owned by the
-  `LivingWorldDirector`, which is responsible for persisting + re-dispatching its
-  own squad pool (the director must "restart from any state" and direct the
-  nearest roaming groups). Not "ignored" — a different persistence owner.
+  (ephemeral); ACTIVE ships (the roster — `PlayerShipStore` — holds them with no
+  TTL, the owner's reclaim path; the 10-ship cap stays); and **roaming DRONES
+  (kind 1)** — owned by the `LivingWorldDirector`, which is responsible for
+  persisting + re-dispatching its own squad pool (it must "restart from any state"
+  and direct the nearest roaming groups). Not "ignored" — a different persistence
+  owner.
 - **Hydration on `onCreate`**: query the most recent row for this
   `sectorKey`, run it through `parseSnapshot`. If schema mismatches or
   the row is older than 24 h (`SNAPSHOT_STALENESS_MS`), discard and
   fresh-spawn from config. Otherwise restore asteroid swarm health for entities
   whose IDs are still in the registry; RECONSTRUCT each persisted structure
   (re-place via `structurePlacement.place`, restore construction/minerals/power/
-  health, then one grid pulse re-forms the web); and RECONSTRUCT each scrap piece
-  (re-derive collider, `swarmSpawner.spawnScrap`, seed health).
+  health, then one grid pulse re-forms the web); RECONSTRUCT each scrap piece
+  (re-derive collider, `swarmSpawner.spawnScrap`, seed health); and RECONSTRUCT
+  each lingering hull (a `new ShipState()` `isActive=false` entry + SAB pose +
+  `linger-<id>` worker body + lingering bookkeeping — run BEFORE any onJoin, and
+  skipped if the roster row is gone so an abandoned ship isn't resurrected).
 
 The 24 h cap prevents zombie state from a long downtime — a sector that
 sat untouched for a week shouldn't come back with stale drone wreckage.

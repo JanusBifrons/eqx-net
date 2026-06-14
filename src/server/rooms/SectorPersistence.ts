@@ -32,6 +32,7 @@ import {
   type SectorSnapshotPayload,
   type SectorSnapshotStructure,
   type SectorSnapshotScrap,
+  type SectorSnapshotLingeringHull,
 } from './SectorSnapshot.js';
 
 /** The minimal structure shape `persist()` reads (a subset of `StructureRecord`). */
@@ -67,6 +68,12 @@ export interface SectorPersistenceDeps {
   /** Reconstruct the scrap pieces on hydrate (re-derive collider + spawn +
    *  seed health). Owned by `SectorRoom`. */
   restoreScrap: (rows: readonly SectorSnapshotScrap[]) => void;
+  /** Lingering hulls to persist (the in-world disconnected/displaced ships).
+   *  Owned by `SectorRoom` (it reads `lingeringSlots` + the schema + pose cache). */
+  lingeringHulls: () => Iterable<SectorSnapshotLingeringHull>;
+  /** Reconstruct the lingering hulls on hydrate (re-spawn the in-world hull).
+   *  Owned by `SectorRoom`. Runs during hydrate (before any onJoin). */
+  restoreLingeringHulls: (rows: readonly SectorSnapshotLingeringHull[]) => void;
   /** Write a snapshot row for this sector (production: `saveSnapshot`). */
   saveRow: (sectorKey: string, payload: SectorSnapshotPayload) => void;
   /** Load the most-recent snapshot row for this sector (production: a sqlite
@@ -124,6 +131,8 @@ export class SectorPersistence {
     }
     const scrap: SectorSnapshotScrap[] = [];
     for (const s of d.scrapEntities()) scrap.push(s);
+    const lingeringHulls: SectorSnapshotLingeringHull[] = [];
+    for (const h of d.lingeringHulls()) lingeringHulls.push(h);
     const payload: SectorSnapshotPayload = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       sectorKey,
@@ -131,6 +140,7 @@ export class SectorPersistence {
       swarm,
       ...(structures.length > 0 ? { structures } : {}),
       ...(scrap.length > 0 ? { scrap } : {}),
+      ...(lingeringHulls.length > 0 ? { lingeringHulls } : {}),
     };
     try {
       d.saveRow(sectorKey, payload);
@@ -198,8 +208,23 @@ export class SectorPersistence {
         d.logger.warn({ err, sectorKey }, 'scrap restore failed — partial hydrate');
       }
     }
+    const lingeringHulls = payload.lingeringHulls ?? [];
+    if (lingeringHulls.length > 0) {
+      try {
+        d.restoreLingeringHulls(lingeringHulls);
+      } catch (err) {
+        d.logger.warn({ err, sectorKey }, 'lingering-hull restore failed — partial hydrate');
+      }
+    }
     d.logger.info(
-      { sectorKey, ageMs, restored, structures: structures.length, scrap: scrap.length },
+      {
+        sectorKey,
+        ageMs,
+        restored,
+        structures: structures.length,
+        scrap: scrap.length,
+        lingeringHulls: lingeringHulls.length,
+      },
       'sector hydrated from snapshot',
     );
   }
