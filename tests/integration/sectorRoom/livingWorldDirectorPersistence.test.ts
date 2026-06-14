@@ -47,14 +47,14 @@ describe('LivingWorldDirector — state persistence across a restart (Phase 5)',
 
     // ── Boot #1: a squad gathers at its home edge, then roams into the interior.
     h = await bootLivingWorldTestServer({
-      sectors: ['orion-belt', 'sol-prime'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 8, // exactly one full squad
       seed: 11,
       directorPersistence: dp,
       director: { roamIntervalMs: 100, hopTravelMs: 40 },
     });
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['sol-prime']!.bots > 0,
+      () => h!.director.snapshot().perSector['emerald-span']!.bots > 0,
       8000,
       'squad roamed into the interior (boot #1)',
     );
@@ -62,25 +62,25 @@ describe('LivingWorldDirector — state persistence across a restart (Phase 5)',
     h.director.persistState();
     expect(row).toBeDefined();
     const saved = JSON.parse(row!.payload_json) as DirectorStatePayload;
-    expect(saved.squads.some((s) => s.sectorKey === 'sol-prime')).toBe(true);
+    expect(saved.squads.some((s) => s.sectorKey === 'emerald-span')).toBe(true);
 
     await h.cleanup();
     h = undefined;
 
     // ── Boot #2: FRESH rooms + director, roaming DISABLED. A fresh seed homes
     //    squads at the entry edge and (roaming off) never drifts inward — so the
-    //    squad's goal can only be the interior `sol-prime` via RESTORE.
+    //    squad's goal can only be the interior `emerald-span` via RESTORE.
     h = await bootLivingWorldTestServer({
-      sectors: ['orion-belt', 'sol-prime'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 8,
       seed: 11,
       directorPersistence: dp,
       director: { roamIntervalMs: 600_000, hopTravelMs: 40, respawnDelayMs: 50 },
     });
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['sol-prime']!.bots > 0,
+      () => h!.director.snapshot().perSector['emerald-span']!.bots > 0,
       8000,
-      'restored squad resumes its goal at sol-prime (boot #2)',
+      'restored squad resumes its goal at emerald-span (boot #2)',
     );
 
     // Ingress invariant survives the restart: every from-nowhere spawn is still
@@ -103,19 +103,19 @@ describe('LivingWorldDirector — state persistence across a restart (Phase 5)',
     });
 
     h = await bootLivingWorldTestServer({
-      sectors: ['orion-belt', 'sol-prime'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 8,
       seed: 11,
       directorPersistence: dp,
       director: { roamIntervalMs: 600_000, hopTravelMs: 40 },
     });
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['orion-belt']!.bots === 8,
+      () => h!.director.snapshot().perSector['greenfall']!.bots === 8,
       8000,
       'squad gathered at its home edge',
     );
     // Roaming off + no restore + no base ⇒ the interior stays empty.
     await h.advance(400);
-    expect(h.director.snapshot().perSector['sol-prime']!.bots).toBe(0);
+    expect(h.director.snapshot().perSector['emerald-span']!.bots).toBe(0);
   }, 30_000);
 });

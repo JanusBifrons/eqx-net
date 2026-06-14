@@ -26,13 +26,13 @@ describe('LivingWorldDirector — in-sector squad formation (WS-4)', () => {
 
   it('assigns every gathered idle-squad member a DISTINCT in-sector move target (a wedge, not a clump)', async () => {
     h = await bootLivingWorldTestServer({
-      sectors: ['sol-prime', 'orion-belt'],
+      sectors: ['greenfall', 'emerald-span'],
       botCount: 8, // one full squad (SQUAD_SIZE)
       seed: 11,
     });
-    // orion-belt is the only entry sector in this set → the squad gathers there.
+    // greenfall is the only entry sector in this set → the squad gathers there.
     await h.waitUntil(
-      () => h!.director.snapshot().perSector['orion-belt']!.bots === 8,
+      () => h!.director.snapshot().perSector['greenfall']!.bots === 8,
       8000,
       'squad gathered at its home edge',
     );
@@ -40,7 +40,7 @@ describe('LivingWorldDirector — in-sector squad formation (WS-4)', () => {
     // Spy on the formation move-target assignments the director pushes to the
     // room (the director calls this room instance, so shadowing the method
     // records every assignment while still driving the real behaviour).
-    const room = h.getRoom('orion-belt');
+    const room = h.getRoom('greenfall');
     const calls: Array<{ botId: string; x: number; y: number }> = [];
     const orig = room.setBotMoveTarget.bind(room);
     room.setBotMoveTarget = (botId: string, x: number, y: number): void => {

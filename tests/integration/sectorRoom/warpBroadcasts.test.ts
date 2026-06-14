@@ -88,7 +88,7 @@ describe('SectorRoom — warp visual broadcasts', () => {
   /**
    * NOT COVERED here: the full warp_out wire path. `commitTransit` fires
    * the warp_out broadcast only AFTER `matchMaker.reserveSeatFor` resolves,
-   * and that needs a live destination room (`galaxy-orion-belt`). The
+   * and that needs a live destination room (`galaxy-cygnus-arm`). The
    * single-room harness used here doesn't define neighbour rooms, so
    * the reservation rejects and commitTransit takes the
    * `destination_unavailable` path before reaching the broadcast.
