@@ -211,6 +211,10 @@ export interface StructureRenderState {
   shieldWallTo?: number;
   /** Shield-fence plan — whether that wall is currently blocking (active). */
   wallActive?: boolean;
+  /** Owning playerId. Drives the inspector "OWNER" line AND the same-owner
+   *  filter on connection / placement-preview lines — a cross-owner structure is
+   *  visible but never draws a connection line to the local player's grid. */
+  owner?: string;
 }
 
 /** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to

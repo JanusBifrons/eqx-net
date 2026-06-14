@@ -62,6 +62,10 @@ interface PanelData {
    *  (the user: "It shouldn't really apply to other structures"). */
   connCount?: number;
   connMax?: number;
+  /** Owning playerId in display form ("you" for the local player, else a
+   *  truncated id) — set for structures so players can identify whose base it is
+   *  (other players' bases are a core part of the game, not a bug). */
+  owner?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -96,6 +100,7 @@ export function EntityStatsPanel(): JSX.Element | null {
       {...(data.selfPower !== undefined ? { 'data-self-power': Math.round(data.selfPower) } : {})}
       {...(hasCharge ? { 'data-charge-pct': Math.round(chargePct) } : {})}
       {...(data.connCount !== undefined ? { 'data-conn-count': data.connCount } : {})}
+      {...(data.owner !== undefined ? { 'data-structure-owner': data.owner } : {})}
       {...(data.pending ? { 'data-stats-pending': '1' } : {})}
       {...(data.infoLine !== undefined ? { 'data-entity-info': data.infoLine } : {})}
       sx={ROOT_SX}
@@ -144,6 +149,12 @@ export function EntityStatsPanel(): JSX.Element | null {
         // C4 — connector-only connection count. Same muted POWER_SX styling.
         <Box sx={POWER_SX} data-testid="entity-stats-conn">
           {`CONN ${data.connCount} / ${data.connMax ?? 0}`}
+        </Box>
+      )}
+      {data.owner !== undefined && (
+        // Owner readout — identifies whose base this is ("you" vs a truncated id).
+        <Box sx={POWER_SX} data-testid="entity-stats-owner">
+          {`OWNER ${data.owner}`}
         </Box>
       )}
     </Box>
@@ -201,6 +212,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       if (subtype === 'connector') {
         data.connCount = st.connTo.length;
         data.connMax = getStructureKind('connector').maxConnections;
+      }
+      // Owner readout — "you" for the local player's base, else a truncated id so
+      // a player can identify whose structure they clicked (mirrors the
+      // lingering-hull owner line). Static per structure, client-resident → instant.
+      if (st.owner) {
+        const localId = getGameClient()?.mirror.localPlayerId ?? null;
+        data.owner =
+          st.owner === localId
+            ? 'you'
+            : st.owner.length > 10
+              ? `${st.owner.slice(0, 8)}…`
+              : st.owner;
       }
     }
     return data;

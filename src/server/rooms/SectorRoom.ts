@@ -2950,6 +2950,9 @@ export class SectorRoom extends Room<SectorState> {
         hpPct: Math.round((Math.max(0, hp) / hpMax) * 100),
         powered: summary.powered,
         netPower: summary.netPower,
+        // Owning playerId — the client shows it in the inspector + filters
+        // connection/preview lines to same-owner structures only.
+        owner: rec.owner,
         built: rec.isConstructed,
       };
       if (conns.length > 0) {

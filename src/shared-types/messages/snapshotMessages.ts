@@ -261,5 +261,11 @@ export interface SnapshotMessage {
     /** Shield-fence plan — whether that wall is currently ACTIVE (blocking). A
      *  down wall (stunned / unpowered) renders dim + is passable. */
     wallActive?: boolean;
+    /** Owning playerId. Lets the client show WHOSE base a structure is in the
+     *  inspector AND filter connection / placement-preview lines to same-owner
+     *  structures only — another player's base is visible but never draws a
+     *  connection line to the local player's grid. Static per structure; slim
+     *  JSON field, no SWARM_WIRE_VERSION bump (pose flows on the binary channel). */
+    owner?: string;
   }>;
 }
