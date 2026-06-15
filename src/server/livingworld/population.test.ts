@@ -15,6 +15,7 @@ import {
   pickRoamGoal,
   MIN_PACK_PER_OCCUPIED,
 } from './population.js';
+import { LIVING_WORLD_SQUAD_COUNT, SQUAD_SIZE } from './director/SquadPool.js';
 
 const KEYS = GALAXY_SECTORS.map((s) => s.key);
 // A FIXED 7-key list for the PURE apportionment / distribution tests, so their
@@ -154,6 +155,27 @@ describe('computeDesiredDistribution', () => {
       budget: 0,
     });
     expect(sum(out)).toBe(0);
+  });
+
+  // Living Galaxy P2: the squad pool grew 3→7 (24→56 bots) to populate the
+  // 21-sector galaxy. The distribution math is size-invariant — this proves
+  // the idle-galaxy even-spread actually scales to the new count over the REAL
+  // galaxy (not the fixed PKEYS anchor the pure math tests use).
+  it('spreads the full scaled bot budget evenly across the live 21-sector galaxy', () => {
+    const budget = LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE; // 56 after P2
+    const out = computeDesiredDistribution({
+      sectorKeys: KEYS,
+      playerCounts: new Map(), // idle galaxy — no players anywhere
+      budget,
+    });
+    expect(sum(out)).toBe(budget);
+    // Every sector gets at least the even-split floor, so no sector is starved
+    // and the bigger galaxy stays uniformly alive.
+    const floor = Math.floor(budget / KEYS.length);
+    for (const k of KEYS) expect(out.get(k)!).toBeGreaterThanOrEqual(floor);
+    // Largest-remainder ⇒ counts differ by at most one across all sectors.
+    const vals = [...out.values()];
+    expect(Math.max(...vals) - Math.min(...vals)).toBeLessThanOrEqual(1);
   });
 });
 
