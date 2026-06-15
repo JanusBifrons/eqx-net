@@ -80,6 +80,34 @@ export const SHARED_LIVELOOP_GLOBS: readonly string[] = [
 ];
 
 /**
+ * Structure server/core/wire paths. The grid pulse + turret tick + the
+ * `structures[]` snapshot slice + `grid_pulse` are live-loop (the repo
+ * docs already declare them netgate-required, invariant #8) — yet the
+ * HISTORICAL netgate path filter omitted them, so a pure structures
+ * change SKIPPED the gate. Folding these into `core.triggerGlobs` closes
+ * that false-negative hole: a structures change now runs `core` (the
+ * foundational local-feel regression check). When a `structures-load`
+ * scenario is promoted to gated (P3), it maps to these specifically.
+ */
+export const STRUCTURE_GLOBS: readonly string[] = [
+  '^src/server/structures/',
+  '^src/core/structures/',
+  '^src/shared-types/structureKinds\\.ts$',
+];
+
+/**
+ * Scrap server/core paths. Composite-death scrap rides the binary swarm
+ * wire (v4 `componentIndex`); `swarmWireFormat.ts` + the client decoder
+ * (`src/client/net/`) are already in SHARED, so these add the spawn +
+ * collider + constants the historical filter omitted.
+ */
+export const SCRAP_GLOBS: readonly string[] = [
+  '^src/server/spawn/ScrapSpawner\\.ts$',
+  '^src/core/geometry/scrapCollider\\.ts$',
+  '^src/core/swarm/scrapConstants\\.ts$',
+];
+
+/**
  * The scenario catalogue. P0 ships only `core` (byte-identical to the
  * historical single-scenario gate). P3 appends `structures-load` and
  * `scrap-load` (print-only). P2 widens `core.triggerGlobs` to ALSO fire
@@ -95,7 +123,9 @@ export const SCENARIOS: readonly NetgateScenario[] = [
     interaction: 'strafe-fire',
     reps: 8,
     gating: 'gate',
-    triggerGlobs: [...SHARED_LIVELOOP_GLOBS],
+    // SHARED ∪ STRUCTURE ∪ SCRAP — core is the catch-all local-feel gate,
+    // so a structures/scrap change fires it (closing the path-filter hole).
+    triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...STRUCTURE_GLOBS, ...SCRAP_GLOBS],
   },
 ];
 
