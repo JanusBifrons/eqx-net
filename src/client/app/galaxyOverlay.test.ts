@@ -62,6 +62,7 @@ function fakeWorker(): {
   const calls = { mode: vi.fn(), visible: vi.fn() };
   Object.assign(w as unknown as Record<string, unknown>, {
     setOverlayTapHandler: (h: (key: string) => void) => { tap = h; },
+    setGalaxyHoverHandler: vi.fn(),
     setLayerMode: calls.mode,
     setLayerVisible: calls.visible,
     setLayerCurrentSector: vi.fn(),

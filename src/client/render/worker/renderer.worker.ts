@@ -72,7 +72,19 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         // (in-game MAP, no pan/zoom) still routes taps via the world camera's
         // `onTap` handler set in `addGalaxyOverlay` below. Both reach the same
         // OVERLAY_TAPPED message.
-        galaxyLayer = new GalaxyMapLayer({ onSelect: (sectorKey) => { post({ type: 'OVERLAY_TAPPED', sectorKey }); } });
+        galaxyLayer = new GalaxyMapLayer({
+          onSelect: (sectorKey) => { post({ type: 'OVERLAY_TAPPED', sectorKey }); },
+          // Living Galaxy Phase 6 — deduped hover → main (cursor + tooltip).
+          onHover: (ev) => {
+            post({
+              type: 'GALAXY_HOVER',
+              sectorKey: ev.sectorKey,
+              screenX: ev.screenX,
+              screenY: ev.screenY,
+              selectable: ev.selectable,
+            });
+          },
+        });
         galaxyLayer.resize(msg.width, msg.height);
         renderer.addGalaxyOverlay(galaxyLayer, (sx, sy) => {
           if (!galaxyLayer) return;

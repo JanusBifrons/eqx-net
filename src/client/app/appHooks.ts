@@ -10,8 +10,8 @@
  *     200 ms connecting beat is the visible WarpScreen overlay.
  *   - `usePhaseChangeLog` — emits the `phase_change` diagnostic + marks the
  *     transit-instrument `phase_game` t0.
- *   - `useAuthExpiryRedirect` — bumps the user back to 'meta' if their auth
- *     token expires while they're on the galaxy-map screen.
+ *   - `useAuthExpiryRedirect` — NO-OP since Living Galaxy P5 (the galaxy map is
+ *     the public landing; auth is gated on the sector pick, not on viewing it).
  *   - `useUserPrefsHydration` — applies per-user preferences (settings +
  *     selected ship kind) when auth resolves or the active account changes.
  */
@@ -125,20 +125,15 @@ export function usePhaseChangeLog(phase: string): void {
 }
 
 /**
- * If the auth token expires while the user is on the galaxy-map screen
- * (which requires a logged-in user to function), bump them back to the
- * meta landing. Game and local are NOT auto-redirected — let the player
- * finish their round; auth phase is unaffected (already logged out).
+ * Living Galaxy P5 — NO-OP. The galaxy map is now the PUBLIC landing screen
+ * (auth is gated on the sector PICK in `GameSurface.handleSelectorPick`, not on
+ * viewing the map), so a logged-out or token-expired user must NOT be bumped
+ * away from it. Pre-P5 this redirected `!user && phase === 'galaxy-map'` → 'meta',
+ * which now fights the public map. Kept as a stable call site for a future
+ * auth-required phase that might re-introduce an expiry redirect.
  */
 export function useAuthExpiryRedirect(): void {
-  const { user } = useAuthStore();
-  const phase = useUIStore((s) => s.phase);
-  const setPhase = useUIStore((s) => s.setPhase);
-  useEffect(() => {
-    if (!user && phase === 'galaxy-map') {
-      setPhase('meta');
-    }
-  }, [user, phase, setPhase]);
+  // Intentionally empty (see above).
 }
 
 /**

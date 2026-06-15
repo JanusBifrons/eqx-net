@@ -21,9 +21,7 @@ test('post-auth spawn-select → click sector → game surface mounts', async ({
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  // Click "Join the fight" CTA on the meta-landing — pre-auth storageState
-  // means the app jumps straight to phase='galaxy-map'.
-  await page.locator('text=Join the fight').first().click();
+  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
 
   // Spawn-select screen should appear.
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
@@ -54,7 +52,7 @@ test('post-auth spawn-select → pick galaxy sector → game surface mounts', as
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.locator('text=Join the fight').first().click();
+  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 
   // Drive a deterministic sector pick (Sol Prime) via the DEV hook

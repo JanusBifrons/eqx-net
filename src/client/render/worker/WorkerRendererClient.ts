@@ -39,6 +39,14 @@ import { setCanvasPointerCapture } from '../pointerCapture.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. */
 export type OverlayTapHandler = (sectorKey: string) => void;
+/** Living Galaxy Phase 6 — invoked when the worker emits GALAXY_HOVER (deduped
+ *  on sector key). Drives the canvas cursor + the React sector tooltip. */
+export type GalaxyHoverHandler = (ev: {
+  sectorKey: string | null;
+  screenX: number;
+  screenY: number;
+  selectable: boolean;
+}) => void;
 
 /**
  * Stable feedback object. The worker overwrites its fields each
@@ -89,6 +97,7 @@ export class WorkerRendererClient implements IRenderer {
   private _placementActive = false;
   private readonly feedback: RendererFeedback = emptyFeedback();
   private onOverlayTap: OverlayTapHandler | null = null;
+  private onGalaxyHover: GalaxyHoverHandler | null = null;
   private initResolve: (() => void) | null = null;
 
   // Event listener handles, kept so `dispose()` removes them cleanly.
@@ -107,6 +116,12 @@ export class WorkerRendererClient implements IRenderer {
   /** Subscribe to OVERLAY_TAPPED messages. Called by `App.tsx`. */
   setOverlayTapHandler(handler: OverlayTapHandler | null): void {
     this.onOverlayTap = handler;
+  }
+
+  /** Subscribe to GALAXY_HOVER messages (Living Galaxy Phase 6). Called by
+   *  `installGalaxyOverlay` — drives the canvas cursor + sector tooltip. */
+  setGalaxyHoverHandler(handler: GalaxyHoverHandler | null): void {
+    this.onGalaxyHover = handler;
   }
 
   async init(rawContainer: unknown): Promise<void> {
@@ -637,6 +652,15 @@ export class WorkerRendererClient implements IRenderer {
       }
       case 'OVERLAY_TAPPED': {
         this.onOverlayTap?.(msg.sectorKey);
+        break;
+      }
+      case 'GALAXY_HOVER': {
+        this.onGalaxyHover?.({
+          sectorKey: msg.sectorKey,
+          screenX: msg.screenX,
+          screenY: msg.screenY,
+          selectable: msg.selectable,
+        });
         break;
       }
       case 'ERROR': {
