@@ -22,8 +22,11 @@ import type { DirectorSquadState } from '../DirectorPersistence.js';
 
 /** Members per squad. Part of the "8 × Legionnaires" wave identity. */
 export const SQUAD_SIZE = 8;
-/** Number of squads the director keeps. 3 × 8 = 24 bots (≈ the legacy 25). */
-export const LIVING_WORLD_SQUAD_COUNT = 3;
+/** Number of squads the director keeps. 7 × 8 = 56 bots — scaled proportionally
+ *  to the 21-sector Living Galaxy (P2). The wave / roam / dispatch machinery is
+ *  size-invariant (BFS over the graph), so only this count moves; squads home
+ *  spread across the entry sectors at boot (`sectorForSquad` round-robin). */
+export const LIVING_WORLD_SQUAD_COUNT = 7;
 
 /**
  * The squad strategic-brain state:
