@@ -64,3 +64,25 @@ export function decidePlacementPointer(
       return { following: null, updateChosen: false, commit: false };
   }
 }
+
+/**
+ * Decide whether to seed the placement ghost at SCREEN-CENTRE the moment
+ * placement becomes active (Equinox Phase 6 / P6.1 — mobile placement flow).
+ *
+ * On DESKTOP the ghost starts at the ahead-of-ship preview and snaps to the
+ * cursor on the first hover-move — fine, the mouse is already on screen. On
+ * TOUCH there is NO hover, so the ahead-of-ship default leaves the blueprint
+ * sitting off-screen / hidden under the bottom-right speed-dial until the first
+ * tap (the user's "it appears hidden under the speeddial, then jumps" report).
+ * Seeding it at screen-centre makes the blueprint immediately visible; the
+ * player then taps/drags to reposition (or just Confirms at centre). Fires once
+ * per placement — only while no point has been chosen yet and the ghost isn't
+ * the dim post-Confirm `pending` one.
+ */
+export function shouldCentreGhostOnActivate(
+  isTouch: boolean,
+  hasChosenPoint: boolean,
+  isPending: boolean,
+): boolean {
+  return isTouch && !hasChosenPoint && !isPending;
+}

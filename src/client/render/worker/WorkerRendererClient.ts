@@ -73,6 +73,14 @@ function emptyFeedback(): RendererFeedback {
 }
 
 export class WorkerRendererClient implements IRenderer {
+  /** Touch-device flag (Equinox P6.1) — forwarded to the worker's PixiRenderer
+   *  via BOOT so the placement ghost seeds at screen-centre on touch. */
+  private readonly _isTouch: boolean;
+
+  constructor(isTouch = false) {
+    this._isTouch = isTouch;
+  }
+
   private worker: Worker | null = null;
   private canvas: HTMLCanvasElement | null = null;
   /** Mirrors the worker renderer's `_placementActive` (set each `update()` from
@@ -150,6 +158,7 @@ export class WorkerRendererClient implements IRenderer {
       width: cssW,
       height: cssH,
       dpr,
+      isTouch: this._isTouch,
       ...(zoom !== undefined ? { zoom } : {}),
     }, [offscreen]);
 
