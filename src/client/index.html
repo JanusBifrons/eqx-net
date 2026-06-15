@@ -40,9 +40,15 @@
         overscroll-behavior: none;
         -webkit-tap-highlight-color: transparent;
         -webkit-touch-callout: none;
+        /* P6.2: suppress the Android long-press text-selection gesture (and its
+           OS haptic) so click-and-hold during structure placement doesn't
+           vibrate / hijack the touch sequence. Paired with the contextmenu
+           handler that no longer cancels placement on a touch long-press. */
+        -webkit-user-select: none;
+        user-select: none;
         touch-action: none;
       }
-      canvas { display: block; touch-action: none; }
+      canvas { display: block; touch-action: none; -webkit-user-select: none; user-select: none; }
     </style>
   </head>
   <body>

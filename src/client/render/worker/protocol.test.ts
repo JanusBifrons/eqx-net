@@ -72,6 +72,7 @@ describe('renderer-worker protocol', () => {
         width: 800,
         height: 600,
         dpr: 2,
+        isTouch: true,
       };
       const back = roundtrip(msg);
       expect(back.type).toBe('BOOT');
@@ -79,6 +80,7 @@ describe('renderer-worker protocol', () => {
         expect(back.width).toBe(800);
         expect(back.height).toBe(600);
         expect(back.dpr).toBe(2);
+        expect(back.isTouch).toBe(true);
       }
     });
 

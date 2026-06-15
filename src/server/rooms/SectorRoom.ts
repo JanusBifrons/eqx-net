@@ -1229,6 +1229,12 @@ export class SectorRoom extends Room<SectorState> {
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
       spawnScrapFromDrone: (rec) => this.spawnScrapFromDrone(rec as SwarmEntityRecord),
+      // P6.3 (Equinox Phase 6) — a composite LINGERING hull breaks into scrap
+      // too. The lingering death policy reads the dying pose from
+      // lingeringPoseCache (before its own teardown) and hands it here; we guard
+      // polygon kinds + spawn, mirroring the active-hull SHIP_DESTROYED path.
+      spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) =>
+        this.spawnHullScrap(kind, pose, shipInstanceId),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -2507,6 +2513,28 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+  }
+
+  /**
+   * Spawn scrap from a HULL that is leaving the world (Equinox P6.3) — a
+   * composite-kind hull (e.g. havok) yields one scrap body per component;
+   * polygon kinds (fighter/scout/…) yield nothing. The single guard+spawn used
+   * by EVERY hull-removal path that has a pose in hand: the lingering-hull death
+   * policy (`spawnScrapFromLingeringHull` LeafDeps seam), and the abandon paths
+   * (`abandonShipToScrap` / `abandonLingeringHullToScrap`). Mirrors the drone
+   * (`spawnScrapFromDrone`) + active-hull (`SHIP_DESTROYED`) scrap paths.
+   */
+  private spawnHullScrap(
+    kind: ShipKindId,
+    pose: { x: number; y: number; vx: number; vy: number; angle: number },
+    shipInstanceId: string,
+  ): void {
+    if (shipScrapGroups(kind).length === 0) return; // polygon kind ⇒ no scrap
+    this.scrapSpawner.spawnFromDeath(
+      kind,
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle },
+      `scrap-${shipInstanceId}`,
+    );
   }
 
   /**
@@ -4315,6 +4343,106 @@ export class SectorRoom extends Room<SectorState> {
   }
 
   /**
+   * Equinox P6.3 (C2 — "scrap replaces wrecks") — abandon an ACTIVE hull by
+   * shattering it into drifting scrap instead of converting it to a wreck. Same
+   * trigger as the old `convertShipToWreck` (the roster row was deleted while the
+   * ship was alive), but the hull leaves as scrap: spawn scrap at the death pose,
+   * DESPAWN the body + free the slot (no wreck rekey), tear down the player-keyed
+   * bookkeeping, and eject the owning session. No-op if missing / already dead.
+   */
+  private abandonShipToScrap(playerId: string): void {
+    const ship = this.getActiveShip(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) return; // already destroyed — the despawn path handles it
+    const shipInstanceId = ship.shipInstanceId;
+    const b = slotBase(slot);
+    const pose = this.shipPoseCache.get(playerId) ?? {
+      x:     this.sabF32[b + SLOT_X_OFF]!,
+      y:     this.sabF32[b + SLOT_Y_OFF]!,
+      vx:    this.sabF32[b + SLOT_VX_OFF]!,
+      vy:    this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+    };
+    this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
+
+    // Free the slot + DESPAWN the playerId body (no wreck rekey).
+    this.freeSlots.push(slot);
+    this.postToWorker({ type: 'DESPAWN', slot, playerId });
+
+    // Tear down player-keyed bookkeeping (mirror of the old wreck path minus the
+    // wreck slot maps).
+    this.playerToSlot.delete(playerId);
+    this.slotToPlayer.delete(slot);
+    this.lastFireClientTick.delete(playerId);
+    this.mountTicker.clearPlayer(playerId);
+    this.initialSpawnPositions.delete(playerId);
+    this.shipPoseCache.delete(playerId);
+    this.snapshotRing.unregisterEntity(playerId);
+    this.state.ships.delete(shipInstanceId);
+    this.playerToActiveShipInstance.delete(playerId);
+
+    // Eject the owning session (if connected) — their next galaxy-map visit
+    // shows the roster minus the abandoned row.
+    const sessionId = this.playerToSession.get(playerId);
+    if (sessionId !== undefined) {
+      const client = this.clients.find((c) => c.sessionId === sessionId);
+      if (client !== undefined) {
+        try { client.send('ship_abandoned', { shipInstanceId }); } catch { /* socket already closed */ }
+        try { client.leave(1000); } catch { /* already gone */ }
+      }
+      this.playerToSession.delete(playerId);
+    }
+    this.sessionToPlayer.forEach((pid, sid) => {
+      if (pid === playerId) this.sessionToPlayer.delete(sid);
+    });
+    this.playerToUser.delete(playerId);
+
+    serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+    logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → scrap');
+  }
+
+  /**
+   * Equinox P6.3 (C2) — abandon a LINGERING hull (displaced / disconnected,
+   * isActive=false) by shattering it into scrap. Mirrors the lingering-hull
+   * DEATH policy (slot/pose teardown + scrap), keyed by shipInstanceId so it
+   * NEVER touches any playerId-keyed map (the owner may be piloting a different
+   * active hull). No-op if missing / already dead.
+   */
+  private abandonLingeringHullToScrap(shipInstanceId: string): void {
+    const ship = this.state.ships.get(shipInstanceId);
+    const slot = this.lingeringSlots.get(shipInstanceId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) return;
+    const b = slotBase(slot);
+    const pose = this.lingeringPoseCache.get(shipInstanceId) ?? {
+      x:     this.sabF32[b + SLOT_X_OFF]!,
+      y:     this.sabF32[b + SLOT_Y_OFF]!,
+      vx:    this.sabF32[b + SLOT_VX_OFF]!,
+      vy:    this.sabF32[b + SLOT_VY_OFF]!,
+      angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
+    };
+    this.spawnHullScrap(ship.kind as ShipKindId, pose, shipInstanceId);
+
+    this.lingeringSlots.delete(shipInstanceId);
+    this.lingeringPoseCache.delete(shipInstanceId);
+    this.freeSlots.push(slot);
+    // The displaced lingering body is keyed `linger-${shipInstanceId}`.
+    this.postToWorker({ type: 'DESPAWN', slot, playerId: `linger-${shipInstanceId}` });
+    const timer = this.ownerlessShips.get(shipInstanceId);
+    if (timer !== undefined) {
+      if (timer) clearTimeout(timer); // R2.26: a persist-forever marker is null
+      this.ownerlessShips.delete(shipInstanceId);
+    }
+    this.state.ships.delete(shipInstanceId);
+
+    serverLogEvent('ship_abandoned', {
+      playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey, lingering: true,
+    });
+    logger.info({ playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey }, 'lingering hull abandoned → scrap');
+  }
+
+  /**
    * Mirror an eviction into the roster — the ship transitions from
    * `is_active=true` to `is_active=false` with frozen pose. The row
    * stays in the table (forever, modulo the 10-cap) so the player can
@@ -4521,8 +4649,12 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
       const abandoned = findAbandonedShips(this.state.ships, getPlayerShipStore());
       for (const a of abandoned) {
-        if (a.lingering) this.wreckCoordinator.convertLingeringHullToWreck(a.shipInstanceId);
-        else this.convertShipToWreck(a.playerId);
+        // Equinox P6.3 (C2) — abandoned hulls shatter into SCRAP, not a wreck.
+        // (The dead wreck-conversion + entity/schema/wire plumbing is removed in
+        // the C3 follow-up PR; until then it stays inert — nothing creates a
+        // WreckState, so state.wrecks is always empty.)
+        if (a.lingering) this.abandonLingeringHullToScrap(a.shipInstanceId);
+        else this.abandonShipToScrap(a.playerId);
       }
     }
 

@@ -43,6 +43,7 @@ import type { INetworkSynced } from '../../../core/contracts/INetworkSynced.js';
 import type { IRenderContributor } from '../../../core/contracts/IRenderContributor.js';
 import type { ShipState } from '../../rooms/schema/SectorState.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
+import type { ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { DestroyEvent } from '../../../shared-types/messages.js';
 import type { WorkerCmd } from '../../rooms/PhysicsWorkerProxy.js';
 
@@ -168,4 +169,15 @@ export interface LeafDeps {
    *  A polygon kind (fighter/scout/…) yields zero scrap. Optional ⇒ no scrap
    *  (e.g. test fixtures / engineering rooms without a ScrapSpawner). */
   spawnScrapFromDrone?: (rec: SwarmLeafTarget) => void;
+  /** Scrap-on-death for a LINGERING hull (Equinox P6.3 — "lingering ships don't
+   *  explode into scrap; only active ships do"). Called the instant BEFORE the
+   *  lingering hull's slot + `lingeringPoseCache` entry are torn down (so the
+   *  dying pose is still live), with the pose read from `lingeringPoseCache`.
+   *  The room guards composite-vs-polygon (`shipScrapGroups`) + calls
+   *  `ScrapSpawner.spawnFromDeath`, exactly like the active-hull `SHIP_DESTROYED`
+   *  path. The active path can't serve a lingering hull: its slot/pose are gone
+   *  by the time `SHIP_DESTROYED` fires (the death policy below tears them down
+   *  first), and `getActiveShip(shipInstanceId)` returns undefined. Optional ⇒
+   *  no scrap (test fixtures / engineering rooms without a ScrapSpawner). */
+  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
 }

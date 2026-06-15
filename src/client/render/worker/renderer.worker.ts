@@ -54,7 +54,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
   try {
     switch (msg.type) {
       case 'BOOT': {
-        renderer = new PixiRenderer();
+        renderer = new PixiRenderer(msg.isTouch ?? false);
         await renderer.init({
           canvas: msg.canvas,
           width: msg.width,
