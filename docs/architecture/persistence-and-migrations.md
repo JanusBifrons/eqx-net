@@ -72,7 +72,7 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
   componentIndex)` via `scrapColliderFor`, so it's never persisted); and (schema
   v5) **lingering hulls** (a disconnected/displaced `isActive=false` ship) so they
   reappear in-world "where you left it" after a restart, reclaimable until
-  abandoned (→ wreck). Sector-keyed, NOT a roster scan — `markActive` doesn't
+  abandoned (→ scrap). Sector-keyed, NOT a roster scan — `markActive` doesn't
   update the roster `lastSectorKey`, so the snapshot's stable `sectorKey` is the
   reliable source.
 - **What's NOT persisted via the sector snapshot**: projectiles/missiles
@@ -192,7 +192,7 @@ Both roles are now served by the **roster** (`PlayerShipStore`):
   last pose; the in-world hull also persists via `lingeringHulls[]` in the sector
   snapshot, and a returning player resumes by shipId (the `onJoin` shipId-restore
   path). The roster `expiresAt` is **unenforced** (no prune sweep), so a lingering
-  hull persists forever (R2.26) until combat / respawn-evict / abandon → wreck.
+  hull persists forever (R2.26) until combat / respawn-evict / abandon → scrap.
 - **Transit-in-flight** → `TransitOrchestrator.commitTransit` `markStored`s the
   roster row at the destination sector with the commit pose and threads the shipId
   through `reserveSeatFor`; the destination `onJoin` shipId-restore is the single
