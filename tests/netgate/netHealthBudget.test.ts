@@ -193,6 +193,47 @@ describe('evaluateNetHealth — liveness preconditions are a DISTINCT channel (n
   });
 });
 
+describe('evaluateNetHealth — per-scenario budgetOverride (multi-scenario gate, plan: misty-teapot)', () => {
+  // baseline 2, head 5 on maxDriftUnits: passes the DEFAULT budget
+  // (relative breach 5 > 3.5, but under the 12.0 ceiling ⇒ AND-gate PASS).
+  const baseline: NetHealthArm = { ...ok(), maxDriftUnits: 2 };
+  const head: NetHealthArm = { ...ok(), maxDriftUnits: 5 };
+
+  it('absent override ⇒ identical to the default budget (back-compat)', () => {
+    expect(evaluateNetHealth(head, baseline).pass).toBe(true);
+    expect(evaluateNetHealth(head, baseline, undefined).pass).toBe(true);
+    expect(evaluateNetHealth(head, baseline, {}).pass).toBe(true);
+  });
+
+  it('a TIGHTER override ceiling flips a previously-passing arm to FAIL (override is applied)', () => {
+    const v = evaluateNetHealth(head, baseline, {
+      maxDriftUnits: { margin: 0.5, eps: 0.5, ceil: 4 }, // 5 > 4 ⇒ absolute breach now bites
+    });
+    expect(v.pass).toBe(false);
+    expect(v.failures.map((f) => f.metric)).toContain('maxDriftUnits');
+  });
+
+  it('an override on one metric does NOT affect the others', () => {
+    // ticksAhead breaches relative vs a low baseline but stays < ceil 30;
+    // tightening maxDriftUnits must not make ticksAhead fail.
+    const b: NetHealthArm = { ...ok(), ticksAhead: 6, maxDriftUnits: 2 };
+    const h: NetHealthArm = { ...ok(), ticksAhead: 20, maxDriftUnits: 5 };
+    const v = evaluateNetHealth(h, b, { maxDriftUnits: { margin: 0.5, eps: 0.5, ceil: 4 } });
+    expect(v.failures.map((f) => f.metric)).toEqual(['maxDriftUnits']);
+  });
+
+  it('a LOOSER override ceiling keeps a default-failing arm passing', () => {
+    // head 60 vs baseline 20 fails the DEFAULT (relative 60 > 20*1.5+0.5=30.5
+    // AND absolute 60 > 12 ceil); a scenario whose heavy workload
+    // legitimately drifts more raises its own ceiling above head.
+    const b: NetHealthArm = { ...ok(), maxDriftUnits: 20 };
+    const h: NetHealthArm = { ...ok(), maxDriftUnits: 60 };
+    expect(evaluateNetHealth(h, b).pass).toBe(false); // default ceil 12
+    const v = evaluateNetHealth(h, b, { maxDriftUnits: { margin: 0.5, eps: 0.5, ceil: 100 } });
+    expect(v.pass).toBe(true); // 60 < 100 ⇒ absolute arm no longer breaches
+  });
+});
+
 describe('NET_HEALTH_BUDGET — the gated set is exactly the five grounded metrics', () => {
   it('locks the gated metric set (snapshotJitterMs is print-only; changing the set is deliberate)', () => {
     expect(Object.keys(NET_HEALTH_BUDGET).sort()).toEqual(

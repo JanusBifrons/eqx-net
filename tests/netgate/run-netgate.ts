@@ -38,6 +38,10 @@ const baselineRef = process.argv[2] ?? 'origin/main';
 const headRef = process.argv[3] ?? '';
 const regress = process.env['NETGATE_REGRESS'] === '1';
 const reps = process.env['NETGATE_REPS'] ?? '4';
+// Which scenarios to run (CSV of scenarios.ts names). CI sets this from
+// select-scenarios.mjs (only the scenarios whose paths changed). Default
+// `core` = the historical single-scenario gate.
+const scenarios = process.env['NETGATE_SCENARIOS'] ?? 'core';
 
 const WT_ROOT = path.resolve('.claude/worktrees');
 const BASE_WT = path.join(WT_ROOT, 'netgate-baseline');
@@ -263,7 +267,7 @@ async function main(): Promise<void> {
     if (!tokRes) throw new Error('failed to mint test token');
     const { token } = (await tokRes.json()) as { token: string };
 
-    log(`running Playwright netcode-health gate (interleaved A/B × ${reps})…`);
+    log(`running Playwright netcode-health gate (scenarios=${scenarios}, interleaved A/B × ${reps})…`);
     exitCode = await new Promise<number>((resolve) => {
       const pw = spawn(
         'pnpm',
@@ -284,7 +288,9 @@ async function main(): Promise<void> {
             NETGATE_TOKEN: token,
             NETGATE_RUN_MS: '8000',
             NETGATE_REPS: reps,
-            NETGATE_RESET_URL: `http://127.0.0.1:${SERVER_PORT}/dev/reset-sector?key=feel-test-25`,
+            NETGATE_SCENARIOS: scenarios,
+            // Keyless base — the spec appends each scenario's room name.
+            NETGATE_RESET_BASE: `http://127.0.0.1:${SERVER_PORT}/dev/reset-sector?key=`,
             NETGATE_ARMS: JSON.stringify([
               { name: 'baseline', url: `http://localhost:${VITE_BASE_PORT}` },
               { name: 'HEAD', url: `http://localhost:${VITE_HEAD_PORT}` },
