@@ -59,36 +59,4 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   await mkdir(path.dirname(STORAGE_STATE_PATH), { recursive: true });
   await writeFile(STORAGE_STATE_PATH, JSON.stringify(storageState, null, 2), 'utf8');
   console.log(`[e2e/global-setup] wrote auth storageState for ${origin} (user ${payload.user.email})`);
-
-  // ── Vite warm-up (de-flake) ────────────────────────────────────────────────
-  // The dev `vite` server compiles the app's module graph ON FIRST REQUEST, and
-  // a cold compile of this app takes far longer than a single test's boot wait.
-  // Under sharding each shard runs its own Playwright invocation (own globalSetup
-  // + own vite), so WHICHEVER test boots first in a shard pays the cold compile
-  // and blows its `ship-stats-card` wait — the recurring `layout-slots` flake.
-  // Boot the app ONCE here (in untimed setup) so the compile + the `test-sector`
-  // room are warm before any test runs; every test then boots in a few seconds.
-  // Skipped when Playwright is not managing the servers (CI_SKIP_WEBSERVER — the
-  // netgate driver, whose arms live on other ports). Non-fatal by design.
-  if (!process.env['CI_SKIP_WEBSERVER']) {
-    const { chromium } = await import('@playwright/test');
-    const browser = await chromium.launch();
-    try {
-      const ctx = await browser.newContext({ storageState: STORAGE_STATE_PATH });
-      const page = await ctx.newPage();
-      await page.goto(`${baseURL}/?room=test-sector`, { waitUntil: 'domcontentloaded' });
-      // 90 s covers a cold module-graph compile on a contended CI runner.
-      await page.waitForSelector('[data-testid="game-surface"]', { timeout: 90_000 });
-      // Best-effort: also reach in-game so the test-sector room is warm too.
-      await page
-        .locator('[data-testid="ship-stats-card"]')
-        .waitFor({ timeout: 30_000 })
-        .catch(() => undefined);
-      console.log('[e2e/global-setup] warmed Vite + test-sector room');
-    } catch (err) {
-      console.log(`[e2e/global-setup] warm-up skipped/failed (non-fatal): ${(err as Error).message}`);
-    } finally {
-      await browser.close();
-    }
-  }
 }
