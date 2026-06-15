@@ -33,7 +33,6 @@
 export type EntityKindTag =
   | 'active-ship'
   | 'lingering-hull'
-  | 'wreck'
   | 'drone'
   | 'asteroid'
   | 'projectile'
@@ -71,7 +70,7 @@ export interface Entity {
   readonly entityKind: EntityKindTag;
   /**
    * Stable per-entity id in the SAME namespace the existing code already
-   * uses for this kind (active ship = playerId; lingering hull / wreck =
+   * uses for this kind (active ship = playerId; lingering hull =
    * shipInstanceId; drone/asteroid = `swarm-<entityId>` wire id; projectile
    * = `p-<n>`; missile = its numeric id as a string). Adapters MUST NOT
    * invent a new id scheme — downstream broadcast/sprite keying depends on

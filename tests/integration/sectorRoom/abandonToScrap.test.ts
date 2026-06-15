@@ -1,18 +1,16 @@
 /**
  * Equinox P6.3 (C2 — "scrap replaces wrecks") — abandon → SCRAP through the real
  * SectorRoom abandon-detection poll. Supersedes the old abandonToWreck.test.ts:
- * an abandoned hull no longer becomes a damageable WreckState entity, it
- * shatters into drifting scrap (composite kinds) and leaves the world.
+ * an abandoned hull no longer becomes a damageable entity, it
+ * shatters into drifting scrap (composite kinds) and leaves the world. The
+ * dead wreck entity/schema/wire plumbing was removed in C3.
  *
  * COVERS:
  *   1. Active COMPOSITE ship → store.delete → poll cycle → the hull is removed
- *      from state.ships, one scrap piece per component appears, NO wreck is
- *      created, and the owning session gets a ship_abandoned notification.
+ *      from state.ships, one scrap piece per component appears, and the owning
+ *      session gets a ship_abandoned notification.
  *   2. Stored ship (not in the sector) → store.delete → poll cycle → row
- *      deleted, NO scrap, NO wreck (no slot ⇒ nothing in the world to shatter).
- *
- * (The now-dead wreck entity/schema/wire plumbing is removed in the C3 PR; until
- * then nothing creates a WreckState, so state.wrecks is always empty.)
+ *      deleted, NO scrap (no slot ⇒ nothing in the world to shatter).
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -43,7 +41,7 @@ describe('SectorRoom integration — abandon → scrap (Equinox P6.3 / C2)', () 
     return [...internal.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_SCRAP).length;
   }
 
-  it('active COMPOSITE ship → store.delete → hull shatters into scrap (no wreck)', async () => {
+  it('active COMPOSITE ship → store.delete → hull shatters into scrap', async () => {
     const pid = randomUUID();
     // Direct joinOrCreate (NOT connectActive): the abandon flow calls
     // client.leave(1000) on the owning session, which hangs the afterEach
@@ -79,16 +77,15 @@ describe('SectorRoom integration — abandon → scrap (Equinox P6.3 / C2)', () 
       await harness.advance(50);
     }
 
-    // Hull removed, NO wreck, scrap appeared (one per component), session notified.
+    // Hull removed, scrap appeared (one per component), session notified.
     expect(state.ships.get(shipId), 'abandoned hull leaves state.ships').toBeUndefined();
-    expect(state.wrecks.size, 'no wreck is ever created — scrap replaces wrecks').toBe(0);
     expect(scrapCount(internal)).toBe(shipScrapGroups('havok').length);
     expect(getPlayerShipStore().get(shipId)).toBeNull();
     expect(abandonedMsg).not.toBeNull();
     expect(abandonedMsg!.shipInstanceId).toBe(shipId);
   }, 20_000);
 
-  it('stored ship abandon → row deleted, NO scrap, NO wreck', async () => {
+  it('stored ship abandon → row deleted, NO scrap', async () => {
     const pid = randomUUID();
     const store = getPlayerShipStore();
     const seeded = store.create({
@@ -106,7 +103,6 @@ describe('SectorRoom integration — abandon → scrap (Equinox P6.3 / C2)', () 
 
     const room = harness.getServerRoom()!;
     const internal = (room as unknown as SectorRoom)._internals;
-    expect((room.state as SectorState).wrecks.size).toBe(0);
     expect(scrapCount(internal)).toBe(0); // no slot ⇒ nothing to shatter
     expect(store.get(seeded.shipId)).toBeNull();
   });

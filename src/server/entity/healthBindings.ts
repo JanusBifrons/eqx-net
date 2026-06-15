@@ -14,7 +14,7 @@
  */
 
 import type { HealthBinding, InteractionResultMut } from '../../core/contracts/IDamageable.js';
-import type { ShipState, WreckState } from '../rooms/schema/SectorState.js';
+import type { ShipState } from '../rooms/schema/SectorState.js';
 import type { ShieldHullRouter, SwarmDamageTarget } from '../rooms/ShieldHullRouter.js';
 
 /** Shared ship-layered binding; `workerBodyIdFor` differs active vs lingering. */
@@ -47,23 +47,6 @@ export function activeShipHealthBinding(router: ShieldHullRouter): HealthBinding
  *  (matches the original branch, which passes null). */
 export function lingeringHealthBinding(router: ShieldHullRouter): HealthBinding {
   return shipBinding(router, () => null);
-}
-
-/** Ownerless wreck (branch 1): flat hull damage, no shield layer. */
-export function wreckHealthBinding(): HealthBinding {
-  return {
-    applyLayered(target: unknown, amount: number, _atTick: number, out: InteractionResultMut): void {
-      const wreck = target as WreckState;
-      wreck.health = Math.max(0, wreck.health - amount);
-      out.applied = true;
-      out.newHealth = wreck.health;
-      out.newShield = 0;
-      out.shieldMax = 0;
-      out.hullMax = wreck.maxHealth;
-      out.hitLayer = 'hull';
-      out.destroyed = wreck.health <= 0;
-    },
-  };
 }
 
 /**

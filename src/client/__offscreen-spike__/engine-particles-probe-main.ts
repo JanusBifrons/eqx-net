@@ -33,7 +33,6 @@ function makeMirror(): RenderMirror {
     ships: new Map([[PROBE_ID, ship]]),
     localPlayerId: PROBE_ID,
     swarm: new Map(),
-    wrecks: new Map(),
     lingeringShips: new Map(),
     projectiles: new Map(),
     boostingShips: new Set(),

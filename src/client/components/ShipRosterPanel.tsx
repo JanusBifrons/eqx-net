@@ -96,9 +96,9 @@ export function ShipRosterPanel({ playerId, compact = false, onSpawn }: ShipRost
       setOpenShipId(null);
       await forceRefreshRoster();
       if (wasMyPilotedShip) {
-        // The hull I was flying is now a wreck — eject to the galaxy
-        // map. Clear currentSectorKey so the map renders neutral instead
-        // of pinning the sector I just lost.
+        // The hull I was flying is gone (shattered into scrap) — eject to
+        // the galaxy map. Clear currentSectorKey so the map renders neutral
+        // instead of pinning the sector I just lost.
         setCurrentSectorKey(null);
         setPhase('galaxy-map');
       }

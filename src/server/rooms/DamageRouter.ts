@@ -9,7 +9,7 @@
  *                                              own { health, perHit, death })
  *   applyInteraction(leaf, …)  → applyLayered → broadcast → perHit → death
  *
- * The leaf is a `ShipEntity` / `WreckEntity` / `DroneEntity` / `StructureEntity`
+ * The leaf is a `ShipEntity` / `DroneEntity` / `StructureEntity`
  * (`src/server/entity/leaves/`); a NEW damageable type is a leaf + a registry
  * row, with ZERO new dispatch branch here (the "structure for free" proof). The
  * ordered, shape-based selection lives in `EntityResolver` (HC#1 — branch order
@@ -26,8 +26,8 @@
  * Allocation-free: the resolver builds the leaf flyweights once; resolution +
  * result use reused instance scratch (invariant #14).
  *
- * Composes ShieldHullRouter (layered + regen, via the leaves' health bindings),
- * WreckLifecycleCoordinator (destroyWreck), and the room's evictSwarmEntity.
+ * Composes ShieldHullRouter (layered + regen, via the leaves' health bindings)
+ * and the room's evictSwarmEntity.
  *
  * Extracted from SectorRoom (commit 21 partial).
  */
@@ -38,7 +38,7 @@ import type { MapSchema } from '@colyseus/schema';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
-import type { ShipState, WreckState } from './schema/SectorState.js';
+import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import type { ShieldHullRouter } from './ShieldHullRouter.js';
 import {
@@ -76,16 +76,11 @@ export interface DamageRouterDeps {
   serverTick: () => number;
   /** Colyseus schema maps. */
   shipsMap: MapSchema<ShipState>;
-  wrecksMap: MapSchema<WreckState>;
   /** Per-tick cached player poses. */
   shipPoseCache: Map<string, ShipPhysicsState>;
   /** Phase 6b lingering hulls. */
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
-  /** Wreck pose mirror — read for damage-event hit-pos fallback. */
-  wreckPoseCache: Map<string, ShipPhysicsState>;
-  /** Wreck destruction (delegates to WreckLifecycleCoordinator). */
-  destroyWreck: (shipInstanceId: string) => void;
   /** Per-frame slot free-list — lingering hull death pushes its slot back. */
   freeSlots: number[];
   /** Shield/hull layered damage helpers. */

@@ -6,7 +6,7 @@
  * each persisted lingering hull in-world (a real `isActive=false` ship + slot +
  * `linger-<id>` worker body + lingering bookkeeping), so a disconnected /
  * displaced ship reappears where it was left, visible to others and reclaimable
- * — until the owner abandons it (→ wreck). This exercises the reconstruction
+ * — until the owner abandons it (→ scrap). This exercises the reconstruction
  * against a REAL room (the unit round-trip in
  * SectorPersistence.structures.test.ts covers the persist↔hydrate wiring).
  */

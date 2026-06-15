@@ -9,7 +9,6 @@ export * from './entityLeaf.js';
 export * from './swarmDamageStrategy.js';
 export * from './swarmLeafBase.js';
 export * from './shipEntity.js';
-export * from './wreckEntity.js';
 export * from './droneEntity.js';
 export * from './asteroidEntity.js';
 export * from './structureEntity.js';

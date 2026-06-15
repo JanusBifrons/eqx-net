@@ -1,7 +1,7 @@
 /**
  * Per-tick SAB → pose-cache mirror, lifted out of `SectorRoom.update()`.
  *
- * Three pose caches live on the main thread (plain Maps of mutable
+ * Two pose caches live on the main thread (plain Maps of mutable
  * records) so the snapshot path can read poses synchronously without
  * touching the SAB directly. The Colyseus schema is NOT involved —
  * mirroring spatial fields into the schema would double-broadcast on
@@ -12,7 +12,6 @@
  *     keyed by shipInstanceId. Allocated lazily here so the common
  *     "no lingering hulls" case carries an empty Map. The worker
  *     keeps stepping these bodies (drag-decayed vx/vy/angvel).
- *   - `wreckPoseCache` — destroyed hulls, keyed by shipInstanceId.
  *
  * Plus the `sabAppliedTicks` map (per-player most-recent applied
  * input tick), decoded from the SLOT_APPLIED_TICK slot
@@ -50,18 +49,16 @@ export interface SabPoseMirrorCtx {
   sabU32: Uint32Array;
   playerToSlot: Map<string, number>;
   lingeringSlots: Map<string, number>;
-  wreckToSlot: Map<string, number>;
   shipPoseCache: Map<string, PoseRecord>;
   lingeringPoseCache: Map<string, PoseRecord>;
-  wreckPoseCache: Map<string, PoseRecord>;
   sabAppliedTicks: Map<string, number>;
 }
 
 export function mirrorSabPoses(ctx: SabPoseMirrorCtx): void {
   const {
     sabF32, sabU32,
-    playerToSlot, lingeringSlots, wreckToSlot,
-    shipPoseCache, lingeringPoseCache, wreckPoseCache,
+    playerToSlot, lingeringSlots,
+    shipPoseCache, lingeringPoseCache,
     sabAppliedTicks,
   } = ctx;
 
@@ -89,19 +86,6 @@ export function mirrorSabPoses(ctx: SabPoseMirrorCtx): void {
         pose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
         lingeringPoseCache.set(shipInstanceId, pose);
       }
-      const b = slotBase(slot);
-      pose.x      = sabF32[b + SLOT_X_OFF]!;
-      pose.y      = sabF32[b + SLOT_Y_OFF]!;
-      pose.angle  = sabF32[b + SLOT_ANGLE_OFF]!;
-      pose.vx     = sabF32[b + SLOT_VX_OFF]!;
-      pose.vy     = sabF32[b + SLOT_VY_OFF]!;
-      pose.angvel = sabF32[b + SLOT_ANGVEL_OFF]!;
-    }
-    // Phase 4 — wreck pose mirror. Wrecks live in SAB slots like
-    // player ships; the worker steps them every physics tick.
-    for (const [shipInstanceId, slot] of wreckToSlot) {
-      const pose = wreckPoseCache.get(shipInstanceId);
-      if (!pose) continue;
       const b = slotBase(slot);
       pose.x      = sabF32[b + SLOT_X_OFF]!;
       pose.y      = sabF32[b + SLOT_Y_OFF]!;

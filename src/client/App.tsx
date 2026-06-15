@@ -255,8 +255,8 @@ function GameSurface({
   //
   // Phase changes from 'game' → 'galaxy-map' unmount `GameSurface`,
   // which cleans up the room. The roster panel on the landing screen
-  // will reflect the wreck (Phase 4 already destroys the dead ship's
-  // roster row, so it disappears).
+  // reflects the loss (the dead ship's roster row is destroyed, so it
+  // disappears).
   //
   // We also clear every transient in-game overlay flag (galaxy map open,
   // overview open, drawer open, pending swap) so a player who died with

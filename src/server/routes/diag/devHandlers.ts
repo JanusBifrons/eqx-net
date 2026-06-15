@@ -183,7 +183,7 @@ export function devLimboHandler(req: Request, res: Response): void {
  * roster row vanishes immediately; if the ship is still in a sector
  * room, the room will continue to host it until the standard
  * disconnect/eviction path runs, but it will not be remembered after.
- * Phase 4 replaces this with a wreck-spawn flow.
+ * The room's abandon-detection poll shatters the hull into scrap.
  */
 export function devPlayerShipsAbandonHandler(req: Request, res: Response): void {
   const shipId = String(req.params['shipId'] ?? '');

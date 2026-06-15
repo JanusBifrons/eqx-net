@@ -147,7 +147,7 @@ describe('SectorRoom integration — Phase 6b lingering hulls', () => {
     // so a fresh-spawn that displaces the hull keeps its presence entry (the
     // rebind / restore gates read it). WS-12 / R2.26: that entry is now a
     // persist-forever `null` marker — there is NO despawn timer — so the
-    // displaced hull stays in the world until abandoned (→ wreck) or destroyed.
+    // displaced hull stays in the world until abandoned (→ scrap) or destroyed.
     // This locks that the displace transition does NOT drop the presence entry.
     const client1 = await harness.connectActive(PID_B, { shipKind: 'fighter' });
     await harness.advance(150);

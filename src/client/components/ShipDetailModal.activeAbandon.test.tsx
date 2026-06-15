@@ -1,6 +1,6 @@
 /**
  * Phase 5 — abandoning ANY ship from the detail modal is gated by a
- * confirm step (the action is destructive — hull becomes a wreck).
+ * confirm step (the action is destructive — hull shatters into scrap).
  * Abandoning the player's currently-active ship gets a STRONGER warning
  * ("ejects you to the galaxy map") so a tap-mistake doesn't kick them
  * out of gameplay.

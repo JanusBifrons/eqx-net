@@ -30,10 +30,10 @@
  *   changes. Client predicts the hull moving on collision → snapshot
  *   pulls the sprite back to X → visible as fly-through-then-snap-back.
  *
- *   Wrecks already solved this in Phase 4 via `REKEY_SHIP` — moving
- *   the body's lookup key from `playerId` to `wreck-${shipInstanceId}`
- *   so the new SPAWN doesn't overwrite it. Phase 6b lingering hulls
- *   missed this rekey step. The fix is the same shape.
+ *   The fix is `REKEY_SHIP` — moving the body's lookup key from
+ *   `playerId` to `linger-${shipInstanceId}` so the new SPAWN doesn't
+ *   overwrite it. Phase 6b lingering hulls originally missed this rekey
+ *   step.
  *
  * THIS TEST asserts the user-visible contract end-to-end against a
  * real SectorRoom + worker: after a fresh-spawn-displaces, the
@@ -159,8 +159,8 @@ describe('SectorRoom integration — lingering hull push (regression)', () => {
         `SPAWN command was issued for the same playerId. The body is`,
         `still in Rapier but its pose is no longer being written to`,
         `the lingering slot's SAB cells. Fix: send a REKEY_SHIP command`,
-        `at the fresh-spawn-displaces point (see Phase 4 wreck pattern`,
-        `at SectorRoom.ts:~2840).`,
+        `(playerId → linger-<shipInstanceId>) at the fresh-spawn-displaces`,
+        `point in SectorRoom.`,
       ].join('\n'),
     ).toBeGreaterThan(1.0); // 1 unit is well above float noise; expect tens of units
     expect(yDelta).toBeGreaterThan(0); // pushed in +y direction

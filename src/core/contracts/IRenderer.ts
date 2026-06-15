@@ -286,33 +286,12 @@ export interface ProjectileRenderState {
   weaponId?: string;
 }
 
-/**
- * Phase 4 — abandoned-ship wreck. Ownerless hull drifting in a sector;
- * destructible, no AI, no player. Identity (kind, health, maxHealth)
- * arrives via the Colyseus schema diff on `state.wrecks`; per-frame
- * pose arrives in `SnapshotMessage.wrecks` and is mirrored here.
- */
-export interface WreckRenderState {
-  shipInstanceId: string;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  angle: number;
-  angvel: number;
-  kind: string;
-  health: number;
-  maxHealth: number;
-}
-
 export interface RenderMirror {
   ships: Map<string, ShipRenderState>;
-  /** Phase 4 — abandoned ship wrecks. Keyed by shipInstanceId UUID. */
-  wrecks?: Map<string, WreckRenderState>;
   /** Phase 6b — lingering player hulls (isActive=false on the wire).
    *  These are NOT in `mirror.ships` (which is playerId-keyed and would
    *  collide with a player's currently-piloted hull). The renderer iterates
-   *  this map separately and draws with the same grey-ish tint as wrecks
+   *  this map separately and draws with a grey-ish tint
    *  to signal "this hull is parked but still belongs to a real player".
    *  Pose fields populated from `SnapshotMessage.states[*]` entries whose
    *  `isActive === false`; identity (kind, displayName) carried alongside. */
@@ -543,14 +522,6 @@ export interface RendererFeedback {
    */
   damageNumberActiveCount: number;
   /**
-   * Number of currently-mounted wreck sprites. Lets integration tests
-   * observe wreck rendering lifecycle (mount when entering mirror.wrecks,
-   * unmount when leaving) without needing pixel-level rendering
-   * assertions. Mirrors `damageNumberActiveCount` for the wreck
-   * sprite path.
-   */
-  wreckSpriteCount: number;
-  /**
    * Number of shield-aura rings currently DRAWN (visible) this frame. A ring
    * is registered via `setContinuous(id,'shield',…)` but only becomes visible
    * once the effects subsystem resolves the entity's pose — so this is the
@@ -559,7 +530,7 @@ export interface RendererFeedback {
    * (P3.12 / WS-C3): pre-fix `getEntityPose` returned null for lingering hulls
    * (their sprites live in `lingeringSprites`, not `sprites`), so the ring
    * registered but stayed `visible=false` → this count was 0. Mirrors
-   * `wreckSpriteCount` / `damageNumberActiveCount` as a test-observable.
+   * `damageNumberActiveCount` as a test-observable.
    */
   shieldRingVisibleCount: number;
   /**
@@ -653,15 +624,14 @@ export interface RendererFeedback {
    * tap) and publishes its id here so the main thread can mirror it into the
    * discrete Zustand `selectedEntityId` (panel visibility). `null` when nothing
    * is selected. The id form matches the `HealthBarManager` lookup convention:
-   * `playerId` for a ship, `swarm-<entityId>` for a drone/structure,
-   * `shipInstanceId` for a wreck. Non-spatial / UI-affordance surface — not
-   * consumed by gameplay logic.
+   * `playerId` for a ship, `swarm-<entityId>` for a drone/structure. Non-spatial
+   * / UI-affordance surface — not consumed by gameplay logic.
    */
   selectedPickId: string | null;
   /** Kind of the selected entity (drives the stats-channel routing: only
-   *  `ship`/`structure` use the server `entity_stats` channel; `drone`/`wreck`
-   *  read health from the mirror directly). `null` when nothing is selected. */
-  selectedPickKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
+   *  `ship`/`structure` use the server `entity_stats` channel; `drone`
+   *  reads health from the mirror directly). `null` when nothing is selected. */
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
   /**
    * WS-10 (R2.4) — the id of the entity the desktop pointer is HOVERING over
    * (set from pointer-move via `pickEntityAt`), or null when the cursor is over

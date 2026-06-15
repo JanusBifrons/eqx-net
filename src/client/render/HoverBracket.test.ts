@@ -3,7 +3,7 @@
  * `SelectionBracket` drawn around the desktop-hovered entity.
  *
  * Mirrors `SelectionBracket.test.ts`: single pooled Graphics + dirty-flag
- * discipline (invariant #14), pose resolution by id (ship / swarm-N / wreck /
+ * discipline (invariant #14), pose resolution by id (ship / swarm-N /
  * lingering), hide + report-not-present when the entity is null or gone. This is
  * cheap insurance for the bracket's own behaviour; the pointer→pick→bracket
  * WIRING is locked by the `hover-outline.spec.ts` E2E (the seam the bug lives at).
@@ -36,7 +36,7 @@ vi.mock('pixi.js', () => {
 });
 
 function mirror(over: Partial<RenderMirror>): RenderMirror {
-  return { ships: new Map(), swarm: new Map(), wrecks: new Map(), localPlayerId: null, ...over } as RenderMirror;
+  return { ships: new Map(), swarm: new Map(), localPlayerId: null, ...over } as RenderMirror;
 }
 
 function gfxOf(b: HoverBracket): { clear: ReturnType<typeof vi.fn>; x: number; y: number; visible: boolean } {

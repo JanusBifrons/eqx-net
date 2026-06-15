@@ -79,9 +79,9 @@ interface ClockRateCmd     { type: 'CLOCK_RATE';     rate: number }
  *  velocity. Single-writer rule: only the worker mutates SAB pose; this
  *  command is the only path the main thread has to override it. */
 interface SetPositionCmd   { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
-/** Phase 4 — rename a ship body's lookup key without destroying it.
- *  Used by the abandon flow so the wreck's body outlives its original
- *  playerId on subsequent rejoins. See SectorRoom.convertShipToWreck. */
+/** Rename a ship body's lookup key without destroying it. Used by the
+ *  fresh-spawn-displace flow so a displaced hull's body outlives its
+ *  original playerId (rekeyed to `linger-${shipInstanceId}`) on rejoin. */
 interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: string }
 /** Shield 0-cross collider swap (shield/hull refactor). `kindId` is carried
  *  in the command (server-authoritative) so the worker needs no per-id kind
@@ -164,12 +164,12 @@ async function main(): Promise<void> {
         break;
       }
       case 'REKEY_SHIP': {
-        // Phase 4 — abandon flow. Move a ship's lookup key from
-        // `oldId` (playerId) to `newId` (wreck-${shipInstanceId})
+        // Fresh-spawn-displace flow. Move a ship's lookup key from
+        // `oldId` (playerId) to `newId` (linger-${shipInstanceId})
         // without destroying the underlying Rapier body. Without this,
         // when the same player rejoins, `spawnShip(playerId, ...)`
         // would overwrite `physics.bodies[playerId]` and orphan the
-        // wreck body (still in Rapier but invisible to the SAB writer,
+        // displaced body (still in Rapier but invisible to the SAB writer,
         // so its pose stops being broadcast and the client renders it
         // at a stale position while server-side collisions still hit
         // an invisible body at the real position).

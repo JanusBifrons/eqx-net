@@ -33,10 +33,8 @@ import { logEvent, isDiagEnabled } from '../debug/ClientLogger';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
-  DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
   shapeForKind,
-  desaturate,
   buildGhostGfx,
   applyMountOffset,
   buildExplosionGfx,
@@ -105,7 +103,7 @@ export class PixiRenderer implements IRenderer {
   private app!: Application;
   /**
    * World Container — replaces `pixi-viewport`'s `Viewport`. Holds all
-   * gameplay sprites (ships, swarm, projectiles, beams, wrecks,
+   * gameplay sprites (ships, swarm, projectiles, beams,
    * lingering hulls, background grid, etc.). Pan / zoom / momentum are
    * driven by the `Camera` controller below.
    */
@@ -189,10 +187,6 @@ export class PixiRenderer implements IRenderer {
   private _dmgNumbersDisabled = false;
   private _healthBarsDisabled = false;
   private sprites = new Map<string, Graphics>();
-  /** Phase 4 — sprites for abandoned-ship wrecks. Keyed by shipInstanceId.
-   *  Drawn with a desaturated kind colour; updated each frame from
-   *  `mirror.wrecks`. Removed when the wreck disappears from the mirror. */
-  private wreckSprites = new Map<string, Graphics>();
   /** Per-ship turret sprites + aim lines (multi-mount/turret refactor,
    *  Phase 3). Parented to each ship's main `sprite` so the cluster inherits
    *  the ship's world transform; the cluster's own children sit at their
@@ -347,7 +341,6 @@ export class PixiRenderer implements IRenderer {
     mountCounts: new Map<string, number>(),
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
-    wreckSpriteCount: 0,
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
@@ -1160,13 +1153,12 @@ export class PixiRenderer implements IRenderer {
     updateShipSprites(mirror, this._shipUpdaterCtx);
 
     // Explosion sprites spawned this frame for destroyed ships.
-    // 2026-05-13 — look up the targetId across ALL three sprite maps
-    // (active ships by playerId, lingering hulls + wrecks by
-    // shipInstanceId). Previously this only checked `this.sprites`
-    // (active-only) and defaulted to (0,0) when a lingering hull or
-    // wreck was destroyed — the user's "explosion appeared at zero
-    // zero" bug. Helper is in `spriteUpdateDecisions.ts` and is
-    // unit-tested there.
+    // 2026-05-13 — look up the targetId across both sprite maps
+    // (active ships by playerId, lingering hulls by shipInstanceId).
+    // Previously this only checked `this.sprites` (active-only) and
+    // defaulted to (0,0) when a lingering hull was destroyed — the
+    // user's "explosion appeared at zero zero" bug. Helper is in
+    // `spriteUpdateDecisions.ts` and is unit-tested there.
     if (mirror.explodingShips) {
       // Wrap the lingering-sprite cache to expose just the {x, y}
       // pose the helper expects. The cache value also carries `kind`
@@ -1192,13 +1184,12 @@ export class PixiRenderer implements IRenderer {
         // PRESERVE the decideExplosionPosition lookup — the 2026-05-13
         // Phase 6b fix. Naive `mirror.ships.get(targetId)?.pose` here
         // would regress the "explosion at (0,0)" bug when a lingering
-        // hull (mirror.lingeringShips) or a wreck (mirror.wrecks) is
-        // destroyed. The helper unifies the three sprite maps.
+        // hull (mirror.lingeringShips) is destroyed. The helper unifies
+        // the two sprite maps.
         const pose = decideExplosionPosition({
           targetId,
           activeShipsByPlayerId: this.sprites,
           lingeringShipsByShipInstanceId: lingeringPosesView,
-          wrecksByShipInstanceId: this.wreckSprites,
         });
         if (!pose) continue; // ship not in any map — skip the VFX
 
@@ -1757,11 +1748,6 @@ export class PixiRenderer implements IRenderer {
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
 
-    // Phase 4 — render / update / sweep wrecks. Wrecks are drawn with
-    // the ship-kind silhouette desaturated and slightly transparent to
-    // sell "broken hull, no pilot". No mount aim lines, no name label,
-    // no exhaust. Y-flip matches the rest of the renderer.
-    this.updateWrecks(mirror);
     this.updateLingeringShips(mirror);
 
     // Halo arrows for off-screen POIs. Runs after moveCenter so the visibility
@@ -1790,7 +1776,6 @@ export class PixiRenderer implements IRenderer {
     }
     this.feedback.haloArrowCount = this.halo.getDebugVisibleArrowCount();
     this.feedback.damageNumberActiveCount = this.damageNumbers?.getActiveCount() ?? 0;
-    this.feedback.wreckSpriteCount = this.wreckSprites.size;
     // Join-render readiness signal: latch true once we've painted at
     // least one frame that includes the LOCAL player's mirror entry
     // (not just any ship). The main thread reads this via
@@ -1988,13 +1973,12 @@ export class PixiRenderer implements IRenderer {
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   private lastEffectsTickNowMs = 0;
 
-  /** Phase 6b — parallel to `updateWrecks`. Lingering hulls (players who
-   *  disconnected within the 15-min linger window OR whose ships have
-   *  been displaced from `playerToSlot` by a fresh spawn) are drawn with
-   *  the SAME silhouette + colour as the live ship (NOT the desaturated
-   *  wreck tint — they still belong to a real player), with a slight
-   *  alpha drop (0.75) as a visual cue for "this hull is parked, the
-   *  pilot isn't currently flying it".
+  /** Phase 6b — lingering hulls (players who disconnected within the
+   *  15-min linger window OR whose ships have been displaced from
+   *  `playerToSlot` by a fresh spawn) are drawn with the SAME silhouette
+   *  + colour as the live ship (they still belong to a real player), with
+   *  a slight alpha drop (0.75) as a visual cue for "this hull is parked,
+   *  the pilot isn't currently flying it".
    *
    *  Phase A3: the create-vs-rebuild-vs-reposition decision is delegated
    *  to `decideLingeringSpriteAction` (pure, unit-tested). The previous
@@ -2009,20 +1993,6 @@ export class PixiRenderer implements IRenderer {
    *  per-frame `new Set<string>()` the audit identified at this site. */
   private readonly lingeringSprites = new Map<string, { sprite: Container; kind: string; stamp: number }>();
   private _lingeringFrameId = 0;
-  /** Parallel stamp map for wreckSprites. Pre-Phase-4 the cleanup
-   *  iterated a per-frame `new Set<string>()`; the parallel-map
-   *  generation-counter keeps `wreckSprites` value type as raw Graphics
-   *  (the `decideExplosionPosition` consumer at PixiRenderer.ts:584
-   *  reads sprite.x/.y off the Graphics, so wrapping would force a
-   *  second view). Map entries persist with wrecks; per-frame stamping
-   *  on an existing key is allocation-free. */
-  private readonly wreckStamps = new Map<string, number>();
-  private _wreckFrameId = 0;
-  /** Cache of `wreck-${shipInstanceId}` strings (Phase 5g —
-   *  invariant #14). updateWrecks builds this key per wreck per frame
-   *  to check mirror.damagedShips; cache-or-create makes subsequent
-   *  ticks allocation-free. */
-  private readonly _wreckDamageKeyCache = new Map<string, string>();
   private updateLingeringShips(mirror: RenderMirror): void {
     if (!mirror.lingeringShips || mirror.lingeringShips.size === 0) {
       if (this.lingeringSprites.size > 0) {
@@ -2064,8 +2034,8 @@ export class PixiRenderer implements IRenderer {
         entry = { sprite, kind: decision.kind, stamp: frameId };
         this.lingeringSprites.set(shipInstanceId, entry);
       }
-      // 'skip' is reserved for wreck-kind-missing diagnostics; not
-      // produced by the lingering decision today. Be defensive anyway.
+      // 'skip' is not produced by the lingering decision today. Be
+      // defensive anyway.
       if (decision.action === 'skip' || !entry) continue;
       entry.stamp = frameId;
       entry.sprite.x = ship.x;
@@ -2077,54 +2047,6 @@ export class PixiRenderer implements IRenderer {
         this.mountVisuals.removeShip(id); // R2.32 — free the weapon-barrel cluster
         entry.sprite.destroy();
         this.lingeringSprites.delete(id);
-      }
-    }
-  }
-
-  private updateWrecks(mirror: RenderMirror): void {
-    if (!mirror.wrecks) {
-      for (const g of this.wreckSprites.values()) g.destroy();
-      this.wreckSprites.clear();
-      this.wreckStamps.clear();
-      return;
-    }
-    // Generation-counter sweep via the parallel `wreckStamps` map
-    // (invariant #14, R5). The wreckSprites value stays `Graphics` so
-    // `decideExplosionPosition` can keep reading sprite.x/.y directly.
-    const frameId = ++this._wreckFrameId;
-    for (const [shipInstanceId, w] of mirror.wrecks) {
-      let sprite = this.wreckSprites.get(shipInstanceId);
-      if (!sprite) {
-        const shape = shapeForKind(w.kind);
-        sprite = buildShipGfxFromShape(shape, desaturate(shipPrimaryColor(getShipKind(w.kind))));
-        sprite.alpha = 0.55;
-        this.shipContainer.addChild(sprite);
-        this.wreckSprites.set(shipInstanceId, sprite);
-      }
-      this.wreckStamps.set(shipInstanceId, frameId);
-      sprite.x = w.x;
-      sprite.y = -w.y;
-      sprite.rotation = -w.angle;
-
-      // Phase 4 — wreck visual feedback when taking damage. The
-      // damage-flash machinery is keyed by the wire targetId (which is
-      // `wreck-${shipInstanceId}` for wrecks); `mirror.damagedShips`
-      // gets that id from handleDamage so we can flash here too.
-      // Phase 5g: cache the template-literal string.
-      let wreckEntityId = this._wreckDamageKeyCache.get(shipInstanceId);
-      if (wreckEntityId === undefined) {
-        wreckEntityId = `wreck-${shipInstanceId}`;
-        this._wreckDamageKeyCache.set(shipInstanceId, wreckEntityId);
-      }
-      const flashing = mirror.damagedShips?.has(wreckEntityId) ?? false;
-      sprite.tint = flashing ? DAMAGE_FLASH_COLOR : 0xffffff;
-    }
-    for (const [id, sprite] of this.wreckSprites) {
-      if (this.wreckStamps.get(id) !== frameId) {
-        sprite.destroy();
-        this.wreckSprites.delete(id);
-        this.wreckStamps.delete(id);
-        this._wreckDamageKeyCache.delete(id);
       }
     }
   }

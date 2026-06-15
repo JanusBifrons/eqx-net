@@ -7,8 +7,8 @@
  * router then runs ONE monomorphic `applyInteraction` over the leaf.
  *
  * The ORDERED, shape-based lookup is preserved verbatim from the old if-tree
- * (HC#1 — the branch order + each branch's side-effects are load-bearing): wreck
- * prefix → lingering (`!isActive` schema) → active player ship → swarm registry.
+ * (HC#1 — the branch order + each branch's side-effects are load-bearing):
+ * lingering (`!isActive` schema) → active player ship → swarm registry.
  * A swarm record routes by its `kind` byte: drone (1) / structure (2) are
  * damageable leaves; an asteroid (0) is NON-damageable, so the resolver returns
  * `null` (immune — no event), byte-identical to the old swarm branch's
@@ -24,22 +24,19 @@
  * golden-master, written before the collapse).
  */
 
-import type { MapSchema } from '@colyseus/schema';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
   slotBase,
 } from '../../shared-types/sabLayout.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
-import type { ShipState, WreckState } from '../rooms/schema/SectorState.js';
+import type { ShipState } from '../rooms/schema/SectorState.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShieldHullRouter } from '../rooms/ShieldHullRouter.js';
 import {
   createActiveShipEntity,
   createLingeringHullEntity,
-  createWreckEntity,
   ShipEntity,
-  WreckEntity,
   DroneEntity,
   StructureEntity,
   type DamageableLeaf,
@@ -65,14 +62,11 @@ export interface EntityResolverDeps extends LeafDeps {
   shieldHullRouter: ShieldHullRouter;
   /** Per-tick pose mirrors (hit-pos fallback for the damage event). */
   shipPoseCache: Map<string, ShipPhysicsState>;
-  wreckPoseCache: Map<string, ShipPhysicsState>;
   /** SAB Float32 view — swarm hit-pos fallback. */
   sabF32: Float32Array;
-  /** Colyseus wrecks map (branch 1 lookup). */
-  wrecksMap: MapSchema<WreckState>;
-  /** Active-ship resolver — playerId → ShipState (branch 3). */
+  /** Active-ship resolver — playerId → ShipState (branch 2). */
   getActiveShip: (playerId: string) => ShipState | undefined;
-  /** Swarm registry lookup (branch 4). */
+  /** Swarm registry lookup (branch 3). */
   swarmRegistry: ResolverSwarmSource;
 }
 
@@ -80,7 +74,6 @@ export class EntityResolver {
   // The damageable leaf flyweights (asteroid is non-damageable → never returned).
   private readonly activeShip: ShipEntity;
   private readonly lingering: ShipEntity;
-  private readonly wreck: WreckEntity;
   private readonly drone: DroneEntity;
   private readonly structure: StructureEntity;
 
@@ -96,7 +89,6 @@ export class EntityResolver {
     const d = deps;
     this.activeShip = createActiveShipEntity(d.shieldHullRouter, d, d.shipPoseCache);
     this.lingering = createLingeringHullEntity(d.shieldHullRouter, d, d.lingeringPoseCache);
-    this.wreck = createWreckEntity(d, d.wreckPoseCache);
     this.drone = new DroneEntity(d.shieldHullRouter, d, d.sabF32);
     this.structure = new StructureEntity(d.shieldHullRouter, d, d.sabF32);
   }
@@ -111,20 +103,7 @@ export class EntityResolver {
   resolve(targetId: string, sourceId: string, amount: number): DamageableLeaf | null {
     const d = this.deps;
 
-    // 1. Wrecks (wire id prefix).
-    if (targetId.startsWith('wreck-')) {
-      const shipInstanceId = targetId.slice('wreck-'.length);
-      const wreck = d.wrecksMap.get(shipInstanceId);
-      if (!wreck) return null;
-      this.wreck.target = wreck;
-      this.wireTargetId = targetId;
-      const pose = d.wreckPoseCache.get(shipInstanceId);
-      this.poseX = pose?.x;
-      this.poseY = pose?.y;
-      return this.wreck;
-    }
-
-    // 2. Lingering hulls (schema entry with isActive=false).
+    // 1. Lingering hulls (schema entry with isActive=false).
     const directLingering = d.shipsMap.get(targetId);
     if (directLingering && !directLingering.isActive) {
       if (!directLingering.alive) return null;
@@ -136,7 +115,7 @@ export class EntityResolver {
       return this.lingering;
     }
 
-    // 3. Active player ship (targetId = playerId).
+    // 2. Active player ship (targetId = playerId).
     const ship = d.getActiveShip(targetId);
     if (ship) {
       if (!ship.alive) return null;
@@ -154,7 +133,7 @@ export class EntityResolver {
       return this.activeShip;
     }
 
-    // 4. Swarm registry id (drone / structure damageable; asteroid immune).
+    // 3. Swarm registry id (drone / structure damageable; asteroid immune).
     const rec = d.swarmRegistry.get(targetId);
     if (!rec) return null;
     let leaf: DamageableSwarmLeaf;

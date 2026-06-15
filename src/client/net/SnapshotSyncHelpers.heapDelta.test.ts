@@ -10,8 +10,8 @@
  * (a regression where the helper started allocating internally would
  * flip the heap-delta inequality).
  *
- * The other generation-counter migrations (PixiRenderer.updateWrecks /
- * updateLingeringShips / HaloRadar) live behind Pixi instances that
+ * The other generation-counter migrations (PixiRenderer.updateLingeringShips
+ * / HaloRadar) live behind Pixi instances that
  * are awkward to spin up in a unit test — their behaviour is covered
  * by the existing integration suite (cleanup correctness is the
  * functional contract; the heap angle is a separate concern that this

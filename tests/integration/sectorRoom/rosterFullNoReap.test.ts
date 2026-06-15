@@ -2,7 +2,7 @@
  * User report 2026-05-13 (server log from session ending in crash):
  *
  *   [20:05:13.285] WARN  Roster full — ship spawned without a roster row
- *   [20:05:13.303] INFO  ship abandoned → wreck   ← 18ms later
+ *   [20:05:13.303] INFO  ship abandoned   ← 18ms later
  *
  * The user reconnected with `isNewShip:true` while their roster was
  * already at the 10-ship cap. `bindRosterEntry` correctly refused to
@@ -12,13 +12,11 @@
  * an empty `shipInstanceId`, including galaxy-room ships whose
  * roster was full. The ship gets a synthetic UUID, then the
  * 30-tick abandon-detection sweep observes
- * `store.get(syntheticUUID) === null` (because no roster row),
- * marks the ship "abandoned", and converts it to a wreck — 18ms
- * after spawn.
+ * `store.get(syntheticUUID) === null` (because no roster row) and
+ * marks the ship "abandoned" — 18ms after spawn.
  *
- * The user then can't play because their new ship is a wreck.
- * Drones swarm the wreck, physics blows up, server gets clamp-
- * spammed, client lag goes to 660ms RTT, phone almost crashes.
+ * The user then can't play because their new ship is reaped out from
+ * under them.
  *
  * Per Invariant #13: this failing test goes in BEFORE the fix.
  *
@@ -36,7 +34,7 @@ import { randomUUID } from 'node:crypto';
 import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
-describe('SectorRoom integration — roster-full fresh-spawn does not produce a wreck', () => {
+describe('SectorRoom integration — roster-full fresh-spawn is not reaped', () => {
   let harness: SectorTestHarness;
   beforeEach(async () => {
     harness = await bootSectorTestServer({
@@ -49,7 +47,7 @@ describe('SectorRoom integration — roster-full fresh-spawn does not produce a 
     if (harness) await harness.cleanup();
   }, 10_000);
 
-  it('FAILS today: full roster + isNewShip:true → server creates a wreck within ~500ms', async () => {
+  it('full roster + isNewShip:true → server does NOT reap the fresh hull within ~500ms', async () => {
     const PID = randomUUID();
 
     // Seed the player's roster to the 10-ship cap. PlayerShipStore.create
@@ -69,42 +67,35 @@ describe('SectorRoom integration — roster-full fresh-spawn does not produce a 
     expect(store.listByPlayer(PID)).toHaveLength(10);
 
     // Now connect with isNewShip:true — bindRosterEntry will catch
-    // RosterFullError and return ''. The synthetic-UUID fallback fires
-    // unconditionally → ship gets a UUID with NO roster row → 30-tick
-    // abandon-sweep converts it to a wreck.
+    // RosterFullError and return ''. The synthetic-UUID fallback must
+    // NOT fire for a galaxy room; if it does, the ship gets a UUID with
+    // NO roster row → the 30-tick abandon-sweep reaps it.
     await harness.connectAs(PID, { isNewShip: true, shipKind: 'fighter' });
 
     // Wait for the abandon-detection sweep to fire. It runs every 30
     // ticks (~500ms). Use the event-driven wait so we fail fast on
-    // ANY wreck-conversion (good outcome: timeout fires, no wreck).
-    let wreckEventSeen = false;
+    // ANY reap (good outcome: timeout fires, no abandon event).
+    let abandonEventSeen = false;
     try {
       await harness.events.waitFor(
         { tag: 'ship_abandoned', where: (d) => d['playerId'] === PID },
         { timeoutMs: 1500 },
       );
-      wreckEventSeen = true;
+      abandonEventSeen = true;
     } catch {
-      // timeout — no wreck event was logged, which is the FIXED state.
+      // timeout — no abandon event was logged, which is the FIXED state.
     }
 
-    const room = harness.getServerRoom()!;
-    const wreckCount = (room.state as unknown as { wrecks: { size: number } }).wrecks.size;
-
     // FIX EXPECTATION: a fresh-spawn into a full roster on a galaxy
-    // room MUST NOT produce a wreck. Either the spawn is rejected
-    // cleanly (state.ships unchanged) or it succeeds with proper
-    // roster bookkeeping. The current bug produces a wreck in
-    // state.wrecks within ~500ms.
+    // room MUST NOT be reaped. Either the spawn is rejected cleanly
+    // (state.ships unchanged) or it succeeds with proper roster
+    // bookkeeping. The original bug reaped the ghost ship within ~500ms
+    // (it fired `ship_abandoned` for this playerId).
     expect(
-      wreckCount,
-      `Roster-full spawn produced ${wreckCount} wreck(s) in the sector. ` +
-        `Expected 0 — the spawn should either be rejected or accommodated, ` +
-        `never produce a ghost ship that gets immediately converted to a wreck. ` +
-        `Bug origin: SectorRoom.ts:2330 synthetic-UUID fallback fires for ` +
-        `galaxy rooms when the roster is full; the 30-tick abandon sweep then ` +
-        `sees a shipInstanceId with no roster row and reaps it.`,
-    ).toBe(0);
-    expect(wreckEventSeen, 'no ship_abandoned event should fire for this playerId').toBe(false);
+      abandonEventSeen,
+      'no ship_abandoned event should fire for this playerId — a roster-full ' +
+        'galaxy spawn must not be reaped (SectorRoom.ts synthetic-UUID fallback ' +
+        'is scoped to engineering rooms; the abandon sweep skips empty shipInstanceIds).',
+    ).toBe(false);
   });
 });

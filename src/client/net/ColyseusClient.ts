@@ -41,7 +41,7 @@ import type { ClientSpawnCtx } from './entity/IClientEntityLeaf.js';
 import { DataChannelTransport } from './dataChannelTransport.js';
 import { webrtcEnabledFromSearch } from './webrtcEnable.js';
 import { HudDispatcher } from './HudDispatcher.js';
-import { syncProjectiles, syncWreckPoses } from './SnapshotSyncHelpers.js';
+import { syncProjectiles } from './SnapshotSyncHelpers.js';
 import { applyMissileSnapshot, removeMissile } from '../combat/MissileMirror.js';
 import { RafStallDetector } from './RafStallDetector.js';
 import {
@@ -367,11 +367,6 @@ export class ColyseusGameClient {
 
   /** IDs of remote ships currently spawned in the prediction world. */
   private predRemoteShipIds = new Set<string>();
-  /** Phase 4 — wrecks currently spawned in predWorld for client-side
-   *  collision. Stored with the `wreck-` prefix so they can't collide
-   *  with the playerId namespace. Despawned when removed from the
-   *  schema's `state.wrecks` map. */
-  private predWreckIds = new Set<string>();
   /** Phase 6b lingering-hull predWorld bridge. Owns:
    *   - `predLingeringIds` Set (which `linger-${...}` bodies are spawned)
    *   - `_lingeringShipOffsets` Map (per-frame visual lerp toward
@@ -618,9 +613,8 @@ export class ColyseusGameClient {
   /** Phase 4 (plan: quirky-rabbit) — class-field Set scratches replacing
    *  the per-call `new Set<string>()` literals at the syncMirror /
    *  updateLiveBeam sites. Each is cleared at the top of its consumer;
-   *  population is bounded by the cache it's reconciling against (wreck
-   *  count, ship count, mount count) so allocations after warmup are zero. */
-  private readonly _syncMirrorSeenWrecksScratch = new Set<string>();
+   *  population is bounded by the cache it's reconciling against (ship
+   *  count, mount count) so allocations after warmup are zero. */
   private readonly _syncMirrorSeenShipsScratch = new Set<string>();
   /**
    * Phase 4 iteration 3 swift-otter HYBRID (2026-05-30):
@@ -2492,11 +2486,6 @@ export class ColyseusGameClient {
     // for interpolation; stale-eviction backstop covers AOI exits.
     applyMissileSnapshot(snap.missiles, this.mirror, snap.serverTick, now);
 
-    // Phase 4 — sync wreck poses into the mirror. Identity (kind, health,
-    // maxHealth) flows via the Colyseus schema diff on `state.wrecks`
-    // (see syncMirror); this just refreshes per-frame pose.
-    this.syncWreckPoses(snap.wrecks);
-
     // Structures plan, Phase 3 — mirror the slim grid slice (web + power +
     // construction). Pose lives in `mirror.swarm` (kind=2); joined by entityId.
     this.syncStructures(snap.structures);
@@ -2898,10 +2887,6 @@ export class ColyseusGameClient {
     syncProjectiles(this.mirror, projectiles, this._syncProjectilesSeenScratch);
   }
 
-  private syncWreckPoses(wrecks: SnapshotMessage['wrecks']): void {
-    syncWreckPoses(this.mirror, wrecks, this.predWorld, this.predWreckIds);
-  }
-
   // ── State mirror ────────────────────────────────────────────────────────
 
   /** Last grid net power pushed to the HUD store (avoid 20 Hz store churn). */
@@ -3016,63 +3001,6 @@ export class ColyseusGameClient {
     // call inside the snapshot handler.
     if (!ships) return;
 
-    // Phase 4 — sync wreck identity (kind, health, maxHealth). Pose
-    // arrives separately in the snapshot's `wrecks` slice. Entries here
-    // are seeded with x:0, y:0 etc. until the next snapshot fills them.
-    const wreckMap = s['wrecks'] as Map<string, unknown> | undefined;
-    if (!this.mirror.wrecks) this.mirror.wrecks = new Map();
-    if (wreckMap) {
-      const seenWrecks = this._syncMirrorSeenWrecksScratch;
-      seenWrecks.clear();
-      for (const [shipInstanceId, w] of wreckMap.entries()) {
-        const wr = w as Record<string, unknown>;
-        seenWrecks.add(shipInstanceId);
-        // Probe 8 — pool the wreck entry. Schema-diff path fires on
-        // wreck identity updates (kind/health/maxHealth); pose comes
-        // from syncWreckPoses. Mutating preserves pose (pose-write
-        // happens elsewhere) and avoids the per-update allocation.
-        let wreckEntry = this.mirror.wrecks.get(shipInstanceId);
-        const kindVal = typeof wr['kind'] === 'string' ? (wr['kind'] as string) : 'fighter';
-        const healthVal = Number(wr['health'] ?? 0);
-        const maxHealthVal = Number(wr['maxHealth'] ?? 100);
-        if (!wreckEntry) {
-          wreckEntry = {
-            shipInstanceId,
-            x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
-            kind: kindVal,
-            health: healthVal,
-            maxHealth: maxHealthVal,
-          };
-          this.mirror.wrecks.set(shipInstanceId, wreckEntry);
-        } else {
-          wreckEntry.kind = kindVal;
-          wreckEntry.health = healthVal;
-          wreckEntry.maxHealth = maxHealthVal;
-          // x/y/vx/vy/angle/angvel are pose — owned by syncWreckPoses,
-          // do not touch here.
-        }
-      }
-      for (const id of this.mirror.wrecks.keys()) {
-        if (!seenWrecks.has(id)) {
-          this.mirror.wrecks.delete(id);
-          // Despawn the predWorld body so local collision stops resolving
-          // against a wreck that's no longer in the sector.
-          const bodyId = `wreck-${id}`;
-          if (this.predWreckIds.has(bodyId)) {
-            this.predWorld?.despawnShip(bodyId);
-            this.predWreckIds.delete(bodyId);
-          }
-        }
-      }
-    } else if (this.mirror.wrecks.size > 0) {
-      this.mirror.wrecks.clear();
-      // Mirror cleared entirely (e.g. left the room) — drop every wreck body.
-      for (const bodyId of this.predWreckIds) {
-        this.predWorld?.despawnShip(bodyId);
-      }
-      this.predWreckIds.clear();
-    }
-
     const localId = this.mirror.localPlayerId;
     const now = this.clock.now();
     const seen = this._syncMirrorSeenShipsScratch;
@@ -3127,10 +3055,8 @@ export class ColyseusGameClient {
         // Laser-"ghost-at-(0,0)" fix (2026-06-03). This path is now
         // IDENTITY-ONLY — it does NOT spawn the predWorld body. The
         // snapshot path (snapshotShipRouter.routeSnapshotShipStates →
-        // tryEnsureLingerPredBody) is the SOLE spawn site, exactly like
-        // wrecks (SnapshotSyncHelpers.syncWreckPoses spawns the wreck
-        // body only from the snapshot pose). Removed: the old Phase-6b
-        // race-fallback spawn here.
+        // tryEnsureLingerPredBody) is the SOLE spawn site. Removed: the
+        // old Phase-6b race-fallback spawn here.
         //
         // Why removed: this entry is seeded at (0,0) above (the schema
         // diff carries no pose). The old race-fallback spawned the body
@@ -4673,7 +4599,7 @@ export class ColyseusGameClient {
       // `?probe=ghost` diagnostic (laser "ghost at (0,0)" investigation,
       // 2026-06-03). When the beam stops on a body whose pose is within
       // ε of world origin, log the hitId — its namespace prefix names the
-      // culprit class (`linger-`/`swarm-`/`wreck-`/raw playerId). Gate is
+      // culprit class (`linger-`/`swarm-`/raw playerId). Gate is
       // cached + webdriver-OFF, so production / E2E / netgate allocate
       // nothing here; the object literal is only built on a rare actual
       // origin-hit while the probe is on. Confirms the lingering-hull fix

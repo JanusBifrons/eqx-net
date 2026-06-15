@@ -12,7 +12,7 @@
  *     extends. Adding a new *continuous* field is the lone exception that
  *     forces a deliberate v4 bump (an explicit user decision, never silent).
  *   - `json-slice` — a named slim array on `SnapshotMessage` (the existing
- *     `drones[]` / `wrecks[]` slices). Carries capability extras that don't
+ *     `drones[]` slice). Carries capability extras that don't
  *     belong in the hot binary record.
  *   - `discrete`   — one-off event broadcasts (spawn/destroy/shield).
  *
@@ -35,7 +35,7 @@ export interface SyncProfile {
    *  for static/teleporting kinds (asteroid, structure). */
   readonly interpolated: boolean;
   /** Named `SnapshotMessage` slice this entity writes into — required iff
-   *  transport === 'json-slice' (e.g. 'drones', 'wrecks'). */
+   *  transport === 'json-slice' (e.g. 'drones'). */
   readonly jsonSliceTag?: string;
 }
 

@@ -73,30 +73,14 @@ export class ShipState extends Schema {
 // in-memory `liveProjectiles` map in `SectorRoom` is the sole source of
 // truth.
 
-/**
- * Phase 4 — an ownerless ship hull left behind by abandonment. Keyed
- * by the original `shipInstanceId` (the `player_ships.ship_id` UUID
- * the ship was hydrated from) in `state.wrecks`. The hull keeps a SAB
- * slot so the physics worker continues to step it — wrecks have
- * inertia, drift, and collide — but the owning player is gone and no
- * AI is bound. Damage runs through the standard `applyDamage` path;
- * at health 0 the wreck explodes and is removed.
- *
- * Pose lives in `wreckPoseCache` (parallel to `shipPoseCache`), NOT on
- * this schema. The schema diff broadcasts identity + health only; pose
- * rides the snapshot channel.
- */
-export class WreckState extends Schema {
-  @type('string') shipInstanceId: string = '';
-  @type('float32') health: number = SHIP_MAX_HEALTH;
-  @type('float32') maxHealth: number = SHIP_MAX_HEALTH;
-  @type('string') kind: string = DEFAULT_SHIP_KIND;
-}
+// Wrecks RETIRED (Equinox P6.3 / C3, 2026-06-15). An abandoned hull now
+// shatters into SCRAP (kind 3) and leaves the world — see
+// `SectorRoom.abandonShipToScrap` / `abandonLingeringHullToScrap`. The
+// former `WreckState` schema + `state.wrecks` MapSchema are removed; nothing
+// creates a wreck any more.
 
 export class SectorState extends Schema {
   @type({ map: ShipState }) ships = new MapSchema<ShipState>();
-  /** Phase 4 — abandoned ship hulls, keyed by shipInstanceId. */
-  @type({ map: WreckState }) wrecks = new MapSchema<WreckState>();
   @type('number') tick: number = 0;
   @type('number') clockRate: number = 1.0;
 }

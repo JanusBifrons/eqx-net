@@ -10,8 +10,8 @@ import { z } from 'zod';
  *
  * Only PLAYER SHIPS and STRUCTURES use this channel — the snapshot deliberately
  * omits remote-ship health and structures carry only build pct, so the live
- * hp/shield must be pushed. Drones + wrecks do NOT use it (the client reads
- * `mirror.swarm.healthFrac` / `mirror.wrecks.health` directly).
+ * hp/shield must be pushed. Drones do NOT use it (the client reads
+ * `mirror.swarm.healthFrac` directly).
  */
 
 /** Client → server: "I selected entity <id> of <kind>; start streaming its

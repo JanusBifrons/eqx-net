@@ -1,18 +1,18 @@
 /**
  * Slot-allocation state for SectorRoom.
  *
- * Step 4 of the hazy-pillow decomposition plan — extracts the four-way
- * slot bookkeeping (player ↔ slot, wreck ↔ slot, lingering hull → slot,
+ * Step 4 of the hazy-pillow decomposition plan — extracts the
+ * slot bookkeeping (player ↔ slot, lingering hull → slot,
  * initial-spawn-position memo) without changing iteration patterns at
  * the call sites: each Map is exposed as a public readonly field so
  * existing `for (const [pid] of this.slots.playerToSlot)` style loops
  * keep working with a one-token rename.
  *
- * Helper methods (`allocSlot`, `freeSlotForPlayer`, `bindWreck`,
- * `bindLinger`, `releaseLinger`, `assertInvariants`) atomically update
+ * Helper methods (`allocSlot`, `freeSlotForPlayer`, `bindLinger`,
+ * `releaseLinger`, `assertInvariants`) atomically update
  * the related maps for the common cases. The maps themselves remain
  * mutable so the existing call sites that touch multiple maps in one
- * coordinated transaction (e.g. `onJoin`, `convertShipToWreck`) can
+ * coordinated transaction (e.g. `onJoin`) can
  * continue inline until those orchestrations extract in later steps.
  */
 
@@ -23,11 +23,6 @@ export class PlayerSlotMap {
   readonly slotToPlayer = new Map<number, string>();
   /** LIFO stack of unallocated slots. */
   readonly freeSlots: number[] = [];
-  /** Phase 6b — ship-instance id → slot for wrecks currently in the
-   *  sector. Owned colliderless / damageless. */
-  readonly wreckToSlot = new Map<string, number>();
-  /** Reverse of `wreckToSlot`. */
-  readonly slotToWreck = new Map<number, string>();
   /** Phase 6b — ship-instance id → slot for lingering hulls (player
    *  disconnected within the 15-min linger window). Keyed by
    *  shipInstanceId, NOT playerId, so fresh-spawn-displace doesn't
@@ -68,22 +63,6 @@ export class PlayerSlotMap {
     return slot;
   }
 
-  /** Bind a wreck's ship-instance id to a slot (both directions). */
-  bindWreck(slot: number, shipInstanceId: string): void {
-    this.wreckToSlot.set(shipInstanceId, slot);
-    this.slotToWreck.set(slot, shipInstanceId);
-  }
-
-  /** Release a wreck's slot back to the free pool. */
-  releaseWreck(shipInstanceId: string): number | null {
-    const slot = this.wreckToSlot.get(shipInstanceId);
-    if (slot === undefined) return null;
-    this.wreckToSlot.delete(shipInstanceId);
-    this.slotToWreck.delete(slot);
-    this.freeSlots.push(slot);
-    return slot;
-  }
-
   /** Bind a lingering hull's ship-instance id to a slot. */
   bindLinger(shipInstanceId: string, slot: number): void {
     this.lingeringSlots.set(shipInstanceId, slot);
@@ -98,9 +77,9 @@ export class PlayerSlotMap {
     return slot;
   }
 
-  /** Throw if any slot appears in more than one of {player, linger, wreck,
+  /** Throw if any slot appears in more than one of {player, linger,
    *  free}. Useful as a debug-mode assertion at sensitive lifecycle
-   *  boundaries (join, leave, transit, wreck-conversion). */
+   *  boundaries (join, leave, transit). */
   assertInvariants(): void {
     const seen = new Map<number, string>();
     const claim = (slot: number, owner: string): void => {
@@ -112,7 +91,6 @@ export class PlayerSlotMap {
     };
     for (const slot of this.playerToSlot.values()) claim(slot, 'player');
     for (const slot of this.lingeringSlots.values()) claim(slot, 'linger');
-    for (const slot of this.slotToWreck.keys()) claim(slot, 'wreck');
     for (const slot of this.freeSlots) claim(slot, 'free');
   }
 }

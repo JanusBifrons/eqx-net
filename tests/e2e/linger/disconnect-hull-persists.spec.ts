@@ -14,7 +14,6 @@ import {
   launchGalaxyTestClient,
   getShipPositions,
   getLingeringPositions,
-  getWreckPositions,
 } from '../helpers/gameScenario';
 import { captureGameScene } from '../helpers/screenshot';
 
@@ -66,17 +65,13 @@ test.describe('linger: closing the browser leaves a lingering hull @feature', ()
 
     await captureGameScene(b.page, 'disconnect-hull-persists-observer');
 
-    // It must NOT vanish or become a wreck — still lingering 3 s later.
+    // It must NOT vanish — still lingering 3 s later.
     await b.page.waitForTimeout(3_000);
     const lingersLater = await getLingeringPositions(b.page);
     expect(
       Object.values(lingersLater).some((l) => l.ownerPlayerId === aPlayerId),
       'lingering hull must persist (not vanish)',
     ).toBe(true);
-    expect(
-      Object.keys(await getWreckPositions(b.page)).length,
-      'a mere disconnect must not create a wreck',
-    ).toBe(0);
 
     await b.ctx.close();
   });

@@ -496,11 +496,12 @@ export class PhysicsWorld {
 
   /**
    * Rename a body's lookup key without disturbing the underlying
-   * Rapier rigid body. Used by the Phase 4 abandon flow: the wreck's
-   * body must outlive its original playerId so the player can rejoin
-   * the room (same playerId) without `spawnShip(playerId, ...)`
-   * overwriting the wreck's entry in `this.bodies` and orphaning the
-   * body. No-op when `oldId` is absent or `newId` is already taken.
+   * Rapier rigid body. Used by the fresh-spawn-displace flow: a
+   * displaced hull's body (rekeyed to `linger-${shipInstanceId}`) must
+   * outlive its original playerId so the player can rejoin the room
+   * (same playerId) without `spawnShip(playerId, ...)` overwriting the
+   * displaced body's entry in `this.bodies` and orphaning it. No-op when
+   * `oldId` is absent or `newId` is already taken.
    */
   rekeyShip(oldId: string, newId: string): boolean {
     if (oldId === newId) return false;

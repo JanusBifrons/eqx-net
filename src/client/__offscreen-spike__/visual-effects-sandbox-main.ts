@@ -166,7 +166,6 @@ function buildScenarioMirror(): RenderMirror {
       ['warper', { x: -700, y: 0, vx: 0, vy: 0, angle: -Math.PI / 2, kind: 'fighter', displayName: '' }],
     ]),
     swarm: new Map(),
-    wrecks: new Map(),
     lingeringShips: new Map(),
     projectiles: new Map(),
     boostingShips: new Set(),

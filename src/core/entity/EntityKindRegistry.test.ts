@@ -13,7 +13,6 @@ import { SWARM_KIND_ASTEROID, SWARM_KIND_DRONE } from '../../shared-types/swarmW
 const ALL_TAGS: readonly EntityKindTag[] = [
   'active-ship',
   'lingering-hull',
-  'wreck',
   'drone',
   'asteroid',
   'projectile',
@@ -56,7 +55,6 @@ describe('EntityKindRegistry', () => {
   it('marks only the right kinds damageable (asteroid/projectile/missile are not)', () => {
     expect(getEntityKind('active-ship').damageable).toBe(true);
     expect(getEntityKind('lingering-hull').damageable).toBe(true);
-    expect(getEntityKind('wreck').damageable).toBe(true);
     expect(getEntityKind('drone').damageable).toBe(true);
     expect(getEntityKind('asteroid').damageable).toBe(false);
     expect(getEntityKind('projectile').damageable).toBe(false);

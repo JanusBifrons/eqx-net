@@ -30,7 +30,7 @@ export interface EntityKindDescriptor {
 }
 
 /**
- * The seed catalogue. Values for the player/wreck/projectile/missile sync
+ * The seed catalogue. Values for the player/projectile/missile sync
  * transports are the best-known mapping today; Phase 3 (the EntitySyncRouter)
  * refines a descriptor FIELD where needed — that is allowed (it is not a
  * reorder/removal). Drone/asteroid pose-core assignments are load-bearing and
@@ -48,12 +48,6 @@ const SEED: readonly EntityKindDescriptor[] = [
     damageable: true,
     sync: { transport: 'json-slice', interpolated: false, jsonSliceTag: 'states' },
     render: { bucket: 'lingeringShips', preservedFields: ['kind', 'displayName'], interpolated: false },
-  },
-  {
-    tag: 'wreck',
-    damageable: true,
-    sync: { transport: 'json-slice', interpolated: false, jsonSliceTag: 'wrecks' },
-    render: { bucket: 'wrecks', preservedFields: ['kind'], interpolated: false },
   },
   {
     tag: 'drone',

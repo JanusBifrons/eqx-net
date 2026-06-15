@@ -21,7 +21,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { MapSchema } from '@colyseus/schema';
 import { ShieldHullRouter } from '../../rooms/ShieldHullRouter.js';
-import type { ShipState, WreckState } from '../../rooms/schema/SectorState.js';
+import type { ShipState } from '../../rooms/schema/SectorState.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { Bus } from '../../../core/events/Bus.js';
 import {
@@ -33,7 +33,6 @@ import { getDroneMaxHealth } from '../../rooms/droneKindHelpers.js';
 import {
   createActiveShipEntity,
   createLingeringHullEntity,
-  createWreckEntity,
   DroneEntity,
   AsteroidEntity,
   StructureEntity,
@@ -76,7 +75,6 @@ interface Harness {
   shipsMap: Map<string, ShipState>;
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
-  wreckPoseCache: Map<string, ShipPhysicsState>;
   shipPoseCache: Map<string, ShipPhysicsState>;
   freeSlots: number[];
   swarm: Map<string, SwarmLeafTarget>;
@@ -87,7 +85,6 @@ function makeHarness(): Harness {
   const shipsMap = new Map<string, ShipState>();
   const lingeringSlots = new Map<string, number>();
   const lingeringPoseCache = new Map<string, ShipPhysicsState>();
-  const wreckPoseCache = new Map<string, ShipPhysicsState>();
   const shipPoseCache = new Map<string, ShipPhysicsState>();
   const freeSlots: number[] = [];
   const swarm = new Map<string, SwarmLeafTarget>();
@@ -124,7 +121,6 @@ function makeHarness(): Harness {
   const deps: LeafDeps = {
     bus,
     broadcastDestroy: (msg) => log.push(`destroy:${msg.targetId}:shooter=${msg.shooterId}`),
-    destroyWreck: (id) => log.push(`destroyWreck:${id}`),
     logger: { info: () => {} } as never,
     shipsMap: shipsMap as unknown as MapSchema<ShipState>,
     lingeringSlots,
@@ -137,7 +133,7 @@ function makeHarness(): Harness {
     serverLogEvent,
   };
 
-  return { shieldHull, deps, shipsMap, lingeringSlots, lingeringPoseCache, wreckPoseCache, shipPoseCache, freeSlots, swarm, sabF32 };
+  return { shieldHull, deps, shipsMap, lingeringSlots, lingeringPoseCache, shipPoseCache, freeSlots, swarm, sabF32 };
 }
 
 /** Stand-in for B2's monomorphic `applyInteraction` — the exact sequence the
@@ -169,27 +165,6 @@ beforeEach(() => {
 });
 
 describe('GEP B1 leaf parity — composed strategy == old DamageRouter branch (byte-identical)', () => {
-  it('WreckEntity: overkill → damage + destroy + bus + destroyWreck', () => {
-    const h = makeHarness();
-    const leaf = createWreckEntity(h.deps, h.wreckPoseCache);
-    const wreck = { shipInstanceId: 'w1', health: 10, maxHealth: 50 } as unknown as WreckState;
-    runLeaf(leaf, wreck, 'wreck-w1', 'wreck-w1', 'shooterA', 30);
-    expect(log).toEqual([
-      'damage:wreck-w1:hp=0:layer=hull:shooter=shooterA',
-      'destroy:wreck-w1:shooter=shooterA',
-      'bus:SHIP_DESTROYED:wreck-w1',
-      'destroyWreck:w1',
-    ]);
-  });
-
-  it('WreckEntity: non-fatal hit emits only a damage broadcast', () => {
-    const h = makeHarness();
-    const leaf = createWreckEntity(h.deps, h.wreckPoseCache);
-    const wreck = { shipInstanceId: 'w1', health: 50, maxHealth: 50 } as unknown as WreckState;
-    runLeaf(leaf, wreck, 'wreck-w1', 'wreck-w1', 'shooterA', 20);
-    expect(log).toEqual(['damage:wreck-w1:hp=30:layer=hull:shooter=shooterA']);
-  });
-
   it('ShipEntity (lingering): overkill frees slot + DESPAWN linger-<id> + schema delete', () => {
     const h = makeHarness();
     const leaf = createLingeringHullEntity(h.shieldHull, h.deps, h.lingeringPoseCache);

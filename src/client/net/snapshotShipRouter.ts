@@ -112,9 +112,8 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
       }
       lingeringSeen.add(shipInstanceId);
       // Phase 6b — spawn / refresh the predWorld body so the local
-      // player can collide with the parked hull (mirrors the wreck
-      // pattern in syncWreckPoses). The helper handles the race
-      // between this site (pose) and syncMirror (kind) — see its
+      // player can collide with the parked hull. The helper handles the
+      // race between this site (pose) and syncMirror (kind) — see its
       // doc comment.
       tryEnsureLingerPredBody(shipInstanceId);
       continue;
@@ -141,7 +140,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
   // is owned by us for the duration of this handler — Colyseus
   // freshly-parses it per message, no aliasing concern. Saves one
   // object allocation per snapshot (the spread also copied references
-  // to all the other snap fields — projectiles, wrecks, drones,
+  // to all the other snap fields — projectiles, drones,
   // boostingIds, etc.).
   snap.states = statesByPlayerId;
 }

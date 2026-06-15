@@ -39,7 +39,6 @@ function makePersistentMirror(): RenderMirror {
     ships: new Map(),
     localPlayerId: null,
     swarm: new Map(),
-    wrecks: new Map(),
     lingeringShips: new Map(),
     projectiles: new Map(),
     boostingShips: new Set(),

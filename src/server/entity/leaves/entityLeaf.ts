@@ -3,7 +3,7 @@
  * Pipeline B1 — the OOP identity layer).
  *
  * A leaf is a thin, per-kind adapter over today's live store (`ShipState` /
- * `WreckState` / `SwarmEntityRecord`). It OWNS its identity
+ * `SwarmEntityRecord`). It OWNS its identity
  * (`entityKind`/`entityId`), knows how to read its own `pose()`, and
  * COMPOSES — holds as data — its damage capability (`HealthBinding` +
  * `PerHitEffect` + `DeathPolicy`) and its sync/render descriptors. This is the
@@ -18,7 +18,7 @@
  * objects for identity/sync/render (where polymorphism is cheap + clarifying);
  * the hot per-hit work is one function reading the composed strategy the leaf
  * holds. The damageable leaves declare their composed `health` / `perHit` /
- * `death` in a consistent order (directly in `ShipEntity` / `WreckEntity`, or
+ * `death` in a consistent order (directly in `ShipEntity`, or
  * via the shared `DamageableSwarmLeaf` base), keeping the monomorphic reader's
  * inline cache stable.
  *
@@ -132,8 +132,6 @@ export interface LeafDeps {
   bus: Bus;
   /** Broadcast a destroy event to every client. */
   broadcastDestroy: (msg: DestroyEvent) => void;
-  /** Wreck destruction (delegates to WreckLifecycleCoordinator). */
-  destroyWreck: (shipInstanceId: string) => void;
   /** Pino logger for the lifecycle log line. */
   logger: Logger;
   /** Colyseus ships map — lingering-hull death deletes its entry. */

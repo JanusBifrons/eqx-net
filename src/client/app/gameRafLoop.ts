@@ -303,7 +303,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       if (selId === null) {
         sendDeselectEntity();
       } else if (selKind === 'ship' || selKind === 'structure') {
-        // Ship/structure use the server stats channel; drone/wreck read the
+        // Ship/structure use the server stats channel; drone reads the
         // mirror, so cancel any prior server stream when switching to them.
         sendSelectEntity(selId, selKind);
       } else {
@@ -374,19 +374,6 @@ function writeE2EDataset(
     }
   }
   el.dataset['lingeringPositions'] = JSON.stringify(lingerMap);
-  // Wrecks (abandoned-in-world husks). Keyed by shipInstanceId.
-  const wreckMap: Record<string, { x: number; y: number; kind: string; health: number }> = {};
-  if (gameClient.mirror.wrecks) {
-    for (const [id, w] of gameClient.mirror.wrecks) {
-      wreckMap[id] = {
-        x: parseFloat(w.x.toFixed(3)),
-        y: parseFloat(w.y.toFixed(3)),
-        kind: w.kind,
-        health: parseFloat(w.health.toFixed(1)),
-      };
-    }
-  }
-  el.dataset['wreckPositions'] = JSON.stringify(wreckMap);
   el.dataset['localPlayerId'] = localId ?? '';
   el.dataset['predStats'] = JSON.stringify(gameClient.stats);
   // Combat state.

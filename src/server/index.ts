@@ -662,7 +662,7 @@ gameServer
   })
   .filterBy(['testId']);
 // 2026-06-03 — isolated, bot-free, LINGER-CAPABLE test room for the
-// lingering-hull / wreck / ship-pool E2E suite (tests/e2e/linger/).
+// lingering-hull / ship-pool E2E suite (tests/e2e/linger/).
 // Unlike every other test room it carries a real `sectorKey`, so the
 // galaxy-only linger + abandon-poll paths (LeaveHandler `shouldLinger`,
 // SectorRoom abandon detection) actually fire — engineering rooms

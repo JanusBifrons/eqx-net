@@ -1,8 +1,8 @@
 /**
  * Phase A3 — pure decision logic for per-entity sprite updates.
  *
- * Extracted from `PixiRenderer.updateLingeringShips` and
- * `PixiRenderer.updateWrecks` to make the decisions testable WITHOUT
+ * Extracted from `PixiRenderer.updateLingeringShips` to make the
+ * decisions testable WITHOUT
  * a Pixi runtime. The Pixi calls (Graphics instantiation, addChild,
  * tint, alpha, destroy) remain in `PixiRenderer.ts`; only the
  * "should I create / rebuild / reposition / skip" branching lives
@@ -70,43 +70,17 @@ export function decideLingeringSpriteAction(args: {
 }
 
 /**
- * Phase 4 wreck decision. Similar rules to lingering but with one
- * important difference: a wreck's kind is REQUIRED. The schema's
- * `WreckState` always carries `kind` (set at conversion time) so we
- * never expect undefined here. If it does arrive undefined, that's a
- * server-side wire-format break — surface a `skip` with a reason so
- * the bug shows up in a log instead of as a missing sprite.
- */
-export function decideWreckSpriteAction(args: {
-  cached: SpriteCacheEntry | undefined;
-  currentKind: string | undefined;
-}): SpriteDecision {
-  const { cached, currentKind } = args;
-  if (!currentKind) {
-    return { action: 'skip', reason: 'wreck-kind-missing-from-schema' };
-  }
-  if (!cached) {
-    return { action: 'create', kind: currentKind };
-  }
-  if (cached.kind !== currentKind) {
-    return { action: 'rebuild', kind: currentKind };
-  }
-  return { action: 'reposition' };
-}
-
-/**
  * Position lookup for an explosion VFX spawn.
  *
  * Bug repro (2026-05-13 user smoke-test): when a lingering hull was
  * shot down, the explosion VFX rendered at (0, 0) instead of the
  * hull's actual position. Root cause: the renderer only checked the
  * **active-ships** sprite map (keyed by playerId), but lingering
- * hulls live in `lingeringSprites` (keyed by shipInstanceId) and
- * wrecks live in `wreckSprites`. Lookup failed → defaulted to
- * `(0, 0)`.
+ * hulls live in `lingeringSprites` (keyed by shipInstanceId). Lookup
+ * failed → defaulted to `(0, 0)`.
  *
- * This helper looks up the targetId across ALL three sprite maps
- * (active ships, lingering hulls, wrecks) so the explosion spawns
+ * This helper looks up the targetId across both sprite maps
+ * (active ships, lingering hulls) so the explosion spawns
  * over whichever silhouette was visible to the player at the moment
  * of destruction.
  *
@@ -127,14 +101,11 @@ export function decideExplosionPosition(args: {
   targetId: string;
   activeShipsByPlayerId: ReadonlyMap<string, SpritePoseRef>;
   lingeringShipsByShipInstanceId: ReadonlyMap<string, SpritePoseRef>;
-  wrecksByShipInstanceId: ReadonlyMap<string, SpritePoseRef>;
 }): SpritePoseRef | null {
-  const { targetId, activeShipsByPlayerId, lingeringShipsByShipInstanceId, wrecksByShipInstanceId } = args;
+  const { targetId, activeShipsByPlayerId, lingeringShipsByShipInstanceId } = args;
   const active = activeShipsByPlayerId.get(targetId);
   if (active) return { x: active.x, y: active.y };
   const lingering = lingeringShipsByShipInstanceId.get(targetId);
   if (lingering) return { x: lingering.x, y: lingering.y };
-  const wreck = wrecksByShipInstanceId.get(targetId);
-  if (wreck) return { x: wreck.x, y: wreck.y };
   return null;
 }

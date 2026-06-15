@@ -122,20 +122,6 @@ export function shapeForKind(kindId: string | undefined): ShipShape {
   return getShipKind(kindId).shape;
 }
 
-/** Drain colour and tilt it grey for the Phase 4 wreck silhouette. Take
- *  ~30 % of the original RGB and mix in a desaturated grey so the wreck
- *  reads as "broken ship of that kind" without screaming the kind's
- *  brand colour. */
-export function desaturate(color: number): number {
-  const r = (color >> 16) & 0xff;
-  const g = (color >> 8) & 0xff;
-  const b = color & 0xff;
-  const grey = Math.round((r + g + b) / 3);
-  // 30% original, 70% grey — gives a smoky, drained tone.
-  const mix = (c: number) => Math.round(c * 0.30 + grey * 0.70);
-  return (mix(r) << 16) | (mix(g) << 8) | mix(b);
-}
-
 // The legacy triangle thrust/boost flames were REMOVED by the engine-fx pass
 // (plan `majestic-pie`, particle-only decision). The `EngineEmitter` particle
 // plume is now the sole engine visual at every quality tier (the `minimal`

@@ -15,7 +15,7 @@
 // v5 (Phase 5 2026-06-14): LINGERING HULLS persist too — a disconnected /
 // displaced ship reappears in its sector "where you left it" after a restart
 // (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
-// ships persist once spawned until abandoned (→ wreck). Bumping discards every
+// ships persist once spawned until abandoned (→ scrap). Bumping discards every
 // older snapshot and reseeds all sectors.
 export const CURRENT_SCHEMA_VERSION = 5;
 
@@ -91,7 +91,7 @@ export interface SectorSnapshotScrap {
  * still drifting in the sector). Persisted so it reappears in-world after a
  * server restart (Phase 5 v5). The `shipInstanceId` is the roster shipId — the
  * stable hull identity across disconnect↔reconnect↔abandon — so reconnect rebinds
- * to the reconstructed hull and abandon→wreck still keys correctly.
+ * to the reconstructed hull and abandon→scrap still keys correctly.
  */
 export interface SectorSnapshotLingeringHull {
   shipInstanceId: string;
