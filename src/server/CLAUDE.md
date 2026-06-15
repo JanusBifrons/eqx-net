@@ -414,11 +414,16 @@ hand-rolled-mock testable) owns the decision: per `shipScrapGroups(kind)`
 component it spawns at the component's world pose (catalogue Pixi-up → world
 math-up via `x*scale,-y*scale`, rotate by ship angle, translate — matching
 `shipShapeToPolygon`), inheriting ship velocity + a radial `SCRAP_BURST_SPEED`
-drift, at the ship's angle. Death hooks (BOTH spawn BEFORE the slot is freed so
-the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s new
-optional `spawnScrapFromDrone` `LeafDeps` seam; player via the `SHIP_DESTROYED`
-handler in `SectorRoom` (active hull, pose from `shipPoseCache`/SAB). Polygon
-kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
+drift, at the ship's angle. Death hooks (ALL spawn BEFORE the slot is freed so
+the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s
+optional `spawnScrapFromDrone` `LeafDeps` seam; ACTIVE player hull via the
+`SHIP_DESTROYED` handler in `SectorRoom` (pose from `shipPoseCache`/SAB); and
+**LINGERING hull (Equinox P6.3) via the `spawnScrapFromLingeringHull` `LeafDeps`
+seam** called inside `createLingeringHullEntity`'s death policy (pose read from
+`lingeringPoseCache` before that policy tears it down — the `SHIP_DESTROYED`
+path can't serve a lingering hull: its slot/pose are gone by emit time AND
+`getActiveShip(shipInstanceId)` is undefined; lock `lingeringScrapOnDeath.test.ts`).
+Polygon kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
 and `EntityResolver` routes kind 3 to the drone leaf (hits hull → destroyed) —
 GUARDED so a dying scrap piece does NOT recursively shatter
 (`SectorRoom.spawnScrapFromDrone` returns early for kind 3). No time-decay; a

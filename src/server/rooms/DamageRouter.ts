@@ -36,6 +36,7 @@ import type { Logger } from 'pino';
 import type { Bus } from '../../core/events/Bus.js';
 import type { MapSchema } from '@colyseus/schema';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { DamageEvent, DestroyEvent } from '../../shared-types/messages.js';
 import type { ShipState, WreckState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
@@ -106,6 +107,12 @@ export interface DamageRouterDeps {
    *  evicted on death, so a composite-kind drone breaks into scrap. Optional
    *  (test fixtures / engineering rooms without a ScrapSpawner omit it). */
   spawnScrapFromDrone?: (rec: SwarmDmgRecord) => void;
+  /** Scrap-on-death for a LINGERING hull (Equinox P6.3) — invoked from the
+   *  lingering death policy just before it tears down the slot + pose, so a
+   *  composite-kind lingering hull breaks into scrap like an active ship. Pose
+   *  is read from lingeringPoseCache before deletion. Optional (test fixtures /
+   *  engineering rooms without a ScrapSpawner omit it). */
+  spawnScrapFromLingeringHull?: (kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string) => void;
   /** Event bus — emits PLAYER_DAMAGED + SHIP_DESTROYED. */
   bus: Bus;
   /** Broadcast a damage / destroy event to every client. */

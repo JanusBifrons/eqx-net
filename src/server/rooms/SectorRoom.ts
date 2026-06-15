@@ -1229,6 +1229,12 @@ export class SectorRoom extends Room<SectorState> {
       // the instant before it's evicted on death. Deferred-eval closure (the
       // ScrapSpawner is constructed later in the ctor, before any death fires).
       spawnScrapFromDrone: (rec) => this.spawnScrapFromDrone(rec as SwarmEntityRecord),
+      // P6.3 (Equinox Phase 6) — a composite LINGERING hull breaks into scrap
+      // too. The lingering death policy reads the dying pose from
+      // lingeringPoseCache (before its own teardown) and hands it here; we guard
+      // polygon kinds + spawn, mirroring the active-hull SHIP_DESTROYED path.
+      spawnScrapFromLingeringHull: (kind, pose, shipInstanceId) =>
+        this.spawnScrapFromLingeringHull(kind, pose, shipInstanceId),
       bus: this.bus,
       broadcastDamage: (msg) => this.broadcast('damage', msg),
       broadcastDestroy: (msg) => this.broadcast('destroy', msg),
@@ -2507,6 +2513,24 @@ export class SectorRoom extends Room<SectorState> {
       angle: this.sabF32[b + SLOT_ANGLE_OFF]!,
     };
     this.scrapSpawner.spawnFromDeath(kind.id, pose, `scrap-${rec.id}`);
+  }
+
+  /**
+   * Scrap-on-death for a LINGERING hull (Equinox P6.3 — "lingering ships don't
+   * explode into scrap; only active ships do"). Called from the lingering-hull
+   * death policy (`createLingeringHullEntity`) the instant before it frees the
+   * slot + `lingeringPoseCache` entry, with the dying pose read from that cache.
+   * A composite-kind hull (e.g. havok) yields one scrap body per component;
+   * polygon kinds (fighter/scout/…) yield nothing — identical to the active-hull
+   * (`SHIP_DESTROYED`) and drone (`spawnScrapFromDrone`) paths.
+   */
+  private spawnScrapFromLingeringHull(kind: ShipKindId, pose: ShipPhysicsState, shipInstanceId: string): void {
+    if (shipScrapGroups(kind).length === 0) return; // polygon kind ⇒ no scrap
+    this.scrapSpawner.spawnFromDeath(
+      kind,
+      { x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, angle: pose.angle },
+      `scrap-${shipInstanceId}`,
+    );
   }
 
   /**
