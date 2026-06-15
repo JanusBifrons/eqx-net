@@ -36,7 +36,7 @@ async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
 test('fresh user → galaxy-map-screen panel mounts with data-roster-count="0"', async ({ page }) => {
   test.setTimeout(30_000);
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await page.locator('text=Join the fight').first().click();
+  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 
   // The panel inside galaxy-map-screen mounts even when playerId is

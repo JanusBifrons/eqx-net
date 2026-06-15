@@ -89,6 +89,11 @@ installTestLeakHook();
  *  here from the retired GalaxyOverviewScreen with the single-canvas
  *  refactor — the tap-shield belongs at the tap site. */
 const PICKER_OPEN_DELAY_MS = 200;
+// Living Galaxy P5 — after an auth-gated pick (logged-out → auth → success)
+// the post-auth effect returns to 'galaxy-map' and re-opens the picker for the
+// stashed sector. The map remounts on the phase switch, so wait a beat for
+// GalaxyPickerChrome to re-register its apiRef, then retry briefly.
+const POST_AUTH_PICKER_OPEN_DELAY_MS = 200;
 
 interface GameSurfaceProps {
   /**
@@ -347,10 +352,51 @@ function GameSurface({
     const t0 = performance.now();
     logEvent('galaxy_sector_click', { key: sectorKey, mode: 'spawn', ts: t0 });
     logEvent('respawn_clicked', { source: 'sector-pick', sectorKey });
+    // Living Galaxy P5 — auth-gate on PICK. The galaxy map is the logged-out
+    // landing screen (fully interactive), but spawning requires a login: stash
+    // the picked sector and route to the auth flow. On return, the remounted
+    // GameSurface re-opens this sector's picker (see the idle-mount effect
+    // below). A non-reactive getState() read keeps the callback stable.
+    if (!useAuthStore.getState().user) {
+      logEvent('pick_auth_gate', { sectorKey });
+      useUIStore.getState().setPendingPickSector(sectorKey);
+      useUIStore.getState().setPhase('auth');
+      return;
+    }
     window.setTimeout(() => {
       pickerApiRef.current?.openForSector(sectorKey);
     }, PICKER_OPEN_DELAY_MS);
   }, []);
+
+  // Living Galaxy P5 — returning from the auth detour after an auth-gated pick:
+  // re-open the picker for the stashed sector. The map remounts on the
+  // auth→galaxy-map switch, so retry briefly until GalaxyPickerChrome has
+  // re-registered its apiRef. Only meaningful in idle (selector) mode; the
+  // very first landing has no stashed sector and no-ops.
+  useEffect(() => {
+    if (!idle) return;
+    if (!useUIStore.getState().pendingPickSector) return;
+    let cancelled = false;
+    let attempts = 0;
+    // Clear the stash ONLY on a successful open (not at effect start): React
+    // StrictMode double-invokes effects in dev, and clearing up-front let the
+    // first invocation's cleanup cancel the open while the second saw an
+    // already-cleared stash and never re-opened. Reading + clearing inside the
+    // retry makes it idempotent across the double-invoke.
+    const tryOpen = (): void => {
+      if (cancelled) return;
+      const pending = useUIStore.getState().pendingPickSector;
+      if (!pending) return; // already consumed
+      if (pickerApiRef.current) {
+        useUIStore.getState().setPendingPickSector(null);
+        pickerApiRef.current.openForSector(pending);
+        return;
+      }
+      if (++attempts < 40) window.setTimeout(tryOpen, 50);
+    };
+    window.setTimeout(tryOpen, POST_AUTH_PICKER_OPEN_DELAY_MS);
+    return () => { cancelled = true; };
+  }, [idle]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -406,6 +452,17 @@ function GameSurface({
       // in idle mode; production tree-shakes.
       (window as unknown as { __eqxGalaxyPick?: (key: string) => void })
         .__eqxGalaxyPick = (key: string) => handleSelectorPick(key);
+      // Living Galaxy P5 — set a logged-in auth user deterministically so E2E
+      // can exercise the logged-IN pick path (straight to the picker, no auth
+      // detour) without real credentials. Production tree-shakes.
+      (window as unknown as { __eqxSetAuthUser?: (name?: string) => void })
+        .__eqxSetAuthUser = (name?: string) => {
+          useAuthStore.getState().setAuth('e2e-token', {
+            id: 'e2e-user',
+            email: 'e2e@example.test',
+            displayName: name ?? 'E2E Pilot',
+          });
+        };
     }
 
     const onKey = (e: KeyboardEvent): void => {

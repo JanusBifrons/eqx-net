@@ -29,6 +29,21 @@ export interface OverlayTappedMsg {
 }
 
 /**
+ * `GalaxyMapLayer` hover (selector mode) — fired when the sector under the
+ * desktop pointer CHANGES (deduped on sector key, so it's low-frequency, NOT
+ * per-pointermove). Main thread sets the canvas cursor + drives the React
+ * sector tooltip. `sectorKey: null` = the pointer left all hexes. Living Galaxy
+ * Phase 6 (bug-doc hover highlight + cursor + tooltip).
+ */
+export interface GalaxyHoverMsg {
+  type: 'GALAXY_HOVER';
+  sectorKey: string | null;
+  screenX: number;
+  screenY: number;
+  selectable: boolean;
+}
+
+/**
  * Uncaught exception in the worker. Surfaces in the main-thread proxy
  * for logging / fallback decisions; not a contract for recovery.
  */
@@ -107,5 +122,6 @@ export type WorkerToMainMsg =
   | ReadyMsg
   | FeedbackMsg
   | OverlayTappedMsg
+  | GalaxyHoverMsg
   | WorkerErrorMsg
   | FrameMarkersMsg;

@@ -108,10 +108,10 @@ describe('SquadPool — snapshot', () => {
     pool.setState(pool.get('squad-0')!, 'attacking');
     pool.setState(pool.get('squad-1')!, 'warping');
     const snap = pool.snapshot();
-    expect(snap.total).toBe(3);
+    expect(snap.total).toBe(LIVING_WORLD_SQUAD_COUNT);
     expect(snap.byState.attacking).toBe(1);
     expect(snap.byState.warping).toBe(1);
-    expect(snap.byState.forming).toBe(1);
+    expect(snap.byState.forming).toBe(LIVING_WORLD_SQUAD_COUNT - 2);
   });
 });
 

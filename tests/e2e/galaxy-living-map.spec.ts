@@ -30,7 +30,7 @@ test('galaxy selector tints territories and shrinks the hovered one', async ({ p
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
   await page.goto(`${BASE_URL}?worker=0`, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-  await page.locator('text=Join the fight').first().click();
+  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 12_000 });
 
   await page.waitForFunction(

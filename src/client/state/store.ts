@@ -155,9 +155,15 @@ export const useUIStore = create<UIStore>((set, get) => ({
   lastFireMs: null,
   isDrawerOpen: false,
   drawerTab: 'galaxy',
-  phase: 'meta',
+  // Living Galaxy P5 — the live galaxy map is the first screen on load. The
+  // `?room=`/`?galaxy=` deep-links still override to 'game' via App's autoJoin
+  // effect; `meta` is retired from the default path (kept reachable via
+  // Return-to-menu / Logout).
+  phase: 'galaxy-map',
+  pendingPickSector: null,
   isGalaxyMapOpen: false,
   galaxyStats: [],
+  galaxyHover: null,
   isGalaxyOverviewOpen: false,
   arrivalMode: initialArrivalMode,
   arrivalTargetX: initialArrivalTargetX,
@@ -256,9 +262,11 @@ export const useUIStore = create<UIStore>((set, get) => ({
     }
     return { phase: p };
   }),
+  setPendingPickSector: (key) => set({ pendingPickSector: key }),
   rearmJoinReadiness: () => set((s) => commonReadinessRearm(s.joinGeneration)),
   setGalaxyMapOpen: (v) => set({ isGalaxyMapOpen: v }),
   setGalaxyStats: (stats) => set({ galaxyStats: stats }),
+  setGalaxyHover: (hover) => set({ galaxyHover: hover }),
   toggleGalaxyMapOpen: () => set((s) => ({ isGalaxyMapOpen: !s.isGalaxyMapOpen })),
   setGalaxyOverviewOpen: (v) => set({ isGalaxyOverviewOpen: v }),
   toggleGalaxyOverviewOpen: () => set((s) => ({ isGalaxyOverviewOpen: !s.isGalaxyOverviewOpen })),
