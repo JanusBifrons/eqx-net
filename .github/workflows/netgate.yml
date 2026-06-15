@@ -147,19 +147,28 @@ jobs:
           # MEDIAN over reps; `ticksAhead` (lookahead) is the variance-prone
           # metric (a single snapshot-starved window on a shared CI runner —
           # e.g. PR #18 saw HEAD snaps 80 vs baseline 103 → ticksAhead 42 vs 27
-          # on otherwise-equal arms). More reps tightens the median WITHOUT the
-          # bias of a job-level retry-until-green (which would also mask a real
-          # ~60%-reproducing regression). This is a MECHANISM fix, not a margin
-          # widening (anti-flake policy: src/server/CLAUDE.md "Netcode-health
-          # gate"). Characterise a suspected flake via the workflow_dispatch
-          # main-vs-main run (head_ref=origin/main) before tuning further.
+          # on otherwise-equal arms). More reps tightens the median. A SINGLE
+          # bounded auto-retry on a fresh runner (the `netgate-retry` job,
+          # 2026-06-15) absorbs a transient host spike that survives even 8 reps
+          # — this is NOT retry-until-green: a failure that SURVIVES the retry
+          # is treated as LEGITIMATE (investigate the netcode, never "host
+          # flake"). A margin is NEVER widened to silence a flake. Characterise
+          # a suspected flake via the workflow_dispatch main-vs-main run
+          # (head_ref=origin/main).
           NETGATE_REPS: ${{ github.event.inputs.reps || '8' }}
+
+  # NOTE: the auto-retry is NOT here — `rerun-failed-jobs` is rejected (HTTP 403
+  # "workflow is already running") when called from a job INSIDE the still-
+  # running run. The bounded one-shot retry lives in the separate
+  # `auto-retry.yml` (workflow_run-triggered, fires after this run COMPLETES).
 
   # The REQUIRED status check (branch protection requires the check named
   # `netgate`). Always reports: pass when the gate passed OR was legitimately
   # skipped (no scenarios selected); fail when the gate ran and failed, OR when
   # the SELECTION itself broke (fail-closed — a skipped gate must never read as
   # healthy unless the selector explicitly returned an empty, non-error set).
+  # On a failure, the message distinguishes the auto-retry attempt (attempt 1)
+  # from the LEGITIMATE post-retry failure (attempt ≥ 2).
   netgate:
     needs: [changes, netgate-run]
     if: always()
@@ -171,6 +180,7 @@ jobs:
           CHANGES_RESULT: ${{ needs.changes.result }}
           RUN_RESULT: ${{ needs.netgate-run.result }}
           SCENARIOS: ${{ needs.changes.outputs.scenarios }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
           # Fail-closed: if the selector job itself broke, we do NOT know
@@ -187,5 +197,9 @@ jobs:
             echo "netgate skipped — no live-loop scenarios selected"
             exit 0
           fi
-          echo "netgate FAILED (run result=$RUN_RESULT, scenarios='$SCENARIOS')"
+          if [ "$RUN_ATTEMPT" = "1" ]; then
+            echo "netgate FAILED on attempt 1 (scenarios='$SCENARIOS') — the Auto-retry workflow re-runs it once on a fresh runner."
+          else
+            echo "netgate FAILED after an auto-retry (attempt $RUN_ATTEMPT, scenarios='$SCENARIOS') — LEGITIMATE. Investigate the netcode; do NOT dismiss as a host flake."
+          fi
           exit 1

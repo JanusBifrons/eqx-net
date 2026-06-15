@@ -242,3 +242,7 @@ jobs:
         env:
           CI: 'true'
           PLAYWRIGHT_RETRIES: '2'
+  # NOTE: the auto-retry for failed jobs is NOT here — `rerun-failed-jobs` is
+  # rejected (HTTP 403 "workflow is already running") when called from a job
+  # INSIDE the still-running run. The bounded one-shot retry lives in the
+  # separate `auto-retry.yml` (workflow_run-triggered, fires after CI completes).

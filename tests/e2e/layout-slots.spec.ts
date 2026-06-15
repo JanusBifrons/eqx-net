@@ -13,14 +13,26 @@ const APP_BAR_HEIGHT = 48;
 
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(BOOT_URL);
-  await page.waitForSelector('[data-testid="game-surface"]', { timeout: 10_000 });
+  // INFRASTRUCTURAL cost, not game-time (so a budget bump is the sanctioned fix —
+  // root CLAUDE.md "Test-harness philosophy"): under sharding each shard's first
+  // boot pays the dev `vite` cold module-graph compile, which far exceeds the old
+  // 10 s waits — the recurring `layout-slots` flake. 30 s each (+ a 90 s
+  // describe timeout below) covers a cold compile + Colyseus join + spawn on a
+  // contended runner; warm boots finish in ~3 s and never approach it.
+  await page.waitForSelector('[data-testid="game-surface"]', { timeout: 30_000 });
   // Wait for ShipStatsCard so layout has settled. The Hull/Ammo chip pills
   // that used to live in the HUD were removed in Phase 2 — ShipStatsCard
   // is now the canonical "the game has rendered" signal.
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 10_000 });
+  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 30_000 });
 }
 
 test.describe('layout-slots', () => {
+  // The bootGame cold-compile/join cost (above) can exceed the global 30 s
+  // per-test cap on the first boot of a contended-runner shard; give this
+  // boot-heavy layout suite headroom. Warm tests finish in a few seconds, so
+  // this budget is unused in the common case (it is NOT a game-time wait).
+  test.describe.configure({ timeout: 90_000 });
+
   // ───────────────────────────────────────────────────────────
   // Phase 1 regressions
   // ───────────────────────────────────────────────────────────
