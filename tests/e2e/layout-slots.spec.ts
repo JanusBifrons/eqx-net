@@ -13,11 +13,13 @@ const APP_BAR_HEIGHT = 48;
 
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(BOOT_URL);
-  await page.waitForSelector('[data-testid="game-surface"]', { timeout: 10_000 });
+  // Vite is warmed once in global-setup, so these boot in a few seconds; the
+  // headroom only matters if a contended runner is still slow after warm-up.
+  await page.waitForSelector('[data-testid="game-surface"]', { timeout: 15_000 });
   // Wait for ShipStatsCard so layout has settled. The Hull/Ammo chip pills
   // that used to live in the HUD were removed in Phase 2 — ShipStatsCard
   // is now the canonical "the game has rendered" signal.
-  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 10_000 });
+  await page.locator('[data-testid="ship-stats-card"]').waitFor({ timeout: 15_000 });
 }
 
 test.describe('layout-slots', () => {
