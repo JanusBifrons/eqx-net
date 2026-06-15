@@ -29,6 +29,7 @@ import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
 import { useAuthStore } from './auth/authStore';
+import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
 import { MobileControls } from './components/MobileControls';
 import { AutoFireToggleButton } from './components/AutoFireToggleButton';
 import { ErrorBoundary } from './components/ErrorOverlay';
@@ -428,11 +429,24 @@ function GameSurface({
     // right-click on the gameplay canvas regardless of which thread renders it
     // (the canvas DOM element + its events live on the main thread on both
     // paths). Outside placement we leave the native menu alone.
+    //
+    // P6.2 (Equinox Phase 6) — Android fires `contextmenu` on a touch LONG-PRESS
+    // too, so an unconditional cancel here meant a hold-to-position during
+    // placement CANCELLED it (+ the OS long-press haptic — "vibrates then
+    // doesn't place"). Track the last pointerdown's `pointerType` and only
+    // CANCEL on a mouse right-click; still `preventDefault` the native menu on
+    // both. Per-gesture (not `isTouchDevice()`), so a mouse on a hybrid
+    // touchscreen still right-click-cancels.
+    let lastPointerType = '';
+    const onPointerDownType = (e: PointerEvent): void => { lastPointerType = e.pointerType; };
+    window.addEventListener('pointerdown', onPointerDownType, { capture: true });
     const onContextMenu = (e: MouseEvent): void => {
-      if (useUIStore.getState().placementKind) {
-        e.preventDefault();
-        useUIStore.getState().setPlacementKind(null);
-      }
+      const outcome = decideContextMenuPlacement(
+        useUIStore.getState().placementKind !== null,
+        lastPointerType,
+      );
+      if (outcome.preventDefault) e.preventDefault();
+      if (outcome.cancel) useUIStore.getState().setPlacementKind(null);
     };
     window.addEventListener('contextmenu', onContextMenu);
 
@@ -483,6 +497,7 @@ function GameSurface({
       cancelAnimationFrame(animFrameRef.current);
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('contextmenu', onContextMenu);
+      window.removeEventListener('pointerdown', onPointerDownType, { capture: true });
       layerRO.disconnect();
       // Plan: crispy-kazoo, Commit 6 — cleanup ordering.
       // 1. Null the singleton FIRST so consumers reaching for the client
