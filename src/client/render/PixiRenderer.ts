@@ -7,7 +7,7 @@ import { WarpFilterChain } from './pixi/WarpFilterChain.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
-import { decidePlacementPointer } from './placementPointerDecision.js';
+import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 import { engineProfileForKind } from './pixi/engineGeometry.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './pixi/swarmSpriteUpdater.js';
 import { ConnectorRenderer } from './pixi/ConnectorRenderer.js';
@@ -91,6 +91,17 @@ export {
 // orchestrator below imports them from that module.
 
 export class PixiRenderer implements IRenderer {
+  /** True on touch devices (Equinox P6.1). The placement ghost seeds at
+   *  screen-centre on touch (vs ahead-of-ship + hover-follow on desktop) so the
+   *  blueprint is visible on select instead of hidden under the speed-dial.
+   *  Threaded from `selectRenderer` (main-thread) / the `BOOT` message (worker);
+   *  `isTouchDevice()` is unreliable in a worker (no `window.matchMedia`). */
+  private readonly _isTouch: boolean;
+
+  constructor(isTouch = false) {
+    this._isTouch = isTouch;
+  }
+
   private app!: Application;
   /**
    * World Container — replaces `pixi-viewport`'s `Viewport`. Holds all
@@ -1556,6 +1567,17 @@ export class PixiRenderer implements IRenderer {
     // pans again) and it draws at the SENT point, dimmer.
     const pendingGhost = preview != null && preview.pending === true;
     this._placementActive = preview != null && !pendingGhost;
+    // P6.1 (touch only) — seed the ghost at SCREEN-CENTRE on placement-start so
+    // it's visible instead of hidden under the speed-dial at the ahead-of-ship
+    // pose. Park it (`following=false`) so the Confirm banner is ready at centre;
+    // a tap/drag then repositions it. Desktop is gated out (hover-follow + the
+    // ahead-of-ship preview is fine when the cursor is already on screen).
+    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._placementChosenX !== null, pendingGhost)) {
+      const c = this.camera.center; // world coord (pixi-down) currently at screen centre
+      this._placementChosenX = c.x;
+      this._placementChosenY = -c.y; // game Y = -worldY
+      this._placementFollowing = false;
+    }
     if (preview) {
       if (!this._placementGhost || this._placementGhostKind !== preview.kind) {
         if (this._placementGhost) {

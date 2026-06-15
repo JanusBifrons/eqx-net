@@ -425,3 +425,43 @@ test('(K) DESKTOP: placement shows NO mobile Confirm/Cancel banner (P3.6)', asyn
     await ctx.close();
   }
 });
+
+/**
+ * (L) P6.1 (Equinox Phase 6 — mobile placement divergence). On TOUCH, picking a
+ * build kind must show the blueprint at SCREEN-CENTRE immediately — visible +
+ * ready to Confirm — instead of the ahead-of-ship pose that lands hidden under
+ * the bottom-right speed-dial (the user's "it appears hidden under the speeddial,
+ * then jumps to where you tap" report). The renderer seeds `_placementChosenX/Y`
+ * at the camera centre on touch and PARKS it (`following=false`), so
+ * `data-placement-stuck` is '1' on select with NO canvas tap, and the projected
+ * ghost sits at the viewport centre. Pre-fix the ghost was at ahead-of-ship with
+ * `following=true` → stuck stayed '0' until a tap → this fails.
+ */
+test('(L) TOUCH: picking a kind centres the ghost on select, ready to confirm (P6.1)', async ({ browser }) => {
+  test.setTimeout(60_000);
+  const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
+  try {
+    await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
+    await page.locator('[data-testid="build-capital"]').click();
+
+    // Parked at centre on select — NO tap. (Pre-fix: stuck stays '0' until a tap.)
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
+      undefined,
+      { timeout: 5_000 },
+    );
+
+    // The projected ghost is anchored at (near) the viewport centre — NOT off
+    // under the dial. Viewport is 390×844 (see joinAndOpenBuild mobile context).
+    const sx = parseFloat((await surfaceAttr(page, 'data-placement-screen-x')) ?? 'NaN');
+    const sy = parseFloat((await surfaceAttr(page, 'data-placement-screen-y')) ?? 'NaN');
+    expect(Number.isFinite(sx) && Number.isFinite(sy), 'ghost projected to screen').toBe(true);
+    expect(Math.abs(sx - 195), `ghost screen-x ${sx} should be near centre 195`).toBeLessThan(80);
+    expect(Math.abs(sy - 422), `ghost screen-y ${sy} should be near centre 422`).toBeLessThan(140);
+
+    // Confirm is immediately available at centre (no tap-to-position required).
+    await expect(page.locator('[data-testid="placement-confirm"]')).toBeVisible({ timeout: 5_000 });
+  } finally {
+    await ctx.close();
+  }
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decidePlacementPointer } from './placementPointerDecision.js';
+import { decidePlacementPointer, shouldCentreGhostOnActivate } from './placementPointerDecision.js';
 
 /**
  * P3.5 (follow STILL broken) regression lock. The headline contract: a
@@ -58,5 +58,28 @@ describe('decidePlacementPointer', () => {
     const c = decidePlacementPointer('pointercancel', 'touch', -1, true);
     expect(c.following).toBe(false);
     expect(c.commit).toBe(false);
+  });
+});
+
+/**
+ * P6.1 (Equinox Phase 6) — on TOUCH the placement ghost must seed at
+ * screen-centre on select so it's visible instead of hidden under the
+ * speed-dial. Desktop keeps the ahead-of-ship + hover-follow default.
+ */
+describe('shouldCentreGhostOnActivate', () => {
+  it('TOUCH + no chosen point + live ghost → seed at centre', () => {
+    expect(shouldCentreGhostOnActivate(true, false, false)).toBe(true);
+  });
+
+  it('DESKTOP never centre-seeds (ahead-of-ship + hover-follow is fine)', () => {
+    expect(shouldCentreGhostOnActivate(false, false, false)).toBe(false);
+  });
+
+  it('does NOT re-seed once a point has been chosen (tapped/dragged)', () => {
+    expect(shouldCentreGhostOnActivate(true, true, false)).toBe(false);
+  });
+
+  it('never seeds the dim post-Confirm pending ghost', () => {
+    expect(shouldCentreGhostOnActivate(true, false, true)).toBe(false);
   });
 });
