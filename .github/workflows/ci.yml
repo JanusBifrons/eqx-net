@@ -242,27 +242,7 @@ jobs:
         env:
           CI: 'true'
           PLAYWRIGHT_RETRIES: '2'
-
-  # Auto-retry FAILED CI jobs ONCE on a fresh runner (policy 2026-06-15, sibling
-  # of netgate.yml's netgate-retry). `rerun-failed-jobs` re-runs ONLY the jobs
-  # that failed, so a transient flake (e.g. e2e-smoke's cold-Vite `layout-slots`
-  # boot) clears on a fresh runner while a DETERMINISTIC failure (verify / unit
-  # / integration) fails AGAIN on attempt 2 and is still caught. `run_attempt ==
-  # '1'` bounds it to ONE retry: a failure that SURVIVES the retry is LEGITIMATE
-  # — fix the code, do NOT dismiss as flaky/host. NOT retry-until-green; a
-  # margin/timeout is never bumped to silence a flake.
-  ci-retry:
-    needs: [changes, verify, unit-tests, integration-tests, docker-build, e2e-smoke]
-    if: always() && github.run_attempt == '1' && contains(needs.*.result, 'failure')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - name: Re-run the failed CI jobs once on fresh runners
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "A CI job failed on attempt 1 — auto-retrying the FAILED jobs ONCE on fresh runners. A failure that SURVIVES the retry is LEGITIMATE (fix the code, not 'flaky')."
-          gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun-failed-jobs" \
-            || echo "::warning::auto-retry call failed (token may lack actions:write) — re-run manually"
+  # NOTE: the auto-retry for failed jobs is NOT here — `rerun-failed-jobs` is
+  # rejected (HTTP 403 "workflow is already running") when called from a job
+  # INSIDE the still-running run. The bounded one-shot retry lives in the
+  # separate `auto-retry.yml` (workflow_run-triggered, fires after CI completes).

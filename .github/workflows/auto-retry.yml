@@ -1,0 +1,47 @@
+name: Auto-retry
+
+# Bounded one-shot auto-retry for CI / Netgate (policy 2026-06-15). When a run
+# fails on its FIRST attempt, re-run only its FAILED jobs ONCE on fresh runners.
+#
+# Why a SEPARATE workflow (not a job inside CI/Netgate): `rerun-failed-jobs` is
+# rejected with HTTP 403 "This workflow is already running" when called from a
+# job inside the still-in-progress run. `workflow_run: types: [completed]` fires
+# only AFTER the run finishes, when the re-run API is valid.
+#
+# This is NOT retry-until-green and NEVER widens a margin/timeout: `run_attempt
+# == 1` bounds it to EXACTLY ONE retry (attempt 2's completion re-fires this
+# with run_attempt == 2, which the guard skips — it can never loop). A failure
+# that SURVIVES the retry is LEGITIMATE: fix the code, investigate the netcode —
+# never dismiss it as "flaky" or "the host". rerun-failed-jobs re-runs only the
+# jobs that failed, so a DETERMINISTIC failure fails again on attempt 2 and is
+# still caught; only a transient flake is absorbed.
+#
+# NOTE: a workflow_run workflow only fires from the DEFAULT BRANCH, so this takes
+# effect for all runs once merged to main — it cannot retry its own PR's runs.
+
+on:
+  workflow_run:
+    workflows: [CI, Netgate]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  rerun-once:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run failed jobs once on a fresh runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_NAME: ${{ github.event.workflow_run.name }}
+        run: |
+          set -euo pipefail
+          echo "$RUN_NAME run $RUN_ID failed on attempt 1 — auto-retrying its FAILED jobs ONCE on a fresh runner."
+          echo "A failure that SURVIVES this retry is LEGITIMATE: fix the code, never dismiss it as 'flaky' / 'the host'."
+          gh api -X POST "repos/${{ github.repository }}/actions/runs/$RUN_ID/rerun-failed-jobs"

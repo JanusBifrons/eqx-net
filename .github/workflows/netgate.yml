@@ -157,30 +157,10 @@ jobs:
           # (head_ref=origin/main).
           NETGATE_REPS: ${{ github.event.inputs.reps || '8' }}
 
-  # Auto-retry the netgate ONCE on a fresh runner if it failed (policy
-  # 2026-06-15). The relative measurement is variance-prone on contended hosted
-  # runners and — empirically — a transient RED clears on a fresh-runner
-  # re-run. `run_attempt == '1'` bounds it to EXACTLY ONE retry: a failure that
-  # SURVIVES the retry (attempt 2) is LEGITIMATE — investigate the netcode,
-  # NEVER dismiss it as "host flake" / "the box". `rerun-failed-jobs` re-runs
-  # netgate-run (+ the summary) on a new attempt with a fresh runner; the
-  # `changes` job (passed) carries its `scenarios` output over, and this job
-  # (also passed) is not itself re-run, so the retry can never loop.
-  netgate-retry:
-    needs: [changes, netgate-run]
-    if: always() && needs.netgate-run.result == 'failure' && github.run_attempt == '1'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: write
-    steps:
-      - name: Re-run the failed netgate once on a fresh runner
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "netgate-run failed on attempt 1 — auto-retrying ONCE on a fresh runner. A failure on attempt 2 is LEGITIMATE (investigate the netcode, not the host)."
-          gh api -X POST "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/rerun-failed-jobs" \
-            || echo "::warning::auto-retry call failed (token may lack actions:write) — re-run the netgate manually"
+  # NOTE: the auto-retry is NOT here — `rerun-failed-jobs` is rejected (HTTP 403
+  # "workflow is already running") when called from a job INSIDE the still-
+  # running run. The bounded one-shot retry lives in the separate
+  # `auto-retry.yml` (workflow_run-triggered, fires after this run COMPLETES).
 
   # The REQUIRED status check (branch protection requires the check named
   # `netgate`). Always reports: pass when the gate passed OR was legitimately
@@ -218,7 +198,7 @@ jobs:
             exit 0
           fi
           if [ "$RUN_ATTEMPT" = "1" ]; then
-            echo "netgate FAILED on attempt 1 (scenarios='$SCENARIOS') — netgate-retry is auto-re-running it once on a fresh runner."
+            echo "netgate FAILED on attempt 1 (scenarios='$SCENARIOS') — the Auto-retry workflow re-runs it once on a fresh runner."
           else
             echo "netgate FAILED after an auto-retry (attempt $RUN_ATTEMPT, scenarios='$SCENARIOS') — LEGITIMATE. Investigate the netcode; do NOT dismiss as a host flake."
           fi
