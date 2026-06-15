@@ -7,14 +7,12 @@
  *   - `projectileCounter` — monotonic id generator (`proj-${n}`).
  *
  * Per-tick `advance()` Euler-integrates each projectile through one
- * step, then runs four collision passes against:
+ * step, then runs three collision passes against:
  *   1. Player ships (lag-comp via shipPoseCache; shield-vs-hull routed
  *      through the injected `playerSweep` hook to share polygon
  *      geometry with the hitscan path).
  *   2. Swarm entities (drones + asteroids — sphere-only).
- *   3. Wrecks (sphere; targetId carries the `wreck-` prefix so
- *      applyDamage routes through state.wrecks).
- *   4. Lingering hulls (sphere; targetId is the shipInstanceId so
+ *   3. Lingering hulls (sphere; targetId is the shipInstanceId so
  *      applyDamage routes through the schema map's isActive=false row).
  *
  * Earliest-entry wins. On hit: emit damage, drop the projectile.
@@ -67,7 +65,7 @@ export interface SwarmCandidateSource {
 }
 
 export interface ProjectilePipelineDeps {
-  /** SAB Float32 view — swarm + wreck + lingering pose source. */
+  /** SAB Float32 view — swarm + lingering pose source. */
   sabF32: Float32Array;
   /** Current server tick (for birth-tick + lifetime check). */
   serverTick: () => number;
@@ -85,8 +83,6 @@ export interface ProjectilePipelineDeps {
   ) => SweepHit | null;
   /** Swarm candidate source (drones + asteroids). */
   swarmRegistry: SwarmCandidateSource;
-  /** Wreck bookkeeping: shipInstanceId -> slot. */
-  wreckToSlot: Map<string, number>;
   /** Phase 6b lingering hulls: shipInstanceId -> slot. */
   lingeringSlots: Map<string, number>;
   /** Damage sink — invoked on a confirmed hit. */
@@ -143,7 +139,7 @@ export class ProjectilePipeline {
    * to `applyDamage` and drop the projectile; non-hits commit the
    * integration; expired projectiles drop. See `src/server/CLAUDE.md`
    * "Combat Architecture" → "Projectile vs swarm collision" for the
-   * 4-pass mandate (player + swarm + wreck + lingering).
+   * 3-pass mandate (player + swarm + lingering).
    */
   advance(): void {
     const d = this.deps;
@@ -195,21 +191,7 @@ export class ProjectilePipeline {
         }
       }
 
-      // 3. Wrecks (sphere; targetId prefixed `wreck-` for applyDamage).
-      for (const [shipInstanceId, slot] of d.wreckToSlot) {
-        const b = slotBase(slot);
-        const cx = d.sabF32[b + SLOT_X_OFF]!;
-        const cy = d.sabF32[b + SLOT_Y_OFF]!;
-        const sweep = projectileSweepCircle(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, SHIP_COLLISION_RADIUS);
-        if (sweep && sweep.entry < bestEntry) {
-          bestEntry = sweep.entry;
-          bestTargetId = `wreck-${shipInstanceId}`;
-          bestHitX = sweep.hitX;
-          bestHitY = sweep.hitY;
-        }
-      }
-
-      // 4. Lingering hulls (sphere; targetId = shipInstanceId).
+      // 3. Lingering hulls (sphere; targetId = shipInstanceId).
       for (const [shipInstanceId, slot] of d.lingeringSlots) {
         if (shipInstanceId === proj.ownerId) continue;
         const b = slotBase(slot);

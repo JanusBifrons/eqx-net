@@ -21,7 +21,7 @@ import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpo
  * the renderer owns (`_selectedId`) resolves the same live pose every frame:
  *   - ship  → `mirror.ships.get(id)`
  *   - drone / structure → `mirror.swarm.get(Number(id.slice('swarm-'.length)))`
- *   - wreck → `mirror.wrecks.get(id)`
+ *   - lingering → `mirror.lingeringShips.get(id)`
  *
  * `update(mirror, id)` returns `true` when the entity was resolved (bracket
  * drawn), `false` when `id` is null OR the entity is gone — the caller clears
@@ -35,7 +35,7 @@ const CORNER_FRAC = 0.32;
 const RADIUS_PAD = 8;
 /** Min half-size so a tiny drone still gets a visible bracket. */
 const MIN_HALF = 14;
-/** Fallback collision radius when a ship/wreck kind can't be resolved. */
+/** Fallback collision radius when a ship kind can't be resolved. */
 const SHIP_FALLBACK_RADIUS = 20;
 
 // Module-scope scratch reused by the asteroid/drone interpolation read. The
@@ -102,14 +102,8 @@ export class SelectionBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.wrecks?.has(selectedId)) {
-      const wreck = mirror.wrecks.get(selectedId)!;
-      ex = wreck.x;
-      ey = wreck.y;
-      radius = shipRadius(wreck.kind);
     } else if (mirror.lingeringShips?.has(selectedId)) {
-      // WS-9 (R2.23/R2.30) — a selected lingering hull resolves from its own map
-      // (the wreck branch above now uses `.has`, so it no longer swallows this).
+      // WS-9 (R2.23/R2.30) — a selected lingering hull resolves from its own map.
       const l = mirror.lingeringShips.get(selectedId)!;
       ex = l.x;
       ey = l.y;

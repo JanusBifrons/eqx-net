@@ -213,9 +213,9 @@ export interface UIStore {
    *  thread mirrors transitions here on change only. */
   selectedEntityId: string | null;
   /** Kind of the selected entity — `ship`/`structure` use the server
-   *  `entity_stats` channel; `drone`/`wreck` read health from the render mirror
+   *  `entity_stats` channel; `drone` reads health from the render mirror
    *  directly. Null when nothing is selected. */
-  selectedEntityKind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null;
+  selectedEntityKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null;
   /** Structures plan (Phase 3) — the player's live grid net power (Σ output −
    *  Σ consumption over their powered component). Discrete HUD readout, set at
    *  the 1 Hz pulse cadence from the structures snapshot slice. 0 when the
@@ -364,7 +364,7 @@ export interface UIStore {
   /** Set the inspected entity selection (Item B3). Both args change together. */
   setSelectedEntity: (
     id: string | null,
-    kind: 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering' | null,
+    kind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | null,
   ) => void;
   setGridNetPower: (net: number) => void;
   setMinerals: (n: number) => void;

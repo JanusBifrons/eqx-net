@@ -21,7 +21,7 @@
  *
  * Builds the global "all alive ships" digest ONCE per tick, then loops
  * recipients (with backpressure + phase-offset gates) to per-client-
- * filter projectiles + drones + wrecks. The wire shape is exactly the
+ * filter projectiles + drones. The wire shape is exactly the
  * pre-extraction `SnapshotMessage`.
  *
  * Extracted from SectorRoom (commit 22 of v3 refactor plan; the 271-LOC
@@ -99,7 +99,6 @@ export interface SnapshotBroadcasterDeps {
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
   shipsMap: MapSchema<ShipState>;
-  wreckPoseCache: Map<string, ShipPhysicsState>;
   liveProjectiles: Map<string, ProjectileRecord>;
   boostingPlayers: Set<string>;
   thrustingPlayers: Set<string>;
@@ -191,11 +190,6 @@ type MutableAsteroidEntry = {
   mass?: number;
 };
 
-type MutableWreckEntry = {
-  id: string; x: number; y: number; vx: number; vy: number;
-  angle: number; angvel: number;
-};
-
 /** Mutable view of the SnapshotMessage so we can poke optional fields
  *  in place. Cast back to `SnapshotMessage` at the `client.send` site. */
 type MutableSnapshotMessage = {
@@ -211,7 +205,6 @@ type MutableSnapshotMessage = {
   missiles?: SnapshotMessage['missiles'];
   drones?: SnapshotMessage['drones'];
   asteroids?: SnapshotMessage['asteroids'];
-  wrecks?: SnapshotMessage['wrecks'];
   structures?: SnapshotMessage['structures'];
 };
 
@@ -249,8 +242,8 @@ export class SnapshotBroadcaster {
   //   - `states: {}`                        — 1 per recipient
   //   - per-ship state literal              — N ships per recipient
   //   - mountAnglesArr `new Array(len)`     — per ship/drone with non-zero mounts
-  //   - `projectiles[]`/`drones[]`/`wrecks[]` arrays — per recipient
-  //   - per-projectile/drone/wreck literal  — per entity per recipient
+  //   - `projectiles[]`/`drones[]` arrays   — per recipient
+  //   - per-projectile/drone literal        — per entity per recipient
   //   - `snap: {}` SnapshotMessage literal  — 1 per recipient (plus the
   //     spread-empty `...({} : {})` quirk that allocates extra empty
   //     literals for absent optional fields)
@@ -259,7 +252,7 @@ export class SnapshotBroadcaster {
   //   - state-entry instances live in `_stateEntryPool` keyed by
   //     shipInstanceId, mutated in place. Sweep stale entries at the
   //     top of broadcast() via `_aliveShipInstanceIds`.
-  //   - projectile/drone/wreck arrays + entry instances reuse the
+  //   - projectile/drone arrays + entry instances reuse the
   //     same slot-reuse pattern Phase 5b landed for WeaponMountTicker.
   //   - mountAngles arrays come from `_mountAnglesPool` keyed by length
   //     (a small finite set — mount counts 1..MAX_MOUNTS).
@@ -278,7 +271,6 @@ export class SnapshotBroadcaster {
   private readonly _missilesScratch: MutableMissileEntry[] = [];
   private readonly _dronesScratch: MutableDroneEntry[] = [];
   private readonly _asteroidsScratch: MutableAsteroidEntry[] = [];
-  private readonly _wrecksScratch: MutableWreckEntry[] = [];
   private readonly _mountAnglesPool = new Map<number, number[]>();
   /** Fresh Record per recipient is unavoidable — notepack.io would
    *  encode stale keys from a reused Record into the wire. The VALUES
@@ -422,20 +414,6 @@ export class SnapshotBroadcaster {
     else delete slot.resourcesMax;
     if (mass !== undefined) slot.mass = mass;
     else delete slot.mass;
-  }
-
-  private static writeWreckSlot(
-    arr: MutableWreckEntry[], i: number,
-    id: string, x: number, y: number, vx: number, vy: number,
-    angle: number, angvel: number,
-  ): void {
-    const slot = arr[i];
-    if (!slot) {
-      arr[i] = { id, x, y, vx, vy, angle, angvel };
-      return;
-    }
-    slot.id = id; slot.x = x; slot.y = y;
-    slot.vx = vx; slot.vy = vy; slot.angle = angle; slot.angvel = angvel;
   }
 
   /** Acquire-or-create an `AllShipEntry` slot at `index`. Used by
@@ -736,23 +714,6 @@ export class SnapshotBroadcaster {
       asteroidsScratch.length = asteroidsCount;
 
       const recipientAcked = this.sabAppliedTicks.get(recipientPlayerId) ?? 0;
-      // Phase 4 — wreck poses for every wreck in the sector. No
-      // interest filtering: wreck count per sector is bounded (one per
-      // abandoned ship; players are 10-capped). Phase 5 can add
-      // interest culling if rosters grow.
-      const wrecksScratch = this._wrecksScratch;
-      let wrecksCount = 0;
-      if (d.wreckPoseCache.size > 0) {
-        for (const [shipInstanceId, pose] of d.wreckPoseCache) {
-          SnapshotBroadcaster.writeWreckSlot(
-            wrecksScratch, wrecksCount,
-            shipInstanceId, pose.x, pose.y, pose.vx, pose.vy,
-            pose.angle, pose.angvel ?? 0,
-          );
-          wrecksCount++;
-        }
-      }
-      wrecksScratch.length = wrecksCount;
 
       // Class-field SnapshotMessage scratch — mutated per recipient.
       // notepack.io's encoder skips undefined values, so the
@@ -769,7 +730,6 @@ export class SnapshotBroadcaster {
       snap.missiles = missilesCount > 0 ? missilesScratch : undefined;
       snap.drones = dronesCount > 0 ? dronesScratch : undefined;
       snap.asteroids = asteroidsCount > 0 ? asteroidsScratch : undefined;
-      snap.wrecks = wrecksCount > 0 ? wrecksScratch : undefined;
       // Structures plan, Phase 3 — the same cached slice array (rebuilt at the
       // 1 Hz pulse, NOT per tick) is attached by reference to every recipient.
       // Undefined when no structures exist (zero cost).

@@ -7,7 +7,7 @@ const SCREENSHOT_ROOT = join(process.cwd(), 'diag', 'e2e-screenshots');
 
 /**
  * Capture the rendered game scene for visual verification of entity
- * placement (lingering hulls / wrecks where they should be).
+ * placement (lingering hulls where they should be).
  *
  * REQUIRES the client to have been launched with `?worker=0` — the default
  * OffscreenCanvas-in-worker renderer composites to a transferred canvas that
@@ -17,11 +17,10 @@ const SCREENSHOT_ROOT = join(process.cwd(), 'diag', 'e2e-screenshots');
  * Waits for the join-handshake load curtain to drop
  * (`data-loading-active=0`) plus a short settle so the warp-in fade has
  * cleared before the capture, then writes `<subdir>/<name>.png` and returns
- * its path. `subdir` defaults to `linger-wreck` for back-compat with the
- * existing lingering-hull specs; the engine-particle flight spec passes
- * `engine-particles`.
+ * its path. `subdir` defaults to `linger` for the existing lingering-hull
+ * specs; the engine-particle flight spec passes `engine-particles`.
  */
-export async function captureGameScene(page: Page, name: string, subdir = 'linger-wreck'): Promise<string> {
+export async function captureGameScene(page: Page, name: string, subdir = 'linger'): Promise<string> {
   const dir = join(SCREENSHOT_ROOT, subdir);
   mkdirSync(dir, { recursive: true });
   // Best-effort wait for the curtain to drop so we don't snap the warp veil.

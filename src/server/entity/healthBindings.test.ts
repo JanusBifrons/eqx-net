@@ -5,7 +5,7 @@
  * `applied`/`destroyed` flags.
  *
  * Why: Phase 2 routes DamageRouter through these bindings; a divergence from
- * `damageShipLayered` / `damageSwarmLayered` / the wreck branch math would
+ * `damageShipLayered` / `damageSwarmLayered` math would
  * silently change damage outcomes. HC#3: the swarm binding mutates the parallel
  * `swarmHealth` map (a reference) — asserted by reading the router's map after
  * applying. The full dispatch ORDER is locked separately by
@@ -14,12 +14,12 @@
 
 import { describe, it, expect } from 'vitest';
 import type { MapSchema } from '@colyseus/schema';
-// Type-only: the real ShipState/WreckState are @colyseus/schema classes whose
-// v3 decorators need a Symbol.metadata runtime the plain unit env lacks (they
-// are only *instantiated* in the integration suite). The bindings touch only
+// Type-only: the real ShipState is a @colyseus/schema class whose
+// v3 decorators need a Symbol.metadata runtime the plain unit env lacks (it
+// is only *instantiated* in the integration suite). The bindings touch only
 // plain fields, so structural stubs cast to the schema types exercise the same
 // code paths without loading the decorator module.
-import type { ShipState, WreckState } from '../rooms/schema/SectorState.js';
+import type { ShipState } from '../rooms/schema/SectorState.js';
 import { ShieldHullRouter, type SwarmDamageTarget } from '../rooms/ShieldHullRouter.js';
 import { getDroneMaxHealth } from '../rooms/droneKindHelpers.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
@@ -28,7 +28,6 @@ import { resetInteractionResult, type InteractionResultMut } from '../../core/co
 import {
   activeShipHealthBinding,
   lingeringHealthBinding,
-  wreckHealthBinding,
   swarmHealthBinding,
 } from './healthBindings.js';
 
@@ -182,19 +181,5 @@ describe('healthBindings — parity with the existing primitives', () => {
     lingeringHealthBinding(r).applyLayered(s, 30, TICK, out);
     expect(out.applied).toBe(true);
     expect(posted).not.toContain('SET_HULL_EXPOSED');
-  });
-
-  it('wreck binding matches the branch-1 flat-hull math and destroyed flag', () => {
-    const w = { shipInstanceId: 'ship-abc', health: 10, maxHealth: 50 } as unknown as WreckState;
-    const out = freshResult();
-    wreckHealthBinding().applyLayered(w, 30, TICK, out); // overkill
-
-    expect(out.applied).toBe(true);
-    expect(out.newHealth).toBe(0); // Math.max(0, 10 - 30)
-    expect(w.health).toBe(0);
-    expect(out.hullMax).toBe(50);
-    expect(out.hitLayer).toBe('hull');
-    expect(out.newShield).toBe(0);
-    expect(out.destroyed).toBe(true);
   });
 });

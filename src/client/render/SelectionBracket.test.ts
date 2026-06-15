@@ -5,7 +5,7 @@
  *  - one Graphics for the whole component (single selection)
  *  - geometry rebuilt ONLY when the bracket size (entity radius) changes;
  *    position-only frames do NOT call clear()
- *  - resolves the live pose from the mirror by id (ship / swarm-N / wreck)
+ *  - resolves the live pose from the mirror by id (ship / swarm-N / lingering)
  *  - returns false (and hides) when the entity vanishes or id is null
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -36,7 +36,7 @@ vi.mock('pixi.js', () => {
 });
 
 function mirror(over: Partial<RenderMirror>): RenderMirror {
-  return { ships: new Map(), swarm: new Map(), wrecks: new Map(), localPlayerId: null, ...over } as RenderMirror;
+  return { ships: new Map(), swarm: new Map(), localPlayerId: null, ...over } as RenderMirror;
 }
 
 function gfxOf(b: SelectionBracket): { clear: ReturnType<typeof vi.fn>; x: number; y: number; visible: boolean } {

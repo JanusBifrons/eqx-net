@@ -2,11 +2,11 @@
  * GOLDEN-MASTER for DamageRouter.apply — the Phase-2 regression lock for the
  * Generic Entity Pipeline dispatch collapse (HC#1).
  *
- * DamageRouter.apply is a 4-branch if-tree keyed on target-id SHAPE
- * (wreck- prefix / lingering `!isActive` / active playerId / swarm registry),
+ * DamageRouter.apply is a 3-branch if-tree keyed on target-id SHAPE
+ * (lingering `!isActive` / active playerId / swarm registry),
  * and the branch ORDER + each branch's side-effects are LOAD-BEARING and
  * asymmetric (broadcast, bus PLAYER_DAMAGED / SHIP_DESTROYED, worker DESPAWN
- * `linger-<id>`, slot free-list push, evictSwarmEntity, destroyWreck, the
+ * `linger-<id>`, slot free-list push, evictSwarmEntity, the
  * swarm-only `damage_applied` diag + markHostile).
  *
  * This test records the FULL ordered observable effect of `apply()` for each
@@ -29,7 +29,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import type { MapSchema } from '@colyseus/schema';
 import { DamageRouter, type SwarmDmgRecord } from './DamageRouter.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
-import type { ShipState, WreckState } from './schema/SectorState.js';
+import type { ShipState } from './schema/SectorState.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import { getDroneMaxHealth } from './droneKindHelpers.js';
@@ -63,10 +63,8 @@ function shipStub(over: Partial<ShipState> = {}): ShipState {
 interface Harness {
   router: DamageRouter;
   shipsMap: Map<string, ShipState>;
-  wrecksMap: Map<string, WreckState>;
   lingeringSlots: Map<string, number>;
   lingeringPoseCache: Map<string, ShipPhysicsState>;
-  wreckPoseCache: Map<string, ShipPhysicsState>;
   shipPoseCache: Map<string, ShipPhysicsState>;
   freeSlots: number[];
   swarm: Map<string, SwarmDmgRecord>;
@@ -76,10 +74,8 @@ interface Harness {
 
 function makeHarness(): Harness {
   const shipsMap = new Map<string, ShipState>();
-  const wrecksMap = new Map<string, WreckState>();
   const lingeringSlots = new Map<string, number>();
   const lingeringPoseCache = new Map<string, ShipPhysicsState>();
-  const wreckPoseCache = new Map<string, ShipPhysicsState>();
   const shipPoseCache = new Map<string, ShipPhysicsState>();
   const freeSlots: number[] = [];
   const swarm = new Map<string, SwarmDmgRecord>();
@@ -109,12 +105,9 @@ function makeHarness(): Harness {
   const router = new DamageRouter({
     serverTick: () => TICK,
     shipsMap: shipsMap as unknown as MapSchema<ShipState>,
-    wrecksMap: wrecksMap as unknown as MapSchema<WreckState>,
     shipPoseCache,
     lingeringSlots,
     lingeringPoseCache,
-    wreckPoseCache,
-    destroyWreck: (id) => log.push(`destroyWreck:${id}`),
     freeSlots,
     shieldHullRouter: shieldHull,
     getActiveShip: (pid) => activeShips.get(pid),
@@ -132,7 +125,7 @@ function makeHarness(): Harness {
     serverLogEvent,
   });
 
-  return { router, shipsMap, wrecksMap, lingeringSlots, lingeringPoseCache, wreckPoseCache, shipPoseCache, freeSlots, swarm, shieldHull, activeShips };
+  return { router, shipsMap, lingeringSlots, lingeringPoseCache, shipPoseCache, freeSlots, swarm, shieldHull, activeShips };
 }
 
 beforeEach(() => {
@@ -140,34 +133,7 @@ beforeEach(() => {
 });
 
 describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branches)', () => {
-  it('branch 1 — wreck: overkill destroys (damage → destroy → bus → destroyWreck)', () => {
-    const h = makeHarness();
-    h.wrecksMap.set('w1', { shipInstanceId: 'w1', health: 10, maxHealth: 50 } as unknown as WreckState);
-    h.wreckPoseCache.set('w1', pose());
-    h.router.apply('wreck-w1', 'shooterA', 30, undefined, undefined);
-    expect(log).toEqual([
-      'damage:wreck-w1:hp=0:layer=hull:shooter=shooterA',
-      'destroy:wreck-w1:shooter=shooterA',
-      'bus:SHIP_DESTROYED:wreck-w1',
-      'destroyWreck:w1',
-    ]);
-  });
-
-  it('branch 1 — wreck: non-fatal hit emits only a damage broadcast', () => {
-    const h = makeHarness();
-    h.wrecksMap.set('w1', { shipInstanceId: 'w1', health: 50, maxHealth: 50 } as unknown as WreckState);
-    h.wreckPoseCache.set('w1', pose());
-    h.router.apply('wreck-w1', 'shooterA', 20, undefined, undefined);
-    expect(log).toEqual(['damage:wreck-w1:hp=30:layer=hull:shooter=shooterA']);
-  });
-
-  it('branch 1 — unknown wreck id is a silent no-op', () => {
-    const h = makeHarness();
-    h.router.apply('wreck-nope', 'shooterA', 20, undefined, undefined);
-    expect(log).toEqual([]);
-  });
-
-  it('branch 2 — lingering hull: overkill frees slot + DESPAWN linger-<id> + schema delete', () => {
+  it('branch 1 — lingering hull: overkill frees slot + DESPAWN linger-<id> + schema delete', () => {
     const h = makeHarness();
     h.shipsMap.set('lng1', shipStub({ playerId: 'owner', shipInstanceId: 'lng1', isActive: false, health: 40 }));
     h.lingeringSlots.set('lng1', 7);
@@ -185,14 +151,14 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     expect(h.shipsMap.has('lng1')).toBe(false);
   });
 
-  it('branch 2 — lingering hull: already-dead is a silent no-op', () => {
+  it('branch 1 — lingering hull: already-dead is a silent no-op', () => {
     const h = makeHarness();
     h.shipsMap.set('lng1', shipStub({ shipInstanceId: 'lng1', isActive: false, alive: false }));
     h.router.apply('lng1', 'shooterB', 10, undefined, undefined);
     expect(log).toEqual([]);
   });
 
-  it('branch 3 — active ship: non-fatal hit emits damage + PLAYER_DAMAGED', () => {
+  it('branch 2 — active ship: non-fatal hit emits damage + PLAYER_DAMAGED', () => {
     const h = makeHarness();
     const ship = shipStub({ playerId: 'p1', shipInstanceId: 'p1', health: 80 });
     h.activeShips.set('p1', ship);
@@ -204,7 +170,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     ]);
   });
 
-  it('branch 3 — active ship: fatal hit adds destroy + SHIP_DESTROYED after PLAYER_DAMAGED', () => {
+  it('branch 2 — active ship: fatal hit adds destroy + SHIP_DESTROYED after PLAYER_DAMAGED', () => {
     const h = makeHarness();
     const ship = shipStub({ playerId: 'p1', shipInstanceId: 'p1', health: 20 });
     h.activeShips.set('p1', ship);
@@ -219,14 +185,14 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     expect(ship.alive).toBe(false);
   });
 
-  it('branch 3 — active ship not yet handshake-active is dropped with a diag', () => {
+  it('branch 2 — active ship not yet handshake-active is dropped with a diag', () => {
     const h = makeHarness();
     h.activeShips.set('p1', shipStub({ playerId: 'p1', isActive: false, alive: true }));
     h.router.apply('p1', 'shooterC', 25, undefined, undefined);
     expect(log).toEqual(['diag:damage_skipped_pending_join:p1']);
   });
 
-  it('branch 4 — drone: non-fatal hit emits damage (wire id) + diag + markHostile', () => {
+  it('branch 3 — drone: non-fatal hit emits damage (wire id) + diag + markHostile', () => {
     const h = makeHarness();
     const rec: SwarmDmgRecord = { id: 'swarm-9', slot: 1, entityId: 9, kind: 1, shipKind: DEFAULT_SHIP_KIND, shieldDown: true };
     h.swarm.set('swarm-9', rec);
@@ -242,7 +208,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     ]);
   });
 
-  it('branch 4 — drone: fatal hit appends evictSwarmEntity', () => {
+  it('branch 3 — drone: fatal hit appends evictSwarmEntity', () => {
     const h = makeHarness();
     const rec: SwarmDmgRecord = { id: 'swarm-9', slot: 1, entityId: 9, kind: 1, shipKind: DEFAULT_SHIP_KIND, shieldDown: true };
     h.swarm.set('swarm-9', rec);
@@ -258,7 +224,7 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     ]);
   });
 
-  it('branch 4 — structure (kind 2): damage + diag but NO markHostile (no AI brain)', () => {
+  it('branch 3 — structure (kind 2): damage + diag but NO markHostile (no AI brain)', () => {
     // Wave-system Phase 0.5 leak-fix lock: a structure shares the swarm damage
     // strategy but is NOT registered with the AiController, so marking it
     // hostile would buffer a `pendingHostile` entry that never drains. The
@@ -278,14 +244,14 @@ describe('DamageRouter.apply — golden-master dispatch (HC#1 load-bearing branc
     expect(log.some((l) => l.startsWith('markHostile:'))).toBe(false);
   });
 
-  it('branch 5 — asteroid (no swarmHealth entry): immune, silent no-op', () => {
+  it('branch 3 — asteroid (no swarmHealth entry): immune, silent no-op', () => {
     const h = makeHarness();
     h.swarm.set('swarm-2', { id: 'swarm-2', slot: 2, entityId: 2, kind: 0, shipKind: null });
     h.router.apply('swarm-2', 'shooterE', 50, undefined, undefined);
     expect(log).toEqual([]);
   });
 
-  it('branch 4 — unknown swarm id is a silent no-op', () => {
+  it('branch 3 — unknown swarm id is a silent no-op', () => {
     const h = makeHarness();
     h.router.apply('swarm-404', 'shooterE', 50, undefined, undefined);
     expect(log).toEqual([]);

@@ -241,7 +241,7 @@ export function ShipDetailModal({ ship, open, onClose, onSpawn, onAbandon }: Shi
             <Typography variant="body2" sx={{ fontSize: 12, lineHeight: 1.5 }}>
               {isMyPilotedShip
                 ? 'This is your active ship — abandoning will eject you to the galaxy map. Continue?'
-                : 'The hull will be left in space as a wreck for others to scavenge. This cannot be undone.'}
+                : 'The hull will shatter into scrap. This cannot be undone.'}
             </Typography>
           </DialogContent>
           <DialogActions sx={{ bgcolor: '#0c1020', justifyContent: 'flex-end', gap: 1, px: 2.5, pb: 2 }}>

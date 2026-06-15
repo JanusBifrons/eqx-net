@@ -1,6 +1,6 @@
 /**
  * Probe 8 (mobile-perf-investigation, 2026-05-24) — extend mirror entry
- * pooling to wrecks, lingering hulls, projectiles, and the
+ * pooling to lingering hulls, projectiles, and the
  * `handleSnapshot` snap-spread.
  *
  * Probe 7 pooled `mirror.ships` only. The o3dx44 capture (post-Probe-6+7)
@@ -13,7 +13,6 @@
  *     per snapshot)
  *   - mirror.projectiles.set (syncProjectiles — per in-flight projectile
  *     per snapshot)
- *   - mirror.wrecks.set (syncMirror — per wreck per identity-update)
  *   - snap = { ...snap, states: ... } → snap.states = ... (one alloc
  *     per snapshot saved)
  *
@@ -25,7 +24,6 @@
 import { describe, it, expect } from 'vitest';
 import type {
   ProjectileRenderState,
-  WreckRenderState,
   LingeringShipRenderState,
 } from '@core/contracts/IRenderer';
 
@@ -62,30 +60,6 @@ function updateProjectilePooled(
     prev.isGhost = false;
     prev.weaponId = p.weaponId;
   }
-}
-
-function updateWreckPooled(
-  wrecks: Map<string, WreckRenderState>,
-  id: string,
-  identity: { kind: string; health: number; maxHealth: number },
-): WreckRenderState {
-  let entry = wrecks.get(id);
-  if (!entry) {
-    entry = {
-      shipInstanceId: id,
-      x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
-      kind: identity.kind,
-      health: identity.health,
-      maxHealth: identity.maxHealth,
-    };
-    wrecks.set(id, entry);
-  } else {
-    entry.kind = identity.kind;
-    entry.health = identity.health;
-    entry.maxHealth = identity.maxHealth;
-    // pose untouched — owned by sibling sync site
-  }
-  return entry;
 }
 
 function updateLingeringPooled(
@@ -147,42 +121,6 @@ describe('Probe 8 — projectile pooling', () => {
   });
 });
 
-describe('Probe 8 — wreck pooling', () => {
-  it('first call creates new entry with pose zeros (pose owned by sibling site)', () => {
-    const m = new Map<string, WreckRenderState>();
-    updateWreckPooled(m, 'w1', { kind: 'fighter', health: 50, maxHealth: 100 });
-    const e = m.get('w1')!;
-    expect(e.shipInstanceId).toBe('w1');
-    expect(e.x).toBe(0); // pose-write hasn't happened yet
-    expect(e.kind).toBe('fighter');
-    expect(e.health).toBe(50);
-  });
-
-  it('subsequent calls UPDATE identity, preserve pose written by sibling site', () => {
-    const m = new Map<string, WreckRenderState>();
-    updateWreckPooled(m, 'w1', { kind: 'fighter', health: 50, maxHealth: 100 });
-    // Simulate sibling pose-write (syncWreckPoses).
-    const ref = m.get('w1')!;
-    ref.x = 123; ref.y = 456; ref.angle = 1.5;
-    // Schema diff updates health.
-    updateWreckPooled(m, 'w1', { kind: 'fighter', health: 30, maxHealth: 100 });
-    expect(m.get('w1')!).toBe(ref); // same reference
-    expect(m.get('w1')!.x).toBe(123); // pose preserved
-    expect(m.get('w1')!.y).toBe(456);
-    expect(m.get('w1')!.angle).toBe(1.5);
-    expect(m.get('w1')!.health).toBe(30); // identity updated
-  });
-
-  it('Map size does not grow on repeated identity updates', () => {
-    const m = new Map<string, WreckRenderState>();
-    updateWreckPooled(m, 'w1', { kind: 'fighter', health: 50, maxHealth: 100 });
-    for (let h = 49; h >= 0; h--) {
-      updateWreckPooled(m, 'w1', { kind: 'fighter', health: h, maxHealth: 100 });
-    }
-    expect(m.size).toBe(1);
-  });
-});
-
 describe('Probe 8 — lingering hull pooling (handleSnapshot path)', () => {
   it('first call creates new entry with provided pose', () => {
     const m = new Map<string, LingeringShipRenderState>();
@@ -218,7 +156,6 @@ describe('Probe 8 — handleSnapshot snap.states mutation (avoiding spread)', ()
       serverTick: 100,
       states: { 'orig-id': { playerId: 'p1', x: 0, y: 0 } as unknown },
       projectiles: [{ id: 'p1' }],
-      wrecks: [],
       drones: [],
     };
     const translated = { 'p1': { x: 0, y: 0 } };
@@ -236,20 +173,17 @@ describe('Probe 8 — handleSnapshot snap.states mutation (avoiding spread)', ()
   });
 });
 
-describe('Probe 8 — allocation-count parity sweep (all three entry types)', () => {
-  it('100 updates × 10 projectiles + 10 wrecks + 10 lingering → 30 Map entries total, no growth', () => {
+describe('Probe 8 — allocation-count parity sweep (projectiles + lingering)', () => {
+  it('100 updates × 10 projectiles + 10 lingering → 20 Map entries total, no growth', () => {
     const proj = new Map<string, ProjectileRenderState>();
-    const wrk = new Map<string, WreckRenderState>();
     const ling = new Map<string, LingeringShipRenderState>();
     for (let pass = 0; pass < 100; pass++) {
       for (let i = 0; i < 10; i++) {
         updateProjectilePooled(proj, `p${i}`, { x: pass, y: 0, vx: 1, vy: 0, ownerId: 'a', weaponId: 'h' });
-        updateWreckPooled(wrk, `w${i}`, { kind: 'fighter', health: 100 - pass, maxHealth: 100 });
         updateLingeringPooled(ling, `l${i}`, { x: pass, y: 0, vx: 0, vy: 0, angle: 0, ownerPlayerId: 'p' });
       }
     }
     expect(proj.size).toBe(10);
-    expect(wrk.size).toBe(10);
     expect(ling.size).toBe(10);
   });
 });

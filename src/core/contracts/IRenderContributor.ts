@@ -15,7 +15,7 @@
 
 export interface RenderContribution {
   /** Which render-mirror bucket this entity lives in
-   *  (e.g. 'ships' | 'lingeringShips' | 'wrecks' | 'swarm' | 'structures'). */
+   *  (e.g. 'ships' | 'lingeringShips' | 'swarm' | 'structures'). */
   readonly bucket: string;
   /** Non-spatial mirror fields that MUST survive the per-frame rebuild
    *  (e.g. ['kind'] / ['shieldDown'] / ['displayName']). Empty when none. */

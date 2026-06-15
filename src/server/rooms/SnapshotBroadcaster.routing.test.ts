@@ -84,7 +84,6 @@ function makeBaseDeps(playerCount: number): { deps: SnapshotBroadcasterDeps; cli
     lingeringSlots: new Map(),
     lingeringPoseCache: new Map(),
     shipsMap: ships as unknown as MapSchema<ShipState>,
-    wreckPoseCache: new Map(),
     liveProjectiles: new Map() as unknown as SnapshotBroadcasterDeps['liveProjectiles'],
     boostingPlayers: new Set(),
     thrustingPlayers: new Set(),

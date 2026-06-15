@@ -173,8 +173,7 @@ describe('lingering hull: snapshot is the sole correction path (no dual-path jit
     //
     // NEW contract — the body spawns ONLY from the snapshot path
     // (snapshotShipRouter.routeSnapshotShipStates), which always carries
-    // the authoritative pose; syncMirror is identity-only. This mirrors
-    // the wreck single-spawn-site pattern (SnapshotSyncHelpers.syncWreckPoses).
+    // the authoritative pose; syncMirror is identity-only (single-spawn-site).
     // Why this is safe: ships are NOT interest-filtered and snapshots flow
     // at 20 Hz while a client is connected, so the no-body window is one
     // ~50 ms snapshot interval; AND a hull with no authoritative pose has
@@ -192,8 +191,7 @@ describe('lingering hull: snapshot is the sole correction path (no dual-path jit
         'pose arrived — it sits at the seeded (0,0), an invisible body the',
         'local live-beam ray stops on (the "laser ghost at origin" bug).',
         'Fix: remove syncMirror\'s tryEnsureLingerPredBody spawn and let the',
-        'snapshot path (which carries the real pose) be the SOLE spawn site,',
-        'exactly like wrecks.',
+        'snapshot path (which carries the real pose) be the SOLE spawn site.',
       ].join('\n'),
     ).toBe(false);
 

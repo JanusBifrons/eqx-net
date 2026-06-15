@@ -17,7 +17,7 @@ import {
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
-import { SectorState, ShipState, WreckState } from './schema/SectorState.js';
+import { SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
@@ -67,7 +67,6 @@ import type { SnapshotMessage } from '../../shared-types/messages.js';
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
-import { WreckLifecycleCoordinator } from './WreckLifecycleCoordinator.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
 import { MissileSimulation } from './MissileSimulation.js';
 import { ShieldHullRouter } from './ShieldHullRouter.js';
@@ -441,31 +440,17 @@ export class SectorRoom extends Room<SectorState> {
    *  bookkeeping continue to iterate it. The fresh ship occupies
    *  `playerToSlot[playerId]` while the lingering ship sits in this
    *  parallel map. Cleaned up by `evictOwnerlessShip` (15-min TTL)
-   *  and by `convertShipToWreck` if a lingering hull is destroyed. */
+   *  and by the abandon→scrap flow if a lingering hull is abandoned. */
   private readonly lingeringSlots = new Map<string, number>();
   /** Phase 6b — pose mirror for lingering hulls. Mirrors `shipPoseCache`
    *  but keyed by shipInstanceId. Updated once per `update()` from
    *  the SAB so the snapshot can include them. */
   private readonly lingeringPoseCache = new Map<string, ShipPhysicsState>();
 
-  // Phase 4 — abandoned-ship hulls. When a player abandons their ship via
-  // the roster panel, the SAB slot is repurposed (slot stays allocated,
-  // ownership transfers from a player to a wreck). The physics worker
-  // continues to step the slot, so wrecks drift on their final-frame
-  // velocity, drag-decay over time, and collide with everything. Damage
-  // resolves through the standard `applyDamage` path; health 0 frees the
-  // slot back into `freeSlots` and removes the wreck.
-  /** Atomic ship→wreck conversion + wreck destruction. Owns
-   *  `wreckToSlot`, `slotToWreck`, `wreckPoseCache`, `wreckConversions`.
-   *  Extracted to `WreckLifecycleCoordinator.ts` (commit 15 of v3
-   *  refactor plan). Aliased below as getters so the unchanged call
-   *  sites in `update()` / snapshot serialiser / restore paths keep
-   *  reading the same Map identity. */
-  private wreckCoordinator!: WreckLifecycleCoordinator;
-  private get wreckToSlot(): Map<string, number> { return this.wreckCoordinator.wreckToSlot; }
-  private get slotToWreck(): Map<number, string> { return this.wreckCoordinator.slotToWreck; }
-  private get wreckPoseCache(): Map<string, ShipPhysicsState> { return this.wreckCoordinator.wreckPoseCache; }
-  private get wreckConversions(): number { return this.wreckCoordinator.wreckConversions; }
+  // Wrecks RETIRED (Equinox P6.3 / C3) — an abandoned hull now shatters into
+  // SCRAP (kind 3) and leaves the world. The former WreckLifecycleCoordinator
+  // (ship→wreck conversion + slot⇄wreck index + wreck pose cache) is removed;
+  // see `abandonShipToScrap` / `abandonLingeringHullToScrap`.
 
   // Phase 5c: swarm entities (asteroids, drones) live in the same SAB slot
   // pool as ships, but their wire-side metadata (kind, radius, last-broadcast
@@ -822,7 +807,7 @@ export class SectorRoom extends Room<SectorState> {
    *  rewind + 4-target sweep + aggregate hit_ack. Extracted to
    *  `PlayerFireResolver.ts`. */
   private playerFireResolver!: PlayerFireResolver;
-  /** Damage routing — 4 branches (wreck / lingering / active / swarm).
+  /** Damage routing — 3 branches (lingering / active / swarm).
    *  Extracted to `DamageRouter.ts`. */
   private damageRouter!: DamageRouter;
   /** Player respawn handler. Extracted to `RespawnHandler.ts`. */
@@ -1093,41 +1078,9 @@ export class SectorRoom extends Room<SectorState> {
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
     });
 
-    // Atomic ship→wreck conversion + wreck destruction. Owns the
-    // wreckTo/From/Pose maps + the diagnostic counter. The 8-collaborator
-    // transaction lives here; the room provides the rest of the world
-    // (slot maps, identity maps, snapshot ring, schema). Extracted to
-    // WreckLifecycleCoordinator.ts (commit 15 of v3 refactor plan).
-    this.wreckCoordinator = new WreckLifecycleCoordinator({
-      getActiveShip: (pid) => this.getActiveShip(pid),
-      newWreckState: () => new WreckState(),
-      state: this.state,
-      sabF32: this.sabF32,
-      shipPoseCache: this.shipPoseCache,
-      lingeringSlots: this.lingeringSlots,
-      lingeringPoseCache: this.lingeringPoseCache,
-      ownerlessShips: this.ownerlessShips,
-      playerToSlot: this.playerToSlot,
-      slotToPlayer: this.slotToPlayer,
-      freeSlots: this.freeSlots,
-      lastFireClientTick: this.lastFireClientTick,
-      initialSpawnPositions: this.initialSpawnPositions,
-      mountTicker: this.mountTicker,
-      playerToActiveShipInstance: this.playerToActiveShipInstance,
-      playerToSession: this.playerToSession,
-      sessionToPlayer: this.sessionToPlayer,
-      playerToUser: this.playerToUser,
-      snapshotRing: this.snapshotRing,
-      clients: this.clients,
-      postToWorker: (cmd) => this.postToWorker(cmd),
-      sectorKey: () => this.sectorKey,
-      logger,
-      serverLogEvent,
-    });
-
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
-    // lag-comp rewind, 4-target sweep (other players, lingering hulls,
-    // swarm, wrecks), and the aggregate hit_ack. Per-mount laser_fired
+    // lag-comp rewind, 3-target sweep (other players, lingering hulls,
+    // swarm), and the aggregate hit_ack. Per-mount laser_fired
     // broadcast per resolved fire.
     this.playerFireResolver = new PlayerFireResolver({
       sabF32: this.sabF32,
@@ -1140,7 +1093,6 @@ export class SectorRoom extends Room<SectorState> {
       playerToSlot: this.playerToSlot,
       lingeringSlots: this.lingeringSlots,
       lingeringPoseCache: this.lingeringPoseCache,
-      wreckToSlot: this.wreckCoordinator.wreckToSlot,
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
@@ -1204,18 +1156,15 @@ export class SectorRoom extends Room<SectorState> {
       broadcast: (type, msg) => this.broadcast(type, msg),
     });
 
-    // Damage routing. Four branches (wreck / lingering / active /
-    // swarm), each composing ShieldHullRouter + WreckLifecycleCoordinator
-    // + evictSwarmEntity. Extracted to DamageRouter.ts.
+    // Damage routing. Three branches (lingering / active /
+    // swarm), each composing ShieldHullRouter + evictSwarmEntity.
+    // Extracted to DamageRouter.ts.
     this.damageRouter = new DamageRouter({
       serverTick: () => this.serverTick,
       shipsMap: this.state.ships,
-      wrecksMap: this.state.wrecks,
       shipPoseCache: this.shipPoseCache,
       lingeringSlots: this.lingeringSlots,
       lingeringPoseCache: this.lingeringPoseCache,
-      wreckPoseCache: this.wreckCoordinator.wreckPoseCache,
-      destroyWreck: (id) => this.destroyWreck(id),
       freeSlots: this.freeSlots,
       shieldHullRouter: this.shieldHullRouter,
       getActiveShip: (pid) => this.getActiveShip(pid),
@@ -1290,7 +1239,7 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     // Server-side projectile lifecycle. Spawn + per-tick sweep + cleanup.
-    // Composes the 4-pass (player / swarm / wreck / lingering) collision
+    // Composes the 3-pass (player / swarm / lingering) collision
     // sweep with the injected playerProjectileSweep (shield-vs-hull
     // routing). Extracted to ProjectilePipeline.ts.
     this.projectiles = new ProjectilePipeline({
@@ -1302,7 +1251,6 @@ export class SectorRoom extends Room<SectorState> {
       playerSweep: (ship, fx, fy, sx, sy, r, cx, cy, ang) =>
         this.playerProjectileSweep(ship, fx, fy, sx, sy, r, cx, cy, ang),
       swarmRegistry: this.swarmRegistry,
-      wreckToSlot: this.wreckCoordinator.wreckToSlot,
       lingeringSlots: this.lingeringSlots,
       applyDamage: (targetId, shooterId, damage, hitX, hitY) =>
         this.applyDamage(targetId, shooterId, damage, hitX, hitY),
@@ -1377,7 +1325,6 @@ export class SectorRoom extends Room<SectorState> {
       lingeringSlots: this.lingeringSlots,
       lingeringPoseCache: this.lingeringPoseCache,
       shipsMap: this.state.ships,
-      wreckPoseCache: this.wreckCoordinator.wreckPoseCache,
       liveProjectiles: this.projectiles.liveProjectiles,
       boostingPlayers: this.boostingPlayers,
       thrustingPlayers: this.thrustingPlayers,
@@ -2109,10 +2056,9 @@ export class SectorRoom extends Room<SectorState> {
       // floating scrap. Only the active-hull case (we have a playerId-keyed slot
       // + pose); lingering hulls are skipped (their slot bookkeeping is already
       // torn down by the lingering death policy). Spawn BEFORE the slot is freed
-      // by the despawn/wreck poll — at SHIP_DESTROYED time the active slot is
-      // still allocated (the death policy only sets `ship.alive = false`). Read
-      // the death pose from shipPoseCache ?? SAB, exactly like
-      // WreckLifecycleCoordinator.convertShipToWreck.
+      // — at SHIP_DESTROYED time the active slot is still allocated (the death
+      // policy only sets `ship.alive = false`). Read the death pose from
+      // shipPoseCache ?? SAB.
       if (activeHull !== undefined && shipScrapGroups(activeHull.kind).length > 0) {
         const slot = this.playerToSlot.get(evt.targetId);
         if (slot !== undefined) {
@@ -2492,8 +2438,7 @@ export class SectorRoom extends Room<SectorState> {
    * `evictSwarmEntity` frees the slot, so the dying drone's pose is still live
    * in the SAB. Composite-kind drones (e.g. havok) yield one scrap body per
    * component; polygon kinds (fighter/scout/…) yield nothing. Reads the pose
-   * off the SAB via `rec.slot` (exactly like WreckLifecycleCoordinator reads a
-   * dying ship's pose).
+   * off the SAB via `rec.slot`.
    */
   private spawnScrapFromDrone(rec: SwarmEntityRecord): void {
     // Anti-recursion: a dying SCRAP piece (kind 3) routes through the same
@@ -2757,14 +2702,14 @@ export class SectorRoom extends Room<SectorState> {
    * hull rather than spawning a duplicate. Mirrors the disconnect-linger machine:
    * a schema `isActive=false` entry + SAB pose + `linger-<id>` worker body +
    * lingering bookkeeping. Skips a hull whose roster row is gone (abandoned → the
-   * abandon→wreck flow owns it) or whose identity is already live.
+   * abandon→scrap flow already removed it) or whose identity is already live.
    */
   private restoreLingeringHullsFromSnapshot(rows: readonly SectorSnapshotLingeringHull[]): void {
     for (const r of rows) {
       if (r.shipInstanceId === '' || r.health <= 0) continue;
       if (this.state.ships.has(r.shipInstanceId)) continue;
       // Roster row gone ⇒ abandoned before shutdown ⇒ do NOT resurrect it as a
-      // lingering hull (the abandon→wreck flow owns it).
+      // lingering hull (the abandon→scrap flow already removed it).
       if (getPlayerShipStore().get(r.shipInstanceId) === null) continue;
       const kind = getShipKind(r.kind);
       const slot = this.freeSlots.pop();
@@ -2801,7 +2746,7 @@ export class SectorRoom extends Room<SectorState> {
       this.ownerlessShips.set(r.shipInstanceId, null);
       this.snapshotRing.registerEntity(r.shipInstanceId);
       // Worker body keyed `linger-<id>` (the REKEY invariant the fresh-spawn-
-      // displace + abandon→wreck paths rely on). SPAWN creates at angle 0; a
+      // displace + abandon→scrap paths rely on). SPAWN creates at angle 0; a
       // SET_POSITION applies the full persisted pose.
       const bodyKey = `linger-${r.shipInstanceId}`;
       this.postToWorker({ type: 'SPAWN', slot, playerId: bodyKey, x: r.x, y: r.y, kindId: r.kind });
@@ -3055,7 +3000,7 @@ export class SectorRoom extends Room<SectorState> {
    * Resolve live stats for a click-to-inspect selection (Item B5). Returns null
    * when the entity is gone (dead / despawned / lingering-only) — the
    * `SelectionStatsSubsystem` auto-clears the selection on null so the ~5 Hz
-   * emitter never leaks. Only ship + structure ids reach here (drones/wrecks
+   * emitter never leaks. Only ship + structure ids reach here (drones
    * read health client-side from the mirror).
    *
    *   - ship      → `id` is a playerId; resolve `state.ships.get(id)`. A
@@ -3691,7 +3636,7 @@ export class SectorRoom extends Room<SectorState> {
         // across this transition (the player's fresh hull is tracked
         // separately). WS-12 / R2.26: that marker is a persist-forever `null`
         // (no despawn timer) — the displaced hull stays in the world until the
-        // owner abandons it (→ wreck) or it is destroyed; it never times out.
+        // owner abandons it (→ scrap) or it is destroyed; it never times out.
         const lingeringSlot = this.playerToSlot.get(playerId);
         if (lingeringSlot !== undefined && existingShip && existingShip.shipInstanceId !== '') {
           this.lingeringSlots.set(existingShip.shipInstanceId, lingeringSlot);
@@ -3720,7 +3665,6 @@ export class SectorRoom extends Room<SectorState> {
           // Visible bug: client predicts the hull moving on collision
           // → snapshot pulls it back to the stale pose → repeat.
           //
-          // Same shape as the Phase 4 wreck rekey at line ~2840.
           // playerToSlot in the worker also gets remapped to the new
           // key, so SAB writes continue to land in the correct (now-
           // lingering) slot.
@@ -4030,9 +3974,9 @@ export class SectorRoom extends Room<SectorState> {
     // roster-full case (bindRosterEntry returns '' on RosterFullError).
     // The synthetic UUID then had no roster row, so the 30-tick
     // abandon-detection sweep saw `store.get(syntheticUUID) === null`
-    // and immediately reaped the ship as a wreck — 18 ms after spawn.
+    // and immediately reaped the ship — 18 ms after spawn.
     // Regression test:
-    // `tests/integration/sectorRoom/rosterFullWreck.test.ts`.
+    // `tests/integration/sectorRoom/rosterFullNoReap.test.ts`.
     if (ship.shipInstanceId === '' && this.sectorKey === null) {
       ship.shipInstanceId = randomUUID();
     }
@@ -4042,8 +3986,8 @@ export class SectorRoom extends Room<SectorState> {
     // already resolve the player's active hull.
     this.playerToActiveShipInstance.set(playerId, ship.shipInstanceId);
     // Tripwire (playtest 2026-06-10 Issue 6): a fresh-spawn bind must never land
-    // on a shipInstanceId already in the schema map — that means a lingering /
-    // wreck hull under the same key was NOT torn down first (the evict-then-
+    // on a shipInstanceId already in the schema map — that means a lingering
+    // hull under the same key was NOT torn down first (the evict-then-
     // restore above is the guard). Log loudly so any future regression of that
     // invariant is visible instead of silently clobbering a live ShipState.
     if (this.state.ships.has(ship.shipInstanceId)) {
@@ -4317,29 +4261,6 @@ export class SectorRoom extends Room<SectorState> {
     },
   ): void {
     this.rosterPersistence.markLinger(shipInstanceId, pose);
-  }
-
-  /**
-   * Phase 4 — promote a player's ship to an ownerless wreck in this
-   * sector. Called by the abandon-detection poll in `update()` when a
-   * ship's roster row has been deleted while still alive in the room.
-   *
-   * Critical invariants:
-   *  - The SAB slot is RETAINED (the worker keeps stepping the body).
-   *    We re-key it under `slotToWreck` and pull it out of
-   *    `slotToPlayer`. `freeSlots` only ever takes the slot back when
-   *    the wreck is destroyed by damage.
-   *  - All player-keyed maps for this slot are torn down so no stray
-   *    snapshot path serialises the ship after conversion.
-   *  - The player's session is force-leave'd. Their next galaxy-map
-   *    visit shows their (now smaller) roster minus the abandoned row.
-   */
-  private convertShipToWreck(playerId: string): void {
-    this.wreckCoordinator.convertShipToWreck(playerId);
-  }
-
-  private destroyWreck(shipInstanceId: string): void {
-    this.wreckCoordinator.destroyWreck(shipInstanceId);
   }
 
   /**
@@ -4626,10 +4547,8 @@ export class SectorRoom extends Room<SectorState> {
       sabU32: this.sabU32,
       playerToSlot: this.playerToSlot,
       lingeringSlots: this.lingeringSlots,
-      wreckToSlot: this.wreckToSlot,
       shipPoseCache: this.shipPoseCache,
       lingeringPoseCache: this.lingeringPoseCache,
-      wreckPoseCache: this.wreckPoseCache,
       sabAppliedTicks: this.sabAppliedTicks,
     });
 
@@ -4649,10 +4568,9 @@ export class SectorRoom extends Room<SectorState> {
     if (this.sectorKey !== null && this.serverTick % 30 === 0 && this.state.ships.size > 0) {
       const abandoned = findAbandonedShips(this.state.ships, getPlayerShipStore());
       for (const a of abandoned) {
-        // Equinox P6.3 (C2) — abandoned hulls shatter into SCRAP, not a wreck.
-        // (The dead wreck-conversion + entity/schema/wire plumbing is removed in
-        // the C3 follow-up PR; until then it stays inert — nothing creates a
-        // WreckState, so state.wrecks is always empty.)
+        // Equinox P6.3 — abandoned hulls shatter into SCRAP and leave the world.
+        // (Wrecks are fully retired — the entity/schema/wire/render plumbing was
+        // removed in C3; nothing creates a wreck.)
         if (a.lingering) this.abandonLingeringHullToScrap(a.shipInstanceId);
         else this.abandonShipToScrap(a.playerId);
       }

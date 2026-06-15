@@ -10,14 +10,14 @@ field cluster owning any piece of state they need to touch.
 
 | Subsystem | File | Concern | Field cluster |
 |---|---|---|---|
-| `slots` | [`PlayerSlotMap.ts`](../../src/server/rooms/PlayerSlotMap.ts) | SAB slot allocation + 7-map bookkeeping | `playerToSlot`, `slotToPlayer`, `freeSlots`, `wreckToSlot`, `slotToWreck`, `lingeringSlots`, `initialSpawnPositions` |
+| `slots` | [`PlayerSlotMap.ts`](../../src/server/rooms/PlayerSlotMap.ts) | SAB slot allocation + bookkeeping | `playerToSlot`, `slotToPlayer`, `freeSlots`, `lingeringSlots`, `initialSpawnPositions` |
 | `swarm` | [`SwarmLifecycleManager.ts`](../../src/server/rooms/SwarmLifecycleManager.ts) | Swarm entity registry + interest grid | `registry`, `grid`, `interestScratch` |
 | `physics` | [`PhysicsBridge.ts`](../../src/server/rooms/PhysicsBridge.ts) | Worker IPC boundary | `worker` (handle), `sabAppliedTicks`, `post(cmd)` |
 | `combat` | [`CombatSubsystem.ts`](../../src/server/rooms/CombatSubsystem.ts) | Fire / projectile / drone HP+shield state | `lastFireClientTick`, `liveProjectiles`, `projectileCounter`, `swarmHealth`, `swarmShield`, `swarmShieldLastDmg` |
 | `mounts` | [`MountAimSubsystem.ts`](../../src/server/rooms/MountAimSubsystem.ts) | Per-mount turret rotation state | `playerMountAngles`, `playerSlotTargets`, `mountTargetsScratch`, `droneMountAngles`, `droneSlotTargets`, `droneMountTargetsScratch` |
 | `ai` | [`AiSubsystem.ts`](../../src/server/rooms/AiSubsystem.ts) | Server-authoritative AI controller + per-tick view scratch | `controller` (AiController), `scratch` (AiPlayerView[]) |
 | `snapshot` | [`SnapshotBroadcaster.ts`](../../src/server/rooms/SnapshotBroadcaster.ts) | Broadcast cadence + idle tracker + TiDi clock + boost/thrust sets | `encoder`, `broadcastCounter`, `lastInputCaches`, `idleTracker`, `forceBroadcastUntilTick`, `ticksSinceSnapshot`, `boostingPlayers`, `thrustingPlayers`, `lastSentClockRate`, `clock` (SimulationClock) |
-| `wrecks` | [`WreckLifecycleCoordinator.ts`](../../src/server/rooms/WreckLifecycleCoordinator.ts) | Wreck conversion + ownerless-hull evict timers | `ownerlessShips`, `wreckConversions` |
+| ownerless evict | [`OwnerlessShipEvictor.ts`](../../src/server/rooms/OwnerlessShipEvictor.ts) | Lingering-hull ownerless-evict timers (the former `WreckLifecycleCoordinator` was removed when wrecks were retired — P6.3/C3; abandon now → scrap) | `ownerlessShips` |
 | `players` | [`PlayerSessionManager.ts`](../../src/server/rooms/PlayerSessionManager.ts) | Session bookkeeping + per-tick input counter | `sessionToPlayer`, `playerToSession`, `inputCountThisTick`, `playerToUser`, `playerToActiveShipInstance`, `playerToTransitInFlight` |
 | `budget` | [`TickBudgetTelemetry.ts`](../../src/server/rooms/TickBudgetTelemetry.ts) | Per-tick timing + hitch detection + 60-sample emit | `sums`, `thisTickPhases`, `historyRing`, `sampleCount`, `maxTotalMs`, `overBudgetCount`, `lastHitchAtMs` |
 
@@ -39,10 +39,10 @@ mature.
 - `onJoin` / `onLeave` lifecycle methods. `onJoin` has 5 branches plus
   one fall-through per [Trap 8](#trap-8-onjoin-branch-list); the body
   spans every subsystem above.
-- `convertShipToWreck` / `destroyWreck` / `evictOwnerlessShip` — the
-  wreck-lifecycle transactions. Their state owner exists
-  (`WreckLifecycleCoordinator`); the method bodies migrate once
-  collaborators stabilise.
+- `abandonShipToScrap` / `abandonLingeringHullToScrap` — the abandon
+  transactions (an abandoned hull shatters into scrap + frees its slot;
+  wrecks were retired P6.3/C3, so these replaced the old
+  `convertShipToWreck`/`destroyWreck` + `WreckLifecycleCoordinator`).
 - The worker `onmessage` dispatcher — a single inline switch that
   routes `READY`, `SLEEP_TRANSITION`, `CONTACT_BATCH` (per
   [Trap 4](#trap-4-no-multi-subscriber-fan-out)) to the right
@@ -61,7 +61,7 @@ their own cast interfaces. Currently exposed:
 
 - `serverTick` (getter)
 - `aiPlayerScratch` (getter → `this.ai.scratch`)
-- `ownerlessShips` (getter → `this.wrecks.ownerlessShips`)
+- `ownerlessShips` (getter → `this.ownerlessShips`)
 - `applyDamage(...)` (bound method on SectorRoom)
 - `postToWorker(cmd)` (bound method on SectorRoom)
 
@@ -109,34 +109,36 @@ angles after the broadcast lets prediction use this tick's input to
 plan next tick's aim. Any future migration of `tickPlayerMounts` into
 `MountAimSubsystem` MUST preserve this ordering.
 
-## Trap 6: eight-collaborator transactions
+## Trap 6: multi-collaborator transactions
 
-`convertShipToWreck` touches:
+> **Wrecks retired (P6.3/C3).** This trap originally described
+> `convertShipToWreck` (an 8-collaborator transaction) + why
+> `WreckLifecycleCoordinator` was its own subsystem. Wrecks are gone:
+> abandon now produces SCRAP via `abandonShipToScrap` /
+> `abandonLingeringHullToScrap` (inline on SectorRoom), which is the
+> surviving multi-collaborator example. Note it spawns scrap + **DESPAWNs**
+> the body (no wreck rekey) instead of re-keying a slot to a wreck.
 
-1. `state.wrecks` (schema)
-2. `slots.wreckToSlot` / `slots.slotToWreck` (PlayerSlotMap)
-3. Worker `REKEY_SHIP` post (PhysicsBridge)
-4. `slots.playerToSlot` / `slots.slotToPlayer` (PlayerSlotMap)
-5. `combat.lastFireClientTick` (CombatSubsystem)
-6. `mounts.playerMountAngles` / `mounts.playerSlotTargets`
-   (MountAimSubsystem)
-7. `slots.initialSpawnPositions` (PlayerSlotMap)
-8. `wreckPoseCache` (still on SectorRoom — would move to PhysicsBridge)
-9. `snapshotRing.unregisterEntity` (still inline — would move to
-   LagCompRing)
-10. `state.ships` delete (schema)
-11. `players.playerToActiveShipInstance` (PlayerSessionManager)
-12. `client.leave(1000)` (Colyseus client lifecycle)
-13. `players.playerToSession` / `sessionToPlayer` / `playerToUser`
+`abandonShipToScrap` touches:
+
+1. `spawnHullScrap` → `ScrapSpawner.spawnFromDeath` (composite hull → scrap)
+2. `slots.freeSlots` push + worker `DESPAWN` post (PhysicsBridge)
+3. `slots.playerToSlot` / `slots.slotToPlayer` (PlayerSlotMap)
+4. `combat.lastFireClientTick` (CombatSubsystem)
+5. `mounts.clearPlayer` (MountAimSubsystem)
+6. `slots.initialSpawnPositions` (PlayerSlotMap)
+7. `shipPoseCache` + `snapshotRing.unregisterEntity`
+8. `state.ships` delete (schema)
+9. `players.playerToActiveShipInstance` (PlayerSessionManager)
+10. `client.leave(1000)` (Colyseus client lifecycle)
+11. `players.playerToSession` / `sessionToPlayer` / `playerToUser`
     (PlayerSessionManager)
-14. `wrecks.wreckConversions++` (WreckLifecycleCoordinator)
-15. `bus.emit('SHIP_DESTROYED', ...)` (bus)
 
-This is why `WreckLifecycleCoordinator` exists as a SEPARATE subsystem
-from `RosterPersistenceAdapter` — the R1 plan parked
-`convertShipToWreck` in Roster, which would have made Roster a
-god-method by transitive import. Splitting them was the hostile
-review's #4 finding.
+The lingering variant (`abandonLingeringHullToScrap`) is keyed by
+`shipInstanceId` and touches ONLY the lingering bookkeeping
+(`lingeringSlots` / `lingeringPoseCache` / `ownerlessShips`) — never a
+playerId-keyed map, because the owner may be piloting a different active
+hull.
 
 ## Trap 8: `onJoin` branch list
 

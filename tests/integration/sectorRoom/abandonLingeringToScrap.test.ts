@@ -1,7 +1,7 @@
 /**
  * Equinox P6.3 (C2 — "scrap replaces wrecks") — abandoning a LINGERING hull
  * (displaced / disconnected, isActive=false, still in-world) shatters it into
- * scrap instead of converting it to a wreck. Supersedes abandonLingeringToWreck.
+ * scrap and removes it. Supersedes abandonLingeringToWreck.
  *
  * This is the abandon-POLL trigger for a lingering hull (roster row deleted),
  * distinct from the combat-DEATH trigger locked by lingeringScrapOnDeath.test.ts
@@ -86,7 +86,6 @@ describe('SectorRoom integration — abandon lingering hull → scrap (Equinox P
     }
 
     expect(state.ships.get(origId), 'abandoned lingering hull leaves state.ships').toBeUndefined();
-    expect(state.wrecks.size, 'no wreck is ever created — scrap replaces wrecks').toBe(0);
     expect(scrapCount(internal)).toBe(shipScrapGroups('havok').length);
     expect(getPlayerShipStore().get(origId)).toBeNull();
 

@@ -56,7 +56,6 @@ async function main(): Promise<void> {
     ]),
     localPlayerId: 'local-player',
     swarm: new Map(),
-    wrecks: new Map(),
     lingeringShips: new Map(),
     projectiles: new Map(),
     boostingShips: new Set(),

@@ -139,7 +139,7 @@ export class LeaveHandler {
       // the hull also persists in-world (`lingeringHulls[]` in the sector
       // snapshot) and a returning player resumes by shipId. The roster has no
       // enforced TTL (no prune sweep), so the hull effectively lingers forever
-      // (R2.26) until combat / respawn-evict / abandon → wreck.
+      // (R2.26) until combat / respawn-evict / abandon → scrap.
       const b = slotBase(slot!);
       d.rosterPersistence.markLinger(ship!.shipInstanceId, {
         x:      d.sabF32[b + SLOT_X_OFF]!,
@@ -158,7 +158,7 @@ export class LeaveHandler {
       // gates that check `ownerlessShips` still detect the lingering hull) but
       // arm NO eviction timer. The hull leaves the world ONLY via the existing
       // explicit paths: combat destruction, the owner resuming a different
-      // roster ship (respawn-evict), or abandonment → wreck (unchanged). The
+      // roster ship (respawn-evict), or abandonment → scrap (unchanged). The
       // `ttlMs` above still bounds the Limbo reconnect-DATA window, not the hull.
       const shipInstanceId = ship!.shipInstanceId;
       d.ownerlessShips.set(shipInstanceId, null);

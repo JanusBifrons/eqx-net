@@ -6,7 +6,7 @@
  *   1. `pose-core`  → the binary swarm send (`SwarmBroadcaster`). It builds the
  *      per-(client,tick) interest scratch.
  *   2. `json-slice` → the slim snapshot slices (`SnapshotBroadcaster`:
- *      states / wrecks / projectiles / drones / missiles). It REUSES that
+ *      states / projectiles / drones / missiles). It REUSES that
  *      scratch — no second `query9`. **HC#4: pose-core MUST run before
  *      json-slice; the router guarantees that order.**
  *

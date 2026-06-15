@@ -62,7 +62,6 @@ interface Internals {
     thrustingShips?: Set<string>;
     lingeringShips?: Map<string, unknown>;
     projectiles?: Map<string, unknown>;
-    wrecks?: Map<string, unknown>;
     liveBeams?: Map<number, unknown>;
     remoteLasers?: Map<string, unknown>;
     pendingDamageNumbers?: unknown[];
@@ -123,7 +122,6 @@ function synthesizeSnapshot(playerId: string, ev: SnapshotEventData): SnapshotMe
     },
     drones: [],
     projectiles: [],
-    wrecks: [],
     // Empty thrust/boost sets — captures don't carry them.
     boostingShips: [],
     thrustingShips: [],
@@ -173,7 +171,6 @@ export async function replayCapture(
   internals.mirror.swarm = internals.mirror.swarm ?? new Map();
   internals.mirror.lingeringShips = internals.mirror.lingeringShips ?? new Map();
   internals.mirror.projectiles = internals.mirror.projectiles ?? new Map();
-  internals.mirror.wrecks = internals.mirror.wrecks ?? new Map();
   internals.mirror.liveBeams = internals.mirror.liveBeams ?? new Map();
   internals.mirror.remoteLasers = internals.mirror.remoteLasers ?? new Map();
   internals.mirror.boostingShips = internals.mirror.boostingShips ?? new Set();

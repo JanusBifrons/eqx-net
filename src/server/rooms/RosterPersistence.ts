@@ -103,7 +103,7 @@ export class RosterPersistence {
   /** Linger: pose freeze at disconnect, expiresAt = now + 15 min. The roster
    *  `expiresAt` is unenforced (no prune sweep), so post-WS-B this is the only
    *  "linger window" — effectively forever (R2.26), until combat / respawn-evict
-   *  / abandon → wreck. The value is kept for symmetry / a future prune. */
+   *  / abandon → scrap. The value is kept for symmetry / a future prune. */
   markLinger(shipInstanceId: string, pose: RosterPose): void {
     const d = this.deps;
     if (d.sectorKey() === null || shipInstanceId === '') return;
@@ -124,8 +124,8 @@ export class RosterPersistence {
     store.markStored(shipInstanceId, { ...pose, sectorKey });
   }
 
-  /** Destruction — drop the row. Phase 4 wreck flow handles the
-   *  "leave a wreck behind" semantics separately. */
+  /** Destruction — drop the row. The abandon→scrap flow handles the
+   *  "shatter the hull into scrap" semantics separately. */
   delete(shipInstanceId: string): void {
     const d = this.deps;
     if (d.sectorKey() === null || shipInstanceId === '') return;

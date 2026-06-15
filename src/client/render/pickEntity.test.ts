@@ -10,7 +10,6 @@
  *   - overlapping candidates → the NEAREST centre wins
  *   - asteroids (kind 0) ARE selectable (WS-9/R2.23)
  *   - structures (kind 2) ARE selectable
- *   - wrecks ARE selectable
  *   - lingering hulls ARE selectable (WS-9/R2.23, by shipInstanceId)
  */
 import { describe, it, expect } from 'vitest';
@@ -18,7 +17,6 @@ import type {
   RenderMirror,
   ShipRenderState,
   SwarmRenderState,
-  WreckRenderState,
 } from '@core/contracts/IRenderer';
 import { pickEntityAt } from './pickEntity.js';
 
@@ -35,10 +33,6 @@ function swarm(x: number, y: number, kind: number, radius = 30): SwarmRenderStat
   } as SwarmRenderState;
 }
 
-function wreck(x: number, y: number, kind = 'fighter'): WreckRenderState {
-  return { shipInstanceId: '', x, y, vx: 0, vy: 0, angle: 0, angvel: 0, kind, health: 50, maxHealth: 100 };
-}
-
 function lingering(x: number, y: number, ownerPlayerId: string, kind = 'fighter'): ShipRenderState & { ownerPlayerId: string } {
   return { x, y, angle: 0, vx: 0, vy: 0, kind, ownerPlayerId };
 }
@@ -47,7 +41,6 @@ function mirror(over: Partial<RenderMirror>): RenderMirror {
   return {
     ships: new Map(),
     swarm: new Map(),
-    wrecks: new Map(),
     localPlayerId: null,
     ...over,
   } as RenderMirror;
@@ -127,14 +120,6 @@ describe('pickEntityAt', () => {
     const m = mirror({ swarm: new Map([[9, swarm(0, 0, 2, 50)]]) });
     const hit = pickEntityAt(0, 0, m);
     expect(hit).toEqual({ id: 'swarm-9', kind: 'structure' });
-  });
-
-  it('wrecks ARE selectable (by shipInstanceId)', () => {
-    const w = wreck(200, 200);
-    w.shipInstanceId = 'wreck-abc';
-    const m = mirror({ wrecks: new Map([['wreck-abc', w]]) });
-    const hit = pickEntityAt(202, 198, m);
-    expect(hit).toEqual({ id: 'wreck-abc', kind: 'wreck' });
   });
 
   it('a structure closer than a drone wins across buckets', () => {

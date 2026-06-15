@@ -19,8 +19,7 @@
  *   - DRONES (`mirror.swarm`, `kind === 1`), STRUCTURES (`kind === 2`) and
  *     ASTEROIDS (`kind === 0`, WS-9/R2.23 — "every entity should be selectable
  *     except weapons fire").
- *   - WRECKS (`mirror.wrecks`) and LINGERING HULLS (`mirror.lingeringShips`,
- *     WS-9/R2.23 — surface the owner).
+ *   - LINGERING HULLS (`mirror.lingeringShips`, WS-9/R2.23 — surface the owner).
  *
  * Explicitly NOT selectable: weapons fire (projectiles / missiles / beams live
  * in their own mirror maps, never scanned here).
@@ -30,10 +29,9 @@
  * frame the same way:
  *   - ship  → `playerId` (key in `mirror.ships`)
  *   - drone / structure / asteroid → `swarm-${entityId}`
- *   - wreck → `shipInstanceId` (key in `mirror.wrecks`)
  *   - lingering → `shipInstanceId` (key in `mirror.lingeringShips`)
  *
- * Radius model: swarm entries carry a `radius`; ships/wrecks derive theirs from
+ * Radius model: swarm entries carry a `radius`; ships derive theirs from
  * the ship-kind catalogue collision radius. The hit test is "distance to centre
  * < entity radius + TAP_SLOP" so a tap just outside a small drone still lands.
  * Among overlapping candidates the NEAREST centre wins.
@@ -41,11 +39,11 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 
-/** Selectable entity classes. `drone`/`wreck`/`asteroid`/`lingering` read from
+/** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
  *  `entity_stats` for hp/shield (structures also read their slice from the
  *  mirror — WS-9/R2.8). */
-export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'wreck' | 'asteroid' | 'lingering';
+export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering';
 
 export interface PickedEntity {
   /** Mirror-resolvable id (see module docstring for the per-kind form). */
@@ -105,22 +103,6 @@ export function pickEntityAt(
     }
   }
 
-  // ── Wrecks (shipInstanceId-keyed). ──
-  if (mirror.wrecks) {
-    for (const [shipInstanceId, wreck] of mirror.wrecks) {
-      const radius = shipRadius(wreck.kind);
-      const dx = wreck.x - worldX;
-      const dy = wreck.y - worldY;
-      const distSq = dx * dx + dy * dy;
-      const reach = radius + TAP_SLOP;
-      if (distSq <= reach * reach && distSq < bestDistSq) {
-        bestDistSq = distSq;
-        bestId = shipInstanceId;
-        bestKind = 'wreck';
-      }
-    }
-  }
-
   // ── Lingering hulls (shipInstanceId-keyed; displaced/disconnected players).
   // WS-9/R2.23 — selectable to surface whose hull it is. ──
   if (mirror.lingeringShips) {
@@ -142,7 +124,7 @@ export function pickEntityAt(
   return { id: bestId, kind: bestKind };
 }
 
-/** Collision/sprite radius for a ship/wreck kind, with a safe fallback. */
+/** Collision/sprite radius for a ship kind, with a safe fallback. */
 function shipRadius(kind: string | undefined): number {
   const k = getShipKind(kind);
   return k?.radius ?? SHIP_FALLBACK_RADIUS;

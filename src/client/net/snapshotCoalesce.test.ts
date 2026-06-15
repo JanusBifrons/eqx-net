@@ -56,7 +56,6 @@ function makeSnapshot(serverTick: number): SnapshotMessage {
     serverTick,
     states: {},
     projectiles: [],
-    wrecks: [],
   } as unknown as SnapshotMessage;
 }
 

@@ -168,14 +168,6 @@ export async function getLingeringPositions(
   return JSON.parse((await surface(page).getAttribute('data-lingering-positions')) ?? '{}');
 }
 
-/** Wrecks (abandoned-in-world husks) visible to this client, keyed by
- *  shipInstanceId. */
-export async function getWreckPositions(
-  page: Page,
-): Promise<Record<string, { x: number; y: number; kind: string; health: number }>> {
-  return JSON.parse((await surface(page).getAttribute('data-wreck-positions')) ?? '{}');
-}
-
 export async function getBeamActive(page: Page): Promise<boolean> {
   return (await surface(page).getAttribute('data-beam-active')) === '1';
 }

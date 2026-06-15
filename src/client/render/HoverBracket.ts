@@ -29,7 +29,7 @@ const CORNER_FRAC = 0.32;
 const RADIUS_PAD = 6;
 /** Min half-size so a tiny drone still gets a visible outline. */
 const MIN_HALF = 13;
-/** Fallback collision radius when a ship/wreck kind can't be resolved. */
+/** Fallback collision radius when a ship kind can't be resolved. */
 const SHIP_FALLBACK_RADIUS = 20;
 
 // Module-scope scratch reused by the (rare) asteroid/drone interpolation read,
@@ -85,11 +85,6 @@ export class HoverBracket {
           radius = sw.radius;
         }
       }
-    } else if (mirror.wrecks?.has(hoveredId)) {
-      const wreck = mirror.wrecks.get(hoveredId)!;
-      ex = wreck.x;
-      ey = wreck.y;
-      radius = shipRadius(wreck.kind);
     } else if (mirror.lingeringShips?.has(hoveredId)) {
       const l = mirror.lingeringShips.get(hoveredId)!;
       ex = l.x;

@@ -21,9 +21,9 @@ import type { StructureRenderState } from '@core/contracts/IRenderer';
  *   - SHIP / STRUCTURE → the `selectionStats` MODULE SINGLETON, pushed by the
  *     server at ~5 Hz and POLLED here at ~1 Hz (no 5 Hz React re-renders;
  *     invariant #2 — only the discrete id lives in Zustand).
- *   - DRONE / WRECK → read directly from the render mirror (sanctioned
+ *   - DRONE → read directly from the render mirror (sanctioned
  *     low-cadence `getGameClient().mirror` read, like `SectorInfoPanel`): the
- *     snapshot already carries drone `healthFrac` + wreck `health`, so no server
+ *     snapshot already carries drone `healthFrac`, so no server
  *     stats channel is used.
  */
 // WS-9/R2.8 — was 1000 ms ("stats pop in after a second"); 150 ms makes the
@@ -245,12 +245,6 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     if (!sw) return null;
     const frac = sw.healthFrac ?? 1;
     return { name: droneName(sw.shipKind), hpPct: frac * 100, shieldPct: null };
-  }
-  if (kind === 'wreck') {
-    const w = client.mirror.wrecks?.get(id);
-    if (!w) return null;
-    const hpPct = w.maxHealth > 0 ? (w.health / w.maxHealth) * 100 : 0;
-    return { name: 'Wreck', hpPct, shieldPct: null };
   }
   // ASTEROID (R2.23) — indestructible rock: no hull bar; show resources when the
   // rock is being mined, else a SIZE proxy from radius (untouched rocks carry no

@@ -59,7 +59,6 @@ function emptyFeedback(): RendererFeedback {
     mountCounts: new Map<string, number>(),
     haloArrowCount: 0,
     damageNumberActiveCount: 0,
-    wreckSpriteCount: 0,
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     liveBeamRenderedFromX: null,
@@ -599,7 +598,6 @@ export class WorkerRendererClient implements IRenderer {
         // Mutate in place to preserve reference identity.
         this.feedback.haloArrowCount = msg.feedback.haloArrowCount;
         this.feedback.damageNumberActiveCount = msg.feedback.damageNumberActiveCount;
-        this.feedback.wreckSpriteCount = msg.feedback.wreckSpriteCount;
         this.feedback.shieldRingVisibleCount = msg.feedback.shieldRingVisibleCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;

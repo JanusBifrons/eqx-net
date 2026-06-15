@@ -10,9 +10,9 @@
  *
  *   - `findAbandonedShips` returns the ships (active OR lingering) whose
  *     roster row has been deleted (via /dev/player-ships/:shipId/
- *     abandon). The room then converts each to an ownerless wreck —
- *     active hulls via `convertShipToWreck`, lingering hulls via
- *     `convertLingeringHullToWreck`. Galaxy-rooms only — engineering
+ *     abandon). The room then shatters each into SCRAP and removes it —
+ *     active hulls via `abandonShipToScrap`, lingering hulls via
+ *     `abandonLingeringHullToScrap`. Galaxy-rooms only — engineering
  *     rooms have no roster and skip entirely.
  */
 
@@ -92,7 +92,7 @@ export function evaluateSectorIdle(ctx: IdleEvalCtx): boolean {
  *  sector. `lingering` distinguishes a displaced/disconnected hull
  *  (`isActive=false`, owned slot lives in `lingeringSlots`) from a
  *  player's live active hull (`isActive=true`, slot in `playerToSlot`).
- *  The two need different wreck-conversion transactions. */
+ *  The two need different abandon→scrap transactions. */
 export interface AbandonedShip {
   shipInstanceId: string;
   playerId: string;
@@ -103,16 +103,16 @@ export interface AbandonedShip {
  * Phase 4 — abandon detection. Every 30 ticks (~500 ms) we check
  * whether any ship currently in this room has had its roster row
  * deleted (via /dev/player-ships/:shipId/abandon). Returns the ships to
- * convert to ownerless wrecks.
+ * shatter into scrap.
  *
- * Intended behaviour: "an abandoned ship becomes a wreck if it's still
- * in the game world." BOTH active hulls AND lingering hulls are in the
- * world (a remote observer renders the lingering hull), so both convert
- * to a wreck when abandoned. The caller routes on `lingering`:
- * `convertShipToWreck(playerId)` for active hulls (playerId-keyed),
- * `convertLingeringHullToWreck(shipInstanceId)` for lingering hulls
+ * Intended behaviour: "an abandoned ship leaves the world." BOTH active
+ * hulls AND lingering hulls are in the world (a remote observer renders
+ * the lingering hull), so both shatter into scrap when abandoned. The
+ * caller routes on `lingering`:
+ * `abandonShipToScrap(playerId)` for active hulls (playerId-keyed),
+ * `abandonLingeringHullToScrap(shipInstanceId)` for lingering hulls
  * (shipInstanceId-keyed — the owning player may be piloting a different
- * active hull, so the conversion must not touch playerId-keyed state).
+ * active hull, so the path must not touch playerId-keyed state).
  */
 export function findAbandonedShips(
   ships: MapSchema<ShipState>,

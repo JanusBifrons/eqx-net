@@ -1,15 +1,15 @@
 /**
  * Phase 6b lingering-hull predWorld bridge.
  *
- * Lingering hulls (the abandoned ship a player leaves behind on
- * disconnect / sector-transit / wreck-conversion) need a body in the
+ * Lingering hulls (the parked ship a player leaves behind on
+ * disconnect / sector-transit / fresh-spawn-displace) need a body in the
  * client's predWorld so:
  *   - the local player can collide with parked hulls
  *   - predicted ghost projectiles have a body to test against
  *
  * Server-side projectile sweep handles authoritative damage; this
  * predWorld body is local-only and identifies with the `linger-`
- * prefix so it can't collide with the playerId or wreck namespaces.
+ * prefix so it can't collide with the playerId namespace.
  *
  * Owns:
  *   - `predLingeringIds: Set<string>` — which bodyIds are spawned

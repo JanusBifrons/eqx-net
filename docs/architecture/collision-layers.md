@@ -144,7 +144,6 @@ untouched). 🔴 netgate (contact→damage live-loop).
 | sector transit (resetPredictionState despawn → respawn) | circle |
 | shield → 0 | `SET_HULL_EXPOSED(true)` → polygon |
 | shield 0 → >0 (regen) | `SET_HULL_EXPOSED(false)` → circle |
-| wreck (`rekeyShip`) | no shield → stays as-is (no regen path) |
 | lingering hull | keeps shield + regen (shield bookkeeping; player-body collider-swap deferred) |
 
 ## Drone lockstep — single-channel rule + the env-noise caveat

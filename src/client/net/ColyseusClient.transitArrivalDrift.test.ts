@@ -86,7 +86,7 @@ function asInternals(c: ColyseusGameClient): Internals {
 
 /** Build a minimal-but-real destination first-snapshot. `states` is
  *  keyed by shipInstanceId on the wire; `handleSnapshot` translates it
- *  to a playerId-keyed view (Phase 6a). projectiles/wrecks/drones are
+ *  to a playerId-keyed view (Phase 6a). projectiles/drones are
  *  all optional and guarded — omitting them is the real "nothing else in
  *  interest yet on the first arrival tick" case. */
 function destSnapshot(playerId: string, x: number, y: number): SnapshotMessage {

@@ -33,22 +33,6 @@ describe('PlayerSlotMap', () => {
     expect(m.freeSlots).toContain(s);
   });
 
-  it('bindWreck + releaseWreck round-trip preserves the free pool count', () => {
-    const m = new PlayerSlotMap(2);
-    m.allocSlot('p1')!;
-    m.freeSlotForPlayer('p1');
-    expect(m.freeSlots.length).toBe(2);
-    // Convert a fresh allocation to a wreck.
-    const s2 = m.allocSlot('p2')!;
-    m.playerToSlot.delete('p2');
-    m.slotToPlayer.delete(s2);
-    m.bindWreck(s2, 'wreck-xyz');
-    expect(m.wreckToSlot.get('wreck-xyz')).toBe(s2);
-    expect(m.slotToWreck.get(s2)).toBe('wreck-xyz');
-    expect(m.releaseWreck('wreck-xyz')).toBe(s2);
-    expect(m.freeSlots).toContain(s2);
-  });
-
   it('lingering bind/release manages a separate keying space', () => {
     const m = new PlayerSlotMap(3);
     const s = m.allocSlot('p1')!;
@@ -64,12 +48,12 @@ describe('PlayerSlotMap', () => {
   it('assertInvariants detects a slot in multiple ownership classes', () => {
     const m = new PlayerSlotMap(2);
     const s = m.allocSlot('p1')!;
-    // Cheat: leave player↔slot mapping AND bind the same slot as a wreck.
-    m.bindWreck(s, 'wreck-zzz');
+    // Cheat: leave player↔slot mapping AND bind the same slot as a lingering hull.
+    m.bindLinger('ship-instance-zzz', s);
     expect(() => m.assertInvariants()).toThrow(/slot 0 claimed by both/);
   });
 
-  it('randomised alloc/free preserves the quadruple-disjoint invariant', () => {
+  it('randomised alloc/free preserves the disjoint invariant', () => {
     const m = new PlayerSlotMap(8);
     const rng = mulberry32(42);
     const owned = new Set<string>();

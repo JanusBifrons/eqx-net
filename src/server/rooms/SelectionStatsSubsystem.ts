@@ -15,7 +15,7 @@
  *     (death / despawn) — `resolveStats` returns null ⇒ the selection is dropped
  *     and no further emits happen for it.
  *
- * Only PLAYER SHIPS and STRUCTURES flow here; drones + wrecks read health from
+ * Only PLAYER SHIPS and STRUCTURES flow here; drones read health from
  * the render mirror client-side, so they never call `select`.
  */
 import type { EntityStatsMessage } from '../../shared-types/messages/selectionMessages.js';

@@ -15,7 +15,7 @@
  * across 1000 broadcasts is a sign the scratches stopped recycling.
  *
  * Why 0 clients instead of stubbed Colyseus clients: the per-recipient
- * allocations (states, projectiles, drones, wrecks, snap) are NOT
+ * allocations (states, projectiles, drones, snap) are NOT
  * pooled in Phase 2 — they're allocated fresh per recipient and
  * passed to `client.send()`. Pooling them needs wire-safety analysis
  * deferred to a follow-up commit. With 0 clients we test exactly the
@@ -84,7 +84,6 @@ function makeDeps(playerCount: number): { deps: SnapshotBroadcasterDeps; broadca
     lingeringPoseCache: new Map<string, ShipPhysicsState>(),
     // MapSchema duck-types as Map for our purposes (we only call .get).
     shipsMap: ships as unknown as MapSchema<ShipState>,
-    wreckPoseCache: new Map<string, ShipPhysicsState>(),
     liveProjectiles: new Map<string, ProjectileRecord>(),
     boostingPlayers: new Set<string>(),
     thrustingPlayers: new Set<string>(),
@@ -122,8 +121,8 @@ describe('SnapshotBroadcaster heap-delta (Phase 2 pool migration)', () => {
   it('broadcast() with N stub clients reuses per-recipient state-entry pool', () => {
     // Phase 5d — exercises the per-recipient loop with a stub Client
     // shape that satisfies the backpressure check + send sink. The
-    // per-recipient scratches (states value pool, projectiles/drones/
-    // wrecks arrays, snap message) should produce zero growth after
+    // per-recipient scratches (states value pool, projectiles/drones
+    // arrays, snap message) should produce zero growth after
     // warmup.
     const playerCount = 5;
     const clientCount = 5;

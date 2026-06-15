@@ -35,7 +35,7 @@ export interface DestroyVfxEvent {
   readonly x: number;
   readonly y: number;
   /** Kind of explosion to play (drone vs ship vs asteroid). */
-  readonly kind: 'ship' | 'drone' | 'asteroid' | 'wreck';
+  readonly kind: 'ship' | 'drone' | 'asteroid';
 }
 
 export type WarpPhase =

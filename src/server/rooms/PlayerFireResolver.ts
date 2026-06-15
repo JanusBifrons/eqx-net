@@ -10,8 +10,8 @@
  *   - temporal-plausibility CLAMP (clampFireTick → effTick) — stale
  *     claims resolve against the OLDEST ring pose instead of being
  *     rejected (2026-05-19 fix; see capture `uf0o8g`)
- *   - 4-target sweep (other players + lingering hulls + swarm +
- *     wrecks); earliest-entry wins
+ *   - 3-target sweep (other players + lingering hulls + swarm);
+ *     earliest-entry wins
  *   - per-mount `laser_fired` broadcast PLUS the aggregate `hit_ack`
  *     for the closest mount-hit, with the WIRE id (`swarm-<entityId>`)
  *     so the client's prediction reconcile compares like-for-like
@@ -93,7 +93,7 @@ export interface SnapshotRingReader {
 }
 
 export interface PlayerFireResolverDeps {
-  /** SAB Float32 view — swarm + wreck pose source. */
+  /** SAB Float32 view — swarm pose source. */
   sabF32: Float32Array;
   /** Current server tick (lag-comp window + log lines). */
   serverTick: () => number;
@@ -113,8 +113,6 @@ export interface PlayerFireResolverDeps {
   lingeringSlots: Map<string, number>;
   /** Phase 6b lingering pose mirror (no lag-comp; slow-drifting). */
   lingeringPoseCache: Map<string, ShipPhysicsState>;
-  /** Wreck bookkeeping (sphere-shootable). */
-  wreckToSlot: Map<string, number>;
   /** Swarm registry (sphere / convex-hull hit candidates). */
   swarmRegistry: SwarmHitSource;
   /** Per-player slewed mount angles. */
@@ -396,19 +394,6 @@ export class PlayerFireResolver implements WeaponFireSink {
         mountHitDist = dist;
         mountHitId = rec.id;
         mountHitIsObstacle = true;
-      }
-    }
-
-    // 4. Wrecks (sphere-shootable; `wreck-` prefix routes applyDamage to state.wrecks).
-    for (const [shipInstanceId, slot] of d.wreckToSlot) {
-      const b = slotBase(slot);
-      const cx = d.sabF32[b + SLOT_X_OFF]!;
-      const cy = d.sabF32[b + SLOT_Y_OFF]!;
-      const dist = rayHitsSphere(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, SHIP_COLLISION_RADIUS);
-      if (dist !== null && dist < mountHitDist) {
-        mountHitDist = dist;
-        mountHitId = `wreck-${shipInstanceId}`;
-        mountHitIsObstacle = false;
       }
     }
 
