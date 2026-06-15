@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel a superseded run when a new commit is pushed to the same PR — the
+# suite is multi-minute, so racing stale runs waste runners. A push to `main`
+# is NEVER cancelled (the merge commit deserves a full validation).
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Cheap path filter — decides whether a PR changed any CODE (vs pure
   # documentation). A docs-only PR (only `**/*.md` — incl. the per-zone
