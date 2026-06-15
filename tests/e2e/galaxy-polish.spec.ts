@@ -29,9 +29,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
 async function goToGalaxyMap(page: Page): Promise<void> {
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  // Pre-auth storageState (see tests/e2e/global-setup.ts) lets the
-  // "Join the fight!" CTA jump straight to phase='galaxy-map'.
-  await page.locator('text=Join the fight').first().click();
+  // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({
     timeout: 15_000,
   });

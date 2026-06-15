@@ -73,18 +73,40 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
         useUIStore.getState().setGalaxyMapOpen(false);
       };
 
+  // Living Galaxy Phase 6 — desktop hover affordance on the spawn/warp picker:
+  // the worker (or DOM layer) emits a DEDUPED hover (only when the sector under
+  // the pointer changes), and we set the canvas cursor + the React tooltip
+  // anchor here. Selector-only — the in-game overlay is not a hover surface.
+  const onHover = selector
+    ? (ev: { sectorKey: string | null; screenX: number; screenY: number; selectable: boolean }): void => {
+        el.style.cursor = ev.selectable ? 'pointer' : 'default';
+        useUIStore.getState().setGalaxyHover(
+          ev.sectorKey ? { sectorKey: ev.sectorKey, left: ev.screenX, top: ev.screenY } : null,
+        );
+      }
+    : undefined;
+
+  // DEV/E2E hook: the hovered sector key (main-side, set by `onHover` above —
+  // works for BOTH render paths since it reads the Zustand mirror). Guarded so
+  // the module is import-safe in the node unit-test env (no `window`).
+  if (typeof window !== 'undefined') {
+    (window as unknown as { __eqxGalaxyHoveredSector?: () => string | null })
+      .__eqxGalaxyHoveredSector = () => useUIStore.getState().galaxyHover?.sectorKey ?? null;
+  }
+
   if (useWorker) {
     // The worker already owns its layer; just route taps + push
     // initial state so the overlay knows which sector is "you are
     // here" and whether it's selectable.
     (renderer as WorkerRendererClient).setOverlayTapHandler(onTap);
+    (renderer as WorkerRendererClient).setGalaxyHoverHandler(onHover ?? null);
     (renderer as WorkerRendererClient).setLayerMode(mode);
     (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
     (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
     (renderer as WorkerRendererClient).setLayerVisible(initialVisible);
     return null;
   }
-  const galaxyLayer = new GalaxyMapLayer({ onSelect: onTap });
+  const galaxyLayer = new GalaxyMapLayer({ onSelect: onTap, onHover });
   // DEV/E2E hook: expose the REAL drawn pan/zoom transform (clusterRoot), so
   // a spec can assert pan/zoom actually moved the rendered map rather than
   // recomputing from inputs (the `data-beam-from` tautology lesson). Main-

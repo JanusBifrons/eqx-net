@@ -40,6 +40,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const SMOKE_SPECS: string[] = [
   '**/boot.spec.ts',
+  '**/galaxy-landing-flow.spec.ts',
   '**/damage-number-lifetime.spec.ts',
   '**/happy-path-switch-ship.spec.ts',
   '**/join-warp-screen.spec.ts',
@@ -83,6 +84,7 @@ const FEATURE_SPECS: string[] = [
   '**/feel-test-lockstep.spec.ts',
   '**/feel-tuning.spec.ts',
   '**/galaxy-living-map.spec.ts',
+  '**/galaxy-hover-tooltip.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
   '**/galaxy-map-pan-zoom.spec.ts',
   '**/galaxy-polish.spec.ts',

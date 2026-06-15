@@ -68,6 +68,15 @@ const FACTION_OUTLINE_WIDTH = 3.5;
 const HOVER_SCALE = 0.94; // eqx-peri's proven value (6% shrink)
 const HOVER_LERP = 0.12; // per-frame ease toward target (tunable feel knob)
 
+/** Living Galaxy Phase 6 — emitted when the hovered sector changes (deduped),
+ *  driving the main-thread canvas cursor + the React sector tooltip. */
+export interface GalaxyHoverEvent {
+  sectorKey: string | null;
+  screenX: number;
+  screenY: number;
+  selectable: boolean;
+}
+
 interface HexEntry {
   sector: GalaxySector;
   /** Base position in clusterRoot space (== `axialToPixel(hex, HEX_SIZE_BASE)`).
@@ -95,6 +104,8 @@ function hexVertices(size: number): Array<{ x: number; y: number }> {
 
 export class GalaxyMapLayer extends Container {
   private readonly onSelect: (sectorKey: string) => void;
+  /** Living Galaxy Phase 6 — deduped hover emit (drives cursor + tooltip). */
+  private readonly onHover?: (ev: GalaxyHoverEvent) => void;
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
   private readonly entries: HexEntry[] = [];
@@ -109,6 +120,9 @@ export class GalaxyMapLayer extends Container {
    *  -1. The tick eases this one toward HOVER_SCALE; -1 falls back to the
    *  current sector's territory. */
   private hoveredTerritory = -1;
+  /** Living Galaxy Phase 6 — sector key under the pointer (selector hover) or
+   *  null; drives the per-hex hover highlight + the deduped onHover emit. */
+  private hoveredSectorKey: string | null = null;
   private currentSectorKey: string | null = null;
   private isDocked = true;
   private mode: GalaxyLayerMode = 'overlay';
@@ -128,9 +142,13 @@ export class GalaxyMapLayer extends Container {
   private _seedW = 0;
   private _seedH = 0;
 
-  constructor(opts: { onSelect: (sectorKey: string) => void }) {
+  constructor(opts: {
+    onSelect: (sectorKey: string) => void;
+    onHover?: (ev: GalaxyHoverEvent) => void;
+  }) {
     super();
     this.onSelect = opts.onSelect;
+    this.onHover = opts.onHover;
     this.visible = false;
     this.eventMode = 'passive';
     this.clusterRoot.addChild(this.hexLayer);
@@ -156,6 +174,7 @@ export class GalaxyMapLayer extends Container {
     this.panZoomCamera.onPointerMove(pointerId, screenX, screenY);
     // Desktop hover (or touch drag): shrink whatever territory is under the pointer.
     this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
+    this.updateHover(screenX, screenY);
   }
   /** Returns true if the pointer cycle was a tap (and a sector was selected). */
   onPointerUp(pointerId: number, screenX: number, screenY: number, stamp: number): boolean {
@@ -195,6 +214,7 @@ export class GalaxyMapLayer extends Container {
 
   setVisible(open: boolean): void {
     this.visible = open;
+    if (!open) this.clearHover();
   }
 
   setCurrentSector(key: string | null): void {
@@ -247,6 +267,7 @@ export class GalaxyMapLayer extends Container {
     this._seedW = 0;
     this._seedH = 0;
     this.hoveredTerritory = -1;
+    this.clearHover();
     this.repaint();
     if (this.screenW > 0 && this.screenH > 0) this.resize(this.screenW, this.screenH);
   }
@@ -288,6 +309,55 @@ export class GalaxyMapLayer extends Container {
       if (Math.hypot(dx, dy) <= HEX_SIZE_BASE) return entry.territoryIndex;
     }
     return -1;
+  }
+
+  /**
+   * Living Galaxy Phase 6 — the sector hex under a screen point (ANY sector) +
+   * whether it's selectable, or `{ key: null }`. Reads BASE hex centres so it's
+   * invariant under the transient hover-shrink (mirrors `hitTest`).
+   */
+  private sectorAtScreen(screenX: number, screenY: number): { key: string | null; selectable: boolean } {
+    const scale = this.clusterRoot.scale.x;
+    if (scale !== 0) {
+      const relX = (screenX - this.clusterRoot.x) / scale;
+      const relY = (screenY - this.clusterRoot.y) / scale;
+      for (const entry of this.entries) {
+        const dx = relX - entry.x;
+        const dy = relY - entry.y;
+        if (Math.hypot(dx, dy) <= HEX_SIZE_BASE) {
+          return { key: entry.sector.key, selectable: this.isSelectable(entry.sector) };
+        }
+      }
+    }
+    return { key: null, selectable: false };
+  }
+
+  /**
+   * Living Galaxy Phase 6 — recompute the hovered sector; on a CHANGE, repaint
+   * the hover highlight + emit `onHover` (deduped on sector key, so it NEVER
+   * fires per-pointermove — the cursor + React tooltip only update when the
+   * pointer crosses into a different hex or off the map).
+   */
+  private updateHover(screenX: number, screenY: number): void {
+    const { key, selectable } = this.sectorAtScreen(screenX, screenY);
+    if (key === this.hoveredSectorKey) return;
+    this.hoveredSectorKey = key;
+    this.repaint();
+    this.onHover?.({ sectorKey: key, screenX, screenY, selectable });
+  }
+
+  /** Clear the hover state + tell the main thread (cursor reset + tooltip hide).
+   *  Called when the map hides or the mode flips. */
+  private clearHover(): void {
+    if (this.hoveredSectorKey === null) return;
+    this.hoveredSectorKey = null;
+    this.repaint();
+    this.onHover?.({ sectorKey: null, screenX: 0, screenY: 0, selectable: false });
+  }
+
+  /** DEV/E2E hook — the sector key currently hovered (or null). */
+  getDebugHoveredSector(): string | null {
+    return this.hoveredSectorKey;
   }
 
   resize(screenW: number, screenH: number): void {
@@ -491,21 +561,29 @@ export class GalaxyMapLayer extends Container {
       const { sector, hex, label } = entry;
       const highlighted = sector.key === this.currentSectorKey;
       const selectable = this.isSelectable(sector);
+      // Living Galaxy Phase 6 — subtle lighter tint + brighter ring on the
+      // hovered hex (the "this is clickable" affordance the bug doc asked for).
+      const hovered = sector.key === this.hoveredSectorKey;
       const verts = hexVertices(this.hexSize);
 
       hex.clear();
-      // 1) Faction territory tint (always) — the region colour.
+      // 1) Faction territory tint (always) — the region colour; a hovered hex
+      //    lifts its fill alpha so it reads brighter than its neighbours.
+      const baseAlpha = highlighted ? 0.5 : selectable ? 0.38 : 0.22;
       hex.poly(verts);
       hex.fill({
         color: factionColor(sector.region),
-        alpha: (highlighted ? 0.5 : selectable ? 0.38 : 0.22) * fillBoost,
+        alpha: (hovered ? baseAlpha + 0.18 : baseAlpha) * fillBoost,
       });
       // 2) Faint inner per-hex border for cell separation (under the bold
       //    faction outer-territory outline drawn in buildHexes); the current
-      //    sector keeps a brighter ring as the "you are here" marker.
+      //    sector keeps a brighter ring as the "you are here" marker; a hovered
+      //    hex gets a lighter ring so it reads as clickable.
       hex.poly(verts);
       if (highlighted) {
         hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 0.9 });
+      } else if (hovered) {
+        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2, alpha: 0.65 });
       } else if (selectable) {
         hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1, alpha: 0.4 });
       } else {

@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test';
 
 // Phase 0 baseline: the Vite dev server renders the stub app.
 // Phase 1 expands this suite with multi-tab SectorRoom scenarios.
-test('client boots and renders the splash heading', async ({ page }) => {
+test('client boots to the living galaxy map at the root URL', async ({ page }) => {
   await page.goto('/');
-  // MUI Typography variant="h2" renders as <h2>
-  await expect(page.getByRole('heading', { level: 2 })).toHaveText('EQX Peri');
+  // Living Galaxy P5 — the live galaxy map is the first screen on load; the
+  // meta "Join the fight" landing is retired from the default path.
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 });
