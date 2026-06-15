@@ -109,7 +109,7 @@ export const NET_HEALTH_BUDGET = {
   droppedSnapshotsRecent: { margin: 1.0, eps: 1, ceil: 4 },
 } as const satisfies Record<string, MetricBudget>;
 
-type GatedMetric = keyof typeof NET_HEALTH_BUDGET;
+export type GatedMetric = keyof typeof NET_HEALTH_BUDGET;
 
 /** ≈ RUN_MS (8 s) at 20 Hz minus warmup — a valid run sees far more. */
 const MIN_SNAPSHOTS = 40;
@@ -117,8 +117,21 @@ const MIN_SNAPSHOTS = 40;
 /**
  * Decide whether HEAD's netcode health regressed vs the same-session
  * baseline. Pure: deterministic in its inputs, no IO.
+ *
+ * `budgetOverride` (multi-scenario netgate, plan: misty-teapot) lets a
+ * scenario tune the relative/absolute margins of EXISTING gated metrics
+ * without changing the gated SET (the set stays locked by the unit test).
+ * A scenario with a heavier or lighter workload than `core` (e.g. a
+ * structures-load or scrap-load room) may legitimately sit at a different
+ * steady-state for a metric; the override merges over `NET_HEALTH_BUDGET`
+ * per-metric. Absent ⇒ the default `core` budget (back-compatible — the
+ * 2-arg call is unchanged).
  */
-export function evaluateNetHealth(head: NetHealthArm, baseline: NetHealthArm): NetHealthVerdict {
+export function evaluateNetHealth(
+  head: NetHealthArm,
+  baseline: NetHealthArm,
+  budgetOverride?: Partial<Record<GatedMetric, MetricBudget>>,
+): NetHealthVerdict {
   const preconditionFailures: string[] = [];
 
   if (head.diagEnabled) {
@@ -149,7 +162,7 @@ export function evaluateNetHealth(head: NetHealthArm, baseline: NetHealthArm): N
 
   const failures: NetHealthFailure[] = [];
   for (const metric of Object.keys(NET_HEALTH_BUDGET) as GatedMetric[]) {
-    const { margin, eps, ceil } = NET_HEALTH_BUDGET[metric];
+    const { margin, eps, ceil } = budgetOverride?.[metric] ?? NET_HEALTH_BUDGET[metric];
     const h = head[metric];
     const b = baseline[metric];
     const relativeBreach = h > b * (1 + margin) + eps;
