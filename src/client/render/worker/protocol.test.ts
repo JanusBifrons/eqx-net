@@ -181,6 +181,8 @@ describe('renderer-worker protocol', () => {
         },
       },
       { name: 'OVERLAY_TAPPED', msg: { type: 'OVERLAY_TAPPED', sectorKey: 'beta-7' } },
+      { name: 'GALAXY_HOVER', msg: { type: 'GALAXY_HOVER', sectorKey: 'sol-prime', screenX: 120, screenY: 80, selectable: true } },
+      { name: 'GALAXY_HOVER null', msg: { type: 'GALAXY_HOVER', sectorKey: null, screenX: 0, screenY: 0, selectable: false } },
       { name: 'ERROR', msg: { type: 'ERROR', message: 'boom' } },
       {
         name: 'FRAME_MARKERS',
@@ -264,6 +266,7 @@ describe('renderer-worker protocol', () => {
           case 'READY':
           case 'FEEDBACK':
           case 'OVERLAY_TAPPED':
+          case 'GALAXY_HOVER':
           case 'ERROR':
           case 'FRAME_MARKERS':
             return msg.type;

@@ -19,6 +19,7 @@ import { useIsCompact } from '../layout/useIsCompact';
 import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
+import { buildSectorTooltip } from './galaxyTooltip';
 import type { MutableRefObject } from 'react';
 
 interface EngineeringRoom {
@@ -99,6 +100,9 @@ export function GalaxyPickerChrome({
   // player count), surfaced over the map now that it's the landing screen.
   const serverHealth = useUIStore((s) => s.serverHealth);
   const playersOnline = useUIStore((s) => s.playersOnline);
+  // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
+  const galaxyHover = useUIStore((s) => s.galaxyHover);
+  const galaxyStats = useUIStore((s) => s.galaxyStats);
   const isCompact = useIsCompact();
   const storedPlayerId = loadStoredPlayerId() ?? '';
 
@@ -144,6 +148,9 @@ export function GalaxyPickerChrome({
     };
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
+
+  // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
+  const sectorTip = galaxyHover ? buildSectorTooltip(galaxyHover.sectorKey, galaxyStats) : null;
 
   return (
     <Box
@@ -289,6 +296,59 @@ export function GalaxyPickerChrome({
           Engineering rooms
         </Button>
       </Stack>
+
+      {/* Living Galaxy Phase 6 — sector tooltip on desktop hover. Anchored at
+       *  the (deduped) hover screen pos; non-interactive. Sector name + faction
+       *  + status + live counts (icons) + features, from the static graph +
+       *  the /galaxy/snapshot slice. */}
+      {galaxyHover && sectorTip && (
+        <Box
+          data-testid="galaxy-sector-tooltip"
+          data-tooltip-sector={galaxyHover.sectorKey}
+          sx={{
+            position: 'fixed',
+            left: galaxyHover.left + 16,
+            top: galaxyHover.top + 16,
+            zIndex: 5,
+            pointerEvents: 'none',
+            bgcolor: 'rgba(8,12,24,0.94)',
+            border: '1px solid #2a3550',
+            borderRadius: 1,
+            px: 1,
+            py: 0.75,
+            maxWidth: 220,
+          }}
+        >
+          <Typography sx={{ color: '#dffff0', fontSize: 12, fontWeight: 700, lineHeight: 1.2 }}>
+            {sectorTip.name}
+          </Typography>
+          <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            {sectorTip.faction} · {sectorTip.status}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
+            {sectorTip.players > 0 && (
+              <Typography sx={{ color: '#6bff9b', fontSize: 10 }} title="Players">▲ {sectorTip.players}</Typography>
+            )}
+            {sectorTip.enemies > 0 && (
+              <Typography sx={{ color: '#ff6b6b', fontSize: 10 }} title="Hostiles">✦ {sectorTip.enemies}</Typography>
+            )}
+            {sectorTip.neutrals > 0 && (
+              <Typography sx={{ color: '#ffd479', fontSize: 10 }} title="Neutrals">◇ {sectorTip.neutrals}</Typography>
+            )}
+            {sectorTip.structures > 0 && (
+              <Typography sx={{ color: '#9ab4dd', fontSize: 10 }} title="Structures">⬡ {sectorTip.structures}</Typography>
+            )}
+            {sectorTip.players + sectorTip.enemies + sectorTip.neutrals + sectorTip.structures === 0 && (
+              <Typography sx={{ color: '#6b7280', fontSize: 10 }}>no activity</Typography>
+            )}
+          </Box>
+          {sectorTip.features.length > 0 && (
+            <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
+              {sectorTip.features.join(' · ')}
+            </Typography>
+          )}
+        </Box>
+      )}
 
       {/* Sector-click confirmation. Opened imperatively via apiRef when the
        *  player taps a galaxy sector hex on the shared canvas; picking a

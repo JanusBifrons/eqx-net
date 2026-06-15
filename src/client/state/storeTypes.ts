@@ -255,6 +255,11 @@ export interface UIStore {
    *  non-spatial → Zustand-safe (#2). Polled by useGalaxyStats while a galaxy map
    *  is on screen; consumed by the GalaxyMapLayer count glyphs. */
   galaxyStats: SectorLiveState[];
+  /** Living Galaxy Phase 6 — the galaxy-map sector under the desktop pointer +
+   *  the screen anchor for its tooltip, or null. Deduped on sector-key change
+   *  (NOT per-pointermove), so it's a discrete low-frequency UI field; the
+   *  `left`/`top` are tooltip anchor px, not game-spatial → Zustand-safe (#2). */
+  galaxyHover: { sectorKey: string; left: number; top: number } | null;
   /** Standalone Galaxy Overview (Map A) open state in-game. Toggled by the
    *  drawer's Galaxy tab. Replaces the gameplay canvas full-screen with a
    *  Pixi-rendered overview that supports drag/pinch/wheel pan & zoom. The
@@ -371,6 +376,7 @@ export interface UIStore {
   setPendingPickSector: (key: string | null) => void;
   setGalaxyMapOpen: (v: boolean) => void;
   setGalaxyStats: (stats: SectorLiveState[]) => void;
+  setGalaxyHover: (hover: { sectorKey: string; left: number; top: number } | null) => void;
   toggleGalaxyMapOpen: () => void;
   setGalaxyOverviewOpen: (v: boolean) => void;
   toggleGalaxyOverviewOpen: () => void;
