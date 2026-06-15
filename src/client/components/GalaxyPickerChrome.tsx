@@ -95,6 +95,10 @@ export function GalaxyPickerChrome({
   useMountLog('GalaxyPickerChrome', {});
   const selectedShipKindId = useUIStore((s) => s.selectedShipKind);
   const setSelectedShipKind = useUIStore((s) => s.setSelectedShipKind);
+  // Living Galaxy P5 — folded MetaLandingScreen bits (server health + live
+  // player count), surfaced over the map now that it's the landing screen.
+  const serverHealth = useUIStore((s) => s.serverHealth);
+  const playersOnline = useUIStore((s) => s.playersOnline);
   const isCompact = useIsCompact();
   const storedPlayerId = loadStoredPlayerId() ?? '';
 
@@ -164,6 +168,56 @@ export function GalaxyPickerChrome({
         data-limbo-sector-key={limboSector?.key ?? ''}
         sx={{ display: 'none' }}
       />
+
+      {/* Living Galaxy P5 — folded landing info over the map (replaces the
+       *  retired MetaLandingScreen's banner + hype count). Non-interactive,
+       *  small per the start-tiny rule. The server-health banner is the
+       *  load-bearing surface while the server cold-boots. */}
+      <Box
+        data-testid="galaxy-landing-info"
+        sx={{
+          position: 'absolute',
+          top: 'calc(var(--app-bar-h, 48px) + 8px)',
+          left: 0,
+          right: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 1,
+          pointerEvents: 'none',
+          zIndex: 1,
+        }}
+      >
+        {(serverHealth === 'warming' || serverHealth === 'unreachable') && (
+          <Alert
+            severity={serverHealth === 'warming' ? 'info' : 'error'}
+            variant="outlined"
+            data-testid="server-health-banner"
+            data-state={serverHealth}
+            sx={{
+              py: 0,
+              fontSize: 11,
+              bgcolor: serverHealth === 'warming' ? 'rgba(2,136,209,0.08)' : 'rgba(211,47,47,0.08)',
+              color: serverHealth === 'warming' ? '#90caf9' : '#ef9a9a',
+              '& .MuiAlert-icon': { color: serverHealth === 'warming' ? '#90caf9' : '#ef9a9a' },
+            }}
+          >
+            {serverHealth === 'warming'
+              ? 'Server is starting up — spawning will be ready in a moment.'
+              : 'Server unavailable. Reconnecting…'}
+          </Alert>
+        )}
+        <Typography
+          data-testid="galaxy-landing-player-count"
+          variant="caption"
+          sx={{ color: '#9aa0b4', fontSize: 10, letterSpacing: 0.5 }}
+        >
+          <span style={{ color: '#00ff88' }} data-testid="galaxy-landing-player-count-number">
+            {playersOnline !== null ? playersOnline.toLocaleString() : '—'}
+          </span>{' '}
+          pilots online
+        </Typography>
+      </Box>
 
       {/* Roster panel floats over the canvas. pointerEvents:none on the
        *  wrapper keeps drag/tap on the canvas working; the inner panel

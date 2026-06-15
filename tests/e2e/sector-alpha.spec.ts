@@ -74,13 +74,11 @@ async function waitForShipPos(page: import('@playwright/test').Page): Promise<vo
 // ---------------------------------------------------------------------------
 
 test.describe('connection', () => {
-  test('splash screen shows the Join the fight CTA', async ({ page }) => {
-    // The old "Enter Sector Alpha" splash button was removed when the
-    // post-auth flow was refactored to galaxy-map-spawn. The new entry
-    // point is the meta-landing's "Join the fight" CTA. Storage-state
-    // pre-pops the JWT so we land on the post-auth meta-landing.
+  test('the living galaxy map is the landing screen', async ({ page }) => {
+    // Living Galaxy P5 — the galaxy map IS the landing screen on load; the
+    // meta "Join the fight" CTA is retired from the default path.
     await page.goto(BASE_URL);
-    await expect(page.locator('text=Join the fight').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
   });
 
   test('single client connects and receives a playerId', async ({ browser }) => {

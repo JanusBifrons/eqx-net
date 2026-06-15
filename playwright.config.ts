@@ -40,6 +40,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const SMOKE_SPECS: string[] = [
   '**/boot.spec.ts',
+  '**/galaxy-landing-flow.spec.ts',
   '**/damage-number-lifetime.spec.ts',
   '**/happy-path-switch-ship.spec.ts',
   '**/join-warp-screen.spec.ts',

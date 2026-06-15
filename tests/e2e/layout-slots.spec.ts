@@ -221,21 +221,19 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('meta landing screen is shown at the root URL', async ({ browser }) => {
+  test('the living galaxy map is shown at the root URL', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await page.goto(BASE_URL);
 
-    const meta = page.locator('[data-testid="meta-landing"]');
-    await expect(meta).toBeVisible();
+    // Living Galaxy P5 — the galaxy map is the landing screen on load; the meta
+    // "Join the fight" landing is retired from the default path (kept reachable
+    // via Return-to-menu / Logout).
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="meta-landing"]')).toHaveCount(0);
 
-    // Player count: a 3-digit number in the hype banner.
-    const countNumber = page.locator('[data-testid="meta-player-count-number"]');
-    const text = (await countNumber.textContent()) ?? '';
-    expect(text).toMatch(/^\d{3}$/);
-
-    // Join button is present and labelled.
-    await expect(page.locator('[data-testid="meta-join-button"]')).toContainText(/Join the fight/i);
+    // The folded landing info (live player count) is surfaced over the map.
+    await expect(page.locator('[data-testid="galaxy-landing-player-count"]')).toBeVisible();
 
     await ctx.close();
   });

@@ -242,6 +242,10 @@ export interface UIStore {
   drawerTab: string;
   /** Top-level UX phase. App.tsx routes screens off this value. */
   phase: Phase;
+  /** Living Galaxy P5 — a galaxy sector picked while logged-OUT, stashed across
+   *  the auth detour so the remounted GameSurface re-opens its picker on
+   *  return. Discrete string id (not spatial) → Zustand-safe (#2). */
+  pendingPickSector: string | null;
   /** In-game additive Pixi overlay (Map B) open state. Toggled by the new
    *  bottom-center MAP HUD button and the keyboard `M` shortcut. Renders a
    *  highly transparent galaxy hex layer ON the gameplay canvas — gameplay
@@ -364,6 +368,7 @@ export interface UIStore {
   setDrawerOpen: (v: boolean) => void;
   setDrawerTab: (id: string) => void;
   setPhase: (p: Phase) => void;
+  setPendingPickSector: (key: string | null) => void;
   setGalaxyMapOpen: (v: boolean) => void;
   setGalaxyStats: (stats: SectorLiveState[]) => void;
   toggleGalaxyMapOpen: () => void;
