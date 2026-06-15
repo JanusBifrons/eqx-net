@@ -336,6 +336,63 @@ gameServer.define('feel-test-25', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `structures-load`.
+// feel-test-25's 25-drone combat churn PLUS a pre-built, powered structure
+// grid (Capital + connectors + solars + miner@asteroid + turret) on a fast
+// 100 ms grid pulse: a "base under attack" workload that exercises the
+// `structures[]` snapshot slice, the grid pulse, the power aggregation, and
+// the turret-fire path the pure-drone feel-test-25 never touches. The grid
+// sits at origin with the drone ring; the player spawns at (700,0) — clear of
+// the structures but at the edge of the pack — and joins with `?startHostile=1`
+// so the player auto-fires and the drones engage (the turret picks the nearest
+// drone). PRINT-ONLY in the netgate until characterised (see
+// tests/netgate/scenarios.ts header — the local-player metrics only move if
+// this load actually stresses the server tick/broadcast budget).
+gameServer.define('feel-test-structures', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  swarmCount: 25,
+  swarmRatio: 0,
+  swarmRadius: 500,
+  structureGridPulseMs: 100,
+  prebuiltStructures: [
+    { kind: 'capital', x: 0, y: 0 },
+    // capital-only-connectors (R2.10): two offset relays carry the grid.
+    { kind: 'connector', x: 150, y: 60 },
+    { kind: 'connector', x: -100, y: -100 },
+    { kind: 'solar', x: 250, y: 0 },
+    { kind: 'solar', x: 0, y: 250 },
+    { kind: 'miner', x: -350, y: 0 },
+    { kind: 'turret', x: 0, y: -350 },
+  ],
+  scenarioAsteroids: [{ x: -700, y: 0, radius: 30 }],
+  defaultSpawnX: 700, // clear of the origin grid; within the drone pack + interest
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
+// 2026-06-15 (plan: misty-teapot) — netgate PERF scenario `scrap-load`. Six
+// hull-exposed `havok` COMPOSITE drones ringed close to the player spawn; with
+// `?startHostile=1` the player auto-fires and each kill breaks into one
+// SWARM_KIND_SCRAP (kind 3) entity per component — the binary-wire v4 scrap
+// path (parentShipKind + componentIndex byte) that feel-test-25's polygon
+// drones never produce. hull-exposed ⇒ shield down ⇒ fast death ⇒ a scrap
+// burst inside the 8 s window. PRINT-ONLY until characterised (a steady
+// `scenarioScrap` pre-seed is the promotion follow-up — see scenarios.ts).
+gameServer.define('feel-test-scrap', SectorRoom, {
+  testMode: true,
+  asteroidConfig: [],
+  dronePoses: [
+    { kind: 'havok', x: 200, y: 0, hullExposed: true },
+    { kind: 'havok', x: -200, y: 0, hullExposed: true },
+    { kind: 'havok', x: 0, y: 200, hullExposed: true },
+    { kind: 'havok', x: 0, y: -200, hullExposed: true },
+    { kind: 'havok', x: 150, y: 150, hullExposed: true },
+    { kind: 'havok', x: -150, y: -150, hullExposed: true },
+  ],
+  defaultSpawnX: 0,
+  defaultSpawnY: 0,
+  maxClients: 4,
+});
 // 2026-06-01 — phone-stall-test: heavy-combat repro environment for
 // `tests/mobile-perf/phone-galaxy-stall-repro.spec.ts`. 35 drones in
 // a tight ring (matches the user's wb1al4/jfd81u swarm count) so the

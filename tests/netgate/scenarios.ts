@@ -127,6 +127,36 @@ export const SCENARIOS: readonly NetgateScenario[] = [
     // so a structures/scrap change fires it (closing the path-filter hole).
     triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...STRUCTURE_GLOBS, ...SCRAP_GLOBS],
   },
+  {
+    // PERF scenario: a powered structure grid (slice + pulse + turret fire) on
+    // top of 25-drone combat. Gates structures PERFORMANCE-under-load, NOT
+    // correctness (that's the deterministic suite). PRINT-ONLY until a
+    // server-side tick-burn fault-injection proves the local-feel metrics move
+    // under this load (the promotion bar — see module header). Off the per-PR
+    // path (print-only ⇒ excluded from select-scenarios.mjs); run via
+    // workflow_dispatch `scenarios=structures-load` for characterisation.
+    name: 'structures-load',
+    room: 'feel-test-structures',
+    urlParams: '&startHostile=1',
+    liveSelector: '[data-testid="ship-count"]',
+    interaction: 'strafe-fire',
+    reps: 4,
+    gating: 'print-only',
+    triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...STRUCTURE_GLOBS],
+  },
+  {
+    // PERF scenario: a scrap burst (composite-death kind=3 v4 wire) on top of
+    // combat. Same print-only-until-proven contract as structures-load. Run via
+    // workflow_dispatch `scenarios=scrap-load`.
+    name: 'scrap-load',
+    room: 'feel-test-scrap',
+    urlParams: '&startHostile=1',
+    liveSelector: '[data-testid="ship-count"]',
+    interaction: 'strafe-fire',
+    reps: 4,
+    gating: 'print-only',
+    triggerGlobs: [...SHARED_LIVELOOP_GLOBS, ...SCRAP_GLOBS],
+  },
 ];
 
 /** Resolve a CSV of scenario names to descriptors, preserving catalogue
