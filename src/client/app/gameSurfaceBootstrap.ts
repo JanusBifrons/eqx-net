@@ -47,7 +47,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
       : workerParam === '0'
         ? false
         : !isTouch && supportsOffscreenRenderer();
-  const renderer: IRenderer = useWorker ? new WorkerRendererClient() : new PixiRenderer();
+  const renderer: IRenderer = useWorker ? new WorkerRendererClient(isTouch) : new PixiRenderer(isTouch);
   // Click-to-inspect (Item B) — DEV/E2E deterministic selection hook. Only the
   // main-thread PixiRenderer exposes `devSelectAtWorld` (the worker renderer is
   // off-thread); E2E specs run `?worker=0` to use it. Mirrors __eqxGalaxyPick.

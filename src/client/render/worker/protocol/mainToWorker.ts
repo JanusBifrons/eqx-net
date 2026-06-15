@@ -34,6 +34,13 @@ export interface BootMsg {
    * so the main thread reads the URL param and forwards it here.
    */
   zoom?: number;
+  /**
+   * Touch-device flag (Equinox P6.1). The worker has no reliable
+   * `window.matchMedia`, so the main thread (which knows via `isTouchDevice()`)
+   * forwards it; the worker's PixiRenderer seeds the placement ghost at
+   * screen-centre on touch. Absent ⇒ desktop (ahead-of-ship + hover-follow).
+   */
+  isTouch?: boolean;
 }
 
 /**

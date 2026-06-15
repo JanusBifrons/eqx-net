@@ -26,6 +26,7 @@ import type { HealthBinding } from '../../../core/contracts/IDamageable.js';
 import { activeShipHealthBinding, lingeringHealthBinding } from '../healthBindings.js';
 import type { ShipState } from '../../rooms/schema/SectorState.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
+import type { ShipKindId } from '../../../shared-types/shipKinds.js';
 import type { ShieldHullRouter } from '../../rooms/ShieldHullRouter.js';
 import type { DamageableLeaf, PerHitEffect, DeathPolicy, LeafDeps } from './entityLeaf.js';
 
@@ -137,6 +138,14 @@ export function createLingeringHullEntity(
       const ship = target as ShipState;
       ship.alive = false;
       deps.broadcastDestroy({ type: 'destroy', targetId, shooterId: sourceId });
+      // P6.3 (Equinox Phase 6) — a COMPOSITE lingering hull breaks into floating
+      // scrap like an active ship/drone. Read the dying pose from
+      // `lingeringPoseCache` BEFORE the teardown below deletes it; the room hook
+      // guards polygon kinds (no scrap groups) + calls ScrapSpawner.spawnFromDeath.
+      const scrapPose = deps.lingeringPoseCache.get(targetId);
+      if (scrapPose !== undefined) {
+        deps.spawnScrapFromLingeringHull?.(ship.kind as ShipKindId, scrapPose, targetId);
+      }
       const slot = deps.lingeringSlots.get(targetId);
       if (slot !== undefined) {
         deps.lingeringSlots.delete(targetId);

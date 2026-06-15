@@ -364,9 +364,11 @@ construction, `phaseTime` is passed by reference. Lock: `EntitySyncRouter.test.t
 (ordering + idle-threading + governance); the full-snapshot-path byte-identity is
 the netgate + the existing integration suite.
 
-## Lingering-hull → wreck symmetry (2026-06-03)
+## Abandon → scrap (Equinox P6.3 / C2, 2026-06-15 — supersedes "abandon → wreck")
 
-"An abandoned ship becomes a wreck if it's still in the game world, otherwise it vanishes." A **lingering** hull (disconnected / fresh-spawn-displaced, `isActive=false`) is still in the world (a remote observer renders it from `mirror.lingeringShips`), so abandoning it must leave a wreck — symmetric with abandoning an active hull. `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](rooms/sectorIdleEvaluator.ts)) returns BOTH active and lingering abandoned ships (no `!isActive` skip) with a `lingering` flag; the `update()` poll routes active → `convertShipToWreck(playerId)` and lingering → `WreckLifecycleCoordinator.convertLingeringHullToWreck(shipInstanceId)`. The lingering path is **shipInstanceId-keyed** because the owning player may be piloting a DIFFERENT active hull — it reads `lingeringSlots`/`lingeringPoseCache`, rekeys the worker body `linger-${id}` → `wreck-${id}`, cancels the ownerless-evict timer, and **never touches any playerId-keyed map**. Locks: [abandonLingeringToWreck.test.ts](../../tests/integration/sectorRoom/abandonLingeringToWreck.test.ts) + the browser-level `tests/e2e/linger/abandon-lingering-wreck.spec.ts`. The galaxy-only linger/wreck/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).
+**Scrap replaces wrecks.** An abandoned hull no longer becomes a damageable `WreckState` entity — it shatters into drifting scrap and leaves the world (the user's "wrecks shouldn't exist any more; it just turns into scrap"). `findAbandonedShips` ([rooms/sectorIdleEvaluator.ts](rooms/sectorIdleEvaluator.ts)) still returns BOTH active and lingering abandoned ships (roster-row deleted while alive) with a `lingering` flag; the `update()` poll now routes active → `SectorRoom.abandonShipToScrap(playerId)` and lingering → `SectorRoom.abandonLingeringHullToScrap(shipInstanceId)`. Both spawn scrap at the death pose via the shared `spawnHullScrap` (composite kinds shatter, polygon kinds just vanish), then DESPAWN the body + free the slot (no wreck rekey) + tear down bookkeeping; the active path also ejects the owning session (`ship_abandoned` + `client.leave`). The lingering path is **shipInstanceId-keyed** (the owner may be piloting a DIFFERENT active hull) and **never touches any playerId-keyed map** — it mirrors the lingering-hull DEATH policy (`createLingeringHullEntity`), so combat-death and abandon end identically. Locks: [abandonToScrap.test.ts](../../tests/integration/sectorRoom/abandonToScrap.test.ts) + [abandonLingeringToScrap.test.ts](../../tests/integration/sectorRoom/abandonLingeringToScrap.test.ts). The galaxy-only linger/abandon/pool flows are E2E-driven through the isolated `galaxy-test` room + the `lingerMs` trigger (see the root CLAUDE.md bespoke-triggers table).
+
+> **C2 retires the wreck BEHAVIOUR; the now-dead wreck ENTITY/schema/wire/client-render plumbing (`WreckState`, `state.wrecks`, `SnapshotMessage.wrecks`, `WreckLifecycleCoordinator`, the `EntityResolver` wreck branch, `WreckEntity`, the client `mirror.wrecks` render/select/pick/hover paths, `wreck-render-probe.spec.ts`) is removed in the C3 follow-up PR.** Until then it stays inert — nothing creates a `WreckState`, so `state.wrecks` is always empty and renders nothing.
 
 ## Shield/Hull + ramming (2026-05-16)
 
@@ -414,11 +416,16 @@ hand-rolled-mock testable) owns the decision: per `shipScrapGroups(kind)`
 component it spawns at the component's world pose (catalogue Pixi-up → world
 math-up via `x*scale,-y*scale`, rotate by ship angle, translate — matching
 `shipShapeToPolygon`), inheriting ship velocity + a radial `SCRAP_BURST_SPEED`
-drift, at the ship's angle. Death hooks (BOTH spawn BEFORE the slot is freed so
-the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s new
-optional `spawnScrapFromDrone` `LeafDeps` seam; player via the `SHIP_DESTROYED`
-handler in `SectorRoom` (active hull, pose from `shipPoseCache`/SAB). Polygon
-kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
+drift, at the ship's angle. Death hooks (ALL spawn BEFORE the slot is freed so
+the dying pose is live): drone via `swarmDamageStrategy.createSwarmDeath`'s
+optional `spawnScrapFromDrone` `LeafDeps` seam; ACTIVE player hull via the
+`SHIP_DESTROYED` handler in `SectorRoom` (pose from `shipPoseCache`/SAB); and
+**LINGERING hull (Equinox P6.3) via the `spawnScrapFromLingeringHull` `LeafDeps`
+seam** called inside `createLingeringHullEntity`'s death policy (pose read from
+`lingeringPoseCache` before that policy tears it down — the `SHIP_DESTROYED`
+path can't serve a lingering hull: its slot/pose are gone by emit time AND
+`getActiveShip(shipInstanceId)` is undefined; lock `lingeringScrapOnDeath.test.ts`).
+Polygon kinds yield nothing. **Scrap is DAMAGEABLE**: seeded `SCRAP_HP` + `swarmShield 0`,
 and `EntityResolver` routes kind 3 to the drone leaf (hits hull → destroyed) —
 GUARDED so a dying scrap piece does NOT recursively shatter
 (`SectorRoom.spawnScrapFromDrone` returns early for kind 3). No time-decay; a
