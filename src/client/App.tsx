@@ -21,10 +21,14 @@ import {
   syncGalaxyCurrentSector,
   syncGalaxyTransitDocked,
   syncGalaxyStats,
+  syncGalaxyPresence,
 } from './app/galaxyOverlay';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import { GalaxyMapLayer } from './render/galaxy/GalaxyMapLayer';
 import { useGalaxyStats } from './app/useGalaxyStats';
+import { useGalaxyPresence } from './app/useGalaxyPresence';
+import { mergePlayerPresence } from './app/galaxyPresence';
+import { loadStoredPlayerId } from './identity/token';
 import { Keyboard } from './input/Keyboard';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
 import { useUIStore, useGameReady, useIsLoadingActive } from './state/store';
@@ -599,9 +603,14 @@ function GameSurface({
   const galaxyLayerCurrentSectorKey = useUIStore((s) => s.currentSectorKey);
   const galaxyLayerTransitState = useUIStore((s) => s.transitState);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  const galaxyOwnedStructures = useUIStore((s) => s.galaxyOwnedStructures);
+  const shipRoster = useUIStore((s) => s.shipRoster);
   // Poll GET /galaxy/snapshot while a galaxy map is on screen (idle selector or
   // the in-game overlay open) → store.galaxyStats → the layer's count glyphs.
   useGalaxyStats(idle || galaxyMapOpen);
+  // Equinox Phase 7 — poll the player's owned-structure presence alongside the
+  // global snapshot (ship locations come from the roster, merged in below).
+  useGalaxyPresence(idle || galaxyMapOpen, loadStoredPlayerId());
   // Each effect routes BOTH paths: `galaxyLayerRef.current` is set
   // only in DOM-renderer mode (Safari fallback). In worker-renderer
   // mode the layer lives inside the worker; state crosses via the
@@ -620,6 +629,14 @@ function GameSurface({
   useEffect(() => {
     syncGalaxyStats(galaxyLayerRef.current, rendererRef.current, galaxyStats);
   }, [galaxyStats]);
+  // Equinox Phase 7 — merge the player's owned structures (GET /galaxy/presence)
+  // + ship locations (roster) into the per-sector "my presence" overlay, pushed
+  // dual-path to the galaxy map. Merge logic (incl. the active-ship → live
+  // currentSectorKey override) is the pure, unit-locked mergePlayerPresence.
+  useEffect(() => {
+    const presence = mergePlayerPresence(galaxyOwnedStructures, shipRoster, galaxyLayerCurrentSectorKey);
+    syncGalaxyPresence(galaxyLayerRef.current, rendererRef.current, presence);
+  }, [galaxyOwnedStructures, shipRoster, galaxyLayerCurrentSectorKey]);
 
   // Pixi 30 Hz throttle while the AdvancedDrawer is open. At 60 Hz the
   // main thread is saturated enough that Playwright's CDP roundtrip

@@ -66,6 +66,11 @@ export interface LivingWorldRoom {
   /** Phase-3 — live per-sector counts for `/galaxy/snapshot`. OPTIONAL: a mock
    *  room may omit it and the director falls back to `playerCount()` + zeros. */
   liveCounts?(): SectorLiveCounts;
+  /** Equinox Phase 7 — count of structures in this room owned by `playerId`
+   *  (the galaxy-map per-player "my structures" overlay; `GET /galaxy/presence`).
+   *  OPTIONAL: a mock room may omit it → the director counts 0 for this sector.
+   *  Off the 60 Hz tick (the ~4 s presence poll). */
+  ownedStructureCount?(playerId: string): number;
   hasFreeSlot(): boolean;
   spawnLivingWorldBot(spec: {
     botId: string;

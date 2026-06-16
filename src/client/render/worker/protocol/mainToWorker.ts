@@ -9,6 +9,7 @@ import type { EffectQuality } from '@core/contracts/IEffects';
 import type { WarpParams } from './warpParams.js';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
 import type { SectorLiveState } from '../../../../shared-types/galaxySnapshot.js';
+import type { SectorPresence } from '../../../../shared-types/galaxyPresence.js';
 
 /**
  * Initialise the worker. Sent once after `new Worker(...)`.
@@ -76,6 +77,13 @@ export interface SetOverlayModeMsg { type: 'SET_OVERLAY_MODE'; mode: 'overlay' |
  * off `GET /galaxy/snapshot` and pushed here for the live count glyphs.
  */
 export interface SetGalaxyStatsMsg { type: 'SET_GALAXY_STATS'; stats: SectorLiveState[] }
+
+/**
+ * Equinox Phase 7 — the logged-in player's merged per-sector presence (own ships
+ * + own structures) for the galaxy-map "my presence" overlay. Built on the main
+ * thread (roster + GET /galaxy/presence) and pushed here.
+ */
+export interface SetPlayerPresenceMsg { type: 'SET_PLAYER_PRESENCE'; presence: SectorPresence[] }
 
 /**
  * Canvas resize. Width/height in LOGICAL (CSS) px; `dpr` carries the
@@ -267,6 +275,7 @@ export type MainToWorkerMsg =
   | SetTransitDockedMsg
   | SetOverlayModeMsg
   | SetGalaxyStatsMsg
+  | SetPlayerPresenceMsg
   | ResizeMsg
   | SetTickerFpsMsg
   | SetWarpModeMsg

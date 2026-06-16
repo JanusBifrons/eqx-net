@@ -16,6 +16,7 @@ import type { ArrivalMode } from '../settings/settingsStorage.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -255,6 +256,11 @@ export interface UIStore {
    *  non-spatial → Zustand-safe (#2). Polled by useGalaxyStats while a galaxy map
    *  is on screen; consumed by the GalaxyMapLayer count glyphs. */
   galaxyStats: SectorLiveState[];
+  /** Equinox Phase 7 — the logged-in player's owned-structure count per sector,
+   *  from GET /galaxy/presence (the "my structures" omnipotent overlay). Ship
+   *  locations are merged in client-side from the roster. Discrete, non-spatial
+   *  → Zustand-safe (#2); polled by useGalaxyPresence while a galaxy map is up. */
+  galaxyOwnedStructures: SectorStructurePresence[];
   /** Living Galaxy Phase 6 — the galaxy-map sector under the desktop pointer +
    *  the screen anchor for its tooltip, or null. Deduped on sector-key change
    *  (NOT per-pointermove), so it's a discrete low-frequency UI field; the
@@ -376,6 +382,7 @@ export interface UIStore {
   setPendingPickSector: (key: string | null) => void;
   setGalaxyMapOpen: (v: boolean) => void;
   setGalaxyStats: (stats: SectorLiveState[]) => void;
+  setGalaxyOwnedStructures: (sectors: SectorStructurePresence[]) => void;
   setGalaxyHover: (hover: { sectorKey: string; left: number; top: number } | null) => void;
   toggleGalaxyMapOpen: () => void;
   setGalaxyOverviewOpen: (v: boolean) => void;

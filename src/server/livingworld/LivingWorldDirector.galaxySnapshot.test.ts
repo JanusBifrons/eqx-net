@@ -79,3 +79,31 @@ describe('LivingWorldDirector.galaxySnapshot', () => {
     }
   });
 });
+
+describe('LivingWorldDirector.playerStructurePresence (Equinox Phase 7)', () => {
+  it('aggregates owned-structure counts per sector, omitting sectors the player owns nothing in', () => {
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['sol-prime', fullMockRoom({ ownedStructureCount: (pid) => (pid === 'p1' ? 3 : 0) })],
+      ['orion-belt', fullMockRoom({ ownedStructureCount: (pid) => (pid === 'p1' ? 1 : 9) })],
+      ['vega-reach', fullMockRoom({ ownedStructureCount: () => 0 })], // p1 owns nothing here
+      ['lyra-fringe', fullMockRoom({})], // room omits the hook entirely → 0
+    ]);
+    const director = new LivingWorldDirector(rooms, OPTS);
+    director.start();
+    try {
+      const presence = director.playerStructurePresence('p1');
+      // Only sectors where p1 owns ≥ 1 structure, with p1's own counts.
+      expect(presence).toEqual(
+        expect.arrayContaining([
+          { key: 'sol-prime', structures: 3 },
+          { key: 'orion-belt', structures: 1 },
+        ]),
+      );
+      expect(presence).toHaveLength(2);
+      expect(presence.find((s) => s.key === 'vega-reach')).toBeUndefined();
+      expect(presence.find((s) => s.key === 'lyra-fringe')).toBeUndefined();
+    } finally {
+      director.stop();
+    }
+  });
+});

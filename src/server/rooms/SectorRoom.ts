@@ -3095,6 +3095,17 @@ export class SectorRoom extends Room<SectorState> {
     return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size };
   }
 
+  /** Equinox Phase 7 — count of structures in THIS room owned by `playerId`
+   *  (the galaxy-map per-player "my structures" overlay; `GET /galaxy/presence`).
+   *  Off the 60 Hz tick — called at the ~4 s presence poll. */
+  ownedStructureCount(playerId: string): number {
+    let n = 0;
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === playerId) n++;
+    }
+    return n;
+  }
+
   /** Whether a SAB slot is free for one more swarm entity. The director
    *  pre-checks this on the DESTINATION before despawning a bot from the
    *  source room, so a transit can't lose a bot to slot exhaustion. */

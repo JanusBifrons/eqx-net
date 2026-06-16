@@ -14,11 +14,21 @@
  */
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 import type { GalaxySnapshotResponse, SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type {
+  GalaxyPresenceResponse,
+  SectorStructurePresence,
+} from '../../shared-types/galaxyPresence.js';
 
 export interface GalaxyStatsProvider {
   /** The cached live per-sector state (one entry per galaxy room the director
    *  holds). O(1) — served from a cache recomputed on the control tick. */
   galaxySnapshot(): SectorLiveState[];
+  /** Per-sector count of structures owned by `playerId` (Equinox Phase 7 — the
+   *  galaxy-map "my structures" overlay). Computed ON DEMAND (it's per-player,
+   *  so it can't share the global snapshot cache) by scanning each live room's
+   *  registry — off the 60 Hz tick, called at the ~4 s presence poll. Sectors
+   *  where the player owns nothing are omitted. */
+  playerStructurePresence(playerId: string): SectorStructurePresence[];
 }
 
 let provider: GalaxyStatsProvider | null = null;
@@ -49,4 +59,19 @@ export function buildGalaxySnapshot(p: GalaxyStatsProvider | null): GalaxySnapsh
       owner: { factionId: s.region, contested: false },
     })),
   };
+}
+
+/**
+ * Build the `GET /galaxy/presence?playerId=` response — the requesting player's
+ * owned-structure count per sector. With a live provider, delegates to its
+ * on-demand per-player scan; without one (Living World disabled / not yet
+ * wired), returns no sectors (the client overlay simply shows nothing). The
+ * route still validates/bounds `playerId` before calling this.
+ */
+export function buildGalaxyPresence(
+  p: GalaxyStatsProvider | null,
+  playerId: string,
+): GalaxyPresenceResponse {
+  if (p) return { sectors: p.playerStructurePresence(playerId) };
+  return { sectors: [] };
 }
