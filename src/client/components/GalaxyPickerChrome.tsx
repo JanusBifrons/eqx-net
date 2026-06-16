@@ -398,7 +398,7 @@ export function GalaxyPickerChrome({
             {sectorTip.name}
           </Typography>
           <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {sectorTip.faction} · {sectorTip.status}
+            Neutral
           </Typography>
           <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
             {sectorTip.players > 0 && (
@@ -470,14 +470,29 @@ export function GalaxyPickerChrome({
             </Box>
           </Box>
           <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {popoverTip.faction} · {popoverTip.status}
+            Neutral
           </Typography>
-          <Box sx={{ display: 'flex', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
-            {popoverTip.players > 0 && <Typography sx={{ color: '#6bff9b', fontSize: 10 }} title="Players">▲ {popoverTip.players}</Typography>}
-            {popoverTip.enemies > 0 && <Typography sx={{ color: '#ff6b6b', fontSize: 10 }} title="Hostiles">✦ {popoverTip.enemies}</Typography>}
-            {popoverTip.neutrals > 0 && <Typography sx={{ color: '#ffd479', fontSize: 10 }} title="Neutrals">◇ {popoverTip.neutrals}</Typography>}
-            {popoverTip.structures > 0 && <Typography sx={{ color: '#9ab4dd', fontSize: 10 }} title="Structures">⬡ {popoverTip.structures}</Typography>}
-          </Box>
+          {/* Equinox Phase 8 (Bug 5) — LABELLED breakdown so the player knows
+              what each count is (icons alone were unreadable) and can see the
+              roaming drones (neutrals / hostiles). Always says something, even
+              when empty, so "are there drones here?" is answerable at a glance. */}
+          <Stack spacing={0.25} sx={{ mt: 0.5 }} data-testid="galaxy-popover-breakdown">
+            {popoverTip.players > 0 && (
+              <Typography sx={{ color: '#6bff9b', fontSize: 10 }}>▲ Players: {popoverTip.players}</Typography>
+            )}
+            {popoverTip.enemies > 0 && (
+              <Typography sx={{ color: '#ff6b6b', fontSize: 10 }}>✦ Hostiles: {popoverTip.enemies}</Typography>
+            )}
+            {popoverTip.neutrals > 0 && (
+              <Typography sx={{ color: '#ffd479', fontSize: 10 }}>◇ Neutral drones: {popoverTip.neutrals}</Typography>
+            )}
+            {popoverTip.structures > 0 && (
+              <Typography sx={{ color: '#9ab4dd', fontSize: 10 }}>⬡ Structures: {popoverTip.structures}</Typography>
+            )}
+            {popoverTip.players + popoverTip.enemies + popoverTip.neutrals + popoverTip.structures === 0 && (
+              <Typography sx={{ color: '#6b7280', fontSize: 10 }}>No ships or structures here.</Typography>
+            )}
+          </Stack>
           {popoverTip.features.length > 0 && (
             <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
               {popoverTip.features.join(' · ')}

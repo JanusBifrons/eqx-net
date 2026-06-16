@@ -14,9 +14,7 @@ import {
 } from './galaxyLayerDecisions';
 import {
   computeTerritories,
-  factionColor,
-  factionBorderColor,
-  boundaryEdges,
+  DEFAULT_FACTION_COLOR,
   type Territory,
 } from './galaxyTerritories';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
@@ -67,9 +65,6 @@ const COLOR_MINE = 0x66ffcc;
 /** Equinox Phase 7 (Item 1) — warpable (adjacent) sector ring on the in-game
  *  warp map: a bright cyan so the player sees where they can warp at a glance. */
 const COLOR_WARPABLE = 0x33ddff;
-
-/** Bold faction-coloured outer-territory perimeter stroke width (eqx-peri value). */
-const FACTION_OUTLINE_WIDTH = 3.5;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -526,13 +521,6 @@ export class GalaxyMapLayer extends Container {
       for (const key of t.sectorKeys) territoryOf.set(key, i);
     }
 
-    // Hex-position → faction lookup for the bold outer-territory outline
-    // (eqx-peri faction-coloured perimeter; HEX-adjacency based, not graph edges,
-    // so a faction boundary — including a chokepoint — is stroked on both sides).
-    const hexFaction = new Map<string, string>();
-    for (const s of GALAXY_SECTORS) hexFaction.set(`${s.hex.q},${s.hex.r}`, s.region);
-    const factionAt = (q: number, r: number): string | null => hexFaction.get(`${q},${r}`) ?? null;
-
     for (const s of GALAXY_SECTORS) {
       const pos = axialToPixel(s.hex, HEX_SIZE_BASE);
       const ti = territoryOf.get(s.key) ?? 0;
@@ -548,21 +536,9 @@ export class GalaxyMapLayer extends Container {
       });
       container.addChild(hex);
 
-      // Bold faction-coloured outline on this hex's OUTER-perimeter edges (edges
-      // whose across-neighbour is absent or a different faction). Drawn ONCE —
-      // the faction layout is static. Sits above the fill, below the label.
-      const boundary = boundaryEdges(s, factionAt);
-      if (boundary.length > 0) {
-        const outline = new Graphics();
-        outline.x = ox;
-        outline.y = oy;
-        const ov = hexVertices(HEX_SIZE_BASE);
-        for (const ei of boundary) {
-          outline.moveTo(ov[ei]!.x, ov[ei]!.y).lineTo(ov[(ei + 1) % 6]!.x, ov[(ei + 1) % 6]!.y);
-        }
-        outline.stroke({ color: factionBorderColor(s.region), width: FACTION_OUTLINE_WIDTH, alpha: 0.95 });
-        container.addChild(outline);
-      }
+      // Equinox Phase 8 (Bug 3) — the bold faction-coloured outer-territory
+      // outline is removed: there are no factions to capture sectors, so every
+      // sector renders neutral with no faction perimeter.
 
       const label = new Text({
         text: s.name,
@@ -581,9 +557,9 @@ export class GalaxyMapLayer extends Container {
       label.y = oy;
       container.addChild(label);
 
-      // Static environmental-feature glyphs (asteroid / nebula / minerals /
-      // black-hole / station) — baked per sector in galaxy.ts, drawn once. Live
-      // count glyphs (structures / enemy / neutral / player) are layered in
+      // Asteroid-field glyph only (Equinox Phase 8 / Bug 3) — the other static
+      // environmental glyphs are gone; only buildings / ships / asteroids show.
+      // Live count glyphs (structures / enemy / neutral / player) are layered in
       // separately by setGalaxyStats (Phase 4b).
       const glyphs = new Graphics();
       this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.46);
@@ -635,13 +611,18 @@ export class GalaxyMapLayer extends Container {
     this.repaint();
   }
 
-  /** Draw a sector's static feature glyphs in a small centred row at (cx, cy). */
+  /** Draw a sector's asteroid-field glyph(s) in a small centred row at (cx, cy).
+   *  Equinox Phase 8 (Bug 3): only ASTEROID features are drawn — the other static
+   *  environmental glyphs (nebula / minerals / black-hole / station) are removed
+   *  so the map shows only buildings / ships / asteroids. Runs once in buildHexes
+   *  (not per-frame), so the filter allocation is fine (invariant #14). */
   private drawFeatureGlyphs(g: Graphics, features: readonly SectorFeature[], cx: number, cy: number): void {
-    if (features.length === 0) return;
+    const asteroids = features.filter((f) => f === 'asteroid');
+    if (asteroids.length === 0) return;
     const spacing = 13;
-    const startX = cx - ((features.length - 1) * spacing) / 2;
-    for (let i = 0; i < features.length; i++) {
-      this.drawFeatureGlyph(g, features[i]!, startX + i * spacing, cy, 5);
+    const startX = cx - ((asteroids.length - 1) * spacing) / 2;
+    for (let i = 0; i < asteroids.length; i++) {
+      this.drawFeatureGlyph(g, asteroids[i]!, startX + i * spacing, cy, 5);
     }
   }
 
@@ -690,12 +671,13 @@ export class GalaxyMapLayer extends Container {
       const verts = hexVertices(this.hexSize);
 
       hex.clear();
-      // 1) Faction territory tint (always) — the region colour; a hovered hex
-      //    lifts its fill alpha so it reads brighter than its neighbours.
+      // 1) Neutral sector fill (Equinox Phase 8 / Bug 3) — there are no factions
+      //    to capture sectors, so every hex is the same neutral tint; a hovered
+      //    hex lifts its fill alpha so it reads brighter than its neighbours.
       const baseAlpha = highlighted ? 0.5 : warpable ? 0.46 : selectable ? 0.38 : 0.22;
       hex.poly(verts);
       hex.fill({
-        color: factionColor(sector.region),
+        color: DEFAULT_FACTION_COLOR,
         alpha: (hovered ? baseAlpha + 0.18 : baseAlpha) * fillBoost,
       });
       // 2) Faint inner per-hex border for cell separation (under the bold
