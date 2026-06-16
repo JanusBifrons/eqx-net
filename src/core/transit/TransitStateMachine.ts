@@ -36,21 +36,26 @@ export type TransitState =
   | 'CANCELLED';
 
 /**
- * Warp spool-up duration (ms). 5 minutes — the long, deliberate "engine
- * charging" window that (a) gives all players in the destination sector a
- * meaningful countdown warning before anyone (player or drone squad) warps in,
- * and (b) is the dramatic spool the wave-attack director uses to telegraph an
- * incoming drone squad. The ship stays in the SOURCE room and is fully
- * damageable for the whole window (the deliberate "vulnerable spool" design,
- * see the class doc) — under active drone waves a player warp can therefore be
- * aborted by death. This is an accepted gameplay tuning knob.
+ * Warp spool-up duration (ms). 30 seconds — the "engine charging" window that
+ * (a) gives all players in the destination sector a meaningful countdown
+ * warning before anyone (player or drone squad) warps in, and (b) is the spool
+ * the wave-attack director uses to telegraph an incoming drone squad. The ship
+ * stays in the SOURCE room and is fully damageable for the whole window (the
+ * deliberate "vulnerable spool" design, see the class doc) — under active drone
+ * waves a player warp can therefore be aborted by death.
  *
- * NOTE: tests must NOT wait 5 minutes. Two injection points exist:
+ * Equinox Phase 7 (2026-06-16) cut this from 5 min → 30 s for BOTH players and
+ * drones (a 5-minute wait per sector change was unplayable). Drone ARRIVAL stays
+ * deliberately gradual — it's gated by the director's dispatch cadence
+ * (5 min/squad) + per-hop travel (2 min/hop), not the spool — so squads still
+ * don't flood; only the charge window shortened.
+ *
+ * NOTE: tests must NOT wait 30 s (real-timer). Two injection points exist:
  *   - players: the per-room `transitSpoolMsOverride` JoinOption → TransitOrchestrator;
  *   - drones:  the director-level `spoolMs` option / `EQX_BOT_SPOOL_MS` env →
  *              BotTransitController (a per-room override does NOT reach the director).
  */
-export const SPOOL_DURATION_MS = 300_000;
+export const SPOOL_DURATION_MS = 30_000;
 
 export class TransitStateMachine {
   private _state: TransitState = 'DOCKED';
