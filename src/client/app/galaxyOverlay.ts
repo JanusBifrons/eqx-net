@@ -49,6 +49,14 @@ export interface InstallGalaxyOverlayOpts {
   mode?: GalaxyLayerMode;
   /** Selector-mode tap handler (spawn picker). Required when `mode === 'selector'`. */
   onSelectorPick?: (sectorKey: string) => void;
+  /**
+   * Idle (landing-screen) context — the selector picker IS the whole screen, so
+   * it's force-visible. When false (in-game), even a `selector`-mode map follows
+   * the `isGalaxyMapOpen` toggle so it installs HIDDEN and never auto-opens over
+   * the game (Equinox Phase 8 Bug 2: the in-game warp map uses `selector` mode
+   * and so was wrongly force-visible, "reappearing" over the game after a spawn).
+   */
+  idle?: boolean;
 }
 
 /**
@@ -58,12 +66,13 @@ export interface InstallGalaxyOverlayOpts {
  * inside the worker, addressed via the renderer's setLayer* methods).
  */
 export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapLayer | null {
-  const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick } = opts;
+  const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick, idle = false } = opts;
   const s0 = useUIStore.getState();
   const selector = mode === 'selector';
-  // The selector picker is always on screen; the additive overlay
-  // follows the Zustand MAP-button toggle.
-  const initialVisible = selector ? true : s0.isGalaxyMapOpen;
+  // Force-visible ONLY on the landing screen (idle), where the picker IS the
+  // whole screen. In-game, even a selector-mode map follows the MAP-button
+  // toggle so it installs hidden and never auto-opens over the game (Bug 2).
+  const initialVisible = idle ? true : s0.isGalaxyMapOpen;
   const onTap = selector
     ? (key: string): void => { onSelectorPick?.(key); }
     : (key: string): void => {
