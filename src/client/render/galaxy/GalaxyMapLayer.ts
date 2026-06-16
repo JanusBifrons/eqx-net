@@ -65,6 +65,11 @@ const COLOR_MINE = 0x66ffcc;
 /** Equinox Phase 7 (Item 1) — warpable (adjacent) sector ring on the in-game
  *  warp map: a bright cyan so the player sees where they can warp at a glance. */
 const COLOR_WARPABLE = 0x33ddff;
+/** Equinox Phase 8 — opaque backdrop behind the selector map. Matches the
+ *  renderer's BACKGROUND_COLOR (PixiRenderer) so the in-game warp map fully
+ *  hides the live game underneath and looks IDENTICAL to the cold landing map
+ *  (a full page), not a transparent overlay over gameplay. */
+const GALAXY_BACKDROP_COLOR = 0x05070f;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -115,6 +120,10 @@ export class GalaxyMapLayer extends Container {
   private readonly onHover?: (ev: GalaxyHoverEvent) => void;
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
+  /** Opaque full-screen backdrop drawn BEHIND the hexes (selector mode only) so
+   *  the in-game warp map hides the live game and reads as a full PAGE — exactly
+   *  like the cold landing map — not a transparent overlay (Equinox Phase 8). */
+  private readonly backdrop = new Graphics();
   private readonly entries: HexEntry[] = [];
   /** Per-territory sub-containers (Phase 4a), positioned at each territory's
    *  centroid; scaling one shrinks the whole region toward its centre. */
@@ -158,6 +167,10 @@ export class GalaxyMapLayer extends Container {
     this.onHover = opts.onHover;
     this.visible = false;
     this.eventMode = 'passive';
+    // Backdrop is the BOTTOM child (behind the hex cluster) and never intercepts
+    // pointer events, so pan/zoom + hex taps still hit the cluster (Phase 8).
+    this.backdrop.eventMode = 'none';
+    this.addChild(this.backdrop);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
@@ -421,6 +434,13 @@ export class GalaxyMapLayer extends Container {
   resize(screenW: number, screenH: number): void {
     this.screenW = screenW;
     this.screenH = screenH;
+    // Equinox Phase 8 — size the opaque full-screen backdrop to the viewport and
+    // show it ONLY in selector mode (the full-page landing + in-game warp map).
+    // It hides the live game underneath so the in-game map looks identical to the
+    // cold landing map. Legacy `overlay` mode stays transparent (backdrop off).
+    this.backdrop.clear();
+    this.backdrop.rect(0, 0, screenW, screenH).fill({ color: GALAXY_BACKDROP_COLOR, alpha: 1 });
+    this.backdrop.visible = this.mode === 'selector';
     const positions = GALAXY_SECTORS.map((s) => axialToPixel(s.hex, HEX_SIZE_BASE));
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of positions) {
