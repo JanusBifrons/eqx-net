@@ -55,13 +55,14 @@ describe('rangeCircleVisualParams (WS-10 R2.3)', () => {
 });
 
 describe('connectorVisualParams', () => {
-  it('idle (no flash) → muted blue, clearly-visible baseline + soft glow (Phase-7: never fades out)', () => {
+  it('idle (no flash) → steady muted-blue line, NO comet (Phase-8: idle does not pulse)', () => {
     const v = connectorVisualParams(/*flashUntil*/ 0, /*now*/ 1000, /*scale*/ 1);
     expect(v.color).toBe(CONNECTOR_IDLE_COLOR);
-    expect(v.alpha).toBeCloseTo(0.5, 6); // raised from the old near-invisible 0.3
-    expect(v.alpha).toBeGreaterThanOrEqual(0.4); // floor: the web stays visible between pulses
-    expect(v.glowAlpha).toBeCloseTo(0.12, 6); // soft idle glow (was 0)
+    expect(v.alpha).toBeCloseTo(0.3, 6); // steady idle line (as before Phase 7)
+    expect(v.glowAlpha).toBe(0); // no glow when idle
     expect(v.width).toBeGreaterThanOrEqual(1);
+    expect(v.pulseActive).toBe(false); // idle connectors must NOT pulse
+    expect(v.pulseAlpha).toBe(0);
   });
 
   it('just-flashed (flashProgress≈0) → mineral colour, bright, thick, full glow', () => {
@@ -73,12 +74,12 @@ describe('connectorVisualParams', () => {
     expect(v.glowWidth).toBeCloseTo(v.width * 3, 6);
   });
 
-  it('mid-flash eases alpha + glow back toward the idle baseline', () => {
+  it('mid-flash eases alpha + glow back down over the flash window', () => {
     const now = 1000;
-    // Halfway through the flash window (flow = 0.5).
+    // Halfway through the flash window (flashProgress = 0.5).
     const v = connectorVisualParams(now + FLASH_DURATION_MS / 2, now, 1);
-    expect(v.alpha).toBeCloseTo(0.5 + 0.4 * 0.5, 4); // 0.7
-    expect(v.glowAlpha).toBeCloseTo(0.12 + 0.18 * 0.5, 4); // 0.21
+    expect(v.alpha).toBeCloseTo(0.9 - 0.5 * 0.5, 4); // 0.65
+    expect(v.glowAlpha).toBeCloseTo((1 - 0.5) * 0.3, 4); // 0.15
   });
 
   it('line widths scale with zoom (≥ 1 device px)', () => {
@@ -96,31 +97,37 @@ describe('connectorVisualInto — directional flow pulse (R2.2)', () => {
     expect(r).toBe(out); // same reference — reused scratch, invariant #14
   });
 
-  it('idle (now ≥ flashUntil) → idle base, but the comet stays ON + floored (Phase-7)', () => {
+  it('idle (now ≥ flashUntil) → idle base, comet OFF (Phase-8: idle does not pulse)', () => {
     const v = connectorVisualInto(blankVisual(), /*flashUntil*/ 0, /*now*/ 1000, 1);
     expect(v.color).toBe(CONNECTOR_IDLE_COLOR);
-    // The travelling comet is ALWAYS active on a built connection now — the
-    // Phase-7 fix for "connection lines fade out between cycles".
-    expect(v.pulseActive).toBe(true);
-    expect(v.pulseAlpha!).toBeCloseTo(0.4, 6); // floored — never 0
+    expect(v.pulseActive).toBe(false); // no travelling comet when idle
+    expect(v.pulseAlpha).toBe(0);
   });
 
-  it('pulseAlpha NEVER drops to 0 across the whole flash→idle cycle (Phase-7 regression lock)', () => {
+  it('comet is ON only while flowing, OFF once idle (Phase-8 regression lock)', () => {
     const now = 1000;
     const flashUntil = now + FLASH_DURATION_MS;
-    // just-flashed, mid-flash, end-of-flash, at-boundary, and well past idle.
-    for (const t of [now, now + FLASH_DURATION_MS / 2, flashUntil - 1, flashUntil, flashUntil + 5000]) {
+    // While flowing (now < flashUntil): comet active with positive alpha.
+    for (const t of [now, now + FLASH_DURATION_MS / 2, flashUntil - 1]) {
       const v = connectorVisualInto(blankVisual(), flashUntil, t, 1);
       expect(v.pulseActive).toBe(true);
-      expect(v.pulseAlpha!).toBeGreaterThanOrEqual(0.4); // floor — the comet never vanishes
+      expect(v.pulseAlpha!).toBeGreaterThan(0);
+    }
+    // At/after the flash window expires (idle): comet OFF — the Phase-8 fix.
+    for (const t of [flashUntil, flashUntil + 5000]) {
+      const v = connectorVisualInto(blankVisual(), flashUntil, t, 1);
+      expect(v.pulseActive).toBe(false);
+      expect(v.pulseAlpha).toBe(0);
     }
   });
 
-  it('base + comet stay clearly visible at idle (the web does not fade out)', () => {
+  it('idle is a steady muted line — no glow, no comet (Phase-8)', () => {
     const idle = connectorVisualInto(blankVisual(), /*flashUntil*/ 0, /*now*/ 1000, 1);
-    expect(idle.alpha).toBeGreaterThanOrEqual(0.4);
-    expect(idle.glowAlpha).toBeGreaterThan(0);
-    expect(idle.pulseAlpha!).toBeGreaterThan(0);
+    expect(idle.color).toBe(CONNECTOR_IDLE_COLOR);
+    expect(idle.alpha).toBeCloseTo(0.3, 6);
+    expect(idle.glowAlpha).toBe(0);
+    expect(idle.pulseActive).toBe(false);
+    expect(idle.pulseAlpha).toBe(0);
   });
 
   it('flowing → pulse active in the distinct flow-pulse colour, base brightens', () => {
