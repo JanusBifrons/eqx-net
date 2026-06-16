@@ -74,6 +74,7 @@ const FEATURE_SPECS: string[] = [
   '**/configurable-arrival.spec.ts',
   '**/energy-bar.spec.ts',
   '**/entity-inspect.spec.ts',
+  '**/galaxy-warp-map.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',
   '**/drone-destruction.spec.ts',

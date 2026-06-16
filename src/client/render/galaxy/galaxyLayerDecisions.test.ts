@@ -8,7 +8,7 @@
  * sector" or "the in-game overlay lets you warp to a non-neighbour."
  */
 import { describe, it, expect } from 'vitest';
-import { isSectorSelectable, clusterFitFraction } from './galaxyLayerDecisions';
+import { isSectorSelectable, isSectorWarpable, clusterFitFraction } from './galaxyLayerDecisions';
 import { isNeighbour } from '@core/galaxy/galaxy';
 
 // Concrete galaxy facts: sol-prime (the core hub) is graph-adjacent to
@@ -62,5 +62,24 @@ describe('isSectorSelectable', () => {
 describe('clusterFitFraction', () => {
   it('selector fills more of the viewport than the overlay HUD', () => {
     expect(clusterFitFraction('selector')).toBeGreaterThan(clusterFitFraction('overlay'));
+  });
+});
+
+describe('isSectorWarpable (Equinox Phase 7 / Item 1)', () => {
+  it('a docked neighbour of the current sector is warpable', () => {
+    expect(isNeighbour(CENTRE, OUTER)).toBe(true); // precondition
+    expect(isSectorWarpable({ docked: true, currentSectorKey: CENTRE, sectorKey: OUTER })).toBe(true);
+  });
+
+  it('the current sector itself is NOT warpable (no self-warp)', () => {
+    expect(isSectorWarpable({ docked: true, currentSectorKey: CENTRE, sectorKey: CENTRE })).toBe(false);
+  });
+
+  it('nothing is warpable while undocked (mid-warp)', () => {
+    expect(isSectorWarpable({ docked: false, currentSectorKey: CENTRE, sectorKey: OUTER })).toBe(false);
+  });
+
+  it('nothing is warpable before the current sector is known (the landing map)', () => {
+    expect(isSectorWarpable({ docked: true, currentSectorKey: null, sectorKey: OUTER })).toBe(false);
   });
 });

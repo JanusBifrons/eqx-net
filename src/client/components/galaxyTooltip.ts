@@ -1,6 +1,7 @@
 import { getSector } from '../../core/galaxy/galaxy';
 import type { SectorFeature } from '../../core/galaxy/galaxy';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { RosterEntry } from '../state/storeTypes';
 
 /**
  * Living Galaxy Phase 6 — the content of the galaxy-map sector tooltip, derived
@@ -59,4 +60,32 @@ export function buildSectorTooltip(
     neutrals: live?.neutrals ?? 0,
     structures: live?.structures ?? 0,
   };
+}
+
+/** One of the player's ships in a sector — the galaxy popover's clickable
+ *  sub-list (Equinox Phase 7 / Item 4). `kind` is a ship-kind name (e.g.
+ *  "fighter"), never a raw id (UI-scope rule). */
+export interface SectorShipEntry {
+  shipId: string;
+  kind: string;
+  isActive: boolean;
+}
+
+/**
+ * The logged-in player's ships in `sectorKey`, for the galaxy popover's
+ * sub-list (the roster the top-bar panel used to show). The ACTIVE ship is
+ * matched against the LIVE `currentSectorKey` — its roster `sectorKey` can be
+ * stale across a transit (the server doesn't refresh it on markActive). Pure.
+ */
+export function shipsInSector(
+  roster: readonly RosterEntry[],
+  sectorKey: string,
+  currentSectorKey: string | null,
+): SectorShipEntry[] {
+  const out: SectorShipEntry[] = [];
+  for (const s of roster) {
+    const key = s.isActive && currentSectorKey ? currentSectorKey : s.sectorKey;
+    if (key === sectorKey) out.push({ shipId: s.shipId, kind: s.kind, isActive: s.isActive });
+  }
+  return out;
 }

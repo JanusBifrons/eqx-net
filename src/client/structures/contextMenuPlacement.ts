@@ -29,11 +29,19 @@ export interface ContextMenuPlacementOutcome {
  * @param hasPlacementKind whether a structure placement is currently active
  * @param lastPointerType  `pointerType` of the most recent `pointerdown`
  *                         (`'mouse'` | `'touch'` | `'pen'` | `''` if none yet)
+ * @param galaxyMapOpen    whether the galaxy map is on screen (Equinox Phase 7)
  */
 export function decideContextMenuPlacement(
   hasPlacementKind: boolean,
   lastPointerType: string,
+  galaxyMapOpen = false,
 ): ContextMenuPlacementOutcome {
+  // Equinox Phase 7 (Item 4) — while the galaxy map is on screen, ALWAYS suppress
+  // the native menu so a mobile long-press on the map never pops the OS context
+  // menu (the "long press causes a context menu" report). Never cancel placement:
+  // the map and structure placement are mutually exclusive, and this branch is
+  // about the map, not placement. Takes precedence over the placement logic.
+  if (galaxyMapOpen) return { preventDefault: true, cancel: false };
   if (!hasPlacementKind) return { preventDefault: false, cancel: false };
   // Suppress the native menu on both inputs; only a MOUSE right-click cancels.
   return { preventDefault: true, cancel: lastPointerType === 'mouse' };

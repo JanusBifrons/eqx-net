@@ -44,3 +44,23 @@ export function isSectorSelectable(args: {
 export function clusterFitFraction(mode: GalaxyLayerMode): number {
   return mode === 'selector' ? 0.85 : 0.6;
 }
+
+/**
+ * Equinox Phase 7 (Item 1) — is `sectorKey` a WARPABLE destination from the
+ * player's current sector? True only for a DOCKED player's direct galaxy-graph
+ * NEIGHBOUR. Drives the in-game full-page map's "warpable" neighbour highlight +
+ * the popover's "Warp here" CTA gating. The server re-validates adjacency on the
+ * wire (`engage_transit`), so this is UI-only. Distinct from
+ * {@link isSectorSelectable}: in the unified map EVERY sector is tappable for its
+ * info popover (omnipotent view), but only neighbours are warp targets.
+ */
+export function isSectorWarpable(args: {
+  docked: boolean;
+  currentSectorKey: string | null;
+  sectorKey: string;
+}): boolean {
+  if (!args.docked) return false;
+  if (!args.currentSectorKey) return false;
+  if (args.sectorKey === args.currentSectorKey) return false;
+  return isNeighbour(args.currentSectorKey, args.sectorKey);
+}

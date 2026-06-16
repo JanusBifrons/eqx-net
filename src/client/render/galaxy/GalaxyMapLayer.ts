@@ -2,11 +2,13 @@ import { Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js';
 import {
   GALAXY_SECTORS,
   axialToPixel,
+  getSector,
   type GalaxySector,
   type SectorFeature,
 } from '@core/galaxy/galaxy';
 import {
   isSectorSelectable,
+  isSectorWarpable,
   clusterFitFraction,
   type GalaxyLayerMode,
 } from './galaxyLayerDecisions';
@@ -62,6 +64,9 @@ const COLOR_LABEL = 0xdffff0;
 /** Equinox Phase 7 — the "yours" tint for the player's own presence readout
  *  (own ships ▲ / structures ■), distinct from the global E/N/P/S counts. */
 const COLOR_MINE = 0x66ffcc;
+/** Equinox Phase 7 (Item 1) — warpable (adjacent) sector ring on the in-game
+ *  warp map: a bright cyan so the player sees where they can warp at a glance. */
+const COLOR_WARPABLE = 0x33ddff;
 
 /** Bold faction-coloured outer-territory perimeter stroke width (eqx-peri value). */
 const FACTION_OUTLINE_WIDTH = 3.5;
@@ -220,8 +225,19 @@ export class GalaxyMapLayer extends Container {
   }
 
   setVisible(open: boolean): void {
+    const wasVisible = this.visible;
     this.visible = open;
-    if (!open) this.clearHover();
+    if (!open) {
+      this.clearHover();
+      return;
+    }
+    // Equinox Phase 7 (Item 1) — re-frame on (re)open so the in-game warp map
+    // auto-zooms to the current sector + its neighbours each time it's shown.
+    if (!wasVisible && this.screenW > 0 && this.screenH > 0) {
+      this._seedW = 0;
+      this._seedH = 0;
+      this.resize(this.screenW, this.screenH);
+    }
   }
 
   setCurrentSector(key: string | null): void {
@@ -433,8 +449,13 @@ export class GalaxyMapLayer extends Container {
     if (this.mode === 'selector') {
       this.panZoomCamera.setScreenSize(screenW, screenH);
       if (screenW !== this._seedW || screenH !== this._seedH) {
-        this.panZoomCamera.setZoom(scale);
-        this.panZoomCamera.moveCenter(focalX, focalY);
+        // Equinox Phase 7 (Item 1) — when the player IS in a sector (the in-game
+        // warp map), auto-zoom to frame the current sector + its neighbours (the
+        // warp targets); on the landing map (no current sector) frame the whole
+        // galaxy.
+        const frame = this.warpFrame(screenW, screenH);
+        this.panZoomCamera.setZoom(frame ? frame.scale : scale);
+        this.panZoomCamera.moveCenter(frame ? frame.cx : focalX, frame ? frame.cy : focalY);
         this._seedW = screenW;
         this._seedH = screenH;
       }
@@ -443,6 +464,32 @@ export class GalaxyMapLayer extends Container {
     this.clusterRoot.scale.set(scale);
     this.clusterRoot.x = screenW / 2 - focalX * scale;
     this.clusterRoot.y = screenH / 2 - focalY * scale;
+  }
+
+  /**
+   * Equinox Phase 7 (Item 1) — the camera frame (zoom + centre) that fits the
+   * current sector + its neighbours (the warp targets) into ~70% of the screen.
+   * Returns null when the player isn't in a sector (the landing map → frame the
+   * whole galaxy via the caller's whole-cluster fit).
+   */
+  private warpFrame(screenW: number, screenH: number): { scale: number; cx: number; cy: number } | null {
+    if (!this.currentSectorKey) return null;
+    const cur = getSector(this.currentSectorKey);
+    if (!cur) return null;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const key of [this.currentSectorKey, ...cur.neighbours]) {
+      const s = getSector(key);
+      if (!s) continue;
+      const p = axialToPixel(s.hex, HEX_SIZE_BASE);
+      if (p.x - HEX_SIZE_BASE < minX) minX = p.x - HEX_SIZE_BASE;
+      if (p.x + HEX_SIZE_BASE > maxX) maxX = p.x + HEX_SIZE_BASE;
+      if (p.y - HEX_SIZE_BASE < minY) minY = p.y - HEX_SIZE_BASE;
+      if (p.y + HEX_SIZE_BASE > maxY) maxY = p.y + HEX_SIZE_BASE;
+    }
+    if (!Number.isFinite(minX)) return null;
+    const target = Math.min(screenW, screenH) * 0.7;
+    const scale = Math.min(target / Math.max(maxX - minX, 1), target / Math.max(maxY - minY, 1));
+    return { scale, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
   }
 
   override destroy(): void {
@@ -632,12 +679,20 @@ export class GalaxyMapLayer extends Container {
       // Living Galaxy Phase 6 — subtle lighter tint + brighter ring on the
       // hovered hex (the "this is clickable" affordance the bug doc asked for).
       const hovered = sector.key === this.hoveredSectorKey;
+      // Equinox Phase 7 (Item 1) — a WARPABLE (docked neighbour) sector on the
+      // in-game warp map: bright cyan ring + lifted fill so the warp targets
+      // read at a glance. No-op on the landing map (no current sector).
+      const warpable = isSectorWarpable({
+        docked: this.isDocked,
+        currentSectorKey: this.currentSectorKey,
+        sectorKey: sector.key,
+      });
       const verts = hexVertices(this.hexSize);
 
       hex.clear();
       // 1) Faction territory tint (always) — the region colour; a hovered hex
       //    lifts its fill alpha so it reads brighter than its neighbours.
-      const baseAlpha = highlighted ? 0.5 : selectable ? 0.38 : 0.22;
+      const baseAlpha = highlighted ? 0.5 : warpable ? 0.46 : selectable ? 0.38 : 0.22;
       hex.poly(verts);
       hex.fill({
         color: factionColor(sector.region),
@@ -645,13 +700,15 @@ export class GalaxyMapLayer extends Container {
       });
       // 2) Faint inner per-hex border for cell separation (under the bold
       //    faction outer-territory outline drawn in buildHexes); the current
-      //    sector keeps a brighter ring as the "you are here" marker; a hovered
-      //    hex gets a lighter ring so it reads as clickable.
+      //    sector keeps a brighter ring as the "you are here" marker; a warpable
+      //    neighbour gets a bright cyan ring; a hovered hex gets a lighter ring.
       hex.poly(verts);
       if (highlighted) {
         hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 0.9 });
       } else if (hovered) {
         hex.stroke({ color: COLOR_HIGHLIGHT, width: 2, alpha: 0.65 });
+      } else if (warpable) {
+        hex.stroke({ color: COLOR_WARPABLE, width: 2, alpha: 0.85 });
       } else if (selectable) {
         hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1, alpha: 0.4 });
       } else {

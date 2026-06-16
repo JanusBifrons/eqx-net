@@ -33,17 +33,19 @@ async function waitForLocalShip(page: Page, timeoutMs = 20_000): Promise<void> {
   );
 }
 
-test('fresh user → galaxy-map-screen panel mounts with data-roster-count="0"', async ({ page }) => {
+test('galaxy-map-screen no longer embeds the floating roster panel (Equinox Phase 7 / Item 4)', async ({ page }) => {
   test.setTimeout(30_000);
   await page.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   // Living Galaxy P5 — the galaxy map is the landing screen on load (no meta CTA).
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
 
-  // The panel inside galaxy-map-screen mounts even when playerId is
-  // empty — count just stays at 0 because the fetch is skipped.
-  const panel = page.locator('[data-testid="galaxy-map-screen"] [data-testid="ship-roster-panel"]').first();
-  await expect(panel).toBeAttached({ timeout: 10_000 });
-  await expect(panel).toHaveAttribute('data-roster-count', '0', { timeout: 5_000 });
+  // Equinox Phase 7 (Item 4) — the floating top-bar roster panel was REMOVED;
+  // the per-sector popover's "your ships" sub-list replaces it (the roster is
+  // still polled for the popover + RosterCountBadge, just not shown as a panel
+  // here). The drawer Galaxy-tab panel remains — see the next test.
+  await expect(
+    page.locator('[data-testid="galaxy-map-screen"] [data-testid="ship-roster-panel"]'),
+  ).toHaveCount(0);
 });
 
 test('after spawning in sol-prime, the drawer Galaxy tab panel shows the new ship', async ({ page }) => {

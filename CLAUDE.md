@@ -141,6 +141,26 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 
 ---
 
+## Pushing branches & opening PRs — `gh` IS installed (2026-06-16)
+
+`gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and authenticated via `%APPDATA%\GitHub CLI\hosts.yml`. **Stop saying "gh isn't installed / branches are local" — it is.** Push + open a PR is a one-liner; **never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), do it.**
+
+**`gh` is FULLY authed** — `read:org` was added 2026-06-16 (`gh auth refresh`), so `gh pr create / edit / list / view / checks / diff` ALL work natively:
+
+```
+git push -u origin <branch>
+gh pr create --base main --head <branch> --title "…" --body-file diag/_pr-body-<x>.md
+gh pr checks <n>   # CI status; gh pr view/edit/list/diff also fine
+```
+
+Fallback (only if gh's token rotates / loses scope): the REST scripts via git's GCM credential — `diag/adb-shots/_create-*.mjs` (`POST /repos/JanusBifrons/eqx-net/pulls`) + `_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`); token = `printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p'` → `Authorization: Bearer`. These need only `repo`, so they work even without read:org. (History: before the refresh, gh's GraphQL commands — list/edit/status/create — failed with `requires read:org`; the REST scripts were the workaround.)
+
+Other notes:
+- A fresh shell hasn't reloaded PATH → call gh by full path once, or in-PowerShell `$env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\..."`.
+- If gh auth ever breaks (token rotated), re-add the scope with `gh auth refresh -h github.com -s read:org` — run it in **PowerShell / Windows Terminal** (a real PTY), NOT Git Bash/MinTTY (which errors `could not prompt: Incorrect function`); in Git Bash, prefix with `winpty`. Or re-mint hosts.yml directly: `printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"` (`$TOKEN` from `git credential fill`).
+
+---
+
 ## Verification Protocol (apply after every server-touching change)
 
 After any change to `src/server/` or its config, **boot the server before reporting success**:
