@@ -18,6 +18,7 @@ import {
   type Territory,
 } from './galaxyTerritories';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
+import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
 import { Camera } from '../worker/Camera';
 
 /**
@@ -58,6 +59,9 @@ const COLOR_HIGHLIGHT = 0x00ff88;
 const COLOR_SELECTABLE_STROKE = 0x8fe9c0;
 const COLOR_LOCKED_STROKE = 0x2a2f40;
 const COLOR_LABEL = 0xdffff0;
+/** Equinox Phase 7 — the "yours" tint for the player's own presence readout
+ *  (own ships ▲ / structures ■), distinct from the global E/N/P/S counts. */
+const COLOR_MINE = 0x66ffcc;
 
 /** Bold faction-coloured outer-territory perimeter stroke width (eqx-peri value). */
 const FACTION_OUTLINE_WIDTH = 3.5;
@@ -86,9 +90,12 @@ interface HexEntry {
   y: number;
   hex: Graphics;
   label: Text;
-  /** Live per-sector count readout (enemies / players / structures), updated by
-   *  setGalaxyStats; hidden when the sector has no activity. */
+  /** Live per-sector count readout (enemies / neutrals / players / structures),
+   *  updated by setGalaxyStats; hidden when the sector has no activity. */
   countText: Text;
+  /** Equinox Phase 7 — the player's OWN presence readout (ships ▲ / structures
+   *  ■), updated by setPlayerPresence; hidden where the player has nothing. */
+  presenceText: Text;
   /** Index into `territories` / `territoryContainers`. */
   territoryIndex: number;
 }
@@ -232,10 +239,14 @@ export class GalaxyMapLayer extends Container {
 
   /**
    * Live per-sector counts (Phase 4b) — updates each sector's count readout
-   * (enemies / players / structures) beneath its feature glyphs, colour-coded by
-   * danger (red enemies → green players → grey). Called ~every 3-5 s from the
-   * useGalaxyStats poll (NOT the render loop), so the small per-call allocation
-   * is fine. Sectors with no activity hide their readout.
+   * beneath its feature glyphs, colour-coded by salience. Called ~every 3-5 s
+   * from the useGalaxyStats poll (NOT the render loop), so the small per-call
+   * allocation is fine. Sectors with no activity hide their readout.
+   *
+   * Equinox Phase 7 (omnipotent view): now also shows roaming NEUTRAL squads
+   * (`N`). They were dropped before, so roaming ships/squads were invisible on
+   * the map even though the count rode the snapshot all along. Readout is
+   * `E enemies / N roamers / P players / S structures`.
    */
   setGalaxyStats(stats: readonly SectorLiveState[]): void {
     const byKey = new Map<string, SectorLiveState>();
@@ -243,17 +254,53 @@ export class GalaxyMapLayer extends Container {
     for (const entry of this.entries) {
       const ct = entry.countText;
       const st = byKey.get(entry.sector.key);
-      if (!st || (st.enemies === 0 && st.players === 0 && st.structures === 0)) {
+      if (!st || (st.enemies === 0 && st.neutrals === 0 && st.players === 0 && st.structures === 0)) {
         ct.visible = false;
         continue;
       }
       const parts: string[] = [];
       if (st.enemies > 0) parts.push(`E${st.enemies}`);
+      if (st.neutrals > 0) parts.push(`N${st.neutrals}`);
       if (st.players > 0) parts.push(`P${st.players}`);
       if (st.structures > 0) parts.push(`S${st.structures}`);
       ct.text = parts.join('  ');
-      ct.style.fill = st.enemies > 0 ? 0xff6b6b : st.players > 0 ? 0x6bff9b : 0xaab0c0;
+      // Colour by the most salient presence: hostile red → roamer amber →
+      // player green → structures grey.
+      ct.style.fill =
+        st.enemies > 0
+          ? 0xff6b6b
+          : st.neutrals > 0
+            ? 0xffc14d
+            : st.players > 0
+              ? 0x6bff9b
+              : 0xaab0c0;
       ct.visible = true;
+    }
+  }
+
+  /**
+   * Equinox Phase 7 — the logged-in player's OWN per-sector presence overlay
+   * (omnipotent view): owned structures (■) + ships (▲), in a distinct "yours"
+   * green below the global counts. Merged client-side from the roster (ships) +
+   * GET /galaxy/presence (structures); pushed at the ~4 s poll cadence (NOT the
+   * render loop), so the small per-call allocation matches setGalaxyStats. Hidden
+   * in sectors where the player has neither ships nor structures.
+   */
+  setPlayerPresence(presence: readonly SectorPresence[]): void {
+    const byKey = new Map<string, SectorPresence>();
+    for (const p of presence) byKey.set(p.key, p);
+    for (const entry of this.entries) {
+      const pt = entry.presenceText;
+      const p = byKey.get(entry.sector.key);
+      if (!p || (p.ships === 0 && p.structures === 0)) {
+        pt.visible = false;
+        continue;
+      }
+      const parts: string[] = [];
+      if (p.structures > 0) parts.push(`■${p.structures}`);
+      if (p.ships > 0) parts.push(`▲${p.ships}`);
+      pt.text = parts.join('  ');
+      pt.visible = true;
     }
   }
 
@@ -515,7 +562,28 @@ export class GalaxyMapLayer extends Container {
       countText.visible = false;
       container.addChild(countText);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, territoryIndex: ti });
+      // Equinox Phase 7 — the player's OWN presence readout (own structures ■ /
+      // ships ▲), a distinct "yours" green row below the global counts. Hidden
+      // until setPlayerPresence reports the player has presence here.
+      const presenceText = new Text({
+        text: '',
+        resolution: MAP_LABEL_RESOLUTION,
+        roundPixels: true,
+        style: new TextStyle({
+          fontFamily: 'sans-serif',
+          fontSize: 10,
+          fontWeight: '700',
+          fill: COLOR_MINE,
+          letterSpacing: 0.5,
+        }),
+      });
+      presenceText.anchor.set(0.5);
+      presenceText.x = ox;
+      presenceText.y = oy + HEX_SIZE_BASE * 0.46 + 25;
+      presenceText.visible = false;
+      container.addChild(presenceText);
+
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, presenceText, territoryIndex: ti });
     }
     this.repaint();
   }

@@ -126,6 +126,16 @@ describe('renderer-worker protocol', () => {
           ],
         },
       },
+      {
+        name: 'SET_PLAYER_PRESENCE',
+        msg: {
+          type: 'SET_PLAYER_PRESENCE',
+          presence: [
+            { key: 'sol-prime', ships: 2, structures: 3 },
+            { key: 'greenfall', ships: 0, structures: 0 },
+          ],
+        },
+      },
       { name: 'RESIZE', msg: { type: 'RESIZE', width: 1024, height: 768, dpr: 1.5 } },
       { name: 'SET_TICKER_FPS number', msg: { type: 'SET_TICKER_FPS', fps: 30 } },
       { name: 'SET_TICKER_FPS null', msg: { type: 'SET_TICKER_FPS', fps: null } },

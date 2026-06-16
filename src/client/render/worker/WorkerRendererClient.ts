@@ -538,6 +538,13 @@ export class WorkerRendererClient implements IRenderer {
   setLayerGalaxyStats(stats: import('../../../shared-types/galaxySnapshot.js').SectorLiveState[]): void {
     this.post({ type: 'SET_GALAXY_STATS', stats });
   }
+  /** Push the logged-in player's per-sector presence (ships + owned structures)
+   *  to the worker-hosted layer (Equinox Phase 7). */
+  setLayerPlayerPresence(
+    presence: import('../../../shared-types/galaxyPresence.js').SectorPresence[],
+  ): void {
+    this.post({ type: 'SET_PLAYER_PRESENCE', presence });
+  }
 
   /** Notify the worker of a canvas-host resize. */
   resize(width: number, height: number, dpr: number): void {

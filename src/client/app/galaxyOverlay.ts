@@ -32,6 +32,7 @@ import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorPresence } from '../../shared-types/galaxyPresence.js';
 
 export interface InstallGalaxyOverlayOpts {
   renderer: IRenderer;
@@ -201,5 +202,22 @@ export function syncGalaxyStats(
   galaxyLayer?.setGalaxyStats(stats);
   if (renderer instanceof WorkerRendererClient) {
     renderer.setLayerGalaxyStats(stats);
+  }
+}
+
+/**
+ * Per-player presence sync (Equinox Phase 7) — routes BOTH the DOM-mode layer
+ * and the worker-hosted layer, mirroring {@link syncGalaxyStats}. `presence` is
+ * the MERGED per-sector view (the logged-in player's ships + owned structures),
+ * built in App.tsx from the roster + GET /galaxy/presence.
+ */
+export function syncGalaxyPresence(
+  galaxyLayer: GalaxyMapLayer | null,
+  renderer: IRenderer | null,
+  presence: SectorPresence[],
+): void {
+  galaxyLayer?.setPlayerPresence(presence);
+  if (renderer instanceof WorkerRendererClient) {
+    renderer.setLayerPlayerPresence(presence);
   }
 }

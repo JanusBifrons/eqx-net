@@ -223,6 +223,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         galaxyLayer?.setGalaxyStats(msg.stats);
         break;
       }
+      case 'SET_PLAYER_PRESENCE': {
+        galaxyLayer?.setPlayerPresence(msg.presence);
+        break;
+      }
 
       case 'SET_DIAG_MARKERS': {
         // F1 — flip per-frame marker emission. No renderer dependency

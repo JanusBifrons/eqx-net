@@ -35,6 +35,7 @@ import {
 } from './population.js';
 import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
+import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import {
   formationSlotOffset,
   formationSlotWorldPose,
@@ -484,6 +485,20 @@ export class LivingWorldDirector {
    *  `setGalaxyStatsProvider`). O(1): served from the control-tick cache. */
   galaxySnapshot(): SectorLiveState[] {
     return this.galaxyStatsCache;
+  }
+
+  /** Equinox Phase 7 — per-sector count of structures owned by `playerId` (the
+   *  galaxy-map "my structures" overlay). Computed ON DEMAND from each live
+   *  room's registry (per-player, so it can't share the global snapshot cache);
+   *  off the 60 Hz tick — called at the ~4 s presence poll. Sectors where the
+   *  player owns nothing are omitted, keeping the payload small. */
+  playerStructurePresence(playerId: string): SectorStructurePresence[] {
+    const out: SectorStructurePresence[] = [];
+    for (const [key, room] of this.rooms) {
+      const n = room.ownedStructureCount?.(playerId) ?? 0;
+      if (n > 0) out.push({ key, structures: n });
+    }
+    return out;
   }
 
   /** Promote squads whose members have spawned (forming→idle) and squads that
