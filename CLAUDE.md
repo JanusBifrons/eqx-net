@@ -143,25 +143,27 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 
 ## Pushing branches & opening PRs — `gh` IS installed (2026-06-16)
 
-`gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and **authenticated out of the box** via `%APPDATA%\GitHub CLI\hosts.yml`. So just use it:
+`gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and authenticated via `%APPDATA%\GitHub CLI\hosts.yml`. **Stop saying "gh isn't installed / branches are local" — it is.** Push + open a PR is a one-liner; **never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), do it.**
 
 ```
 git push -u origin <branch>
-gh pr create --base main --head <branch> --title "..." --body-file diag/_pr-body-<x>.md
-gh pr list / gh pr view <n> / gh pr checks <n>
 ```
 
-Stop saying "gh isn't installed / branches are local" — it is, and a push + `gh pr create` is the one-liner. **Never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), push the branch and open the PR.**
+**Token-scope caveat (load-bearing — pick the command that actually works):** the stored credential is the repo's `gho_` **Git Credential Manager** OAuth token, scopes `gist, repo, workflow` — **no `read:org`**. So gh's REST-backed + narrow commands work, but its GraphQL commands that touch org/author/team fields FAIL with `... requires read:org`:
 
-Notes / gotchas:
-- The stored token is the repo's `gho_` OAuth token from **Git Credential Manager** (scopes `gist, repo, workflow`). It is **missing `read:org`**, so `gh auth login --with-token` *rejects* it — that's why hosts.yml was written directly (which skips that over-strict validation). `gh auth status` prints a harmless `! Missing required token scopes: 'read:org'` warning; **PR create/list/view/checks all work** regardless (they only need `repo`).
-- A fresh shell hasn't reloaded PATH yet → call gh by full path that one time, or in-PowerShell `$env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\..."`.
-- If the GCM token ever rotates and gh auth breaks, re-mint hosts.yml from the live credential (no `gh auth` needed):
-  ```bash
-  TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')
-  printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"
-  ```
-  (Equivalently set `GH_TOKEN=$TOKEN` for a single session — `GH_TOKEN` bypasses the scope check too.) The legacy REST-API fallback (`diag/adb-shots/_create-*.mjs` → `git credential fill` → `POST /repos/JanusBifrons/eqx-net/pulls`) still works but is no longer needed.
+| Works (use gh) | FAILS on read:org → use the REST script |
+|---|---|
+| `gh pr view <n> --json …`, `gh pr checks <n>`, `gh pr diff <n>` | `gh pr list`, `gh pr edit`, `gh pr status`, and **`gh pr create`** (post-create GraphQL) |
+
+So the **reliable path for create/edit/list is the REST API via `git credential fill`** (this is NOT legacy — it's the primary path here):
+- **Create**: `diag/adb-shots/_create-*.mjs` (`git credential fill` → `POST /repos/JanusBifrons/eqx-net/pulls`).
+- **Edit title/body**: `diag/adb-shots/_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`).
+- Both read the token the same way: `TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')` then `Authorization: Bearer $TOKEN`.
+
+Other notes:
+- A fresh shell hasn't reloaded PATH → call gh by full path once, or in-PowerShell `$env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\..."`.
+- If gh auth ever breaks (token rotated), re-mint hosts.yml: `printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"` (or `GH_TOKEN=$TOKEN` for one session).
+- **One-time full fix** (makes ALL gh commands work): add `read:org` to the token — `gh auth refresh -h github.com -s read:org` (interactive/browser; the user must run it, e.g. via `! gh auth refresh …`).
 
 ---
 
