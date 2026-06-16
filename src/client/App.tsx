@@ -133,7 +133,12 @@ function GameSurface({
   onSelectLocal,
 }: GameSurfaceProps): JSX.Element {
   const idle = surfaceMode === 'idle';
-  const overlayMode = idle ? 'selector' : 'overlay';
+  // Equinox Phase 7 (Item 1) — ONE map: both the landing picker and the in-game
+  // warp map use the full-page `selector` layer (the translucent `overlay` is
+  // retired). In-game it auto-frames the current sector + neighbours (keyed on
+  // currentSectorKey) and routes taps to the popover; visibility is the Map
+  // toggle (`isGalaxyMapOpen`), wired separately by syncGalaxyVisibility.
+  const overlayMode = 'selector' as const;
   // Imperative handle into the picker chrome so a sector tap on the
   // shared canvas's selector layer opens the kind-picker.
   const pickerApiRef = useRef<GalaxyPickerApi | null>(null);
@@ -361,7 +366,10 @@ function GameSurface({
     // the picked sector and route to the auth flow. On return, the remounted
     // GameSurface re-opens this sector's picker (see the idle-mount effect
     // below). A non-reactive getState() read keeps the callback stable.
-    if (!useAuthStore.getState().user) {
+    // Auth-gate the spawn ONLY on the landing map (phase 'galaxy-map'). In-game
+    // (Equinox Phase 7 warp map, phase 'game') the pilot is already in a room —
+    // never bounce them to the auth flow.
+    if (useUIStore.getState().phase === 'galaxy-map' && !useAuthStore.getState().user) {
       logEvent('pick_auth_gate', { sectorKey });
       useUIStore.getState().setPendingPickSector(sectorKey);
       useUIStore.getState().setPhase('auth');
@@ -763,6 +771,27 @@ function GameSurface({
        *  moves it to the projected on-screen position of the blueprint ghost. */}
       <StructurePlacementBanner />
       <LostConnectionOverlay />
+      {/* Equinox Phase 7 (Item 1) — the in-game full-page WARP map: the SAME
+       *  GalaxyPickerChrome (context='warp') over the full-page selector layer
+       *  (the translucent overlay is retired). Opened by the Map toggle
+       *  (isGalaxyMapOpen). Tap a hex → info popover; "Warp here" warps to an
+       *  adjacent neighbour; a roster row hot-swaps ships; Close dismisses. */}
+      {galaxyMapOpen && (
+        <GalaxyPickerChrome
+          context="warp"
+          apiRef={pickerApiRef}
+          onClose={() => useUIStore.getState().setGalaxyMapOpen(false)}
+          onWarp={(sectorKey) => {
+            handleEngageTransit(sectorKey);
+            // Close the map so the HyperspaceOverlay spool bar shows over the game.
+            useUIStore.getState().setGalaxyMapOpen(false);
+          }}
+          onSpawnExistingShip={(shipId, sectorKey) => {
+            useUIStore.getState().setPendingShipSwap({ shipId, sectorKey });
+            useUIStore.getState().setGalaxyMapOpen(false);
+          }}
+        />
+      )}
       {galaxyOverviewOpen && (
         <Slot anchor="fullscreen" order={25}>
           {/* In-game ship-swap overview — roster-pick only over the live
