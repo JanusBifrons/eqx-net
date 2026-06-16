@@ -26,4 +26,18 @@ describe('decideContextMenuPlacement', () => {
     expect(decideContextMenuPlacement(true, 'pen')).toEqual({ preventDefault: true, cancel: false });
     expect(decideContextMenuPlacement(true, '')).toEqual({ preventDefault: true, cancel: false });
   });
+
+  // Equinox Phase 7 (Item 4) — galaxy map open suppresses the native menu
+  // (long-press on the map must never pop the OS context menu) and never cancels.
+  it('galaxy map open → suppress menu, never cancel (takes precedence)', () => {
+    expect(decideContextMenuPlacement(false, 'touch', true)).toEqual({ preventDefault: true, cancel: false });
+    expect(decideContextMenuPlacement(false, 'mouse', true)).toEqual({ preventDefault: true, cancel: false });
+    // Even mid-placement (mutually exclusive in practice), the map branch wins: no cancel.
+    expect(decideContextMenuPlacement(true, 'mouse', true)).toEqual({ preventDefault: true, cancel: false });
+  });
+
+  it('galaxy map closed (default arg) → unchanged behaviour', () => {
+    expect(decideContextMenuPlacement(false, 'mouse')).toEqual({ preventDefault: false, cancel: false });
+    expect(decideContextMenuPlacement(true, 'mouse')).toEqual({ preventDefault: true, cancel: true });
+  });
 });
