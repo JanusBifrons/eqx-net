@@ -168,11 +168,16 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   shedRecoveryMs: 10_000,
   initialStaggerMs: 200,
   spoolMs: SPOOL_DURATION_MS,
-  // ~2 min per hop. Every entry sector is 1 hop from sol-prime, so a dispatch
-  // at the home sector telegraphs ~spool+hop ahead; a 2-hop interior base is
-  // ~2× the flight — the "warping in from outside, takes minutes to reach Sol"
-  // feel. Tunable via EQX_BOT_HOP_MS.
-  hopTravelMs: 120_000,
+  // 0 = NO invisible inter-sector flight (Equinox: "drones should always be on
+  // the actual game world, not in some ethereal warp"). The cross-sector hop is
+  // now an atomic despawn-source/spawn-dest (deferred one macrotask) — a drone
+  // is a LIVE, visible entity in a real sector at all times. Paced travel still
+  // emerges from the VISIBLE per-hop spool dwell (`spoolMs`): a squad lingers in
+  // each sector for the spool, then jumps to the next, so a farther base still
+  // takes proportionally longer to reach — just visibly, never in limbo.
+  // Tunable via EQX_BOT_HOP_MS (a non-zero value re-introduces the invisible
+  // flight window; not recommended).
+  hopTravelMs: 0,
   // ~45 s dwell between roam hops — a slow drift, not a frantic patrol.
   roamIntervalMs: 45_000,
   // One squad per ready faction per 5 min (then it traverses hop-by-hop).
@@ -756,9 +761,9 @@ export class LivingWorldDirector {
 
   /** Phase-4 P0 — a squad's coarse threat relation for the incoming banner. A
    *  wave (tasked against a faction) is an ENEMY (red); an idle/roaming pack is
-   *  NEUTRAL (amber). Per-recipient PvP refinement is a future nicety — the
-   *  wave-dispatch `ownerPresent` gate already makes the present player the
-   *  target, so coarse `enemy` is correct in practice. */
+   *  NEUTRAL (amber). Per-recipient PvP refinement is a future nicety — a tasked
+   *  squad is bearing down on that faction's base, so coarse `enemy` is correct
+   *  in practice. */
   private dispositionForSquad(squad: SquadRecord | undefined): WarpDisposition {
     return squad && squad.targetFactionId !== null ? 'enemy' : 'neutral';
   }

@@ -110,11 +110,15 @@ describe('WaveDirector — assignment + advancement', () => {
     expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
   });
 
-  it('does NOT assign to a ready base whose owner is OFFLINE (presence gate)', () => {
+  it('STILL assigns to a ready base whose owner is OFFLINE (Equinox: attack regardless of presence)', () => {
     const { wave, squadPool } = setup({ readiness: [readyFaction({ ownerPresent: false })] });
     squadPool.setState(squadPool.get('squad-0')!, 'idle');
-    expect(wave.plan(0)).toEqual([]);
-    expect(squadPool.get('squad-0')!.targetFactionId).toBeNull();
+    const steps = wave.plan(0);
+    const sq = squadPool.get('squad-0')!;
+    // The presence gate was removed — a ready base draws a wave even when the
+    // owner is offline (their turrets defend; an undefended base de-escalates).
+    expect(sq.targetFactionId).toBe('alice');
+    expect(steps).toContainEqual({ kind: 'warp', squad: sq, to: 'vega' });
   });
 
   it('does not double-assign two squads to the same faction (v1 = 1 squad)', () => {

@@ -154,10 +154,13 @@ export class WaveDirector {
       if (sq.targetFactionId !== null) assigned.add(sq.targetFactionId);
     }
     for (const [factionId, r] of readiness) {
-      // Only START a wave against a ready base whose owner is present (online in
-      // the sector) — the warning + countdown is meaningless if they're offline
-      // and can't defend. An already-assigned wave continues regardless.
-      if (!r.ready || !r.ownerPresent || assigned.has(factionId)) continue;
+      // Equinox: a ready base draws a wave whether or not the owner is present
+      // ("they should attack if the player is there or not"). The world stays
+      // dangerous while you're away — the base's own turrets defend it, and an
+      // undefended base eventually de-escalates (no surviving miners + peaceful
+      // timeout). `ownerPresent` is still computed on the readiness entry for
+      // telemetry, but it no longer gates the dispatch.
+      if (!r.ready || assigned.has(factionId)) continue;
       // Rate cap: at most one squad per `dispatchIntervalMs` per faction. The
       // first dispatch (no record) is immediate; after a wave stands down the
       // next one against the same base waits out the window (drone-warp-in
