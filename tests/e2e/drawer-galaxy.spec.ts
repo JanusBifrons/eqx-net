@@ -1,15 +1,18 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
 
 /**
- * Drawer → Galaxy-overview flow locks (2026-05-13 user-smoke regressions).
+ * Drawer → Galaxy flow locks (2026-05-13 user-smoke regressions).
  *
- * Merged 2026-06-03 from `drawer-galaxy-map-open-close.spec.ts` +
- * `drawer-galaxy-overview-spawn.spec.ts` (test-coverage determinism refactor):
- * both drive the same drawer → "Show galaxy map" flow, asserting different
- * load-bearing surfaces. Two distinct test()s, each keeping its own timeout
- * budget (the open/close lag guard relies on the tight 25 s cap + 3 s per-step
- * ceiling; the roster-card flow needs the generous 120 s budget for its extra
- * CDP roundtrips). Do NOT collapse the two timeouts.
+ * Two distinct test()s, each keeping its own timeout budget (the open/close lag
+ * guard relies on the tight 25 s cap + 3 s per-step ceiling; the roster-card
+ * flow needs the generous 120 s budget for its extra CDP roundtrips). Do NOT
+ * collapse the two timeouts.
+ *
+ * Equinox Phase 8 (Bug 4): "Show galaxy map" now opens the REAL full-page galaxy
+ * map (the warp-context GalaxyPickerChrome / `galaxy-map-screen`), not the old
+ * roster-scrim overview (GalaxyOverviewSelectChrome, now retired). Test 1 locks
+ * the open→close lag of the full-page map; Test 2 locks the drawer Galaxy-tab's
+ * own roster card → ShipDetailModal path (the in-game ship-swap surface).
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -129,40 +132,25 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
   await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 5_000 });
   stamp('galaxy-tab-show-map visible');
 
-  // === 3. Click "Show galaxy map" ===
+  // === 3. Click "Show galaxy map" — Phase 8 (Bug 4): opens the full-page map ===
   await page.locator('[data-testid="galaxy-tab-show-map"]').click();
   stamp('clicked Show galaxy map');
-  await expect(page.locator('[data-testid="galaxy-overview-close"]')).toBeVisible({ timeout: 5_000 });
-  stamp('galaxy-overview-close visible');
-  await expect(page.locator('[data-testid="galaxy-overview-select"]')).toBeVisible({ timeout: 5_000 });
-  stamp('galaxy-overview-select visible');
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 5_000 });
+  stamp('galaxy-map-screen visible');
+  await expect(page.locator('[data-testid="galaxy-warp-close"]')).toBeVisible({ timeout: 5_000 });
+  stamp('galaxy-warp-close visible');
+  // Light double-mount guard (replaces the old GalaxyOverviewSelectChrome
+  // mount-count audit; that roster scrim is retired): the full-page map mounts
+  // exactly once on a single open click.
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(1);
 
   // === 4. Click X close ===
-  await page.locator('[data-testid="galaxy-overview-close"]').click();
+  await page.locator('[data-testid="galaxy-warp-close"]').click();
   stamp('clicked X close');
-  await expect(page.locator('[data-testid="galaxy-overview-close"]')).toBeHidden({ timeout: 5_000 });
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toHaveCount(0, { timeout: 5_000 });
   await expect(page.locator('[data-testid="ship-stats-card"]')).toBeVisible({ timeout: 5_000 });
 
-  // === 5. Mount-count audit (catches the "double-mounted" symptom) ===
-  // production: 1 mount on open, 0 on close. dev StrictMode: 2 on open.
-  // >2 = the overlay double-mounted on a single open click.
-  const mountCount = await page.evaluate(() => {
-    const win = window as unknown as StoreWindow;
-    const logs = win.__eqxLogs ?? [];
-    return logs.filter(
-      // Single-canvas refactor: the in-game overview is now the
-      // canvas-less GalaxyOverviewSelectChrome (was GalaxyOverviewScreen).
-      (e) => e.tag === 'component_mount' && e.data['name'] === 'GalaxyOverviewSelectChrome',
-    ).length;
-  });
-  expect(
-    mountCount,
-    `GalaxyOverviewSelectChrome mounted ${mountCount} times in one open/close cycle. ` +
-      `Expected ≤ 2 (StrictMode doubles mount on first open; close should not mount). ` +
-      `>2 = the user-reported double-mount regression.`,
-  ).toBeLessThanOrEqual(2);
-
-  // === 6. Confirm the game surface is still ALIVE after the cycle ===
+  // === 5. Confirm the game surface is still ALIVE after the cycle ===
   const shipCount = await page.evaluate(() => {
     const el = document.querySelector('[data-testid="ship-count"]');
     return parseInt(el?.textContent?.replace('Ships: ', '') ?? '0', 10);
@@ -184,7 +172,7 @@ test('drawer → Show galaxy map → X close: stays interactive, no double-mount
 // asserts the card RENDERS — it does NOT cover the click→modal path, so this
 // coverage lives only here.
 // ---------------------------------------------------------------------------
-test('drawer → Show galaxy map → roster card opens detail modal (real clicks)', async ({ page }) => {
+test('drawer Galaxy tab → roster card opens detail modal (real clicks)', async ({ page }) => {
   // FUNCTIONAL only, not a perf budget. The main thread is saturated by Pixi
   // tick + Colyseus snapshot apply, so every CDP roundtrip needs generous
   // timeouts. (The lag budget lives in Test 1 above.)
@@ -219,17 +207,13 @@ test('drawer → Show galaxy map → roster card opens detail modal (real clicks
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 15_000 });
   }
   await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 30_000 });
+  // Phase 8 (Bug 4): the roster panel lives in the drawer's Galaxy tab itself —
+  // its card opens ShipDetailModal directly. The old "Show galaxy map → overview
+  // roster scrim → card" path is retired (the button now opens the full-page map,
+  // covered by galaxy-map-overlay.spec.ts).
+  await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 15_000 });
 
-  // === 3. REAL click: "Show galaxy map". ===
-  await page
-    .locator('[data-testid="galaxy-tab-show-map"]')
-    .click({ force: true, timeout: 15_000 });
-
-  // === 4. Refactor contract: overview opens in 'select' mode, NOT warp. ===
-  await expect(page.locator('[data-testid="galaxy-overview-select"]')).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator('[data-testid="galaxy-overview-warp"]')).toHaveCount(0);
-
-  // === 5. REAL click on the roster card inside the overview. ===
+  // === 3. REAL click on the roster card in the drawer's Galaxy tab. ===
   const localShipInstanceId = await page.evaluate(() => {
     const win = window as unknown as StoreWindow;
     return win.__eqxStore!.getState().localShipInstanceId;

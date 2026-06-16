@@ -114,6 +114,10 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     onEngageTransit,
     mode: overlayMode,
     onSelectorPick,
+    // Equinox Phase 8 (Bug 2): force-visible only on the landing screen (idle).
+    // In-game the selector-mode warp map must install HIDDEN + follow the MAP
+    // toggle, else it auto-opens over the game and "reappears" after a spawn.
+    idle,
   });
 
   // Idle galaxy-picker canvas: no simulation and no room. The galaxy
