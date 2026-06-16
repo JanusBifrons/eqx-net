@@ -9,7 +9,7 @@
  * A regression here is "the spawn picker renders in overlay (neighbours-
  * only) mode on one of the two render paths."
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { syncGalaxyMode, installGalaxyOverlay } from './galaxyOverlay';
 import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
 import { useUIStore } from '../state/store';
@@ -72,13 +72,17 @@ function fakeWorker(): {
 }
 
 describe('installGalaxyOverlay (worker path)', () => {
-  it('selector mode: always visible, taps route to onSelectorPick (not transit)', () => {
+  // Reset the shared toggle so the visibility assertions are deterministic
+  // regardless of test order.
+  beforeEach(() => { useUIStore.getState().setGalaxyMapOpen(false); });
+
+  it('selector mode on the LANDING (idle): always visible, taps route to onSelectorPick', () => {
     const { w, getTap, calls } = fakeWorker();
     const onEngageTransit = vi.fn();
     const onSelectorPick = vi.fn();
     const ret = installGalaxyOverlay({
       renderer: w, useWorker: true, el: {} as HTMLDivElement,
-      onEngageTransit, mode: 'selector', onSelectorPick,
+      onEngageTransit, mode: 'selector', onSelectorPick, idle: true,
     });
     expect(ret).toBeNull(); // worker hosts its own layer
     expect(calls.mode).toHaveBeenCalledWith('selector');
@@ -86,6 +90,29 @@ describe('installGalaxyOverlay (worker path)', () => {
     getTap()?.('orion-belt');
     expect(onSelectorPick).toHaveBeenCalledWith('orion-belt');
     expect(onEngageTransit).not.toHaveBeenCalled();
+  });
+
+  it('selector mode IN-GAME (not idle) + map CLOSED: installs HIDDEN (Phase 8 / Bug 2 lock)', () => {
+    // The in-game warp map uses selector mode too. Before the fix it force-
+    // installed VISIBLE and "reappeared" over the game after a spawn; it must
+    // follow isGalaxyMapOpen (closed → hidden) when not on the landing screen.
+    useUIStore.getState().setGalaxyMapOpen(false);
+    const { w, calls } = fakeWorker();
+    installGalaxyOverlay({
+      renderer: w, useWorker: true, el: {} as HTMLDivElement,
+      onEngageTransit: vi.fn(), mode: 'selector', onSelectorPick: vi.fn(), idle: false,
+    });
+    expect(calls.visible).toHaveBeenCalledWith(false);
+  });
+
+  it('selector mode IN-GAME (not idle) + map OPEN: installs visible', () => {
+    useUIStore.getState().setGalaxyMapOpen(true);
+    const { w, calls } = fakeWorker();
+    installGalaxyOverlay({
+      renderer: w, useWorker: true, el: {} as HTMLDivElement,
+      onEngageTransit: vi.fn(), mode: 'selector', onSelectorPick: vi.fn(), idle: false,
+    });
+    expect(calls.visible).toHaveBeenCalledWith(true);
   });
 
   it('overlay mode (default): taps engage a transit + close the map', () => {

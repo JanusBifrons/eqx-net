@@ -91,7 +91,7 @@ const SNACKBAR_ANCHOR = { vertical: 'bottom' as const, horizontal: 'center' as c
 export function GalaxyTab(): JSX.Element {
   const transitState   = useUIStore((s) => s.transitState);
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
-  const setGalaxyOverviewOpen = useUIStore((s) => s.setGalaxyOverviewOpen);
+  const setGalaxyMapOpen = useUIStore((s) => s.setGalaxyMapOpen);
   const setDrawerOpen    = useUIStore((s) => s.setDrawerOpen);
   const arrivalMode      = useUIStore((s) => s.arrivalMode);
   const arrivalTargetX   = useUIStore((s) => s.arrivalTargetX);
@@ -166,7 +166,11 @@ export function GalaxyTab(): JSX.Element {
   const lastToastRef = useRef<string>('');
 
   const onShowMap = (): void => {
-    setGalaxyOverviewOpen(true);
+    // Equinox Phase 8 (Bug 4) — open the REAL full-page galaxy map (the warp-
+    // context GalaxyPickerChrome + Pixi selector layer), NOT the old roster
+    // scrim (GalaxyOverviewSelectChrome) which just dimmed the game + showed
+    // the roster. The map is the single unified surface (Phase 7).
+    setGalaxyMapOpen(true);
     setDrawerOpen(false);
   };
 
@@ -245,7 +249,7 @@ export function GalaxyTab(): JSX.Element {
         Show galaxy map
       </Button>
       <Typography variant="caption" sx={CAPTION_MUTED_SX}>
-        Galaxy overview + roster picker. Use the bottom-center MAP button (or M key) to warp.
+        Opens the full galaxy map — tap a sector for its breakdown, your ships, and to warp or join. (Or press M.)
       </Typography>
 
       {/* Phase 5 — in-game roster access. */}

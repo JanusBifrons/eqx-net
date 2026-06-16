@@ -11,9 +11,10 @@
  *     directly),
  *   - the engineering-room path stops routing to onSelectRoom.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './GalaxyPickerChrome';
+import { useUIStore } from '../state/store';
 
 describe('GalaxyPickerChrome', () => {
   it('renders the load-bearing testids (limbo stub, engineering, single-player)', () => {
@@ -72,4 +73,29 @@ describe('GalaxyPickerChrome', () => {
     fireEvent.click(screen.getByTestId('engineering-room-test-sector'));
     expect(onSelectRoom).toHaveBeenCalledWith('test-sector');
   });
+
+  it('sector popover shows LABELLED counts incl. drones (Equinox Phase 8 / Bug 5)', () => {
+    // Inject a live snapshot slice so the popover has non-zero counts to label.
+    act(() => {
+      useUIStore.getState().setGalaxyStats([
+        { key: 'sol-prime', players: 1, enemies: 2, neutrals: 8, structures: 3, owner: null },
+      ]);
+    });
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('galaxy-sector-popover')).toBeInTheDocument();
+    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix), so the
+    // roaming drones (neutrals) are legible at a glance.
+    const breakdown = screen.getByTestId('galaxy-popover-breakdown');
+    expect(breakdown).toHaveTextContent('Players: 1');
+    expect(breakdown).toHaveTextContent('Hostiles: 2');
+    expect(breakdown).toHaveTextContent('Neutral drones: 8');
+    expect(breakdown).toHaveTextContent('Structures: 3');
+  });
+});
+
+// Reset the shared Zustand galaxyStats so the injected slice above doesn't leak.
+afterEach(() => {
+  useUIStore.getState().setGalaxyStats([]);
 });
