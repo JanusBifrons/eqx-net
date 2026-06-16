@@ -145,25 +145,19 @@ Long uncommitted sessions are a recovery hazard. If Vite HMR cycles go wrong, th
 
 `gh` (GitHub CLI, v2.94+) is installed (winget `GitHub.cli`, user scope at `%LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.cli_*\bin\gh.exe`, on the user PATH for new shells) and authenticated via `%APPDATA%\GitHub CLI\hosts.yml`. **Stop saying "gh isn't installed / branches are local" — it is.** Push + open a PR is a one-liner; **never leave finished, green work unpushed waiting to "ask" — when the user says push/PR (or the task implies shipping), do it.**
 
+**`gh` is FULLY authed** — `read:org` was added 2026-06-16 (`gh auth refresh`), so `gh pr create / edit / list / view / checks / diff` ALL work natively:
+
 ```
 git push -u origin <branch>
+gh pr create --base main --head <branch> --title "…" --body-file diag/_pr-body-<x>.md
+gh pr checks <n>   # CI status; gh pr view/edit/list/diff also fine
 ```
 
-**Token-scope caveat (load-bearing — pick the command that actually works):** the stored credential is the repo's `gho_` **Git Credential Manager** OAuth token, scopes `gist, repo, workflow` — **no `read:org`**. So gh's REST-backed + narrow commands work, but its GraphQL commands that touch org/author/team fields FAIL with `... requires read:org`:
-
-| Works (use gh) | FAILS on read:org → use the REST script |
-|---|---|
-| `gh pr view <n> --json …`, `gh pr checks <n>`, `gh pr diff <n>` | `gh pr list`, `gh pr edit`, `gh pr status`, and **`gh pr create`** (post-create GraphQL) |
-
-So the **reliable path for create/edit/list is the REST API via `git credential fill`** (this is NOT legacy — it's the primary path here):
-- **Create**: `diag/adb-shots/_create-*.mjs` (`git credential fill` → `POST /repos/JanusBifrons/eqx-net/pulls`).
-- **Edit title/body**: `diag/adb-shots/_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`).
-- Both read the token the same way: `TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p')` then `Authorization: Bearer $TOKEN`.
+Fallback (only if gh's token rotates / loses scope): the REST scripts via git's GCM credential — `diag/adb-shots/_create-*.mjs` (`POST /repos/JanusBifrons/eqx-net/pulls`) + `_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`); token = `printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p'` → `Authorization: Bearer`. These need only `repo`, so they work even without read:org. (History: before the refresh, gh's GraphQL commands — list/edit/status/create — failed with `requires read:org`; the REST scripts were the workaround.)
 
 Other notes:
 - A fresh shell hasn't reloaded PATH → call gh by full path once, or in-PowerShell `$env:Path += ";$env:LOCALAPPDATA\Microsoft\WinGet\Packages\..."`.
-- If gh auth ever breaks (token rotated), re-mint hosts.yml: `printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"` (or `GH_TOKEN=$TOKEN` for one session).
-- **One-time full fix** (makes ALL gh commands work): add `read:org` to the token — `gh auth refresh -h github.com -s read:org` (interactive/browser; the user must run it, e.g. via `! gh auth refresh …`).
+- If gh auth ever breaks (token rotated), re-add the scope with `gh auth refresh -h github.com -s read:org` — run it in **PowerShell / Windows Terminal** (a real PTY), NOT Git Bash/MinTTY (which errors `could not prompt: Incorrect function`); in Git Bash, prefix with `winpty`. Or re-mint hosts.yml directly: `printf 'github.com:\n    oauth_token: %s\n    user: JanusBifrons\n    git_protocol: https\n' "$TOKEN" > "$APPDATA/GitHub CLI/hosts.yml"` (`$TOKEN` from `git credential fill`).
 
 ---
 
