@@ -5,9 +5,10 @@
  *   - a load-bearing testid disappears (E2E specs probe galaxy-map-screen,
  *     limbo-resume-banner/data-limbo-sector-key, engineering-rooms-button,
  *     single-player-button, ship-picker-modal),
- *   - the imperative apiRef.openForSector → ship-picker → onSpawnNewShip
- *     spawn flow breaks (this is how a tap on the shared canvas's selector
- *     layer turns into a spawn),
+ *   - the imperative apiRef.openForSector → popover → "Join the fight" →
+ *     ship-picker → onSpawnNewShip spawn flow breaks (Equinox Phase 7 / Item 4:
+ *     a tap on the selector layer opens the interactive popover, not the picker
+ *     directly),
  *   - the engineering-room path stops routing to onSelectRoom.
  */
 import { describe, it, expect, vi } from 'vitest';
@@ -34,7 +35,7 @@ describe('GalaxyPickerChrome', () => {
     expect(screen.queryByTestId('single-player-button')).not.toBeInTheDocument();
   });
 
-  it('apiRef.openForSector opens the kind-picker → spawn fires onSpawnNewShip with the sector', () => {
+  it('apiRef.openForSector opens the sector popover → Join → kind-picker → spawn fires onSpawnNewShip', () => {
     const apiRef = { current: null as GalaxyPickerApi | null };
     const onSpawnNewShip = vi.fn();
     render(
@@ -44,10 +45,17 @@ describe('GalaxyPickerChrome', () => {
         onSpawnNewShip={onSpawnNewShip}
       />,
     );
-    // Picker is closed until a sector is tapped.
+    // Popover + picker are both closed until a sector is tapped.
+    expect(screen.queryByTestId('galaxy-sector-popover')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
 
+    // Equinox Phase 7 (Item 4) — a tap opens the INTERACTIVE popover, NOT the
+    // ship picker directly.
     act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('galaxy-sector-popover')).toBeInTheDocument();
+
+    // "Join the fight" opens the kind-picker for that sector.
+    fireEvent.click(screen.getByTestId('galaxy-popover-join'));
     expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
     // Title carries the tapped sector's name.
     expect(screen.getByText(/Spawn in/)).toBeInTheDocument();
