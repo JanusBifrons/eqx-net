@@ -502,9 +502,15 @@ function GameSurface({
     const onPointerDownType = (e: PointerEvent): void => { lastPointerType = e.pointerType; };
     window.addEventListener('pointerdown', onPointerDownType, { capture: true });
     const onContextMenu = (e: MouseEvent): void => {
+      const s = useUIStore.getState();
+      // Equinox Phase 7 (Item 4) — the galaxy map (landing phase OR the in-game
+      // map toggle) never wants a browser context menu; suppress it so a mobile
+      // long-press on the map doesn't pop the OS menu.
+      const galaxyMapOpen = s.isGalaxyMapOpen || s.phase === 'galaxy-map';
       const outcome = decideContextMenuPlacement(
-        useUIStore.getState().placementKind !== null,
+        s.placementKind !== null,
         lastPointerType,
+        galaxyMapOpen,
       );
       if (outcome.preventDefault) e.preventDefault();
       if (outcome.cancel) useUIStore.getState().setPlacementKind(null);
