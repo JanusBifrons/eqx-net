@@ -114,20 +114,23 @@ describe('TransitStateMachine', () => {
     expect(dflt.scheduledCommitMs).toBe(SPOOL_DURATION_MS);
   });
 
-  it('SPOOL_DURATION_MS is the wave-system 5 min (absolute revert-lock)', () => {
-    // Wave-attack pass 2026-06-10 (plan: i-d-like-you-to-resilient-hellman):
-    // warp spool 30 s → 5 min for ALL warps. The long window is the
-    // telegraph for incoming drone squads (and any player warp) — every
-    // player/drone in the destination sector gets a meaningful countdown.
+  it('SPOOL_DURATION_MS is 30 s (absolute revert-lock)', () => {
+    // Equinox Phase 7 (2026-06-16, plan: i-d-like-you-to-snug-flurry): warp
+    // spool cut 5 min → 30 s for ALL warps (players AND drones share this
+    // constant). A 5-minute charge per sector change was unplayable. The
+    // window is still long enough to telegraph an incoming drone squad / any
+    // player warp — every player/drone in the destination sector gets a
+    // meaningful countdown — and drone ARRIVAL stays gradual via the director's
+    // dispatch cadence (5 min/squad) + per-hop travel (2 min/hop), not the spool.
     // Every OTHER spool assertion is constant-relative (asserts
     // `=== SPOOL_DURATION_MS` or injects its own fixture spoolMs), so a
     // revert would pass them all. This absolute literal is the regression
     // lock that fails LOUDLY on a revert. It also pins the value the server
     // sends clients in the SPOOLING `transit_state` message and that
     // `HyperspaceOverlay` / `WarpInWarningBanner` count down from. Tests
-    // never wait 5 min — they inject a small spoolMs (player: per-room
+    // never wait 30 s — they inject a small spoolMs (player: per-room
     // `transitSpoolMsOverride`; drone: director `spoolMs` / `EQX_BOT_SPOOL_MS`).
-    expect(SPOOL_DURATION_MS).toBe(300_000);
+    expect(SPOOL_DURATION_MS).toBe(30_000);
   });
 
   it('works with no bus injected', () => {
