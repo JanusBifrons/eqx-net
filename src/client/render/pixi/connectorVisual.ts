@@ -1,9 +1,11 @@
 /**
  * Pure visual-params for a grid connection segment (speed-dial-resource-
- * structures plan, Phase 3). Ported from eqx-peri's `ConnectionRenderer` visual
- * model: an idle muted-blue line that brightens (alpha/width pulse + glow) when
- * it carried flow this pulse, fading over `FLASH_DURATION_MS`. eqx-peri uses no
- * travelling-dash, so neither do we.
+ * structures plan, Phase 3). Base model ported from eqx-peri's
+ * `ConnectionRenderer`: a muted-blue line that brightens (alpha/width pulse +
+ * glow) when it carried flow this pulse, easing back over `FLASH_DURATION_MS`.
+ * eqx-net adds a directional travelling comet (R2.2) which Equinox Phase 7 made
+ * CONTINUOUS + always-visible so the web never "fades out between cycles" — see
+ * `connectorVisualInto`.
  *
  * Zone-pure (no Pixi import) so the maths is unit-testable; the Graphics drawing
  * lives in `ConnectorRenderer.ts`.
@@ -142,14 +144,24 @@ function fract(x: number): number {
 }
 
 /**
- * Visual params for a connection given its flash window — written INTO `out`
- * (no allocation; the renderer hot path holds one scratch struct, invariant
- * #14). Fills the base-line style (idle muted-blue, brightening + glowing while
- * flowing and fading over the last `FLASH_DURATION_MS`) AND the R2.2 directional
- * flow-pulse fields (a travelling comet, continuous phase clock; `phaseOffset`
- * ∈ [0,1) desynchronises edges so the grid reads as organic flow, not a global
- * strobe). The comet's source→dest direction is resolved by the renderer via
- * `cometSegment` (it knows which endpoint is the flow source).
+ * Visual params for a built connection given its flash window — written INTO
+ * `out` (no allocation; the renderer hot path holds one scratch struct,
+ * invariant #14). EVERY line this is called for is a LIVE, built connection, so
+ * it stays clearly visible AT ALL TIMES with a continuous travelling comet (the
+ * direction-of-flow cue) — the wire + comet NEVER fade to nothing between grid
+ * pulses. A `grid_pulse` "flash" (this edge carried flow this cycle, i.e.
+ * `nowMs < flashUntilMs`) brightens the wire (muted-blue → mineral), the glow,
+ * and the comet on top, then eases back to the idle baseline over
+ * `FLASH_DURATION_MS`. `phaseOffset` ∈ [0,1) desynchronises edges so the grid
+ * reads as organic flow, not a global strobe; the comet's source→dest direction
+ * is resolved by the renderer via `cometSegment`.
+ *
+ * Equinox Phase 7 (2026-06-16) fix: the R2.2 comet was gated on the 300 ms flash
+ * window and faded its alpha to 0, while the base line dropped to a near-
+ * invisible idle 0.3 for the ~700 ms gap between 1 Hz pulses — the web "faded
+ * out between cycles." It now keeps a visible idle baseline + an always-on
+ * floored comet, brightening with `flow`. The just-flashed PEAK is unchanged
+ * (alpha 0.9 / glow 0.30 / comet 0.95).
  */
 export function connectorVisualInto(
   out: ConnectorVisual,
@@ -159,33 +171,25 @@ export function connectorVisualInto(
   phaseOffset = 0,
 ): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
-  if (nowMs >= flashUntilMs) {
-    out.color = CONNECTOR_IDLE_COLOR;
-    out.alpha = 0.3;
-    out.width = Math.max(1 / safeScale, 1);
-    out.glowAlpha = 0;
-    out.glowWidth = 0;
-    out.pulseActive = false;
-    out.pulseT = 0;
-    out.pulseColor = CONNECTOR_FLOW_PULSE_COLOR;
-    out.pulseAlpha = 0;
-    out.pulseWidth = 0;
-    return out;
-  }
-  // flashProgress 0 (just flashed) → 1 (about to go idle).
-  const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
-  const width = Math.max(1 / safeScale, 2.5);
-  out.color = CONNECTOR_MINERAL_COLOR;
-  out.alpha = 0.9 - flashProgress * 0.5;
+  // `flow`: 1 at the instant of flow, easing to 0 at the idle baseline over the
+  // flash window. 0 when this edge isn't flashing (steady idle).
+  const flashProgress =
+    nowMs < flashUntilMs
+      ? Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS))
+      : 1;
+  const flow = 1 - flashProgress;
+  const width = Math.max(1 / safeScale, 1 + 1.5 * flow); // idle 1 → flash 2.5
+  out.color = flow > 0 ? CONNECTOR_MINERAL_COLOR : CONNECTOR_IDLE_COLOR;
+  out.alpha = 0.5 + 0.4 * flow; // idle 0.5 (clearly visible) → flash 0.9
   out.width = width;
-  out.glowAlpha = (1 - flashProgress) * 0.3;
+  out.glowAlpha = 0.12 + 0.18 * flow; // soft idle glow 0.12 → flash 0.30
   out.glowWidth = width * 3;
-  // Travelling comet — continuous client phase clock; dims as the flow stops
-  // (flashProgress → 1 in the window's last FLASH_DURATION_MS).
+  // Continuous travelling comet — always on (a built connection always shows its
+  // flow direction), brightening with `flow`. Floored so it never vanishes.
   out.pulseActive = true;
   out.pulseT = fract(nowMs / CONNECTOR_PULSE_PERIOD_MS + phaseOffset);
   out.pulseColor = CONNECTOR_FLOW_PULSE_COLOR;
-  out.pulseAlpha = 0.95 * (1 - flashProgress);
+  out.pulseAlpha = 0.4 + 0.55 * flow; // idle 0.4 → flash 0.95 (never 0)
   out.pulseWidth = Math.max(2 / safeScale, 3.5);
   return out;
 }
