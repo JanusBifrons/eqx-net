@@ -74,12 +74,12 @@ describe('connectorVisualParams', () => {
     expect(v.glowWidth).toBeCloseTo(v.width * 3, 6);
   });
 
-  it('mid-flash eases alpha + glow back down over the flash window', () => {
+  it('mid-beat eases alpha + glow toward the FLOOR (never fades out — Phase-8)', () => {
     const now = 1000;
-    // Halfway through the flash window (flashProgress = 0.5).
+    // Halfway through the brighten beat (flashProgress = 0.5, beat = 0.5).
     const v = connectorVisualParams(now + FLASH_DURATION_MS / 2, now, 1);
-    expect(v.alpha).toBeCloseTo(0.9 - 0.5 * 0.5, 4); // 0.65
-    expect(v.glowAlpha).toBeCloseTo((1 - 0.5) * 0.3, 4); // 0.15
+    expect(v.alpha).toBeCloseTo(0.6 + 0.3 * 0.5, 4); // 0.75 (floored at 0.6)
+    expect(v.glowAlpha).toBeCloseTo(0.15 + 0.15 * 0.5, 4); // 0.225 (floored at 0.15)
   });
 
   it('line widths scale with zoom (≥ 1 device px)', () => {
@@ -104,20 +104,22 @@ describe('connectorVisualInto — directional flow pulse (R2.2)', () => {
     expect(v.pulseAlpha).toBe(0);
   });
 
-  it('comet is ON only while flowing, OFF once idle (Phase-8 regression lock)', () => {
+  it('comet is ON + FLOORED while flowing (incl. the grace), OFF once idle (Phase-8 lock)', () => {
     const now = 1000;
     const flashUntil = now + FLASH_DURATION_MS;
-    // While flowing (now < flashUntil): comet active with positive alpha.
-    for (const t of [now, now + FLASH_DURATION_MS / 2, flashUntil - 1]) {
+    // While flowing AND through the post-pulse grace, the comet stays active
+    // with a FLOORED alpha (>= 0.55) — it never fades out between 1 Hz cycles
+    // (the "active still fades" bug). `flashUntil + 300` is inside the grace.
+    for (const t of [now, now + FLASH_DURATION_MS / 2, flashUntil - 1, flashUntil + 300]) {
       const v = connectorVisualInto(blankVisual(), flashUntil, t, 1);
-      expect(v.pulseActive).toBe(true);
-      expect(v.pulseAlpha!).toBeGreaterThan(0);
+      expect(v.pulseActive, `t=${t}`).toBe(true);
+      expect(v.pulseAlpha!, `t=${t}`).toBeGreaterThanOrEqual(0.55);
     }
-    // At/after the flash window expires (idle): comet OFF — the Phase-8 fix.
-    for (const t of [flashUntil, flashUntil + 5000]) {
+    // Well past the flash window + grace (flow stopped): comet OFF — idle.
+    for (const t of [flashUntil + 700, flashUntil + 5000]) {
       const v = connectorVisualInto(blankVisual(), flashUntil, t, 1);
-      expect(v.pulseActive).toBe(false);
-      expect(v.pulseAlpha).toBe(0);
+      expect(v.pulseActive, `t=${t}`).toBe(false);
+      expect(v.pulseAlpha, `t=${t}`).toBe(0);
     }
   });
 
