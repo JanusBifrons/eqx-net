@@ -63,3 +63,6 @@ data/
 # (incremental — preserved across runs to keep node_modules warm; never commit).
 .claude/worktrees/
 tests/mobile-perf/screenshots/
+
+# Storybook build output
+storybook-static/
