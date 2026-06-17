@@ -61,7 +61,8 @@ function loadEvents() {
     console.error(`audit dir not found: ${dir}`);
     return [];
   }
-  const files = readdirSync(dir).filter((f) => f.endsWith('.ndjson')).sort();
+  // pino-roll writes `audit.<date>.<n>.log`; the fallback writes `audit.ndjson`.
+  const files = readdirSync(dir).filter((f) => f.endsWith('.ndjson') || f.endsWith('.log')).sort();
   const out = [];
   for (const f of files) {
     let text;

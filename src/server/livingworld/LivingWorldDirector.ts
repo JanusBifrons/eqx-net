@@ -23,6 +23,7 @@
  */
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
 import {
@@ -677,6 +678,7 @@ export class LivingWorldDirector {
         this.incoming.clear(step.squad.squadId, step.sectorKey);
         this.squadPool.clearTarget(step.squad);
         serverLogEvent('wave_deescalated', { factionId: step.factionId, sectorKey: step.sectorKey });
+        auditEvent({ event: 'wave_repelled', sector: step.sectorKey, owner: step.factionId });
         break;
       }
     }

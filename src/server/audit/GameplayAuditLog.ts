@@ -97,16 +97,18 @@ let defaultLogger: Logger | null = null;
  * pino-roll API/version hiccup.
  */
 function buildLogger(): Logger {
+  // `base: null` drops pid/hostname; `timestamp: false` drops pino's own
+  // `time` (we carry `ts`/`iso`). We deliberately KEEP pino's `level` field —
+  // trying to strip it via a `formatters.level` returning `{}` emits INVALID
+  // JSON (a stray leading comma), and the query layer ignores `level` anyway.
   try {
     return pino({
       base: null,
       timestamp: false,
-      formatters: { level: () => ({}) },
       transport: {
         target: 'pino-roll',
         options: {
           file: path.join(AUDIT_DIR, 'audit'),
-          extension: '.ndjson',
           frequency: 'daily',
           dateFormat: 'yyyy-MM-dd',
           size: '20m',
@@ -118,17 +120,30 @@ function buildLogger(): Logger {
   } catch {
     // Fallback: a single appended NDJSON file, no rotation.
     return pino(
-      { base: null, timestamp: false, formatters: { level: () => ({}) } },
+      { base: null, timestamp: false },
       destination({ dest: path.join(AUDIT_DIR, 'audit.ndjson'), mkdir: true, sync: false }),
     );
   }
 }
 
+/** Under vitest we must NEVER construct the pino-roll logger — it spawns a
+ *  thread-stream worker and writes real files. Any test that transitively calls
+ *  `auditEvent` (WaveDirector, structure construction, applyDamage, …) without
+ *  opting into `setAuditSink` gets a no-op sink; the in-memory ring still
+ *  records, so `getRecentAudit` / `setAuditSink` assertions work. */
+function isTestEnv(): boolean {
+  return process.env['VITEST'] !== undefined || process.env['NODE_ENV'] === 'test';
+}
+
 function ensureDefaultSink(): AuditSink {
   if (!defaultSink) {
-    defaultLogger = buildLogger();
-    const l = defaultLogger;
-    defaultSink = (record: AuditEvent): void => { l.info(record); };
+    if (isTestEnv()) {
+      defaultSink = (): void => { /* no durable sink under test */ };
+    } else {
+      defaultLogger = buildLogger();
+      const l = defaultLogger;
+      defaultSink = (record: AuditEvent): void => { l.info(record); };
+    }
   }
   return defaultSink;
 }

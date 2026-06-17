@@ -17,6 +17,7 @@
 
 import { shouldDeEscalate, FACTION_PEACEFUL_TIMEOUT_TICKS } from '../../../core/faction/Faction.js';
 import { hopDistance } from '../population.js';
+import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import type { FactionBaseReadiness, LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { HunterBotPool } from './HunterBotPool.js';
 import { SquadPool, type SquadRecord } from './SquadPool.js';
@@ -185,6 +186,16 @@ export class WaveDirector {
         if (committed >= spec.squadCount) break;
         this.squadPool.assignTarget(c.sq, r.sectorKey, factionId);
         committed++;
+        // Audit: a wave was sent at this base (control-tick cadence, off the
+        // 60 Hz loop). `owner` is the targeted faction = the base owner.
+        auditEvent({
+          event: 'wave_dispatched',
+          sector: r.sectorKey,
+          owner: factionId,
+          targetSector: r.sectorKey,
+          squadId: c.sq.squadId,
+          squadSize: c.sq.botIds.length,
+        });
       }
       if (committed > 0) {
         this.waveCount.set(factionId, wave);

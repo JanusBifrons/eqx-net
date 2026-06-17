@@ -13,7 +13,9 @@ import type { AuditEvent } from './GameplayAuditLog.js';
 export async function loadAuditFromDisk(dir: string): Promise<AuditEvent[]> {
   let files: string[];
   try {
-    files = (await readdir(dir)).filter((f) => f.endsWith('.ndjson')).sort();
+    // pino-roll names files `audit.<date>.<n>.log`; the no-rotation fallback
+    // writes `audit.ndjson`. Both hold NDJSON — accept either extension.
+    files = (await readdir(dir)).filter((f) => f.endsWith('.ndjson') || f.endsWith('.log')).sort();
   } catch {
     return []; // dir doesn't exist yet
   }
