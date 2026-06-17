@@ -11,6 +11,7 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
+import { pushRouter } from './routes/pushRouter.js';
 import { devAuditHandler } from './audit/auditRoute.js';
 import { flushAudit } from './audit/GameplayAuditLog.js';
 import { initWorker, persistence, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
@@ -65,6 +66,8 @@ app.use('/auth', authRouter);
 // Phase 8 — public route exposing the galaxy graph for the landing screen
 // and the in-game galaxy-map overlay.
 app.use('/galaxy', galaxyRouter);
+// Web Push (PWA notifications): VAPID public key + subscribe/unsubscribe.
+app.use('/push', pushRouter);
 
 /**
  * Server health probe. The client polls this to gate the pre-game UI

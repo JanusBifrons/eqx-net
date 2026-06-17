@@ -53,7 +53,13 @@ export type PersistOp =
   // left off instead of re-seeding from scratch. Single UPSERT row (id=1).
   // `payloadJson` is JSON.stringify'd DirectorStatePayload. Boot hydration reads
   // via the read-only main-thread connection, never through the worker.
-  | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number };
+  | { type: 'DIRECTOR_STATE_PUT'; payloadJson: string; ts: number }
+  // Web Push subscriptions (PWA notifications). `PUT` is an UPSERT keyed on the
+  // unique `endpoint`; `DELETE` prunes an endpoint the push service reported as
+  // gone (HTTP 404/410). The hot path is a per-user read via the read-only
+  // main-thread connection; only mutations go through the worker writer.
+  | { type: 'PUSH_SUBSCRIPTION_PUT'; subscriptionId: string; userId: string; endpoint: string; p256dh: string; auth: string; ts: number }
+  | { type: 'PUSH_SUBSCRIPTION_DELETE'; endpoint: string; ts: number };
 
 export type PersistOpType = PersistOp['type'];
 
