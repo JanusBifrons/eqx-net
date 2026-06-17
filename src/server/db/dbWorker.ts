@@ -82,6 +82,15 @@ const stmts = {
     'INSERT INTO director_state (id, payload_json, created_at, updated_at) VALUES (1, ?, ?, ?) ' +
     'ON CONFLICT(id) DO UPDATE SET payload_json=excluded.payload_json, updated_at=excluded.updated_at',
   ),
+  // Web Push subscriptions. UPSERT keyed on the unique endpoint so a device
+  // re-subscribing (re-granted permission, rotated keys) updates in place.
+  PUSH_SUBSCRIPTION_PUT: db.prepare(
+    'INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at, updated_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?) ' +
+    'ON CONFLICT(endpoint) DO UPDATE SET ' +
+    'user_id=excluded.user_id, p256dh=excluded.p256dh, auth=excluded.auth, updated_at=excluded.updated_at',
+  ),
+  PUSH_SUBSCRIPTION_DELETE: db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?'),
 };
 
 let drainedCount = 0;
@@ -164,6 +173,22 @@ function applyOp(op: PersistOp): { rowId?: number } {
     }
     case 'DIRECTOR_STATE_PUT': {
       stmts.DIRECTOR_STATE_PUT.run(op.payloadJson, op.ts, op.ts);
+      return {};
+    }
+    case 'PUSH_SUBSCRIPTION_PUT': {
+      stmts.PUSH_SUBSCRIPTION_PUT.run(
+        op.subscriptionId,
+        op.userId,
+        op.endpoint,
+        op.p256dh,
+        op.auth,
+        op.ts,
+        op.ts,
+      );
+      return {};
+    }
+    case 'PUSH_SUBSCRIPTION_DELETE': {
+      stmts.PUSH_SUBSCRIPTION_DELETE.run(op.endpoint);
       return {};
     }
   }

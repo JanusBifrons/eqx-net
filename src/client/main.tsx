@@ -1,11 +1,22 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
 import { useAuthStore } from './auth/authStore';
 import { useUIStore } from './state/store';
 import { loadToken, saveToken } from './auth/tokenStorage';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
+
+// PWA service worker. Production-only (the plugin emits no SW under `vite dev`,
+// so this is a no-op in dev / Playwright / netgate). `registerType: 'prompt'`
+// means a new SW installs in the background and WAITS — it activates on the
+// next full launch, never forcing a mid-session reload (no onNeedRefresh UI by
+// design; see vite.config.ts + docs/architecture/web-push.md). The SW is what
+// enables installability + Web Push (push events are delivered to the SW).
+if (import.meta.env.PROD) {
+  registerSW({ immediate: true });
+}
 
 // Expose the Zustand store on window for E2E tests + interactive
 // debugging. Read-only by convention (tests use `getState()` to read +

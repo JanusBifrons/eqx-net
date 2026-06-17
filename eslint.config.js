@@ -82,6 +82,14 @@ export default [
   },
   js.configs.recommended,
   {
+    // Hand-written service-worker asset (public/push-sw.js) imported into the
+    // generated SW. Declare the SW global scope so `no-undef` doesn't flag it.
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: { self: 'readonly' },
+    },
+  },
+  {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsparser,
