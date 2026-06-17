@@ -4,6 +4,7 @@ import {
   ENTITY_KIND_ORDER,
   entityLabel,
   entityBadgePolygon,
+  entityBadgeCount,
 } from './entityVisuals';
 
 describe('entityVisuals (shared visual language)', () => {
@@ -28,6 +29,26 @@ describe('entityVisuals (shared visual language)', () => {
     expect(entityLabel('neutral', 2)).toBe('neutral drones');
     expect(entityLabel('structure', 1)).toBe('structure');
     expect(entityLabel('structure', 5)).toBe('structures');
+  });
+
+  it('every visual carries a positive per-shape number scale', () => {
+    for (const k of ENTITY_KIND_ORDER) {
+      expect(ENTITY_VISUALS[k].numScale).toBeGreaterThan(0);
+    }
+    // The star's narrow body needs a smaller number than the open shapes.
+    expect(ENTITY_VISUALS.hostile.numScale).toBeLessThan(ENTITY_VISUALS.neutral.numScale);
+  });
+
+  it('entityBadgeCount caps at "99+" and shrinks the font as digits grow', () => {
+    expect(entityBadgeCount(1)).toEqual({ label: '1', scale: 1 });
+    expect(entityBadgeCount(9).label).toBe('9');
+    expect(entityBadgeCount(99).label).toBe('99');
+    // Above 99 → "99+", never a 3-digit number.
+    expect(entityBadgeCount(100).label).toBe('99+');
+    expect(entityBadgeCount(4096).label).toBe('99+');
+    // More digits → smaller scale (so it still fits the shape), monotonic.
+    expect(entityBadgeCount(99).scale).toBeLessThan(entityBadgeCount(9).scale);
+    expect(entityBadgeCount(100).scale).toBeLessThan(entityBadgeCount(99).scale);
   });
 
   it('entityBadgePolygon returns flat point pairs whose bbox is vertically centred', () => {

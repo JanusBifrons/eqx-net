@@ -34,6 +34,15 @@ export interface EntityVisual {
    * both the SVG badge and the Pixi map badge.
    */
   readonly numCenterYFrac: number;
+  /**
+   * Per-shape font multiplier for the knockout number (1 = the surface's normal
+   * size). Shapes with a NARROW usable interior need a smaller number to fit: a
+   * 5-point star's central body (the inner pentagon) is much tighter than a
+   * diamond/hexagon's full mid-width, so its number must shrink or it spills into
+   * the arms. Multiplies on TOP of the digit-count shrink (`entityBadgeCount`),
+   * on both the SVG and Pixi badges.
+   */
+  readonly numScale: number;
 }
 
 /** Backdrop colour the knockout number is drawn in (so it reads as CUT OUT of the
@@ -44,19 +53,19 @@ export const ENTITY_BADGE_KNOCKOUT_CSS = '#05070d';
 export const ENTITY_VISUALS: Record<EntityKind, EntityVisual> = {
   hostile: {
     kind: 'hostile', shape: 'star', color: 0xff6b6b, cssColor: '#ff6b6b',
-    singular: 'hostile', plural: 'hostiles', numCenterYFrac: 0.18,
+    singular: 'hostile', plural: 'hostiles', numCenterYFrac: 0.08, numScale: 0.8,
   },
   neutral: {
     kind: 'neutral', shape: 'diamond', color: 0xffd479, cssColor: '#ffd479',
-    singular: 'neutral drone', plural: 'neutral drones', numCenterYFrac: 0.1,
+    singular: 'neutral drone', plural: 'neutral drones', numCenterYFrac: 0.0, numScale: 1,
   },
   ship: {
     kind: 'ship', shape: 'triangle', color: 0x6bff9b, cssColor: '#6bff9b',
-    singular: 'ship', plural: 'ships', numCenterYFrac: 0.3,
+    singular: 'ship', plural: 'ships', numCenterYFrac: 0.3, numScale: 1,
   },
   structure: {
     kind: 'structure', shape: 'hexagon', color: 0x9ab4dd, cssColor: '#9ab4dd',
-    singular: 'structure', plural: 'structures', numCenterYFrac: 0.1,
+    singular: 'structure', plural: 'structures', numCenterYFrac: 0.0, numScale: 1,
   },
 };
 
@@ -67,6 +76,21 @@ export const ENTITY_KIND_ORDER: readonly EntityKind[] = ['hostile', 'neutral', '
 export function entityLabel(kind: EntityKind, count: number): string {
   const v = ENTITY_VISUALS[kind];
   return count === 1 ? v.singular : v.plural;
+}
+
+/**
+ * The knockout COUNT for a badge: caps at "99+" (a badge is a glanceable "lots",
+ * not an exact tally, and 3+ digits can't fit the narrow shapes legibly) plus a
+ * font `scale` that shrinks with digit count so a single digit stays bold and
+ * large while two-digit counts and "99+" still fit inside the shape. `scale` is
+ * RELATIVE to each surface's own 1-digit font size (1 = unchanged), so the SVG
+ * (`EntityBadge`) and Pixi (`GalaxyMapLayer`) badges shrink identically while
+ * each keeps its own tuned baseline. ONE source → the surfaces never drift.
+ */
+export function entityBadgeCount(count: number): { label: string; scale: number } {
+  const label = count > 99 ? '99+' : String(count);
+  const scale = label.length >= 3 ? 0.625 : label.length === 2 ? 0.79 : 1;
+  return { label, scale };
 }
 
 /**
