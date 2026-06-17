@@ -2081,6 +2081,24 @@ export class SectorRoom extends Room<SectorState> {
         ? (this.playerToUser.get(victimPlayerId) ?? null)
         : null;
       recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
+      // Gameplay audit — a player hull died (covers offline lingering-hull
+      // deaths too). A non-prefixed shooter id is another player ⇒ PvP kill.
+      const auditAttacker = evt.shooterId || undefined;
+      auditEvent({
+        event: 'ship_destroyed',
+        sector: this.sectorKey ?? undefined,
+        playerId: victimPlayerId ?? evt.targetId,
+        attackerId: auditAttacker,
+        attackerKind: classifyAttacker(auditAttacker),
+      });
+      if (auditAttacker && victimPlayerId && classifyAttacker(auditAttacker) === 'player') {
+        auditEvent({
+          event: 'player_killed',
+          sector: this.sectorKey ?? undefined,
+          victim: victimPlayerId,
+          killer: auditAttacker,
+        });
+      }
       // Phase 3 dual-write — drop the destroyed ship from the roster.
       if (destroyedShip !== undefined) {
         this.deleteRosterRow(destroyedShip.shipInstanceId);
@@ -4268,6 +4286,7 @@ export class SectorRoom extends Room<SectorState> {
     // JOIN_BROADCAST_GRACE_TICKS.
     this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
+    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
     logger.info(
       { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromStore },
       'player joined',
@@ -4447,6 +4466,7 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToUser.delete(playerId);
 
     serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+    auditEvent({ event: 'ship_abandoned', sector: this.sectorKey ?? undefined, playerId, shipInstanceId });
     logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → scrap');
   }
 
@@ -4487,6 +4507,7 @@ export class SectorRoom extends Room<SectorState> {
     serverLogEvent('ship_abandoned', {
       playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey, lingering: true,
     });
+    auditEvent({ event: 'ship_abandoned', sector: this.sectorKey ?? undefined, playerId: ship.playerId, shipInstanceId });
     logger.info({ playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey }, 'lingering hull abandoned → scrap');
   }
 

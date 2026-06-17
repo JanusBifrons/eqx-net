@@ -31,6 +31,7 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 import {
   getDroneMaxHealth,
   getDroneShieldMax,
@@ -154,6 +155,9 @@ export class ShieldHullRouter {
     if (r.brokeThisHit) {
       d.bus.emit('SHIELD_BROKEN', { type: 'SHIELD_BROKEN', entityId: ship.shipInstanceId });
       d.serverLogEvent('shield_broken', { entityId: ship.shipInstanceId, kindId: ship.kind, tick: d.serverTick() });
+      // Audit (player ships only — structures are shieldless; drone breaks are
+      // combat noise). `owner` is the pilot, so a player can filter "my" breaks.
+      auditEvent({ event: 'shield_broken', entityId: ship.shipInstanceId, owner: ship.playerId });
       if (workerBodyId !== null) {
         d.postToWorker({ type: 'SET_HULL_EXPOSED', id: workerBodyId, exposed: true, kindId: ship.kind, tick: d.serverTick() });
       }

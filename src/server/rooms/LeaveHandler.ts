@@ -36,6 +36,7 @@ import {
 } from '../../shared-types/sabLayout.js';
 import { clearSession } from '../transit/sessionRegistry.js';
 import { recordGameLeave } from '../stats/StatsService.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
@@ -172,6 +173,7 @@ export class LeaveHandler {
       d.clearLingerMs(playerId);
 
       d.serverLogEvent('player_lingered', { playerId });
+      auditEvent({ event: 'ship_lingered', sector: d.sectorKey() ?? undefined, playerId, shipInstanceId });
       d.logger.info(
         { playerId, sectorKey, health: ship.health },
         'player left, ship lingering in sector',
@@ -200,6 +202,7 @@ export class LeaveHandler {
     d.playerToUser.delete(playerId);
     d.bus.emit('SHIP_DESPAWNED', { type: 'SHIP_DESPAWNED' as const, playerId });
     d.serverLogEvent('player_leave', { playerId });
+    auditEvent({ event: 'player_left', sector: d.sectorKey() ?? undefined, playerId });
     d.logger.info({ playerId }, 'player left');
   }
 }

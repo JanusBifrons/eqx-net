@@ -30,6 +30,7 @@ import { TransitStateMachine, SPOOL_DURATION_MS } from '../../core/transit/Trans
 import type { Bus } from '../../core/events/Bus.js';
 import type { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { isNeighbour } from '../../core/galaxy/galaxy.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { TransitStateMessage, TransitCancelReason } from '../../shared-types/messages.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -353,6 +354,17 @@ export class TransitOrchestrator {
       });
     }
     this.room.playerToTransitInFlight.add(playerId);
+
+    // Gameplay audit — the pilot has committed to the hop (seat reserved, out
+    // the door). The matching arrival is recorded as `player_joined` at the
+    // destination room's onJoin. Off the 60 Hz loop (a discrete transit event).
+    auditEvent({
+      event: 'transit_started',
+      sector: this.room.sectorKey ?? undefined,
+      playerId,
+      from: this.room.sectorKey ?? undefined,
+      to: inFlight.targetSectorKey,
+    });
 
     inFlight.machine.beginTransit();
 
