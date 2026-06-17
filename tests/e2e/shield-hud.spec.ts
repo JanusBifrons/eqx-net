@@ -27,7 +27,11 @@ test('shield+hull HUD wiring is live end-to-end on join', async ({ browser }) =>
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   try {
-    await page.goto(`${BASE_URL}?room=sector`);
+    // Engineering room (0 drones) — this is a HUD-wiring smoke asserting a
+    // FRESH ship is 100/100; it doesn't need combat, and the live `?room=sector`
+    // 30-drone ring was a latent flake risk (a stray aggro could damage the ship
+    // before the 100/100 read). test-sector removes that coupling entirely.
+    await page.goto(`${BASE_URL}?room=test-sector`);
     await page.waitForFunction(
       () => {
         const el = document.querySelector('[data-testid="ship-count"]');
