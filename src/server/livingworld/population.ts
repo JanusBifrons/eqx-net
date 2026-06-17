@@ -205,6 +205,52 @@ export function hopDistance(from: string, goal: string): number {
   return Infinity;
 }
 
+/** A squad's wave assignment + membership — the fields the galaxy-map enemy
+ *  classification needs. Structural (no SquadRecord import coupling). */
+export interface WaveSquadView {
+  /** The faction this squad is on a wave against, or `null` when roaming. */
+  targetFactionId: string | null;
+  /** The squad's member bot ids. */
+  botIds: readonly string[];
+}
+
+/** A bot's live placement — `'active'` bots occupy a real sector; in-transit /
+ *  respawning bots are between rooms and don't count toward any sector. */
+export interface BotPlacement {
+  state: string;
+  sectorKey: string;
+}
+
+/**
+ * Per-sector count of ACTIVE bots belonging to a HOSTILE wave — a squad with a
+ * `targetFactionId`. These are the galaxy map's "enemies": faction-hostile from
+ * the moment the squad is DISPATCHED (the target is assigned), tallied in
+ * whatever sector each member currently occupies as the wave traverses, and
+ * **independent of whether the targeted player is present** (Equinox: waves
+ * attack regardless of presence — so the map must show them regardless too).
+ * Roaming squads (`targetFactionId === null`) contribute nothing — they're
+ * neutral until dispatched. In-transit members (not `'active'`) are excluded.
+ *
+ * Pure + injectable. Called on the director's ~1.5 s control tick (never the
+ * 60 Hz loop), so the small allocation is fine.
+ */
+export function enemyBotCountsBySector(
+  squads: Iterable<WaveSquadView>,
+  placementOf: (botId: string) => BotPlacement | null | undefined,
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const sq of squads) {
+    if (sq.targetFactionId === null) continue; // roaming ⇒ neutral
+    for (const botId of sq.botIds) {
+      const p = placementOf(botId);
+      if (p && p.state === 'active' && p.sectorKey) {
+        counts.set(p.sectorKey, (counts.get(p.sectorKey) ?? 0) + 1);
+      }
+    }
+  }
+  return counts;
+}
+
 export interface MigrationPlanInput {
   readonly sectorKeys: readonly string[];
   /** sectorKey → ALL bots physically present there (active in that
