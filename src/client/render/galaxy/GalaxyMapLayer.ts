@@ -128,6 +128,10 @@ export class GalaxyMapLayer extends Container {
   private readonly onSelect: (sectorKey: string) => void;
   /** Living Galaxy Phase 6 — deduped hover emit (drives cursor + tooltip). */
   private readonly onHover?: (ev: GalaxyHoverEvent) => void;
+  /** Equinox Phase 9 — a confirmed TAP that hit NO hex (empty space). Drives
+   *  blur-to-deselect: the host closes the SectorInfoDrawer (the user's "making
+   *  a selection which isn't a sector should deselect"). */
+  private readonly onDeselect?: () => void;
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
   /** Equinox Phase 9 (item 3) — opaque deep-space backdrop + zoom-aware LOD
@@ -181,10 +185,12 @@ export class GalaxyMapLayer extends Container {
   constructor(opts: {
     onSelect: (sectorKey: string) => void;
     onHover?: (ev: GalaxyHoverEvent) => void;
+    onDeselect?: () => void;
   }) {
     super();
     this.onSelect = opts.onSelect;
     this.onHover = opts.onHover;
+    this.onDeselect = opts.onDeselect;
     this.visible = false;
     this.eventMode = 'passive';
     // Back-to-front: opaque backdrop, LOD starfield, then the hex cluster.
@@ -223,6 +229,8 @@ export class GalaxyMapLayer extends Container {
     if (result.wasTap) {
       const key = this.hitTest(screenX, screenY);
       if (key !== null) this.onSelect(key);
+      // A confirmed tap that hit no hex = blur/deselect (close the drawer).
+      else this.onDeselect?.();
     }
     // Release → fall back to the current-sector territory (touch has no hover).
     this.hoveredTerritory = -1;

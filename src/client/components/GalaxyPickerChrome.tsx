@@ -21,6 +21,7 @@ import { useMountLog } from '../debug/useMountLog';
 import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
 import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
+import { isTouchDevice } from '../input/TouchInput';
 import { Z } from '../layout/zIndex';
 import type { MutableRefObject } from 'react';
 
@@ -57,6 +58,11 @@ export interface GalaxyPickerApi {
    * the host's onSelectorPick wiring).
    */
   openForSector(sectorKey: string): void;
+  /**
+   * Equinox Phase 9 — BLUR/deselect: close the SectorInfoDrawer + clear the
+   * selection. Fired by the host when a galaxy tap hits no hex (empty space).
+   */
+  deselect(): void;
 }
 
 export interface GalaxyPickerChromeProps {
@@ -181,9 +187,17 @@ export function GalaxyPickerChrome({
         logEvent('picker_open_scheduled', { key, ts: performance.now() });
         // Equinox Phase 9 (item 2) — a hex tap SELECTS the sector → the docked
         // SectorInfoDrawer (sector info + your ships + recent activity + Join/Warp),
-        // NOT the ship-picker directly.
-        setSelectedSectorKey(key);
+        // NOT the ship-picker directly. TOGGLE: re-tapping the already-selected
+        // sector DESELECTS it and dismisses the drawer (the user's "dismiss the
+        // drawer when you deselect"). On touch there's no empty-canvas deselect
+        // target and no hover-to-dismiss, so re-tapping the hex is the
+        // discoverable deselect gesture (plus the ✕ and swipe-down handle). The
+        // functional updater reads the latest selection, so the once-set apiRef
+        // closure never goes stale.
+        setSelectedSectorKey((cur) => (cur === key ? null : key));
       },
+      // Empty-space tap (blur) → close the drawer + deselect.
+      deselect: () => { setSelectedSectorKey(null); },
     };
     return () => { if (apiRef) apiRef.current = null; };
   }, [apiRef]);
@@ -376,8 +390,12 @@ export function GalaxyPickerChrome({
        *  ABOVE-CENTRE of the hovered hex (Equinox Phase 9); non-interactive.
        *  Sector name + faction + status + live counts (icons) + features, from the
        *  static graph + the /galaxy/snapshot slice. Kept on desktop alongside the
-       *  click-selected drawer (the doc: "desktop keeps the tooltips"). */}
-      {galaxyHover && sectorTip && (
+       *  click-selected drawer (the doc: "desktop keeps the tooltips").
+       *  DESKTOP-ONLY: on a touch device a tap synthesises a pointermove → a
+       *  hover, which would flash this tooltip over the freshly-opened drawer
+       *  (the user's "still shows the tooltip on mobile"). The drawer is the
+       *  touch affordance; the hover tooltip is gated out entirely on touch. */}
+      {!isTouchDevice() && galaxyHover && sectorTip && (
         <Box
           data-testid="galaxy-sector-tooltip"
           data-tooltip-sector={galaxyHover.sectorKey}

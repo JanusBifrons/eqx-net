@@ -45,6 +45,37 @@ test('in-game drawer: active-ship card (hull bar + position) + Warp here', async
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-drawer/04-warp.png' });
 });
 
+test('portrait: bottom-docked drawer action bar is within the viewport (not clipped below the fold)', async ({ page }) => {
+  // Equinox Phase 9 follow-up: on a non-fullscreen mobile browser the drawer
+  // sized with `vh` overflowed past the visible viewport so the ✕/Join action
+  // bar clipped below the fold. The fix sizes the bottom dock in `dvh` + adds
+  // safe-area padding. Headless has no dynamic address bar (dvh≈vh), so this
+  // locks the STATIC fit: in a short portrait viewport the action bar's bottom
+  // edge must sit within the viewport height.
+  const VIEW_W = 390;
+  const VIEW_H = 720;
+  await page.setViewportSize({ width: VIEW_W, height: VIEW_H });
+  await page.goto(`${BASE_URL}?worker=0`, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+  await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 12_000 });
+  await page.waitForFunction(() => typeof window.__eqxGalaxyPick === 'function', null, { timeout: 6_000 });
+  await page.waitForTimeout(400);
+
+  await page.evaluate(() => window.__eqxGalaxyPick!('sol-prime'));
+  const closeBtn = page.getByTestId('sector-drawer-close');
+  const joinBtn = page.getByTestId('sector-drawer-join');
+  await expect(closeBtn).toBeVisible({ timeout: 8_000 });
+  await expect(joinBtn).toBeVisible();
+
+  // The action bar (✕ + Join) must be fully inside the viewport — its bottom
+  // edge cannot extend past VIEW_H (the "clips below the fold" regression).
+  for (const btn of [closeBtn, joinBtn]) {
+    const box = await btn.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.y + box!.height).toBeLessThanOrEqual(VIEW_H);
+  }
+  await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-drawer/07-portrait-bottom-dock.png' });
+});
+
 test('landing drawer + map: recent-combat breakdown + hex ⚔ icon', async ({ page }) => {
   await page.goto(`${BASE_URL}?worker=0`, { waitUntil: 'domcontentloaded', timeout: 20_000 });
   await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 12_000 });

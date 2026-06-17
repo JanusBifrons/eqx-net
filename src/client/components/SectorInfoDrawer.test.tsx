@@ -40,21 +40,46 @@ describe('SectorInfoDrawer', () => {
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
   });
 
-  it('renders the sector name + labelled breakdown', () => {
+  it('renders the sector name + labelled breakdown with conditional plurals', () => {
     renderDrawer();
     expect(screen.getByText('Sol Prime')).toBeInTheDocument();
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    expect(breakdown).toHaveTextContent('Players: 1');
-    expect(breakdown).toHaveTextContent('Hostiles: 2');
-    expect(breakdown).toHaveTextContent('Structures: 3');
+    // TIP: players 1 (singular), enemies 2 (plural), structures 3 (plural);
+    // neutrals 0 → row omitted entirely.
+    expect(breakdown).toHaveTextContent('player');
+    expect(breakdown).not.toHaveTextContent('players');
+    expect(breakdown).toHaveTextContent('hostiles');
+    expect(breakdown).toHaveTextContent('structures');
+    expect(breakdown).not.toHaveTextContent('drone');
   });
 
-  it('recent activity: "No recent activity" when null, a breakdown when present', () => {
+  it('breakdown pluralises by count (2 players, 1 structure)', () => {
+    renderDrawer({ tip: { ...TIP, players: 2, enemies: 0, structures: 1 } });
+    const breakdown = screen.getByTestId('sector-drawer-breakdown');
+    expect(breakdown).toHaveTextContent('players');
+    expect(breakdown).toHaveTextContent('structure');
+    expect(breakdown).not.toHaveTextContent('structures');
+    expect(breakdown).not.toHaveTextContent('hostile');
+  });
+
+  it('recent activity: "No recent activity" when null, per-line breakdown + plurals when present', () => {
     const { unmount } = renderDrawer({ recentCombat: null });
     expect(screen.getByTestId('sector-drawer-recent')).toHaveTextContent('No recent activity');
     unmount();
+    // shipsDestroyed 2 (plural), structuresDestroyed 1 (singular) → separate lines.
     renderDrawer({ recentCombat: { shipsDestroyed: 2, structuresDestroyed: 1, lastEventMs: 1 } });
-    expect(screen.getByTestId('sector-drawer-recent')).toHaveTextContent('2 ships · 1 structure destroyed');
+    const recent = screen.getByTestId('sector-drawer-recent');
+    expect(recent).toHaveTextContent('ships destroyed');
+    expect(recent).toHaveTextContent('structure destroyed');
+    expect(recent).not.toHaveTextContent('structures destroyed');
+    expect(recent).toHaveTextContent('last 5 min');
+  });
+
+  it('recent activity omits a zero-count line (only structures destroyed)', () => {
+    renderDrawer({ recentCombat: { shipsDestroyed: 0, structuresDestroyed: 3, lastEventMs: 1 } });
+    const recent = screen.getByTestId('sector-drawer-recent');
+    expect(recent).toHaveTextContent('structures destroyed');
+    expect(recent).not.toHaveTextContent('ship destroyed');
   });
 
   it('ships in sector: cards (hull bar + position) + Spawn fire onSpawnExistingShip; None when empty', () => {

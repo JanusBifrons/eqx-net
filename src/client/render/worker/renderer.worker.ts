@@ -74,6 +74,8 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         // OVERLAY_TAPPED message.
         galaxyLayer = new GalaxyMapLayer({
           onSelect: (sectorKey) => { post({ type: 'OVERLAY_TAPPED', sectorKey }); },
+          // Equinox Phase 9 — empty-space tap → blur/deselect (null sectorKey).
+          onDeselect: () => { post({ type: 'OVERLAY_TAPPED', sectorKey: null }); },
           // Living Galaxy Phase 6 — deduped hover → main (cursor + tooltip).
           onHover: (ev) => {
             post({

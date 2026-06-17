@@ -380,6 +380,14 @@ function GameSurface({
     }, PICKER_OPEN_DELAY_MS);
   }, []);
 
+  // Equinox Phase 9 — selector-mode BLUR: a confirmed tap that hit no hex
+  // (empty space) deselects the sector + closes the SectorInfoDrawer ("making a
+  // selection which isn't a sector should deselect"). Routed from the galaxy
+  // layer through the same tap channel as the pick (null sectorKey).
+  const handleSelectorDeselect = useCallback(() => {
+    pickerApiRef.current?.deselect();
+  }, []);
+
   // Living Galaxy P5 — returning from the auth detour after an auth-gated pick:
   // re-open the picker for the stashed sector. The map remounts on the
   // auth→galaxy-map switch, so retry briefly until GalaxyPickerChrome has
@@ -551,6 +559,7 @@ function GameSurface({
       surfaceMode,
       overlayMode,
       onSelectorPick: handleSelectorPick,
+      onSelectorDeselect: handleSelectorDeselect,
     }).catch((err: unknown) => {
       logEvent('game_surface_connect_failed', { err: String(err) });
       setConnectionStatus('error');
@@ -607,7 +616,7 @@ function GameSurface({
       audioRef.current = null;
       try { gameClient.dispose(); } catch (e) { stepLog('gameClient.dispose', e); }
     };
-  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit, surfaceMode, overlayMode, handleSelectorPick]);
+  }, [setConnectionStatus, setPlayerId, setSectorName, roomNameOverride, joinOptionsOverride, toggleGalaxyMap, handleEngageTransit, surfaceMode, overlayMode, handleSelectorPick, handleSelectorDeselect]);
 
   // Reactive sync from Zustand to the Pixi galaxy layer. The layer is
   // constructed inside the main mount effect (async after renderer.init)

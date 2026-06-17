@@ -67,6 +67,26 @@ describe('GalaxyPickerChrome', () => {
     expect(onSpawnNewShip.mock.calls[0][1]).toBe('sol-prime');
   });
 
+  it('apiRef.openForSector TOGGLES — re-selecting the same sector deselects (closes the drawer)', () => {
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
+    // Re-tapping the SAME sector deselects → drawer content collapses to the
+    // placeholder (Join CTA gone).
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
+  });
+
+  it('apiRef.deselect closes the drawer (blur / empty-space tap)', () => {
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
+    act(() => { apiRef.current?.deselect(); });
+    expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
+  });
+
   it('engineering room selection routes to onSelectRoom', () => {
     const onSelectRoom = vi.fn();
     render(<GalaxyPickerChrome activeLimboSectorKey={null} onSelectRoom={onSelectRoom} />);
@@ -86,13 +106,14 @@ describe('GalaxyPickerChrome', () => {
     render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
     act(() => { apiRef.current?.openForSector('sol-prime'); });
     expect(screen.getByTestId('sector-drawer-breakdown')).toBeInTheDocument();
-    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix), so the
-    // roaming drones (neutrals) are legible at a glance.
+    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix) in an
+    // aligned icon·label·value grid with conditional plurals (Phase 9 redesign),
+    // so the roaming drones (neutrals) are legible at a glance.
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    expect(breakdown).toHaveTextContent('Players: 1');
-    expect(breakdown).toHaveTextContent('Hostiles: 2');
-    expect(breakdown).toHaveTextContent('Neutral drones: 8');
-    expect(breakdown).toHaveTextContent('Structures: 3');
+    expect(breakdown).toHaveTextContent('player');         // 1 → singular
+    expect(breakdown).toHaveTextContent('hostiles');       // 2 → plural
+    expect(breakdown).toHaveTextContent('neutral drones'); // 8 → plural
+    expect(breakdown).toHaveTextContent('structures');     // 3 → plural
   });
 });
 

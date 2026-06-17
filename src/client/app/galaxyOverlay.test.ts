@@ -54,14 +54,14 @@ describe('syncGalaxyMode', () => {
  */
 function fakeWorker(): {
   w: WorkerRendererClient;
-  getTap: () => ((key: string) => void) | null;
+  getTap: () => ((key: string | null) => void) | null;
   calls: { mode: ReturnType<typeof vi.fn>; visible: ReturnType<typeof vi.fn> };
 } {
   const w = Object.create(WorkerRendererClient.prototype) as WorkerRendererClient;
-  let tap: ((key: string) => void) | null = null;
+  let tap: ((key: string | null) => void) | null = null;
   const calls = { mode: vi.fn(), visible: vi.fn() };
   Object.assign(w as unknown as Record<string, unknown>, {
-    setOverlayTapHandler: (h: (key: string) => void) => { tap = h; },
+    setOverlayTapHandler: (h: (key: string | null) => void) => { tap = h; },
     setGalaxyHoverHandler: vi.fn(),
     setLayerMode: calls.mode,
     setLayerVisible: calls.visible,
@@ -90,6 +90,19 @@ describe('installGalaxyOverlay (worker path)', () => {
     getTap()?.('orion-belt');
     expect(onSelectorPick).toHaveBeenCalledWith('orion-belt');
     expect(onEngageTransit).not.toHaveBeenCalled();
+  });
+
+  it('selector mode: an empty-space tap (null key) routes to onSelectorDeselect, not onSelectorPick', () => {
+    const { w, getTap } = fakeWorker();
+    const onSelectorPick = vi.fn();
+    const onSelectorDeselect = vi.fn();
+    installGalaxyOverlay({
+      renderer: w, useWorker: true, el: {} as HTMLDivElement,
+      onEngageTransit: vi.fn(), mode: 'selector', onSelectorPick, onSelectorDeselect, idle: true,
+    });
+    getTap()?.(null);
+    expect(onSelectorDeselect).toHaveBeenCalledTimes(1);
+    expect(onSelectorPick).not.toHaveBeenCalled();
   });
 
   it('selector mode IN-GAME (not idle) + map CLOSED: installs HIDDEN (Phase 8 / Bug 2 lock)', () => {
@@ -126,5 +139,17 @@ describe('installGalaxyOverlay (worker path)', () => {
     getTap()?.('orion-belt');
     expect(onEngageTransit).toHaveBeenCalledWith('orion-belt');
     expect(useUIStore.getState().isGalaxyMapOpen).toBe(false);
+  });
+
+  it('overlay mode: an empty-space tap (null key) is a no-op (no transit, map stays as-is)', () => {
+    useUIStore.getState().setGalaxyMapOpen(true);
+    const { w, getTap } = fakeWorker();
+    const onEngageTransit = vi.fn();
+    installGalaxyOverlay({
+      renderer: w, useWorker: true, el: {} as HTMLDivElement, onEngageTransit,
+    });
+    getTap()?.(null);
+    expect(onEngageTransit).not.toHaveBeenCalled();
+    expect(useUIStore.getState().isGalaxyMapOpen).toBe(true);
   });
 });

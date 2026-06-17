@@ -48,14 +48,22 @@ const PAPER_RIGHT = {
   width: 296,
   maxWidth: '92vw',
   top: 'var(--app-bar-h, 48px)',
-  height: 'calc(100% - var(--app-bar-h, 48px))',
+  // dvh tracks the VISIBLE viewport (mobile address/nav bars), so the panel
+  // never overflows past the fold; `100%` resolves to the LARGE layout viewport
+  // and clipped on a non-fullscreen mobile browser.
+  height: 'calc(100dvh - var(--app-bar-h, 48px))',
   borderRadius: '8px 0 0 8px',
 } as const;
 
 const PAPER_BOTTOM = {
   ...PAPER_COMMON,
   width: '100%',
-  height: 'min(54vh, 392px)',
+  // Compact ~half-height bottom dock (the user's "only about half that height").
+  // dvh (dynamic viewport height) shrinks as the mobile address bar shows, so
+  // the fixed action bar is never clipped below the fold when NOT in fullscreen;
+  // the body scrolls on overflow. Capped to the current visible viewport.
+  height: 'min(28dvh, 220px)',
+  maxHeight: 'calc(100dvh - 8px)',
   borderRadius: '10px 10px 0 0',
 } as const;
 
@@ -82,7 +90,11 @@ const ACTIONBAR_SX = {
   alignItems: 'center',
   gap: 1,
   px: 1,
-  py: 0.75,
+  pt: 0.75,
+  // Clear the home indicator / on-screen nav bar so the CTAs are never tucked
+  // under it (pairs with the dvh height fix). Falls back to ~6px on devices
+  // with no inset.
+  pb: 'calc(6px + env(safe-area-inset-bottom, 0px))',
   borderTop: '1px solid #1c2438',
   flex: '0 0 auto',
 } as const;
@@ -94,6 +106,24 @@ const SECTION_LABEL_SX = {
   textTransform: 'uppercase',
   mt: 1,
 } as const;
+
+/** Invisible 3-column grid (icon · label · value) so every stat row's icons,
+ *  labels and numbers line up vertically. No borders. The icon column is a
+ *  FIXED width and the value column hugs the right edge, so the breakdown grid
+ *  and the recent-activity grid (two separate grids) still align column-for-
+ *  column with each other. */
+const STAT_GRID_SX = {
+  display: 'grid',
+  gridTemplateColumns: '18px 1fr auto',
+  columnGap: 0.75,
+  rowGap: 0.25,
+  alignItems: 'center',
+  mt: 0.5,
+} as const;
+
+const STAT_ICON_SX = { fontSize: 11, lineHeight: 1.5, textAlign: 'center' } as const;
+const STAT_LABEL_SX = { color: '#cfe', fontSize: 10, lineHeight: 1.5 } as const;
+const STAT_VALUE_SX = { fontSize: 10, lineHeight: 1.5, fontWeight: 700, textAlign: 'right' } as const;
 
 const SHIP_CARD_SX = {
   display: 'flex',
@@ -108,8 +138,10 @@ const HANDLE_WRAP_SX = {
   display: 'flex',
   justifyContent: 'center',
   alignItems: 'center',
-  height: 18,
+  height: 24,
   cursor: 'grab',
+  // `none` stops the browser claiming the drag as a scroll/pull-to-refresh and
+  // firing pointercancel instead of the pointerup our swipe-close reads.
   touchAction: 'none',
   flex: '0 0 auto',
 } as const;
@@ -135,6 +167,37 @@ export interface SectorInfoDrawerProps {
 
 function kindLabel(k: string): string {
   return k.charAt(0).toUpperCase() + k.slice(1);
+}
+
+/** Conditional plural so labels read "1 player" / "2 players" (the user's
+ *  "protect against plurals" ask) — `count === 1 ? singular : singular+suffix`. */
+function plural(count: number, singular: string, suffix = 's'): string {
+  return count === 1 ? singular : singular + suffix;
+}
+
+/** One row of the invisible icon · label · value grid. Returns the three grid
+ *  CELLS as a fragment (the parent Box owns `display:grid`), so every row's
+ *  icon, label and number align vertically across the whole panel. */
+function StatRow({
+  icon,
+  color,
+  label,
+  value,
+  testId,
+}: {
+  icon: string;
+  color: string;
+  label: string;
+  value: number | string;
+  testId?: string;
+}): JSX.Element {
+  return (
+    <>
+      <Typography sx={STAT_ICON_SX} style={{ color }}>{icon}</Typography>
+      <Typography sx={STAT_LABEL_SX} noWrap data-testid={testId}>{label}</Typography>
+      <Typography sx={STAT_VALUE_SX} style={{ color }}>{value}</Typography>
+    </>
+  );
 }
 
 /** Hull-bar colour by fraction: green (healthy) → amber → red (critical). */
@@ -163,19 +226,46 @@ export function SectorInfoDrawer({
   const isWarp = context === 'warp';
 
   // Scoped swipe-to-close on the grab handle (no global listeners — avoids the
-  // SwipeableDrawer RTT regression). Close when the drag travels far enough in
-  // the dock-OUT direction (down for bottom, right for right).
+  // SwipeableDrawer RTT regression). The Paper FOLLOWS the finger in the
+  // dock-OUT direction (down for bottom, right for right) for live feedback;
+  // release past SWIPE_CLOSE_PX closes (deselects), otherwise it snaps back.
+  // Pointer capture keeps move/up on the handle even as the finger leaves it.
+  const paperRef = useRef<HTMLDivElement | null>(null);
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const outDelta = (e: React.PointerEvent, s: { x: number; y: number }): number =>
+    anchor === 'bottom' ? e.clientY - s.y : e.clientX - s.x;
   const onHandleDown = (e: React.PointerEvent): void => {
     dragStart.current = { x: e.clientX, y: e.clientY };
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
+  const onHandleMove = (e: React.PointerEvent): void => {
+    const s = dragStart.current;
+    const p = paperRef.current;
+    if (!s || !p) return;
+    const out = Math.max(0, outDelta(e, s));
+    p.style.transition = 'none';
+    p.style.transform = anchor === 'bottom' ? `translateY(${out}px)` : `translateX(${out}px)`;
+  };
   const onHandleUp = (e: React.PointerEvent): void => {
     const s = dragStart.current;
     dragStart.current = null;
+    const p = paperRef.current;
     if (!s) return;
-    const out = anchor === 'bottom' ? e.clientY - s.y : e.clientX - s.x;
-    if (out > SWIPE_CLOSE_PX) onClose();
+    const out = outDelta(e, s);
+    if (out > SWIPE_CLOSE_PX) {
+      // Hand the transform back to MUI; its exit slide animates the rest out.
+      if (p) { p.style.transition = ''; p.style.transform = ''; }
+      onClose();
+    } else if (p) {
+      // Snap back to docked.
+      p.style.transition = 'transform 160ms ease';
+      p.style.transform = '';
+    }
+  };
+  const onHandleCancel = (): void => {
+    dragStart.current = null;
+    const p = paperRef.current;
+    if (p) { p.style.transition = ''; p.style.transform = ''; }
   };
 
   const total = tip ? tip.players + tip.enemies + tip.neutrals + tip.structures : 0;
@@ -193,6 +283,7 @@ export function SectorInfoDrawer({
       open={open}
       data-testid="sector-info-drawer"
       PaperProps={{
+        ref: paperRef,
         sx: anchor === 'right' ? PAPER_RIGHT : PAPER_BOTTOM,
         // E2E hook for the live selection.
         ['data-drawer-sector' as string]: sectorKey ?? '',
@@ -202,7 +293,9 @@ export function SectorInfoDrawer({
       <Box
         sx={HANDLE_WRAP_SX}
         onPointerDown={onHandleDown}
+        onPointerMove={onHandleMove}
         onPointerUp={onHandleUp}
+        onPointerCancel={onHandleCancel}
         data-testid="sector-drawer-handle"
         aria-label="Drag to close"
       >
@@ -239,40 +332,65 @@ export function SectorInfoDrawer({
           </Box>
 
           <Box sx={SCROLL_SX}>
-            {/* Above-the-fold breakdown — labelled icons. */}
-            <Stack spacing={0.25} sx={{ mt: 0.5 }} data-testid="sector-drawer-breakdown">
-              {tip.players > 0 && (
-                <Typography sx={{ color: '#6bff9b', fontSize: 10 }}>▲ Players: {tip.players}</Typography>
-              )}
-              {tip.enemies > 0 && (
-                <Typography sx={{ color: '#ff6b6b', fontSize: 10 }}>✦ Hostiles: {tip.enemies}</Typography>
-              )}
-              {tip.neutrals > 0 && (
-                <Typography sx={{ color: '#ffd479', fontSize: 10 }}>◇ Neutral drones: {tip.neutrals}</Typography>
-              )}
-              {tip.structures > 0 && (
-                <Typography sx={{ color: '#9ab4dd', fontSize: 10 }}>⬡ Structures: {tip.structures}</Typography>
-              )}
-              {total === 0 && (
-                <Typography sx={{ color: '#6b7280', fontSize: 10 }}>No ships or structures here.</Typography>
-              )}
-            </Stack>
+            {/* Above-the-fold breakdown — aligned icon · label · value grid, with
+                conditional plurals (1 player / 2 players). */}
+            {total > 0 ? (
+              <Box sx={STAT_GRID_SX} data-testid="sector-drawer-breakdown">
+                {tip.players > 0 && (
+                  <StatRow icon="▲" color="#6bff9b" label={plural(tip.players, 'player')} value={tip.players} />
+                )}
+                {tip.enemies > 0 && (
+                  <StatRow icon="✦" color="#ff6b6b" label={plural(tip.enemies, 'hostile')} value={tip.enemies} />
+                )}
+                {tip.neutrals > 0 && (
+                  <StatRow icon="◇" color="#ffd479" label={`neutral ${plural(tip.neutrals, 'drone')}`} value={tip.neutrals} />
+                )}
+                {tip.structures > 0 && (
+                  <StatRow icon="⬡" color="#9ab4dd" label={plural(tip.structures, 'structure')} value={tip.structures} />
+                )}
+              </Box>
+            ) : (
+              <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-breakdown">
+                No ships or structures here.
+              </Typography>
+            )}
             {tip.features.length > 0 && (
               <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
                 {tip.features.join(' · ')}
               </Typography>
             )}
 
-            {/* Recent events (Equinox Phase 9 item 5). */}
+            {/* Recent events (Equinox Phase 9 item 5) — each kind on its own line
+                in the SAME icon · label · value grid as the breakdown, with
+                conditional plurals + a footnote window. */}
             <Typography sx={SECTION_LABEL_SX}>Recent activity</Typography>
-            <Typography
-              data-testid="sector-drawer-recent"
-              sx={{ color: recentCombat ? '#ffb59a' : '#6b7280', fontSize: 10, mt: 0.25 }}
-            >
-              {recentCombat
-                ? `${recentCombat.shipsDestroyed} ship${recentCombat.shipsDestroyed === 1 ? '' : 's'} · ${recentCombat.structuresDestroyed} structure${recentCombat.structuresDestroyed === 1 ? '' : 's'} destroyed (last 5 min)`
-                : 'No recent activity'}
-            </Typography>
+            {recentCombat && (recentCombat.shipsDestroyed > 0 || recentCombat.structuresDestroyed > 0) ? (
+              <Box sx={STAT_GRID_SX} data-testid="sector-drawer-recent">
+                {recentCombat.shipsDestroyed > 0 && (
+                  <StatRow
+                    icon="✦"
+                    color="#ffb59a"
+                    label={`${plural(recentCombat.shipsDestroyed, 'ship')} destroyed`}
+                    value={recentCombat.shipsDestroyed}
+                  />
+                )}
+                {recentCombat.structuresDestroyed > 0 && (
+                  <StatRow
+                    icon="⬡"
+                    color="#ffb59a"
+                    label={`${plural(recentCombat.structuresDestroyed, 'structure')} destroyed`}
+                    value={recentCombat.structuresDestroyed}
+                  />
+                )}
+                <Typography sx={{ gridColumn: '1 / -1', color: '#7a8499', fontSize: 8, mt: 0.25 }}>
+                  last 5 min
+                </Typography>
+              </Box>
+            ) : (
+              <Typography data-testid="sector-drawer-recent" sx={{ color: '#6b7280', fontSize: 10, mt: 0.25 }}>
+                No recent activity
+              </Typography>
+            )}
 
             {/* Ships in sector — per-ship cards. */}
             <Typography sx={SECTION_LABEL_SX}>Your ships in sector</Typography>
