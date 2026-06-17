@@ -1,4 +1,14 @@
-import { ENTITY_VISUALS, ENTITY_BADGE_KNOCKOUT_CSS, entityBadgePolygon, type EntityKind } from '../render/entityVisuals';
+import {
+  ENTITY_VISUALS,
+  ENTITY_BADGE_KNOCKOUT_CSS,
+  entityBadgePolygon,
+  entityBadgeCount,
+  type EntityKind,
+} from '../render/entityVisuals';
+
+/** 1-digit knockout font as a fraction of the badge size; `entityBadgeCount`
+ *  scales it down for multi-digit counts so they fit the shape. */
+const BADGE_NUM_BASE_SCALE = 0.48;
 
 /**
  * The shared entity badge, as SVG — a solid-colour SHAPE (per the entity VISUAL
@@ -21,6 +31,10 @@ export function EntityBadge({
   const pts = entityBadgePolygon(v.shape, r);
   let points = '';
   for (let i = 0; i < pts.length; i += 2) points += `${pts[i]},${pts[i + 1]} `;
+  // Count label + per-digit font shrink (caps at "99+") from the shared visual
+  // language, so this SVG badge and the Pixi map badge read identically.
+  const { label, scale } = entityBadgeCount(count);
+  const fontScale = BADGE_NUM_BASE_SCALE * scale * v.numScale;
   return (
     <svg
       width={size}
@@ -35,12 +49,12 @@ export function EntityBadge({
         y={v.numCenterYFrac * r}
         textAnchor="middle"
         dominantBaseline="central"
-        fontSize={size * 0.46}
+        fontSize={size * fontScale}
         fontWeight={700}
         fontFamily="sans-serif"
         fill={ENTITY_BADGE_KNOCKOUT_CSS}
       >
-        {count}
+        {label}
       </text>
     </svg>
   );
