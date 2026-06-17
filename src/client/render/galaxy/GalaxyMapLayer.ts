@@ -20,6 +20,12 @@ import {
   type Territory,
 } from './galaxyTerritories';
 import { resolveSectorOwner } from './sectorOwnership';
+import {
+  GALAXY_STAR_LAYERS,
+  STAR_MAX_TILE_HALF,
+  starHash,
+  starLayerAlphaAt,
+} from './galaxyStarfield';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
 import { Camera } from '../worker/Camera';
@@ -68,6 +74,9 @@ const COLOR_MINE = 0x66ffcc;
 /** Equinox Phase 7 (Item 1) — warpable (adjacent) sector ring on the in-game
  *  warp map: a bright cyan so the player sees where they can warp at a glance. */
 const COLOR_WARPABLE = 0x33ddff;
+/** Equinox Phase 9 (item 3) — the FULL-PAGE galaxy map's opaque deep-space
+ *  backdrop, so the gameplay starfield can't bleed through. */
+const COLOR_BACKDROP = 0x05070d;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -118,6 +127,13 @@ export class GalaxyMapLayer extends Container {
   private readonly onHover?: (ev: GalaxyHoverEvent) => void;
   private readonly hexLayer = new Container();
   private readonly clusterRoot = new Container();
+  /** Equinox Phase 9 (item 3) — opaque deep-space backdrop + zoom-aware LOD
+   *  starfield, drawn BEHIND clusterRoot, ONLY in the full-page `selector` mode
+   *  (the in-game `overlay` HUD stays fully transparent). Screen-space children
+   *  of `this` (not clusterRoot): the starfield is projected by its own pure LOD
+   *  math, not the clusterRoot transform. */
+  private readonly backdrop = new Graphics();
+  private readonly starfield = new Graphics();
   private readonly entries: HexEntry[] = [];
   /** Per-territory sub-containers (Phase 4a), positioned at each territory's
    *  centroid; scaling one shrinks the whole region toward its centre. */
@@ -168,6 +184,11 @@ export class GalaxyMapLayer extends Container {
     this.onHover = opts.onHover;
     this.visible = false;
     this.eventMode = 'passive';
+    // Back-to-front: opaque backdrop, LOD starfield, then the hex cluster.
+    this.backdrop.visible = false;
+    this.starfield.visible = false;
+    this.addChild(this.backdrop);
+    this.addChild(this.starfield);
     this.clusterRoot.addChild(this.hexLayer);
     this.addChild(this.clusterRoot);
     this.panZoomCamera = new Camera(this.clusterRoot, { minScale: 0.12, maxScale: 4 });
@@ -431,6 +452,16 @@ export class GalaxyMapLayer extends Container {
   resize(screenW: number, screenH: number): void {
     this.screenW = screenW;
     this.screenH = screenH;
+    // Equinox Phase 9 (item 3) — opaque deep-space backdrop covering the screen,
+    // ONLY on the full-page map (`selector`); the in-game `overlay` HUD stays
+    // transparent. Drawn before the selector early-return so it always refreshes.
+    this.backdrop.clear();
+    if (this.mode === 'selector') {
+      this.backdrop.rect(0, 0, screenW, screenH).fill({ color: COLOR_BACKDROP, alpha: 1 });
+      this.backdrop.visible = true;
+    } else {
+      this.backdrop.visible = false;
+    }
     const positions = GALAXY_SECTORS.map((s) => axialToPixel(s.hex, HEX_SIZE_BASE));
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of positions) {
@@ -668,6 +699,62 @@ export class GalaxyMapLayer extends Container {
     }
   }
 
+  /**
+   * Equinox Phase 9 (item 3) — redraw the zoom-aware LOD parallax starfield for
+   * the full-page map. Screen-space (a direct child of `this`, NOT clusterRoot):
+   * we project each star through the SAME world→screen transform clusterRoot uses
+   * (`screen = root.xy + world * scale`) but pick which LOD layers are visible by
+   * the live zoom `scale`, so density stays ~constant and stars stay crisp at any
+   * zoom (vs the old fixed TilingSprite). No-op outside `selector` mode (the
+   * in-game overlay HUD has no backdrop/starfield). Pure layer/fade/placement
+   * math is in `galaxyStarfield.ts`; this is just the Pixi draw.
+   */
+  private drawStarfield(): void {
+    const g = this.starfield;
+    g.clear();
+    if (this.mode !== 'selector' || this.screenW === 0 || this.screenH === 0) {
+      g.visible = false;
+      return;
+    }
+    const scale = this.clusterRoot.scale.x;
+    if (scale <= 0) {
+      g.visible = false;
+      return;
+    }
+    g.visible = true;
+    const scx = this.screenW / 2;
+    const scy = this.screenH / 2;
+    // The world point currently under the screen centre (inverse clusterRoot map).
+    const camX = (scx - this.clusterRoot.x) / scale;
+    const camY = (scy - this.clusterRoot.y) / scale;
+    const hw = this.screenW / (2 * scale); // half-viewport in world units
+    const hh = this.screenH / (2 * scale);
+
+    for (const layer of GALAXY_STAR_LAYERS) {
+      const alpha = starLayerAlphaAt(layer, scale);
+      if (alpha <= 0) continue;
+      const T = layer.tileSize;
+      const p = layer.parallax;
+      const bgCx = camX * p;
+      const bgCy = camY * p;
+      const cTX = Math.round(bgCx / T);
+      const cTY = Math.round(bgCy / T);
+      const halfX = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hw / T) + 1);
+      const halfY = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hh / T) + 1);
+      // Batch the whole layer into one fill call (one colour + alpha).
+      for (let atx = cTX - halfX; atx <= cTX + halfX; atx++) {
+        for (let aty = cTY - halfY; aty <= cTY + halfY; aty++) {
+          for (let i = 0; i < layer.starsPerTile; i++) {
+            const sx = (atx + starHash(atx, aty, layer.seed, i * 2)) * T;
+            const sy = (aty + starHash(atx, aty, layer.seed, i * 2 + 1)) * T;
+            g.circle(scx + (sx - bgCx) * scale, scy + (sy - bgCy) * scale, layer.radius);
+          }
+        }
+      }
+      g.fill({ color: layer.color, alpha });
+    }
+  }
+
   /** Draw a sector's asteroid-field glyph(s) in a small centred row at (cx, cy).
    *  Equinox Phase 8 (Bug 3): only ASTEROID features are drawn — the other static
    *  environmental glyphs (nebula / minerals / black-hole / station) are removed
@@ -772,6 +859,10 @@ export class GalaxyMapLayer extends Container {
   private readonly tick = (): void => {
     if (!this.visible) return;
     if (this.mode === 'selector') this.panZoomCamera.tick();
+
+    // Equinox Phase 9 (item 3) — redraw the zoom-aware starfield against the live
+    // clusterRoot transform (full-page mode only; no-op otherwise).
+    this.drawStarfield();
 
     // ── Contiguous-territory hover-shrink ease (Phase 4a) ──
     // The active territory (pointer-hovered, else the current sector's) eases
