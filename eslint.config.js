@@ -75,6 +75,10 @@ export default [
       '.pnpm-store/**',
       'playwright-report/**',
       'test-results/**',
+      // Built Storybook output (minified bundle) — gitignored generated artefact,
+      // never project source; `eslint .` would otherwise flag thousands of errors
+      // in the compiled JS after a `pnpm build-storybook`.
+      'storybook-static/**',
       'scripts/**',
       'diag/**',
       '**/*.disabled',
