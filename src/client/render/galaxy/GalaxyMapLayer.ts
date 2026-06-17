@@ -32,6 +32,7 @@ import {
   ENTITY_KIND_ORDER,
   ENTITY_BADGE_KNOCKOUT,
   entityBadgePolygon,
+  entityBadgeCount,
 } from '../entityVisuals';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
@@ -395,7 +396,17 @@ export class GalaxyMapLayer extends Container {
       const seg = segs[i]!;
       const n = counts[i]!;
       if (n > 0) {
-        seg.num.text = String(n);
+        // Count label + per-digit shrink (caps at "99+") from the shared visual
+        // language, then the per-shape numScale (star's narrow body needs a
+        // smaller number) — identical to the SVG EntityBadge in the drawer.
+        const { label, scale } = entityBadgeCount(n);
+        const v = ENTITY_VISUALS[ENTITY_KIND_ORDER[i]!];
+        seg.num.text = label;
+        const fontPx = COUNT_NUM_SIZE * scale * v.numScale;
+        if (seg.num.style.fontSize !== fontPx) {
+          seg.num.style.fontSize = fontPx;
+          seg.num.style.lineHeight = fontPx;
+        }
         seg.box.visible = true;
         nVis++;
       } else {
