@@ -9,6 +9,7 @@ import {
   boundaryEdges,
   HEX_EDGE_NEIGHBOUR_DIRS,
 } from './galaxyTerritories';
+import { resolveSectorOwner, NEUTRAL_OWNER } from './sectorOwnership';
 
 function sec(key: string, region: string, q: number, r: number, neighbours: string[]): GalaxySector {
   return {
@@ -25,57 +26,74 @@ function sec(key: string, region: string, q: number, r: number, neighbours: stri
   };
 }
 
+// The v1 production resolver: every sector is neutral (no capture mechanics yet).
+const neutralOwnerOf = (s: GalaxySector): string => resolveSectorOwner(s.key);
+
 describe('computeTerritories', () => {
-  it('groups the real galaxy into one contiguous territory per faction', () => {
-    const territories = computeTerritories(GALAXY_SECTORS, 64);
-    // One territory per faction (every faction is graph-contiguous by construction).
-    expect(territories).toHaveLength(GALAXY_FACTIONS.length);
-    const factionIds = territories.map((t) => t.factionId).sort();
-    expect(factionIds).toEqual(GALAXY_FACTIONS.map((f) => f.id).sort());
+  it('groups the whole connected galaxy into ONE neutral territory (everything is neutral today)', () => {
+    // Equinox Phase 9 item 1: grouping is DYNAMIC (owner-driven), and today every
+    // sector is NEUTRAL → the whole contiguous galaxy is a single territory that
+    // breathes/shrinks together (vs the old 4 hard-coded region clusters).
+    const territories = computeTerritories(GALAXY_SECTORS, 64, neutralOwnerOf);
+    expect(territories).toHaveLength(1);
+    expect(territories[0]!.ownerId).toBe(NEUTRAL_OWNER);
+    expect(territories[0]!.sectorKeys.length).toBe(GALAXY_SECTORS.length);
   });
 
-  it('every sector appears in exactly one territory, all members share the faction', () => {
-    const territories = computeTerritories(GALAXY_SECTORS, 64);
+  it('every sector appears in exactly one territory; centroid is finite', () => {
+    const territories = computeTerritories(GALAXY_SECTORS, 64, neutralOwnerOf);
     const all = territories.flatMap((t) => t.sectorKeys);
     expect(new Set(all).size).toBe(all.length); // no dupes
     expect(all.length).toBe(GALAXY_SECTORS.length); // covers every sector
-    const regionOf = new Map(GALAXY_SECTORS.map((s) => [s.key, s.region]));
     for (const t of territories) {
-      for (const key of t.sectorKeys) expect(regionOf.get(key)).toBe(t.factionId);
       expect(Number.isFinite(t.centroid.x)).toBe(true);
       expect(Number.isFinite(t.centroid.y)).toBe(true);
     }
   });
 
-  it('the core territory holds the three core sectors', () => {
-    const core = computeTerritories(GALAXY_SECTORS, 64).find((t) => t.factionId === 'core')!;
-    expect(core).toBeDefined();
-    expect([...core.sectorKeys].sort()).toEqual(['lyra-fringe', 'sol-prime', 'vega-reach']);
+  it('is DYNAMIC: grouping follows the ownerOf callback, NOT the baked region', () => {
+    // Two sectors with the SAME baked region but DIFFERENT owners → two
+    // territories. Proves grouping reads ownerOf, not GalaxySector.region (the
+    // exact "still statically grouped" complaint).
+    const graph = [sec('a', 'core', 0, 0, ['b']), sec('b', 'core', 1, 0, ['a'])];
+    const territories = computeTerritories(graph, 10, (s) => (s.key === 'a' ? 'p1' : 'p2'));
+    expect(territories).toHaveLength(2);
+    expect(territories.map((t) => t.ownerId).sort()).toEqual(['p1', 'p2']);
+    for (const t of territories) expect(t.sectorKeys).toHaveLength(1);
   });
 
-  it('merges contiguous same-faction sectors and centroids their pixel positions', () => {
-    const graph = [sec('a', 'fA', 0, 0, ['b']), sec('b', 'fA', 1, 0, ['a'])];
-    const [t, ...rest] = computeTerritories(graph, 10);
+  it('merges contiguous SAME-owner sectors and centroids their pixel positions', () => {
+    // Different baked regions, but the resolver gives the SAME owner → one merged
+    // territory (the future "contiguous captured run" case).
+    const graph = [sec('a', 'rA', 0, 0, ['b']), sec('b', 'rB', 1, 0, ['a'])];
+    const [t, ...rest] = computeTerritories(graph, 10, () => 'shared');
     expect(rest).toHaveLength(0);
-    expect(t.sectorKeys).toEqual(['a', 'b']);
+    expect(t!.sectorKeys).toEqual(['a', 'b']);
+    expect(t!.ownerId).toBe('shared');
     const pa = axialToPixel({ q: 0, r: 0 }, 10);
     const pb = axialToPixel({ q: 1, r: 0 }, 10);
-    expect(t.centroid.x).toBeCloseTo((pa.x + pb.x) / 2, 6);
-    expect(t.centroid.y).toBeCloseTo((pa.y + pb.y) / 2, 6);
+    expect(t!.centroid.x).toBeCloseTo((pa.x + pb.x) / 2, 6);
+    expect(t!.centroid.y).toBeCloseTo((pa.y + pb.y) / 2, 6);
   });
 
-  it('splits NON-contiguous same-faction sectors into separate territories', () => {
-    // a(fA) — b(fB) — c(fA): a and c share a faction but are separated by b,
+  it('splits NON-contiguous same-owner sectors into separate territories', () => {
+    // a(o1) — b(o2) — c(o1): a and c share an owner but are separated by b,
     // so contiguity yields THREE territories (a alone, b alone, c alone).
     const graph = [
-      sec('a', 'fA', 0, 0, ['b']),
-      sec('b', 'fB', 1, 0, ['a', 'c']),
-      sec('c', 'fA', 2, 0, ['b']),
+      sec('a', 'r', 0, 0, ['b']),
+      sec('b', 'r', 1, 0, ['a', 'c']),
+      sec('c', 'r', 2, 0, ['b']),
     ];
-    const territories = computeTerritories(graph, 10);
+    const territories = computeTerritories(graph, 10, (s) => (s.key === 'b' ? 'o2' : 'o1'));
     expect(territories).toHaveLength(3);
-    expect(territories.filter((t) => t.factionId === 'fA')).toHaveLength(2);
+    expect(territories.filter((t) => t.ownerId === 'o1')).toHaveLength(2);
     for (const t of territories) expect(t.sectorKeys).toHaveLength(1);
+  });
+});
+
+describe('resolveSectorOwner (v1 — neutral seam)', () => {
+  it('returns NEUTRAL_OWNER for every real sector today', () => {
+    for (const s of GALAXY_SECTORS) expect(resolveSectorOwner(s.key)).toBe(NEUTRAL_OWNER);
   });
 });
 

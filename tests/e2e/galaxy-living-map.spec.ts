@@ -1,12 +1,15 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Living Galaxy Phase 4a — faction territory tint + contiguous-territory
+ * Living Galaxy Phase 4a + Equinox Phase 9 (item 1) — DYNAMIC contiguous-territory
  * hover-shrink. Drives the selector (spawn/warp picker) galaxy map and asserts
  * the REAL drawn per-territory scale (`window.__eqxGalaxyTerritoryScale()` →
  * `clusterRoot`'s per-territory sub-container `scale.x`, NOT a recompute) shrinks
- * the hovered territory and leaves the others at rest. Also captures before/after
- * screenshots of the tinted map.
+ * the hovered territory. Grouping is now owner-driven (`resolveSectorOwner`), and
+ * with no capture mechanics yet EVERY sector is NEUTRAL, so the whole connected
+ * galaxy is ONE territory keyed `neutral` that breathes together on hover (vs the
+ * pre-Phase-9 four hard-coded region clusters). Also captures before/after
+ * screenshots of the map.
  *
  * `?worker=0` forces the MAIN-THREAD PixiRenderer (the OffscreenCanvas worker
  * path screenshots black); the DOM galaxy layer installs the debug hooks. The
@@ -47,9 +50,13 @@ test('galaxy selector tints territories and shrinks the hovered one', async ({ p
   const box = await surface.boundingBox();
   if (!box) throw new Error('game-surface bounding box not found');
 
-  // The faction-contiguous territories exist (one per faction region).
+  // One dynamic NEUTRAL territory exists (everything is neutral today) and sits at
+  // rest (~1.0) before any hover.
   const restScales = await page.evaluate(() => window.__eqxGalaxyTerritoryScale!());
-  expect(Object.keys(restScales).length).toBeGreaterThanOrEqual(4);
+  expect(
+    restScales['neutral'],
+    `the neutral territory should exist (scales=${JSON.stringify(restScales)})`,
+  ).toBeGreaterThan(0.97);
 
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-living/01-rest.png' });
 
@@ -65,10 +72,11 @@ test('galaxy selector tints territories and shrinks the hovered one', async ({ p
   await page.waitForTimeout(700); // lerp ease toward HOVER_SCALE (0.94)
 
   const hoverScales = await page.evaluate(() => window.__eqxGalaxyTerritoryScale!());
-  // The hovered core territory has visibly shrunk; others stay near rest.
+  // Hovering any hex shrinks its (neutral) territory — the whole contiguous galaxy
+  // breathes toward its centroid, the dynamic-grouping behaviour Phase 9 asked for.
   expect(
-    hoverScales['core'],
-    `the hovered core territory should shrink (scales=${JSON.stringify(hoverScales)})`,
+    hoverScales['neutral'],
+    `the hovered neutral territory should shrink (scales=${JSON.stringify(hoverScales)})`,
   ).toBeLessThan(0.97);
 
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-living/02-hover-centre.png' });

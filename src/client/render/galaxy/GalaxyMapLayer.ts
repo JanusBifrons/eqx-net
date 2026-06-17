@@ -14,9 +14,12 @@ import {
 } from './galaxyLayerDecisions';
 import {
   computeTerritories,
+  boundaryEdges,
+  factionBorderColor,
   DEFAULT_FACTION_COLOR,
   type Territory,
 } from './galaxyTerritories';
+import { resolveSectorOwner } from './sectorOwnership';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
 import { Camera } from '../worker/Camera';
@@ -120,6 +123,13 @@ export class GalaxyMapLayer extends Container {
    *  centroid; scaling one shrinks the whole region toward its centre. */
   private territories: Territory[] = [];
   private readonly territoryContainers: Container[] = [];
+  /** One bold perimeter outline per territory (Equinox Phase 9, item 4 — applies
+   *  to neutral territories too). A child of the matching territory container, so
+   *  it shrinks WITH the hover-shrink. */
+  private readonly territoryOutlines: Graphics[] = [];
+  /** owner id at each occupied axial hex ("q,r" → ownerId), built once in
+   *  buildHexes; the `boundaryEdges` perimeter lookup (absent ⇒ map edge). */
+  private readonly ownerByHexKey = new Map<string, string>();
   /** Live + target scale per territory (the hover-shrink ease state). */
   private readonly territoryScale: number[] = [];
   private readonly territoryTarget: number[] = [];
@@ -209,12 +219,12 @@ export class GalaxyMapLayer extends Container {
   }
 
   /** Live territory shrink scales — the REAL drawn per-territory scale, keyed by
-   *  faction id. DEV `__eqxGalaxyTerritoryScale` E2E hook (asserts the whole
-   *  contiguous region scales as one unit on hover). */
+   *  OWNER id (NEUTRAL_OWNER today). DEV `__eqxGalaxyTerritoryScale` E2E hook
+   *  (asserts the whole contiguous region scales as one unit on hover). */
   getDebugTerritoryScales(): Record<string, number> {
     const out: Record<string, number> = {};
     for (let i = 0; i < this.territories.length; i++) {
-      out[this.territories[i]!.factionId] = this.territoryContainers[i]!.scale.x;
+      out[this.territories[i]!.ownerId] = this.territoryContainers[i]!.scale.x;
     }
     return out;
   }
@@ -504,10 +514,17 @@ export class GalaxyMapLayer extends Container {
   }
 
   private buildHexes(): void {
-    // Group sectors into faction-contiguous territories (Phase 4a). Each
-    // territory becomes a sub-container at its centroid; member hexes hang off it
-    // at an offset, so scaling the container shrinks the region toward its centre.
-    this.territories = computeTerritories(GALAXY_SECTORS, HEX_SIZE_BASE);
+    // Group sectors into OWNER-contiguous territories (Phase 4a; Equinox Phase 9
+    // item 1 — DYNAMIC, via the `resolveSectorOwner` seam, NOT the baked region).
+    // Each territory becomes a sub-container at its centroid; member hexes hang
+    // off it at an offset, so scaling the container shrinks the region toward its
+    // centre. Today every sector is NEUTRAL ⇒ one contiguous territory.
+    for (const s of GALAXY_SECTORS) {
+      this.ownerByHexKey.set(`${s.hex.q},${s.hex.r}`, resolveSectorOwner(s.key));
+    }
+    this.territories = computeTerritories(GALAXY_SECTORS, HEX_SIZE_BASE, (s) =>
+      resolveSectorOwner(s.key),
+    );
     const territoryOf = new Map<string, number>();
     for (let i = 0; i < this.territories.length; i++) {
       const t = this.territories[i]!;
@@ -536,9 +553,9 @@ export class GalaxyMapLayer extends Container {
       });
       container.addChild(hex);
 
-      // Equinox Phase 8 (Bug 3) — the bold faction-coloured outer-territory
-      // outline is removed: there are no factions to capture sectors, so every
-      // sector renders neutral with no faction perimeter.
+      // The bold contiguous-territory outline is drawn per-territory in
+      // buildTerritoryOutlines (Equinox Phase 9 item 4 — applies to neutral
+      // territories too), not per-hex here.
 
       const label = new Text({
         text: s.name,
@@ -608,7 +625,47 @@ export class GalaxyMapLayer extends Container {
 
       this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, presenceText, territoryIndex: ti });
     }
+    this.buildTerritoryOutlines();
     this.repaint();
+  }
+
+  /**
+   * Draw one bold perimeter outline per territory — the eqx-peri "territory
+   * outline, not per-cell grid" look (Equinox Phase 9 item 4). The outline strokes
+   * only each member hex's edges whose across-neighbour is a DIFFERENT owner (or
+   * absent) via the unit-locked `boundaryEdges`, yielding one continuous perimeter
+   * per contiguous territory. It is a child of the territory CONTAINER, so it
+   * shrinks WITH the hover-shrink. Border colour comes from the owner
+   * (`factionBorderColor` ⇒ DEFAULT for NEUTRAL today; a faction/player hue once
+   * capture exists), so neutral territories get the outline too — exactly what
+   * the bug report asked for. Drawn once (ownership is static-neutral now); a
+   * future re-group would re-run this.
+   */
+  private buildTerritoryOutlines(): void {
+    const verts = hexVertices(HEX_SIZE_BASE);
+    const ownerAt = (q: number, r: number): string | null =>
+      this.ownerByHexKey.get(`${q},${r}`) ?? null;
+    for (let ti = 0; ti < this.territories.length; ti++) {
+      const t = this.territories[ti]!;
+      const container = this.territoryContainers[ti]!;
+      const g = new Graphics();
+      for (const key of t.sectorKeys) {
+        const sec = getSector(key);
+        if (!sec) continue;
+        const pos = axialToPixel(sec.hex, HEX_SIZE_BASE);
+        const ox = pos.x - container.x;
+        const oy = pos.y - container.y;
+        for (const ei of boundaryEdges({ hex: sec.hex, region: t.ownerId }, ownerAt)) {
+          const a = verts[ei]!;
+          const b = verts[(ei + 1) % 6]!;
+          g.moveTo(ox + a.x, oy + a.y);
+          g.lineTo(ox + b.x, oy + b.y);
+        }
+      }
+      g.stroke({ color: factionBorderColor(t.ownerId), width: 2, alpha: 0.5 });
+      container.addChild(g);
+      this.territoryOutlines.push(g);
+    }
   }
 
   /** Draw a sector's asteroid-field glyph(s) in a small centred row at (cx, cy).
