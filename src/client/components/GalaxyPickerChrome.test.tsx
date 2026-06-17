@@ -106,11 +106,11 @@ describe('GalaxyPickerChrome', () => {
     render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
     act(() => { apiRef.current?.openForSector('sol-prime'); });
     expect(screen.getByTestId('sector-drawer-breakdown')).toBeInTheDocument();
-    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix) in an
-    // aligned icon·label·value grid with conditional plurals (Phase 9 redesign),
-    // so the roaming drones (neutrals) are legible at a glance.
+    // The breakdown uses the SHARED entity badges + plain-language labels (the
+    // unified visual language), so each kind is legible at a glance. Players
+    // render as the ▲ ship badge.
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    expect(breakdown).toHaveTextContent('player');         // 1 → singular
+    expect(breakdown).toHaveTextContent('ship');           // players 1 → ship (singular)
     expect(breakdown).toHaveTextContent('hostiles');       // 2 → plural
     expect(breakdown).toHaveTextContent('neutral drones'); // 8 → plural
     expect(breakdown).toHaveTextContent('structures');     // 3 → plural

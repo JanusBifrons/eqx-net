@@ -40,23 +40,24 @@ describe('SectorInfoDrawer', () => {
     expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
   });
 
-  it('renders the sector name + labelled breakdown with conditional plurals', () => {
+  it('renders the sector name + shared entity-badge breakdown with conditional plurals', () => {
     renderDrawer();
     expect(screen.getByText('Sol Prime')).toBeInTheDocument();
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    // TIP: players 1 (singular), enemies 2 (plural), structures 3 (plural);
-    // neutrals 0 → row omitted entirely.
-    expect(breakdown).toHaveTextContent('player');
-    expect(breakdown).not.toHaveTextContent('players');
+    // TIP: players 1 → ship (singular), enemies 2 → hostiles, structures 3 →
+    // structures; neutrals 0 → row omitted. Players render as the shared ▲ ship
+    // badge (the unified visual language), so the label is "ship", not "player".
     expect(breakdown).toHaveTextContent('hostiles');
+    expect(breakdown).toHaveTextContent('ship');
+    expect(breakdown).not.toHaveTextContent('ships');
     expect(breakdown).toHaveTextContent('structures');
     expect(breakdown).not.toHaveTextContent('drone');
   });
 
-  it('breakdown pluralises by count (2 players, 1 structure)', () => {
+  it('breakdown pluralises by count (2 ships, 1 structure)', () => {
     renderDrawer({ tip: { ...TIP, players: 2, enemies: 0, structures: 1 } });
     const breakdown = screen.getByTestId('sector-drawer-breakdown');
-    expect(breakdown).toHaveTextContent('players');
+    expect(breakdown).toHaveTextContent('ships');
     expect(breakdown).toHaveTextContent('structure');
     expect(breakdown).not.toHaveTextContent('structures');
     expect(breakdown).not.toHaveTextContent('hostile');

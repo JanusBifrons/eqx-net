@@ -73,6 +73,7 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         // `onTap` handler set in `addGalaxyOverlay` below. Both reach the same
         // OVERLAY_TAPPED message.
         galaxyLayer = new GalaxyMapLayer({
+          isTouch: msg.isTouch ?? false,
           onSelect: (sectorKey) => { post({ type: 'OVERLAY_TAPPED', sectorKey }); },
           // Equinox Phase 9 — empty-space tap → blur/deselect (null sectorKey).
           onDeselect: () => { post({ type: 'OVERLAY_TAPPED', sectorKey: null }); },

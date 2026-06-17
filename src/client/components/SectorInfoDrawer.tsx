@@ -4,6 +4,8 @@ import { useMediaQuery } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { ShipSilhouette } from '../render/shipShapeSvg';
+import { EntityBadge } from './EntityBadge';
+import { entityLabel, type EntityKind } from '../render/entityVisuals';
 import { Z } from '../layout/zIndex';
 import type { SectorTooltipData, SectorShipEntry } from './galaxyTooltip';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot';
@@ -58,11 +60,11 @@ const PAPER_RIGHT = {
 const PAPER_BOTTOM = {
   ...PAPER_COMMON,
   width: '100%',
-  // Compact ~half-height bottom dock (the user's "only about half that height").
-  // dvh (dynamic viewport height) shrinks as the mobile address bar shows, so
-  // the fixed action bar is never clipped below the fold when NOT in fullscreen;
-  // the body scrolls on overflow. Capped to the current visible viewport.
-  height: 'min(28dvh, 220px)',
+  // ~40% of the visible height — between the original 54% ("too big") and the
+  // 28% pass ("too small"). dvh (dynamic viewport height) shrinks as the mobile
+  // address bar shows, so the fixed action bar is never clipped below the fold
+  // when NOT in fullscreen; the body scrolls on overflow.
+  height: 'min(40dvh, 340px)',
   maxHeight: 'calc(100dvh - 8px)',
   borderRadius: '10px 10px 0 0',
 } as const;
@@ -107,23 +109,11 @@ const SECTION_LABEL_SX = {
   mt: 1,
 } as const;
 
-/** Invisible 3-column grid (icon · label · value) so every stat row's icons,
- *  labels and numbers line up vertically. No borders. The icon column is a
- *  FIXED width and the value column hugs the right edge, so the breakdown grid
- *  and the recent-activity grid (two separate grids) still align column-for-
- *  column with each other. */
-const STAT_GRID_SX = {
-  display: 'grid',
-  gridTemplateColumns: '18px 1fr auto',
-  columnGap: 0.75,
-  rowGap: 0.25,
-  alignItems: 'center',
-  mt: 0.5,
-} as const;
-
-const STAT_ICON_SX = { fontSize: 11, lineHeight: 1.5, textAlign: 'center' } as const;
-const STAT_LABEL_SX = { color: '#cfe', fontSize: 10, lineHeight: 1.5 } as const;
-const STAT_VALUE_SX = { fontSize: 10, lineHeight: 1.5, fontWeight: 700, textAlign: 'right' } as const;
+/** A breakdown / recent-activity row: the shared EntityBadge (shape + colour +
+ *  cutout count — the game's visual language, identical to the galaxy-map count
+ *  badges) followed by a plain-language label that explains it. */
+const BADGE_ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.4 } as const;
+const BADGE_LABEL_SX = { color: '#cfe', fontSize: 11, lineHeight: 1.3 } as const;
 
 const SHIP_CARD_SX = {
   display: 'flex',
@@ -169,34 +159,15 @@ function kindLabel(k: string): string {
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
-/** Conditional plural so labels read "1 player" / "2 players" (the user's
- *  "protect against plurals" ask) — `count === 1 ? singular : singular+suffix`. */
-function plural(count: number, singular: string, suffix = 's'): string {
-  return count === 1 ? singular : singular + suffix;
-}
-
-/** One row of the invisible icon · label · value grid. Returns the three grid
- *  CELLS as a fragment (the parent Box owns `display:grid`), so every row's
- *  icon, label and number align vertically across the whole panel. */
-function StatRow({
-  icon,
-  color,
-  label,
-  value,
-  testId,
-}: {
-  icon: string;
-  color: string;
-  label: string;
-  value: number | string;
-  testId?: string;
-}): JSX.Element {
+/** A badge + label row in the SHARED entity visual language (EntityBadge = solid
+ *  shape + colour + cutout count). `labelSuffix` appends e.g. " destroyed" for the
+ *  recent-activity rows. The label is conditionally pluralised by entityLabel. */
+function BadgeRow({ kind, count, labelSuffix = '' }: { kind: EntityKind; count: number; labelSuffix?: string }): JSX.Element {
   return (
-    <>
-      <Typography sx={STAT_ICON_SX} style={{ color }}>{icon}</Typography>
-      <Typography sx={STAT_LABEL_SX} noWrap data-testid={testId}>{label}</Typography>
-      <Typography sx={STAT_VALUE_SX} style={{ color }}>{value}</Typography>
-    </>
+    <Box sx={BADGE_ROW_SX}>
+      <EntityBadge kind={kind} count={count} size={18} />
+      <Typography sx={BADGE_LABEL_SX}>{entityLabel(kind, count)}{labelSuffix}</Typography>
+    </Box>
   );
 }
 
@@ -332,23 +303,16 @@ export function SectorInfoDrawer({
           </Box>
 
           <Box sx={SCROLL_SX}>
-            {/* Above-the-fold breakdown — aligned icon · label · value grid, with
-                conditional plurals (1 player / 2 players). */}
+            {/* Above-the-fold breakdown — the SHARED entity badges (same visual
+                language as the galaxy-map count badges) + plain-language labels
+                that explain each one. */}
             {total > 0 ? (
-              <Box sx={STAT_GRID_SX} data-testid="sector-drawer-breakdown">
-                {tip.players > 0 && (
-                  <StatRow icon="▲" color="#6bff9b" label={plural(tip.players, 'player')} value={tip.players} />
-                )}
-                {tip.enemies > 0 && (
-                  <StatRow icon="✦" color="#ff6b6b" label={plural(tip.enemies, 'hostile')} value={tip.enemies} />
-                )}
-                {tip.neutrals > 0 && (
-                  <StatRow icon="◇" color="#ffd479" label={`neutral ${plural(tip.neutrals, 'drone')}`} value={tip.neutrals} />
-                )}
-                {tip.structures > 0 && (
-                  <StatRow icon="⬡" color="#9ab4dd" label={plural(tip.structures, 'structure')} value={tip.structures} />
-                )}
-              </Box>
+              <Stack spacing={0} sx={{ mt: 0.5 }} data-testid="sector-drawer-breakdown">
+                {tip.enemies > 0 && <BadgeRow kind="hostile" count={tip.enemies} />}
+                {tip.neutrals > 0 && <BadgeRow kind="neutral" count={tip.neutrals} />}
+                {tip.players > 0 && <BadgeRow kind="ship" count={tip.players} />}
+                {tip.structures > 0 && <BadgeRow kind="structure" count={tip.structures} />}
+              </Stack>
             ) : (
               <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.5 }} data-testid="sector-drawer-breakdown">
                 No ships or structures here.
@@ -360,31 +324,17 @@ export function SectorInfoDrawer({
               </Typography>
             )}
 
-            {/* Recent events (Equinox Phase 9 item 5) — each kind on its own line
-                in the SAME icon · label · value grid as the breakdown, with
-                conditional plurals + a footnote window. */}
+            {/* Recent events (Equinox Phase 9 item 5) — same entity badges + labels. */}
             <Typography sx={SECTION_LABEL_SX}>Recent activity</Typography>
             {recentCombat && (recentCombat.shipsDestroyed > 0 || recentCombat.structuresDestroyed > 0) ? (
-              <Box sx={STAT_GRID_SX} data-testid="sector-drawer-recent">
+              <Box data-testid="sector-drawer-recent">
                 {recentCombat.shipsDestroyed > 0 && (
-                  <StatRow
-                    icon="✦"
-                    color="#ffb59a"
-                    label={`${plural(recentCombat.shipsDestroyed, 'ship')} destroyed`}
-                    value={recentCombat.shipsDestroyed}
-                  />
+                  <BadgeRow kind="ship" count={recentCombat.shipsDestroyed} labelSuffix=" destroyed" />
                 )}
                 {recentCombat.structuresDestroyed > 0 && (
-                  <StatRow
-                    icon="⬡"
-                    color="#ffb59a"
-                    label={`${plural(recentCombat.structuresDestroyed, 'structure')} destroyed`}
-                    value={recentCombat.structuresDestroyed}
-                  />
+                  <BadgeRow kind="structure" count={recentCombat.structuresDestroyed} labelSuffix=" destroyed" />
                 )}
-                <Typography sx={{ gridColumn: '1 / -1', color: '#7a8499', fontSize: 8, mt: 0.25 }}>
-                  last 5 min
-                </Typography>
+                <Typography sx={{ color: '#7a8499', fontSize: 8, mt: 0.4 }}>last 5 min</Typography>
               </Box>
             ) : (
               <Typography data-testid="sector-drawer-recent" sx={{ color: '#6b7280', fontSize: 10, mt: 0.25 }}>

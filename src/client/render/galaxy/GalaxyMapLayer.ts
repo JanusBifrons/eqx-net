@@ -25,7 +25,14 @@ import {
   STAR_MAX_TILE_HALF,
   starHash,
   starLayerAlphaAt,
+  starRadiusAt,
 } from './galaxyStarfield';
+import {
+  ENTITY_VISUALS,
+  ENTITY_KIND_ORDER,
+  ENTITY_BADGE_KNOCKOUT,
+  entityBadgePolygon,
+} from '../entityVisuals';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
 import { Camera } from '../worker/Camera';
@@ -68,15 +75,41 @@ const COLOR_HIGHLIGHT = 0x00ff88;
 const COLOR_SELECTABLE_STROKE = 0x8fe9c0;
 const COLOR_LOCKED_STROKE = 0x2a2f40;
 const COLOR_LABEL = 0xdffff0;
-/** Equinox Phase 7 — the "yours" tint for the player's own presence readout
- *  (own ships ▲ / structures ■), distinct from the global E/N/P/S counts. */
-const COLOR_MINE = 0x66ffcc;
 /** Equinox Phase 7 (Item 1) — warpable (adjacent) sector ring on the in-game
  *  warp map: a bright cyan so the player sees where they can warp at a glance. */
 const COLOR_WARPABLE = 0x33ddff;
 /** Equinox Phase 9 (item 3) — the FULL-PAGE galaxy map's opaque deep-space
  *  backdrop, so the gameplay starfield can't bleed through. */
 const COLOR_BACKDROP = 0x05070d;
+
+/** Blend two 0xRRGGBB colours (t=0→a, t=1→b). Used to render the selector hex
+ *  fill OPAQUE at the tint's alpha-over-backdrop shade, so the LOD starfield
+ *  (drawn behind the cluster) never shows THROUGH a sector hex. Pure, alloc-free. */
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+  const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+  const r = Math.round(ar + (br - ar) * t);
+  const g = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (g << 8) | bl;
+}
+
+/** Per-sector count readout badges — a SOLID-colour FILLED shape per present type
+ *  with the count knocked OUT of it (cutout), colour-coded (no "E/N/P/S" letters).
+ *  Drawn as Pixi SHAPES (not unicode glyphs) so they render identically on every
+ *  device AND the number centres on the shape's geometric centre (glyph ink was a
+ *  couple px off + a glyph could render as the wrong shape, e.g. ⬡→○). Order is
+ *  FIXED: 0 hostiles, 1 neutral drones, 2 your ships, 3 structures —
+ *  hostiles/neutrals from the global snapshot, ships/structures from the player's
+ *  OWN presence (so structures aren't double-counted). Colours match the drawer. */
+/** Pixi render params for the per-sector count badges. The shapes / colours /
+ *  labels are the shared entity VISUAL LANGUAGE (render/entityVisuals.ts), used
+ *  identically by the React drawer. The badge ROW shows one shape per present
+ *  type (ENTITY_KIND_ORDER = hostiles · neutrals · ships · structures), each with
+ *  its count knocked out (cutout). */
+const COUNT_BADGE_R = 8;
+const COUNT_NUM_SIZE = 9;
+const COUNT_SEG_GAP = 3;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -102,12 +135,15 @@ interface HexEntry {
   y: number;
   hex: Graphics;
   label: Text;
-  /** Live per-sector count readout (enemies / neutrals / players / structures),
-   *  updated by setGalaxyStats; hidden when the sector has no activity. */
-  countText: Text;
-  /** Equinox Phase 7 — the player's OWN presence readout (ships ▲ / structures
-   *  ■), updated by setPlayerPresence; hidden where the player has nothing. */
-  presenceText: Text;
+  /** Live per-sector count readout — one solid-colour FILLED-shape badge per
+   *  present type with the count knocked out of it (cutout), laid out as a centred
+   *  row by layoutCountBadges. `box` = the badge (shape + cutout number); `num` =
+   *  the knockout count Text. Order: hostiles, neutrals, ships, structures. */
+  countSegs: { box: Container; num: Text }[];
+  /** Cached counts [hostiles, neutrals, ships, structures] driving the badges —
+   *  hostiles/neutrals from setGalaxyStats, ships/structures from
+   *  setPlayerPresence; both call layoutCountBadges so the row stays consistent. */
+  counts: number[];
   /** Equinox Phase 9 (item 5) — a small "recent combat" glyph shown at the top of
    *  the hex when fighting/kills happened here recently; hidden otherwise. */
   combatIcon: Text;
@@ -181,16 +217,22 @@ export class GalaxyMapLayer extends Container {
   private readonly panZoomCamera: Camera;
   private _seedW = 0;
   private _seedH = 0;
+  /** Touch device? Disables the territory hover-shrink — there's no true hover on
+   *  touch, so a press/drag would otherwise shrink whatever sector is under the
+   *  finger (the user's "shrink shouldn't happen on mobile"). */
+  private readonly isTouch: boolean;
 
   constructor(opts: {
     onSelect: (sectorKey: string) => void;
     onHover?: (ev: GalaxyHoverEvent) => void;
     onDeselect?: () => void;
+    isTouch?: boolean;
   }) {
     super();
     this.onSelect = opts.onSelect;
     this.onHover = opts.onHover;
     this.onDeselect = opts.onDeselect;
+    this.isTouch = opts.isTouch ?? false;
     this.visible = false;
     this.eventMode = 'passive';
     // Back-to-front: opaque backdrop, LOD starfield, then the hex cluster.
@@ -214,13 +256,13 @@ export class GalaxyMapLayer extends Container {
   // ── Pan/zoom + hover input (routed from the renderer's canvas listeners). ──
   onPointerDown(pointerId: number, screenX: number, screenY: number, stamp: number): void {
     this.panZoomCamera.onPointerDown(pointerId, screenX, screenY, stamp);
-    // Touch press shrinks the territory under the finger (no true hover on touch).
-    this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
+    // Hover-shrink is DESKTOP-ONLY — on touch a press/drag is not a hover.
+    if (!this.isTouch) this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
   }
   onPointerMove(pointerId: number, screenX: number, screenY: number): void {
     this.panZoomCamera.onPointerMove(pointerId, screenX, screenY);
-    // Desktop hover (or touch drag): shrink whatever territory is under the pointer.
-    this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
+    // Desktop hover: shrink whatever territory is under the pointer (never on touch).
+    if (!this.isTouch) this.hoveredTerritory = this.territoryIndexAtScreen(screenX, screenY);
     this.updateHover(screenX, screenY);
   }
   /** Returns true if the pointer cycle was a tap (and a sector was selected). */
@@ -305,33 +347,16 @@ export class GalaxyMapLayer extends Container {
     const byKey = new Map<string, SectorLiveState>();
     for (const s of stats) byKey.set(s.key, s);
     for (const entry of this.entries) {
-      const ct = entry.countText;
       const st = byKey.get(entry.sector.key);
-      // Equinox Phase 9 (item 5) — recent-combat glyph, set independently of the
-      // live counts below (a razed sector can have recentCombat but zero current
-      // entities, so this must not sit behind the no-activity `continue`).
+      // Equinox Phase 9 (item 5) — recent-combat glyph (independent of the live
+      // counts: a razed sector can have recentCombat but zero current entities).
       entry.combatIcon.visible = st?.recentCombat != null;
-      if (!st || (st.enemies === 0 && st.neutrals === 0 && st.players === 0 && st.structures === 0)) {
-        ct.visible = false;
-        continue;
-      }
-      const parts: string[] = [];
-      if (st.enemies > 0) parts.push(`E${st.enemies}`);
-      if (st.neutrals > 0) parts.push(`N${st.neutrals}`);
-      if (st.players > 0) parts.push(`P${st.players}`);
-      if (st.structures > 0) parts.push(`S${st.structures}`);
-      ct.text = parts.join('  ');
-      // Colour by the most salient presence: hostile red → roamer amber →
-      // player green → structures grey.
-      ct.style.fill =
-        st.enemies > 0
-          ? 0xff6b6b
-          : st.neutrals > 0
-            ? 0xffc14d
-            : st.players > 0
-              ? 0x6bff9b
-              : 0xaab0c0;
-      ct.visible = true;
+      // Hostiles + neutrals are the global (omnipotent) NPC counts; ships +
+      // structures come from setPlayerPresence. Update only this slice, then
+      // re-lay-out the full badge row.
+      entry.counts[0] = st?.enemies ?? 0;
+      entry.counts[1] = st?.neutrals ?? 0;
+      this.layoutCountBadges(entry);
     }
   }
 
@@ -347,17 +372,43 @@ export class GalaxyMapLayer extends Container {
     const byKey = new Map<string, SectorPresence>();
     for (const p of presence) byKey.set(p.key, p);
     for (const entry of this.entries) {
-      const pt = entry.presenceText;
       const p = byKey.get(entry.sector.key);
-      if (!p || (p.ships === 0 && p.structures === 0)) {
-        pt.visible = false;
-        continue;
+      // The player's OWN ships + structures (badges 2 + 3). Update only this slice,
+      // then re-lay-out the row (hostiles/neutrals come from setGalaxyStats). This
+      // is the single source for structures now — no more global+owned double-count.
+      entry.counts[2] = p?.ships ?? 0;
+      entry.counts[3] = p?.structures ?? 0;
+      this.layoutCountBadges(entry);
+    }
+  }
+
+  /** Lay out the cached `entry.counts` as a centred row of shape badges inside the
+   *  hex: each present type (count > 0) shows its solid badge with the count
+   *  knocked out; absent types hide. A fixed per-badge slot keeps even spacing
+   *  regardless of shape. Called by setGalaxyStats + setPlayerPresence. */
+  private layoutCountBadges(entry: HexEntry): void {
+    const segs = entry.countSegs;
+    const counts = entry.counts;
+    const slotW = COUNT_BADGE_R * 2;
+    let nVis = 0;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i]!;
+      const n = counts[i]!;
+      if (n > 0) {
+        seg.num.text = String(n);
+        seg.box.visible = true;
+        nVis++;
+      } else {
+        seg.box.visible = false;
       }
-      const parts: string[] = [];
-      if (p.structures > 0) parts.push(`■${p.structures}`);
-      if (p.ships > 0) parts.push(`▲${p.ships}`);
-      pt.text = parts.join('  ');
-      pt.visible = true;
+    }
+    const totalW = nVis * slotW + COUNT_SEG_GAP * Math.max(0, nVis - 1);
+    let x = -totalW / 2;
+    for (let i = 0; i < segs.length; i++) {
+      const seg = segs[i]!;
+      if (!seg.box.visible) continue;
+      seg.box.x = x + slotW / 2;
+      x += slotW + COUNT_SEG_GAP;
     }
   }
 
@@ -631,7 +682,7 @@ export class GalaxyMapLayer extends Container {
       });
       label.anchor.set(0.5);
       label.x = ox;
-      label.y = oy;
+      label.y = oy - HEX_SIZE_BASE * 0.18; // upper-centre, leaving room for the badge row
       container.addChild(label);
 
       // Asteroid-field glyph only (Equinox Phase 8 / Bug 3) — the other static
@@ -639,49 +690,39 @@ export class GalaxyMapLayer extends Container {
       // Live count glyphs (structures / enemy / neutral / player) are layered in
       // separately by setGalaxyStats (Phase 4b).
       const glyphs = new Graphics();
-      this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.46);
+      this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.05);
       container.addChild(glyphs);
 
-      // Live count readout (Phase 4b), beneath the feature glyphs. Empty/hidden
-      // until setGalaxyStats reports activity.
-      const countText = new Text({
-        text: '',
-        resolution: MAP_LABEL_RESOLUTION,
-        roundPixels: true,
-        style: new TextStyle({
-          fontFamily: 'sans-serif',
-          fontSize: 10,
-          fontWeight: '700',
-          fill: 0xaab0c0,
-          letterSpacing: 0.5,
-        }),
-      });
-      countText.anchor.set(0.5);
-      countText.x = ox;
-      countText.y = oy + HEX_SIZE_BASE * 0.46 + 13;
-      countText.visible = false;
-      container.addChild(countText);
-
-      // Equinox Phase 7 — the player's OWN presence readout (own structures ■ /
-      // ships ▲), a distinct "yours" green row below the global counts. Hidden
-      // until setPlayerPresence reports the player has presence here.
-      const presenceText = new Text({
-        text: '',
-        resolution: MAP_LABEL_RESOLUTION,
-        roundPixels: true,
-        style: new TextStyle({
-          fontFamily: 'sans-serif',
-          fontSize: 10,
-          fontWeight: '700',
-          fill: COLOR_MINE,
-          letterSpacing: 0.5,
-        }),
-      });
-      presenceText.anchor.set(0.5);
-      presenceText.x = ox;
-      presenceText.y = oy + HEX_SIZE_BASE * 0.46 + 25;
-      presenceText.visible = false;
-      container.addChild(presenceText);
+      // Live per-sector count readout — a centred row of solid-colour SHAPE badges
+      // with the count knocked OUT (cutout), placed INSIDE the hex (lower-centre,
+      // within the full-width band) so it never spills past the hex edge or hides
+      // behind an adjacent hex. Laid out by layoutCountBadges; row at hex centre.
+      const countRow = new Container();
+      countRow.x = ox;
+      countRow.y = oy + HEX_SIZE_BASE * 0.34;
+      const countSegs: { box: Container; num: Text }[] = [];
+      for (const kind of ENTITY_KIND_ORDER) {
+        const v = ENTITY_VISUALS[kind];
+        const box = new Container();
+        const shapeG = new Graphics();
+        shapeG.poly(entityBadgePolygon(v.shape, COUNT_BADGE_R));
+        shapeG.fill(v.color);
+        // The count, KNOCKED OUT of the solid shape (backdrop colour → cutout),
+        // centred on the shape's optical centre + the font baseline nudge.
+        const num = new Text({
+          text: '',
+          resolution: MAP_LABEL_RESOLUTION,
+          roundPixels: true,
+          style: new TextStyle({ fontFamily: 'sans-serif', fontSize: COUNT_NUM_SIZE, lineHeight: COUNT_NUM_SIZE, fontWeight: '700', fill: ENTITY_BADGE_KNOCKOUT }),
+        });
+        num.anchor.set(0.5);
+        num.y = v.numCenterYFrac * COUNT_BADGE_R;
+        box.addChild(shapeG, num);
+        box.visible = false;
+        countRow.addChild(box);
+        countSegs.push({ box, num });
+      }
+      container.addChild(countRow);
 
       // Equinox Phase 9 (item 5) — "recent combat" glyph at the TOP of the hex,
       // shown by setGalaxyStats when the sector saw fighting/kills recently.
@@ -697,7 +738,7 @@ export class GalaxyMapLayer extends Container {
       combatIcon.visible = false;
       container.addChild(combatIcon);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, presenceText, combatIcon, territoryIndex: ti });
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countSegs, counts: [0, 0, 0, 0], combatIcon, territoryIndex: ti });
     }
     this.buildTerritoryOutlines();
     this.repaint();
@@ -736,7 +777,9 @@ export class GalaxyMapLayer extends Container {
           g.lineTo(ox + b.x, oy + b.y);
         }
       }
-      g.stroke({ color: factionBorderColor(t.ownerId), width: 2, alpha: 0.5 });
+      // Thick, SOLID, pronounced outer-territory outline — drawn for every
+      // territory incl. neutral (factionBorderColor ⇒ DEFAULT for neutral today).
+      g.stroke({ color: factionBorderColor(t.ownerId), width: 3, alpha: 1 });
       container.addChild(g);
       this.territoryOutlines.push(g);
     }
@@ -784,13 +827,16 @@ export class GalaxyMapLayer extends Container {
       const cTY = Math.round(bgCy / T);
       const halfX = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hw / T) + 1);
       const halfY = Math.min(STAR_MAX_TILE_HALF, Math.ceil(hh / T) + 1);
-      // Batch the whole layer into one fill call (one colour + alpha).
+      // Batch the whole layer into one fill call (one colour + alpha). Each
+      // star's radius varies (mostly fine dust, a few brighter) so the field
+      // never reads as uniform chunky dots.
       for (let atx = cTX - halfX; atx <= cTX + halfX; atx++) {
         for (let aty = cTY - halfY; aty <= cTY + halfY; aty++) {
           for (let i = 0; i < layer.starsPerTile; i++) {
             const sx = (atx + starHash(atx, aty, layer.seed, i * 2)) * T;
             const sy = (aty + starHash(atx, aty, layer.seed, i * 2 + 1)) * T;
-            g.circle(scx + (sx - bgCx) * scale, scy + (sy - bgCy) * scale, layer.radius);
+            const r = starRadiusAt(layer, starHash(atx, aty, layer.seed + 101, i + 1));
+            g.circle(scx + (sx - bgCx) * scale, scy + (sy - bgCy) * scale, r);
           }
         }
       }
@@ -837,9 +883,6 @@ export class GalaxyMapLayer extends Container {
   }
 
   private repaint(): void {
-    // Faction-tint fills read more strongly in the full-screen selector; the
-    // in-game overlay stays highly transparent so gameplay shows through.
-    const fillBoost = this.mode === 'selector' ? 1 : 0.55;
     for (const entry of this.entries) {
       const { sector, hex, label } = entry;
       const highlighted = sector.key === this.currentSectorKey;
@@ -858,30 +901,33 @@ export class GalaxyMapLayer extends Container {
       const verts = hexVertices(this.hexSize);
 
       hex.clear();
-      // 1) Neutral sector fill (Equinox Phase 8 / Bug 3) — there are no factions
-      //    to capture sectors, so every hex is the same neutral tint; a hovered
-      //    hex lifts its fill alpha so it reads brighter than its neighbours.
-      const baseAlpha = highlighted ? 0.5 : warpable ? 0.46 : selectable ? 0.38 : 0.22;
+      // 1) Neutral sector fill — OPAQUE in EVERY mode (user directive: a sector
+      //    hex is NEVER see-through; the old "transparent in-game overlay" rule
+      //    is dropped). The opaque colour is the neutral tint alpha-blended over
+      //    the backdrop, varied by state (current / warpable / selectable /
+      //    hover) for the affordance. In overlay mode there's no full-screen
+      //    backdrop, so only the hexes are solid — the gaps still show gameplay.
+      const tint = highlighted ? 0.62 : warpable ? 0.58 : selectable ? 0.5 : 0.42;
+      const weight = Math.min(1, hovered ? tint + 0.16 : tint);
       hex.poly(verts);
-      hex.fill({
-        color: DEFAULT_FACTION_COLOR,
-        alpha: (hovered ? baseAlpha + 0.18 : baseAlpha) * fillBoost,
-      });
+      hex.fill({ color: lerpColor(COLOR_BACKDROP, DEFAULT_FACTION_COLOR, weight), alpha: 1 });
       // 2) Faint inner per-hex border for cell separation (under the bold
       //    faction outer-territory outline drawn in buildHexes); the current
       //    sector keeps a brighter ring as the "you are here" marker; a warpable
       //    neighbour gets a bright cyan ring; a hovered hex gets a lighter ring.
       hex.poly(verts);
+      // Per-hex borders are SOLID (alpha 1) — state reads via colour + width, not
+      // transparency (the user's "the border on the sectors isn't solid").
       if (highlighted) {
-        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 0.9 });
+        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2.5, alpha: 1 });
       } else if (hovered) {
-        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2, alpha: 0.65 });
+        hex.stroke({ color: COLOR_HIGHLIGHT, width: 2, alpha: 1 });
       } else if (warpable) {
-        hex.stroke({ color: COLOR_WARPABLE, width: 2, alpha: 0.85 });
+        hex.stroke({ color: COLOR_WARPABLE, width: 2, alpha: 1 });
       } else if (selectable) {
-        hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1, alpha: 0.4 });
+        hex.stroke({ color: COLOR_SELECTABLE_STROKE, width: 1.2, alpha: 1 });
       } else {
-        hex.stroke({ color: COLOR_LOCKED_STROKE, width: 0.8, alpha: 0.25 });
+        hex.stroke({ color: COLOR_LOCKED_STROKE, width: 1, alpha: 1 });
       }
 
       hex.eventMode = this.mode === 'overlay' && selectable ? 'static' : 'none';
