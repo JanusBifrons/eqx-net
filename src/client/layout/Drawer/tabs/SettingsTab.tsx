@@ -1,6 +1,7 @@
 import { Box, Button, Divider, FormControlLabel, Stack, Switch, Typography } from '@mui/material';
 import HomeIcon from '@mui/icons-material/Home';
 import { useUIStore } from '../../../state/store';
+import { PushNotificationToggle } from '../../../components/PushNotificationToggle';
 
 /**
  * Mobile-drawer Settings tab.
@@ -45,6 +46,15 @@ export function SettingsTab(): JSX.Element {
         <Typography variant="caption" sx={{ color: '#9aa0b4', display: 'block', mt: 0.5 }}>
           Leaves the current sector and returns to the landing screen.
         </Typography>
+      </Box>
+
+      <Divider />
+
+      <Box>
+        <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 1 }}>
+          Notifications
+        </Typography>
+        <PushNotificationToggle />
       </Box>
 
       <Divider />

@@ -353,6 +353,17 @@ export async function bootLivingWorldTestServer(opts: {
   /** Phase 5 — inject to exercise director-state persist/restore across a
    *  (two-boot) "restart". Omit ⇒ stateless director (today's fresh seed). */
   directorPersistence?: DirectorPersistence;
+  /** Seed a PRE-BUILT, powered base in one or more sectors (the
+   *  `prebuiltStructures` scenario path). A ready base (Capital + Miner + Solar
+   *  + Turret) makes the WaveDirector dispatch a wave at it — `owner` is the
+   *  faction the wave targets. Lets a test drive the full wave lifecycle
+   *  (dispatch → traverse → attack) against a real base, with or without the
+   *  owner present. */
+  bases?: ReadonlyArray<{
+    sector: string;
+    structures: ReadonlyArray<{ kind: string; x: number; y: number }>;
+    owner: string;
+  }>;
 }): Promise<LivingWorldTestHarness> {
   const sink = new CaptureSink();
   setPersistence(sink);
@@ -370,11 +381,20 @@ export async function bootLivingWorldTestServer(opts: {
   const gameServer = new Server({
     transport: new WebSocketTransport({ server: httpServer }),
   });
+  const baseBySector = new Map((opts.bases ?? []).map((b) => [b.sector, b]));
   for (const key of opts.sectors) {
+    const base = baseBySector.get(key);
     gameServer.define(`galaxy-${key}`, SectorRoom, {
       sectorKey: key,
       droneCount: 0,
       testMode: true,
+      // Seed a base ⇒ also clear the ambient asteroid field: placement is
+      // obstacle-aware, so a stray rock would block a structure (e.g. the solar)
+      // and leave the base un-ready. Mirrors structureScenario.test's
+      // `asteroidConfig: []` for the same reason.
+      ...(base
+        ? { prebuiltStructures: base.structures, prebuiltStructuresOwner: base.owner, asteroidConfig: [] }
+        : {}),
     });
   }
   await gameServer.listen(port);

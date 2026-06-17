@@ -12,6 +12,7 @@ import TextField from '@mui/material/TextField';
 import Divider from '@mui/material/Divider';
 import { useUIStore } from '../state/store.js';
 import { captureDiagnostic } from '../debug/diagCapture.js';
+import { PushNotificationToggle } from './PushNotificationToggle.js';
 
 interface Props {
   open: boolean;
@@ -113,6 +114,13 @@ export function SettingsModal({ open, onClose }: Props) {
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
           Settings are saved on this device only.
         </Typography>
+
+        <Divider sx={{ my: 2 }} />
+
+        <Typography variant="overline" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+          Notifications
+        </Typography>
+        <PushNotificationToggle />
 
         <Divider sx={{ my: 2 }} />
 

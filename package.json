@@ -42,7 +42,8 @@
     "dev:server:gctrace": "cross-env NODE_OPTIONS=\"--max-semi-space-size=128 --trace-gc-verbose\" tsx --tsconfig tsconfig.server.json src/server/index.ts",
     "dev:client": "vite",
     "format": "prettier --write .",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "gen:pwa-assets": "pwa-assets-generator --preset minimal-2023 public/pwa-icon.svg"
   },
   "dependencies": {
     "@colyseus/msgpackr": "^1.11.2",
@@ -66,6 +67,7 @@
     "node-datachannel": "^0.32.3",
     "pino": "^9.5.0",
     "pino-roll": "^4.0.0",
+    "web-push": "^3.6.7",
     "pixi-filters": "^6.1.5",
     "pixi-viewport": "^6.0.3",
     "pixi.js": "^8.6.0",
@@ -91,6 +93,8 @@
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/web-push": "^3.6.4",
+    "@vite-pwa/assets-generator": "^0.2.6",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitejs/plugin-react": "^4.3.4",
@@ -110,7 +114,9 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^6.0.3",
-    "vitest": "^2.1.8"
+    "vite-plugin-pwa": "^0.21.1",
+    "vitest": "^2.1.8",
+    "workbox-window": "^7.3.0"
   },
   "pnpm": {
     "overrides": {

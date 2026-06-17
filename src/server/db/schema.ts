@@ -102,4 +102,20 @@ CREATE TABLE IF NOT EXISTS director_state (
   created_at   INTEGER NOT NULL,
   updated_at   INTEGER NOT NULL
 );
+
+-- Web Push subscriptions (PWA notifications, e.g. "your base is under attack").
+-- One row per browser push endpoint; a user may have several (phone + desktop).
+-- Keyed on the unique endpoint URL so a re-subscribe from the same device is an
+-- UPSERT, not a duplicate. Rows are pruned when the push service reports the
+-- endpoint is gone (HTTP 404/410). See src/server/push/.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  endpoint   TEXT NOT NULL UNIQUE,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 `;
