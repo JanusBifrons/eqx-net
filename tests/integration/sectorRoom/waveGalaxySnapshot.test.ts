@@ -71,4 +71,73 @@ describe('SectorRoom integration — a wave shows as hostile on the galaxy snaps
     const dispatched = getRecentAudit().filter((e) => e.event === 'wave_dispatched');
     expect(dispatched.some((e) => (e as { owner?: string }).owner === OFFLINE_OWNER)).toBe(true);
   }, 25_000);
+
+  it('drives the wave lifecycle dispatch → attacking → stand-down (base destroyed) → enemies clear', async () => {
+    clearAuditRing();
+    h = await bootLivingWorldTestServer({
+      sectors: ['greenfall', 'emerald-span'],
+      botCount: 8,
+      seed: 9,
+      bases: [
+        {
+          sector: 'emerald-span',
+          owner: OFFLINE_OWNER,
+          structures: [
+            { kind: 'capital', x: 0, y: 0 },
+            { kind: 'solar', x: 250, y: 0 },
+            { kind: 'miner', x: -350, y: 0 },
+            { kind: 'turret', x: 0, y: 350 },
+          ],
+        },
+      ],
+      director: { dispatchIntervalMs: 1, controlIntervalMs: 50, spoolMs: 40, hopTravelMs: 40 },
+    });
+
+    const room = h.getRoom('emerald-span') as unknown as {
+      _internals: {
+        structureRegistry: { all(): Iterable<{ id: string }> };
+        applyDamage(targetId: string, shooterId: string, damage: number): void;
+      };
+      factionBaseReadiness(): Array<{ factionId: string; underWave: boolean }>;
+    };
+
+    // Dispatch → traverse → attack (the states only mock-tested in SquadBehaviour).
+    await h.waitUntil(
+      () => h!.director.squadSnapshot().byState.attacking > 0,
+      8000,
+      'squad reached attacking',
+    );
+    expect(getRecentAudit().some((e) => e.event === 'wave_dispatched')).toBe(true);
+
+    // A4 — the REAL hostility side-effect fires: the real factionBaseReadiness()
+    // reports the faction `underWave` (not a mocked room). This is the seam the
+    // WaveDirector unit test can only fake.
+    await h.waitUntil(
+      () => room.factionBaseReadiness().find((r) => r.factionId === OFFLINE_OWNER)?.underWave === true,
+      8000,
+      'the real faction ledger flips underWave',
+    );
+
+    // Destroy the entire base → the faction is no longer a live target → the
+    // squad stands down (factionStillHostile=false; no peaceful-timeout needed).
+    for (const s of [...room._internals.structureRegistry.all()]) {
+      room._internals.applyDamage(s.id, 'test-killer', 999_999);
+    }
+
+    // The squad drops its target and stands down (no longer warping/attacking).
+    await h.waitUntil(
+      () => {
+        const b = h!.director.squadSnapshot().byState;
+        return b.attacking === 0 && b.warping === 0;
+      },
+      8000,
+      'squad stood down after the base was destroyed',
+    );
+    // …and the galaxy snapshot clears the hostiles (target cleared ⇒ neutral).
+    await h.waitUntil(
+      () => (h!.director.galaxySnapshot().find((s) => s.key === 'emerald-span')?.enemies ?? 0) === 0,
+      8000,
+      'enemies cleared from the galaxy snapshot after stand-down',
+    );
+  }, 30_000);
 });
