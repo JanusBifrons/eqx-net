@@ -3,6 +3,7 @@ import {
   GALAXY_STAR_LAYERS,
   starHash,
   starLayerAlphaAt,
+  starRadiusAt,
   type GalaxyStarLayer,
 } from './galaxyStarfield';
 
@@ -72,5 +73,21 @@ describe('starHash', () => {
     expect(starHash(0, 0, 7, 0)).not.toBe(starHash(1, 0, 7, 0));
     expect(starHash(0, 0, 7, 0)).not.toBe(starHash(0, 1, 7, 0));
     expect(starHash(0, 0, 7, 0)).not.toBe(starHash(0, 0, 7, 1));
+  });
+});
+
+describe('starRadiusAt', () => {
+  it('spans 0.5×–1.3× the base radius and is monotonic in the hash', () => {
+    expect(starRadiusAt(L, 0)).toBeCloseTo(L.radius * 0.5, 6); // floor (no sub-pixel vanish)
+    expect(starRadiusAt(L, 1)).toBeCloseTo(L.radius * 1.3, 6); // ceiling (no chunky dots)
+    expect(starRadiusAt(L, 0.3)).toBeLessThan(starRadiusAt(L, 0.7));
+  });
+
+  it('biases toward small (most stars are fine dust)', () => {
+    // h² weighting ⇒ the midpoint hash maps below the mid-radius, so the bulk of
+    // the [0,1) hash range lands near the floor — fine dust, a few highlights.
+    const mid = starRadiusAt(L, 0.5);
+    const range = L.radius * 1.3 - L.radius * 0.5;
+    expect(mid).toBeLessThan(L.radius * 0.5 + range * 0.5);
   });
 });

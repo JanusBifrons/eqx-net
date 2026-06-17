@@ -28,6 +28,7 @@
 import { GalaxyMapLayer } from '../render/galaxy/GalaxyMapLayer';
 import type { GalaxyLayerMode } from '../render/galaxy/galaxyLayerDecisions';
 import { WorkerRendererClient } from '../render/worker/WorkerRendererClient';
+import { isTouchDevice } from '../input/TouchInput';
 import { useUIStore } from '../state/store';
 import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
@@ -138,6 +139,7 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
     return null;
   }
   const galaxyLayer = new GalaxyMapLayer({
+    isTouch: isTouchDevice(),
     onSelect: (key) => onTap(key),
     onDeselect: () => onTap(null),
     onHover,
@@ -153,6 +155,12 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // hovered contiguous territory shrinks as one unit. Main-thread (DOM) path only.
   (window as unknown as { __eqxGalaxyTerritoryScale?: () => Record<string, number> })
     .__eqxGalaxyTerritoryScale = () => galaxyLayer.getDebugTerritoryScales();
+  // DEV/E2E hook (Equinox Phase 9) — inject per-sector OWNED presence (ships +
+  // structures) so a spec/probe can render the ▲/⬢ count badges deterministically
+  // (the real data needs a logged-in player with ships/structures). Main-thread
+  // (DOM) path only; mirrors `__eqxSetGalaxyStats` for the global ★/◆ counts.
+  (window as unknown as { __eqxSetGalaxyPresence?: (p: SectorPresence[]) => void })
+    .__eqxSetGalaxyPresence = (p: SectorPresence[]) => galaxyLayer.setPlayerPresence(p);
   renderer.addOverlayContainer(galaxyLayer);
   galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);
