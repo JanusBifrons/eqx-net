@@ -432,7 +432,21 @@ export class GalaxyMapLayer extends Container {
     if (key === this.hoveredSectorKey) return;
     this.hoveredSectorKey = key;
     this.repaint();
-    this.onHover?.({ sectorKey: key, screenX, screenY, selectable });
+    // Equinox Phase 9 — anchor the DESKTOP tooltip ABOVE the hovered hex's CENTRE
+    // (not down-right of the pointer). Emit the hex's TOP-centre in screen space
+    // (clusterRoot transform ∘ the BASE hex position, invariant under the
+    // hover-shrink), so the React tooltip floats centred just above the sector.
+    // Runs only on hover CHANGE (deduped above), never per-frame — `.find` is fine.
+    // Off-map (key === null, a clear) falls back to the raw pointer coords.
+    if (key === null) {
+      this.onHover?.({ sectorKey: null, screenX, screenY, selectable });
+      return;
+    }
+    const entry = this.entries.find((e) => e.sector.key === key);
+    const scale = this.clusterRoot.scale.x;
+    const cx = entry ? this.clusterRoot.x + entry.x * scale : screenX;
+    const cyTop = entry ? this.clusterRoot.y + entry.y * scale - HEX_SIZE_BASE * scale : screenY;
+    this.onHover?.({ sectorKey: key, screenX: cx, screenY: cyTop, selectable });
   }
 
   /** Clear the hover state + tell the main thread (cursor reset + tooltip hide).

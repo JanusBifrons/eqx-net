@@ -382,8 +382,15 @@ export function GalaxyPickerChrome({
           data-tooltip-sector={galaxyHover.sectorKey}
           sx={{
             position: 'fixed',
-            left: galaxyHover.left + 16,
-            top: galaxyHover.top + 16,
+            // Equinox Phase 9 — anchored ABOVE-CENTRE of the hex. galaxyHover now
+            // carries the hex's TOP-centre (GalaxyMapLayer.updateHover), so centre
+            // the tooltip horizontally on it and float it just above (vs the old
+            // down-right-of-cursor offset). `textAlign:center` keeps the copy tidy
+            // under the centred anchor.
+            left: galaxyHover.left,
+            top: galaxyHover.top,
+            transform: 'translate(-50%, calc(-100% - 6px))',
+            textAlign: 'center',
             zIndex: 5,
             pointerEvents: 'none',
             bgcolor: 'rgba(8,12,24,0.94)',
