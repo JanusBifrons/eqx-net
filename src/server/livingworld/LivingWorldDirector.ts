@@ -32,6 +32,7 @@ import {
   pickEntrySector,
   liveEntrySectors,
   pickRoamGoal,
+  enemyBotCountsBySector,
   type Rng,
 } from './population.js';
 import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
@@ -459,10 +460,22 @@ export class LivingWorldDirector {
   }
 
   /** Recompute the cached `/galaxy/snapshot` live state — one entry per galaxy
-   *  room: the room's live counts (players / enemies / neutrals / structures)
-   *  stamped with the sector's static region faction (cosmetic v1). Allocating
-   *  here is fine — it runs on the ~1.5 s control tick, never the 60 Hz loop. */
+   *  room. The room reports its TOTAL present drones (enemies+neutrals) +
+   *  players + structures; the director RE-SPLITS enemies vs neutrals by
+   *  FACTION-hostility, not the room's present-player view.
+   *
+   *  Why: hostility is faction → faction (each player is their own faction). A
+   *  drone is an "enemy" the moment its squad is DISPATCHED at a base
+   *  (targetFactionId set) — independent of whether the targeted player is
+   *  present (Equinox: waves attack regardless of presence). The room's
+   *  `liveCounts` only knew "hostile to a PRESENT player", so an offline base
+   *  under attack showed zero enemies on the map. The squad-derived count fixes
+   *  that: a dispatched wave shows red in whatever sector its members occupy,
+   *  from dispatch through traversal to arrival; roaming squads stay neutral.
+   *  Runs on the ~1.5 s control tick (never the 60 Hz loop), so allocating here
+   *  is fine. */
   private recomputeGalaxyStats(): void {
+    const enemyBySector = enemyBotCountsBySector(this.squadPool.all(), (id) => this.pool.get(id));
     const out: SectorLiveState[] = [];
     for (const [key, room] of this.rooms) {
       const counts = room.liveCounts?.() ?? {
@@ -471,12 +484,17 @@ export class LivingWorldDirector {
         neutrals: 0,
         structures: 0,
       };
+      // Total drones actually present in the sector (the room is ground truth
+      // for "how many"); the director decides the enemy/neutral SPLIT by wave.
+      const totalDrones = counts.enemies + counts.neutrals;
+      const enemies = Math.min(enemyBySector.get(key) ?? 0, totalDrones);
+      const neutrals = Math.max(0, totalDrones - enemies);
       const region = getSector(key)?.region ?? null;
       out.push({
         key,
         players: counts.players,
-        enemies: counts.enemies,
-        neutrals: counts.neutrals,
+        enemies,
+        neutrals,
         structures: counts.structures,
         // Cosmetic/static v1: ownership IS the sector's region faction; the shape
         // carries `null` for the FUTURE "unclaimed" case (shared-types/galaxySnapshot.ts).

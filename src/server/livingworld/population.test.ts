@@ -13,7 +13,10 @@ import {
   liveEntrySectors,
   pickEntrySector,
   pickRoamGoal,
+  enemyBotCountsBySector,
   MIN_PACK_PER_OCCUPIED,
+  type WaveSquadView,
+  type BotPlacement,
 } from './population.js';
 import { LIVING_WORLD_SQUAD_COUNT, SQUAD_SIZE } from './director/SquadPool.js';
 
@@ -389,5 +392,57 @@ describe('makeSeededRng', () => {
       expect(v).toBeGreaterThanOrEqual(0);
       expect(v).toBeLessThan(1);
     }
+  });
+});
+
+describe('enemyBotCountsBySector — galaxy-map hostile classification', () => {
+  const place =
+    (m: Record<string, BotPlacement>) =>
+    (id: string): BotPlacement | undefined =>
+      m[id];
+
+  it('counts a DISPATCHED squad (targetFactionId set) as enemies in each member sector', () => {
+    const squads: WaveSquadView[] = [
+      { targetFactionId: 'player-A', botIds: ['b1', 'b2', 'b3'] },
+    ];
+    const placements = place({
+      b1: { state: 'active', sectorKey: 'sol-prime' },
+      b2: { state: 'active', sectorKey: 'sol-prime' },
+      b3: { state: 'active', sectorKey: 'vega-reach' }, // a straggler mid-traverse
+    });
+    const counts = enemyBotCountsBySector(squads, placements);
+    expect(counts.get('sol-prime')).toBe(2);
+    expect(counts.get('vega-reach')).toBe(1);
+  });
+
+  it('shows enemies regardless of player presence (the bug: it used to require a present player)', () => {
+    // No player is present anywhere — an offline base under attack. The squad is
+    // still hostile to the faction, so its members MUST count as enemies.
+    const squads: WaveSquadView[] = [{ targetFactionId: 'offline-owner', botIds: ['b1'] }];
+    const counts = enemyBotCountsBySector(squads, place({ b1: { state: 'active', sectorKey: 'sol-prime' } }));
+    expect(counts.get('sol-prime')).toBe(1);
+  });
+
+  it('treats a ROAMING squad (targetFactionId null) as neutral — contributes nothing', () => {
+    const squads: WaveSquadView[] = [{ targetFactionId: null, botIds: ['r1', 'r2'] }];
+    const counts = enemyBotCountsBySector(squads, place({
+      r1: { state: 'active', sectorKey: 'thornfield' },
+      r2: { state: 'active', sectorKey: 'thornfield' },
+    }));
+    expect(counts.size).toBe(0);
+  });
+
+  it('excludes in-transit / unknown members (only live bots occupy a sector)', () => {
+    const squads: WaveSquadView[] = [{ targetFactionId: 'player-A', botIds: ['b1', 'b2', 'gone'] }];
+    const counts = enemyBotCountsBySector(squads, place({
+      b1: { state: 'active', sectorKey: 'sol-prime' },
+      b2: { state: 'in-transit', sectorKey: 'sol-prime' }, // mid-hop, between rooms
+      // 'gone' has no placement at all
+    }));
+    expect(counts.get('sol-prime')).toBe(1);
+  });
+
+  it('is empty with no squads', () => {
+    expect(enemyBotCountsBySector([], place({})).size).toBe(0);
   });
 });
