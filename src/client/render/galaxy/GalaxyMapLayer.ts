@@ -108,6 +108,9 @@ interface HexEntry {
   /** Equinox Phase 7 — the player's OWN presence readout (ships ▲ / structures
    *  ■), updated by setPlayerPresence; hidden where the player has nothing. */
   presenceText: Text;
+  /** Equinox Phase 9 (item 5) — a small "recent combat" glyph shown at the top of
+   *  the hex when fighting/kills happened here recently; hidden otherwise. */
+  combatIcon: Text;
   /** Index into `territories` / `territoryContainers`. */
   territoryIndex: number;
 }
@@ -296,6 +299,10 @@ export class GalaxyMapLayer extends Container {
     for (const entry of this.entries) {
       const ct = entry.countText;
       const st = byKey.get(entry.sector.key);
+      // Equinox Phase 9 (item 5) — recent-combat glyph, set independently of the
+      // live counts below (a razed sector can have recentCombat but zero current
+      // entities, so this must not sit behind the no-activity `continue`).
+      entry.combatIcon.visible = st?.recentCombat != null;
       if (!st || (st.enemies === 0 && st.neutrals === 0 && st.players === 0 && st.structures === 0)) {
         ct.visible = false;
         continue;
@@ -668,7 +675,21 @@ export class GalaxyMapLayer extends Container {
       presenceText.visible = false;
       container.addChild(presenceText);
 
-      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, presenceText, territoryIndex: ti });
+      // Equinox Phase 9 (item 5) — "recent combat" glyph at the TOP of the hex,
+      // shown by setGalaxyStats when the sector saw fighting/kills recently.
+      const combatIcon = new Text({
+        text: '⚔',
+        resolution: MAP_LABEL_RESOLUTION,
+        roundPixels: true,
+        style: new TextStyle({ fontFamily: 'sans-serif', fontSize: 13, fontWeight: '700', fill: 0xff7043 }),
+      });
+      combatIcon.anchor.set(0.5);
+      combatIcon.x = ox;
+      combatIcon.y = oy - HEX_SIZE_BASE * 0.5;
+      combatIcon.visible = false;
+      container.addChild(combatIcon);
+
+      this.entries.push({ sector: s, x: pos.x, y: pos.y, hex, label, countText, presenceText, combatIcon, territoryIndex: ti });
     }
     this.buildTerritoryOutlines();
     this.repaint();

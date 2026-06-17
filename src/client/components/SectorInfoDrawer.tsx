@@ -137,6 +137,13 @@ function kindLabel(k: string): string {
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
+/** Hull-bar colour by fraction: green (healthy) → amber → red (critical). */
+function hullColor(frac: number): string {
+  if (frac > 0.5) return '#6bff9b';
+  if (frac > 0.2) return '#ffd479';
+  return '#ff6b6b';
+}
+
 export function SectorInfoDrawer({
   open,
   sectorKey,
@@ -214,7 +221,10 @@ export function SectorInfoDrawer({
                 {tip.name}
               </Typography>
               <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                {tip.status}
+                {/* Everything is NEUTRAL today (no capture/faction mechanics — Phase 9
+                    item 1); the server's region `owner` is cosmetic-static. Show
+                    Neutral until real ownership exists, then switch to `tip.status`. */}
+                Neutral
               </Typography>
             </Box>
             {recentCombat && (
@@ -268,15 +278,33 @@ export function SectorInfoDrawer({
             <Typography sx={SECTION_LABEL_SX}>Your ships in sector</Typography>
             {ships.length > 0 ? (
               <Stack spacing={0.5} sx={{ mt: 0.5 }}>
-                {ships.map((s) => (
+                {ships.map((s) => {
+                  const kind = getShipKind(s.kind);
+                  const frac = kind.maxHealth > 0 ? Math.max(0, Math.min(1, s.health / kind.maxHealth)) : 0;
+                  const pct = Math.round(frac * 100);
+                  return (
                   <Box key={s.shipId} sx={SHIP_CARD_SX} data-testid={`sector-drawer-ship-${s.shipId}`}>
                     <Box sx={{ flex: '0 0 auto', lineHeight: 0 }}>
-                      <ShipSilhouette shape={getShipKind(s.kind).shape} size={28} />
+                      <ShipSilhouette shape={kind.shape} size={28} />
                     </Box>
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Typography sx={{ color: '#cfe', fontSize: 11, lineHeight: 1.1 }} noWrap>
                         {kindLabel(s.kind)}
                         {s.isActive ? ' · active' : ''}
+                      </Typography>
+                      {/* Hull bar (health / kind maxHealth) + last-known position. */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                        <Box sx={{ flex: 1, height: 4, borderRadius: 2, bgcolor: '#26304a', overflow: 'hidden' }}>
+                          <Box
+                            data-testid={`sector-drawer-hull-${s.shipId}`}
+                            data-hull-pct={pct}
+                            sx={{ width: `${pct}%`, height: '100%', bgcolor: hullColor(frac) }}
+                          />
+                        </Box>
+                        <Typography sx={{ color: '#8a93a8', fontSize: 8, flex: '0 0 auto' }}>{pct}%</Typography>
+                      </Box>
+                      <Typography sx={{ color: '#7a8499', fontSize: 8, lineHeight: 1.1 }} noWrap>
+                        ({Math.round(s.x)}, {Math.round(s.y)})
                       </Typography>
                     </Box>
                     <Button
@@ -293,7 +321,8 @@ export function SectorInfoDrawer({
                       Spawn
                     </Button>
                   </Box>
-                ))}
+                  );
+                })}
               </Stack>
             ) : (
               <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.5 }}>None</Typography>

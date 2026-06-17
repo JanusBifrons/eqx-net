@@ -57,16 +57,18 @@ describe('SectorInfoDrawer', () => {
     expect(screen.getByTestId('sector-drawer-recent')).toHaveTextContent('2 ships · 1 structure destroyed');
   });
 
-  it('ships in sector: cards + Spawn fire onSpawnExistingShip; None when empty', () => {
+  it('ships in sector: cards (hull bar + position) + Spawn fire onSpawnExistingShip; None when empty', () => {
     const onSpawnExistingShip = vi.fn();
-    const { unmount } = renderDrawer({ ships: [], });
+    const { unmount } = renderDrawer({ ships: [] });
     expect(screen.getByText('None')).toBeInTheDocument();
     unmount();
     renderDrawer({
-      ships: [{ shipId: 'sh1', kind: 'fighter', isActive: true }],
+      ships: [{ shipId: 'sh1', kind: 'fighter', isActive: true, health: 50, x: 12, y: -8 }],
       onSpawnExistingShip,
     });
     expect(screen.getByTestId('sector-drawer-ship-sh1')).toBeInTheDocument();
+    expect(screen.getByTestId('sector-drawer-hull-sh1')).toBeInTheDocument();
+    expect(screen.getByText('(12, -8)')).toBeInTheDocument();
     fireEvent.click(screen.getByTestId('sector-drawer-spawn-sh1'));
     expect(onSpawnExistingShip).toHaveBeenCalledWith('sh1', 'sol-prime');
   });
