@@ -47,6 +47,8 @@ import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
 import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
+import { pushNotifier } from '../push/PushNotifier.js';
+import { registerConnectedPlayer, unregisterConnectedPlayer } from '../push/connectedPlayers.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -412,6 +414,11 @@ function structurePriority(kind: StructureKindId): number {
 /** Audit throttle window for the "your base is under attack" signal. */
 const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
 
+/** Web Push throttle window for the "your base is under attack" notification —
+ *  much longer than the audit window above, because a phone alert should be
+ *  rare (one per base per 15 min) rather than once per sustained-fire burst. */
+const STRUCTURE_ATTACK_PUSH_WINDOW_MS = 15 * 60_000;
+
 /**
  * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
  * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
@@ -520,6 +527,10 @@ export class SectorRoom extends Room<SectorState> {
    *  first-hit allocates (invariant #14). Entry cleared on the structure's
    *  removal in `evictSwarmEntity`. */
   private readonly structureAttackAuditAtMs = new Map<string, number>();
+  /** Web Push throttle — structureId → wall-clock ms of the last "base under
+   *  attack" PUSH notification (separate, far longer window than the audit map
+   *  above). Same alloc-free steady state; cleared in `evictSwarmEntity`. */
+  private readonly structureAttackPushAtMs = new Map<string, number>();
   private structurePlacement!: StructurePlacementSubsystem;
   /** Monotonic id source for player-placed structures (session-scoped). */
   private placedStructureCounter = 0;
@@ -2488,6 +2499,21 @@ export class SectorRoom extends Room<SectorState> {
             attackerKind: classifyAttacker(shooterId),
           });
         }
+        // PWA push — alert the OFFLINE owner's device(s) that their base is
+        // under attack. Separate, much longer throttle than the audit above;
+        // scalars only — the notifier does the offline gate + DB read + send
+        // asynchronously, off the tick (invariant #14). No-op when push is
+        // disabled (no VAPID keys) or the owner is currently connected.
+        const lastPush = this.structureAttackPushAtMs.get(targetId) ?? -Infinity;
+        if (now - lastPush >= STRUCTURE_ATTACK_PUSH_WINDOW_MS) {
+          this.structureAttackPushAtMs.set(targetId, now);
+          pushNotifier.onStructureAttacked(
+            s.owner,
+            s.kind,
+            classifyAttacker(shooterId),
+            this.sectorKey ?? undefined,
+          );
+        }
         // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
         // hit into an active wall and skip the pylon damage entirely.
         if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, Date.now())) {
@@ -2592,6 +2618,7 @@ export class SectorRoom extends Room<SectorState> {
     if (this.structureRegistry.has(rec.id)) {
       this.structureRegistry.remove(rec.id);
       this.structureAttackAuditAtMs.delete(rec.id);
+      this.structureAttackPushAtMs.delete(rec.id);
       this.rebuildStructuresSlice();
     }
     // Scrap-on-death (Phase 2b-ii) — a SCRAP entity (kind 3) leaving the world
@@ -4088,6 +4115,10 @@ export class SectorRoom extends Room<SectorState> {
     const ship = new ShipState();
     ship.playerId = playerId;
     ship.kind = chosenKind;
+    // Presence — mark this player connected (any room) so the Web Push trigger
+    // only alerts OFFLINE base owners. Decremented in onLeave. Refcounted, so
+    // a transit's brief leave→join (or two tabs) never flips them to offline.
+    registerConnectedPlayer(playerId);
     if (resumedHealth !== null) ship.health = resumedHealth;
     // Phase 3 dual-write — pick or create a `player_ships` row for this
     // ship and stamp its UUID onto the schema. Engineering rooms skip
@@ -4336,7 +4367,11 @@ export class SectorRoom extends Room<SectorState> {
     // (linger / despawn) to handle, but we don't want a watchdog
     // to fire warp_in on a ghost session.
     const leavingPlayerId = this.sessionToPlayer.get(client.sessionId);
-    if (leavingPlayerId) this.pendingJoin.delete(leavingPlayerId);
+    if (leavingPlayerId) {
+      this.pendingJoin.delete(leavingPlayerId);
+      // Presence — drop this session's connected refcount (push offline gate).
+      unregisterConnectedPlayer(leavingPlayerId);
+    }
 
     // Click-to-inspect (Item B5) — drop this connection's selection so the
     // ~5 Hz stats emitter doesn't keep resolving for a gone session (covers

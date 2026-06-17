@@ -14,6 +14,45 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 
 ---
 
+## 2026-06-17 — PWA + Web Push — three non-obvious traps wiring vite-plugin-pwa into this repo
+Commit: feat/pwa-push-notifications
+
+Adding an installable PWA + Web Push ("your base is under attack"). Three things
+that would cost a future contributor time:
+
+**1. `registerType: 'autoUpdate'` is the wrong default for a code-split game.**
+`autoUpdate` injects `skipWaiting` + `clientsClaim` + an auto-reload helper. For a
+real-time game that's doubly bad: it forces a mid-session reload, AND a new SW
+claiming the running page can serve freshly-hashed lazy chunks (notably the Pixi
+render worker) that mismatch the already-loaded app → runtime crash. We use
+`registerType: 'prompt'` with **no prompt UI** and `registerSW({ immediate: true })`
+gated on `import.meta.env.PROD`: the new SW installs and WAITS, activating on the
+next full launch. That is exactly "auto-update, apply on next launch" with zero
+mid-combat disruption. Don't "simplify" it back to `autoUpdate`.
+
+**2. The SW must be production-only or it poisons the test/netgate harness.**
+`devOptions.enabled: false` (the default, set explicitly) means no SW under
+`vite dev`. Playwright + the netgate both run against `vite dev`, so they never see
+a service worker — no precache interfering with fresh code, no cache-vs-wire-format
+desync during tests. A dev-enabled SW would be a silent, maddening source of "stale
+client" flakes. The custom push handlers ride in via `workbox.importScripts(
+['push-sw.js'])` (a hand-written `public/push-sw.js`) — leaner than an
+`injectManifest` setup, and it keeps the push logic independent of the precache.
+
+**3. Two TS/Node-version gotchas that only surface at compile/test, not runtime.**
+(a) `pushManager.subscribe({ applicationServerKey })` wants a `BufferSource` that is
+`ArrayBuffer`-backed; under TS 5.7 a plain `new Uint8Array(n)` is
+`Uint8Array<ArrayBufferLike>` (could be `SharedArrayBuffer`) and is REJECTED. Back
+the array with an explicit `new ArrayBuffer(n)` and annotate the return
+`Uint8Array<ArrayBuffer>`. (b) This repo's SQLite is **`node:sqlite` (`DatabaseSync`),
+not `better-sqlite3`** despite the package.json dep; `.all()` returns
+`Record<string, SQLOutputValue>[]` which needs `as unknown as T[]`, and an in-memory
+`:memory:` test DB **enforces foreign keys** (the `push_subscriptions.user_id → users`
+FK fails unless you seed the user first). Also: importing a module whose singleton
+transitively pulls `node:sqlite` makes a Vitest suite fail to LOAD ("Failed to load
+url sqlite") — mock the DB-touching dep modules (as `authRouter.test.ts` does) so
+only the pure class loads.
+
 ## 2026-06-14 — Living Galaxy P4b — a top-level `src/client/<name>/` dir whose name matches a Vite proxy prefix → module 404 → blank app
 Commit: feat/living-galaxy-map (P4b)
 Added the `useGalaxyStats` poll hook at `src/client/galaxy/useGalaxyStats.ts`. The app booted to a BLANK page — no `pageerror`, just one console `Failed to load resource: 404`. The 404 URL was the tell: `http://localhost:5173/galaxy/useGalaxyStats.ts`. Vite's web root is `src/client`, so a NEW top-level `src/client/galaxy/` dir is served at `/galaxy/…` — which COLLIDES with the `/galaxy` HTTP proxy in `vite.config.ts` (→ game server :2567). The proxy hijacked the ESM module request, forwarded it to the server, got 404, the module never loaded, and `App` never mounted. Silent, because **a 404 on an ESM import is a console error, NOT a `pageerror`** — a `page.on('pageerror')` guard misses it entirely; assert on a 404 `response` or the rendered body instead. Fix: move the file out of the proxy-named dir (`galaxy/` → `app/`) — same relative-import depth, zero other changes. **Rule: never name a top-level `src/client/<dir>` after a route prefix `vite.config.ts` proxies** (`/matchmake`, `/auth`, `/healthz`, `/diag`, `/dev`, `/galaxy`). Galaxy client code lives under `src/client/render/galaxy/` (served at `/render/galaxy/…`, no collision) or `src/client/app/`. Diagnostic shortcut: blank body + a lone 404 + no pageerror ⇒ a hijacked/missing ESM module → read the 404 URL.

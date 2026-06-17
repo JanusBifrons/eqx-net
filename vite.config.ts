@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import path from 'node:path';
 import { createConnection } from 'node:net';
 import type { IncomingMessage } from 'node:http';
@@ -53,6 +54,62 @@ export default defineConfig({
         });
       },
     },
+    // PWA — installable manifest + a Workbox service worker (precache the app
+    // shell so launch is instant + the app installs to the home screen, which
+    // is what unlocks Web Push on iOS). See docs/architecture/web-push.md.
+    //
+    // `registerType: 'prompt'` (NOT 'autoUpdate') is load-bearing: 'autoUpdate'
+    // injects skipWaiting + clientsClaim + an auto-reload, which would force a
+    // mid-session reload AND risk the new SW claiming the running page and
+    // serving freshly-hashed code-split chunks (incl. the Pixi render worker)
+    // that mismatch the loaded app. 'prompt' leaves the new SW WAITING; it
+    // activates on the next full launch. We register it silently (no prompt UI
+    // — see main.tsx), which is exactly "auto-update, apply on next launch".
+    //
+    // The SW is PRODUCTION-ONLY (`devOptions.enabled: false`), so Playwright +
+    // the netgate (both run against `vite dev`) never see it — zero test/gate
+    // interference. The custom push + notificationclick handlers ride in via
+    // `workbox.importScripts(['push-sw.js'])` (public/push-sw.js), avoiding an
+    // injectManifest setup + extra workbox-* deps.
+    VitePWA({
+      registerType: 'prompt',
+      injectRegister: null, // registered explicitly in src/client/main.tsx
+      manifest: {
+        name: 'EQX Peri',
+        short_name: 'EQX Peri',
+        description: 'Multiplayer space combat in a hex galaxy.',
+        start_url: '/',
+        display: 'fullscreen',
+        orientation: 'any',
+        background_color: '#05070f',
+        theme_color: '#05070f',
+        icons: [
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' },
+          {
+            src: 'maskable-icon-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable',
+          },
+        ],
+      },
+      workbox: {
+        // Pixi + rapier chunks exceed the 2 MB Workbox default; bump the cap so
+        // the whole app shell precaches. Content-hashed assets are safe to keep
+        // forever; `cleanupOutdatedCaches` prunes superseded revisions.
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2,wasm}'],
+        maximumFileSizeToCacheInBytes: 6_000_000,
+        cleanupOutdatedCaches: true,
+        // Keep the SPA navigation fallback OFF the proxied API/WS routes — the
+        // SW must never serve index.html for an /auth, /push, /galaxy… request.
+        navigateFallbackDenylist: [/^\/(matchmake|auth|galaxy|diag|dev|healthz|push)/],
+        // Custom push handlers (push + notificationclick) live in
+        // public/push-sw.js, imported into the generated SW at root scope.
+        importScripts: ['push-sw.js'],
+      },
+      devOptions: { enabled: false },
+    }),
   ],
   server: {
     port: 5173,
@@ -95,6 +152,10 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/galaxy': {
+        target: 'http://localhost:2567',
+        changeOrigin: true,
+      },
+      '/push': {
         target: 'http://localhost:2567',
         changeOrigin: true,
       },

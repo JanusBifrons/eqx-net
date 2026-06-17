@@ -1,0 +1,24 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="EQX Peri">
+  <!-- Source icon for the PWA. The arrowhead is the in-game FIGHTER silhouette
+       (src/shared-types/shipKinds/fighters.ts points [[0,-16],[-10,10],[0,5],[10,10]],
+       colour 0x00ff88) scaled ~7x and centred well inside the maskable safe zone
+       (content within the central ~60% so adaptive masking never clips it).
+       Regenerate the PNG icon set with `pnpm gen:pwa-assets`. -->
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="75%">
+      <stop offset="0%" stop-color="#0b1426"/>
+      <stop offset="100%" stop-color="#05070f"/>
+    </radialGradient>
+    <linearGradient id="hull" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7dffc4"/>
+      <stop offset="55%" stop-color="#00ff88"/>
+      <stop offset="100%" stop-color="#00b863"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Fighter arrowhead. Game space is Y-up (nose at -y); SVG is Y-down, so the
+       nose (negative game-y) maps to the smaller SVG-y at the top — points up. -->
+  <polygon points="256,144 186,326 256,291 326,326"
+           fill="url(#hull)"
+           stroke="#aaffdd" stroke-width="6" stroke-linejoin="round"/>
+</svg>
