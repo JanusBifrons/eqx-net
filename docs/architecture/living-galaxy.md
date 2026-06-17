@@ -460,3 +460,48 @@ ritual.
 - `pnpm e2e:netgate` (CI) + a `tick_budget` bench for the director scaling.
 - An 8 s `pnpm dev:server` boot smoke after the room-count change (expect N
   `galaxy room created` lines, clean start).
+
+---
+
+## Equinox Phase 9 — galaxy-map refinement (2026-06-17, plan `buzzing-dawn`)
+
+Five play-test items, all galaxy-map. The through-line: make the map read as *real*
+and *dynamic*, and give the sector UI a proper home on mobile + desktop.
+
+1. **Dynamic territory grouping (item 1) + neutral border (item 4).** Grouping was
+   the baked `GalaxySector.region` — four fixed clusters that never moved ("still
+   statically grouped"). It now flows through an **ownership seam**,
+   `render/galaxy/sectorOwnership.ts` `resolveSectorOwner`, consumed by
+   `computeTerritories(sectors, hexSize, ownerOf)` (`Territory.factionId` →
+   `ownerId`). There are no capture / NPC-faction mechanics yet, so every sector
+   resolves to `NEUTRAL_OWNER` → the whole connected galaxy is ONE contiguous
+   territory that breathes toward its centroid on hover. A per-territory **outline**
+   (the unit-locked `boundaryEdges`, drawn in `buildTerritoryOutlines`) is drawn for
+   ALL territories incl. neutral. **Future:** `resolveSectorOwner` reads the live
+   `SectorLiveState.owner` once the server derives ownership from the dominant base
+   holder (the documented `galaxySnapshot.ts` seam) → factions/capture light up the
+   grouping, tint, and outline with **no change** to `computeTerritories` / the layer.
+2. **Opaque map + zoom-aware starfield (item 3).** The full-page map drew transparent,
+   so the gameplay `StarfieldBackground` bled through, and that fixed `TilingSprite`
+   looked low-res when zoomed. `GalaxyMapLayer` now paints an opaque deep-space
+   backdrop (full-page `selector` mode only — the in-game `overlay` HUD stays
+   transparent) + a galaxy-owned LOD parallax starfield (`render/galaxy/galaxyStarfield.ts`,
+   ported from eqx-peri's `StarfieldRenderer`): layers fade in/out by the live zoom
+   so star density stays ~constant and stays crisp at any zoom.
+3. **Popover → drawer (item 2).** The cramped fixed popover is replaced by
+   `SectorInfoDrawer` — docked BOTTOM in portrait / RIGHT in landscape, overlaying the
+   map without a scrim so it stays selectable, swipe-to-close on a grab handle (a
+   scoped pointer handler, NOT `SwipeableDrawer` — that regresses mobile RTT). It
+   carries the sector breakdown, a "Recent activity" line, per-ship cards (silhouette
+   thumbnail + hull bar + last-known position + Spawn), and a fixed ✕ + `Join sector`
+   / `Warp here` action bar. The desktop hover **tooltip** is kept (now anchored
+   ABOVE the hex centre). **Load-bearing:** the drawer is `<Portal>`'d to `<body>` so
+   its z beats the body-level slot-anchored HUD — a nested z-index loses the hit-test
+   even when it wins the paint (see `docs/LESSONS.md` 2026-06-17).
+4. **Recent-combat indicator (item 5).** `SectorLiveState.recentCombat` (a per-room
+   5-min sliding `RecentCombatLog`, fed from the discrete destruction hooks, folded
+   into `recomputeGalaxyStats` off the 60 Hz tick) drives a ⚔ glyph on the hex + the
+   drawer's "Recent activity" breakdown.
+
+Everything is client-render or off-tick HTTP, so **no netgate** is required; PR CI
+runs the full suite + netgate as the backstop.
