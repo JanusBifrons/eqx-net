@@ -71,8 +71,8 @@ async function openPickerViaSectorClick(page: Page): Promise<void> {
   });
   // Equinox Phase 7 (Item 4) — a pick opens the interactive sector popover;
   // "Join the fight" opens the ship picker (no longer one-click).
-  await expect(page.getByTestId('galaxy-sector-popover')).toBeVisible({ timeout: 8_000 });
-  await page.getByTestId('galaxy-popover-join').click();
+  await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('sector-drawer-join').click();
   await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 5_000 });
 }
 

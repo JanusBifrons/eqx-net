@@ -10,6 +10,7 @@
 import type { Bus } from '../../core/events/Bus.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
+import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import type { BotCarry } from './botTypes.js';
 
 /**
@@ -66,6 +67,11 @@ export interface LivingWorldRoom {
   /** Phase-3 — live per-sector counts for `/galaxy/snapshot`. OPTIONAL: a mock
    *  room may omit it and the director falls back to `playerCount()` + zeros. */
   liveCounts?(): SectorLiveCounts;
+  /** Equinox Phase 9 (item 5) — recent-combat tally for this sector (the galaxy
+   *  map's "fighting happened here" indicator + drawer event breakdown), or null
+   *  when quiet. OPTIONAL: a mock room may omit it → the director sends null. Off
+   *  the 60 Hz tick (read on the ~1.5 s control tick). */
+  recentCombat?(): RecentCombat | null;
   /** Equinox Phase 7 — count of structures in this room owned by `playerId`
    *  (the galaxy-map per-player "my structures" overlay; `GET /galaxy/presence`).
    *  OPTIONAL: a mock room may omit it → the director counts 0 for this sector.

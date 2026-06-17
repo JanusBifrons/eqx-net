@@ -69,6 +69,11 @@ export interface SectorShipEntry {
   shipId: string;
   kind: string;
   isActive: boolean;
+  /** Current hull (raw; the drawer card derives a % vs the kind's maxHealth). */
+  health: number;
+  /** Last-known sector-local position (low-cadence roster poll — NOT per-frame). */
+  x: number;
+  y: number;
 }
 
 /**
@@ -85,7 +90,9 @@ export function shipsInSector(
   const out: SectorShipEntry[] = [];
   for (const s of roster) {
     const key = s.isActive && currentSectorKey ? currentSectorKey : s.sectorKey;
-    if (key === sectorKey) out.push({ shipId: s.shipId, kind: s.kind, isActive: s.isActive });
+    if (key === sectorKey) {
+      out.push({ shipId: s.shipId, kind: s.kind, isActive: s.isActive, health: s.health, x: s.x, y: s.y });
+    }
   }
   return out;
 }

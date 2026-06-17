@@ -21,11 +21,13 @@ export interface FeedbackMsg {
 /**
  * `GalaxyMapLayer` hex tap — the worker fires this when its
  * pointer-event state machine resolves a tap on a sector hex. Main
- * thread routes to `handleEngageTransit(sectorKey)`.
+ * thread routes to `handleEngageTransit(sectorKey)`. Equinox Phase 9:
+ * `sectorKey: null` = a confirmed tap that hit NO hex (empty space) →
+ * blur/deselect (close the SectorInfoDrawer).
  */
 export interface OverlayTappedMsg {
   type: 'OVERLAY_TAPPED';
-  sectorKey: string;
+  sectorKey: string | null;
 }
 
 /**

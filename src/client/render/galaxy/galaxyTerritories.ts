@@ -5,11 +5,14 @@ import { axialToPixel, type GalaxySector } from '@core/galaxy/galaxy';
  * `galaxyLayerDecisions.ts` idiom: the logic lives here + is unit-tested, the
  * Pixi calls stay in the layer).
  *
- * A **territory** is a maximal set of same-faction sectors that are CONTIGUOUS in
- * the galaxy graph (BFS over same-faction neighbours). Because the generator
- * keeps every faction graph-contiguous (a hard invariant, asserted in
- * galaxy.test.ts), each frontier faction yields exactly one territory; a
- * singleton/neutral sector is its own territory of one.
+ * A **territory** is a maximal set of same-OWNER sectors that are CONTIGUOUS in
+ * the galaxy graph (BFS over same-owner neighbours). Ownership is resolved by the
+ * injected `ownerOf` callback — the {@link import('./sectorOwnership').resolveSectorOwner}
+ * seam — NOT the baked `GalaxySector.region` (Equinox Phase 9, item 1): that is
+ * what makes the grouping DYNAMIC rather than hard-coded. Today every sector is
+ * NEUTRAL, so the whole connected galaxy forms ONE territory; as capture/faction
+ * mechanics arrive, `ownerOf` returns real owners and territories re-form here
+ * with no caller change.
  *
  * The territory grouping is what makes the contiguous-territory hover-shrink
  * meaningful: the layer parents each territory's hexes under one sub-container at
@@ -19,8 +22,9 @@ import { axialToPixel, type GalaxySector } from '@core/galaxy/galaxy';
  * at `centroid` and offset each child by `(hexPixel - centroid)`.
  */
 export interface Territory {
-  /** The shared faction id (a GALAXY_FACTIONS id == GalaxySector.region). */
-  factionId: string;
+  /** The shared OWNER id (a {@link import('./sectorOwnership').OwnerId} —
+   *  NEUTRAL_OWNER today; a faction/player id once capture exists). */
+  ownerId: string;
   /** Member sector keys, in graph-discovery (BFS) order. */
   sectorKeys: string[];
   /** Pixel centroid (mean of members' `axialToPixel` positions at `hexSize`). */
@@ -28,21 +32,28 @@ export interface Territory {
 }
 
 /**
- * Group `sectors` into faction-contiguous territories. Deterministic: territories
- * are discovered in `sectors` order; members in BFS order over
- * `GalaxySector.neighbours`. Every sector appears in exactly one territory.
+ * Group `sectors` into owner-contiguous territories. `ownerOf` resolves each
+ * sector's owner (inject `resolveSectorOwner`); BFS merges contiguous neighbours
+ * that share that owner. Deterministic: territories are discovered in `sectors`
+ * order; members in BFS order over `GalaxySector.neighbours`. Every sector
+ * appears in exactly one territory.
  */
 export function computeTerritories(
   sectors: readonly GalaxySector[],
   hexSize: number,
+  ownerOf: (sector: GalaxySector) => string,
 ): Territory[] {
   const byKey = new Map(sectors.map((s) => [s.key, s]));
+  // Resolve ownership once per sector (deterministic + avoids re-calling ownerOf
+  // for every neighbour visit).
+  const ownerByKey = new Map<string, string>();
+  for (const s of sectors) ownerByKey.set(s.key, ownerOf(s));
   const seen = new Set<string>();
   const out: Territory[] = [];
 
   for (const start of sectors) {
     if (seen.has(start.key)) continue;
-    const factionId = start.region;
+    const ownerId = ownerByKey.get(start.key)!;
     const members: string[] = [];
     const queue: string[] = [start.key];
     seen.add(start.key);
@@ -54,7 +65,7 @@ export function computeTerritories(
       for (const nKey of sec.neighbours) {
         if (seen.has(nKey)) continue;
         const n = byKey.get(nKey);
-        if (n && n.region === factionId) {
+        if (n && ownerByKey.get(nKey) === ownerId) {
           seen.add(nKey);
           queue.push(nKey);
         }
@@ -69,7 +80,7 @@ export function computeTerritories(
       sumY += p.y;
     }
     out.push({
-      factionId,
+      ownerId,
       sectorKeys: members,
       centroid: { x: sumX / members.length, y: sumY / members.length },
     });

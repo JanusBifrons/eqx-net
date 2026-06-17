@@ -58,6 +58,8 @@ import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { FactionLedger } from '../faction/FactionLedger.js';
 import { isBaseReady } from '../../core/faction/Faction.js';
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
+import { RecentCombatLog } from './RecentCombatLog.js';
+import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
@@ -520,6 +522,10 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
+  /** Equinox Phase 9 (item 5) — sliding-window tally of recent destruction
+   *  events for the galaxy-map "recent combat" indicator + drawer breakdown. Fed
+   *  from the discrete combat-death hooks; read on the director's control tick. */
+  private readonly recentCombatLog = new RecentCombatLog();
   /** Audit throttle — structureId → wall-clock ms of the last `structure_attacked`
    *  audit. Bounds the "your base is under attack" signal to one record per
    *  STRUCTURE_ATTACK_AUDIT_WINDOW_MS so a sustained beam doesn't firehose the
@@ -2095,6 +2101,8 @@ export class SectorRoom extends Room<SectorState> {
       // Gameplay audit — a player hull died (covers offline lingering-hull
       // deaths too). A non-prefixed shooter id is another player ⇒ PvP kill.
       const auditAttacker = evt.shooterId || undefined;
+      // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
+      this.recentCombatLog.record('ship', Date.now());
       auditEvent({
         event: 'ship_destroyed',
         sector: this.sectorKey ?? undefined,
@@ -2644,6 +2652,8 @@ export class SectorRoom extends Room<SectorState> {
     if (rec.kind === SWARM_KIND_STRUCTURE) {
       const s = this.structureRegistry.get(rec.id);
       if (!s) return;
+      // Equinox Phase 9 (item 5) — recent-combat tally for the galaxy map.
+      this.recentCombatLog.record('structure', Date.now());
       auditEvent({
         event: 'structure_destroyed',
         sector,
@@ -2659,6 +2669,8 @@ export class SectorRoom extends Room<SectorState> {
         auditEvent({ event: 'base_destroyed', sector, owner: s.owner, attackerId: shooterId });
       }
     } else if (rec.kind === SWARM_KIND_DRONE) {
+      // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
+      this.recentCombatLog.record('ship', Date.now());
       auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
     }
   }
@@ -3244,6 +3256,13 @@ export class SectorRoom extends Room<SectorState> {
       else neutrals++;
     }
     return { players: present.length, enemies, neutrals, structures: this.structureRegistry.size };
+  }
+
+  /** Equinox Phase 9 (item 5) — recent-combat tally for `/galaxy/snapshot` (the
+   *  galaxy-map "fighting happened here" icon + drawer breakdown), or null when
+   *  quiet. Read by the LivingWorldDirector on its ~1.5 s control tick. */
+  recentCombat(): RecentCombat | null {
+    return this.recentCombatLog.summary(Date.now());
   }
 
   /** Equinox Phase 7 — count of structures in THIS room owned by `playerId`

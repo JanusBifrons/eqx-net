@@ -62,6 +62,8 @@ export interface ConnectFlowOpts {
   overlayMode?: GalaxyLayerMode;
   /** Selector-mode tap handler (the spawn picker). Used when `overlayMode === 'selector'`. */
   onSelectorPick?: (sectorKey: string) => void;
+  /** Selector-mode blur/deselect — an empty-space tap closes the SectorInfoDrawer. */
+  onSelectorDeselect?: () => void;
 }
 
 export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<void> {
@@ -70,7 +72,7 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     phaseEnterPerfNow, isDisposed, galaxyLayerRef, animFrameRef,
     roomNameOverride, joinOptionsOverride, onEngageTransit,
     onConnectionStatus, onPlayerId, onSectorName,
-    surfaceMode = 'connect', overlayMode = 'overlay', onSelectorPick,
+    surfaceMode = 'connect', overlayMode = 'overlay', onSelectorPick, onSelectorDeselect,
   } = opts;
   const idle = surfaceMode === 'idle';
 
@@ -114,6 +116,7 @@ export async function runGameSurfaceConnectFlow(opts: ConnectFlowOpts): Promise<
     onEngageTransit,
     mode: overlayMode,
     onSelectorPick,
+    onSelectorDeselect,
     // Equinox Phase 8 (Bug 2): force-visible only on the landing screen (idle).
     // In-game the selector-mode warp map must install HIDDEN + follow the MAP
     // toggle, else it auto-opens over the game and "reappears" after a spawn.

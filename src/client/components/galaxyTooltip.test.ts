@@ -69,8 +69,8 @@ describe('shipsInSector (Equinox Phase 7 / Item 4 popover sub-list)', () => {
     expect(shipsInSector(roster, 'stale', B)).toEqual([]);
   });
 
-  it('carries kind + active flag, never a raw id', () => {
-    const out = shipsInSector([ship({ shipId: 's1', kind: 'heavy', isActive: true })], A, A);
-    expect(out[0]).toEqual({ shipId: 's1', kind: 'heavy', isActive: true });
+  it('carries kind + active flag + health/pose, never a raw id', () => {
+    const out = shipsInSector([ship({ shipId: 's1', kind: 'heavy', isActive: true, health: 42, x: 12, y: -8 })], A, A);
+    expect(out[0]).toEqual({ shipId: 's1', kind: 'heavy', isActive: true, health: 42, x: 12, y: -8 });
   });
 });

@@ -57,6 +57,7 @@ export function buildGalaxySnapshot(p: GalaxyStatsProvider | null): GalaxySnapsh
       neutrals: 0,
       structures: 0,
       owner: { factionId: s.region, contested: false },
+      recentCombat: null,
     })),
   };
 }

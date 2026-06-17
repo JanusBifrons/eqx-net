@@ -46,17 +46,18 @@ describe('GalaxyPickerChrome', () => {
         onSpawnNewShip={onSpawnNewShip}
       />,
     );
-    // Popover + picker are both closed until a sector is tapped.
-    expect(screen.queryByTestId('galaxy-sector-popover')).not.toBeInTheDocument();
+    // Drawer + picker are both closed until a sector is tapped (the drawer's
+    // Join CTA only renders when a sector is selected).
+    expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
     expect(screen.queryByTestId('ship-picker-modal')).not.toBeInTheDocument();
 
-    // Equinox Phase 7 (Item 4) — a tap opens the INTERACTIVE popover, NOT the
-    // ship picker directly.
+    // Equinox Phase 9 (item 2) — a tap SELECTS the sector → the docked drawer,
+    // NOT the ship picker directly.
     act(() => { apiRef.current?.openForSector('sol-prime'); });
-    expect(screen.getByTestId('galaxy-sector-popover')).toBeInTheDocument();
+    expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
 
-    // "Join the fight" opens the kind-picker for that sector.
-    fireEvent.click(screen.getByTestId('galaxy-popover-join'));
+    // "Join sector" opens the kind-picker for that sector.
+    fireEvent.click(screen.getByTestId('sector-drawer-join'));
     expect(screen.getByTestId('ship-picker-modal')).toBeInTheDocument();
     // Title carries the tapped sector's name.
     expect(screen.getByText(/Spawn in/)).toBeInTheDocument();
@@ -64,6 +65,26 @@ describe('GalaxyPickerChrome', () => {
     fireEvent.click(screen.getByTestId('ship-picker-spawn'));
     expect(onSpawnNewShip).toHaveBeenCalledTimes(1);
     expect(onSpawnNewShip.mock.calls[0][1]).toBe('sol-prime');
+  });
+
+  it('apiRef.openForSector TOGGLES — re-selecting the same sector deselects (closes the drawer)', () => {
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
+    // Re-tapping the SAME sector deselects → drawer content collapses to the
+    // placeholder (Join CTA gone).
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
+  });
+
+  it('apiRef.deselect closes the drawer (blur / empty-space tap)', () => {
+    const apiRef = { current: null as GalaxyPickerApi | null };
+    render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
+    act(() => { apiRef.current?.openForSector('sol-prime'); });
+    expect(screen.getByTestId('sector-drawer-join')).toBeInTheDocument();
+    act(() => { apiRef.current?.deselect(); });
+    expect(screen.queryByTestId('sector-drawer-join')).not.toBeInTheDocument();
   });
 
   it('engineering room selection routes to onSelectRoom', () => {
@@ -74,8 +95,8 @@ describe('GalaxyPickerChrome', () => {
     expect(onSelectRoom).toHaveBeenCalledWith('test-sector');
   });
 
-  it('sector popover shows LABELLED counts incl. drones (Equinox Phase 8 / Bug 5)', () => {
-    // Inject a live snapshot slice so the popover has non-zero counts to label.
+  it('sector drawer shows LABELLED counts incl. drones (Equinox Phase 8 / Bug 5)', () => {
+    // Inject a live snapshot slice so the drawer has non-zero counts to label.
     act(() => {
       useUIStore.getState().setGalaxyStats([
         { key: 'sol-prime', players: 1, enemies: 2, neutrals: 8, structures: 3, owner: null },
@@ -84,14 +105,15 @@ describe('GalaxyPickerChrome', () => {
     const apiRef = { current: null as GalaxyPickerApi | null };
     render(<GalaxyPickerChrome apiRef={apiRef} activeLimboSectorKey={null} />);
     act(() => { apiRef.current?.openForSector('sol-prime'); });
-    expect(screen.getByTestId('galaxy-sector-popover')).toBeInTheDocument();
-    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix), so the
-    // roaming drones (neutrals) are legible at a glance.
-    const breakdown = screen.getByTestId('galaxy-popover-breakdown');
-    expect(breakdown).toHaveTextContent('Players: 1');
-    expect(breakdown).toHaveTextContent('Hostiles: 2');
-    expect(breakdown).toHaveTextContent('Neutral drones: 8');
-    expect(breakdown).toHaveTextContent('Structures: 3');
+    expect(screen.getByTestId('sector-drawer-breakdown')).toBeInTheDocument();
+    // The breakdown is LABELLED rows (not bare icons — the Bug-5 fix) in an
+    // aligned icon·label·value grid with conditional plurals (Phase 9 redesign),
+    // so the roaming drones (neutrals) are legible at a glance.
+    const breakdown = screen.getByTestId('sector-drawer-breakdown');
+    expect(breakdown).toHaveTextContent('player');         // 1 → singular
+    expect(breakdown).toHaveTextContent('hostiles');       // 2 → plural
+    expect(breakdown).toHaveTextContent('neutral drones'); // 8 → plural
+    expect(breakdown).toHaveTextContent('structures');     // 3 → plural
   });
 });
 

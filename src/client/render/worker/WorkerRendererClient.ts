@@ -37,8 +37,9 @@ import { logEvent, isDiagEnabled, isAutoCaptureEnabled } from '../../debug/Clien
 import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 
-/** Callback invoked when the worker emits OVERLAY_TAPPED. */
-export type OverlayTapHandler = (sectorKey: string) => void;
+/** Callback invoked when the worker emits OVERLAY_TAPPED. Equinox Phase 9:
+ *  `sectorKey: null` = an empty-space tap → blur/deselect (close the drawer). */
+export type OverlayTapHandler = (sectorKey: string | null) => void;
 /** Living Galaxy Phase 6 — invoked when the worker emits GALAXY_HOVER (deduped
  *  on sector key). Drives the canvas cursor + the React sector tooltip. */
 export type GalaxyHoverHandler = (ev: {

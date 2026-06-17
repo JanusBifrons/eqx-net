@@ -50,6 +50,14 @@ export interface InstallGalaxyOverlayOpts {
   /** Selector-mode tap handler (spawn picker). Required when `mode === 'selector'`. */
   onSelectorPick?: (sectorKey: string) => void;
   /**
+   * Selector-mode BLUR/deselect — a confirmed tap that hit no hex (empty space).
+   * The host closes the SectorInfoDrawer (Equinox Phase 9: "making a selection
+   * which isn't a sector should deselect"). Routed through the SAME tap channel
+   * as {@link onSelectorPick} on both render paths (DOM `onDeselect`; worker
+   * `OVERLAY_TAPPED` with `sectorKey: null`).
+   */
+  onSelectorDeselect?: () => void;
+  /**
    * Idle (landing-screen) context — the selector picker IS the whole screen, so
    * it's force-visible. When false (in-game), even a `selector`-mode map follows
    * the `isGalaxyMapOpen` toggle so it installs HIDDEN and never auto-opens over
@@ -66,16 +74,22 @@ export interface InstallGalaxyOverlayOpts {
  * inside the worker, addressed via the renderer's setLayer* methods).
  */
 export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapLayer | null {
-  const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick, idle = false } = opts;
+  const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick, onSelectorDeselect, idle = false } = opts;
   const s0 = useUIStore.getState();
   const selector = mode === 'selector';
   // Force-visible ONLY on the landing screen (idle), where the picker IS the
   // whole screen. In-game, even a selector-mode map follows the MAP-button
   // toggle so it installs hidden and never auto-opens over the game (Bug 2).
   const initialVisible = idle ? true : s0.isGalaxyMapOpen;
+  // `key === null` = an empty-space tap (blur). Selector → deselect; overlay
+  // HUD → no-op (Equinox Phase 9).
   const onTap = selector
-    ? (key: string): void => { onSelectorPick?.(key); }
-    : (key: string): void => {
+    ? (key: string | null): void => {
+        if (key === null) onSelectorDeselect?.();
+        else onSelectorPick?.(key);
+      }
+    : (key: string | null): void => {
+        if (key === null) return;
         onEngageTransit(key);
         // Auto-close the additive overlay on warp-tap; the user explicitly
         // asked for tap-to-warp to dismiss the map (otherwise it stays
@@ -102,6 +116,13 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   if (typeof window !== 'undefined') {
     (window as unknown as { __eqxGalaxyHoveredSector?: () => string | null })
       .__eqxGalaxyHoveredSector = () => useUIStore.getState().galaxyHover?.sectorKey ?? null;
+    // DEV/E2E hook (Equinox Phase 9) — inject a `/galaxy/snapshot` slice so a spec
+    // can drive the recent-combat hex glyph + the drawer's counts/recent-activity
+    // deterministically (a real recentCombat needs a kill in that sector). The
+    // ~4 s poll overwrites it, so callers screenshot/assert promptly. Cosmetic,
+    // display-only state — mirrors the existing `__eqxGalaxyPick` hook.
+    (window as unknown as { __eqxSetGalaxyStats?: (s: SectorLiveState[]) => void })
+      .__eqxSetGalaxyStats = (s: SectorLiveState[]) => useUIStore.getState().setGalaxyStats(s);
   }
 
   if (useWorker) {
@@ -116,7 +137,11 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
     (renderer as WorkerRendererClient).setLayerVisible(initialVisible);
     return null;
   }
-  const galaxyLayer = new GalaxyMapLayer({ onSelect: onTap, onHover });
+  const galaxyLayer = new GalaxyMapLayer({
+    onSelect: (key) => onTap(key),
+    onDeselect: () => onTap(null),
+    onHover,
+  });
   // DEV/E2E hook: expose the REAL drawn pan/zoom transform (clusterRoot), so
   // a spec can assert pan/zoom actually moved the rendered map rather than
   // recomputing from inputs (the `data-beam-from` tautology lesson). Main-
