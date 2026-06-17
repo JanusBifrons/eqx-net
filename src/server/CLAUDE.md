@@ -105,6 +105,45 @@ Update this section when a threshold is set.
 
 ---
 
+## Gameplay audit log (`src/server/audit/`)
+
+A persistent, queryable NDJSON record of **discrete semantic gameplay events** —
+the durable trail that answers "what happened to my base?" (incl. events that
+fire while no player is connected: a base attacked + razed by an offline wave).
+Distinct from `serverLogEvent` (a 500-entry RAM ring that dies on restart) and
+from diag captures (client-driven, sporadic). Full story:
+[docs/architecture/gameplay-audit-log.md](../../docs/architecture/gameplay-audit-log.md).
+
+- **One API:** `auditEvent(evt)` (module singleton, like `serverLogEvent`). `evt`
+  is a variant of the `AuditEvent` discriminated union (`GameplayAuditLog.ts`).
+  It stamps `ts`/`iso`, pushes to an in-memory ring (for `/dev/audit`), and writes
+  one JSON line via a `pino-roll` rolling-NDJSON sink under `audit-logs/`
+  (gitignored; daily, 20 MB, 30-file retention; `EQX_AUDIT_DIR` override).
+- **The write path is NOT dev-gated** — it runs in normal play (that's the point).
+  Only the `GET /dev/audit` *read* endpoint is gated, like `/dev/events`.
+- **Discrete events ONLY** (the Event Bus rule applies): never stream positions/
+  velocities/per-tick/per-hit data. "Under attack" is a THROTTLED first-hit signal
+  (`SectorRoom.applyDamage`, one per structure per 15 s) — steady-state
+  allocation-free (invariant #14). Every `auditEvent` call site is a discrete
+  boundary (destruction, dispatch, shield 0-cross, join), never the hot loop;
+  the file write itself is off-thread (pino's `thread-stream` worker). **No netgate.**
+- **Under vitest** the durable sink is a no-op (the ring still records) so no test
+  spawns a worker or writes files; tests opt into capture via `setAuditSink`.
+- **Hook inventory** (add new events here, never in a per-tick loop): destruction
+  (`evictSwarmEntity`, gated on `emitDestroyed` so load-shed/quiet-despawn/abandon
+  are excluded), waves (`WaveDirector`/`IncomingRegistry`/`LivingWorldDirector`
+  retreat), base-ready (`factionBaseReadiness`), structure place/remove/build
+  (handlers + `StructureGridSubsystem.onConstructed`), ships (`SHIP_DESTROYED`
+  handler, abandon paths), lifecycle (`onJoin`, `LeaveHandler`,
+  `TransitOrchestrator.commitTransit`), `shield_broken` (player path only).
+- **Querying:** `scripts/query-audit.mjs` (`pnpm audit:query`) for offline full
+  history; `GET /dev/audit?player=&sector=&event=&since=&format=text` live. The
+  two filter implementations are kept aligned (the script is plain JS, can't
+  import the TS `auditQuery.ts`). Lock: `structureDestroyedAudit.test.ts`
+  (failing-first, invariant #13) + `auditQuery`/`GameplayAuditLog` unit tests.
+
+---
+
 ## Combat Architecture (Phase 4)
 
 - **SnapshotRing** (`src/server/lagcomp/SnapshotRing.ts`): pre-allocated Float32Array ring buffer (1000 × 12 × 16 bytes = 192 KB). `record(tick, entities)` called every `update()`; `getAt(entityId, tick)` returns rewound position for lag-comp. No per-tick allocation.

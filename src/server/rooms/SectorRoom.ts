@@ -45,7 +45,8 @@ import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type S
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { BotCarry } from '../livingworld/botTypes.js';
 
 // Drone-kind catalogue helpers moved to ./droneKindHelpers.ts.
@@ -408,6 +409,22 @@ function structurePriority(kind: StructureKindId): number {
   }
 }
 
+/** Audit throttle window for the "your base is under attack" signal. */
+const STRUCTURE_ATTACK_AUDIT_WINDOW_MS = 15_000;
+
+/**
+ * Coarse audit attribution from a shooter id's prefix — drone (`swarm-` /
+ * `lwbot-`), structure turret (`pstruct-`), or a player otherwise. The raw
+ * `attackerId` is always logged too, so this is a convenience label for
+ * "what destroyed my base?" (a drone? a player?), not a precise lookup.
+ */
+function classifyAttacker(id?: string): string | undefined {
+  if (!id) return undefined;
+  if (id.startsWith('pstruct-')) return 'structure';
+  if (id.startsWith('swarm-') || id.startsWith('lwbot-') || id.startsWith('scenario-drone')) return 'drone';
+  return 'player';
+}
+
 export class SectorRoom extends Room<SectorState> {
   /** Owns the physics worker (lifecycle + message routing + typed
    *  postMessage facade). Extracted to PhysicsWorkerProxy.ts (commit 20
@@ -496,6 +513,13 @@ export class SectorRoom extends Room<SectorState> {
   private scrapSpawner!: ScrapSpawner;
   /** Placed-structure bookkeeping (structures plan, Phase 2). */
   private readonly structureRegistry = new StructureRegistry();
+  /** Audit throttle — structureId → wall-clock ms of the last `structure_attacked`
+   *  audit. Bounds the "your base is under attack" signal to one record per
+   *  STRUCTURE_ATTACK_AUDIT_WINDOW_MS so a sustained beam doesn't firehose the
+   *  log. Steady-state is allocation-free (Map.get + compare); only a fresh
+   *  first-hit allocates (invariant #14). Entry cleared on the structure's
+   *  removal in `evictSwarmEntity`. */
+  private readonly structureAttackAuditAtMs = new Map<string, number>();
   private structurePlacement!: StructurePlacementSubsystem;
   /** Monotonic id source for player-placed structures (session-scoped). */
   private placedStructureCounter = 0;
@@ -1620,6 +1644,9 @@ export class SectorRoom extends Room<SectorState> {
         this.spawnServerMissile(shooterId, x, y, dx, dy, def),
       // Reconnect sweep honours current asteroid LOS (playtest 2026-06-10 Issue 2).
       getObstacles: () => this.gatherStructureObstacles(),
+      // Gameplay audit — a blueprint finished construction (1 Hz pulse, off-tick).
+      onConstructed: (owner, kind) =>
+        auditEvent({ event: 'structure_built', sector: this.sectorKey ?? undefined, owner, kind }),
     });
     // ── Shield-wall lifecycle (shield-fence plan) ──────────────────────────
     // Forms the blocking span between paired pylons + drives its physics
@@ -1935,6 +1962,14 @@ export class SectorRoom extends Room<SectorState> {
         // Refresh the slice so the new blueprint + its auto-connection appear on
         // the next snapshot without waiting for the 1 Hz pulse.
         this.rebuildStructuresSlice();
+        auditEvent({
+          event: 'structure_placed',
+          sector: this.sectorKey ?? undefined,
+          owner,
+          kind: parsed.data.kind,
+          x: parsed.data.x,
+          y: parsed.data.y,
+        });
       }
     });
 
@@ -1946,8 +1981,16 @@ export class SectorRoom extends Room<SectorState> {
       }
       const owner = this.sessionToPlayer.get(client.sessionId);
       if (!owner) return;
+      // Capture the kind BEFORE removal (the record is gone afterwards).
+      const removedKind = this.structureRegistry.get(parsed.data.id)?.kind;
       if (this.structurePlacement.remove(owner, parsed.data.id)) {
         this.rebuildStructuresSlice();
+        auditEvent({
+          event: 'structure_removed',
+          sector: this.sectorKey ?? undefined,
+          owner,
+          kind: removedKind ?? 'unknown',
+        });
       }
     });
 
@@ -2038,6 +2081,24 @@ export class SectorRoom extends Room<SectorState> {
         ? (this.playerToUser.get(victimPlayerId) ?? null)
         : null;
       recordKill(killerUser, victimUser, 'hitscan', this.sectorKey ?? this.roomId);
+      // Gameplay audit — a player hull died (covers offline lingering-hull
+      // deaths too). A non-prefixed shooter id is another player ⇒ PvP kill.
+      const auditAttacker = evt.shooterId || undefined;
+      auditEvent({
+        event: 'ship_destroyed',
+        sector: this.sectorKey ?? undefined,
+        playerId: victimPlayerId ?? evt.targetId,
+        attackerId: auditAttacker,
+        attackerKind: classifyAttacker(auditAttacker),
+      });
+      if (auditAttacker && victimPlayerId && classifyAttacker(auditAttacker) === 'player') {
+        auditEvent({
+          event: 'player_killed',
+          sector: this.sectorKey ?? undefined,
+          victim: victimPlayerId,
+          killer: auditAttacker,
+        });
+      }
       // Phase 3 dual-write — drop the destroyed ship from the roster.
       if (destroyedShip !== undefined) {
         this.deleteRosterRow(destroyedShip.shipInstanceId);
@@ -2408,9 +2469,30 @@ export class SectorRoom extends Room<SectorState> {
     // wall-clock (Date.now), matching every other shieldWalls call site.
     if (damage > 0) {
       const s = this.structureRegistry.get(targetId);
-      if (s !== undefined && s.kind === 'shield_pylon' &&
-          this.shieldWalls.absorbForPylon(targetId, damage, Date.now())) {
-        return;
+      if (s !== undefined) {
+        // Audit "your base is under attack" — throttled to one record per
+        // structure per window (a sustained beam mustn't firehose the log).
+        // Steady-state: Map.get + compare, no allocation (invariant #14); only
+        // a fresh first-hit allocates. Fires for ANY structure hit, including a
+        // pylon whose wall absorbs it just below.
+        const now = Date.now();
+        const last = this.structureAttackAuditAtMs.get(targetId) ?? -Infinity;
+        if (now - last >= STRUCTURE_ATTACK_AUDIT_WINDOW_MS) {
+          this.structureAttackAuditAtMs.set(targetId, now);
+          auditEvent({
+            event: 'structure_attacked',
+            sector: this.sectorKey ?? undefined,
+            owner: s.owner,
+            kind: s.kind,
+            attackerId: shooterId,
+            attackerKind: classifyAttacker(shooterId),
+          });
+        }
+        // R2.18 — a Shield Pylon is undamageable while its wall is up: route the
+        // hit into an active wall and skip the pylon damage entirely.
+        if (s.kind === 'shield_pylon' && this.shieldWalls.absorbForPylon(targetId, damage, Date.now())) {
+          return;
+        }
       }
     }
     this.damageRouter.apply(targetId, shooterId, damage, hitX, hitY);
@@ -2494,12 +2576,22 @@ export class SectorRoom extends Room<SectorState> {
     rec: SwarmEntityRecord,
     opts: { broadcast: boolean; emitDestroyed: boolean; shooterId?: string },
   ): void {
+    // Gameplay audit log — record a REAL combat death (the `emitDestroyed`
+    // signal that fires the kill-feed + bus ENTITY_DESTROYED; load-shedder /
+    // quiet bot despawn / abandon use emitDestroyed:false and are excluded).
+    // Done HERE, before the structureRegistry.remove below, so the structure's
+    // owner/kind/pose are still resolvable. Discrete boundary, off the per-tick
+    // path (invariant #14). See src/server/audit/GameplayAuditLog.ts.
+    if (opts.emitDestroyed) {
+      this.auditCombatDestruction(rec, opts.shooterId);
+    }
     // Structures plan, Phase 3 — a destroyed structure must sever its grid
     // connections (StructureRegistry.remove disconnects) so the web doesn't
     // keep a dangling edge. Idempotent: harmless if `rec` isn't a structure or
     // was already removed (e.g. by placement.remove / deconstruction).
     if (this.structureRegistry.has(rec.id)) {
       this.structureRegistry.remove(rec.id);
+      this.structureAttackAuditAtMs.delete(rec.id);
       this.rebuildStructuresSlice();
     }
     // Scrap-on-death (Phase 2b-ii) — a SCRAP entity (kind 3) leaving the world
@@ -2510,6 +2602,38 @@ export class SectorRoom extends Room<SectorState> {
       this.scrapSpawner.notifyRemoved(rec.id);
     }
     this.swarmEvictor.evict(rec, opts);
+  }
+
+  /**
+   * Audit a confirmed combat death (structure / base / drone) with the
+   * owner / kind / sector / attacker context that answers "what happened to
+   * my base?". Called from `evictSwarmEntity` on the `emitDestroyed` branch
+   * BEFORE the structure record is removed. Asteroids (kind 0) + scrap
+   * (kind 3) are not audited. Off the per-tick path (a discrete death).
+   */
+  private auditCombatDestruction(rec: SwarmEntityRecord, shooterId?: string): void {
+    const sector = this.sectorKey ?? undefined;
+    const attackerKind = classifyAttacker(shooterId);
+    if (rec.kind === SWARM_KIND_STRUCTURE) {
+      const s = this.structureRegistry.get(rec.id);
+      if (!s) return;
+      auditEvent({
+        event: 'structure_destroyed',
+        sector,
+        owner: s.owner,
+        kind: s.kind,
+        attackerId: shooterId,
+        attackerKind,
+        x: s.x,
+        y: s.y,
+      });
+      // A Capital IS the base — surface the headline event alongside.
+      if (s.kind === 'capital') {
+        auditEvent({ event: 'base_destroyed', sector, owner: s.owner, attackerId: shooterId });
+      }
+    } else if (rec.kind === SWARM_KIND_DRONE) {
+      auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
+    }
   }
 
   // ── Structure grid pulse (structures plan, Phase 3) ──────────────────────
@@ -3221,6 +3345,16 @@ export class SectorRoom extends Room<SectorState> {
       if (ready) {
         if (this.factionLedger.markReadyNotified(factionId)) {
           this.broadcast('base_ready', { type: 'base_ready', factionId, sectorKey });
+          auditEvent({
+            event: 'base_ready',
+            sector: sectorKey,
+            owner: factionId,
+            composition: {
+              miner: agg.minerCount,
+              solar: agg.solarCount,
+              turret: agg.turretCount,
+            },
+          });
         }
       } else {
         this.factionLedger.clearReadyNotified(factionId);
@@ -4152,6 +4286,7 @@ export class SectorRoom extends Room<SectorState> {
     // JOIN_BROADCAST_GRACE_TICKS.
     this.forceBroadcastUntilTick = currentServerTick + JOIN_BROADCAST_GRACE_TICKS;
     serverLogEvent('player_join', { playerId, sessionId: client.sessionId, spawnX, spawnY });
+    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
     logger.info(
       { playerId, sessionId: client.sessionId, userId: effectiveUserId, resumedFromStore },
       'player joined',
@@ -4331,6 +4466,7 @@ export class SectorRoom extends Room<SectorState> {
     this.playerToUser.delete(playerId);
 
     serverLogEvent('ship_abandoned', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+    auditEvent({ event: 'ship_abandoned', sector: this.sectorKey ?? undefined, playerId, shipInstanceId });
     logger.info({ playerId, shipInstanceId, sectorKey: this.sectorKey }, 'ship abandoned → scrap');
   }
 
@@ -4371,6 +4507,7 @@ export class SectorRoom extends Room<SectorState> {
     serverLogEvent('ship_abandoned', {
       playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey, lingering: true,
     });
+    auditEvent({ event: 'ship_abandoned', sector: this.sectorKey ?? undefined, playerId: ship.playerId, shipInstanceId });
     logger.info({ playerId: ship.playerId, shipInstanceId, sectorKey: this.sectorKey }, 'lingering hull abandoned → scrap');
   }
 

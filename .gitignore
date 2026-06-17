@@ -10,6 +10,10 @@ eqx.db
 eqx.db-wal
 eqx.db-shm
 
+# gameplay audit log — local rolling NDJSON history (per-machine, churning;
+# NOT committed, unlike diag/). Queried via scripts/query-audit.mjs + /dev/audit.
+audit-logs/
+
 # test artefacts
 playwright-report/
 test-results/

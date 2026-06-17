@@ -21,6 +21,7 @@
  */
 import type { LivingWorldRoom } from './LivingWorldRoom.js';
 import type { WarpDisposition } from '../../shared-types/messages.js';
+import { auditEvent } from '../audit/GameplayAuditLog.js';
 
 export interface IncomingEntry {
   /** Stable id — the `squadId` (bots) or `playerId` (players). The dedup + clear key. */
@@ -91,6 +92,15 @@ export class IncomingRegistry {
       countdownMs: entry.etaMs,
       disposition: entry.disposition,
       ...(entry.kind !== undefined ? { kind: entry.kind } : {}),
+    });
+    // Audit: something is inbound to this sector (deduped to the same NEW/
+    // changed condition as the broadcast above; control-tick cadence).
+    auditEvent({
+      event: 'wave_incoming',
+      sector: entry.destSectorKey,
+      disposition: entry.disposition,
+      count: entry.count,
+      label: entry.label,
     });
   }
 

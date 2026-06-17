@@ -11,6 +11,8 @@ import { installGcMonitor } from './debug/GcMonitor.js';
 import { authRouter } from './routes/authRouter.js';
 import { diagRouter, devStatsHandler, devLimboHandler, devPlayerShipsHandler, devPlayerShipsAbandonHandler, devResetSectorHandler, devResetRosterHandler, devWebrtcCountersHandler } from './routes/diagRouter.js';
 import { galaxyRouter } from './routes/galaxyRouter.js';
+import { devAuditHandler } from './audit/auditRoute.js';
+import { flushAudit } from './audit/GameplayAuditLog.js';
 import { initWorker, persistence, initPlayerShipStore, getPersistenceHealth } from './db/PersistenceWorker.js';
 import { GALAXY_SECTORS } from '../core/galaxy/galaxy.js';
 import { resolveSectorConfig } from './galaxy/GalaxyRegistry.js';
@@ -154,6 +156,14 @@ if (process.env['NODE_ENV'] !== 'production') {
   // Read-only; mirrors /dev/limbo's inspection-only shape.
   app.get('/dev/population', (_req, res) => {
     res.json(livingWorldDirector ? livingWorldDirector.snapshot() : { ready: false });
+  });
+
+  // GET /dev/audit?player=&owner=&sector=&event=&since=&until=&limit=&source=&format=
+  // — query the gameplay audit log (durable NDJSON history + live ring tail).
+  // Answers "what happened to my base?" from the running server. The audit
+  // WRITE path is NOT gated (runs in normal play); only this read endpoint is.
+  app.get('/dev/audit', (req, res) => {
+    void devAuditHandler(req, res);
   });
 
   // GET /dev/player-ships?playerId=foo — Phase 2 multi-ship roster
@@ -936,6 +946,14 @@ const shutdown = async (sig: string, exitCode = 0): Promise<void> => {
     livingWorldDirector?.stop();
   } catch (err) {
     logger.warn({ err }, 'livingWorldDirector.persistState/stop threw');
+  }
+
+  // Drain the audit log's worker-thread file buffer before exit so the
+  // tail of the durable NDJSON is not lost on a graceful shutdown.
+  try {
+    await flushAudit();
+  } catch (err) {
+    logger.warn({ err }, 'audit log flush threw');
   }
 
   try {

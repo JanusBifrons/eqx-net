@@ -112,6 +112,10 @@ export interface StructureGridHooks {
    *  Used by the reconnect sweep so a retry honours current asteroid geometry.
    *  Optional: omitted ⇒ structures-only LOS (byte-identical). */
   getObstacles?: () => readonly GridObstacle[];
+  /** Gameplay audit — a blueprint finished construction this pulse. The room
+   *  supplies the closure (it owns the sectorKey). Off the 60 Hz loop (1 Hz
+   *  pulse). Optional ⇒ no-op in the unit harness. */
+  onConstructed?: (owner: string, kind: string) => void;
 }
 
 export interface GridPulseResult {
@@ -604,6 +608,7 @@ export class StructureGridSubsystem {
         bp.isConstructed = true;
         this.hooks.setHealth(bp.id, getStructureKind(bp.kind).maxHealth);
         this.hooks.registry.topologyDirty = true; // it now relays
+        this.hooks.onConstructed?.(bp.owner, bp.kind);
       }
     }
   }
