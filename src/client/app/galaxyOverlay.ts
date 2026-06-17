@@ -102,6 +102,13 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   if (typeof window !== 'undefined') {
     (window as unknown as { __eqxGalaxyHoveredSector?: () => string | null })
       .__eqxGalaxyHoveredSector = () => useUIStore.getState().galaxyHover?.sectorKey ?? null;
+    // DEV/E2E hook (Equinox Phase 9) — inject a `/galaxy/snapshot` slice so a spec
+    // can drive the recent-combat hex glyph + the drawer's counts/recent-activity
+    // deterministically (a real recentCombat needs a kill in that sector). The
+    // ~4 s poll overwrites it, so callers screenshot/assert promptly. Cosmetic,
+    // display-only state — mirrors the existing `__eqxGalaxyPick` hook.
+    (window as unknown as { __eqxSetGalaxyStats?: (s: SectorLiveState[]) => void })
+      .__eqxSetGalaxyStats = (s: SectorLiveState[]) => useUIStore.getState().setGalaxyStats(s);
   }
 
   if (useWorker) {
