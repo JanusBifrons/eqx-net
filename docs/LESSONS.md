@@ -17,8 +17,27 @@ What we hit, how we diagnosed it, how we resolved it, and what downstream phases
 ## 2026-06-17 — PWA + Web Push — three non-obvious traps wiring vite-plugin-pwa into this repo
 Commit: feat/pwa-push-notifications
 
-Adding an installable PWA + Web Push ("your base is under attack"). Three things
+Adding an installable PWA + Web Push ("your base is under attack"). Four things
 that would cost a future contributor time:
+
+**0. (the one that broke CI) A `src/client/<dir>` that matches a Vite proxy prefix → 404 → blank app — AGAIN.**
+This is the *exact* recurrence of the 2026-06-14 `src/client/galaxy/` lesson below.
+I added `src/client/push/pushClient.ts` AND added `/push` to the `server.proxy` in
+vite.config.ts. Vite's web root is `src/client`, so the module is served at
+`/push/pushClient.ts` — which the new `/push` proxy hijacks and forwards to the
+game server → 404 → the import chain breaks → React never mounts → no `ship-count`
+→ the **netgate (and every E2E) times out** on the HEAD arm. Production `vite build`
+did NOT catch it (different module-serving path, no proxy); only `vite dev` (what
+the netgate + E2E run) reproduces it. Diagnostic: HEAD WS connects but no pred-stats
++ a lone 404 → read the 404 URL (`/push/pushClient.ts`). Fix: renamed the **client**
+dir `push/` → `notifications/` (the server `src/server/push/` is fine; the `/push`
+proxy still carries the API fetches). Note `src/client/auth/` coexists with the
+`/auth` proxy ONLY because that proxy has a source-file `bypass` — the no-bypass
+proxies (`/push`, `/galaxy`, `/diag`, `/dev`, …) hijack source modules. New durable
+lock: `tests/unit/clientDirProxyCollision.test.ts` fails if any top-level client dir
+collides with a no-bypass proxy prefix (would have caught both galaxy and push).
+**I had READ the galaxy lesson earlier this same session and still walked into it —
+hence the structural guard, not just another note.**
 
 **1. `registerType: 'autoUpdate'` is the wrong default for a code-split game.**
 `autoUpdate` injects `skipWaiting` + `clientsClaim` + an auto-reload helper. For a

@@ -11,7 +11,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
   type SubscribeReason,
-} from '../push/pushClient.js';
+} from '../notifications/pushClient.js';
 
 function reasonText(reason: SubscribeReason): string {
   switch (reason) {

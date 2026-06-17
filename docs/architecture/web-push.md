@@ -42,7 +42,7 @@ All driven by **`vite-plugin-pwa`** (config in `vite.config.ts`):
     `public/push-sw.js`, imported into the generated SW via
     `workbox.importScripts(['push-sw.js'])` — leaner than `injectManifest`.
 
-The client opt-in helper is `src/client/push/pushClient.ts` (capability detection,
+The client opt-in helper is `src/client/notifications/pushClient.ts` (capability detection,
 `subscribe` / `unsubscribe`, the pure `shouldOfferPushToggle` gate). The UI is
 `src/client/components/PushNotificationToggle.tsx`, shown in both the desktop
 `SettingsModal` and the mobile drawer `SettingsTab`. On iOS-not-installed it shows
@@ -96,7 +96,9 @@ asynchronously off the tick. A phone alert is therefore rare (≤ once per base 
 
 ## Testing it end-to-end
 
-The SW is production-only, so build first: `pnpm build:client` then
+The full operational procedure (generate VAPID keys → serve over HTTPS → install →
+enable → verify) lives in [docs/HANDOFF-enabling-web-push.md](../HANDOFF-enabling-web-push.md).
+In short: the SW is production-only, so build first: `pnpm build:client` then
 `pnpm exec vite preview`. Install the PWA, enable the alerts toggle (grant
 permission), and confirm a row lands in `push_subscriptions`. To fire a push
 without staging a real siege, use the dev script:
