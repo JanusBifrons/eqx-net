@@ -42,6 +42,21 @@ async function recentEvents(): Promise<ServerEvent[]> {
   return body.events ?? [];
 }
 
+interface GalaxySector {
+  key: string;
+  players: number;
+  enemies: number;
+  neutrals: number;
+}
+
+/** Enemy count for the wave sector from the PUBLIC /galaxy/snapshot endpoint
+ *  (the HTTP feed behind the in-game galaxy map). */
+async function waveSectorEnemies(): Promise<number> {
+  const res = await fetch(`${SERVER_URL}/galaxy/snapshot`);
+  const body = (await res.json()) as { sectors?: GalaxySector[] };
+  return body.sectors?.find((s) => s.key === 'galaxy-wave-test')?.enemies ?? 0;
+}
+
 test.describe.configure({ retries: 0 });
 
 test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in and attacks', async ({
@@ -105,6 +120,18 @@ test('wave attack: a ready base draws an 8 × Legionnaires squad that warps in a
       { timeout: 45_000, intervals: [1000], message: 'a drone should hit a base structure' },
     )
     .toBe(true);
+
+  // 4. A5 — the PUBLIC galaxy-map feed reflects the wave: GET /galaxy/snapshot
+  //    shows enemies>0 in the wave sector. This is the endpoint behind the
+  //    in-game galaxy map (the 2026-06-17 "no hostiles on the map" bug surface),
+  //    zero-tested E2E before. Outcome-gated poll.
+  await expect
+    .poll(waveSectorEnemies, {
+      timeout: 45_000,
+      intervals: [1000],
+      message: 'the galaxy snapshot should show hostile ships in the wave sector',
+    })
+    .toBeGreaterThan(0);
 
   await ctx.close();
 });

@@ -80,6 +80,15 @@ The cost of the current bag-of-specs setup is concrete: every E2E run shoulders 
 
 **`@diag`** if the spec's own docstring or test title says "capture", "probe", "diagnostic", or "data only, not a regression lock" — i.e. it's instrumentation, not assertion. These are kept (often invaluable for debugging) but moved to `tests/diag/` and excluded from CI so they don't bloat the suite wall-clock.
 
+### Test at the level the bug lives — the mock-seam anti-pattern (Invariant #13)
+
+The tier choice above is "how deterministic / how fast"; this is the orthogonal choice of **which LEVEL** (unit vs integration vs E2E). The recurring failure mode is **proving integration behaviour with a mock**:
+
+- **2026-05-14 damage-number:** a unit test on `DamageNumberManager` was green; the bug lived at the `WorkerRendererClient ↔ worker` structured-clone seam. Fixed by a Playwright probe page that crosses the boundary.
+- **2026-06-17 galaxy-map "no hostiles":** `LivingWorldDirector.galaxySnapshot.test.ts` (MOCK rooms) was green while a real offline wave showed zero enemies on the map. The bug lived at the director↔room seam + the `/galaxy/snapshot` aggregation. `WaveDirector.test.ts` fakes `LivingWorldRoom.factionBaseReadiness()`, so the real dispatch→`markSquadHostileToFaction`→snapshot chain was never exercised. Fixed + locked by `tests/integration/sectorRoom/waveGalaxySnapshot.test.ts`, which seeds a **real** ready base (via the harness `bases` opt), drives a **real** wave with an **offline** owner, and asserts `director.galaxySnapshot()` + the real `factionBaseReadiness().underWave` flip.
+
+**Rule:** a behaviour that lives at a seam (worker boundary, director↔room hook, HTTP endpoint, wire) MUST be tested ACROSS that seam — mocking one side proves the wrong thing. Unit-test the pure decision logic in isolation (mocks fine there); **integration-test across real component seams (no mocks); E2E-test user-visible endpoints/render.** When unsure where a smoke-reported bug lives, write the test at the integration seam first — if it passes on the buggy build, you picked the wrong level.
+
 ## Per-spec triage table
 
 | Spec | Tier | Surface locked | Lock vs capture | Runtime | Verdict |
