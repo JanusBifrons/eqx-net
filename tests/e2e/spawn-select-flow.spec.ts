@@ -68,8 +68,8 @@ test('post-auth spawn-select → pick galaxy sector → game surface mounts', as
 
   // Equinox Phase 7 (Item 4) — a sector pick now opens the interactive popover;
   // "Join the fight" opens the ShipPickerModal (no longer one-click).
-  await expect(page.getByTestId('galaxy-sector-popover')).toBeVisible({ timeout: 8_000 });
-  await page.getByTestId('galaxy-popover-join').click();
+  await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('sector-drawer-join').click();
   // The picker ("Spawn in {sector}") accepts the default ship (last choice, or
   // Fighter on fresh state) via Spawn — that fires the real
   // `onSpawnNewShip` -> `handleSelectRoom` round-trip.

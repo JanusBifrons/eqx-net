@@ -44,12 +44,12 @@ test('in-game: Map → full-page warp map → tap adjacent → "Warp here" → S
   await page.evaluate(() => {
     (window as unknown as { __eqxGalaxyPick?: (k: string) => void }).__eqxGalaxyPick?.('cygnus-arm');
   });
-  await expect(page.getByTestId('galaxy-sector-popover')).toBeVisible({ timeout: 8_000 });
-  await expect(page.getByTestId('galaxy-popover-warp')).toBeVisible();
-  await expect(page.getByTestId('galaxy-popover-join')).toHaveCount(0);
+  await expect(page.getByTestId('sector-drawer-close')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByTestId('sector-drawer-warp')).toBeVisible();
+  await expect(page.getByTestId('sector-drawer-join')).toHaveCount(0);
 
   // "Warp here" → engages the transit (SPOOLING overlay) and closes the map.
-  await page.getByTestId('galaxy-popover-warp').click();
+  await page.getByTestId('sector-drawer-warp').click();
   const overlay = page.locator('[data-testid="hyperspace-overlay"]');
   await expect(overlay).toBeVisible({ timeout: 8_000 });
   await expect(overlay).toHaveAttribute('data-transit-state', 'SPOOLING');

@@ -19,13 +19,10 @@ import type { ShipKindId } from '../../shared-types/shipKinds';
 import { logEvent } from '../debug/ClientLogger';
 import { useMountLog } from '../debug/useMountLog';
 import { buildSectorTooltip, shipsInSector } from './galaxyTooltip';
+import { SectorInfoDrawer } from './SectorInfoDrawer';
 import { isSectorWarpable } from '../render/galaxy/galaxyLayerDecisions';
+import { Z } from '../layout/zIndex';
 import type { MutableRefObject } from 'react';
-
-/** Title-case a ship-kind name for display (e.g. "fighter" → "Fighter"). */
-function kindLabel(k: string): string {
-  return k.charAt(0).toUpperCase() + k.slice(1);
-}
 
 interface EngineeringRoom {
   roomName: string;
@@ -134,11 +131,10 @@ export function GalaxyPickerChrome({
 
   const [engineeringOpen, setEngineeringOpen] = useState(false);
   const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
-  // Equinox Phase 7 (Item 4) — the interactive sector popover opened on a hex
-  // tap (replaces the one-click → ship-picker flow + the floating roster panel).
-  // `left/top` anchor it at the tapped hex (desktop, from galaxyHover); null ⇒
-  // centred (mobile tap, no hover).
-  const [popover, setPopover] = useState<{ sectorKey: string; left: number | null; top: number | null } | null>(null);
+  // Equinox Phase 9 (item 2) — a hex tap SELECTS a sector, opening the docked
+  // SectorInfoDrawer (replaces the old fixed popover; the desktop hover tooltip is
+  // separate + kept). The drawer reads this key; ✕ / swipe deselects.
+  const [selectedSectorKey, setSelectedSectorKey] = useState<string | null>(null);
 
   // Keep the roster polled while the picker is mounted (the popover sub-list +
   // RosterCountBadge consume store.shipRoster). Refcounted — safe alongside the
@@ -183,17 +179,10 @@ export function GalaxyPickerChrome({
     apiRef.current = {
       openForSector: (key: string) => {
         logEvent('picker_open_scheduled', { key, ts: performance.now() });
-        // Equinox Phase 7 (Item 4) — a hex tap opens the INTERACTIVE popover
-        // (sector info + your ships + Join), NOT the ship-picker directly. Anchor
-        // at the hovered hex (desktop, if the hover is for THIS sector); centre
-        // on mobile tap (no hover).
-        const hover = useUIStore.getState().galaxyHover;
-        const anchored = hover !== null && hover.sectorKey === key;
-        setPopover({
-          sectorKey: key,
-          left: anchored ? hover.left : null,
-          top: anchored ? hover.top : null,
-        });
+        // Equinox Phase 9 (item 2) — a hex tap SELECTS the sector → the docked
+        // SectorInfoDrawer (sector info + your ships + recent activity + Join/Warp),
+        // NOT the ship-picker directly.
+        setSelectedSectorKey(key);
       },
     };
     return () => { if (apiRef) apiRef.current = null; };
@@ -201,14 +190,17 @@ export function GalaxyPickerChrome({
 
   // Living Galaxy Phase 6 — derive the hovered-sector tooltip content (pure).
   const sectorTip = galaxyHover ? buildSectorTooltip(galaxyHover.sectorKey, galaxyStats) : null;
-  // Equinox Phase 7 (Item 4) — the OPEN popover's content (sector breakdown +
-  // the player's ships in that sector), both pure.
-  const popoverTip = popover ? buildSectorTooltip(popover.sectorKey, galaxyStats) : null;
-  const popoverShips = popover ? shipsInSector(shipRoster, popover.sectorKey, currentSectorKey) : [];
-  // Equinox Phase 7 (Item 1) — is the popover's sector a warp target (warp
-  // context + docked + adjacent neighbour)?
-  const popoverWarpable = popover
-    ? isSectorWarpable({ docked: transitState === 'DOCKED', currentSectorKey, sectorKey: popover.sectorKey })
+  // Equinox Phase 9 (item 2) — the SELECTED sector's drawer content (sector
+  // breakdown + the player's ships there + recent combat), all pure.
+  const drawerTip = selectedSectorKey ? buildSectorTooltip(selectedSectorKey, galaxyStats) : null;
+  const drawerShips = selectedSectorKey ? shipsInSector(shipRoster, selectedSectorKey, currentSectorKey) : [];
+  const drawerRecentCombat = selectedSectorKey
+    ? (galaxyStats.find((s) => s.key === selectedSectorKey)?.recentCombat ?? null)
+    : null;
+  // Equinox Phase 7 (Item 1) — is the selected sector a warp target (warp context
+  // + docked + adjacent neighbour)?
+  const drawerWarpable = selectedSectorKey
+    ? isSectorWarpable({ docked: transitState === 'DOCKED', currentSectorKey, sectorKey: selectedSectorKey })
     : false;
 
   return (
@@ -222,6 +214,14 @@ export function GalaxyPickerChrome({
         // pointerEvents:none lets empty-region taps reach the galaxy
         // layer's hit-test; interactive children re-enable below.
         pointerEvents: 'none',
+        // Equinox Phase 9 (item 2) — in the in-game WARP map the gameplay HUD
+        // (bottom-right AUTO/FIRE/BOOST) is a body-level z=Z.mobileControls(15)
+        // host, so the SectorInfoDrawer's z (1200) is trapped inside this
+        // z-auto chrome root and can't beat it. Lift the whole (still
+        // pointer-none) chrome above the HUD here so the docked drawer's action
+        // bar is clickable; below the app bar + modals. Landing has no HUD, so
+        // no lift is needed there.
+        ...(isWarp ? { zIndex: Z.drawer } : {}),
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -302,7 +302,7 @@ export function GalaxyPickerChrome({
         </Typography>
       </Box>
 
-      {!isWarp && (
+      {!isWarp && !selectedSectorKey && (
       <Stack
         direction="row"
         spacing={2}
@@ -372,11 +372,12 @@ export function GalaxyPickerChrome({
         </Box>
       )}
 
-      {/* Living Galaxy Phase 6 — sector tooltip on desktop hover. Anchored at
-       *  the (deduped) hover screen pos; non-interactive. Sector name + faction
-       *  + status + live counts (icons) + features, from the static graph +
-       *  the /galaxy/snapshot slice. */}
-      {galaxyHover && sectorTip && !popover && (
+      {/* Living Galaxy Phase 6 — sector tooltip on desktop hover. Anchored
+       *  ABOVE-CENTRE of the hovered hex (Equinox Phase 9); non-interactive.
+       *  Sector name + faction + status + live counts (icons) + features, from the
+       *  static graph + the /galaxy/snapshot slice. Kept on desktop alongside the
+       *  click-selected drawer (the doc: "desktop keeps the tooltips"). */}
+      {galaxyHover && sectorTip && (
         <Box
           data-testid="galaxy-sector-tooltip"
           data-tooltip-sector={galaxyHover.sectorKey}
@@ -432,149 +433,36 @@ export function GalaxyPickerChrome({
         </Box>
       )}
 
-      {/* Equinox Phase 7 (Item 4) — the INTERACTIVE sector popover (tap a hex).
-       *  Sector breakdown + the player's ships here (clickable to resume) + a
-       *  "Join the fight" CTA → the ship-kind picker. Anchored at the tapped hex
-       *  on desktop; centred on mobile (tap has no hover). Replaces the old
-       *  one-click→picker flow + the floating roster panel. */}
-      {popover && popoverTip && (
-        <Box
-          data-testid="galaxy-sector-popover"
-          data-popover-sector={popover.sectorKey}
-          sx={{
-            position: 'fixed',
-            pointerEvents: 'auto',
-            zIndex: 6,
-            width: 220,
-            ...(popover.left !== null && popover.top !== null
-              ? {
-                  left: Math.min(popover.left + 16, window.innerWidth - 236),
-                  top: Math.min(popover.top + 16, window.innerHeight - 300),
-                }
-              : { left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }),
-            bgcolor: 'rgba(8,12,24,0.98)',
-            border: '1px solid #2a3550',
-            borderRadius: 1,
-            px: 1.25,
-            py: 1,
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <Typography sx={{ color: '#dffff0', fontSize: 13, fontWeight: 700, lineHeight: 1.2 }}>
-              {popoverTip.name}
-            </Typography>
-            <Box
-              component="button"
-              data-testid="galaxy-popover-close"
-              onClick={() => setPopover(null)}
-              aria-label="Close sector info"
-              sx={{
-                background: 'none', border: 'none', color: '#9aa0b4', cursor: 'pointer',
-                fontSize: 14, lineHeight: 1, p: 0, ml: 1, '&:hover': { color: '#fff' },
-              }}
-            >
-              ×
-            </Box>
-          </Box>
-          <Typography sx={{ color: '#8fe9c0', fontSize: 9, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            Neutral
-          </Typography>
-          {/* Equinox Phase 8 (Bug 5) — LABELLED breakdown so the player knows
-              what each count is (icons alone were unreadable) and can see the
-              roaming drones (neutrals / hostiles). Always says something, even
-              when empty, so "are there drones here?" is answerable at a glance. */}
-          <Stack spacing={0.25} sx={{ mt: 0.5 }} data-testid="galaxy-popover-breakdown">
-            {popoverTip.players > 0 && (
-              <Typography sx={{ color: '#6bff9b', fontSize: 10 }}>▲ Players: {popoverTip.players}</Typography>
-            )}
-            {popoverTip.enemies > 0 && (
-              <Typography sx={{ color: '#ff6b6b', fontSize: 10 }}>✦ Hostiles: {popoverTip.enemies}</Typography>
-            )}
-            {popoverTip.neutrals > 0 && (
-              <Typography sx={{ color: '#ffd479', fontSize: 10 }}>◇ Neutral drones: {popoverTip.neutrals}</Typography>
-            )}
-            {popoverTip.structures > 0 && (
-              <Typography sx={{ color: '#9ab4dd', fontSize: 10 }}>⬡ Structures: {popoverTip.structures}</Typography>
-            )}
-            {popoverTip.players + popoverTip.enemies + popoverTip.neutrals + popoverTip.structures === 0 && (
-              <Typography sx={{ color: '#6b7280', fontSize: 10 }}>No ships or structures here.</Typography>
-            )}
-          </Stack>
-          {popoverTip.features.length > 0 && (
-            <Typography sx={{ color: '#7a8499', fontSize: 9, mt: 0.25, textTransform: 'capitalize' }}>
-              {popoverTip.features.join(' · ')}
-            </Typography>
-          )}
-          <Typography sx={{ color: '#66ffcc', fontSize: 9, mt: 0.75, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            Your ships
-          </Typography>
-          {popoverShips.length > 0 ? (
-            <Stack spacing={0.5} sx={{ mt: 0.25 }}>
-              {popoverShips.map((s) => (
-                <Button
-                  key={s.shipId}
-                  size="small"
-                  variant="outlined"
-                  data-testid={`galaxy-popover-ship-${s.shipId}`}
-                  onClick={() => {
-                    logEvent('galaxy_popover_resume', { shipId: s.shipId, sector: popover.sectorKey });
-                    onSpawnExistingShip?.(s.shipId, popover.sectorKey);
-                    setPopover(null);
-                  }}
-                  sx={{
-                    justifyContent: 'flex-start', color: '#cfe', borderColor: '#2a3550',
-                    fontSize: 10, py: 0.25, textTransform: 'none',
-                    '&:hover': { borderColor: '#66ffcc' },
-                  }}
-                >
-                  {kindLabel(s.kind)}{s.isActive ? ' · active' : ''}
-                </Button>
-              ))}
-            </Stack>
-          ) : (
-            <Typography sx={{ color: '#6b7280', fontSize: 10, mt: 0.25 }}>No ships here yet.</Typography>
-          )}
-          {isWarp ? (
-            popoverWarpable ? (
-              <Button
-                fullWidth
-                size="small"
-                variant="contained"
-                data-testid="galaxy-popover-warp"
-                onClick={() => {
-                  logEvent('galaxy_popover_warp', { sector: popover.sectorKey });
-                  onWarp?.(popover.sectorKey);
-                  setPopover(null);
-                }}
-                sx={{ mt: 0.75, bgcolor: '#0088cc', color: '#04140b', fontWeight: 700, fontSize: 11, '&:hover': { bgcolor: '#33bbff' } }}
-              >
-                Warp here
-              </Button>
-            ) : (
-              <Typography sx={{ color: '#6b7280', fontSize: 9, mt: 0.75, textAlign: 'center' }}>
-                {popover.sectorKey === currentSectorKey
-                  ? 'You are here'
-                  : 'Not adjacent — warp via a neighbour'}
-              </Typography>
-            )
-          ) : (
-            <Button
-              fullWidth
-              size="small"
-              variant="contained"
-              data-testid="galaxy-popover-join"
-              onClick={() => {
-                logEvent('galaxy_popover_join', { sector: popover.sectorKey });
-                setPendingSpawnSector(popover.sectorKey);
-                setPopover(null);
-              }}
-              sx={{ mt: 0.75, bgcolor: '#00aa55', color: '#04140b', fontWeight: 700, fontSize: 11, '&:hover': { bgcolor: '#00cc66' } }}
-            >
-              Join the fight
-            </Button>
-          )}
-        </Box>
-      )}
+      {/* Equinox Phase 9 (item 2) — the docked SectorInfoDrawer REPLACES the old
+       *  fixed popover. A hex tap selects the sector → drawer (bottom in portrait,
+       *  right in landscape; overlay, no scrim, so the map stays selectable); ✕ /
+       *  swipe deselects. The desktop hover tooltip above is separate + kept. */}
+      <SectorInfoDrawer
+        open={selectedSectorKey !== null}
+        sectorKey={selectedSectorKey}
+        tip={drawerTip}
+        ships={drawerShips}
+        recentCombat={drawerRecentCombat}
+        context={context}
+        warpable={drawerWarpable}
+        currentSectorKey={currentSectorKey}
+        onClose={() => setSelectedSectorKey(null)}
+        onSpawnExistingShip={(shipId, sector) => {
+          logEvent('galaxy_drawer_resume', { shipId, sector });
+          onSpawnExistingShip?.(shipId, sector);
+          setSelectedSectorKey(null);
+        }}
+        onJoin={(sector) => {
+          logEvent('galaxy_drawer_join', { sector });
+          setPendingSpawnSector(sector);
+          setSelectedSectorKey(null);
+        }}
+        onWarp={(sector) => {
+          logEvent('galaxy_drawer_warp', { sector });
+          onWarp?.(sector);
+          setSelectedSectorKey(null);
+        }}
+      />
 
       {/* Sector-click confirmation. Opened imperatively via apiRef when the
        *  player taps a galaxy sector hex on the shared canvas; picking a

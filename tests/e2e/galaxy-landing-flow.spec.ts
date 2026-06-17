@@ -48,8 +48,8 @@ test('logged-in pick → ship picker opens directly (no auth detour)', async ({ 
   await pickSector(page);
   // Equinox Phase 7 (Item 4) — a pick now opens the interactive sector popover;
   // "Join the fight" opens the ship picker (the flow is no longer one-click).
-  await expect(page.getByTestId('galaxy-sector-popover')).toBeVisible({ timeout: 8_000 });
-  await page.getByTestId('galaxy-popover-join').click();
+  await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 8_000 });
+  await page.getByTestId('sector-drawer-join').click();
   await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
   // A logged-in pilot is NOT detoured through the auth flow.
   await expect(page.locator('text=Continue as guest')).toHaveCount(0);
@@ -84,8 +84,8 @@ test.describe('logged-out (auth-gated pick)', () => {
     await page.locator('text=Continue as guest').click();
     // Back on the map; the popover auto-opens for the stashed sector (no re-tap);
     // "Join the fight" then opens the ship picker (Equinox Phase 7 / Item 4).
-    await expect(page.getByTestId('galaxy-sector-popover')).toBeVisible({ timeout: 10_000 });
-    await page.getByTestId('galaxy-popover-join').click();
+    await expect(page.getByTestId('sector-drawer-join')).toBeVisible({ timeout: 10_000 });
+    await page.getByTestId('sector-drawer-join').click();
     await expect(page.getByTestId('ship-picker-modal')).toBeVisible({ timeout: 8_000 });
   });
 });
