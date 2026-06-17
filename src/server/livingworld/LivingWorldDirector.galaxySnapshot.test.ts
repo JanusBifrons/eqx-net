@@ -42,7 +42,12 @@ const OPTS: Partial<LivingWorldOptions> & { rng: () => number; nowMs: () => numb
 };
 
 describe('LivingWorldDirector.galaxySnapshot', () => {
-  it('aggregates per-room live counts and stamps the static region faction', () => {
+  it('aggregates per-room counts; enemies are FACTION-derived (no waves ⇒ all present drones are neutral)', () => {
+    // The director re-splits enemies vs neutrals by squad faction-hostility, NOT
+    // the room's present-player view. With botCount:0 there are no squads/waves,
+    // so EVERY present drone is neutral — the room's `enemies` count is folded
+    // back into `neutrals` (total present drones is preserved). Squad-derived
+    // enemy counting is locked in population.test.ts (enemyBotCountsBySector).
     const rooms = new Map<string, LivingWorldRoom>([
       ['sol-prime', withCounts({ players: 2, enemies: 0, neutrals: 1, structures: 3 })],
       ['orion-belt', withCounts({ players: 0, enemies: 4, neutrals: 2, structures: 0 })],
@@ -58,7 +63,9 @@ describe('LivingWorldDirector.galaxySnapshot', () => {
       expect(sol.owner).toEqual({ factionId: getSector('sol-prime')!.region, contested: false });
 
       const orion = snap.find((s) => s.key === 'orion-belt')!;
-      expect(orion).toMatchObject({ players: 0, enemies: 4, neutrals: 2, structures: 0 });
+      // No wave ⇒ enemies 0; the mock's 4 "enemies" + 2 neutrals = 6 present
+      // drones, all classified neutral (total preserved).
+      expect(orion).toMatchObject({ players: 0, enemies: 0, neutrals: 6, structures: 0 });
       expect(orion.owner!.factionId).toBe(getSector('orion-belt')!.region);
     } finally {
       director.stop();
