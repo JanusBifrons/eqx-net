@@ -85,6 +85,25 @@ describe('LivingWorldDirector.galaxySnapshot', () => {
       director.stop();
     }
   });
+
+  it('forwards each room\'s recentCombat into the snapshot (null when the room omits it)', () => {
+    // Equinox Phase 9 item 5 — the room owns the sliding window; the director just
+    // forwards `recentCombat()`, defaulting to null for rooms that omit the hook.
+    const rc = { shipsDestroyed: 2, structuresDestroyed: 1, lastEventMs: 123 };
+    const rooms = new Map<string, LivingWorldRoom>([
+      ['sol-prime', fullMockRoom({ recentCombat: () => rc })],
+      ['orion-belt', fullMockRoom({})], // omits recentCombat → null
+    ]);
+    const director = new LivingWorldDirector(rooms, OPTS);
+    director.start();
+    try {
+      const snap = director.galaxySnapshot();
+      expect(snap.find((s) => s.key === 'sol-prime')!.recentCombat).toEqual(rc);
+      expect(snap.find((s) => s.key === 'orion-belt')!.recentCombat).toBeNull();
+    } finally {
+      director.stop();
+    }
+  });
 });
 
 describe('LivingWorldDirector.playerStructurePresence (Equinox Phase 7)', () => {

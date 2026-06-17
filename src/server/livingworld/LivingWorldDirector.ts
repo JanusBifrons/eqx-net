@@ -499,6 +499,9 @@ export class LivingWorldDirector {
         // Cosmetic/static v1: ownership IS the sector's region faction; the shape
         // carries `null` for the FUTURE "unclaimed" case (shared-types/galaxySnapshot.ts).
         owner: region ? { factionId: region, contested: false } : null,
+        // Equinox Phase 9 (item 5) — recent-combat tally (null when quiet); the
+        // room owns the sliding window, the director just forwards it.
+        recentCombat: room.recentCombat?.() ?? null,
       });
     }
     this.galaxyStatsCache = out;

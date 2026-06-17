@@ -23,6 +23,23 @@ export interface SectorOwner {
   contested: boolean;
 }
 
+/**
+ * Recent-combat tally for a sector (Equinox Phase 9 item 5) — the galaxy map's
+ * "fighting happened here recently" indicator + the drawer event breakdown. The
+ * SERVER windows this (default 5 min) and sends `null`/omits it when quiet, so
+ * the client shows the icon purely on `recentCombat` being present.
+ */
+export interface RecentCombat {
+  /** Player + drone (NPC ship) hulls destroyed within the recent window. */
+  shipsDestroyed: number;
+  /** Structures (incl. bases) destroyed within the recent window. */
+  structuresDestroyed: number;
+  /** Server epoch ms of the most recent event (best-effort recency; cross-clock,
+   *  so don't use for precise client timing — the field's presence already means
+   *  "within the window"). */
+  lastEventMs: number;
+}
+
 export interface SectorLiveState {
   /** Stable sector key (matches `GalaxySector.key`). */
   key: string;
@@ -39,6 +56,9 @@ export interface SectorLiveState {
    *  every sector has a region); the seam supports `null` = unclaimed for the
    *  future derived-ownership model. */
   owner: SectorOwner | null;
+  /** Recent-combat tally, or null/absent when the sector has been quiet within
+   *  the window. Additive (optional) — pre-Phase-9 producers simply omit it. */
+  recentCombat?: RecentCombat | null;
 }
 
 export interface GalaxySnapshotResponse {
@@ -52,6 +72,14 @@ export const SectorOwnerSchema = z
   })
   .strict();
 
+export const RecentCombatSchema = z
+  .object({
+    shipsDestroyed: z.number().int().nonnegative(),
+    structuresDestroyed: z.number().int().nonnegative(),
+    lastEventMs: z.number().nonnegative(),
+  })
+  .strict();
+
 export const SectorLiveStateSchema = z
   .object({
     key: z.string(),
@@ -60,6 +88,9 @@ export const SectorLiveStateSchema = z
     neutrals: z.number().int().nonnegative(),
     structures: z.number().int().nonnegative(),
     owner: SectorOwnerSchema.nullable(),
+    // Additive (Equinox Phase 9 item 5) — optional + nullable so pre-Phase-9
+    // producers (and the quiet case) validate unchanged.
+    recentCombat: RecentCombatSchema.nullable().optional(),
   })
   .strict();
 
