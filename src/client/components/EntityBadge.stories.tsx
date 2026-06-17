@@ -36,13 +36,45 @@ export const AllKinds: Story = {
   ),
 };
 
-/** Centring check: every shape across 1- and 2-digit counts. */
+/**
+ * Centring check across the full digit range — every shape down a row, every count
+ * across the columns: 1-9 (single digit), double digits, and overflow above 99.
+ * Scan each row to confirm the knockout number reads centred at every width.
+ */
+const COUNT_SAMPLES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 20, 88, 100, 999];
 export const Counts: Story = {
   render: (args) => (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, auto)', gap: 14, justifyItems: 'center' }}>
-      {[1, 8, 12, 20].flatMap((c) =>
-        ENTITY_KIND_ORDER.map((kind) => <EntityBadge key={`${kind}-${c}`} kind={kind} count={c} size={args.size} />),
-      )}
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `auto repeat(${COUNT_SAMPLES.length}, auto)`,
+        gap: 12,
+        alignItems: 'center',
+        justifyItems: 'center',
+      }}
+    >
+      {/* header row: blank corner + the count values */}
+      <div />
+      {COUNT_SAMPLES.map((c) => (
+        <div key={`h-${c}`} style={{ color: '#7f93a8', font: '11px sans-serif' }}>
+          {c}
+        </div>
+      ))}
+      {/* one row per kind */}
+      {ENTITY_KIND_ORDER.map((kind) => (
+        <Row key={kind} kind={kind} size={args.size} />
+      ))}
     </div>
   ),
 };
+
+function Row({ kind, size }: { kind: (typeof ENTITY_KIND_ORDER)[number]; size?: number }): JSX.Element {
+  return (
+    <>
+      <div style={{ color: '#cfe', font: '12px sans-serif', justifySelf: 'end', paddingRight: 8 }}>{kind}</div>
+      {COUNT_SAMPLES.map((c) => (
+        <EntityBadge key={`${kind}-${c}`} kind={kind} count={c} size={size} />
+      ))}
+    </>
+  );
+}
