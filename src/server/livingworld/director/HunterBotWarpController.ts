@@ -24,7 +24,7 @@
  */
 
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
-import { sectorEdgePose, type Rng } from '../population.js';
+import { sectorEdgePose, squadEdgePose, type Rng } from '../population.js';
 import type { LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { BotCarry } from '../botTypes.js';
 import type { HunterBotPool, BotRecord } from './HunterBotPool.js';
@@ -37,6 +37,10 @@ export interface HunterBotWarpControllerOptions {
   /** Invulnerable inter-sector flight time (ms). 0 ⇒ effectively instant
    *  arrival (deferred one macrotask). */
   hopTravelMs: number;
+  /** Resolve a bot's squad key so its whole squad ARRIVES clustered at one edge
+   *  anchor (a herd that hops together), via `squadEdgePose`. Absent ⇒ fall back
+   *  to the per-bot random `sectorEdgePose` (back-compat for tests). */
+  squadKeyOf?: (botId: string) => string;
 }
 
 export class HunterBotWarpController {
@@ -45,6 +49,7 @@ export class HunterBotWarpController {
   private readonly rng: Rng;
   private readonly respawnDelayMs: number;
   private readonly hopTravelMs: number;
+  private readonly squadKeyOf?: (botId: string) => string;
   /** botId → pending arrival timer (the in-flight window). Cleared on
    *  `disposePending` (director stop) so no timer fires into a torn-down room. */
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -55,6 +60,7 @@ export class HunterBotWarpController {
     this.rng = opts.rng;
     this.respawnDelayMs = opts.respawnDelayMs;
     this.hopTravelMs = opts.hopTravelMs;
+    this.squadKeyOf = opts.squadKeyOf;
   }
 
   /** Spool-end half of the hop: pre-check the dest slot, despawn the bot from
@@ -95,7 +101,10 @@ export class HunterBotWarpController {
       this.pool.scheduleRespawn(rec, this.respawnDelayMs);
       return;
     }
-    const pose = sectorEdgePose(this.rng);
+    // Arrive CLUSTERED with squadmates (a herd hops together) when a squad-key
+    // resolver is wired; else the legacy per-bot random edge pose.
+    const squadKey = this.squadKeyOf?.(rec.botId);
+    const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng);
     const ok = dest.spawnLivingWorldBot({
       botId: rec.botId,
       kind: carry.kind,

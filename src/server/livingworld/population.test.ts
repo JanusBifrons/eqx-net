@@ -9,6 +9,7 @@ import {
   planMigrations,
   pickRespawnSector,
   sectorEdgePose,
+  squadEdgePose,
   makeSeededRng,
   liveEntrySectors,
   pickEntrySector,
@@ -379,6 +380,44 @@ describe('sectorEdgePose', () => {
 
   it('is deterministic per seed', () => {
     expect(sectorEdgePose(makeSeededRng(99))).toEqual(sectorEdgePose(makeSeededRng(99)));
+  });
+});
+
+describe('squadEdgePose — a squad warps in CLUSTERED (a herd from birth)', () => {
+  it('clusters a squad members tightly around one shared edge anchor', () => {
+    // 8 members of one squad in one sector → all near one anchor (≪ the old
+    // per-bot random scatter, which could be ~the sector diameter apart).
+    const poses = Array.from({ length: 8 }, (_, i) =>
+      squadEdgePose('squad-0', 'greenfall', `lwbot-${i}`),
+    );
+    let maxGap = 0;
+    for (let i = 0; i < poses.length; i++) {
+      for (let j = i + 1; j < poses.length; j++) {
+        maxGap = Math.max(maxGap, Math.hypot(poses[i]!.x - poses[j]!.x, poses[i]!.y - poses[j]!.y));
+      }
+    }
+    expect(maxGap).toBeLessThan(1200); // a tight cluster, not a sector-wide scatter
+  });
+
+  it('still spawns near the edge, in bounds, heading + drifting inward', () => {
+    const p = squadEdgePose('squad-3', 'orion-belt', 'lwbot-25');
+    expect(Math.abs(p.x)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
+    expect(Math.abs(p.y)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
+    expect(Math.hypot(p.x, p.y)).toBeGreaterThan(SECTOR_PLAYABLE_HALF_EXTENT * 0.8);
+    expect(p.vx * -p.x + p.vy * -p.y).toBeGreaterThan(0); // drifts toward centre
+  });
+
+  it('is deterministic (no RNG) and varies the anchor by squad + sector', () => {
+    expect(squadEdgePose('squad-0', 'greenfall', 'lwbot-0')).toEqual(
+      squadEdgePose('squad-0', 'greenfall', 'lwbot-0'),
+    );
+    // Different squad OR different sector ⇒ a different anchor bearing (members
+    // don't all funnel to the same edge point galaxy-wide).
+    const a = squadEdgePose('squad-0', 'greenfall', 'lwbot-0');
+    const b = squadEdgePose('squad-1', 'greenfall', 'lwbot-0');
+    const c = squadEdgePose('squad-0', 'emerald-span', 'lwbot-0');
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(500);
+    expect(Math.hypot(a.x - c.x, a.y - c.y)).toBeGreaterThan(500);
   });
 });
 

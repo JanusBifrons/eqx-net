@@ -27,6 +27,7 @@ import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
+  squadEdgePose,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -216,6 +217,13 @@ const FORMATION_DEST_ARRIVE = 250;
  *  current bearing) so every leg is LONG — otherwise a random absolute point can
  *  land next to the leader and it just mills in place (the milling bug). */
 const FORMATION_LEG_SPREAD = Math.PI / 2;
+/** Non-combat herding: the squad is "gathered" (the leader may cruise its course)
+ *  while every follower is within this distance of the leader. When the farthest
+ *  follower is beyond it, the director HOLDS the leader at its own pose so the
+ *  flock catches up — the user's "you can also just make the leader wait". Set
+ *  comfortably above the boids settle band (separation floor → follow radius ≈
+ *  150–220) so a gathered herd isn't whipsawed back into a hold by minor drift. */
+const FLOCK_GATHER_RADIUS = 500;
 
 /** Throttle (ms) for the director's crash-defence state persist inside the
  *  control loop — matches the 60 s sector-snapshot cadence. The PRIMARY persist
@@ -292,6 +300,9 @@ export class LivingWorldDirector {
       rng: this.rng,
       respawnDelayMs: this.opts.respawnDelayMs,
       hopTravelMs: this.opts.hopTravelMs,
+      // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
+      // so a squad re-forms clustered at each sector it hops into.
+      squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -672,12 +683,31 @@ export class LivingWorldDirector {
         this.squadFormationDest.set(sq.squadId, dest);
       }
 
-      // Leader cruises its course; every other member FLOCKS to it (continuous
-      // boids in the brain, resolved against the leader's LIVE pose — not a stale
-      // slot). `members` includes the leader; the follower brain skips self + the
-      // leader in its separation loop. Passing the reused `members` array is safe
-      // — `setFlockFollow` copies it synchronously.
-      room.setBotMoveTarget(leaderId, dest.x, dest.y);
+      // "Make the leader wait": measure how spread the squad is (the farthest
+      // follower's gap to the leader). While the herd is gathered the leader
+      // cruises its far course (throttled in the brain so followers tighten);
+      // while it's spread the leader HOLDS at its own pose so the flock catches
+      // up. Either way the leader role is THROTTLED via setBotFlockLeaderCourse —
+      // followers move at full cruise and converge.
+      let maxGap = 0;
+      for (let i = 1; i < members.length; i++) {
+        const fp = room.getBotPose(members[i]!);
+        if (!fp) continue;
+        const g = Math.hypot(fp.x - leaderPose.x, fp.y - leaderPose.y);
+        if (g > maxGap) maxGap = g;
+      }
+      const gathered = maxGap <= FLOCK_GATHER_RADIUS;
+      if (gathered) {
+        room.setBotFlockLeaderCourse(leaderId, dest.x, dest.y);
+      } else {
+        room.setBotFlockLeaderCourse(leaderId, leaderPose.x, leaderPose.y);
+      }
+
+      // Every other member FLOCKS to the leader (continuous boids in the brain,
+      // resolved against the leader's LIVE pose — not a stale slot). `members`
+      // includes the leader; the follower brain skips self + the leader in its
+      // separation loop. Passing the reused `members` array is safe —
+      // `setFlockFollow` copies it synchronously.
       for (let i = 1; i < members.length; i++) {
         room.setBotFlockFollow(members[i]!, leaderId, members);
       }
@@ -900,7 +930,11 @@ export class LivingWorldDirector {
         rec.respawnAtMs = now; // keep retrying next tick
         continue;
       }
-      const pose = sectorEdgePose(this.rng);
+      // Spawn CLUSTERED with squadmates (the herd warps in together) when the
+      // bot belongs to a squad; the per-squad+sector anchor means a whole squad
+      // seeding/respawning into the same sector lands as one tight group.
+      const squadKey = this.squadPool.squadOf(rec.botId)?.squadId;
+      const pose = squadKey ? squadEdgePose(squadKey, sector, rec.botId) : sectorEdgePose(this.rng);
       const ok = room.spawnLivingWorldBot({
         botId: rec.botId,
         kind: rec.kind,

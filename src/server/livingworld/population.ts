@@ -434,7 +434,12 @@ export interface EdgePose {
  */
 export function sectorEdgePose(rng: Rng): EdgePose {
   const bearing = rng() * Math.PI * 2;
-  const r = SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION;
+  return edgePoseAtBearing(bearing, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION);
+}
+
+/** Build an inward-facing edge pose at a specific bearing + radius (shared by
+ *  `sectorEdgePose` + `squadEdgePose`). */
+function edgePoseAtBearing(bearing: number, r: number): EdgePose {
   const ex = Math.cos(bearing) * r;
   const ey = Math.sin(bearing) * r;
   // Inward unit vector (toward origin).
@@ -448,6 +453,43 @@ export function sectorEdgePose(rng: Rng): EdgePose {
     vy: dirY * RESPAWN_INBOUND_SPEED,
     angle: Math.atan2(-dirX, dirY),
   };
+}
+
+/** Deterministic 32-bit FNV-1a string hash → stable across runs (no RNG state).
+ *  Used to derive a per-squad spawn bearing so a squad's members cluster at ONE
+ *  edge point instead of scattering to independent random bearings. */
+function hashStr(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Angular spread (rad) of a squad's members around their shared spawn anchor.
+ *  At the ~4600 u edge radius, ±0.06 rad ≈ ±275 u tangential. */
+export const SQUAD_SPAWN_ANGULAR_JITTER = 0.06;
+/** Radial spread (u) of a squad's members around the edge radius. */
+export const SQUAD_SPAWN_RADIAL_JITTER = 250;
+
+/**
+ * Edge spawn pose for a SQUAD member. Every member of `squadKey` arriving at
+ * `sectorKey` shares ONE anchor bearing (a deterministic hash of the pair), with
+ * a small deterministic per-`botKey` angular + radial jitter so they don't stack
+ * but still land in a ~±300 u cluster. The squad therefore "warps in together"
+ * as a herd — flocking (cohesion + separation) tightens + maintains it from
+ * there, instead of the old per-bot random `sectorEdgePose` that scattered a
+ * squad across the entire sector edge (max gap ≈ the sector diameter, which
+ * flocking then had to gather from at the slow drone cruise). Still an edge
+ * spawn (radius unchanged), so the entry-only-ingress invariant is preserved —
+ * only the BEARING is shared. Deterministic ⇒ no RNG, replay-safe, testable.
+ */
+export function squadEdgePose(squadKey: string, sectorKey: string, botKey: string): EdgePose {
+  const base = (hashStr(`${squadKey}:${sectorKey}`) / 0xffffffff) * Math.PI * 2;
+  const aJit = (hashStr(`${botKey}:a`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_ANGULAR_JITTER;
+  const rJit = (hashStr(`${botKey}:r`) / 0xffffffff - 0.5) * 2 * SQUAD_SPAWN_RADIAL_JITTER;
+  return edgePoseAtBearing(base + aJit, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION + rJit);
 }
 
 /**

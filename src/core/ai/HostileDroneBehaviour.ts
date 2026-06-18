@@ -18,8 +18,6 @@ import {
   addAlignment,
   addSeparation,
   resolveFlock,
-  FLOCK_FOLLOW_DISTANCE,
-  FLOCK_BOOST_GAP_FACTOR,
 } from './flocking.js';
 import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
 
@@ -87,6 +85,15 @@ const PATROL_INWARD_GAIN = 1.0;
  *  which the drone ramps thrust down so per-kind damping brakes it to a stop
  *  (the "slow down and come to a stop in formation, don't float past" feel). */
 const MOVE_ARRIVE_SLOW_RADIUS = 300;
+/** Non-combat herding: a flock LEADER cruises its course at this fraction of the
+ *  drone's normal `ai.thrust`, so its FOLLOWERS — moving at the full calm cruise
+ *  — actually outrun it and tighten into the herd. Without the throttle the
+ *  leader and followers share the same slow max-speed and the herd can never
+ *  close the gap (the boost the old scheme used to paper over this is gone; the
+ *  user's "make the leader wait" instead). ~0.55 = leader noticeably slower than
+ *  the flock but still genuinely travelling. The director ALSO holds the leader
+ *  outright when the squad is badly spread (course = its own pose). */
+const LEADER_CRUISE_THROTTLE = 0.55;
 
 /**
  * Hostile drone: steers toward nearest player and fires hitscan when in range
@@ -112,6 +119,12 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  the leader). `null` ⇒ default origin orbit. Server-only — set via the
    *  `setMoveTarget` hook; the client never ticks the drone brain. */
   private moveTarget: { x: number; y: number } | null = null;
+  /** True when this drone is a flock LEADER cruising a course (set by
+   *  `setFlockLeaderCourse`, cleared by `setMoveTarget`/`setFlockFollow`). While
+   *  set, `tickMoveTo` throttles forward thrust by `LEADER_CRUISE_THROTTLE` so
+   *  the leader travels slower than its full-cruise followers and they tighten
+   *  into the herd. A plain `setMoveTarget` (lone drone / tests) is full-thrust. */
+  private _flockLeaderCruise = false;
   /** Reused arrive() output (alloc-free hot path, invariant #14). */
   private readonly _steerScratch: SteerOutput = makeSteerOutput();
 
@@ -619,6 +632,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    *  flocking. The director re-issues the course each control tick. */
   setMoveTarget(x: number, y: number): void {
     this.leaderId = null;
+    this._flockLeaderCruise = false;
+    if (this.moveTarget === null) this.moveTarget = { x, y };
+    else { this.moveTarget.x = x; this.moveTarget.y = y; }
+  }
+
+  /** Leader-led flocking (non-combat herding): assign this drone the LEADER's
+   *  course. Same as `setMoveTarget` but flags it a flock leader so `tickMoveTo`
+   *  THROTTLES its cruise (`LEADER_CRUISE_THROTTLE`) — the leader travels slower
+   *  than its full-cruise followers so the herd tightens around it (replaces the
+   *  old follower-boost; the user's "make the leader wait"). The director sets
+   *  the course to the leader's OWN pose to make it hold while the flock gathers. */
+  setFlockLeaderCourse(x: number, y: number): void {
+    this.leaderId = null;
+    this._flockLeaderCruise = true;
     if (this.moveTarget === null) this.moveTarget = { x, y };
     else { this.moveTarget.x = x; this.moveTarget.y = y; }
   }
@@ -626,6 +653,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   clearMoveTarget(): void {
     this.moveTarget = null;
     this.leaderId = null;
+    this._flockLeaderCruise = false;
   }
 
   /** Leader-led flocking (non-combat herding): mark this drone a FOLLOWER of
@@ -636,6 +664,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
     this.leaderId = leaderId;
     this.moveTarget = null;
+    this._flockLeaderCruise = false;
     this._flockMemberIds.length = 0;
     for (let i = 0; i < memberIds.length; i++) this._flockMemberIds.push(memberIds[i]!);
   }
@@ -662,7 +691,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
-    const thrustMag = this.kind.ai.thrust * steer.thrustScale;
+    // A flock leader cruises SLOWER than its full-cruise followers so they
+    // tighten into the herd around it (the "make the leader wait" lever).
+    const cruise = this._flockLeaderCruise ? LEADER_CRUISE_THROTTLE : 1;
+    const thrustMag = this.kind.ai.thrust * steer.thrustScale * cruise;
     out.fx = fwdX * thrustMag;
     out.fy = fwdY * thrustMag;
     return out;
@@ -670,13 +702,16 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /**
    * Leader-led flocking (non-combat herding) — the FOLLOWER path. Continuously
-   * steer toward a boids blend resolved against LIVE poses every tick: COHESION
-   * toward the squad CENTROID (bunches the herd), ALIGNMENT with the leader's
+   * steer toward a standard boids blend resolved against LIVE poses every tick:
+   * COHESION toward the leader with an ARRIVAL ramp (slows as it nears the
+   * follow-distance — "slow down once close"), ALIGNMENT with the leader's
    * heading (the herd flies as one along the leader's course), and SEPARATION
-   * from squad neighbours (holds spacing). Unlike `tickMoveTo` it never brakes to
-   * a stop — alignment is a constant push so the follower keeps pace; a follower
-   * that falls well behind BOOSTS (below). Falls back to orbit when the leader/
-   * resolver is gone.
+   * from squad neighbours (holds spacing, spreads the blob into a herd). Forward
+   * thrust is the calm `ai.thrust` cruise scaled by the boids magnitude — NO
+   * boost: the arrival ramp + per-kind damping settle the follower into the
+   * cluster with no overshoot/fling, and the LEADER is throttled / waits (see
+   * `LEADER_CRUISE_THROTTLE` + the director) so a full-cruise follower can catch
+   * it. Falls back to orbit when the leader / resolver is gone.
    */
   private tickFlock(self: AiEntity, view: AiWorldView): AiIntent {
     const resolve = view.resolveEntityInto;
@@ -692,10 +727,10 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const acc = this._flockAcc;
     resetFlock(acc);
     // COHESION toward the leader (its position is the herd's anchor — followers
-    // bunch AROUND it). SEPARATION from every squad neighbour (incl. the leader)
-    // so they cluster around it at a spacing rather than piling on. ALIGNMENT
-    // with the leader's heading so the herd flies the course as one. Cohesion +
-    // boost both reference the LEADER, so a lagging follower boosts TOWARD it.
+    // bunch AROUND it) with the arrival ramp baked into addCohesion. SEPARATION
+    // from every squad neighbour (incl. the leader) so they cluster around it at
+    // a spacing rather than piling on. ALIGNMENT with the leader's heading so the
+    // herd flies the course as one + keeps pace.
     addCohesion(acc, self.x, self.y, leaderX, leaderY);
     for (let i = 0; i < this._flockMemberIds.length; i++) {
       const mid = this._flockMemberIds[i]!;
@@ -717,21 +752,11 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
-    // BOOST to catch up (the drone analogue of a player holding boost). The AI
-    // cruise impulse (`ai.thrust`) is far below a player's, so a follower that
-    // has fallen well behind its leader can't close the gap on the calm cruise
-    // alone — when it's beyond the boost gap it applies the kind's REAL
-    // player-boost impulse (`thrustImpulse × boostMultiplier`), exactly what a
-    // player gets. In formation it drops back to the gentle roam cruise. The
-    // boost rides the follower's facing, which `setAngvel` is already turning
-    // toward the leader, so it closes the gap.
-    const leaderDx = this._leaderScratch.x - self.x;
-    const leaderDy = this._leaderScratch.y - self.y;
-    const gap = Math.hypot(leaderDx, leaderDy);
-    const thrustMag =
-      gap > FLOCK_FOLLOW_DISTANCE * FLOCK_BOOST_GAP_FACTOR
-        ? this.kind.thrustImpulse * this.kind.boostMultiplier
-        : this.kind.ai.thrust * flock.thrustScale;
+    // Calm cruise scaled by the boids desired-velocity magnitude. As the follower
+    // settles at the follow-radius, cohesion ramps to ~0 and separation cancels
+    // it, so the magnitude shrinks toward the alignment term alone → it eases off
+    // thrust without any boost (and damping brakes the residual).
+    const thrustMag = this.kind.ai.thrust * flock.thrustScale;
     out.fx = fwdX * thrustMag;
     out.fy = fwdY * thrustMag;
     return out;

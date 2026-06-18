@@ -53,30 +53,51 @@ describe('HostileDroneBehaviour — leader-led flocking (non-combat herding)', (
     expect(intent.setAngvel!).toBeLessThan(0);
   });
 
-  it('BOOSTS (player-boost impulse) when far behind the leader — not the slow AI cruise', () => {
+  it('NEVER exceeds the calm AI cruise — no boost/fling, even far behind the leader', () => {
     const b = new HostileDroneBehaviour(KIND);
     b.setFlockFollow('leader', ['leader', 'f0']);
-    const intent = b.tick(self(), viewWith({ leader: { x: FLOCK_FOLLOW_DISTANCE * 4, y: 0 } }));
+    // The boost (which overshot + flung the herd apart) is gone: a follower at any
+    // gap thrusts at most the calm AI cruise (ai.thrust); the leader-wait/throttle
+    // closes the gap instead.
+    for (const gap of [FLOCK_FOLLOW_DISTANCE * 0.5, FLOCK_FOLLOW_DISTANCE * 2, FLOCK_FOLLOW_DISTANCE * 8]) {
+      const intent = b.tick(self(), viewWith({ leader: { x: gap, y: 0 } }));
+      const mag = Math.hypot(intent.fx, intent.fy);
+      expect(mag).toBeGreaterThan(0);
+      expect(mag).toBeLessThanOrEqual(KIND.ai.thrust + 1e-6);
+    }
+  });
+
+  it('a flock LEADER cruises THROTTLED (slower than full cruise) so followers catch up', () => {
+    const leader = new HostileDroneBehaviour(KIND);
+    leader.setFlockLeaderCourse(0, 5000); // far course straight ahead (+y)
+    // Leader at origin facing +y → forward thrust aligns with the course.
+    const intent = leader.tick(self({ x: 0, y: 0, angle: 0 }), viewWith({}));
     const mag = Math.hypot(intent.fx, intent.fy);
-    // Far follower boosts at the kind's REAL player-boost impulse — well above
-    // the slow AI cruise (ai.thrust).
-    expect(mag).toBeGreaterThan(KIND.ai.thrust);
-    expect(mag).toBeCloseTo(KIND.thrustImpulse * KIND.boostMultiplier, 5);
+    expect(mag).toBeGreaterThan(0);
+    expect(mag).toBeLessThan(KIND.ai.thrust); // throttled below full cruise
   });
 
-  it('does NOT boost when in formation (gap within the boost factor) — calm cruise', () => {
-    const b = new HostileDroneBehaviour(KIND);
-    b.setFlockFollow('leader', ['leader', 'f0']);
-    // Leader just ahead, well inside the boost gap → normal AI cruise, not boost.
-    const intent = b.tick(self(), viewWith({ leader: { x: 0, y: FLOCK_FOLLOW_DISTANCE, angle: 0 } }));
-    expect(Math.hypot(intent.fx, intent.fy)).toBeLessThanOrEqual(KIND.ai.thrust + 1e-6);
+  it('a plain setMoveTarget mover is NOT throttled (full cruise — back-compat)', () => {
+    const m = new HostileDroneBehaviour(KIND);
+    m.setMoveTarget(0, 5000);
+    const intent = m.tick(self({ x: 0, y: 0, angle: 0 }), viewWith({}));
+    // arrive() returns full thrustScale far from target; no leader throttle applied.
+    expect(Math.hypot(intent.fx, intent.fy)).toBeCloseTo(KIND.ai.thrust, 5);
   });
 
-  it('keeps cruising (alignment) even when at the follow distance — no stop', () => {
+  it('a leader HELD at its own pose (course = own position) does not thrust (it waits)', () => {
+    const leader = new HostileDroneBehaviour(KIND);
+    leader.setFlockLeaderCourse(0, 0); // course == own pose ⇒ arrive ramps to 0
+    const intent = leader.tick(self({ x: 0, y: 0, angle: 0 }), viewWith({}));
+    expect(Math.hypot(intent.fx, intent.fy)).toBe(0);
+  });
+
+  it('keeps cruising (cohesion + alignment) at the follow distance — no stop', () => {
     const b = new HostileDroneBehaviour(KIND);
     b.setFlockFollow('leader', ['leader', 'f0']);
-    // Follower exactly at follow-distance behind the leader ⇒ cohesion 0; the
-    // alignment term must still produce forward thrust so the herd keeps pace.
+    // Follower at the follow-distance behind the leader: cohesion is still at full
+    // gain here (the arrival ramp only fades it BELOW this distance), and alignment
+    // adds the leader's heading — together a clear forward thrust, never a stop.
     const intent = b.tick(
       self({ x: 0, y: 0 }),
       viewWith({ leader: { x: 0, y: FLOCK_FOLLOW_DISTANCE, angle: 0 } }),

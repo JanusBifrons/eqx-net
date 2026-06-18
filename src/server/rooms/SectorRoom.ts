@@ -3431,6 +3431,13 @@ export class SectorRoom extends Room<SectorState> {
     this.aiController.getBehaviour(botId)?.setFlockFollow?.(leaderId, memberIds);
   }
 
+  /** Leader-led flocking — assign a bot the squad LEADER's throttled course. The
+   *  drone's IDLE `HostileDroneBehaviour` cruises to it slower than its followers
+   *  (so the herd tightens). No-op for a bot with no behaviour registered here. */
+  setBotFlockLeaderCourse(botId: string, x: number, y: number): void {
+    this.aiController.getBehaviour(botId)?.setFlockLeaderCourse?.(x, y);
+  }
+
   /** Leader-led flocking — write a swarm entity's LIVE SAB pose into a CALLER-
    *  owned buffer (false if it's gone). The drone AI's `resolveEntityInto` seam:
    *  a follower reads its leader's + neighbours' live poses each tick. Distinct

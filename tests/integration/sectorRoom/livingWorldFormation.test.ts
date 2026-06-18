@@ -2,11 +2,14 @@
  * Non-combat herding — roaming squads fly as a leader-led FLOCK inside a sector.
  *
  * Playtest ask (the redesign): "designate a leader given a course, then use
- * flocking/herding to guide the rest with distance + simple steering." The
- * director's `flockStep` designates the first active member the LEADER (given a
- * wandering in-sector course via `setBotMoveTarget`) and marks every other member
- * a FOLLOWER (via `setBotFlockFollow`) that herds to the leader's LIVE pose each
- * tick (cohesion/alignment/separation in `HostileDroneBehaviour.tickFlock`).
+ * flocking/herding to guide the rest with distance + simple steering" — plus the
+ * follow-up "they just need to slow down once close… you can also just make the
+ * leader wait." The director's `flockStep` designates the first active member the
+ * LEADER (given a wandering in-sector course via `setBotFlockLeaderCourse`, which
+ * THROTTLES its cruise; it HOLDS at its own pose while the squad is spread) and
+ * marks every other member a FOLLOWER (via `setBotFlockFollow`) that herds to the
+ * leader's LIVE pose each tick (cohesion+arrival/alignment/separation in
+ * `HostileDroneBehaviour.tickFlock`, NO boost — the leader-wait closes the gap).
  *
  * This lives at the multi-room director level (the behaviour LIVES here — real
  * squad gather + real room hooks + real physics); the pure boids math is
@@ -40,12 +43,12 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
     // room instance, so shadowing records every assignment while still driving
     // the real behaviour).
     const room = h.getRoom('greenfall');
-    const leaderCourses: string[] = []; // bots given a move-target course (leaders)
+    const leaderCourses: string[] = []; // bots given a leader course (leaders)
     const followAssigns: Array<{ botId: string; leaderId: string }> = [];
-    const origMove = room.setBotMoveTarget.bind(room);
-    room.setBotMoveTarget = (botId: string, x: number, y: number): void => {
+    const origCourse = room.setBotFlockLeaderCourse.bind(room);
+    room.setBotFlockLeaderCourse = (botId: string, x: number, y: number): void => {
       leaderCourses.push(botId);
-      origMove(botId, x, y);
+      origCourse(botId, x, y);
     };
     const origFollow = room.setBotFlockFollow.bind(room);
     room.setBotFlockFollow = (botId: string, leaderId: string, memberIds: readonly string[]): void => {
@@ -68,45 +71,52 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
     expect(followerIds.has(leaderId)).toBe(false); // leader isn't its own follower
     expect(followAssigns.every((c) => c.leaderId === leaderId)).toBe(true); // all follow it
 
-    // ── Behaviour: the herd flies as a group AND converges (cohesion net-pulls-
-    //    in, vs the old static blob that just sat). Drones are damping-limited to
-    //    a slow cruise (~65 u/s) and the squad spawns spread around the sector
-    //    edge, so the assertion is about TRENDS (moving + tightening), not a
-    //    tight absolute radius (which would take minutes at drone speed). ──
+    // ── Behaviour: the squad is BORN clustered (members share a per-squad edge
+    //    anchor, `squadEdgePose`, so a squad warps in as a herd — NOT scattered
+    //    across the whole sector edge), and flocking TIGHTENS + holds it at the
+    //    equilibrium spacing while the herd flies as a group. The faithful
+    //    properties: spawns clustered, ends TIGHT, and is alive (moving). ──
     const botIds = Array.from({ length: 8 }, (_, i) => `lwbot-${i}`);
-    const centroid = (): { x: number; y: number } => {
-      let x = 0, y = 0, n = 0;
+    const poseMap = (): Map<string, { x: number; y: number }> => {
+      const m = new Map<string, { x: number; y: number }>();
       for (const id of botIds) {
         const p = room.getBotPose(id);
-        if (p) { x += p.x; y += p.y; n++; }
+        if (p) m.set(id, { x: p.x, y: p.y });
       }
-      return n > 0 ? { x: x / n, y: y / n } : { x: 0, y: 0 };
+      return m;
     };
-    const maxFollowerGap = (): number => {
-      const lp = room.getBotPose(leaderId);
+    const maxFollowerGap = (poses: Map<string, { x: number; y: number }>): number => {
+      const lp = poses.get(leaderId);
       if (!lp) return Infinity;
       let m = 0;
-      for (const id of botIds) {
+      for (const [id, p] of poses) {
         if (id === leaderId) continue;
-        const p = room.getBotPose(id);
-        if (!p) continue;
         const d = Math.hypot(p.x - lp.x, p.y - lp.y);
         if (d > m) m = d;
       }
       return m;
     };
 
-    const c0 = centroid();
-    const gap0 = maxFollowerGap();
-    await h.advance(5000); // let the leader cruise + the herd follow + converge
-    const c1 = centroid();
-    const gap1 = maxFollowerGap();
+    const before = poseMap();
+    const gap0 = maxFollowerGap(before);
+    await h.advance(16_000); // let flocking tighten the herd + the leader cruise
+    const after = poseMap();
+    const gap1 = maxFollowerGap(after);
 
-    // (a) The herd MOVED — it flew as a group, instead of sitting.
-    expect(Math.hypot(c1.x - c0.x, c1.y - c0.y)).toBeGreaterThan(50);
-    // (b) It CONVERGED — the farthest follower is closer to the leader than at
-    //     the start. Overdrive cohesion lets stragglers outpace the cruising
-    //     leader, so the gap shrinks (the old equal-speed scheme strung out).
-    expect(gap1).toBeLessThan(gap0);
-  }, 30_000);
+    // (a) BORN CLUSTERED — the squad spawned as a herd (shared edge anchor), not
+    //     scattered across the sector edge (which was ~9000 u, the diameter).
+    expect(gap0).toBeLessThan(1500);
+    // (b) TIGHT HERD — flocking holds the farthest follower close to the leader
+    //     (cohesion pulls in, separation spaces ~150; the herd settles ~a few
+    //     hundred u across, never strung out).
+    expect(gap1).toBeLessThan(400);
+    // (c) ALIVE — bots actually steered + moved (the herd flies, not a frozen
+    //     blob). Sum every bot's displacement over the window.
+    let totalDisp = 0;
+    for (const [id, b] of before) {
+      const a = after.get(id);
+      if (a) totalDisp += Math.hypot(a.x - b.x, a.y - b.y);
+    }
+    expect(totalDisp).toBeGreaterThan(200);
+  }, 60_000);
 });
