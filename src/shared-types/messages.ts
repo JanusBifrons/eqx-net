@@ -19,6 +19,7 @@ export {
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
+  StructureActionSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -30,6 +31,7 @@ export type {
   ClientReadyMessage,
   PlaceStructureMessage,
   RemoveStructureMessage,
+  StructureActionMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 

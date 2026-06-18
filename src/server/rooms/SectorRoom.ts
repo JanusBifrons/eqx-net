@@ -141,6 +141,7 @@ import {
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
+  StructureActionSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -2009,6 +2010,37 @@ export class SectorRoom extends Room<SectorState> {
           kind: removedKind ?? 'unknown',
         });
       }
+    });
+
+    // Phase-1 issue 6 — structure action buttons (deconstruct toggle / reconnect
+    // / clear connections). The client references the structure by its numeric
+    // swarm entityId (the selected id); resolve → registry record → OWNER-gate.
+    this.onMessage('structure_action', (client: Client, raw: unknown) => {
+      const parsed = StructureActionSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed structure_action');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.id);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner) return; // own-only
+      switch (parsed.data.action) {
+        case 'toggle_deconstruct':
+          rec.isDeconstructing = !rec.isDeconstructing;
+          break;
+        case 'reconnect':
+          this.structureGrid.reconnect(rec.id);
+          break;
+        case 'clear_connections':
+          this.structureGrid.clearConnections(rec.id);
+          break;
+      }
+      // Refresh the slice so the button state + web update on the next snapshot
+      // without waiting for the 1 Hz pulse.
+      this.rebuildStructuresSlice();
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────

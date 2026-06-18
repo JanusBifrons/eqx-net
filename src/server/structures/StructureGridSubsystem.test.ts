@@ -150,6 +150,33 @@ describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', ()
   });
 });
 
+describe('StructureGridSubsystem — action helpers (Phase-1 issue 6)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  it('clearConnections severs every connection touching a structure', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!; // auto-connects to capital
+    expect(h.registry.connectionCount(conn)).toBeGreaterThan(0);
+    expect(h.grid.clearConnections(conn)).toBe(true);
+    expect(h.registry.connectionCount(conn)).toBe(0);
+  });
+
+  it('reconnect re-links a stranded structure to the nearest hub', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.grid.clearConnections(conn);
+    expect(h.registry.connectionCount(conn)).toBe(0);
+    expect(h.grid.reconnect(conn)).toBe(true);
+    expect(h.registry.connectionCount(conn)).toBeGreaterThan(0);
+  });
+
+  it('both return false for an unknown id', () => {
+    expect(h.grid.clearConnections('nope')).toBe(false);
+    expect(h.grid.reconnect('nope')).toBe(false);
+  });
+});
+
 describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => { h = makeHarness(); });

@@ -584,6 +584,31 @@ export class StructureGridSubsystem {
     return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
 
+  /**
+   * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".
+   * Re-runs the SAME obstacle-aware auto-connect the placement + 1 Hz reconnect
+   * sweep use, so a stranded structure (its hub was removed, or it was placed
+   * before its hub) re-wires to the nearest legal in-range hub(s). Additive
+   * (never severs); `autoConnectStructure` dirties topology on success. Returns
+   * false for an unknown id.
+   */
+  reconnect(id: string): boolean {
+    if (!this.hooks.registry.get(id)) return false;
+    autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    return true;
+  }
+
+  /**
+   * Phase-1 issue 6 — player-triggered "clear all connections" (chiefly for a
+   * Connector). Severs every connection touching the structure; the registry
+   * dirties topology. Returns false for an unknown id.
+   */
+  clearConnections(id: string): boolean {
+    if (!this.hooks.registry.get(id)) return false;
+    this.hooks.registry.disconnect(id);
+    return true;
+  }
+
   /** Find a built Capital with minerals that can route to `targetId`. */
   private findStorageRoute(targetId: string): { capital: StructureRecord; route: readonly string[] } | null {
     for (const rec of this.hooks.registry.all()) {
