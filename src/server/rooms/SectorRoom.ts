@@ -1050,6 +1050,12 @@ export class SectorRoom extends Room<SectorState> {
       /** Structures plan (Phase 4) — seed asteroids at poses (miner targets).
        *  testMode-only; for the mining scenario. */
       scenarioAsteroids?: ReadonlyArray<{ x: number; y: number; radius?: number }>;
+      /** Phase-1 issue 5 — seed N free-floating SCRAP pieces in a dense corridor
+       *  AHEAD of spawn (+y), via the real `restoreScrapFromSnapshot` path, so an
+       *  E2E can fly the player straight through a scrap cascade and measure
+       *  prediction corrections/drift. testMode-only. Drives `scrap-stress-test`.
+       *  See `tests/e2e/scrap-collision-stress.spec.ts`. */
+      scenarioScrapCount?: number;
       /** Wave-system (2026-06-10) — override the PLAYER warp spool (ms). The
        *  production default is `SPOOL_DURATION_MS` (5 min); E2E can't wait that
        *  long, so testMode rooms inject e.g. 2_000. testMode-only. NOTE: this
@@ -1704,6 +1710,11 @@ export class SectorRoom extends Room<SectorState> {
     // powered grid + drones/asteroids, for deterministic E2E (no place-ahead
     // overlap, no construction wait).
     if (this.testMode) this.seedStructureScenario(roomOpts);
+    // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
+    // scrap ahead of spawn for the fly-through reconciliation E2E.
+    if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
+      this.seedScenarioScrap(roomOpts.scenarioScrapCount!);
+    }
 
     // Living World bot lifecycle hooks (spawn/despawn/markHostile).
     // These satisfy the LivingWorldRoom contract; bots are server-
@@ -2811,6 +2822,41 @@ export class SectorRoom extends Room<SectorState> {
    *  the SAME `scrapColliderFor` the death path uses, so the restored body is
    *  byte-identical. Restored scrap is NOT re-registered in the ScrapSpawner FIFO
    *  (it's a bounded set from the snapshot; the slot pool still hard-caps it). */
+  /**
+   * Phase-1 issue 5 — seed `count` free-floating scrap pieces in a dense
+   * corridor AHEAD of spawn (+y, the forward dir at angle 0), via the SAME
+   * `restoreScrapFromSnapshot` path the persistence layer uses (so the bodies
+   * are byte-identical to real death-spawned scrap). The player flies straight
+   * through this for the reconciliation stress E2E. testMode-only.
+   */
+  private seedScenarioScrap(count: number): void {
+    const PARENT = 'havok' as ShipKindId; // a composite kind with scrap groups
+    const groups = shipScrapGroups(PARENT).length;
+    if (groups === 0) return;
+    const COLS = 7;
+    const COL_SPACING = 48; // dense wall — a straight flight can't avoid clipping many
+    const ROW_SPACING = 60;
+    const Y0 = 250; // first row ahead of spawn, clear of the hull
+    const rows: SectorSnapshotScrap[] = [];
+    for (let i = 0; i < count; i++) {
+      const col = i % COLS;
+      const row = Math.floor(i / COLS);
+      rows.push({
+        entityId: `scrap-stress-${i}`,
+        x: (col - (COLS - 1) / 2) * COL_SPACING,
+        y: Y0 + row * ROW_SPACING,
+        vx: 0,
+        vy: 0,
+        angle: 0,
+        health: 30,
+        parentShipKind: PARENT,
+        componentIndex: i % groups,
+      });
+    }
+    this.restoreScrapFromSnapshot(rows);
+    logger.info({ requested: count, parent: PARENT, groups }, 'scenario scrap seeded');
+  }
+
   private restoreScrapFromSnapshot(rows: readonly SectorSnapshotScrap[]): void {
     for (const r of rows) {
       const geom = scrapColliderFor(r.parentShipKind as ShipKindId, r.componentIndex);
