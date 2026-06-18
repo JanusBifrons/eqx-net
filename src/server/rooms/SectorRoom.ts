@@ -38,7 +38,7 @@ import { HostileDroneBehaviour } from '../../core/ai/HostileDroneBehaviour.js';
 import { PassiveDroneBehaviour } from '../../core/ai/PassiveDroneBehaviour.js';
 // pickTarget / rotateMountToward / wrapPi / MountTargetView now used
 // inside WeaponMountTicker.ts; this file no longer imports them.
-import type { AiPlayerView, AiStructureView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
@@ -3424,6 +3424,31 @@ export class SectorRoom extends Room<SectorState> {
     this.aiController.getBehaviour(botId)?.setMoveTarget?.(x, y);
   }
 
+  /** Leader-led flocking (non-combat herding) — mark a bot a FOLLOWER of
+   *  `leaderId` (the squad's member ids drive the separation rule). No-op for a
+   *  bot with no behaviour registered here (e.g. mid-transit). */
+  setBotFlockFollow(botId: string, leaderId: string, memberIds: readonly string[]): void {
+    this.aiController.getBehaviour(botId)?.setFlockFollow?.(leaderId, memberIds);
+  }
+
+  /** Leader-led flocking — write a swarm entity's LIVE SAB pose into a CALLER-
+   *  owned buffer (false if it's gone). The drone AI's `resolveEntityInto` seam:
+   *  a follower reads its leader's + neighbours' live poses each tick. Distinct
+   *  from `swarmEntitySnapshot` (which returns a SHARED scratch the brain's
+   *  `self` aliases — writing here must not clobber that). */
+  swarmEntityPoseInto(id: string, out: AiEntityPoseOut): boolean {
+    const rec = this.swarmRegistry.get(id);
+    if (!rec) return false;
+    const b = slotBase(rec.slot);
+    out.x = this.sabF32[b + SLOT_X_OFF]!;
+    out.y = this.sabF32[b + SLOT_Y_OFF]!;
+    out.vx = this.sabF32[b + SLOT_VX_OFF]!;
+    out.vy = this.sabF32[b + SLOT_VY_OFF]!;
+    out.angle = this.sabF32[b + SLOT_ANGLE_OFF]!;
+    out.angvel = this.sabF32[b + SLOT_ANGVEL_OFF]!;
+    return true;
+  }
+
   /**
    * Wave-system Phase 4 — per-(owner, sector) faction base summary the
    * WaveDirector polls (~1.5 s, NOT the hot loop, so allocation here is fine).
@@ -4956,6 +4981,7 @@ export class SectorRoom extends Room<SectorState> {
       aiStructureScratch: this.aiStructureScratch,
       fillStructureTargets: (out) => this.fillStructureTargets(out),
       swarmEntitySnapshot: (id) => this.swarmEntitySnapshot(id),
+      resolveEntityInto: (id, out) => this.swarmEntityPoseInto(id, out),
       handleAiFire: (shooterId, dirX, dirY, tick) => this.handleAiFire(shooterId, dirX, dirY, tick),
       phaseTime,
     });

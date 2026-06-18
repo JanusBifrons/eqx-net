@@ -1,6 +1,7 @@
 import type {
   IAiBehaviour,
   AiEntity,
+  AiEntityPoseOut,
   AiPlayerView,
   AiStructureView,
   AiWorldView,
@@ -184,6 +185,11 @@ export class AiController {
      *  Omitted ⇒ `view.structures` is undefined ⇒ byte-identical to pre-Phase-2
      *  (players-only targeting). */
     structures?: ReadonlyArray<AiStructureView>,
+    /** Leader-led flocking (non-combat herding) — resolves ANY swarm entity's
+     *  live pose into a caller-owned buffer so a follower can read its leader's
+     *  + neighbours' poses each tick. SERVER-ONLY (no client brain). Omitted ⇒
+     *  followers fall back to orbit. */
+    resolveEntityInto?: (id: string, out: AiEntityPoseOut) => boolean,
   ): void {
     if (this.entities.size === 0) return;
     // NOTE: this `{ players, tick, dtSec }` literal is the ONE remaining
@@ -195,7 +201,7 @@ export class AiController {
     // every behaviour. The 60/sec rate is negligible vs the rest of
     // the engine; leave as-is. See `swarmEntitySnapshot` doc for the
     // full GC-pressure story.
-    const view: AiWorldView = { players, structures, tick, dtSec };
+    const view: AiWorldView = { players, structures, tick, dtSec, resolveEntityInto };
     for (const [id, reg] of this.entities) {
       this.runEntity(id, reg, view, tick, entitySnapshot);
     }

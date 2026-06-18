@@ -68,6 +68,27 @@ export interface AiWorldView {
   /** Current server tick. Behaviours use this for cooldowns. */
   readonly tick: number;
   readonly dtSec: number;
+  /**
+   * Resolve ANOTHER swarm entity's LIVE pose into a caller-owned buffer
+   * (returns false if it's gone). The leader-led flocking behaviour uses this
+   * to read its leader's + squad-neighbours' current poses every tick — the
+   * thing the fixed-wedge-slot scheme couldn't do (it only had a 1.5 s stale
+   * point). **SERVER-ONLY, no wire surface** (same rationale as `structures`
+   * above — the client runs no drone brain). MUST write into the passed `out`,
+   * never a shared scratch the caller's `self` aliases. Absent ⇒ no flocking
+   * data (the behaviour falls back to patrol). */
+  resolveEntityInto?(id: string, out: AiEntityPoseOut): boolean;
+}
+
+/** Mutable pose buffer for `AiWorldView.resolveEntityInto` (caller-owned, so
+ *  resolving a neighbour never clobbers the brain's own `self`). */
+export interface AiEntityPoseOut {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  angvel: number;
 }
 
 /** The AI's own pose for this tick. */
@@ -139,6 +160,16 @@ export interface IAiBehaviour {
    */
   setMoveTarget?(x: number, y: number): void;
   clearMoveTarget?(): void;
+  /**
+   * Leader-led flocking (non-combat herding). The `LivingWorldDirector` marks
+   * one squad member the LEADER (given a course via `setMoveTarget`) and calls
+   * this on every OTHER member with the leader's id + the squad's member ids.
+   * While IDLE the follower flocks (cohesion/alignment/separation) to the
+   * leader's LIVE pose (resolved each tick via `AiWorldView.resolveEntityInto`)
+   * instead of chasing a stale wedge slot. SERVER-ONLY (no client brain ⇒ no
+   * lockstep surface / wire bump). `setMoveTarget` clears the follower role
+   * (you're a leader/independent mover); `clearMoveTarget` reverts to orbit. */
+  setFlockFollow?(leaderId: string, memberIds: readonly string[]): void;
 }
 
 /** Returns the nearest player to (x, y), or null when no players are present. */

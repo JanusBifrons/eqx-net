@@ -37,12 +37,6 @@ import {
 import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
-import {
-  formationSlotOffset,
-  formationSlotWorldPose,
-  makeSlotOffset,
-  type WorldPoint,
-} from '../../core/ai/formation.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
 import { HunterBotPool, type BotRecord, type DirectorSnapshot } from './director/HunterBotPool.js';
 import { HunterBotWarpController } from './director/HunterBotWarpController.js';
@@ -210,15 +204,18 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   waveMaxAttackMs: 180_000,
 };
 
-/** Roaming-formation (Phase 5) tunables. Half-extent (game units) of the box
- *  the leader's in-sector A→B destinations are drawn from — well inside the
- *  ±5000 sector bounds and around the spawn zone so the squad stays readable. */
+/** Leader-course tunables (non-combat herding). Half-extent (game units) of the
+ *  box the LEADER's in-sector A→B course points are drawn from — well inside the
+ *  ±5000 sector bounds + around the spawn zone so the herd stays readable. */
 const FORMATION_DEST_RANGE = 2000;
-/** Re-pick the squad destination once the leader is within this distance of it
- *  (so the formation continuously flies new A→B legs rather than parking). */
+/** Re-pick the leader's course once it's within this distance of it (so the herd
+ *  continuously flies new A→B legs rather than parking). */
 const FORMATION_DEST_ARRIVE = 250;
-/** World-unit spacing between adjacent formation slots (a Legionnaire wedge). */
-const FORMATION_SPACING = 140;
+/** Angular spread (rad) around the "fly to the far side" bearing for course
+ *  variety. The leader always aims roughly ACROSS the central zone (opposite its
+ *  current bearing) so every leg is LONG — otherwise a random absolute point can
+ *  land next to the leader and it just mills in place (the milling bug). */
+const FORMATION_LEG_SPREAD = Math.PI / 2;
 
 /** Throttle (ms) for the director's crash-defence state persist inside the
  *  control loop — matches the 60 s sector-snapshot cadence. The PRIMARY persist
@@ -254,13 +251,12 @@ export class LivingWorldDirector {
   /** squadId → wall-clock the squad may next pick a new roam goal (the
    *  slow-roam dwell). Idle squads drift one roam hop per `roamIntervalMs`. */
   private readonly squadRoamNextAtMs = new Map<string, number>();
-  /** Roaming-formation (Phase 5): squadId → the squad's current IN-SECTOR A→B
-   *  destination (the leader flies to it; followers fly their formation slots).
-   *  Re-picked once the leader arrives. Reused scratch keeps the step alloc-free. */
+  /** Non-combat herding: squadId → the LEADER's current IN-SECTOR A→B course
+   *  point (the leader cruises to it; followers flock to the leader). Re-picked
+   *  once the leader arrives. */
   private readonly squadFormationDest = new Map<string, { x: number; y: number }>();
+  /** Reused scratch for the active-members-in-sector list (alloc-free). */
   private readonly _formationMembers: string[] = [];
-  private readonly _slotOffset = makeSlotOffset();
-  private readonly _slotWorld: WorldPoint = { x: 0, y: 0 };
   /** Per-room (bus, handler) pairs for clean teardown. */
   private readonly subs: Array<{
     bus: Bus;
@@ -456,8 +452,9 @@ export class LivingWorldDirector {
     // ── 2b. roam idle/unassigned squads (the ambient floor replacement) ──
     this.roamStep(now);
 
-    // ── 2b-ii. fly gathered idle squads in formation toward in-sector A→B ──
-    this.formationStep();
+    // ── 2b-ii. herd gathered idle squads: leader cruises a course, the rest
+    //          FLOCK to it (continuous boids in the drone brain) ──
+    this.flockStep();
 
     // ── 2c. clear "incoming" banners for squads that have arrived ────────
     this.reconcileIncoming();
@@ -618,29 +615,32 @@ export class LivingWorldDirector {
   }
 
   /**
-   * Roaming-formation (Phase 5 / playtest "AI bots which are 'roaming' just sort
-   * of sit there… make a formation and set arbitrary A-to-B destinations and fly
-   * in formation"). For every IDLE, unassigned squad whose active members are
-   * gathered in one sector, designate a leader, fly it toward an arbitrary
-   * in-sector A→B destination, and place each follower in a wedge slot relative
-   * to the leader's live pose (so the wedge faces the travel direction). The
-   * drones' `HostileDroneBehaviour` `arrive`s at the slot and slows to a stop.
+   * Non-combat herding ("AI bots which are 'roaming' just sit there… designate a
+   * leader given a course, then use flocking/herding to guide the rest").
+   * Replaces the old fixed-wedge-slot scheme (which assigned each follower a
+   * STATIC world point every ~1.5 s and `arrive`d/STOPPED at it — a static blob,
+   * not a formation). For every IDLE, unassigned squad gathered in one sector,
+   * designate the first active member the LEADER, cruise it along a wandering
+   * in-sector A→B course, and mark every OTHER member a FOLLOWER that FLOCKS to
+   * the leader.
    *
-   * Members stay together, so the squad gathers + spools + warps as ONE unit
-   * (the roam hop in `roamStep` only fires once gathered, and starts every
-   * member's transit in the same control tick).
+   * THE STEERING IS PER-TICK IN THE DRONE BRAIN (60 Hz, `HostileDroneBehaviour.
+   * tickFlock`): continuous cohesion/alignment/separation against the leader's +
+   * neighbours' LIVE poses. This method only assigns ROLES at the control-loop
+   * cadence (1.5 s is fine for ROLE assignment — only the steering must be 60 Hz,
+   * which is exactly why the old slot-at-1.5 s scheme failed).
    *
-   * Combat overrides this: a hostile (waved) drone is in COMBAT state and never
-   * reads the move target, so a squad under attack pursues normally.
+   * Combat overrides this: a hostile (waved) drone is in COMBAT and never reads
+   * the flock role, so a squad under attack pursues normally.
    */
-  private formationStep(): void {
+  private flockStep(): void {
     for (const sq of this.squadPool.all()) {
       if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
       const room = this.rooms.get(sq.sectorKey);
       if (!room) continue;
 
       // Active members present in this sector, in stable botIds order so the
-      // leader + slot assignment is deterministic.
+      // leader designation is deterministic.
       const members = this._formationMembers;
       members.length = 0;
       for (const botId of sq.botIds) {
@@ -653,27 +653,33 @@ export class LivingWorldDirector {
       const leaderPose = room.getBotPose(leaderId);
       if (!leaderPose) continue;
 
-      // Pick / refresh the squad's in-sector destination: a fresh random A→B
-      // point once the leader has arrived (or if it has none yet).
+      // Pick / refresh the leader's COURSE once it has (nearly) arrived (or has
+      // none yet). Aim ACROSS the central zone — a point on the radius-RANGE ring
+      // roughly OPPOSITE the leader's current bearing (± a spread for variety) —
+      // so every leg is LONG and the leader genuinely CRUISES (the herd flies
+      // with it) instead of milling near a randomly-close point.
       let dest = this.squadFormationDest.get(sq.squadId);
       if (
         dest === undefined ||
         Math.hypot(dest.x - leaderPose.x, dest.y - leaderPose.y) < FORMATION_DEST_ARRIVE
       ) {
+        const awayAng =
+          Math.atan2(leaderPose.y, leaderPose.x) + Math.PI + (this.rng() - 0.5) * FORMATION_LEG_SPREAD;
         dest = {
-          x: (this.rng() * 2 - 1) * FORMATION_DEST_RANGE,
-          y: (this.rng() * 2 - 1) * FORMATION_DEST_RANGE,
+          x: Math.cos(awayAng) * FORMATION_DEST_RANGE,
+          y: Math.sin(awayAng) * FORMATION_DEST_RANGE,
         };
         this.squadFormationDest.set(sq.squadId, dest);
       }
 
-      // Leader chases the destination; followers chase their wedge slot rotated
-      // into the leader's frame (so the formation faces the travel direction).
+      // Leader cruises its course; every other member FLOCKS to it (continuous
+      // boids in the brain, resolved against the leader's LIVE pose — not a stale
+      // slot). `members` includes the leader; the follower brain skips self + the
+      // leader in its separation loop. Passing the reused `members` array is safe
+      // — `setFlockFollow` copies it synchronously.
       room.setBotMoveTarget(leaderId, dest.x, dest.y);
       for (let i = 1; i < members.length; i++) {
-        formationSlotOffset('wedge', i, members.length, FORMATION_SPACING, this._slotOffset);
-        formationSlotWorldPose(leaderPose.x, leaderPose.y, leaderPose.angle, this._slotOffset, this._slotWorld);
-        room.setBotMoveTarget(members[i]!, this._slotWorld.x, this._slotWorld.y);
+        room.setBotFlockFollow(members[i]!, leaderId, members);
       }
     }
   }
