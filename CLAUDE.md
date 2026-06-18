@@ -153,6 +153,14 @@ gh pr create --base main --head <branch> --title "…" --body-file diag/_pr-body
 gh pr checks <n>   # CI status; gh pr view/edit/list/diff also fine
 ```
 
+**Keep the branch synced with `main` — sync BEFORE every push + PR (2026-06-18, user process directive).** A branch cut off an older `main` goes stale the instant another PR merges, so the user repeatedly hits GitHub's "Update branch" gate before merge. Avoid it:
+
+1. **Cut every new branch off a freshly-fetched `main`:** `git fetch origin && git checkout -b <branch> origin/main`.
+2. **Sync `main` in right before `git push -u` + `gh pr create`:** `git fetch origin && git merge --no-edit origin/main`, then **re-run the inner loop** (`pnpm typecheck && pnpm lint && pnpm test`) since the merge can change behaviour.
+3. **Re-sync just before the PR is actually merged** — and for a STACK of related PRs, **re-sync each remaining branch after any one of them merges** (merging A staleness B/C). A quick `git fetch && git rev-list --count origin/<branch>..origin/main` tells you if a branch is behind (0 ⇒ current).
+
+Use `git merge` (not `rebase`) for an already-pushed PR branch so no force-push is needed; `rebase` is fine only for an unpushed, clean branch. This is the standing default now — don't wait for the user to ask for an "update branch".
+
 Fallback (only if gh's token rotates / loses scope): the REST scripts via git's GCM credential — `diag/adb-shots/_create-*.mjs` (`POST /repos/JanusBifrons/eqx-net/pulls`) + `_edit-pr<n>.mjs` (`PATCH /…/pulls/<n>`); token = `printf 'protocol=https\nhost=github.com\n\n' | git credential fill | sed -n 's/^password=//p'` → `Authorization: Bearer`. These need only `repo`, so they work even without read:org. (History: before the refresh, gh's GraphQL commands — list/edit/status/create — failed with `requires read:org`; the REST scripts were the workaround.)
 
 Other notes:
