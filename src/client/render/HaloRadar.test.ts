@@ -5,6 +5,7 @@ import {
   lerp,
   wedgeIndex,
   partitionAndGroupCandidates,
+  haloContactKind,
   type HaloProjectionParams,
   type Candidate,
 } from './HaloRadar';
@@ -119,6 +120,23 @@ describe('HaloRadar projectArrow', () => {
     const proj = projectArrow({ x: 1000, y: 500 }, { x: 1600, y: 500 }, baseParams);
     expect(proj.hidden).toBe(false);
     expect(proj.theta).toBeCloseTo(0); // east bearing in world space
+  });
+});
+
+describe('HaloRadar haloContactKind (Phase 2 #4 — include/exclude + classify)', () => {
+  it('EXCLUDES asteroids (kind 0) and scrap (kind 3)', () => {
+    expect(haloContactKind(0, false)).toBeNull();
+    expect(haloContactKind(3, false)).toBeNull();
+  });
+  it('classifies a drone (kind 1) by hostility', () => {
+    expect(haloContactKind(1, true)).toBe('hostile');
+    expect(haloContactKind(1, false)).toBe('neutral');
+  });
+  it('classifies a structure (kind 2) as structure', () => {
+    expect(haloContactKind(2, false)).toBe('structure');
+  });
+  it('excludes any unknown kind by default', () => {
+    expect(haloContactKind(7, false)).toBeNull();
   });
 });
 

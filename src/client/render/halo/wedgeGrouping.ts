@@ -5,6 +5,8 @@
  * god-file refactor plan (`docs/plans/refactor-god-files.md`, commit 7).
  */
 
+import type { EntityKind } from '../entityVisuals.js';
+
 // Phase D: angular bucket size for wedge grouping. 24 wedges around the
 // full ring at 15° each.
 const RADAR_WEDGE_DEG = 15;
@@ -26,6 +28,11 @@ export interface Candidate {
   y: number;
   color: number;
   dist: number;
+  /** Equinox Tweaks Phase 2 (#4) — the shared entity VISUAL LANGUAGE kind
+   *  (`entityVisuals.ts`) the radar draws this contact as (hostile/neutral/ship/
+   *  structure). Optional so non-radar callers + the unit tests can omit it; the
+   *  radar always sets it and the wedge representative inherits it. */
+  kind?: EntityKind;
   /** Whether this entry should render with the hostile glow + bright
    *  stroke. Defaults to false; set true by the radar for drones the
    *  client AI currently treats as hostile to the local player. */
@@ -143,9 +150,10 @@ export function partitionAndGroupCandidates(
         rep.dist = c.dist;
         rep.grouped = true;
       }
-      // hostile is optional — assign directly (set to false when absent
-      // so a stale `true` from a prior tick doesn't leak through).
+      // hostile + kind are optional — assign directly (clear when absent so a
+      // stale value from a prior tick doesn't leak through the reused slot).
       rep.hostile = c.hostile ?? false;
+      rep.kind = c.kind;
       result.push(rep);
       repIdx++;
     } else {
@@ -155,6 +163,7 @@ export function partitionAndGroupCandidates(
         y: c.y,
         color: c.color,
         dist: c.dist,
+        kind: c.kind,
         hostile: c.hostile,
         grouped: true,
       });
