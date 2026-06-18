@@ -1663,7 +1663,7 @@ export class PixiRenderer implements IRenderer {
 
     if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
-        this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct);
+        this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct, hb.preHealthPct);
       }
       mirror.pendingHealthBarHits.length = 0;
     } else if (this._healthBarsDisabled && mirror.pendingHealthBarHits) {
