@@ -248,7 +248,7 @@ reintroduces the spiral the 500-target cannot afford. Full story:
 ## What belongs in src/core
 
 - Pure simulation: physics, AI behaviour trees, combat math, reconciliation.
-- AI steering + formation primitives (`src/core/ai/steering.ts`, `src/core/ai/formation.ts`, Phase 5 WS-4): pure `arrive`/`seek` (heading + a thrust scale that ramps to 0 within a slow radius so per-kind damping brakes the body to a stop) + wedge/line/column slot geometry with leader-frame rotation (ship-angle convention `(-sin θ, cos θ)`, mirror-safe asymmetric offsets). Scalar in / caller-owned out (alloc-free). Consumed by `HostileDroneBehaviour`'s IDLE move-target path; the server `LivingWorldDirector` flies roaming squads in formation through these. See `src/server/CLAUDE.md` "In-sector squad formation".
+- AI steering + flocking + formation primitives (`src/core/ai/steering.ts`, `src/core/ai/flocking.ts`, `src/core/ai/formation.ts`): pure `arrive`/`seek` (heading + a thrust scale that ramps to 0 within a slow radius so per-kind damping brakes the body to a stop); **flocking/boids** (`flocking.ts`, 2026-06-18) — `addCohesion`/`addAlignment`/`addSeparation` accumulate into a caller-owned `FlockAccumulator`, `resolveFlock` → unit dir + thrust scale, all alloc-free, the FEEL constants (`FLOCK_*`) exported; and wedge/line/column slot geometry (`formation.ts`, leader-frame rotation, ship-angle convention `(-sin θ, cos θ)` — now UNUSED, kept for a future rigid-formation mode). Scalar in / caller-owned out (alloc-free). The non-combat roaming squads use `flocking.ts` via `HostileDroneBehaviour.tickFlock` (leader-led herd + boost catch-up); see `src/server/CLAUDE.md` "In-sector squad herding — leader + FLOCKING".
 - Event bus definition.
 - DI contracts.
 - Shared math utilities.

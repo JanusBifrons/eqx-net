@@ -20,7 +20,7 @@
  */
 
 import type { AiController } from '../../core/ai/AiController.js';
-import type { AiPlayerView, AiStructureView, AiEntity } from '../../core/contracts/IAiBehaviour.js';
+import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '../../core/contracts/IAiBehaviour.js';
 import type { PoseRecord } from './SabPoseMirror.js';
 
 export interface AiFireRequest {
@@ -46,6 +46,10 @@ export interface AiTickCtx {
    *  targeting (byte-identical to pre-wave). */
   fillStructureTargets?: (out: AiStructureView[]) => void;
   swarmEntitySnapshot: (id: string) => AiEntity | null;
+  /** Leader-led flocking — resolve ANY swarm entity's live pose into a caller-
+   *  owned buffer (server-only; no client brain). Feeds a follower its leader's
+   *  + neighbours' live poses each tick. */
+  resolveEntityInto: (id: string, out: AiEntityPoseOut) => boolean;
   handleAiFire: (shooterId: string, dirX: number, dirY: number, tick: number) => void;
   /** Phase-time callback — fires for 'aiTick' after the controller tick
    *  and 'aiFire' after the fire pipeline drains. */
@@ -77,6 +81,7 @@ export function runAiTick(ctx: AiTickCtx): void {
   }
   ctx.aiController.tick(
     ctx.serverTick, 1 / 60, ctx.aiPlayerScratch, ctx.swarmEntitySnapshot, structures,
+    ctx.resolveEntityInto,
   );
   ctx.phaseTime('aiTick');
 

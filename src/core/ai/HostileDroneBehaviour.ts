@@ -8,6 +8,20 @@ import { getWeapon, type WeaponMode } from '../combat/WeaponCatalogue.js';
 import { getShipKind, type ShipKind } from '../../shared-types/shipKinds.js';
 import { pickTarget, type MountTargetView } from './WeaponMountController.js';
 import { arrive, makeSteerOutput, type SteerOutput } from './steering.js';
+import {
+  type FlockAccumulator,
+  type FlockOutput,
+  makeFlockAccumulator,
+  makeFlockOutput,
+  resetFlock,
+  addCohesion,
+  addAlignment,
+  addSeparation,
+  resolveFlock,
+  FLOCK_FOLLOW_DISTANCE,
+  FLOCK_BOOST_GAP_FACTOR,
+} from './flocking.js';
+import type { AiEntityPoseOut } from '../contracts/IAiBehaviour.js';
 
 /** Aim cone (radians). Drones won't fire unless their nose is within this many radians of the target. */
 const DRONE_AIM_TOLERANCE = 0.25; // ~14°
@@ -100,6 +114,20 @@ export class HostileDroneBehaviour implements IAiBehaviour {
   private moveTarget: { x: number; y: number } | null = null;
   /** Reused arrive() output (alloc-free hot path, invariant #14). */
   private readonly _steerScratch: SteerOutput = makeSteerOutput();
+
+  /** Leader-led flocking (non-combat herding). When `leaderId !== null` this
+   *  drone is a FOLLOWER and flocks to the leader's live pose each tick instead
+   *  of orbiting / chasing a static slot. Set by the director via
+   *  `setFlockFollow`; cleared by `setMoveTarget` (leader role) / `clearMoveTarget`. */
+  private leaderId: string | null = null;
+  /** Squad member ids for the separation rule. Owned (copied on assignment) so
+   *  the director may reuse its source array. */
+  private readonly _flockMemberIds: string[] = [];
+  /** Alloc-free flocking scratch (invariant #14) — all allocated once here. */
+  private readonly _flockAcc: FlockAccumulator = makeFlockAccumulator();
+  private readonly _flockOut: FlockOutput = makeFlockOutput();
+  private readonly _leaderScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
+  private readonly _neighborScratch: AiEntityPoseOut = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 
   // ── Phase 1: hostility / state machine ────────────────────────────────
   /** Behaviour state. Driven by `markHostile`/`purgeHostility` external
@@ -296,10 +324,14 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (this.hostileTo.size === 0) this.state = 'IDLE';
     }
 
-    // 2) IDLE → patrol. Behaviour returns deterministic intent purely from
-    //    `self`, so server and client AI controllers produce identical
-    //    outputs when given the same drone pose (lockstep-safe).
-    if (this.state === 'IDLE') return this.tickPatrol(self);
+    // 2) IDLE → flock (follower) or patrol (leader / lone drone). A FOLLOWER
+    //    (leaderId set by the director) herds to its leader's LIVE pose via
+    //    continuous flocking; everyone else patrols (the leader follows its
+    //    `moveTarget` course; a lone drone orbits). Server-only — the client
+    //    never ticks the drone brain.
+    if (this.state === 'IDLE') {
+      return this.leaderId !== null ? this.tickFlock(self, view) : this.tickPatrol(self);
+    }
 
     // 3) COMBAT — pick the *hostile* player to engage. Non-hostile players
     //    are invisible to a drone in combat (so a bystander flying through
@@ -581,16 +613,31 @@ export class HostileDroneBehaviour implements IAiBehaviour {
    * Linear ramp inside `±TURN_RAMP_WINDOW` so the drone slows into
    * the bearing instead of overshooting.
    */
-  /** Roaming-formation (Phase 5): set/clear the in-sector move target. The
-   *  director re-issues this each control tick (followers chase a slot that
-   *  moves with the leader; the leader chases the squad destination). */
+  /** Set/clear the in-sector move target — the LEADER's course (or a lone
+   *  drone's destination). Setting a course clears any FOLLOWER role (you lead /
+   *  move independently now), so a former follower promoted to leader stops
+   *  flocking. The director re-issues the course each control tick. */
   setMoveTarget(x: number, y: number): void {
+    this.leaderId = null;
     if (this.moveTarget === null) this.moveTarget = { x, y };
     else { this.moveTarget.x = x; this.moveTarget.y = y; }
   }
 
   clearMoveTarget(): void {
     this.moveTarget = null;
+    this.leaderId = null;
+  }
+
+  /** Leader-led flocking (non-combat herding): mark this drone a FOLLOWER of
+   *  `leaderId`, herding to the leader's LIVE pose via cohesion/alignment/
+   *  separation each tick (vs the old static wedge slot). `memberIds` (the
+   *  squad) drives the separation rule. Copied into an owned buffer so the
+   *  director may reuse its source array. Clears any leader course. */
+  setFlockFollow(leaderId: string, memberIds: readonly string[]): void {
+    this.leaderId = leaderId;
+    this.moveTarget = null;
+    this._flockMemberIds.length = 0;
+    for (let i = 0; i < memberIds.length; i++) this._flockMemberIds.push(memberIds[i]!);
   }
 
   /** Steer to (tx, ty) with an arrive ramp: turn toward it, thrust forward
@@ -616,6 +663,75 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const fwdX = -Math.sin(self.angle);
     const fwdY = Math.cos(self.angle);
     const thrustMag = this.kind.ai.thrust * steer.thrustScale;
+    out.fx = fwdX * thrustMag;
+    out.fy = fwdY * thrustMag;
+    return out;
+  }
+
+  /**
+   * Leader-led flocking (non-combat herding) — the FOLLOWER path. Continuously
+   * steer toward a boids blend resolved against LIVE poses every tick: COHESION
+   * toward the squad CENTROID (bunches the herd), ALIGNMENT with the leader's
+   * heading (the herd flies as one along the leader's course), and SEPARATION
+   * from squad neighbours (holds spacing). Unlike `tickMoveTo` it never brakes to
+   * a stop — alignment is a constant push so the follower keeps pace; a follower
+   * that falls well behind BOOSTS (below). Falls back to orbit when the leader/
+   * resolver is gone.
+   */
+  private tickFlock(self: AiEntity, view: AiWorldView): AiIntent {
+    const resolve = view.resolveEntityInto;
+    const out = this._intentScratch;
+    out.torque = 0;
+    out.fire = undefined;
+    // Need the leader's live pose; without it (gone / no resolver) → orbit.
+    if (!resolve || this.leaderId === null || !resolve(this.leaderId, this._leaderScratch)) {
+      return this.tickPatrol(self);
+    }
+    const leaderX = this._leaderScratch.x;
+    const leaderY = this._leaderScratch.y;
+    const acc = this._flockAcc;
+    resetFlock(acc);
+    // COHESION toward the leader (its position is the herd's anchor — followers
+    // bunch AROUND it). SEPARATION from every squad neighbour (incl. the leader)
+    // so they cluster around it at a spacing rather than piling on. ALIGNMENT
+    // with the leader's heading so the herd flies the course as one. Cohesion +
+    // boost both reference the LEADER, so a lagging follower boosts TOWARD it.
+    addCohesion(acc, self.x, self.y, leaderX, leaderY);
+    for (let i = 0; i < this._flockMemberIds.length; i++) {
+      const mid = this._flockMemberIds[i]!;
+      if (mid === self.id) continue;
+      const mx = mid === this.leaderId ? leaderX : (resolve(mid, this._neighborScratch) ? this._neighborScratch.x : NaN);
+      if (Number.isNaN(mx)) continue;
+      const my = mid === this.leaderId ? leaderY : this._neighborScratch.y;
+      addSeparation(acc, self.x, self.y, mx, my);
+    }
+    addAlignment(acc, this._leaderScratch.angle);
+    const flock = resolveFlock(acc, this._flockOut);
+    if (flock.thrustScale <= 1e-4) {
+      out.fx = 0;
+      out.fy = 0;
+      out.setAngvel = 0;
+      return out;
+    }
+    const desiredAngle = Math.atan2(-flock.dirX, flock.dirY);
+    out.setAngvel = this.angvelTarget(desiredAngle - self.angle);
+    const fwdX = -Math.sin(self.angle);
+    const fwdY = Math.cos(self.angle);
+    // BOOST to catch up (the drone analogue of a player holding boost). The AI
+    // cruise impulse (`ai.thrust`) is far below a player's, so a follower that
+    // has fallen well behind its leader can't close the gap on the calm cruise
+    // alone — when it's beyond the boost gap it applies the kind's REAL
+    // player-boost impulse (`thrustImpulse × boostMultiplier`), exactly what a
+    // player gets. In formation it drops back to the gentle roam cruise. The
+    // boost rides the follower's facing, which `setAngvel` is already turning
+    // toward the leader, so it closes the gap.
+    const leaderDx = this._leaderScratch.x - self.x;
+    const leaderDy = this._leaderScratch.y - self.y;
+    const gap = Math.hypot(leaderDx, leaderDy);
+    const thrustMag =
+      gap > FLOCK_FOLLOW_DISTANCE * FLOCK_BOOST_GAP_FACTOR
+        ? this.kind.thrustImpulse * this.kind.boostMultiplier
+        : this.kind.ai.thrust * flock.thrustScale;
     out.fx = fwdX * thrustMag;
     out.fy = fwdY * thrustMag;
     return out;

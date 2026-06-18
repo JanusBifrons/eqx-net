@@ -98,6 +98,11 @@ export interface LivingWorldRoom {
    *  IDLE behaviour flies to it via an arrive ramp. No-op if the bot isn't an
    *  in-sector drone here. */
   setBotMoveTarget(botId: string, x: number, y: number): void;
+  /** Leader-led flocking (non-combat herding): mark a bot a FOLLOWER of
+   *  `leaderId`; while IDLE it flocks (cohesion/alignment/separation) to the
+   *  leader's LIVE pose each tick (`memberIds` drive separation), instead of a
+   *  static wedge slot. No-op if the bot isn't an in-sector drone here. */
+  setBotFlockFollow(botId: string, leaderId: string, memberIds: readonly string[]): void;
   /** Wave-system Phase 4 — per-faction base summary for wave planning. Empty on
    *  engineering rooms (`sectorKey === null`; waves are galaxy-only). */
   factionBaseReadiness(): FactionBaseReadiness[];
