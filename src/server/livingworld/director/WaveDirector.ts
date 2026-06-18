@@ -13,6 +13,15 @@
  * De-escalation (req #8) is computed here from the pure `shouldDeEscalate`
  * (no surviving miners AND peaceful past the timeout) — a squad whose faction
  * de-escalated gets a `retreat` step.
+ *
+ * Phase-1 issue 4 — TIME-BOXED waves (2026-06-18). A 12 h playtest audit showed
+ * waves NEVER resolved (`wave_repelled=0`): a base turret keeps the faction "at
+ * war" so de-escalation can't fire, and killed wave members respawn at the
+ * galaxy edge and trickle back, so a single squad ground on indefinitely and no
+ * second wave was ever dispatched (one perpetual grind, not phased squad
+ * assaults). A wave now also `retreat`s after `waveMaxAttackMs` of attacking —
+ * a discrete PHASE — which frees the faction so the existing dispatch cadence
+ * sends a FRESH squad next phase.
  */
 
 import { shouldDeEscalate, FACTION_PEACEFUL_TIMEOUT_TICKS } from '../../../core/faction/Faction.js';
@@ -42,10 +51,19 @@ export interface WaveDirectorOptions {
    *  so a base that's been ready a long time isn't swarmed (drone-warp-in
    *  design: "one squad per ~5 min"). Defaults to 5 min. */
   dispatchIntervalMs?: number;
+  /** Phase-1 issue 4 — max wall-clock a squad stays `attacking` before the wave
+   *  falls back (resolves). Bounds an assault to a discrete PHASE so the faction
+   *  is freed for a fresh squad on the dispatch cadence. Defaults to 3 min (a
+   *  FEEL knob — verify on-device). */
+  waveMaxAttackMs?: number;
 }
 
 /** Default dispatch cadence: one squad per ready faction per 5 minutes. */
 export const DEFAULT_DISPATCH_INTERVAL_MS = 300_000;
+
+/** Default max attack duration before a wave falls back (phased assaults). Must
+ *  be < the dispatch cadence so a lull separates phases. Feel knob. */
+export const DEFAULT_WAVE_MAX_ATTACK_MS = 180_000;
 
 export class WaveDirector {
   private readonly rooms: Map<string, LivingWorldRoom>;
@@ -55,11 +73,15 @@ export class WaveDirector {
   private readonly pattern: WavePattern;
   private readonly peacefulTimeoutTicks: number;
   private readonly dispatchIntervalMs: number;
+  private readonly waveMaxAttackMs: number;
   /** factionId → wave count (for the WavePattern; v1 unused beyond 1). */
   private readonly waveCount = new Map<string, number>();
   /** factionId → wall-clock of the last squad dispatch against it (the
    *  ≤1-per-`dispatchIntervalMs` rate cap anchor). */
   private readonly lastDispatchAtMs = new Map<string, number>();
+  /** squadId → wall-clock it ENTERED `attacking` (the time-box anchor). Set the
+   *  first plan() tick a squad is seen attacking; cleared when it leaves. */
+  private readonly attackStartedAtMs = new Map<string, number>();
 
   constructor(opts: WaveDirectorOptions) {
     this.rooms = opts.rooms;
@@ -69,6 +91,7 @@ export class WaveDirector {
     this.pattern = opts.pattern;
     this.peacefulTimeoutTicks = opts.peacefulTimeoutTicks ?? FACTION_PEACEFUL_TIMEOUT_TICKS;
     this.dispatchIntervalMs = opts.dispatchIntervalMs ?? DEFAULT_DISPATCH_INTERVAL_MS;
+    this.waveMaxAttackMs = opts.waveMaxAttackMs ?? DEFAULT_WAVE_MAX_ATTACK_MS;
   }
 
   /**
@@ -115,7 +138,14 @@ export class WaveDirector {
 
     const steps: WaveStep[] = [];
     for (const sq of this.squadPool.all()) {
-      const ctx = this.buildContext(sq, readiness);
+      // Maintain the per-squad attack time-box anchor: stamp the first tick it's
+      // seen attacking; clear it the moment it leaves (retreat / idle / re-warp).
+      if (sq.state === 'attacking') {
+        if (!this.attackStartedAtMs.has(sq.squadId)) this.attackStartedAtMs.set(sq.squadId, nowMs);
+      } else {
+        this.attackStartedAtMs.delete(sq.squadId);
+      }
+      const ctx = this.buildContext(sq, readiness, nowMs);
       const action = this.behaviour.decide(sq, ctx);
       switch (action.kind) {
         case 'hold':
@@ -208,6 +238,7 @@ export class WaveDirector {
   private buildContext(
     sq: SquadRecord,
     readiness: Map<string, FactionBaseReadiness>,
+    nowMs: number,
   ): { membersInSector: number; membersActive: number; factionStillHostile: boolean } {
     const isActive = (botId: string): boolean => this.hunterPool.get(botId)?.state === 'active';
     const isActiveInSector = (botId: string): boolean => {
@@ -240,7 +271,20 @@ export class WaveDirector {
             peacefulTimeoutTicks: this.peacefulTimeoutTicks,
           },
         );
-        factionStillHostile = !deescalated;
+        // Phase-1 issue 4 — TIME-BOX the assault into a discrete PHASE. The audit
+        // log (12 h playtest) showed waves NEVER resolved (wave_repelled=0): a
+        // dispatched squad's killed members respawn at the galaxy edge and trickle
+        // back, so the wave self-heals forever, the faction stays `assigned`, and
+        // no second wave is ever dispatched — one squad grinding indefinitely
+        // instead of phased squad assaults. After `waveMaxAttackMs` of attacking
+        // the wave falls back; the faction is freed and the existing dispatch
+        // cadence sends a FRESH squad next phase (de-escalation stays a fallback).
+        const attackStart = this.attackStartedAtMs.get(sq.squadId);
+        const timedOut =
+          sq.state === 'attacking' &&
+          attackStart !== undefined &&
+          nowMs - attackStart >= this.waveMaxAttackMs;
+        factionStillHostile = !deescalated && !timedOut;
       }
     }
     return { membersInSector, membersActive, factionStillHostile };
