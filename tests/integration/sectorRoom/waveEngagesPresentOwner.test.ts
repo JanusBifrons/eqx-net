@@ -94,4 +94,57 @@ describe('SectorRoom integration — a wave engages the PRESENT base owner (Phas
     // And the squad genuinely reached the attacking state (not a stray aggro).
     expect(h.director.squadSnapshot().byState.attacking).toBeGreaterThan(0);
   }, 30_000);
+
+  it('a MULTI-HOP wave traverses all the way to a deep base (warp re-advances, not frozen after one hop)', async () => {
+    // The deeper half of issue 3: the live user base is sol-prime — the galaxy
+    // CENTRE, 5 hops from any edge. A wave there NEVER converged even with a fast
+    // spool, because `SquadBehaviour` only emits `warp` ONCE (idle→warping);
+    // thereafter a not-yet-arrived squad returns `hold`, which advances no
+    // members — so a multi-hop wave hops ONCE then freezes (members orbit-patrol
+    // wherever they stopped: "just sitting there, not moving toward me"). The
+    // 1-hop existing tests never caught it. This drives a 2-hop chain
+    // (greenfall entry → emerald-span → bloomgate base) with a FAST spool so it
+    // isolates the LOGIC bug (not timing): on current code the squad freezes at
+    // emerald-span and never attacks; after the fix it traverses to bloomgate.
+    const OWNER = randomUUID();
+    h = await bootLivingWorldTestServer({
+      // The ACTUAL shortest path greenfall→bloomgate is via verdance (NOT
+      // emerald-span) — boot exactly that chain so every hop has a live room.
+      // (Production has all 21 sectors live, so this is a test-topology detail.)
+      sectors: ['greenfall', 'verdance', 'bloomgate'], // entry → mid → base
+      botCount: 8,
+      seed: 7,
+      bases: [
+        {
+          sector: 'bloomgate', // 2 hops from the only entry (greenfall), via verdance
+          owner: OWNER,
+          structures: [
+            { kind: 'capital', x: 0, y: 0 },
+            { kind: 'solar', x: 250, y: 0 },
+            { kind: 'miner', x: -350, y: 0 },
+            { kind: 'turret', x: 0, y: 350 },
+          ],
+        },
+      ],
+      // Fast spool (harness default) — the bug under test is the warp-advance
+      // LOGIC, independent of the per-hop dwell.
+      director: { dispatchIntervalMs: 1, controlIntervalMs: 50 },
+    });
+
+    const ownerRoom = await h.connectActive(OWNER, 'bloomgate');
+    const aggrosAtOwner: BotAggroEvent[] = [];
+    ownerRoom.onMessage('bot_aggro', (e: BotAggroEvent) => {
+      if (e.targetPlayerId === OWNER) aggrosAtOwner.push(e);
+    });
+
+    // Current code: the wave hops greenfall→emerald-span then freezes (warping
+    // returns `hold`, nobody advances to bloomgate) ⇒ never attacking ⇒ TIMES OUT.
+    await h.waitUntil(
+      () => aggrosAtOwner.length > 0,
+      12_000,
+      'the multi-hop wave traverses to the deep base and engages the owner',
+    );
+    expect(aggrosAtOwner.length).toBeGreaterThan(0);
+    expect(h.director.squadSnapshot().byState.attacking).toBeGreaterThan(0);
+  }, 30_000);
 });
