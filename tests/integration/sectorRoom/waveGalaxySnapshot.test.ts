@@ -140,4 +140,53 @@ describe('SectorRoom integration — a wave shows as hostile on the galaxy snaps
       'enemies cleared from the galaxy snapshot after stand-down',
     );
   }, 30_000);
+
+  it('time-boxed wave RESOLVES then RE-DISPATCHES a fresh wave (Phase-1 issue 4)', async () => {
+    // The 12 h playtest audit showed waves NEVER resolved (wave_repelled=0) and
+    // each base got exactly ONE wave forever — a perpetual grind, no phased
+    // assaults. The time-box makes a wave fall back after waveMaxAttackMs (even
+    // with the base intact + miners alive), freeing the faction so the dispatch
+    // cadence sends a FRESH wave. This proves both halves end-to-end: a wave
+    // RESOLVES (wave_repelled) AND a SECOND wave dispatches (≥2 wave_dispatched).
+    clearAuditRing();
+    h = await bootLivingWorldTestServer({
+      sectors: ['greenfall', 'emerald-span'],
+      botCount: 8,
+      seed: 5,
+      bases: [
+        {
+          sector: 'emerald-span',
+          owner: OFFLINE_OWNER,
+          structures: [
+            { kind: 'capital', x: 0, y: 0 },
+            { kind: 'solar', x: 250, y: 0 },
+            { kind: 'miner', x: -350, y: 0 }, // miner ALIVE the whole test ⇒ de-escalation can't fire
+            { kind: 'turret', x: 0, y: 350 },
+          ],
+        },
+      ],
+      // Fast cycle: short attack window + immediate re-dispatch so the phase
+      // boundary + the fresh wave both land inside the test budget.
+      director: { dispatchIntervalMs: 1, controlIntervalMs: 50, spoolMs: 40, hopTravelMs: 40, waveMaxAttackMs: 400 },
+    });
+
+    // The first wave engages.
+    await h.waitUntil(
+      () => h!.director.squadSnapshot().byState.attacking > 0,
+      8000,
+      'first wave reaches attacking',
+    );
+    // It falls back after the time-box (resolves) even though the base + miner stand.
+    await h.waitUntil(
+      () => getRecentAudit().some((e) => e.event === 'wave_repelled'),
+      8000,
+      'the wave time-boxes out and falls back (resolves)',
+    );
+    // A FRESH wave re-dispatches — the "one squad forever" lock is gone.
+    await h.waitUntil(
+      () => getRecentAudit().filter((e) => e.event === 'wave_dispatched').length >= 2,
+      10000,
+      'a fresh wave re-dispatches after the phase ends',
+    );
+  }, 30_000);
 });

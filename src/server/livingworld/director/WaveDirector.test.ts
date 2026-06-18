@@ -49,6 +49,7 @@ function setup(opts: {
   readiness: FactionBaseReadiness[];
   hunterStates?: Map<string, { state: string; sectorKey: string }>;
   dispatchIntervalMs?: number;
+  waveMaxAttackMs?: number;
 }): { wave: WaveDirector; squadPool: SquadPool } {
   const squadPool = new SquadPool();
   squadPool.seed(botIds(LIVING_WORLD_SQUAD_COUNT * SQUAD_SIZE), () => 'sol-prime', () => 'fighter');
@@ -60,6 +61,7 @@ function setup(opts: {
     behaviour: new WaveSquadBehaviour(),
     pattern: new EscalatingWavePattern(),
     ...(opts.dispatchIntervalMs !== undefined ? { dispatchIntervalMs: opts.dispatchIntervalMs } : {}),
+    ...(opts.waveMaxAttackMs !== undefined ? { waveMaxAttackMs: opts.waveMaxAttackMs } : {}),
   });
   return { wave, squadPool };
 }
@@ -180,6 +182,27 @@ describe('WaveDirector — assignment + advancement', () => {
     squadPool.setState(sq, 'attacking');
     const steps = wave.plan(0);
     expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+  });
+
+  it('TIME-BOXES a wave: falls back after waveMaxAttackMs even with miners alive → retreat (issue 4)', () => {
+    // The 12 h playtest audit showed waves NEVER resolved (wave_repelled=0): with
+    // the base turret keeping the faction "at war", de-escalation can't fire, so a
+    // squad ground on forever and no second wave was dispatched. The time-box makes
+    // the assault a discrete PHASE — it falls back after waveMaxAttackMs regardless,
+    // freeing the faction for a fresh squad next dispatch cadence.
+    const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
+    const { wave, squadPool } = setup({
+      readiness: [readyFaction({ minerCount: 2, hostileToDrones: true, underWave: true })], // miners alive ⇒ de-escalation CANNOT fire
+      hunterStates: states,
+      waveMaxAttackMs: 1000,
+    });
+    const sq = squadPool.get('squad-0')!;
+    squadPool.assignTarget(sq, 'vega', 'alice');
+    squadPool.setState(sq, 'attacking');
+    // First tick stamps the attack-start; still within the window ⇒ keep attacking.
+    expect(wave.plan(0)).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    // Past the time-box ⇒ the wave falls back (resolves) so a fresh squad can come.
+    expect(wave.plan(2000)).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
   it('re-triggers: a stood-down squad re-engages when the faction rebuilds (req #8)', () => {
