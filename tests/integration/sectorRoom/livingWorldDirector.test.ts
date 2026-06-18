@@ -133,6 +133,58 @@ describe('LivingWorldDirector — multi-sector population control', () => {
     expect(sq.byState.attacking).toBe(0);
   }, 25_000);
 
+  it('a dispatched single-squad wave delivers all 8 to the base — cohesion lock (issue 4)', async () => {
+    // Phase-1 issue 4: "only 1-2 ships destroyed instead of squads of 8". The
+    // existing wave tests only assert attacking>0 / enemies>0, so a wave that
+    // delivered a TRICKLE would pass them. This asserts squad COHESION end-to-end:
+    // a dispatched squad's 8 members all traverse greenfall→emerald-span and
+    // arrive (counting DISTINCT bot ids that committed a hop INTO the base sector
+    // — the cumulative arrival signal, immune to the base turret picking arrivals
+    // off, which would deflate a simultaneous head-count).
+    //
+    // FINDING (2026-06-18): this PASSES — single-squad dispatch + traversal is
+    // HEALTHY. So the reported "1-2 ships" is NOT a single-squad bug; it's a
+    // full-pool CONTENTION / scale or dispatch-cadence symptom (7×8 bots across
+    // 21 sectors, 1-squad EscalatingWavePattern, 5-min dispatch interval). Per
+    // the doc ("the logs should be revealing") that needs runtime audit-log /
+    // contention evidence to fix safely — see the PR description. This test
+    // stands as the regression lock that the cohesive single-squad path stays
+    // healthy while that investigation continues.
+    h = await bootLivingWorldTestServer({
+      sectors: ['greenfall', 'emerald-span'],
+      botCount: 8, // one full squad (squad-0)
+      seed: 5,
+      bases: [
+        {
+          sector: 'emerald-span',
+          owner: 'offline-owner',
+          structures: [
+            { kind: 'capital', x: 0, y: 0 },
+            { kind: 'solar', x: 250, y: 0 },
+            { kind: 'miner', x: -350, y: 0 },
+            { kind: 'turret', x: 0, y: 350 },
+          ],
+        },
+      ],
+      director: { dispatchIntervalMs: 1, controlIntervalMs: 50, spoolMs: 40, hopTravelMs: 40 },
+    });
+
+    const distinctArrivals = (): number => {
+      const ids = new Set<string>();
+      for (const e of h!.events.all({ tag: 'bot_transit_commit', where: (d) => d['to'] === 'emerald-span' })) {
+        const id = (e.data['botId'] ?? e.data['id']) as string | undefined;
+        if (id) ids.add(id);
+      }
+      return ids.size;
+    };
+
+    // Wait for the wave to reach the base (at least one arrival).
+    await h.waitUntil(() => distinctArrivals() > 0, 8000, 'the wave begins arriving at the base');
+    // Then give the whole squad time to traverse the single hop.
+    await h.waitUntil(() => distinctArrivals() >= 8, 10000, 'the FULL squad of 8 reaches the base');
+    expect(distinctArrivals()).toBeGreaterThanOrEqual(8);
+  }, 35_000);
+
   it('respawns a combat-killed bot from no-origin after the delay', async () => {
     h = await bootLivingWorldTestServer({
       sectors: ['sol-prime'],

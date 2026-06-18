@@ -140,16 +140,20 @@ describe('WaveDirector — assignment + advancement', () => {
     expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
-  it('attacking squad whose faction de-escalated (no miners + peaceful) → retreat', () => {
+  it('fights to the death: keeps attacking after the Miner dies (no early retreat) — issue 4', () => {
+    // Phase-1 issue 4 "fight to the death": losing the Miner + a 60 s lull used
+    // to retreat the wave (shouldDeEscalate), so the player only bagged 1-2. Now
+    // the wave keeps attacking as long as the base EXISTS — it only stands down
+    // when the base is fully razed (see the base-vanished test below).
     const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
     const { wave, squadPool } = setup({
       readiness: [
         readyFaction({
-          ready: false, // no miner ⇒ not ready
+          ready: false, // Miner dead ⇒ not "ready", but the base still stands
           minerCount: 0,
           hostileToDrones: true,
           underWave: true,
-          lastDealtDamageTick: 0, // long ago
+          lastDealtDamageTick: 0, // long ago — would have de-escalated pre-fix
           serverTick: FACTION_PEACEFUL_TIMEOUT_TICKS + 100, // peaceful window elapsed
         }),
       ],
@@ -159,10 +163,11 @@ describe('WaveDirector — assignment + advancement', () => {
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
     const steps = wave.plan(0);
-    expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    expect(steps).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    expect(steps).not.toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
   });
 
-  it('attacking squad stays attacking while miners survive (no de-escalation)', () => {
+  it('attacking squad stays attacking while miners survive (fight continues)', () => {
     const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
     const { wave, squadPool } = setup({
       readiness: [

@@ -10,12 +10,14 @@
  * machinery out of this testable unit (mirrors how `HunterBotDistribution.plan`
  * returns migrations the director executes).
  *
- * De-escalation (req #8) is computed here from the pure `shouldDeEscalate`
- * (no surviving miners AND peaceful past the timeout) — a squad whose faction
- * de-escalated gets a `retreat` step.
+ * Stand-down (Phase-1 issue 4 — "fight to the death"): a committed wave keeps
+ * attacking until the base is fully RAZED (no constructed structures ⇒ no
+ * readiness entry) or its squad is wiped. The earlier `shouldDeEscalate`
+ * early-retreat (no surviving Miner + 60 s peaceful) made waves fly home after
+ * killing the Miner — the user's "only 1-2 destroyed / they didn't fight to the
+ * death". The retreat-on-raze path is preserved.
  */
 
-import { shouldDeEscalate, FACTION_PEACEFUL_TIMEOUT_TICKS } from '../../../core/faction/Faction.js';
 import { hopDistance } from '../population.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import type { FactionBaseReadiness, LivingWorldRoom } from '../LivingWorldRoom.js';
@@ -35,8 +37,6 @@ export interface WaveDirectorOptions {
   hunterPool: HunterBotPool;
   behaviour: SquadBehaviour;
   pattern: WavePattern;
-  /** Peaceful window (ticks) for de-escalation; defaults to the faction const. */
-  peacefulTimeoutTicks?: number;
   /** Minimum wall-clock spacing (ms) between dispatches against the SAME ready
    *  faction. The director routes at most one squad per this window at a base,
    *  so a base that's been ready a long time isn't swarmed (drone-warp-in
@@ -53,7 +53,6 @@ export class WaveDirector {
   private readonly hunterPool: HunterBotPool;
   private readonly behaviour: SquadBehaviour;
   private readonly pattern: WavePattern;
-  private readonly peacefulTimeoutTicks: number;
   private readonly dispatchIntervalMs: number;
   /** factionId → wave count (for the WavePattern; v1 unused beyond 1). */
   private readonly waveCount = new Map<string, number>();
@@ -67,7 +66,6 @@ export class WaveDirector {
     this.hunterPool = opts.hunterPool;
     this.behaviour = opts.behaviour;
     this.pattern = opts.pattern;
-    this.peacefulTimeoutTicks = opts.peacefulTimeoutTicks ?? FACTION_PEACEFUL_TIMEOUT_TICKS;
     this.dispatchIntervalMs = opts.dispatchIntervalMs ?? DEFAULT_DISPATCH_INTERVAL_MS;
   }
 
@@ -217,32 +215,15 @@ export class WaveDirector {
     const membersActive = this.squadPool.activeMemberCount(sq, isActive);
     const membersInSector = this.squadPool.activeMemberCount(sq, isActiveInSector);
 
-    let factionStillHostile = true;
-    if (sq.targetFactionId !== null) {
-      const r = readiness.get(sq.targetFactionId);
-      if (!r) {
-        // Base gone entirely (every structure destroyed) → stand down.
-        factionStillHostile = false;
-      } else {
-        const deescalated = shouldDeEscalate(
-          {
-            id: sq.targetFactionId,
-            hostileToDrones: r.hostileToDrones,
-            lastDealtDamageTick: r.lastDealtDamageTick,
-            underWave: r.underWave,
-            // shouldDeEscalate reads only lastDealtDamageTick; the base-ready
-            // one-shot is irrelevant here (the readiness entry doesn't carry it).
-            notifiedReady: false,
-          },
-          {
-            minerCount: r.minerCount,
-            nowTick: r.serverTick,
-            peacefulTimeoutTicks: this.peacefulTimeoutTicks,
-          },
-        );
-        factionStillHostile = !deescalated;
-      }
-    }
+    // Phase-1 issue 4 — "fight to the death". A committed wave stays hostile as
+    // long as the base EXISTS (any constructed structure ⇒ a readiness entry);
+    // it stands down ONLY when the base is fully RAZED (no entry) — or when its
+    // squad is wiped (handled by member counts / respawn). The old
+    // `shouldDeEscalate` early-retreat (no surviving Miner + 60 s peaceful) is
+    // gone: it made waves fly home after killing the Miner, so a player only
+    // ever bagged 1-2 before the rest left.
+    const factionStillHostile =
+      sq.targetFactionId === null ? true : readiness.has(sq.targetFactionId);
     return { membersInSector, membersActive, factionStillHostile };
   }
 }
