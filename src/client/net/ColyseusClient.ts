@@ -2101,7 +2101,15 @@ export class ColyseusGameClient {
     if (evt.shooterId === localId && this.mirror.pendingHealthBarHits) {
       const healthPct = evt.hullMax > 0 ? Math.max(0, evt.newHealth / evt.hullMax) : 0;
       const shieldPct = evt.shieldMax > 0 ? Math.max(0, evt.newShield / evt.shieldMax) : 0;
-      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct });
+      // Pre-hit HULL fraction for the chip-damage band: a HULL hit removed
+      // `damage` from hull, so health was `newHealth + damage` before it. A
+      // SHIELD hit left hull untouched ⇒ pre == post (no chip). All
+      // client-derived from the already-received DamageEvent — no wire cost.
+      const preHealthPct =
+        evt.hullMax > 0 && evt.hitLayer === 'hull'
+          ? Math.min(1, (evt.newHealth + evt.damage) / evt.hullMax)
+          : healthPct;
+      this.mirror.pendingHealthBarHits.push({ entityId: evt.targetId, healthPct, shieldPct, preHealthPct });
     }
 
     // Impact sparks — visual-effects subsystem M7 (plan wiggly-puppy).
