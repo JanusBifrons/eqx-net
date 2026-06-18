@@ -370,7 +370,16 @@ export interface RenderMirror {
    *  hull stays at 100% while shield absorbs (no per-entity HUD
    *  ShieldHullBar exists for them — the on-hit bar is the only
    *  shield-damage feedback). */
-  pendingHealthBarHits?: Array<{ entityId: string; healthPct: number; shieldPct?: number }>;
+  pendingHealthBarHits?: Array<{
+    entityId: string;
+    healthPct: number;
+    shieldPct?: number;
+    /** HULL fraction BEFORE this hit, for the Street-Fighter chip-damage
+     *  band (the lighter "recent damage" trail that drains down after the
+     *  attack stops). Client-derived from the DamageEvent (newHealth +
+     *  damage, hull hits only) — NOT on the wire. Omitted ⇒ no chip. */
+    preHealthPct?: number;
+  }>;
   /** Remote warp events (`warp_in` / `warp_out` broadcasts from the
    *  server) to play this frame. The renderer drains the array and
    *  fires `triggerWarpIn` at each `(x, y)` — same one-shot flash +

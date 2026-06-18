@@ -150,6 +150,10 @@ export interface LivingWorldOptions {
   /** Minimum spacing (ms) between squad dispatches against the SAME ready
    *  faction — the director routes ≤1 squad per this window at a base. */
   dispatchIntervalMs: number;
+  /** Phase-1 issue 4 — max ms a squad stays `attacking` before the wave falls
+   *  back (a discrete assault PHASE), freeing the faction for a fresh squad on
+   *  the next dispatch. Must be < `dispatchIntervalMs` for a lull between phases. */
+  waveMaxAttackMs: number;
 }
 
 /** Display label for a squad's homogeneous hull in the warp-in warning
@@ -184,6 +188,9 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   roamIntervalMs: 45_000,
   // One squad per ready faction per 5 min (then it traverses hop-by-hop).
   dispatchIntervalMs: 300_000,
+  // A wave falls back after 3 min of attacking (a discrete phase) so the faction
+  // is freed for a fresh squad next dispatch — phased assaults, not one grind.
+  waveMaxAttackMs: 180_000,
 };
 
 /** Roaming-formation (Phase 5) tunables. Half-extent (game units) of the box
@@ -281,6 +288,7 @@ export class LivingWorldDirector {
       behaviour: new WaveSquadBehaviour(),
       pattern: new EscalatingWavePattern(),
       dispatchIntervalMs: this.opts.dispatchIntervalMs,
+      waveMaxAttackMs: this.opts.waveMaxAttackMs,
     });
     this.incoming = new IncomingRegistry(this.rooms);
   }
