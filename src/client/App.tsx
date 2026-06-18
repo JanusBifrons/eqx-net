@@ -50,7 +50,6 @@ import { ShipStatsCard } from './components/ShipStatsCard';
 import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
-import { GridPowerReadout } from './components/GridPowerReadout';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
@@ -765,8 +764,6 @@ function GameSurface({
        *  (5) and FIRE/BOOST (10/20). Smoke handoff 2026-06-06, Issue 3:
        *  "the speed dial is in the wrong place" → bottom-right corner. */}
       <Slot anchor="bottom-right" order={1}><SpeedDialMenu /></Slot>
-      {/* Structures plan (Phase 3): grid net-power readout (top-left). */}
-      <Slot anchor="top-left" order={40}><GridPowerReadout /></Slot>
       {/* Click-to-inspect live stats (structures follow-up Item B6). Visible
        *  only while an entity is selected. WS-9 (R2.30) — WORLD-ANCHORED: rendered
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop

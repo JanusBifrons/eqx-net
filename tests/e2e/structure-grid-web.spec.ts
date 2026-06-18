@@ -3,14 +3,16 @@ import type { Browser, Page } from '@playwright/test';
 
 /**
  * Structures plan, Phase 3 — the grid, CLIENT half via the BUILD UI (single
- * placement). Placing the pre-built Capital instantly yields a powered grid with
- * a mineral bank, so the grid-power + minerals HUD readouts light up within a
- * snapshot — NO multi-second construction wait, and a SINGLE placement (the
- * place-ahead UI stacks/overlaps multiple placements, so multi-structure grids
- * are exercised by the scenario room in structure-scenario.spec.ts instead).
+ * placement). Placing the pre-built Capital instantly yields a structure swarm
+ * entity, so the Build ▸ Capital ▸ confirm flow is observable within a snapshot
+ * (the place-ahead UI stacks/overlaps multiple placements, so multi-structure
+ * grids are exercised by the scenario room in structure-scenario.spec.ts).
  *
- * Server grid maths is locked by tests/integration/sectorRoom/structure{Grid,
- * Construction}.test.ts.
+ * Phase-1 issue 7 removed the ambiguous whole-grid power/minerals HUD readout;
+ * per-structure stats now live in-world (capital minerals + battery charge Pixi
+ * Text) + the selection inspector. So this spec asserts the structure SPAWNS
+ * (swarm count) rather than a HUD readout. Server grid maths is locked by
+ * tests/integration/sectorRoom/structure{Grid,Construction}.test.ts.
  */
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
@@ -30,11 +32,15 @@ async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<B
   return { ctx, page };
 }
 
-test('Build ▸ Capital lights the grid-power + minerals HUD', async ({ browser }) => {
+const swarmCount = (page: Page): Promise<number> =>
+  page.locator('[data-testid="swarm-count"]').textContent()
+    .then((t) => parseInt((t ?? '0').replace(/\D/g, '') || '0', 10));
+
+test('Build ▸ Capital places a structure', async ({ browser }) => {
   const { ctx, page } = await joinClient(browser);
   try {
-    await expect(page.locator('[data-testid="grid-power"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="grid-minerals"]')).toHaveCount(0);
+    // test-sector-fast has no drones/asteroids → the swarm starts empty.
+    expect(await swarmCount(page)).toBe(0);
 
     // Open dial → Build ▸ → Core ▸ → Capital → confirm.
     await page.locator('[data-testid="speed-dial-fab"]').click();
@@ -44,22 +50,13 @@ test('Build ▸ Capital lights the grid-power + minerals HUD', async ({ browser 
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
 
-    // Capital is pre-built + powered + has a starting bank. The net-power and
-    // minerals values are filled by the 1 Hz grid pulse AFTER placement, so the
-    // HUD element can appear a frame or two before the first pulse populates
-    // them — poll the attribute rather than reading it once (read-once raced when
-    // the dial-open timing shifted Confirm relative to the pulse).
-    const power = page.locator('[data-testid="grid-power"]');
-    await expect(power).toBeVisible({ timeout: 10_000 });
-    await expect
-      .poll(async () => Number(await power.getAttribute('data-net-power')), { timeout: 5_000 })
-      .toBeGreaterThan(0);
-
-    const minerals = page.locator('[data-testid="grid-minerals"]');
-    await expect(minerals).toBeVisible({ timeout: 10_000 });
-    await expect
-      .poll(async () => Number(await minerals.getAttribute('data-minerals')), { timeout: 5_000 })
-      .toBeGreaterThan(0);
+    // The placed Capital appears as a kind-2 swarm entity within a snapshot.
+    await page.waitForFunction(
+      () => parseInt((document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0').replace(/\D/g, '') || '0', 10) >= 1,
+      undefined,
+      { timeout: 10_000 },
+    );
+    expect(await swarmCount(page)).toBeGreaterThanOrEqual(1);
   } finally {
     await ctx.close();
   }

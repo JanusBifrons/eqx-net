@@ -2889,21 +2889,17 @@ export class ColyseusGameClient {
 
   // ── State mirror ────────────────────────────────────────────────────────
 
-  /** Last grid net power pushed to the HUD store (avoid 20 Hz store churn). */
-  private _lastGridNetPower: number | null = null;
-  /** Last mineral bank pushed to the HUD store (avoid 20 Hz store churn). */
-  private _lastMinerals: number | null = null;
-
   /** Structures plan, Phase 3 — mirror the `structures[]` slice into
-   *  `mirror.structures` (rebuilt each snapshot — it's low-cadence + small) and
-   *  dispatch the player's grid net power to the HUD store on change. */
+   *  `mirror.structures` (rebuilt each snapshot — it's low-cadence + small).
+   *  Phase-1 issue 7: the ambiguous whole-grid power/minerals HUD readout was
+   *  removed; per-structure stats live in-world (capital minerals + battery
+   *  charge Pixi Text) + the selection inspector, so nothing is dispatched to
+   *  the HUD store here. */
   private syncStructures(slice: SnapshotMessage['structures']): void {
     if (slice && slice.length > 0) {
       let map = this.mirror.structures;
       if (!map) { map = new Map(); this.mirror.structures = map; }
       map.clear();
-      let netPower: number | null = null;
-      let minerals = 0;
       for (const s of slice) {
         map.set(s.id, {
           powered: s.powered,
@@ -2925,33 +2921,9 @@ export class ColyseusGameClient {
           ...(s.owner !== undefined ? { owner: s.owner } : {}),
           ...(s.ownerName !== undefined ? { ownerName: s.ownerName } : {}),
         });
-        // Surface the powered grid's net power (members share a component, so
-        // the max powered netPower represents the player's live grid).
-        if (s.powered && (netPower === null || (s.netPower ?? 0) > netPower)) {
-          netPower = s.netPower ?? 0;
-        }
-        // The mineral bank is the Capital's store (the largest minerals value).
-        if ((s.minerals ?? 0) > minerals) minerals = s.minerals ?? 0;
-      }
-      const resolved = netPower ?? 0;
-      if (resolved !== this._lastGridNetPower) {
-        this._lastGridNetPower = resolved;
-        useUIStore.getState().setGridNetPower(resolved);
-      }
-      if (minerals !== this._lastMinerals) {
-        this._lastMinerals = minerals;
-        useUIStore.getState().setMinerals(minerals);
       }
     } else {
       if (this.mirror.structures && this.mirror.structures.size > 0) this.mirror.structures.clear();
-      if (this._lastGridNetPower !== null) {
-        this._lastGridNetPower = null;
-        useUIStore.getState().setGridNetPower(0);
-      }
-      if (this._lastMinerals !== null) {
-        this._lastMinerals = null;
-        useUIStore.getState().setMinerals(0);
-      }
     }
     this.syncPredWalls();
   }

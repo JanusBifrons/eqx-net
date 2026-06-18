@@ -314,6 +314,28 @@ export function formatBuildEta(etaMs: number | null | undefined): string {
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
 
+let _batteryChargeStyle: TextStyle | undefined;
+/** Phase-1 issue 7 — a Battery's world-space stored-power readout
+ *  ("120/300", amber, below the body), mirroring the Capital's mineral number.
+ *  The charge BAR above the body shows the proportion; this shows the ACTUAL
+ *  NUMBERS the doc asked for (replacing the removed whole-grid HUD readout).
+ *  Built ONCE per battery sprite (invariant #14); the caller mutates `.text`
+ *  only on change. Tagged `label = 'batteryCharge'`. */
+export function buildBatteryChargeText(radius: number): Text {
+  _batteryChargeStyle ??= new TextStyle({
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: 11,
+    fontWeight: '700',
+    fill: 0xffcf8a,
+    stroke: { color: 0x000000, width: 3 },
+  });
+  const t = new Text({ text: '', style: _batteryChargeStyle, resolution: STRUCTURE_LABEL_RESOLUTION, roundPixels: true });
+  t.anchor.set(0.5, 0);
+  t.y = radius + 4; // below the body (Pixi y-down)
+  t.label = 'batteryCharge';
+  return t;
+}
+
 let _buildEtaStyle: TextStyle | undefined;
 /** Phase-1 issue 2 — a blueprint's world-space build-ETA countdown (a short cyan
  *  number ABOVE the body, above the construction fill-bar). Built ONCE per
