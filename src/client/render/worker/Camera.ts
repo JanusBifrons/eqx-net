@@ -134,6 +134,13 @@ interface PointerState {
 export class Camera {
   private readonly opts: ResolvedOpts;
   private readonly pointers = new Map<number, PointerState>();
+  /** True once a gesture has had ≥2 simultaneous pointers (a pinch). Latches for
+   *  the WHOLE gesture and only clears when the last finger lifts, so the final
+   *  single-finger release of a pinch can never register as a tap/select. Without
+   *  it, lifting one pinch finger resumes a single-pointer drag from the remaining
+   *  finger with a fresh stamp, and a quick release then classifies as a tap →
+   *  the mobile "pinch-to-zoom selects a sector" bug (Equinox Tweaks Phase 2 #1). */
+  private hadMultiTouch = false;
   private readonly drag = new DragGesture();
   private readonly pinch = new PinchGesture();
   private readonly momentum: MomentumDecay;
@@ -218,6 +225,8 @@ export class Camera {
       if (a && b) this.pinch.begin(a, b, this.target.scale.x);
       // Pan is suspended during pinch.
       this.drag.suspend();
+      // Latch the gesture as multi-touch so no release in it counts as a tap.
+      this.hadMultiTouch = true;
     }
   }
 
@@ -250,6 +259,10 @@ export class Camera {
   onPointerUp(pointerId: number, screenX: number, screenY: number, stamp: number): PointerUpResult {
     const sizeBefore = this.pointers.size;
     this.pointers.delete(pointerId);
+    // Snapshot the multi-touch latch for this release, then clear it once the
+    // gesture is fully over (last finger up) so the NEXT clean single tap works.
+    const wasMultiTouch = this.hadMultiTouch;
+    if (this.pointers.size === 0) this.hadMultiTouch = false;
 
     // Was this a single-pointer tap?
     if (sizeBefore === 1 && this.drag.isPanning()) {
@@ -265,7 +278,9 @@ export class Camera {
       );
       this.drag.end();
 
-      if (cls.isTap) {
+      // A tap only counts if the WHOLE gesture stayed single-touch — a pinch's
+      // final release must never select (Phase 2 #1).
+      if (cls.isTap && !wasMultiTouch) {
         this.momentum.clear();
         const { x: worldX, y: worldY } = this.screenToWorld(screenX, screenY);
         return { wasTap: true, worldX, worldY };
@@ -293,6 +308,7 @@ export class Camera {
     if (this.pointers.size === 0) {
       this.drag.end();
       this.momentum.clear();
+      this.hadMultiTouch = false;
     }
   }
 

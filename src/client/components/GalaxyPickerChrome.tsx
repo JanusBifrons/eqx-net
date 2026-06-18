@@ -9,6 +9,7 @@ import {
   DialogActions,
   Stack,
   Alert,
+  CircularProgress,
 } from '@mui/material';
 import { getSector } from '../../core/galaxy/galaxy';
 import { loadStoredPlayerId } from '../identity/token';
@@ -30,6 +31,21 @@ interface EngineeringRoom {
   label: string;
   description: string;
 }
+
+/** Phase 2 #2 — one-shot loading overlay (static sx, hoisted per the drawer-perf
+ *  rule) shown over the galaxy map until the first `/galaxy/snapshot` resolves, so
+ *  the live count icons appear WITH the map instead of popping in out of sync. */
+const GALAXY_LOADING_SX = {
+  position: 'absolute' as const,
+  inset: 0,
+  display: 'flex',
+  flexDirection: 'column' as const,
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 1.5,
+  pointerEvents: 'none' as const,
+  zIndex: 2,
+};
 
 const ENGINEERING_ROOMS: EngineeringRoom[] = [
   { roomName: 'sector',          label: 'Sector (legacy)',     description: 'Original Phase-1..7 default room. 30-drone hostile ring, no persistence.' },
@@ -125,6 +141,9 @@ export function GalaxyPickerChrome({
   // Living Galaxy Phase 6 — hovered sector + live stats drive the tooltip.
   const galaxyHover = useUIStore((s) => s.galaxyHover);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  // Phase 2 #2 — false until the first /galaxy/snapshot poll resolves; drives the
+  // one-shot loading spinner so the map's live counts don't pop in out of sync.
+  const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   // Equinox Phase 7 (Item 4) — the popover's "your ships" sub-list reads the
   // roster + live current sector. The visible top-bar roster panel is gone; we
   // still POLL it (refcounted singleton) so the popover has data.
@@ -248,6 +267,18 @@ export function GalaxyPickerChrome({
         data-limbo-sector-key={limboSector?.key ?? ''}
         sx={{ display: 'none' }}
       />
+
+      {/* Phase 2 #2 — one-shot loading spinner over the whole map until the first
+       *  /galaxy/snapshot resolves, so the live count icons appear WITH the map
+       *  rather than popping in ~a few hundred ms later ("out of sync"). */}
+      {!galaxyStatsLoaded && (
+        <Box data-testid="galaxy-loading" sx={GALAXY_LOADING_SX}>
+          <CircularProgress size={28} thickness={4} sx={{ color: '#00ff88' }} />
+          <Typography variant="caption" sx={{ color: '#9aa0b4', fontSize: 10, letterSpacing: 0.5 }}>
+            Charting the galaxy…
+          </Typography>
+        </Box>
+      )}
 
       {/* Living Galaxy P5 — folded landing info over the map (replaces the
        *  retired MetaLandingScreen's banner + hype count). Non-interactive,

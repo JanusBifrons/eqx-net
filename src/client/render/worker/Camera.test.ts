@@ -257,6 +257,39 @@ describe('Camera — pinch zoom', () => {
     expect(cam.getPointerCount()).toBe(1);
     expect(cam.isPanningNow()).toBe(true);
   });
+
+  it('the FINAL release of a pinch is NOT a tap (Phase 2 #1 — pinch must not select)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+
+    // Pinch: two fingers down, lift the second (resumes pan from the first),
+    // then lift the first quickly + near where it is — which WOULD classify as a
+    // tap on the resumed single-pointer drag without the multi-touch latch.
+    cam.onPointerDown(1, 100, 100, 0);
+    cam.onPointerDown(2, 200, 100, 0);
+    cam.onPointerUp(2, 200, 100, 50);
+    const result = cam.onPointerUp(1, 101, 100, 90); // small distance, short time
+
+    expect(result.wasTap).toBe(false);
+  });
+
+  it('a clean single tap still works AFTER a completed pinch (latch resets)', () => {
+    const target = makeTarget();
+    const cam = new Camera(target);
+
+    // Complete a pinch.
+    cam.onPointerDown(1, 100, 100, 0);
+    cam.onPointerDown(2, 200, 100, 0);
+    cam.onPointerUp(2, 200, 100, 50);
+    cam.onPointerUp(1, 101, 100, 90); // ends the gesture → latch clears
+
+    // A subsequent clean single-finger tap registers normally.
+    cam.onPointerDown(3, 300, 300, 200);
+    cam.onPointerMove(3, 301, 300);
+    const result = cam.onPointerUp(3, 301, 300, 240);
+
+    expect(result.wasTap).toBe(true);
+  });
 });
 
 describe('Camera — follow', () => {
