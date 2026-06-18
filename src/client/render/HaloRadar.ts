@@ -16,13 +16,14 @@ import {
   type PartitionScratch,
 } from './halo/wedgeGrouping.js';
 import {
-  paintArrowGfx,
-  buildArrowGfx,
-  ASTEROID_COLOR,
-  DRONE_HOSTILE_COLOR,
-  DRONE_IDLE_COLOR,
-  REMOTE_SHIP_COLOR,
+  paintHaloGlyph,
+  buildHaloGlyph,
+  haloContactKind,
 } from './halo/arrowGraphics.js';
+import { ENTITY_VISUALS, type EntityKind } from './entityVisuals.js';
+
+// Re-export for the radar test suite (the include/exclude + classification lock).
+export { haloContactKind } from './halo/arrowGraphics.js';
 
 // Re-export the surface the existing test suite imports from this file.
 // `src/client/render/HaloRadar.test.ts` consumes these by name; the
@@ -85,16 +86,17 @@ type MutableCandidate = Candidate;
 
 function writeCandidateSlot(
   arr: MutableCandidate[], i: number,
-  key: string, x: number, y: number, color: number, dist: number,
+  key: string, x: number, y: number, kind: EntityKind, dist: number,
   hostile: boolean,
 ): void {
+  const color = ENTITY_VISUALS[kind].color;
   const slot = arr[i];
   if (!slot) {
-    arr[i] = { key, x, y, color, dist, hostile };
+    arr[i] = { key, x, y, color, kind, dist, hostile };
     return;
   }
   slot.key = key; slot.x = x; slot.y = y;
-  slot.color = color; slot.dist = dist; slot.hostile = hostile;
+  slot.color = color; slot.kind = kind; slot.dist = dist; slot.hostile = hostile;
   // grouped is the partition-step's wedge marker; reset to undefined so
   // a stale `true` from a prior tick doesn't leak through.
   if (slot.grouped !== undefined) slot.grouped = false;
@@ -119,17 +121,12 @@ const ARROW_SMOOTH_HALF_LIFE_MS = 130;
 
 interface ArrowEntry {
   gfx: Graphics;
-  /** Current fill colour. Tracked so wedge representatives that change
-   *  type (drone → asteroid → ship) can detect mismatch and repaint
-   *  geometry instead of leaving stale colour on the pooled graphic. */
-  color: number;
-  /** Whether the entry currently renders the hostile glow + bright stroke.
-   *  Tracked alongside `color` so a hostility flip also triggers a
-   *  geometry repaint. */
-  hostile: boolean;
-  /** Whether the entry uses the wider "grouped" arrow silhouette. Tracked
-   *  alongside `color`/`hostile` so a near→far transition (singleton to
-   *  wedge rep, or vice-versa) triggers a polygon repaint. */
+  /** Current visual-language kind (hostile/neutral/ship/structure). Tracked so a
+   *  wedge representative that changes type (or a drone flipping hostile↔neutral)
+   *  detects the mismatch and repaints the glyph instead of leaving a stale one. */
+  kind: EntityKind;
+  /** Whether the entry uses the larger "grouped" glyph. Tracked alongside `kind`
+   *  so a singleton↔wedge-rep transition triggers a glyph repaint. */
   grouped: boolean;
   /** Critically-damped spring state for the arrow's screen-pixel x. */
   sx: SpringState;
@@ -279,6 +276,17 @@ export class HaloRadar {
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
+        // Equinox Tweaks Phase 2 (#4) — the ring shows THREATS + bases, not
+        // clutter: asteroids (kind 0) and scrap (kind 3) are excluded entirely
+        // (the user: "asteroids, scrap and lingering ships shouldn't even show").
+        // Only drones (kind 1) and structures (kind 2) pass.
+        const isDrone = e.kind === 1;
+        const hostile = isDrone && (e.isHostileToLocal ?? false);
+        // Map to the shared visual language (hostile ★ / neutral ◆ / structure ⬢)
+        // — null EXCLUDES the contact (asteroids kind 0, scrap kind 3) per the
+        // user's "asteroids, scrap and lingering ships shouldn't even show".
+        const kind = haloContactKind(e.kind, hostile);
+        if (kind === null) continue;
         // Velocity-extrapolate the swarm entry forward from its last-known
         // pose. Out-of-interest drones ship at 6 Hz (167 ms between
         // updates) and at-interest drones at 20 Hz (50 ms); without
@@ -293,11 +301,6 @@ export class HaloRadar {
         const xExtrap = e.x + e.vx * dtSec;
         const yExtrap = e.y + e.vy * dtSec;
         const dist = Math.hypot(xExtrap - local.x, yExtrap - local.y);
-        const isDrone = e.kind === 1;
-        const hostile = isDrone && (e.isHostileToLocal ?? false);
-        const color = isDrone
-          ? (hostile ? DRONE_HOSTILE_COLOR : DRONE_IDLE_COLOR)
-          : ASTEROID_COLOR;
         // Cache the template-literal key so subsequent observations of
         // the same id are allocation-free.
         let key = this._swarmKeyCache.get(id);
@@ -305,10 +308,13 @@ export class HaloRadar {
           key = `swarm:${id}`;
           this._swarmKeyCache.set(id, key);
         }
-        writeCandidateSlot(rawCandidates, rawCount, key, xExtrap, yExtrap, color, dist, hostile);
+        writeCandidateSlot(rawCandidates, rawCount, key, xExtrap, yExtrap, kind, dist, hostile);
         rawCount++;
       }
     }
+    // Remote PLAYER ships → ▲ green. (mirror.ships holds only active remote
+    // players; lingering hulls live in mirror.lingeringShips and are NOT
+    // iterated, so they never show on the ring — per the user's request.)
     for (const [id, s] of mirror.ships) {
       if (id === localId) continue;
       const dist = Math.hypot(s.x - local.x, s.y - local.y);
@@ -317,7 +323,7 @@ export class HaloRadar {
         key = `ship:${id}`;
         this._shipKeyCache.set(id, key);
       }
-      writeCandidateSlot(rawCandidates, rawCount, key, s.x, s.y, REMOTE_SHIP_COLOR, dist, false);
+      writeCandidateSlot(rawCandidates, rawCount, key, s.x, s.y, 'ship', dist, false);
       rawCount++;
     }
     rawCandidates.length = rawCount;
@@ -401,15 +407,14 @@ export class HaloRadar {
       const targetX = playerScreen.x + Math.cos(proj.theta) * proj.radiusPx;
       const targetY = playerScreen.y - Math.sin(proj.theta) * proj.radiusPx;
 
-      const wantHostile = c.hostile === true;
+      const wantKind: EntityKind = c.kind ?? 'neutral';
       const wantGrouped = c.grouped === true;
       if (!entry) {
-        const gfx = buildArrowGfx(c.color, wantHostile, wantGrouped);
+        const gfx = buildHaloGlyph(wantKind, wantGrouped);
         this.container.addChild(gfx);
         entry = {
           gfx,
-          color: c.color,
-          hostile: wantHostile,
+          kind: wantKind,
           grouped: wantGrouped,
           sx: { x: targetX, v: 0 },
           sy: { x: targetY, v: 0 },
@@ -419,17 +424,12 @@ export class HaloRadar {
           renderedAtFrame: 0, // stamped a few lines below at the render tail
         };
         this.arrows.set(c.key, entry);
-      } else if (
-        entry.color !== c.color
-        || entry.hostile !== wantHostile
-        || entry.grouped !== wantGrouped
-      ) {
-        // Wedge representative type / hostility / group-state flipped — repaint
-        // geometry with the new colour, glow, and silhouette. Bounded cost: at
-        // most RADAR_WEDGE_COUNT + active hostile-flip count per frame.
-        paintArrowGfx(entry.gfx, c.color, wantHostile, wantGrouped);
-        entry.color = c.color;
-        entry.hostile = wantHostile;
+      } else if (entry.kind !== wantKind || entry.grouped !== wantGrouped) {
+        // Wedge representative type changed (or a drone flipped hostile↔neutral,
+        // or singleton↔group) — repaint the glyph. Bounded cost: at most
+        // RADAR_WEDGE_COUNT + active hostility-flip count per frame.
+        paintHaloGlyph(entry.gfx, wantKind, wantGrouped);
+        entry.kind = wantKind;
         entry.grouped = wantGrouped;
       }
       entry.renderedAtFrame = frameId;
@@ -454,7 +454,10 @@ export class HaloRadar {
       entry.gfx.visible = true;
       entry.gfx.x = entry.sx.x;
       entry.gfx.y = entry.sy.x;
-      entry.gfx.rotation = -proj.theta;
+      // Glyphs are UPRIGHT (Phase 2 #4) — the bearing is conveyed by the
+      // marker's POSITION on the ring, not by rotating a needle (a rotated
+      // ★/⬢ reads as broken). The old code set `rotation = -proj.theta`.
+      entry.gfx.rotation = 0;
       entry.gfx.scale.set(proj.scale);
       entry.lastVisible = true;
     }
