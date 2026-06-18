@@ -2912,7 +2912,9 @@ export class ColyseusGameClient {
           ...(s.hpPct !== undefined ? { hpPct: s.hpPct / 100 } : {}), // C3 — 0-100 int → [0..1] fraction
           built: s.built ?? false,
           buildPct: s.built ? 1 : (s.buildPct ?? 0),
+          ...(s.etaMs !== undefined ? { etaMs: s.etaMs } : {}),
           deconstructPct: s.deconstructPct ?? 0,
+          ...(s.isDeconstructing ? { isDeconstructing: true } : {}),
           ...(s.miningTargetId !== undefined ? { miningTargetId: s.miningTargetId } : {}),
           ...(s.turretTargetId !== undefined ? { turretTargetId: s.turretTargetId } : {}),
           ...(s.storedPower !== undefined ? { storedPower: s.storedPower } : {}),

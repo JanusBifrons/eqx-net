@@ -229,8 +229,19 @@ export interface SnapshotMessage {
     /** Construction fraction [0..1]; sent ONLY while `!built` (drives the
      *  scaffolding fill-bar), omitted once complete to keep the slice small. */
     buildPct?: number;
+    /** Estimated ms to completion at the steady delivery rate, ASSUMING
+     *  resources are available (Phase-1 issue 1/2). Sent while `!built`:
+     *  a number drives the smooth linear build bar + the in-world ETA
+     *  countdown; `null` ⇒ the build is STALLED (no minerals reachable) so the
+     *  client freezes the bar + shows a paused timer. Omitted once built. */
+    etaMs?: number | null;
     /** Deconstruction fraction [0..1] while reclaiming; omitted otherwise. */
     deconstructPct?: number;
+    /** True while the owner is reclaiming this structure (Phase-1 issue 6).
+     *  Drives the inspector's Deconstruct↔Cancel button state from the first
+     *  polled frame (don't infer from `deconstructPct > 0`, which is ~0 at the
+     *  start of a drain). Omitted when not deconstructing. */
+    isDeconstructing?: boolean;
     /** Phase 4 — the asteroid entityId a Miner is extracting from (draws the
      *  mining beam). Present only on actively-mining miners. */
     miningTargetId?: number;

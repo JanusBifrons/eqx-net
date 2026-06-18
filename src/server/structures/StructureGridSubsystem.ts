@@ -34,6 +34,7 @@ import {
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
   MINING_BEAM_CADENCE_MS,
+  TRANSFER_PULSE_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -562,6 +563,25 @@ export class StructureGridSubsystem {
       if (route) return { capital: rec, route };
     }
     return null;
+  }
+
+  /**
+   * Estimate ms-to-completion for a blueprint at the steady delivery rate
+   * (`CONSTRUCTION_PULSE_AMOUNT` per `TRANSFER_PULSE_MS`), ASSUMING resources
+   * are available — the doc's "the building time is independent of [the supply
+   * pulse], assuming no shortage of resources." Returns `null` when there's
+   * nothing to time (already built / zero-cost Capital) OR the build is STALLED
+   * (no storage route with minerals) so the client freezes the bar + shows a
+   * paused timer. Drives the smooth client build bar (issue 1) + the in-world
+   * ETA countdown (issue 2). Computed in the 1 Hz slice rebuild, never the
+   * 60 Hz tick — the division is free.
+   */
+  estimateBuildEtaMs(rec: StructureRecord): number | null {
+    if (rec.isConstructed || rec.constructionCost <= 0) return null;
+    if (!this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
+    const remaining = Math.max(0, rec.constructionCost - rec.constructionProgress);
+    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS;
+    return ratePerMs > 0 ? remaining / ratePerMs : null;
   }
 
   /** Find a built Capital with minerals that can route to `targetId`. */

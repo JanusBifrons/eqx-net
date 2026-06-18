@@ -9,6 +9,7 @@ import {
   REPAIR_PULSE_AMOUNT,
   REPAIR_COST_PER_HP,
   MINING_BEAM_CADENCE_MS,
+  TRANSFER_PULSE_MS,
 } from '../../core/structures/structureGridConstants.js';
 
 /** Shared harness: a real registry + health map, with placement + grid wired
@@ -98,6 +99,56 @@ function relayConnector(
   h.registry.topologyDirty = true;
   return c;
 }
+
+describe('StructureGridSubsystem — estimateBuildEtaMs (Phase-1 issue 1/2)', () => {
+  let h: ReturnType<typeof makeHarness>;
+  beforeEach(() => { h = makeHarness(); });
+
+  const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS;
+
+  // Topology (the routing graph) is (re)built on pulse(), so estimates are
+  // meaningful AFTER the first pulse — exactly the production order (the slice
+  // is rebuilt after pulse()).
+  it('estimates remaining ms at the steady delivery rate', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!; // pre-built bank, plenty of minerals
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!; // blueprint, routes to capital
+    h.pulse(); // build topology + deliver one pulse
+    const rec = h.registry.get(conn)!;
+    expect(rec.constructionProgress).toBeGreaterThan(0);
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeCloseTo(
+      (rec.constructionCost - rec.constructionProgress) / ratePerMs,
+      3,
+    );
+  });
+
+  it('shrinks as construction progresses', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    const rec = h.registry.get(conn)!;
+    h.pulse(); // topology + first delivery
+    const before = h.grid.estimateBuildEtaMs(rec)!;
+    h.pulse(); // more progress
+    const after = h.grid.estimateBuildEtaMs(rec)!;
+    expect(after).toBeLessThan(before);
+  });
+
+  it('is null once built', () => {
+    h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    const rec = h.registry.get(conn)!;
+    rec.isConstructed = true;
+    rec.constructionProgress = rec.constructionCost;
+    expect(h.grid.estimateBuildEtaMs(rec)).toBeNull();
+  });
+
+  it('is null (stalled) when no Capital with minerals can route to it', () => {
+    const cap = h.placement.place(OWNER, 'capital', 0, 0)!;
+    const conn = h.placement.place(OWNER, 'connector', 0, 140)!;
+    h.pulse(); // build topology
+    h.registry.get(cap)!.minerals = 0; // bank dry → build stalled
+    expect(h.grid.estimateBuildEtaMs(h.registry.get(conn)!)).toBeNull();
+  });
+});
 
 describe('StructureGridSubsystem — batteries (full power buffer)', () => {
   let h: ReturnType<typeof makeHarness>;

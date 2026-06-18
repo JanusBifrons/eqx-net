@@ -41,7 +41,9 @@ import {
   buildScrapGfx,
   buildMinerRangeRingGfx,
   buildCapitalResourceText,
+  buildBuildEtaText,
   formatResources,
+  formatBuildEta,
 } from './spriteBuilders.js';
 import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
@@ -116,6 +118,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // WS-9 (R2.12) — the Capital shows its mineral bank as a world-space
         // number below the body. Built ONCE here (invariant #14).
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
+        // Phase-1 issue 2 — every structure carries an (initially empty)
+        // build-ETA countdown child, shown only while it's an unbuilt blueprint.
+        sprite.addChild(buildBuildEtaText(entry.radius));
       } else if (entry.kind === 3) {
         // Scrap (pose-core kind 3, scrap-on-death): one component of a dead
         // ship. Renders that component's recentred sub-shapes from the parent
@@ -232,6 +237,14 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
           const next = st?.minerals !== undefined ? formatResources(st.minerals) : '';
           if (capText.text !== next) capText.text = next;
         }
+      }
+      // Phase-1 issue 2 — the in-world build-ETA countdown (CHANGE-only update;
+      // the 1 Hz pulse re-supplies etaMs so the seconds tick without per-frame
+      // re-raster). Empty once built.
+      const etaText = sprite.getChildByLabel('buildEta') as Text | null;
+      if (etaText) {
+        const nextEta = st && !st.built ? formatBuildEta(st.etaMs) : '';
+        if (etaText.text !== nextEta) etaText.text = nextEta;
       }
     }
     // Sleeping entries stop interpolating; their pose is whatever the

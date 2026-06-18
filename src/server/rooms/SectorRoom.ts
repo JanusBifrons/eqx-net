@@ -3134,9 +3134,15 @@ export class SectorRoom extends Room<SectorState> {
       if (rec.minerals > 0) entry.minerals = rec.minerals;
       if (!rec.isConstructed && rec.constructionCost > 0) {
         entry.buildPct = rec.constructionProgress / rec.constructionCost;
+        // ETA at the steady delivery rate (null ⇒ stalled). Drives the smooth
+        // client build bar (issue 1) + the in-world countdown (issue 2).
+        entry.etaMs = this.structureGrid.estimateBuildEtaMs(rec);
       }
-      if (rec.isDeconstructing && rec.constructionCost > 0) {
-        entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
+      if (rec.isDeconstructing) {
+        entry.isDeconstructing = true;
+        if (rec.constructionCost > 0) {
+          entry.deconstructPct = 1 - rec.constructionProgress / rec.constructionCost;
+        }
       }
       if (rec.miningTargetEntityId !== undefined) entry.miningTargetId = rec.miningTargetEntityId;
       if (rec.turretTargetEntityId !== undefined) entry.turretTargetId = rec.turretTargetEntityId;

@@ -298,6 +298,43 @@ export function buildCapitalResourceText(radius: number): Text {
 }
 
 /**
+ * Phase-1 issue 2 — format the in-world build-timer ETA. `null` ⇒ stalled (no
+ * minerals reaching the blueprint) → a paused marker; `undefined`/≤0 ⇒ empty
+ * (built / not building). The countdown reaches 1 s granularity naturally: the
+ * server recomputes `etaMs` on its 1 Hz pulse, so the text ticks down ~once a
+ * second with no per-frame re-raster.
+ */
+export function formatBuildEta(etaMs: number | null | undefined): string {
+  if (etaMs === null) return '⏸'; // ⏸ stalled — no minerals
+  if (etaMs === undefined || etaMs <= 0) return '';
+  const totalSec = Math.ceil(etaMs / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return s === 0 ? `${m}m` : `${m}m ${s}s`;
+}
+
+let _buildEtaStyle: TextStyle | undefined;
+/** Phase-1 issue 2 — a blueprint's world-space build-ETA countdown (a short cyan
+ *  number ABOVE the body, above the construction fill-bar). Built ONCE per
+ *  structure sprite (invariant #14); the caller mutates `.text` only on change.
+ *  Tagged `label = 'buildEta'`. */
+export function buildBuildEtaText(radius: number): Text {
+  _buildEtaStyle ??= new TextStyle({
+    fontFamily: 'system-ui, sans-serif',
+    fontSize: 12,
+    fontWeight: '700',
+    fill: 0x9fe0ff,
+    stroke: { color: 0x000000, width: 3 },
+  });
+  const t = new Text({ text: '', style: _buildEtaStyle, resolution: STRUCTURE_LABEL_RESOLUTION, roundPixels: true });
+  t.anchor.set(0.5, 1);
+  t.y = -(radius + 16); // above the body + fill-bar (Pixi y-down)
+  t.label = 'buildEta';
+  return t;
+}
+
+/**
  * Mining-range ring (WS-4 Phase 5 / R2.16) — a faint dashed circle at the
  * Miner's `miningRange` radius, showing where it can extract from asteroids.
  * Built ONCE per miner sprite (never per-frame, invariant #14) and parented to

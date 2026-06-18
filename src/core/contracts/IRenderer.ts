@@ -190,8 +190,16 @@ export interface StructureRenderState {
   built: boolean;
   /** Construction fraction [0..1] (1 when built) — drives the fill-bar. */
   buildPct: number;
+  /** Estimated ms to completion at the steady rate while building (issue 1/2);
+   *  `null` ⇒ stalled (no minerals) → freeze the bar + show a paused timer;
+   *  `undefined` ⇒ built / not applicable. Drives the smooth linear build bar
+   *  and the in-world ETA countdown. */
+  etaMs?: number | null;
   /** Deconstruction fraction [0..1] while reclaiming (0 normally). */
   deconstructPct: number;
+  /** True while the owner is reclaiming this structure (issue 6) — drives the
+   *  inspector's Deconstruct↔Cancel button + the drain bar. */
+  isDeconstructing?: boolean;
   /** Phase 4 — asteroid entityId a Miner is extracting from (draws the beam),
    *  or undefined. */
   miningTargetId?: number;
