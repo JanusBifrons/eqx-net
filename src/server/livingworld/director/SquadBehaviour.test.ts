@@ -37,8 +37,16 @@ describe('WaveSquadBehaviour.decide', () => {
     expect(b.decide(sq, ctx())).toEqual({ kind: 'warp', to: 'vega' });
   });
 
-  it('warping + no members arrived yet → hold', () => {
+  it('warping + no members arrived yet → KEEP WARPING (re-advance toward the goal)', () => {
+    // Issue 3 fix: a not-yet-arrived warping squad re-emits `warp` every tick so
+    // `advanceMembersTowardGoal` keeps hopping members toward a MULTI-HOP goal.
+    // Returning `hold` here (the old behaviour) froze a wave after one hop.
     const sq = squad({ state: 'warping', sectorKey: 'vega', targetFactionId: 'alice' });
+    expect(b.decide(sq, ctx({ membersInSector: 0 }))).toEqual({ kind: 'warp', to: 'vega' });
+  });
+
+  it('warping + no assignment (defensive) → hold', () => {
+    const sq = squad({ state: 'warping', sectorKey: 'vega', targetFactionId: null });
     expect(b.decide(sq, ctx({ membersInSector: 0 }))).toEqual({ kind: 'hold' });
   });
 

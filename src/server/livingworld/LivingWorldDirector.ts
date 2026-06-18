@@ -24,7 +24,6 @@
 import type { Bus } from '../../core/events/Bus.js';
 import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
-import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
 import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
@@ -83,7 +82,7 @@ export function isLivingWorldDisabled(
 }
 
 /** Director-level drone-squad spool override (ms), read from `EQX_BOT_SPOOL_MS`.
- *  Returns `undefined` (⇒ use `SPOOL_DURATION_MS`, 5 min) when unset/invalid.
+ *  Returns `undefined` (⇒ use the `DRONE_HOP_SPOOL_MS` default) when unset/invalid.
  *
  *  WHY a director env and not the per-room `transitSpoolMsOverride`: the
  *  director constructs every `BotTransitController(..., this.opts.spoolMs)`
@@ -164,6 +163,22 @@ export function squadDisplayLabel(kind: ShipKindId): string {
   return kind === 'fighter' ? 'Legionnaire' : kind;
 }
 
+/** Visible per-hop dwell (ms) for a DRONE squad's inter-sector hop — the drone
+ *  analogue of a player's `SPOOL_DURATION_MS` (30 s) vulnerable warp spool, but
+ *  DECOUPLED from it. The 30 s value is a PLAYER mechanic; drone hops wrongly
+ *  inherited it, which broke the whole wave pipeline (Equinox Tweaks Phase 2,
+ *  issue 3): a squad crosses the galaxy hop-by-hop, so at 30 s/hop a wave took
+ *  MINUTES to reach a base — killed members respawn at the galaxy edge and
+ *  restart the journey, so the squad never got a member to SETTLE in the target
+ *  sector, never entered `attack`, and never marked hostility. The live server
+ *  proved it: 17 waves dispatched, 0 resolved, 0 bots ever in the target,
+ *  33/56 bots stuck inTransit. A short dwell keeps drones VISIBLE in each sector
+ *  (the body stays in the source room during the spool) while letting waves
+ *  actually converge + sustain pressure faster than the base turret clears them.
+ *  FEEL knob — confirm the dwell pacing on-device; overridable via
+ *  `EQX_BOT_SPOOL_MS`. Regression lock: `waveEngagesPresentOwner.test.ts`. */
+export const DRONE_HOP_SPOOL_MS = 2500;
+
 export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   botCount: LIVING_WORLD_BOT_COUNT,
   controlIntervalMs: 1500,
@@ -173,7 +188,9 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   maxMigrationsPerTick: 4,
   shedRecoveryMs: 10_000,
   initialStaggerMs: 200,
-  spoolMs: SPOOL_DURATION_MS,
+  // Drone hops use the SHORT visible dwell (NOT the 30 s player warp spool) so
+  // waves actually traverse + converge — see `DRONE_HOP_SPOOL_MS`.
+  spoolMs: DRONE_HOP_SPOOL_MS,
   // 0 = NO invisible inter-sector flight (Equinox: "drones should always be on
   // the actual game world, not in some ethereal warp"). The cross-sector hop is
   // now an atomic despawn-source/spawn-dest (deferred one macrotask) — a drone

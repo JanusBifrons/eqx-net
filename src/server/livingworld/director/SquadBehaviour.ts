@@ -45,7 +45,7 @@ export interface SquadBehaviour {
  *   - idle, assigned        → warp to the target sector.
  *   - idle, unassigned      → hold.
  *   - warping, arrived      → attack (members present in the target sector).
- *   - warping, not arrived  → hold (still spooling / in flight).
+ *   - warping, not arrived  → warp (keep hopping members toward the goal).
  *   - attacking             → attack (the director re-pulses hostility each tick).
  *   - assigned & faction no longer hostile → retreat (overrides warp/attack).
  */
@@ -69,9 +69,20 @@ export class WaveSquadBehaviour implements SquadBehaviour {
           ? { kind: 'warp', to: squad.sectorKey }
           : { kind: 'hold' };
       case 'warping':
-        return ctx.membersInSector > 0 && squad.targetFactionId !== null
+        // No assignment (defensive) ⇒ hold. Otherwise: the instant ≥1 member is
+        // in the goal sector, ATTACK; until then KEEP WARPING — re-emit `warp`
+        // every tick so `advanceMembersTowardGoal` keeps hopping the not-yet-
+        // arrived members toward the goal. Returning `hold` here was the bug
+        // (Equinox Tweaks Phase 2, #3): the `warp` action fires only once on the
+        // idle→warping transition, so a MULTI-HOP wave advanced exactly ONE hop
+        // then froze (members orbit-patrolled where they stopped, never reaching
+        // a deep base like sol-prime, 5 hops in). Re-warping makes traversal
+        // continue hop-by-hop until the squad arrives. (1-hop waves are
+        // unchanged — they reach the goal on the first hop and flip to attack.)
+        if (squad.targetFactionId === null) return { kind: 'hold' };
+        return ctx.membersInSector > 0
           ? { kind: 'attack', factionId: squad.targetFactionId }
-          : { kind: 'hold' };
+          : { kind: 'warp', to: squad.sectorKey };
       case 'attacking':
         return squad.targetFactionId !== null
           ? { kind: 'attack', factionId: squad.targetFactionId }
