@@ -1,9 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Box, CircularProgress } from '@mui/material';
+import { Box, CircularProgress, IconButton, Tooltip } from '@mui/material';
+import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
+import CancelIcon from '@mui/icons-material/Cancel';
+import HubIcon from '@mui/icons-material/Hub';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
+import { sendStructureAction } from '../structures/structureActionsClient';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import type { PickedEntityKind } from '../render/pickEntity';
@@ -66,6 +71,14 @@ interface PanelData {
    *  truncated id) — set for structures so players can identify whose base it is
    *  (other players' bases are a core part of the game, not a bug). */
   owner?: string;
+  /** Phase-1 issue 6 — the structure's numeric swarm entityId (for action
+   *  sends), whether the LOCAL player owns it (gates the action buttons), its
+   *  deconstruct state (Deconstruct↔Cancel toggle), and whether it's a Connector
+   *  (gates the clear-connections button). Set for owned structures only. */
+  entityId?: number;
+  isOwn?: boolean;
+  isDeconstructing?: boolean;
+  isConnector?: boolean;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -157,6 +170,45 @@ export function EntityStatsPanel(): JSX.Element | null {
           {`OWNER ${data.owner}`}
         </Box>
       )}
+      {data.isOwn && data.entityId !== undefined && (
+        // Phase-1 issue 6 — owner-only action buttons. The panel root is
+        // pointerEvents:none (passive readout), so this row re-enables pointers.
+        <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
+          <Tooltip title={data.isDeconstructing ? 'Cancel deconstruction' : 'Deconstruct (reverse build, returns resources)'}>
+            <IconButton
+              data-testid="structure-action-deconstruct"
+              data-active={data.isDeconstructing ? '1' : '0'}
+              size="small"
+              sx={data.isDeconstructing ? ACTION_BTN_WARN_SX : ACTION_BTN_SX}
+              onClick={() => sendStructureAction(data.entityId!, 'toggle_deconstruct')}
+            >
+              {data.isDeconstructing ? <CancelIcon sx={ICON_SX} /> : <DeleteForeverIcon sx={ICON_SX} />}
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Reconnect to the nearest structure">
+            <IconButton
+              data-testid="structure-action-reconnect"
+              size="small"
+              sx={ACTION_BTN_SX}
+              onClick={() => sendStructureAction(data.entityId!, 'reconnect')}
+            >
+              <HubIcon sx={ICON_SX} />
+            </IconButton>
+          </Tooltip>
+          {data.isConnector && (
+            <Tooltip title="Clear all connections">
+              <IconButton
+                data-testid="structure-action-clear"
+                size="small"
+                sx={ACTION_BTN_SX}
+                onClick={() => sendStructureAction(data.entityId!, 'clear_connections')}
+              >
+                <LinkOffIcon sx={ICON_SX} />
+              </IconButton>
+            </Tooltip>
+          )}
+        </Box>
+      )}
     </Box>
   );
 }
@@ -219,8 +271,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
       // → "Unknown". NEVER a raw playerId.
       if (st.owner) {
         const localId = getGameClient()?.mirror.localPlayerId ?? null;
-        data.owner = st.owner === localId ? 'you' : (st.ownerName ?? 'Unknown');
+        const isOwn = st.owner === localId;
+        data.owner = isOwn ? 'you' : (st.ownerName ?? 'Unknown');
+        // Phase-1 issue 6 — action buttons are OWN-only.
+        data.isOwn = isOwn;
       }
+      // Action-button state (issue 6): the numeric id to act on + the toggle /
+      // connector gates. Always populated for a structure; the render gates the
+      // buttons on `isOwn`.
+      const eid = parseEntityId(id);
+      if (eid !== undefined) data.entityId = eid;
+      data.isDeconstructing = st.isDeconstructing === true;
+      data.isConnector = subtype === 'connector';
     }
     return data;
   }
@@ -279,6 +341,13 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     };
   }
   return null;
+}
+
+/** Parse the numeric swarm entityId from a selection id (`swarm-<n>` or `<n>`).
+ *  Undefined when not numeric. */
+function parseEntityId(id: string): number | undefined {
+  const n = parseInt(id.startsWith('swarm-') ? id.slice('swarm-'.length) : id, 10);
+  return Number.isNaN(n) ? undefined : n;
 }
 
 /** A structure's catalogue display name (INSTANT — from the swarm mirror's
@@ -405,3 +474,24 @@ const PENDING_SX = {
   py: '2px',
 };
 const SPINNER_SX = { color: 'rgba(180,220,255,0.8)' };
+// Phase-1 issue 6 — owner-only action-button row. Re-enables pointers (the
+// panel root is pointerEvents:none) and keeps the buttons tiny ("start tiny").
+const ACTIONS_SX = {
+  gridColumn: '1 / -1',
+  display: 'flex',
+  justifyContent: 'center',
+  gap: 0.25,
+  pt: '2px',
+  pointerEvents: 'auto' as const,
+};
+const ACTION_BTN_SX = {
+  p: '2px',
+  color: 'rgba(180,220,255,0.85)',
+  '&:hover': { color: '#cde', bgcolor: 'rgba(120,200,255,0.15)' },
+};
+const ACTION_BTN_WARN_SX = {
+  p: '2px',
+  color: '#ff9b6b',
+  '&:hover': { color: '#ffb892', bgcolor: 'rgba(255,120,80,0.15)' },
+};
+const ICON_SX = { fontSize: 16 };

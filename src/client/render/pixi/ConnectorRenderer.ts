@@ -12,6 +12,7 @@
  */
 import { Graphics } from 'pixi.js';
 import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
+import { interpBuildPct } from './buildBarInterp.js';
 import {
   connectorVisualInto,
   previewLineVisualParams,
@@ -147,7 +148,10 @@ export class ConnectorRenderer {
     this.placementPreviewOverflowCount = 0;
     this.lastRangeCircleRadius = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
-    if (!structures || !swarm || structures.size === 0) return;
+    if (!structures || !swarm || structures.size === 0) {
+      if (this._buildAnchors.size > 0) this._buildAnchors.clear();
+      return;
+    }
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
 
@@ -263,7 +267,11 @@ export class ConnectorRenderer {
       }
 
       // Construction fill-bar for blueprints (above the structure body).
+      // Issue 1: the fill is interpolated LINEARLY between the 1 Hz authoritative
+      // `buildPct` steps using the server `etaMs`, so it builds smoothly rather
+      // than jumping each pulse.
       if (!st.built) {
+        const shownPct = this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs);
         const r = a.radius;
         const barW = r * 2;
         const barH = Math.max(3, r * 0.18);
@@ -271,7 +279,7 @@ export class ConnectorRenderer {
         const by0 = ay - r - barH - 4;
         g.rect(bx0, by0, barW, barH);
         g.fill({ color: 0x000000, alpha: 0.5 });
-        g.rect(bx0, by0, barW * Math.min(1, Math.max(0, st.buildPct)), barH);
+        g.rect(bx0, by0, barW * Math.min(1, Math.max(0, shownPct)), barH);
         g.fill({ color: 0x66ccff, alpha: 0.9 });
       } else if (st.deconstructPct > 0) {
         // Red emptying bar while reclaiming.
@@ -313,6 +321,15 @@ export class ConnectorRenderer {
         g.moveTo(cx - d, cy - d);
         g.lineTo(cx + d, cy + d);
         g.stroke({ color: 0xff4444, width: w, alpha: 0.95 });
+      }
+    }
+
+    // Prune build anchors for structures that have completed or disappeared
+    // (tiny set — only live while something is under construction).
+    if (this._buildAnchors.size > 0) {
+      for (const id of this._buildAnchors.keys()) {
+        const s = structures.get(id);
+        if (!s || s.built) this._buildAnchors.delete(id);
       }
     }
   }
@@ -496,6 +513,24 @@ export class ConnectorRenderer {
    *  `connectorRenderer.update(...)`. */
   ghostWorldX: number | null = null;
   ghostWorldY: number | null = null;
+
+  /** Phase-1 issue 1 — per-blueprint build-bar interpolation anchors, keyed by
+   *  entityId. The server's `buildPct` arrives in 1 Hz steps; we re-anchor on
+   *  each value change and ramp LINEARLY between via `interpBuildPct` so the bar
+   *  fills smoothly instead of jumping. Tiny (only structures under
+   *  construction), pruned when a structure completes / disappears. */
+  private readonly _buildAnchors = new Map<number, { pct: number; atMs: number; etaMs: number | null }>();
+
+  /** Resolve the smoothly-interpolated build fraction for blueprint `id`,
+   *  re-anchoring when the authoritative `buildPct` changes. */
+  private displayedBuildPct(id: number, authoritativePct: number, etaMs: number | null, nowMs: number): number {
+    let anchor = this._buildAnchors.get(id);
+    if (!anchor || anchor.pct !== authoritativePct) {
+      anchor = { pct: authoritativePct, atMs: nowMs, etaMs };
+      this._buildAnchors.set(id, anchor);
+    }
+    return interpBuildPct(anchor.pct, anchor.etaMs, nowMs - anchor.atMs);
+  }
 
   destroy(): void {
     this.gfx.destroy();

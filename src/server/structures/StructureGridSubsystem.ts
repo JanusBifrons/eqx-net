@@ -34,6 +34,7 @@ import {
   DECONSTRUCTION_RATE_KG,
   CONNECTION_THROUGHPUT,
   MINING_BEAM_CADENCE_MS,
+  TRANSFER_PULSE_MS,
 } from '../../core/structures/structureGridConstants.js';
 import { autoConnectStructure, buildGridNodes } from './structureGridView.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
@@ -562,6 +563,50 @@ export class StructureGridSubsystem {
       if (route) return { capital: rec, route };
     }
     return null;
+  }
+
+  /**
+   * Estimate ms-to-completion for a blueprint at the steady delivery rate
+   * (`CONSTRUCTION_PULSE_AMOUNT` per `TRANSFER_PULSE_MS`), ASSUMING resources
+   * are available — the doc's "the building time is independent of [the supply
+   * pulse], assuming no shortage of resources." Returns `null` when there's
+   * nothing to time (already built / zero-cost Capital) OR the build is STALLED
+   * (no storage route with minerals) so the client freezes the bar + shows a
+   * paused timer. Drives the smooth client build bar (issue 1) + the in-world
+   * ETA countdown (issue 2). Computed in the 1 Hz slice rebuild, never the
+   * 60 Hz tick — the division is free.
+   */
+  estimateBuildEtaMs(rec: StructureRecord): number | null {
+    if (rec.isConstructed || rec.constructionCost <= 0) return null;
+    if (!this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
+    const remaining = Math.max(0, rec.constructionCost - rec.constructionProgress);
+    const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / TRANSFER_PULSE_MS;
+    return ratePerMs > 0 ? remaining / ratePerMs : null;
+  }
+
+  /**
+   * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".
+   * Re-runs the SAME obstacle-aware auto-connect the placement + 1 Hz reconnect
+   * sweep use, so a stranded structure (its hub was removed, or it was placed
+   * before its hub) re-wires to the nearest legal in-range hub(s). Additive
+   * (never severs); `autoConnectStructure` dirties topology on success. Returns
+   * false for an unknown id.
+   */
+  reconnect(id: string): boolean {
+    if (!this.hooks.registry.get(id)) return false;
+    autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.());
+    return true;
+  }
+
+  /**
+   * Phase-1 issue 6 — player-triggered "clear all connections" (chiefly for a
+   * Connector). Severs every connection touching the structure; the registry
+   * dirties topology. Returns false for an unknown id.
+   */
+  clearConnections(id: string): boolean {
+    if (!this.hooks.registry.get(id)) return false;
+    this.hooks.registry.disconnect(id);
+    return true;
   }
 
   /** Find a built Capital with minerals that can route to `targetId`. */

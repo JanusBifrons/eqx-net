@@ -41,7 +41,10 @@ import {
   buildScrapGfx,
   buildMinerRangeRingGfx,
   buildCapitalResourceText,
+  buildBatteryChargeText,
+  buildBuildEtaText,
   formatResources,
+  formatBuildEta,
 } from './spriteBuilders.js';
 import type { Text } from 'pixi.js';
 import { minerRangeForKind } from '../minerRangeRing.js';
@@ -116,6 +119,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // WS-9 (R2.12) — the Capital shows its mineral bank as a world-space
         // number below the body. Built ONCE here (invariant #14).
         if (entry.shipKind === 'capital') sprite.addChild(buildCapitalResourceText(entry.radius));
+        // Phase-1 issue 7 — a Battery shows its stored power as a world-space
+        // number (the doc's "actual numbers for the stored capacity").
+        if (entry.shipKind === 'battery') sprite.addChild(buildBatteryChargeText(entry.radius));
+        // Phase-1 issue 2 — every structure carries an (initially empty)
+        // build-ETA countdown child, shown only while it's an unbuilt blueprint.
+        sprite.addChild(buildBuildEtaText(entry.radius));
       } else if (entry.kind === 3) {
         // Scrap (pose-core kind 3, scrap-on-death): one component of a dead
         // ship. Renders that component's recentred sub-shapes from the parent
@@ -231,6 +240,25 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (capText) {
           const next = st?.minerals !== undefined ? formatResources(st.minerals) : '';
           if (capText.text !== next) capText.text = next;
+        }
+      }
+      // Phase-1 issue 2 — the in-world build-ETA countdown (CHANGE-only update;
+      // the 1 Hz pulse re-supplies etaMs so the seconds tick without per-frame
+      // re-raster). Empty once built.
+      const etaText = sprite.getChildByLabel('buildEta') as Text | null;
+      if (etaText) {
+        const nextEta = st && !st.built ? formatBuildEta(st.etaMs) : '';
+        if (etaText.text !== nextEta) etaText.text = nextEta;
+      }
+      // Phase-1 issue 7 — the Battery's stored-power number (CHANGE-only).
+      if (entry.shipKind === 'battery') {
+        const batText = sprite.getChildByLabel('batteryCharge') as Text | null;
+        if (batText) {
+          const next =
+            st?.storedPowerMax !== undefined && st.storedPowerMax > 0
+              ? `${Math.round(st.storedPower ?? 0)}/${Math.round(st.storedPowerMax)}`
+              : '';
+          if (batText.text !== next) batText.text = next;
         }
       }
     }

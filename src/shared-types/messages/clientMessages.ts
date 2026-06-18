@@ -136,6 +136,22 @@ export const RemoveStructureSchema = z
   })
   .strict();
 
+/** Client → server (structures plan, Phase 1 issue 6): act on a structure the
+ *  requester OWNS, identified by its numeric swarm `entityId` (what the client
+ *  has selected). Actions:
+ *   - `toggle_deconstruct` — begin/cancel reverse-construction (drains minerals
+ *      back to the network, removes when fully reclaimed);
+ *   - `reconnect` — re-wire to the nearest legal in-range hub(s);
+ *   - `clear_connections` — sever all of this structure's connections.
+ *  Owner-gated server-side; foreign / unknown ids are dropped. Strict. */
+export const StructureActionSchema = z
+  .object({
+    type: z.literal('structure_action'),
+    id: z.number().int().nonnegative(),
+    action: z.enum(['toggle_deconstruct', 'reconnect', 'clear_connections']),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -145,6 +161,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,
+  StructureActionSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 ]);
@@ -157,4 +174,5 @@ export type CancelTransitMessage = z.infer<typeof CancelTransitSchema>;
 export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
+export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

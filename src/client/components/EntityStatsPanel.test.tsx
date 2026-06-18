@@ -7,8 +7,8 @@
  *   - renders a shield bar for ships, none for structures
  *   - is HIDDEN when `selectedEntityId` is null
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
@@ -310,5 +310,82 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-owner')).toHaveTextContent('OWNER you');
+  });
+
+  // ── Phase-1 issue 6 — owner-only action buttons (deconstruct / reconnect /
+  // clear connections). Gated on owner === local; clear is connector-only. ──
+  it('shows Deconstruct + Reconnect on an OWNED structure (no Clear for non-connector)', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [8, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[8, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
+    expect(screen.getByTestId('structure-action-reconnect')).toBeInTheDocument();
+    expect(screen.queryByTestId('structure-action-clear')).toBeNull(); // non-connector
+  });
+
+  it('shows the Clear-connections button on an OWNED connector', () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [7, { powered: true, netPower: 0, connTo: [3, 5], built: true, buildPct: 1, deconstructPct: 0, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'connector', radius: 10, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('structure-action-clear')).toBeInTheDocument();
+  });
+
+  it("hides ALL action buttons on ANOTHER player's structure", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [7, { powered: true, netPower: 0, connTo: [], built: true, buildPct: 1, deconstructPct: 0, owner: 'other-1', ownerName: 'Nova' }],
+        ]),
+        swarm: new Map([[7, { kind: 2, shipKind: 'connector', radius: 10, x: 0, y: 0 }]]),
+      }),
+    );
+    applySelectionStats({ id: '7', name: 'Connector', hp: 200, hpMax: 200 });
+    useUIStore.setState({ selectedEntityId: 'swarm-7', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('entity-stats-actions')).toBeNull();
+  });
+
+  it('the Deconstruct button shows Cancel state + sends the toggle action with the entityId', () => {
+    const sendSpy = vi.fn();
+    setGameClient({
+      mirror: {
+        localPlayerId: 'me-123',
+        structures: new Map([
+          [8, { powered: true, netPower: 0, connTo: [], built: false, buildPct: 0.3, deconstructPct: 0.2, isDeconstructing: true, owner: 'me-123' }],
+        ]),
+        swarm: new Map([[8, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }]]),
+      },
+      getRoom: () => ({ send: sendSpy }),
+    } as unknown as ColyseusGameClient);
+    applySelectionStats({ id: '8', name: 'Solar', hp: 300, hpMax: 300 });
+    useUIStore.setState({ selectedEntityId: 'swarm-8', selectedEntityKind: 'structure' });
+    render(<EntityStatsPanel />);
+    const btn = screen.getByTestId('structure-action-deconstruct');
+    expect(btn).toHaveAttribute('data-active', '1'); // already deconstructing → Cancel state
+    fireEvent.click(btn);
+    expect(sendSpy).toHaveBeenCalledWith('structure_action', {
+      type: 'structure_action',
+      id: 8,
+      action: 'toggle_deconstruct',
+    });
   });
 });

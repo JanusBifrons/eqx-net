@@ -9,12 +9,15 @@ import { randomUUID } from 'node:crypto';
  * a baked scenario avoids the place-ahead UI overlap (stacked placements get
  * rejected) and the multi-second construction wait, so the E2E observes the
  * client-visible end states directly:
- *   - grid-power HUD shows the powered grid's net power (Phase 3 slice → HUD),
- *   - minerals HUD CLIMBS (Phase 4 mining → haul → bank → slice → HUD),
+ *   - the pre-built grid SPAWNS on the client (Phase 3 slice → swarm mirror),
+ *   - a clicked structure's OWNER reaches the inspector (Phase 4 slice → panel),
  *   - the parked drone DIES (Phase 5 turret fires → swarm count drops).
  *
- * The server maths is locked by the integration + unit suites; this is the
- * "the wire actually reaches the client" lock.
+ * Phase-1 issue 7 removed the whole-grid power/minerals HUD readout (per-
+ * structure stats now live in-world + the selection inspector), so the former
+ * "HUD lights up / climbs" assertions are gone; the mining→bank economy stays
+ * locked by the integration + unit suites. The server maths is locked there;
+ * this is the "the wire actually reaches the client" lock.
  */
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
@@ -39,29 +42,20 @@ function swarmCount(page: Page): Promise<number> {
     .then((t) => parseInt((t ?? '0').replace(/\D/g, '') || '0', 10));
 }
 
-test('the pre-built scenario grid reports power in the HUD', async ({ browser }) => {
+test('the pre-built scenario grid spawns on the client', async ({ browser }) => {
+  // The slice → swarm-mirror wire path: the baked grid (Capital + 2 Solar +
+  // Miner + Turret = 5 structures) plus the asteroid + parked drone reach the
+  // client as swarm entities. (The whole-grid power HUD was removed in issue 7;
+  // per-structure power now lives in the inspector, locked by the owner test
+  // below + EntityStatsPanel.test.tsx.)
   const { ctx, page } = await joinScenario(browser);
   try {
-    const power = page.locator('[data-testid="grid-power"]');
-    await expect(power).toBeVisible({ timeout: 12_000 });
-    expect(Number(await power.getAttribute('data-net-power'))).toBeGreaterThan(0);
-  } finally {
-    await ctx.close();
-  }
-});
-
-test('the miner grows the mineral bank (HUD climbs)', async ({ browser }) => {
-  const { ctx, page } = await joinScenario(browser);
-  try {
-    const minerals = page.locator('[data-testid="grid-minerals"]');
-    await expect(minerals).toBeVisible({ timeout: 12_000 });
-    const start = Number(await minerals.getAttribute('data-minerals'));
     await page.waitForFunction(
-      (s) => Number(document.querySelector('[data-testid="grid-minerals"]')?.getAttribute('data-minerals') ?? 0) > s,
-      start,
-      { timeout: 15_000 },
+      () => parseInt((document.querySelector('[data-testid="swarm-count"]')?.textContent ?? '0').replace(/\D/g, '') || '0', 10) >= 6,
+      undefined,
+      { timeout: 12_000 },
     );
-    expect(Number(await minerals.getAttribute('data-minerals'))).toBeGreaterThan(start);
+    expect(await swarmCount(page)).toBeGreaterThanOrEqual(6);
   } finally {
     await ctx.close();
   }
