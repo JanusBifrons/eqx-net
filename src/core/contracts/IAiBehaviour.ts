@@ -161,6 +161,16 @@ export interface IAiBehaviour {
   setMoveTarget?(x: number, y: number): void;
   clearMoveTarget?(): void;
   /**
+   * Leader-led flocking (non-combat herding): assign this drone the squad
+   * LEADER's course. Like `setMoveTarget` but flags it a flock leader so the
+   * brain THROTTLES its cruise — the leader travels slower than its full-cruise
+   * followers so the herd tightens around it (replaces the old follower-boost;
+   * the user's "make the leader wait"). The director points the course at the
+   * leader's own pose to make it hold while the flock gathers. SERVER-ONLY (no
+   * client brain ⇒ no lockstep surface / wire bump).
+   */
+  setFlockLeaderCourse?(x: number, y: number): void;
+  /**
    * Leader-led flocking (non-combat herding). The `LivingWorldDirector` marks
    * one squad member the LEADER (given a course via `setMoveTarget`) and calls
    * this on every OTHER member with the leader's id + the squad's member ids.

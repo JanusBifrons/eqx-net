@@ -103,6 +103,12 @@ export interface LivingWorldRoom {
    *  leader's LIVE pose each tick (`memberIds` drive separation), instead of a
    *  static wedge slot. No-op if the bot isn't an in-sector drone here. */
   setBotFlockFollow(botId: string, leaderId: string, memberIds: readonly string[]): void;
+  /** Leader-led flocking (non-combat herding): assign a bot the squad LEADER's
+   *  COURSE — like `setBotMoveTarget` but flags it a throttled flock leader so it
+   *  cruises slower than its followers (they tighten around it). The director
+   *  points the course at the leader's own pose to make it HOLD while the flock
+   *  gathers. No-op if the bot isn't an in-sector drone here. */
+  setBotFlockLeaderCourse(botId: string, x: number, y: number): void;
   /** Wave-system Phase 4 — per-faction base summary for wave planning. Empty on
    *  engineering rooms (`sectorKey === null`; waves are galaxy-only). */
   factionBaseReadiness(): FactionBaseReadiness[];

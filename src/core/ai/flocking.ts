@@ -6,12 +6,20 @@
  * blob, not a formation. This replaces that with continuous leader-led flocking
  * run in the drone brain every tick (60 Hz): a designated leader cruises a
  * course, and each follower steers by the three classic Reynolds rules —
- *   - COHESION   : pull toward the leader, but only beyond a follow-distance (so
- *                  followers trail/surround at a readable radius, never pile on);
+ *   - COHESION   : pull toward the leader, with an ARRIVAL ramp so the follower
+ *                  SLOWS as it nears the follow-distance (standard "arrive"
+ *                  behaviour — it doesn't barrel through the leader);
  *   - ALIGNMENT  : a constant nudge along the leader's heading (the herd flies as
  *                  one + keeps pace with the moving leader);
  *   - SEPARATION : push away from any squad neighbour closer than a radius (this
  *                  is what spreads the blob into a herd — strongest when closest).
+ *
+ * There is NO boost. Followers move at the calm AI cruise (`ai.thrust`); the
+ * arrival ramp + per-kind damping settle them into the cluster with no overshoot.
+ * The catch-up problem (a follower can't outrun a leader moving at the same max
+ * speed) is solved on the DIRECTOR side instead — the leader is THROTTLED and
+ * WAITS when the squad is spread, so the flock keeps up (see
+ * `HostileDroneBehaviour` `LEADER_CRUISE_THROTTLE` + `LivingWorldDirector.flockStep`).
  *
  * Zone-pure (src/core): scalar in / caller-owned accumulator + out (allocation-
  * free, invariant #14), deterministic. Game-space is Y-up; the ship-forward
@@ -53,48 +61,49 @@ export function resetFlock(acc: FlockAccumulator): void {
 }
 
 // ── FEEL constants (tune on-device — the boids weights/radii) ───────────────
-/** Nominal herd radius — the reference distance for the catch-up BOOST: a
- *  follower farther than `× FLOCK_BOOST_GAP_FACTOR` from its leader boosts back
- *  in. (Cluster TIGHTNESS itself is set by the cohesion/separation balance.) */
-export const FLOCK_FOLLOW_DISTANCE = 200;
-/** Neighbours closer than this push each other apart (prevents the clump). */
-export const FLOCK_SEPARATION_RADIUS = 130;
-/** Per-rule blend weights. Separation > cohesion so the herd spreads rather than
- *  piles; alignment keeps it moving with the leader even when cohesion is 0. */
-export const FLOCK_COHESION_GAIN = 1.2;
+/** The follow-distance: within this range of the leader the COHESION pull ramps
+ *  down toward 0 (arrival), so followers trail/surround at a readable radius and
+ *  SLOW as they arrive rather than piling onto the leader. Also the director's
+ *  reference for whether the squad has "gathered". */
+export const FLOCK_FOLLOW_DISTANCE = 220;
+/** Neighbours closer than this push each other apart (prevents the clump). Set
+ *  below FOLLOW_DISTANCE so the stable band (separation floor → cohesion-zero) is
+ *  a real spacing, not a single point. */
+export const FLOCK_SEPARATION_RADIUS = 150;
+/** Per-rule blend weights. Cohesion ≥ separation so the herd actually bunches;
+ *  alignment keeps it moving with the leader even when cohesion has ramped to 0
+ *  at the follow-distance. */
+export const FLOCK_COHESION_GAIN = 1.4;
 export const FLOCK_ALIGNMENT_GAIN = 0.6;
-export const FLOCK_SEPARATION_GAIN = 1.7;
-/** A follower farther than `FLOCK_BOOST_GAP_FACTOR × follow-distance` from its
- *  leader BOOSTS to catch up — the drone analogue of a player holding boost. The
- *  drone's normal AI cruise impulse (`ai.thrust`) is far below a player's, so
- *  without a boost a lagging follower (capped at the same slow cruise) could
- *  never close on a moving leader. The brain applies the kind's REAL player-boost
- *  impulse (`thrustImpulse × boostMultiplier`) while boosting; in-formation it
- *  drops back to the calm roam cruise. */
-export const FLOCK_BOOST_GAP_FACTOR = 1.6;
+export const FLOCK_SEPARATION_GAIN = 1.3;
 
 /**
- * COHESION — a constant pull toward an anchor point (the LEADER's position). The
- * herd bunches AROUND the leader; SEPARATION counters it at close range, so the
- * squad settles into a cluster at a stable spacing around the leader (rather than
- * piling on). Constant magnitude (not distance-ramped) — far stragglers are
- * pulled back fast by the BOOST, not by overdriving cohesion. (Cohesion +
- * boost both reference the leader, so a lagging follower boosts TOWARD it.)
+ * COHESION — pull toward an anchor point (the LEADER's position) with an ARRIVAL
+ * ramp: FULL `gain` while farther than `FLOCK_FOLLOW_DISTANCE`, then linearly
+ * ramped down to 0 as the follower closes inside it. This is the textbook
+ * "arrive" slow-down — the follower decelerates its inward pull as it reaches
+ * the follow-radius instead of overshooting through the leader. SEPARATION
+ * counters it at close range, so the squad settles into a cluster at a stable
+ * spacing AROUND the leader (between the separation floor and the follow radius).
  */
 export function addCohesion(
   acc: FlockAccumulator,
   selfX: number,
   selfY: number,
-  centroidX: number,
-  centroidY: number,
+  leaderX: number,
+  leaderY: number,
   gain: number = FLOCK_COHESION_GAIN,
+  followDistance: number = FLOCK_FOLLOW_DISTANCE,
 ): void {
-  const dx = centroidX - selfX;
-  const dy = centroidY - selfY;
+  const dx = leaderX - selfX;
+  const dy = leaderY - selfY;
   const d = Math.hypot(dx, dy);
   if (d < 1e-6) return;
-  acc.x += (dx / d) * gain;
-  acc.y += (dy / d) * gain;
+  // Arrival ramp: full pull beyond the follow-distance, linearly to 0 within it.
+  const ramp = d >= followDistance ? 1 : d / followDistance;
+  const s = ramp * gain;
+  acc.x += (dx / d) * s;
+  acc.y += (dy / d) * s;
 }
 
 /**
@@ -139,7 +148,10 @@ export function addSeparation(
 
 /**
  * Resolve the accumulated boids vector into a unit heading + a thrust scale in
- * [0, 1] (the desired-velocity magnitude, capped). Zero vector ⇒ no steer.
+ * [0, 1] (the desired-velocity magnitude, capped at 1). Zero vector ⇒ no steer.
+ * Because cohesion arrival-ramps to 0 and separation cancels it near the
+ * follow-radius, a settled follower's vector shrinks toward the alignment term
+ * alone — so it eases off thrust ("slow down once close") without any boost.
  */
 export function resolveFlock(acc: FlockAccumulator, out: FlockOutput): FlockOutput {
   const m = Math.hypot(acc.x, acc.y);

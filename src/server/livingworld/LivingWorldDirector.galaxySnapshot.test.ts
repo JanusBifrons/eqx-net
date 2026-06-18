@@ -18,6 +18,8 @@ function fullMockRoom(over: Partial<LivingWorldRoom>): LivingWorldRoom {
     markBotHostile: () => {},
     getBotPose: () => null,
     setBotMoveTarget: () => {},
+    setBotFlockFollow: () => {},
+    setBotFlockLeaderCourse: () => {},
     factionBaseReadiness: () => [],
     setFactionUnderWave: () => {},
     markSquadHostileToFaction: () => {},

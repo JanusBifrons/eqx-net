@@ -9,27 +9,32 @@ import {
   resolveFlock,
   FLOCK_SEPARATION_RADIUS,
   FLOCK_COHESION_GAIN,
+  FLOCK_FOLLOW_DISTANCE,
 } from './flocking.js';
 
-describe('flocking — cohesion (toward the leader anchor)', () => {
-  it('pulls toward the anchor (unit direction × gain)', () => {
+describe('flocking — cohesion (toward the leader anchor, with arrival ramp)', () => {
+  it('pulls toward the anchor at FULL gain beyond the follow-distance', () => {
     const acc = makeFlockAccumulator();
-    // Anchor to the +x; follower at origin → pull is +x, magnitude = gain.
-    addCohesion(acc, 0, 0, 500, 0);
+    // Anchor to the +x well beyond the follow-distance → pull is +x at full gain.
+    addCohesion(acc, 0, 0, FLOCK_FOLLOW_DISTANCE * 3, 0);
     expect(acc.x).toBeGreaterThan(0);
     expect(acc.y).toBeCloseTo(0, 6);
-    expect(acc.x).toBeCloseTo(FLOCK_COHESION_GAIN, 6); // constant pull (not distance-ramped)
+    expect(acc.x).toBeCloseTo(FLOCK_COHESION_GAIN, 6); // ramp == 1 beyond follow-distance
   });
 
-  it('is a CONSTANT pull regardless of distance (boost handles far catch-up)', () => {
+  it('ARRIVAL ramp: weaker pull inside the follow-distance, linear to 0 at the anchor', () => {
     const near = makeFlockAccumulator();
     const far = makeFlockAccumulator();
-    addCohesion(near, 0, 0, 300, 0);
-    addCohesion(far, 0, 0, 5000, 0);
-    expect(Math.abs(near.x)).toBeCloseTo(Math.abs(far.x), 6);
+    addCohesion(near, 0, 0, FLOCK_FOLLOW_DISTANCE * 0.4, 0); // inside → ramped down
+    addCohesion(far, 0, 0, FLOCK_FOLLOW_DISTANCE * 3, 0); // beyond → full
+    expect(Math.abs(near.x)).toBeLessThan(Math.abs(far.x));
+    // Halfway in is half the full pull (the linear arrival ramp).
+    const half = makeFlockAccumulator();
+    addCohesion(half, 0, 0, FLOCK_FOLLOW_DISTANCE * 0.5, 0);
+    expect(Math.abs(half.x)).toBeCloseTo(FLOCK_COHESION_GAIN * 0.5, 6);
   });
 
-  it('no pull when already at the centroid', () => {
+  it('no pull when already at the anchor', () => {
     const acc = makeFlockAccumulator();
     addCohesion(acc, 100, 100, 100, 100);
     expect(acc.x).toBe(0);
@@ -77,10 +82,10 @@ describe('flocking — separation', () => {
 });
 
 describe('flocking — resolveFlock', () => {
-  it('normalises to a unit direction + caps the thrust scale at 1 (boost is separate)', () => {
+  it('normalises to a unit direction + caps the thrust scale at 1', () => {
     const acc = makeFlockAccumulator();
     acc.x = 3;
-    acc.y = 4; // magnitude 5 → capped to 1 (the catch-up speed-up is the boost, not this)
+    acc.y = 4; // magnitude 5 → capped to 1 (calm cruise; no boost above cruise)
     const out = resolveFlock(acc, makeFlockOutput());
     expect(Math.hypot(out.dirX, out.dirY)).toBeCloseTo(1, 6);
     expect(out.dirX).toBeCloseTo(0.6, 6);
