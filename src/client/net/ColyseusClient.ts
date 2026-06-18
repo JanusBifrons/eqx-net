@@ -3583,6 +3583,13 @@ export class ColyseusGameClient {
           kinematicScratch.vx = entry.vx;
           kinematicScratch.vy = entry.vy;
           kinematicScratch.angle = entry.angle;
+          // angvel stays 0 for the kinematic follower (drones AND scrap). The
+          // body is hard-set to the single interpolated pose each frame; a
+          // non-zero angvel lets it spin off between frames then snap back,
+          // which MEASURABLY worsened scrap-flythrough corrections (Phase-1
+          // issue 5 A/B: peak corr-rate 0.40→0.80, drift 18→39 u — the
+          // scrap-collision-stress E2E falsified the "feed scrap its spin"
+          // hypothesis). Holding the interpolated angle is correct.
           kinematicScratch.angvel = 0;
           this.predWorld.setShipState(bodyKey, kinematicScratch);
         }

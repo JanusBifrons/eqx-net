@@ -406,6 +406,23 @@ gameServer.define('feel-test-scrap', SectorRoom, {
   defaultSpawnY: 0,
   maxClients: 4,
 });
+// Phase-1 issue 5 (2026-06-18) — scrap-collision reproduction. Pre-seeds 50
+// free-floating SCRAP pieces in a dense corridor AHEAD of spawn (the promotion
+// follow-up the feel-test-scrap comment names: a steady `scenarioScrap` seed
+// instead of death-timing-dependent drone kills). The E2E flies the player
+// straight through to measure prediction corrections/drift through a scrap
+// cascade. testMode-true + filterBy(testId) for isolation. Drives
+// `tests/e2e/scrap-collision-stress.spec.ts`.
+gameServer
+  .define('scrap-stress-test', SectorRoom, {
+    testMode: true,
+    asteroidConfig: [],
+    scenarioScrapCount: 50,
+    defaultSpawnX: 0,
+    defaultSpawnY: 0,
+    maxClients: 4,
+  })
+  .filterBy(['testId']);
 // 2026-06-01 — phone-stall-test: heavy-combat repro environment for
 // `tests/mobile-perf/phone-galaxy-stall-repro.spec.ts`. 35 drones in
 // a tight ring (matches the user's wb1al4/jfd81u swarm count) so the
