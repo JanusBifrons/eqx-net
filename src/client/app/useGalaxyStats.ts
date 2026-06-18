@@ -15,6 +15,7 @@ const POLL_MS = 4000;
  */
 export function useGalaxyStats(active: boolean): void {
   const setGalaxyStats = useUIStore((s) => s.setGalaxyStats);
+  const setGalaxyStatsLoaded = useUIStore((s) => s.setGalaxyStatsLoaded);
   useEffect(() => {
     if (!active) return undefined;
     let cancelled = false;
@@ -23,7 +24,12 @@ export function useGalaxyStats(active: boolean): void {
         const res = await fetch('/galaxy/snapshot');
         if (!res.ok) return;
         const parsed = GalaxySnapshotResponseSchema.safeParse(await res.json());
-        if (!cancelled && parsed.success) setGalaxyStats(parsed.data.sectors);
+        if (!cancelled && parsed.success) {
+          setGalaxyStats(parsed.data.sectors);
+          // First successful poll ⇒ the map's live counts are ready; drop the
+          // loading spinner so icons appear WITH the map, not popped-in after (#2).
+          setGalaxyStatsLoaded(true);
+        }
       } catch {
         /* transient network — ignore; the next interval retries */
       }
@@ -34,5 +40,5 @@ export function useGalaxyStats(active: boolean): void {
       cancelled = true;
       clearInterval(id);
     };
-  }, [active, setGalaxyStats]);
+  }, [active, setGalaxyStats, setGalaxyStatsLoaded]);
 }

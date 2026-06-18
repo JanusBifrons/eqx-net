@@ -7,6 +7,7 @@ import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 describe('useGalaxyStats', () => {
   beforeEach(() => {
     useUIStore.getState().setGalaxyStats([]);
+    useUIStore.getState().setGalaxyStatsLoaded(false);
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -29,6 +30,20 @@ describe('useGalaxyStats', () => {
     renderHook(() => useGalaxyStats(true));
     await vi.waitFor(() => expect(useUIStore.getState().galaxyStats).toEqual(sectors));
     expect(fetchMock).toHaveBeenCalledWith('/galaxy/snapshot');
+    // Phase 2 #2 — the loading flag flips on the first successful poll (drops the
+    // spinner so icons appear with the map).
+    expect(useUIStore.getState().galaxyStatsLoaded).toBe(true);
+  });
+
+  it('leaves galaxyStatsLoaded false on a malformed response (spinner stays until valid data)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ sectors: [{ key: 'x', players: 'not-a-number' }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderHook(() => useGalaxyStats(true));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(useUIStore.getState().galaxyStatsLoaded).toBe(false);
   });
 
   it('ignores a malformed (zod-rejected) response without writing the store', async () => {

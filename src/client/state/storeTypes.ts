@@ -248,6 +248,11 @@ export interface UIStore {
    *  non-spatial → Zustand-safe (#2). Polled by useGalaxyStats while a galaxy map
    *  is on screen; consumed by the GalaxyMapLayer count glyphs. */
   galaxyStats: SectorLiveState[];
+  /** Equinox Tweaks Phase 2 (#2) — false until the FIRST `/galaxy/snapshot` poll
+   *  resolves. Drives a one-shot loading spinner over the galaxy map so the live
+   *  count icons don't "pop in" out of sync after the hexes render. Discrete
+   *  boolean → Zustand-safe (#2). */
+  galaxyStatsLoaded: boolean;
   /** Equinox Phase 7 — the logged-in player's owned-structure count per sector,
    *  from GET /galaxy/presence (the "my structures" omnipotent overlay). Ship
    *  locations are merged in client-side from the roster. Discrete, non-spatial
@@ -372,6 +377,7 @@ export interface UIStore {
   setPendingPickSector: (key: string | null) => void;
   setGalaxyMapOpen: (v: boolean) => void;
   setGalaxyStats: (stats: SectorLiveState[]) => void;
+  setGalaxyStatsLoaded: (v: boolean) => void;
   setGalaxyOwnedStructures: (sectors: SectorStructurePresence[]) => void;
   setGalaxyHover: (hover: { sectorKey: string; left: number; top: number } | null) => void;
   toggleGalaxyMapOpen: () => void;
