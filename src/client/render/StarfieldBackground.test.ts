@@ -2,9 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { GAMEPLAY_STAR_LAYERS } from './StarfieldBackground';
 import { starLayerAlphaAt, starRadiusAt } from './lodStarfield';
 
-// The gameplay camera clamps zoom to [0.4, 4] (Camera.ts minScale/maxScale).
-const MIN_ZOOM = 0.4;
-const MAX_ZOOM = 4;
+// The gameplay camera clamps zoom to [0.15, 3] — PixiRenderer overrides the
+// Camera default (0.4/4) with minScale 0.15 / maxScale 3. The field must never
+// be blank anywhere in this real range (the 2026-06-19 "blank when fully zoomed
+// out" report was layers tuned for 0.4 while the floor is actually 0.15).
+const MIN_ZOOM = 0.15;
+const MAX_ZOOM = 3;
 
 describe('GAMEPLAY_STAR_LAYERS — zoom-aware LOD coverage', () => {
   it('keeps ≥1 layer visible at EVERY zoom across the gameplay range (never a blank field)', () => {

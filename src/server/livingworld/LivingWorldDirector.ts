@@ -28,7 +28,6 @@ import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
   squadEdgePose,
-  squadCentralPose,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -109,6 +108,23 @@ export function resolveBotHopMs(
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
+/**
+ * Per-hop vulnerable spool length. A WAVE's FINAL approach into its target sector
+ * uses the long `waveApproachMs` (≈ the player's 30 s warp) so the attack
+ * TELEGRAPHS with a real "incoming" countdown; every other hop — intermediate
+ * wave hops AND roam hops (roamers are never a wave, so `isWave` is false) — uses
+ * the fast `normalMs` so a multi-hop wave still converges. The 2026-06-19 playtest
+ * "the attack came out of nowhere with 2.5 s warning" fix, decoupled + unit-locked.
+ */
+export function hopSpoolMs(
+  isWave: boolean,
+  isFinalApproach: boolean,
+  normalMs: number,
+  waveApproachMs: number,
+): number {
+  return isWave && isFinalApproach ? waveApproachMs : normalMs;
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
@@ -132,8 +148,18 @@ export interface LivingWorldOptions {
   /** Initial warp-ins are spread out by this step so 25 bots don't all
    *  appear on the same tick. */
   initialStaggerMs: number;
-  /** Per-bot vulnerable spool length (defaults to the player value). */
+  /** Per-bot vulnerable spool length for a NORMAL hop (ms) — the fast
+   *  cross-galaxy traversal cadence (`DRONE_HOP_SPOOL_MS`). */
   spoolMs: number;
+  /** Vulnerable spool length for a WAVE's FINAL approach hop INTO its target
+   *  sector (ms). Much longer than `spoolMs` (≈ the player's 30 s warp) so an
+   *  incoming wave TELEGRAPHS: the squad visibly winds up in the adjacent sector
+   *  and the target gets a real ~30 s "incoming wave" countdown, instead of the
+   *  2.5 s-per-hop surprise that read as "no warning, spawned on top" (2026-06-19
+   *  playtest). Only the final approach is slow — intermediate hops stay
+   *  `spoolMs` fast so a multi-hop wave still converges (a uniform 30 s/hop was
+   *  the pre-2026-06-18 bug that took waves minutes + never arrived). */
+  waveApproachSpoolMs: number;
   /** Invulnerable inter-sector flight time per galaxy-graph hop (ms). The
    *  drone-warp-in design's emergent travel: a 2-hop dispatch costs ~2×, so
    *  farther bases take longer to reach. Override via `EQX_BOT_HOP_MS`. */
@@ -187,6 +213,12 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // Drone hops use the SHORT visible dwell (NOT the 30 s player warp spool) so
   // waves actually traverse + converge — see `DRONE_HOP_SPOOL_MS`.
   spoolMs: DRONE_HOP_SPOOL_MS,
+  // A wave's FINAL approach into the target sector spools ~30 s (the player warp
+  // duration) so the attack telegraphs with a real countdown + a visible windup
+  // in the adjacent sector — the 2026-06-19 "the attack came out of nowhere with
+  // no warning" fix. Intermediate hops stay `spoolMs` fast (convergence). FEEL
+  // knob — confirm on-device.
+  waveApproachSpoolMs: 30_000,
   // 0 = NO invisible inter-sector flight (Equinox: "drones should always be on
   // the actual game world, not in some ethereal warp"). The cross-sector hop is
   // now an atomic despawn-source/spawn-dest (deferred one macrotask) — a drone
@@ -211,18 +243,17 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
 };
 
 /** Leader-course tunables (non-combat herding). Radius (game units) of the ring
- *  the LEADER's in-sector A→B course points are drawn from, CENTRED ON ORIGIN.
- *  Kept SMALL so a roaming herd patrols the CENTRAL, player-visible, interest-
- *  covered zone (a player sees ~±650 u at zoom 1 / ±1600 at min zoom; interest
- *  reaches ~3072 u) rather than cruising a radius-2000 ring out near the edge
- *  where it's never seen — the live-diagnosis fix, paired with the central
- *  roam-arrival pose (`squadCentralPose`). Legs are chords of this ring (up to
- *  ~2× the radius) so the leader still genuinely CRUISES across the centre. */
-const FORMATION_DEST_RANGE = 1000;
+ *  the LEADER's in-sector A→B course points are drawn from, centred on origin.
+ *  Legs are LONG chords of this ring (up to ~2× the radius) so the herd CRUISES
+ *  edge-to-edge ACROSS the sector — over the long roam dwell it traverses the
+ *  central zone (encounterable) while ARRIVING at the edge, never popping in on
+ *  top of a player at the centre (the 2026-06-19 playtest "spawned on top" fix —
+ *  the central-arrival experiment was reverted; visibility comes from the long
+ *  dwell + long legs, not from arriving on top). */
+const FORMATION_DEST_RANGE = 2000;
 /** Re-pick the leader's course once it's within this distance of it (so the herd
- *  continuously flies new A→B legs rather than parking). Tightened with the
- *  smaller ring so the wander stays lively on the shorter legs. */
-const FORMATION_DEST_ARRIVE = 180;
+ *  continuously flies new A→B legs rather than parking). */
+const FORMATION_DEST_ARRIVE = 250;
 /** Angular spread (rad) around the "fly to the far side" bearing for course
  *  variety. The leader always aims roughly ACROSS the central zone (opposite its
  *  current bearing) so every leg is LONG — otherwise a random absolute point can
@@ -314,15 +345,6 @@ export class LivingWorldDirector {
       // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
       // so a squad re-forms clustered at each sector it hops into.
       squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
-      // A ROAMING squad (idle, not tasked to a faction wave) re-forms in the
-      // CENTRAL, player-visible zone so the herd is actually SEEN; wave squads
-      // (targetFactionId set) keep the edge arrival (bearing down on a base), and
-      // an unknown squad falls through to the edge pose. Lazy ⇒ sees the squad's
-      // role at arrival time.
-      arrivalPoseFor: (botId, sector) => {
-        const sq = this.squadPool.squadOf(botId);
-        return sq && sq.targetFactionId === null ? squadCentralPose(sq.squadId, sector, botId) : undefined;
-      },
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -850,8 +872,17 @@ export class LivingWorldDirector {
    * Returns the number of members that began the FINAL leg (`nextHop === goal`)
    * this tick — the trigger for the one-shot warp-in warning.
    */
-  private advanceMembersTowardGoal(squad: { botIds: readonly string[]; sectorKey: string }): number {
+  private advanceMembersTowardGoal(squad: {
+    botIds: readonly string[];
+    sectorKey: string;
+    targetFactionId?: string | null;
+  }): number {
     const goal = squad.sectorKey;
+    // A WAVE (tasked against a faction) telegraphs its FINAL approach into the
+    // target with a long spool; everything else (intermediate wave hops, roam
+    // hops) stays fast so traversal still converges. `targetFactionId` is unset
+    // for roaming squads ⇒ they never get the slow approach.
+    const isWave = squad.targetFactionId != null;
     let finalApproach = 0;
     for (const botId of squad.botIds) {
       const rec = this.pool.get(botId);
@@ -867,8 +898,10 @@ export class LivingWorldDirector {
         if (this.rooms.has(goal)) hop = goal;
         else continue;
       }
-      this.startSquadMemberTransit(rec, rec.sectorKey, hop);
-      if (hop === goal) finalApproach++;
+      const isFinalApproach = hop === goal;
+      const spoolMs = hopSpoolMs(isWave, isFinalApproach, this.opts.spoolMs, this.opts.waveApproachSpoolMs);
+      this.startSquadMemberTransit(rec, rec.sectorKey, hop, spoolMs);
+      if (isFinalApproach) finalApproach++;
     }
     return finalApproach;
   }
@@ -876,11 +909,16 @@ export class LivingWorldDirector {
   /** Spool one squad member from→to via the proven per-bot transit machinery
    *  (vulnerable spool, race-guarded outcome routing). Extracted from the old
    *  distribution-migration loop. */
-  private startSquadMemberTransit(rec: BotRecord, from: string, to: string): void {
+  private startSquadMemberTransit(
+    rec: BotRecord,
+    from: string,
+    to: string,
+    spoolMs: number = this.opts.spoolMs,
+  ): void {
     const fromRoom = this.rooms.get(from);
     if (!fromRoom) return;
     rec.state = 'in-transit';
-    const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), this.opts.spoolMs);
+    const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), spoolMs);
     rec.controller = ctrl;
     fromRoom.eventBus().emit('BOT_TRANSIT_STARTED', {
       type: 'BOT_TRANSIT_STARTED',
@@ -902,7 +940,9 @@ export class LivingWorldDirector {
       count: squad ? squad.botIds.length : 1,
       disposition: this.dispositionForSquad(squad),
       // ≈ time-to-arrival for this leg: vulnerable spool + invulnerable flight.
-      etaMs: this.opts.spoolMs + this.opts.hopTravelMs,
+      // Uses THIS hop's spool (a wave's final approach is ~30 s), so the HUD
+      // countdown matches the real arrival instead of a fixed 2.5 s.
+      etaMs: spoolMs + this.opts.hopTravelMs,
       kind: squad ? squad.kind : rec.kind,
     });
     serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });

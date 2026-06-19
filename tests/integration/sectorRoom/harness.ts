@@ -415,6 +415,9 @@ export async function bootLivingWorldTestServer(opts: {
     // `opts.director`.
     controlIntervalMs: 60,
     spoolMs: 40,
+    // Fast wave final-approach in tests (production telegraphs ~30 s) so a wave
+    // reaches its target within the test window instead of waiting out the spool.
+    waveApproachSpoolMs: 40,
     respawnDelayMs: 150,
     arrivalCooldownMs: 80,
     // Long vs the test's deliberate connection-blip (≤ a few hundred ms)

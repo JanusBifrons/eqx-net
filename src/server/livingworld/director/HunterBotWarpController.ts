@@ -24,7 +24,7 @@
  */
 
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
-import { sectorEdgePose, squadEdgePose, type EdgePose, type Rng } from '../population.js';
+import { sectorEdgePose, squadEdgePose, type Rng } from '../population.js';
 import type { LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { BotCarry } from '../botTypes.js';
 import type { HunterBotPool, BotRecord } from './HunterBotPool.js';
@@ -41,12 +41,6 @@ export interface HunterBotWarpControllerOptions {
    *  anchor (a herd that hops together), via `squadEdgePose`. Absent ⇒ fall back
    *  to the per-bot random `sectorEdgePose` (back-compat for tests). */
   squadKeyOf?: (botId: string) => string;
-  /** Optional per-bot arrival-pose override, consulted FIRST in `arrive`. The
-   *  director uses it to land a ROAMING squad in the central, player-visible zone
-   *  (`squadCentralPose`) instead of the far edge — wave hops + unknown squads
-   *  return `undefined` and fall through to the edge pose. Lazy (called at
-   *  arrival), so it sees the squad's current role. */
-  arrivalPoseFor?: (botId: string, sector: string) => EdgePose | undefined;
 }
 
 export class HunterBotWarpController {
@@ -56,7 +50,6 @@ export class HunterBotWarpController {
   private readonly respawnDelayMs: number;
   private readonly hopTravelMs: number;
   private readonly squadKeyOf?: (botId: string) => string;
-  private readonly arrivalPoseFor?: (botId: string, sector: string) => EdgePose | undefined;
   /** botId → pending arrival timer (the in-flight window). Cleared on
    *  `disposePending` (director stop) so no timer fires into a torn-down room. */
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -68,7 +61,6 @@ export class HunterBotWarpController {
     this.respawnDelayMs = opts.respawnDelayMs;
     this.hopTravelMs = opts.hopTravelMs;
     this.squadKeyOf = opts.squadKeyOf;
-    this.arrivalPoseFor = opts.arrivalPoseFor;
   }
 
   /** Spool-end half of the hop: pre-check the dest slot, despawn the bot from
@@ -109,14 +101,11 @@ export class HunterBotWarpController {
       this.pool.scheduleRespawn(rec, this.respawnDelayMs);
       return;
     }
-    // Arrive CLUSTERED with squadmates (a herd hops together). A ROAMING squad
-    // re-forms in the central, player-visible zone (`arrivalPoseFor` →
-    // `squadCentralPose`); a wave hop / unknown squad falls through to the edge
-    // pose (squad anchor if known, else legacy per-bot random).
+    // Arrive CLUSTERED with squadmates (a herd hops together) at the destination
+    // EDGE — drones enter a sector from outside and fly in (never popping in on
+    // top of a player at the centre). Squad anchor if known, else per-bot random.
     const squadKey = this.squadKeyOf?.(rec.botId);
-    const pose =
-      this.arrivalPoseFor?.(rec.botId, to) ??
-      (squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng));
+    const pose = squadKey ? squadEdgePose(squadKey, to, rec.botId) : sectorEdgePose(this.rng);
     const ok = dest.spawnLivingWorldBot({
       botId: rec.botId,
       kind: carry.kind,

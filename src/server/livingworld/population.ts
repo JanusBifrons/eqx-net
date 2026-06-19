@@ -492,44 +492,6 @@ export function squadEdgePose(squadKey: string, sectorKey: string, botKey: strin
   return edgePoseAtBearing(base + aJit, SECTOR_PLAYABLE_HALF_EXTENT * RESPAWN_EDGE_FRACTION + rJit);
 }
 
-/** Radius (u) from the sector CENTRE at which a ROAMING squad re-forms when it
- *  hops into a sector. Small (vs the ~4600 u edge) so the herd lands in the
- *  central, player-visible, interest-covered zone instead of orbiting the far
- *  edge UNSEEN — the live-diagnosis root cause: a tight herd nobody ever sees
- *  because it spawns at the edge and the ~45 s roam dwell is shorter than the
- *  edge→centre cruise, so it perpetually orbits the outer ring at/beyond
- *  interest range. ONLY roam hops use this — wave hops + from-nowhere ingress
- *  keep the edge pose (the entry-only-ingress invariant binds ingress, NOT
- *  graph-traversal hop arrivals). */
-export const SQUAD_ARRIVAL_CENTRAL_RADIUS = 450;
-/** Cartesian half-extent (u) of a squad's member cluster around its central
- *  re-form anchor — a ~±220 u herd, matching the edge-cluster spread but in x/y
- *  (polar jitter is too tight at a small radius). */
-export const SQUAD_ARRIVAL_CLUSTER_HALF = 220;
-
-/**
- * Central re-form pose for a ROAMING squad member arriving in `sectorKey`. Like
- * {@link squadEdgePose} (one shared per-squad anchor + deterministic per-bot
- * jitter so the squad lands as a tight cluster, NOT scattered) but at a SMALL
- * radius from the sector centre rather than the edge — so a roaming herd appears
- * where players are and is actually seen, then flocking maintains it. Velocity 0
- * (it arrives to mill + flock, not to charge inward). Deterministic ⇒ replay-safe,
- * testable.
- */
-export function squadCentralPose(squadKey: string, sectorKey: string, botKey: string): EdgePose {
-  const base = (hashStr(`${squadKey}:${sectorKey}:c`) / 0xffffffff) * Math.PI * 2;
-  const cx = Math.cos(base) * SQUAD_ARRIVAL_CENTRAL_RADIUS;
-  const cy = Math.sin(base) * SQUAD_ARRIVAL_CENTRAL_RADIUS;
-  const jx = (hashStr(`${botKey}:cx`) / 0xffffffff - 0.5) * 2 * SQUAD_ARRIVAL_CLUSTER_HALF;
-  const jy = (hashStr(`${botKey}:cy`) / 0xffffffff - 0.5) * 2 * SQUAD_ARRIVAL_CLUSTER_HALF;
-  const { x, y } = clampToSectorBounds(cx + jx, cy + jy);
-  // Face roughly toward the sector centre (nose = (-sin θ, cos θ) convention).
-  const r = Math.hypot(x, y) || 1;
-  const dirX = -x / r;
-  const dirY = -y / r;
-  return { x, y, vx: 0, vy: 0, angle: Math.atan2(-dirX, dirY) };
-}
-
 /**
  * Deterministic `mulberry32` PRNG factory for tests. Same seed ⇒ same
  * stream; never used in production (production passes `Math.random`).

@@ -28,25 +28,28 @@ import {
  */
 
 /**
- * Layers tuned for the GAMEPLAY camera zoom range (`Camera` clamps scale 0.4–4;
- * default ~1.0). Distinct from the galaxy map's 0.12–4 table. Biased toward fine
- * dust (small `radius`, low `parallax` so the backdrop stays "deep"), with
- * overlapping fade windows so ≥1 layer is visible at every zoom and crossfades
- * keep the star count roughly constant. NO permanent chunky near layer.
+ * Layers tuned for the ACTUAL GAMEPLAY camera zoom range — `PixiRenderer`
+ * constructs the `Camera` with **minScale 0.15 / maxScale 3** (NOT the Camera
+ * default 0.4–4). The far/overview layer MUST fade in by the 0.15 floor or the
+ * field goes BLANK fully zoomed out (the 2026-06-19 playtest report); the
+ * closest layer must still carry at the 3.0 ceiling. Biased toward fine dust
+ * (small `radius`, low `parallax` so the backdrop stays "deep"), with
+ * overlapping fade windows so ≥1 layer is visible at EVERY zoom in [0.15, 3]
+ * and crossfades keep the star count roughly constant. NO chunky near layer.
  */
 // `tileSize` is set so the SCREEN-space tile (`tileSize × peakScale`) is ~150 px
 // at each layer's peak zoom — small enough that several tiles always cover the
 // viewport, so density stays ~constant and the field does NOT thin out when you
 // zoom in (zooming in reveals the finer near/dust layers — "fields appear").
 export const GAMEPLAY_STAR_LAYERS: readonly LodStarLayer[] = [
-  // Far / overview — the field you see zoomed OUT (peak ~0.7).
-  { parallax: 0.05, tileSize: 220, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 101, fadeInAt: 0.20, fullAt: 0.45, dimAt: 0.95, fadedAt: 1.70 },
-  // Mid — full around the default zoom (~1.0; peak ~1.45).
-  { parallax: 0.09, tileSize: 110, starsPerTile: 4, radius: 0.90, color: 0xeaf0ff, baseAlpha: 0.80, seed: 202, fadeInAt: 0.65, fullAt: 1.05, dimAt: 1.90, fadedAt: 3.10 },
-  // Near — fades in as you zoom in (peak ~2.85).
-  { parallax: 0.13, tileSize: 56, starsPerTile: 4, radius: 0.85, color: 0xd7e2ff, baseAlpha: 0.75, seed: 303, fadeInAt: 1.50, fullAt: 2.30, dimAt: 3.40, fadedAt: 4.60 },
-  // Closest dust — only at high zoom-in (peak ~3.95).
-  { parallax: 0.17, tileSize: 40, starsPerTile: 4, radius: 0.80, color: 0xc7d6f7, baseAlpha: 0.70, seed: 404, fadeInAt: 2.60, fullAt: 3.40, dimAt: 4.50, fadedAt: 6.00 },
+  // Far / overview — visible all the way to the 0.15 zoom-out floor (fadeInAt 0).
+  { parallax: 0.05, tileSize: 340, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 101, fadeInAt: 0.0, fullAt: 0.18, dimAt: 0.65, fadedAt: 1.30 },
+  // Mid — full around the default zoom (~1.0).
+  { parallax: 0.09, tileSize: 150, starsPerTile: 4, radius: 0.90, color: 0xeaf0ff, baseAlpha: 0.80, seed: 202, fadeInAt: 0.45, fullAt: 0.75, dimAt: 1.40, fadedAt: 2.20 },
+  // Near — fades in as you zoom in.
+  { parallax: 0.13, tileSize: 80, starsPerTile: 4, radius: 0.85, color: 0xd7e2ff, baseAlpha: 0.75, seed: 303, fadeInAt: 1.20, fullAt: 1.70, dimAt: 2.30, fadedAt: 3.00 },
+  // Closest dust — carries the field at the 3.0 zoom-in ceiling.
+  { parallax: 0.17, tileSize: 55, starsPerTile: 4, radius: 0.80, color: 0xc7d6f7, baseAlpha: 0.70, seed: 404, fadeInAt: 1.90, fullAt: 2.40, dimAt: 2.90, fadedAt: 3.40 },
 ];
 
 export class StarfieldBackground {

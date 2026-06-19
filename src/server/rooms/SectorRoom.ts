@@ -1580,7 +1580,14 @@ export class SectorRoom extends Room<SectorState> {
     // damageable through the existing swarm damage path. `evictScrap` quietly
     // despawns the oldest scrap when the global cap (MAX_LIVE_SCRAP) is hit.
     this.scrapSpawner = new ScrapSpawner({
-      spawnScrap: (spec) => this.swarmSpawner.spawnScrap(spec),
+      // IDEMPOTENT spawn (2026-06-19 playtest crash fix): a hull can emit
+      // `SHIP_DESTROYED` TWICE in one tick — two lethal hits land in the same
+      // damage batch (common under a wave), the handler runs twice with no
+      // dedup, and re-spawns the SAME scrap ids → `SwarmEntityRegistry.register`
+      // threw "id already registered" and took the whole server down mid-play.
+      // Skipping a duplicate id is the correct no-op (the scrap already exists)
+      // and bounds itself via the live registry — no set to clear.
+      spawnScrap: (spec) => (this.swarmRegistry.has(spec.id) ? false : this.swarmSpawner.spawnScrap(spec)),
       // Seed health AND a zero shield so scrap is damageable through the swarm
       // layered-damage path (the drone leaf reads swarmShield; scrap has none,
       // so a hit lands on hull and a destroyed piece is evicted). Mirrors the
