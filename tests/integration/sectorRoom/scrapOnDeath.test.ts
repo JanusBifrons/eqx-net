@@ -100,4 +100,31 @@ describe('SectorRoom integration — scrap-on-death (Phase 2b-ii)', () => {
     expect(internal.swarmRegistry.get(victim)).toBeFalsy();
     expect(scrapRecs(internal)).toHaveLength(6); // 7 - 1, no recursive re-spawn
   });
+
+  it('a DOUBLE SHIP_DESTROYED on the same active hull does NOT crash the registry (idempotent shatter)', async () => {
+    // 2026-06-19 playtest crash: two lethal wave hits landed in ONE tick, so
+    // SHIP_DESTROYED fired TWICE for the same hull → the scrap block re-spawned
+    // the same scrap ids → `SwarmEntityRegistry.register` threw "id already
+    // registered" and took the whole server down. The fix makes scrap spawning
+    // idempotent (skip a duplicate id). This reproduces the double-fire directly
+    // via the bus (the same-tick double-cross), at the level where the bug lives.
+    const shooter = randomUUID();
+    const victim = randomUUID();
+    // A COMPOSITE player hull so death actually shatters into scrap.
+    const cr = await harness.connectActive(victim, { shipKind: 'havok' });
+    await harness.events.waitFor({ tag: 'player_join', where: (d) => d['playerId'] === victim });
+    const room = getRoomById(cr.roomId);
+    const internal = room._internals;
+    const before = scrapRecs(internal).length;
+    const pieces = shipScrapGroups('havok').length;
+    expect(pieces).toBeGreaterThan(0);
+
+    const evt = { type: 'SHIP_DESTROYED' as const, targetId: victim, shooterId: shooter };
+    room.eventBus().emit('SHIP_DESTROYED', evt);
+    // The SECOND identical emit must be a no-op, NOT a registry crash.
+    expect(() => room.eventBus().emit('SHIP_DESTROYED', evt)).not.toThrow();
+
+    // Exactly ONE component-set of scrap — the duplicate shatter was skipped.
+    expect(scrapRecs(internal).length - before).toBe(pieces);
+  });
 });

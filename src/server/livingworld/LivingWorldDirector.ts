@@ -108,6 +108,23 @@ export function resolveBotHopMs(
   return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
+/**
+ * Per-hop vulnerable spool length. A WAVE's FINAL approach into its target sector
+ * uses the long `waveApproachMs` (≈ the player's 30 s warp) so the attack
+ * TELEGRAPHS with a real "incoming" countdown; every other hop — intermediate
+ * wave hops AND roam hops (roamers are never a wave, so `isWave` is false) — uses
+ * the fast `normalMs` so a multi-hop wave still converges. The 2026-06-19 playtest
+ * "the attack came out of nowhere with 2.5 s warning" fix, decoupled + unit-locked.
+ */
+export function hopSpoolMs(
+  isWave: boolean,
+  isFinalApproach: boolean,
+  normalMs: number,
+  waveApproachMs: number,
+): number {
+  return isWave && isFinalApproach ? waveApproachMs : normalMs;
+}
+
 export interface LivingWorldOptions {
   /** Total bots the director keeps alive. */
   botCount: number;
@@ -131,8 +148,18 @@ export interface LivingWorldOptions {
   /** Initial warp-ins are spread out by this step so 25 bots don't all
    *  appear on the same tick. */
   initialStaggerMs: number;
-  /** Per-bot vulnerable spool length (defaults to the player value). */
+  /** Per-bot vulnerable spool length for a NORMAL hop (ms) — the fast
+   *  cross-galaxy traversal cadence (`DRONE_HOP_SPOOL_MS`). */
   spoolMs: number;
+  /** Vulnerable spool length for a WAVE's FINAL approach hop INTO its target
+   *  sector (ms). Much longer than `spoolMs` (≈ the player's 30 s warp) so an
+   *  incoming wave TELEGRAPHS: the squad visibly winds up in the adjacent sector
+   *  and the target gets a real ~30 s "incoming wave" countdown, instead of the
+   *  2.5 s-per-hop surprise that read as "no warning, spawned on top" (2026-06-19
+   *  playtest). Only the final approach is slow — intermediate hops stay
+   *  `spoolMs` fast so a multi-hop wave still converges (a uniform 30 s/hop was
+   *  the pre-2026-06-18 bug that took waves minutes + never arrived). */
+  waveApproachSpoolMs: number;
   /** Invulnerable inter-sector flight time per galaxy-graph hop (ms). The
    *  drone-warp-in design's emergent travel: a 2-hop dispatch costs ~2×, so
    *  farther bases take longer to reach. Override via `EQX_BOT_HOP_MS`. */
@@ -186,6 +213,12 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // Drone hops use the SHORT visible dwell (NOT the 30 s player warp spool) so
   // waves actually traverse + converge — see `DRONE_HOP_SPOOL_MS`.
   spoolMs: DRONE_HOP_SPOOL_MS,
+  // A wave's FINAL approach into the target sector spools ~30 s (the player warp
+  // duration) so the attack telegraphs with a real countdown + a visible windup
+  // in the adjacent sector — the 2026-06-19 "the attack came out of nowhere with
+  // no warning" fix. Intermediate hops stay `spoolMs` fast (convergence). FEEL
+  // knob — confirm on-device.
+  waveApproachSpoolMs: 30_000,
   // 0 = NO invisible inter-sector flight (Equinox: "drones should always be on
   // the actual game world, not in some ethereal warp"). The cross-sector hop is
   // now an atomic despawn-source/spawn-dest (deferred one macrotask) — a drone
@@ -839,8 +872,17 @@ export class LivingWorldDirector {
    * Returns the number of members that began the FINAL leg (`nextHop === goal`)
    * this tick — the trigger for the one-shot warp-in warning.
    */
-  private advanceMembersTowardGoal(squad: { botIds: readonly string[]; sectorKey: string }): number {
+  private advanceMembersTowardGoal(squad: {
+    botIds: readonly string[];
+    sectorKey: string;
+    targetFactionId?: string | null;
+  }): number {
     const goal = squad.sectorKey;
+    // A WAVE (tasked against a faction) telegraphs its FINAL approach into the
+    // target with a long spool; everything else (intermediate wave hops, roam
+    // hops) stays fast so traversal still converges. `targetFactionId` is unset
+    // for roaming squads ⇒ they never get the slow approach.
+    const isWave = squad.targetFactionId != null;
     let finalApproach = 0;
     for (const botId of squad.botIds) {
       const rec = this.pool.get(botId);
@@ -856,8 +898,10 @@ export class LivingWorldDirector {
         if (this.rooms.has(goal)) hop = goal;
         else continue;
       }
-      this.startSquadMemberTransit(rec, rec.sectorKey, hop);
-      if (hop === goal) finalApproach++;
+      const isFinalApproach = hop === goal;
+      const spoolMs = hopSpoolMs(isWave, isFinalApproach, this.opts.spoolMs, this.opts.waveApproachSpoolMs);
+      this.startSquadMemberTransit(rec, rec.sectorKey, hop, spoolMs);
+      if (isFinalApproach) finalApproach++;
     }
     return finalApproach;
   }
@@ -865,11 +909,16 @@ export class LivingWorldDirector {
   /** Spool one squad member from→to via the proven per-bot transit machinery
    *  (vulnerable spool, race-guarded outcome routing). Extracted from the old
    *  distribution-migration loop. */
-  private startSquadMemberTransit(rec: BotRecord, from: string, to: string): void {
+  private startSquadMemberTransit(
+    rec: BotRecord,
+    from: string,
+    to: string,
+    spoolMs: number = this.opts.spoolMs,
+  ): void {
     const fromRoom = this.rooms.get(from);
     if (!fromRoom) return;
     rec.state = 'in-transit';
-    const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), this.opts.spoolMs);
+    const ctrl = new BotTransitController(rec.botId, fromRoom.eventBus(), spoolMs);
     rec.controller = ctrl;
     fromRoom.eventBus().emit('BOT_TRANSIT_STARTED', {
       type: 'BOT_TRANSIT_STARTED',
@@ -891,7 +940,9 @@ export class LivingWorldDirector {
       count: squad ? squad.botIds.length : 1,
       disposition: this.dispositionForSquad(squad),
       // ≈ time-to-arrival for this leg: vulnerable spool + invulnerable flight.
-      etaMs: this.opts.spoolMs + this.opts.hopTravelMs,
+      // Uses THIS hop's spool (a wave's final approach is ~30 s), so the HUD
+      // countdown matches the real arrival instead of a fixed 2.5 s.
+      etaMs: spoolMs + this.opts.hopTravelMs,
       kind: squad ? squad.kind : rec.kind,
     });
     serverLogEvent('bot_transit_start', { botId: rec.botId, from, to });
