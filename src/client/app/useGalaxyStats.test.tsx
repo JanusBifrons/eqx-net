@@ -30,20 +30,25 @@ describe('useGalaxyStats', () => {
     renderHook(() => useGalaxyStats(true));
     await vi.waitFor(() => expect(useUIStore.getState().galaxyStats).toEqual(sectors));
     expect(fetchMock).toHaveBeenCalledWith('/galaxy/snapshot');
-    // Phase 2 #2 — the loading flag flips on the first successful poll (drops the
-    // spinner so icons appear with the map).
+    // 2026-06-19 — the loading flag flips on the first COMPLETED poll so icons
+    // appear with the map (the gate covers the map until then).
     expect(useUIStore.getState().galaxyStatsLoaded).toBe(true);
   });
 
-  it('leaves galaxyStatsLoaded false on a malformed response (spinner stays until valid data)', async () => {
+  it('reveals (galaxyStatsLoaded → true) even on a malformed response — the OPAQUE gate must never black-screen', async () => {
+    // The loading gate is now an OPAQUE block over the whole map (2026-06-19), so
+    // it must lift on the first COMPLETED poll regardless of success — a persistent
+    // stats hiccup must never leave the gate up forever and black-screen the map.
+    // A malformed response is still a completed poll → reveal with no counts (the
+    // next interval fills them in). Revealing on FAILURE is the whole point of the
+    // `finally`; do NOT move it back into the success branch.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ sectors: [{ key: 'x', players: 'not-a-number' }] }),
     });
     vi.stubGlobal('fetch', fetchMock);
     renderHook(() => useGalaxyStats(true));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(useUIStore.getState().galaxyStatsLoaded).toBe(false);
+    await vi.waitFor(() => expect(useUIStore.getState().galaxyStatsLoaded).toBe(true));
   });
 
   it('ignores a malformed (zod-rejected) response without writing the store', async () => {
