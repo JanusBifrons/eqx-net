@@ -92,6 +92,14 @@ async function performFetch(playerId: string): Promise<void> {
     logEvent('roster_fetch', { stage: 'exception', message: (err as Error).message ?? 'unknown' });
   } finally {
     state.inFlight = false;
+    // 2026-06-19 pop-in fix — the galaxy landing reveal gate waits on this (for a
+    // logged-in player) so OWN SHIP badges don't pop in after the map reveals
+    // (the user's "ships still pop in"). Flip on the first COMPLETED fetch
+    // (success OR failure) so a roster hiccup never keeps the opaque gate up
+    // forever (mirrors useGalaxyStats / useGalaxyPresence).
+    if (!useUIStore.getState().rosterLoaded) {
+      useUIStore.getState().setRosterLoaded(true);
+    }
   }
 }
 

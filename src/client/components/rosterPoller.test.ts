@@ -74,6 +74,25 @@ describe('roster poller — refcount + dedupe', () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
+  it('flips rosterLoaded once the first fetch COMPLETES (the galaxy pop-in gate, 2026-06-19)', async () => {
+    // The galaxy landing reveal gate waits on this so the player's OWN ship
+    // badges don't pop in after the map reveals (the user's "ships still pop in").
+    useUIStore.getState().setRosterLoaded(false);
+    acquireRosterPolling('player-1');
+    // Not flipped synchronously — only on completion of the fetch promise.
+    expect(useUIStore.getState().rosterLoaded).toBe(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useUIStore.getState().rosterLoaded).toBe(true);
+  });
+
+  it('flips rosterLoaded even when the fetch FAILS (gate must never black-screen)', async () => {
+    useUIStore.getState().setRosterLoaded(false);
+    mockFetch.mockImplementationOnce(() => Promise.reject(new Error('network down')));
+    acquireRosterPolling('player-1');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useUIStore.getState().rosterLoaded).toBe(true);
+  });
+
   it('two acquires with the SAME playerId do not start two intervals or fire two fetches', async () => {
     acquireRosterPolling('player-1');
     acquireRosterPolling('player-1');

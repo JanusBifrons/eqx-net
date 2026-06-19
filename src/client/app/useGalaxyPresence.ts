@@ -19,6 +19,7 @@ const POLL_MS = 4000;
  */
 export function useGalaxyPresence(active: boolean, playerId: string | null): void {
   const setGalaxyOwnedStructures = useUIStore((s) => s.setGalaxyOwnedStructures);
+  const setGalaxyPresenceLoaded = useUIStore((s) => s.setGalaxyPresenceLoaded);
   useEffect(() => {
     if (!active || !playerId) return undefined;
     let cancelled = false;
@@ -30,6 +31,12 @@ export function useGalaxyPresence(active: boolean, playerId: string | null): voi
         if (!cancelled && parsed.success) setGalaxyOwnedStructures(parsed.data.sectors);
       } catch {
         /* transient network — ignore; the next interval retries */
+      } finally {
+        // 2026-06-19 pop-in fix — the landing reveal gate waits on this (for a
+        // logged-in player) so OWN structure badges don't pop in after the map.
+        // Flip on the first COMPLETED poll (success OR failure) so a presence
+        // hiccup never keeps the opaque gate up forever (mirrors useGalaxyStats).
+        if (!cancelled) setGalaxyPresenceLoaded(true);
       }
     };
     void poll();
@@ -38,5 +45,5 @@ export function useGalaxyPresence(active: boolean, playerId: string | null): voi
       cancelled = true;
       clearInterval(id);
     };
-  }, [active, playerId, setGalaxyOwnedStructures]);
+  }, [active, playerId, setGalaxyOwnedStructures, setGalaxyPresenceLoaded]);
 }
