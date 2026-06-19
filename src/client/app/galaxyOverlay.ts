@@ -135,6 +135,13 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
     (renderer as WorkerRendererClient).setLayerMode(mode);
     (renderer as WorkerRendererClient).setLayerCurrentSector(s0.currentSectorKey);
     (renderer as WorkerRendererClient).setLayerTransitDocked(s0.transitState === 'DOCKED');
+    // SEED the live counts onto the just-built layer BEFORE it can become visible.
+    // The poll routinely completes during `renderer.init` (esp. on a phone), so
+    // `galaxyStats` is already in the store by now; the App stats-effect is keyed
+    // on `galaxyStats` CHANGING and won't re-fire for this late layer — so without
+    // this seed the layer reveals with EMPTY count badges and they pop in on the
+    // next ~4 s poll (the 2026-06-19 pop-in root cause, "Hole 1").
+    (renderer as WorkerRendererClient).setLayerGalaxyStats(s0.galaxyStats);
     (renderer as WorkerRendererClient).setLayerVisible(initialVisible);
     return null;
   }
@@ -150,6 +157,12 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // thread (DOM) path only; the worker hosts its own layer.
   (window as unknown as { __eqxGalaxyTransform?: () => { x: number; y: number; scale: number } })
     .__eqxGalaxyTransform = () => galaxyLayer.getDebugTransform();
+  // DEV/E2E hook (2026-06-19 pop-in lock): the REAL count of drawn count badges
+  // for a sector, so a spec can assert the icons are present the instant the map
+  // reveals (hexes + icons together) — no flaky pixel screenshots. DOM path only;
+  // run the spec with `?worker=0` to use it.
+  (window as unknown as { __eqxGalaxyBadgeCount?: (k: string) => number })
+    .__eqxGalaxyBadgeCount = (k: string) => galaxyLayer.getDebugBadgeCount(k);
   // DEV/E2E hook (Living Galaxy P4a): the REAL drawn per-territory shrink scale
   // (factionId → clusterRoot sub-container scale.x), so a spec can assert the
   // hovered contiguous territory shrinks as one unit. Main-thread (DOM) path only.
@@ -165,6 +178,11 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   galaxyLayer.setMode(mode);
   galaxyLayer.setCurrentSector(s0.currentSectorKey);
   galaxyLayer.setTransitDocked(s0.transitState === 'DOCKED');
+  // SEED the live counts BEFORE the layer can become visible — the App stats-
+  // effect is change-keyed and won't re-fire for this late-built layer, so
+  // without this the layer reveals with empty count badges and they pop in on
+  // the next poll (the 2026-06-19 pop-in root cause, "Hole 1").
+  galaxyLayer.setGalaxyStats(s0.galaxyStats);
   galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
   galaxyLayer.setVisible(initialVisible);
   return galaxyLayer;
