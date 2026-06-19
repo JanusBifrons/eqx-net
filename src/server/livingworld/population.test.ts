@@ -10,6 +10,8 @@ import {
   pickRespawnSector,
   sectorEdgePose,
   squadEdgePose,
+  squadCentralPose,
+  SQUAD_ARRIVAL_CENTRAL_RADIUS,
   makeSeededRng,
   liveEntrySectors,
   pickEntrySector,
@@ -418,6 +420,37 @@ describe('squadEdgePose — a squad warps in CLUSTERED (a herd from birth)', () 
     const c = squadEdgePose('squad-0', 'emerald-span', 'lwbot-0');
     expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(500);
     expect(Math.hypot(a.x - c.x, a.y - c.y)).toBeGreaterThan(500);
+  });
+});
+
+describe('squadCentralPose — a ROAMING squad re-forms CENTRAL (visible), not at the edge', () => {
+  it('clusters all members near the sector CENTRE, not the far edge', () => {
+    const poses = Array.from({ length: 8 }, (_, i) =>
+      squadCentralPose('squad-0', 'emerald-span', `lwbot-${i}`),
+    );
+    // Every member is in the central zone — radius well below the ~4600 u edge
+    // (so a player at the sector centre actually sees the herd). Anchor radius +
+    // the cartesian member jitter bound it comfortably.
+    for (const p of poses) {
+      expect(Math.hypot(p.x, p.y)).toBeLessThan(SQUAD_ARRIVAL_CENTRAL_RADIUS + 500);
+    }
+    // …and still a tight cluster (a herd), not a scatter.
+    let maxGap = 0;
+    for (let i = 0; i < poses.length; i++) {
+      for (let j = i + 1; j < poses.length; j++) {
+        maxGap = Math.max(maxGap, Math.hypot(poses[i]!.x - poses[j]!.x, poses[i]!.y - poses[j]!.y));
+      }
+    }
+    expect(maxGap).toBeLessThan(900);
+  });
+
+  it('is deterministic and stays in bounds', () => {
+    expect(squadCentralPose('squad-2', 'verdance', 'lwbot-7')).toEqual(
+      squadCentralPose('squad-2', 'verdance', 'lwbot-7'),
+    );
+    const p = squadCentralPose('squad-2', 'verdance', 'lwbot-7');
+    expect(Math.abs(p.x)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
+    expect(Math.abs(p.y)).toBeLessThanOrEqual(SECTOR_PLAYABLE_HALF_EXTENT);
   });
 });
 

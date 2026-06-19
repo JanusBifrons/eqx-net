@@ -28,6 +28,7 @@ import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
   squadEdgePose,
+  squadCentralPose,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -196,8 +197,12 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   // Tunable via EQX_BOT_HOP_MS (a non-zero value re-introduces the invisible
   // flight window; not recommended).
   hopTravelMs: 0,
-  // ~45 s dwell between roam hops — a slow drift, not a frantic patrol.
-  roamIntervalMs: 45_000,
+  // ~6 min dwell between roam hops — roaming squads LINGER in a sector flying
+  // A→B flock-cruise legs, then drift to a neighbour. 45 s was far too twitchy
+  // (a squad barely arrived before hopping again, so it never settled anywhere
+  // visible). Frequent hopping is for WAVES (a squad bearing down on a base),
+  // not roamers. FEEL knob — confirm on-device.
+  roamIntervalMs: 360_000,
   // One squad per ready faction per 5 min (then it traverses hop-by-hop).
   dispatchIntervalMs: 300_000,
   // A wave falls back after 3 min of attacking (a discrete phase) so the faction
@@ -205,13 +210,19 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
   waveMaxAttackMs: 180_000,
 };
 
-/** Leader-course tunables (non-combat herding). Half-extent (game units) of the
- *  box the LEADER's in-sector A→B course points are drawn from — well inside the
- *  ±5000 sector bounds + around the spawn zone so the herd stays readable. */
-const FORMATION_DEST_RANGE = 2000;
+/** Leader-course tunables (non-combat herding). Radius (game units) of the ring
+ *  the LEADER's in-sector A→B course points are drawn from, CENTRED ON ORIGIN.
+ *  Kept SMALL so a roaming herd patrols the CENTRAL, player-visible, interest-
+ *  covered zone (a player sees ~±650 u at zoom 1 / ±1600 at min zoom; interest
+ *  reaches ~3072 u) rather than cruising a radius-2000 ring out near the edge
+ *  where it's never seen — the live-diagnosis fix, paired with the central
+ *  roam-arrival pose (`squadCentralPose`). Legs are chords of this ring (up to
+ *  ~2× the radius) so the leader still genuinely CRUISES across the centre. */
+const FORMATION_DEST_RANGE = 1000;
 /** Re-pick the leader's course once it's within this distance of it (so the herd
- *  continuously flies new A→B legs rather than parking). */
-const FORMATION_DEST_ARRIVE = 250;
+ *  continuously flies new A→B legs rather than parking). Tightened with the
+ *  smaller ring so the wander stays lively on the shorter legs. */
+const FORMATION_DEST_ARRIVE = 180;
 /** Angular spread (rad) around the "fly to the far side" bearing for course
  *  variety. The leader always aims roughly ACROSS the central zone (opposite its
  *  current bearing) so every leg is LONG — otherwise a random absolute point can
@@ -303,6 +314,15 @@ export class LivingWorldDirector {
       // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
       // so a squad re-forms clustered at each sector it hops into.
       squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
+      // A ROAMING squad (idle, not tasked to a faction wave) re-forms in the
+      // CENTRAL, player-visible zone so the herd is actually SEEN; wave squads
+      // (targetFactionId set) keep the edge arrival (bearing down on a base), and
+      // an unknown squad falls through to the edge pose. Lazy ⇒ sees the squad's
+      // role at arrival time.
+      arrivalPoseFor: (botId, sector) => {
+        const sq = this.squadPool.squadOf(botId);
+        return sq && sq.targetFactionId === null ? squadCentralPose(sq.squadId, sector, botId) : undefined;
+      },
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -645,24 +665,58 @@ export class LivingWorldDirector {
    * the flock role, so a squad under attack pursues normally.
    */
   private flockStep(): void {
+    // Env-gated herd diagnostics (`EQX_BOT_*`-style): off by default, inert in
+    // production. Emits one `flock_debug` per idle squad per control tick (skip
+    // reason or herd metrics: leaderR / maxGap / gathered / dest) → read via
+    // GET /dev/events. The live-diagnosis + tuning lever for the herd.
+    const dbg = process.env['EQX_FLOCK_DEBUG'] === '1';
     for (const sq of this.squadPool.all()) {
-      if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
+      if (sq.state !== 'idle' || sq.targetFactionId !== null) {
+        if (dbg)
+          serverLogEvent('flock_debug', {
+            squadId: sq.squadId,
+            sector: sq.sectorKey,
+            skip: sq.state !== 'idle' ? `state=${sq.state}` : `targetFaction=${sq.targetFactionId}`,
+          });
+        continue;
+      }
       const room = this.rooms.get(sq.sectorKey);
-      if (!room) continue;
+      if (!room) {
+        if (dbg) serverLogEvent('flock_debug', { squadId: sq.squadId, sector: sq.sectorKey, skip: 'no-room' });
+        continue;
+      }
 
       // Active members present in this sector, in stable botIds order so the
       // leader designation is deterministic.
       const members = this._formationMembers;
       members.length = 0;
+      let nTransit = 0;
+      let nElsewhere = 0;
       for (const botId of sq.botIds) {
         const rec = this.pool.get(botId);
-        if (rec && rec.state === 'active' && rec.sectorKey === sq.sectorKey) members.push(botId);
+        if (!rec) continue;
+        if (rec.state === 'active' && rec.sectorKey === sq.sectorKey) members.push(botId);
+        else if (rec.state === 'in-transit') nTransit++;
+        else if (rec.state === 'active') nElsewhere++;
       }
-      if (members.length === 0) continue;
+      if (members.length === 0) {
+        if (dbg)
+          serverLogEvent('flock_debug', {
+            squadId: sq.squadId,
+            sector: sq.sectorKey,
+            skip: 'no-active-members',
+            inTransit: nTransit,
+            activeElsewhere: nElsewhere,
+          });
+        continue;
+      }
 
       const leaderId = members[0]!;
       const leaderPose = room.getBotPose(leaderId);
-      if (!leaderPose) continue;
+      if (!leaderPose) {
+        if (dbg) serverLogEvent('flock_debug', { squadId: sq.squadId, sector: sq.sectorKey, skip: 'no-leader-pose' });
+        continue;
+      }
 
       // Pick / refresh the leader's COURSE once it has (nearly) arrived (or has
       // none yet). Aim ACROSS the central zone — a point on the radius-RANGE ring
@@ -697,6 +751,22 @@ export class LivingWorldDirector {
         if (g > maxGap) maxGap = g;
       }
       const gathered = maxGap <= FLOCK_GATHER_RADIUS;
+      if (dbg)
+        serverLogEvent('flock_debug', {
+          squadId: sq.squadId,
+          sector: sq.sectorKey,
+          herded: true,
+          members: members.length,
+          inTransit: nTransit,
+          activeElsewhere: nElsewhere,
+          maxGap: Math.round(maxGap),
+          gathered,
+          leaderR: Math.round(Math.hypot(leaderPose.x, leaderPose.y)),
+          leaderX: Math.round(leaderPose.x),
+          leaderY: Math.round(leaderPose.y),
+          destX: Math.round(dest.x),
+          destY: Math.round(dest.y),
+        });
       if (gathered) {
         room.setBotFlockLeaderCourse(leaderId, dest.x, dest.y);
       } else {
