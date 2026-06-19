@@ -120,17 +120,13 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
     expect(totalDisp).toBeGreaterThan(200);
   }, 60_000);
 
-  it('a ROAMING squad re-forms in the CENTRAL, player-visible zone on hop arrival (not the far edge)', async () => {
-    // The live-diagnosis regression lock. The flock MATH was always correct (the
-    // test above proves a gathered squad is tight) — but in live play the herd was
-    // never SEEN: squads spawn at the ~4600 u sector EDGE and the old leader course
-    // targeted a radius-2000 ring, while the ~45 s roam dwell was shorter than the
-    // edge→centre cruise, so the herd perpetually orbited the OUTER ring at/beyond
-    // a central player's interest + view. The fix lands a ROAMING squad clustered in
-    // the CENTRAL zone (`squadCentralPose`) on hop arrival + shrinks the leader's
-    // wander ring, so the herd patrols where players are. This asserts the property
-    // the gathered-squad test above structurally CANNOT: a herd reached by ROAMING is
-    // central, not at the edge.
+  it('a ROAMING squad re-forms CLEAR of the sector centre on hop arrival (enters from the edge, never on top of a player)', async () => {
+    // Regression lock for the 2026-06-19 playtest "they just spawned on top of me"
+    // report. A roaming squad hops into a sector and must re-form at the EDGE (it
+    // enters from outside and flies in over the long roam dwell), NOT pop into
+    // existence on top of a player/base at the centre. (A brief central-arrival
+    // experiment did exactly that — squads materialised ~450 u from origin, i.e.
+    // on top of a base at spawn — and was reverted; this test fails if it returns.)
     h = await bootLivingWorldTestServer({
       sectors: ['greenfall', 'emerald-span'],
       botCount: 8,
@@ -160,12 +156,11 @@ describe('LivingWorldDirector — leader-led flock (non-combat herding)', () => 
     // the read; the herd is still overwhelmingly present in the interior.
     expect(present.length).toBeGreaterThanOrEqual(7);
 
-    // (a) CENTRAL — every present member re-formed near the sector CENTRE (origin),
-    //     FAR below the ~4600 u edge the old `squadEdgePose` arrival produced. The
-    //     leader patrols a radius-~1000 ring, so allow generous central headroom
-    //     (< 1500) — still an unambiguous discriminator vs the edge.
-    const maxRadius = Math.max(...present.map((p) => Math.hypot(p.x, p.y)));
-    expect(maxRadius).toBeLessThan(1500);
+    // (a) CLEAR OF THE CENTRE — every member arrived well away from origin (the
+    //     edge, ~4600 u; the reverted central arrival put them ~450 u = on top).
+    //     > 2000 is an unambiguous "not on top of a central player/base" discriminator.
+    const minRadius = Math.min(...present.map((p) => Math.hypot(p.x, p.y)));
+    expect(minRadius).toBeGreaterThan(2000);
 
     // (b) TIGHT — a cohesive cluster around its centroid (flocking still holds the
     //     herd together post-arrival), never strung out across the sector.

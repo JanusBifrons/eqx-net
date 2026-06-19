@@ -28,7 +28,6 @@ import { BotTransitController } from './BotTransitController.js';
 import {
   sectorEdgePose,
   squadEdgePose,
-  squadCentralPose,
   nextHopToward,
   pickEntrySector,
   liveEntrySectors,
@@ -211,18 +210,17 @@ export const DEFAULT_LIVING_WORLD_OPTIONS: LivingWorldOptions = {
 };
 
 /** Leader-course tunables (non-combat herding). Radius (game units) of the ring
- *  the LEADER's in-sector A→B course points are drawn from, CENTRED ON ORIGIN.
- *  Kept SMALL so a roaming herd patrols the CENTRAL, player-visible, interest-
- *  covered zone (a player sees ~±650 u at zoom 1 / ±1600 at min zoom; interest
- *  reaches ~3072 u) rather than cruising a radius-2000 ring out near the edge
- *  where it's never seen — the live-diagnosis fix, paired with the central
- *  roam-arrival pose (`squadCentralPose`). Legs are chords of this ring (up to
- *  ~2× the radius) so the leader still genuinely CRUISES across the centre. */
-const FORMATION_DEST_RANGE = 1000;
+ *  the LEADER's in-sector A→B course points are drawn from, centred on origin.
+ *  Legs are LONG chords of this ring (up to ~2× the radius) so the herd CRUISES
+ *  edge-to-edge ACROSS the sector — over the long roam dwell it traverses the
+ *  central zone (encounterable) while ARRIVING at the edge, never popping in on
+ *  top of a player at the centre (the 2026-06-19 playtest "spawned on top" fix —
+ *  the central-arrival experiment was reverted; visibility comes from the long
+ *  dwell + long legs, not from arriving on top). */
+const FORMATION_DEST_RANGE = 2000;
 /** Re-pick the leader's course once it's within this distance of it (so the herd
- *  continuously flies new A→B legs rather than parking). Tightened with the
- *  smaller ring so the wander stays lively on the shorter legs. */
-const FORMATION_DEST_ARRIVE = 180;
+ *  continuously flies new A→B legs rather than parking). */
+const FORMATION_DEST_ARRIVE = 250;
 /** Angular spread (rad) around the "fly to the far side" bearing for course
  *  variety. The leader always aims roughly ACROSS the central zone (opposite its
  *  current bearing) so every leg is LONG — otherwise a random absolute point can
@@ -314,15 +312,6 @@ export class LivingWorldDirector {
       // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
       // so a squad re-forms clustered at each sector it hops into.
       squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
-      // A ROAMING squad (idle, not tasked to a faction wave) re-forms in the
-      // CENTRAL, player-visible zone so the herd is actually SEEN; wave squads
-      // (targetFactionId set) keep the edge arrival (bearing down on a base), and
-      // an unknown squad falls through to the edge pose. Lazy ⇒ sees the squad's
-      // role at arrival time.
-      arrivalPoseFor: (botId, sector) => {
-        const sq = this.squadPool.squadOf(botId);
-        return sq && sq.targetFactionId === null ? squadCentralPose(sq.squadId, sector, botId) : undefined;
-      },
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
