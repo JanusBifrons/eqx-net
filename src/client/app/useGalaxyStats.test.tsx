@@ -35,15 +35,19 @@ describe('useGalaxyStats', () => {
     expect(useUIStore.getState().galaxyStatsLoaded).toBe(true);
   });
 
-  it('leaves galaxyStatsLoaded false on a malformed response (spinner stays until valid data)', async () => {
+  it('still REVEALS the map (galaxyStatsLoaded true) on a malformed response — badge-less, never a black screen', async () => {
+    // The galaxy map's reveal is gated on galaxyStatsLoaded (so hexes + count
+    // icons appear TOGETHER). The flag therefore flips on the FIRST completed
+    // poll regardless of outcome — otherwise a malformed/failed /galaxy/snapshot
+    // would hold the landing black-screened forever. It reveals badge-less and
+    // fills in on the next valid poll.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ sectors: [{ key: 'x', players: 'not-a-number' }] }),
     });
     vi.stubGlobal('fetch', fetchMock);
     renderHook(() => useGalaxyStats(true));
-    await new Promise((r) => setTimeout(r, 20));
-    expect(useUIStore.getState().galaxyStatsLoaded).toBe(false);
+    await vi.waitFor(() => expect(useUIStore.getState().galaxyStatsLoaded).toBe(true));
   });
 
   it('ignores a malformed (zod-rejected) response without writing the store', async () => {

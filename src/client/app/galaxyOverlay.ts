@@ -78,10 +78,13 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   const { renderer, useWorker, el, onEngageTransit, mode = 'overlay', onSelectorPick, onSelectorDeselect, idle = false } = opts;
   const s0 = useUIStore.getState();
   const selector = mode === 'selector';
-  // Force-visible ONLY on the landing screen (idle), where the picker IS the
-  // whole screen. In-game, even a selector-mode map follows the MAP-button
-  // toggle so it installs hidden and never auto-opens over the game (Bug 2).
-  const initialVisible = idle ? true : s0.isGalaxyMapOpen;
+  // Landing screen (idle): reveal ONLY once the live counts have loaded, so the
+  // hexes + count icons appear TOGETHER instead of hexes-then-icons-pop-in
+  // (2026-06-19 playtest). Reading `galaxyStatsLoaded` here (not forcing `true`)
+  // covers the case where stats already loaded before install; the App-level
+  // visibility effect reveals it later if they load after. In-game, even a
+  // selector-mode map follows the MAP-button toggle (installs hidden, Bug 2).
+  const initialVisible = idle ? s0.galaxyStatsLoaded : s0.isGalaxyMapOpen;
   // `key === null` = an empty-space tap (blur). Selector → deselect; overlay
   // HUD → no-op (Equinox Phase 9).
   const onTap = selector

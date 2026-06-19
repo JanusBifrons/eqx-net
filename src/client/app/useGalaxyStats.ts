@@ -22,16 +22,20 @@ export function useGalaxyStats(active: boolean): void {
     const poll = async (): Promise<void> => {
       try {
         const res = await fetch('/galaxy/snapshot');
-        if (!res.ok) return;
-        const parsed = GalaxySnapshotResponseSchema.safeParse(await res.json());
-        if (!cancelled && parsed.success) {
-          setGalaxyStats(parsed.data.sectors);
-          // First successful poll ⇒ the map's live counts are ready; drop the
-          // loading spinner so icons appear WITH the map, not popped-in after (#2).
-          setGalaxyStatsLoaded(true);
+        if (res.ok) {
+          const parsed = GalaxySnapshotResponseSchema.safeParse(await res.json());
+          if (!cancelled && parsed.success) setGalaxyStats(parsed.data.sectors);
         }
       } catch {
         /* transient network — ignore; the next interval retries */
+      } finally {
+        // The FIRST completed poll (success OR failure) marks the live counts
+        // "ready" → the galaxy map REVEALS (it's held hidden until now so the
+        // hexes + count icons appear TOGETHER, not hexes-then-icons-pop-in).
+        // Setting it even on failure means a stats-endpoint hiccup can never
+        // black-screen the galaxy — it just reveals badge-less, then fills in on
+        // the next interval's retry.
+        if (!cancelled) setGalaxyStatsLoaded(true);
       }
     };
     void poll();

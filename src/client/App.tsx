@@ -625,6 +625,7 @@ function GameSurface({
   const galaxyLayerCurrentSectorKey = useUIStore((s) => s.currentSectorKey);
   const galaxyLayerTransitState = useUIStore((s) => s.transitState);
   const galaxyStats = useUIStore((s) => s.galaxyStats);
+  const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
   const galaxyOwnedStructures = useUIStore((s) => s.galaxyOwnedStructures);
   const shipRoster = useUIStore((s) => s.shipRoster);
   // Poll GET /galaxy/snapshot while a galaxy map is on screen (idle selector or
@@ -638,10 +639,18 @@ function GameSurface({
   // mode the layer lives inside the worker; state crosses via the
   // `WorkerRendererClient.setLayer*` postMessages.
   useEffect(() => {
-    // Idle (selector) picker is ALWAYS visible — it's the whole screen.
-    // The additive overlay (connect mode) follows the MAP-button toggle.
-    syncGalaxyVisibility(galaxyLayerRef.current, rendererRef.current, idle ? true : galaxyMapOpen);
-  }, [galaxyMapOpen, idle]);
+    // Idle (selector) picker is the whole screen, but it's held hidden until the
+    // live counts have loaded (`galaxyStatsLoaded`) so the hexes + count icons
+    // reveal TOGETHER rather than hexes-first-then-icons-pop-in (2026-06-19
+    // playtest). `galaxyStatsLoaded` flips on the first /galaxy/snapshot poll
+    // (success OR failure), so a stats hiccup can't black-screen the landing.
+    // The additive in-game overlay (connect mode) follows the MAP-button toggle.
+    syncGalaxyVisibility(
+      galaxyLayerRef.current,
+      rendererRef.current,
+      idle ? galaxyStatsLoaded : galaxyMapOpen,
+    );
+  }, [galaxyMapOpen, idle, galaxyStatsLoaded]);
   useEffect(() => {
     syncGalaxyCurrentSector(galaxyLayerRef.current, rendererRef.current, galaxyLayerCurrentSectorKey);
   }, [galaxyLayerCurrentSectorKey]);
