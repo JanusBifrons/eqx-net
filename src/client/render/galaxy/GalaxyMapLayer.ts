@@ -293,6 +293,18 @@ export class GalaxyMapLayer extends Container {
     return { x: this.clusterRoot.x, y: this.clusterRoot.y, scale: this.clusterRoot.scale.x };
   }
 
+  /** Number of VISIBLE count badges drawn for a sector — the REAL drawn badge
+   *  state, for the `__eqxGalaxyBadgeCount` E2E hook. Lets a spec assert the count
+   *  icons are present the moment the map reveals (the 2026-06-19 pop-in lock:
+   *  hexes + icons together), without flaky pixel screenshots. */
+  getDebugBadgeCount(sectorKey: string): number {
+    const entry = this.entries.find((e) => e.sector.key === sectorKey);
+    if (!entry) return 0;
+    let n = 0;
+    for (const seg of entry.countSegs) if (seg.box.visible) n++;
+    return n;
+  }
+
   /** Live territory shrink scales — the REAL drawn per-territory scale, keyed by
    *  OWNER id (NEUTRAL_OWNER today). DEV `__eqxGalaxyTerritoryScale` E2E hook
    *  (asserts the whole contiguous region scales as one unit on hover). */

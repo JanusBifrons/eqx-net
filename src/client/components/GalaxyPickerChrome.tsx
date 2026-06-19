@@ -43,8 +43,14 @@ const GALAXY_LOADING_SX = {
   alignItems: 'center',
   justifyContent: 'center',
   gap: 1.5,
-  pointerEvents: 'none' as const,
-  zIndex: 2,
+  // OPAQUE deep-space backdrop that actually COVERS the Pixi map canvas while the
+  // live counts load, so the player never sees a half-painted map (hexes without
+  // their count icons) — the 2026-06-19 "pop-in" blunt block. Was transparent +
+  // pointerEvents:none (a cosmetic spinner that occluded nothing). Swallows taps
+  // so a not-ready map can't be clicked. Lifts (unmounts) when galaxyStatsLoaded.
+  backgroundColor: '#05070d',
+  pointerEvents: 'auto' as const,
+  zIndex: 2000,
 };
 
 const ENGINEERING_ROOMS: EngineeringRoom[] = [

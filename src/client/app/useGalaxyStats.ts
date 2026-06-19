@@ -26,12 +26,17 @@ export function useGalaxyStats(active: boolean): void {
         const parsed = GalaxySnapshotResponseSchema.safeParse(await res.json());
         if (!cancelled && parsed.success) {
           setGalaxyStats(parsed.data.sectors);
-          // First successful poll ⇒ the map's live counts are ready; drop the
-          // loading spinner so icons appear WITH the map, not popped-in after (#2).
-          setGalaxyStatsLoaded(true);
         }
       } catch {
         /* transient network — ignore; the next interval retries */
+      } finally {
+        // Reveal the map on the FIRST COMPLETED poll — success OR failure. The
+        // loading gate is now OPAQUE (it blocks the whole map until counts load,
+        // so hexes + icons appear TOGETHER, never hexes-then-icons-pop-in), which
+        // means a stats hiccup must NEVER leave the gate up forever and
+        // black-screen the map. A failed first poll reveals with no counts (better
+        // than a black screen); the next interval retries and the icons fill in.
+        if (!cancelled) setGalaxyStatsLoaded(true);
       }
     };
     void poll();

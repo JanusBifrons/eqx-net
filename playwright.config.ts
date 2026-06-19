@@ -88,6 +88,7 @@ const FEATURE_SPECS: string[] = [
   '**/galaxy-sector-drawer.spec.ts',
   '**/galaxy-drawer-rich.spec.ts',
   '**/galaxy-hover-tooltip.spec.ts',
+  '**/galaxy-landing-reveal.spec.ts',
   '**/galaxy-map-overlay.spec.ts',
   '**/galaxy-map-pan-zoom.spec.ts',
   '**/galaxy-polish.spec.ts',
