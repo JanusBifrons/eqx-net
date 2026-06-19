@@ -150,6 +150,14 @@ export function GalaxyPickerChrome({
   // Phase 2 #2 — false until the first /galaxy/snapshot poll resolves; drives the
   // one-shot loading spinner so the map's live counts don't pop in out of sync.
   const galaxyStatsLoaded = useUIStore((s) => s.galaxyStatsLoaded);
+  // 2026-06-19 pop-in fix — the badges come from THREE async sources: global
+  // hostile/neutral counts (/galaxy/snapshot → galaxyStatsLoaded), the player's
+  // OWN structures (/galaxy/presence → galaxyPresenceLoaded), and the player's
+  // OWN ships (/dev/player-ships roster → rosterLoaded). Gating only on the
+  // snapshot let the player's ship + structure badges pop in AFTER the map
+  // revealed (the user's "ships still pop in"). The gate now waits on ALL of them.
+  const galaxyPresenceLoaded = useUIStore((s) => s.galaxyPresenceLoaded);
+  const rosterLoaded = useUIStore((s) => s.rosterLoaded);
   // Equinox Phase 7 (Item 4) — the popover's "your ships" sub-list reads the
   // roster + live current sector. The visible top-bar roster panel is gone; we
   // still POLL it (refcounted singleton) so the popover has data.
@@ -159,6 +167,14 @@ export function GalaxyPickerChrome({
   // DOCKED + the sector being an adjacent neighbour.
   const transitState = useUIStore((s) => s.transitState);
   const storedPlayerId = loadStoredPlayerId() ?? '';
+
+  // 2026-06-19 pop-in fix — the map is "ready" (gate lifts) only when the global
+  // counts AND, for a logged-in pilot, the player's OWN ship + structure presence
+  // have all completed their first load. A logged-OUT browser has no roster /
+  // presence poll running, so it gates on the global snapshot alone (the OWN-badge
+  // flags would never flip → would black-screen the opaque gate forever otherwise).
+  const galaxyReady =
+    galaxyStatsLoaded && (storedPlayerId === '' || (galaxyPresenceLoaded && rosterLoaded));
 
   const [engineeringOpen, setEngineeringOpen] = useState(false);
   const [pendingSpawnSector, setPendingSpawnSector] = useState<string | null>(null);
@@ -274,10 +290,11 @@ export function GalaxyPickerChrome({
         sx={{ display: 'none' }}
       />
 
-      {/* Phase 2 #2 — one-shot loading spinner over the whole map until the first
-       *  /galaxy/snapshot resolves, so the live count icons appear WITH the map
-       *  rather than popping in ~a few hundred ms later ("out of sync"). */}
-      {!galaxyStatsLoaded && (
+      {/* 2026-06-19 — opaque gate over the whole map until ALL badge sources have
+       *  loaded (global counts + the player's own ships + structures), so hexes,
+       *  count icons AND ship/structure badges appear together rather than popping
+       *  in after the map reveals (the user's repeated "ships still pop in"). */}
+      {!galaxyReady && (
         <Box data-testid="galaxy-loading" sx={GALAXY_LOADING_SX}>
           <CircularProgress size={28} thickness={4} sx={{ color: '#00ff88' }} />
           <Typography variant="caption" sx={{ color: '#9aa0b4', fontSize: 10, letterSpacing: 0.5 }}>

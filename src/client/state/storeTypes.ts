@@ -253,6 +253,17 @@ export interface UIStore {
    *  count icons don't "pop in" out of sync after the hexes render. Discrete
    *  boolean → Zustand-safe (#2). */
   galaxyStatsLoaded: boolean;
+  /** 2026-06-19 pop-in fix — false until the FIRST `/galaxy/presence` poll
+   *  COMPLETES (success OR failure). The landing reveal gate ALSO waits on this
+   *  (for a logged-in player) so the player's OWN structure badges don't pop in
+   *  after the hexes + global counts. Discrete boolean → Zustand-safe (#2). */
+  galaxyPresenceLoaded: boolean;
+  /** 2026-06-19 pop-in fix — false until the FIRST `/dev/player-ships` roster
+   *  fetch COMPLETES (success OR failure). The landing reveal gate ALSO waits on
+   *  this (for a logged-in player) so the player's OWN SHIP badges (the user's
+   *  "ships still pop in") don't appear after the map reveals. Discrete boolean
+   *  → Zustand-safe (#2). */
+  rosterLoaded: boolean;
   /** Equinox Phase 7 — the logged-in player's owned-structure count per sector,
    *  from GET /galaxy/presence (the "my structures" omnipotent overlay). Ship
    *  locations are merged in client-side from the roster. Discrete, non-spatial
@@ -378,6 +389,8 @@ export interface UIStore {
   setGalaxyMapOpen: (v: boolean) => void;
   setGalaxyStats: (stats: SectorLiveState[]) => void;
   setGalaxyStatsLoaded: (v: boolean) => void;
+  setGalaxyPresenceLoaded: (v: boolean) => void;
+  setRosterLoaded: (v: boolean) => void;
   setGalaxyOwnedStructures: (sectors: SectorStructurePresence[]) => void;
   setGalaxyHover: (hover: { sectorKey: string; left: number; top: number } | null) => void;
   toggleGalaxyMapOpen: () => void;

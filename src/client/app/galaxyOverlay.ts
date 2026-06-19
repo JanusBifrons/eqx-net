@@ -34,6 +34,7 @@ import { logEvent } from '../debug/ClientLogger';
 import type { IRenderer } from '@core/contracts/IRenderer';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../shared-types/galaxyPresence.js';
+import { mergePlayerPresence } from './galaxyPresence';
 
 export interface InstallGalaxyOverlayOpts {
   renderer: IRenderer;
@@ -142,6 +143,14 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
     // this seed the layer reveals with EMPTY count badges and they pop in on the
     // next ~4 s poll (the 2026-06-19 pop-in root cause, "Hole 1").
     (renderer as WorkerRendererClient).setLayerGalaxyStats(s0.galaxyStats);
+    // SEED the player's OWN presence (ship + structure badges) too — same Hole-1
+    // reasoning as the counts: the roster/presence polls often complete during
+    // renderer.init, and the App presence-effect is change-keyed so it won't
+    // re-fire for this late layer. Without this the layer reveals with no ship
+    // badges that pop in on the next poll (the user's "ships still pop in").
+    (renderer as WorkerRendererClient).setLayerPlayerPresence(
+      mergePlayerPresence(s0.galaxyOwnedStructures, s0.shipRoster, s0.currentSectorKey),
+    );
     (renderer as WorkerRendererClient).setLayerVisible(initialVisible);
     return null;
   }
@@ -183,6 +192,11 @@ export function installGalaxyOverlay(opts: InstallGalaxyOverlayOpts): GalaxyMapL
   // without this the layer reveals with empty count badges and they pop in on
   // the next poll (the 2026-06-19 pop-in root cause, "Hole 1").
   galaxyLayer.setGalaxyStats(s0.galaxyStats);
+  // SEED the player's OWN presence (ship + structure badges) too — same Hole-1
+  // reasoning as the counts (see the worker path above).
+  galaxyLayer.setPlayerPresence(
+    mergePlayerPresence(s0.galaxyOwnedStructures, s0.shipRoster, s0.currentSectorKey),
+  );
   galaxyLayer.resize(el.clientWidth || window.innerWidth, el.clientHeight || window.innerHeight);
   galaxyLayer.setVisible(initialVisible);
   return galaxyLayer;
