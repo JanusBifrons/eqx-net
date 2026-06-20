@@ -125,9 +125,10 @@ describe('MissileSimulation pool', () => {
     expect(slice![0]).toBeDefined();
   });
 
-  it('broadcasts missile_fired exactly once per spawn', () => {
+  it('broadcasts missile_fired exactly once per spawn; lifetime expiry detonates (no damage)', () => {
     let firedCount = 0;
     let detonatedCount = 0;
+    let applyDamageCount = 0;
     const sim = new MissileSimulation({
       sabF32: new Float32Array(1024),
       serverTick: () => 0,
@@ -137,7 +138,7 @@ describe('MissileSimulation pool', () => {
       lingeringSlots: new Map(),
       lingeringPoseCache: new Map(),
       swarmRegistry: { get: () => null, all: function* () {} },
-      applyDamage: () => {},
+      applyDamage: () => { applyDamageCount++; },
       broadcastFired: () => { firedCount++; },
       broadcastDetonated: () => { detonatedCount++; },
       bus: new Bus(),
@@ -145,13 +146,15 @@ describe('MissileSimulation pool', () => {
     sim.spawn('p', 0, 0, 0, -1, HEAT_SEEKER, () => false);
     sim.spawn('p', 0, 0, 0, -1, HEAT_SEEKER, () => false);
     expect(firedCount).toBe(2);
-    // Impact-only (smoke handoff 2026-06-06, Issue 2): both missiles fly
-    // out their lifetime WITHOUT a hostile target → they DESPAWN on expiry
-    // with NO detonation broadcast (a missed missile fizzles, it does not
-    // splash in-place). Were the old lifetime-detonate behaviour present,
-    // detonatedCount would be 2.
+    // WS-C #14: both missiles fly out their lifetime WITHOUT a hostile target.
+    // Each now DETONATES on expiry (cause='lifetime') so a `missile_detonated`
+    // broadcast fires → the client removeMissile()s immediately instead of
+    // freeze-then-fade. The 2026-06-06 impact-only DAMAGE design is preserved:
+    // a lifetime detonation skips its splash loops, so applyDamage is never
+    // called (a missed missile fizzles, dealing no damage).
     for (let i = 0; i < HEAT_SEEKER.lifetimeTicks + 2; i++) sim.advance();
-    expect(detonatedCount).toBe(0);
+    expect(detonatedCount).toBe(2);
+    expect(applyDamageCount).toBe(0);
     // …and both are gone from the pool (despawn cap honoured).
     expect(sim.snapshotSlice()).toBeUndefined();
   });
