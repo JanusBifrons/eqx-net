@@ -37,8 +37,10 @@ import type { LodStarLayer } from '../lodStarfield';
  * so most are fine dust with a few brighter — no chunky "too-big" stars.
  */
 export const GALAXY_STAR_LAYERS: readonly LodStarLayer[] = [
-  // Overview (zoomed out): the background field.
-  { parallax: 0.08, tileSize: 460, starsPerTile: 4, radius: 1.0, color: 0xffffff, baseAlpha: 0.9, seed: 11, fadeInAt: 0.05, fullAt: 0.13, dimAt: 0.50, fadedAt: 0.95 },
+  // Overview (zoomed out): the background field. FULL coverage by the 0.12
+  // zoom-out floor (fullAt 0.12 == the Camera minScale; #11 — was fullAt 0.13 >
+  // 0.12, so the field was only ~88% alpha fully zoomed out).
+  { parallax: 0.08, tileSize: 460, starsPerTile: 4, radius: 1.0, color: 0xffffff, baseAlpha: 0.9, seed: 11, fadeInAt: 0.05, fullAt: 0.12, dimAt: 0.50, fadedAt: 0.95 },
   // Mid.
   { parallax: 0.12, tileSize: 200, starsPerTile: 4, radius: 0.95, color: 0xeaf0ff, baseAlpha: 0.85, seed: 23, fadeInAt: 0.30, fullAt: 0.55, dimAt: 1.20, fadedAt: 2.10 },
   // Near.

@@ -42,8 +42,11 @@ import {
 // viewport, so density stays ~constant and the field does NOT thin out when you
 // zoom in (zooming in reveals the finer near/dust layers — "fields appear").
 export const GAMEPLAY_STAR_LAYERS: readonly LodStarLayer[] = [
-  // Far / overview — visible all the way to the 0.15 zoom-out floor (fadeInAt 0).
-  { parallax: 0.05, tileSize: 340, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 101, fadeInAt: 0.0, fullAt: 0.18, dimAt: 0.65, fadedAt: 1.30 },
+  // Far / overview — FULL coverage by the 0.15 zoom-out floor (fadeInAt 0,
+  // fullAt 0.15 == the camera minScale, so it carries full baseAlpha at and below
+  // the floor; #11 — was fullAt 0.18 > 0.15, so the field was only ~83% alpha
+  // fully zoomed out and read as thin/sparse).
+  { parallax: 0.05, tileSize: 340, starsPerTile: 4, radius: 0.95, color: 0xffffff, baseAlpha: 0.85, seed: 101, fadeInAt: 0.0, fullAt: 0.15, dimAt: 0.65, fadedAt: 1.30 },
   // Mid — full around the default zoom (~1.0).
   { parallax: 0.09, tileSize: 150, starsPerTile: 4, radius: 0.90, color: 0xeaf0ff, baseAlpha: 0.80, seed: 202, fadeInAt: 0.45, fullAt: 0.75, dimAt: 1.40, fadedAt: 2.20 },
   // Near — fades in as you zoom in.

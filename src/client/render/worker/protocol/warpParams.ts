@@ -104,27 +104,27 @@ export const DEFAULT_WARP_PARAMS: WarpParams = {
   spoolBrightness: 1.03,
   spoolZoomBlur: 0.04,
 
-  // Climax: toned down 2026-05-27 (M3): amplitude 220→70 (third), brightness
-  // 2.0→1.4, zoomBlur 0.7→0.35. The disable note said filters were not
-  // load-bearing for playability — keep the dramatic shape (single big
-  // ripple) but bring the intensity in.
-  climaxDurationMs: 1100,
+  // Climax: toned down 2026-05-27 (M3): amplitude 220→70, brightness 2.0→1.4,
+  // zoomBlur 0.7→0.35. Phase 3 (#10) — "subtler ripple": amplitude 70→40 and
+  // the duration +50% (1100→1650 ms) so the same single big ripple reads as a
+  // gentler wave spread over a longer distance rather than a sharp pulse.
+  climaxDurationMs: 1650,
   climaxWavePeriodMs: 5000,
-  climaxAmplitude: 70,
+  climaxAmplitude: 40,
   climaxBrightness: 1.4,
   climaxZoomBlur: 0.35,
 
-  // Burst + flash: toned down 2026-05-27 (M3): amplitude 440→220,
-  // flashAlpha 0.85→0.55. Still legible at perimeter (speed/range
-  // unchanged) but no longer dominates the screen. The bloom/glow pass
-  // was removed entirely in WS-14/R2.9 (the white arrival flash is the
-  // reveal).
-  burstDurationMs: 1500,
-  burstAmplitude: 220,
+  // Burst + flash: toned down 2026-05-27 (M3): amplitude 440→220, flashAlpha
+  // 0.85→0.55. Phase 3 (#10) — "subtler ripple": amplitude 220→140,
+  // flashAlpha 0.55→0.35, burst duration +50% (1500→2250 ms) so the arrival
+  // burst + white flash are gentler and spread slower. The bloom/glow pass was
+  // removed entirely in WS-14/R2.9 (the white arrival flash is the reveal).
+  burstDurationMs: 2250,
+  burstAmplitude: 140,
   burstSpeed: 2800,
   burstWavelength: 520,
   burstBrightness: 1.6,
-  flashAlphaMax: 0.55,
+  flashAlphaMax: 0.35,
   flashDurationMs: 380,
   flashRangeMax: 2500,
 };

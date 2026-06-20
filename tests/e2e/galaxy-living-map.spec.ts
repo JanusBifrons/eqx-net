@@ -1,23 +1,28 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Living Galaxy Phase 4a + Equinox Phase 9 (item 1) — DYNAMIC contiguous-territory
- * hover-shrink. Drives the selector (spawn/warp picker) galaxy map and asserts
- * the REAL drawn per-territory scale (`window.__eqxGalaxyTerritoryScale()` →
- * `clusterRoot`'s per-territory sub-container `scale.x`, NOT a recompute) shrinks
- * the hovered territory. Grouping is now owner-driven (`resolveSectorOwner`), and
- * with no capture mechanics yet EVERY sector is NEUTRAL, so the whole connected
- * galaxy is ONE territory keyed `neutral` that breathes together on hover (vs the
- * pre-Phase-9 four hard-coded region clusters). Also captures before/after
- * screenshots of the map.
+ * Living Galaxy Phase 4a + Equinox Phase 9 (item 1) + Phase 3 (#1 single-owner
+ * gate) — DYNAMIC contiguous-territory hover-shrink. Drives the selector
+ * (spawn/warp picker) galaxy map and asserts the REAL drawn per-territory scale
+ * (`window.__eqxGalaxyTerritoryScale()` → `clusterRoot`'s per-territory
+ * sub-container `scale.x`, NOT a recompute). Grouping is owner-driven
+ * (`resolveSectorOwner`), and with no capture mechanics yet EVERY sector is
+ * NEUTRAL, so the whole connected galaxy is ONE territory keyed `neutral`.
+ *
+ * Phase 3 #1: when there is only ONE territory, hovering must NOT shrink it —
+ * shrinking the sole territory shrinks the entire map under the pointer, which
+ * read as a janky global flinch on every hover (the bug report). So on today's
+ * all-neutral graph the hovered scale must stay at rest (~1.0). The shrink only
+ * engages once 2+ territories exist (locked at the unit level by
+ * `hoverShrinkTargetScale`, which can't depend on a live multi-owner galaxy).
  *
  * `?worker=0` forces the MAIN-THREAD PixiRenderer (the OffscreenCanvas worker
  * path screenshots black); the DOM galaxy layer installs the debug hooks. The
  * renderer forwards bare `pointermove` to the layer while the selector is
  * pan-zoom-active (PixiRenderer ~:782), so desktop hover reaches the shrink.
  *
- * FAIL on pre-4a code: there were no per-territory containers and no
- * `__eqxGalaxyTerritoryScale` hook, so the scales never move.
+ * FAIL on pre-#1 code: a single neutral territory DID shrink on hover, so the
+ * post-hover scale dropped below 0.97 — this spec now asserts it stays ≥ 0.97.
  */
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? 'http://localhost:5173';
 
@@ -28,7 +33,7 @@ declare global {
   }
 }
 
-test('galaxy selector tints territories and shrinks the hovered one', async ({ page }) => {
+test('galaxy selector does NOT shrink the sole (all-neutral) territory on hover (#1)', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (err) => errors.push(`PAGEERROR: ${err.message}`));
 
@@ -72,12 +77,13 @@ test('galaxy selector tints territories and shrinks the hovered one', async ({ p
   await page.waitForTimeout(700); // lerp ease toward HOVER_SCALE (0.94)
 
   const hoverScales = await page.evaluate(() => window.__eqxGalaxyTerritoryScale!());
-  // Hovering any hex shrinks its (neutral) territory — the whole contiguous galaxy
-  // breathes toward its centroid, the dynamic-grouping behaviour Phase 9 asked for.
+  // #1: with only ONE territory (everything neutral today), hovering must NOT
+  // shrink it — shrinking the sole territory shrinks the whole map under the
+  // pointer (the global-flinch bug). The scale stays at rest.
   expect(
     hoverScales['neutral'],
-    `the hovered neutral territory should shrink (scales=${JSON.stringify(hoverScales)})`,
-  ).toBeLessThan(0.97);
+    `the sole neutral territory should NOT shrink on hover (scales=${JSON.stringify(hoverScales)})`,
+  ).toBeGreaterThan(0.97);
 
   await page.screenshot({ path: 'diag/e2e-screenshots/galaxy-living/02-hover-centre.png' });
 
