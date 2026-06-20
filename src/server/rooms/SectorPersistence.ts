@@ -46,6 +46,9 @@ export interface PersistableStructure {
   constructionProgress: number;
   minerals: number;
   storedPower: number;
+  /** Phase 4 (Leveling & XP, WS-0) — structure level (≥ 1). Optional here while
+   *  the `StructureRecord` field is owned by WS-B4; `persist()` defaults to 1. */
+  level?: number;
 }
 
 export interface SectorPersistenceDeps {
@@ -127,6 +130,10 @@ export class SectorPersistence {
         constructionProgress: s.constructionProgress,
         minerals: s.minerals,
         storedPower: s.storedPower,
+        // Phase 4 (Leveling & XP, WS-0) — default 1 until WS-B4 wires the live
+        // structure level onto `StructureRecord`. Always written so a hydrated
+        // v6 row carries it.
+        level: s.level ?? 1,
       });
     }
     const scrap: SectorSnapshotScrap[] = [];

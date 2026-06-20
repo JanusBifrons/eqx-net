@@ -274,4 +274,68 @@ describe('PlayerShipStore', () => {
       expect(store.size()).toBe(2);
     });
   });
+
+  // ── Phase 4 WS-0 — leveling/XP roster columns ──────────────────────
+  describe('leveling fields (Phase 4 WS-0)', () => {
+    it('create defaults level=1, xp=0, empty statAlloc, empty mounts', () => {
+      const rec = store.create({
+        playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100,
+      });
+      expect(rec.level).toBe(1);
+      expect(rec.xp).toBe(0);
+      expect(rec.statAlloc).toEqual({});
+      expect(rec.mounts).toEqual([]);
+    });
+
+    it('shadows the leveling fields through the PLAYER_SHIP_PUT op', () => {
+      store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      const op = sink.ops[0]!;
+      expect(op.type).toBe('PLAYER_SHIP_PUT');
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(op.level).toBe(1);
+      expect(op.xp).toBe(0);
+      expect(op.statAllocJson).toBe('{}');
+      expect(op.mountsJson).toBe('[]');
+    });
+
+    it('put round-trips non-default level/xp/statAlloc/mounts (in-memory + op)', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      sink.ops.length = 0;
+      const next: PlayerShipRecord = {
+        ...rec,
+        level: 4,
+        xp: 1234,
+        statAlloc: { hull: 2, damage: 1 },
+        mounts: [{ slotId: 'wing-l', weaponId: 'laser_beam' }],
+      };
+      store.put(next);
+      const got = store.get(rec.shipId)!;
+      expect(got.level).toBe(4);
+      expect(got.xp).toBe(1234);
+      expect(got.statAlloc).toEqual({ hull: 2, damage: 1 });
+      expect(got.mounts).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(op.level).toBe(4);
+      expect(op.xp).toBe(1234);
+      expect(JSON.parse(op.statAllocJson)).toEqual({ hull: 2, damage: 1 });
+      expect(JSON.parse(op.mountsJson)).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+    });
+
+    it('hydrate restores stored leveling fields verbatim', () => {
+      const r: PlayerShipRecord = {
+        shipId: 's1', playerId: 'p1', userId: null, kind: 'fighter',
+        kindVersion: SHIP_KIND_CATALOGUE_VERSION, health: 100,
+        lastSectorKey: 'sol-prime', lastX: 0, lastY: 0, lastVx: 0, lastVy: 0, lastAngle: 0, lastAngvel: 0,
+        lastFireClientTick: 0, isActive: false, activeRoomId: null, expiresAt: 0, createdAt: 0, updatedAt: 0,
+        level: 7, xp: 9000, statAlloc: { topSpeed: 3 }, mounts: [{ slotId: 'tail', weaponId: 'heat-seeker' }],
+      };
+      store.hydrate([r]);
+      const got = store.get('s1')!;
+      expect(got.level).toBe(7);
+      expect(got.xp).toBe(9000);
+      expect(got.statAlloc).toEqual({ topSpeed: 3 });
+      expect(got.mounts).toEqual([{ slotId: 'tail', weaponId: 'heat-seeker' }]);
+    });
+  });
 });

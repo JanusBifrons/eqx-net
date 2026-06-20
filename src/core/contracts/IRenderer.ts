@@ -32,6 +32,11 @@ export interface ShipRenderState {
    *  shield aura state to "one optional bool per render entry", one
    *  ownership site per renderer-visible state. */
   shieldDown?: boolean;
+  /** Phase 4 (Leveling & XP, WS-0) — PUBLIC ship level (≥ 1). Read path for the
+   *  small level badge rendered on the ship (visible to all). Mirrored from the
+   *  wire's `states[].level` (the broadcaster + badge renderer are owned by
+   *  WS-B1). Absent ⇒ level 1. Discrete scalar — purity-clean (Invariant #2). */
+  level?: number;
 }
 
 /**
@@ -226,6 +231,11 @@ export interface StructureRenderState {
   /** The owner's resolved DISPLAY NAME (server-side). Shown in the inspector;
    *  absent ⇒ orphaned owner (server-logged) → the inspector shows "Unknown". */
   ownerName?: string;
+  /** Phase 4 (Leveling & XP, WS-0) — structure level (≥ 1). Read path for the
+   *  inspector's `LVL n` line + the Upgrade affordance (the build phase + the
+   *  wire field are owned by WS-B4). Absent ⇒ level 1. Discrete scalar —
+   *  purity-clean (Invariant #2). */
+  level?: number;
 }
 
 /** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to

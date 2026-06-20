@@ -57,8 +57,9 @@ export class SyncSinkAdapter implements IPersistenceSink {
       PLAYER_SHIP_PUT: db.prepare(
         'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
         'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
-        'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+        'last_fire_client_tick, is_active, active_room_id, expires_at, ' +
+        'level, xp, stat_alloc, mounts, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
         'ON CONFLICT(ship_id) DO UPDATE SET ' +
         'player_id=excluded.player_id, user_id=excluded.user_id, kind=excluded.kind, ' +
         'kind_version=excluded.kind_version, health=excluded.health, ' +
@@ -66,7 +67,8 @@ export class SyncSinkAdapter implements IPersistenceSink {
         'last_vx=excluded.last_vx, last_vy=excluded.last_vy, last_angle=excluded.last_angle, ' +
         'last_angvel=excluded.last_angvel, last_fire_client_tick=excluded.last_fire_client_tick, ' +
         'is_active=excluded.is_active, active_room_id=excluded.active_room_id, ' +
-        'expires_at=excluded.expires_at, updated_at=excluded.updated_at',
+        'expires_at=excluded.expires_at, level=excluded.level, xp=excluded.xp, ' +
+        'stat_alloc=excluded.stat_alloc, mounts=excluded.mounts, updated_at=excluded.updated_at',
       ),
       PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
       DIRECTOR_STATE_PUT: db.prepare(
@@ -177,6 +179,10 @@ export class SyncSinkAdapter implements IPersistenceSink {
           op.isActive ? 1 : 0,
           op.activeRoomId,
           op.expiresAt,
+          op.level,
+          op.xp,
+          op.statAllocJson,
+          op.mountsJson,
           op.ts,
           op.ts,
         );

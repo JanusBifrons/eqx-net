@@ -44,6 +44,17 @@ export type PersistOp =
       isActive: boolean;
       activeRoomId: string | null;
       expiresAt: number;
+      // Phase 4 (Leveling & XP, WS-0). Per-ship-instance progression — a
+      // veteran hull is genuinely stronger; switching ships switches your
+      // progression. Defaults (level 1 / xp 0 / `{}` / `[]`) make existing
+      // rows hydrate cleanly. `statAllocJson` is the spent stat-point map
+      // (e.g. `{ "hull": 2, "damage": 1 }`); `mountsJson` is the activated
+      // latent-slot loadout (`[{ slotId, weaponId }]`). Both are stored as
+      // JSON text — the worker writes the strings verbatim.
+      level: number;
+      xp: number;
+      statAllocJson: string;
+      mountsJson: string;
       ts: number;
     }
   | { type: 'PLAYER_SHIP_DELETE'; shipId: string; ts: number }

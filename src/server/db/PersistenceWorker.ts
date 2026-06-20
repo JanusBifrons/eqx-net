@@ -4,7 +4,13 @@ import { pino } from 'pino';
 import type { IPersistenceSink, PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import { WorkerBackedSink, type WorkerHandle } from './WorkerBackedSink.js';
 import { bundleWorker } from '../workers/bundleWorker.js';
-import { PlayerShipStore, PLAYER_SHIP_ACTIVE_LINGER_MS, type PlayerShipRecord } from '../playerShips/PlayerShipStore.js';
+import {
+  PlayerShipStore,
+  PLAYER_SHIP_ACTIVE_LINGER_MS,
+  type PlayerShipRecord,
+  type StatAlloc,
+  type ActivatedMount,
+} from '../playerShips/PlayerShipStore.js';
 
 /** Shape of a legacy `limbo` row's payload_json — kept only for the one-release
  *  backfill that migrates surviving limbo rows into the roster (WS-B retired the
@@ -128,6 +134,55 @@ export function setPlayerShipStore(store: PlayerShipStore): void {
 }
 
 /**
+ * Phase 4 (Leveling & XP, WS-0). Parse the persisted `stat_alloc` JSON into a
+ * `StatAlloc` map, falling back to `{}` on absence / corruption / wrong shape.
+ * Defensive by design — one bad row never throws the whole boot hydrate.
+ */
+function parseStatAlloc(raw: string | null | undefined): StatAlloc {
+  if (typeof raw !== 'string' || raw.length === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    const out: StatAlloc = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Phase 4 (Leveling & XP, WS-0). Parse the persisted `mounts` JSON into the
+ * activated-mount list, falling back to `[]` on absence / corruption / wrong
+ * shape. Each entry must have string `slotId` + `weaponId`.
+ */
+function parseMounts(raw: string | null | undefined): ActivatedMount[] {
+  if (typeof raw !== 'string' || raw.length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const out: ActivatedMount[] = [];
+    for (const m of parsed) {
+      if (
+        typeof m === 'object' && m !== null &&
+        typeof (m as Record<string, unknown>)['slotId'] === 'string' &&
+        typeof (m as Record<string, unknown>)['weaponId'] === 'string'
+      ) {
+        out.push({
+          slotId: (m as { slotId: string }).slotId,
+          weaponId: (m as { weaponId: string }).weaponId,
+        });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Boot hydrate. Reads `player_ships` rows from the read-only main-thread
  * connection. Unlike Limbo, this table is NOT pruned by TTL — entries
  * live indefinitely until the 10-cap evicts or the player abandons.
@@ -152,6 +207,12 @@ export function initPlayerShipStore(): { hydrated: number } {
     is_active: number;
     active_room_id: string | null;
     expires_at: number;
+    // Phase 4 (Leveling & XP, WS-0). Columns added by PLAYER_SHIPS_MIGRATIONS;
+    // an old DB row gains them at the catalogue DEFAULTs (1 / 0 / '{}' / '[]').
+    level: number;
+    xp: number;
+    stat_alloc: string;
+    mounts: string;
     created_at: number;
     updated_at: number;
   }> = [];
@@ -159,7 +220,8 @@ export function initPlayerShipStore(): { hydrated: number } {
     rows = db.prepare(
       'SELECT ship_id, player_id, user_id, kind, kind_version, health, ' +
       'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
-      'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at ' +
+      'last_fire_client_tick, is_active, active_room_id, expires_at, ' +
+      'level, xp, stat_alloc, mounts, created_at, updated_at ' +
       'FROM player_ships',
     ).all() as typeof rows;
   } catch (err) {
@@ -186,6 +248,13 @@ export function initPlayerShipStore(): { hydrated: number } {
     isActive: row.is_active === 1,
     activeRoomId: row.active_room_id,
     expiresAt: row.expires_at,
+    // Phase 4 (Leveling & XP, WS-0). Defensive defaults — a column missing on a
+    // very old row (or corrupt JSON) falls back to the fresh-ship defaults
+    // rather than throwing the whole hydrate.
+    level: typeof row.level === 'number' ? row.level : 1,
+    xp: typeof row.xp === 'number' ? row.xp : 0,
+    statAlloc: parseStatAlloc(row.stat_alloc),
+    mounts: parseMounts(row.mounts),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }));
@@ -246,6 +315,12 @@ export function initPlayerShipStore(): { hydrated: number } {
         isActive: true,
         activeRoomId: null,
         expiresAt: now + PLAYER_SHIP_ACTIVE_LINGER_MS,
+        // Phase 4 (Leveling & XP, WS-0). A backfilled legacy ship starts fresh
+        // — no progression existed before this feature.
+        level: 1,
+        xp: 0,
+        statAlloc: {},
+        mounts: [],
         createdAt: row.created_at,
         updatedAt: now,
       };

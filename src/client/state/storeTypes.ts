@@ -91,6 +91,16 @@ export interface RosterEntry {
 export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
 
 /**
+ * Phase 4 (Spectator / Construction mode, WS-0) — whether the local player is
+ * actively piloting a ship (`pilot`) or free-roaming the sector as an
+ * invulnerable, un-networked local camera with full construction (`spectator`).
+ * A discrete enum (NOT spatial — the free-roam camera position lives in the
+ * render mirror, never the store) → Zustand-safe (#2). WS-0 only adds the flag
+ * + its setter with a `pilot` default; the death→spectate transition, the
+ * free-roam camera/input, and the speed-dial toggle are owned by WS-A1. */
+export type PilotMode = 'pilot' | 'spectator';
+
+/**
  * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
  * Settings "Return to menu") can change it without prop-drilling through
  * App → ... → tab.
@@ -179,6 +189,11 @@ export interface UIStore {
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
   isDead: boolean;
+  /** Phase 4 (Spectator / Construction mode, WS-0) — `pilot` (driving a ship)
+   *  vs `spectator` (free-roam construction camera). Discrete enum, purity-clean
+   *  (#2). Defaults to `pilot`; WS-A1 flips it on death + via the speed-dial
+   *  toggle. WS-0 lands only the flag + setter. */
+  pilotMode: PilotMode;
   /** Phase 8 — stable galaxy sector key the player is currently in (set
    *  from the welcome message), or null in engineering rooms. */
   currentSectorKey: string | null;
@@ -368,6 +383,9 @@ export interface UIStore {
   setDevData: (d: DevData) => void;
   setHealthStats: (s: UIHealthStats) => void;
   setDead: (dead: boolean) => void;
+  /** Phase 4 (Spectator / Construction mode, WS-0) — set the pilot/spectator
+   *  mode. WS-A1 wires the death transition + the speed-dial toggle. */
+  setPilotMode: (mode: PilotMode) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;

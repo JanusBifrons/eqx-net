@@ -58,11 +58,15 @@ the sink in Phase 7 but never called. Sub-phase A activates it:
   { schemaVersion, sectorKey, savedAtMs,
     swarm: [{ entityId, kind, x, y, health }],
     structures?: [{ entityId, owner, kind, x, y, health,
-                    isConstructed, constructionProgress, minerals, storedPower }],
+                    isConstructed, constructionProgress, minerals, storedPower, level }],
     scrap?: [{ entityId, parentShipKind, componentIndex, x, y, vx, vy, angle, health }],
     lingeringHulls?: [{ shipInstanceId, playerId, kind, x, y, vx, vy, angle, angvel,
                         health, shieldDown }] }
   ```
+  - (schema **v6**, Phase 4 leveling/XP WS-0) `structures[].level` (default 1) —
+    the per-structure level an Upgrade build phase (WS-B4) increments. The bump
+    5 → 6 is a TEAR-DOWN (`migrateSnapshot` v5→v6 throws); every v5 snapshot is
+    discarded and all sectors fresh-spawn.
 - **What's persisted** (opt-out / BLACKLIST model — the world persists by default):
   asteroid swarm health; (schema v3) the FULL state of placed **structures**
   (owner / subtype / pose / construction / minerals / power — positions DO
@@ -259,6 +263,32 @@ every player, returning or new, with no migration.
 `SHIP_KINDS` MUST bump `SHIP_KIND_CATALOGUE_VERSION` by 1 in the same PR.
 There is **no SQLite migration** — the `kindVersion` stamp + the live-read
 design *is* the entire migration mechanism.
+
+### Roster columns + the idempotent-ALTER pattern (Phase 4 leveling/XP, WS-0)
+
+Phase 4 adds per-ship-instance progression columns to `player_ships`:
+`level (INTEGER DEFAULT 1)`, `xp (INTEGER DEFAULT 0)`,
+`stat_alloc (TEXT DEFAULT '{}')`, `mounts (TEXT DEFAULT '[]')`. They ride the
+`PLAYER_SHIP_PUT` op (`level` / `xp` / `statAllocJson` / `mountsJson`) and the
+`PlayerShipStore` record (`level` / `xp` / `statAlloc` / `mounts`); a fresh ship
+defaults to level 1 / xp 0 / empty maps.
+
+Because `SCHEMA_SQL` uses `CREATE TABLE IF NOT EXISTS`, a table from an older
+deploy is NOT re-created with the new columns. SQLite has no
+`ADD COLUMN IF NOT EXISTS`, so the worker (`dbWorker.ts`, the sole writer) runs
+`PLAYER_SHIPS_MIGRATIONS` (a list of `ALTER TABLE … ADD COLUMN …` exported from
+`schema.ts`) AFTER `db.exec(SCHEMA_SQL)`, each inside a try/catch that swallows
+the "duplicate column name" error — that makes the whole list **idempotent** (a
+fresh DB already has the columns and skips them; an old DB gains them at the
+catalogue DEFAULTs). This extends the `kindVersion` precedent (which lived in
+the original CREATE TABLE) to a true in-place migration so existing roster rows
+survive. Locked by `dbWorker.integration.test.ts` ("round-trips the Phase 4
+leveling columns" + "the idempotent ALTER adds the leveling columns to a
+pre-existing DB without them").
+
+The boot-hydrate row mapping (`initPlayerShipStore`) parses `stat_alloc` /
+`mounts` JSON defensively (`parseStatAlloc` / `parseMounts` → `{}` / `[]` on
+absence / corruption / wrong shape) so one bad row never throws the whole boot.
 
 ### v2 → v3 (2026-05-18, "slow down gameplay")
 

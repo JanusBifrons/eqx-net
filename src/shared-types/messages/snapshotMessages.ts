@@ -108,6 +108,14 @@ export interface SnapshotMessage {
        *  Emit-when-true only (notepack skips `undefined`); absent ⇒ shield up.
        *  Byte-additive — an undamaged sector pays zero extra bytes. */
       shieldDown?: boolean;
+      /** Phase 4 (Leveling & XP, WS-0) — this hull's PUBLIC level (≥ 1). Drives
+       *  the small level badge rendered on the ship (visible to all) + in the
+       *  roster. Emit-only-if-changed (the same emit-if-changed discipline as
+       *  `energy`; the broadcaster wiring is owned by WS-B1) — absent ⇒ the
+       *  client treats the hull as level 1, so undamaged/un-levelled sectors pay
+       *  zero extra bytes. Integer; no `SWARM_WIRE_VERSION` bump (a slim JSON
+       *  field on the snapshot states map, like `energy`/`mountAngles`). */
+      level?: number;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

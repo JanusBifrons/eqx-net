@@ -36,6 +36,27 @@ export const ROSTER_CAP = 10;
  *  window, matching the LimboStore's 15-min behaviour. */
 export const PLAYER_SHIP_ACTIVE_LINGER_MS = 900_000; // 15 min
 
+/**
+ * Phase 4 (Leveling & XP, WS-0). Per-ship spent stat-point allocation. Keyed
+ * by a stat id (e.g. `hull`, `energy`, `damage`, `topSpeed`, `turnRate`,
+ * `shield`); the value is the number of points spent on that stat. The exact
+ * stat-id set + the per-point multiplier are owned by later workstreams
+ * (WS-B2); WS-0 only persists the map. An empty `{}` means "no points spent".
+ */
+export type StatAlloc = Record<string, number>;
+
+/**
+ * Phase 4 (Leveling & XP, WS-0). One activated latent mount slot — the
+ * dynamic-mounts feature (WS-B3) activates a ship-kind's candidate hardpoint
+ * and binds a weapon to it. WS-0 only persists the list; the geometry for a
+ * `slotId` is looked up client-side from the ship-kind catalogue (no geometry
+ * on the wire), and the firing path is owned by WS-B3.
+ */
+export interface ActivatedMount {
+  slotId: string;
+  weaponId: string;
+}
+
 /** Returned when a player tries to spawn an 11th ship. */
 export class RosterFullError extends Error {
   constructor(public readonly playerId: string) {
@@ -71,6 +92,16 @@ export interface PlayerShipRecord {
    *  owning client has dropped; the prune sweep flips `isActive=false`
    *  and freezes pose at this point. Ignored when `isActive=false`. */
   expiresAt: number;
+  /** Phase 4 (Leveling & XP, WS-0). Current level (≥ 1). A fresh ship is
+   *  level 1; later workstreams (WS-B1) award XP from kills and increment
+   *  this at curve thresholds. */
+  level: number;
+  /** Phase 4. Accumulated XP toward the next level (≥ 0). */
+  xp: number;
+  /** Phase 4. Spent stat-point allocation; `{}` = no points spent. */
+  statAlloc: StatAlloc;
+  /** Phase 4. Activated latent mount slots + bound weapons; `[]` = none. */
+  mounts: ActivatedMount[];
   createdAt: number;
   updatedAt: number;
 }
@@ -135,6 +166,10 @@ export class PlayerShipStore {
       isActive: false,
       activeRoomId: null,
       expiresAt: 0,
+      level: 1,
+      xp: 0,
+      statAlloc: {},
+      mounts: [],
       createdAt: now,
       updatedAt: now,
     };
@@ -177,6 +212,10 @@ export class PlayerShipStore {
       isActive: stamped.isActive,
       activeRoomId: stamped.activeRoomId,
       expiresAt: stamped.expiresAt,
+      level: stamped.level,
+      xp: stamped.xp,
+      statAllocJson: JSON.stringify(stamped.statAlloc),
+      mountsJson: JSON.stringify(stamped.mounts),
       ts: now,
     });
   }
@@ -308,6 +347,10 @@ export class PlayerShipStore {
           isActive: corrected.isActive,
           activeRoomId: corrected.activeRoomId,
           expiresAt: corrected.expiresAt,
+          level: corrected.level,
+          xp: corrected.xp,
+          statAllocJson: JSON.stringify(corrected.statAlloc),
+          mountsJson: JSON.stringify(corrected.mounts),
           ts: now,
         });
       }

@@ -16,7 +16,7 @@
  */
 import { parentPort, workerData } from 'node:worker_threads';
 import { DatabaseSync } from 'node:sqlite';
-import { SCHEMA_SQL } from './schema.js';
+import { SCHEMA_SQL, PLAYER_SHIPS_MIGRATIONS } from './schema.js';
 import type { PersistOp } from '../../core/contracts/IPersistenceSink.js';
 import type { WorkerInbound, WorkerOutbound } from './workerProtocol.js';
 
@@ -34,6 +34,20 @@ db.exec('PRAGMA journal_mode=WAL');
 db.exec('PRAGMA synchronous=NORMAL');
 db.exec('PRAGMA foreign_keys=ON');
 db.exec(SCHEMA_SQL);
+
+// Idempotent in-place column migrations. SCHEMA_SQL only creates a table when
+// it doesn't exist, so a table from an older deploy is missing the new Phase 4
+// roster columns. SQLite has no ADD COLUMN IF NOT EXISTS — run each ALTER and
+// swallow the "duplicate column name" error so the list is idempotent (a fresh
+// DB already has the columns and skips them).
+for (const sql of PLAYER_SHIPS_MIGRATIONS) {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/duplicate column name/i.test(message)) throw err;
+  }
+}
 
 const stmts = {
   KILL: db.prepare(
@@ -65,8 +79,9 @@ const stmts = {
   PLAYER_SHIP_PUT: db.prepare(
     'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
     'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
-    'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at) ' +
-    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+    'last_fire_client_tick, is_active, active_room_id, expires_at, ' +
+    'level, xp, stat_alloc, mounts, created_at, updated_at) ' +
+    'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
     'ON CONFLICT(ship_id) DO UPDATE SET ' +
     'player_id=excluded.player_id, user_id=excluded.user_id, kind=excluded.kind, ' +
     'kind_version=excluded.kind_version, health=excluded.health, ' +
@@ -74,7 +89,8 @@ const stmts = {
     'last_vx=excluded.last_vx, last_vy=excluded.last_vy, last_angle=excluded.last_angle, ' +
     'last_angvel=excluded.last_angvel, last_fire_client_tick=excluded.last_fire_client_tick, ' +
     'is_active=excluded.is_active, active_room_id=excluded.active_room_id, ' +
-    'expires_at=excluded.expires_at, updated_at=excluded.updated_at',
+    'expires_at=excluded.expires_at, level=excluded.level, xp=excluded.xp, ' +
+    'stat_alloc=excluded.stat_alloc, mounts=excluded.mounts, updated_at=excluded.updated_at',
   ),
   PLAYER_SHIP_DELETE: db.prepare('DELETE FROM player_ships WHERE ship_id = ?'),
   // Phase 5 director-state persistence shadow. Singleton row (id = 1).
@@ -162,6 +178,10 @@ function applyOp(op: PersistOp): { rowId?: number } {
         op.isActive ? 1 : 0,
         op.activeRoomId,
         op.expiresAt,
+        op.level,
+        op.xp,
+        op.statAllocJson,
+        op.mountsJson,
         op.ts,
         op.ts,
       );
