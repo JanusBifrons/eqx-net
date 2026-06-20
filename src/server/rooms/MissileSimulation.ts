@@ -100,6 +100,12 @@ export interface MissileRecord {
   vy: number;
   /** Heading (rad). Pixi-up convention: forward = -y at angle 0. */
   angle: number;
+  /** SIGNED angular velocity (rad/s) for THIS tick — `(angle − prevAngle) / DT`,
+   *  computed in `advance()` after guidance. Rides the missile snapshot slice so
+   *  the client can integrate the homing CURVE between 20 Hz snapshots instead of
+   *  dead-reckoning a straight line off `vx/vy` (WS-C #5). 0 on a dumb-flying /
+   *  just-spawned missile (no turn this tick). */
+  angvel: number;
   /** Locked target id (server-internal). null = dumb-mode (fly straight).
    *  Re-verified each tick; lost-lock → null without changing trajectory. */
   lockedTargetId: string | null;
@@ -126,6 +132,9 @@ export interface MissileSnapshotEntry {
   vx: number;
   vy: number;
   angle: number;
+  /** Signed angular velocity (rad/s) for the latest tick — drives client-side
+   *  curve-aware interpolation (WS-C #5). */
+  angvel: number;
   ownerId: string;
   weaponId: 'heat-seeker';
   /** Remaining life as a fraction [0..1]. 0 = about to expire. */
@@ -230,7 +239,7 @@ export class MissileSimulation {
       // Placeholder — overwritten in spawn(). The MissileWeaponDef shape
       // is constant for any given weapon id, so a per-record cache is safe.
       weaponDef: null as unknown as MissileWeaponDef,
-      x: 0, y: 0, vx: 0, vy: 0, angle: 0,
+      x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0,
       lockedTargetId: null,
       lockedKind: null,
       ticksRemaining: 0,
@@ -303,6 +312,7 @@ export class MissileSimulation {
     rec.vy = ndy * weaponDef.speed;
     // Pixi-up: angle 0 → forward (-y). dir=(-sin θ, cos θ) ⇒ θ = atan2(-dx, dy).
     rec.angle = Math.atan2(-ndx, ndy);
+    rec.angvel = 0; // fresh missile hasn't turned yet
 
     // Lock-at-launch: build candidate set (players + swarm) and pickTarget.
     const lockResult = this.lockOnTarget(spawnX, spawnY, ownerId, isHostile, weaponDef);
@@ -431,6 +441,11 @@ export class MissileSimulation {
       }
 
       // 3. Guidance: yaw toward target by at most turnRate * dt per tick.
+      // Track the signed turn this tick as angvel so the client can integrate
+      // the homing CURVE between 20 Hz snapshots (WS-C #5) instead of
+      // dead-reckoning a straight line. Computed from the actual applied step
+      // (wrapped) — never the raw desired delta, so it matches the integration.
+      const angleBefore = m.angle;
       if (target !== null) {
         const desired = Math.atan2(-(target.x - m.x), (target.y - m.y));
         const delta = wrapPi(desired - m.angle);
@@ -440,6 +455,7 @@ export class MissileSimulation {
         m.vx = -Math.sin(m.angle) * def.speed;
         m.vy = Math.cos(m.angle) * def.speed;
       }
+      m.angvel = wrapPi(m.angle - angleBefore) / DT_SEC;
 
       // 4. Integrate position.
       m.x += m.vx * DT_SEC;
@@ -502,6 +518,7 @@ export class MissileSimulation {
         vx: m.vx,
         vy: m.vy,
         angle: m.angle,
+        angvel: m.angvel,
         ownerId: m.ownerId,
         weaponId: 'heat-seeker',
         lifePct: lifePct > 0 ? lifePct : 0,
