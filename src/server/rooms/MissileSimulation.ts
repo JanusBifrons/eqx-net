@@ -469,14 +469,16 @@ export class MissileSimulation {
         continue;
       }
 
-      // 6. Lifetime decrement / expiry. Impact-only (smoke handoff
-      // 2026-06-06, Issue 2): a missile that never lands a direct hit
-      // DESPAWNS without detonating — no splash, no damage, no explosion
-      // VFX (the client sprite alpha-fades over its last 15 % of life and
-      // is reaped when it leaves the snapshot `missiles[]` slice, so the
-      // fizzle is graceful with no broadcast needed). The TTL stays as a
-      // despawn cap so a never-hitting missile doesn't fly forever. Only
-      // the direct sweep (step 5) deals damage now.
+      // 6. Lifetime decrement / expiry. Impact-only DAMAGE is preserved (smoke
+      // handoff 2026-06-06, Issue 2): a missile that never lands a direct hit
+      // deals NO splash damage — `detonate()` skips its splash loops on
+      // cause==='lifetime'. But it MUST still DETONATE with a `missile_detonated`
+      // broadcast (WS-C #14): the old silent `releaseAtPos` left the client
+      // extrapolation to cap-then-FREEZE while the stale lifePct fade played over
+      // the frozen sprite (the "missile stops, then fades" report). Detonating
+      // (null primary, no splash) fires the broadcast so the client
+      // removeMissile()s immediately and plays the explosion VFX instead of a
+      // frozen ghost. The TTL still caps a never-hitting missile.
       m.ticksRemaining -= 1;
       if (m.ticksRemaining <= 0) {
         this.deps.serverLogEvent?.('missile_expired', {
@@ -486,6 +488,7 @@ export class MissileSimulation {
           y: m.y,
           lockedTargetId: m.lockedTargetId,
         });
+        this.detonate(m, m.x, m.y, null, null, 'lifetime');
         this.releaseAtPos(i);
         continue;
       }
@@ -733,46 +736,54 @@ export class MissileSimulation {
       lockedKind: m.lockedKind,
     });
 
-    // Splash against players.
-    for (const [playerId] of this.deps.playerToSlot) {
-      if (playerId === ownerSkip) continue;
-      const ship = this.deps.getActiveShip(playerId);
-      if (!ship || !ship.alive || !ship.isActive) continue;
-      const pose = this.deps.shipPoseCache.get(playerId);
-      if (!pose) continue;
-      const px = pose.x - dx;
-      const py = pose.y - dy;
-      const dist2 = px * px + py * py;
-      if (dist2 > r2) continue;
-      this.applySplash(m, playerId, primaryKind === 'ship' && primaryId === playerId, dx, dy, pose.x, pose.y, dist2);
-    }
+    // WS-C #14 — a LIFETIME detonation is a graceful fizzle: it detonates ONLY
+    // to fire the `missile_detonated` broadcast (so the client clears the sprite
+    // + plays VFX instead of freeze-then-fade) and deals NO splash damage. The
+    // 2026-06-06 impact-only design (a missile that lands no direct hit deals no
+    // damage) is preserved by skipping every splash loop on cause==='lifetime'.
+    // Real detonations (sweep / fuse) splash as before.
+    if (cause !== 'lifetime') {
+      // Splash against players.
+      for (const [playerId] of this.deps.playerToSlot) {
+        if (playerId === ownerSkip) continue;
+        const ship = this.deps.getActiveShip(playerId);
+        if (!ship || !ship.alive || !ship.isActive) continue;
+        const pose = this.deps.shipPoseCache.get(playerId);
+        if (!pose) continue;
+        const px = pose.x - dx;
+        const py = pose.y - dy;
+        const dist2 = px * px + py * py;
+        if (dist2 > r2) continue;
+        this.applySplash(m, playerId, primaryKind === 'ship' && primaryId === playerId, dx, dy, pose.x, pose.y, dist2);
+      }
 
-    // Splash against lingering hulls (R2.22 symptom 3) — identical to the
-    // active-player loop minus the isActive gate. The struck lingering hull is
-    // the primary; applySplash routes applyDamage by shipInstanceId →
-    // EntityResolver's lingering leaf. Alloc-free for-of over the slot set.
-    for (const [shipInstanceId] of this.deps.lingeringSlots) {
-      if (shipInstanceId === ownerSkip) continue;
-      const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
-      if (!pose) continue;
-      const px = pose.x - dx;
-      const py = pose.y - dy;
-      const dist2 = px * px + py * py;
-      if (dist2 > r2) continue;
-      this.applySplash(m, shipInstanceId, primaryKind === 'ship' && primaryId === shipInstanceId, dx, dy, pose.x, pose.y, dist2);
-    }
+      // Splash against lingering hulls (R2.22 symptom 3) — identical to the
+      // active-player loop minus the isActive gate. The struck lingering hull is
+      // the primary; applySplash routes applyDamage by shipInstanceId →
+      // EntityResolver's lingering leaf. Alloc-free for-of over the slot set.
+      for (const [shipInstanceId] of this.deps.lingeringSlots) {
+        if (shipInstanceId === ownerSkip) continue;
+        const pose = this.deps.lingeringPoseCache.get(shipInstanceId);
+        if (!pose) continue;
+        const px = pose.x - dx;
+        const py = pose.y - dy;
+        const dist2 = px * px + py * py;
+        if (dist2 > r2) continue;
+        this.applySplash(m, shipInstanceId, primaryKind === 'ship' && primaryId === shipInstanceId, dx, dy, pose.x, pose.y, dist2);
+      }
 
-    // Splash against swarm.
-    for (const rec of this.deps.swarmRegistry.all()) {
-      if (rec.id === ownerSkip) continue;
-      const b = slotBase(rec.slot);
-      const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
-      const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
-      const px = cx - dx;
-      const py = cy - dy;
-      const dist2 = px * px + py * py;
-      if (dist2 > r2) continue;
-      this.applySplash(m, rec.id, primaryKind === 'swarm' && primaryId === rec.id, dx, dy, cx, cy, dist2);
+      // Splash against swarm.
+      for (const rec of this.deps.swarmRegistry.all()) {
+        if (rec.id === ownerSkip) continue;
+        const b = slotBase(rec.slot);
+        const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
+        const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
+        const px = cx - dx;
+        const py = cy - dy;
+        const dist2 = px * px + py * py;
+        if (dist2 > r2) continue;
+        this.applySplash(m, rec.id, primaryKind === 'swarm' && primaryId === rec.id, dx, dy, cx, cy, dist2);
+      }
     }
 
     // Local bus + cross-process broadcast.

@@ -33,6 +33,9 @@ client (player fires)  │  PlayerFireResolver — mode='missile'│
    │                   │     ├── integrate position          │
    │                   │     ├── sweep player + swarm        │
    │                   │     ├── lifetime decrement          │
+   │                   │     │    └─ on expiry: detonate      │
+   │                   │     │       (cause='lifetime',       │
+   │                   │     │        no splash, broadcasts)  │
    │                   │     └── (on detonate)               │
    │                   │         ├── splash damage           │
    │                   │         ├── enqueue impulse         │
@@ -232,6 +235,35 @@ lockable** — `lockOnTarget` keeps its `kind === 0` skip, so a missile never
 *homes* on rock; it only can't fly through it. Lock:
 `missileLifecycle.test.ts` (a missile fired at an asteroid emits a
 `missile_detonated` broadcast instead of expiring).
+
+## Lifetime expiry detonates (no damage) — WS-C #14 (2026-06-20)
+
+A missile that never lands a direct hit still has to LEAVE the world cleanly. The
+2026-06-06 "impact-only" pass made lifetime expiry call `releaseAtPos()` SILENTLY
+(no `missile_detonated` broadcast) on the theory that the client would alpha-fade
+the sprite over its last 15 % of life and reap it when it left the `missiles[]`
+slice. On-device that read as **"the missile stops, then fades"**: the client's
+extrapolation dead-reckons past the newest sample, **caps at
+`MISSILE_EXTRAPOLATION_CAP_MS` then FREEZES**, and the stale `lifePct` fade plays
+over the frozen sprite — a visible stutter at end of life.
+
+Fix: on lifetime expiry `advance()` now calls
+`detonate(m, m.x, m.y, null, null, 'lifetime')` before `releaseAtPos`. This fires
+the `missile_detonated` broadcast (+ local `MISSILE_DETONATED` bus event), so the
+client's `removeMissile()` clears the sprite the same frame and the explosion VFX
+plays — a clean finish, not a frozen ghost.
+
+The **impact-only DAMAGE design is preserved**: `detonate()` SKIPS all three
+splash loops when `cause === 'lifetime'`, so a fizzle deals zero damage (a missed
+missile must not splash in-place — that was the deliberate 2026-06-06 change). The
+broadcast is for the client clear + VFX only. `'lifetime'` was already a valid
+`DetonateCause` (it had only ever been used as a diag tag); it now also drives the
+real detonation path with the splash suppressed.
+
+Locks: `missileLifecycle.test.ts` "WS-C #14" (a dumb missile flown to lifetime
+expiry broadcasts `missile_detonated` AND deals no damage — FAILS on the silent
+`releaseAtPos`) + `MissileSimulation.pool.test.ts` (`detonatedCount === 2`,
+`applyDamageCount === 0` after two missiles expire). No wire change → NO netgate.
 
 ## Proximity fuse
 
