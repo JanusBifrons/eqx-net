@@ -51,7 +51,15 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'wave_dispatched'; owner: string; targetSector: string; squadId: string; squadSize: number })
   | (AuditEventBase & { event: 'wave_incoming'; disposition: string; count: number; label?: string })
   | (AuditEventBase & { event: 'base_ready'; owner: string; composition?: Record<string, number> })
-  | (AuditEventBase & { event: 'wave_repelled'; owner: string })
+  | (AuditEventBase & {
+      event: 'wave_repelled';
+      owner: string;
+      /** WS-E #8 — why the wave stood down: a healthy time-box phase-end vs a
+       *  genuine de-escalation vs a fully-razed base. Lets a cadence audit tell
+       *  the relentless-grind class from a clean resolution. Optional for
+       *  back-compat with older log readers. */
+      reason?: 'timeout' | 'de-escalation' | 'base-razed';
+    })
   // ── Structures ──────────────────────────────────────────────────────
   | (AuditEventBase & { event: 'structure_placed'; owner: string; kind: string; x: number; y: number })
   | (AuditEventBase & { event: 'structure_removed'; owner: string; kind: string })

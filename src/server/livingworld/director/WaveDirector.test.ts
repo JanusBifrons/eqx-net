@@ -162,7 +162,13 @@ describe('WaveDirector — assignment + advancement', () => {
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
     const steps = wave.plan(0);
-    expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    expect(steps).toContainEqual({
+      kind: 'retreat',
+      squad: sq,
+      factionId: 'alice',
+      sectorKey: 'vega',
+      reason: 'de-escalation',
+    });
   });
 
   it('attacking squad stays attacking while miners survive (no de-escalation)', () => {
@@ -203,7 +209,13 @@ describe('WaveDirector — assignment + advancement', () => {
     // First tick stamps the attack-start; still within the window ⇒ keep attacking.
     expect(wave.plan(0)).toContainEqual({ kind: 'attack', squad: sq, factionId: 'alice', sectorKey: 'vega' });
     // Past the time-box ⇒ the wave falls back (resolves) so a fresh squad can come.
-    expect(wave.plan(2000)).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    expect(wave.plan(2000)).toContainEqual({
+      kind: 'retreat',
+      squad: sq,
+      factionId: 'alice',
+      sectorKey: 'vega',
+      reason: 'timeout',
+    });
   });
 
   it('re-triggers: a stood-down squad re-engages when the faction rebuilds (req #8)', () => {
@@ -249,7 +261,65 @@ describe('WaveDirector — assignment + advancement', () => {
     squadPool.assignTarget(sq, 'vega', 'alice');
     squadPool.setState(sq, 'attacking');
     const steps = wave.plan(0);
-    expect(steps).toContainEqual({ kind: 'retreat', squad: sq, factionId: 'alice', sectorKey: 'vega' });
+    expect(steps).toContainEqual({
+      kind: 'retreat',
+      squad: sq,
+      factionId: 'alice',
+      sectorKey: 'vega',
+      reason: 'base-razed',
+    });
+  });
+});
+
+describe('WaveDirector — retreat reason tagging (WS-E #8)', () => {
+  it('tags a TIME-BOX retreat with reason "timeout"', () => {
+    // Miners alive ⇒ de-escalation cannot fire; only the time-box resolves it.
+    const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
+    const { wave, squadPool } = setup({
+      readiness: [readyFaction({ minerCount: 2, hostileToDrones: true, underWave: true })],
+      hunterStates: states,
+      waveMaxAttackMs: 1000,
+    });
+    const sq = squadPool.get('squad-0')!;
+    squadPool.assignTarget(sq, 'vega', 'alice');
+    squadPool.setState(sq, 'attacking');
+    wave.plan(0); // stamps the attack-start
+    const steps = wave.plan(2000); // past the time-box
+    expect(steps).toContainEqual({
+      kind: 'retreat',
+      squad: sq,
+      factionId: 'alice',
+      sectorKey: 'vega',
+      reason: 'timeout',
+    });
+  });
+
+  it('tags a DE-ESCALATION retreat with reason "de-escalation"', () => {
+    const states = new Map([['lwbot-0', { state: 'active', sectorKey: 'vega' }]]);
+    const { wave, squadPool } = setup({
+      readiness: [
+        readyFaction({
+          ready: false,
+          minerCount: 0, // no miners → de-escalation key
+          hostileToDrones: true,
+          underWave: true,
+          lastDealtDamageTick: 0,
+          serverTick: FACTION_PEACEFUL_TIMEOUT_TICKS + 100,
+        }),
+      ],
+      hunterStates: states,
+    });
+    const sq = squadPool.get('squad-0')!;
+    squadPool.assignTarget(sq, 'vega', 'alice');
+    squadPool.setState(sq, 'attacking');
+    const steps = wave.plan(0);
+    expect(steps).toContainEqual({
+      kind: 'retreat',
+      squad: sq,
+      factionId: 'alice',
+      sectorKey: 'vega',
+      reason: 'de-escalation',
+    });
   });
 });
 

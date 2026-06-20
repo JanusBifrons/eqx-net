@@ -118,7 +118,7 @@ function line(e) {
     case 'wave_dispatched': return `${head}: wave of ${e.squadSize} → ${e.targetSector} (owner=${e.owner}, squad=${e.squadId})`;
     case 'wave_incoming': return `${head}: ${e.count} ${e.label ?? 'ships'} inbound (${e.disposition})`;
     case 'base_ready': return `${head}: owner=${e.owner}`;
-    case 'wave_repelled': return `${head}: owner=${e.owner}`;
+    case 'wave_repelled': return `${head}: owner=${e.owner}${e.reason ? ` (${e.reason})` : ''}`;
     case 'structure_placed': return `${head}: ${e.kind} owner=${e.owner} @(${Math.round(e.x)},${Math.round(e.y)})`;
     case 'structure_removed': return `${head}: ${e.kind} owner=${e.owner}`;
     case 'structure_built': return `${head}: ${e.kind} owner=${e.owner}`;

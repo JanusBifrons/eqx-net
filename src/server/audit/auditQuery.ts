@@ -73,7 +73,7 @@ export function formatAuditLine(e: AuditEvent): string {
     case 'base_ready':
       return `${head}: owner=${e.owner}`;
     case 'wave_repelled':
-      return `${head}: owner=${e.owner}`;
+      return `${head}: owner=${e.owner}${e.reason ? ` (${e.reason})` : ''}`;
     case 'structure_placed':
       return `${head}: ${e.kind} owner=${e.owner} @(${Math.round(e.x)},${Math.round(e.y)})`;
     case 'structure_removed':

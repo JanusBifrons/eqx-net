@@ -862,8 +862,19 @@ export class LivingWorldDirector {
         // stood-down squad is no longer warping in.
         this.incoming.clear(step.squad.squadId, step.sectorKey);
         this.squadPool.clearTarget(step.squad);
-        serverLogEvent('wave_deescalated', { factionId: step.factionId, sectorKey: step.sectorKey });
-        auditEvent({ event: 'wave_repelled', sector: step.sectorKey, owner: step.factionId });
+        // WS-E #8 — tag WHY the wave stood down so a cadence audit can tell a
+        // healthy time-box phase-end from a de-escalation or a fully-razed base.
+        serverLogEvent('wave_deescalated', {
+          factionId: step.factionId,
+          sectorKey: step.sectorKey,
+          reason: step.reason,
+        });
+        auditEvent({
+          event: 'wave_repelled',
+          sector: step.sectorKey,
+          owner: step.factionId,
+          reason: step.reason,
+        });
         break;
       }
     }
