@@ -31,10 +31,13 @@ import {
 import {
   ENTITY_VISUALS,
   ENTITY_KIND_ORDER,
-  ENTITY_BADGE_KNOCKOUT,
   entityBadgePolygon,
   entityBadgeCount,
 } from '../entityVisuals';
+import {
+  layoutBadgeIconLabelRow,
+  type BadgeSegmentMeasure,
+} from './badgeIconLabelLayout';
 import type { SectorLiveState } from '../../../shared-types/galaxySnapshot.js';
 import type { SectorPresence } from '../../../shared-types/galaxyPresence.js';
 import { Camera } from '../worker/Camera';
@@ -96,22 +99,23 @@ function lerpColor(a: number, b: number, t: number): number {
   return (r << 16) | (g << 8) | bl;
 }
 
-/** Per-sector count readout badges — a SOLID-colour FILLED shape per present type
- *  with the count knocked OUT of it (cutout), colour-coded (no "E/N/P/S" letters).
- *  Drawn as Pixi SHAPES (not unicode glyphs) so they render identically on every
- *  device AND the number centres on the shape's geometric centre (glyph ink was a
- *  couple px off + a glyph could render as the wrong shape, e.g. ⬡→○). Order is
- *  FIXED: 0 hostiles, 1 neutral drones, 2 your ships, 3 structures —
+/** Per-sector count readout badges — a small per-type ICON (the shared
+ *  `entityVisuals` shape) with the count as a SEPARATE ADJACENT text LABEL to its
+ *  right (#16 — the "icon + label" look, not a number knocked out of the shape's
+ *  centre; that cramped the count and read poorly at map scale). Drawn as Pixi
+ *  SHAPES (not unicode glyphs) so they render identically on every device. Order
+ *  is FIXED: 0 hostiles, 1 neutral drones, 2 your ships, 3 structures —
  *  hostiles/neutrals from the global snapshot, ships/structures from the player's
- *  OWN presence (so structures aren't double-counted). Colours match the drawer. */
-/** Pixi render params for the per-sector count badges. The shapes / colours /
- *  labels are the shared entity VISUAL LANGUAGE (render/entityVisuals.ts), used
- *  identically by the React drawer. The badge ROW shows one shape per present
- *  type (ENTITY_KIND_ORDER = hostiles · neutrals · ships · structures), each with
- *  its count knocked out (cutout). */
-const COUNT_BADGE_R = 8;
-const COUNT_NUM_SIZE = 9;
-const COUNT_SEG_GAP = 3;
+ *  OWN presence (so structures aren't double-counted). Shapes + colours match the
+ *  React drawer's `EntityBadge` (the shared VISUAL LANGUAGE). */
+/** Icon radius (px) for the small per-type glyph. */
+const COUNT_BADGE_R = 6;
+/** Count-label font size (px). */
+const COUNT_NUM_SIZE = 10;
+/** Gap between adjacent type segments in the row. */
+const COUNT_SEG_GAP = 4;
+/** Gap between an icon and its trailing count label. */
+const COUNT_ICON_LABEL_GAP = 2;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
  *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
@@ -194,6 +198,10 @@ export class GalaxyMapLayer extends Container {
   /** Live + target scale per territory (the hover-shrink ease state). */
   private readonly territoryScale: number[] = [];
   private readonly territoryTarget: number[] = [];
+  /** Reused scratch for the per-call icon+label badge layout (#16) — poll cadence,
+   *  not the render loop, but reused to keep the per-call alloc tiny. */
+  private readonly _badgeMeasures: BadgeSegmentMeasure[] = [];
+  private readonly _badgeVisibleIdx: number[] = [];
   /** Territory the pointer is currently over (selector hover / touch press), or
    *  -1. The tick eases this one toward HOVER_SCALE; -1 falls back to the
    *  current sector's territory. */
@@ -396,43 +404,51 @@ export class GalaxyMapLayer extends Container {
     }
   }
 
-  /** Lay out the cached `entry.counts` as a centred row of shape badges inside the
-   *  hex: each present type (count > 0) shows its solid badge with the count
-   *  knocked out; absent types hide. A fixed per-badge slot keeps even spacing
-   *  regardless of shape. Called by setGalaxyStats + setPlayerPresence. */
+  /** Lay out the cached `entry.counts` as a centred row of "icon + count label"
+   *  segments inside the hex (#16): each present type (count > 0) shows its small
+   *  icon glyph with the count as an ADJACENT label to its right; absent types
+   *  hide. The row centres via the pure `layoutBadgeIconLabelRow`. Called by
+   *  setGalaxyStats + setPlayerPresence (poll cadence, not the render loop). */
   private layoutCountBadges(entry: HexEntry): void {
     const segs = entry.countSegs;
     const counts = entry.counts;
-    const slotW = COUNT_BADGE_R * 2;
-    let nVis = 0;
+    // Set text + visibility, and measure each VISIBLE segment (icon + label).
+    // `_badgeMeasures` is a reused scratch (the visible-segment indices line up
+    // with the placement order); cleared per call.
+    const measures = this._badgeMeasures;
+    measures.length = 0;
+    const visibleIdx = this._badgeVisibleIdx;
+    visibleIdx.length = 0;
     for (let i = 0; i < segs.length; i++) {
       const seg = segs[i]!;
       const n = counts[i]!;
       if (n > 0) {
         // Count label + per-digit shrink (caps at "99+") from the shared visual
-        // language, then the per-shape numScale (star's narrow body needs a
-        // smaller number) — identical to the SVG EntityBadge in the drawer.
+        // language — identical capping to the SVG EntityBadge in the drawer.
         const { label, scale } = entityBadgeCount(n);
-        const v = ENTITY_VISUALS[ENTITY_KIND_ORDER[i]!];
         seg.num.text = label;
-        const fontPx = COUNT_NUM_SIZE * scale * v.numScale;
+        const fontPx = COUNT_NUM_SIZE * scale;
         if (seg.num.style.fontSize !== fontPx) {
           seg.num.style.fontSize = fontPx;
           seg.num.style.lineHeight = fontPx;
         }
         seg.box.visible = true;
-        nVis++;
+        measures.push({ iconW: COUNT_BADGE_R * 2, labelW: seg.num.width });
+        visibleIdx.push(i);
       } else {
         seg.box.visible = false;
       }
     }
-    const totalW = nVis * slotW + COUNT_SEG_GAP * Math.max(0, nVis - 1);
-    let x = -totalW / 2;
-    for (let i = 0; i < segs.length; i++) {
-      const seg = segs[i]!;
-      if (!seg.box.visible) continue;
-      seg.box.x = x + slotW / 2;
-      x += slotW + COUNT_SEG_GAP;
+    const placements = layoutBadgeIconLabelRow({
+      measures,
+      segGap: COUNT_SEG_GAP,
+      iconLabelGap: COUNT_ICON_LABEL_GAP,
+    });
+    for (let p = 0; p < placements.length; p++) {
+      const seg = segs[visibleIdx[p]!]!;
+      const place = placements[p]!;
+      seg.box.x = place.x;
+      seg.num.x = place.labelX;
     }
   }
 
@@ -717,10 +733,12 @@ export class GalaxyMapLayer extends Container {
       this.drawFeatureGlyphs(glyphs, s.features, ox, oy + HEX_SIZE_BASE * 0.05);
       container.addChild(glyphs);
 
-      // Live per-sector count readout — a centred row of solid-colour SHAPE badges
-      // with the count knocked OUT (cutout), placed INSIDE the hex (lower-centre,
-      // within the full-width band) so it never spills past the hex edge or hides
-      // behind an adjacent hex. Laid out by layoutCountBadges; row at hex centre.
+      // Live per-sector count readout — a centred row of "icon + count label"
+      // segments (#16), placed INSIDE the hex (lower-centre) so it never spills
+      // past the hex edge or hides behind an adjacent hex. Each segment is a small
+      // per-type ICON (the shared `entityVisuals` shape, NO cutout) with the count
+      // as a SEPARATE text LABEL to its right (in the type colour). Laid out by
+      // layoutCountBadges; row centred on the hex.
       const countRow = new Container();
       countRow.x = ox;
       countRow.y = oy + HEX_SIZE_BASE * 0.34;
@@ -729,18 +747,18 @@ export class GalaxyMapLayer extends Container {
         const v = ENTITY_VISUALS[kind];
         const box = new Container();
         const shapeG = new Graphics();
+        // The icon: a small solid glyph drawn at the box origin (no knockout).
         shapeG.poly(entityBadgePolygon(v.shape, COUNT_BADGE_R));
         shapeG.fill(v.color);
-        // The count, KNOCKED OUT of the solid shape (backdrop colour → cutout),
-        // centred on the shape's optical centre + the font baseline nudge.
+        // The count, as an ADJACENT label (left-anchored, vertically centred on
+        // the icon), in the type colour so the badge reads "icon: N" at a glance.
         const num = new Text({
           text: '',
           resolution: MAP_LABEL_RESOLUTION,
           roundPixels: true,
-          style: new TextStyle({ fontFamily: 'sans-serif', fontSize: COUNT_NUM_SIZE, lineHeight: COUNT_NUM_SIZE, fontWeight: '700', fill: ENTITY_BADGE_KNOCKOUT }),
+          style: new TextStyle({ fontFamily: 'sans-serif', fontSize: COUNT_NUM_SIZE, lineHeight: COUNT_NUM_SIZE, fontWeight: '700', fill: v.color }),
         });
-        num.anchor.set(0.5);
-        num.y = v.numCenterYFrac * COUNT_BADGE_R;
+        num.anchor.set(0, 0.5); // left-anchored, vertically centred
         box.addChild(shapeG, num);
         box.visible = false;
         countRow.addChild(box);
