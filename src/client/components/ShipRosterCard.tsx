@@ -2,6 +2,7 @@ import { Box, Chip, Typography } from '@mui/material';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { ShipSilhouette } from '../render/shipShapeSvg';
 import { GRID_CELL } from './rosterConstants';
+import { LevelBadge } from './LevelBadge';
 
 /**
  * One roster entry as the server reports it. Mirrors the JSON returned
@@ -21,6 +22,9 @@ export interface RosterShipEntry {
   expiresAt: number;
   createdAt: number;
   updatedAt: number;
+  /** Phase 4 (Leveling & XP, WS-B1) — public ship level (≥ 1). Absent on
+   *  servers / fixtures that pre-date the field ⇒ treated as level 1 (no badge). */
+  level?: number;
 }
 
 interface ShipRosterCardProps {
@@ -53,6 +57,7 @@ export function ShipRosterCard({ ship, compact, onClick }: ShipRosterCardProps):
         data-active={ship.isActive ? '1' : '0'}
         onClick={onClick}
         sx={{
+          position: 'relative',
           flexShrink: 0,
           width: 52,
           height: 52,
@@ -70,6 +75,11 @@ export function ShipRosterCard({ ship, compact, onClick }: ShipRosterCardProps):
           '&:hover': { borderColor: '#1f7a4d' },
         }}
       >
+        {/* Public level badge (D13), tucked top-left so it doesn't disturb the
+            52px square layout. Renders nothing for level ≤ 1. */}
+        <Box sx={{ position: 'absolute', top: 1, left: 1 }}>
+          <LevelBadge level={ship.level} />
+        </Box>
         <ShipSilhouette shape={kind.shape} size={28} />
         <HealthBar pct={healthPct} thickness={2} />
       </Box>
@@ -106,6 +116,8 @@ export function ShipRosterCard({ ship, compact, onClick }: ShipRosterCardProps):
           <Typography sx={{ color: '#cde', fontSize: 10, fontWeight: 600, lineHeight: 1.15 }} noWrap>
             {kind.displayName}
           </Typography>
+          {/* Public level badge (D13) — renders nothing for level ≤ 1. */}
+          <LevelBadge level={ship.level} />
           {ship.isActive && (
             <Chip
               label="●"

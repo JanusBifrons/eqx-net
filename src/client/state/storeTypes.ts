@@ -238,6 +238,11 @@ export interface UIStore {
    *  ship-kind catalogue; constant per kind, so it lives safely in Zustand
    *  (no per-frame churn). */
   energyMax: number;
+  /** Phase 4 (Leveling & XP, WS-B1) — the level the LOCAL player's ship just
+   *  reached, set on a `ship_level_up` for the own hull. Discrete scalar
+   *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
+   *  null = no pending level-up to acknowledge. */
+  pendingLevelUp: number | null;
   /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
    *  or slot switched since last fire). Stamped by `ColyseusClient.sendFire`.
    *  Per-frame readers (the fire-button cooldown ring) use this with the
@@ -393,6 +398,9 @@ export interface UIStore {
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
+  /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
+   *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */
+  setPendingLevelUp: (level: number | null) => void;
   /** Set the inspected entity selection (Item B3). Both args change together. */
   setSelectedEntity: (
     id: string | null,

@@ -17,6 +17,7 @@ import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSprit
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
+import { LevelUpIconManager } from './LevelUpIcons';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
@@ -345,6 +346,8 @@ export class PixiRenderer implements IRenderer {
    *  undefined (WS-B #3/#4 thread touch into the halo). */
   private readonly halo: HaloRadar;
   private damageNumbers: DamageNumberManager | null = null;
+  /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
+  private levelUpIcons: LevelUpIconManager | null = null;
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
@@ -710,6 +713,7 @@ export class PixiRenderer implements IRenderer {
     // legible at any zoom — Camera ref needed for the per-frame
     // counter-scale.
     this.damageNumbers = new DamageNumberManager(this.world, this.camera);
+    this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
     // Click-to-inspect selection bracket (Item B4). Parented to the world
@@ -1758,6 +1762,20 @@ export class PixiRenderer implements IRenderer {
     }
     if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
 
+    // Phase 4 WS-B1 — drain the level-up icon queue and pop a pooled
+    // screenspace icon over the named ship's CURRENT pose. The queue's
+    // length-reset is owned by `consumeOneFrameTriggers` on render frames only
+    // (same skip-frame discipline as explodingShips / pendingEffectTriggers).
+    // DO NOT add `.length = 0` here.
+    if (this.levelUpIcons && mirror.pendingLevelUps) {
+      for (const ev of mirror.pendingLevelUps) {
+        const ship = mirror.ships.get(ev.playerId);
+        if (!ship) continue;
+        this.levelUpIcons.spawn(ship.x, ship.y, ev.newLevel);
+      }
+    }
+    this.levelUpIcons?.update();
+
     if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
         this.healthBars.onHit(hb.entityId, hb.healthPct, hb.shieldPct, hb.preHealthPct);
@@ -2356,6 +2374,7 @@ export class PixiRenderer implements IRenderer {
     const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
     if (ro instanceof ResizeObserver) ro.disconnect();
     this.damageNumbers?.destroy();
+    this.levelUpIcons?.destroy();
     this.healthBars?.destroy();
     this.labels?.destroy();
     this.selectionBracket?.destroy();

@@ -51,6 +51,16 @@ export class ShipState extends Schema {
   shield = 0;
   shieldLastDamageTick = 0;
 
+  // -- Level (Phase 4 Leveling & XP, WS-B1) ------------------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: like shield /
+  // energy, the PUBLIC level reaches clients via the per-recipient
+  // SnapshotMessage.states[id].level slice (emit-when > 1), NOT the Colyseus
+  // diff. Mirrored from the roster row's `level` on spawn/restore and
+  // incremented in-place by the XP-award path (SHIP_DESTROYED → applyKillXp).
+  // Source of truth is the roster (PlayerShipStore); this is the live mirror
+  // the broadcaster reads. Defaults to 1 (a fresh, un-levelled hull).
+  level = 1;
+
   // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the
   // authoritative energy value reaches the OWNING client via the

@@ -292,6 +292,8 @@ export function devPlayerShipsHandler(req: Request, res: Response): void {
     expiresAt: rec.expiresAt,
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
+    // Phase 4 (Leveling & XP, WS-B1) — public level for the roster card badge.
+    level: rec.level,
   }));
   res.json({ playerId, ships });
 }

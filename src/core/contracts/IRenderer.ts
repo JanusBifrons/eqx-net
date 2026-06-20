@@ -460,6 +460,14 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  /** Phase 4 (Leveling & XP, WS-B1) — one-shot level-up triggers to play this
+   *  frame. Populated by `ColyseusClient`'s `ship_level_up` handler (pooled —
+   *  the array's slot instances persist; `.length` truncates the logical view,
+   *  Invariant #14). The renderer drains it, spawns a pooled screenspace
+   *  level-up icon over the named ship (resolved by `playerId`; the owner's own
+   *  ship pops the icon + opens the upgrade modal). Cleared each render frame in
+   *  `consumeOneFrameTriggers` (same skip-frame gate as `explodingShips`). */
+  pendingLevelUps?: Array<{ playerId: string; newLevel: number }>;
   /** Ships currently holding shift-boost AND thrust. Server-authoritative —
    *  rebuilt on every snapshot. Renderer draws an exhaust trail for each. */
   boostingShips?: Set<string>;

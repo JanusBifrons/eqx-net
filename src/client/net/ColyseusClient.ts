@@ -14,7 +14,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -52,7 +52,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -300,6 +300,7 @@ export class ColyseusGameClient {
     pendingWarpEvents: [],
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
+    pendingLevelUps: [],
   };
 
   /**
@@ -1557,6 +1558,16 @@ export class ColyseusGameClient {
       this.handleDestroy(evt);
     });
 
+    // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
+    // parse (invariant #3/#4 — crosses the trust boundary). The badge refresh
+    // for ALL ships rides the next snapshot's states[].level; THIS handler pops
+    // the owner-facing screenspace level-up icon for the LOCAL player's hull.
+    room.onMessage('ship_level_up', (raw: unknown) => {
+      const parsed = ShipLevelUpEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
+    });
+
     room.onMessage('hit_ack', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse (invariant #4;
       // the client now consumes hit_ack as its single reconcile path, so
@@ -2302,6 +2313,31 @@ export class ColyseusGameClient {
   }
 
   /**
+   * Phase 4 WS-B1 — a ship instance just levelled up. The PUBLIC badge for ALL
+   * ships refreshes from the next snapshot's `states[].level` (applyShipLevels);
+   * this only pops the OWNER-facing screenspace level-up icon for the LOCAL
+   * player's own hull (resolved via `localShipInstanceId`). Remote level-ups
+   * just refresh their badge — no icon for other players. Discrete + low-
+   * frequency (a kill threshold), so the single pooled-array push is off the
+   * hot path (mirrors `pendingEffectTriggers` pushes from `handleDamage`).
+   */
+  private handleShipLevelUp(shipInstanceId: string, newLevel: number): void {
+    const localShipInstanceId = this.mirror.localShipInstanceId;
+    const localPlayerId = this.mirror.localPlayerId;
+    if (localShipInstanceId == null || localPlayerId == null) return;
+    if (shipInstanceId !== localShipInstanceId) return; // owner-facing icon only
+    // Pooled one-frame trigger — drained by the renderer, cleared in
+    // consumeOneFrameTriggers. Keyed by playerId so the renderer resolves it to
+    // the local ship's (playerId-keyed) mirror pose for the screenspace anchor.
+    const queue = this.mirror.pendingLevelUps;
+    if (queue) queue.push({ playerId: localPlayerId, newLevel });
+    // Discrete Zustand seam for the upgrade modal (WS-B2 wires the modal open;
+    // here we surface "the local player just hit level N" as a discrete scalar —
+    // purity-clean, Invariant #2). A no-op until WS-B2 reads it.
+    useUIStore.getState().setPendingLevelUp(newLevel);
+  }
+
+  /**
    * Remove a swarm entity (drone) immediately on a destroy event. Sweeps the
    * mirror entry, the predWorld body, and the damage-flash tracker. The next
    * binary swarm packet will confirm the entity is gone (delta packets won't
@@ -2604,6 +2640,12 @@ export class ColyseusGameClient {
 
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
+
+    // Phase 4 WS-B1 — mirror each ACTIVE hull's PUBLIC level (states[].level,
+    // now playerId-keyed post-route) onto mirror.ships so the renderer paints
+    // the in-world level badge. Lingering hulls carry their level via the
+    // router (mirror.lingeringShips), above.
+    applyShipLevels(snap, this.mirror);
 
     // Phase 6 — surface the server's TiDi rate to the HUD + audio,
     // and drive the Temporal Anomaly banner with hysteresis. See

@@ -43,6 +43,7 @@ import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '.
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -2190,7 +2191,20 @@ export class SectorRoom extends Room<SectorState> {
           killer: auditAttacker,
         });
       }
-      // Phase 3 dual-write — drop the destroyed ship from the roster.
+      // Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE,
+      // weighted by the victim's toughness. MUST run BEFORE the roster wipe
+      // below (D9): the wipe drops the VICTIM's row; the killer's row is a
+      // different instance, so ordering only matters in the self-kill edge
+      // (a ship can't kill itself, but a stale shooterId === victim would be
+      // a no-op award anyway). We still read the victim's maxHealth here while
+      // its kind is known.
+      if (destroyedShip !== undefined) {
+        const victimMaxHealth = getShipKind(destroyedShip.kind).maxHealth;
+        this.awardKillXp(evt.shooterId, victimMaxHealth);
+      }
+      // Phase 3 dual-write — drop the destroyed ship from the roster. D9 — the
+      // whole roster row (level / xp / statAlloc / mounts) is dropped together
+      // here, so a destroyed ship's progression is gone atomically.
       if (destroyedShip !== undefined) {
         this.deleteRosterRow(destroyedShip.shipInstanceId);
       }
@@ -2744,6 +2758,12 @@ export class SectorRoom extends Room<SectorState> {
       // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
       this.recentCombatLog.record('ship', Date.now());
       auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
+      // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
+      // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
+      // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
+      // awarded separately in the SHIP_DESTROYED handler.
+      const droneMaxHealth = getDroneMaxHealth(rec.shipKind ?? undefined) ?? 40;
+      this.awardKillXp(shooterId ?? '', droneMaxHealth);
     }
   }
 
@@ -4331,6 +4351,12 @@ export class SectorRoom extends Room<SectorState> {
     if (ship.shipInstanceId === '' && this.sectorKey === null) {
       ship.shipInstanceId = randomUUID();
     }
+    // Phase 4 (Leveling & XP, WS-B1) — seed the live level mirror from the
+    // roster row so a previously-levelled ship shows its public badge from the
+    // first snapshot. Engineering rooms / fresh ships have no row ⇒ level 1.
+    if (ship.shipInstanceId !== '') {
+      ship.level = getPlayerShipStore().get(ship.shipInstanceId)?.level ?? 1;
+    }
     ship.isActive = true;
     // Populate the indirection map BEFORE setting the schema entry so
     // any synchronous observer (e.g. a re-entrant fire-handler) can
@@ -4892,6 +4918,54 @@ export class SectorRoom extends Room<SectorState> {
 
   private deleteRosterRow(shipInstanceId: string): void {
     this.rosterPersistence.delete(shipInstanceId);
+  }
+
+  /**
+   * Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE on a
+   * kill, weighted by the victim's `maxHealth` (tougher = more, D10). XP is
+   * PER SHIP INSTANCE (D8): the killer's playerId resolves to the hull THAT
+   * PLAYER is currently piloting (`resolveActiveShipKey`), and the XP rides
+   * that hull's persistent roster row — switching ships switches progression.
+   *
+   * Only PLAYER killers earn XP — a drone/structure killer (`swarm-`/`lwbot-`/
+   * `pstruct-` prefix) has no roster ship instance, so it's skipped. Engineering
+   * rooms (no roster) and unbound killers are no-ops.
+   *
+   * On crossing a threshold the ship's `level` increments, the roster persists
+   * the new `(level, xp)`, the live `ShipState.level` mirror updates (so the
+   * next snapshot ships the public badge), a discrete `SHIP_LEVEL_UP` fires on
+   * the bus, and a `ship_level_up` Colyseus message broadcasts to every client.
+   */
+  private awardKillXp(killerId: string, victimMaxHealth: number): void {
+    if (classifyAttacker(killerId) !== 'player') return; // drones/structures don't level
+    const killerShipInstanceId = this.resolveActiveShipKey(killerId);
+    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
+    const store = getPlayerShipStore();
+    const row = store.get(killerShipInstanceId);
+    if (row === null) return; // no roster row (engineering room / not persisted)
+
+    const gained = xpForKill(victimMaxHealth);
+    const result = applyKillXp(row.level, row.xp, gained);
+    // Persist the new progression (level/xp) on the killer's instance.
+    store.setProgress(killerShipInstanceId, { level: result.level, xp: result.xp });
+
+    // Mirror the level onto the live ShipState so the broadcaster ships the
+    // public badge on the next snapshot.
+    const killerShip = this.state.ships.get(killerShipInstanceId);
+    if (killerShip !== undefined) killerShip.level = result.level;
+
+    if (result.levelsGained > 0) {
+      this.bus.emit('SHIP_LEVEL_UP', {
+        type: 'SHIP_LEVEL_UP',
+        shipInstanceId: killerShipInstanceId,
+        newLevel: result.level,
+      });
+      this.broadcast('ship_level_up', {
+        type: 'ship_level_up',
+        shipInstanceId: killerShipInstanceId,
+        newLevel: result.level,
+      });
+    }
   }
 
   override onDispose(): void {

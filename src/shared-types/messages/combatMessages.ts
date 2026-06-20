@@ -42,6 +42,20 @@ export interface DestroyEvent {
   shooterId: string;
 }
 
+/** Server → client (broadcast): a player ship INSTANCE levelled up from a kill
+ *  (Phase 4 WS-B1, plan: effervescent-umbrella). Broadcast to ALL clients —
+ *  level is public (D13). `shipInstanceId` is the killer's persistent roster id
+ *  (NOT a playerId — XP is per-instance, D8); `newLevel` is the level just
+ *  reached. The owning client pops a pooled screenspace level-up icon; every
+ *  client refreshes the public ship badge from the next snapshot's
+ *  `states[].level`. The `shipInstanceId` is hidden render/data only — never
+ *  shown as text (no-raw-ids rule). */
+export interface ShipLevelUpEvent {
+  type: 'ship_level_up';
+  shipInstanceId: string;
+  newLevel: number;
+}
+
 /** Server -> client (broadcast): a DISCRETE shield-state transition NOT
  *  carried by a `damage` event. Shield value on every hit rides
  *  DamageEvent.newShield; the regen ramp is NEVER streamed — the client
@@ -177,5 +191,17 @@ export const DamageEventSchema = z
     shieldMax: z.number(),
     hullMax: z.number(),
     hitLayer: z.enum(['shield', 'hull']),
+  })
+  .strict();
+
+/** Server → client (broadcast): a ship instance levelled up (Phase 4 WS-B1).
+ *  Defensive schema — the server builds + trusts its own shape; the client
+ *  `safeParse`s on ingest and drops malformed packets before the screenspace
+ *  icon / badge refresh fire (invariant #3). */
+export const ShipLevelUpEventSchema = z
+  .object({
+    type: z.literal('ship_level_up'),
+    shipInstanceId: z.string().min(1).max(64),
+    newLevel: z.number().int().positive(),
   })
   .strict();

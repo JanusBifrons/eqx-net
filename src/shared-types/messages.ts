@@ -45,11 +45,13 @@ export {
   CollisionResolvedMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  ShipLevelUpEventSchema,
 } from './messages/combatMessages.js';
 export type {
   HitAckMessage,
   DamageEvent,
   DestroyEvent,
+  ShipLevelUpEvent,
   ShieldEventMessage,
   RespawnAckMessage,
   LaserFiredEvent,

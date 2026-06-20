@@ -117,7 +117,7 @@ describe('devPlayerShipsHandler', () => {
     // Wire-shape contract — client `RosterShipEntry` reads these names.
     // Adding fields is fine; renaming or removing is a breaking change.
     expect(Object.keys(entry).sort()).toEqual(
-      ['activeRoomId', 'createdAt', 'expiresAt', 'isActive', 'kind', 'kindVersion', 'sectorKey', 'shipId', 'updatedAt', 'x', 'y', 'health'].sort(),
+      ['activeRoomId', 'createdAt', 'expiresAt', 'isActive', 'kind', 'kindVersion', 'sectorKey', 'shipId', 'updatedAt', 'x', 'y', 'health', 'level'].sort(),
     );
     expect(entry['isActive']).toBe(true);
     expect(entry['activeRoomId']).toBe('room-xyz');

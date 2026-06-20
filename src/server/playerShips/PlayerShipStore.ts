@@ -309,6 +309,31 @@ export class PlayerShipStore {
   }
 
   /**
+   * Phase 4 (Leveling & XP, WS-B1). Persist a ship instance's progression
+   * (level / xp / optional stat allocation + activated mounts). Used by the
+   * XP-award path on a kill (level/xp) and by the upgrade modal (WS-B2/B3:
+   * statAlloc / mounts). Returns the updated record or `null` when the ship is
+   * unknown. Per-instance by construction — the XP rides the `shipId` row, so
+   * switching ships switches progression (D8).
+   */
+  setProgress(
+    shipId: string,
+    progress: { level?: number; xp?: number; statAlloc?: StatAlloc; mounts?: ActivatedMount[] },
+  ): PlayerShipRecord | null {
+    const existing = this.byShip.get(shipId);
+    if (existing === undefined) return null;
+    const next: PlayerShipRecord = {
+      ...existing,
+      level: progress.level ?? existing.level,
+      xp: progress.xp ?? existing.xp,
+      statAlloc: progress.statAlloc ?? existing.statAlloc,
+      mounts: progress.mounts ?? existing.mounts,
+    };
+    this.put(next);
+    return next;
+  }
+
+  /**
    * Boot-time rehydrate from on-disk rows. Pure in-memory write — does NOT
    * shadow through the sink (the rows already live there). Applies the
    * catalogue-version drift correction in-line so all post-boot reads see

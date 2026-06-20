@@ -5,6 +5,12 @@ export interface BusEventPayloads {
   LASER_FIRED: { type: 'LASER_FIRED'; shooterId: string; x: number; y: number; angle: number };
   PLAYER_DAMAGED: { type: 'PLAYER_DAMAGED'; targetId: string; damage: number; newHealth: number };
   SHIP_DESTROYED: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string };
+  /** Phase 4 (Leveling & XP, WS-B1) — a player ship INSTANCE crossed a level
+   *  threshold from a kill. Discrete + low-frequency; subscribers: the room
+   *  (broadcast `ship_level_up` to clients + the screenspace icon), telemetry/
+   *  audit. `shipInstanceId` is the killer's persistent roster id (NOT a
+   *  playerId — XP is per-instance, D8); `newLevel` is the level just reached. */
+  SHIP_LEVEL_UP: { type: 'SHIP_LEVEL_UP'; shipInstanceId: string; newLevel: number };
   ENTITY_DESTROYED: { type: 'ENTITY_DESTROYED'; entityId: string };
   ENTITY_SHED: { type: 'ENTITY_SHED'; entityId: string };
   ENTITY_SLEPT: { type: 'ENTITY_SLEPT'; entityId: string };

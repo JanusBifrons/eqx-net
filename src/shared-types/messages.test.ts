@@ -17,11 +17,12 @@ import {
   FireMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  ShipLevelUpEventSchema,
   WarpWarningSchema,
   WarpWarningClearSchema,
   BaseReadySchema,
 } from './messages.js';
-import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent } from './messages.js';
+import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent, ShipLevelUpEvent } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -521,5 +522,42 @@ describe('BaseReadySchema (WS-11 R2.24 Part B)', () => {
 
   it('rejects a wrong type literal', () => {
     expect(BaseReadySchema.safeParse({ ...valid, type: 'warp_warning' }).success).toBe(false);
+  });
+});
+
+describe('ShipLevelUpEventSchema (Phase 4 WS-B1)', () => {
+  const valid = { type: 'ship_level_up' as const, shipInstanceId: 'ship-abc', newLevel: 3 };
+
+  it('accepts a valid level-up event', () => {
+    expect(ShipLevelUpEventSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects a wrong type literal', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, type: 'destroy' }).success).toBe(false);
+  });
+
+  it('rejects an empty or over-long shipInstanceId (S5 bounds)', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, shipInstanceId: '' }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, shipInstanceId: 'x'.repeat(65) }).success).toBe(false);
+  });
+
+  it('rejects a non-positive / fractional newLevel', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: 0 }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: -1 }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: 2.5 }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields (strict)', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('z.infer<ShipLevelUpEventSchema> ↔ ShipLevelUpEvent are bidirectionally assignable', () => {
+    type SchemaT = z.infer<typeof ShipLevelUpEventSchema>;
+    const schemaToIface: ShipLevelUpEvent = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as ShipLevelUpEvent;
+    void schemaToIface;
+    void ifaceToSchema;
+    const parsed: ShipLevelUpEvent = ShipLevelUpEventSchema.parse(valid);
+    expect(parsed.newLevel).toBe(3);
   });
 });

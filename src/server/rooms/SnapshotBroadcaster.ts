@@ -144,6 +144,9 @@ interface AllShipEntry {
   /** WS-12 / R2.32 — shield down (hull exposed). Drives the client shield
    *  aura for both active AND lingering hulls. */
   shieldDown: boolean;
+  /** Phase 4 (Leveling & XP, WS-B1) — this hull's PUBLIC level (≥ 1). Emitted
+   *  on the wire only when > 1 (un-levelled sectors pay zero bytes). */
+  level: number;
 }
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
@@ -163,6 +166,7 @@ type MutableStateEntry = {
   mountAngles?: number[];
   energy?: number;
   shieldDown?: boolean;
+  level?: number;
 };
 
 type MutableProjectileEntry = {
@@ -438,6 +442,7 @@ export class SnapshotBroadcaster {
         lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
         energy: 0,
         shieldDown: false,
+        level: 1,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -490,6 +495,7 @@ export class SnapshotBroadcaster {
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
       entry.energy = ship.energy;
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
+      entry.level = ship.level; // Phase 4 WS-B1 — public level
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -517,6 +523,7 @@ export class SnapshotBroadcaster {
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
       entry.shieldDown = ship.shield <= 0;
+      entry.level = ship.level; // Phase 4 WS-B1 — public level (lingering hulls too)
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -600,6 +607,10 @@ export class SnapshotBroadcaster {
         // R2.32 — emit shieldDown only when true (notepack skips undefined →
         // zero bytes for an undamaged sector); clear the pooled entry otherwise.
         entry.shieldDown = ship.shieldDown ? true : undefined;
+        // Phase 4 WS-B1 — public level. Emit only when > 1 (notepack skips
+        // undefined → zero bytes for an un-levelled sector; the client treats
+        // absent as level 1). Clear the pooled entry otherwise.
+        entry.level = ship.level > 1 ? ship.level : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

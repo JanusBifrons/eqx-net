@@ -156,3 +156,28 @@ describe('ShipRosterCard — compact variant', () => {
     expect(onClick).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('ShipRosterCard — public level badge (Phase 4 WS-B1)', () => {
+  it('renders the level badge in the full variant when level > 1', () => {
+    const ship = makeShip({ level: 4 });
+    render(<ShipRosterCard ship={ship} compact={false} onClick={() => {}} />);
+    const badge = screen.getByTestId('level-badge');
+    expect(badge).toHaveAttribute('data-level', '4');
+    expect(badge).toHaveTextContent('Lv 4');
+  });
+
+  it('renders the level badge in the compact variant when level > 1', () => {
+    const ship = makeShip({ level: 6 });
+    render(<ShipRosterCard ship={ship} compact={true} onClick={() => {}} />);
+    expect(screen.getByTestId('level-badge')).toHaveTextContent('Lv 6');
+  });
+
+  it('omits the badge for an un-levelled (level 1 / absent) ship in both variants', () => {
+    const { rerender } = render(
+      <ShipRosterCard ship={makeShip({ level: 1 })} compact={false} onClick={() => {}} />,
+    );
+    expect(screen.queryByTestId('level-badge')).toBeNull();
+    rerender(<ShipRosterCard ship={makeShip({ level: undefined })} compact={true} onClick={() => {}} />);
+    expect(screen.queryByTestId('level-badge')).toBeNull();
+  });
+});

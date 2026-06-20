@@ -159,3 +159,29 @@ export function applyAsteroidResources(snap: SnapshotMessage, mirror: RenderMirr
     if (a.resourcesMax !== undefined) sw.resourcesMax = a.resourcesMax;
   }
 }
+
+/**
+ * Public ship-level slice (Phase 4 WS-B1, plan: effervescent-umbrella). The
+ * snapshot `states[id].level` carries each hull's PUBLIC level (emit-when > 1,
+ * D13). Mirror it onto EVERY ship render entry (local + remote) so the renderer
+ * paints the in-world level badge; absent ⇒ level 1 (un-levelled), so we clear
+ * a stale value back to undefined. Discrete scalar — purity-clean (Invariant
+ * #2). Keyed by the wire's snapshot key (shipInstanceId), which is the
+ * `mirror.ships` key (mirrors how `mountAngles` is applied). Alloc-free: a
+ * scalar write per ship, no per-frame literal. The single ownership site for
+ * the public level mirror field.
+ */
+export function applyShipLevels(snap: SnapshotMessage, mirror: RenderMirror): void {
+  for (const id in snap.states) {
+    const ship = mirror.ships.get(id);
+    if (!ship) continue;
+    const level = snap.states[id]!.level;
+    // Only write when it differs to avoid churning the mirror object's hidden
+    // class; absent ⇒ level 1 ⇒ clear the badge.
+    if (level !== undefined && level > 1) {
+      if (ship.level !== level) ship.level = level;
+    } else if (ship.level !== undefined) {
+      ship.level = undefined;
+    }
+  }
+}

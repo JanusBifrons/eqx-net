@@ -99,6 +99,9 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
           ownerPlayerId: entry.playerId,
           // R2.32 — carry the shield state so the parked hull renders its aura.
           shieldDown: entry.shieldDown,
+          // Phase 4 WS-B1 — carry the public level so the parked hull shows its
+          // badge (absent ⇒ level 1, no badge).
+          level: entry.level,
         };
         mirror.lingeringShips.set(shipInstanceId, lingerEntry);
       } else {
@@ -109,6 +112,7 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
         lingerEntry.angle = entry.angle;
         lingerEntry.ownerPlayerId = entry.playerId;
         lingerEntry.shieldDown = entry.shieldDown;
+        lingerEntry.level = entry.level;
       }
       lingeringSeen.add(shipInstanceId);
       // Phase 6b — spawn / refresh the predWorld body so the local
