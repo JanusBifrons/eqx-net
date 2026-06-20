@@ -133,6 +133,7 @@ function line(e) {
     case 'player_left': return `${head}: player=${e.playerId}`;
     case 'transit_started': return `${head}: player=${e.playerId} ${e.from ?? '?'} → ${e.to}`;
     case 'transit_arrived': return `${head}: player=${e.playerId} → ${e.to}`;
+    case 'sector_change': return `${head}: ${e.entityKind}=${e.id} ${e.from ?? '?'} → ${e.to}${e.adjacent === false ? ' [NON-ADJACENT!]' : ''}`;
     case 'ship_lingered':
     case 'ship_abandoned': return `${head}: player=${e.playerId ?? '?'} ship=${e.shipInstanceId}`;
     default: return `${head}: ${JSON.stringify(e)}`;

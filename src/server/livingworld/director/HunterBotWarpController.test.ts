@@ -26,6 +26,7 @@ import type { LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { BotCarry } from '../botTypes.js';
 import { makeSeededRng } from '../population.js';
 import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
+import { setAuditSink, type AuditEvent } from '../../audit/GameplayAuditLog.js';
 
 type SpawnSpec = Parameters<LivingWorldRoom['spawnLivingWorldBot']>[0];
 
@@ -213,5 +214,52 @@ describe('HunterBotWarpController.arrive — carry-over spawn position (WS-E #13
     // Edge spawn radius is ~0.92 × 5000 ≈ 4600 — far from the carry pose (100,100).
     const r = Math.hypot(spawns[0]!.x, spawns[0]!.y);
     expect(r).toBeGreaterThan(2000);
+  });
+});
+
+/**
+ * #18 — durable sector-change logging. Drone hops previously only hit the
+ * volatile in-RAM `serverLogEvent` ring (dies on restart, never in the audit
+ * NDJSON), so a galaxy-map "ship" (drone squad) jumping sectors left NO
+ * checkable record. This locks a DURABLE `sector_change` audit event on every
+ * drone arrival, carrying from/to + an `adjacent` watchdog flag (computed via
+ * the real galaxy graph) so an illegal (non-neighbour) hop is a trivial grep.
+ */
+describe('HunterBotWarpController.arrive — durable sector_change audit (#18)', () => {
+  async function captureHop(from: string, to: string): Promise<AuditEvent[]> {
+    const events: AuditEvent[] = [];
+    setAuditSink((e) => events.push(e));
+    try {
+      const { pool, rec } = makePool();
+      const src = makeRoom();
+      const { room: dest } = makeRoom();
+      const rooms = new Map<string, LivingWorldRoom>([[from, src.room], [to, dest]]);
+      const controller = new HunterBotWarpController({
+        rooms, pool, rng: makeSeededRng(1), respawnDelayMs: 100, hopTravelMs: 0,
+      });
+      await hop({ controller, rec, from, to });
+      return events.filter((e) => e.event === 'sector_change');
+    } finally {
+      setAuditSink(null);
+    }
+  }
+
+  it('emits a durable sector_change (entityKind=drone, from/to) on arrival', async () => {
+    // sol-prime → vega-reach is a REAL adjacency (galaxy.ts).
+    const changes = await captureHop('sol-prime', 'vega-reach');
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({
+      event: 'sector_change', entityKind: 'drone', id: 'lwbot-0',
+      from: 'sol-prime', to: 'vega-reach', adjacent: true,
+    });
+  });
+
+  it('flags adjacent=false when a drone hops between NON-neighbour sectors (the illegal-warp watchdog)', async () => {
+    // sol-prime and thornfield are NOT neighbours — this is exactly the
+    // "ship jumped Thornfield→Cygnus" class the user reported; if it ever
+    // happens for real, the audit log now records adjacent=false.
+    const changes = await captureHop('sol-prime', 'thornfield');
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ event: 'sector_change', adjacent: false });
   });
 });

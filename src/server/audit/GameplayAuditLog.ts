@@ -89,6 +89,19 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'player_left'; playerId: string })
   | (AuditEventBase & { event: 'transit_started'; playerId: string; from?: string; to: string })
   | (AuditEventBase & { event: 'transit_arrived'; playerId: string; to: string })
+  // #18 — durable record of ANY ship/entity sector change (player transit OR
+  // drone hop), so an "I just saw a ship jump A→B" report is checkable from the
+  // audit log. `adjacent` is the galaxy-graph watchdog: false ⇒ a non-neighbour
+  // (illegal) hop actually happened. Drones were previously only in the volatile
+  // RAM ring (`bot_transit_commit`); this is the durable, queryable record.
+  | (AuditEventBase & {
+      event: 'sector_change';
+      entityKind: 'player' | 'drone';
+      id: string;
+      from?: string;
+      to: string;
+      adjacent?: boolean;
+    })
   | (AuditEventBase & { event: 'ship_lingered'; playerId: string; shipInstanceId: string })
   | (AuditEventBase & { event: 'ship_abandoned'; playerId?: string; shipInstanceId: string });
 

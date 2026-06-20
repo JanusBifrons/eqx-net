@@ -7,6 +7,7 @@ import {
   SAB_TOTAL_BYTES, slotBase,
 } from '../../shared-types/sabLayout.js';
 import { SPOOL_DURATION_MS } from '../../core/transit/TransitStateMachine.js';
+import { setAuditSink, type AuditEvent } from '../audit/GameplayAuditLog.js';
 
 interface FakeClientSent {
   channel: string;
@@ -217,6 +218,25 @@ describe('TransitOrchestrator', () => {
       orch.setReserveByNameOverride(fn as unknown as Parameters<TransitOrchestrator['setReserveByNameOverride']>[0]);
       return { orch, room: r.room, store, shipId: rec.shipId, sent: r.sent, broadcasts: r.broadcasts, setHealth: r.setHealth };
     }
+
+    it('emits a durable sector_change audit on commit (#18 — player movement record)', async () => {
+      const events: AuditEvent[] = [];
+      setAuditSink((e) => events.push(e));
+      try {
+        const reserve = vi.fn().mockResolvedValue({ sessionId: 'reserved', room: { roomId: 'r' } });
+        const { orch } = withFakeReserve(reserve);
+        orch.beginTransit('p1', 'cygnus-arm'); // sol-prime → cygnus-arm IS a neighbour
+        vi.advanceTimersByTime(SPOOL_DURATION_MS);
+        await vi.runAllTimersAsync();
+        const sc = events.find((e) => e.event === 'sector_change');
+        expect(sc).toMatchObject({
+          event: 'sector_change', entityKind: 'player', id: 'p1',
+          from: 'sol-prime', to: 'cygnus-arm', adjacent: true,
+        });
+      } finally {
+        setAuditSink(null);
+      }
+    });
 
     it('re-homes the roster row to the destination sector with the commit pose', async () => {
       const reservation = { sessionId: 'reserved', room: { roomId: 'r' } };
