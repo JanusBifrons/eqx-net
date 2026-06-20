@@ -16,6 +16,46 @@ export const RADAR_WEDGE_COUNT = Math.round(360 / RADAR_WEDGE_DEG);
 // representatives instead of each getting their own arrow.
 export const RADAR_GROUPING_DISTANCE = 2000;
 
+// WS-B #2 — distance-banded grouping. A single flat grouping distance
+// (2000 u) kept every close contact ungrouped, so a tight cluster at
+// close range each got its own ring icon (the "just-placed structure pops
+// in / zooms / vanishes" complaint). The grouping threshold is now BANDED
+// by how close the action is: when the nearest contacts are close, the
+// grouping distance shrinks so close clusters collapse to one
+// representative; when the action is far, it opens back up to the legacy
+// flat distance so distant entities still pass through as singletons until
+// the far wedge band. Industry off-screen-indicator clustering uses a
+// proximity radius that scales with screen/world distance for exactly this
+// reason — see docs/architecture/off-screen-indicators.md.
+export const RADAR_GROUPING_DISTANCE_MIN = 250;
+export const RADAR_GROUPING_DISTANCE_MAX = RADAR_GROUPING_DISTANCE;
+// World distance over which the banded grouping distance ramps from MIN
+// (at the player) up to MAX. Chosen so a close brawl (≲ 1500 u) groups
+// tightly while mid/long-range contacts keep singleton arrows.
+const RADAR_GROUPING_BAND_RAMP = 6000;
+
+/**
+ * Pure helper (WS-B #2). Maps the distance of the NEAREST contact to the
+ * per-frame `groupingDistance` argument fed to
+ * `partitionAndGroupCandidates`. Monotonic non-decreasing, clamped to
+ * `[RADAR_GROUPING_DISTANCE_MIN, RADAR_GROUPING_DISTANCE_MAX]`.
+ *
+ * At close range the grouping distance is small, so a tight cluster of
+ * close contacts collapses to one wedge representative instead of N icons
+ * popping in/out. As the nearest contact recedes the grouping distance
+ * grows toward the legacy flat 2000 u, restoring per-contact arrows for
+ * spread-out mid/long-range targets.
+ */
+export function groupingDistanceForBand(closestDist: number): number {
+  const safe = closestDist > 0 ? closestDist : 0;
+  const t = safe / RADAR_GROUPING_BAND_RAMP;
+  const clampedT = t < 0 ? 0 : t > 1 ? 1 : t;
+  return (
+    RADAR_GROUPING_DISTANCE_MIN
+    + (RADAR_GROUPING_DISTANCE_MAX - RADAR_GROUPING_DISTANCE_MIN) * clampedT
+  );
+}
+
 // Beyond this distance, no arrow at all (distinct from `DIST_MAX`,
 // which is just the lerp-finish point for radius/scale). Between
 // `DIST_MAX` and `RADAR_MAX_DISTANCE` the arrow sits at the outer ring at
