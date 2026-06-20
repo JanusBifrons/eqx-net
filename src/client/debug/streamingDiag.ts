@@ -8,7 +8,9 @@
  *     `POST /diag/capture/stream` every CADENCE_MS, so a smoke-test
  *     capture is on-disk before the user even hits "Capture" (and is
  *     resilient to client crashes / OS-reaped tabs).
- *   - No-op unless `?autocapture=1` (zero cost on normal sessions).
+ *   - No-op unless autocapture is enabled — `?autocapture=1` OR the
+ *     gated dev account (see `isAutoCaptureEnabled`). Zero cost on
+ *     every other session.
  *
  * Robustness (Phase 3 hardening, per hostile-review findings):
  *   - One-in-flight POST lock: prevents stacked concurrent batches if
@@ -194,11 +196,16 @@ function flushFinalBeacon(): void {
 }
 
 /**
- * Install the streaming diagnostic loop. No-op unless `?autocapture=1`.
+ * Install the streaming diagnostic loop. No-op unless autocapture is
+ * enabled (`?autocapture=1` or the gated dev account — see
+ * `isAutoCaptureEnabled`). Idempotent (`_timer` guard), so the App.tsx
+ * post-login re-activation can safely call it again after the account
+ * latch flips true mid-session.
  *
- * Call from `App.tsx` (module top-level, alongside
+ * Called from `App.tsx` (module top-level, alongside
  * `installWindowLogger()`) so streaming captures the FULL session
- * including pre-game events (auth / galaxy map / ship picker).
+ * including pre-game events (auth / galaxy map / ship picker) — and
+ * again from the App auth effect for the fresh-login case.
  */
 export function installStreamingDiag(): void {
   if (!isAutoCaptureEnabled()) return;

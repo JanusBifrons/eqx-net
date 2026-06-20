@@ -10,6 +10,8 @@
  *   window.__eqxClearLogs()   // reset
  */
 
+import { loadEmail } from '../auth/emailStorage.js';
+
 // 2026-05-21: 8000 → 25000 for the replay-infrastructure plan
 // (i-d-like-you-to-zany-narwhal.md, Phase A). On TOP of the existing
 // in-combat ~450/s event rate, captures now ALSO carry the replay-
@@ -336,22 +338,48 @@ export function isGhostProbeEnabled(): boolean {
 }
 
 /**
- * Streaming auto-capture mode — `?autocapture=1`. Mirror of the
- * `isDiagEnabled()` predicate above, distinct latch + window flag.
+ * Accounts that get DEFAULT-ON streaming auto-capture (2026-06-20). The
+ * comparison lower-cases both sides; entries here must be lower-cased.
  *
- * Background (plan: streaming auto-capture, Phase 1, 2026-05-21): the
- * plan adds a continuous diagnostic-streaming mode to remove the manual
- * Capture step + survive client crashes. The whole concern from the
- * hostile review is that streaming-time network + main-thread overhead
- * could perturb the netcode metrics the captures are designed to
- * measure. The netcode-gate (`tests/e2e/netcode-health.spec.ts`) needs
- * a symmetric way to assert "streaming is OFF on this rep" so a future
- * accidental `?autocapture=1` leak doesn't silently turn the gate's
- * measurement into a different program.
+ * Add an email to opt a dev/playtest account into always-on captures (a
+ * capture lands on disk for every session, no manual "Capture" step, no
+ * `?autocapture=1` in the URL). Empty this array to revert autocapture to
+ * pure `?autocapture=1` opt-in. Every NON-listed player and ALL automation
+ * stay at zero cost — see the webdriver branch in `isAutoCaptureEnabled`.
+ */
+export const AUTOCAPTURE_ACCOUNT_EMAILS: readonly string[] = ['alecvickers@hotmail.com'];
+
+/**
+ * Streaming auto-capture mode — `?autocapture=1` OR the gated dev account.
+ * Mirror of the `isDiagEnabled()` predicate above, distinct latch + window
+ * flag.
  *
- * Precedence is simpler than `?diag` — `?autocapture=1` enables
- * streaming, anything else (absent / =0) disables. WebDriver does NOT
- * auto-enable: streaming is opt-in only, never automatic.
+ * Background (plan: streaming auto-capture, Phase 1, 2026-05-21): a
+ * continuous diagnostic-streaming mode that removes the manual Capture step
+ * + survives client crashes. The hostile-review concern is that streaming
+ * overhead could perturb the netcode metrics captures are meant to measure,
+ * so the netcode-gate (`tests/e2e/netcode-health.spec.ts`) asserts
+ * `__eqxAutoCaptureEnabled === false` on every rep.
+ *
+ * Account-gated default-on (2026-06-20): streaming is DEFAULT-ON for the
+ * accounts in `AUTOCAPTURE_ACCOUNT_EMAILS` so the owner gets a capture for
+ * EVERY session with no manual step. Precedence (highest first):
+ *   1. `?autocapture=0` — explicit opt-out, wins over everything (the
+ *      "disabled by flag" kill-switch; mirrors `?diag=0`).
+ *   2. `?autocapture=1` — explicit opt-in on any session/device (preserved;
+ *      E2E specs that exercise streaming pass this — it overrides webdriver).
+ *   3. `navigator.webdriver` — automation NEVER auto-streams via the account
+ *      gate (protects the netgate / E2E even though no test logs in as the
+ *      account — belt-and-suspenders).
+ *   4. persisted account email (`auth/emailStorage`) ∈ AUTOCAPTURE_ACCOUNT_EMAILS
+ *      → ON. The email is written by `authStore.setAuth`, so a returning
+ *      logged-in pilot resolves `true` at boot; a fresh login activates
+ *      mid-session via `refreshAutoCaptureLatch()` (App.tsx auth effect),
+ *      because the boot latch resolved before the email was persisted.
+ *   5. otherwise off — zero cost for everyone else.
+ *
+ * Cached at first read; reset by `__resetDiagCache()` (test/gate harness)
+ * and by `refreshAutoCaptureLatch()` (the post-login re-evaluation).
  */
 let _autoCaptureEnabled: boolean | null = null;
 export function isAutoCaptureEnabled(): boolean {
@@ -362,12 +390,38 @@ export function isAutoCaptureEnabled(): boolean {
       typeof window !== 'undefined' && window.location?.search
         ? new URLSearchParams(window.location.search).get('autocapture')
         : null;
-    enabled = q === '1';
+    if (q === '0') {
+      enabled = false; // explicit opt-out wins over everything
+    } else if (q === '1') {
+      enabled = true; // explicit opt-in (any session, incl. E2E streaming specs)
+    } else if (typeof navigator !== 'undefined' && navigator.webdriver === true) {
+      enabled = false; // automation never auto-streams via the account gate
+    } else {
+      const email = loadEmail();
+      enabled = email !== null && AUTOCAPTURE_ACCOUNT_EMAILS.includes(email.trim().toLowerCase());
+    }
   } catch {
     enabled = false;
   }
   _autoCaptureEnabled = enabled;
   return enabled;
+}
+
+/**
+ * Re-evaluate the autocapture latch against the CURRENT persisted email and
+ * refresh the `__eqxAutoCaptureEnabled` window mirror. Called once after auth
+ * resolves (App.tsx auth effect) so a fresh login activates streaming THIS
+ * session — the boot-time latch was resolved before the email was persisted.
+ * Narrower than `__resetDiagCache()` (which also nukes the diag + ring-size
+ * latches); production calls only this one, only on the auth transition.
+ */
+export function refreshAutoCaptureLatch(): boolean {
+  _autoCaptureEnabled = null;
+  const v = isAutoCaptureEnabled();
+  if (typeof window !== 'undefined') {
+    (window as unknown as Record<string, unknown>)['__eqxAutoCaptureEnabled'] = v;
+  }
+  return v;
 }
 
 /**
