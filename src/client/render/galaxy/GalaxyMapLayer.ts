@@ -10,6 +10,7 @@ import {
   isSectorSelectable,
   isSectorWarpable,
   clusterFitFraction,
+  hoverShrinkTargetScale,
   type GalaxyLayerMode,
 } from './galaxyLayerDecisions';
 import {
@@ -981,8 +982,16 @@ export class GalaxyMapLayer extends Container {
     // toward HOVER_SCALE; every other eases back to 1.0. Lerping ALL of them
     // each frame IS the smooth incoming/outgoing transition.
     const active = this.hoveredTerritory >= 0 ? this.hoveredTerritory : this.currentTerritoryIndex();
-    for (let i = 0; i < this.territoryContainers.length; i++) {
-      this.territoryTarget[i] = i === active ? HOVER_SCALE : 1;
+    const territoryCount = this.territoryContainers.length;
+    for (let i = 0; i < territoryCount; i++) {
+      // #1 — never shrink when the whole galaxy is ONE territory (all-neutral):
+      // shrinking the sole territory shrinks the entire map under the pointer.
+      this.territoryTarget[i] = hoverShrinkTargetScale({
+        index: i,
+        active,
+        territoryCount,
+        shrink: HOVER_SCALE,
+      });
       const cur = this.territoryScale[i]!;
       const next = cur + (this.territoryTarget[i]! - cur) * HOVER_LERP;
       this.territoryScale[i] = next;
