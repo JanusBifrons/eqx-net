@@ -290,6 +290,11 @@ export class PixiRenderer implements IRenderer {
    *  "places at a weird angle then snaps" bug). Swept alongside `sprites` in the
    *  swarm teardown loop so it can't leak across despawns. */
   private readonly _structureMountSlew = new Map<string, number[]>();
+  /** Equinox Phase 3 #20 — the `kind` each cached swarm sprite was built for,
+   *  keyed by `swarm-<entityId>`. Detects a recycled entityId flipping kind so
+   *  the stale sprite is rebuilt (see swarmSpriteUpdater `spriteKinds`). Swept
+   *  alongside `sprites` in the teardown loop so it can't leak across despawns. */
+  private readonly _swarmSpriteKinds = new Map<string, number>();
   /** Wall-clock (performance.now) of the previous swarm-sprite update — the dt
    *  source for the structure mount slew (P3.8). 0 ⇒ first frame (one 60 Hz step). */
   private _lastSwarmUpdateNow = 0;
@@ -600,6 +605,7 @@ export class PixiRenderer implements IRenderer {
       localHitTargets: this._updateLocalHitTargetsScratch,
       seenScratch: this._updateSeenScratch,
       structureMountAngles: this._structureMountSlew,
+      spriteKinds: this._swarmSpriteKinds,
       slewDtSec: 1 / 60, // overwritten per frame before updateSwarmSprites
     };
     this._projectileUpdaterCtx = {
@@ -1259,6 +1265,7 @@ export class PixiRenderer implements IRenderer {
         sprite.destroy({ children: true });
         this.sprites.delete(id);
         this._structureMountSlew.delete(id); // P3.8 — drop slew state with the sprite
+        this._swarmSpriteKinds.delete(id); // #20 — drop kind tracker with the sprite
       }
     }
 

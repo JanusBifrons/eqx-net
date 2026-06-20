@@ -68,6 +68,16 @@ export interface SwarmSpriteCtx {
    *  its target instead of SNAPPING. Owned + swept by the renderer (deleted with
    *  the sprite on despawn). */
   structureMountAngles: Map<string, number[]>;
+  /** Equinox Phase 3 #20 — parallel to `sprites`: the `kind` each cached sprite
+   *  was BUILT for, keyed by `swarm-<entityId>`. The server recycles the dense
+   *  u16 entityId (a destroyed structure's id is handed to the next spawn), so a
+   *  cached entityId's `kind` byte can FLIP (structure 2 → drone 1). The reaper
+   *  sweep only despawns entities ABSENT from the frame (a recycled id stays
+   *  present), so without this the stale structure sprite is reused for the new
+   *  drone — the "drone renders as a connector/turret" bug. On a kind change the
+   *  updater tears the sprite down + rebuilds. Owned + swept by the renderer
+   *  (deleted with the sprite on despawn), like `structureMountAngles`. */
+  spriteKinds: Map<string, number>;
   /** P3.8 — seconds since the previous call; the structure-mount slew rate input
    *  (`rotateMountToward` advances ≤ `rotationSpeed * slewDtSec` per call). The
    *  renderer computes it (clamped) from wall-clock; tests inject a fixed value
@@ -97,6 +107,20 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const spriteKey = `swarm-${entityId}`;
     ctx.seenScratch.add(spriteKey);
     let sprite = ctx.sprites.get(spriteKey);
+    // Equinox Phase 3 #20 — a recycled entityId can flip kind (a destroyed
+    // structure's slot reused by a new drone). The sprite is cached by entityId;
+    // if the kind changed since it was built, the cached visual is the WRONG
+    // type — tear it down (sprite + barrel cluster + slew state) so the create
+    // path below rebuilds it. Without this the drone renders as the connector/
+    // turret it recycled.
+    if (sprite && ctx.spriteKinds.get(spriteKey) !== entry.kind) {
+      ctx.shipContainer.removeChild(sprite);
+      ctx.mountVisuals.removeShip(spriteKey);
+      ctx.structureMountAngles.delete(spriteKey);
+      sprite.destroy({ children: true });
+      ctx.sprites.delete(spriteKey);
+      sprite = undefined;
+    }
     if (!sprite) {
       if (entry.kind === 1) {
         // Drones use the same procedural shape as player ships of that
@@ -138,6 +162,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       }
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(spriteKey, sprite);
+      ctx.spriteKinds.set(spriteKey, entry.kind); // #20 — track kind for recycle detection
     }
     // Drones (kind 1) AND scrap (kind 3): read the already-resolved
     // single-per-frame pose that `ColyseusClient.updateMirror` wrote (the
