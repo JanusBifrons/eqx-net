@@ -102,6 +102,7 @@ export class PixiRenderer implements IRenderer {
 
   constructor(isTouch = false) {
     this._isTouch = isTouch;
+    this.halo = new HaloRadar(isTouch);
   }
 
   private app!: Application;
@@ -329,7 +330,11 @@ export class PixiRenderer implements IRenderer {
   private _shipUpdaterCtx!: ShipSpriteCtx;
   private _swarmUpdaterCtx!: SwarmSpriteCtx;
   private _projectileUpdaterCtx!: ProjectileSpriteCtx;
-  private readonly halo = new HaloRadar();
+  /** Off-screen ring/edge indicator. Constructed in the constructor body
+   *  (NOT a field initializer) so it sees the assigned `_isTouch` — field
+   *  initializers run before the constructor body, where `_isTouch` is still
+   *  undefined (WS-B #3/#4 thread touch into the halo). */
+  private readonly halo: HaloRadar;
   private damageNumbers: DamageNumberManager | null = null;
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;

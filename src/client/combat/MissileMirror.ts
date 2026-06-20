@@ -72,10 +72,10 @@ function newRing(): PoseRingEntry[] {
 }
 
 /** Write a fresh authoritative pose into the ring at `head`, in place. */
-function writeRing(m: MissileRenderState, x: number, y: number, vx: number, vy: number, angle: number, arrivalMs: number, serverTick: number): void {
+function writeRing(m: MissileRenderState, x: number, y: number, vx: number, vy: number, angle: number, angvel: number, arrivalMs: number, serverTick: number): void {
   const slot = m.poseRing[m.ringHead]!;
   slot.x = x; slot.y = y; slot.angle = angle;
-  slot.vx = vx; slot.vy = vy; slot.angvel = 0;
+  slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
   slot.arrivalMs = arrivalMs; slot.serverTick = serverTick;
   slot.empty = false;
   m.ringHead = (m.ringHead + 1) % MISSILE_POSE_RING_DEPTH;
@@ -100,6 +100,9 @@ export function applyMissileSnapshot(
 
   if (slice && slice.length > 0) {
     for (const entry of slice) {
+      // Signed angular velocity (WS-C #5) — back-fills to 0 for pre-WS-C
+      // servers (linear path, byte-identical to before).
+      const angvel = entry.angvel ?? 0;
       const existing = map.get(entry.id);
       if (existing) {
         existing.x = entry.x;
@@ -110,7 +113,7 @@ export function applyMissileSnapshot(
         existing.lifePct = entry.lifePct;
         existing.lastUpdateTick = serverTick;
         existing.latestArrivalMs = nowMs;
-        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, nowMs, serverTick);
+        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
       } else {
         const fresh: MissileRenderState = {
           id: entry.id,
@@ -125,7 +128,7 @@ export function applyMissileSnapshot(
           weaponId: entry.weaponId,
           lifePct: entry.lifePct,
         };
-        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, nowMs, serverTick);
+        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
         map.set(entry.id, fresh);
       }
     }
@@ -158,6 +161,47 @@ function shortestArc(target: number, source: number): number {
   while (d > Math.PI) d -= 2 * Math.PI;
   while (d < -Math.PI) d += 2 * Math.PI;
   return d;
+}
+
+/** Reused scratch for the curve dead-reckon result (alloc-free per call — the
+ *  one-pose-per-frame call shape, mutated in place then read by the caller). */
+const _curveOut = { x: 0, y: 0, angle: 0 };
+
+/**
+ * Dead-reckon a missile pose forward by `dtSec` from an authoritative ring
+ * sample, following the HOMING CURVE (WS-C #5). Missiles steer, so a straight
+ * `pos += v·dt` flies off the server's arc and snaps on the next snapshot.
+ * Here we integrate `angle += angvel·dt` and recompute position from the curved
+ * heading:
+ *
+ *   - `angvel ≈ 0`  → linear: `pos += v·dt` (the legacy straight path).
+ *   - `angvel ≠ 0`  → exact constant-turn circular arc closed form
+ *     `pos += (s/ω)·(dir(angle+ω·dt) − dir(angle))`, where `s` is the speed
+ *     |v| and `dir(θ) = (−sinθ, cosθ)` (Pixi-up, matching MissileSimulation).
+ *
+ * Writes the result into the shared `_curveOut` scratch and returns it. Used for
+ * BOTH extrapolation past the newest sample AND interpolation forward from the
+ * older bracket sample (the constant-turn arc reconstructs the inter-snapshot
+ * path the server integrated, within sub-unit Euler error).
+ */
+const ANGVEL_EPS = 1e-4; // below this, treat as straight (avoid s/ω blow-up)
+function curveDeadReckon(
+  x: number, y: number, vx: number, vy: number, angle: number, angvel: number, dtSec: number,
+): { x: number; y: number; angle: number } {
+  const newAngle = angle + angvel * dtSec;
+  if (Math.abs(angvel) < ANGVEL_EPS) {
+    _curveOut.x = x + vx * dtSec;
+    _curveOut.y = y + vy * dtSec;
+    _curveOut.angle = newAngle;
+    return _curveOut;
+  }
+  const speed = Math.hypot(vx, vy);
+  const r = speed / angvel; // signed turn radius factor
+  // dir(θ) = (−sinθ, cosθ). ∫ over [angle, newAngle] gives the arc displacement.
+  _curveOut.x = x + r * (Math.cos(newAngle) - Math.cos(angle));
+  _curveOut.y = y + r * (Math.sin(newAngle) - Math.sin(angle));
+  _curveOut.angle = newAngle;
+  return _curveOut;
 }
 
 /**
@@ -201,12 +245,15 @@ export function resolveMissileDisplayPose(
     return { x: oldest.x, y: oldest.y, angle: oldest.angle, lifePct: m.lifePct };
   }
 
-  // Render time past the newest arrival: dead-reckon forward with the newest
-  // sample's velocity, capped, then freeze. Angle held (no angvel for missiles).
+  // Render time past the newest arrival: dead-reckon forward along the HOMING
+  // CURVE with the newest sample's velocity + angvel (WS-C #5), capped, then
+  // freeze. Pre-WS-C this held `angle` and coasted straight — which flew off the
+  // server's turning path and snapped on the next arrival.
   if (targetMs >= newest.arrivalMs) {
     const overshootMs = Math.min(MISSILE_EXTRAPOLATION_CAP_MS, targetMs - newest.arrivalMs);
     const dt = overshootMs / 1000;
-    return { x: newest.x + newest.vx * dt, y: newest.y + newest.vy * dt, angle: newest.angle, lifePct: m.lifePct };
+    const c = curveDeadReckon(newest.x, newest.y, newest.vx, newest.vy, newest.angle, newest.angvel, dt);
+    return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
   }
 
   // Interpolation window — find adjacent populated entries a,b bracketing target.
@@ -226,11 +273,28 @@ export function resolveMissileDisplayPose(
     return { x: b.x, y: b.y, angle: b.angle, lifePct: m.lifePct };
   }
 
-  const t = span > 0 ? Math.max(0, Math.min(1, (targetMs - a.arrivalMs) / span)) : 0;
-  return {
-    x: a.x + (b.x - a.x) * t,
-    y: a.y + (b.y - a.y) * t,
-    angle: a.angle + shortestArc(b.angle, a.angle) * t,
-    lifePct: m.lifePct,
-  };
+  // Curve-aware interpolation (WS-C #5): dead-reckon forward from the OLDER
+  // bracket sample `a` along its homing arc by `targetMs − a.arrivalMs`. For a
+  // steering missile the constant-turn arc reconstructs the path the server
+  // integrated between the two snapshots — so the rendered missile follows the
+  // CURVE instead of cutting the straight chord (the per-arrival snap). When
+  // `a.angvel ≈ 0` this reduces to the exact linear lerp the old code used
+  // (back-compat with pre-WS-C servers / dumb-flying missiles). The angle is
+  // taken from the arc integration, which lands at ~`b.angle` by `span`
+  // (continuity into the next bracket).
+  const dt = span > 0 ? Math.max(0, targetMs - a.arrivalMs) / 1000 : 0;
+  if (Math.abs(a.angvel) < ANGVEL_EPS) {
+    // Linear fast path — straight lerp between the two buffered samples (the
+    // original behaviour; keeps the smooth two-sample blend for non-steering
+    // missiles and matches the legacy locked tests exactly).
+    const t = span > 0 ? Math.max(0, Math.min(1, (targetMs - a.arrivalMs) / span)) : 0;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      y: a.y + (b.y - a.y) * t,
+      angle: a.angle + shortestArc(b.angle, a.angle) * t,
+      lifePct: m.lifePct,
+    };
+  }
+  const c = curveDeadReckon(a.x, a.y, a.vx, a.vy, a.angle, a.angvel, dt);
+  return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
 }

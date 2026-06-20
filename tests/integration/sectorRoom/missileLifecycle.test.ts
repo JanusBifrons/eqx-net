@@ -221,6 +221,52 @@ describe('SectorRoom integration — missile lifecycle', () => {
     expect(internals.missileSim.size()).toBe(0);
   }, 20_000);
 
+  it('WS-C #14: lifetime expiry BROADCASTS missile_detonated WITHOUT splash damage (client clears, not freeze-then-fade)', async () => {
+    // Bug: lifetime expiry called releaseAtPos() SILENTLY (no broadcast). The
+    // missile dropped from the next snapshot, the client extrapolation capped
+    // then FROZE, and the stale lifePct fade played over the frozen sprite —
+    // the "missile stops, then fades" report. Fix: expiry now detonates with
+    // cause='lifetime' (+ null primary) so missile_detonated fires and the
+    // client removeMissile()s immediately. The 2026-06-06 impact-only design
+    // (a lifetime miss deals NO damage) is preserved — detonate() skips its
+    // splash loops on cause==='lifetime', so the broadcast is for the client
+    // clear + VFX only, never damage.
+    //
+    // Single-shooter, rock-free sector ⇒ no lock candidate ⇒ the dumb missile
+    // flies straight into empty space, so the ONLY way it leaves the pool is
+    // lifetime expiry (not a sweep/fuse hit). A short lifetime keeps it fast.
+    const shooter = await joinPlayer('missile-frigate', 0, 0);
+    const internals = shooter.room as unknown as MissileTestInternals;
+
+    const detonations: Array<Record<string, unknown>> = [];
+    shooter.cr.onMessage('missile_detonated', (e: Record<string, unknown>) => detonations.push(e));
+    const dmgEvents: Array<Record<string, unknown>> = [];
+    shooter.cr.onMessage('damage', (e: Record<string, unknown>) => dmgEvents.push(e));
+
+    await harness.advance(100);
+
+    const heatSeeker = getWeapon('heat-seeker') as MissileWeaponDef;
+    const shortLived: MissileWeaponDef = { ...heatSeeker, lifetimeTicks: 30 }; // ~0.5 s
+    const missileId = internals.spawnServerMissile(shooter.pid, 0, 0, 1, 0, shortLived);
+    expect(missileId).not.toBeNull();
+    expect(internals.missileSim.size()).toBe(1);
+
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline) {
+      if (internals.missileSim.size() === 0) break;
+      await harness.advance(50);
+    }
+
+    // The missile left the pool via lifetime expiry...
+    expect(internals.missileSim.size()).toBe(0);
+    // ...AND a missile_detonated broadcast fired for it (FAILS on current main:
+    // releaseAtPos is silent, so no broadcast → client freeze-then-fade).
+    const mine = detonations.filter((e) => e['missileId'] === missileId);
+    expect(mine.length, 'lifetime expiry broadcast a missile_detonated').toBeGreaterThan(0);
+    // ...and the fizzle dealt NO damage (impact-only preserved).
+    expect(dmgEvents.length, 'a lifetime fizzle deals no splash damage').toBe(0);
+  }, 15_000);
+
   it('missile pool overflow → spawnServerMissile returns null', async () => {
     const shooter = await joinPlayer('missile-frigate', 0, 0);
     const internals = shooter.room as unknown as MissileTestInternals;

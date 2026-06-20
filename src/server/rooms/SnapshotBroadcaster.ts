@@ -81,6 +81,8 @@ export interface MissileBroadcasterView {
     vx: number;
     vy: number;
     angle: number;
+    /** Signed angular velocity (rad/s) — drives client curve-aware interp (WS-C #5). */
+    angvel: number;
     ownerId: string;
     weaponId: 'heat-seeker';
     ticksRemaining: number;
@@ -171,6 +173,7 @@ type MutableProjectileEntry = {
 
 type MutableMissileEntry = {
   id: number; x: number; y: number; vx: number; vy: number; angle: number;
+  angvel: number;
   ownerId: string;
   weaponId: 'heat-seeker';
   lifePct: number;
@@ -354,15 +357,16 @@ export class SnapshotBroadcaster {
   private static writeMissileSlot(
     arr: MutableMissileEntry[], i: number,
     id: number, x: number, y: number, vx: number, vy: number, angle: number,
-    ownerId: string, weaponId: 'heat-seeker', lifePct: number,
+    angvel: number, ownerId: string, weaponId: 'heat-seeker', lifePct: number,
   ): void {
     const slot = arr[i];
     if (!slot) {
-      arr[i] = { id, x, y, vx, vy, angle, ownerId, weaponId, lifePct };
+      arr[i] = { id, x, y, vx, vy, angle, angvel, ownerId, weaponId, lifePct };
       return;
     }
     slot.id = id; slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
-    slot.angle = angle; slot.ownerId = ownerId; slot.weaponId = weaponId;
+    slot.angle = angle; slot.angvel = angvel;
+    slot.ownerId = ownerId; slot.weaponId = weaponId;
     slot.lifePct = lifePct;
   }
 
@@ -633,7 +637,7 @@ export class SnapshotBroadcaster {
           : 0;
         SnapshotBroadcaster.writeMissileSlot(
           missilesScratch, missilesCount,
-          m.id, m.x, m.y, m.vx, m.vy, m.angle,
+          m.id, m.x, m.y, m.vx, m.vy, m.angle, m.angvel,
           m.ownerId, m.weaponId, lifePct > 0 ? lifePct : 0,
         );
         missilesCount++;

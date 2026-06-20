@@ -29,13 +29,14 @@ function makeMirror(): RenderMirror {
 }
 
 function makeSlice(entries: Array<{
-  id: number; x: number; y: number; vx?: number; vy?: number; angle?: number; lifePct?: number;
+  id: number; x: number; y: number; vx?: number; vy?: number; angle?: number; angvel?: number; lifePct?: number;
 }>): NonNullable<SnapshotMessage['missiles']> {
   return entries.map((e) => ({
     id: e.id,
     x: e.x, y: e.y,
     vx: e.vx ?? 0, vy: e.vy ?? 0,
     angle: e.angle ?? 0,
+    angvel: e.angvel ?? 0,
     ownerId: 'player-a',
     weaponId: 'heat-seeker' as const,
     lifePct: e.lifePct ?? 1,
@@ -122,6 +123,109 @@ describe('MissileMirror.applyMissileSnapshot', () => {
     // 16 ms at 400 u/s ≈ 6.4 u/step; allow headroom but far below a
     // whole-snapshot (~20 u) jitter snap.
     expect(maxStep).toBeLessThan(12);
+  });
+
+  it('HOMING CURVE: angvel-interpolated path tracks the server arc within ~2u (FAILS on linear lerp)', () => {
+    // WS-C #5. A heat-seeker STEERS, so its true path between two 20 Hz
+    // snapshots is an ARC, not a straight chord. We simulate the server's exact
+    // homing integration (m.angle += angvel*DT each 60 Hz tick; vx/vy recomputed
+    // from the curved angle) to build a ground-truth path, sample it at the 20 Hz
+    // (every 3 ticks) snapshot cadence, feed those snapshots WITH the per-tick
+    // signed angvel, and assert the client's resolved display pose lands on the
+    // TRUE arc — not the straight chord the old velocity-only lerp produced.
+    const SPEED = 400;
+    const DT = 1 / 60;
+    const TURN = 4.0; // rad/s — a hard, sustained turn (tight homing curve)
+    const mirror = makeMirror();
+
+    // Ground-truth integration, identical to MissileSimulation.advance.
+    let x = 0, y = 0, angle = 0;
+    const truth: Array<{ ms: number; x: number; y: number }> = [];
+    // 9-tick (~150 ms) snapshot spacing models a JITTERY mobile link where
+    // snapshots arrive sparsely — the chord-vs-arc error grows ~quadratically
+    // with the span, so a sparse cadence is where the linear lerp visibly
+    // diverges (and where the user reports the "jumps"). The display delay is
+    // 100 ms, so a 150 ms bracket keeps the read point comfortably interpolating.
+    const SNAP_EVERY = 9;
+    let arrivalMs = 1000;
+    let tick = 0;
+    // 36 ticks = 5 snapshots — fills the ring + gives a comfortable bracketed
+    // window to sample.
+    for (; tick <= 36; tick++) {
+      const nowMs = 1000 + tick * (DT * 1000);
+      truth.push({ ms: nowMs, x, y });
+      if (tick % SNAP_EVERY === 0) {
+        // The angvel shipped is the CONSTANT per-tick turn rate.
+        applyMissileSnapshot(
+          makeSlice([{ id: 1, x, y, vx: -Math.sin(angle) * SPEED, vy: Math.cos(angle) * SPEED, angle, angvel: TURN }]),
+          mirror, tick + 1, arrivalMs,
+        );
+        arrivalMs = 1000 + (tick + SNAP_EVERY) * (DT * 1000);
+      }
+      // Advance one server tick: turn, then integrate the curved velocity.
+      angle += TURN * DT;
+      x += -Math.sin(angle) * SPEED * DT;
+      y += Math.cos(angle) * SPEED * DT;
+    }
+
+    // Find the true position at a target render time that lands strictly INSIDE
+    // a bracketed snapshot window (so we exercise interpolation, not extrapolation).
+    function truthAt(ms: number): { x: number; y: number } {
+      for (let i = 0; i < truth.length - 1; i++) {
+        const a = truth[i]!, b = truth[i + 1]!;
+        if (ms >= a.ms && ms <= b.ms) {
+          const t = (ms - a.ms) / (b.ms - a.ms);
+          return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        }
+      }
+      const last = truth[truth.length - 1]!;
+      return { x: last.x, y: last.y };
+    }
+
+    // Sample several render times across the buffered window. resolve reads at
+    // now − MISSILE_DISPLAY_DELAY_MS, so pick `now` so the read point sits well
+    // inside the snapshot bracket (between the 2nd snapshot at tick 9 and the
+    // 4th at tick 27).
+    let maxErr = 0;
+    let prevX = -Infinity, prevY = -Infinity;
+    let maxStep = 0;
+    for (let readMs = 1000 + 10 * (DT * 1000); readMs <= 1000 + 26 * (DT * 1000); readMs += 8) {
+      const now = readMs + MISSILE_DISPLAY_DELAY_MS;
+      const pose = resolveMissileDisplayPose(mirror, 1, now)!;
+      const t = truthAt(readMs);
+      maxErr = Math.max(maxErr, Math.hypot(pose.x - t.x, pose.y - t.y));
+      if (prevX > -Infinity) {
+        maxStep = Math.max(maxStep, Math.hypot(pose.x - prevX, pose.y - prevY));
+      }
+      prevX = pose.x; prevY = pose.y;
+    }
+
+    // Curve-aware interpolation lands on the true arc. The old straight-chord
+    // lerp (no angvel) bows away from the arc by the chord sagitta — at SPEED
+    // 400, TURN 2.5, over a ~50 ms snapshot span the chord error is several units
+    // (well past 2u), so this assertion FAILS on the pre-WS-C linear path.
+    expect(maxErr).toBeLessThan(2);
+    // Frame-to-frame motion stays smooth (no per-arrival snap). 8 ms at 400 u/s
+    // ≈ 3.2 u/step; allow headroom but far below a whole-snapshot (~20 u) jump.
+    expect(maxStep).toBeLessThan(6);
+  });
+
+  it('EXTRAPOLATION past newest applies angvel: angle keeps turning, vx/vy follow the curve', () => {
+    // WS-C #5. When arrivals stall the renderer dead-reckons past the newest
+    // sample. With angvel it must keep TURNING (angle advances) and recompute
+    // vx/vy from the curved angle — not coast straight on a frozen heading.
+    const SPEED = 400;
+    const mirror = makeMirror();
+    // Two samples 50 ms apart; newest at angle 0 moving +y, turning at +1 rad/s.
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 0, vx: 0, vy: SPEED, angle: 0, angvel: 1 }]), mirror, 1, 1000);
+    applyMissileSnapshot(makeSlice([{ id: 1, x: 0, y: 20, vx: 0, vy: SPEED, angle: 0, angvel: 1 }]), mirror, 2, 1050);
+    // Read 60 ms past the newest arrival (target = 1110, newest = 1050 →
+    // overshoot 60 ms). Angle should have advanced ~ +0.06 rad.
+    const pose = resolveMissileDisplayPose(mirror, 1, 1110 + MISSILE_DISPLAY_DELAY_MS)!;
+    expect(pose.angle).toBeGreaterThan(0.03); // turned, not frozen at 0
+    // The x must have drifted off the straight +y line because the heading
+    // curved (a frozen-angle dead-reckon keeps x === 0 exactly).
+    expect(Math.abs(pose.x)).toBeGreaterThan(0.5);
   });
 
   it('ring depth invariant: never retains more than MISSILE_POSE_RING_DEPTH samples', () => {
