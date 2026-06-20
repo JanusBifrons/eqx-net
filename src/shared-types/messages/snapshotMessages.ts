@@ -189,6 +189,15 @@ export interface SnapshotMessage {
     /** Stable per-sector u32 id; matches `MissileFiredEvent.missileId`. */
     id: number;
     x: number; y: number; vx: number; vy: number; angle: number;
+    /** SIGNED angular velocity (rad/s) — `(newAngle − oldAngle) / DT` on the
+     *  server tick. Missiles STEER (homing), so linear dead-reckoning of
+     *  `vx/vy` between the 20 Hz snapshots flies STRAIGHT while the server
+     *  curves → a snap on every ~50 ms arrival (the never-fixed "~20 Hz look",
+     *  WS-C #5). The client's MissileMirror integrates `angle += angvel·dt`
+     *  during interpolation/extrapolation and RECOMPUTES vx/vy from the curved
+     *  angle, so the rendered path tracks the server's homing arc. Optional for
+     *  back-compat (back-fills to 0 → identical to the old linear path). */
+    angvel?: number;
     /** Owner shooter id (wire form). Lets the renderer route the missile
      *  trail to the correct player/drone for camera-shake source. */
     ownerId: string;
