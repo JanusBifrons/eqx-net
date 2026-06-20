@@ -44,6 +44,17 @@ describe('GAMEPLAY_STAR_LAYERS — zoom-aware LOD coverage', () => {
     }
   });
 
+  it('#11 — the farthest layer is at FULL coverage by the zoom-out floor (not a partial fade)', () => {
+    // The bug: at max zoom-out (scale === MIN_ZOOM = 0.15) the far/overview layer
+    // was still ramping in (fullAt 0.18 > 0.15), so coverage was only ~83% of
+    // baseAlpha — the field looked thin/sparse fully zoomed out. The farthest
+    // layer's `fullAt` must be <= the camera minScale floor so it carries FULL
+    // alpha at (and below) the floor.
+    const far = GAMEPLAY_STAR_LAYERS[0]!;
+    expect(far.fullAt).toBeLessThanOrEqual(MIN_ZOOM);
+    expect(starLayerAlphaAt(far, MIN_ZOOM)).toBeCloseTo(far.baseAlpha, 6);
+  });
+
   it('keeps stars SMALL — no chunky "in front of the gameplay" dots', () => {
     // The old near layer rendered constant 2-px dots that read as foreground
     // stars. Every gameplay layer's max drawn radius stays ≤ ~1.3 px.

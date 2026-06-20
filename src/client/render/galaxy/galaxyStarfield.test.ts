@@ -55,6 +55,16 @@ describe('GALAXY_STAR_LAYERS coverage', () => {
       expect(total, `no star layer visible at scale ${scale.toFixed(2)}`).toBeGreaterThan(0);
     }
   });
+
+  it('#11 — the farthest layer is at FULL coverage by the zoom-out floor (0.12)', () => {
+    // Same fix as the gameplay field: at max zoom-out (clusterRoot.scale === 0.12)
+    // the far/overview layer must already be at its full baseAlpha, not still
+    // ramping in (fullAt was 0.13 > 0.12 → only ~88% coverage fully zoomed out).
+    const GALAXY_MIN_ZOOM = 0.12;
+    const far = GALAXY_STAR_LAYERS[0]!;
+    expect(far.fullAt).toBeLessThanOrEqual(GALAXY_MIN_ZOOM);
+    expect(starLayerAlphaAt(far, GALAXY_MIN_ZOOM)).toBeCloseTo(far.baseAlpha, 6);
+  });
 });
 
 describe('starHash', () => {
