@@ -18,6 +18,7 @@ import {
   codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
+  builtRangeCircleVisualParams,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
@@ -25,6 +26,7 @@ import {
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
+import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
   canConnect,
   edgeDistance,
@@ -112,6 +114,17 @@ export class ConnectorRenderer {
    */
   lastRangeCircleRadius = 0;
 
+  /**
+   * WS-D (#21) — number of always-on defensive range circles the LAST `update()`
+   * drew (one per BUILT weapon turret in interest). 0 when no built turret is on
+   * screen. Test hook (the drawn circles aren't headlessly inspectable —
+   * feedback-test-observable lesson).
+   */
+  builtTurretRangeCount = 0;
+  /** WS-D (#21) — the world-unit radius of the LAST built-turret range circle
+   *  drawn (the kind's catalogue `weaponRange`), or 0 when none. Test hook. */
+  lastBuiltTurretRangeRadius = 0;
+
   // ── Item C preview-pass module-scratch (invariant #14) ────────────────────
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
   // these stay empty/untouched during normal play.
@@ -171,6 +184,8 @@ export class ConnectorRenderer {
     this.placementPreviewSelectedCount = 0;
     this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
+    this.builtTurretRangeCount = 0;
+    this.lastBuiltTurretRangeRadius = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
@@ -186,6 +201,23 @@ export class ConnectorRenderer {
       // Pixi screen space is Y-down; world is Y-up — negate y (same as sprites).
       const ax = a.x;
       const ay = -a.y;
+
+      // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
+      // `a.shipKind` is the structure subtype (rides the shared shipKind byte);
+      // the catalogue `weaponRange` is known client-side, so no wire. Out-of-
+      // interest structures are absent from `structures`, so they're omitted by
+      // construction. Drawn FIRST (faint underlay, behind the web). A symmetric
+      // circle → the Y-flip on `ay` doesn't affect the radius.
+      if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
+        const wr = getStructureKind(a.shipKind).weaponRange;
+        if (wr !== undefined && wr > 0) {
+          const rc = builtRangeCircleVisualParams(scale);
+          g.circle(ax, ay, wr);
+          g.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
+          this.builtTurretRangeCount++;
+          this.lastBuiltTurretRangeRadius = wr;
+        }
+      }
 
       for (const otherId of st.connTo) {
         // Draw each undirected edge once, from the lower-id endpoint.

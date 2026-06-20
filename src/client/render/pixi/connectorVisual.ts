@@ -231,6 +231,26 @@ export function rangeCircleVisualParams(scale: number): {
   return { color: RANGE_CIRCLE_COLOR, alpha: 0.22, width: Math.max(1 / safeScale, 1) };
 }
 
+// ── WS-D (#21) — always-on defensive RANGE circle for built turrets ──────────
+/** The built-turret weapon-range ring tint — a faint warm red, distinct from the
+ *  cool cyan placement connection-range ring (`RANGE_CIRCLE_COLOR`), so the
+ *  defensive coverage reads as a "threat zone", not a connection reach. */
+export const BUILT_RANGE_CIRCLE_COLOR = 0xff6655;
+
+/** Pure visual params for a BUILT turret's persistent weapon-range ring (#21).
+ *  Even fainter than the placement ring (it's always on, for every built turret)
+ *  so a base full of turrets doesn't drown the scene. Scale-aware width like the
+ *  other rings. The RADIUS is the kind's catalogue `weaponRange` (geometry — the
+ *  renderer owns it). */
+export function builtRangeCircleVisualParams(scale: number): {
+  color: number;
+  alpha: number;
+  width: number;
+} {
+  const safeScale = scale > 0 ? scale : 1;
+  return { color: BUILT_RANGE_CIRCLE_COLOR, alpha: 0.13, width: Math.max(1 / safeScale, 1) };
+}
+
 /** Positive fractional part (`x - floor(x)`, always in [0,1)). */
 function fract(x: number): number {
   const f = x - Math.floor(x);

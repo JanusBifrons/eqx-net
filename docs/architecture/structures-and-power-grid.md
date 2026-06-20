@@ -178,6 +178,19 @@ orange = minerals, cyan = construction** — `connectorVisual.ts`
 bars; `swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the
 HUD chip.
 
+**Defensive range circles (WS-D #21) — always-on for built turrets.** A weapon
+turret's `weaponRange` (catalogue) was drawn only during the placement ghost.
+`ConnectorRenderer.update` now draws a PERSISTENT faint range circle around every
+BUILT structure whose kind has a `weaponRange` (turret / laser_bolt_turret /
+missile_turret — NOT a Miner's `miningRange`, NOT a Capital/Solar), so the player
+sees coverage at a glance. The radius is the catalogue `weaponRange` (known
+client-side via `getStructureKind(a.shipKind)` — no wire); out-of-interest
+structures are absent from the mirror, so they're omitted by construction;
+unbuilt blueprints (no coverage yet) draw nothing. A distinct warm-red tint
+(`BUILT_RANGE_CIRCLE_COLOR`, fainter than the cool-cyan placement ring) reads as
+a "threat zone". Test hooks: `builtTurretRangeCount` / `lastBuiltTurretRangeRadius`
+(+ the main-thread DEV hook `__eqxBuiltTurretRangeCount` for E2E on `?worker=0`).
+
 **Placement preview (WS-D #6) — solid vs dotted.** `ConnectorRenderer.drawPlacement-
 Preview` draws **SOLID green** (`'selected'`) to the hub(s) the blueprint WILL
 connect to on confirm (capped at the kind's `maxConnections` AND the global
