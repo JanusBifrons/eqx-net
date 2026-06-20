@@ -24,6 +24,8 @@
  */
 
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
+import { auditEvent } from '../../audit/GameplayAuditLog.js';
+import { isNeighbour } from '../../../core/galaxy/galaxy.js';
 import { sectorEdgePose, squadEdgePose, type Rng } from '../population.js';
 import type { LivingWorldRoom } from '../LivingWorldRoom.js';
 import type { BotCarry } from '../botTypes.js';
@@ -174,6 +176,20 @@ export class HunterBotWarpController {
     rec.kind = carry.kind;
     this.pool.markActive(rec, to);
     serverLogEvent('bot_transit_commit', { botId: rec.botId, from, to });
+    // #18 — DURABLE sector-change record (the RAM-ring `bot_transit_commit`
+    // above dies on restart). `adjacent` flags an illegal (non-neighbour) hop —
+    // hunters traverse the graph hop-by-hop so this is always true in practice;
+    // a false here is the watchdog for the "ship jumped between non-connecting
+    // sectors" report.
+    auditEvent({
+      event: 'sector_change',
+      entityKind: 'drone',
+      id: rec.botId,
+      sector: to,
+      from,
+      to,
+      adjacent: isNeighbour(from, to),
+    });
   }
 
   /** Route the controller's spool outcome. `'arrived'` ⇒ the bot departed OK

@@ -365,6 +365,20 @@ export class TransitOrchestrator {
       from: this.room.sectorKey ?? undefined,
       to: inFlight.targetSectorKey,
     });
+    // #18 — uniform durable sector-change record (the SAME event drones emit) so
+    // one `event:sector_change` grep covers ALL ship movements. beginTransit
+    // already rejects non-neighbours, so `adjacent` is true in practice here; the
+    // field keeps the player + drone records shape-identical for the audit query.
+    const fromSector = this.room.sectorKey ?? undefined;
+    auditEvent({
+      event: 'sector_change',
+      entityKind: 'player',
+      id: playerId,
+      sector: fromSector,
+      from: fromSector,
+      to: inFlight.targetSectorKey,
+      adjacent: fromSector ? isNeighbour(fromSector, inFlight.targetSectorKey) : undefined,
+    });
 
     inFlight.machine.beginTransit();
 
