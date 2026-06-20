@@ -7,8 +7,10 @@ on the wire and the screen, and why progression is destroyed with the ship.
 WS-B1 (this document's scope at first writing) ships the **XP core**:
 per-instance attribution, the curve, level-up, and the public badge. WS-B2 (stat
 upgrades / free allocation) and WS-B3 (dynamic weapon mounts via latent slots)
-build on the roster columns + the level seeded here. WS-B4 covers structure
-leveling, documented in `structures-and-power-grid.md`.
+build on the roster columns + the level seeded here. WS-B4 (structure leveling)
+is documented in full in the "WS-B4 — structure leveling" section below, with the
+grid-pulse build-phase mechanics cross-referenced from
+[structures-and-power-grid.md](structures-and-power-grid.md).
 
 ## Locked design decisions (from the Phase-4 Q&A)
 
