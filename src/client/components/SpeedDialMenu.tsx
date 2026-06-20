@@ -100,6 +100,12 @@ export function SpeedDialMenu(): JSX.Element | null {
   const close = useCallback(() => {
     setOpen(false);
     setView(ROOT_VIEW);
+    // Drop DOM focus from whatever speed-dial button the player just activated
+    // (Map / Panels / Weapon). MUI Fab buttons activate on Space/Enter while
+    // focused, so a still-focused Map FAB meant the next Space/Fire silently
+    // re-toggled the galaxy overlay (WS-F #18). Blurring on close makes every
+    // terminal selection lose focus.
+    (document.activeElement as HTMLElement | null)?.blur();
   }, []);
 
   const toggleOpen = useCallback(() => setOpen((o) => !o), []);
