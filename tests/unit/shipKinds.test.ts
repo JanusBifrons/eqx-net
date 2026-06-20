@@ -427,8 +427,8 @@ describe('havok composite kind — catalogue registration (composite-ships Phase
     expect(SHIP_KINDS_LIST[SHIP_KINDS_LIST.length - 1]!.id).toBe('havok');
   });
 
-  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 11', () => {
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(11);
+  it('SHIP_KIND_CATALOGUE_VERSION is bumped to 12 (WS-B3 latentMounts shape add)', () => {
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(12);
   });
 
   it('HAVOK is registered in SHIP_KINDS and parses its own schema', () => {

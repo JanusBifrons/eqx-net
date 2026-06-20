@@ -37,6 +37,14 @@ export interface ShipRenderState {
    *  wire's `states[].level` (the broadcaster + badge renderer are owned by
    *  WS-B1). Absent ⇒ level 1. Discrete scalar — purity-clean (Invariant #2). */
   level?: number;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — PUBLIC activated latent mounts
+   *  (`{ slotId, weaponId }[]`). Mirrored from the wire's `states[].mounts` so
+   *  the renderer draws the EXTRA turrets on every ship that has activated one.
+   *  The per-instance mount list the renderer iterates is
+   *  `[...kind.mounts, ...activated]` (geometry looked up by `(kind, slotId)`
+   *  from the catalogue — never on the wire). Absent ⇒ no activated mounts.
+   *  Non-spatial discrete data — purity-clean (Invariant #2). */
+  activatedMounts?: Array<{ slotId: string; weaponId: string }>;
 }
 
 /**

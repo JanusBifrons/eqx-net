@@ -25,6 +25,7 @@ export {
   StatAllocSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
+  ActivateMountSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -42,6 +43,7 @@ export type {
   WireStatAlloc,
   ApplyShipUpgradeMessage,
   RespecShipMessage,
+  ActivateMountMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 
@@ -55,6 +57,8 @@ export {
   DamageEventSchema,
   ShipLevelUpEventSchema,
   ShipUpgradeAppliedEventSchema,
+  WireActivatedMountSchema,
+  MountActivatedEventSchema,
 } from './messages/combatMessages.js';
 export type {
   HitAckMessage,
@@ -62,6 +66,8 @@ export type {
   DestroyEvent,
   ShipLevelUpEvent,
   ShipUpgradeAppliedEvent,
+  WireActivatedMount,
+  MountActivatedEvent,
   ShieldEventMessage,
   RespawnAckMessage,
   LaserFiredEvent,

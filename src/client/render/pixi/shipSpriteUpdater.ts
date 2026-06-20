@@ -25,6 +25,8 @@
 import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '../../../shared-types/shipKinds';
+import { resolveInstanceMounts } from '../../../shared-types/shipKinds/slots';
+import { shipPrimaryColor } from '@core/geometry/shipHullOutline';
 import {
   DAMAGE_FLASH_COLOR,
   buildShipGfxFromShape,
@@ -55,9 +57,26 @@ export function updateShipSprites(mirror: RenderMirror, ctx: ShipSpriteCtx): voi
       ctx.shipContainer.addChild(sprite);
       ctx.sprites.set(playerId, sprite);
     }
-    ctx.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
     const shipKind = getShipKind(ship.kind ?? null);
-    const shipMounts = shipKind.mounts ?? [];
+    // WS-B3 — the per-instance mount list `[...kind.mounts, ...activated]`. When
+    // the ship has ACTIVATED latent mounts the cluster is built for the full
+    // list (extra turrets drawn) and rebuilt when the set changes (`mountSig`).
+    // Un-upgraded ⇒ the kind-only `ensureForShip` path (alloc-free, byte-
+    // identical to pre-WS-B3 — `resolveInstanceMounts` returns the base ref).
+    const activated = ship.activatedMounts;
+    let shipMounts;
+    if (activated && activated.length > 0) {
+      shipMounts = resolveInstanceMounts(shipKind, activated);
+      // Signature = the activated slot ids (the base mounts never change for a
+      // kind). Only computed on the rare activated path, so the per-frame
+      // un-upgraded path stays alloc-free (invariant #14).
+      let sig = '';
+      for (const a of activated) sig += a.slotId + '|' + a.weaponId + ';';
+      ctx.mountVisuals.ensureForInstance(playerId, ship.kind, shipMounts, shipPrimaryColor(shipKind), sig, sprite);
+    } else {
+      ctx.mountVisuals.ensureForShip(playerId, ship.kind, sprite);
+      shipMounts = shipKind.mounts ?? [];
+    }
     if (shipMounts.length > 0) {
       ctx.mountVisuals.applyMountAngles(playerId, shipMounts, ship.mountAngles);
     }

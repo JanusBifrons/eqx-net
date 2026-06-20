@@ -28,6 +28,10 @@ export interface RosterShipEntry {
   /** Phase 4 (Leveling & XP, WS-B2) — per-instance spent stat allocation. Drives
    *  the upgrade modal's current spend; absent ⇒ no points spent. */
   statAlloc?: Record<string, number>;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — activated latent mount slots
+   *  (`{ slotId, weaponId }[]`). Drives the upgrade modal's "activate a mount"
+   *  section (which latent hardpoints are already on); absent ⇒ none. */
+  mounts?: Array<{ slotId: string; weaponId: string }>;
 }
 
 interface ShipRosterCardProps {

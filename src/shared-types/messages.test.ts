@@ -21,6 +21,8 @@ import {
   ShipUpgradeAppliedEventSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
+  ActivateMountSchema,
+  MountActivatedEventSchema,
   StatIdSchema,
   WarpWarningSchema,
   WarpWarningClearSchema,
@@ -629,6 +631,47 @@ describe('Ship stat upgrade messages (Phase 4 WS-B2)', () => {
     it('rejects a negative spent / budget', () => {
       expect(ShipUpgradeAppliedEventSchema.safeParse({ ...valid, spent: -1 }).success).toBe(false);
       expect(ShipUpgradeAppliedEventSchema.safeParse({ ...valid, budget: -1 }).success).toBe(false);
+    });
+  });
+});
+
+describe('Dynamic weapon mount messages (Phase 4 WS-B3)', () => {
+  describe('ActivateMountSchema', () => {
+    const valid = { type: 'activate_mount' as const, shipId: 'ship-1', slotId: 'latent-wing-l', weaponId: 'laser' };
+
+    it('accepts a valid activation', () => {
+      expect(ActivateMountSchema.safeParse(valid).success).toBe(true);
+    });
+    it('rejects an unknown weapon id', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, weaponId: 'death-ray' }).success).toBe(false);
+    });
+    it('rejects an empty / over-long shipId or slotId (S5 bounds)', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, shipId: '' }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, shipId: 'x'.repeat(65) }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, slotId: '' }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, slotId: 'x'.repeat(65) }).success).toBe(false);
+    });
+    it('rejects extra unknown fields (strict)', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    });
+  });
+
+  describe('MountActivatedEventSchema (server → client echo)', () => {
+    const valid = {
+      type: 'mount_activated' as const,
+      shipInstanceId: 'ship-1',
+      mounts: [{ slotId: 'latent-wing-l', weaponId: 'laser' }],
+    };
+    it('accepts a valid echo', () => {
+      expect(MountActivatedEventSchema.safeParse(valid).success).toBe(true);
+    });
+    it('accepts an empty mount list', () => {
+      expect(MountActivatedEventSchema.safeParse({ ...valid, mounts: [] }).success).toBe(true);
+    });
+    it('rejects a bad weapon id inside the mount list', () => {
+      expect(
+        MountActivatedEventSchema.safeParse({ ...valid, mounts: [{ slotId: 'x', weaponId: 'death-ray' }] }).success,
+      ).toBe(false);
     });
   });
 });

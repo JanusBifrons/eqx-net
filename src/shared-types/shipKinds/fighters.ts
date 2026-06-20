@@ -140,4 +140,32 @@ export const FIGHTER: ShipKind = ShipKindSchema.parse({
   // Bolts (weapons/energy/AI overhaul §2) — see SCOUT note.
   mounts: [{ ...LEGACY_FORWARD_MOUNT, weaponId: 'laser' }],
   slots: [LEGACY_PRIMARY_SLOT],
+  // Dynamic weapon mounts (Phase 4 WS-B3) — two LATENT wing hardpoints,
+  // inactive until an `activate_mount` upgrade turns one on (the player picks
+  // the weapon). Geometry sits on the polygon wings (±10, 10); a ±30° forward
+  // arc with a 4 rad/s slew mirrors the interceptor's wing turrets. `weaponId`
+  // here is the catalogue DEFAULT — overridden by the player's choice on
+  // activation. Latent ⇒ no aim/fire/render until activated.
+  latentMounts: [
+    {
+      id: 'latent-wing-l',
+      localX: -10,
+      localY: 10,
+      baseAngle: 0,
+      arcMin: -Math.PI / 6,
+      arcMax: Math.PI / 6,
+      rotationSpeed: 4,
+      weaponId: 'laser',
+    },
+    {
+      id: 'latent-wing-r',
+      localX: 10,
+      localY: 10,
+      baseAngle: 0,
+      arcMin: -Math.PI / 6,
+      arcMax: Math.PI / 6,
+      rotationSpeed: 4,
+      weaponId: 'laser',
+    },
+  ],
 });

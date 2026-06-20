@@ -211,8 +211,16 @@ alloc.
 The physics multipliers touch client prediction (the snapshot reconcile path), so
 `pnpm e2e:netgate` is required — deferred to the human gate.
 
-## Future (WS-B3)
+## WS-B3 — dynamic weapon mounts (latent slots) — SHIPPED
 
 - **WS-B3** activates latent mount slots and binds weapons, persisted in the
   per-instance `mounts` roster column; geometry looked up client-side by
-  `(shipKind, slotId)` (no new geometry wire).
+  `(shipKind, slotId)` (no new geometry wire — the scrap-collider trick). A
+  ship-level upgrade `activate_mount { shipId, slotId, weaponId }` activates the
+  next latent hardpoint; the activated `{ slotId, weaponId }` rides the PUBLIC
+  `SnapshotMessage.states[].mounts` slice (emit-when-non-empty, no
+  `SWARM_WIRE_VERSION` bump). The catalogue `ShipKind.latentMounts` declares the
+  candidate hardpoints (record-shape add → `SHIP_KIND_CATALOGUE_VERSION` 11→12).
+  **The full architecture (the three pure resolvers, the lockstep aim/fire seam,
+  the renderer + UI) lives in [docs/architecture/weapon-mounts.md](weapon-mounts.md)
+  "Dynamic weapon mounts — latent slots".**

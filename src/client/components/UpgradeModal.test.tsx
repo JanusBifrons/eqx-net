@@ -101,3 +101,51 @@ describe('UpgradeModal (Phase 4 WS-B2)', () => {
     expect(screen.getByTestId('upgrade-points-remaining')).toHaveAttribute('data-remaining', '3'); // 5 - 2
   });
 });
+
+describe('UpgradeModal — dynamic weapon mounts (Phase 4 WS-B3)', () => {
+  it('renders the catalogue latent mounts when onActivateMount is provided', () => {
+    render(
+      <UpgradeModal
+        ship={makeShip()} open onClose={() => {}} onApply={() => {}} onRespec={() => {}}
+        onActivateMount={() => {}}
+      />,
+    );
+    // The fighter declares two latent wing hardpoints.
+    expect(screen.getByTestId('upgrade-mounts')).toBeInTheDocument();
+    expect(screen.getByTestId('mount-slot-latent-wing-l')).toBeInTheDocument();
+    expect(screen.getByTestId('mount-slot-latent-wing-r')).toBeInTheDocument();
+  });
+
+  it('hides the mounts section when no onActivateMount is wired', () => {
+    render(<UpgradeModal ship={makeShip()} open onClose={() => {}} onApply={() => {}} onRespec={() => {}} />);
+    expect(screen.queryByTestId('upgrade-mounts')).not.toBeInTheDocument();
+  });
+
+  it('Activate fires onActivateMount with the slot + the picked weapon', () => {
+    const onActivateMount = vi.fn();
+    render(
+      <UpgradeModal
+        ship={makeShip()} open onClose={() => {}} onApply={() => {}} onRespec={() => {}}
+        onActivateMount={onActivateMount}
+      />,
+    );
+    // Pick the Beam (hitscan) weapon, then activate the left wing.
+    fireEvent.click(screen.getByTestId('mount-weapon-hitscan'));
+    fireEvent.click(screen.getByTestId('mount-activate-latent-wing-l'));
+    expect(onActivateMount).toHaveBeenCalledWith('ship-1', 'latent-wing-l', 'hitscan');
+  });
+
+  it('an already-activated slot shows Active and no Activate button', () => {
+    render(
+      <UpgradeModal
+        ship={makeShip({ mounts: [{ slotId: 'latent-wing-l', weaponId: 'laser' }] })}
+        open onClose={() => {}} onApply={() => {}} onRespec={() => {}}
+        onActivateMount={() => {}}
+      />,
+    );
+    expect(screen.getByTestId('mount-slot-latent-wing-l')).toHaveAttribute('data-active', '1');
+    expect(screen.queryByTestId('mount-activate-latent-wing-l')).not.toBeInTheDocument();
+    // The other slot is still activatable.
+    expect(screen.getByTestId('mount-activate-latent-wing-r')).toBeInTheDocument();
+  });
+});

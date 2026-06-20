@@ -57,6 +57,13 @@ export function UpgradeModalHost(): JSX.Element | null {
   const handleRespec = (shipId: string): void => {
     getGameClient()?.respecShip(shipId);
   };
+  const handleActivateMount = (
+    shipId: string,
+    slotId: string,
+    weaponId: 'hitscan' | 'laser' | 'heat-seeker',
+  ): void => {
+    getGameClient()?.activateMount(shipId, slotId, weaponId);
+  };
 
   return (
     <UpgradeModal
@@ -65,6 +72,7 @@ export function UpgradeModalHost(): JSX.Element | null {
       onClose={() => setOpen(false)}
       onApply={handleApply}
       onRespec={handleRespec}
+      onActivateMount={handleActivateMount}
     />
   );
 }
@@ -86,5 +94,6 @@ function rosterEntryToShip(r: RosterEntry): RosterShipEntry {
     updatedAt: r.updatedAt ?? 0,
     level: r.level,
     statAlloc: r.statAlloc,
+    mounts: r.mounts,
   };
 }

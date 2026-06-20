@@ -173,11 +173,25 @@ interface AllShipEntry {
    *  discrete upgrade — never per tick → invariant #14 safe). Emitted on the
    *  wire ONLY for the recipient's own ACTIVE ship AND only when non-empty. */
   statAlloc: StatAllocRef;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — this hull's ACTIVATED latent
+   *  mounts. A SHARED reference to `ShipState.mounts` (replaced only on a
+   *  discrete activation — never per tick → invariant #14 safe). PUBLIC: emitted
+   *  for every ship (active + lingering) with ≥ 1 activated mount, so others see
+   *  the extra turrets. The renderer looks up geometry by `(shipKind, slotId)`. */
+  mounts: MountsRef;
 }
 
 /** Read-only reference shape for the per-instance stat allocation (mirrors
  *  `ShipState.statAlloc`). Carried by reference, never copied per tick. */
 type StatAllocRef = Record<string, number>;
+
+/** Read-only reference shape for the per-instance activated mounts (mirrors
+ *  `ShipState.mounts`). Carried by reference, never copied per tick. */
+type MountsRef = ReadonlyArray<{ slotId: string; weaponId: string }>;
+
+/** Shared frozen empty mounts reference (WS-B3). Mirrors `EMPTY_STAT_ALLOC` —
+ *  every un-upgraded ship reuses ONE array (invariant #14). */
+const EMPTY_MOUNTS: MountsRef = Object.freeze([]);
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
 // Inline-literal pre-fix; mutable-in-place post-fix. The wire shape is
@@ -198,6 +212,10 @@ type MutableStateEntry = {
   shieldDown?: boolean;
   level?: number;
   statAlloc?: Record<string, number>;
+  // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
+  // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
+  // reads it synchronously and never mutates it).
+  mounts?: { slotId: string; weaponId: string }[];
 };
 
 type MutableProjectileEntry = {
@@ -475,6 +493,7 @@ export class SnapshotBroadcaster {
         shieldDown: false,
         level: 1,
         statAlloc: EMPTY_STAT_ALLOC,
+        mounts: EMPTY_MOUNTS,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -529,6 +548,7 @@ export class SnapshotBroadcaster {
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
       entry.level = ship.level; // Phase 4 WS-B1 — public level
       entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC; // WS-B2 — shared ref
+      entry.mounts = ship.mounts ?? EMPTY_MOUNTS; // WS-B3 — public activated mounts
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -560,6 +580,9 @@ export class SnapshotBroadcaster {
       // Lingering hulls never carry statAlloc on the wire (it's own-active-only
       // below), but keep the scratch coherent.
       entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC;
+      // WS-B3 — activated mounts ARE public for lingering hulls too (a parked
+      // upgraded hull renders its extra turrets to observers).
+      entry.mounts = ship.mounts ?? EMPTY_MOUNTS;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -655,6 +678,14 @@ export class SnapshotBroadcaster {
         const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
         entry.statAlloc =
           ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined;
+        // WS-B3 — activated mounts are PUBLIC (every recipient, active +
+        // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
+        // #14); the renderer looks up geometry by (shipKind, slotId). Clear the
+        // pooled entry for un-upgraded ships. The readonly→mutable cast is safe:
+        // the encoder reads the array synchronously and never mutates it.
+        entry.mounts = ship.mounts.length > 0
+          ? (ship.mounts as { slotId: string; weaponId: string }[])
+          : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

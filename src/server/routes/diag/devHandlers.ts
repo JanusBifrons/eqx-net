@@ -299,6 +299,9 @@ export function devPlayerShipsHandler(req: Request, res: Response): void {
     // grants the budget).
     xp: rec.xp,
     statAlloc: rec.statAlloc,
+    // Phase 4 WS-B3 — the activated latent mounts for the upgrade modal's
+    // "activate a mount" section (which hardpoints are already on).
+    mounts: rec.mounts,
   }));
   res.json({ playerId, ships });
 }

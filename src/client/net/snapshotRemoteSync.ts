@@ -185,3 +185,30 @@ export function applyShipLevels(snap: SnapshotMessage, mirror: RenderMirror): vo
     }
   }
 }
+
+/**
+ * Public activated-mount slice (Phase 4 WS-B3, plan: effervescent-umbrella). The
+ * snapshot `states[id].mounts` carries each hull's PUBLIC activated latent mounts
+ * (emit-when-non-empty). Mirror it onto EVERY ship render entry (local + remote)
+ * so the renderer draws the extra turrets; absent / empty ⇒ no activated mounts,
+ * so we clear a stale value back to undefined. The renderer reads geometry by
+ * `(kind, slotId)` from the catalogue (never on the wire). Keyed by the
+ * playerId-translated `snap.states` key (matching `mirror.ships`, run AFTER
+ * `routeSnapshotShipStates`). The single ownership site for the activated-mount
+ * mirror field — non-spatial discrete data, purity-clean (Invariant #2). Alloc:
+ * one `.slice()` ONLY when the list changes (a discrete activation), never per
+ * tick for an un-upgraded ship.
+ */
+export function applyActivatedMounts(snap: SnapshotMessage, mirror: RenderMirror): void {
+  for (const id in snap.states) {
+    const ship = mirror.ships.get(id);
+    if (!ship) continue;
+    const mounts = snap.states[id]!.mounts;
+    if (mounts !== undefined && mounts.length > 0) {
+      // Copy the slim id/weapon pairs (the slice is small + only on a change).
+      ship.activatedMounts = mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }));
+    } else if (ship.activatedMounts !== undefined) {
+      ship.activatedMounts = undefined;
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
 import { SHIP_MAX_HEALTH } from '../../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
-import type { StatAlloc } from '../../playerShips/PlayerShipStore.js';
+import type { StatAlloc, ActivatedMount } from '../../playerShips/PlayerShipStore.js';
 
 // Wire-traffic invariant (network-discipline P1, see plan):
 // Spatial fields (x/y/vx/vy/angle/angvel) MUST NOT live on this schema.
@@ -72,6 +72,16 @@ export class ShipState extends Schema {
   // are read here by the server damage/shield/energy calcs. `{}` = un-upgraded.
   statAlloc: StatAlloc = {};
 
+  // -- Activated dynamic mounts (Phase 4 WS-B3) --------------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
+  // ACTIVATED latent mount slots (`{ slotId, weaponId }[]`). Mirrored from the
+  // roster row's `mounts` on spawn/restore + on an `activate_mount`. PUBLIC —
+  // rides the per-recipient SnapshotMessage.states[id].mounts slice (emit-when-
+  // non-empty, for active AND lingering hulls) so OTHER players see the extra
+  // turrets, NOT the Colyseus diff. The per-instance fire/aim/render mount list
+  // is `[...kind.mounts, ...activated]` (geometry looked up by `slotId` from the
+  // catalogue, never on the wire). `[]` = no activated mounts (the default).
+  mounts: ActivatedMount[] = [];
 
   // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the

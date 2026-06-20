@@ -73,6 +73,8 @@ import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
+import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
+import type { ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -148,6 +150,7 @@ import {
   PilotShipSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
+  ActivateMountSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -1130,6 +1133,8 @@ export class SectorRoom extends Room<SectorState> {
       aiController: this.aiController,
       swarmHealth: () => this.swarmHealth,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+      resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
+      resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -1150,6 +1155,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+      resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
+      resolveInstanceFireMounts: (ship, slotId) => this.resolveInstanceFireMounts(ship, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
       playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
@@ -2116,6 +2123,24 @@ export class SectorRoom extends Room<SectorState> {
       this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
     });
 
+    // ── Phase 4 WS-B3 — dynamic weapon mounts (activate a latent slot) ──────
+    // Activate a latent hardpoint on a ship instance + bind a weapon to it.
+    // Owner-gated + valid-latent-slot-gated server-side; the activated mount is
+    // persisted on the roster, mirrored onto the live ShipState, and fed through
+    // the SAME per-instance mount resolver the aim + fire path use, so it fires
+    // from the first tick (geometry looked up by slotId on both sides — no wire
+    // bump, the scrap-collider trick).
+    this.onMessage('activate_mount', (client: Client, raw: unknown) => {
+      const parsed = ActivateMountSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed activate_mount');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.activateMount(client, playerId, parsed.data.shipId, parsed.data.slotId, parsed.data.weaponId);
+    });
+
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
     // The renderer tells the main thread which entity is selected; the client
     // forwards ship/structure selections here. The ~5 Hz emit happens on
@@ -2354,6 +2379,18 @@ export class SectorRoom extends Room<SectorState> {
   // method-wrapper delegations preserve every existing call-site.
   private resolveSlotMounts(kind: ShipKind, slotId?: string): ReadonlyArray<WeaponMount> {
     return resolveSlotMounts(kind, slotId);
+  }
+  /** WS-B3 — a player ship's FULL per-instance mount list `[...kind.mounts,
+   *  ...activated latent]` (the `mountAngles[]` index space). Reads
+   *  `ship.mounts`; un-upgraded ⇒ exactly `kind.mounts`. */
+  private resolveInstanceMounts(ship: ShipState): ReadonlyArray<WeaponMount> {
+    return resolveInstanceMounts(getShipKind(ship.kind), ship.mounts);
+  }
+  /** WS-B3 — a player ship's FIRING mount set `[...active-slot, ...activated]`.
+   *  The server's mount ticker uses the default (first) slot, matching the
+   *  pre-WS-B3 behaviour; the active-slot selection rides the `fire` message. */
+  private resolveInstanceFireMounts(ship: ShipState, slotId?: string): ReadonlyArray<WeaponMount> {
+    return resolveInstanceFireMounts(getShipKind(ship.kind), ship.mounts, slotId);
   }
   private mountWorldOrigin(
     shipX: number,
@@ -3052,6 +3089,13 @@ export class SectorRoom extends Room<SectorState> {
       ship.shieldLastDamageTick = this.serverTick;
       ship.alive = true;
       ship.isActive = false;
+      // WS-B1/B2/B3 — seed the per-instance progression from the roster so a
+      // restored lingering hull renders its public level badge + activated
+      // turrets to observers (the gap is keyed by the stable shipInstanceId).
+      const lingerRow = getPlayerShipStore().get(r.shipInstanceId);
+      ship.level = lingerRow?.level ?? 1;
+      ship.statAlloc = lingerRow?.statAlloc ?? {};
+      ship.mounts = lingerRow?.mounts ?? [];
       this.state.ships.set(r.shipInstanceId, ship);
       // SAB pose seed.
       const b = slotBase(slot);
@@ -4393,6 +4437,9 @@ export class SectorRoom extends Room<SectorState> {
       const row = getPlayerShipStore().get(ship.shipInstanceId);
       ship.level = row?.level ?? 1;
       ship.statAlloc = row?.statAlloc ?? {};
+      // WS-B3 — seed the per-instance activated latent mounts so a previously-
+      // upgraded ship fires + renders its extra turrets from the first tick.
+      ship.mounts = row?.mounts ?? [];
     }
     ship.isActive = true;
     // Populate the indirection map BEFORE setting the schema entry so
@@ -4803,6 +4850,9 @@ export class SectorRoom extends Room<SectorState> {
     // prediction scales movement by the upgraded factors from the first tick.
     target.statAlloc = rec.statAlloc ?? {};
     this.applyStatMulToWorker(playerId, target.statAlloc);
+    // WS-B3 — re-seed the reclaimed hull's activated dynamic mounts so it fires
+    // + renders its extra turrets from the first tick under the new body key.
+    target.mounts = rec.mounts ?? [];
     // Seed the pose cache + roster so any synchronous reader + a later restore
     // see the live pose (NOT a stale abandon pose — WS-A2 "lands at its live pose").
     this.shipPoseCache.set(playerId, { ...livePose });
@@ -5082,6 +5132,63 @@ export class SectorRoom extends Room<SectorState> {
       alloc,
       spent: spentPoints(alloc),
       budget: pointBudget(row.level),
+    });
+  }
+
+  /**
+   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance.
+   *
+   * Validation order (a foreign / unknown / non-latent / already-active request
+   * is a SILENT no-op — no echo, no persistence):
+   *   - ownership (`row.playerId === playerId`);
+   *   - `slotId` names a real `ShipKind.latentMounts` hardpoint (`isLatentSlot`);
+   *   - the slot isn't already activated on this instance.
+   * On success: append `{ slotId, weaponId }` to the roster `mounts` (the
+   * per-instance source of truth, D8 — switching ships switches the loadout) AND
+   * — if this instance is the player's ACTIVE hull in THIS room — mirror it onto
+   * `ShipState.mounts` so the SAME-tick aim/fire/snapshot paths pick it up (the
+   * per-instance mount resolver reads `ship.mounts`). The `weaponId` is already
+   * zod-restricted to the catalogue weapon set. Echoes `mount_activated` with the
+   * full activated list so the modal closes + the roster card refreshes. The
+   * GEOMETRY is looked up CLIENT-SIDE by `(shipKind, slotId)` — never on the wire.
+   */
+  private activateMount(
+    client: Client,
+    playerId: string,
+    shipId: string,
+    slotId: string,
+    weaponId: string,
+  ): void {
+    const store = getPlayerShipStore();
+    const row = store.get(shipId);
+    if (row === null || row.playerId !== playerId) return; // foreign / unknown
+    const kind = getShipKind(row.kind);
+    if (!isLatentSlot(kind, slotId)) {
+      logger.warn(
+        { sessionId: client.sessionId, shipId, slotId },
+        'activate_mount: slotId is not a latent hardpoint — dropped',
+      );
+      return;
+    }
+    // Already active ⇒ no-op (idempotent; never duplicate the index space).
+    if (row.mounts.some((m) => m.slotId === slotId)) return;
+
+    const nextMounts: ActivatedMount[] = [...row.mounts, { slotId, weaponId }];
+    // Persist on the roster (the per-instance source of truth, D8).
+    store.setProgress(shipId, { mounts: nextMounts });
+
+    // Mirror onto the live ACTIVE hull (if it's piloted in THIS room) so the
+    // very next tick's aim + fire + snapshot resolve the new mount.
+    const activeShipKey = this.resolveActiveShipKey(playerId);
+    if (activeShipKey === shipId) {
+      const ship = this.state.ships.get(shipId);
+      if (ship !== undefined) ship.mounts = nextMounts;
+    }
+
+    client.send('mount_activated', {
+      type: 'mount_activated',
+      shipInstanceId: shipId,
+      mounts: nextMounts,
     });
   }
 

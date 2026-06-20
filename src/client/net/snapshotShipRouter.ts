@@ -102,6 +102,12 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
           // Phase 4 WS-B1 — carry the public level so the parked hull shows its
           // badge (absent ⇒ level 1, no badge).
           level: entry.level,
+          // Phase 4 WS-B3 — carry the public activated mounts so the parked hull
+          // renders its extra turrets (absent ⇒ none). Copied (slim list, only
+          // on a discrete change in practice — the wire omits it when empty).
+          activatedMounts: entry.mounts
+            ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
+            : undefined,
         };
         mirror.lingeringShips.set(shipInstanceId, lingerEntry);
       } else {
@@ -113,6 +119,9 @@ export function routeSnapshotShipStates(snap: SnapshotMessage, ctx: ShipRouterCt
         lingerEntry.ownerPlayerId = entry.playerId;
         lingerEntry.shieldDown = entry.shieldDown;
         lingerEntry.level = entry.level;
+        lingerEntry.activatedMounts = entry.mounts
+          ? entry.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId }))
+          : undefined;
       }
       lingeringSeen.add(shipInstanceId);
       // Phase 6b — spawn / refresh the predWorld body so the local

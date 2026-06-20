@@ -125,6 +125,18 @@ export interface SnapshotMessage {
        *  authoritative re-anchor; the `ship_upgrade_applied` echo is just UI
        *  confirmation). No `SWARM_WIRE_VERSION` bump (slim JSON field). */
       statAlloc?: Record<string, number>;
+      /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
+       *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
+       *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated
+       *  mount, so OTHER players see (and the renderer draws) the extra turrets.
+       *  Emit-when-non-empty only — un-upgraded hulls omit it (zero byte cost).
+       *  The activated mounts' GEOMETRY is looked up CLIENT-SIDE by
+       *  `(shipKind, slotId)` from the catalogue — only this slim id/weapon pair
+       *  rides the wire (the scrap-collider trick). The per-instance mount list
+       *  is `[...kind.mounts, ...activated]`, so `mountAngles[]` (already
+       *  variable-length) carries the activated slots' angles WITHOUT a
+       *  `SWARM_WIRE_VERSION` bump (it's a slim JSON field on the states map). */
+      mounts?: Array<{ slotId: string; weaponId: string }>;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

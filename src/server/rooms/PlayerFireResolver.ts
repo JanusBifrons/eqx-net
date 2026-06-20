@@ -119,6 +119,14 @@ export interface PlayerFireResolverDeps {
   playerMountAngles: Map<string, Float32Array>;
   /** Resolves the active-slot mount list for a kind. */
   resolveSlotMounts: (kind: ShipKind, slotId?: string) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the firing ship's FULL per-instance mount list `[...kind.mounts,
+   *  ...activated latent]` — the `playerMountAngles` index space (so the fire
+   *  ray reads the SAME slewed angle the ticker wrote). Reads `ship.mounts`. */
+  resolveInstanceMounts: (ship: ShipState) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the firing ship's FIRING mount set `[...active-slot for slotId,
+   *  ...activated latent]`. Only these mounts spawn a shot; every other instance
+   *  mount is in the angle array but does not fire. Reads `ship.mounts` + slotId. */
+  resolveInstanceFireMounts: (ship: ShipState, slotId?: string) => ReadonlyArray<WeaponMount>;
   /** Pure mount world-origin helper. */
   mountWorldOrigin: (
     shipX: number, shipY: number, shipAngle: number, mount: WeaponMount,
@@ -217,7 +225,9 @@ export class PlayerFireResolver implements WeaponFireSink {
     // (`mount.weaponId`) and STOPS TRUSTING the client's claimed `weapon`
     // field (kept on the wire for back-compat but ignored for selection).
     const shipKind = getShipKind(ship.kind);
-    const slotMounts = d.resolveSlotMounts(shipKind, slotId);
+    // WS-B3 — the FIRING set is the active slot's mounts PLUS every activated
+    // latent mount; un-upgraded ⇒ exactly the active slot (byte-identical).
+    const slotMounts = d.resolveInstanceFireMounts(ship, slotId);
     if (slotMounts.length === 0) return;
 
     // Slot-level cooldown gate. The slot fires as ONE synchronised trigger,
@@ -272,13 +282,25 @@ export class PlayerFireResolver implements WeaponFireSink {
     this._bestHitWireId = undefined;
 
     const playerAngles = d.playerMountAngles.get(shooterId);
+    // WS-B3 — the slewed angle array is indexed by the FULL per-instance mount
+    // list `[...kind.mounts, ...activated]` (what the mount ticker writes), NOT
+    // the firing-set order. Resolve each firing mount's angle by its index in
+    // that list so an activated latent mount reads ITS slewed angle (not a base
+    // mount's). For un-upgraded single-slot ships the firing set == the instance
+    // list, so this is byte-identical to the pre-WS-B3 `playerAngles[mIdx]`.
+    const instanceMounts = d.resolveInstanceMounts(ship);
     const ctx = this._fireCtx;
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
-      const currentMountAngle = playerAngles?.[mIdx] ?? 0;
+      // Find this firing mount's slot in the full instance angle array by id.
+      let angleIdx = mIdx;
+      for (let k = 0; k < instanceMounts.length; k++) {
+        if (instanceMounts[k]!.id === mount.id) { angleIdx = k; break; }
+      }
+      const currentMountAngle = playerAngles?.[angleIdx] ?? 0;
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);

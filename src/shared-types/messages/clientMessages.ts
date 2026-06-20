@@ -207,6 +207,30 @@ export const RespecShipSchema = z
   })
   .strict();
 
+/** Catalogue-id of the weapon to bind to an activated latent mount (Phase 4
+ *  WS-B3). Mirrors `MountWeaponIdSchema` in `shipKinds/types.ts` (kept local so
+ *  this module stays self-contained); parity asserted by `messages.test.ts`'s
+ *  weapon-catalogue checks. Append-only. */
+export const ActivateMountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker']);
+
+/** Client → server (Phase 4 WS-B3, plan: effervescent-umbrella): "activate the
+ *  latent mount slot `slotId` on my ship instance + bind `weaponId` to it". The
+ *  dynamic-weapon-mounts upgrade — the server validates ownership + that
+ *  `slotId` names a real `ShipKind.latentMounts` hardpoint + that the slot isn't
+ *  already active, persists the `{ slotId, weaponId }` in the roster `mounts`
+ *  JSON, mirrors it onto the live `ShipState.mounts`, and echoes a
+ *  `mount_activated`. The activated mount's GEOMETRY is looked up CLIENT-SIDE by
+ *  `(shipKind, slotId)` from the catalogue — never on the wire. A foreign /
+ *  unknown / already-active / non-latent request is a silent no-op. Strict. */
+export const ActivateMountSchema = z
+  .object({
+    type: z.literal('activate_mount'),
+    shipId: z.string().min(1).max(64),
+    slotId: z.string().min(1).max(64),
+    weaponId: ActivateMountWeaponIdSchema,
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -220,6 +244,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   PilotShipSchema,
   ApplyShipUpgradeSchema,
   RespecShipSchema,
+  ActivateMountSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 ]);
@@ -238,4 +263,5 @@ export type StatId = z.infer<typeof StatIdSchema>;
 export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
 export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;
 export type RespecShipMessage = z.infer<typeof RespecShipSchema>;
+export type ActivateMountMessage = z.infer<typeof ActivateMountSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

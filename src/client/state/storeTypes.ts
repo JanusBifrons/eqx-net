@@ -90,6 +90,9 @@ export interface RosterEntry {
    *  / no spend. */
   level?: number;
   statAlloc?: Record<string, number>;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — activated latent mount slots, for
+   *  the upgrade modal's "activate a mount" section. Absent ⇒ none. */
+  mounts?: Array<{ slotId: string; weaponId: string }>;
 }
 
 /** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */

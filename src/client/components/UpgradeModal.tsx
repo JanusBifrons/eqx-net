@@ -45,9 +45,19 @@ interface UpgradeModalProps {
   onClose: () => void;
   onApply: (shipId: string, alloc: Record<string, number>) => void;
   onRespec: (shipId: string) => void;
+  /** Phase 4 WS-B3 — activate a latent weapon mount + bind a weapon to it. */
+  onActivateMount?: (shipId: string, slotId: string, weaponId: 'hitscan' | 'laser' | 'heat-seeker') => void;
 }
 
-export function UpgradeModal({ ship, open, onClose, onApply, onRespec }: UpgradeModalProps): JSX.Element {
+/** Selectable weapons for a freshly-activated mount (WS-B3) — mirrors the
+ *  catalogue `MountWeaponIdSchema`. The player picks one per latent slot. */
+const MOUNT_WEAPON_CHOICES: ReadonlyArray<{ id: 'hitscan' | 'laser' | 'heat-seeker'; label: string }> = [
+  { id: 'laser', label: 'Bolt' },
+  { id: 'hitscan', label: 'Beam' },
+  { id: 'heat-seeker', label: 'Missile' },
+];
+
+export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivateMount }: UpgradeModalProps): JSX.Element {
   const kind = getShipKind(ship.kind);
   const level = ship.level ?? 1;
   // Server-authoritative current allocation, re-synced whenever the modal opens
@@ -78,6 +88,16 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec }: Upgrade
     setDraft(toDraft({}));
     onRespec(ship.shipId);
   };
+
+  // Phase 4 WS-B3 — latent weapon mounts. Candidate hardpoints come from the
+  // catalogue; `ship.mounts` (activated) tells which are already on. The player
+  // picks a weapon then activates ONE latent slot.
+  const latentMounts = kind.latentMounts ?? [];
+  const activatedSlotIds = useMemo(
+    () => new Set((ship.mounts ?? []).map((m) => m.slotId)),
+    [ship.mounts],
+  );
+  const [mountWeapon, setMountWeapon] = useState<'hitscan' | 'laser' | 'heat-seeker'>('laser');
 
   return (
     <Dialog
@@ -150,6 +170,67 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec }: Upgrade
             );
           })}
         </Stack>
+
+        {/* Phase 4 WS-B3 — dynamic weapon mounts (latent slots). */}
+        {onActivateMount !== undefined && latentMounts.length > 0 && (
+          <Box data-testid="upgrade-mounts" sx={{ mt: 1.5, pt: 1, borderTop: '1px solid #2a2f40' }}>
+            <Typography variant="caption" sx={{ color: '#8aa0ff', display: 'block', mb: 0.5 }}>
+              Weapon mounts
+            </Typography>
+            {/* Weapon picker for the next activation. */}
+            <Box sx={{ display: 'flex', gap: 0.5, mb: 0.75 }}>
+              {MOUNT_WEAPON_CHOICES.map((w) => (
+                <Button
+                  key={w.id}
+                  size="small"
+                  data-testid={`mount-weapon-${w.id}`}
+                  data-selected={mountWeapon === w.id ? '1' : '0'}
+                  onClick={() => setMountWeapon(w.id)}
+                  sx={{
+                    flex: 1,
+                    fontSize: 11,
+                    color: mountWeapon === w.id ? '#00ff88' : '#9aa0b4',
+                    border: mountWeapon === w.id ? '1px solid #1f7a4d' : '1px solid #2a2f40',
+                    p: 0.25,
+                  }}
+                >
+                  {w.label}
+                </Button>
+              ))}
+            </Box>
+            <Stack spacing={0.5}>
+              {latentMounts.map((lm) => {
+                const active = activatedSlotIds.has(lm.id);
+                return (
+                  <Box
+                    key={lm.id}
+                    data-testid={`mount-slot-${lm.id}`}
+                    data-active={active ? '1' : '0'}
+                    sx={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', columnGap: 0.5 }}
+                  >
+                    <Typography variant="body2" sx={{ color: active ? '#00ff88' : '#bfc4d6', fontSize: 12 }}>
+                      {lm.id}
+                    </Typography>
+                    {active ? (
+                      <Typography variant="caption" sx={{ color: '#00ff88', fontSize: 11 }}>
+                        Active
+                      </Typography>
+                    ) : (
+                      <Button
+                        size="small"
+                        data-testid={`mount-activate-${lm.id}`}
+                        onClick={() => onActivateMount(ship.shipId, lm.id, mountWeapon)}
+                        sx={{ fontSize: 11, color: '#00ff88', border: '1px solid #1f7a4d', p: 0.25 }}
+                      >
+                        Activate
+                      </Button>
+                    )}
+                  </Box>
+                );
+              })}
+            </Stack>
+          </Box>
+        )}
       </DialogContent>
       <DialogActions sx={{ bgcolor: '#0c1020', justifyContent: 'space-between', px: 2.5, pb: 2 }}>
         <Button

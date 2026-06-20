@@ -224,3 +224,32 @@ export const ShipUpgradeAppliedEventSchema = z
   })
   .strict();
 export type ShipUpgradeAppliedEvent = z.infer<typeof ShipUpgradeAppliedEventSchema>;
+
+/** One activated latent mount on the wire (Phase 4 WS-B3) — `slotId` names a
+ *  `ShipKind.latentMounts` hardpoint, `weaponId` the bound weapon. The GEOMETRY
+ *  is looked up client-side from the catalogue by `(shipKind, slotId)`; only
+ *  this slim pair rides the wire (the scrap-collider trick). Mirrors the
+ *  `MountWeaponIdSchema` weapon set. */
+export const WireActivatedMountSchema = z
+  .object({
+    slotId: z.string().min(1).max(64),
+    weaponId: z.enum(['hitscan', 'laser', 'heat-seeker']),
+  })
+  .strict();
+export type WireActivatedMount = z.infer<typeof WireActivatedMountSchema>;
+
+/** Server → client (direct, to the owning session): a ship instance's dynamic
+ *  mounts were ACTIVATED (Phase 4 WS-B3). The echo of `activate_mount` — confirms
+ *  the server accepted + persisted the activation, so the client can close the
+ *  modal + refresh the roster card. Carries the now-authoritative full activated
+ *  list (the renderer reads geometry from the catalogue by `slotId`). The
+ *  PUBLIC visibility of the extra mounts rides the snapshot `states[].mounts`
+ *  slice; this echo is the owner's UI confirmation. */
+export const MountActivatedEventSchema = z
+  .object({
+    type: z.literal('mount_activated'),
+    shipInstanceId: z.string().min(1).max(64),
+    mounts: z.array(WireActivatedMountSchema),
+  })
+  .strict();
+export type MountActivatedEvent = z.infer<typeof MountActivatedEventSchema>;

@@ -184,6 +184,7 @@ describe('PlayerShipStore × SectorRoom integration — spawn → store row → 
         'level',
         'xp',
         'statAlloc',
+        'mounts',
         'sectorKey',
         'shipId',
         'updatedAt',

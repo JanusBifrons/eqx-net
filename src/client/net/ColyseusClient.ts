@@ -15,7 +15,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -53,7 +53,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -66,7 +66,7 @@ import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
-import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
+import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
@@ -521,6 +521,21 @@ export class ColyseusGameClient {
     if (!this.room || shipId === '') return false;
     this.room.send('respec_ship', { type: 'respec_ship', shipId });
     logEvent('ship_respec_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance + bind a
+   * weapon to it. The server validates ownership + that `slotId` is a real
+   * latent hardpoint, persists the activation on the roster, mirrors it onto the
+   * live hull, and echoes `mount_activated`. The activated mount fires + renders
+   * from the next snapshot (PUBLIC via `states[].mounts`; geometry looked up
+   * client-side by `(kind, slotId)`). Returns true when dispatched.
+   */
+  activateMount(shipId: string, slotId: string, weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
+    if (!this.room || shipId === '' || slotId === '') return false;
+    this.room.send('activate_mount', { type: 'activate_mount', shipId, slotId, weaponId });
+    logEvent('mount_activation_requested', { shipId, slotId, weaponId });
     return true;
   }
 
@@ -1627,6 +1642,25 @@ export class ColyseusGameClient {
       });
     });
 
+    // Phase 4 WS-B3 — the server accepted + persisted a dynamic-mount activation.
+    // Patch the Zustand roster entry's `mounts` so the upgrade modal's activated
+    // set updates immediately (the roster poll would also catch it within ~3 s,
+    // but the patch makes the modal feel responsive). The IN-WORLD render +
+    // fire come off the snapshot `states[].mounts` slice (the authority), not
+    // this echo. Defensive zod parse.
+    room.onMessage('mount_activated', (raw: unknown) => {
+      const parsed = MountActivatedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const evt = parsed.data;
+      const store = useUIStore.getState();
+      const patched = store.shipRoster.map((r) =>
+        r.shipId === evt.shipInstanceId
+          ? { ...r, mounts: evt.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId })) }
+          : r,
+      );
+      store.setShipRoster(patched);
+    });
+
     room.onMessage('hit_ack', (raw: unknown) => {
       // weapon-hit-prediction Phase 3 — defensive zod parse (invariant #4;
       // the client now consumes hit_ack as its single reconcile path, so
@@ -2705,6 +2739,12 @@ export class ColyseusGameClient {
     // the in-world level badge. Lingering hulls carry their level via the
     // router (mirror.lingeringShips), above.
     applyShipLevels(snap, this.mirror);
+
+    // Phase 4 WS-B3 — mirror each ACTIVE hull's PUBLIC activated latent mounts
+    // (states[].mounts, playerId-keyed post-route) onto mirror.ships so the
+    // renderer draws the extra turrets. Lingering hulls carry their activated
+    // mounts via the router (mirror.lingeringShips), above.
+    applyActivatedMounts(snap, this.mirror);
 
     // Phase 6 — surface the server's TiDi rate to the HUD + audio,
     // and drive the Temporal Anomaly banner with hysteresis. See
@@ -4694,10 +4734,14 @@ export class ColyseusGameClient {
     if (!state) return;
     // `mountAngles` is CATALOGUE-indexed everywhere it is READ (the
     // renderer beam direction + the turret sprites). Size + write the
-    // array by the FULL kind.mounts; only the ACTIVE SLOT's mounts aim
-    // (the rest slew to base). Indexing by the active-slot order instead
-    // is the latent index bug — see combat/localMountAim.ts.
-    const catalogueMounts = getShipKind(ship.kind ?? null).mounts ?? [];
+    // array by the FULL per-instance mount list `[...kind.mounts,
+    // ...activated latent]` (WS-B3); only the FIRING set (active slot +
+    // activated) aims (the rest slew to base). The full instance list is
+    // the index space the SERVER ticker writes too, so the snapshot's
+    // mountAngles for activated mounts land at the matching index.
+    // Un-upgraded ⇒ exactly `kind.mounts` (byte-identical). Indexing by the
+    // active-slot order instead is the latent index bug — see combat/localMountAim.ts.
+    const catalogueMounts = resolveInstanceMounts(getShipKind(ship.kind ?? null), ship.activatedMounts);
     if (catalogueMounts.length === 0) {
       if (ship.mountAngles) ship.mountAngles = undefined;
       return;
@@ -4922,11 +4966,14 @@ export class ColyseusGameClient {
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
     if (!localId) return [];
-    const kindId = this.mirror.ships.get(localId)?.kind ?? null;
-    // Active-slot mounts (weapons/energy/AI overhaul §5.2). The pilot selects
-    // the slot; the server fires each mount's bound weapon. Same shared
-    // resolver the server uses so client ghost geometry matches.
-    return resolveSlotMounts(getShipKind(kindId), useUIStore.getState().activeSlotId);
+    const ship = this.mirror.ships.get(localId);
+    const kindId = ship?.kind ?? null;
+    // Active-slot mounts (weapons/energy/AI overhaul §5.2) PLUS any WS-B3
+    // activated latent mounts (they always fire). The pilot selects the slot;
+    // the server fires each mount's bound weapon. Same shared resolver the
+    // server uses (resolveInstanceFireMounts) so client ghost geometry matches.
+    // Un-upgraded ⇒ exactly the active slot (byte-identical).
+    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, useUIStore.getState().activeSlotId);
   }
 
   /**
