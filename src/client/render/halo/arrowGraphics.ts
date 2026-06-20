@@ -22,8 +22,21 @@ import {
 /** Marker glyph radius (screen px, before the per-arrow projection scale). A
  *  grouped wedge representative (N entities at one bearing) draws a touch larger
  *  so an aggregated group reads heavier than a single contact. */
-const GLYPH_RADIUS = 7;
-const GLYPH_RADIUS_GROUPED = 9;
+export const GLYPH_RADIUS = 7;
+export const GLYPH_RADIUS_GROUPED = 9;
+
+/** WS-B #3 — on a touch device (smaller screen + smaller halo ring) the fixed
+ *  desktop glyph radius reads too large, so the marker scales down to this
+ *  fraction. 0.65 keeps the touch glyph 60-70% of desktop (the WS-B brief). */
+export const HALO_GLYPH_TOUCH_SCALE = 0.65;
+
+/** Pure helper (WS-B #3). The screen-px glyph radius for a singleton vs grouped
+ *  marker, scaled down on touch. Single source of truth so the unit test and the
+ *  painter never drift. */
+export function haloGlyphRadius(grouped: boolean, isTouch: boolean): number {
+  const base = grouped ? GLYPH_RADIUS_GROUPED : GLYPH_RADIUS;
+  return isTouch ? base * HALO_GLYPH_TOUCH_SCALE : base;
+}
 
 // Glow under the glyph. Hostile (★) gets a brighter, larger red menace ring;
 // everything else a subtle ring tinted by its own colour.
@@ -39,19 +52,22 @@ const GLYPH_FILL_ALPHA = 0.92;
 const STROKE_ALPHA = 0.85;
 
 /** Paint a ring marker for `kind` into `g` (clears first). Upright; the ring
- *  position carries the bearing. Hostile gets a stronger glow + stroke. */
-export function paintHaloGlyph(g: Graphics, kind: EntityKind, grouped: boolean): void {
+ *  position carries the bearing. Hostile gets a stronger glow + stroke.
+ *  `isTouch` scales the glyph + glow down on a phone (WS-B #3). */
+export function paintHaloGlyph(g: Graphics, kind: EntityKind, grouped: boolean, isTouch = false): void {
   g.clear();
   const v = ENTITY_VISUALS[kind];
   const hostile = kind === 'hostile';
+  const touchScale = isTouch ? HALO_GLYPH_TOUCH_SCALE : 1;
 
   const glowColor = hostile ? GLOW_COLOR_HOSTILE : v.color;
-  const glowRadius = (hostile ? GLOW_RADIUS_HOSTILE : GLOW_RADIUS_DEFAULT) * (grouped ? 1.25 : 1);
+  const glowRadius =
+    (hostile ? GLOW_RADIUS_HOSTILE : GLOW_RADIUS_DEFAULT) * (grouped ? 1.25 : 1) * touchScale;
   const glowAlpha = hostile ? GLOW_ALPHA_HOSTILE : GLOW_ALPHA_DEFAULT;
   g.circle(0, 0, glowRadius);
   g.fill({ color: glowColor, alpha: glowAlpha });
 
-  const r = grouped ? GLYPH_RADIUS_GROUPED : GLYPH_RADIUS;
+  const r = haloGlyphRadius(grouped, isTouch);
   const poly = entityBadgePolygon(v.shape, r);
   g.poly(poly);
   g.fill({ color: v.color, alpha: GLYPH_FILL_ALPHA });
@@ -59,9 +75,9 @@ export function paintHaloGlyph(g: Graphics, kind: EntityKind, grouped: boolean):
   g.stroke({ color: 0xffffff, width: hostile ? 1.4 : 1, alpha: STROKE_ALPHA });
 }
 
-export function buildHaloGlyph(kind: EntityKind, grouped: boolean): Graphics {
+export function buildHaloGlyph(kind: EntityKind, grouped: boolean, isTouch = false): Graphics {
   const g = new Graphics();
-  paintHaloGlyph(g, kind, grouped);
+  paintHaloGlyph(g, kind, grouped, isTouch);
   return g;
 }
 

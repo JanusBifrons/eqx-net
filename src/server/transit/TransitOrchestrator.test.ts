@@ -109,6 +109,22 @@ describe('TransitOrchestrator', () => {
       expect(msg.reason).toBe('not_neighbour');
     });
 
+    it('#17 — rejects the specific Thornfield → Cygnus-Arm non-neighbour jump', () => {
+      // Regression lock for the smoke report "I jumped Thornfield → Cygnus". The
+      // two are in DIFFERENT regions and share NO galaxy-graph edge (galaxy.ts:
+      // thornfield.neighbours = [orion-belt, bloomgate, verdance]); a same-tick
+      // jump between them is impossible — the server rejects with not_neighbour.
+      // (A live log showing the hop is an INTERMEDIATE-hop misread, not a bypass.)
+      const { room, sent } = makeRoom({ sectorKey: 'thornfield', playerId: 'p1' });
+      const orch = new TransitOrchestrator(room);
+      const ok = orch.beginTransit('p1', 'cygnus-arm');
+      expect(ok).toBe(false);
+      expect(orch.isInFlight('p1')).toBe(false);
+      const msg = sent[0]!.msg as { state: string; reason?: string };
+      expect(msg.state).toBe('DOCKED');
+      expect(msg.reason).toBe('not_neighbour');
+    });
+
     it('accepts a valid neighbour and emits SPOOLING', () => {
       const { room, sent } = makeRoom({ sectorKey: 'sol-prime', playerId: 'p1' });
       const orch = new TransitOrchestrator(room);

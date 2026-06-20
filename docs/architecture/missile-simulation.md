@@ -29,9 +29,13 @@ client (player fires)  │  PlayerFireResolver — mode='missile'│
    │                   │     ├── lock verify (resolve id)    │
    │                   │     ├── proximity fuse check        │
    │                   │     ├── guidance yaw (turnRate clamp)│
+   │                   │     ├── record angvel (Δangle / DT)  │
    │                   │     ├── integrate position          │
    │                   │     ├── sweep player + swarm        │
    │                   │     ├── lifetime decrement          │
+   │                   │     │    └─ on expiry: detonate      │
+   │                   │     │       (cause='lifetime',       │
+   │                   │     │        no splash, broadcasts)  │
    │                   │     └── (on detonate)               │
    │                   │         ├── splash damage           │
    │                   │         ├── enqueue impulse         │
@@ -232,6 +236,35 @@ lockable** — `lockOnTarget` keeps its `kind === 0` skip, so a missile never
 `missileLifecycle.test.ts` (a missile fired at an asteroid emits a
 `missile_detonated` broadcast instead of expiring).
 
+## Lifetime expiry detonates (no damage) — WS-C #14 (2026-06-20)
+
+A missile that never lands a direct hit still has to LEAVE the world cleanly. The
+2026-06-06 "impact-only" pass made lifetime expiry call `releaseAtPos()` SILENTLY
+(no `missile_detonated` broadcast) on the theory that the client would alpha-fade
+the sprite over its last 15 % of life and reap it when it left the `missiles[]`
+slice. On-device that read as **"the missile stops, then fades"**: the client's
+extrapolation dead-reckons past the newest sample, **caps at
+`MISSILE_EXTRAPOLATION_CAP_MS` then FREEZES**, and the stale `lifePct` fade plays
+over the frozen sprite — a visible stutter at end of life.
+
+Fix: on lifetime expiry `advance()` now calls
+`detonate(m, m.x, m.y, null, null, 'lifetime')` before `releaseAtPos`. This fires
+the `missile_detonated` broadcast (+ local `MISSILE_DETONATED` bus event), so the
+client's `removeMissile()` clears the sprite the same frame and the explosion VFX
+plays — a clean finish, not a frozen ghost.
+
+The **impact-only DAMAGE design is preserved**: `detonate()` SKIPS all three
+splash loops when `cause === 'lifetime'`, so a fizzle deals zero damage (a missed
+missile must not splash in-place — that was the deliberate 2026-06-06 change). The
+broadcast is for the client clear + VFX only. `'lifetime'` was already a valid
+`DetonateCause` (it had only ever been used as a diag tag); it now also drives the
+real detonation path with the splash suppressed.
+
+Locks: `missileLifecycle.test.ts` "WS-C #14" (a dumb missile flown to lifetime
+expiry broadcasts `missile_detonated` AND deals no damage — FAILS on the silent
+`releaseAtPos`) + `MissileSimulation.pool.test.ts` (`detonatedCount === 2`,
+`applyDamageCount === 0` after two missiles expire). No wire change → NO netgate.
+
 ## Proximity fuse
 
 The proximity-fuse check runs **before** guidance each tick. If the
@@ -265,6 +298,54 @@ Today the only consumer is `missileSpriteUpdater.ts`, which resolves
 once per missile per frame and writes `sprite.x / sprite.y /
 sprite.rotation` from the cached pose. Future consumers add their own
 read-once-per-frame cache from the same seam.
+
+## Curve-aware interpolation — `angvel` on the wire (WS-C #5, 2026-06-20)
+
+Missiles ride the 20 Hz JSON snapshot (see "Why JSON snapshot" above), and a
+prior fix gave `MissileMirror` a per-missile pose ring + display-delay
+interpolation (Issue 11). But the ring carried only `x/y/vx/vy/angle` — **no
+angular velocity** — so the client dead-reckoned a STRAIGHT line off the last
+snapshot's `vx/vy` between arrivals. Heat-seekers STEER (homing), so the server's
+true path between two snapshots is an ARC: the straight client guess bowed away
+from it and **snapped onto the new pose on every ~50 ms arrival** — the
+long-standing "missiles are jerky / still look like 20 Hz" report. This was the
+real, never-fixed root cause (the ring fix smoothed *jitter*, not the *curve*).
+
+The fix adds a **signed `angvel` float** (rad/s) to `SnapshotMessage.missiles[]`:
+
+- **Server** (`MissileSimulation.advance`): after the guidance yaw step, records
+  `m.angvel = wrapPi(m.angle − angleBefore) / DT` — the actual applied turn this
+  tick (wrapped, so it matches the integration; 0 on a dumb-flying or
+  just-spawned missile). It rides `MissileSnapshotEntry` → `MissileBroadcasterView`
+  → `SnapshotBroadcaster.writeMissileSlot` (pooled scratch, invariant #14).
+- **Client** (`MissileMirror`): the ring stores `angvel`; `resolveMissileDisplayPose`
+  integrates `angle += angvel·dt` and **recomputes position from the curved
+  heading** via the pure `curveDeadReckon` helper — the exact constant-turn
+  circular-arc closed form `pos += (s/ω)·(dir(angle+ω·dt) − dir(angle))`, where
+  `s = |v|` and `dir(θ) = (−sinθ, cosθ)` (Pixi-up, matching the server). This
+  applies to BOTH branches:
+  - **Interpolation** dead-reckons forward along the arc from the OLDER bracket
+    sample, reconstructing the inter-snapshot path the server integrated.
+  - **Extrapolation** past the newest sample keeps TURNING (was: held a frozen
+    heading and coasted straight — which flew off the arc and snapped).
+- **Back-compat:** `angvel` is optional, back-fills to `0`; a near-zero angvel
+  takes the linear fast path, byte-identical to the pre-WS-C behaviour (and to
+  the legacy locked interpolation tests). So a pre-WS-C server, a dumb-flying
+  missile, and a straight projectile are all unchanged.
+
+**Why missiles and not laser bolts / projectiles:** projectiles fly STRAIGHT —
+they have no steering, so `angvel` is always 0 and linear dead-reckoning is
+already exact. Adding angvel to the projectile slice would only add bytes for a
+field that's always zero. The decision is documented here so it isn't re-litigated.
+
+**Wire impact:** +1 optional float on the per-recipient `missiles[]` slice (only
+non-zero when a missile is actively turning). Touches the snapshot/broadcast
+path, so the **netcode-health gate (invariant #8) applies** on CI.
+
+Lock: `MissileMirror.test.ts` "HOMING CURVE" (the angvel-interpolated path tracks
+a simulated server arc within ~2 u — FAILS on the old linear lerp by ~4 u) and
+"EXTRAPOLATION past newest applies angvel" (angle keeps turning past the newest
+sample). The pure `curveDeadReckon` is exercised through both branches.
 
 ## Bus events
 
