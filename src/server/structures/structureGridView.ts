@@ -28,6 +28,18 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
   // (a leveled consumer still draws its base, so the leveled grant is a pure
   // surplus boost). Level 1 is the identity (factor 1).
   const lvlMul = structureLevelFactor(rec.level);
+  // Review must-fix #2 (2026-06-20, plan effervescent-umbrella): a Capital that
+  // is MID-UPGRADE (`rec.isConstructed=false` but `upgradeTargetLevel` set) is
+  // an already-operational bank being RE-built, NOT a fresh blueprint — so in
+  // the grid VIEW it stays BUILT: traversable as a route SOURCE + relay and
+  // power-generating. The `StructureRecord.isConstructed` field itself stays
+  // false (so `processConstruction` runs the visible build phase + the
+  // funding/completion machinery), but `Grid` must see it as a live source or
+  // the construction stream can never reach it (or anything else) — bricking the
+  // whole grid (see `findStorageRoute`). This ONLY applies to the Capital, which
+  // is the grid's funder; a mid-upgrade LEAF (turret/solar/etc.) is a normal
+  // dead-end blueprint while it re-builds.
+  const operational = rec.isConstructed || (rec.kind === 'capital' && rec.upgradeTargetLevel !== undefined);
   return {
     id: rec.id,
     x: rec.x,
@@ -38,10 +50,12 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     isConnector: rec.kind === 'connector',
     maxConnections: kind.maxConnections,
     connectionRange: kind.connectionRange,
-    // The isConstructed gate: a blueprint is inert (0 power) until built.
-    powerOutput: rec.isConstructed ? kind.powerOutput * lvlMul : 0,
-    powerConsumption: rec.isConstructed ? kind.powerConsumption : 0,
-    isConstructed: rec.isConstructed,
+    // The isConstructed gate: a blueprint is inert (0 power) until built. A
+    // mid-upgrade Capital (see above) is treated as operational so it keeps
+    // funding power + minerals through its own re-build.
+    powerOutput: operational ? kind.powerOutput * lvlMul : 0,
+    powerConsumption: operational ? kind.powerConsumption : 0,
+    isConstructed: operational,
   };
 }
 

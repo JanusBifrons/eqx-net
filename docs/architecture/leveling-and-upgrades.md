@@ -320,6 +320,39 @@ re-derives cleanly), and seeds HP to the LEVELED effective max. The leveled
 turret range/damage (`tickTurrets`) + power output (`structureToGridNode`) read
 the level factor at their catalogue read-sites.
 
+#### Upgrading the CAPITAL — a mid-upgrade Capital stays funding-capable (review must-fix #2, 2026-06-20)
+
+The Capital is the grid's ONLY mineral bank/funder, and an Upgrade flips
+`isConstructed=false` to run the visible re-build. Naively that bricks the WHOLE
+grid: `findStorageRoute` only returns a Capital where `isConstructed && minerals
+> 0`, and `Grid.computeRoute` rejects an un-built node as a routing SOURCE. So
+while the capital is mid-upgrade, `findStorageRoute` returns null for EVERY
+blueprint — including the capital itself — and `processConstruction` `continue`s
+BEFORE the completion check. Result on the pre-fix code: the capital's upgrade
+NEVER completes (permanent blueprint, level stuck at 1) AND every OTHER
+structure's construction/upgrade/repair stalls for the duration.
+
+**Locked design decision:** an upgrade is a visible RE-BUILD of an
+already-operational structure, NOT a fresh blueprint — so a **mid-upgrade Capital
+(`upgradeTargetLevel !== undefined`) remains funding-capable AND
+grid-traversable.** Two coordinated changes carry it:
+
+1. `findStorageRoute` funding guard: `fundingCapable = rec.isConstructed ||
+   rec.upgradeTargetLevel !== undefined` (still requires `minerals > 0`).
+2. `structureToGridNode` projection: a mid-upgrade **Capital** projects
+   `isConstructed: true` (+ its power) in the zone-pure `GridNode` view, so
+   `Grid.route` accepts it as a route SOURCE (incl. the trivial self-route
+   `capitalId → capitalId` that funds its own completion) AND as a relay through
+   which the grid's other streams flow. The `StructureRecord.isConstructed` field
+   itself stays `false`, so `processConstruction` still runs the build phase and
+   the funding/completion machinery. The carve-out is **Capital-only** — a
+   mid-upgrade LEAF (turret/solar/…) re-builds as a normal dead-end blueprint.
+
+**Balance follow-up (NOT the bug):** the Capital's base `constructionCost` is 0,
+so `structureUpgradeCost(0, level) = 0` — a capital upgrade is currently FREE,
+which contradicts D14 ("costs resources"). That is a separate balance oddity,
+recorded as an open risk; the button is correctly NOT blocked on it.
+
 ### The wire + the UI
 
 - `level` rides the `StructureRecord` → persists in the sector snapshot
@@ -349,6 +382,14 @@ the level factor at their catalogue read-sites.
   resources (Capital bank drains), the build phase runs via the deterministic
   pulse, level increments 1→2, the effective max HP rises; plus the foreign-owner
   silent no-op.
+- `tests/integration/sectorRoom/structureUpgradeCapital.test.ts` (must-fix #2) —
+  upgrading the CAPITAL completes (level 1→2, re-builds) AND a second damaged
+  structure still gets repair-funded DURING the capital's build (the grid is NOT
+  bricked). RED on the pre-fix code (the upgrade hangs forever).
+- `structureGridView.test.ts` "mid-upgrade Capital stays operational" — the
+  `structureToGridNode` projection: a mid-upgrade capital projects built/powered,
+  a fresh capital blueprint stays inert, and a mid-upgrade LEAF stays a dead-end
+  blueprint (the carve-out is capital-only).
 
 ### Netgate (WS-B4)
 

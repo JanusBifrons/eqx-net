@@ -665,9 +665,16 @@ export class StructureGridSubsystem {
     if (!canUpgradeStructure(rec.level)) return false; // at the cap
     const baseCost = getStructureKind(rec.kind).constructionCost;
     const cost = structureUpgradeCost(baseCost, rec.level);
-    // A zero-cost base kind (the pre-built Capital) still levels — its build
-    // phase completes on the first pulse (constructionProgress 0 >= cost 0). The
-    // upgrade is gated on `canUpgradeStructure`, not a non-zero cost.
+    // Review must-fix #2 (2026-06-20): the Capital's `constructionCost` is 0, so
+    // its upgrade `cost` is 0 — a BALANCE oddity (a free capital upgrade,
+    // contradicts D14 "costs resources"; recorded as a follow-up, NOT this fix).
+    // It does NOT mean the build "completes on the first pulse": `process-
+    // Construction` reaches the FUNDING gate (`findStorageRoute`) BEFORE the
+    // `constructionProgress >= constructionCost` completion check, so the upgrade
+    // only completes once the capital is routable as a funder. That funding is
+    // exactly why a mid-upgrade Capital must stay funding-capable + grid-
+    // traversable — see `findStorageRoute` + `structureToGridNode`. The upgrade
+    // is gated on `canUpgradeStructure`, not a non-zero cost.
     rec.isConstructed = false;
     rec.constructionProgress = 0;
     rec.constructionCost = cost;
@@ -679,10 +686,27 @@ export class StructureGridSubsystem {
     return true;
   }
 
-  /** Find a built Capital with minerals that can route to `targetId`. */
+  /** Find a Capital with minerals that can route to `targetId`.
+   *
+   *  Review must-fix #2 (2026-06-20, plan effervescent-umbrella): a Capital that
+   *  is MID-UPGRADE (`upgradeTargetLevel !== undefined`) STILL counts as a funder.
+   *  The Capital is the grid's ONLY mineral bank, and an Upgrade flips its
+   *  `isConstructed` false to run a visible re-build (`upgradeStructure`). If the
+   *  plain `!rec.isConstructed` exclusion stood, upgrading the Capital would brick
+   *  the ENTIRE grid: `findStorageRoute` would return null for EVERY blueprint
+   *  (including the capital itself), so `processConstruction` `continue`s before
+   *  the completion check — the capital's own upgrade NEVER completes (permanent
+   *  blueprint) AND every other structure's construction/upgrade/repair stalls for
+   *  the duration. So a mid-upgrade Capital remains funding-capable; it is an
+   *  already-operational bank being re-built, not a fresh blueprint. Its
+   *  grid-traversability as a route SOURCE is preserved by the matching
+   *  `structureToGridNode` projection (a mid-upgrade capital projects
+   *  `isConstructed: true` so `Grid.route` accepts it as source + relay). */
   private findStorageRoute(targetId: string): { capital: StructureRecord; route: readonly string[] } | null {
     for (const rec of this.hooks.registry.all()) {
-      if (rec.kind !== 'capital' || !rec.isConstructed || rec.minerals <= 0) continue;
+      if (rec.kind !== 'capital' || rec.minerals <= 0) continue;
+      const fundingCapable = rec.isConstructed || rec.upgradeTargetLevel !== undefined;
+      if (!fundingCapable) continue;
       const route = this.grid.route(rec.id, targetId);
       if (route) return { capital: rec, route };
     }
