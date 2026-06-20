@@ -149,15 +149,19 @@ so it unit-tests like `TransitOrchestrator`):
   → repair → deconstruction → connection flashes. `SectorRoom` runs the timer,
   rebuilds the `structures[]` slice, broadcasts `grid_pulse`, and severs on
   structure death via `evictSwarmEntity`.
-  - **WS-D (#12) — connectors return to IDLE after repair + per-edge MATERIAL.**
-    `processRepair` flashes (and spends) ONLY when `hpGain > 0` — a stalled /
-    zero-progress / full-HP repair no longer keeps the route lit forever (the
-    "connectors never return to idle after repair" bug). Each flow step now tags
-    its flashed edges with a `FlowMaterial` (`Connection.ts`, append-only:
-    `minerals` haul/reclaim, `repair` healing, `construction` building, `power`
-    reserved). `pulse()` returns `flashed: [aId, bId, FlowMaterial][]` (per-edge,
-    so a repair route + a haul route can light in the SAME pulse) plus a dominant
-    `material` for the back-compat single field.
+  - **WS-D (#12) — per-edge flow MATERIAL.** Each flow step now tags its flashed
+    edges with a `FlowMaterial` (`Connection.ts`, append-only: `minerals`
+    haul/reclaim, `repair` healing, `construction` building, `power` reserved).
+    `pulse()` returns `flashed: [aId, bId, FlowMaterial][]` (per-edge, so a repair
+    route + a haul route can light in the SAME pulse) plus a dominant `material`
+    for the back-compat single field. **Repair routes already drop to idle** — a
+    full-HP (`hp >= max`), unrouted, or dry-bank (`findStorageRoute` only returns
+    a capital with `minerals > 0`, plus the `spend <= 0` skip) repair `continue`s
+    before `flashRoute`, so `processRepair` only ever flashes when it genuinely
+    heals (`hpGain` is the min of two strictly-positive values). _(An earlier
+    `hpGain <= 0` guard was added here as a belt-and-braces lock but proved
+    UNREACHABLE given those upstream guards — removed as dead code; the material
+    tagging is the real deliverable.)_
 
 **Wire** — `SnapshotMessage.structures[]` (slim, low-cadence, same array ref per
 recipient, entityId-keyed → joins the swarm mirror for pose) +

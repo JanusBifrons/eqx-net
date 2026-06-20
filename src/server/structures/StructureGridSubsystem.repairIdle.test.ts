@@ -105,6 +105,24 @@ describe('StructureGridSubsystem — repair returns to idle + material tagging (
     expect(h.health.get(con)).toBe(50); // unchanged — no repair happened
   });
 
+  it('whenever processRepair reaches a damaged+routable structure it ALWAYS heals (hpGain > 0)', () => {
+    // The "idle after repair" behaviour is NOT owned by any per-edge hpGain<=0
+    // guard — the earlier guards (`hp >= max` skips full-HP; `findStorageRoute`
+    // only returns a capital with minerals > 0, and `spend <= 0` skips a dry
+    // bank) mean control only ever reaches the heal with hpGain strictly > 0.
+    // A 1-HP-below-max structure (the minimal heal) still makes positive
+    // progress AND flashes — locking that no zero-progress repair flash exists.
+    const { cap, con } = builtConnector(h);
+    const max = getStructureKind('connector').maxHealth;
+    h.health.set(con, max - 0.05); // a sliver below full → tiny but POSITIVE heal
+    expect(h.registry.get(cap)!.minerals).toBeGreaterThan(0); // routable bank
+    const result = h.pulse();
+    const edge = edgeIn(result.flashed, cap, con);
+    expect(edge, 'a damaged+routable structure flashes its repair route').not.toBeNull();
+    expect(edge![2]).toBe('repair');
+    expect(h.health.get(con)!).toBeGreaterThan(max - 0.05); // healed (hpGain > 0)
+  });
+
   it('a construction route is TAGGED "construction", a transfer route "minerals"', () => {
     // Construction: a fresh blueprint reachable from the capital flashes
     // 'construction' while building.

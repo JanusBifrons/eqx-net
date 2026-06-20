@@ -689,12 +689,13 @@ export class StructureGridSubsystem {
       const spend = Math.min(REPAIR_PULSE_AMOUNT, source.capital.minerals);
       if (spend <= 0) continue;
       const hpGain = Math.min(max - hp, spend / REPAIR_COST_PER_HP);
-      // WS-D (#12) — flash + spend ONLY when the repair actually heals. A stalled
-      // / zero-progress repair must NOT keep the route lit forever (the
-      // "connectors never return to idle after repair" bug). The route is tagged
-      // 'repair' so the client tints it green (healing), distinct from the orange
-      // mineral haul that ALSO routes from the same Capital.
-      if (hpGain <= 0) continue;
+      // WS-D (#12) — the stalled / zero-progress case is ALREADY handled by the
+      // guards above: `hp >= max` (nothing to heal) and `findStorageRoute`'s
+      // `minerals <= 0` filter / `spend <= 0` (nothing to spend) both `continue`
+      // before we get here, so `hpGain` is the min of two strictly-positive values
+      // and is always > 0 — an idle/stalled repair never reaches `flashRoute`. The
+      // route is tagged 'repair' so the client tints it green (healing), distinct
+      // from the orange mineral haul that ALSO routes from the same Capital.
       const actualSpend = hpGain * REPAIR_COST_PER_HP;
       source.capital.minerals -= actualSpend;
       this.hooks.setHealth(rec.id, hp + hpGain);
