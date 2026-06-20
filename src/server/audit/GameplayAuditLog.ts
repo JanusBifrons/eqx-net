@@ -60,6 +60,18 @@ export type AuditEvent =
        *  back-compat with older log readers. */
       reason?: 'timeout' | 'de-escalation' | 'base-razed';
     })
+  | (AuditEventBase & {
+      // WS-E #22 — a roaming squad re-routed AWAY from an active-combat sector
+      // (combat within the recent window). `squadId` identifies the pack; `from`
+      // is where it roamed from, `avoided` the combat sector it skipped, `to` the
+      // safe goal it picked instead (or `from` when it held because every live
+      // neighbour was in combat).
+      event: 'roam_avoid_combat';
+      squadId: string;
+      from: string;
+      avoided: string;
+      to: string;
+    })
   // ── Structures ──────────────────────────────────────────────────────
   | (AuditEventBase & { event: 'structure_placed'; owner: string; kind: string; x: number; y: number })
   | (AuditEventBase & { event: 'structure_removed'; owner: string; kind: string })

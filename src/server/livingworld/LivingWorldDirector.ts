@@ -35,7 +35,7 @@ import {
   enemyBotCountsBySector,
   type Rng,
 } from './population.js';
-import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
+import { getSector, getNeighbours, isEntrySector } from '../../core/galaxy/galaxy.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { BotCarry } from './botTypes.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
@@ -642,8 +642,16 @@ export class LivingWorldDirector {
    * so a roaming pack that drifts through a base-less player's sector does not
    * hunt them. Roam hops are real despawn→spawn pairs (`bot_transit_commit`),
    * never from-nowhere ingress, so they may legally enter interior sectors.
+   *
+   * WS-E #22 — roaming squads AVOID active-combat sectors. The roam-goal pick is
+   * given an `avoidCombat` predicate built from each room's `recentCombat()`
+   * (a non-null summary ⇒ combat within the ~5-min sliding window), so a neutral
+   * pack re-routes around a firefight; if every live neighbour is in combat the
+   * squad HOLDS at its current sector. An avoidance that changed the outcome is
+   * audit-logged (`roam_avoid_combat`).
    */
   private roamStep(now: number): void {
+    const avoidCombat = (sectorKey: string): boolean => this.sectorInRecentCombat(sectorKey);
     for (const sq of this.squadPool.all()) {
       if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
       const sched = this.squadRoamNextAtMs.get(sq.squadId);
@@ -651,12 +659,50 @@ export class LivingWorldDirector {
         // First sighting: dwell at the home edge before the first drift.
         this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
       } else if (now >= sched && this.squadGatheredAt(sq, sq.sectorKey)) {
-        sq.sectorKey = pickRoamGoal(this.rng, sq.sectorKey, this.sectorKeys);
+        const from = sq.sectorKey;
+        // Did we skip ANY live neighbour for being in combat? Compute it BEFORE
+        // the (single) RNG-consuming pick so we don't perturb the draw — the
+        // audit wants the name of a representative skipped sector.
+        const avoided = this.firstCombatNeighbour(from);
+        const goal = pickRoamGoal(this.rng, from, this.sectorKeys, avoidCombat);
+        sq.sectorKey = goal;
         this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+        // Audit a combat-driven re-route: a neighbour was skipped for combat and
+        // the squad picked elsewhere (or held at `from` because all were unsafe).
+        if (avoided !== null && goal !== avoided) {
+          auditEvent({
+            event: 'roam_avoid_combat',
+            sector: from,
+            squadId: sq.squadId,
+            from,
+            avoided,
+            to: goal,
+          });
+          serverLogEvent('roam_avoid_combat', { squadId: sq.squadId, from, avoided, to: goal });
+        }
       }
       // Always drift toward the current goal (no-op once gathered there).
       this.advanceMembersTowardGoal(sq);
     }
+  }
+
+  /** WS-E #22 — true iff `sectorKey`'s room reports combat within its recent
+   *  window (`recentCombat()` returns non-null). The room owns the ~5-min
+   *  sliding `RecentCombatLog`; the director just queries it for roam routing.
+   *  Off the 60 Hz loop (the ~1.5 s control tick). */
+  private sectorInRecentCombat(sectorKey: string): boolean {
+    return this.rooms.get(sectorKey)?.recentCombat?.() != null;
+  }
+
+  /** WS-E #22 — a representative LIVE neighbour of `from` that's in active combat
+   *  (for the `roam_avoid_combat` audit's `avoided` field), or null when none.
+   *  Order follows the galaxy graph adjacency so it's deterministic. Control-tick
+   *  cadence — off the 60 Hz loop. */
+  private firstCombatNeighbour(from: string): string | null {
+    for (const n of getNeighbours(from)) {
+      if (this.rooms.has(n.key) && this.sectorInRecentCombat(n.key)) return n.key;
+    }
+    return null;
   }
 
   /** True iff the squad has ≥1 active member, ALL its active members are in

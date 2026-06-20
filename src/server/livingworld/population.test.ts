@@ -359,6 +359,29 @@ describe('pickRoamGoal', () => {
     const b = pickRoamGoal(makeSeededRng(8), 'sol-prime', KEYS);
     expect(a).toBe(b);
   });
+
+  // ── WS-E #22: roaming squads avoid active-combat sectors ──
+  it('skips a neighbour flagged as active-combat (avoidCombat predicate)', () => {
+    // sol-prime's live neighbours here: vega-reach, cygnus-arm. Flag vega-reach
+    // as in-combat → the roamer must pick the safe cygnus-arm.
+    const live = ['sol-prime', 'vega-reach', 'cygnus-arm'];
+    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', live, (k) => k === 'vega-reach');
+    expect(goal).toBe('cygnus-arm');
+  });
+
+  it('holds (returns the source) when EVERY live neighbour is in combat', () => {
+    const live = ['sol-prime', 'vega-reach', 'cygnus-arm'];
+    // Both neighbours in combat ⇒ nowhere safe to roam ⇒ stay put.
+    const goal = pickRoamGoal(makeSeededRng(3), 'sol-prime', live, () => true);
+    expect(goal).toBe('sol-prime');
+  });
+
+  it('is unchanged when avoidCombat is omitted vs always-false (back-compat)', () => {
+    const live = ['sol-prime', 'vega-reach', 'cygnus-arm'];
+    const withUndef = pickRoamGoal(makeSeededRng(3), 'sol-prime', live);
+    const withFalse = pickRoamGoal(makeSeededRng(3), 'sol-prime', live, () => false);
+    expect(withUndef).toBe(withFalse);
+  });
 });
 
 describe('sectorEdgePose', () => {
