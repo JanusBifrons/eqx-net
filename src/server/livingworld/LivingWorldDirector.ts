@@ -345,6 +345,11 @@ export class LivingWorldDirector {
       // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
       // so a squad re-forms clustered at each sector it hops into.
       squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
+      // WS-E #15 — resolve inline hostility at the ARRIVAL instant so a member
+      // landing in its squad's target (base) sector is hostile in the same step
+      // as spawn — closing the warp-arrive race that left it neutral until the
+      // next ~1.5 s control-tick `markSquadHostileToFaction` pulse.
+      hostileSpecFor: (botId, sectorKey) => this.hostileSpecFor(botId, sectorKey),
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -1017,6 +1022,35 @@ export class LivingWorldDirector {
     this.incoming.clear(playerId, destSectorKey);
   }
 
+  /**
+   * WS-E #15 — build the optional `hostileToFaction` spawn spec for a bot landing
+   * in `sectorKey`. A member is marked hostile INLINE at spawn ONLY when its
+   * squad is on a wave (`targetFactionId` set) AND that wave targets THIS very
+   * sector (the squad has reached its goal). Resolved against the destination
+   * room (the only place that holds the faction's structure ids). Returns `{}`
+   * (spread to nothing) for a roaming/neutral spawn or an intermediate hop — so a
+   * member only flips hostile on landing AT the base, never mid-traverse.
+   *
+   * This closes the warp-arrive race: the old path spawned the member on a
+   * macrotask AFTER the control tick's `markSquadHostileToFaction` ran, so the
+   * arriving record didn't exist yet (`!rec` early-return) and the member stayed
+   * neutral until the next ~1.5 s pulse.
+   */
+  private hostileSpecFor(
+    botId: string,
+    sectorKey: string,
+  ): { hostileToFaction?: { playerId: string; structureIds: readonly string[] } } {
+    const squad = this.squadPool.squadOf(botId);
+    if (!squad || squad.targetFactionId === null) return {};
+    // Only mark hostile when the member is landing in the squad's TARGET sector
+    // (the base). An intermediate-hop arrival stays neutral until it reaches the
+    // base, matching the wave's `attack`-only hostility pulse.
+    if (squad.sectorKey !== sectorKey) return {};
+    const room = this.rooms.get(sectorKey);
+    if (!room || !room.factionHostility) return {};
+    return { hostileToFaction: room.factionHostility(squad.targetFactionId) };
+  }
+
   /** Step 1 of `tick`: warp-in respawning bots when their delay elapses
    *  AND shed recovery has cleared. */
   private respawnStep(now: number): void {
@@ -1052,6 +1086,10 @@ export class LivingWorldDirector {
         y: pose.y,
         vx: pose.vx,
         vy: pose.vy,
+        // WS-E #15 — if this (re)spawning member belongs to a squad that's
+        // ATTACKING the faction whose base lives in THIS sector, mark hostility
+        // INLINE at spawn so a combat respawn rejoins hostile, not neutral.
+        ...this.hostileSpecFor(rec.botId, sector),
       });
       if (ok) {
         rec.state = 'active';

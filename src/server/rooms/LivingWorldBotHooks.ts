@@ -42,6 +42,19 @@ export interface HostilityLedger {
   markHostile(droneId: string, playerId: string, tick: number): void;
 }
 
+/**
+ * Inline-hostility-at-spawn target (WS-E #15). When a squad member spawns/arrives
+ * into a sector where its squad is ATTACKING a faction, the director resolves the
+ * faction's `playerId` + owned `structureIds` and passes them here so `spawnBot`
+ * marks hostility in the SAME call that creates the record — closing the
+ * control-tick gap that left a just-arrived member rendering NEUTRAL until the
+ * next ~1.5 s wave pulse.
+ */
+export interface BotHostileTarget {
+  playerId: string;
+  structureIds: readonly string[];
+}
+
 /** Eviction sink — quietly remove a swarm entity. */
 export type EvictFn = (
   rec: SwarmEntityRecord,
@@ -87,6 +100,11 @@ export class LivingWorldBotHooks {
     vx?: number;
     vy?: number;
     health?: number;
+    /** WS-E #15 — mark this bot hostile to the faction (player + owned structures)
+     *  INLINE, in the same call that creates the record. Set by the director when
+     *  the bot's squad is ATTACKING the faction at this destination, so an
+     *  arriving member doesn't render NEUTRAL until the next control-tick pulse. */
+    hostileToFaction?: BotHostileTarget;
   }): boolean {
     const d = this.deps;
     const ok = d.swarmSpawner.spawnDrone({
@@ -116,6 +134,18 @@ export class LivingWorldBotHooks {
       x: spec.x,
       y: spec.y,
     });
+    // WS-E #15 — close the "renders neutral on arrival" race: the record now
+    // exists (spawnDrone succeeded), so the inline mark resolves `rec` and the
+    // owner's radar colours the bot hostile at warp-in time, not a control tick
+    // later. Re-pulsed each tick by the wave's `markSquadHostileToFaction` so it
+    // survives the 30 s FORGET_TICKS decay; this is the FIRST pulse.
+    if (spec.hostileToFaction) {
+      this.markBotHostileToFaction(
+        spec.botId,
+        spec.hostileToFaction.playerId,
+        spec.hostileToFaction.structureIds,
+      );
+    }
     return true;
   }
 

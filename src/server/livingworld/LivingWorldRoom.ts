@@ -86,9 +86,19 @@ export interface LivingWorldRoom {
     vx?: number;
     vy?: number;
     health?: number;
+    /** WS-E #15 — mark the bot hostile to this faction (player + owned
+     *  structures) INLINE at spawn, so an arriving member of an attacking squad
+     *  doesn't render NEUTRAL until the next control-tick pulse. Resolve via
+     *  {@link factionHostility}. */
+    hostileToFaction?: { playerId: string; structureIds: readonly string[] };
   }): boolean;
   despawnLivingWorldBot(botId: string): BotCarry | null;
   markBotHostile(botId: string): void;
+  /** WS-E #15 — resolve a faction's hostility members in THIS room: the owning
+   *  player id + every structure id the faction owns here. Mirrors the resolver
+   *  `markSquadHostileToFaction` uses, exposed so the director can pre-populate
+   *  `spawnLivingWorldBot`'s `hostileToFaction` at the destination room. */
+  factionHostility(factionId: string): { playerId: string; structureIds: readonly string[] };
   /** Roaming-formation (Phase 5): the live pose of a living-world bot in this
    *  room (SAB ground truth), or null if it has no slot here. The director reads
    *  the squad LEADER's pose to anchor the formation frame each control tick. */

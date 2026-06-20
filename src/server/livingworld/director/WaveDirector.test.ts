@@ -21,6 +21,7 @@ function fakeRoom(readiness: FactionBaseReadiness[]): LivingWorldRoom {
     spawnLivingWorldBot: () => true,
     despawnLivingWorldBot: () => null,
     markBotHostile: () => {},
+    factionHostility: (id: string) => ({ playerId: id, structureIds: [] }),
     factionBaseReadiness: () => readiness,
     setFactionUnderWave: () => {},
     markSquadHostileToFaction: () => {},

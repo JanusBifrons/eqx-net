@@ -41,6 +41,14 @@ export interface HunterBotWarpControllerOptions {
    *  anchor (a herd that hops together), via `squadEdgePose`. Absent ⇒ fall back
    *  to the per-bot random `sectorEdgePose` (back-compat for tests). */
   squadKeyOf?: (botId: string) => string;
+  /** WS-E #15 — resolve the optional inline-hostility spec for a bot ARRIVING in
+   *  `sectorKey` (set when its squad is attacking the faction whose base lives
+   *  there). Threaded into `spawnLivingWorldBot` so an arriving member is marked
+   *  hostile in the same step as spawn. Absent ⇒ never marks inline (back-compat). */
+  hostileSpecFor?: (
+    botId: string,
+    sectorKey: string,
+  ) => { hostileToFaction?: { playerId: string; structureIds: readonly string[] } };
 }
 
 export class HunterBotWarpController {
@@ -50,6 +58,10 @@ export class HunterBotWarpController {
   private readonly respawnDelayMs: number;
   private readonly hopTravelMs: number;
   private readonly squadKeyOf?: (botId: string) => string;
+  private readonly hostileSpecFor?: (
+    botId: string,
+    sectorKey: string,
+  ) => { hostileToFaction?: { playerId: string; structureIds: readonly string[] } };
   /** botId → pending arrival timer (the in-flight window). Cleared on
    *  `disposePending` (director stop) so no timer fires into a torn-down room. */
   private readonly pending = new Map<string, ReturnType<typeof setTimeout>>();
@@ -61,6 +73,7 @@ export class HunterBotWarpController {
     this.respawnDelayMs = opts.respawnDelayMs;
     this.hopTravelMs = opts.hopTravelMs;
     this.squadKeyOf = opts.squadKeyOf;
+    this.hostileSpecFor = opts.hostileSpecFor;
   }
 
   /** Spool-end half of the hop: pre-check the dest slot, despawn the bot from
@@ -114,6 +127,10 @@ export class HunterBotWarpController {
       vx: pose.vx,
       vy: pose.vy,
       health: carry.health,
+      // WS-E #15 — if this arrival lands in the squad's TARGET (base) sector,
+      // mark hostility INLINE so the just-spawned record is hostile in the same
+      // step, instead of neutral until the next ~1.5 s control-tick pulse.
+      ...(this.hostileSpecFor?.(rec.botId, to) ?? {}),
     });
     if (!ok) {
       rec.kind = carry.kind;
