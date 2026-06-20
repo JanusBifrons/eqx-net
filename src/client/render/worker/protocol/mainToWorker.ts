@@ -170,6 +170,18 @@ export interface SetLoadCurtainMsg {
 }
 
 /**
+ * Phase 4 WS-A1 — spectator/construction mode render-state toggle. When
+ * `active`, the renderer DETACHES the follow camera (`Camera.follow(null)`) so
+ * the world camera free-roams the sector (drag-pan + wheel/pinch zoom via the
+ * existing gameplay pointer path); `update()` stops re-issuing the local-ship
+ * follow each frame. `active:false` restores normal follow-the-ship behaviour.
+ */
+export interface SetSpectatorMsg {
+  type: 'SET_SPECTATOR';
+  active: boolean;
+}
+
+/**
  * Native pointer event, forwarded from the main thread because
  * `OffscreenCanvas` has no DOM event source in the worker (per
  * pixijs/pixijs#9132). The worker hand-rolled camera consumes these
@@ -284,6 +296,7 @@ export type MainToWorkerMsg =
   | SetCameraCenterMsg
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
+  | SetSpectatorMsg
   | SetDiagMarkersMsg
   | TriggerEffectMsg
   | SetEffectQualityMsg

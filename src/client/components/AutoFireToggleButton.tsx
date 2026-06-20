@@ -12,16 +12,18 @@ import { useTouchClickActivate } from './touchClickActivate';
  * (touch). Reads/writes the persisted `autoFireEnabled` Zustand flag.
  *
  * Hidden during the loading curtain (`useShouldRenderHud`) and while dead — same
- * lifecycle as the rest of the in-game HUD.
+ * lifecycle as the rest of the in-game HUD. Phase 4 WS-A1: also hidden while
+ * SPECTATING — a free-roam construction camera has no ship to fire (D4).
  */
 export function AutoFireToggleButton(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
+  const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const autoFireEnabled = useUIStore((s) => s.autoFireEnabled);
   const setAutoFireEnabled = useUIStore((s) => s.setAutoFireEnabled);
   const { touchActivate, clickActivate } = useTouchClickActivate();
 
-  if (!shouldRender || isDead) return null;
+  if (!shouldRender || isDead || spectating) return null;
 
   const toggle = (): void => setAutoFireEnabled(!autoFireEnabled);
 

@@ -378,6 +378,8 @@ function writeE2EDataset(
   el.dataset['predStats'] = JSON.stringify(gameClient.stats);
   // Combat state.
   const uiState = useUIStore.getState();
+  // Phase 4 WS-A1 — spectator/construction mode flag for the spectator E2E.
+  el.dataset['pilotMode'] = uiState.pilotMode;
   el.dataset['hullPct'] = String(uiState.hullPct);
   el.dataset['shieldPct'] = String(uiState.shieldPct);
   el.dataset['sectorAlert'] = uiState.sectorAlert ?? '';

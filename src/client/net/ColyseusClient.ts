@@ -95,6 +95,7 @@ import {
   type PendingPlacement,
   type ShipPose,
 } from '../structures/structurePlacementClient.js';
+import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
 
@@ -2203,7 +2204,15 @@ export class ColyseusGameClient {
       this._localSlotTarget = null;
       this.ghostManager.clearForShip(id);
       useUIStore.getState().setHullPct(0);
-      useUIStore.getState().setDead(true);
+      // Phase 4 WS-A1 (D3) — death transitions INSTANTLY into spectator (no
+      // death modal). The old blocking DeathOverlay path is removed; the player
+      // free-roams the sector as an invulnerable, un-networked camera with full
+      // construction. `isDead` is intentionally NOT set (it gated the modal);
+      // `pilotMode='spectator'` is the discrete flag the camera/input/build
+      // branches read. Remote interpolation keeps running so drones stay smooth.
+      if (shouldEnterSpectatorOnDeath(id, this.mirror.localPlayerId)) {
+        useUIStore.getState().setPilotMode('spectator');
+      }
       useUIStore.getState().setSectorAlert('SHIP DESTROYED');
       setTimeout(() => useUIStore.getState().setSectorAlert(null), 3000);
     } else {
@@ -2280,6 +2289,20 @@ export class ColyseusGameClient {
   respawnShip(): void {
     if (!this.room || !this.localDead) return;
     this.room.send('respawn', { type: 'respawn' });
+  }
+
+  /**
+   * Test-only (Phase 4 WS-A1) — drive the CLIENT-LOCAL death path for the local
+   * ship, exactly as a `destroy` event would (kill the body + mirror entry +
+   * flip into spectator). Spectator is client-local + un-networked (D5), so the
+   * spectator-mode E2E exercises the transition deterministically here instead
+   * of waiting out hostile-fire TTK. Exposed only via the DEV-gated
+   * `__eqxKillLocalShip` window hook in App.tsx; production tree-shakes the hook.
+   */
+  devKillLocalShip(): void {
+    const id = this.mirror.localPlayerId;
+    if (!id) return;
+    this.killEntity(id);
   }
 
   /**
@@ -3534,6 +3557,55 @@ export class ColyseusGameClient {
           this._swarmNearbyIds = nowNear;
           this._swarmNearbySwapScratch = oldActive;
         }
+      }
+    }
+
+    // Phase 4 WS-A1 — construction WITHOUT an active ship (spectator mode, D4).
+    // The placement-preview block above lives inside the local-ship branch and
+    // anchors the ghost AHEAD of the ship. After death there is NO local ship in
+    // `mirror.ships`, so that branch never runs — yet the spectator must still
+    // build. Set `pendingPlacementPreview` here from a zeroed placeholder pose;
+    // the renderer overrides x/y to the CAMERA CENTRE (free-roam) via the
+    // spectator centre-seed (`shouldCentreGhostOnActivate(..., spectator)`), so
+    // the blueprint follows where the player is looking. Reuses the same scratch
+    // (no per-frame alloc — invariant #14) + the same pending-ghost machinery.
+    const noLocalShip = !localId || !this.mirror.ships.has(localId);
+    if (noLocalShip && useUIStore.getState().pilotMode === 'spectator') {
+      const placementKind = useUIStore.getState().placementKind;
+      let allRenderable = true;
+      if (this._pendingPlacement) {
+        const structs = this.mirror.structures;
+        const sw = this.mirror.swarm;
+        if (structs && structs.size > 0) {
+          if (!sw) {
+            allRenderable = false;
+          } else {
+            for (const id of structs.keys()) {
+              if (!sw.has(id)) { allRenderable = false; break; }
+            }
+          }
+        }
+      }
+      // Zeroed placeholder ship — the renderer re-anchors the ghost to the
+      // camera centre in spectator, so the resolver's ahead-of-ship pose is a
+      // throwaway that's immediately overridden.
+      this._placementShipScratch.x = 0;
+      this._placementShipScratch.y = 0;
+      this._placementShipScratch.angle = 0;
+      const status = resolvePlacementPreviewStatus(
+        placementKind,
+        placementKind ? this._placementShipScratch : null,
+        this._pendingPlacement,
+        Date.now(),
+        this.mirror.structures?.size ?? 0,
+        allRenderable,
+        this._placementPreviewScratch,
+      );
+      if (status === 'active' || status === 'pending') {
+        this.mirror.pendingPlacementPreview = this._placementPreviewScratch;
+      } else {
+        if (status === 'cleared') this._pendingPlacement = null;
+        if (this.mirror.pendingPlacementPreview) this.mirror.pendingPlacementPreview = null;
       }
     }
 
@@ -4999,6 +5071,10 @@ export class ColyseusGameClient {
     this.localDead = false;
     this.diedAtMs = 0;
     useUIStore.getState().setDead(false);
+    // Phase 4 WS-A1 — a fresh GameSurface mount (new join / respawn-via-galaxy)
+    // builds a new client; reset the spectator flag so the next session starts
+    // piloting. (Spectator is client-local and never crosses a room boundary.)
+    useUIStore.getState().setPilotMode('pilot');
     this.keyboard = null;
     this.touchInput = null;
     // Phase 4 swift-otter — close the DC transport BEFORE the room leave

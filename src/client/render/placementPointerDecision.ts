@@ -78,11 +78,17 @@ export function decidePlacementPointer(
  * player then taps/drags to reposition (or just Confirms at centre). Fires once
  * per placement — only while no point has been chosen yet and the ghost isn't
  * the dim post-Confirm `pending` one.
+ *
+ * Phase 4 WS-A1 — in SPECTATOR/construction mode there is NO local ship to
+ * anchor the ahead-of-ship preview to, so the screen-centre seed is the ONLY
+ * sensible anchor regardless of device (desktop too): the free-roam camera IS
+ * the placement cursor. So `spectator` forces the centre seed even on desktop.
  */
 export function shouldCentreGhostOnActivate(
   isTouch: boolean,
   hasChosenPoint: boolean,
   isPending: boolean,
+  spectator = false,
 ): boolean {
-  return isTouch && !hasChosenPoint && !isPending;
+  return (isTouch || spectator) && !hasChosenPoint && !isPending;
 }

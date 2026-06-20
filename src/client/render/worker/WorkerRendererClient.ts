@@ -469,6 +469,15 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   /**
+   * Phase 4 WS-A1 — spectator/construction free-roam camera toggle. See
+   * `IRenderer.setSpectator`. Posts to the worker which forwards to its
+   * `PixiRenderer.setSpectator(active)` (detach follow + skip per-frame follow).
+   */
+  setSpectator(active: boolean): void {
+    this.post({ type: 'SET_SPECTATOR', active });
+  }
+
+  /**
    * Effects subsystem (plan `wiggly-puppy` M2): trigger a one-shot effect.
    * Production code rarely calls this directly — most triggers ride
    * `RenderMirror.pendingEffectTriggers` (drained renderer-side per

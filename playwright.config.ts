@@ -75,6 +75,8 @@ const FEATURE_SPECS: string[] = [
   '**/energy-bar.spec.ts',
   '**/entity-inspect.spec.ts',
   '**/galaxy-warp-map.spec.ts',
+  // Phase 4 WS-A1 — spectator / construction mode.
+  '**/spectator-mode.spec.ts',
   '**/respawn-cascade-input-routing.spec.ts',
   '**/drawer-galaxy.spec.ts',
   '**/drone-destruction.spec.ts',

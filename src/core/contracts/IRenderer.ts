@@ -769,6 +769,18 @@ export interface IRenderer {
    */
   setLoadCurtain(active: boolean): void;
   /**
+   * Phase 4 WS-A1 (Spectator / Construction mode) — toggle the free-roam
+   * camera. When `active`, the renderer DETACHES the follow camera
+   * (`Camera.follow(null)`) and stops re-issuing the local-ship follow each
+   * `update()` frame, so the world camera free-roams the sector (drag-pan +
+   * wheel/pinch zoom via the existing gameplay pointer path — no new event
+   * routing). `active:false` restores normal follow-the-local-ship behaviour.
+   *
+   * Spatial camera state stays inside the renderer's `Camera`; only the
+   * discrete `pilotMode` enum is mirrored in the store (Invariant #2).
+   */
+  setSpectator(active: boolean): void;
+  /**
    * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
    * continuous emitters + in-flight bursts on sector handoff. Called
    * from `ColyseusClient.resetPredictionState()`'s sibling-line in the

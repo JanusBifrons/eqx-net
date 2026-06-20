@@ -206,6 +206,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'SET_SPECTATOR': {
+        if (!renderer) return;
+        renderer.setSpectator(msg.active);
+        break;
+      }
+
       case 'SET_VISIBLE': {
         galaxyLayer?.setVisible(msg.visible);
         break;
