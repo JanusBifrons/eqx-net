@@ -148,6 +148,20 @@ export class Camera {
   // Follow state
   private followTarget: { x: number; y: number } | null = null;
 
+  // One-shot glide state (Phase 4 WS-A2 smooth ship-switch). When active, the
+  // camera centre eases from `glideFromX/Y` to `glideToX/Y` over `glideDurMs`,
+  // OVERRIDING the follow target each tick so a high-`followLerpFactor` follow
+  // (production gameplay = 1, i.e. instant snap) cannot yank the view to the new
+  // ship mid-transition. It is driven by `glideElapsedMs` (NOT pose
+  // interpolation), so it never trips the snapshot teleport guard (Risk #4).
+  private gliding = false;
+  private glideFromX = 0;
+  private glideFromY = 0;
+  private glideToX = 0;
+  private glideToY = 0;
+  private glideDurMs = 1;
+  private glideElapsedMs = 0;
+
   // Screen size (for follow + moveCenter math)
   private screenW = 0;
   private screenH = 0;
@@ -210,6 +224,37 @@ export class Camera {
    */
   follow(target: { x: number; y: number } | null): void {
     this.followTarget = target;
+  }
+
+  /**
+   * Phase 4 WS-A2 — kick off a ONE-SHOT eased camera glide from the current
+   * screen-centre world point to `(worldX, worldY)` over `durationMs`. Used by
+   * the smooth ship-switch: the camera lerps from the old view to the new ship
+   * instead of snapping. While gliding, `tick()` ignores the follow target (so a
+   * `followLerpFactor: 1` follow can't snap mid-glide) and drives the centre by
+   * the eased fraction. It is driven by elapsed wall-clock ms — INDEPENDENT of
+   * pose interpolation — so it never trips the snapshot teleport guard. Caller
+   * passes the destination in the camera's own (pixi-down) world space.
+   */
+  glideTo(worldX: number, worldY: number, durationMs: number): void {
+    const c = this.center;
+    this.glideFromX = c.x;
+    this.glideFromY = c.y;
+    this.glideToX = worldX;
+    this.glideToY = worldY;
+    this.glideDurMs = Math.max(1, durationMs);
+    this.glideElapsedMs = 0;
+    this.gliding = true;
+  }
+
+  /** True while a one-shot glide is in progress. */
+  isGliding(): boolean {
+    return this.gliding;
+  }
+
+  /** Abort an in-flight glide and hand the camera back to follow/pan. */
+  cancelGlide(): void {
+    this.gliding = false;
   }
 
   // ---------- Pointer / wheel event consumption ----------
@@ -364,6 +409,22 @@ export class Camera {
     // Momentum coasts only when no pointer is active.
     if (!this.drag.isPanning() && this.pointers.size === 0) {
       this.momentum.step(this.target);
+    }
+
+    // One-shot glide (WS-A2) — OVERRIDES follow while active. Eased (ease-out
+    // cubic) fraction from the captured start point to the destination, driven
+    // by elapsed ms (framerate-independent). On completion it snaps exactly to
+    // the destination and clears, handing the camera back to follow.
+    if (this.gliding && this.screenW > 0 && this.screenH > 0) {
+      this.glideElapsedMs += dtMs;
+      const t = Math.min(1, this.glideElapsedMs / this.glideDurMs);
+      const e = 1 - Math.pow(1 - t, 3); // ease-out cubic
+      const cx = this.glideFromX + (this.glideToX - this.glideFromX) * e;
+      const cy = this.glideFromY + (this.glideToY - this.glideFromY) * e;
+      this.target.x = this.screenW / 2 - cx * this.target.scale.x;
+      this.target.y = this.screenH / 2 - cy * this.target.scale.y;
+      if (t >= 1) this.gliding = false;
+      return;
     }
 
     // Follow — lerp toward target, regardless of momentum state.

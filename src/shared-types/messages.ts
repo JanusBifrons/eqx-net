@@ -20,6 +20,7 @@ export {
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  PilotShipSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -32,6 +33,7 @@ export type {
   PlaceStructureMessage,
   RemoveStructureMessage,
   StructureActionMessage,
+  PilotShipMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 

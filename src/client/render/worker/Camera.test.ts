@@ -356,3 +356,73 @@ describe('Camera — moveCenter / screenToWorld', () => {
     expect(y).toBeCloseTo(20, 5);
   });
 });
+
+describe('Camera — one-shot glide (Phase 4 WS-A2 smooth ship-switch)', () => {
+  it('glideTo eases a world point to screen-centre over the duration, then clears', () => {
+    const target = makeTarget();
+    const cam = new Camera(target, { followLerpFactor: 1 });
+    cam.setScreenSize(800, 600);
+
+    // Camera starts centred on world (0,0): target = screenCentre - 0 = (400,300).
+    cam.moveCenter(0, 0);
+    expect(cam.center.x).toBeCloseTo(0, 5);
+    expect(cam.center.y).toBeCloseTo(0, 5);
+
+    // Glide the view to world (1000, 0) over 200 ms.
+    cam.glideTo(1000, 0, 200);
+    expect(cam.isGliding()).toBe(true);
+
+    // Half-way through the glide the centre is NOT yet at the target and NOT
+    // still at the start — it's an intermediate point (asserts a LERP, not a
+    // jump). With an ease curve the midpoint isn't exactly 500, but it must be
+    // strictly between the endpoints.
+    cam.tick(100);
+    const mid = cam.center.x;
+    expect(mid).toBeGreaterThan(0);
+    expect(mid).toBeLessThan(1000);
+
+    // Drive past the duration — the glide completes AT the target and clears.
+    cam.tick(100);
+    cam.tick(16);
+    expect(cam.center.x).toBeCloseTo(1000, 3);
+    expect(cam.center.y).toBeCloseTo(0, 3);
+    expect(cam.isGliding()).toBe(false);
+  });
+
+  it('an active glide OVERRIDES the follow target (so a high-lerp follow cannot snap mid-glide)', () => {
+    const target = makeTarget();
+    // followLerpFactor:1 == the production gameplay camera (instant snap each tick).
+    const cam = new Camera(target, { followLerpFactor: 1 });
+    cam.setScreenSize(800, 600);
+    cam.moveCenter(0, 0);
+
+    // The follow target is the NEW ship at (1000,0); a glide to the same point.
+    cam.follow({ x: 1000, y: 0 });
+    cam.glideTo(1000, 0, 200);
+
+    // One tick: follow alone (lerp 1) would SNAP the centre to 1000 immediately.
+    // The glide must override → the centre is an intermediate point, not 1000.
+    cam.tick(50);
+    expect(cam.center.x).toBeLessThan(1000);
+    expect(cam.center.x).toBeGreaterThan(0);
+
+    // Once the glide finishes, follow resumes (the centre tracks the target).
+    cam.tick(160);
+    cam.tick(16);
+    expect(cam.isGliding()).toBe(false);
+    cam.tick(16);
+    expect(cam.center.x).toBeCloseTo(1000, 3);
+  });
+
+  it('cancelGlide stops the ease and hands the camera back to follow/pan', () => {
+    const target = makeTarget();
+    const cam = new Camera(target, { followLerpFactor: 1 });
+    cam.setScreenSize(800, 600);
+    cam.moveCenter(0, 0);
+    cam.glideTo(1000, 0, 400);
+    cam.tick(50);
+    expect(cam.isGliding()).toBe(true);
+    cam.cancelGlide();
+    expect(cam.isGliding()).toBe(false);
+  });
+});

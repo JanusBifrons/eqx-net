@@ -101,6 +101,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
     tickInbound: fake.tickInbound,
     updateMirror: fake.updateMirror,
     sendClientReady: fake.sendClientReady,
+    consumePendingCameraGlide: () => null,
     mirror: {
       localPlayerId: 'ship-1',
       ships: new Map(),
@@ -111,6 +112,7 @@ function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { c
   } as unknown as ColyseusGameClient;
   const mockRenderer = {
     update: fake.rendererUpdate,
+    glideCameraTo: vi.fn(),
     getFeedback: () => ({ firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0, selectedPickId: null, selectedPickKind: null }),
   } as unknown as IRenderer;
   const el = document.createElement('div');

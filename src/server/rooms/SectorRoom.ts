@@ -143,6 +143,7 @@ import {
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  PilotShipSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -2060,6 +2061,26 @@ export class SectorRoom extends Room<SectorState> {
       // Refresh the slice so the button state + web update on the next snapshot
       // without waiting for the 1 Hz pulse.
       this.rebuildStructuresSlice();
+    });
+
+    // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
+    // The player (a spectator after death, or piloting another hull) reclaims
+    // one of their OWN lingering hulls parked in THIS sector and resumes control
+    // IN-ROOM (no leave/rejoin → no spool, no curtain). Owner-gated: the request
+    // is dropped unless `shipId` is a lingering hull (isActive=false) owned by
+    // the requester and present in this sector. A foreign / active / unknown id
+    // is a silent no-op. The reclaim reuses the lingering-hull reactivation
+    // machinery + `RosterPersistence.markActive` and preserves the rekey/abandon
+    // identity invariant. The fresh `welcome` re-anchors the client's prediction.
+    this.onMessage('pilot_ship', (client: Client, raw: unknown) => {
+      const parsed = PilotShipSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed pilot_ship');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.reclaimLingeringHull(client, playerId, parsed.data.shipId);
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
@@ -4596,6 +4617,159 @@ export class SectorRoom extends Room<SectorState> {
     },
   ): void {
     this.rosterPersistence.markLinger(shipInstanceId, pose);
+  }
+
+  // ── Phase 4 WS-A2 — same-sector instant pilot swap ──────────────────────────
+
+  /**
+   * Displace the player's CURRENT active hull into a lingering hull, IN-ROOM —
+   * the inverse partner of `reclaimLingeringHull`. Mirrors the onJoin
+   * fresh-spawn-displaces branch EXACTLY (the rekey/abandon identity invariant):
+   * REKEY the worker body `playerId` → `linger-<shipInstanceId>`, move the slot
+   * from `playerToSlot`/`slotToPlayer` into `lingeringSlots`, freeze the roster
+   * row at the LIVE SAB pose (`markLinger`), record a persist-forever ownerless
+   * marker (`null`), clear `playerToActiveShipInstance`, and flip `isActive=false`
+   * so the snapshot loop renders it as a parked hull. The schema entry STAYS
+   * (keyed by shipInstanceId) so the displaced hull keeps broadcasting. No-op when
+   * the player has no live active hull (the spectator case).
+   */
+  private displaceActiveHullToLingering(playerId: string): void {
+    const ship = this.getActiveShip(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) return;
+    const shipInstanceId = ship.shipInstanceId;
+    const b = slotBase(slot);
+    // Freeze the roster row + lingering pose cache at the LIVE SAB pose so a
+    // later reclaim / restore lands at where the hull actually is.
+    const livePose = {
+      x:      this.sabF32[b + SLOT_X_OFF]!,
+      y:      this.sabF32[b + SLOT_Y_OFF]!,
+      vx:     this.sabF32[b + SLOT_VX_OFF]!,
+      vy:     this.sabF32[b + SLOT_VY_OFF]!,
+      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+    this.markRosterLinger(shipInstanceId, {
+      ...livePose,
+      health: ship.health,
+      lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
+    });
+    this.lingeringPoseCache.set(shipInstanceId, { ...livePose });
+    // Slot moves from the active maps to the lingering map; the worker body is
+    // rekeyed so its per-tick SAB write keeps landing in the (now-lingering) slot
+    // (the 2026-05-13 orphan-body push bug — see the onJoin displace branch).
+    this.lingeringSlots.set(shipInstanceId, slot);
+    this.playerToSlot.delete(playerId);
+    this.slotToPlayer.delete(slot);
+    this.ownerlessShips.set(shipInstanceId, null);
+    this.playerToActiveShipInstance.delete(playerId);
+    ship.isActive = false;
+    this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
+    serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+  }
+
+  /**
+   * Reclaim one of the player's OWN lingering hulls parked in THIS sector and
+   * make it their active hull — the server half of the in-world Pilot action
+   * (Phase 4 WS-A2). SAME-SECTOR INSTANT swap: no leave/rejoin, no spool, no
+   * curtain. The hull keeps its LIVE pose; only its visibility + the session
+   * binding change.
+   *
+   * Owner-gated by construction:
+   *   - the target must be a `lingeringSlots` entry (a DISPLACED / combat-death /
+   *     boot-reconstructed lingering hull) present in THIS room,
+   *   - whose schema entry is owned by `playerId` and `isActive=false` (a hull
+   *     someone else is piloting is `isActive=true` and never in `lingeringSlots`,
+   *     so a request for a foreign / active hull is dropped here),
+   *   - the room must be a galaxy room (engineering rooms have no roster).
+   *
+   * On success: the player's current active hull (if any) is displaced first,
+   * then the target body is rekeyed `linger-<id>` → `playerId`, its slot moves
+   * back into the active maps, the lingering bookkeeping is torn down, the roster
+   * row is `markActive`'d at the live pose, and a fresh `welcome` re-anchors the
+   * client (which then clears spectator + smooth-lerps the camera + re-enables
+   * self-prediction). Routed through the unified `pendingJoin` handshake so
+   * `client_ready` → `warp_in` → arrivalTick → `isActive=true` exactly as a
+   * rebind does (no second activation path — Invariant #12).
+   */
+  private reclaimLingeringHull(client: Client, playerId: string, shipId: string): void {
+    if (this.sectorKey === null) return; // engineering rooms have no roster
+    const target = this.state.ships.get(shipId);
+    const slot = this.lingeringSlots.get(shipId);
+    // Validate: a lingering hull (isActive=false), present in this room, owned
+    // by the requester, alive. A foreign / active / unknown id falls through.
+    if (target === undefined || slot === undefined) return;
+    if (target.playerId !== playerId || target.isActive || !target.alive) return;
+    if (target.shipInstanceId !== shipId || shipId === '') return;
+    // Defence-in-depth: the roster row must be owned by this player too.
+    const rec = getPlayerShipStore().get(shipId);
+    if (rec === null || rec.playerId !== playerId) return;
+
+    // Displace the player's current active hull (if they were piloting one) into
+    // a lingering hull, so they don't keep two active hulls.
+    this.displaceActiveHullToLingering(playerId);
+
+    // Reclaim the target's slot from the lingering maps back into the active maps.
+    const b = slotBase(slot);
+    const livePose = {
+      x:      this.sabF32[b + SLOT_X_OFF]!,
+      y:      this.sabF32[b + SLOT_Y_OFF]!,
+      vx:     this.sabF32[b + SLOT_VX_OFF]!,
+      vy:     this.sabF32[b + SLOT_VY_OFF]!,
+      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+    this.lingeringSlots.delete(shipId);
+    this.lingeringPoseCache.delete(shipId);
+    const ownerlessTimer = this.ownerlessShips.get(shipId);
+    if (ownerlessTimer) clearTimeout(ownerlessTimer); // R2.26: persist-forever marker is null
+    this.ownerlessShips.delete(shipId);
+    this.playerToSlot.set(playerId, slot);
+    this.slotToPlayer.set(slot, playerId);
+    this.playerToActiveShipInstance.set(playerId, shipId);
+    // REKEY the worker body `linger-<id>` → `playerId` so input + the per-tick
+    // SAB write resume under the player's key (the displace inverse).
+    this.postToWorker({ type: 'REKEY_SHIP', oldId: `linger-${shipId}`, newId: playerId });
+    // Seed the pose cache + roster so any synchronous reader + a later restore
+    // see the live pose (NOT a stale abandon pose — WS-A2 "lands at its live pose").
+    this.shipPoseCache.set(playerId, { ...livePose });
+    this.lastFireClientTick.set(playerId, rec.lastFireClientTick);
+    // `markActive` the roster row at the live pose (the design's "reuse the
+    // markActive machinery"). bind() with the preferred shipId hits markActive.
+    this.rosterPersistence.bind(playerId, this.playerToUser.get(playerId) ?? rec.userId, target.kind, {
+      ...livePose,
+      health: target.health,
+      lastFireClientTick: rec.lastFireClientTick,
+    }, shipId);
+    this.shipPoseCache.set(playerId, { ...livePose });
+
+    // Re-drive the unified join handshake so visibility flips through the SAME
+    // `client_ready` → `warp_in` → arrivalTick path a rebind uses (no second
+    // activation path). The hull stays at its live pose (no SAB reset).
+    const tick = Atomics.load(this.sabU32, TICK_IDX);
+    target.isActive = false;
+    const welcome: WelcomeMessage = {
+      type: 'welcome',
+      playerId,
+      serverTick: tick,
+      sectorKey: this.sectorKey,
+      shipInstanceId: shipId,
+    };
+    client.send('welcome', welcome);
+    this.pendingJoin.set(playerId, {
+      joinTick: tick,
+      watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
+      arrivalTick: null,
+      spawnX: livePose.x,
+      spawnY: livePose.y,
+      sessionId: client.sessionId,
+    });
+    this.forceBroadcastUntilTick = tick + JOIN_BROADCAST_GRACE_TICKS;
+    this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: livePose.x, y: livePose.y });
+    serverLogEvent('pilot_swap_reclaimed', { playerId, shipInstanceId: shipId, sectorKey: this.sectorKey, x: livePose.x, y: livePose.y });
+    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
+    logger.info({ playerId, shipInstanceId: shipId, sectorKey: this.sectorKey }, 'pilot swap — reclaimed lingering hull in-room');
   }
 
   /**

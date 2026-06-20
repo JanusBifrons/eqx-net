@@ -212,6 +212,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'GLIDE_CAMERA': {
+        if (!renderer) return;
+        renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs);
+        break;
+      }
+
       case 'SET_VISIBLE': {
         galaxyLayer?.setVisible(msg.visible);
         break;

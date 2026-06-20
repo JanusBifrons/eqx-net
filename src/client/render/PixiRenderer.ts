@@ -2246,6 +2246,17 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
+   * Phase 4 WS-A2 — one-shot eased camera glide to a GAME-space point. The
+   * camera's `Camera` operates in pixi-world space (Y-down, `pixiY = -gameY`),
+   * so negate Y. See `IRenderer.glideCameraTo`. Driven by elapsed ms inside
+   * `Camera.tick` (independent of pose interpolation → no teleport-guard trip).
+   */
+  glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
+    if (!this.initialized) return;
+    this.camera.glideTo(gameX, -gameY, durationMs);
+  }
+
+  /**
    * Test-only (Phase 4 WS-A1) — the world point currently at screen centre, in
    * GAME space (Y-up). The renderer's `Camera.center` is in pixi-world space
    * (Y-down, `pixiY = -gameY`), so negate Y. Read by the spectator E2E's

@@ -15,6 +15,12 @@ import { selectionStats, applySelectionStats, resetSelectionStats } from '../net
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 
+// Phase 4 WS-A2 — observe the Pilot action send without a live client.
+const sendPilotShip = vi.fn();
+vi.mock('../ships/shipActionsClient.js', () => ({
+  sendPilotShip: (id: string) => sendPilotShip(id),
+}));
+
 /** Flexible fake client — seed any mirror maps the panel reads (swarm /
  *  lingeringShips / structures). */
 function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
@@ -252,6 +258,36 @@ describe('EntityStatsPanel', () => {
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Nova');
     expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('heavy');
     expect(screen.queryByText('HULL')).toBeNull();
+  });
+
+  // ── Phase 4 WS-A2 — the in-world Pilot action on an OWNED lingering hull. ──
+  it("shows a Pilot action on the LOCAL player's own lingering hull and sends pilot_ship on click", () => {
+    sendPilotShip.mockClear();
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        lingeringShips: new Map([['ship-mine', { ownerPlayerId: 'me', displayName: 'My Hull', kind: 'fighter', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selectedEntityId: 'ship-mine', selectedEntityKind: 'lingering' });
+    render(<EntityStatsPanel />);
+    const btn = screen.getByTestId('ship-action-pilot');
+    expect(btn).toBeInTheDocument();
+    fireEvent.click(btn);
+    // The selection id IS the shipInstanceId (the lingeringShips map key).
+    expect(sendPilotShip).toHaveBeenCalledWith('ship-mine');
+  });
+
+  it("does NOT show a Pilot action on ANOTHER player's lingering hull", () => {
+    setGameClient(
+      fakeClient({
+        localPlayerId: 'me',
+        lingeringShips: new Map([['ship-theirs', { ownerPlayerId: 'someone-else', displayName: 'Their Hull', kind: 'fighter', x: 0, y: 0 }]]),
+      }),
+    );
+    useUIStore.setState({ selectedEntityId: 'ship-theirs', selectedEntityKind: 'lingering' });
+    render(<EntityStatsPanel />);
+    expect(screen.queryByTestId('ship-action-pilot')).toBeNull();
   });
 
   // ── Owner readout — identify WHOSE base a structure is (other players'

@@ -152,6 +152,21 @@ export const StructureActionSchema = z
   })
   .strict();
 
+/** Client → server (Phase 4 WS-A2): "pilot the OWNED in-sector ship with this
+ *  shipInstanceId". The SAME-SECTOR INSTANT swap — the player (a spectator after
+ *  death, or piloting another hull) reclaims one of their own lingering hulls
+ *  parked in this sector and resumes control of it AT ITS LIVE POSE, with no
+ *  spool / curtain. Owner-gated server-side: a shipId that isn't a lingering hull
+ *  owned by the requester (or one piloted by someone else) is dropped. The
+ *  camera smooth-lerp + self-prediction re-anchor happen client-side off the
+ *  fresh `welcome` the server sends on success. Strict. */
+export const PilotShipSchema = z
+  .object({
+    type: z.literal('pilot_ship'),
+    shipId: z.string().min(1).max(64),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -162,6 +177,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  PilotShipSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 ]);
@@ -175,4 +191,5 @@ export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
+export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

@@ -478,6 +478,15 @@ export class WorkerRendererClient implements IRenderer {
   }
 
   /**
+   * Phase 4 WS-A2 — one-shot eased camera glide to a GAME-space point. See
+   * `IRenderer.glideCameraTo`. Posts to the worker which forwards to its
+   * `PixiRenderer.glideCameraTo` → `Camera.glideTo` (the smooth ship-switch).
+   */
+  glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
+    this.post({ type: 'GLIDE_CAMERA', gameX, gameY, durationMs });
+  }
+
+  /**
    * Effects subsystem (plan `wiggly-puppy` M2): trigger a one-shot effect.
    * Production code rarely calls this directly — most triggers ride
    * `RenderMirror.pendingEffectTriggers` (drained renderer-side per

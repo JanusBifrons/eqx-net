@@ -466,6 +466,51 @@ export class ColyseusGameClient {
       baselineStructureCount: this.mirror.structures?.size ?? 0,
     };
   }
+
+  /**
+   * Phase 4 WS-A2 — same-sector instant pilot swap. Sends `pilot_ship { shipId }`
+   * over the LIVE room (no leave/rejoin → no spool, no curtain), then primes the
+   * client-side transition: despawn the local predWorld body so the fresh
+   * `welcome` re-anchors self-prediction at the new authoritative pose (one
+   * ownership site — same discipline as `resetPredictionState`), and stash the
+   * target shipId so the welcome handler clears spectator + arms the camera glide.
+   * Returns true when the swap was dispatched (false when there's no live room).
+   */
+  pilotInSectorShip(shipId: string): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('pilot_ship', { type: 'pilot_ship', shipId });
+    this._pendingPilotSwapShipId = shipId;
+    // Despawn the local predWorld body so the welcome's `tryInitPredWorld`
+    // reseeds it at the new ship's AUTHORITATIVE pose (the spectator case has
+    // none; the switch-from-another-hull case must drop the OLD body). The
+    // `welcome` handler nulls + rebuilds the Reconciler via tryInitPredWorld.
+    const localId = this.mirror.localPlayerId;
+    if (localId && this.predWorld?.hasShip(localId)) {
+      this.predWorld.despawnShip(localId);
+      this.reconciler = null;
+    }
+    this.localDead = false;
+    logEvent('pilot_swap_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-A2 — one-shot read of the pending pilot-swap camera glide target.
+   * Returns the NEW local ship's GAME-space pose ONCE the welcome has landed AND
+   * the new pose is in the mirror, then clears the flag; null otherwise. The RAF
+   * loop calls this each frame and, on a non-null return, drives the renderer's
+   * `glideCameraTo` (the smooth ship-switch). Driven off the mirror pose, not
+   * pose interpolation — independent of the snapshot teleport guard (Risk #4).
+   */
+  consumePendingCameraGlide(): { x: number; y: number } | null {
+    if (!this._pilotSwapGlidePending) return null;
+    const localId = this.mirror.localPlayerId;
+    const ship = localId ? this.mirror.ships.get(localId) : undefined;
+    if (!ship) return null; // wait until the new pose is mirrored
+    this._pilotSwapGlidePending = false;
+    return { x: ship.x, y: ship.y };
+  }
+
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
   private lastSnapshotPos: { x: number; y: number } | null = null;
@@ -925,6 +970,16 @@ export class ColyseusGameClient {
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
 
+  /** Phase 4 WS-A2 — the shipInstanceId of an in-flight SAME-SECTOR pilot swap
+   *  (set by `pilotInSectorShip`, matched + cleared in the `welcome` handler).
+   *  Lets the generic welcome path distinguish a pilot-swap re-anchor from a
+   *  fresh join/transit so it can clear spectator + arm the camera glide. */
+  private _pendingPilotSwapShipId: string | null = null;
+  /** Phase 4 WS-A2 — armed by the welcome handler when a pilot swap lands; the
+   *  RAF loop reads `consumePendingCameraGlide()` to fire the ONE-SHOT camera
+   *  glide to the new ship's pose once it's known (one-shot, then cleared). */
+  private _pilotSwapGlidePending = false;
+
   /** Predicted energy pool for the local ship (weapons/energy/AI overhaul
    *  §3.2). Driven entirely by the player's OWN fire/boost input, so it's
    *  predictable like position: regen + boost drain in `tickPhysics`, fire
@@ -1254,6 +1309,22 @@ export class ColyseusGameClient {
             break;
           }
         }
+      }
+
+      // Phase 4 WS-A2 — a SAME-SECTOR pilot swap re-anchors via this same
+      // welcome path. When the welcome's shipInstanceId matches the swap we
+      // requested, this is a successful in-room reclaim: leave spectator
+      // (re-enable pilot input + self-prediction) and ARM the one-shot camera
+      // glide to the new ship (fired by the RAF loop once its pose is mirrored).
+      if (
+        this._pendingPilotSwapShipId !== null &&
+        msg.shipInstanceId !== '' &&
+        msg.shipInstanceId === this._pendingPilotSwapShipId
+      ) {
+        this._pendingPilotSwapShipId = null;
+        this._pilotSwapGlidePending = true;
+        useUIStore.getState().setPilotMode('pilot');
+        logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
       }
 
       // If state already arrived, bootstrap the prediction world now.

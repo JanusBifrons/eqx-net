@@ -4,11 +4,13 @@ import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import CancelIcon from '@mui/icons-material/Cancel';
 import HubIcon from '@mui/icons-material/Hub';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
+import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import { useUIStore } from '../state/store';
 import { selectionStats } from '../net/selectionStats';
 import { toSelectWire } from '../net/selectionClient';
 import { getGameClient } from '../net/clientSingleton';
 import { sendStructureAction } from '../structures/structureActionsClient';
+import { sendPilotShip } from '../ships/shipActionsClient';
 import { hullColor } from './ShieldHullBar';
 import { getStructureKind } from '@shared-types/structureKinds';
 import type { PickedEntityKind } from '../render/pickEntity';
@@ -79,6 +81,11 @@ interface PanelData {
   isOwn?: boolean;
   isDeconstructing?: boolean;
   isConnector?: boolean;
+  /** Phase 4 WS-A2 — set for an OWNED in-sector lingering hull (the local
+   *  player's own parked ship). Drives the in-world "Pilot" action; the value is
+   *  the shipInstanceId to `pilot_ship`. Absent for another player's hull / a
+   *  hull the local player can't reclaim. */
+  pilotShipId?: string;
 }
 
 export function EntityStatsPanel(): JSX.Element | null {
@@ -209,6 +216,24 @@ export function EntityStatsPanel(): JSX.Element | null {
           )}
         </Box>
       )}
+      {data.pilotShipId !== undefined && (
+        // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
+        // lingering hull. Same-sector instant swap (no spool/curtain); the camera
+        // smooth-lerps to the new ship. The panel root is pointerEvents:none, so
+        // this row re-enables pointers.
+        <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
+          <Tooltip title="Pilot this ship (instant in-sector swap)">
+            <IconButton
+              data-testid="ship-action-pilot"
+              size="small"
+              sx={ACTION_BTN_SX}
+              onClick={() => sendPilotShip(data.pilotShipId!)}
+            >
+              <FlightTakeoffIcon sx={ICON_SX} />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      )}
     </Box>
   );
 }
@@ -332,13 +357,18 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
   if (kind === 'lingering') {
     const l = client.mirror.lingeringShips?.get(id);
     if (!l) return null;
-    return {
+    const data: PanelData = {
       name: l.displayName || 'Abandoned hull',
       hpPct: 0,
       shieldPct: null,
       noHull: true,
       infoLine: `${l.kind ?? 'ship'}`,
     };
+    // WS-A2 — a lingering hull the LOCAL player owns is reclaimable via the
+    // in-world Pilot action. The selection id IS the shipInstanceId (the
+    // lingeringShips map key), which is exactly what `pilot_ship` needs.
+    if (l.ownerPlayerId === client.mirror.localPlayerId) data.pilotShipId = id;
+    return data;
   }
   return null;
 }

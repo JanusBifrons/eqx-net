@@ -51,6 +51,11 @@ let _lastPublishedSelectedId: string | null = null;
  *  cache lag — the value only moves on a real click, so we commit once per click. */
 let _lastPlacementConfirmSeq = 0;
 
+/** Phase 4 WS-A2 — duration (ms) of the one-shot smooth camera glide to a
+ *  newly-piloted ship on a same-sector swap. Long enough to read as a deliberate
+ *  ease, short enough to feel instant. */
+const PILOT_SWAP_GLIDE_MS = 420;
+
 // plan: imperative-taco — Playwright sets `navigator.webdriver=true`;
 // a real player's browser leaves it undefined/false. The heavy E2E
 // instrumentation in `writeE2EDataset` (JSON.stringify of shipPositions,
@@ -171,6 +176,14 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     if (!isLoadingActive) gameClient.tickPhysics(deltaMs);
     const mirrorStart = performance.now();
     gameClient.updateMirror();
+    // Phase 4 WS-A2 — fire the ONE-SHOT smooth camera glide to a newly-piloted
+    // ship the frame its pose is first mirrored (after a same-sector swap). One-
+    // shot: `consumePendingCameraGlide` returns non-null exactly once. Driven off
+    // the mirror pose (not pose interpolation) so it never trips the teleport
+    // guard. Runs every frame (NOT gated by `shouldRender`) so the worker path
+    // posts the GLIDE_CAMERA message promptly.
+    const glide = gameClient.consumePendingCameraGlide();
+    if (glide) renderer.glideCameraTo(glide.x, glide.y, PILOT_SWAP_GLIDE_MS);
     const renderStart = performance.now();
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
     if (shouldRender) renderer.update(gameClient.mirror);

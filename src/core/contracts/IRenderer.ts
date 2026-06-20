@@ -781,6 +781,17 @@ export interface IRenderer {
    */
   setSpectator(active: boolean): void;
   /**
+   * Phase 4 WS-A2 (Ship entry / switch) — kick off a ONE-SHOT eased camera glide
+   * from the current view to the GAME-space point `(gameX, gameY)` over
+   * `durationMs`. Used by the smooth same-sector ship-switch: the camera lerps to
+   * the newly-piloted ship instead of snapping. It is driven by elapsed wall-clock
+   * inside the `Camera` — INDEPENDENT of pose interpolation — so it never trips
+   * the snapshot teleport guard (Risk #4). While the glide runs it OVERRIDES the
+   * follow target, so the production `followLerpFactor:1` follow can't snap mid-
+   * transition; once it completes, follow resumes on the new ship.
+   */
+  glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
+  /**
    * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
    * continuous emitters + in-flight bursts on sector handoff. Called
    * from `ColyseusClient.resetPredictionState()`'s sibling-line in the

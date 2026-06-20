@@ -182,6 +182,19 @@ export interface SetSpectatorMsg {
 }
 
 /**
+ * Phase 4 WS-A2 — kick off a one-shot eased camera glide to a GAME-space point
+ * over `durationMs`. Drives `PixiRenderer.glideCameraTo` → `Camera.glideTo`. The
+ * smooth same-sector ship-switch camera transition (not a snap; independent of
+ * pose interpolation → no teleport-guard trip).
+ */
+export interface GlideCameraMsg {
+  type: 'GLIDE_CAMERA';
+  gameX: number;
+  gameY: number;
+  durationMs: number;
+}
+
+/**
  * Native pointer event, forwarded from the main thread because
  * `OffscreenCanvas` has no DOM event source in the worker (per
  * pixijs/pixijs#9132). The worker hand-rolled camera consumes these
@@ -297,6 +310,7 @@ export type MainToWorkerMsg =
   | TriggerWarpInMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
+  | GlideCameraMsg
   | SetDiagMarkersMsg
   | TriggerEffectMsg
   | SetEffectQualityMsg

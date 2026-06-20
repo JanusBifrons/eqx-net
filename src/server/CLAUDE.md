@@ -417,6 +417,41 @@ the netgate + the existing integration suite.
 
 > **C3 (done) removed the wreck ENTITY end-to-end** — `WreckState` + `state.wrecks`, `SnapshotMessage.wrecks`, `WreckLifecycleCoordinator`, the `EntityResolver` wreck branch + `WreckEntity` leaf + the wreck `EntityKindTag`, the client `mirror.wrecks` render/select/pick/hover paths, and `wreck-render-probe.spec.ts` are all gone. No `WreckState` exists; the abandon/death paths above are the only hull-removal flows, and both produce scrap. (Removing `SnapshotMessage.wrecks` is a JSON-field removal, NOT a `SWARM_WIRE_VERSION` bump — the binary swarm wire is untouched.)
 
+## Same-sector instant pilot swap — `pilot_ship` (Equinox Phase 4, WS-A2)
+
+The server half of the in-world **Pilot** action: a player (a spectator after
+death, or piloting a different hull) reclaims one of their OWN lingering hulls
+parked in THIS sector and resumes control IN-ROOM — **no leave/rejoin → no spool,
+no curtain**. Message `pilot_ship { shipId }` (zod `.strict()`, `clientMessages.ts`)
+→ `SectorRoom.reclaimLingeringHull(client, playerId, shipId)`.
+
+- **Owner-gated by construction.** The target must be a `lingeringSlots` entry (a
+  DISPLACED / combat-death / boot-reconstructed lingering hull) present in THIS
+  room, whose `state.ships` entry is owned by the requester and `isActive=false`,
+  alive, with a matching owned roster row. A hull another player is piloting is
+  `isActive=true` and NEVER in `lingeringSlots`, so a foreign / active / unknown id
+  is a **silent no-op** (no control transfer, no clobber). Engineering rooms
+  (`sectorKey===null`) have no roster → no-op.
+- **The rekey/abandon identity invariant is preserved BOTH ways.** If the player
+  was piloting an active hull, `displaceActiveHullToLingering(playerId)` runs first
+  — the exact inverse of the onJoin fresh-spawn-displaces branch (REKEY `playerId`
+  → `linger-<id>`, slot → `lingeringSlots`, `markLinger`, `ownerlessShips=null`,
+  `isActive=false`) — so a switch never leaves two active hulls. Then the reclaim
+  moves the target's slot back into the active maps, **REKEYs the worker body
+  `linger-<shipId>` → `playerId`** (so input + the per-tick SAB write resume under
+  the player's key), tears down `lingeringSlots`/`lingeringPoseCache`/`ownerlessShips`,
+  and `markActive`'s the roster row at the **LIVE SAB pose** (so the hull lands at
+  where it actually is — NOT a stale abandon pose; WS-A2 "lands at its live pose").
+- **Re-drives the UNIFIED join handshake** (`pendingJoin` → `client_ready` →
+  `warp_in` → arrivalTick → `isActive=true`) via a fresh `welcome` — the SAME path
+  a rebind uses, NO second activation path (Invariant #12). The hull pose is never
+  reset; only visibility + the session binding change. Force-broadcast grace so the
+  returning client reconciles before idle-suppression. Reuse note: the `welcome`
+  the client gets is what re-anchors its prediction + arms the smooth camera glide
+  (see src/client/CLAUDE.md).
+- **Netgate required** — touches the join/snapshot + control-rebind live-loop
+  surface. Deferred to the human gate. Locks: [pilotInSectorShip.test.ts](../../tests/integration/sectorRoom/pilotInSectorShip.test.ts) (control transfers in-room, lands at live pose, foreign-hull dropped, lingering bookkeeping torn down + roster row survives), with the `lingering*`/`transit`/`abandon` greens as the reproduce-first baseline (Invariant #13). Full story: [docs/architecture/spectator-and-construction-mode.md](../../docs/architecture/spectator-and-construction-mode.md).
+
 ## Shield/Hull + ramming (2026-05-16)
 
 - Two-layer survivability for all ships. `applyDamage` routes
