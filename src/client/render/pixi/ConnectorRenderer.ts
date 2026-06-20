@@ -18,11 +18,12 @@ import {
   codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
-  builtRangeCircleVisualParams,
+  builtRangeCircleVisualInto,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
   type CometSegment,
+  type RingVisual,
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
@@ -168,6 +169,9 @@ export class ConnectorRenderer {
     railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0,
     shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0,
   };
+  /** WS-D (#21) — reused built-turret range-ring scratch, written per built
+   *  turret per frame (invariant #14: was a fresh object literal per turret). */
+  private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
   /** Redraw the web for this frame. `scale` is the viewport zoom. */
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -211,7 +215,7 @@ export class ConnectorRenderer {
       if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
         const wr = getStructureKind(a.shipKind).weaponRange;
         if (wr !== undefined && wr > 0) {
-          const rc = builtRangeCircleVisualParams(scale);
+          const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
           g.circle(ax, ay, wr);
           g.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
           this.builtTurretRangeCount++;

@@ -21,9 +21,11 @@ import { describe, it, expect } from 'vitest';
 import { ConnectorRenderer } from './ConnectorRenderer.js';
 import {
   builtRangeCircleVisualParams,
+  builtRangeCircleVisualInto,
   rangeCircleVisualParams,
   BUILT_RANGE_CIRCLE_COLOR,
   RANGE_CIRCLE_COLOR,
+  type RingVisual,
 } from './connectorVisual.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import type {
@@ -132,5 +134,26 @@ describe('ConnectorRenderer — built-turret range circles (WS-D #21)', () => {
   it('the built-turret ring width is scale-aware (≥ 1 device px)', () => {
     expect(builtRangeCircleVisualParams(0.5).width).toBeGreaterThan(builtRangeCircleVisualParams(4).width);
     expect(builtRangeCircleVisualParams(0).width).toBeGreaterThanOrEqual(1); // guards /0
+  });
+
+  it('builtRangeCircleVisualInto writes INTO a reused scratch (no per-call alloc, #21/#14)', () => {
+    // The renderer calls this once per BUILT turret per frame inside the
+    // per-structure loop — it MUST mutate a reused scratch, never allocate a
+    // fresh object literal. Locking: the same struct ref comes back, and a second
+    // call with different scale overwrites the SAME object (so a loop over N
+    // turrets allocates nothing). Mirrors the connectorVisualInto / shieldWall
+    // scratch pattern.
+    const scratch: RingVisual = { color: 0, alpha: 0, width: 0 };
+    const r1 = builtRangeCircleVisualInto(scratch, 1);
+    expect(r1).toBe(scratch); // same reference — written in place, not allocated
+    expect(r1.color).toBe(BUILT_RANGE_CIRCLE_COLOR);
+    const w1 = r1.width;
+    const r2 = builtRangeCircleVisualInto(scratch, 0.25); // bigger width at lower zoom
+    expect(r2).toBe(scratch); // STILL the same object — reused across calls
+    expect(r2.width).toBeGreaterThan(w1);
+    // builtRangeCircleVisualParams (the allocating wrapper the pure tests use)
+    // must agree byte-for-byte with the into-variant.
+    const alloc = builtRangeCircleVisualParams(0.25);
+    expect(alloc).toEqual({ color: r2.color, alpha: r2.alpha, width: r2.width });
   });
 });

@@ -194,6 +194,11 @@ unbuilt blueprints (no coverage yet) draw nothing. A distinct warm-red tint
 (`BUILT_RANGE_CIRCLE_COLOR`, fainter than the cool-cyan placement ring) reads as
 a "threat zone". Test hooks: `builtTurretRangeCount` / `lastBuiltTurretRangeRadius`
 (+ the main-thread DEV hook `__eqxBuiltTurretRangeCount` for E2E on `?worker=0`).
+The ring stroke params are written into a reused `_builtRangeVisual` scratch via
+`builtRangeCircleVisualInto(out, scale)` (invariant #14 — called once per built
+turret per frame inside the per-structure loop, so it must not allocate; the
+allocating `builtRangeCircleVisualParams` wrapper is test-only, mirroring the
+`connectorVisualInto` / `shieldWallVisualParams` pattern).
 
 **Placement preview (WS-D #6) — solid vs dotted.** `ConnectorRenderer.drawPlacement-
 Preview` draws **SOLID green** (`'selected'`) to the hub(s) the blueprint WILL

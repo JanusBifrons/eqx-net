@@ -237,18 +237,33 @@ export function rangeCircleVisualParams(scale: number): {
  *  defensive coverage reads as a "threat zone", not a connection reach. */
 export const BUILT_RANGE_CIRCLE_COLOR = 0xff6655;
 
-/** Pure visual params for a BUILT turret's persistent weapon-range ring (#21).
- *  Even fainter than the placement ring (it's always on, for every built turret)
- *  so a base full of turrets doesn't drown the scene. Scale-aware width like the
- *  other rings. The RADIUS is the kind's catalogue `weaponRange` (geometry — the
- *  renderer owns it). */
-export function builtRangeCircleVisualParams(scale: number): {
+/** Stroke params for a ring (built-turret coverage / placement reach). */
+export interface RingVisual {
   color: number;
   alpha: number;
   width: number;
-} {
+}
+
+/** Pure visual params for a BUILT turret's persistent weapon-range ring (#21),
+ *  written INTO `out` (no allocation — the renderer hot path holds one scratch,
+ *  invariant #14: this is called once per BUILT turret per frame inside the
+ *  per-structure render loop). Even fainter than the placement ring (it's always
+ *  on, for every built turret) so a base full of turrets doesn't drown the scene.
+ *  Scale-aware width like the other rings. The RADIUS is the kind's catalogue
+ *  `weaponRange` (geometry — the renderer owns it). */
+export function builtRangeCircleVisualInto(out: RingVisual, scale: number): RingVisual {
   const safeScale = scale > 0 ? scale : 1;
-  return { color: BUILT_RANGE_CIRCLE_COLOR, alpha: 0.13, width: Math.max(1 / safeScale, 1) };
+  out.color = BUILT_RANGE_CIRCLE_COLOR;
+  out.alpha = 0.13;
+  out.width = Math.max(1 / safeScale, 1);
+  return out;
+}
+
+/** Allocating wrapper for `builtRangeCircleVisualInto` — returns a fresh struct.
+ *  Used by tests + any non-hot caller; the per-frame renderer path uses
+ *  `builtRangeCircleVisualInto` with a reused scratch. */
+export function builtRangeCircleVisualParams(scale: number): RingVisual {
+  return builtRangeCircleVisualInto({ color: 0, alpha: 0, width: 0 }, scale);
 }
 
 /** Positive fractional part (`x - floor(x)`, always in [0,1)). */
