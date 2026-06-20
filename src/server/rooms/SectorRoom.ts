@@ -44,7 +44,7 @@ import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
-import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
+import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -2656,7 +2656,10 @@ export class SectorRoom extends Room<SectorState> {
     for (const [, ship] of this.state.ships) {
       if (!ship.isActive || !ship.alive) continue;
       const kind = getShipKind(ship.kind);
-      ship.energy = regenEnergyStep(ship.energy, kind.energyMax ?? 100, kind.energyRegenRate ?? 0.25);
+      // Effective energy cap = kind base × per-instance energy upgrade (review
+      // must-fix #1) so an energy-upgraded ship regenerates to its larger pool.
+      const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
+      ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
     }
     for (const playerId of this.boostingPlayers) {
       const ship = this.getActiveShip(playerId);
@@ -3119,19 +3122,22 @@ export class SectorRoom extends Room<SectorState> {
       ship.playerId = r.playerId;
       ship.shipInstanceId = r.shipInstanceId;
       ship.kind = r.kind;
-      ship.maxHealth = kind.maxHealth;
-      ship.health = r.health;
-      ship.shield = r.shieldDown ? 0 : kind.shieldMax;
-      ship.shieldLastDamageTick = this.serverTick;
-      ship.alive = true;
-      ship.isActive = false;
       // WS-B1/B2/B3 — seed the per-instance progression from the roster so a
       // restored lingering hull renders its public level badge + activated
       // turrets to observers (the gap is keyed by the stable shipInstanceId).
+      // statAlloc is read BEFORE the hull/shield seed so the maxHull/shield
+      // upgrade multipliers apply to a restored lingering hull too (review
+      // must-fix #1 — the `effectiveShip*` helpers are the one source).
       const lingerRow = getPlayerShipStore().get(r.shipInstanceId);
       ship.level = lingerRow?.level ?? 1;
       ship.statAlloc = lingerRow?.statAlloc ?? {};
       ship.mounts = lingerRow?.mounts ?? [];
+      ship.maxHealth = effectiveShipMaxHealth(kind.maxHealth, ship.statAlloc);
+      ship.health = r.health;
+      ship.shield = r.shieldDown ? 0 : effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
+      ship.shieldLastDamageTick = this.serverTick;
+      ship.alive = true;
+      ship.isActive = false;
       this.state.ships.set(r.shipInstanceId, ship);
       // SAB pose seed.
       const b = slotBase(slot);
@@ -3437,7 +3443,10 @@ export class SectorRoom extends Room<SectorState> {
         hp: Math.max(0, Math.round(ship.health)),
         hpMax: Math.round(ship.maxHealth),
         shield: Math.max(0, Math.round(ship.shield)),
-        shieldMax: Math.round(kind.shieldMax),
+        // Effective shield cap (kind base × per-instance shield upgrade) so the
+        // inspector's shield bar denominator matches the upgraded ship (review
+        // must-fix #1). hpMax already reads the upgraded ship.maxHealth.
+        shieldMax: effectiveShipShieldMax(kind.shieldMax, ship.statAlloc),
       };
     }
     // structure — id is the numeric swarm entityId (as a string).
@@ -4508,12 +4517,26 @@ export class SectorRoom extends Room<SectorState> {
     // ship records keyed by shipInstanceId; the snapshot wire format
     // already matched this since Phase 6a.
     this.state.ships.set(ship.shipInstanceId, ship);
+    // Phase 4 WS-B2 review must-fix #1 — the NON-PHYSICS stat upgrades
+    // (maxHull / shield / energy) are applied server-authoritatively at their
+    // seed sites via the `effectiveShip*` helpers (ONE source each, so the
+    // hull-pct DENOMINATOR + the seed always agree). An un-upgraded ship gets
+    // the rounded kind base (byte-identical for whole bases). `ship.statAlloc`
+    // was seeded from the roster above (or `{}` for engineering rooms).
+    const spawnKind = getShipKind(ship.kind);
+    // Hull max — the active-spawn path never set ship.maxHealth before (it sat
+    // at the schema default), so the hull-pct denominator was wrong; seed it
+    // from the kind base × maxHull mul, matching the lingering-reconstruct path.
+    ship.maxHealth = effectiveShipMaxHealth(spawnKind.maxHealth, ship.statAlloc);
+    // A fresh spawn (no resumed roster health) seeds full hull at the upgraded
+    // max; a resumed hull keeps its stored (already-clamped) health.
+    if (resumedHealth === null) ship.health = ship.maxHealth;
     // Shield seeds full on spawn (transient - never persisted; only hull
     // persists). Body spawns circle (exposed:false in spawnShip).
-    ship.shield = getShipKind(ship.kind).shieldMax;
+    ship.shield = effectiveShipShieldMax(spawnKind.shieldMax, ship.statAlloc);
     // Energy seeds full on spawn (transient like shield; weapons/energy/AI
     // overhaul §3). Fallback covers any kind that pre-dates the energy field.
-    ship.energy = getShipKind(ship.kind).energyMax ?? 100;
+    ship.energy = effectiveShipEnergyMax(spawnKind.energyMax ?? 100, ship.statAlloc);
     // Test-only initialHull / initialShield overrides. Gated to testMode
     // rooms (engineering, never galaxy) so live gameplay can't be nerfed
     // via the wire. Applied AFTER the kind-default hull/shield are
@@ -4892,6 +4915,16 @@ export class SectorRoom extends Room<SectorState> {
     // prediction scales movement by the upgraded factors from the first tick.
     target.statAlloc = rec.statAlloc ?? {};
     this.applyStatMulToWorker(playerId, target.statAlloc);
+    // Review must-fix #1 — recompute the NON-PHYSICS caps from the (re-read)
+    // alloc so the reclaimed hull's maxHull/shield match its current upgrade,
+    // and clamp the live hull/shield down to the new max (a respec that lowers
+    // a cap must not leave the current value above it). One source: the
+    // `effectiveShip*` helpers.
+    const reclaimKind = getShipKind(target.kind);
+    target.maxHealth = effectiveShipMaxHealth(reclaimKind.maxHealth, target.statAlloc);
+    if (target.health > target.maxHealth) target.health = target.maxHealth;
+    const reclaimShieldMax = effectiveShipShieldMax(reclaimKind.shieldMax, target.statAlloc);
+    if (target.shield > reclaimShieldMax) target.shield = reclaimShieldMax;
     // WS-B3 — re-seed the reclaimed hull's activated dynamic mounts so it fires
     // + renders its extra turrets from the first tick under the new body key.
     target.mounts = rec.mounts ?? [];
@@ -5163,7 +5196,23 @@ export class SectorRoom extends Room<SectorState> {
     const activeShipKey = this.resolveActiveShipKey(playerId);
     if (activeShipKey === shipId) {
       const ship = this.state.ships.get(shipId);
-      if (ship !== undefined) ship.statAlloc = alloc;
+      if (ship !== undefined) {
+        ship.statAlloc = alloc;
+        // Review must-fix #1 — a LIVE upgrade/respec must recompute the NON-
+        // PHYSICS caps from the new alloc and CLAMP the current value down to
+        // the new max (a respec that lowers a cap must not leave current above
+        // it). NO free heal — clamp only; the bar shrinks, it never refills.
+        // One source: the `effectiveShip*` helpers (so the seed + denominator
+        // agree). hpMax/shieldMax/energyMax all ride the OWN-ship snapshot
+        // slice / discrete DamageEvent so the client re-reads the new caps.
+        const upgKind = getShipKind(ship.kind);
+        ship.maxHealth = effectiveShipMaxHealth(upgKind.maxHealth, alloc);
+        if (ship.health > ship.maxHealth) ship.health = ship.maxHealth;
+        const newShieldMax = effectiveShipShieldMax(upgKind.shieldMax, alloc);
+        if (ship.shield > newShieldMax) ship.shield = newShieldMax;
+        const newEnergyMax = effectiveShipEnergyMax(upgKind.energyMax ?? 100, alloc);
+        if (ship.energy > newEnergyMax) ship.energy = newEnergyMax;
+      }
       // The active player's worker body is keyed by playerId.
       this.applyStatMulToWorker(playerId, alloc);
     }

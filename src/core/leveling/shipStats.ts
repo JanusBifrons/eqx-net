@@ -21,9 +21,14 @@
  * touches a body — it only computes scalar factors.
  *
  * The non-physics multipliers (`maxHull`, `energy`, `damage`, `shield`) are
- * applied server-authoritatively in the damage/shield/energy calcs (NOT here);
- * they ride the same per-instance `StatAlloc`, so this one derivation feeds both
- * surfaces.
+ * applied server-authoritatively in the damage/shield/energy calcs (via the
+ * `effectiveShip*` helpers below + `mul.damage` in the fire resolvers — NOT
+ * physics-clamped, so unlike `topSpeed`/`turnRate` they need NO client-
+ * prediction mirror); they ride the same per-instance `StatAlloc`, so this one
+ * derivation feeds both surfaces. Each `effectiveShip*` helper is the SINGLE
+ * source for its effective cap, so the seed (`ship.maxHealth` / shield-max /
+ * energy-max) and the hull-pct denominator the client's bar reads always agree
+ * (mirrors `effectiveStructureMaxHealth` in `structureLevel.ts`).
  *
  * Zone-pure (`src/core`): no allocation in any hot path beyond the small result
  * literal `deriveStatMultipliers` returns (called on spawn + on an upgrade — a
@@ -169,4 +174,35 @@ export function deriveStatMultipliers(alloc: StatAlloc | undefined): ShipStatMul
     turnRate: factorFor(alloc, 'turnRate'),
     shield: factorFor(alloc, 'shield'),
   };
+}
+
+/**
+ * Leveled effective max HULL for a player ship (`baseMaxHealth · mul.maxHull`,
+ * rounded to a whole hull point — the schema/store keep hull as integers). The
+ * SINGLE helper the server's `ship.maxHealth` seed AND the hull-pct denominator
+ * read, so an upgraded ship's bar always reads correctly on the client.
+ * Un-upgraded ⇒ `Math.round(baseMaxHealth)` (byte-identical for whole bases).
+ */
+export function effectiveShipMaxHealth(baseMaxHealth: number, alloc: StatAlloc | undefined): number {
+  return Math.round(baseMaxHealth * factorFor(alloc ?? {}, 'hull'));
+}
+
+/**
+ * Leveled effective SHIELD max for a player ship (`baseShieldMax · mul.shield`,
+ * rounded). The single helper every server shield read-site uses — the spawn
+ * seed, the `tickShieldRegen` cap, and the `DamageEvent.shieldMax` the client's
+ * shield bar divides by — so they always agree.
+ */
+export function effectiveShipShieldMax(baseShieldMax: number, alloc: StatAlloc | undefined): number {
+  return Math.round(baseShieldMax * factorFor(alloc ?? {}, 'shield'));
+}
+
+/**
+ * Leveled effective ENERGY max for a player ship (`baseEnergyMax · mul.energy`,
+ * rounded). The single helper the energy spawn seed, the per-tick regen cap, and
+ * the fire-path affordance gate read, so an energy-upgraded ship's pool is
+ * larger end-to-end.
+ */
+export function effectiveShipEnergyMax(baseEnergyMax: number, alloc: StatAlloc | undefined): number {
+  return Math.round(baseEnergyMax * factorFor(alloc ?? {}, 'energy'));
 }

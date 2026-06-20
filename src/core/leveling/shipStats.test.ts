@@ -7,6 +7,9 @@ import {
   isAllocValid,
   deriveStatMultipliers,
   NEUTRAL_STAT_MULTIPLIERS,
+  effectiveShipMaxHealth,
+  effectiveShipShieldMax,
+  effectiveShipEnergyMax,
 } from './shipStats.js';
 
 /**
@@ -105,5 +108,34 @@ describe('shipStats — deriveStatMultipliers', () => {
 
   it('STAT_IDS is the documented append-only pool order', () => {
     expect(STAT_IDS).toEqual(['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield']);
+  });
+});
+
+describe('shipStats — effectiveShip* (the non-physics cap helpers)', () => {
+  it('effectiveShipMaxHealth scales the base by mul.maxHull and rounds to an int', () => {
+    // 4 hull points ⇒ +20 %; 90 * 1.2 = 108.
+    expect(effectiveShipMaxHealth(90, { hull: 4 })).toBe(108);
+    // Un-upgraded ⇒ exactly the rounded base.
+    expect(effectiveShipMaxHealth(90, {})).toBe(90);
+    expect(effectiveShipMaxHealth(90, undefined)).toBe(90);
+  });
+
+  it('effectiveShipShieldMax scales the base by mul.shield and rounds', () => {
+    // 2 shield points ⇒ +10 %; 100 * 1.1 = 110.
+    expect(effectiveShipShieldMax(100, { shield: 2 })).toBe(110);
+    expect(effectiveShipShieldMax(100, {})).toBe(100);
+  });
+
+  it('effectiveShipEnergyMax scales the base by mul.energy and rounds', () => {
+    // 5 energy points ⇒ +25 %; 100 * 1.25 = 125.
+    expect(effectiveShipEnergyMax(100, { energy: 5 })).toBe(125);
+    expect(effectiveShipEnergyMax(100, {})).toBe(100);
+  });
+
+  it('each helper reads ONLY its own stat (cross-stat points do not bleed)', () => {
+    const alloc = { hull: 4, shield: 2, energy: 5, damage: 3, topSpeed: 1 };
+    expect(effectiveShipMaxHealth(100, alloc)).toBe(120); // hull only
+    expect(effectiveShipShieldMax(100, alloc)).toBe(110); // shield only
+    expect(effectiveShipEnergyMax(100, alloc)).toBe(125); // energy only
   });
 });

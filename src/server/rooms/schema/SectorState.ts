@@ -69,7 +69,10 @@ export class ShipState extends Schema {
   // multipliers (topSpeed/turnRate) are pushed to the worker (SET_STAT_MUL) AND
   // ride the OWN-ship snapshot slice so the client predWorld scales movement
   // identically (risk #1). The non-physics factors (hull/energy/damage/shield)
-  // are read here by the server damage/shield/energy calcs. `{}` = un-upgraded.
+  // are read off THIS field by the server caps + fire path — `effectiveShip*`
+  // (maxHull/shield/energy seed + denominators in ShieldHullRouter/tickEnergy/
+  // entity_stats) and `mul.damage` in PlayerFireResolver (review must-fix #1,
+  // 2026-06-20 — these were dead code before). `{}` = un-upgraded.
   statAlloc: StatAlloc = {};
 
   // -- Activated dynamic mounts (Phase 4 WS-B3) --------------------------

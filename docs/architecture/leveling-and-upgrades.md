@@ -166,12 +166,63 @@ BOTH sides drive that one seam:
 So the client never PREDICTS the upgrade — it reads the server's truth off the
 snapshot. The non-physics factors (`maxHull`/`energy`/`damage`/`shield`) are
 server-authoritative (applied in the damage/shield/energy calcs — NOT in
-`applyShipInput`), riding the same per-instance `StatAlloc`.
+`applyShipInput`, so they are NOT physics-clamped and need NO prediction
+mirror; the client reads the results off the authoritative `DamageEvent` /
+snapshot), riding the same per-instance `StatAlloc`.
 
 Locked by `applyShipInput.levelMultiplier.test.ts` (two independent
 `PhysicsWorld`s stepped with the same allocation reach byte-identical velocity /
 turn; an upgraded ship is genuinely faster; an empty alloc is byte-identical to
 the legacy no-`mul` path).
+
+#### The non-physics four — wiring (review must-fix #1, 2026-06-20)
+
+> **History:** `deriveStatMultipliers` always returned all six factors, but for
+> the first build of WS-B2 **only `topSpeed`/`turnRate` were ever consumed** —
+> `SectorRoom.applyStatMulToWorker` forwarded just those two to the worker, and a
+> repo-wide grep found `maxHull`/`energy`/`damage`/`shield` read NOWHERE. So
+> spending points on 4 of the 6 stats was a **silent no-op** (a trap the player
+> could not see), and typecheck + unit tests did not catch it (the factors WERE
+> computed — just never read). The fix below wires them in; the docs/comments
+> that claimed they were "applied" now describe the now-true behaviour.
+
+The four non-physics factors are applied through **three pure cap helpers**
+(`src/core/leveling/shipStats.ts`, the ship analogue of
+`effectiveStructureMaxHealth`) plus `mul.damage` in the fire path:
+
+- `effectiveShipMaxHealth(baseMaxHealth, alloc)` = `round(base × mul.maxHull)`.
+  The ONE source for `ship.maxHealth`, applied at every player-hull seed site:
+  the **active-spawn** seed (this ALSO fixes a latent bug — that path never set
+  `ship.maxHealth`, leaving it at the `500` schema default; it now seeds
+  `kind.maxHealth × mul`, and a fresh spawn fills hull to the upgraded max), the
+  **lingering-hull reconstruction**, and the **in-sector reclaim**. The hull bar
+  divides by `ship.maxHealth` (the `DamageEvent.hullMax`), so the denominator
+  always matches the seed.
+- `effectiveShipShieldMax(baseShieldMax, alloc)` = `round(base × mul.shield)`.
+  Read by `ShieldHullRouter.damageShipLayered` (the `DamageEvent.shieldMax`),
+  `tickShieldRegen` (the regen cap + the 0-cross / regen-complete broadcasts —
+  `regenStep` gained an optional `shieldMaxOverride`), the spawn/reconstruct/
+  reclaim seeds, and the `entity_stats` inspector denominator.
+- `effectiveShipEnergyMax(baseEnergyMax, alloc)` = `round(base × mul.energy)`.
+  Read by the spawn seed + the `tickEnergy` regen cap.
+- `mul.damage` scales **OUTGOING PLAYER weapon damage** in `PlayerFireResolver`
+  (the `_damageMul` set once per `resolve()` from `ship.statAlloc`, applied to
+  the hitscan base damage BEFORE range falloff, and to the projectile + missile
+  spawn damage). **Player ships ONLY** — the drone `AiFireResolver` and
+  structure/turret damage are deliberately untouched (only player ships level).
+
+**Live upgrade / respec clamp.** `applyShipUpgrade`, when the edited instance is
+the player's ACTIVE hull, recomputes `ship.maxHealth` / shield-max / energy-max
+from the new alloc and **clamps the current hull/shield/energy DOWN to the new
+max** (a respec that lowers a cap must not leave current above it) — **no free
+heal** (clamp only; the bar shrinks, it never refills).
+
+Locked (RED-then-GREEN): `PlayerFireResolver.damageMul.test.ts` (an upgraded
+shooter's projectile damage was stuck at the catalogue base on the pre-fix code),
+`tests/integration/sectorRoom/shipStatUpgradeEffects.test.ts` (the live
+hull/shield caps the client reads off the `DamageEvent` were stuck at the `500`
+schema default + base shield; plus the respec clamp), and the `effectiveShip*`
+unit cases in `shipStats.test.ts`.
 
 ### Messages + persistence
 

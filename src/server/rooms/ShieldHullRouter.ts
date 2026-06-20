@@ -30,6 +30,7 @@ import {
   getShipKind,
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
+import { effectiveShipShieldMax } from '../../core/leveling/shipStats.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import {
@@ -163,8 +164,13 @@ export class ShieldHullRouter {
       }
     }
     // hullMax stays ship.maxHealth (schema): hull behaves exactly as
-    // today ("hull works as health does currently"); shield is the new layer.
-    return { newShield: state.shield, shieldMax: kind.shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
+    // today ("hull works as health does currently") — and ship.maxHealth is
+    // already seeded with the maxHull upgrade at the spawn/restore sites, so the
+    // client's hull bar divides by the upgraded max. shieldMax is the kind base
+    // scaled by the per-instance shield upgrade (review must-fix #1) so the
+    // DamageEvent.shieldMax the client divides by reflects the upgrade too.
+    const shieldMax = effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
+    return { newShield: state.shield, shieldMax, hullMax: ship.maxHealth, hitLayer: r.hitLayer };
   }
 
   /**
@@ -229,14 +235,19 @@ export class ShieldHullRouter {
     for (const [, ship] of d.shipsMap) {
       if (!ship.alive) continue;
       const kind = getShipKind(ship.kind);
-      if (ship.shield >= kind.shieldMax) continue;
+      // Effective shield cap = kind base × per-instance shield upgrade (review
+      // must-fix #1). The regen cap, the 0-cross-up restore broadcast, and the
+      // regen-complete broadcast all read THIS value so an upgraded ship
+      // regenerates to + reports its larger shield pool.
+      const effShieldMax = effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
+      if (ship.shield >= effShieldMax) continue;
       if (t - ship.shieldLastDamageTick < kind.shieldRegenDelayTicks) continue;
       const state: ShieldHullState = {
         shield: ship.shield,
         hull: ship.health,
         lastDamageTick: ship.shieldLastDamageTick,
       };
-      const r = regenStep(state, kind, t);
+      const r = regenStep(state, kind, t, effShieldMax);
       if (!r.regenerated) continue;
       ship.shield = state.shield;
       if (r.restoredThisStep) {
@@ -249,11 +260,11 @@ export class ShieldHullRouter {
           // the ramp itself is never streamed (locked: no continuous
           // shield traffic). Lingering hulls' owners aren't connected,
           // so only active player ships broadcast.
-          d.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: ship.shield, shieldMax: kind.shieldMax, phase: 'restored', tick: t });
+          d.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: ship.shield, shieldMax: effShieldMax, phase: 'restored', tick: t });
         }
       }
       if (r.regenComplete && ship.isActive) {
-        d.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: kind.shieldMax, shieldMax: kind.shieldMax, phase: 'regen_complete', tick: t });
+        d.broadcast('shield', { type: 'shield', targetId: ship.playerId, shield: effShieldMax, shieldMax: effShieldMax, phase: 'regen_complete', tick: t });
       }
     }
     for (const [id, shieldVal] of this.swarmShield) {
