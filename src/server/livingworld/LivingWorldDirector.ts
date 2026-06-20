@@ -35,7 +35,9 @@ import {
   enemyBotCountsBySector,
   type Rng,
 } from './population.js';
-import { getSector, isEntrySector } from '../../core/galaxy/galaxy.js';
+import { getSector, getNeighbours, isEntrySector } from '../../core/galaxy/galaxy.js';
+import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
+import type { BotCarry } from './botTypes.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import { LivingWorldRoom } from './LivingWorldRoom.js';
@@ -345,6 +347,15 @@ export class LivingWorldDirector {
       // Lazy (squadPool is constructed just below) — resolved at hop-arrival time
       // so a squad re-forms clustered at each sector it hops into.
       squadKeyOf: (botId) => this.squadPool.squadOf(botId)?.squadId ?? botId,
+      // WS-E #15 — resolve inline hostility at the ARRIVAL instant so a member
+      // landing in its squad's target (base) sector is hostile in the same step
+      // as spawn — closing the warp-arrive race that left it neutral until the
+      // next ~1.5 s control-tick `markSquadHostileToFaction` pulse.
+      hostileSpecFor: (botId, sectorKey) => this.hostileSpecFor(botId, sectorKey),
+      // WS-E #13/#19 — a WAVE hop arrives at its CARRY pose (clamped) so attackers
+      // arrive spread near where they left, not stacked at one edge anchor; roam
+      // hops return null → the edge spawn (enter from outside, never on-top).
+      arrivalPoseFor: (botId, to, carry) => this.arrivalPoseFor(botId, to, carry),
     });
     this.squadPool = new SquadPool();
     this.waveDirector = new WaveDirector({
@@ -631,8 +642,16 @@ export class LivingWorldDirector {
    * so a roaming pack that drifts through a base-less player's sector does not
    * hunt them. Roam hops are real despawn→spawn pairs (`bot_transit_commit`),
    * never from-nowhere ingress, so they may legally enter interior sectors.
+   *
+   * WS-E #22 — roaming squads AVOID active-combat sectors. The roam-goal pick is
+   * given an `avoidCombat` predicate built from each room's `recentCombat()`
+   * (a non-null summary ⇒ combat within the ~5-min sliding window), so a neutral
+   * pack re-routes around a firefight; if every live neighbour is in combat the
+   * squad HOLDS at its current sector. An avoidance that changed the outcome is
+   * audit-logged (`roam_avoid_combat`).
    */
   private roamStep(now: number): void {
+    const avoidCombat = (sectorKey: string): boolean => this.sectorInRecentCombat(sectorKey);
     for (const sq of this.squadPool.all()) {
       if (sq.state !== 'idle' || sq.targetFactionId !== null) continue;
       const sched = this.squadRoamNextAtMs.get(sq.squadId);
@@ -640,12 +659,50 @@ export class LivingWorldDirector {
         // First sighting: dwell at the home edge before the first drift.
         this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
       } else if (now >= sched && this.squadGatheredAt(sq, sq.sectorKey)) {
-        sq.sectorKey = pickRoamGoal(this.rng, sq.sectorKey, this.sectorKeys);
+        const from = sq.sectorKey;
+        // Did we skip ANY live neighbour for being in combat? Compute it BEFORE
+        // the (single) RNG-consuming pick so we don't perturb the draw — the
+        // audit wants the name of a representative skipped sector.
+        const avoided = this.firstCombatNeighbour(from);
+        const goal = pickRoamGoal(this.rng, from, this.sectorKeys, avoidCombat);
+        sq.sectorKey = goal;
         this.squadRoamNextAtMs.set(sq.squadId, now + this.opts.roamIntervalMs);
+        // Audit a combat-driven re-route: a neighbour was skipped for combat and
+        // the squad picked elsewhere (or held at `from` because all were unsafe).
+        if (avoided !== null && goal !== avoided) {
+          auditEvent({
+            event: 'roam_avoid_combat',
+            sector: from,
+            squadId: sq.squadId,
+            from,
+            avoided,
+            to: goal,
+          });
+          serverLogEvent('roam_avoid_combat', { squadId: sq.squadId, from, avoided, to: goal });
+        }
       }
       // Always drift toward the current goal (no-op once gathered there).
       this.advanceMembersTowardGoal(sq);
     }
+  }
+
+  /** WS-E #22 — true iff `sectorKey`'s room reports combat within its recent
+   *  window (`recentCombat()` returns non-null). The room owns the ~5-min
+   *  sliding `RecentCombatLog`; the director just queries it for roam routing.
+   *  Off the 60 Hz loop (the ~1.5 s control tick). */
+  private sectorInRecentCombat(sectorKey: string): boolean {
+    return this.rooms.get(sectorKey)?.recentCombat?.() != null;
+  }
+
+  /** WS-E #22 — a representative LIVE neighbour of `from` that's in active combat
+   *  (for the `roam_avoid_combat` audit's `avoided` field), or null when none.
+   *  Order follows the galaxy graph adjacency so it's deterministic. Control-tick
+   *  cadence — off the 60 Hz loop. */
+  private firstCombatNeighbour(from: string): string | null {
+    for (const n of getNeighbours(from)) {
+      if (this.rooms.has(n.key) && this.sectorInRecentCombat(n.key)) return n.key;
+    }
+    return null;
   }
 
   /** True iff the squad has ≥1 active member, ALL its active members are in
@@ -851,8 +908,19 @@ export class LivingWorldDirector {
         // stood-down squad is no longer warping in.
         this.incoming.clear(step.squad.squadId, step.sectorKey);
         this.squadPool.clearTarget(step.squad);
-        serverLogEvent('wave_deescalated', { factionId: step.factionId, sectorKey: step.sectorKey });
-        auditEvent({ event: 'wave_repelled', sector: step.sectorKey, owner: step.factionId });
+        // WS-E #8 — tag WHY the wave stood down so a cadence audit can tell a
+        // healthy time-box phase-end from a de-escalation or a fully-razed base.
+        serverLogEvent('wave_deescalated', {
+          factionId: step.factionId,
+          sectorKey: step.sectorKey,
+          reason: step.reason,
+        });
+        auditEvent({
+          event: 'wave_repelled',
+          sector: step.sectorKey,
+          owner: step.factionId,
+          reason: step.reason,
+        });
         break;
       }
     }
@@ -1017,6 +1085,57 @@ export class LivingWorldDirector {
     this.incoming.clear(playerId, destSectorKey);
   }
 
+  /**
+   * WS-E #15 — build the optional `hostileToFaction` spawn spec for a bot landing
+   * in `sectorKey`. A member is marked hostile INLINE at spawn ONLY when its
+   * squad is on a wave (`targetFactionId` set) AND that wave targets THIS very
+   * sector (the squad has reached its goal). Resolved against the destination
+   * room (the only place that holds the faction's structure ids). Returns `{}`
+   * (spread to nothing) for a roaming/neutral spawn or an intermediate hop — so a
+   * member only flips hostile on landing AT the base, never mid-traverse.
+   *
+   * This closes the warp-arrive race: the old path spawned the member on a
+   * macrotask AFTER the control tick's `markSquadHostileToFaction` ran, so the
+   * arriving record didn't exist yet (`!rec` early-return) and the member stayed
+   * neutral until the next ~1.5 s pulse.
+   */
+  private hostileSpecFor(
+    botId: string,
+    sectorKey: string,
+  ): { hostileToFaction?: { playerId: string; structureIds: readonly string[] } } {
+    const squad = this.squadPool.squadOf(botId);
+    if (!squad || squad.targetFactionId === null) return {};
+    // Only mark hostile when the member is landing in the squad's TARGET sector
+    // (the base). An intermediate-hop arrival stays neutral until it reaches the
+    // base, matching the wave's `attack`-only hostility pulse.
+    if (squad.sectorKey !== sectorKey) return {};
+    const room = this.rooms.get(sectorKey);
+    if (!room || !room.factionHostility) return {};
+    return { hostileToFaction: room.factionHostility(squad.targetFactionId) };
+  }
+
+  /**
+   * WS-E #13/#19 — the ARRIVAL pose for a hopping member. A WAVE hop (squad has a
+   * `targetFactionId`) carries the bot's pre-despawn SAB pose (CLAMPED to the
+   * destination bounds — the same defense-in-depth `clampToSectorBounds` the
+   * player `TransitOrchestrator.commitTransit` uses), so a squad's members arrive
+   * SPREAD near where they each were in the source sector instead of all snapping
+   * to one clustered edge anchor (the "all attacking drones appear in exactly the
+   * same place" report). A ROAM hop (no target) returns null ⇒ the controller
+   * falls back to the EDGE spawn, preserving the "roamers enter from the edge,
+   * never pop in on top of a player at the centre" invariant (2026-06-19).
+   */
+  private arrivalPoseFor(
+    botId: string,
+    _to: string,
+    carry: BotCarry,
+  ): { x: number; y: number; vx: number; vy: number } | null {
+    const squad = this.squadPool.squadOf(botId);
+    if (!squad || squad.targetFactionId === null) return null; // roaming ⇒ edge spawn
+    const { x, y } = clampToSectorBounds(carry.x, carry.y);
+    return { x, y, vx: carry.vx, vy: carry.vy };
+  }
+
   /** Step 1 of `tick`: warp-in respawning bots when their delay elapses
    *  AND shed recovery has cleared. */
   private respawnStep(now: number): void {
@@ -1052,6 +1171,10 @@ export class LivingWorldDirector {
         y: pose.y,
         vx: pose.vx,
         vy: pose.vy,
+        // WS-E #15 — if this (re)spawning member belongs to a squad that's
+        // ATTACKING the faction whose base lives in THIS sector, mark hostility
+        // INLINE at spawn so a combat respawn rejoins hostile, not neutral.
+        ...this.hostileSpecFor(rec.botId, sector),
       });
       if (ok) {
         rec.state = 'active';

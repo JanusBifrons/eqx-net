@@ -337,6 +337,59 @@ boot #2 brings up fresh rooms with roaming OFF and the squad resumes at the
 interior, which only the restore can produce — verified against a no-row
 fresh-seed control arm).
 
+## WS-E Phase-3 fixes (2026-06-20, plan `magical-summit`)
+
+Four playtest-reported AI/lifecycle bugs, each with a fail-first lock:
+
+- **#15 hostile drones render neutral on arrival.** Disposition rides the
+  discrete `bot_aggro` broadcast fired by `markBotHostileToFaction`, which
+  early-returns `if (!rec)`. The dominant race is the warp `arrive` path:
+  `HunterBotWarpController.arrive` spawns the member on a macrotask AFTER the
+  control tick whose `executeWaveStep('attack')` already pulsed
+  `markSquadHostileToFaction` — so the arriving record didn't exist yet, leaving
+  it neutral until the next ~1.5 s pulse. **Fix:** `spawnBot` /
+  `spawnLivingWorldBot` take an optional `hostileToFaction { playerId,
+  structureIds }` and mark hostility INLINE post-spawn; the director resolves it
+  from `squadPool.squadOf(botId)?.targetFactionId` + the destination room's new
+  `factionHostility()` resolver (the same `FactionLedger.membersOf` source
+  `markSquadHostileToFaction` uses), in BOTH spawn paths (`respawnStep` +
+  `arrive`), ONLY when the member lands AT its squad's target (base) sector.
+  Locks: `LivingWorldBotHooks.test.ts`, `HunterBotWarpController.test.ts`.
+
+- **#13/#19 attackers stack at one edge.** `BotCarry` carried vx/vy/angle/angvel
+  but NOT x/y, so `arrive` always snapped to one clustered edge anchor. **Fix:**
+  add `x,y` to `BotCarry` (captured from the live SAB pose in `despawnBot`); a
+  WAVE hop now arrives at the carry pose CLAMPED via `clampToSectorBounds` (the
+  same defense-in-depth the player `TransitOrchestrator.commitTransit` uses), via
+  an injected `arrivalPoseFor` resolver; a ROAM hop returns null ⇒ the EDGE spawn
+  (preserving the 2026-06-19 "roamers enter from the edge, never pop in on top of
+  a player at the centre" invariant). Lock: `HunterBotWarpController.test.ts`.
+
+- **#8 waves too frequent — retreat-reason tagging.** The time-box → retreat
+  (`waveMaxAttackMs`) already lands a wave back to a discrete phase, but a 12 h
+  audit couldn't tell a healthy time-box phase-end from a perpetual grind because
+  the retreat carried no reason. **Fix:** `WaveDirector.buildContext` computes the
+  cause (`base-razed` > `de-escalation` > `timeout` precedence) and threads it
+  onto the retreat `WaveStep`; `executeWaveStep` passes it into the
+  `wave_repelled` audit event (new optional `reason` field) + the
+  `wave_deescalated` serverLogEvent, surfaced by both audit formatters. The
+  "don't reset `lastDispatchAtMs` on a re-tasked squad" rule is already satisfied
+  (faction-keyed, set only on a fresh commit). Lock: `WaveDirector.test.ts`.
+
+- **#22 roaming avoids active-combat sectors.** `pickRoamGoal` was combat-blind.
+  **Fix:** it gains an optional `avoidCombat(sectorKey)` predicate that drops
+  flagged live neighbours (HOLDS at `from` when every neighbour is in combat);
+  `LivingWorldDirector.roamStep` builds it from each room's `recentCombat()`
+  (non-null ⇒ combat within the ~5-min sliding window) and audit-logs a re-route
+  (`roam_avoid_combat`). Locks: `population.test.ts`, `roamAvoidCombat.test.ts`.
+
+- **#9 roaming squads don't scatter (regression lock).** The anti-scatter
+  mechanism — leader-led flocking + spawn-clustering + the 6-min roam dwell — was
+  already in place; `roamRegather.test.ts` adds the explicit lock that the
+  director KEEPS assigning flock roles (leader course + followers) to a roaming
+  squad post-hop, so a future regression that bypasses `flockStep` for roamers
+  fails loudly.
+
 ## Future work
 
 - Per-kind hunter loadouts / threat tiers (extend the director's kind

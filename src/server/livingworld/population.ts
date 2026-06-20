@@ -406,11 +406,29 @@ export function pickEntrySector(rng: Rng, liveSectorKeys: readonly string[]): st
  * HOP (never a from-nowhere ingress), so it can legally land in interior
  * sectors. Restricted to `liveSectorKeys` so a squad never roams toward a sector
  * the director doesn't hold a room for. Deterministic given the RNG.
+ *
+ * WS-E #22 — roaming squads AVOID active-combat sectors. When `avoidCombat` is
+ * supplied, neighbours it flags `true` (combat within the recent window) are
+ * dropped from the candidate set, so a neutral pack doesn't blunder into a
+ * firefight. If EVERY live neighbour is in combat the squad HOLDS (returns
+ * `from`) rather than entering one — the user's "should avoid sectors with active
+ * combat" directive. Omitted ⇒ no filtering (byte-identical to the pre-#22
+ * walk).
  */
-export function pickRoamGoal(rng: Rng, from: string, liveSectorKeys: readonly string[]): string {
+export function pickRoamGoal(
+  rng: Rng,
+  from: string,
+  liveSectorKeys: readonly string[],
+  avoidCombat?: (sectorKey: string) => boolean,
+): string {
   const live = new Set(liveSectorKeys);
   const neighbours: string[] = [];
-  for (const n of getNeighbours(from)) if (live.has(n.key)) neighbours.push(n.key);
+  for (const n of getNeighbours(from)) {
+    if (!live.has(n.key)) continue;
+    if (avoidCombat?.(n.key)) continue; // skip an active-combat neighbour (#22)
+    neighbours.push(n.key);
+  }
+  // No safe live neighbour (none live, or all in combat) ⇒ hold at `from`.
   if (neighbours.length === 0) return from;
   const idx = Math.min(neighbours.length - 1, Math.floor(rng() * neighbours.length));
   return neighbours[idx]!;

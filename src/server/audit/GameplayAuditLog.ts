@@ -51,7 +51,27 @@ export type AuditEvent =
   | (AuditEventBase & { event: 'wave_dispatched'; owner: string; targetSector: string; squadId: string; squadSize: number })
   | (AuditEventBase & { event: 'wave_incoming'; disposition: string; count: number; label?: string })
   | (AuditEventBase & { event: 'base_ready'; owner: string; composition?: Record<string, number> })
-  | (AuditEventBase & { event: 'wave_repelled'; owner: string })
+  | (AuditEventBase & {
+      event: 'wave_repelled';
+      owner: string;
+      /** WS-E #8 — why the wave stood down: a healthy time-box phase-end vs a
+       *  genuine de-escalation vs a fully-razed base. Lets a cadence audit tell
+       *  the relentless-grind class from a clean resolution. Optional for
+       *  back-compat with older log readers. */
+      reason?: 'timeout' | 'de-escalation' | 'base-razed';
+    })
+  | (AuditEventBase & {
+      // WS-E #22 — a roaming squad re-routed AWAY from an active-combat sector
+      // (combat within the recent window). `squadId` identifies the pack; `from`
+      // is where it roamed from, `avoided` the combat sector it skipped, `to` the
+      // safe goal it picked instead (or `from` when it held because every live
+      // neighbour was in combat).
+      event: 'roam_avoid_combat';
+      squadId: string;
+      from: string;
+      avoided: string;
+      to: string;
+    })
   // ── Structures ──────────────────────────────────────────────────────
   | (AuditEventBase & { event: 'structure_placed'; owner: string; kind: string; x: number; y: number })
   | (AuditEventBase & { event: 'structure_removed'; owner: string; kind: string })

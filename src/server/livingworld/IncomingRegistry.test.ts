@@ -29,6 +29,7 @@ function fakeRoom(): FakeRoom {
     spawnLivingWorldBot: () => true,
     despawnLivingWorldBot: () => null,
     markBotHostile: () => {},
+    factionHostility: (id) => ({ playerId: id, structureIds: [] }),
     factionBaseReadiness: () => [],
     setFactionUnderWave: () => {},
     markSquadHostileToFaction: () => {},

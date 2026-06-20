@@ -16,6 +16,7 @@ function fullMockRoom(over: Partial<LivingWorldRoom>): LivingWorldRoom {
     spawnLivingWorldBot: () => false,
     despawnLivingWorldBot: () => null,
     markBotHostile: () => {},
+    factionHostility: (id) => ({ playerId: id, structureIds: [] }),
     getBotPose: () => null,
     setBotMoveTarget: () => {},
     setBotFlockFollow: () => {},

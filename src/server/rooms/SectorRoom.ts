@@ -3403,8 +3403,17 @@ export class SectorRoom extends Room<SectorState> {
     vx?: number;
     vy?: number;
     health?: number;
+    hostileToFaction?: { playerId: string; structureIds: readonly string[] };
   }): boolean {
     return this.livingWorldBotHooks.spawnBot(spec);
+  }
+
+  /** WS-E #15 — resolve a faction's hostility members here (owning player +
+   *  owned structure ids). The director uses this to pre-populate
+   *  `spawnLivingWorldBot`'s `hostileToFaction` so an arriving member of an
+   *  attacking squad is marked hostile INLINE at spawn (no control-tick gap). */
+  factionHostility(factionId: string): { playerId: string; structureIds: readonly string[] } {
+    return this.factionLedger.membersOf(factionId);
   }
 
   despawnLivingWorldBot(botId: string): BotCarry | null {

@@ -33,10 +33,21 @@ import { SquadPool, type SquadRecord } from './SquadPool.js';
 import type { SquadBehaviour } from './SquadBehaviour.js';
 import type { WavePattern } from './WavePattern.js';
 
+/** Why a wave stood down (WS-E #8) — tagged on the retreat step + audit log so a
+ *  cadence audit can tell a healthy time-box phase-end from a de-escalation or a
+ *  fully-razed base. */
+export type RetreatReason = 'timeout' | 'de-escalation' | 'base-razed';
+
 export type WaveStep =
   | { kind: 'warp'; squad: SquadRecord; to: string }
   | { kind: 'attack'; squad: SquadRecord; factionId: string; sectorKey: string }
-  | { kind: 'retreat'; squad: SquadRecord; factionId: string; sectorKey: string };
+  | {
+      kind: 'retreat';
+      squad: SquadRecord;
+      factionId: string;
+      sectorKey: string;
+      reason: RetreatReason;
+    };
 
 export interface WaveDirectorOptions {
   rooms: Map<string, LivingWorldRoom>;
@@ -168,6 +179,7 @@ export class WaveDirector {
               squad: sq,
               factionId: sq.targetFactionId,
               sectorKey: sq.sectorKey,
+              reason: ctx.retreatReason,
             });
           }
           break;
@@ -239,7 +251,12 @@ export class WaveDirector {
     sq: SquadRecord,
     readiness: Map<string, FactionBaseReadiness>,
     nowMs: number,
-  ): { membersInSector: number; membersActive: number; factionStillHostile: boolean } {
+  ): {
+    membersInSector: number;
+    membersActive: number;
+    factionStillHostile: boolean;
+    retreatReason: RetreatReason;
+  } {
     const isActive = (botId: string): boolean => this.hunterPool.get(botId)?.state === 'active';
     const isActiveInSector = (botId: string): boolean => {
       const rec = this.hunterPool.get(botId);
@@ -249,11 +266,16 @@ export class WaveDirector {
     const membersInSector = this.squadPool.activeMemberCount(sq, isActiveInSector);
 
     let factionStillHostile = true;
+    // Default reason when a retreat IS triggered but neither de-escalation nor
+    // time-box explains it (shouldn't happen for an assigned squad, but keeps the
+    // type total). Overwritten below by the actual cause.
+    let retreatReason: RetreatReason = 'de-escalation';
     if (sq.targetFactionId !== null) {
       const r = readiness.get(sq.targetFactionId);
       if (!r) {
         // Base gone entirely (every structure destroyed) → stand down.
         factionStillHostile = false;
+        retreatReason = 'base-razed';
       } else {
         const deescalated = shouldDeEscalate(
           {
@@ -285,8 +307,13 @@ export class WaveDirector {
           attackStart !== undefined &&
           nowMs - attackStart >= this.waveMaxAttackMs;
         factionStillHostile = !deescalated && !timedOut;
+        // Reason precedence: de-escalation (the base genuinely stood down) is the
+        // "true" peace; a time-box is the FEEL knob that breaks an otherwise
+        // perpetual grind. Prefer de-escalation when both happen to be true.
+        if (deescalated) retreatReason = 'de-escalation';
+        else if (timedOut) retreatReason = 'timeout';
       }
     }
-    return { membersInSector, membersActive, factionStillHostile };
+    return { membersInSector, membersActive, factionStillHostile, retreatReason };
   }
 }
