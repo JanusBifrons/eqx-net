@@ -16,6 +16,7 @@ import {
 } from '../debug/GcMonitor.js';
 import type { GcPauseEventMessage } from '../../shared-types/messages.js';
 import type { WarpWarningEvent, WarpWarningClearEvent } from '../../shared-types/messages.js';
+import type { GridFlowMaterial } from '../../shared-types/messages.js';
 import { getIncomingPlayerSink } from '../livingworld/incomingPlayerSink.js';
 import { SectorState, ShipState } from './schema/SectorState.js';
 import { shouldHonourResumedCooldown } from './cooldownRestore.js';
@@ -2738,12 +2739,14 @@ export class SectorRoom extends Room<SectorState> {
     this.shieldWalls.update(Date.now());
     this.rebuildStructuresSlice();
     if (result.flashed.length > 0) {
-      // Map the registry's string-id pairs to dense entityIds for the wire.
-      const flashed: Array<[number, number]> = [];
-      for (const [a, b] of result.flashed) {
+      // Map the registry's string-id pairs to dense entityIds for the wire,
+      // carrying each edge's flow MATERIAL (WS-D #12) so the client tints
+      // per-edge (repair/minerals/construction can co-occur in one pulse).
+      const flashed: Array<[number, number, GridFlowMaterial]> = [];
+      for (const [a, b, material] of result.flashed) {
         const ea = this.swarmRegistry.get(a)?.entityId;
         const eb = this.swarmRegistry.get(b)?.entityId;
-        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb]);
+        if (ea !== undefined && eb !== undefined) flashed.push([ea, eb, material]);
       }
       if (flashed.length > 0) {
         this.broadcast('grid_pulse', { type: 'grid_pulse', flashed, material: result.material });

@@ -11,7 +11,18 @@
  */
 import { FLASH_DURATION_MS } from './structureGridConstants.js';
 
-export type FlowMaterial = 'power' | 'minerals';
+/**
+ * The kind of flow that last crossed a connection this pulse — a PRESENTATION
+ * hint the client maps to a connector tint (WS-D #12):
+ *   - `minerals`     → orange (hauling ore to a Capital / reclaiming)
+ *   - `repair`       → green  (healing a damaged structure)
+ *   - `construction` → cyan   (building a blueprint)
+ *   - `power`        → reserved (power is aggregated, not flashed, in Phase 3)
+ * Append-only — it's a JSON presentation string, not a wire-versioned binary
+ * field. The ABSENCE of a flash (idle) renders muted-blue; there is no `'idle'`
+ * material because an idle edge simply isn't in the pulse's flash set.
+ */
+export type FlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
 
 export interface Pose2 {
   x: number;

@@ -14,10 +14,55 @@ import { FLASH_DURATION_MS } from '../../../core/structures/structureGridConstan
 
 /** Idle (non-flowing) line tint — muted blue. */
 export const CONNECTOR_IDLE_COLOR = 0x4488aa;
-/** Mineral-flow tint (the single Phase-3 flow material). */
+/** Mineral-flow tint (hauling ore / reclaiming) — orange. */
 export const CONNECTOR_MINERAL_COLOR = 0xee8844;
+/** WS-D (#12) — repair / healing flow tint — green. */
+export const CONNECTOR_REPAIR_COLOR = 0x55dd66;
+/** WS-D (#12) — construction / build flow tint — cyan. */
+export const CONNECTOR_CONSTRUCTION_COLOR = 0x44ccdd;
 /** Power-flow tint (reserved — power is aggregated, not flashed, in Phase 3). */
 export const CONNECTOR_POWER_COLOR = 0x44ddff;
+
+/** WS-D (#12) — the per-edge flow material a `grid_pulse` carries. Mirrors the
+ *  wire `GridFlowMaterial` (kept local so `connectorVisual` stays import-light;
+ *  the renderer maps the wire string into this). */
+export type ConnectorFlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
+
+/** WS-D (#12) — pack a flow material into the numeric code stored on
+ *  `RenderMirror.gridFlowMaterial` (no per-frame string handling / cheap
+ *  structured-clone across the worker boundary). */
+export function flowMaterialToCode(material: ConnectorFlowMaterial): number {
+  switch (material) {
+    case 'repair': return 1;
+    case 'construction': return 2;
+    case 'power': return 3;
+    case 'minerals':
+    default: return 0;
+  }
+}
+
+/** WS-D (#12) — unpack the numeric mirror code back to a flow material (renderer
+ *  read path). Unknown / absent ⇒ minerals (back-compat default). */
+export function codeToFlowMaterial(code: number | undefined): ConnectorFlowMaterial {
+  switch (code) {
+    case 1: return 'repair';
+    case 2: return 'construction';
+    case 3: return 'power';
+    default: return 'minerals';
+  }
+}
+
+/** WS-D (#12) — the ACTIVE (flowing) base tint for a flow material. Idle is the
+ *  muted blue (the absence of a flash), handled by the idle branch — never here. */
+function activeColorFor(material: ConnectorFlowMaterial): number {
+  switch (material) {
+    case 'repair': return CONNECTOR_REPAIR_COLOR;
+    case 'construction': return CONNECTOR_CONSTRUCTION_COLOR;
+    case 'power': return CONNECTOR_POWER_COLOR;
+    case 'minerals':
+    default: return CONNECTOR_MINERAL_COLOR;
+  }
+}
 /** R2.2 — the travelling flow-pulse "packet" tint: a bright warm gold, distinct
  *  from both the idle wire and the mineral brighten so it reads as a moving
  *  energy packet, not just a brighter line. */
@@ -50,6 +95,11 @@ export interface ConnectorVisual {
   pulseColor?: number;
   pulseAlpha?: number;
   pulseWidth?: number;
+  /** WS-D (#6) — a DOTTED-line dash pattern (world units), set ONLY on the
+   *  'deferred' placement-preview class (could-but-won't connect). Pixi v8 has no
+   *  native dashed stroke, so the renderer walks the segment emitting `on`-length
+   *  dashes separated by `off`-length gaps. Absent (or `on <= 0`) ⇒ a solid line. */
+  dash?: { on: number; off: number };
 }
 
 /** Comet segment endpoints (reused-into scratch — the renderer holds one). */
@@ -72,11 +122,31 @@ export const PREVIEW_BLOCKED_COLOR = 0xcc4444;
  *  from the dim LOS-blocked red, so the player reads "in range + legal but the
  *  cap is full, this one won't link". */
 export const PREVIEW_OVERFLOW_COLOR = 0xff4422;
+/** WS-D (#6) — the DOTTED-green "deferred" tint: an in-range, legal pairing that
+ *  lost the multi-connect cap race (could-but-won't connect). A softer/cooler
+ *  green than the solid `ok`/`selected` so the dotted line reads as "available
+ *  but not chosen", NOT as an error (the old over-cap RED read as a problem). */
+export const PREVIEW_DEFERRED_COLOR = 0x88ddaa;
+
+/** WS-D (#6) — a 'deferred' dotted line's dash pattern (world units at scale 1):
+ *  6 u on, 5 u off. Scaled by 1/zoom in `previewLineVisualParams` so the dotting
+ *  density stays ~constant on screen (same idiom as the scale-aware line width). */
+const PREVIEW_DASH_ON = 6;
+const PREVIEW_DASH_OFF = 5;
 
 /** A placement-preview segment's outcome, mirroring `canConnect`'s result
  *  partition collapsed to what the preview draws. `overflow` (WS-5 R2.17) is a
- *  segment that WOULD connect but is past the `PLACEMENT_MAX_CONNECTIONS` cap. */
-export type PreviewLineKind = 'ok' | 'blocked' | 'overflow' | 'skip';
+ *  segment that WOULD connect but is past the `PLACEMENT_MAX_CONNECTIONS` cap.
+ *  WS-D (#6) restyles the would-connect partition into `selected` (SOLID green,
+ *  the hub that WILL connect) vs `deferred` (DOTTED green, could-but-won't past
+ *  the cap) — `ok`/`overflow` are kept as aliases for back-compat. */
+export type PreviewLineKind =
+  | 'ok'
+  | 'selected'
+  | 'deferred'
+  | 'blocked'
+  | 'overflow'
+  | 'skip';
 
 /**
  * Pure visual params for ONE placement-preview segment (ghost → existing
@@ -89,7 +159,9 @@ export type PreviewLineKind = 'ok' | 'blocked' | 'overflow' | 'skip';
  */
 export function previewLineVisualParams(kind: PreviewLineKind, scale: number): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
-  if (kind === 'ok') {
+  // WS-D (#6) — 'selected' is the restyle name for the chosen hub; keep 'ok' as
+  // the back-compat alias (both = the SOLID green that WILL connect).
+  if (kind === 'ok' || kind === 'selected') {
     const width = Math.max(1 / safeScale, 2);
     return {
       color: PREVIEW_OK_COLOR,
@@ -97,6 +169,21 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
       width,
       glowAlpha: 0.25,
       glowWidth: width * 3,
+    };
+  }
+  if (kind === 'deferred') {
+    // DOTTED green — in-range + legal but past the multi-connect cap (won't
+    // link). A softer green than the solid selected line + a dash pattern (Pixi
+    // v8 has no native dash → the renderer walks the segment). No glow: a dotted
+    // glow smears into a solid line, defeating the dotting.
+    const width = Math.max(1 / safeScale, 2);
+    return {
+      color: PREVIEW_DEFERRED_COLOR,
+      alpha: 0.7,
+      width,
+      glowAlpha: 0,
+      glowWidth: 0,
+      dash: { on: PREVIEW_DASH_ON / safeScale, off: PREVIEW_DASH_OFF / safeScale },
     };
   }
   if (kind === 'overflow') {
@@ -144,6 +231,41 @@ export function rangeCircleVisualParams(scale: number): {
   return { color: RANGE_CIRCLE_COLOR, alpha: 0.22, width: Math.max(1 / safeScale, 1) };
 }
 
+// ── WS-D (#21) — always-on defensive RANGE circle for built turrets ──────────
+/** The built-turret weapon-range ring tint — a faint warm red, distinct from the
+ *  cool cyan placement connection-range ring (`RANGE_CIRCLE_COLOR`), so the
+ *  defensive coverage reads as a "threat zone", not a connection reach. */
+export const BUILT_RANGE_CIRCLE_COLOR = 0xff6655;
+
+/** Stroke params for a ring (built-turret coverage / placement reach). */
+export interface RingVisual {
+  color: number;
+  alpha: number;
+  width: number;
+}
+
+/** Pure visual params for a BUILT turret's persistent weapon-range ring (#21),
+ *  written INTO `out` (no allocation — the renderer hot path holds one scratch,
+ *  invariant #14: this is called once per BUILT turret per frame inside the
+ *  per-structure render loop). Even fainter than the placement ring (it's always
+ *  on, for every built turret) so a base full of turrets doesn't drown the scene.
+ *  Scale-aware width like the other rings. The RADIUS is the kind's catalogue
+ *  `weaponRange` (geometry — the renderer owns it). */
+export function builtRangeCircleVisualInto(out: RingVisual, scale: number): RingVisual {
+  const safeScale = scale > 0 ? scale : 1;
+  out.color = BUILT_RANGE_CIRCLE_COLOR;
+  out.alpha = 0.13;
+  out.width = Math.max(1 / safeScale, 1);
+  return out;
+}
+
+/** Allocating wrapper for `builtRangeCircleVisualInto` — returns a fresh struct.
+ *  Used by tests + any non-hot caller; the per-frame renderer path uses
+ *  `builtRangeCircleVisualInto` with a reused scratch. */
+export function builtRangeCircleVisualParams(scale: number): RingVisual {
+  return builtRangeCircleVisualInto({ color: 0, alpha: 0, width: 0 }, scale);
+}
+
 /** Positive fractional part (`x - floor(x)`, always in [0,1)). */
 function fract(x: number): number {
   const f = x - Math.floor(x);
@@ -178,6 +300,7 @@ export function connectorVisualInto(
   nowMs: number,
   scale: number,
   phaseOffset = 0,
+  material: ConnectorFlowMaterial = 'minerals',
 ): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
   if (flashUntilMs <= 0 || nowMs >= flashUntilMs + FLOW_ACTIVE_GRACE_MS) {
@@ -202,7 +325,7 @@ export function connectorVisualInto(
   const flashProgress = Math.min(1, Math.max(0, 1 - (flashUntilMs - nowMs) / FLASH_DURATION_MS));
   const beat = 1 - flashProgress;
   const width = Math.max(1 / safeScale, 2.5);
-  out.color = CONNECTOR_MINERAL_COLOR;
+  out.color = activeColorFor(material);
   out.alpha = 0.6 + 0.3 * beat; // 0.6 floor → 0.9 on the beat
   out.width = width;
   out.glowAlpha = 0.15 + 0.15 * beat; // 0.15 floor → 0.30 on the beat

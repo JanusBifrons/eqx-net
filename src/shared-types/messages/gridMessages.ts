@@ -10,12 +10,22 @@
  * Interface-only (no zod) — server→client events aren't in the inbound
  * `ClientMessageSchema`.
  */
+/** Per-edge flow material — drives the client connector tint (WS-D #12). A
+ *  presentation hint only (JSON string, never a binary/versioned wire field):
+ *  `minerals`→orange, `repair`→green, `construction`→cyan, `power`→reserved. */
+export type GridFlowMaterial = 'power' | 'minerals' | 'repair' | 'construction';
+
 export interface GridPulseEvent {
   type: 'grid_pulse';
-  /** Endpoint entityId pairs `[aId, bId]` that carried flow this pulse —
-   *  numeric `u16 entityId`s matching the binary swarm channel + the
-   *  `structures[]` slice, so the client joins them to structure positions. */
-  flashed: Array<[number, number]>;
-  /** Flow material — drives the client tint (Phase 3: always 'minerals'). */
-  material: 'power' | 'minerals';
+  /** Endpoint entityId pairs + the per-edge flow MATERIAL `[aId, bId, material]`
+   *  that carried flow this pulse — numeric `u16 entityId`s matching the binary
+   *  swarm channel + the `structures[]` slice, so the client joins them to
+   *  structure positions AND tints each edge by its own flow (a repair route and
+   *  a haul route can light in the SAME pulse). WS-D (#12) added the 3rd tuple
+   *  element; a legacy 2-tuple `[aId, bId]` is tolerated (defaults to the
+   *  top-level `material`). */
+  flashed: Array<[number, number, GridFlowMaterial] | [number, number]>;
+  /** Dominant flow material — back-compat single field + the default tint for any
+   *  legacy 2-tuple `flashed` entry. */
+  material: GridFlowMaterial;
 }

@@ -1312,6 +1312,12 @@ export class PixiRenderer implements IRenderer {
     this.connectorRenderer.update(mirror, this.world.scale.x, performance.now());
     this.feedback.placementPreviewConnectionCount =
       this.connectorRenderer.placementPreviewConnectionCount;
+    // WS-D (#21) — built-turret defensive range-circle count. DEV hook only (not
+    // a RendererFeedback field — that grows the per-frame worker payload and is
+    // phase-gated; the unit lock is the primary regression guard). Main-thread
+    // render path only, like __eqxGalaxyBadgeCount, so the E2E runs ?worker=0.
+    (globalThis as { __eqxBuiltTurretRangeCount?: number }).__eqxBuiltTurretRangeCount =
+      this.connectorRenderer.builtTurretRangeCount;
 
     // Phase 5c swarm sprites (asteroids + drones) — see
     // pixi/swarmSpriteUpdater.ts. Ctx pooled to `this._swarmUpdaterCtx`.
