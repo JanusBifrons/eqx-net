@@ -26,8 +26,17 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LivingWorldBotHooks, type LivingWorldBotHooksDeps } from './LivingWorldBotHooks.js';
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
-import type { BotAggroEvent } from '../../shared-types/messages.js';
+import type { BotAggroEvent, WarpOutEvent } from '../../shared-types/messages.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import {
+  SLOT_X_OFF,
+  SLOT_Y_OFF,
+  SLOT_VX_OFF,
+  SLOT_VY_OFF,
+  SLOT_ANGLE_OFF,
+  SLOT_ANGVEL_OFF,
+  slotBase,
+} from '../../shared-types/sabLayout.js';
 
 /** Build a hooks instance over hand-rolled deps; expose the captured side
  *  effects (markHostile ledger writes + bot_aggro broadcasts). */
@@ -35,11 +44,15 @@ function makeHooks(): {
   hooks: LivingWorldBotHooks;
   marks: Array<{ droneId: string; targetId: string }>;
   aggros: BotAggroEvent[];
+  warpOuts: WarpOutEvent[];
+  evicted: SwarmEntityRecord[];
   registry: Map<string, SwarmEntityRecord>;
   sab: Float32Array;
 } {
   const marks: Array<{ droneId: string; targetId: string }> = [];
   const aggros: BotAggroEvent[] = [];
+  const warpOuts: WarpOutEvent[] = [];
+  const evicted: SwarmEntityRecord[] = [];
   const registry = new Map<string, SwarmEntityRecord>();
   const sab = new Float32Array(64 * 1024);
   let nextEntityId = 1;
@@ -57,12 +70,14 @@ function makeHooks(): {
     } as unknown as LivingWorldBotHooksDeps['swarmRegistry'],
     swarmSpawner: {
       // Mimic a successful spawn: create a registry record so the subsequent
-      // markBotHostileToFaction can resolve `rec`.
-      spawnDrone: (spec: { id: string }): boolean => {
+      // markBotHostileToFaction / despawnBot can resolve `rec`. `slot` lets the
+      // despawn-carry test write a known SAB pose at the record's slot.
+      spawnDrone: (spec: { id: string; kind?: string }): boolean => {
         registry.set(spec.id, {
           id: spec.id,
           entityId: nextEntityId++,
           slot: nextSlot++,
+          shipKind: spec.kind ?? DEFAULT_SHIP_KIND,
         } as unknown as SwarmEntityRecord);
         return true;
       },
@@ -72,11 +87,15 @@ function makeHooks(): {
         marks.push({ droneId, targetId });
       },
     },
-    evictSwarmEntity: () => {},
+    evictSwarmEntity: (rec: SwarmEntityRecord): void => {
+      evicted.push(rec);
+    },
     extendBroadcastGrace: () => {},
     joinBroadcastGraceTicks: 300,
     broadcastWarpIn: () => {},
-    broadcastWarpOut: () => {},
+    broadcastWarpOut: (msg: WarpOutEvent): void => {
+      warpOuts.push(msg);
+    },
     broadcastBotAggro: (msg: BotAggroEvent): void => {
       aggros.push(msg);
     },
@@ -84,7 +103,7 @@ function makeHooks(): {
     clients: [] as unknown as LivingWorldBotHooksDeps['clients'],
   };
 
-  return { hooks: new LivingWorldBotHooks(deps), marks, aggros, registry, sab };
+  return { hooks: new LivingWorldBotHooks(deps), marks, aggros, warpOuts, evicted, registry, sab };
 }
 
 describe('LivingWorldBotHooks.spawnBot — inline hostility at spawn (WS-E #15)', () => {
@@ -156,5 +175,67 @@ describe('LivingWorldBotHooks.spawnBot — inline hostility at spawn (WS-E #15)'
     });
     expect(ok).toBe(false);
     expect(marks).toHaveLength(0);
+  });
+});
+
+/**
+ * LivingWorldBotHooks.despawnBot — carries the LIVE SAB world pose (WS-E #13/#19).
+ *
+ * ADVERSARIAL-REVIEW FIX. The first-round carry-over lock
+ * (`HunterBotWarpController.test.ts`) HARDCODES the carry `{x,y}` in its mock
+ * `despawnLivingWorldBot`, so reverting the REAL `despawnBot` SAB read left it
+ * green. This test drives the REAL `despawnBot`: it writes a KNOWN world pose
+ * into the SAB at the bot's slot offsets, despawns, and asserts the returned
+ * carry carries THAT pose (x/y/vx/vy/angle/angvel). Revert the SAB x/y capture
+ * ⇒ this goes RED (carry.x/y read 0, not the seeded pose). It also confirms the
+ * despawn is QUIET (evict with no destroyed/broadcast — the despawn must not look
+ * like a kill, the director's respawn trigger).
+ */
+describe('LivingWorldBotHooks.despawnBot — carries the live SAB world pose (WS-E #13/#19)', () => {
+  let env: ReturnType<typeof makeHooks>;
+  beforeEach(() => {
+    env = makeHooks();
+  });
+
+  it('reads the bot\'s live SAB x/y/vx/vy/angle/angvel into the carry', () => {
+    // Spawn so the registry holds a record at slot 0.
+    expect(env.hooks.spawnBot({ botId: 'lwbot-7', kind: DEFAULT_SHIP_KIND, x: 0, y: 0 })).toBe(true);
+    const rec = env.registry.get('lwbot-7')!;
+
+    // Write a KNOWN live world pose into the SAB at the record's slot — this is
+    // what the physics worker would have written; despawn must read it back.
+    const b = slotBase(rec.slot);
+    const sab = env.sab;
+    sab[b + SLOT_X_OFF] = 1234.5;
+    sab[b + SLOT_Y_OFF] = -987.25;
+    sab[b + SLOT_VX_OFF] = 7.5;
+    sab[b + SLOT_VY_OFF] = -3.25;
+    sab[b + SLOT_ANGLE_OFF] = 1.5;
+    sab[b + SLOT_ANGVEL_OFF] = -0.5;
+
+    const carry = env.hooks.despawnBot('lwbot-7');
+
+    expect(carry).not.toBeNull();
+    // The HEADLINE lock for #13/#19: the despawn captures the LIVE SAB position,
+    // so a hop can arrive near where the bot left (vs the old all-stack-at-edge).
+    expect(carry!.x).toBe(1234.5);
+    expect(carry!.y).toBe(-987.25);
+    expect(carry!.vx).toBe(7.5);
+    expect(carry!.vy).toBe(-3.25);
+    expect(carry!.angle).toBe(1.5);
+    expect(carry!.angvel).toBe(-0.5);
+
+    // The warp_out broadcast carries the SAME live pose (the visual hop-out).
+    const out = env.warpOuts.find((w) => w.playerId === 'lwbot-7');
+    expect(out).toBeDefined();
+    expect(out!.x).toBe(1234.5);
+    expect(out!.y).toBe(-987.25);
+
+    // QUIET despawn: the record is evicted (transit, not a kill).
+    expect(env.evicted).toContain(rec);
+  });
+
+  it('returns null when the bot is not in the registry (already gone)', () => {
+    expect(env.hooks.despawnBot('lwbot-unknown')).toBeNull();
   });
 });
