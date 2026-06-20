@@ -55,6 +55,27 @@ import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 
+/** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
+ *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
+ *  object (invariant #14 — no per-tick alloc); the real per-instance alloc is a
+ *  reference to `ShipState.statAlloc`, replaced only on a discrete upgrade. */
+const EMPTY_STAT_ALLOC: Readonly<Record<string, number>> = Object.freeze({});
+
+/** The stat-pool ids (mirrors `STAT_IDS` in core/leveling/shipStats.ts; kept as a
+ *  local literal so the broadcaster stays self-contained). Used to test
+ *  emptiness WITHOUT `Object.keys` (which would allocate per snapshot — #14). */
+const STAT_ALLOC_KEYS = ['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield'] as const;
+
+/** True iff the allocation has at least one positive entry. Alloc-free
+ *  (iterates the fixed-length key list, no `Object.keys` array). */
+function hasAnyStatAlloc(alloc: Record<string, number>): boolean {
+  for (let i = 0; i < STAT_ALLOC_KEYS.length; i++) {
+    const v = alloc[STAT_ALLOC_KEYS[i]!];
+    if (typeof v === 'number' && v > 0) return true;
+  }
+  return false;
+}
+
 /** Subset of SwarmEntityRecord the drone + asteroid slices read. */
 export interface SwarmDroneRec {
   id: string;
@@ -147,7 +168,16 @@ interface AllShipEntry {
   /** Phase 4 (Leveling & XP, WS-B1) — this hull's PUBLIC level (≥ 1). Emitted
    *  on the wire only when > 1 (un-levelled sectors pay zero bytes). */
   level: number;
+  /** Phase 4 (Leveling & XP, WS-B2) — this hull's per-instance spent stat
+   *  allocation. A SHARED reference to `ShipState.statAlloc` (replaced only on a
+   *  discrete upgrade — never per tick → invariant #14 safe). Emitted on the
+   *  wire ONLY for the recipient's own ACTIVE ship AND only when non-empty. */
+  statAlloc: StatAllocRef;
 }
+
+/** Read-only reference shape for the per-instance stat allocation (mirrors
+ *  `ShipState.statAlloc`). Carried by reference, never copied per tick. */
+type StatAllocRef = Record<string, number>;
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
 // Inline-literal pre-fix; mutable-in-place post-fix. The wire shape is
@@ -167,6 +197,7 @@ type MutableStateEntry = {
   energy?: number;
   shieldDown?: boolean;
   level?: number;
+  statAlloc?: Record<string, number>;
 };
 
 type MutableProjectileEntry = {
@@ -443,6 +474,7 @@ export class SnapshotBroadcaster {
         energy: 0,
         shieldDown: false,
         level: 1,
+        statAlloc: EMPTY_STAT_ALLOC,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -496,6 +528,7 @@ export class SnapshotBroadcaster {
       entry.energy = ship.energy;
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
       entry.level = ship.level; // Phase 4 WS-B1 — public level
+      entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC; // WS-B2 — shared ref
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -524,6 +557,9 @@ export class SnapshotBroadcaster {
       // parked hull whose shield was broken still renders hull-exposed.
       entry.shieldDown = ship.shield <= 0;
       entry.level = ship.level; // Phase 4 WS-B1 — public level (lingering hulls too)
+      // Lingering hulls never carry statAlloc on the wire (it's own-active-only
+      // below), but keep the scratch coherent.
+      entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -611,6 +647,14 @@ export class SnapshotBroadcaster {
         // undefined → zero bytes for an un-levelled sector; the client treats
         // absent as level 1). Clear the pooled entry otherwise.
         entry.level = ship.level > 1 ? ship.level : undefined;
+        // Phase 4 WS-B2 — per-instance stat allocation. Like energy, emit on the
+        // recipient's OWN ACTIVE ship only (the local player's predicted physics
+        // multipliers re-anchor from this), AND only when non-empty (un-upgraded
+        // ⇒ undefined ⇒ zero bytes; the client treats absent as no upgrade).
+        // Shared reference — no per-tick alloc (invariant #14).
+        const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
+        entry.statAlloc =
+          ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

@@ -205,3 +205,22 @@ export const ShipLevelUpEventSchema = z
     newLevel: z.number().int().positive(),
   })
   .strict();
+
+/** Server → client (direct, to the owning session only): a ship instance's stat
+ *  allocation was APPLIED or RESPEC'd (Phase 4 WS-B2, plan: effervescent-umbrella).
+ *  The echo of `apply_ship_upgrade` / `respec_ship` — confirms the server
+ *  accepted + persisted the allocation, so the client can close the modal and
+ *  refresh the roster card. The `alloc` is the now-authoritative spend (`{}` after
+ *  a respec); `spent`/`budget` let the modal render the remaining points without a
+ *  roster round-trip. The physics multipliers are re-anchored from the next
+ *  snapshot's own-ship `statAlloc` slice; this echo is the UI confirmation. */
+export const ShipUpgradeAppliedEventSchema = z
+  .object({
+    type: z.literal('ship_upgrade_applied'),
+    shipInstanceId: z.string().min(1).max(64),
+    alloc: z.record(z.string(), z.number().int().min(0)),
+    spent: z.number().int().min(0),
+    budget: z.number().int().min(0),
+  })
+  .strict();
+export type ShipUpgradeAppliedEvent = z.infer<typeof ShipUpgradeAppliedEventSchema>;

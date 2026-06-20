@@ -116,6 +116,15 @@ export interface SnapshotMessage {
        *  zero extra bytes. Integer; no `SWARM_WIRE_VERSION` bump (a slim JSON
        *  field on the snapshot states map, like `energy`/`mountAngles`). */
       level?: number;
+      /** Phase 4 (Leveling & XP, WS-B2) — the hull's per-instance spent stat
+       *  allocation (`statId → points`). Emitted ONLY on the recipient's OWN ship
+       *  entry (like `energy`) AND only when non-empty (un-upgraded hulls + every
+       *  remote ship omit it — zero byte cost). The client derives the PHYSICS
+       *  multipliers from this and re-anchors its predWorld `setStatMultipliers`
+       *  so prediction scales movement identically to the server (risk #1 — the
+       *  authoritative re-anchor; the `ship_upgrade_applied` echo is just UI
+       *  confirmation). No `SWARM_WIRE_VERSION` bump (slim JSON field). */
+      statAlloc?: Record<string, number>;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.

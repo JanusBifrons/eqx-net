@@ -41,6 +41,13 @@ export type WorkerCmd =
   | { type: 'CLOCK_RATE';     rate: number }
   | { type: 'SET_POSITION';   entityId: string; x: number; y: number; angle: number; vx: number; vy: number; angvel: number }
   | { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
+  /** Phase 4 WS-B2 — set (or clear) a ship instance's per-instance PHYSICS stat
+   *  multipliers (`topSpeed` / `turnRate`) on its worker body, so `applyShipInput`
+   *  scales the next tick's movement by the upgraded factors. The client predWorld
+   *  runs the SAME `World.setStatMultipliers` directly, so both sides clamp
+   *  identically (risk #1 / invariants #4, #12). Omitting `topSpeed`/`turnRate`
+   *  (both undefined) resets to the un-upgraded factors. */
+  | { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
   /** Missile splash impulse. The server's MissileSimulation queues these on
    *  detonate; the SectorRoom drains the queue each tick and posts them as
    *  individual commands. The worker resolves `entityId` to a Rapier body

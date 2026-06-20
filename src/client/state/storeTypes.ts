@@ -85,6 +85,11 @@ export interface RosterEntry {
   expiresAt?: number;
   createdAt?: number;
   updatedAt?: number;
+  /** Phase 4 (Leveling & XP, WS-B1/B2) — public level + per-instance spent stat
+   *  allocation, for the roster card badge + the upgrade modal. Absent ⇒ level 1
+   *  / no spend. */
+  level?: number;
+  statAlloc?: Record<string, number>;
 }
 
 /** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
@@ -243,6 +248,12 @@ export interface UIStore {
    *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
    *  null = no pending level-up to acknowledge. */
   pendingLevelUp: number | null;
+  /** Phase 4 (Leveling & XP, WS-B2) — the server's echo of the most recent
+   *  `apply_ship_upgrade` / `respec_ship` (the now-authoritative allocation +
+   *  spent/budget). Discrete object (purity-clean: ids/counts, NO spatial
+   *  fields). The upgrade modal reads it to refresh + close; null until the
+   *  first ack of the session. */
+  upgradeAck: { shipInstanceId: string; alloc: Record<string, number>; spent: number; budget: number } | null;
   /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
    *  or slot switched since last fire). Stamped by `ColyseusClient.sendFire`.
    *  Per-frame readers (the fire-button cooldown ring) use this with the
@@ -401,6 +412,11 @@ export interface UIStore {
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
    *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */
   setPendingLevelUp: (level: number | null) => void;
+  /** Phase 4 WS-B2 — publish (or clear, null) the server's upgrade-applied echo
+   *  so the modal refreshes + closes. */
+  setUpgradeAck: (
+    ack: { shipInstanceId: string; alloc: Record<string, number>; spent: number; budget: number } | null,
+  ) => void;
   /** Set the inspected entity selection (Item B3). Both args change together. */
   setSelectedEntity: (
     id: string | null,

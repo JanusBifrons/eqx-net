@@ -44,6 +44,7 @@ import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
 import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
+import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -145,6 +146,8 @@ import {
   RemoveStructureSchema,
   StructureActionSchema,
   PilotShipSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -2082,6 +2085,35 @@ export class SectorRoom extends Room<SectorState> {
       const playerId = this.sessionToPlayer.get(client.sessionId);
       if (!playerId) return;
       this.reclaimLingeringHull(client, playerId, parsed.data.shipId);
+    });
+
+    // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
+    // Spend the ship instance's upgrade points (budget = level - 1) across the
+    // stat pool, FREELY (re-distribute any way within the budget). Owner-gated +
+    // budget-gated server-side; the multipliers are applied at the ONE seam the
+    // clamps live (applyShipInput, identical server + client) so prediction
+    // stays in lockstep (risk #1).
+    this.onMessage('apply_ship_upgrade', (client: Client, raw: unknown) => {
+      const parsed = ApplyShipUpgradeSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed apply_ship_upgrade');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.applyShipUpgrade(client, playerId, parsed.data.shipId, parsed.data.alloc as CoreStatAlloc);
+    });
+
+    this.onMessage('respec_ship', (client: Client, raw: unknown) => {
+      const parsed = RespecShipSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed respec_ship');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      // A respec is "apply the empty allocation" — refund every spent point.
+      this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
     });
 
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
@@ -4354,8 +4386,13 @@ export class SectorRoom extends Room<SectorState> {
     // Phase 4 (Leveling & XP, WS-B1) — seed the live level mirror from the
     // roster row so a previously-levelled ship shows its public badge from the
     // first snapshot. Engineering rooms / fresh ships have no row ⇒ level 1.
+    // WS-B2 — also seed the per-instance stat allocation so a previously-upgraded
+    // ship's multipliers take effect from the first tick (the SET_STAT_MUL post
+    // is below, after the worker SPAWN).
     if (ship.shipInstanceId !== '') {
-      ship.level = getPlayerShipStore().get(ship.shipInstanceId)?.level ?? 1;
+      const row = getPlayerShipStore().get(ship.shipInstanceId);
+      ship.level = row?.level ?? 1;
+      ship.statAlloc = row?.statAlloc ?? {};
     }
     ship.isActive = true;
     // Populate the indirection map BEFORE setting the schema entry so
@@ -4451,6 +4488,10 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
+    // Phase 4 WS-B2 — push the per-instance physics multipliers to the freshly
+    // spawned worker body (no-op when un-upgraded) so the very first applyInput
+    // tick scales movement by the upgraded factors, identically to the client.
+    this.applyStatMulToWorker(playerId, ship.statAlloc);
 
     // Test-only initialAngle: SPAWN creates the body at angle 0; force
     // the requested heading immediately via SET_POSITION so the spec
@@ -4757,6 +4798,11 @@ export class SectorRoom extends Room<SectorState> {
     // REKEY the worker body `linger-<id>` → `playerId` so input + the per-tick
     // SAB write resume under the player's key (the displace inverse).
     this.postToWorker({ type: 'REKEY_SHIP', oldId: `linger-${shipId}`, newId: playerId });
+    // Phase 4 WS-B2 — re-seed the reclaimed hull's stat allocation + push its
+    // physics multipliers under the new (playerId) body key so the resumed
+    // prediction scales movement by the upgraded factors from the first tick.
+    target.statAlloc = rec.statAlloc ?? {};
+    this.applyStatMulToWorker(playerId, target.statAlloc);
     // Seed the pose cache + roster so any synchronous reader + a later restore
     // see the live pose (NOT a stale abandon pose — WS-A2 "lands at its live pose").
     this.shipPoseCache.set(playerId, { ...livePose });
@@ -4966,6 +5012,77 @@ export class SectorRoom extends Room<SectorState> {
         newLevel: result.level,
       });
     }
+  }
+
+  /**
+   * Phase 4 WS-B2 — push a ship instance's per-instance PHYSICS multipliers
+   * (`topSpeed`/`turnRate`, derived from its spent stat allocation) to its
+   * worker body via `SET_STAT_MUL`. `bodyKey` is the worker body id (the
+   * active player's is `playerId`; a lingering hull's is `linger-<shipId>`).
+   * An empty / un-upgraded allocation resets the body to the un-upgraded
+   * factors (both undefined). Allocation-free beyond the small derived literal
+   * (called only on spawn + on a discrete upgrade — never per tick).
+   */
+  private applyStatMulToWorker(bodyKey: string, alloc: CoreStatAlloc | undefined): void {
+    const mul = deriveStatMultipliers(alloc);
+    // Send the physics pair only. Neutral (both 1) ⇒ send the factors anyway so
+    // a respec/clear visibly resets the body; SET_STAT_MUL with 1/1 is a no-op
+    // beyond writing the (identity) multipliers.
+    this.postToWorker({ type: 'SET_STAT_MUL', id: bodyKey, topSpeed: mul.topSpeed, turnRate: mul.turnRate });
+  }
+
+  /**
+   * Phase 4 WS-B2 — apply a free stat allocation (or a respec, `alloc = {}`) to a
+   * ship INSTANCE the requester owns. The single server entry for both messages.
+   *
+   * Validates, in order:
+   *   - ownership (the roster row's `playerId === requester`),
+   *   - the point budget (`isAllocValid(alloc, row.level)` — the budget CANNOT be
+   *     exceeded, the authoritative gate).
+   * A foreign / unknown / over-budget request is a silent no-op (no echo, no
+   * persistence). On success: persist the new `statAlloc` on the roster row, and
+   * — if this instance is the player's ACTIVE hull in THIS room — update the live
+   * `ShipState.statAlloc` mirror AND push the physics multipliers to its worker
+   * body (so the next tick scales movement; the OWN-ship snapshot slice carries
+   * the alloc so the client re-anchors its predWorld identically). Finally echo
+   * `ship_upgrade_applied` so the modal closes + the roster card refreshes.
+   */
+  private applyShipUpgrade(
+    client: Client,
+    playerId: string,
+    shipId: string,
+    alloc: CoreStatAlloc,
+  ): void {
+    const store = getPlayerShipStore();
+    const row = store.get(shipId);
+    if (row === null || row.playerId !== playerId) return; // foreign / unknown
+    if (!isAllocValid(alloc, row.level)) {
+      logger.warn(
+        { sessionId: client.sessionId, shipId, level: row.level },
+        'apply_ship_upgrade over budget / invalid — dropped',
+      );
+      return;
+    }
+    // Persist on the roster (the per-instance source of truth, D8).
+    store.setProgress(shipId, { statAlloc: alloc });
+
+    // If this instance is the player's ACTIVE hull in THIS room, mirror the
+    // alloc + re-anchor the worker body's physics multipliers immediately.
+    const activeShipKey = this.resolveActiveShipKey(playerId);
+    if (activeShipKey === shipId) {
+      const ship = this.state.ships.get(shipId);
+      if (ship !== undefined) ship.statAlloc = alloc;
+      // The active player's worker body is keyed by playerId.
+      this.applyStatMulToWorker(playerId, alloc);
+    }
+
+    client.send('ship_upgrade_applied', {
+      type: 'ship_upgrade_applied',
+      shipInstanceId: shipId,
+      alloc,
+      spent: spentPoints(alloc),
+      budget: pointBudget(row.level),
+    });
   }
 
   override onDispose(): void {

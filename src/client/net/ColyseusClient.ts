@@ -6,6 +6,7 @@ import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import { decideStatAllocReanchor } from './localStatAlloc';
 import { SHIELD_WALL_THICKNESS } from '@core/structures/ShieldWall';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -14,7 +15,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -492,6 +493,34 @@ export class ColyseusGameClient {
     }
     this.localDead = false;
     logEvent('pilot_swap_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B2 — send a free stat allocation for a ship instance. The server
+   * validates ownership + the point budget, persists, applies the multipliers,
+   * and echoes `ship_upgrade_applied`. The physics re-anchor happens off the
+   * authoritative own-ship `statAlloc` snapshot slice (not this send), so the
+   * client never predicts the upgrade — it waits for the server's truth. Returns
+   * true when dispatched (false when there's no live room / blank id).
+   */
+  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('apply_ship_upgrade', { type: 'apply_ship_upgrade', shipId, alloc });
+    logEvent('ship_upgrade_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B2 — respec a ship instance (refund every spent point). The
+   * server resets the roster `statAlloc` to `{}`, re-anchors the multipliers to
+   * neutral, and echoes `ship_upgrade_applied` with the empty alloc. Returns
+   * true when dispatched.
+   */
+  respecShip(shipId: string): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('respec_ship', { type: 'respec_ship', shipId });
+    logEvent('ship_respec_requested', { shipId });
     return true;
   }
 
@@ -989,6 +1018,15 @@ export class ColyseusGameClient {
    *  EnergyBar reads it via a RAF loop + direct-DOM write. */
   private predEnergy = 0;
 
+  /** Phase 4 WS-B2 — the last per-instance stat allocation applied to the local
+   *  player's predWorld body, as a stable JSON key. The server emits the
+   *  authoritative `statAlloc` on the own-ship snapshot slice (own-active-only,
+   *  when non-empty); the client re-anchors `predWorld.setStatMultipliers` from
+   *  it so prediction scales movement IDENTICALLY to the server (risk #1). This
+   *  guard avoids re-pushing identical multipliers every snapshot. `''` = no
+   *  upgrades applied yet (the neutral path). */
+  private _lastStatAllocKey = '';
+
   /** Inject the audio sink before `connect()`. Wired by `App.tsx`'s bootstrap. */
   setAudio(audio: IAudio): void {
     this.audio = audio;
@@ -1071,6 +1109,12 @@ export class ColyseusGameClient {
       this.predWorld.despawnShip(localId);
     }
     this.reconciler = null;
+    // Phase 4 WS-B2 — the local predWorld body is despawned, so its physics stat
+    // multipliers go with it; clear the guard so the destination's first
+    // own-ship `statAlloc` slice re-anchors the fresh body (otherwise an
+    // identical key would suppress the re-push and the new body would run
+    // un-upgraded prediction).
+    this._lastStatAllocKey = '';
     // Phase 3 — drop AI registrations on sector handoff. The destination
     // sector has a different swarm; old behaviours would hold stale
     // `lastFireTick` and target stale player IDs that may not exist there.
@@ -1566,6 +1610,21 @@ export class ColyseusGameClient {
       const parsed = ShipLevelUpEventSchema.safeParse(raw);
       if (!parsed.success) return;
       this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
+    });
+
+    // Phase 4 WS-B2 — the server accepted + persisted a stat allocation / respec.
+    // Publish a discrete Zustand ack so the upgrade modal closes + the roster
+    // refreshes; the physics multipliers re-anchor off the snapshot slice, not
+    // this echo (so this is UI-confirmation only). Defensive zod parse.
+    room.onMessage('ship_upgrade_applied', (raw: unknown) => {
+      const parsed = ShipUpgradeAppliedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setUpgradeAck({
+        shipInstanceId: parsed.data.shipInstanceId,
+        alloc: parsed.data.alloc,
+        spent: parsed.data.spent,
+        budget: parsed.data.budget,
+      });
     });
 
     room.onMessage('hit_ack', (raw: unknown) => {
@@ -2761,6 +2820,16 @@ export class ColyseusGameClient {
         const max = localKind.energyMax ?? 100;
         if (useUIStore.getState().energyMax !== max) useUIStore.getState().setEnergyMax(max);
       }
+
+      // Phase 4 WS-B2 — re-anchor the local predWorld body's PHYSICS stat
+      // multipliers from the authoritative own-ship `statAlloc` slice (the
+      // server emits it own-active-only, when non-upgraded → absent). This is
+      // the single ownership site for the client's physics multipliers — read
+      // identically to the server so reconciliation stays clean (risk #1). The
+      // `ship_upgrade_applied` echo is UI-only; the SNAPSHOT is the physics
+      // truth, so an upgrade applied while the player is in another sector still
+      // takes effect the moment its own-ship slice arrives.
+      this.applyLocalStatAlloc(localId, serverState.statAlloc);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts.
@@ -4881,6 +4950,22 @@ export class ColyseusGameClient {
    *  loop + direct-DOM write — never via Zustand (it changes every frame). */
   public getPredictedEnergy(): number {
     return this.predEnergy;
+  }
+
+  /**
+   * Phase 4 WS-B2 — re-anchor the local predWorld body's PHYSICS stat
+   * multipliers from the authoritative own-ship `statAlloc` slice. Derives the
+   * multipliers via the SAME `deriveStatMultipliers` the server feeds the
+   * worker, so prediction scales movement IDENTICALLY (risk #1 / invariants #4,
+   * #12). Guarded by a stable JSON key so identical allocations don't re-push
+   * every snapshot. An absent / empty alloc resets to the neutral path.
+   */
+  private applyLocalStatAlloc(localId: string, alloc: Record<string, number> | undefined): void {
+    if (!this.predWorld || !this.predWorld.hasShip(localId)) return;
+    const decision = decideStatAllocReanchor(alloc, this._lastStatAllocKey);
+    if (!decision.changed) return; // identical allocation since last apply
+    this._lastStatAllocKey = decision.key;
+    this.predWorld.setStatMultipliers(localId, decision.mul);
   }
 
   public triggerFireForTest(weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {

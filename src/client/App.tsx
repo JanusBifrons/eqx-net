@@ -51,6 +51,7 @@ import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
+import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -773,6 +774,9 @@ function GameSurface({
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
        *  moves to the renderer's projection of the selected entity (any kind). */}
       <EntityStatsPanel />
+      {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
+       *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
+      <UpgradeModalHost />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
        *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,

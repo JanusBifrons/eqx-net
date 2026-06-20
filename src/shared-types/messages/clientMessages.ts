@@ -167,6 +167,46 @@ export const PilotShipSchema = z
   })
   .strict();
 
+/** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
+ *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
+ *  `src/shared-types/` stays self-contained (the parity is asserted in
+ *  `messages.test.ts`). Append-only: add a new id at the END, never reorder. */
+export const StatIdSchema = z.enum(['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield']);
+
+/** A spent stat allocation on the wire — `statId → points (≥ 0 integer)`.
+ *  Bounded server-side against the ship instance's point budget (the budget
+ *  can't be exceeded); per-entry capped at 64 so a malformed map can't bloat. */
+export const StatAllocSchema = z
+  .record(StatIdSchema, z.number().int().min(0).max(64))
+  .refine((a) => Object.keys(a).length <= 6, { message: 'too many stat entries' });
+
+/** Client → server (Phase 4 WS-B2): "spend my ship instance's upgrade points
+ *  across the stat pool with this allocation". FREE allocation — the player may
+ *  re-distribute any way they like within the point BUDGET (`level - 1`). The
+ *  server validates ownership + the budget (`isAllocValid`), persists the alloc
+ *  on the roster row, applies the per-instance multipliers (physics + combat),
+ *  and echoes a `ship_upgrade_applied`. An over-budget / foreign / unknown ship
+ *  is dropped. Strict — no extra keys. */
+export const ApplyShipUpgradeSchema = z
+  .object({
+    type: z.literal('apply_ship_upgrade'),
+    shipId: z.string().min(1).max(64),
+    alloc: StatAllocSchema,
+  })
+  .strict();
+
+/** Client → server (Phase 4 WS-B2): "respec my ship instance — refund every
+ *  spent point back to the pool". Resets the roster `statAlloc` to `{}` and the
+ *  multipliers to neutral, then echoes a `ship_upgrade_applied` with the empty
+ *  alloc. A resource cost (D11 — optional) is a future balance knob; v1 is free.
+ *  Owner-gated; a foreign / unknown ship is dropped. Strict. */
+export const RespecShipSchema = z
+  .object({
+    type: z.literal('respec_ship'),
+    shipId: z.string().min(1).max(64),
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -178,6 +218,8 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   RemoveStructureSchema,
   StructureActionSchema,
   PilotShipSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 ]);
@@ -192,4 +234,8 @@ export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
+export type StatId = z.infer<typeof StatIdSchema>;
+export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
+export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;
+export type RespecShipMessage = z.infer<typeof RespecShipSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

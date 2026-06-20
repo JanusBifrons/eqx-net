@@ -25,6 +25,9 @@ export interface RosterShipEntry {
   /** Phase 4 (Leveling & XP, WS-B1) — public ship level (≥ 1). Absent on
    *  servers / fixtures that pre-date the field ⇒ treated as level 1 (no badge). */
   level?: number;
+  /** Phase 4 (Leveling & XP, WS-B2) — per-instance spent stat allocation. Drives
+   *  the upgrade modal's current spend; absent ⇒ no points spent. */
+  statAlloc?: Record<string, number>;
 }
 
 interface ShipRosterCardProps {

@@ -1,6 +1,7 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
 import { SHIP_MAX_HEALTH } from '../../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
+import type { StatAlloc } from '../../playerShips/PlayerShipStore.js';
 
 // Wire-traffic invariant (network-discipline P1, see plan):
 // Spatial fields (x/y/vx/vy/angle/angvel) MUST NOT live on this schema.
@@ -60,6 +61,17 @@ export class ShipState extends Schema {
   // Source of truth is the roster (PlayerShipStore); this is the live mirror
   // the broadcaster reads. Defaults to 1 (a fresh, un-levelled hull).
   level = 1;
+
+  // -- Stat allocation (Phase 4 Leveling & XP, WS-B2) --------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
+  // spent stat-point allocation. Mirrored from the roster row's `statAlloc` on
+  // spawn/restore + on an `apply_ship_upgrade`/`respec_ship`. The PHYSICS
+  // multipliers (topSpeed/turnRate) are pushed to the worker (SET_STAT_MUL) AND
+  // ride the OWN-ship snapshot slice so the client predWorld scales movement
+  // identically (risk #1). The non-physics factors (hull/energy/damage/shield)
+  // are read here by the server damage/shield/energy calcs. `{}` = un-upgraded.
+  statAlloc: StatAlloc = {};
+
 
   // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the

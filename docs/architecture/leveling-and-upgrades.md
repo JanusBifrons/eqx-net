@@ -124,11 +124,95 @@ integration (the `level` field is emit-when > 1 and rides the same snapshot the
 gate already measures — characterise, don't widen margins). Deferred to the
 human gate.
 
-## Future (WS-B2 / WS-B3)
+## Stat upgrades — free allocation + respec (WS-B2)
 
-- **WS-B2** spends the `level`-granted points across a stat pool (free allocation
-  + respec) via the per-instance `stat_alloc` roster column; multipliers read at
-  the one `applyShipInput` clamp seam, identically server + client.
+WS-B2 spends the `level`-granted points across a stat pool, FREELY (re-distribute
+any way within the budget), with a respec that refunds everything.
+
+### The stat pool (pure, zone-blind)
+
+`src/core/leveling/shipStats.ts` is the single source of truth for the pool +
+the multipliers. `STAT_IDS` (append-only order): `hull`, `energy`, `damage`,
+`topSpeed`, `turnRate`, `shield`. Each spent point multiplies that stat's base by
+an extra `STAT_POINT_FRAC` (5 %/point — a balance knob), so N points ⇒
+`1 + N·STAT_POINT_FRAC`. `pointBudget(level) = level - 1` (one point per level).
+
+| Function | Meaning |
+|---|---|
+| `pointBudget(level)` | Available points: `level - 1` (≥ 0). |
+| `isAllocValid(alloc, level)` | The SERVER's authoritative gate: every key a known stat id, every value a non-negative integer, total ≤ budget. The budget CANNOT be exceeded. |
+| `deriveStatMultipliers(alloc)` | `StatAlloc → ShipStatMultipliers` (`maxHull`/`energy`/`damage`/`topSpeed`/`turnRate`/`shield`). Empty / undefined ⇒ every factor 1 (byte-identical to an un-upgraded ship). |
+
+### Prediction integrity — the ONE seam (risk #1)
+
+The canonical failure mode is prediction drift from the physics multipliers. The
+PHYSICS pair — `topSpeed` (scales `thrustImpulse` + the `maxSpeed` clamp so the
+ship can reach the raised cap) and `turnRate` (scales `maxAngvel`) — is applied
+at **exactly one seam**: `applyShipInput(body, kind, input, mul?)`
+(`src/core/physics/applyShipInput.ts`). `World.applyInput` reads the
+per-instance `mul` off the body record (`World.setStatMultipliers(id, mul)`).
+BOTH sides drive that one seam:
+
+- **Server worker** — `SectorRoom.applyStatMulToWorker(bodyKey, statAlloc)` posts
+  the `SET_STAT_MUL { id, topSpeed, turnRate }` worker command (on spawn /
+  restore / reclaim / upgrade) → the worker calls `World.setStatMultipliers`.
+- **Client predWorld** — `ColyseusClient.applyLocalStatAlloc` re-anchors
+  `predWorld.setStatMultipliers(localId, mul)` off the authoritative own-ship
+  `statAlloc` snapshot slice, deriving the SAME multipliers via the SAME
+  `deriveStatMultipliers`.
+
+So the client never PREDICTS the upgrade — it reads the server's truth off the
+snapshot. The non-physics factors (`maxHull`/`energy`/`damage`/`shield`) are
+server-authoritative (applied in the damage/shield/energy calcs — NOT in
+`applyShipInput`), riding the same per-instance `StatAlloc`.
+
+Locked by `applyShipInput.levelMultiplier.test.ts` (two independent
+`PhysicsWorld`s stepped with the same allocation reach byte-identical velocity /
+turn; an upgraded ship is genuinely faster; an empty alloc is byte-identical to
+the legacy no-`mul` path).
+
+### Messages + persistence
+
+- `apply_ship_upgrade { shipId, alloc }` / `respec_ship { shipId }` (client →
+  server, strict zod). `SectorRoom.applyShipUpgrade` validates ownership (the
+  roster row's `playerId`) + the budget (`isAllocValid`), persists via
+  `PlayerShipStore.setProgress(shipId, { statAlloc })` (per-instance, D8),
+  mirrors `ShipState.statAlloc` + re-pushes the worker multipliers when the
+  instance is the player's ACTIVE hull, and echoes
+  `ship_upgrade_applied { shipInstanceId, alloc, spent, budget }` to the owner.
+  A foreign / over-budget / unknown request is a silent no-op.
+- The per-instance `statAlloc` lives in the roster `stat_alloc` JSON column
+  (WS-0). The OWN-ship snapshot slice carries `states[].statAlloc` (own-active
+  only, when non-empty — the client physics re-anchor); no `SWARM_WIRE_VERSION`
+  bump (a slim JSON field, like `energy`/`level`).
+
+### The modal
+
+`UpgradeModal` (MUI `Dialog`, `keepMounted`, cloned from `ShipDetailModal`) +
+`UpgradeModalHost` (opens on the local ship's level-up via the WS-B1
+`pendingLevelUp` seam, closes on the `upgradeAck` echo). The draft math is pure
+(`upgradeModalDraft.ts`) — budget-clamped spend/refund, canonical zero-stripped
+alloc.
+
+### Regression locks (WS-B2)
+
+| Concern | Test |
+|---|---|
+| Stat pool curve (budget, validation gate, derivation) | `src/core/leveling/shipStats.test.ts` |
+| Server==client physics multiplier (no drift) + upgrade is real | `src/core/physics/applyShipInput.levelMultiplier.test.ts` |
+| Wire schemas (apply/respec/echo, S5 bounds, strict) | `src/shared-types/messages.test.ts` |
+| `setProgress(statAlloc)` per-instance persistence + respec | `src/server/playerShips/PlayerShipStore.test.ts` |
+| Full apply→budget→respec→foreign-drop server chain | `tests/integration/sectorRoom/shipUpgradeApply.test.ts` |
+| Client re-anchor guard | `src/client/net/localStatAlloc.test.ts` |
+| Modal draft logic + React wiring | `upgradeModalDraft.test.ts`, `UpgradeModal.test.tsx` |
+
+### Netgate
+
+The physics multipliers touch client prediction (the snapshot reconcile path), so
+`pnpm e2e:netgate` is required — deferred to the human gate.
+
+## Future (WS-B3)
+
 - **WS-B3** activates latent mount slots and binds weapons, persisted in the
   per-instance `mounts` roster column; geometry looked up client-side by
   `(shipKind, slotId)` (no new geometry wire).

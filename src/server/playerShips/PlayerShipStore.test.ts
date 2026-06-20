@@ -386,4 +386,36 @@ describe('PlayerShipStore', () => {
       expect(store.get(b.shipId)!.level).toBe(2);
     });
   });
+
+  // ── Phase 4 WS-B2 — stat allocation round-trips PER INSTANCE ──────────
+  describe('setProgress — statAlloc (Phase 4 WS-B2)', () => {
+    it('persists a statAlloc on the named ship and shadows it as JSON', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      sink.ops.length = 0;
+      store.setProgress(rec.shipId, { statAlloc: { topSpeed: 3, hull: 2 } });
+      expect(store.get(rec.shipId)!.statAlloc).toEqual({ topSpeed: 3, hull: 2 });
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(JSON.parse(op.statAllocJson)).toEqual({ topSpeed: 3, hull: 2 });
+    });
+
+    it('a respec (empty statAlloc) is round-tripped + shadowed', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      store.setProgress(rec.shipId, { statAlloc: { damage: 4 } });
+      sink.ops.length = 0;
+      store.setProgress(rec.shipId, { statAlloc: {} });
+      expect(store.get(rec.shipId)!.statAlloc).toEqual({});
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(JSON.parse(op.statAllocJson)).toEqual({});
+    });
+
+    it("keeps each of a player's two ships' statAlloc separate (per-instance, D8)", () => {
+      const a = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      const b = store.create({ playerId: 'p1', userId: null, kind: 'scout', sectorKey: 's', x: 1, y: 1, health: 60 });
+      store.setProgress(a.shipId, { statAlloc: { topSpeed: 5 } });
+      expect(store.get(a.shipId)!.statAlloc).toEqual({ topSpeed: 5 });
+      expect(store.get(b.shipId)!.statAlloc).toEqual({}); // untouched
+    });
+  });
 });
