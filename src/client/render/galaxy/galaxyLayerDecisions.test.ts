@@ -13,10 +13,11 @@ import {
   isSectorWarpable,
   clusterFitFraction,
   hoverShrinkTargetScale,
+  HOVER_SHRINK_SCALE,
 } from './galaxyLayerDecisions';
 import { isNeighbour } from '@core/galaxy/galaxy';
 
-const SHRINK = 0.94; // HOVER_SCALE — the layer's tuned shrink target
+const SHRINK = HOVER_SHRINK_SCALE; // the layer's tuned shrink target
 
 // Concrete galaxy facts: sol-prime (the core hub) is graph-adjacent to
 // vega-reach; no sector neighbours itself (no self-loop — enforced by
@@ -79,25 +80,24 @@ describe('hoverShrinkTargetScale (#1 single-owner gate)', () => {
   // territory shrinks the entire map under the pointer, which reads as a janky
   // global flinch with nothing to contrast against. The shrink must only engage
   // when there are 2+ territories to differentiate.
+  //
+  // POSITIONAL SCALAR signature (isActive, territoryCount) — the hot-loop
+  // callsite (`GalaxyMapLayer.tick` on `Ticker.shared`) must NOT allocate an
+  // object literal per-territory per-frame (invariant #14).
   it('does NOT shrink the active territory when it is the only one', () => {
-    expect(hoverShrinkTargetScale({ index: 0, active: 0, territoryCount: 1, shrink: SHRINK })).toBe(1);
+    expect(hoverShrinkTargetScale(true, 1)).toBe(1);
   });
 
   it('shrinks the active territory when there are multiple', () => {
-    expect(hoverShrinkTargetScale({ index: 0, active: 0, territoryCount: 2, shrink: SHRINK })).toBe(SHRINK);
+    expect(hoverShrinkTargetScale(true, 2)).toBe(SHRINK);
   });
 
   it('leaves non-active territories at 1.0 even with multiple territories', () => {
-    expect(hoverShrinkTargetScale({ index: 1, active: 0, territoryCount: 3, shrink: SHRINK })).toBe(1);
-  });
-
-  it('targets 1.0 for every territory when none is active (active = -1)', () => {
-    expect(hoverShrinkTargetScale({ index: 0, active: -1, territoryCount: 3, shrink: SHRINK })).toBe(1);
-    expect(hoverShrinkTargetScale({ index: 2, active: -1, territoryCount: 3, shrink: SHRINK })).toBe(1);
+    expect(hoverShrinkTargetScale(false, 3)).toBe(1);
   });
 
   it('does not shrink with zero territories (degenerate guard)', () => {
-    expect(hoverShrinkTargetScale({ index: 0, active: 0, territoryCount: 0, shrink: SHRINK })).toBe(1);
+    expect(hoverShrinkTargetScale(true, 0)).toBe(1);
   });
 });
 

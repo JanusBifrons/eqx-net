@@ -118,9 +118,10 @@ const COUNT_SEG_GAP = 4;
 const COUNT_ICON_LABEL_GAP = 2;
 
 /** Contiguous-territory hover-shrink: the hovered (selector) / current-sector
- *  (overlay / touch) territory eases toward this scale; all others ease to 1.0.
- *  Small + subtle — the region "breathes" toward its centroid. Tunable. */
-const HOVER_SCALE = 0.94; // eqx-peri's proven value (6% shrink)
+ *  (overlay / touch) territory eases toward {@link HOVER_SHRINK_SCALE}; all
+ *  others ease to 1.0. Small + subtle — the region "breathes" toward its
+ *  centroid. The shrink VALUE is owned by `galaxyLayerDecisions` (the pure
+ *  `hoverShrinkTargetScale` returns it) so there is ONE source of truth. */
 const HOVER_LERP = 0.12; // per-frame ease toward target (tunable feel knob)
 
 /** Living Galaxy Phase 6 — emitted when the hovered sector changes (deduped),
@@ -203,7 +204,7 @@ export class GalaxyMapLayer extends Container {
   private readonly _badgeMeasures: BadgeSegmentMeasure[] = [];
   private readonly _badgeVisibleIdx: number[] = [];
   /** Territory the pointer is currently over (selector hover / touch press), or
-   *  -1. The tick eases this one toward HOVER_SCALE; -1 falls back to the
+   *  -1. The tick eases this one toward HOVER_SHRINK_SCALE; -1 falls back to the
    *  current sector's territory. */
   private hoveredTerritory = -1;
   /** Living Galaxy Phase 6 — sector key under the pointer (selector hover) or
@@ -997,19 +998,16 @@ export class GalaxyMapLayer extends Container {
 
     // ── Contiguous-territory hover-shrink ease (Phase 4a) ──
     // The active territory (pointer-hovered, else the current sector's) eases
-    // toward HOVER_SCALE; every other eases back to 1.0. Lerping ALL of them
+    // toward HOVER_SHRINK_SCALE; every other eases back to 1.0. Lerping ALL of them
     // each frame IS the smooth incoming/outgoing transition.
     const active = this.hoveredTerritory >= 0 ? this.hoveredTerritory : this.currentTerritoryIndex();
     const territoryCount = this.territoryContainers.length;
     for (let i = 0; i < territoryCount; i++) {
       // #1 — never shrink when the whole galaxy is ONE territory (all-neutral):
       // shrinking the sole territory shrinks the entire map under the pointer.
-      this.territoryTarget[i] = hoverShrinkTargetScale({
-        index: i,
-        active,
-        territoryCount,
-        shrink: HOVER_SCALE,
-      });
+      // Positional scalar args — NO per-territory-per-frame object literal in
+      // this `Ticker.shared` hot loop (invariant #14).
+      this.territoryTarget[i] = hoverShrinkTargetScale(i === active, territoryCount);
       const cur = this.territoryScale[i]!;
       const next = cur + (this.territoryTarget[i]! - cur) * HOVER_LERP;
       this.territoryScale[i] = next;
