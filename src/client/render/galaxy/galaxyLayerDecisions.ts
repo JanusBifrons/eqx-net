@@ -45,6 +45,34 @@ export function clusterFitFraction(mode: GalaxyLayerMode): number {
   return mode === 'selector' ? 0.85 : 0.6;
 }
 
+/** The tuned per-territory hover-shrink target (eqx-peri's proven 6% shrink). */
+export const HOVER_SHRINK_SCALE = 0.94;
+
+/**
+ * Phase 3 (#1) — the per-territory hover-shrink target scale.
+ *
+ * The contiguous-territory hover-shrink "breathes" a region toward its centroid
+ * when it's the active (pointer-hovered / current-sector) territory. The active
+ * territory eases toward {@link HOVER_SHRINK_SCALE}; every other eases back to
+ * 1.0.
+ *
+ * BUT when the whole galaxy is a SINGLE territory (the default — every sector
+ * NEUTRAL, no capture mechanics yet), shrinking the sole territory shrinks the
+ * ENTIRE map under the pointer. There's nothing to contrast it against, so it
+ * reads as a janky global flinch on every hover (the bug report). The gate:
+ * only shrink when there are 2+ territories to differentiate. With one (or
+ * zero) territory the target is 1.0 — no shrink. Pure; unit-locked.
+ *
+ * POSITIONAL SCALAR args (no object literal) — this is called per-territory
+ * per-frame from `GalaxyMapLayer.tick` (registered on `Ticker.shared`), so an
+ * object-literal arg allocated in the hot loop (invariant #14). The caller
+ * passes scalars: `hoverShrinkTargetScale(i === active, territoryCount)`.
+ */
+export function hoverShrinkTargetScale(isActive: boolean, territoryCount: number): number {
+  if (territoryCount <= 1) return 1;
+  return isActive ? HOVER_SHRINK_SCALE : 1;
+}
+
 /**
  * Equinox Phase 7 (Item 1) — is `sectorKey` a WARPABLE destination from the
  * player's current sector? True only for a DOCKED player's direct galaxy-graph

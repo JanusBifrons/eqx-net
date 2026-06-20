@@ -15,15 +15,19 @@ import type { RenderMirror, SwarmRenderState } from '../../../core/contracts/IRe
 import { interpBuildPct } from './buildBarInterp.js';
 import {
   connectorVisualInto,
+  codeToFlowMaterial,
   previewLineVisualParams,
   rangeCircleVisualParams,
+  builtRangeCircleVisualInto,
   cometSegment,
   shieldWallVisualParams,
   type ConnectorVisual,
   type CometSegment,
+  type RingVisual,
   type ShieldWallVisual,
   type PreviewLineKind,
 } from './connectorVisual.js';
+import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
   canConnect,
   edgeDistance,
@@ -77,8 +81,29 @@ export class ConnectorRenderer {
    * or the in-range legal hubs are at/below the cap. Sibling test hook to
    * `placementPreviewConnectionCount` (the drawn lines aren't headlessly
    * inspectable, so this is the observable — feedback-test-observable lesson).
+   *
+   * WS-D (#6) — kept as the back-compat alias of `placementPreviewDeferredCount`
+   * (the over-cap remainder is now drawn DOTTED green, not red).
    */
   placementPreviewOverflowCount = 0;
+
+  /**
+   * WS-D (#6) — number of SOLID-green 'selected' preview lines the LAST
+   * `update()` drew: the hubs that WILL connect on confirm (capped at the placed
+   * kind's `maxConnections` AND the global `PLACEMENT_MAX_CONNECTIONS`). Identical
+   * to `placementPreviewConnectionCount`; named for the restyle's solid/dotted
+   * split. 0 when no preview is up.
+   */
+  placementPreviewSelectedCount = 0;
+
+  /**
+   * WS-D (#6) — number of DOTTED-green 'deferred' preview lines the LAST
+   * `update()` drew: in-range, legal hubs that lost the multi-connect cap race
+   * (could-but-won't connect). Identical count to `placementPreviewOverflowCount`
+   * — the restyle only changes the COLOUR (red → dotted green), not the cap. 0
+   * when no preview is up or the in-range legal hubs are at/below the cap.
+   */
+  placementPreviewDeferredCount = 0;
 
   /**
    * WS-10 (R2.3) — the world-unit RADIUS of the connection-range ring the LAST
@@ -89,6 +114,17 @@ export class ConnectorRenderer {
    * `placementPreviewConnectionCount`); read by the unit lock.
    */
   lastRangeCircleRadius = 0;
+
+  /**
+   * WS-D (#21) — number of always-on defensive range circles the LAST `update()`
+   * drew (one per BUILT weapon turret in interest). 0 when no built turret is on
+   * screen. Test hook (the drawn circles aren't headlessly inspectable —
+   * feedback-test-observable lesson).
+   */
+  builtTurretRangeCount = 0;
+  /** WS-D (#21) — the world-unit radius of the LAST built-turret range circle
+   *  drawn (the kind's catalogue `weaponRange`), or 0 when none. Test hook. */
+  lastBuiltTurretRangeRadius = 0;
 
   // ── Item C preview-pass module-scratch (invariant #14) ────────────────────
   // All reused in place; the preview pass runs ONLY while a ghost is up, so
@@ -133,6 +169,9 @@ export class ConnectorRenderer {
     railColor: 0, railAlpha: 0, railWidth: 0, halfThickness: 0,
     shimmerT: 0, shimmerColor: 0, shimmerAlpha: 0, shimmerWidth: 0,
   };
+  /** WS-D (#21) — reused built-turret range-ring scratch, written per built
+   *  turret per frame (invariant #14: was a fresh object literal per turret). */
+  private readonly _builtRangeVisual: RingVisual = { color: 0, alpha: 0, width: 0 };
 
   /** Redraw the web for this frame. `scale` is the viewport zoom. */
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
@@ -146,7 +185,11 @@ export class ConnectorRenderer {
     // preview always publishes 0.
     this.placementPreviewConnectionCount = 0;
     this.placementPreviewOverflowCount = 0;
+    this.placementPreviewSelectedCount = 0;
+    this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
+    this.builtTurretRangeCount = 0;
+    this.lastBuiltTurretRangeRadius = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) {
       if (this._buildAnchors.size > 0) this._buildAnchors.clear();
@@ -154,6 +197,7 @@ export class ConnectorRenderer {
     }
     const flashes = mirror.gridFlashes;
     const flowSrc = mirror.gridFlowSrc;
+    const flowMat = mirror.gridFlowMaterial;
 
     for (const [id, st] of structures) {
       const a = swarm.get(id);
@@ -161,6 +205,23 @@ export class ConnectorRenderer {
       // Pixi screen space is Y-down; world is Y-up — negate y (same as sprites).
       const ax = a.x;
       const ay = -a.y;
+
+      // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
+      // `a.shipKind` is the structure subtype (rides the shared shipKind byte);
+      // the catalogue `weaponRange` is known client-side, so no wire. Out-of-
+      // interest structures are absent from `structures`, so they're omitted by
+      // construction. Drawn FIRST (faint underlay, behind the web). A symmetric
+      // circle → the Y-flip on `ay` doesn't affect the radius.
+      if (st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
+        const wr = getStructureKind(a.shipKind).weaponRange;
+        if (wr !== undefined && wr > 0) {
+          const rc = builtRangeCircleVisualInto(this._builtRangeVisual, scale);
+          g.circle(ax, ay, wr);
+          g.stroke({ color: rc.color, alpha: rc.alpha, width: rc.width });
+          this.builtTurretRangeCount++;
+          this.lastBuiltTurretRangeRadius = wr;
+        }
+      }
 
       for (const otherId of st.connTo) {
         // Draw each undirected edge once, from the lower-id endpoint.
@@ -174,7 +235,10 @@ export class ConnectorRenderer {
         // R2.2 — desync edges by source id so the grid reads as organic flow,
         // not a global strobe (a coherent hop-distance wavefront is future polish).
         const phaseOffset = src !== undefined ? (src & 7) / 8 : 0;
-        const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset);
+        // WS-D (#12) — per-edge flow material drives the active tint
+        // (repair→green / minerals→orange / construction→cyan). Absent ⇒ minerals.
+        const material = codeToFlowMaterial(flowMat ? flowMat.get(key) : undefined);
+        const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset, material);
         const bx = b.x;
         const by = -b.y;
         // Glow underlay first (so the core line sits on top).
@@ -477,10 +541,16 @@ export class ConnectorRenderer {
     // but past the cap → RED overflow (won't link).
     const greenCount = Math.min(okHubs.length, ghost.maxConnections, PLACEMENT_MAX_CONNECTIONS);
     for (let i = 0; i < okHubs.length; i++) {
-      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'ok' : 'overflow', scale);
+      // WS-D (#6) restyle: the chosen (within-cap) hubs draw SOLID green
+      // ('selected' = the ones that WILL connect); the over-cap remainder draws
+      // DOTTED green ('deferred' = could-but-won't), NOT the old red overflow.
+      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'selected' : 'deferred', scale);
     }
+    const deferredCount = okHubs.length - greenCount;
     this.placementPreviewConnectionCount = greenCount;
-    this.placementPreviewOverflowCount = okHubs.length - greenCount;
+    this.placementPreviewSelectedCount = greenCount;
+    this.placementPreviewOverflowCount = deferredCount;
+    this.placementPreviewDeferredCount = deferredCount;
   }
 
   /** Draw ONE placement-preview segment (ghost → hub) for the given outcome
@@ -501,6 +571,28 @@ export class ConnectorRenderer {
       g.moveTo(ax, ay);
       g.lineTo(bx, by);
       g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
+    }
+    // WS-D (#6) — a 'deferred' line is DOTTED: Pixi v8 has no native dash, so
+    // walk the segment emitting short `on`-length dashes separated by `off`-length
+    // gaps. Alloc-free (scalar march; runs every frame during build mode, #14).
+    if (v.dash && v.dash.on > 0) {
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        const ux = dx / len;
+        const uy = dy / len;
+        const period = v.dash.on + v.dash.off;
+        let t = 0;
+        while (t < len) {
+          const segEnd = Math.min(t + v.dash.on, len);
+          g.moveTo(ax + ux * t, ay + uy * t);
+          g.lineTo(ax + ux * segEnd, ay + uy * segEnd);
+          g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+          t += period;
+        }
+      }
+      return;
     }
     g.moveTo(ax, ay);
     g.lineTo(bx, by);

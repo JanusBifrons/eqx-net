@@ -77,6 +77,7 @@ import {
 } from '../combat/HitPrediction.client';
 import { localFireSpawnsGhost, liveBeamVisible, LIVE_BEAM_PERSIST_MS, buildLocalAimTargets, type LocalAimTarget } from '../combat/LocalBeam';
 import { tickLocalMountAngles } from '../combat/localMountAim';
+import { flowMaterialToCode } from '../render/pixi/connectorVisual';
 import type { TouchInput } from '../input/TouchInput';
 import { joystickToInput, IDLE_INPUT_STATE, type JoystickInputState } from '../input/joystickToInput';
 import { decodeSwarmPacket } from './BinarySwarmDecoder';
@@ -1402,10 +1403,15 @@ export class ColyseusGameClient {
       // travels source→dest). Sibling map keyed identically; value = the source.
       let flowSrc = this.mirror.gridFlowSrc;
       if (!flowSrc) { flowSrc = new Map(); this.mirror.gridFlowSrc = flowSrc; }
+      // WS-D (#12) — per-edge flow MATERIAL (numeric code) for the connector
+      // tint. Sibling map keyed identically; value = flowMaterialToCode(material).
+      let flowMat = this.mirror.gridFlowMaterial;
+      if (!flowMat) { flowMat = new Map(); this.mirror.gridFlowMaterial = flowMat; }
       // R2.2 — keep the edge lit for a FULL pulse period so consecutive 1 Hz
       // pulses read as continuous flow (not a 300 ms blink + 700 ms gap); it
       // fades ~1 s after the flow actually stops being re-stamped.
       const until = this.clock.now() + GRID_PULSE_WINDOW_MS;
+      const defaultMatCode = flowMaterialToCode(msg.material ?? 'minerals');
       for (const pair of msg.flashed) {
         const a = pair[0];
         const b = pair[1];
@@ -1417,6 +1423,10 @@ export class ColyseusGameClient {
         // `a` is the route SOURCE (StructureGridSubsystem.flashRoute pushes
         // [route[i], route[i+1]] in source→dest order; SectorRoom preserves it).
         flowSrc.set(key, a);
+        // Per-edge material (WS-D #12); a legacy 2-tuple falls back to the
+        // pulse-level `material`.
+        const edgeMat = pair[2];
+        flowMat.set(key, edgeMat !== undefined ? flowMaterialToCode(edgeMat) : defaultMatCode);
       }
     });
 

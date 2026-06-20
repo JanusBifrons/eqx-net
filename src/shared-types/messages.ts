@@ -75,7 +75,7 @@ export type {
 
 // Living World (server → client)
 export type { BotAggroEvent } from './messages/livingWorldMessages.js';
-export type { GridPulseEvent } from './messages/gridMessages.js';
+export type { GridPulseEvent, GridFlowMaterial } from './messages/gridMessages.js';
 
 // Click-to-inspect selection-scoped stats channel (structures follow-up Item B5)
 export {

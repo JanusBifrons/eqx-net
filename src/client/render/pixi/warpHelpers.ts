@@ -68,6 +68,50 @@ export function warpEventFiresBurst(event: WarpBurstEvent): boolean {
 }
 
 /**
+ * #7 — should a REMOTE-warp ripple fire given the galaxy map's open state?
+ *
+ * The WarpFilterChain attaches to the shared `app.stage`, and the
+ * `GalaxyMapLayer` (full-screen selector OR in-game additive overlay) is a child
+ * of that SAME stage. A stage-level warp filter therefore distorts the galaxy
+ * overlay the player is reading whenever a remote ship warps in/out — a ripple
+ * bleeding across the hexes. Skip the visual entirely while the map is open; the
+ * effect is purely cosmetic and the player isn't looking at the gameplay scene
+ * anyway. Pure (mirrors `warpEventFiresBurst`); locked by
+ * `PixiRenderer.warpGalaxyGate.test.ts`.
+ */
+export function shouldFireRemoteWarpVisual(state: { galaxyMapOpen: boolean }): boolean {
+  return !state.galaxyMapOpen;
+}
+
+/**
+ * #7 — the SINGLE source of truth for the `pendingWarpEvents` drain's
+ * per-event decision: does THIS queued remote-warp event actually fire its
+ * ripple right now?
+ *
+ * Composes the two gates the drain applies:
+ *   1. the galaxy-map gate ({@link shouldFireRemoteWarpVisual}) — skip while the
+ *      map is open (the ripple would bleed across the overlay the player reads), and
+ *   2. the burst-in-flight gate — only one warp burst per RAF window (the
+ *      2026-05-21 render-jitter guard; a fresh `triggerWarpIn` restarts the
+ *      filter-chain teardown timer).
+ *
+ * The live drain (`PixiRenderer.drainRemoteWarp`) calls THIS composed function;
+ * the DEV/E2E hook (`PixiRenderer.devRemoteWarpVisualWouldFire`) shares the
+ * galaxy-map gate {@link shouldFireRemoteWarpVisual} (the only gate the E2E
+ * cares about — the burst gate is transient frame state). The adversarial-review
+ * finding was that NEITHER the pure-helper unit test NOR the DEV hook observed
+ * the ACTUAL drain outcome, so reverting the drain's guard left both green: the
+ * lock now drives `drainRemoteWarp` and asserts its observable fired/suppressed
+ * counters. Pure; locked by `PixiRenderer.warpGalaxyGate.test.ts`.
+ */
+export function remoteWarpEventFires(state: {
+  galaxyMapOpen: boolean;
+  burstInFlight: boolean;
+}): boolean {
+  return shouldFireRemoteWarpVisual({ galaxyMapOpen: state.galaxyMapOpen }) && !state.burstInFlight;
+}
+
+/**
  * Resolve the warp filter centre, in the renderer's screen-pixel
  * frame (the same frame `world.toGlobal` / `camera.screenWidth`
  * report — NO resolution rescale; see history note below).

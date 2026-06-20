@@ -149,19 +149,69 @@ so it unit-tests like `TransitOrchestrator`):
   → repair → deconstruction → connection flashes. `SectorRoom` runs the timer,
   rebuilds the `structures[]` slice, broadcasts `grid_pulse`, and severs on
   structure death via `evictSwarmEntity`.
+  - **WS-D (#12) — per-edge flow MATERIAL.** Each flow step now tags its flashed
+    edges with a `FlowMaterial` (`Connection.ts`, append-only: `minerals`
+    haul/reclaim, `repair` healing, `construction` building, `power` reserved).
+    `pulse()` returns `flashed: [aId, bId, FlowMaterial][]` (per-edge, so a repair
+    route + a haul route can light in the SAME pulse) plus a dominant `material`
+    for the back-compat single field. **Repair routes already drop to idle** — a
+    full-HP (`hp >= max`), unrouted, or dry-bank (`findStorageRoute` only returns
+    a capital with `minerals > 0`, plus the `spend <= 0` skip) repair `continue`s
+    before `flashRoute`, so `processRepair` only ever flashes when it genuinely
+    heals (`hpGain` is the min of two strictly-positive values). _(An earlier
+    `hpGain <= 0` guard was added here as a belt-and-braces lock but proved
+    UNREACHABLE given those upstream guards — removed as dead code; the material
+    tagging is the real deliverable.)_
 
 **Wire** — `SnapshotMessage.structures[]` (slim, low-cadence, same array ref per
 recipient, entityId-keyed → joins the swarm mirror for pose) +
-`grid_pulse { flashed: [entityId,entityId][], material }` (discrete ≤ 1 Hz
-flash event). **Netgate territory** (invariant #8) — these touch the
-snapshot/broadcast path.
+`grid_pulse { flashed: [aId, bId, GridFlowMaterial][], material }` (discrete
+≤ 1 Hz flash event; the per-edge 3-tuple is WS-D #12 — a legacy 2-tuple is
+tolerated and defaults to the top-level `material`). **Netgate territory**
+(invariant #8) — these touch the snapshot/broadcast path.
 
 **Client** — `ColyseusClient.syncStructures` mirrors the slice into
 `mirror.structures` + dispatches `gridNetPower` to Zustand; the `grid_pulse`
-handler records `mirror.gridFlashes` (numeric pair key, alloc-free).
-`render/pixi/ConnectorRenderer` draws the web (idle vs flowing alpha/width
-pulse + glow, `connectorVisual.ts` pure params) + scaffolding/deconstruct bars;
-`swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the HUD chip.
+handler records `mirror.gridFlashes` (numeric pair key, alloc-free), the flow
+direction (`gridFlowSrc`), AND the per-edge material code (`gridFlowMaterial`,
+numeric via `flowMaterialToCode` — cheap clone across the worker boundary).
+`render/pixi/ConnectorRenderer` draws the web (idle muted-blue vs flowing
+alpha/width pulse + glow, tinted per-edge by material: **green = repair,
+orange = minerals, cyan = construction** — `connectorVisual.ts`
+`connectorVisualInto(..., material)` pure params) + scaffolding/deconstruct
+bars; `swarmSpriteUpdater` dims unbuilt blueprints; `GridPowerReadout` is the
+HUD chip.
+
+**Defensive range circles (WS-D #21) — always-on for built turrets.** A weapon
+turret's `weaponRange` (catalogue) was drawn only during the placement ghost.
+`ConnectorRenderer.update` now draws a PERSISTENT faint range circle around every
+BUILT structure whose kind has a `weaponRange` (turret / laser_bolt_turret /
+missile_turret — NOT a Miner's `miningRange`, NOT a Capital/Solar), so the player
+sees coverage at a glance. The radius is the catalogue `weaponRange` (known
+client-side via `getStructureKind(a.shipKind)` — no wire); out-of-interest
+structures are absent from the mirror, so they're omitted by construction;
+unbuilt blueprints (no coverage yet) draw nothing. A distinct warm-red tint
+(`BUILT_RANGE_CIRCLE_COLOR`, fainter than the cool-cyan placement ring) reads as
+a "threat zone". Test hooks: `builtTurretRangeCount` / `lastBuiltTurretRangeRadius`
+(+ the main-thread DEV hook `__eqxBuiltTurretRangeCount` for E2E on `?worker=0`).
+The ring stroke params are written into a reused `_builtRangeVisual` scratch via
+`builtRangeCircleVisualInto(out, scale)` (invariant #14 — called once per built
+turret per frame inside the per-structure loop, so it must not allocate; the
+allocating `builtRangeCircleVisualParams` wrapper is test-only, mirroring the
+`connectorVisualInto` / `shieldWallVisualParams` pattern).
+
+**Placement preview (WS-D #6) — solid vs dotted.** `ConnectorRenderer.drawPlacement-
+Preview` draws **SOLID green** (`'selected'`) to the hub(s) the blueprint WILL
+connect to on confirm (capped at the kind's `maxConnections` AND the global
+`PLACEMENT_MAX_CONNECTIONS`) and **DOTTED green** (`'deferred'`) to in-range,
+legal hubs that lost the multi-connect cap race (could-but-won't). RED stays for
+hubs that CAN'T connect (LOS / range / capacity). Pixi v8 has no native dash, so
+a `'deferred'` line is emitted as short segments from a scale-aware
+`ConnectorVisual.dash {on, off}` pattern (`connectorVisual.ts`). Replaces the old
+"green chosen + RED overflow" (the over-cap RED read as errors). Test hooks:
+`placementPreviewSelectedCount` / `placementPreviewDeferredCount`
+(`placementPreviewConnectionCount` / `placementPreviewOverflowCount` kept as the
+back-compat aliases).
 
 ## Batteries — stored-power buffer (batteries plan — shipped)
 

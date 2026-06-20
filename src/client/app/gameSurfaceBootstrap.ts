@@ -65,6 +65,11 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
     // hover uses.
     (window as unknown as { __eqxHoverAtWorld?: (x: number, y: number) => string | null })
       .__eqxHoverAtWorld = (x, y) => renderer.devHoverAtWorld(x, y);
+    // #7 — deterministic remote-warp-ripple gate hook: reports whether a queued
+    // remote-warp event WOULD fire its ripple given the live galaxy-map state, so
+    // a spec can assert the ripple is suppressed while the map is open.
+    (window as unknown as { __eqxRemoteWarpVisualWouldFire?: () => boolean })
+      .__eqxRemoteWarpVisualWouldFire = () => renderer.devRemoteWarpVisualWouldFire();
   }
   logEvent('renderer_path_chosen', {
     useWorker,
