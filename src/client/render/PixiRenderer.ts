@@ -4,7 +4,7 @@ import type { IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type WarpParams, type WarpCenter, type FrameMarkers } from './worker/protocol';
 import { WarpFilterChain } from './pixi/WarpFilterChain.js';
-import { shouldFireRemoteWarpVisual } from './pixi/warpHelpers.js';
+import { shouldFireRemoteWarpVisual, remoteWarpEventFires } from './pixi/warpHelpers.js';
 import { fillHitTargetSets } from './pixi/hitTargetSets.js';
 import { updateShipSprites, type ShipSpriteCtx } from './pixi/shipSpriteUpdater.js';
 import { entityPoseFromSprite, type EntityPose } from './pixi/entityPoseFromSprite.js';
@@ -219,6 +219,13 @@ export class PixiRenderer implements IRenderer {
    *  pointer/wheel handlers route to ITS camera (free pan/zoom of the
    *  galaxy) instead of the world camera. Restored 2026-06-06. */
   private _galaxyLayer: GalaxyMapLayer | null = null;
+  /** #7 — observable outcome of the `pendingWarpEvents` drain, so a test can
+   *  lock the ACTUAL wiring (not just the pure helper): incremented in
+   *  `drainRemoteWarp` when a queued remote-warp event FIRES its ripple
+   *  (`triggerWarpIn`) vs is SUPPRESSED (galaxy map open / burst in flight).
+   *  Exposed via the test seam `debugRemoteWarpCounts()`. */
+  private _remoteWarpFiredCount = 0;
+  private _remoteWarpSuppressedCount = 0;
   private _liveBeamPool: BeamSpritePool | null = null;
   private _remoteBeamPool: BeamSpritePool | null = null;
   /** WS-4 Phase 4 (R2.27) — dedicated pool for the Miner's mining beam
@@ -1099,11 +1106,59 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
+   * #7 — the SINGLE-OWNER drain for `pendingWarpEvents` (remote warp_in/out
+   * broadcasts from the server). Extracted from `update()` so the actual wiring
+   * is unit-lockable headlessly (it needs only `_galaxyLayer`, `warp`,
+   * `triggerWarpIn`, and the counters — no WebGL).
+   *
+   * The WarpFilterChain lives on the shared `app.stage`, and the GalaxyMapLayer
+   * is a child of that same stage, so a remote-warp ripple bleeds across the
+   * galaxy overlay the player is reading. Skip the cosmetic visual entirely
+   * while the map is open (the gameplay scene isn't the focus anyway). Still
+   * drain the queue so it doesn't back up. The fire/skip decision is the shared
+   * pure `remoteWarpEventFires` (galaxy-map gate AND burst-in-flight gate) — the
+   * same function the DEV hook reads, so the hook cannot drift from this drain.
+   */
+  private drainRemoteWarp(mirror: RenderMirror): void {
+    if (!mirror.pendingWarpEvents || mirror.pendingWarpEvents.length === 0) return;
+    const galaxyMapOpen = this._galaxyLayer?.visible === true;
+    const burstInFlight = this.warp.isBurstInFlight();
+    if (remoteWarpEventFires({ galaxyMapOpen, burstInFlight })) {
+      // Fire ONLY the first queued event this frame. Subsequent events get
+      // visually skipped — at 1-2 warps/sec from drones plus a 1.5 s burst
+      // window, the visible duty cycle is close to 100 % anyway, so dropping
+      // 1-2 visuals is invisible to the player but bounds GPU cost.
+      const first = mirror.pendingWarpEvents[0]!;
+      this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
+      this._remoteWarpFiredCount++;
+    } else {
+      this._remoteWarpSuppressedCount++;
+    }
+    mirror.pendingWarpEvents.length = 0;
+  }
+
+  /**
+   * DEV/E2E + test-only (#7): the observable outcome of the `pendingWarpEvents`
+   * drain. `fired` counts events that fired their ripple (`triggerWarpIn`);
+   * `suppressed` counts events skipped (galaxy map open / burst in flight). The
+   * lock that the drain ACTUALLY honours the galaxy-map gate reads these after
+   * driving `drainRemoteWarp` — reverting the gate moves the counter the wrong
+   * way (see `PixiRenderer.warpGalaxyGate.test.ts`).
+   */
+  debugRemoteWarpCounts(): { fired: number; suppressed: number } {
+    return { fired: this._remoteWarpFiredCount, suppressed: this._remoteWarpSuppressedCount };
+  }
+
+  /**
    * DEV/E2E-only (#7): would a queued REMOTE-warp event fire its ripple right
    * now, given the live galaxy-map state? Returns the EXACT gate the
    * `pendingWarpEvents` drain applies (`shouldFireRemoteWarpVisual` against
    * `_galaxyLayer.visible`), so a spec can assert the warp ripple is suppressed
-   * while the galaxy map is open without injecting a server warp broadcast.
+   * while the galaxy map is open without injecting a server warp broadcast. This
+   * is the galaxy-map gate ONLY (it ignores the transient burst-in-flight gate)
+   * — it answers "is the map suppressing the ripple", which is what the E2E
+   * checks; it reads the SAME `shouldFireRemoteWarpVisual` the drain composes
+   * into `remoteWarpEventFires`.
    */
   devRemoteWarpVisualWouldFire(): boolean {
     const galaxyMapOpen = this._galaxyLayer?.visible === true;
@@ -1747,25 +1802,7 @@ export class PixiRenderer implements IRenderer {
     // the burst timer; filters stay attached indefinitely; GPU runs
     // the multi-pass filter chain every frame → frame rate collapses
     // (the late-onset spiral pattern in captures `af742v` / `ecat41`).
-    if (mirror.pendingWarpEvents && mirror.pendingWarpEvents.length > 0) {
-      // #7 — the WarpFilterChain lives on the shared `app.stage`, and the
-      // GalaxyMapLayer is a child of that same stage, so a remote-warp ripple
-      // bleeds across the galaxy overlay the player is reading. Skip the cosmetic
-      // visual entirely while the map is open (the gameplay scene isn't the focus
-      // anyway). Still drain the queue so it doesn't back up.
-      const galaxyMapOpen = this._galaxyLayer?.visible === true;
-      const burstInFlight = this.warp.isBurstInFlight();
-      if (shouldFireRemoteWarpVisual({ galaxyMapOpen }) && !burstInFlight) {
-        // Fire ONLY the first queued event this frame. Subsequent
-        // events get visually skipped — at 1-2 warps/sec from drones
-        // plus a 1.5 s burst window, the visible duty cycle is close
-        // to 100 % anyway, so dropping 1-2 visuals is invisible to the
-        // player but bounds GPU cost.
-        const first = mirror.pendingWarpEvents[0]!;
-        this.triggerWarpIn({ kind: 'world', worldX: first.x, worldY: first.y });
-      }
-      mirror.pendingWarpEvents.length = 0;
-    }
+    this.drainRemoteWarp(mirror);
 
     // Phase 1 — name labels above remote ships and drones (skip self).
     this.labels?.update(mirror);
