@@ -55,6 +55,27 @@ import type { ShipPhysicsState } from '../../core/physics/World.js';
 import type { ShipState } from './schema/SectorState.js';
 import type { ProjectileRecord } from './ProjectilePipeline.js';
 
+/** Shared empty stat-allocation reference (Phase 4 WS-B2). A frozen singleton so
+ *  the per-broadcast scratch initializer + every un-upgraded ship reuse ONE
+ *  object (invariant #14 — no per-tick alloc); the real per-instance alloc is a
+ *  reference to `ShipState.statAlloc`, replaced only on a discrete upgrade. */
+const EMPTY_STAT_ALLOC: Readonly<Record<string, number>> = Object.freeze({});
+
+/** The stat-pool ids (mirrors `STAT_IDS` in core/leveling/shipStats.ts; kept as a
+ *  local literal so the broadcaster stays self-contained). Used to test
+ *  emptiness WITHOUT `Object.keys` (which would allocate per snapshot — #14). */
+const STAT_ALLOC_KEYS = ['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield'] as const;
+
+/** True iff the allocation has at least one positive entry. Alloc-free
+ *  (iterates the fixed-length key list, no `Object.keys` array). */
+function hasAnyStatAlloc(alloc: Record<string, number>): boolean {
+  for (let i = 0; i < STAT_ALLOC_KEYS.length; i++) {
+    const v = alloc[STAT_ALLOC_KEYS[i]!];
+    if (typeof v === 'number' && v > 0) return true;
+  }
+  return false;
+}
+
 /** Subset of SwarmEntityRecord the drone + asteroid slices read. */
 export interface SwarmDroneRec {
   id: string;
@@ -144,7 +165,33 @@ interface AllShipEntry {
   /** WS-12 / R2.32 — shield down (hull exposed). Drives the client shield
    *  aura for both active AND lingering hulls. */
   shieldDown: boolean;
+  /** Phase 4 (Leveling & XP, WS-B1) — this hull's PUBLIC level (≥ 1). Emitted
+   *  on the wire only when > 1 (un-levelled sectors pay zero bytes). */
+  level: number;
+  /** Phase 4 (Leveling & XP, WS-B2) — this hull's per-instance spent stat
+   *  allocation. A SHARED reference to `ShipState.statAlloc` (replaced only on a
+   *  discrete upgrade — never per tick → invariant #14 safe). Emitted on the
+   *  wire ONLY for the recipient's own ACTIVE ship AND only when non-empty. */
+  statAlloc: StatAllocRef;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — this hull's ACTIVATED latent
+   *  mounts. A SHARED reference to `ShipState.mounts` (replaced only on a
+   *  discrete activation — never per tick → invariant #14 safe). PUBLIC: emitted
+   *  for every ship (active + lingering) with ≥ 1 activated mount, so others see
+   *  the extra turrets. The renderer looks up geometry by `(shipKind, slotId)`. */
+  mounts: MountsRef;
 }
+
+/** Read-only reference shape for the per-instance stat allocation (mirrors
+ *  `ShipState.statAlloc`). Carried by reference, never copied per tick. */
+type StatAllocRef = Record<string, number>;
+
+/** Read-only reference shape for the per-instance activated mounts (mirrors
+ *  `ShipState.mounts`). Carried by reference, never copied per tick. */
+type MountsRef = ReadonlyArray<{ slotId: string; weaponId: string }>;
+
+/** Shared frozen empty mounts reference (WS-B3). Mirrors `EMPTY_STAT_ALLOC` —
+ *  every un-upgraded ship reuses ONE array (invariant #14). */
+const EMPTY_MOUNTS: MountsRef = Object.freeze([]);
 
 // ── Pooled per-recipient scratch shapes (plan: quirky-rabbit, Phase 5d).
 // Inline-literal pre-fix; mutable-in-place post-fix. The wire shape is
@@ -163,6 +210,12 @@ type MutableStateEntry = {
   mountAngles?: number[];
   energy?: number;
   shieldDown?: boolean;
+  level?: number;
+  statAlloc?: Record<string, number>;
+  // Typed mutable to match the wire `SnapshotMessage['states'][...].mounts`; the
+  // value assigned is a SHARED reference to `ShipState.mounts` (the encoder
+  // reads it synchronously and never mutates it).
+  mounts?: { slotId: string; weaponId: string }[];
 };
 
 type MutableProjectileEntry = {
@@ -438,6 +491,9 @@ export class SnapshotBroadcaster {
         lastInput: { thrust: false, turnLeft: false, turnRight: false, boost: false, reverse: false },
         energy: 0,
         shieldDown: false,
+        level: 1,
+        statAlloc: EMPTY_STAT_ALLOC,
+        mounts: EMPTY_MOUNTS,
       };
       this._allShipsScratch[index] = entry;
     }
@@ -490,6 +546,9 @@ export class SnapshotBroadcaster {
       entry.lastInput.reverse   = !!(flags & FLAG_INPUT_REVERSE);
       entry.energy = ship.energy;
       entry.shieldDown = ship.shield <= 0; // R2.32 — hull exposed → render aura off
+      entry.level = ship.level; // Phase 4 WS-B1 — public level
+      entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC; // WS-B2 — shared ref
+      entry.mounts = ship.mounts ?? EMPTY_MOUNTS; // WS-B3 — public activated mounts
       allShipsCount++;
       this._aliveIdsScratch.add(playerId);
       this._aliveShipInstanceIds.add(entry.shipInstanceId);
@@ -517,6 +576,13 @@ export class SnapshotBroadcaster {
       // R2.32 — a lingering hull keeps its at-disconnect shield state so a
       // parked hull whose shield was broken still renders hull-exposed.
       entry.shieldDown = ship.shield <= 0;
+      entry.level = ship.level; // Phase 4 WS-B1 — public level (lingering hulls too)
+      // Lingering hulls never carry statAlloc on the wire (it's own-active-only
+      // below), but keep the scratch coherent.
+      entry.statAlloc = ship.statAlloc ?? EMPTY_STAT_ALLOC;
+      // WS-B3 — activated mounts ARE public for lingering hulls too (a parked
+      // upgraded hull renders its extra turrets to observers).
+      entry.mounts = ship.mounts ?? EMPTY_MOUNTS;
       allShipsCount++;
       this._aliveShipInstanceIds.add(shipInstanceId);
     }
@@ -600,6 +666,26 @@ export class SnapshotBroadcaster {
         // R2.32 — emit shieldDown only when true (notepack skips undefined →
         // zero bytes for an undamaged sector); clear the pooled entry otherwise.
         entry.shieldDown = ship.shieldDown ? true : undefined;
+        // Phase 4 WS-B1 — public level. Emit only when > 1 (notepack skips
+        // undefined → zero bytes for an un-levelled sector; the client treats
+        // absent as level 1). Clear the pooled entry otherwise.
+        entry.level = ship.level > 1 ? ship.level : undefined;
+        // Phase 4 WS-B2 — per-instance stat allocation. Like energy, emit on the
+        // recipient's OWN ACTIVE ship only (the local player's predicted physics
+        // multipliers re-anchor from this), AND only when non-empty (un-upgraded
+        // ⇒ undefined ⇒ zero bytes; the client treats absent as no upgrade).
+        // Shared reference — no per-tick alloc (invariant #14).
+        const ownActive = ship.playerId === recipientPlayerId && ship.isActive;
+        entry.statAlloc =
+          ownActive && hasAnyStatAlloc(ship.statAlloc) ? ship.statAlloc : undefined;
+        // WS-B3 — activated mounts are PUBLIC (every recipient, active +
+        // lingering), emit-when-non-empty. Shared reference (no per-tick alloc,
+        // #14); the renderer looks up geometry by (shipKind, slotId). Clear the
+        // pooled entry for un-upgraded ships. The readonly→mutable cast is safe:
+        // the encoder reads the array synchronously and never mutates it.
+        entry.mounts = ship.mounts.length > 0
+          ? (ship.mounts as { slotId: string; weaponId: string }[])
+          : undefined;
         states[ship.shipInstanceId] = entry;
       }
 

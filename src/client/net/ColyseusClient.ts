@@ -6,6 +6,7 @@ import { SPOOL_DURATION_MS } from '@core/transit/TransitStateMachine';
 import type { WelcomeMessage, SnapshotMessage, DamageEvent, DestroyEvent, LaserFiredEvent, RespawnAckMessage, TransitStateMessage, WarpInEvent, WarpOutEvent, ShieldEventMessage, BotAggroEvent, GcPauseEventMessage, GridPulseEvent } from '@shared-types/messages';
 import { TRANSFER_PULSE_MS as GRID_PULSE_WINDOW_MS } from '@core/structures/structureGridConstants';
 import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
+import { decideStatAllocReanchor } from './localStatAlloc';
 import { SHIELD_WALL_THICKNESS } from '@core/structures/ShieldWall';
 import { Reconciler, type InputRecord } from '@core/prediction/Reconciler';
 import { springStep, type SpringState } from '@core/math/CritDampedSpring';
@@ -14,7 +15,7 @@ import {
   createCollisionGuard,
   type CollisionGuardState,
 } from './applyCollisionResolved';
-import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema } from '@shared-types/messages';
+import { CollisionResolvedMessageSchema, HitAckSchema, DamageEventSchema, MissileFiredEventSchema, MissileDetonatedEventSchema, EntityStatsSchema, WarpWarningSchema, WarpWarningClearSchema, BaseReadySchema, ShipLevelUpEventSchema, ShipUpgradeAppliedEventSchema, MountActivatedEventSchema } from '@shared-types/messages';
 import { applySelectionStats } from './selectionStats.js';
 import {
   createRemotePredictionGuard,
@@ -52,7 +53,7 @@ import {
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
+import { preResetRemoteShips, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyActivatedMounts, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets } from './remoteLerpOffsets.js';
 import { useUIStore, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode, isRammingProbeEnabled, isGhostProbeEnabled } from '../debug/ClientLogger';
@@ -65,7 +66,7 @@ import { GhostManager } from '../combat/GhostProjectile';
 import { HITSCAN_RANGE, rayHitsSphere } from '@core/combat/Weapons';
 import { getWeapon, weaponAutoFireRange, type WeaponDef } from '@core/combat/WeaponCatalogue';
 import { canAfford, spendEnergy, regenEnergyStep, resolveSlotEnergyCost, BOOST_TICK_COST } from '@core/combat/Energy';
-import { resolveSlotMounts } from '@shared-types/shipKinds/slots';
+import { resolveSlotMounts, resolveInstanceMounts, resolveInstanceFireMounts } from '@shared-types/shipKinds/slots';
 import { HitPredictionLedger } from '@core/combat/HitPrediction';
 import {
   predictShotOutcome,
@@ -95,6 +96,7 @@ import {
   type PendingPlacement,
   type ShipPose,
 } from '../structures/structurePlacementClient.js';
+import { shouldEnterSpectatorOnDeath } from '../spectator/spectatorMode.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import { pickTarget, PLAYER_AIM_HEALTH_WEIGHT, PLAYER_AIM_SWITCH_MARGIN } from '@core/ai/WeaponMountController';
 
@@ -299,6 +301,7 @@ export class ColyseusGameClient {
     pendingWarpEvents: [],
     pendingMissileExplosions: [],
     pendingEffectTriggers: [],
+    pendingLevelUps: [],
   };
 
   /**
@@ -465,6 +468,94 @@ export class ColyseusGameClient {
       baselineStructureCount: this.mirror.structures?.size ?? 0,
     };
   }
+
+  /**
+   * Phase 4 WS-A2 — same-sector instant pilot swap. Sends `pilot_ship { shipId }`
+   * over the LIVE room (no leave/rejoin → no spool, no curtain), then primes the
+   * client-side transition: despawn the local predWorld body so the fresh
+   * `welcome` re-anchors self-prediction at the new authoritative pose (one
+   * ownership site — same discipline as `resetPredictionState`), and stash the
+   * target shipId so the welcome handler clears spectator + arms the camera glide.
+   * Returns true when the swap was dispatched (false when there's no live room).
+   */
+  pilotInSectorShip(shipId: string): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('pilot_ship', { type: 'pilot_ship', shipId });
+    this._pendingPilotSwapShipId = shipId;
+    // Despawn the local predWorld body so the welcome's `tryInitPredWorld`
+    // reseeds it at the new ship's AUTHORITATIVE pose (the spectator case has
+    // none; the switch-from-another-hull case must drop the OLD body). The
+    // `welcome` handler nulls + rebuilds the Reconciler via tryInitPredWorld.
+    const localId = this.mirror.localPlayerId;
+    if (localId && this.predWorld?.hasShip(localId)) {
+      this.predWorld.despawnShip(localId);
+      this.reconciler = null;
+    }
+    this.localDead = false;
+    logEvent('pilot_swap_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B2 — send a free stat allocation for a ship instance. The server
+   * validates ownership + the point budget, persists, applies the multipliers,
+   * and echoes `ship_upgrade_applied`. The physics re-anchor happens off the
+   * authoritative own-ship `statAlloc` snapshot slice (not this send), so the
+   * client never predicts the upgrade — it waits for the server's truth. Returns
+   * true when dispatched (false when there's no live room / blank id).
+   */
+  applyShipUpgrade(shipId: string, alloc: Record<string, number>): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('apply_ship_upgrade', { type: 'apply_ship_upgrade', shipId, alloc });
+    logEvent('ship_upgrade_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B2 — respec a ship instance (refund every spent point). The
+   * server resets the roster `statAlloc` to `{}`, re-anchors the multipliers to
+   * neutral, and echoes `ship_upgrade_applied` with the empty alloc. Returns
+   * true when dispatched.
+   */
+  respecShip(shipId: string): boolean {
+    if (!this.room || shipId === '') return false;
+    this.room.send('respec_ship', { type: 'respec_ship', shipId });
+    logEvent('ship_respec_requested', { shipId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance + bind a
+   * weapon to it. The server validates ownership + that `slotId` is a real
+   * latent hardpoint, persists the activation on the roster, mirrors it onto the
+   * live hull, and echoes `mount_activated`. The activated mount fires + renders
+   * from the next snapshot (PUBLIC via `states[].mounts`; geometry looked up
+   * client-side by `(kind, slotId)`). Returns true when dispatched.
+   */
+  activateMount(shipId: string, slotId: string, weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
+    if (!this.room || shipId === '' || slotId === '') return false;
+    this.room.send('activate_mount', { type: 'activate_mount', shipId, slotId, weaponId });
+    logEvent('mount_activation_requested', { shipId, slotId, weaponId });
+    return true;
+  }
+
+  /**
+   * Phase 4 WS-A2 — one-shot read of the pending pilot-swap camera glide target.
+   * Returns the NEW local ship's GAME-space pose ONCE the welcome has landed AND
+   * the new pose is in the mirror, then clears the flag; null otherwise. The RAF
+   * loop calls this each frame and, on a non-null return, drives the renderer's
+   * `glideCameraTo` (the smooth ship-switch). Driven off the mirror pose, not
+   * pose interpolation — independent of the snapshot teleport guard (Risk #4).
+   */
+  consumePendingCameraGlide(): { x: number; y: number } | null {
+    if (!this._pilotSwapGlidePending) return null;
+    const localId = this.mirror.localPlayerId;
+    const ship = localId ? this.mirror.ships.get(localId) : undefined;
+    if (!ship) return null; // wait until the new pose is mirrored
+    this._pilotSwapGlidePending = false;
+    return { x: ship.x, y: ship.y };
+  }
+
   private inputTick = 0;
   /** Raw server snapshot position — shown as the orange ghost ship. */
   private lastSnapshotPos: { x: number; y: number } | null = null;
@@ -924,6 +1015,16 @@ export class ColyseusGameClient {
   /** Set when the local ship is destroyed — blocks firing until reconnect. */
   private localDead = false;
 
+  /** Phase 4 WS-A2 — the shipInstanceId of an in-flight SAME-SECTOR pilot swap
+   *  (set by `pilotInSectorShip`, matched + cleared in the `welcome` handler).
+   *  Lets the generic welcome path distinguish a pilot-swap re-anchor from a
+   *  fresh join/transit so it can clear spectator + arm the camera glide. */
+  private _pendingPilotSwapShipId: string | null = null;
+  /** Phase 4 WS-A2 — armed by the welcome handler when a pilot swap lands; the
+   *  RAF loop reads `consumePendingCameraGlide()` to fire the ONE-SHOT camera
+   *  glide to the new ship's pose once it's known (one-shot, then cleared). */
+  private _pilotSwapGlidePending = false;
+
   /** Predicted energy pool for the local ship (weapons/energy/AI overhaul
    *  §3.2). Driven entirely by the player's OWN fire/boost input, so it's
    *  predictable like position: regen + boost drain in `tickPhysics`, fire
@@ -931,6 +1032,15 @@ export class ColyseusGameClient {
    *  each snapshot. NOT in Zustand — it changes per frame; the top-center
    *  EnergyBar reads it via a RAF loop + direct-DOM write. */
   private predEnergy = 0;
+
+  /** Phase 4 WS-B2 — the last per-instance stat allocation applied to the local
+   *  player's predWorld body, as a stable JSON key. The server emits the
+   *  authoritative `statAlloc` on the own-ship snapshot slice (own-active-only,
+   *  when non-empty); the client re-anchors `predWorld.setStatMultipliers` from
+   *  it so prediction scales movement IDENTICALLY to the server (risk #1). This
+   *  guard avoids re-pushing identical multipliers every snapshot. `''` = no
+   *  upgrades applied yet (the neutral path). */
+  private _lastStatAllocKey = '';
 
   /** Inject the audio sink before `connect()`. Wired by `App.tsx`'s bootstrap. */
   setAudio(audio: IAudio): void {
@@ -1014,6 +1124,12 @@ export class ColyseusGameClient {
       this.predWorld.despawnShip(localId);
     }
     this.reconciler = null;
+    // Phase 4 WS-B2 — the local predWorld body is despawned, so its physics stat
+    // multipliers go with it; clear the guard so the destination's first
+    // own-ship `statAlloc` slice re-anchors the fresh body (otherwise an
+    // identical key would suppress the re-push and the new body would run
+    // un-upgraded prediction).
+    this._lastStatAllocKey = '';
     // Phase 3 — drop AI registrations on sector handoff. The destination
     // sector has a different swarm; old behaviours would hold stale
     // `lastFireTick` and target stale player IDs that may not exist there.
@@ -1255,6 +1371,22 @@ export class ColyseusGameClient {
         }
       }
 
+      // Phase 4 WS-A2 — a SAME-SECTOR pilot swap re-anchors via this same
+      // welcome path. When the welcome's shipInstanceId matches the swap we
+      // requested, this is a successful in-room reclaim: leave spectator
+      // (re-enable pilot input + self-prediction) and ARM the one-shot camera
+      // glide to the new ship (fired by the RAF loop once its pose is mirrored).
+      if (
+        this._pendingPilotSwapShipId !== null &&
+        msg.shipInstanceId !== '' &&
+        msg.shipInstanceId === this._pendingPilotSwapShipId
+      ) {
+        this._pendingPilotSwapShipId = null;
+        this._pilotSwapGlidePending = true;
+        useUIStore.getState().setPilotMode('pilot');
+        logEvent('pilot_swap_welcomed', { shipInstanceId: msg.shipInstanceId });
+      }
+
       // If state already arrived, bootstrap the prediction world now.
       this.tryInitPredWorld(msg.playerId);
       // Phase 2 swift-otter — kick off the DC handshake after welcome.
@@ -1483,6 +1615,50 @@ export class ColyseusGameClient {
     });
     room.onMessage('destroy', (evt: DestroyEvent) => {
       this.handleDestroy(evt);
+    });
+
+    // Phase 4 WS-B1 — a ship instance levelled up (public, D13). Defensive zod
+    // parse (invariant #3/#4 — crosses the trust boundary). The badge refresh
+    // for ALL ships rides the next snapshot's states[].level; THIS handler pops
+    // the owner-facing screenspace level-up icon for the LOCAL player's hull.
+    room.onMessage('ship_level_up', (raw: unknown) => {
+      const parsed = ShipLevelUpEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      this.handleShipLevelUp(parsed.data.shipInstanceId, parsed.data.newLevel);
+    });
+
+    // Phase 4 WS-B2 — the server accepted + persisted a stat allocation / respec.
+    // Publish a discrete Zustand ack so the upgrade modal closes + the roster
+    // refreshes; the physics multipliers re-anchor off the snapshot slice, not
+    // this echo (so this is UI-confirmation only). Defensive zod parse.
+    room.onMessage('ship_upgrade_applied', (raw: unknown) => {
+      const parsed = ShipUpgradeAppliedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      useUIStore.getState().setUpgradeAck({
+        shipInstanceId: parsed.data.shipInstanceId,
+        alloc: parsed.data.alloc,
+        spent: parsed.data.spent,
+        budget: parsed.data.budget,
+      });
+    });
+
+    // Phase 4 WS-B3 — the server accepted + persisted a dynamic-mount activation.
+    // Patch the Zustand roster entry's `mounts` so the upgrade modal's activated
+    // set updates immediately (the roster poll would also catch it within ~3 s,
+    // but the patch makes the modal feel responsive). The IN-WORLD render +
+    // fire come off the snapshot `states[].mounts` slice (the authority), not
+    // this echo. Defensive zod parse.
+    room.onMessage('mount_activated', (raw: unknown) => {
+      const parsed = MountActivatedEventSchema.safeParse(raw);
+      if (!parsed.success) return;
+      const evt = parsed.data;
+      const store = useUIStore.getState();
+      const patched = store.shipRoster.map((r) =>
+        r.shipId === evt.shipInstanceId
+          ? { ...r, mounts: evt.mounts.map((m) => ({ slotId: m.slotId, weaponId: m.weaponId })) }
+          : r,
+      );
+      store.setShipRoster(patched);
     });
 
     room.onMessage('hit_ack', (raw: unknown) => {
@@ -2203,7 +2379,15 @@ export class ColyseusGameClient {
       this._localSlotTarget = null;
       this.ghostManager.clearForShip(id);
       useUIStore.getState().setHullPct(0);
-      useUIStore.getState().setDead(true);
+      // Phase 4 WS-A1 (D3) — death transitions INSTANTLY into spectator (no
+      // death modal). The old blocking DeathOverlay path is removed; the player
+      // free-roams the sector as an invulnerable, un-networked camera with full
+      // construction. `isDead` is intentionally NOT set (it gated the modal);
+      // `pilotMode='spectator'` is the discrete flag the camera/input/build
+      // branches read. Remote interpolation keeps running so drones stay smooth.
+      if (shouldEnterSpectatorOnDeath(id, this.mirror.localPlayerId)) {
+        useUIStore.getState().setPilotMode('spectator');
+      }
       useUIStore.getState().setSectorAlert('SHIP DESTROYED');
       setTimeout(() => useUIStore.getState().setSectorAlert(null), 3000);
     } else {
@@ -2219,6 +2403,31 @@ export class ColyseusGameClient {
       return;
     }
     this.killEntity(evt.targetId);
+  }
+
+  /**
+   * Phase 4 WS-B1 — a ship instance just levelled up. The PUBLIC badge for ALL
+   * ships refreshes from the next snapshot's `states[].level` (applyShipLevels);
+   * this only pops the OWNER-facing screenspace level-up icon for the LOCAL
+   * player's own hull (resolved via `localShipInstanceId`). Remote level-ups
+   * just refresh their badge — no icon for other players. Discrete + low-
+   * frequency (a kill threshold), so the single pooled-array push is off the
+   * hot path (mirrors `pendingEffectTriggers` pushes from `handleDamage`).
+   */
+  private handleShipLevelUp(shipInstanceId: string, newLevel: number): void {
+    const localShipInstanceId = this.mirror.localShipInstanceId;
+    const localPlayerId = this.mirror.localPlayerId;
+    if (localShipInstanceId == null || localPlayerId == null) return;
+    if (shipInstanceId !== localShipInstanceId) return; // owner-facing icon only
+    // Pooled one-frame trigger — drained by the renderer, cleared in
+    // consumeOneFrameTriggers. Keyed by playerId so the renderer resolves it to
+    // the local ship's (playerId-keyed) mirror pose for the screenspace anchor.
+    const queue = this.mirror.pendingLevelUps;
+    if (queue) queue.push({ playerId: localPlayerId, newLevel });
+    // Discrete Zustand seam for the upgrade modal (WS-B2 wires the modal open;
+    // here we surface "the local player just hit level N" as a discrete scalar —
+    // purity-clean, Invariant #2). A no-op until WS-B2 reads it.
+    useUIStore.getState().setPendingLevelUp(newLevel);
   }
 
   /**
@@ -2280,6 +2489,20 @@ export class ColyseusGameClient {
   respawnShip(): void {
     if (!this.room || !this.localDead) return;
     this.room.send('respawn', { type: 'respawn' });
+  }
+
+  /**
+   * Test-only (Phase 4 WS-A1) — drive the CLIENT-LOCAL death path for the local
+   * ship, exactly as a `destroy` event would (kill the body + mirror entry +
+   * flip into spectator). Spectator is client-local + un-networked (D5), so the
+   * spectator-mode E2E exercises the transition deterministically here instead
+   * of waiting out hostile-fire TTK. Exposed only via the DEV-gated
+   * `__eqxKillLocalShip` window hook in App.tsx; production tree-shakes the hook.
+   */
+  devKillLocalShip(): void {
+    const id = this.mirror.localPlayerId;
+    if (!id) return;
+    this.killEntity(id);
   }
 
   /**
@@ -2511,6 +2734,18 @@ export class ColyseusGameClient {
     // Server-authoritative boost + thrust sets — exhaust-trail renderer.
     applyBoostingThrustingSets(snap, this.mirror);
 
+    // Phase 4 WS-B1 — mirror each ACTIVE hull's PUBLIC level (states[].level,
+    // now playerId-keyed post-route) onto mirror.ships so the renderer paints
+    // the in-world level badge. Lingering hulls carry their level via the
+    // router (mirror.lingeringShips), above.
+    applyShipLevels(snap, this.mirror);
+
+    // Phase 4 WS-B3 — mirror each ACTIVE hull's PUBLIC activated latent mounts
+    // (states[].mounts, playerId-keyed post-route) onto mirror.ships so the
+    // renderer draws the extra turrets. Lingering hulls carry their activated
+    // mounts via the router (mirror.lingeringShips), above.
+    applyActivatedMounts(snap, this.mirror);
+
     // Phase 6 — surface the server's TiDi rate to the HUD + audio,
     // and drive the Temporal Anomaly banner with hysteresis. See
     // tidiSync.ts.
@@ -2625,6 +2860,16 @@ export class ColyseusGameClient {
         const max = localKind.energyMax ?? 100;
         if (useUIStore.getState().energyMax !== max) useUIStore.getState().setEnergyMax(max);
       }
+
+      // Phase 4 WS-B2 — re-anchor the local predWorld body's PHYSICS stat
+      // multipliers from the authoritative own-ship `statAlloc` slice (the
+      // server emits it own-active-only, when non-upgraded → absent). This is
+      // the single ownership site for the client's physics multipliers — read
+      // identically to the server so reconciliation stays clean (risk #1). The
+      // `ship_upgrade_applied` echo is UI-only; the SNAPSHOT is the physics
+      // truth, so an upgrade applied while the player is in another sector still
+      // takes effect the moment its own-ship slice arrives.
+      this.applyLocalStatAlloc(localId, serverState.statAlloc);
 
       // Drone snapshot slice (slim turret/shield slice; pose flows on the
       // binary swarm wire). See snapshotRemoteSync.ts.
@@ -2938,6 +3183,7 @@ export class ColyseusGameClient {
           ...(s.wallActive !== undefined ? { wallActive: s.wallActive } : {}),
           ...(s.owner !== undefined ? { owner: s.owner } : {}),
           ...(s.ownerName !== undefined ? { ownerName: s.ownerName } : {}),
+          ...(s.level !== undefined ? { level: s.level } : {}), // WS-B4 — structure level (absent ⇒ 1)
         });
       }
     } else {
@@ -3534,6 +3780,55 @@ export class ColyseusGameClient {
           this._swarmNearbyIds = nowNear;
           this._swarmNearbySwapScratch = oldActive;
         }
+      }
+    }
+
+    // Phase 4 WS-A1 — construction WITHOUT an active ship (spectator mode, D4).
+    // The placement-preview block above lives inside the local-ship branch and
+    // anchors the ghost AHEAD of the ship. After death there is NO local ship in
+    // `mirror.ships`, so that branch never runs — yet the spectator must still
+    // build. Set `pendingPlacementPreview` here from a zeroed placeholder pose;
+    // the renderer overrides x/y to the CAMERA CENTRE (free-roam) via the
+    // spectator centre-seed (`shouldCentreGhostOnActivate(..., spectator)`), so
+    // the blueprint follows where the player is looking. Reuses the same scratch
+    // (no per-frame alloc — invariant #14) + the same pending-ghost machinery.
+    const noLocalShip = !localId || !this.mirror.ships.has(localId);
+    if (noLocalShip && useUIStore.getState().pilotMode === 'spectator') {
+      const placementKind = useUIStore.getState().placementKind;
+      let allRenderable = true;
+      if (this._pendingPlacement) {
+        const structs = this.mirror.structures;
+        const sw = this.mirror.swarm;
+        if (structs && structs.size > 0) {
+          if (!sw) {
+            allRenderable = false;
+          } else {
+            for (const id of structs.keys()) {
+              if (!sw.has(id)) { allRenderable = false; break; }
+            }
+          }
+        }
+      }
+      // Zeroed placeholder ship — the renderer re-anchors the ghost to the
+      // camera centre in spectator, so the resolver's ahead-of-ship pose is a
+      // throwaway that's immediately overridden.
+      this._placementShipScratch.x = 0;
+      this._placementShipScratch.y = 0;
+      this._placementShipScratch.angle = 0;
+      const status = resolvePlacementPreviewStatus(
+        placementKind,
+        placementKind ? this._placementShipScratch : null,
+        this._pendingPlacement,
+        Date.now(),
+        this.mirror.structures?.size ?? 0,
+        allRenderable,
+        this._placementPreviewScratch,
+      );
+      if (status === 'active' || status === 'pending') {
+        this.mirror.pendingPlacementPreview = this._placementPreviewScratch;
+      } else {
+        if (status === 'cleared') this._pendingPlacement = null;
+        if (this.mirror.pendingPlacementPreview) this.mirror.pendingPlacementPreview = null;
       }
     }
 
@@ -4440,10 +4735,14 @@ export class ColyseusGameClient {
     if (!state) return;
     // `mountAngles` is CATALOGUE-indexed everywhere it is READ (the
     // renderer beam direction + the turret sprites). Size + write the
-    // array by the FULL kind.mounts; only the ACTIVE SLOT's mounts aim
-    // (the rest slew to base). Indexing by the active-slot order instead
-    // is the latent index bug — see combat/localMountAim.ts.
-    const catalogueMounts = getShipKind(ship.kind ?? null).mounts ?? [];
+    // array by the FULL per-instance mount list `[...kind.mounts,
+    // ...activated latent]` (WS-B3); only the FIRING set (active slot +
+    // activated) aims (the rest slew to base). The full instance list is
+    // the index space the SERVER ticker writes too, so the snapshot's
+    // mountAngles for activated mounts land at the matching index.
+    // Un-upgraded ⇒ exactly `kind.mounts` (byte-identical). Indexing by the
+    // active-slot order instead is the latent index bug — see combat/localMountAim.ts.
+    const catalogueMounts = resolveInstanceMounts(getShipKind(ship.kind ?? null), ship.activatedMounts);
     if (catalogueMounts.length === 0) {
       if (ship.mountAngles) ship.mountAngles = undefined;
       return;
@@ -4668,11 +4967,14 @@ export class ColyseusGameClient {
   private localShipMounts(): ReadonlyArray<WeaponMount> {
     const localId = this.mirror.localPlayerId;
     if (!localId) return [];
-    const kindId = this.mirror.ships.get(localId)?.kind ?? null;
-    // Active-slot mounts (weapons/energy/AI overhaul §5.2). The pilot selects
-    // the slot; the server fires each mount's bound weapon. Same shared
-    // resolver the server uses so client ghost geometry matches.
-    return resolveSlotMounts(getShipKind(kindId), useUIStore.getState().activeSlotId);
+    const ship = this.mirror.ships.get(localId);
+    const kindId = ship?.kind ?? null;
+    // Active-slot mounts (weapons/energy/AI overhaul §5.2) PLUS any WS-B3
+    // activated latent mounts (they always fire). The pilot selects the slot;
+    // the server fires each mount's bound weapon. Same shared resolver the
+    // server uses (resolveInstanceFireMounts) so client ghost geometry matches.
+    // Un-upgraded ⇒ exactly the active slot (byte-identical).
+    return resolveInstanceFireMounts(getShipKind(kindId), ship?.activatedMounts, useUIStore.getState().activeSlotId);
   }
 
   /**
@@ -4696,6 +4998,22 @@ export class ColyseusGameClient {
    *  loop + direct-DOM write — never via Zustand (it changes every frame). */
   public getPredictedEnergy(): number {
     return this.predEnergy;
+  }
+
+  /**
+   * Phase 4 WS-B2 — re-anchor the local predWorld body's PHYSICS stat
+   * multipliers from the authoritative own-ship `statAlloc` slice. Derives the
+   * multipliers via the SAME `deriveStatMultipliers` the server feeds the
+   * worker, so prediction scales movement IDENTICALLY (risk #1 / invariants #4,
+   * #12). Guarded by a stable JSON key so identical allocations don't re-push
+   * every snapshot. An absent / empty alloc resets to the neutral path.
+   */
+  private applyLocalStatAlloc(localId: string, alloc: Record<string, number> | undefined): void {
+    if (!this.predWorld || !this.predWorld.hasShip(localId)) return;
+    const decision = decideStatAllocReanchor(alloc, this._lastStatAllocKey);
+    if (!decision.changed) return; // identical allocation since last apply
+    this._lastStatAllocKey = decision.key;
+    this.predWorld.setStatMultipliers(localId, decision.mul);
   }
 
   public triggerFireForTest(weaponId: 'hitscan' | 'laser' | 'heat-seeker'): boolean {
@@ -4999,6 +5317,10 @@ export class ColyseusGameClient {
     this.localDead = false;
     this.diedAtMs = 0;
     useUIStore.getState().setDead(false);
+    // Phase 4 WS-A1 — a fresh GameSurface mount (new join / respawn-via-galaxy)
+    // builds a new client; reset the spectator flag so the next session starts
+    // piloting. (Spectator is client-local and never crosses a room boundary.)
+    useUIStore.getState().setPilotMode('pilot');
     this.keyboard = null;
     this.touchInput = null;
     // Phase 4 swift-otter — close the DC transport BEFORE the room leave

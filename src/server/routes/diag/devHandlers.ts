@@ -292,6 +292,16 @@ export function devPlayerShipsHandler(req: Request, res: Response): void {
     expiresAt: rec.expiresAt,
     createdAt: rec.createdAt,
     updatedAt: rec.updatedAt,
+    // Phase 4 (Leveling & XP, WS-B1) — public level for the roster card badge.
+    level: rec.level,
+    // Phase 4 WS-B2 — per-instance progression for the upgrade modal: the spent
+    // stat allocation + raw XP (the modal renders current spend + the level
+    // grants the budget).
+    xp: rec.xp,
+    statAlloc: rec.statAlloc,
+    // Phase 4 WS-B3 — the activated latent mounts for the upgrade modal's
+    // "activate a mount" section (which hardpoints are already on).
+    mounts: rec.mounts,
   }));
   res.json({ playerId, ships });
 }

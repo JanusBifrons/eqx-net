@@ -54,6 +54,10 @@ export interface OneFrameTriggerSurface {
   /** Missile detonation queue. Same shape contract — array-like with
    *  `.length`. The concrete element type is in `RenderMirror`. */
   pendingMissileExplosions?: { length: number };
+  /** Phase 4 WS-B1 — level-up icon one-shot queue. Same array-like shape +
+   *  consume-after-render contract: the renderer spawns the pooled screenspace
+   *  icon, then this clears so the next frame doesn't re-spawn duplicates. */
+  pendingLevelUps?: { length: number };
 }
 
 /**
@@ -84,4 +88,7 @@ export function consumeOneFrameTriggers(
   // in worker mode (no-op on the main thread) and on the main mirror
   // in main-thread mode (already correct, now centralised here).
   if (mirror.pendingMissileExplosions) mirror.pendingMissileExplosions.length = 0;
+  // pendingLevelUps — Phase 4 WS-B1 level-up icon queue. SAME consume-after-
+  // render gate: clearing on a skip frame silently drops the level-up icon.
+  if (mirror.pendingLevelUps) mirror.pendingLevelUps.length = 0;
 }

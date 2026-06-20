@@ -30,6 +30,28 @@ Schema validation (`.superRefine` block) enforces: mounts + slots present-or-bot
 
 Catalogue order is wire-format-stable (drone kinds encode as a `u8` index into `SHIP_KINDS_LIST`). Today the order is locked at `[fighter, scout, heavy, interceptor, gunship]`.
 
+### Dynamic weapon mounts — latent slots (Phase 4 WS-B3, plan: effervescent-umbrella)
+
+`ShipKindSchema` gained a third optional field:
+
+```typescript
+latentMounts?: ReadonlyArray<WeaponMount>;
+```
+
+A **latent mount** is a candidate hardpoint that is INACTIVE by default — full geometry (`localX/Y`, `baseAngle`, `arcMin/arcMax`, `rotationSpeed`) + a default `weaponId`, but it does not aim, fire, or render until **activated** by a per-instance ship upgrade. The fighter declares two latent wing hardpoints (`latent-wing-l`/`latent-wing-r`). A latent id must be unique within the kind AND distinct from every base mount id (enforced by `ShipKindSchema`'s `.superRefine`), so the per-instance index space never collides.
+
+Adding the field is an **append-only record-shape change** (invariant #11 — the `SHIP_KINDS_LIST` indices are unchanged), so `SHIP_KIND_CATALOGUE_VERSION` is bumped (11 → 12) in the same PR. **No `SWARM_WIRE_VERSION` bump** — activated-mount state rides the player `ShipState`/roster, NOT the drone binary core.
+
+**Activation is per ship INSTANCE.** A ship-level upgrade `activate_mount { shipId, slotId, weaponId }` activates the next latent slot and binds the player's chosen weapon. The activated `{ slotId, weaponId }` is persisted in the roster `mounts` JSON (`PlayerShipStore.ActivatedMount[]`) — switching ships switches the loadout (D8). The server validates ownership + that `slotId` is a real latent hardpoint (`isLatentSlot`) + that it isn't already on; a foreign / unknown / non-latent / duplicate request is a silent no-op. The echo is `mount_activated { shipInstanceId, mounts }`.
+
+**The per-instance mount list is the lockstep seam.** Three pure resolvers in [`src/shared-types/shipKinds/slots.ts`](../../src/shared-types/shipKinds/slots.ts) are the ONE place the activated-slot → geometry mapping lives (the same trick as scrap colliders — geometry by `(kind, slotId)`, never on the wire):
+
+- `resolveActivatedMounts(kind, activated)` → the activated latent hardpoints as `WeaponMount`s (catalogue geometry, the player's `weaponId` overriding the latent default; iterates the catalogue latent list for a stable order so a differently-ordered roster JSON can't desync).
+- `resolveInstanceMounts(kind, activated)` → `[...kind.mounts, ...activated]` — the `mountAngles[]` INDEX SPACE (base mounts keep their catalogue indices, activated append). Un-upgraded ⇒ the base mount reference (byte-identical).
+- `resolveInstanceFireMounts(kind, activated, slotId)` → `[...resolveSlotMounts(kind, slotId), ...activated]` — the FIRING set (active slot + every activated latent; activated mounts always fire).
+
+The server aim ticker (`WeaponMountTicker.tickPlayer`) sizes the angle array by the FULL instance list and aims only the firing subset (non-firing instance mounts slew to base); the server fire resolver (`PlayerFireResolver`) resolves the firing set + reads each firing mount's slewed angle by its index in the full instance list. The client's `tickLocalMountAim` / `localShipMounts` / `updateLiveBeam` / `sendFire` use the SAME resolvers, so the predicted aim + beam + ghosts match the authoritative mount angles (lockstep, invariant #12). The activated mounts ride the PUBLIC `SnapshotMessage.states[].mounts` slice (emit-when-non-empty, for active AND lingering hulls) so other players see the extra turrets; `mountAngles[]` (already variable-length) carries their slewed angles with no wire bump. The renderer (`shipSpriteUpdater` → `MountVisualManager.ensureForInstance`) draws the extra barrels from `resolveInstanceMounts`, rebuilding the turret cluster when the activated set changes (`mountSig`). The UI is the `UpgradeModal`'s "Weapon mounts" section.
+
 ### Pure controller ([src/core/ai/WeaponMountController.ts](../../src/core/ai/WeaponMountController.ts))
 
 Zero zone awareness, zero side effects. Same inputs → same outputs on server and client, which is the architectural foundation of lockstep.

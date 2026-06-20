@@ -84,6 +84,14 @@ CREATE TABLE IF NOT EXISTS player_ships (
   is_active             INTEGER NOT NULL DEFAULT 0,
   active_room_id        TEXT,
   expires_at            INTEGER NOT NULL,
+  -- Phase 4 (Leveling & XP, WS-0). Per-ship-instance progression. Defaults
+  -- (level 1 / xp 0 / empty JSON) make pre-Phase-4 rows hydrate cleanly; the
+  -- companion idempotent ALTERs in PLAYER_SHIPS_MIGRATIONS add these columns
+  -- to a DB created before this column block existed.
+  level                 INTEGER NOT NULL DEFAULT 1,
+  xp                    INTEGER NOT NULL DEFAULT 0,
+  stat_alloc            TEXT NOT NULL DEFAULT '{}',
+  mounts                TEXT NOT NULL DEFAULT '[]',
   created_at            INTEGER NOT NULL,
   updated_at            INTEGER NOT NULL
 );
@@ -119,3 +127,25 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions(user_id);
 `;
+
+/**
+ * Idempotent column migrations applied AFTER `SCHEMA_SQL` in the DB worker
+ * (the sole writer — see `dbWorker.ts`).
+ *
+ * `SCHEMA_SQL` uses `CREATE TABLE IF NOT EXISTS`, so a table created by an
+ * older deploy is NOT re-created with new columns. SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`, so each statement here is run inside a
+ * try/catch that swallows the "duplicate column name" error — that makes the
+ * whole list idempotent (a fresh DB already has the columns from `SCHEMA_SQL`
+ * and skips them; an old DB gains them).
+ *
+ * This mirrors the `kindVersion`-column precedent (it lived in the original
+ * CREATE TABLE) but extends it to a true in-place migration so existing roster
+ * rows survive the Phase 4 leveling/XP addition.
+ */
+export const PLAYER_SHIPS_MIGRATIONS: readonly string[] = [
+  "ALTER TABLE player_ships ADD COLUMN level INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE player_ships ADD COLUMN xp INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE player_ships ADD COLUMN stat_alloc TEXT NOT NULL DEFAULT '{}'",
+  "ALTER TABLE player_ships ADD COLUMN mounts TEXT NOT NULL DEFAULT '[]'",
+];

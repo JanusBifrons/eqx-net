@@ -17,6 +17,8 @@ import BatteryChargingFullIcon from '@mui/icons-material/BatteryChargingFull';
 import SecurityIcon from '@mui/icons-material/Security';
 import BoltIcon from '@mui/icons-material/Bolt';
 import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import FlightIcon from '@mui/icons-material/Flight';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, type StructureKindId } from '@shared-types/structureKinds';
@@ -78,6 +80,9 @@ import { useTouchClickActivate } from './touchClickActivate';
 export function SpeedDialMenu(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
+  const phase = useUIStore((s) => s.phase);
+  const pilotMode = useUIStore((s) => s.pilotMode);
+  const setPilotMode = useUIStore((s) => s.setPilotMode);
   const isGalaxyMapOpen = useUIStore((s) => s.isGalaxyMapOpen);
   const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   const toggleGalaxyMapOpen = useUIStore((s) => s.toggleGalaxyMapOpen);
@@ -119,6 +124,15 @@ export function SpeedDialMenu(): JSX.Element | null {
     close();
     toggleGalaxyMapOpen();
   }, [close, toggleGalaxyMapOpen]);
+
+  // Phase 4 WS-A1 (D7) — pilot↔spectator toggle. Spectator is a CLIENT-LOCAL
+  // free-roam construction camera (D4/D5); the death→spectator transition fires
+  // elsewhere (ColyseusClient.killEntity). This is the deliberate toggle. Gated
+  // to phase==='game' below (it makes no sense on the galaxy/connecting screens).
+  const handleSpectatorToggle = useCallback(() => {
+    close();
+    setPilotMode(useUIStore.getState().pilotMode === 'spectator' ? 'pilot' : 'spectator');
+  }, [close, setPilotMode]);
 
   const handleWeapon = useCallback(() => {
     close();
@@ -260,6 +274,26 @@ export function SpeedDialMenu(): JSX.Element | null {
         })}
       />,
     ];
+    // Phase 4 WS-A1 (D7) — the pilot↔spectator toggle is gated to the in-game
+    // phase only (a free-roam construction camera makes no sense on the
+    // galaxy-map / connecting screens, where the dial can still mount).
+    if (phase === 'game') {
+      const spectating = pilotMode === 'spectator';
+      (actions as ReactNode[]).push(
+        <SpeedDialAction
+          key="spectator"
+          icon={spectating ? <FlightIcon /> : <VisibilityIcon />}
+          tooltipTitle={spectating ? 'Pilot ship' : 'Spectate'}
+          tooltipOpen
+          FabProps={fab(ACTION_FAB_BASE, {
+            'data-testid': 'spectator-toggle',
+            'aria-pressed': spectating,
+            onClick: clickActivate(handleSpectatorToggle),
+            onTouchStart: touchActivate(handleSpectatorToggle),
+          })}
+        />,
+      );
+    }
   }
 
   // The FAB reflects the drilled-into category at the `kinds` level (the dial
@@ -338,7 +372,9 @@ const BUILD_ICONS: Record<StructureKindId, ReactNode> = {
 const DIAL_SX = {
   // The dial portals into the bottom-right anchor host, which already owns
   // position / safe-area insets; we only size the FAB down to match the HUD's
-  // "start tiny" sizing default.
+  // "start tiny" sizing default. `position: relative` anchors the collapsed
+  // actions container we lift out of flow below.
+  position: 'relative',
   '& .MuiSpeedDial-fab': {
     width: 48,
     height: 48,
@@ -346,6 +382,26 @@ const DIAL_SX = {
     color: '#dde',
     border: '1px solid rgba(255,255,255,0.16)',
     '&:hover': { bgcolor: 'rgba(5,7,15,0.9)' },
+  },
+  // When the dial is CLOSED, lift its actions container OUT of layout flow so
+  // the dial's interactive bounding box collapses to just the 48px FAB. MUI
+  // keeps the collapsed actions mounted (scale-0) for the open animation + the
+  // `aria-pressed`-readable-when-collapsed contract, but a closed flex child at
+  // scale(0) still reserves its full natural height — so each added action grew
+  // the dial's box UPWARD, and the `pointer-events: auto` Slot wrapper around it
+  // then intercepted taps meant for other corners. On the short iPhone-SE
+  // landscape viewport (375px tall) the grown column reached the top-right
+  // `drawer-toggle` and ate its click (Phase 4 WS-A1 added the spectator action;
+  // `layout-slots.spec.ts` "floating MAP button …" caught it). Absolute + zero
+  // height removes the reserved column without unmounting the actions (they stay
+  // in the DOM, readable by attribute). The OPEN state (`.MuiSpeedDial-actions`
+  // without `…-actionsClosed`) is untouched, so the expanded dial is unchanged.
+  '& .MuiSpeedDial-actionsClosed': {
+    position: 'absolute',
+    bottom: 56,
+    right: 4,
+    height: 0,
+    pointerEvents: 'none',
   },
   // P3.1 — the always-on (tooltipOpen) action labels must NEVER wrap. The
   // static tooltip label defaults to a narrow max-width that wrapped longer

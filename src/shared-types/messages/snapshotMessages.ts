@@ -108,6 +108,35 @@ export interface SnapshotMessage {
        *  Emit-when-true only (notepack skips `undefined`); absent ⇒ shield up.
        *  Byte-additive — an undamaged sector pays zero extra bytes. */
       shieldDown?: boolean;
+      /** Phase 4 (Leveling & XP, WS-0) — this hull's PUBLIC level (≥ 1). Drives
+       *  the small level badge rendered on the ship (visible to all) + in the
+       *  roster. Emit-only-if-changed (the same emit-if-changed discipline as
+       *  `energy`; the broadcaster wiring is owned by WS-B1) — absent ⇒ the
+       *  client treats the hull as level 1, so undamaged/un-levelled sectors pay
+       *  zero extra bytes. Integer; no `SWARM_WIRE_VERSION` bump (a slim JSON
+       *  field on the snapshot states map, like `energy`/`mountAngles`). */
+      level?: number;
+      /** Phase 4 (Leveling & XP, WS-B2) — the hull's per-instance spent stat
+       *  allocation (`statId → points`). Emitted ONLY on the recipient's OWN ship
+       *  entry (like `energy`) AND only when non-empty (un-upgraded hulls + every
+       *  remote ship omit it — zero byte cost). The client derives the PHYSICS
+       *  multipliers from this and re-anchors its predWorld `setStatMultipliers`
+       *  so prediction scales movement identically to the server (risk #1 — the
+       *  authoritative re-anchor; the `ship_upgrade_applied` echo is just UI
+       *  confirmation). No `SWARM_WIRE_VERSION` bump (slim JSON field). */
+      statAlloc?: Record<string, number>;
+      /** Phase 4 (Dynamic weapon mounts, WS-B3) — the hull's ACTIVATED latent
+       *  mount slots (`{ slotId, weaponId }[]`). PUBLIC (unlike `statAlloc`):
+       *  emitted for EVERY ship (active + lingering) that has ≥ 1 activated
+       *  mount, so OTHER players see (and the renderer draws) the extra turrets.
+       *  Emit-when-non-empty only — un-upgraded hulls omit it (zero byte cost).
+       *  The activated mounts' GEOMETRY is looked up CLIENT-SIDE by
+       *  `(shipKind, slotId)` from the catalogue — only this slim id/weapon pair
+       *  rides the wire (the scrap-collider trick). The per-instance mount list
+       *  is `[...kind.mounts, ...activated]`, so `mountAngles[]` (already
+       *  variable-length) carries the activated slots' angles WITHOUT a
+       *  `SWARM_WIRE_VERSION` bump (it's a slim JSON field on the states map). */
+      mounts?: Array<{ slotId: string; weaponId: string }>;
     }
   >;
   /** Last client input tick acknowledged by the server for THIS recipient.
@@ -281,5 +310,12 @@ export interface SnapshotMessage {
      *  owner doesn't map to a DB user — an orphaned structure (the server logs
      *  it). The client shows the name, "you" for the local player, else "Unknown". */
     ownerName?: string;
+    /** Phase 4 (Leveling & XP, WS-B4) — this structure's level (≥ 1). Drives the
+     *  inspector's `LVL n` line + the Upgrade affordance (an at-cap structure
+     *  hides the button). Emitted ONLY when > 1 (un-levelled grids pay zero extra
+     *  bytes; absent ⇒ the client treats it as level 1), the same emit-if-> 1
+     *  discipline as `states[].level`. Slim JSON field, no SWARM_WIRE_VERSION bump
+     *  (pose flows on the binary channel). */
+    level?: number;
   }>;
 }

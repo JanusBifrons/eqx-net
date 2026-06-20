@@ -152,6 +152,100 @@ export const StructureActionSchema = z
   })
   .strict();
 
+/** Client → server (Phase 4 WS-B4): "upgrade the structure I OWN with this
+ *  numeric swarm `entityId`" — a paid level-up. The server validates ownership
+ *  (the requester owns the structure) + that it's BUILT, not deconstructing, and
+ *  below the level cap, then starts a NEW construction phase (reusing the grid
+ *  pulse) whose cost is drained from the owner's Capital bank. On completion the
+ *  level increments and the per-level stat grant (HP / turret range+damage /
+ *  power output) applies. A foreign / unbuilt / capped / unknown request is a
+ *  silent no-op. Strict — no extra keys. */
+export const UpgradeStructureSchema = z
+  .object({
+    type: z.literal('upgrade_structure'),
+    entityId: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/** Client → server (Phase 4 WS-A2): "pilot the OWNED in-sector ship with this
+ *  shipInstanceId". The SAME-SECTOR INSTANT swap — the player (a spectator after
+ *  death, or piloting another hull) reclaims one of their own lingering hulls
+ *  parked in this sector and resumes control of it AT ITS LIVE POSE, with no
+ *  spool / curtain. Owner-gated server-side: a shipId that isn't a lingering hull
+ *  owned by the requester (or one piloted by someone else) is dropped. The
+ *  camera smooth-lerp + self-prediction re-anchor happen client-side off the
+ *  fresh `welcome` the server sends on success. Strict. */
+export const PilotShipSchema = z
+  .object({
+    type: z.literal('pilot_ship'),
+    shipId: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** Stat-pool ids spendable by the upgrade modal (Phase 4 WS-B2). Mirrors
+ *  `STAT_IDS` in `src/core/leveling/shipStats.ts` — kept as a local zod enum so
+ *  `src/shared-types/` stays self-contained (the parity is asserted in
+ *  `messages.test.ts`). Append-only: add a new id at the END, never reorder. */
+export const StatIdSchema = z.enum(['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield']);
+
+/** A spent stat allocation on the wire — `statId → points (≥ 0 integer)`.
+ *  Bounded server-side against the ship instance's point budget (the budget
+ *  can't be exceeded); per-entry capped at 64 so a malformed map can't bloat. */
+export const StatAllocSchema = z
+  .record(StatIdSchema, z.number().int().min(0).max(64))
+  .refine((a) => Object.keys(a).length <= 6, { message: 'too many stat entries' });
+
+/** Client → server (Phase 4 WS-B2): "spend my ship instance's upgrade points
+ *  across the stat pool with this allocation". FREE allocation — the player may
+ *  re-distribute any way they like within the point BUDGET (`level - 1`). The
+ *  server validates ownership + the budget (`isAllocValid`), persists the alloc
+ *  on the roster row, applies the per-instance multipliers (physics + combat),
+ *  and echoes a `ship_upgrade_applied`. An over-budget / foreign / unknown ship
+ *  is dropped. Strict — no extra keys. */
+export const ApplyShipUpgradeSchema = z
+  .object({
+    type: z.literal('apply_ship_upgrade'),
+    shipId: z.string().min(1).max(64),
+    alloc: StatAllocSchema,
+  })
+  .strict();
+
+/** Client → server (Phase 4 WS-B2): "respec my ship instance — refund every
+ *  spent point back to the pool". Resets the roster `statAlloc` to `{}` and the
+ *  multipliers to neutral, then echoes a `ship_upgrade_applied` with the empty
+ *  alloc. A resource cost (D11 — optional) is a future balance knob; v1 is free.
+ *  Owner-gated; a foreign / unknown ship is dropped. Strict. */
+export const RespecShipSchema = z
+  .object({
+    type: z.literal('respec_ship'),
+    shipId: z.string().min(1).max(64),
+  })
+  .strict();
+
+/** Catalogue-id of the weapon to bind to an activated latent mount (Phase 4
+ *  WS-B3). Mirrors `MountWeaponIdSchema` in `shipKinds/types.ts` (kept local so
+ *  this module stays self-contained); parity asserted by `messages.test.ts`'s
+ *  weapon-catalogue checks. Append-only. */
+export const ActivateMountWeaponIdSchema = z.enum(['hitscan', 'laser', 'heat-seeker']);
+
+/** Client → server (Phase 4 WS-B3, plan: effervescent-umbrella): "activate the
+ *  latent mount slot `slotId` on my ship instance + bind `weaponId` to it". The
+ *  dynamic-weapon-mounts upgrade — the server validates ownership + that
+ *  `slotId` names a real `ShipKind.latentMounts` hardpoint + that the slot isn't
+ *  already active, persists the `{ slotId, weaponId }` in the roster `mounts`
+ *  JSON, mirrors it onto the live `ShipState.mounts`, and echoes a
+ *  `mount_activated`. The activated mount's GEOMETRY is looked up CLIENT-SIDE by
+ *  `(shipKind, slotId)` from the catalogue — never on the wire. A foreign /
+ *  unknown / already-active / non-latent request is a silent no-op. Strict. */
+export const ActivateMountSchema = z
+  .object({
+    type: z.literal('activate_mount'),
+    shipId: z.string().min(1).max(64),
+    slotId: z.string().min(1).max(64),
+    weaponId: ActivateMountWeaponIdSchema,
+  })
+  .strict();
+
 export const ClientMessageSchema = z.discriminatedUnion('type', [
   InputMessageSchema,
   IdentifyMessageSchema,
@@ -162,6 +256,11 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  UpgradeStructureSchema,
+  PilotShipSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
+  ActivateMountSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 ]);
@@ -175,4 +274,11 @@ export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
+export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;
+export type PilotShipMessage = z.infer<typeof PilotShipSchema>;
+export type StatId = z.infer<typeof StatIdSchema>;
+export type WireStatAlloc = z.infer<typeof StatAllocSchema>;
+export type ApplyShipUpgradeMessage = z.infer<typeof ApplyShipUpgradeSchema>;
+export type RespecShipMessage = z.infer<typeof RespecShipSchema>;
+export type ActivateMountMessage = z.infer<typeof ActivateMountSchema>;
 export type ClientMessage = z.infer<typeof ClientMessageSchema>;

@@ -60,6 +60,12 @@ interface MountCluster {
   /** Cached ship-kind id; if the ship's kind ever changes mid-life (it
    *  currently can't), we'd notice the mismatch and rebuild. */
   kindId: string | undefined;
+  /** WS-B3 — signature of the per-instance mount list (the catalogue base
+   *  mounts + any ACTIVATED latent mounts). When a player activates a latent
+   *  mount the kind is unchanged but the mount list grows, so the cluster must
+   *  rebuild — `kindId` alone can't detect it. The signature is the joined
+   *  mount-id list. `undefined` for the legacy `ensureForShip` path (kind-only).*/
+  mountSig: string | undefined;
 }
 
 interface MountGraphics {
@@ -109,6 +115,29 @@ export class MountVisualManager {
   }
 
   /**
+   * WS-B3 — ensure a cluster for a ship's FULL per-instance mount list
+   * (`[...kind.mounts, ...activated latent]`). When the activated set changes
+   * (a player activates a latent slot) the cluster rebuilds even though `kindId`
+   * is unchanged, via the per-instance `mountSig`. `sig` is the joined mount-id
+   * list (already computed by the caller from `resolveInstanceMounts`).
+   */
+  ensureForInstance(
+    shipId: string,
+    kindId: string | undefined,
+    mounts: ReadonlyArray<WeaponMount>,
+    color: number,
+    sig: string,
+    parent: Container | Graphics,
+  ): Container {
+    const existing = this.clusters.get(shipId);
+    if (existing && existing.kindId === kindId && existing.mountSig === sig) {
+      return existing.container;
+    }
+    if (existing) this.removeShip(shipId);
+    return this.ensureForMounts(shipId, kindId, mounts, color, parent, sig);
+  }
+
+  /**
    * The single mount-cluster construction path — `ensureForShip` is a thin
    * wrapper that resolves a ship-kind's mounts + colour and delegates here.
    *
@@ -128,11 +157,12 @@ export class MountVisualManager {
     mounts: ReadonlyArray<WeaponMount>,
     color: number,
     parent: Container | Graphics,
+    mountSig?: string,
   ): Container {
     const existing = this.clusters.get(id);
-    if (existing && existing.kindId === kindId) return existing.container;
+    if (existing && existing.kindId === kindId && existing.mountSig === mountSig) return existing.container;
     if (existing) {
-      // Kind changed (theoretical). Destroy and rebuild from scratch.
+      // Kind (or WS-B3 per-instance mount set) changed. Destroy + rebuild.
       this.removeShip(id);
     }
 
@@ -160,7 +190,7 @@ export class MountVisualManager {
       }
     }
 
-    this.clusters.set(id, { container, perMount, kindId });
+    this.clusters.set(id, { container, perMount, kindId, mountSig });
     return container;
   }
 

@@ -42,6 +42,20 @@ export interface DestroyEvent {
   shooterId: string;
 }
 
+/** Server → client (broadcast): a player ship INSTANCE levelled up from a kill
+ *  (Phase 4 WS-B1, plan: effervescent-umbrella). Broadcast to ALL clients —
+ *  level is public (D13). `shipInstanceId` is the killer's persistent roster id
+ *  (NOT a playerId — XP is per-instance, D8); `newLevel` is the level just
+ *  reached. The owning client pops a pooled screenspace level-up icon; every
+ *  client refreshes the public ship badge from the next snapshot's
+ *  `states[].level`. The `shipInstanceId` is hidden render/data only — never
+ *  shown as text (no-raw-ids rule). */
+export interface ShipLevelUpEvent {
+  type: 'ship_level_up';
+  shipInstanceId: string;
+  newLevel: number;
+}
+
 /** Server -> client (broadcast): a DISCRETE shield-state transition NOT
  *  carried by a `damage` event. Shield value on every hit rides
  *  DamageEvent.newShield; the regen ramp is NEVER streamed — the client
@@ -179,3 +193,63 @@ export const DamageEventSchema = z
     hitLayer: z.enum(['shield', 'hull']),
   })
   .strict();
+
+/** Server → client (broadcast): a ship instance levelled up (Phase 4 WS-B1).
+ *  Defensive schema — the server builds + trusts its own shape; the client
+ *  `safeParse`s on ingest and drops malformed packets before the screenspace
+ *  icon / badge refresh fire (invariant #3). */
+export const ShipLevelUpEventSchema = z
+  .object({
+    type: z.literal('ship_level_up'),
+    shipInstanceId: z.string().min(1).max(64),
+    newLevel: z.number().int().positive(),
+  })
+  .strict();
+
+/** Server → client (direct, to the owning session only): a ship instance's stat
+ *  allocation was APPLIED or RESPEC'd (Phase 4 WS-B2, plan: effervescent-umbrella).
+ *  The echo of `apply_ship_upgrade` / `respec_ship` — confirms the server
+ *  accepted + persisted the allocation, so the client can close the modal and
+ *  refresh the roster card. The `alloc` is the now-authoritative spend (`{}` after
+ *  a respec); `spent`/`budget` let the modal render the remaining points without a
+ *  roster round-trip. The physics multipliers are re-anchored from the next
+ *  snapshot's own-ship `statAlloc` slice; this echo is the UI confirmation. */
+export const ShipUpgradeAppliedEventSchema = z
+  .object({
+    type: z.literal('ship_upgrade_applied'),
+    shipInstanceId: z.string().min(1).max(64),
+    alloc: z.record(z.string(), z.number().int().min(0)),
+    spent: z.number().int().min(0),
+    budget: z.number().int().min(0),
+  })
+  .strict();
+export type ShipUpgradeAppliedEvent = z.infer<typeof ShipUpgradeAppliedEventSchema>;
+
+/** One activated latent mount on the wire (Phase 4 WS-B3) — `slotId` names a
+ *  `ShipKind.latentMounts` hardpoint, `weaponId` the bound weapon. The GEOMETRY
+ *  is looked up client-side from the catalogue by `(shipKind, slotId)`; only
+ *  this slim pair rides the wire (the scrap-collider trick). Mirrors the
+ *  `MountWeaponIdSchema` weapon set. */
+export const WireActivatedMountSchema = z
+  .object({
+    slotId: z.string().min(1).max(64),
+    weaponId: z.enum(['hitscan', 'laser', 'heat-seeker']),
+  })
+  .strict();
+export type WireActivatedMount = z.infer<typeof WireActivatedMountSchema>;
+
+/** Server → client (direct, to the owning session): a ship instance's dynamic
+ *  mounts were ACTIVATED (Phase 4 WS-B3). The echo of `activate_mount` — confirms
+ *  the server accepted + persisted the activation, so the client can close the
+ *  modal + refresh the roster card. Carries the now-authoritative full activated
+ *  list (the renderer reads geometry from the catalogue by `slotId`). The
+ *  PUBLIC visibility of the extra mounts rides the snapshot `states[].mounts`
+ *  slice; this echo is the owner's UI confirmation. */
+export const MountActivatedEventSchema = z
+  .object({
+    type: z.literal('mount_activated'),
+    shipInstanceId: z.string().min(1).max(64),
+    mounts: z.array(WireActivatedMountSchema),
+  })
+  .strict();
+export type MountActivatedEvent = z.infer<typeof MountActivatedEventSchema>;

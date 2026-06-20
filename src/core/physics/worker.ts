@@ -87,6 +87,12 @@ interface RekeyShipCmd     { type: 'REKEY_SHIP';     oldId: string; newId: strin
  *  in the command (server-authoritative) so the worker needs no per-id kind
  *  map; `getShipKind` is forgiving on unknown ids. See World.setHullExposed. */
 interface SetHullExposedCmd { type: 'SET_HULL_EXPOSED'; id: string; exposed: boolean; kindId: string; tick: number }
+/** Phase 4 WS-B2 — set a ship instance's per-instance PHYSICS stat multipliers
+ *  (`topSpeed`/`turnRate`) on its worker body. `applyShipInput` reads them next
+ *  tick so movement scales by the upgraded factors. Both factors undefined ⇒
+ *  reset to the un-upgraded path. The client predWorld runs the same setter so
+ *  prediction stays in lockstep. */
+interface SetStatMulCmd     { type: 'SET_STAT_MUL'; id: string; topSpeed?: number; turnRate?: number }
 /** Missile splash impulse. MissileSimulation queues these on detonate; the
  *  SectorRoom drains the queue and posts them; this dispatcher resolves the
  *  entityId to a Rapier body and applies the linear impulse. Silent no-op
@@ -98,7 +104,7 @@ interface MissileImpulseCmd { type: 'MISSILE_IMPULSE'; entityId: string; fx: num
 interface SpawnWallCmd      { type: 'SPAWN_WALL';      id: string; ax: number; ay: number; bx: number; by: number; thickness: number }
 interface SetWallActiveCmd  { type: 'SET_WALL_ACTIVE'; id: string; active: boolean }
 interface RemoveWallCmd     { type: 'REMOVE_WALL';     id: string }
-type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
+type WorkerCommand = SpawnCmd | DespawnCmd | InputCmd | SpawnObstacleCmd | AiIntentCmd | ClockRateCmd | SetPositionCmd | RekeyShipCmd | SetHullExposedCmd | SetStatMulCmd | MissileImpulseCmd | SpawnWallCmd | SetWallActiveCmd | RemoveWallCmd;
 
 async function main(): Promise<void> {
   const { sab } = workerData as { sab: SharedArrayBuffer };
@@ -248,6 +254,17 @@ async function main(): Promise<void> {
         // Shield 0-cross collider swap. kindId is server-authoritative
         // (carried in the command) so no per-id kind map is needed here.
         physics.setHullExposed(cmd.id, cmd.exposed, getShipKind(cmd.kindId));
+        break;
+      }
+      case 'SET_STAT_MUL': {
+        // Phase 4 WS-B2 — per-instance physics stat multipliers. Both factors
+        // undefined ⇒ reset to the un-upgraded path. Silent no-op on unknown
+        // ids (a stale post after despawn is harmless).
+        const hasMul = cmd.topSpeed !== undefined || cmd.turnRate !== undefined;
+        physics.setStatMultipliers(
+          cmd.id,
+          hasMul ? { topSpeed: cmd.topSpeed ?? 1, turnRate: cmd.turnRate ?? 1 } : undefined,
+        );
         break;
       }
       case 'MISSILE_IMPULSE': {

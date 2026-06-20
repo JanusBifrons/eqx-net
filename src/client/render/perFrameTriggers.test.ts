@@ -265,3 +265,31 @@ describe('consumeOneFrameTriggers: pendingMissileExplosions (combat-fx-hunt — 
     expect(mirror.pendingMissileExplosions.length).toBe(3);
   });
 });
+
+describe('consumeOneFrameTriggers: pendingLevelUps (Phase 4 WS-B1)', () => {
+  // Same consume-after-render gate as the other one-shot queues — clearing on
+  // a skip frame silently drops the level-up icon.
+  it('clears pendingLevelUps after a render frame, preserving array identity', () => {
+    const mirror = {
+      pendingLevelUps: [
+        { playerId: 'p1', newLevel: 2 },
+        { playerId: 'p2', newLevel: 3 },
+      ],
+    };
+    const arrRef = mirror.pendingLevelUps;
+    consumeOneFrameTriggers(mirror, /* didRender */ true);
+    expect(mirror.pendingLevelUps.length).toBe(0);
+    expect(mirror.pendingLevelUps).toBe(arrRef);
+  });
+
+  it('preserves pendingLevelUps on a skip frame', () => {
+    const mirror = { pendingLevelUps: [{ playerId: 'p1', newLevel: 2 }] };
+    consumeOneFrameTriggers(mirror, /* didRender */ false);
+    expect(mirror.pendingLevelUps.length).toBe(1);
+  });
+
+  it('is a no-op when pendingLevelUps is undefined', () => {
+    const mirror = {};
+    expect(() => consumeOneFrameTriggers(mirror, true)).not.toThrow();
+  });
+});

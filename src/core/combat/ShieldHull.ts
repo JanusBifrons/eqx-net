@@ -124,22 +124,27 @@ export function regenStep(
   state: ShieldHullState,
   kind: ShieldRegenParams,
   nowTick: number,
+  shieldMaxOverride?: number,
 ): RegenResult {
+  // The cap is the kind base UNLESS the caller passes a per-instance effective
+  // max (Phase 4 ship shield upgrade — `effectiveShipShieldMax`). The regen
+  // RATE stays the kind's; only the ceiling moves.
+  const shieldMax = shieldMaxOverride ?? kind.shieldMax;
   const none: RegenResult = {
     restoredThisStep: false,
     regenComplete: false,
     regenerated: false,
   };
   if (state.hull <= 0) return none; // dead ships do not regen
-  if (state.shield >= kind.shieldMax) return none; // already full
+  if (state.shield >= shieldMax) return none; // already full
   if (nowTick - state.lastDamageTick < kind.shieldRegenDelayTicks) return none;
 
   const prevShield = state.shield;
-  const newShield = Math.min(kind.shieldMax, prevShield + kind.shieldRegenRate);
+  const newShield = Math.min(shieldMax, prevShield + kind.shieldRegenRate);
   state.shield = newShield;
   return {
     restoredThisStep: prevShield === 0 && newShield > 0,
-    regenComplete: prevShield < kind.shieldMax && newShield >= kind.shieldMax,
+    regenComplete: prevShield < shieldMax && newShield >= shieldMax,
     regenerated: newShield !== prevShield,
   };
 }

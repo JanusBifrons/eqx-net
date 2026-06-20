@@ -109,6 +109,9 @@ export class StructurePlacementSubsystem {
       isDeconstructing: false,
       minerals,
       storedPower: 0,
+      // Phase 4 (Leveling & XP, WS-B4) — every fresh structure starts at level 1.
+      // A paid Upgrade build phase increments it (restore overrides on hydrate).
+      level: 1,
     };
     this.hooks.registry.add(rec);
     // Auto-wire into the owner's grid: nearest in-range hub with a free slot

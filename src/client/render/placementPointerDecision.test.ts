@@ -82,4 +82,16 @@ describe('shouldCentreGhostOnActivate', () => {
   it('never seeds the dim post-Confirm pending ghost', () => {
     expect(shouldCentreGhostOnActivate(true, false, true)).toBe(false);
   });
+
+  // Phase 4 WS-A1 — in SPECTATOR/construction mode there is NO ship to anchor
+  // the ahead-of-ship preview to, so the camera-centre seed is forced even on
+  // desktop (the free-roam camera IS the placement cursor).
+  it('SPECTATOR forces the centre seed even on DESKTOP', () => {
+    expect(shouldCentreGhostOnActivate(false, false, false, true)).toBe(true);
+  });
+
+  it('SPECTATOR still respects "already chosen" + "pending" guards', () => {
+    expect(shouldCentreGhostOnActivate(false, true, false, true)).toBe(false);
+    expect(shouldCentreGhostOnActivate(false, false, true, true)).toBe(false);
+  });
 });

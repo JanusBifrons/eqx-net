@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
-import { autoConnectStructure } from './structureGridView.js';
+import { autoConnectStructure, structureToGridNode } from './structureGridView.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
 
 const OWNER = 'owner-1';
@@ -105,5 +105,44 @@ describe('autoConnectStructure — WS-5 (R2.17) multi-connect', () => {
     expect(registry.connectionCount(placedId)).toBe(1);
     expect(registry.hasConnection(placedId, 'hub-near')).toBe(true);
     expect(nearest).toBe('hub-near');
+  });
+});
+
+describe('structureToGridNode — mid-upgrade Capital stays operational (must-fix #2)', () => {
+  it('projects a MID-UPGRADE Capital as built (traversable source + power-generating)', () => {
+    // Review must-fix #2: an Upgrade flips the Capital's `isConstructed` false to
+    // run a visible re-build, but in the GRID VIEW it must stay BUILT so it
+    // remains the routable funder (else the whole grid bricks). Fail-first: on
+    // the pre-fix projection a mid-upgrade capital projects isConstructed=false /
+    // 0 power, so Grid.route can't use it as a source.
+    const cap = record('cap', 'capital', 0, 0, /* built */ false);
+    cap.upgradeTargetLevel = 2; // mid-upgrade
+
+    const node = structureToGridNode(cap);
+
+    expect(node.isConstructed).toBe(true);
+    expect(node.powerOutput).toBe(getStructureKind('capital').powerOutput);
+  });
+
+  it('still projects a fresh (not-yet-built) Capital blueprint as inert', () => {
+    // A capital that is genuinely a fresh blueprint (no upgradeTargetLevel) stays
+    // a dead-end blueprint — the mid-upgrade carve-out must not leak to it.
+    const cap = record('cap', 'capital', 0, 0, /* built */ false);
+
+    const node = structureToGridNode(cap);
+
+    expect(node.isConstructed).toBe(false);
+    expect(node.powerOutput).toBe(0);
+  });
+
+  it('does NOT extend the carve-out to a mid-upgrade LEAF (turret stays a dead-end blueprint)', () => {
+    // The carve-out is Capital-only — a mid-upgrade leaf (turret) re-builds as a
+    // normal dead-end blueprint (it is not a funder / relay).
+    const turret = record('t', 'turret', 0, 0, /* built */ false);
+    turret.upgradeTargetLevel = 2;
+
+    const node = structureToGridNode(turret);
+
+    expect(node.isConstructed).toBe(false);
   });
 });

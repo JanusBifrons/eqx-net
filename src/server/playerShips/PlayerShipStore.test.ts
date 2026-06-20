@@ -274,4 +274,148 @@ describe('PlayerShipStore', () => {
       expect(store.size()).toBe(2);
     });
   });
+
+  // ── Phase 4 WS-0 — leveling/XP roster columns ──────────────────────
+  describe('leveling fields (Phase 4 WS-0)', () => {
+    it('create defaults level=1, xp=0, empty statAlloc, empty mounts', () => {
+      const rec = store.create({
+        playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100,
+      });
+      expect(rec.level).toBe(1);
+      expect(rec.xp).toBe(0);
+      expect(rec.statAlloc).toEqual({});
+      expect(rec.mounts).toEqual([]);
+    });
+
+    it('shadows the leveling fields through the PLAYER_SHIP_PUT op', () => {
+      store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      const op = sink.ops[0]!;
+      expect(op.type).toBe('PLAYER_SHIP_PUT');
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(op.level).toBe(1);
+      expect(op.xp).toBe(0);
+      expect(op.statAllocJson).toBe('{}');
+      expect(op.mountsJson).toBe('[]');
+    });
+
+    it('put round-trips non-default level/xp/statAlloc/mounts (in-memory + op)', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      sink.ops.length = 0;
+      const next: PlayerShipRecord = {
+        ...rec,
+        level: 4,
+        xp: 1234,
+        statAlloc: { hull: 2, damage: 1 },
+        mounts: [{ slotId: 'wing-l', weaponId: 'laser_beam' }],
+      };
+      store.put(next);
+      const got = store.get(rec.shipId)!;
+      expect(got.level).toBe(4);
+      expect(got.xp).toBe(1234);
+      expect(got.statAlloc).toEqual({ hull: 2, damage: 1 });
+      expect(got.mounts).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(op.level).toBe(4);
+      expect(op.xp).toBe(1234);
+      expect(JSON.parse(op.statAllocJson)).toEqual({ hull: 2, damage: 1 });
+      expect(JSON.parse(op.mountsJson)).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+    });
+
+    it('hydrate restores stored leveling fields verbatim', () => {
+      const r: PlayerShipRecord = {
+        shipId: 's1', playerId: 'p1', userId: null, kind: 'fighter',
+        kindVersion: SHIP_KIND_CATALOGUE_VERSION, health: 100,
+        lastSectorKey: 'sol-prime', lastX: 0, lastY: 0, lastVx: 0, lastVy: 0, lastAngle: 0, lastAngvel: 0,
+        lastFireClientTick: 0, isActive: false, activeRoomId: null, expiresAt: 0, createdAt: 0, updatedAt: 0,
+        level: 7, xp: 9000, statAlloc: { topSpeed: 3 }, mounts: [{ slotId: 'tail', weaponId: 'heat-seeker' }],
+      };
+      store.hydrate([r]);
+      const got = store.get('s1')!;
+      expect(got.level).toBe(7);
+      expect(got.xp).toBe(9000);
+      expect(got.statAlloc).toEqual({ topSpeed: 3 });
+      expect(got.mounts).toEqual([{ slotId: 'tail', weaponId: 'heat-seeker' }]);
+    });
+  });
+
+  // ── Phase 4 WS-B1 — XP attribution is PER SHIP INSTANCE (D8) ─────────
+  describe('setProgress — per-instance progression (Phase 4 WS-B1)', () => {
+    it('persists level/xp on the named ship and shadows a PUT op', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      sink.ops.length = 0;
+      const next = store.setProgress(rec.shipId, { level: 3, xp: 42 });
+      expect(next).not.toBeNull();
+      expect(store.get(rec.shipId)!.level).toBe(3);
+      expect(store.get(rec.shipId)!.xp).toBe(42);
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(op.level).toBe(3);
+      expect(op.xp).toBe(42);
+    });
+
+    it('returns null for an unknown shipId and does not shadow', () => {
+      expect(store.setProgress('not-a-ship', { level: 5 })).toBeNull();
+      expect(sink.ops).toHaveLength(0);
+    });
+
+    it('leaves un-supplied fields unchanged', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      store.setProgress(rec.shipId, { statAlloc: { hull: 1 } });
+      store.setProgress(rec.shipId, { level: 2, xp: 5 });
+      const got = store.get(rec.shipId)!;
+      expect(got.level).toBe(2);
+      expect(got.xp).toBe(5);
+      expect(got.statAlloc).toEqual({ hull: 1 }); // preserved across the second call
+    });
+
+    it("keeps each of a player's two ships' XP completely separate", () => {
+      // The same player owns two ships. Awarding XP to one must not bleed
+      // into the other — XP is per-instance (D8), keyed by shipId.
+      const a = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      const b = store.create({ playerId: 'p1', userId: null, kind: 'scout', sectorKey: 's', x: 1, y: 1, health: 60 });
+      store.setProgress(a.shipId, { level: 4, xp: 200 });
+      // Ship B is untouched.
+      expect(store.get(a.shipId)!.level).toBe(4);
+      expect(store.get(a.shipId)!.xp).toBe(200);
+      expect(store.get(b.shipId)!.level).toBe(1);
+      expect(store.get(b.shipId)!.xp).toBe(0);
+      // Now level B independently; A is unaffected.
+      store.setProgress(b.shipId, { level: 2, xp: 10 });
+      expect(store.get(a.shipId)!.level).toBe(4);
+      expect(store.get(b.shipId)!.level).toBe(2);
+    });
+  });
+
+  // ── Phase 4 WS-B2 — stat allocation round-trips PER INSTANCE ──────────
+  describe('setProgress — statAlloc (Phase 4 WS-B2)', () => {
+    it('persists a statAlloc on the named ship and shadows it as JSON', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      sink.ops.length = 0;
+      store.setProgress(rec.shipId, { statAlloc: { topSpeed: 3, hull: 2 } });
+      expect(store.get(rec.shipId)!.statAlloc).toEqual({ topSpeed: 3, hull: 2 });
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(JSON.parse(op.statAllocJson)).toEqual({ topSpeed: 3, hull: 2 });
+    });
+
+    it('a respec (empty statAlloc) is round-tripped + shadowed', () => {
+      const rec = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      store.setProgress(rec.shipId, { statAlloc: { damage: 4 } });
+      sink.ops.length = 0;
+      store.setProgress(rec.shipId, { statAlloc: {} });
+      expect(store.get(rec.shipId)!.statAlloc).toEqual({});
+      const op = sink.ops[0]!;
+      if (op.type !== 'PLAYER_SHIP_PUT') throw new Error('unreachable');
+      expect(JSON.parse(op.statAllocJson)).toEqual({});
+    });
+
+    it("keeps each of a player's two ships' statAlloc separate (per-instance, D8)", () => {
+      const a = store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
+      const b = store.create({ playerId: 'p1', userId: null, kind: 'scout', sectorKey: 's', x: 1, y: 1, health: 60 });
+      store.setProgress(a.shipId, { statAlloc: { topSpeed: 5 } });
+      expect(store.get(a.shipId)!.statAlloc).toEqual({ topSpeed: 5 });
+      expect(store.get(b.shipId)!.statAlloc).toEqual({}); // untouched
+    });
+  });
 });

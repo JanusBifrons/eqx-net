@@ -40,8 +40,8 @@ import { ErrorBoundary } from './components/ErrorOverlay';
 import { HyperspaceOverlay } from './components/HyperspaceOverlay';
 import { WarpScreen } from './components/WarpScreen';
 import { LostConnectionOverlay } from './components/LostConnectionOverlay';
-import { DeathOverlay } from './components/DeathOverlay';
 import { engageTransit, cancelTransit } from './net/transitClient';
+import { isSpectating } from './spectator/spectatorMode';
 import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
@@ -51,6 +51,7 @@ import { EnergyBar } from './components/EnergyBar';
 import { SpeedDialMenu } from './components/SpeedDialMenu';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { EntityStatsPanel } from './components/EntityStatsPanel';
+import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
 import { SectorInfoPanel } from './components/SectorInfoPanel';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -164,6 +165,10 @@ function GameSurface({
   // off the curtain visibility (`useIsLoadingActive`). Honours the
   // `?loading=cosmetic` URL kill switch via the underlying selector.
   const isLoadingActive = useIsLoadingActive();
+  // Phase 4 WS-A1 — spectator/construction mode. A discrete enum (#2-safe); the
+  // free-roam camera pose lives in the renderer's `Camera`, never the store.
+  // Drives the renderer free-roam toggle + the input gate below.
+  const pilotMode = useUIStore((s) => s.pilotMode);
   // Per-setter selectors, NOT a no-arg `useUIStore()` whole-store subscription.
   // A no-arg subscription re-renders GameSurface — the entire HUD subtree
   // (every Slot, SpeedDialMenu, the MUI bars/panels) — on EVERY store write,
@@ -182,12 +187,20 @@ function GameSurface({
   // are zeroed on disable so a key still held at the moment the
   // curtain drops doesn't auto-thrust on resume — the user must
   // re-press to act.
+  //
+  // Phase 4 WS-A1 — input is ALSO gated off in spectator mode: a spectator is
+  // a free-roam construction camera with no ship to thrust or fire (D4). The
+  // pilot drives via Keyboard/TouchInput → thrust/fire; the spectator drives
+  // the CAMERA via the renderer's pointer/wheel path (untouched by this gate),
+  // so disabling Keyboard/TouchInput swaps "thrust/fire" for "pan/zoom only".
+  const spectating = isSpectating(pilotMode);
   useEffect(() => {
     const audio = audioRef.current;
     const keyboard = keyboardRef.current;
     const touch = touchInputRef.current;
-    if (isLoadingActive) {
-      audio?.suspendAll();
+    const inputBlocked = isLoadingActive || spectating;
+    if (inputBlocked) {
+      if (isLoadingActive) audio?.suspendAll();
       keyboard?.setEnabled(false);
       touch?.setEnabled(false);
     } else {
@@ -195,7 +208,16 @@ function GameSurface({
       keyboard?.setEnabled(true);
       touch?.setEnabled(true);
     }
-  }, [isLoadingActive]);
+  }, [isLoadingActive, spectating]);
+
+  // Phase 4 WS-A1 — drive the renderer's free-roam camera off `pilotMode`.
+  // `setSpectator(true)` detaches `Camera.follow` (and `update()` stops
+  // re-issuing the local-ship follow), so the world camera holds wherever the
+  // player pans it; `false` restores follow-the-ship. Camera pose lives in the
+  // renderer, never the store (#2).
+  useEffect(() => {
+    rendererRef.current?.setSpectator(spectating);
+  }, [spectating]);
 
   // Fire `join_chain_complete` exactly once per GameSurface mount, when
   // all four readiness gates (connected + welcomed + first-snapshot OR
@@ -258,48 +280,13 @@ function GameSurface({
   // is unit-lockable. See `App.warpOrchestration.test.tsx`.
   useWarpOrchestration(rendererRef);
 
-  // Phase 5 scope change — when the player dies and clicks Respawn, send
-  // them BACK TO THE GALAXY MAP rather than respawning in-place. The
-  // post-auth landing screen is now the canonical "pick where to spawn"
-  // surface (it shows roster + sector picker), so re-using it for
-  // post-death respawn is consistent UX. The in-place `respawnShip` RPC
-  // is preserved on `ColyseusGameClient` for tests / engineering rooms
-  // but the user-facing UI no longer calls it.
-  //
-  // Phase changes from 'game' → 'galaxy-map' unmount `GameSurface`,
-  // which cleans up the room. The roster panel on the landing screen
-  // reflects the loss (the dead ship's roster row is destroyed, so it
-  // disappears).
-  //
-  // We also clear every transient in-game overlay flag (galaxy map open,
-  // overview open, drawer open, pending swap) so a player who died with
-  // any of those mounted doesn't see them re-appear on their next spawn.
-  // This is the edge case captured 2026-05-13: die-while-galaxy-overview-
-  // open left `isGalaxyOverviewOpen=true` in the store; the next spawn
-  // saw the overview pop back open immediately on top of the fresh game.
-  const handleRespawn = useCallback(() => {
-    // Plan: crispy-kazoo, Commit 3 — log the respawn click so the
-    // diag-capture timeline names WHICH path triggered the cycle.
-    // 'button' = in-game Respawn button (this handler); the
-    // 'sector-pick' counterpart logs from GalaxyOverviewScreen on
-    // the spawn-mode sector tap. Both lead to the galaxy-map phase
-    // + leave-room + rejoin flow (per the user's "same flow" decision).
-    const client = clientRef.current;
-    const msFromDied = client && client.diedAtMs > 0
-      ? Math.round(performance.now() - client.diedAtMs)
-      : -1;
-    logEvent('respawn_clicked', { source: 'button', msFromDied });
-
-    const ui = useUIStore.getState();
-    ui.setLocalShipInstanceId(null);
-    ui.setCurrentSectorKey(null);
-    ui.setDead(false);
-    ui.setGalaxyOverviewOpen(false);
-    ui.setGalaxyMapOpen(false);
-    ui.setDrawerOpen(false);
-    ui.setPendingShipSwap(null);
-    ui.setPhase('galaxy-map');
-  }, []);
+  // Phase 4 WS-A1 (D3) — the old "die → click Respawn → back to galaxy map"
+  // handler (and its blocking DeathOverlay) are removed. Death now flips
+  // INSTANTLY into spectator (a free-roam construction camera; see
+  // ColyseusClient.killEntity); the player re-enters via the galaxy map (the
+  // Map toggle leaves the room + rejoins) or, in WS-A2, an owned ship's
+  // in-world Pilot action. The in-place `respawnShip` RPC stays on
+  // `ColyseusGameClient` for engineering rooms / tests.
 
   const getLocalShip = useCallback(() => {
     const c = clientRef.current;
@@ -481,6 +468,21 @@ function GameSurface({
             email: 'e2e@example.test',
             displayName: name ?? 'E2E Pilot',
           });
+        };
+      // Phase 4 WS-A1 — drive the CLIENT-LOCAL death path so the spectator-mode
+      // E2E can flip into spectator deterministically (no hostile-fire TTK wait;
+      // spectator is un-networked per D5). Production tree-shakes the hook.
+      (window as unknown as { __eqxKillLocalShip?: () => void })
+        .__eqxKillLocalShip = () => clientRef.current?.devKillLocalShip();
+      // Phase 4 WS-A1 — read the renderer's camera centre (GAME space) so the
+      // E2E can assert the free-roam camera pans on a spectator drag. Main-
+      // thread renderer only (`?worker=0`); the worker camera lives off-thread.
+      (window as unknown as { __eqxCameraCenter?: () => { x: number; y: number } })
+        .__eqxCameraCenter = () => {
+          const r = rendererRef.current as unknown as {
+            getCameraCenterGame?: () => { x: number; y: number };
+          };
+          return r?.getCameraCenterGame ? r.getCameraCenterGame() : { x: NaN, y: NaN };
         };
     }
 
@@ -742,7 +744,10 @@ function GameSurface({
       <Slot anchor="top-center" order={2}><WarpInWarningBanner /></Slot>
       <Slot anchor="top-right" order={2}><ShipStatsCard getLocalShip={getLocalShip} /></Slot>
       <AdvancedDrawer />
-      <DeathOverlay onRespawn={handleRespawn} />
+      {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
+       *  is removed. Death transitions INSTANTLY into spectator (free-roam
+       *  construction camera); re-entry is via the galaxy map or (WS-A2) an
+       *  owned ship's in-world Pilot action. */}
       {isTouchRef.current && touchInputRef.current && (
         <MobileControls touchInput={touchInputRef.current} />
       )}
@@ -769,6 +774,9 @@ function GameSurface({
        *  OUTSIDE the Slot system as a `position:fixed` element that gameRafLoop
        *  moves to the renderer's projection of the selected entity (any kind). */}
       <EntityStatsPanel />
+      {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
+       *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
+      <UpgradeModalHost />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
       {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
        *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,

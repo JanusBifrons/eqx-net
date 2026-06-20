@@ -9,7 +9,7 @@ import {
   type ShipKindId,
 } from '../../shared-types/shipKinds.js';
 import { configureShipCollider, shipBallColliderDesc } from './colliderConfig.js';
-import { applyShipInput } from './applyShipInput.js';
+import { applyShipInput, type ShipInputMultipliers } from './applyShipInput.js';
 import { castHitscan } from './hitscanRay.js';
 import { wallGeometry } from '../structures/ShieldWall.js';
 
@@ -53,6 +53,11 @@ interface ShipBody {
   /** Current collider geometry: false = cheap CIRCLE (shield up), true =
    *  exact HULL polygon compound (shield down). Owned by setHullExposed. */
   exposed: boolean;
+  /** Phase 4 WS-B2 — per-instance PHYSICS stat multipliers (`topSpeed`,
+   *  `turnRate`), set via `setStatMultipliers`. Threaded into `applyShipInput`
+   *  so the server sim + client prediction scale movement identically (risk
+   *  #1). `undefined` ⇒ no upgrades ⇒ byte-identical to the legacy path. */
+  statMul?: ShipInputMultipliers;
 }
 
 export class PhysicsWorld {
@@ -445,7 +450,23 @@ export class PhysicsWorld {
   applyInput(id: string, input: ShipInput): void {
     const rec = this.bodies.get(id);
     if (!rec) return;
-    applyShipInput(rec.body, rec.kind, input);
+    applyShipInput(rec.body, rec.kind, input, rec.statMul);
+  }
+
+  /**
+   * Phase 4 WS-B2 — set (or clear) a ship instance's per-instance PHYSICS stat
+   * multipliers (`topSpeed`, `turnRate`). Threaded into `applyShipInput` on the
+   * NEXT tick so the per-tick movement clamps scale by the instance's spent
+   * stat allocation. The SAME setter runs on the server worker (via the
+   * `SET_STAT_MUL` worker command) and the client predWorld (called directly),
+   * so both sides clamp identically and reconciliation stays clean (risk #1 /
+   * invariants #4, #12). Pass `undefined` to reset to the un-upgraded factors.
+   * Silently no-ops on unknown ids (a stale post after despawn is harmless).
+   */
+  setStatMultipliers(id: string, mul: ShipInputMultipliers | undefined): void {
+    const rec = this.bodies.get(id);
+    if (!rec) return;
+    rec.statMul = mul;
   }
 
   /**

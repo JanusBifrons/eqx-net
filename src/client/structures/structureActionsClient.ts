@@ -18,3 +18,15 @@ export function sendStructureAction(id: number, action: StructureAction): boolea
   room.send('structure_action', { type: 'structure_action', id, action });
   return true;
 }
+
+/** Phase 4 WS-B4 — send `upgrade_structure` for the structure with swarm
+ *  entityId `entityId` (a paid level-up build phase, owner-gated server-side).
+ *  Returns true if the message was sent (false when there's no live room). */
+export function sendUpgradeStructure(entityId: number): boolean {
+  const client = getGameClient();
+  if (!client) return false;
+  const room = client.getRoom();
+  if (!room) return false;
+  room.send('upgrade_structure', { type: 'upgrade_structure', entityId });
+  return true;
+}

@@ -17,7 +17,10 @@
 // (visible to others, reclaimable by the owner). The 10-ship roster cap stays;
 // ships persist once spawned until abandoned (→ scrap). Bumping discards every
 // older snapshot and reseeds all sectors.
-export const CURRENT_SCHEMA_VERSION = 5;
+// v6 (Phase 4 leveling/XP, WS-0): structures[] gain a `level` (default 1) — the
+// per-structure progression an Upgrade build phase increments (WS-B4). Tear-down
+// on the bump: every v5 snapshot is discarded and all sectors fresh-spawn.
+export const CURRENT_SCHEMA_VERSION = 6;
 
 /** Maximum age of a hydrated snapshot before it's discarded (24 h). */
 export const SNAPSHOT_STALENESS_MS = 24 * 60 * 60 * 1000;
@@ -62,6 +65,12 @@ export interface SectorSnapshotStructure {
   minerals: number;
   /** Stored power (batteries). */
   storedPower: number;
+  /** Phase 4 (Leveling & XP, WS-0) — structure level (≥ 1). A fresh structure
+   *  is level 1; the Upgrade build phase (WS-B4) increments it. Optional on the
+   *  TYPE for back-compat with older in-process callers, but always written by
+   *  `SectorPersistence.persist()` (defaulting to 1). The schema bump to v6
+   *  discards every persisted v5 row, so a hydrated row always carries it. */
+  level?: number;
 }
 
 /**
@@ -131,6 +140,18 @@ export interface SectorSnapshotPayload {
  * throw and falls through to fresh-spawn).
  */
 export function migrateSnapshot(_snap: unknown, fromV: number, toV: number): SectorSnapshotPayload {
+  // v5 → v6 (Phase 4 leveling/XP, WS-0): structures[] gained a `level` field.
+  // The added field defaults to 1 and there is no player-facing value in
+  // preserving a v5 galaxy across the bump, so this stays a tear-down arm
+  // (Phase-8 strategy) — throw, and the hydrate caller fresh-spawns. Kept as an
+  // explicit arm so a future preserving migration slots in by replacing the
+  // throw with a mechanical v5→v6 transform.
+  if (fromV === 5 && toV === 6) {
+    throw new Error(
+      `No migration from sector-snapshot schema v5 to v6 (structures[].level added). ` +
+      `Tear-down-on-change: every v5 snapshot is discarded and all sectors fresh-spawn.`,
+    );
+  }
   throw new Error(
     `No migration from sector-snapshot schema v${fromV} to v${toV}. ` +
     `Bump CURRENT_SCHEMA_VERSION to discard old snapshots and reseed all sectors, ` +

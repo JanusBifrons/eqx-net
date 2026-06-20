@@ -103,8 +103,17 @@ export interface WeaponMountTickerDeps {
    *  LAZY accessor: the backing map (shieldHullRouter.swarmHealth) is built
    *  AFTER this ticker in SectorRoom's constructor, so resolve it per-tick. */
   swarmHealth: () => Map<string, number>;
-  /** Resolves the active-slot mount list for a kind (composes mountGeometry). */
+  /** Resolves the active-slot mount list for a kind (composes mountGeometry).
+   *  Used by the DRONE path (drones never carry activated latent mounts). */
   resolveSlotMounts: (kind: ShipKind, slotId?: string) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the PLAYER's full per-instance mount list `[...kind.mounts,
+   *  ...activated latent]` (the `mountAngles[]` index space — base mounts keep
+   *  catalogue indices, activated append). Reads `ship.mounts`. */
+  resolveInstanceMounts: (ship: ShipState) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the PLAYER's FIRING mount set `[...active-slot, ...activated]` —
+   *  only these aim at the target; every other instance mount slews to base.
+   *  Reads `ship.mounts` + the active slotId. */
+  resolveInstanceFireMounts: (ship: ShipState) => ReadonlyArray<WeaponMount>;
 }
 
 const DT_SEC = 1 / 60;
@@ -132,6 +141,9 @@ export class WeaponMountTicker {
   /** Pooled per-tick player candidates (rebuilt by tickDrone). Same
    *  logical-length pattern as `mountTargetsScratch`. */
   private readonly droneMountTargetsScratch: MountTargetView[] = [];
+  /** WS-B3 — reused per-player firing-mount-id set (alloc-free, invariant #14).
+   *  Rebuilt per player in `tickPlayer` from `resolveInstanceFireMounts`. */
+  private readonly _firingIdsScratch = new Set<string>();
 
   /** Acquire-or-create a MountTargetView slot. Subsequent calls
    *  overwrite the SAME instance, eliminating per-tick literal allocs.
@@ -215,9 +227,17 @@ export class WeaponMountTicker {
       if (!ship?.alive) continue;
       const pose = d.shipPoseCache.get(playerId);
       if (!pose) continue;
-      const kind = getShipKind(ship.kind);
-      const mounts = d.resolveSlotMounts(kind);
+      // WS-B3 — the angle index space is the FULL per-instance list
+      // `[...kind.mounts, ...activated]`; only the FIRING subset (active slot +
+      // activated) aims, the rest slew to base. For un-upgraded single-slot
+      // ships `mounts` == the active slot == the catalogue order, so this is
+      // byte-identical to the pre-WS-B3 active-slot-only loop.
+      const mounts = d.resolveInstanceMounts(ship);
       if (mounts.length === 0) continue;
+      // Firing-set ids — only these track the target. Reused scratch set.
+      const firingIds = this._firingIdsScratch;
+      firingIds.clear();
+      for (const m of d.resolveInstanceFireMounts(ship)) firingIds.add(m.id);
 
       const prevTargetId = this.playerSlotTargets.get(playerId) ?? null;
       // Part C — hostile-only (per-player ledger), health-weighted, commitment-
@@ -264,6 +284,12 @@ export class WeaponMountTicker {
       const sinA = Math.sin(pose.angle);
       for (let i = 0; i < mounts.length; i++) {
         const mount = mounts[i]!;
+        // Non-firing instance mounts (e.g. a future inactive slot's mounts)
+        // slew back to base — only the firing set tracks the target.
+        if (!firingIds.has(mount.id)) {
+          angles[i] = rotateMountToward(angles[i]!, 0, mount, DT_SEC);
+          continue;
+        }
         const mountWorldX = pose.x + (mount.localX * cosA - mount.localY * sinA);
         const mountWorldY = pose.y + (mount.localX * sinA + mount.localY * cosA);
         const dx = target.x - mountWorldX;

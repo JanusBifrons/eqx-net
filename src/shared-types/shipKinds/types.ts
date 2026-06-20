@@ -316,6 +316,25 @@ export const ShipKindSchema = z
      *  must belong to exactly one slot. Legacy ships have a single
      *  `'primary'` slot containing their single forward mount. */
     slots: z.array(WeaponSlotSchema).optional(),
+    /** Dynamic weapon mounts (Phase 4 WS-B3, plan: effervescent-umbrella).
+     *  LATENT hardpoints — candidate mount positions + arcs that are
+     *  INACTIVE by default. A ship-level upgrade `activate_mount` activates
+     *  one (the player picks the weapon for it), persisted per ship instance
+     *  in the roster `mounts` JSON. The `weaponId` on a latent mount is the
+     *  catalogue DEFAULT for that hardpoint; the player's chosen weapon
+     *  overrides it on activation. The full per-instance mount list is
+     *  `[...mounts, ...activated latentMounts]` — base mounts keep their
+     *  catalogue indices, activated latent mounts append, so `mountAngles[]`
+     *  (already variable-length on the wire) carries the extra slots without
+     *  a wire bump. Geometry for an activated slot is looked up CLIENT-SIDE
+     *  by `(shipKind, slotId)` from this list — never on the wire (same trick
+     *  as scrap colliders). Append-only field addition (invariant #11): the
+     *  `SHIP_KINDS_LIST` indices are unchanged; the record SHAPE changed, so
+     *  `SHIP_KIND_CATALOGUE_VERSION` is bumped in the same PR. Each latent id
+     *  must be unique within the kind AND distinct from every base mount id
+     *  (enforced by `ShipKindSchema`'s refinement) so the per-instance index
+     *  space never collides. */
+    latentMounts: z.array(WeaponMountSchema).optional(),
   })
   .strict()
   .superRefine((kind, ctx) => {
@@ -394,6 +413,33 @@ export const ShipKindSchema = z
           message: `mount '${m.id}' is not assigned to any slot`,
         });
         return;
+      }
+    }
+
+    // Latent mount ids (Phase 4 WS-B3) — unique within the kind AND distinct
+    // from every base mount id, so the per-instance index space
+    // `[...mounts, ...activated latentMounts]` never collides.
+    const latent = kind.latentMounts;
+    if (latent !== undefined) {
+      const latentIds = new Set<string>();
+      for (const lm of latent) {
+        if (mountIds.has(lm.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['latentMounts'],
+            message: `latent mount id '${lm.id}' collides with a base mount id`,
+          });
+          return;
+        }
+        if (latentIds.has(lm.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['latentMounts'],
+            message: `duplicate latent mount id: '${lm.id}'`,
+          });
+          return;
+        }
+        latentIds.add(lm.id);
       }
     }
   });

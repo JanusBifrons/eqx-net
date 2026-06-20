@@ -17,6 +17,7 @@ import { updateMissileSprites, type MissileSpriteCtx } from './pixi/missileSprit
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { HaloRadar } from './HaloRadar';
 import { DamageNumberManager } from './DamageNumbers';
+import { LevelUpIconManager } from './LevelUpIcons';
 import { HealthBarManager } from './HealthBars';
 import { LabelManager } from './Labels';
 import { SelectionBracket } from './SelectionBracket';
@@ -133,6 +134,10 @@ export class PixiRenderer implements IRenderer {
   private _placementFollowing = true;
   private _placementChosenX: number | null = null;
   private _placementChosenY: number | null = null;
+  /** Phase 4 WS-A1 — spectator/construction free-roam camera. While true,
+   *  `update()` does NOT re-issue the local-ship follow, so the camera holds
+   *  wherever the player panned it (and there may be no local ship at all). */
+  private _spectator = false;
   /**
    * Click-to-inspect selection (structures follow-up Item B2). The renderer
    * OWNS the selected entity — set on a gameplay tap that resolves to an
@@ -341,6 +346,8 @@ export class PixiRenderer implements IRenderer {
    *  undefined (WS-B #3/#4 thread touch into the halo). */
   private readonly halo: HaloRadar;
   private damageNumbers: DamageNumberManager | null = null;
+  /** Phase 4 WS-B1 — pooled screenspace level-up icon (own ship). */
+  private levelUpIcons: LevelUpIconManager | null = null;
   private healthBars: HealthBarManager | null = null;
   private labels: LabelManager | null = null;
   private selectionBracket: SelectionBracket | null = null;
@@ -706,6 +713,7 @@ export class PixiRenderer implements IRenderer {
     // legible at any zoom — Camera ref needed for the per-frame
     // counter-scale.
     this.damageNumbers = new DamageNumberManager(this.world, this.camera);
+    this.levelUpIcons = new LevelUpIconManager(this.world, this.camera);
     this.healthBars = new HealthBarManager(this.world);
     this.labels = new LabelManager(this.world);
     // Click-to-inspect selection bracket (Item B4). Parented to the world
@@ -1622,7 +1630,11 @@ export class PixiRenderer implements IRenderer {
     }
 
     const local = mirror.localPlayerId ? this.sprites.get(mirror.localPlayerId) : null;
-    if (local) {
+    // Phase 4 WS-A1 — in spectator/construction mode the camera free-roams; do
+    // NOT re-issue the local-ship follow (which would yank the view back / snap
+    // to a ship that no longer exists). `setSpectator(true)` already detached
+    // the follow target; the gameplay pointer path keeps panning/zooming it.
+    if (local && !this._spectator) {
       // `follow` (not `moveCenter`) — the camera's per-tick interpolator
       // applies this target every Pixi frame (60 Hz), independent of
       // `update()` cadence. With `followLerpFactor: 1` the follow is
@@ -1652,7 +1664,7 @@ export class PixiRenderer implements IRenderer {
     // pose. Park it (`following=false`) so the Confirm banner is ready at centre;
     // a tap/drag then repositions it. Desktop is gated out (hover-follow + the
     // ahead-of-ship preview is fine when the cursor is already on screen).
-    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._placementChosenX !== null, pendingGhost)) {
+    if (preview && shouldCentreGhostOnActivate(this._isTouch, this._placementChosenX !== null, pendingGhost, this._spectator)) {
       const c = this.camera.center; // world coord (pixi-down) currently at screen centre
       this._placementChosenX = c.x;
       this._placementChosenY = -c.y; // game Y = -worldY
@@ -1749,6 +1761,20 @@ export class PixiRenderer implements IRenderer {
       mirror.pendingDamageNumberCancels.length = 0;
     }
     if (!this._dmgNumbersDisabled) this.damageNumbers?.update();
+
+    // Phase 4 WS-B1 — drain the level-up icon queue and pop a pooled
+    // screenspace icon over the named ship's CURRENT pose. The queue's
+    // length-reset is owned by `consumeOneFrameTriggers` on render frames only
+    // (same skip-frame discipline as explodingShips / pendingEffectTriggers).
+    // DO NOT add `.length = 0` here.
+    if (this.levelUpIcons && mirror.pendingLevelUps) {
+      for (const ev of mirror.pendingLevelUps) {
+        const ship = mirror.ships.get(ev.playerId);
+        if (!ship) continue;
+        this.levelUpIcons.spawn(ship.x, ship.y, ev.newLevel);
+      }
+    }
+    this.levelUpIcons?.update();
 
     if (!this._healthBarsDisabled && this.healthBars && mirror.pendingHealthBarHits) {
       for (const hb of mirror.pendingHealthBarHits) {
@@ -2224,6 +2250,43 @@ export class PixiRenderer implements IRenderer {
   }
 
   /**
+   * Phase 4 WS-A1 — spectator/construction free-roam camera. See
+   * `IRenderer.setSpectator`. While spectating, `update()` skips the per-frame
+   * `camera.follow({local pose})`; here we detach the follow target immediately
+   * (`follow(null)`) so the world camera holds wherever the player panned it.
+   * The gameplay pointer path already pans/zooms the same `Camera` (drag +
+   * wheel/pinch), so free-roam needs no new event routing.
+   */
+  setSpectator(active: boolean): void {
+    this._spectator = active;
+    if (!this.initialized) return;
+    if (active) this.camera.follow(null);
+  }
+
+  /**
+   * Phase 4 WS-A2 — one-shot eased camera glide to a GAME-space point. The
+   * camera's `Camera` operates in pixi-world space (Y-down, `pixiY = -gameY`),
+   * so negate Y. See `IRenderer.glideCameraTo`. Driven by elapsed ms inside
+   * `Camera.tick` (independent of pose interpolation → no teleport-guard trip).
+   */
+  glideCameraTo(gameX: number, gameY: number, durationMs: number): void {
+    if (!this.initialized) return;
+    this.camera.glideTo(gameX, -gameY, durationMs);
+  }
+
+  /**
+   * Test-only (Phase 4 WS-A1) — the world point currently at screen centre, in
+   * GAME space (Y-up). The renderer's `Camera.center` is in pixi-world space
+   * (Y-down, `pixiY = -gameY`), so negate Y. Read by the spectator E2E's
+   * `__eqxCameraCenter` DEV hook (main-thread renderer path, `?worker=0`) to
+   * assert the free-roam camera actually pans. Not consumed by gameplay logic.
+   */
+  getCameraCenterGame(): { x: number; y: number } {
+    const c = this.camera.center;
+    return { x: c.x, y: -c.y };
+  }
+
+  /**
    * Read the most recent feedback the renderer wrote at the tail of its
    * last `update()` call. See `IRenderer.getFeedback` / `RendererFeedback`
    * — the contract surface for both today (sync mutate) and the future
@@ -2311,6 +2374,7 @@ export class PixiRenderer implements IRenderer {
     const ro = (this.app as unknown as Record<string, unknown>)['_resizeObserver'];
     if (ro instanceof ResizeObserver) ro.disconnect();
     this.damageNumbers?.destroy();
+    this.levelUpIcons?.destroy();
     this.healthBars?.destroy();
     this.labels?.destroy();
     this.selectionBracket?.destroy();

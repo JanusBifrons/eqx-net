@@ -42,6 +42,7 @@ import { getWeaponObject } from '../../core/combat/weapons/index.js';
 import type { WeaponFireContext, WeaponFireSink } from '../../core/combat/weapons/Weapon.js';
 import { clampFireTick } from '../../core/combat/fireTemporal.js';
 import { canAfford, spendEnergy, resolveSlotEnergyCost } from '../../core/combat/Energy.js';
+import { deriveStatMultipliers } from '../../core/leveling/shipStats.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -119,6 +120,14 @@ export interface PlayerFireResolverDeps {
   playerMountAngles: Map<string, Float32Array>;
   /** Resolves the active-slot mount list for a kind. */
   resolveSlotMounts: (kind: ShipKind, slotId?: string) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the firing ship's FULL per-instance mount list `[...kind.mounts,
+   *  ...activated latent]` — the `playerMountAngles` index space (so the fire
+   *  ray reads the SAME slewed angle the ticker wrote). Reads `ship.mounts`. */
+  resolveInstanceMounts: (ship: ShipState) => ReadonlyArray<WeaponMount>;
+  /** WS-B3 — the firing ship's FIRING mount set `[...active-slot for slotId,
+   *  ...activated latent]`. Only these mounts spawn a shot; every other instance
+   *  mount is in the angle array but does not fire. Reads `ship.mounts` + slotId. */
+  resolveInstanceFireMounts: (ship: ShipState, slotId?: string) => ReadonlyArray<WeaponMount>;
   /** Pure mount world-origin helper. */
   mountWorldOrigin: (
     shipX: number, shipY: number, shipAngle: number, mount: WeaponMount,
@@ -178,6 +187,12 @@ export class PlayerFireResolver implements WeaponFireSink {
   // sink methods. resolve() is synchronous + single-threaded, so race-free.
   private _shooterId = '';
   private _effTick = 0;
+  // Review must-fix #1 — the shooter's per-instance outgoing-DAMAGE multiplier
+  // (`mul.damage`, derived from ship.statAlloc), set once per resolve() and
+  // applied to every barrel's damage in the sink methods. ONLY player ships
+  // level, so this lives in the PLAYER resolver — drone (AiFireResolver) and
+  // structure/turret damage are untouched. 1 = un-upgraded (byte-identical).
+  private _damageMul = 1;
   private _bestHitId: string | null = null;
   private _bestHitDist = Infinity;
   private _bestHitDamage = 0;
@@ -217,7 +232,9 @@ export class PlayerFireResolver implements WeaponFireSink {
     // (`mount.weaponId`) and STOPS TRUSTING the client's claimed `weapon`
     // field (kept on the wire for back-compat but ignored for selection).
     const shipKind = getShipKind(ship.kind);
-    const slotMounts = d.resolveSlotMounts(shipKind, slotId);
+    // WS-B3 — the FIRING set is the active slot's mounts PLUS every activated
+    // latent mount; un-upgraded ⇒ exactly the active slot (byte-identical).
+    const slotMounts = d.resolveInstanceFireMounts(ship, slotId);
     if (slotMounts.length === 0) return;
 
     // Slot-level cooldown gate. The slot fires as ONE synchronised trigger,
@@ -266,19 +283,36 @@ export class PlayerFireResolver implements WeaponFireSink {
     // Reset the per-fire-event sink accumulator (the resolver IS the sink).
     this._shooterId = shooterId;
     this._effTick = effTick;
+    // Outgoing-damage upgrade multiplier for THIS shooter (review must-fix #1).
+    // deriveStatMultipliers allocates one small literal — fire is a LOW-
+    // frequency discrete event (cooldown-gated), not a per-tick hot loop, so
+    // invariant #14's hot-loop ban does not bite.
+    this._damageMul = deriveStatMultipliers(ship.statAlloc).damage;
     this._bestHitId = null;
     this._bestHitDist = Infinity;
     this._bestHitDamage = 0;
     this._bestHitWireId = undefined;
 
     const playerAngles = d.playerMountAngles.get(shooterId);
+    // WS-B3 — the slewed angle array is indexed by the FULL per-instance mount
+    // list `[...kind.mounts, ...activated]` (what the mount ticker writes), NOT
+    // the firing-set order. Resolve each firing mount's angle by its index in
+    // that list so an activated latent mount reads ITS slewed angle (not a base
+    // mount's). For un-upgraded single-slot ships the firing set == the instance
+    // list, so this is byte-identical to the pre-WS-B3 `playerAngles[mIdx]`.
+    const instanceMounts = d.resolveInstanceMounts(ship);
     const ctx = this._fireCtx;
     for (let mIdx = 0; mIdx < slotMounts.length; mIdx++) {
       const mount = slotMounts[mIdx]!;
       // Each barrel fires its own catalogue weapon (data-driven loadout).
       const weaponId: WeaponId = mount.weaponId;
       const mountWorld = d.mountWorldOrigin(sx, sy, shipAngleAtFireTick, mount);
-      const currentMountAngle = playerAngles?.[mIdx] ?? 0;
+      // Find this firing mount's slot in the full instance angle array by id.
+      let angleIdx = mIdx;
+      for (let k = 0; k < instanceMounts.length; k++) {
+        if (instanceMounts[k]!.id === mount.id) { angleIdx = k; break; }
+      }
+      const currentMountAngle = playerAngles?.[angleIdx] ?? 0;
       const mountFireAngle = shipAngleAtFireTick + mount.baseAngle + currentMountAngle;
       const ndx = -Math.sin(mountFireAngle);
       const ndy = Math.cos(mountFireAngle);
@@ -417,11 +451,14 @@ export class PlayerFireResolver implements WeaponFireSink {
       }
       const hitX = rayFromX + ndx * mountHitDist;
       const hitY = rayFromY + ndy * mountHitDist;
-      // R2.29 — reverse-square damage falloff over range (server-authoritative;
+      // Review must-fix #1 — scale the BASE damage by the shooter's per-instance
+      // damage upgrade (player ships only; un-upgraded ⇒ ×1) BEFORE the range
+      // falloff. R2.29 — reverse-square falloff over range (server-authoritative;
       // the client reads the scaled number off the DamageEvent, never predicts it).
+      const upgraded = damage * this._damageMul;
       const effDamage = falloffMinDamageFrac !== undefined
-        ? damage * hitscanFalloffFrac(mountHitDist, range, rayRange, falloffMinDamageFrac)
-        : damage;
+        ? upgraded * hitscanFalloffFrac(mountHitDist, range, rayRange, falloffMinDamageFrac)
+        : upgraded;
       d.applyDamage(mountHitId, shooterId, effDamage, hitX, hitY);
       if (mountHitDist < this._bestHitDist) {
         this._bestHitDist = mountHitDist;
@@ -457,11 +494,17 @@ export class PlayerFireResolver implements WeaponFireSink {
     maxTicks: number,
     weaponId: WeaponId,
   ): void {
-    this.deps.spawnServerProjectile(this._shooterId, ctx.fromX, ctx.fromY, vx, vy, damage, radius, maxTicks, weaponId);
+    // Review must-fix #1 — scale outgoing bolt damage by the shooter's
+    // per-instance damage upgrade (player ships only; ×1 un-upgraded).
+    this.deps.spawnServerProjectile(this._shooterId, ctx.fromX, ctx.fromY, vx, vy, damage * this._damageMul, radius, maxTicks, weaponId);
   }
 
-  /** Missile: lock-at-launch + lifecycle owned by MissileSimulation. */
+  /** Missile: lock-at-launch + lifecycle owned by MissileSimulation. The
+   *  missile's damage is baked into `def` (the catalogue WeaponDef); scale it by
+   *  the shooter's damage upgrade so a player missile shot also benefits (review
+   *  must-fix #1). A shallow clone keeps the catalogue record immutable. */
   spawnMissile(ctx: WeaponFireContext, def: MissileWeaponDef): void {
-    this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, def);
+    const scaled = this._damageMul === 1 ? def : { ...def, damage: def.damage * this._damageMul };
+    this.deps.spawnServerMissile(this._shooterId, ctx.fromX, ctx.fromY, ctx.dirX, ctx.dirY, scaled);
   }
 }

@@ -155,6 +155,8 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_EFFECT_PARAMS engine', msg: { type: 'SET_EFFECT_PARAMS', effect: 'engine', params: { thrustEmitRateHz: 60, boostEmitRateHz: 90 } } },
       { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
+      { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
+      { name: 'GLIDE_CAMERA', msg: { type: 'GLIDE_CAMERA', gameX: 1000, gameY: -250, durationMs: 320 } },
       { name: 'DISPOSE', msg: { type: 'DISPOSE' } },
     ])('$name survives structuredClone', ({ msg }) => {
       const back = roundtrip(msg);

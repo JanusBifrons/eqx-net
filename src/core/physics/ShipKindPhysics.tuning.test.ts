@@ -71,7 +71,10 @@ describe('ship-kind tuning lock (2026-05-18 slow-down pass)', () => {
     // 10 → 11 on 2026-06-13 (composite-ships P1): appended composite kind
     // `havok` (Equinox debug.js port). Pure append — no existing kind's
     // physics changed, so the cruise/hull literals below still hold.
-    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(11);
+    // 11 → 12 on Phase 4 WS-B3 (dynamic mounts): added the `latentMounts` field
+    // to the ship-kind record + two latent wing hardpoints on the fighter. A
+    // record-SHAPE change (not a physics edit), so the cruise/hull literals hold.
+    expect(SHIP_KIND_CATALOGUE_VERSION).toBe(12);
   });
 
   for (const kindKey of Object.keys(EXPECTED) as (keyof typeof EXPECTED)[]) {

@@ -37,6 +37,10 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
   // the mode; auto-fire handles firing). Manual fire still works via the button
   // when auto-fire is OFF (and Space always works as an override).
   const autoFireEnabled = useUIStore((s) => s.autoFireEnabled);
+  // Phase 4 WS-A1 — hide the held thrust/fire/boost cluster while SPECTATING:
+  // a free-roam construction camera has no ship to steer or fire (D4). The
+  // spectator drives the CAMERA via the canvas pointer/wheel path instead.
+  const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   // The joystick zone lives inside a `<Slot>` portal whose host doesn't
   // exist on the first render — `useRef` would observe `null` at the time
   // the effect first runs and skip nipplejs setup forever. A state-backed
@@ -153,7 +157,7 @@ export function MobileControls({ touchInput }: Props): JSX.Element | null {
     touchInput.setBoostHeld(false);
   };
 
-  if (!shouldRender) return null;
+  if (!shouldRender || spectating) return null;
 
   return (
     <>

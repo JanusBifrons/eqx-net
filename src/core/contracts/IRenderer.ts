@@ -32,6 +32,19 @@ export interface ShipRenderState {
    *  shield aura state to "one optional bool per render entry", one
    *  ownership site per renderer-visible state. */
   shieldDown?: boolean;
+  /** Phase 4 (Leveling & XP, WS-0) — PUBLIC ship level (≥ 1). Read path for the
+   *  small level badge rendered on the ship (visible to all). Mirrored from the
+   *  wire's `states[].level` (the broadcaster + badge renderer are owned by
+   *  WS-B1). Absent ⇒ level 1. Discrete scalar — purity-clean (Invariant #2). */
+  level?: number;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — PUBLIC activated latent mounts
+   *  (`{ slotId, weaponId }[]`). Mirrored from the wire's `states[].mounts` so
+   *  the renderer draws the EXTRA turrets on every ship that has activated one.
+   *  The per-instance mount list the renderer iterates is
+   *  `[...kind.mounts, ...activated]` (geometry looked up by `(kind, slotId)`
+   *  from the catalogue — never on the wire). Absent ⇒ no activated mounts.
+   *  Non-spatial discrete data — purity-clean (Invariant #2). */
+  activatedMounts?: Array<{ slotId: string; weaponId: string }>;
 }
 
 /**
@@ -226,6 +239,11 @@ export interface StructureRenderState {
   /** The owner's resolved DISPLAY NAME (server-side). Shown in the inspector;
    *  absent ⇒ orphaned owner (server-logged) → the inspector shows "Unknown". */
   ownerName?: string;
+  /** Phase 4 (Leveling & XP, WS-0) — structure level (≥ 1). Read path for the
+   *  inspector's `LVL n` line + the Upgrade affordance (the build phase + the
+   *  wire field are owned by WS-B4). Absent ⇒ level 1. Discrete scalar —
+   *  purity-clean (Invariant #2). */
+  level?: number;
 }
 
 /** Depth of the per-missile pose ring (playtest 2026-06-10 Issue 11). Sized to
@@ -450,6 +468,14 @@ export interface RenderMirror {
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
   explodingShips?: Set<string>;
+  /** Phase 4 (Leveling & XP, WS-B1) — one-shot level-up triggers to play this
+   *  frame. Populated by `ColyseusClient`'s `ship_level_up` handler (pooled —
+   *  the array's slot instances persist; `.length` truncates the logical view,
+   *  Invariant #14). The renderer drains it, spawns a pooled screenspace
+   *  level-up icon over the named ship (resolved by `playerId`; the owner's own
+   *  ship pops the icon + opens the upgrade modal). Cleared each render frame in
+   *  `consumeOneFrameTriggers` (same skip-frame gate as `explodingShips`). */
+  pendingLevelUps?: Array<{ playerId: string; newLevel: number }>;
   /** Ships currently holding shift-boost AND thrust. Server-authoritative —
    *  rebuilt on every snapshot. Renderer draws an exhaust trail for each. */
   boostingShips?: Set<string>;
@@ -758,6 +784,29 @@ export interface IRenderer {
    * between target states internally; callers just flip the bool.
    */
   setLoadCurtain(active: boolean): void;
+  /**
+   * Phase 4 WS-A1 (Spectator / Construction mode) — toggle the free-roam
+   * camera. When `active`, the renderer DETACHES the follow camera
+   * (`Camera.follow(null)`) and stops re-issuing the local-ship follow each
+   * `update()` frame, so the world camera free-roams the sector (drag-pan +
+   * wheel/pinch zoom via the existing gameplay pointer path — no new event
+   * routing). `active:false` restores normal follow-the-local-ship behaviour.
+   *
+   * Spatial camera state stays inside the renderer's `Camera`; only the
+   * discrete `pilotMode` enum is mirrored in the store (Invariant #2).
+   */
+  setSpectator(active: boolean): void;
+  /**
+   * Phase 4 WS-A2 (Ship entry / switch) — kick off a ONE-SHOT eased camera glide
+   * from the current view to the GAME-space point `(gameX, gameY)` over
+   * `durationMs`. Used by the smooth same-sector ship-switch: the camera lerps to
+   * the newly-piloted ship instead of snapping. It is driven by elapsed wall-clock
+   * inside the `Camera` — INDEPENDENT of pose interpolation — so it never trips
+   * the snapshot teleport guard (Risk #4). While the glide runs it OVERRIDES the
+   * follow target, so the production `followLerpFactor:1` follow can't snap mid-
+   * transition; once it completes, follow resumes on the new ship.
+   */
+  glideCameraTo(gameX: number, gameY: number, durationMs: number): void;
   /**
    * Effects subsystem (plan `wiggly-puppy` M9): drop per-entity
    * continuous emitters + in-flight bursts on sector handoff. Called

@@ -85,10 +85,28 @@ export interface RosterEntry {
   expiresAt?: number;
   createdAt?: number;
   updatedAt?: number;
+  /** Phase 4 (Leveling & XP, WS-B1/B2) — public level + per-instance spent stat
+   *  allocation, for the roster card badge + the upgrade modal. Absent ⇒ level 1
+   *  / no spend. */
+  level?: number;
+  statAlloc?: Record<string, number>;
+  /** Phase 4 (Dynamic weapon mounts, WS-B3) — activated latent mount slots, for
+   *  the upgrade modal's "activate a mount" section. Absent ⇒ none. */
+  mounts?: Array<{ slotId: string; weaponId: string }>;
 }
 
 /** Phase 8 sub-phase B — client-side mirror of the transit lifecycle. */
 export type TransitState = 'DOCKED' | 'SPOOLING' | 'IN_TRANSIT' | 'ARRIVED';
+
+/**
+ * Phase 4 (Spectator / Construction mode, WS-0) — whether the local player is
+ * actively piloting a ship (`pilot`) or free-roaming the sector as an
+ * invulnerable, un-networked local camera with full construction (`spectator`).
+ * A discrete enum (NOT spatial — the free-roam camera position lives in the
+ * render mirror, never the store) → Zustand-safe (#2). WS-0 only adds the flag
+ * + its setter with a `pilot` default; the death→spectate transition, the
+ * free-roam camera/input, and the speed-dial toggle are owned by WS-A1. */
+export type PilotMode = 'pilot' | 'spectator';
 
 /**
  * Top-level UX phase. Lifted to Zustand so drawer tabs (Profile Logout,
@@ -179,6 +197,11 @@ export interface UIStore {
   correctionRate: number;
   /** True when the local ship has been destroyed and is awaiting respawn. */
   isDead: boolean;
+  /** Phase 4 (Spectator / Construction mode, WS-0) — `pilot` (driving a ship)
+   *  vs `spectator` (free-roam construction camera). Discrete enum, purity-clean
+   *  (#2). Defaults to `pilot`; WS-A1 flips it on death + via the speed-dial
+   *  toggle. WS-0 lands only the flag + setter. */
+  pilotMode: PilotMode;
   /** Phase 8 — stable galaxy sector key the player is currently in (set
    *  from the welcome message), or null in engineering rooms. */
   currentSectorKey: string | null;
@@ -223,6 +246,17 @@ export interface UIStore {
    *  ship-kind catalogue; constant per kind, so it lives safely in Zustand
    *  (no per-frame churn). */
   energyMax: number;
+  /** Phase 4 (Leveling & XP, WS-B1) — the level the LOCAL player's ship just
+   *  reached, set on a `ship_level_up` for the own hull. Discrete scalar
+   *  (purity-clean, #2). The upgrade-modal trigger (WS-B2) reads + clears this;
+   *  null = no pending level-up to acknowledge. */
+  pendingLevelUp: number | null;
+  /** Phase 4 (Leveling & XP, WS-B2) — the server's echo of the most recent
+   *  `apply_ship_upgrade` / `respec_ship` (the now-authoritative allocation +
+   *  spent/budget). Discrete object (purity-clean: ids/counts, NO spatial
+   *  fields). The upgrade modal reads it to refresh + close; null until the
+   *  first ack of the session. */
+  upgradeAck: { shipInstanceId: string; alloc: Record<string, number>; spent: number; budget: number } | null;
   /** Wall-clock ms when the most-recent fire was sent (null = no fire yet,
    *  or slot switched since last fire). Stamped by `ColyseusClient.sendFire`.
    *  Per-frame readers (the fire-button cooldown ring) use this with the
@@ -368,6 +402,9 @@ export interface UIStore {
   setDevData: (d: DevData) => void;
   setHealthStats: (s: UIHealthStats) => void;
   setDead: (dead: boolean) => void;
+  /** Phase 4 (Spectator / Construction mode, WS-0) — set the pilot/spectator
+   *  mode. WS-A1 wires the death transition + the speed-dial toggle. */
+  setPilotMode: (mode: PilotMode) => void;
   setCurrentSectorKey: (key: string | null) => void;
   setTransitState: (s: TransitState) => void;
   setTransitProgress: (p: number) => void;
@@ -375,6 +412,14 @@ export interface UIStore {
   setTransitSpoolMs: (ms: number | null) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
+  /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
+   *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */
+  setPendingLevelUp: (level: number | null) => void;
+  /** Phase 4 WS-B2 — publish (or clear, null) the server's upgrade-applied echo
+   *  so the modal refreshes + closes. */
+  setUpgradeAck: (
+    ack: { shipInstanceId: string; alloc: Record<string, number>; spent: number; budget: number } | null,
+  ) => void;
   /** Set the inspected entity selection (Item B3). Both args change together. */
   setSelectedEntity: (
     id: string | null,

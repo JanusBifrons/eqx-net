@@ -43,6 +43,8 @@ import type { AiPlayerView, AiStructureView, AiEntity, AiEntityPoseOut } from '.
 import { assignPlayerId } from '../identity/PlayerIdentity.js';
 import type { WelcomeMessage } from '../../shared-types/messages.js';
 import { DEFAULT_SHIP_KIND, getShipKind, isShipKindId, SHIELD_RADIUS_PAD, type ShipKind, type ShipKindId, type WeaponMount } from '../../shared-types/shipKinds.js';
+import { applyKillXp, xpForKill } from '../../core/leveling/shipXp.js';
+import { deriveStatMultipliers, isAllocValid, pointBudget, spentPoints, effectiveShipMaxHealth, effectiveShipShieldMax, effectiveShipEnergyMax, type StatAlloc as CoreStatAlloc } from '../../core/leveling/shipStats.js';
 // applyLayeredDamage + regenStep + ShieldHullState now used inside ShieldHullRouter.ts.
 import { shipCollisionParts } from '../../core/geometry/shipHullDecomp.js';
 import { shipScrapGroups } from '../../core/geometry/shipScrapGroups.js';
@@ -65,12 +67,15 @@ import { StructurePlacementSubsystem } from '../structures/StructurePlacementSub
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import { getStructureKind, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
 import { TRANSFER_PULSE_MS, TURRET_TICK_MS } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
 import { clampToSectorBounds } from '../../shared-types/sectorBounds.js';
 import type { SnapshotMessage } from '../../shared-types/messages.js';
 // Mount/slot geometry helpers moved to ./mountGeometry.ts.
 import { resolveSlotMounts, mountWorldOrigin } from './mountGeometry.js';
+import { isLatentSlot, resolveInstanceMounts, resolveInstanceFireMounts } from '../../shared-types/shipKinds/slots.js';
+import type { ActivatedMount } from '../playerShips/PlayerShipStore.js';
 import { WeaponMountTicker } from './WeaponMountTicker.js';
 import { PhysicsWorkerProxy, type WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ProjectilePipeline } from './ProjectilePipeline.js';
@@ -143,6 +148,11 @@ import {
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  UpgradeStructureSchema,
+  PilotShipSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
+  ActivateMountSchema,
   SelectEntitySchema,
   DeselectEntitySchema,
 } from '../../shared-types/messages.js';
@@ -781,6 +791,10 @@ export class SectorRoom extends Room<SectorState> {
      *  wall-clock wait) + read the cached snapshot slice. */
     pulseStructureGrid: () => void;
     getStructuresSlice: () => SnapshotMessage['structures'];
+    /** Phase 4 WS-B4 — drive a structure UPGRADE build phase directly (no
+     *  message round-trip) for the leveling integration test. Returns whether
+     *  the upgrade started (the subsystem's owner-agnostic gate). */
+    upgradeStructure: (id: string) => boolean;
     /** Phase 4 — seed a mineable asteroid for the mining integration test. */
     spawnTestAsteroid: (id: string, x: number, y: number, radius: number) => boolean;
     /** Phase 5 — seed a drone + drive the turret tick for the turret test.
@@ -811,6 +825,7 @@ export class SectorRoom extends Room<SectorState> {
       structureRegistry: this.structureRegistry,
       pulseStructureGrid: () => this.structureGridTick(),
       getStructuresSlice: () => this.structuresSlice,
+      upgradeStructure: (id) => this.structureGrid.upgradeStructure(id),
       spawnTestAsteroid: (id, x, y, radius) =>
         this.swarmSpawner.spawnAsteroid({ id, x, y, vx: 0, vy: 0, radius, mass: 1 }),
       spawnTestDrone: (id, x, y, kind = 'fighter') => {
@@ -1125,6 +1140,8 @@ export class SectorRoom extends Room<SectorState> {
       aiController: this.aiController,
       swarmHealth: () => this.swarmHealth,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+      resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
+      resolveInstanceFireMounts: (ship) => this.resolveInstanceFireMounts(ship),
     });
 
     // Player weapon-fire resolver. Owns the zod parse, cooldown gate,
@@ -1145,6 +1162,8 @@ export class SectorRoom extends Room<SectorState> {
       swarmRegistry: this.swarmRegistry,
       playerMountAngles: this.mountTicker.playerMountAngles,
       resolveSlotMounts: (kind, slotId) => this.resolveSlotMounts(kind, slotId),
+      resolveInstanceMounts: (ship) => this.resolveInstanceMounts(ship),
+      resolveInstanceFireMounts: (ship, slotId) => this.resolveInstanceFireMounts(ship, slotId),
       mountWorldOrigin: (x, y, ang, m) => this.mountWorldOrigin(x, y, ang, m),
       playerHitscanDist: (s, fx, fy, dx, dy, md, cx, cy, ang) =>
         this.playerHitscanDist(s, fx, fy, dx, dy, md, cx, cy, ang),
@@ -2062,6 +2081,98 @@ export class SectorRoom extends Room<SectorState> {
       this.rebuildStructuresSlice();
     });
 
+    // ── Phase 4 WS-B4 — structure leveling (paid Upgrade build phase) ──────
+    // The client references the structure by its numeric swarm entityId (the
+    // selected id); resolve → registry record → OWNER-gate, then start a paid
+    // build phase (charges drained during the build by the grid pulse). On the
+    // build's completion the level increments + the per-level stat grant applies.
+    this.onMessage('upgrade_structure', (client: Client, raw: unknown) => {
+      const parsed = UpgradeStructureSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed upgrade_structure');
+        return;
+      }
+      const owner = this.sessionToPlayer.get(client.sessionId);
+      if (!owner) return;
+      const swarmRec = this.swarmRegistry.getByEntityId(parsed.data.entityId);
+      if (!swarmRec) return;
+      const rec = this.structureRegistry.get(swarmRec.id);
+      if (!rec || rec.owner !== owner) return; // own-only
+      if (this.structureGrid.upgradeStructure(rec.id)) {
+        // Refresh the slice so the blueprint state + the LVL line update on the
+        // next snapshot without waiting for the 1 Hz pulse. The build's
+        // COMPLETION is audited via `onConstructed` (`structure_built`).
+        this.rebuildStructuresSlice();
+      }
+    });
+
+    // ── Phase 4 WS-A2 — same-sector instant pilot swap ─────────────────────
+    // The player (a spectator after death, or piloting another hull) reclaims
+    // one of their OWN lingering hulls parked in THIS sector and resumes control
+    // IN-ROOM (no leave/rejoin → no spool, no curtain). Owner-gated: the request
+    // is dropped unless `shipId` is a lingering hull (isActive=false) owned by
+    // the requester and present in this sector. A foreign / active / unknown id
+    // is a silent no-op. The reclaim reuses the lingering-hull reactivation
+    // machinery + `RosterPersistence.markActive` and preserves the rekey/abandon
+    // identity invariant. The fresh `welcome` re-anchors the client's prediction.
+    this.onMessage('pilot_ship', (client: Client, raw: unknown) => {
+      const parsed = PilotShipSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed pilot_ship');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.reclaimLingeringHull(client, playerId, parsed.data.shipId);
+    });
+
+    // ── Phase 4 WS-B2 — ship stat upgrades (free allocation + respec) ──────
+    // Spend the ship instance's upgrade points (budget = level - 1) across the
+    // stat pool, FREELY (re-distribute any way within the budget). Owner-gated +
+    // budget-gated server-side; the multipliers are applied at the ONE seam the
+    // clamps live (applyShipInput, identical server + client) so prediction
+    // stays in lockstep (risk #1).
+    this.onMessage('apply_ship_upgrade', (client: Client, raw: unknown) => {
+      const parsed = ApplyShipUpgradeSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed apply_ship_upgrade');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.applyShipUpgrade(client, playerId, parsed.data.shipId, parsed.data.alloc as CoreStatAlloc);
+    });
+
+    this.onMessage('respec_ship', (client: Client, raw: unknown) => {
+      const parsed = RespecShipSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed respec_ship');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      // A respec is "apply the empty allocation" — refund every spent point.
+      this.applyShipUpgrade(client, playerId, parsed.data.shipId, {});
+    });
+
+    // ── Phase 4 WS-B3 — dynamic weapon mounts (activate a latent slot) ──────
+    // Activate a latent hardpoint on a ship instance + bind a weapon to it.
+    // Owner-gated + valid-latent-slot-gated server-side; the activated mount is
+    // persisted on the roster, mirrored onto the live ShipState, and fed through
+    // the SAME per-instance mount resolver the aim + fire path use, so it fires
+    // from the first tick (geometry looked up by slotId on both sides — no wire
+    // bump, the scrap-collider trick).
+    this.onMessage('activate_mount', (client: Client, raw: unknown) => {
+      const parsed = ActivateMountSchema.safeParse(raw);
+      if (!parsed.success) {
+        logger.warn({ sessionId: client.sessionId }, 'malformed activate_mount');
+        return;
+      }
+      const playerId = this.sessionToPlayer.get(client.sessionId);
+      if (!playerId) return;
+      this.activateMount(client, playerId, parsed.data.shipId, parsed.data.slotId, parsed.data.weaponId);
+    });
+
     // ── Click-to-inspect selection-scoped live-stats channel (Item B5) ──────
     // The renderer tells the main thread which entity is selected; the client
     // forwards ship/structure selections here. The ~5 Hz emit happens on
@@ -2169,7 +2280,20 @@ export class SectorRoom extends Room<SectorState> {
           killer: auditAttacker,
         });
       }
-      // Phase 3 dual-write — drop the destroyed ship from the roster.
+      // Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE,
+      // weighted by the victim's toughness. MUST run BEFORE the roster wipe
+      // below (D9): the wipe drops the VICTIM's row; the killer's row is a
+      // different instance, so ordering only matters in the self-kill edge
+      // (a ship can't kill itself, but a stale shooterId === victim would be
+      // a no-op award anyway). We still read the victim's maxHealth here while
+      // its kind is known.
+      if (destroyedShip !== undefined) {
+        const victimMaxHealth = getShipKind(destroyedShip.kind).maxHealth;
+        this.awardKillXp(evt.shooterId, victimMaxHealth);
+      }
+      // Phase 3 dual-write — drop the destroyed ship from the roster. D9 — the
+      // whole roster row (level / xp / statAlloc / mounts) is dropped together
+      // here, so a destroyed ship's progression is gone atomically.
       if (destroyedShip !== undefined) {
         this.deleteRosterRow(destroyedShip.shipInstanceId);
       }
@@ -2287,6 +2411,18 @@ export class SectorRoom extends Room<SectorState> {
   // method-wrapper delegations preserve every existing call-site.
   private resolveSlotMounts(kind: ShipKind, slotId?: string): ReadonlyArray<WeaponMount> {
     return resolveSlotMounts(kind, slotId);
+  }
+  /** WS-B3 — a player ship's FULL per-instance mount list `[...kind.mounts,
+   *  ...activated latent]` (the `mountAngles[]` index space). Reads
+   *  `ship.mounts`; un-upgraded ⇒ exactly `kind.mounts`. */
+  private resolveInstanceMounts(ship: ShipState): ReadonlyArray<WeaponMount> {
+    return resolveInstanceMounts(getShipKind(ship.kind), ship.mounts);
+  }
+  /** WS-B3 — a player ship's FIRING mount set `[...active-slot, ...activated]`.
+   *  The server's mount ticker uses the default (first) slot, matching the
+   *  pre-WS-B3 behaviour; the active-slot selection rides the `fire` message. */
+  private resolveInstanceFireMounts(ship: ShipState, slotId?: string): ReadonlyArray<WeaponMount> {
+    return resolveInstanceFireMounts(getShipKind(ship.kind), ship.mounts, slotId);
   }
   private mountWorldOrigin(
     shipX: number,
@@ -2520,7 +2656,10 @@ export class SectorRoom extends Room<SectorState> {
     for (const [, ship] of this.state.ships) {
       if (!ship.isActive || !ship.alive) continue;
       const kind = getShipKind(ship.kind);
-      ship.energy = regenEnergyStep(ship.energy, kind.energyMax ?? 100, kind.energyRegenRate ?? 0.25);
+      // Effective energy cap = kind base × per-instance energy upgrade (review
+      // must-fix #1) so an energy-upgraded ship regenerates to its larger pool.
+      const energyMax = effectiveShipEnergyMax(kind.energyMax ?? 100, ship.statAlloc);
+      ship.energy = regenEnergyStep(ship.energy, energyMax, kind.energyRegenRate ?? 0.25);
     }
     for (const playerId of this.boostingPlayers) {
       const ship = this.getActiveShip(playerId);
@@ -2723,6 +2862,12 @@ export class SectorRoom extends Room<SectorState> {
       // Equinox Phase 9 (item 5) — a drone is an NPC SHIP for the combat tally.
       this.recentCombatLog.record('ship', Date.now());
       auditEvent({ event: 'drone_destroyed', sector, attackerId: shooterId });
+      // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
+      // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
+      // (per-kind maxHealth — tougher drones = more XP, D10). PvP hull kills are
+      // awarded separately in the SHIP_DESTROYED handler.
+      const droneMaxHealth = getDroneMaxHealth(rec.shipKind ?? undefined) ?? 40;
+      this.awardKillXp(shooterId ?? '', droneMaxHealth);
     }
   }
 
@@ -2825,6 +2970,10 @@ export class SectorRoom extends Room<SectorState> {
         rec.constructionProgress = r.constructionProgress;
         rec.minerals = r.minerals;
         rec.storedPower = r.storedPower;
+        // Phase 4 (Leveling & XP, WS-B4) — restore the persisted level (default
+        // 1 for a pre-v6 / un-levelled row). The hydrated HP below is the
+        // persisted (already-leveled) value, so no re-seed is needed.
+        rec.level = r.level ?? 1;
       }
       this.swarmHealth.set(id, r.health);
       restored += 1;
@@ -2973,9 +3122,19 @@ export class SectorRoom extends Room<SectorState> {
       ship.playerId = r.playerId;
       ship.shipInstanceId = r.shipInstanceId;
       ship.kind = r.kind;
-      ship.maxHealth = kind.maxHealth;
+      // WS-B1/B2/B3 — seed the per-instance progression from the roster so a
+      // restored lingering hull renders its public level badge + activated
+      // turrets to observers (the gap is keyed by the stable shipInstanceId).
+      // statAlloc is read BEFORE the hull/shield seed so the maxHull/shield
+      // upgrade multipliers apply to a restored lingering hull too (review
+      // must-fix #1 — the `effectiveShip*` helpers are the one source).
+      const lingerRow = getPlayerShipStore().get(r.shipInstanceId);
+      ship.level = lingerRow?.level ?? 1;
+      ship.statAlloc = lingerRow?.statAlloc ?? {};
+      ship.mounts = lingerRow?.mounts ?? [];
+      ship.maxHealth = effectiveShipMaxHealth(kind.maxHealth, ship.statAlloc);
       ship.health = r.health;
-      ship.shield = r.shieldDown ? 0 : kind.shieldMax;
+      ship.shield = r.shieldDown ? 0 : effectiveShipShieldMax(kind.shieldMax, ship.statAlloc);
       ship.shieldLastDamageTick = this.serverTick;
       ship.alive = true;
       ship.isActive = false;
@@ -3193,7 +3352,10 @@ export class SectorRoom extends Room<SectorState> {
       // C3 — hull percent (0-100 int) so the client inspector renders hull on
       // the first frame after selection, no entity_stats round-trip. Off the
       // 60 Hz tick (1 Hz pulse + on placement), so the integer math is free.
-      const hpMax = getStructureKind(rec.kind).maxHealth;
+      // WS-B4 — a leveled structure's hull cap grows, so the %-denominator is
+      // the LEVELED effective max (so a full-health leveled structure reads
+      // 100 %, not >100 %).
+      const hpMax = effectiveStructureMaxHealth(getStructureKind(rec.kind).maxHealth, rec.level);
       const hp = this.swarmHealth.get(rec.id) ?? hpMax;
       const entry: NonNullable<SnapshotMessage['structures']>[number] = {
         id: entityId,
@@ -3205,6 +3367,9 @@ export class SectorRoom extends Room<SectorState> {
         owner: rec.owner,
         built: rec.isConstructed,
       };
+      // WS-B4 — emit the level ONLY when > 1 (un-levelled grids pay zero extra
+      // bytes; absent ⇒ the client treats it as level 1).
+      if (rec.level > 1) entry.level = rec.level;
       // Owner DISPLAY NAME for the inspector (DB-resolved + cached; absent ⇒
       // orphaned owner, already logged, client shows "Unknown").
       const ownerName = this.resolveOwnerName(rec.owner);
@@ -3278,7 +3443,10 @@ export class SectorRoom extends Room<SectorState> {
         hp: Math.max(0, Math.round(ship.health)),
         hpMax: Math.round(ship.maxHealth),
         shield: Math.max(0, Math.round(ship.shield)),
-        shieldMax: Math.round(kind.shieldMax),
+        // Effective shield cap (kind base × per-instance shield upgrade) so the
+        // inspector's shield bar denominator matches the upgraded ship (review
+        // must-fix #1). hpMax already reads the upgraded ship.maxHealth.
+        shieldMax: effectiveShipShieldMax(kind.shieldMax, ship.statAlloc),
       };
     }
     // structure — id is the numeric swarm entityId (as a string).
@@ -4310,6 +4478,20 @@ export class SectorRoom extends Room<SectorState> {
     if (ship.shipInstanceId === '' && this.sectorKey === null) {
       ship.shipInstanceId = randomUUID();
     }
+    // Phase 4 (Leveling & XP, WS-B1) — seed the live level mirror from the
+    // roster row so a previously-levelled ship shows its public badge from the
+    // first snapshot. Engineering rooms / fresh ships have no row ⇒ level 1.
+    // WS-B2 — also seed the per-instance stat allocation so a previously-upgraded
+    // ship's multipliers take effect from the first tick (the SET_STAT_MUL post
+    // is below, after the worker SPAWN).
+    if (ship.shipInstanceId !== '') {
+      const row = getPlayerShipStore().get(ship.shipInstanceId);
+      ship.level = row?.level ?? 1;
+      ship.statAlloc = row?.statAlloc ?? {};
+      // WS-B3 — seed the per-instance activated latent mounts so a previously-
+      // upgraded ship fires + renders its extra turrets from the first tick.
+      ship.mounts = row?.mounts ?? [];
+    }
     ship.isActive = true;
     // Populate the indirection map BEFORE setting the schema entry so
     // any synchronous observer (e.g. a re-entrant fire-handler) can
@@ -4335,12 +4517,26 @@ export class SectorRoom extends Room<SectorState> {
     // ship records keyed by shipInstanceId; the snapshot wire format
     // already matched this since Phase 6a.
     this.state.ships.set(ship.shipInstanceId, ship);
+    // Phase 4 WS-B2 review must-fix #1 — the NON-PHYSICS stat upgrades
+    // (maxHull / shield / energy) are applied server-authoritatively at their
+    // seed sites via the `effectiveShip*` helpers (ONE source each, so the
+    // hull-pct DENOMINATOR + the seed always agree). An un-upgraded ship gets
+    // the rounded kind base (byte-identical for whole bases). `ship.statAlloc`
+    // was seeded from the roster above (or `{}` for engineering rooms).
+    const spawnKind = getShipKind(ship.kind);
+    // Hull max — the active-spawn path never set ship.maxHealth before (it sat
+    // at the schema default), so the hull-pct denominator was wrong; seed it
+    // from the kind base × maxHull mul, matching the lingering-reconstruct path.
+    ship.maxHealth = effectiveShipMaxHealth(spawnKind.maxHealth, ship.statAlloc);
+    // A fresh spawn (no resumed roster health) seeds full hull at the upgraded
+    // max; a resumed hull keeps its stored (already-clamped) health.
+    if (resumedHealth === null) ship.health = ship.maxHealth;
     // Shield seeds full on spawn (transient - never persisted; only hull
     // persists). Body spawns circle (exposed:false in spawnShip).
-    ship.shield = getShipKind(ship.kind).shieldMax;
+    ship.shield = effectiveShipShieldMax(spawnKind.shieldMax, ship.statAlloc);
     // Energy seeds full on spawn (transient like shield; weapons/energy/AI
     // overhaul §3). Fallback covers any kind that pre-dates the energy field.
-    ship.energy = getShipKind(ship.kind).energyMax ?? 100;
+    ship.energy = effectiveShipEnergyMax(spawnKind.energyMax ?? 100, ship.statAlloc);
     // Test-only initialHull / initialShield overrides. Gated to testMode
     // rooms (engineering, never galaxy) so live gameplay can't be nerfed
     // via the wire. Applied AFTER the kind-default hull/shield are
@@ -4404,6 +4600,10 @@ export class SectorRoom extends Room<SectorState> {
     });
 
     this.postToWorker({ type: 'SPAWN', slot, playerId, x: spawnX, y: spawnY, kindId: chosenKind });
+    // Phase 4 WS-B2 — push the per-instance physics multipliers to the freshly
+    // spawned worker body (no-op when un-upgraded) so the very first applyInput
+    // tick scales movement by the upgraded factors, identically to the client.
+    this.applyStatMulToWorker(playerId, ship.statAlloc);
 
     // Test-only initialAngle: SPAWN creates the body at angle 0; force
     // the requested heading immediately via SET_POSITION so the spec
@@ -4598,6 +4798,177 @@ export class SectorRoom extends Room<SectorState> {
     this.rosterPersistence.markLinger(shipInstanceId, pose);
   }
 
+  // ── Phase 4 WS-A2 — same-sector instant pilot swap ──────────────────────────
+
+  /**
+   * Displace the player's CURRENT active hull into a lingering hull, IN-ROOM —
+   * the inverse partner of `reclaimLingeringHull`. Mirrors the onJoin
+   * fresh-spawn-displaces branch EXACTLY (the rekey/abandon identity invariant):
+   * REKEY the worker body `playerId` → `linger-<shipInstanceId>`, move the slot
+   * from `playerToSlot`/`slotToPlayer` into `lingeringSlots`, freeze the roster
+   * row at the LIVE SAB pose (`markLinger`), record a persist-forever ownerless
+   * marker (`null`), clear `playerToActiveShipInstance`, and flip `isActive=false`
+   * so the snapshot loop renders it as a parked hull. The schema entry STAYS
+   * (keyed by shipInstanceId) so the displaced hull keeps broadcasting. No-op when
+   * the player has no live active hull (the spectator case).
+   */
+  private displaceActiveHullToLingering(playerId: string): void {
+    const ship = this.getActiveShip(playerId);
+    const slot = this.playerToSlot.get(playerId);
+    if (ship === undefined || slot === undefined || ship.shipInstanceId === '') return;
+    if (!ship.alive) return;
+    const shipInstanceId = ship.shipInstanceId;
+    const b = slotBase(slot);
+    // Freeze the roster row + lingering pose cache at the LIVE SAB pose so a
+    // later reclaim / restore lands at where the hull actually is.
+    const livePose = {
+      x:      this.sabF32[b + SLOT_X_OFF]!,
+      y:      this.sabF32[b + SLOT_Y_OFF]!,
+      vx:     this.sabF32[b + SLOT_VX_OFF]!,
+      vy:     this.sabF32[b + SLOT_VY_OFF]!,
+      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+    this.markRosterLinger(shipInstanceId, {
+      ...livePose,
+      health: ship.health,
+      lastFireClientTick: this.lastFireClientTick.get(playerId) ?? 0,
+    });
+    this.lingeringPoseCache.set(shipInstanceId, { ...livePose });
+    // Slot moves from the active maps to the lingering map; the worker body is
+    // rekeyed so its per-tick SAB write keeps landing in the (now-lingering) slot
+    // (the 2026-05-13 orphan-body push bug — see the onJoin displace branch).
+    this.lingeringSlots.set(shipInstanceId, slot);
+    this.playerToSlot.delete(playerId);
+    this.slotToPlayer.delete(slot);
+    this.ownerlessShips.set(shipInstanceId, null);
+    this.playerToActiveShipInstance.delete(playerId);
+    ship.isActive = false;
+    this.postToWorker({ type: 'REKEY_SHIP', oldId: playerId, newId: `linger-${shipInstanceId}` });
+    serverLogEvent('pilot_swap_displaced', { playerId, shipInstanceId, sectorKey: this.sectorKey });
+  }
+
+  /**
+   * Reclaim one of the player's OWN lingering hulls parked in THIS sector and
+   * make it their active hull — the server half of the in-world Pilot action
+   * (Phase 4 WS-A2). SAME-SECTOR INSTANT swap: no leave/rejoin, no spool, no
+   * curtain. The hull keeps its LIVE pose; only its visibility + the session
+   * binding change.
+   *
+   * Owner-gated by construction:
+   *   - the target must be a `lingeringSlots` entry (a DISPLACED / combat-death /
+   *     boot-reconstructed lingering hull) present in THIS room,
+   *   - whose schema entry is owned by `playerId` and `isActive=false` (a hull
+   *     someone else is piloting is `isActive=true` and never in `lingeringSlots`,
+   *     so a request for a foreign / active hull is dropped here),
+   *   - the room must be a galaxy room (engineering rooms have no roster).
+   *
+   * On success: the player's current active hull (if any) is displaced first,
+   * then the target body is rekeyed `linger-<id>` → `playerId`, its slot moves
+   * back into the active maps, the lingering bookkeeping is torn down, the roster
+   * row is `markActive`'d at the live pose, and a fresh `welcome` re-anchors the
+   * client (which then clears spectator + smooth-lerps the camera + re-enables
+   * self-prediction). Routed through the unified `pendingJoin` handshake so
+   * `client_ready` → `warp_in` → arrivalTick → `isActive=true` exactly as a
+   * rebind does (no second activation path — Invariant #12).
+   */
+  private reclaimLingeringHull(client: Client, playerId: string, shipId: string): void {
+    if (this.sectorKey === null) return; // engineering rooms have no roster
+    const target = this.state.ships.get(shipId);
+    const slot = this.lingeringSlots.get(shipId);
+    // Validate: a lingering hull (isActive=false), present in this room, owned
+    // by the requester, alive. A foreign / active / unknown id falls through.
+    if (target === undefined || slot === undefined) return;
+    if (target.playerId !== playerId || target.isActive || !target.alive) return;
+    if (target.shipInstanceId !== shipId || shipId === '') return;
+    // Defence-in-depth: the roster row must be owned by this player too.
+    const rec = getPlayerShipStore().get(shipId);
+    if (rec === null || rec.playerId !== playerId) return;
+
+    // Displace the player's current active hull (if they were piloting one) into
+    // a lingering hull, so they don't keep two active hulls.
+    this.displaceActiveHullToLingering(playerId);
+
+    // Reclaim the target's slot from the lingering maps back into the active maps.
+    const b = slotBase(slot);
+    const livePose = {
+      x:      this.sabF32[b + SLOT_X_OFF]!,
+      y:      this.sabF32[b + SLOT_Y_OFF]!,
+      vx:     this.sabF32[b + SLOT_VX_OFF]!,
+      vy:     this.sabF32[b + SLOT_VY_OFF]!,
+      angle:  this.sabF32[b + SLOT_ANGLE_OFF]!,
+      angvel: this.sabF32[b + SLOT_ANGVEL_OFF]!,
+    };
+    this.lingeringSlots.delete(shipId);
+    this.lingeringPoseCache.delete(shipId);
+    const ownerlessTimer = this.ownerlessShips.get(shipId);
+    if (ownerlessTimer) clearTimeout(ownerlessTimer); // R2.26: persist-forever marker is null
+    this.ownerlessShips.delete(shipId);
+    this.playerToSlot.set(playerId, slot);
+    this.slotToPlayer.set(slot, playerId);
+    this.playerToActiveShipInstance.set(playerId, shipId);
+    // REKEY the worker body `linger-<id>` → `playerId` so input + the per-tick
+    // SAB write resume under the player's key (the displace inverse).
+    this.postToWorker({ type: 'REKEY_SHIP', oldId: `linger-${shipId}`, newId: playerId });
+    // Phase 4 WS-B2 — re-seed the reclaimed hull's stat allocation + push its
+    // physics multipliers under the new (playerId) body key so the resumed
+    // prediction scales movement by the upgraded factors from the first tick.
+    target.statAlloc = rec.statAlloc ?? {};
+    this.applyStatMulToWorker(playerId, target.statAlloc);
+    // Review must-fix #1 — recompute the NON-PHYSICS caps from the (re-read)
+    // alloc so the reclaimed hull's maxHull/shield match its current upgrade,
+    // and clamp the live hull/shield down to the new max (a respec that lowers
+    // a cap must not leave the current value above it). One source: the
+    // `effectiveShip*` helpers.
+    const reclaimKind = getShipKind(target.kind);
+    target.maxHealth = effectiveShipMaxHealth(reclaimKind.maxHealth, target.statAlloc);
+    if (target.health > target.maxHealth) target.health = target.maxHealth;
+    const reclaimShieldMax = effectiveShipShieldMax(reclaimKind.shieldMax, target.statAlloc);
+    if (target.shield > reclaimShieldMax) target.shield = reclaimShieldMax;
+    // WS-B3 — re-seed the reclaimed hull's activated dynamic mounts so it fires
+    // + renders its extra turrets from the first tick under the new body key.
+    target.mounts = rec.mounts ?? [];
+    // Seed the pose cache + roster so any synchronous reader + a later restore
+    // see the live pose (NOT a stale abandon pose — WS-A2 "lands at its live pose").
+    this.shipPoseCache.set(playerId, { ...livePose });
+    this.lastFireClientTick.set(playerId, rec.lastFireClientTick);
+    // `markActive` the roster row at the live pose (the design's "reuse the
+    // markActive machinery"). bind() with the preferred shipId hits markActive.
+    this.rosterPersistence.bind(playerId, this.playerToUser.get(playerId) ?? rec.userId, target.kind, {
+      ...livePose,
+      health: target.health,
+      lastFireClientTick: rec.lastFireClientTick,
+    }, shipId);
+    this.shipPoseCache.set(playerId, { ...livePose });
+
+    // Re-drive the unified join handshake so visibility flips through the SAME
+    // `client_ready` → `warp_in` → arrivalTick path a rebind uses (no second
+    // activation path). The hull stays at its live pose (no SAB reset).
+    const tick = Atomics.load(this.sabU32, TICK_IDX);
+    target.isActive = false;
+    const welcome: WelcomeMessage = {
+      type: 'welcome',
+      playerId,
+      serverTick: tick,
+      sectorKey: this.sectorKey,
+      shipInstanceId: shipId,
+    };
+    client.send('welcome', welcome);
+    this.pendingJoin.set(playerId, {
+      joinTick: tick,
+      watchdogTick: tick + CLIENT_READY_TIMEOUT_TICKS,
+      arrivalTick: null,
+      spawnX: livePose.x,
+      spawnY: livePose.y,
+      sessionId: client.sessionId,
+    });
+    this.forceBroadcastUntilTick = tick + JOIN_BROADCAST_GRACE_TICKS;
+    this.bus.emit('SHIP_SPAWNED', { type: 'SHIP_SPAWNED' as const, playerId, x: livePose.x, y: livePose.y });
+    serverLogEvent('pilot_swap_reclaimed', { playerId, shipInstanceId: shipId, sectorKey: this.sectorKey, x: livePose.x, y: livePose.y });
+    auditEvent({ event: 'player_joined', sector: this.sectorKey ?? undefined, playerId });
+    logger.info({ playerId, shipInstanceId: shipId, sectorKey: this.sectorKey }, 'pilot swap — reclaimed lingering hull in-room');
+  }
+
   /**
    * Equinox P6.3 (C2 — "scrap replaces wrecks") — abandon an ACTIVE hull by
    * shattering it into drifting scrap instead of converting it to a wreck. Same
@@ -4718,6 +5089,198 @@ export class SectorRoom extends Room<SectorState> {
 
   private deleteRosterRow(shipInstanceId: string): void {
     this.rosterPersistence.delete(shipInstanceId);
+  }
+
+  /**
+   * Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE on a
+   * kill, weighted by the victim's `maxHealth` (tougher = more, D10). XP is
+   * PER SHIP INSTANCE (D8): the killer's playerId resolves to the hull THAT
+   * PLAYER is currently piloting (`resolveActiveShipKey`), and the XP rides
+   * that hull's persistent roster row — switching ships switches progression.
+   *
+   * Only PLAYER killers earn XP — a drone/structure killer (`swarm-`/`lwbot-`/
+   * `pstruct-` prefix) has no roster ship instance, so it's skipped. Engineering
+   * rooms (no roster) and unbound killers are no-ops.
+   *
+   * On crossing a threshold the ship's `level` increments, the roster persists
+   * the new `(level, xp)`, the live `ShipState.level` mirror updates (so the
+   * next snapshot ships the public badge), a discrete `SHIP_LEVEL_UP` fires on
+   * the bus, and a `ship_level_up` Colyseus message broadcasts to every client.
+   */
+  private awardKillXp(killerId: string, victimMaxHealth: number): void {
+    if (classifyAttacker(killerId) !== 'player') return; // drones/structures don't level
+    const killerShipInstanceId = this.resolveActiveShipKey(killerId);
+    if (killerShipInstanceId === undefined || killerShipInstanceId === '') return;
+    const store = getPlayerShipStore();
+    const row = store.get(killerShipInstanceId);
+    if (row === null) return; // no roster row (engineering room / not persisted)
+
+    const gained = xpForKill(victimMaxHealth);
+    const result = applyKillXp(row.level, row.xp, gained);
+    // Persist the new progression (level/xp) on the killer's instance.
+    store.setProgress(killerShipInstanceId, { level: result.level, xp: result.xp });
+
+    // Mirror the level onto the live ShipState so the broadcaster ships the
+    // public badge on the next snapshot.
+    const killerShip = this.state.ships.get(killerShipInstanceId);
+    if (killerShip !== undefined) killerShip.level = result.level;
+
+    if (result.levelsGained > 0) {
+      this.bus.emit('SHIP_LEVEL_UP', {
+        type: 'SHIP_LEVEL_UP',
+        shipInstanceId: killerShipInstanceId,
+        newLevel: result.level,
+      });
+      this.broadcast('ship_level_up', {
+        type: 'ship_level_up',
+        shipInstanceId: killerShipInstanceId,
+        newLevel: result.level,
+      });
+    }
+  }
+
+  /**
+   * Phase 4 WS-B2 — push a ship instance's per-instance PHYSICS multipliers
+   * (`topSpeed`/`turnRate`, derived from its spent stat allocation) to its
+   * worker body via `SET_STAT_MUL`. `bodyKey` is the worker body id (the
+   * active player's is `playerId`; a lingering hull's is `linger-<shipId>`).
+   * An empty / un-upgraded allocation resets the body to the un-upgraded
+   * factors (both undefined). Allocation-free beyond the small derived literal
+   * (called only on spawn + on a discrete upgrade — never per tick).
+   */
+  private applyStatMulToWorker(bodyKey: string, alloc: CoreStatAlloc | undefined): void {
+    const mul = deriveStatMultipliers(alloc);
+    // Send the physics pair only. Neutral (both 1) ⇒ send the factors anyway so
+    // a respec/clear visibly resets the body; SET_STAT_MUL with 1/1 is a no-op
+    // beyond writing the (identity) multipliers.
+    this.postToWorker({ type: 'SET_STAT_MUL', id: bodyKey, topSpeed: mul.topSpeed, turnRate: mul.turnRate });
+  }
+
+  /**
+   * Phase 4 WS-B2 — apply a free stat allocation (or a respec, `alloc = {}`) to a
+   * ship INSTANCE the requester owns. The single server entry for both messages.
+   *
+   * Validates, in order:
+   *   - ownership (the roster row's `playerId === requester`),
+   *   - the point budget (`isAllocValid(alloc, row.level)` — the budget CANNOT be
+   *     exceeded, the authoritative gate).
+   * A foreign / unknown / over-budget request is a silent no-op (no echo, no
+   * persistence). On success: persist the new `statAlloc` on the roster row, and
+   * — if this instance is the player's ACTIVE hull in THIS room — update the live
+   * `ShipState.statAlloc` mirror AND push the physics multipliers to its worker
+   * body (so the next tick scales movement; the OWN-ship snapshot slice carries
+   * the alloc so the client re-anchors its predWorld identically). Finally echo
+   * `ship_upgrade_applied` so the modal closes + the roster card refreshes.
+   */
+  private applyShipUpgrade(
+    client: Client,
+    playerId: string,
+    shipId: string,
+    alloc: CoreStatAlloc,
+  ): void {
+    const store = getPlayerShipStore();
+    const row = store.get(shipId);
+    if (row === null || row.playerId !== playerId) return; // foreign / unknown
+    if (!isAllocValid(alloc, row.level)) {
+      logger.warn(
+        { sessionId: client.sessionId, shipId, level: row.level },
+        'apply_ship_upgrade over budget / invalid — dropped',
+      );
+      return;
+    }
+    // Persist on the roster (the per-instance source of truth, D8).
+    store.setProgress(shipId, { statAlloc: alloc });
+
+    // If this instance is the player's ACTIVE hull in THIS room, mirror the
+    // alloc + re-anchor the worker body's physics multipliers immediately.
+    const activeShipKey = this.resolveActiveShipKey(playerId);
+    if (activeShipKey === shipId) {
+      const ship = this.state.ships.get(shipId);
+      if (ship !== undefined) {
+        ship.statAlloc = alloc;
+        // Review must-fix #1 — a LIVE upgrade/respec must recompute the NON-
+        // PHYSICS caps from the new alloc and CLAMP the current value down to
+        // the new max (a respec that lowers a cap must not leave current above
+        // it). NO free heal — clamp only; the bar shrinks, it never refills.
+        // One source: the `effectiveShip*` helpers (so the seed + denominator
+        // agree). hpMax/shieldMax/energyMax all ride the OWN-ship snapshot
+        // slice / discrete DamageEvent so the client re-reads the new caps.
+        const upgKind = getShipKind(ship.kind);
+        ship.maxHealth = effectiveShipMaxHealth(upgKind.maxHealth, alloc);
+        if (ship.health > ship.maxHealth) ship.health = ship.maxHealth;
+        const newShieldMax = effectiveShipShieldMax(upgKind.shieldMax, alloc);
+        if (ship.shield > newShieldMax) ship.shield = newShieldMax;
+        const newEnergyMax = effectiveShipEnergyMax(upgKind.energyMax ?? 100, alloc);
+        if (ship.energy > newEnergyMax) ship.energy = newEnergyMax;
+      }
+      // The active player's worker body is keyed by playerId.
+      this.applyStatMulToWorker(playerId, alloc);
+    }
+
+    client.send('ship_upgrade_applied', {
+      type: 'ship_upgrade_applied',
+      shipInstanceId: shipId,
+      alloc,
+      spent: spentPoints(alloc),
+      budget: pointBudget(row.level),
+    });
+  }
+
+  /**
+   * Phase 4 WS-B3 — activate a latent weapon mount on a ship instance.
+   *
+   * Validation order (a foreign / unknown / non-latent / already-active request
+   * is a SILENT no-op — no echo, no persistence):
+   *   - ownership (`row.playerId === playerId`);
+   *   - `slotId` names a real `ShipKind.latentMounts` hardpoint (`isLatentSlot`);
+   *   - the slot isn't already activated on this instance.
+   * On success: append `{ slotId, weaponId }` to the roster `mounts` (the
+   * per-instance source of truth, D8 — switching ships switches the loadout) AND
+   * — if this instance is the player's ACTIVE hull in THIS room — mirror it onto
+   * `ShipState.mounts` so the SAME-tick aim/fire/snapshot paths pick it up (the
+   * per-instance mount resolver reads `ship.mounts`). The `weaponId` is already
+   * zod-restricted to the catalogue weapon set. Echoes `mount_activated` with the
+   * full activated list so the modal closes + the roster card refreshes. The
+   * GEOMETRY is looked up CLIENT-SIDE by `(shipKind, slotId)` — never on the wire.
+   */
+  private activateMount(
+    client: Client,
+    playerId: string,
+    shipId: string,
+    slotId: string,
+    weaponId: string,
+  ): void {
+    const store = getPlayerShipStore();
+    const row = store.get(shipId);
+    if (row === null || row.playerId !== playerId) return; // foreign / unknown
+    const kind = getShipKind(row.kind);
+    if (!isLatentSlot(kind, slotId)) {
+      logger.warn(
+        { sessionId: client.sessionId, shipId, slotId },
+        'activate_mount: slotId is not a latent hardpoint — dropped',
+      );
+      return;
+    }
+    // Already active ⇒ no-op (idempotent; never duplicate the index space).
+    if (row.mounts.some((m) => m.slotId === slotId)) return;
+
+    const nextMounts: ActivatedMount[] = [...row.mounts, { slotId, weaponId }];
+    // Persist on the roster (the per-instance source of truth, D8).
+    store.setProgress(shipId, { mounts: nextMounts });
+
+    // Mirror onto the live ACTIVE hull (if it's piloted in THIS room) so the
+    // very next tick's aim + fire + snapshot resolve the new mount.
+    const activeShipKey = this.resolveActiveShipKey(playerId);
+    if (activeShipKey === shipId) {
+      const ship = this.state.ships.get(shipId);
+      if (ship !== undefined) ship.mounts = nextMounts;
+    }
+
+    client.send('mount_activated', {
+      type: 'mount_activated',
+      shipInstanceId: shipId,
+      mounts: nextMounts,
+    });
   }
 
   override onDispose(): void {

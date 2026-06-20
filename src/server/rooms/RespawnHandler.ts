@@ -10,6 +10,16 @@
  * defaultSpawn anchor; otherwise random scatter).
  *
  * Extracted from SectorRoom (commit 21 partial).
+ *
+ * Phase 4 WS-A1 (Spectator / Construction mode, D3) — this is NO LONGER on the
+ * player-facing death path. The blocking DeathOverlay "Respawn" button is gone;
+ * on the local ship's death the CLIENT flips INSTANTLY into spectator (a free-
+ * roam, un-networked construction camera) and the player stays roomed with no
+ * active ship (the server already only sets `ship.alive=false` on death — it
+ * never required a respawn to keep the session). Re-entry is via the galaxy map
+ * or (WS-A2) an owned ship's in-world Pilot action. The in-place revive here is
+ * preserved for engineering-room E2E specs that still drive the `respawn`
+ * message directly; nothing in the live UI sends it.
  */
 
 import type { Client } from 'colyseus';

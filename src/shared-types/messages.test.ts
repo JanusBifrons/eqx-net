@@ -17,11 +17,19 @@ import {
   FireMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  ShipLevelUpEventSchema,
+  ShipUpgradeAppliedEventSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
+  ActivateMountSchema,
+  MountActivatedEventSchema,
+  StatIdSchema,
+  UpgradeStructureSchema,
   WarpWarningSchema,
   WarpWarningClearSchema,
   BaseReadySchema,
 } from './messages.js';
-import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent } from './messages.js';
+import type { SnapshotMessage, WelcomeMessage, HitAckMessage, DamageEvent, ShipLevelUpEvent } from './messages.js';
 
 describe('CollisionResolvedMessageSchema', () => {
   const valid = {
@@ -521,5 +529,169 @@ describe('BaseReadySchema (WS-11 R2.24 Part B)', () => {
 
   it('rejects a wrong type literal', () => {
     expect(BaseReadySchema.safeParse({ ...valid, type: 'warp_warning' }).success).toBe(false);
+  });
+});
+
+describe('ShipLevelUpEventSchema (Phase 4 WS-B1)', () => {
+  const valid = { type: 'ship_level_up' as const, shipInstanceId: 'ship-abc', newLevel: 3 };
+
+  it('accepts a valid level-up event', () => {
+    expect(ShipLevelUpEventSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('rejects a wrong type literal', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, type: 'destroy' }).success).toBe(false);
+  });
+
+  it('rejects an empty or over-long shipInstanceId (S5 bounds)', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, shipInstanceId: '' }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, shipInstanceId: 'x'.repeat(65) }).success).toBe(false);
+  });
+
+  it('rejects a non-positive / fractional newLevel', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: 0 }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: -1 }).success).toBe(false);
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, newLevel: 2.5 }).success).toBe(false);
+  });
+
+  it('rejects extra unknown fields (strict)', () => {
+    expect(ShipLevelUpEventSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+  });
+
+  it('z.infer<ShipLevelUpEventSchema> ↔ ShipLevelUpEvent are bidirectionally assignable', () => {
+    type SchemaT = z.infer<typeof ShipLevelUpEventSchema>;
+    const schemaToIface: ShipLevelUpEvent = null as unknown as SchemaT;
+    const ifaceToSchema: SchemaT = null as unknown as ShipLevelUpEvent;
+    void schemaToIface;
+    void ifaceToSchema;
+    const parsed: ShipLevelUpEvent = ShipLevelUpEventSchema.parse(valid);
+    expect(parsed.newLevel).toBe(3);
+  });
+});
+
+describe('Ship stat upgrade messages (Phase 4 WS-B2)', () => {
+  it('StatIdSchema is the documented append-only stat-pool order', () => {
+    // Parity with `STAT_IDS` in src/core/leveling/shipStats.ts (asserted as a
+    // literal here so src/shared-types stays self-contained / boundary-clean).
+    expect(StatIdSchema.options).toEqual(['hull', 'energy', 'damage', 'topSpeed', 'turnRate', 'shield']);
+  });
+
+  describe('ApplyShipUpgradeSchema', () => {
+    const valid = { type: 'apply_ship_upgrade' as const, shipId: 'ship-1', alloc: { hull: 2, topSpeed: 1 } };
+
+    it('accepts a valid allocation', () => {
+      expect(ApplyShipUpgradeSchema.safeParse(valid).success).toBe(true);
+    });
+
+    it('accepts an empty allocation', () => {
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, alloc: {} }).success).toBe(true);
+    });
+
+    it('rejects an unknown stat id', () => {
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, alloc: { wings: 1 } }).success).toBe(false);
+    });
+
+    it('rejects negative / fractional points', () => {
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, alloc: { hull: -1 } }).success).toBe(false);
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, alloc: { hull: 1.5 } }).success).toBe(false);
+    });
+
+    it('rejects an empty / over-long shipId (S5 bounds)', () => {
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, shipId: '' }).success).toBe(false);
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, shipId: 'x'.repeat(65) }).success).toBe(false);
+    });
+
+    it('rejects extra unknown fields (strict)', () => {
+      expect(ApplyShipUpgradeSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    });
+  });
+
+  describe('RespecShipSchema', () => {
+    it('accepts a valid respec', () => {
+      expect(RespecShipSchema.safeParse({ type: 'respec_ship', shipId: 'ship-1' }).success).toBe(true);
+    });
+    it('rejects a blank shipId', () => {
+      expect(RespecShipSchema.safeParse({ type: 'respec_ship', shipId: '' }).success).toBe(false);
+    });
+  });
+
+  describe('ShipUpgradeAppliedEventSchema (server → client echo)', () => {
+    const valid = {
+      type: 'ship_upgrade_applied' as const,
+      shipInstanceId: 'ship-1',
+      alloc: { hull: 2 },
+      spent: 2,
+      budget: 4,
+    };
+    it('accepts a valid echo', () => {
+      expect(ShipUpgradeAppliedEventSchema.safeParse(valid).success).toBe(true);
+    });
+    it('accepts an empty alloc (post-respec)', () => {
+      expect(ShipUpgradeAppliedEventSchema.safeParse({ ...valid, alloc: {}, spent: 0 }).success).toBe(true);
+    });
+    it('rejects a negative spent / budget', () => {
+      expect(ShipUpgradeAppliedEventSchema.safeParse({ ...valid, spent: -1 }).success).toBe(false);
+      expect(ShipUpgradeAppliedEventSchema.safeParse({ ...valid, budget: -1 }).success).toBe(false);
+    });
+  });
+});
+
+describe('Dynamic weapon mount messages (Phase 4 WS-B3)', () => {
+  describe('ActivateMountSchema', () => {
+    const valid = { type: 'activate_mount' as const, shipId: 'ship-1', slotId: 'latent-wing-l', weaponId: 'laser' };
+
+    it('accepts a valid activation', () => {
+      expect(ActivateMountSchema.safeParse(valid).success).toBe(true);
+    });
+    it('rejects an unknown weapon id', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, weaponId: 'death-ray' }).success).toBe(false);
+    });
+    it('rejects an empty / over-long shipId or slotId (S5 bounds)', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, shipId: '' }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, shipId: 'x'.repeat(65) }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, slotId: '' }).success).toBe(false);
+      expect(ActivateMountSchema.safeParse({ ...valid, slotId: 'x'.repeat(65) }).success).toBe(false);
+    });
+    it('rejects extra unknown fields (strict)', () => {
+      expect(ActivateMountSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    });
+  });
+
+  describe('MountActivatedEventSchema (server → client echo)', () => {
+    const valid = {
+      type: 'mount_activated' as const,
+      shipInstanceId: 'ship-1',
+      mounts: [{ slotId: 'latent-wing-l', weaponId: 'laser' }],
+    };
+    it('accepts a valid echo', () => {
+      expect(MountActivatedEventSchema.safeParse(valid).success).toBe(true);
+    });
+    it('accepts an empty mount list', () => {
+      expect(MountActivatedEventSchema.safeParse({ ...valid, mounts: [] }).success).toBe(true);
+    });
+    it('rejects a bad weapon id inside the mount list', () => {
+      expect(
+        MountActivatedEventSchema.safeParse({ ...valid, mounts: [{ slotId: 'x', weaponId: 'death-ray' }] }).success,
+      ).toBe(false);
+    });
+  });
+});
+
+describe('Structure leveling message (Phase 4 WS-B4)', () => {
+  describe('UpgradeStructureSchema', () => {
+    const valid = { type: 'upgrade_structure' as const, entityId: 7 };
+    it('accepts a valid upgrade request', () => {
+      expect(UpgradeStructureSchema.safeParse(valid).success).toBe(true);
+    });
+    it('rejects a negative / non-integer entityId', () => {
+      expect(UpgradeStructureSchema.safeParse({ ...valid, entityId: -1 }).success).toBe(false);
+      expect(UpgradeStructureSchema.safeParse({ ...valid, entityId: 1.5 }).success).toBe(false);
+    });
+    it('rejects a missing entityId', () => {
+      expect(UpgradeStructureSchema.safeParse({ type: 'upgrade_structure' }).success).toBe(false);
+    });
+    it('rejects extra unknown fields (strict)', () => {
+      expect(UpgradeStructureSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+    });
   });
 });

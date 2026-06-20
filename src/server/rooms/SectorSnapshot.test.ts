@@ -55,4 +55,47 @@ describe('SectorSnapshot', () => {
     expect(CURRENT_SCHEMA_VERSION).toBeGreaterThan(0);
     expect(Number.isInteger(CURRENT_SCHEMA_VERSION)).toBe(true);
   });
+
+  // ── Phase 4 WS-0 — structures[].level + schema 5→6 ─────────────────
+  describe('Phase 4 WS-0 — structures[].level + schema bump', () => {
+    it('CURRENT_SCHEMA_VERSION bumped to 6', () => {
+      expect(CURRENT_SCHEMA_VERSION).toBe(6);
+    });
+
+    it('round-trips a payload carrying structures[].level', () => {
+      const payload: SectorSnapshotPayload = {
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        sectorKey: 'sol-prime',
+        savedAtMs: 1_700_000_000_000,
+        swarm: [],
+        structures: [
+          {
+            entityId: 'pstruct-1',
+            owner: 'p1',
+            kind: 'capital',
+            x: 10,
+            y: 20,
+            health: 500,
+            isConstructed: true,
+            constructionProgress: 0,
+            minerals: 0,
+            storedPower: 0,
+            level: 3,
+          },
+        ],
+      };
+      const out = parseSnapshot(JSON.parse(JSON.stringify(payload)));
+      expect(out.structures?.[0]?.level).toBe(3);
+    });
+
+    it('migrateSnapshot(v5 → v6) drops every prior snapshot (tear-down-on-change)', () => {
+      const v5 = {
+        schemaVersion: 5,
+        sectorKey: 'sol-prime',
+        savedAtMs: 0,
+        swarm: [],
+      };
+      expect(() => parseSnapshot(v5)).toThrow(/No migration from sector-snapshot schema v5 to v6/);
+    });
+  });
 });

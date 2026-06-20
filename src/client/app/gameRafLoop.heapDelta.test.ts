@@ -90,6 +90,7 @@ function makeDeps(): GameRafLoopDeps {
       tickPhysics: () => {},
       tickInbound: () => {},
       updateMirror: () => {},
+      consumePendingCameraGlide: () => null,
       mirror: {
         ships: new Map(),
         swarm: undefined,
@@ -111,6 +112,7 @@ function makeDeps(): GameRafLoopDeps {
       const stableFeedback = { firstFrameRendered: false, mountCounts: new Map(), haloArrowCount: 0 };
       return {
         update: () => {},
+        glideCameraTo: () => {},
         getFeedback: () => stableFeedback,
       } as unknown as GameRafLoopDeps['renderer'];
     })(),

@@ -344,6 +344,36 @@ on the slice → client aim line), and fires on its per-kind `fireRateMs` cooldo
 `AiFireResolver` (which targets players — turrets target drones). Power-gated: an
 overdrawn grid (`powered === false`) fires nothing.
 
+## Structure leveling (Equinox Phase 4 WS-B4 — paid Upgrade + visible build phase)
+
+Structures level via a PAID Upgrade that runs a **visible build phase** — the
+same `constructionProgress` pulse machinery the initial build uses (D14). It's
+the structure analogue of ship XP, but **player-economy-driven, not kill-driven**:
+there is no structure XP, only a per-level resource cost.
+
+`StructureGridSubsystem.upgradeStructure(id)` (owner-gated by the caller, like
+`reconnect`/`clearConnections`) validates BUILT + not-deconstructing + below-cap
+(`STRUCTURE_LEVEL_CAP = 5`) + not-already-upgrading, then **reuses the
+construction machinery**: flips `isConstructed=false`, resets
+`constructionProgress=0`, sets `constructionCost` to the upgrade cost, and stashes
+`upgradeTargetLevel = level+1`. The cost is drained DURING the build by the grid
+pulse (`processConstruction`) — exactly like a fresh blueprint — so an upgrade
+against an empty bank simply waits for minerals. On completion `processConstruction`
+increments `level`, clears the target, restores `constructionCost` to the kind
+base, and seeds HP to the leveled effective max. The leveled stats — `maxHealth`
+(universal), `weaponRange + weaponDamage` (`tickTurrets`), `powerOutput`
+(`structureToGridNode`) — read the level factor at their catalogue read-sites via
+the pure `structureLevelFactor(level)` curve. `level` rides the `StructureRecord`,
+persists in the sector snapshot (`SectorSnapshotStructure.level`, schema v6), and
+rides the live `SnapshotMessage.structures[].level` wire slice (emit-when `> 1`,
+no `SWARM_WIRE_VERSION` bump). The UI is the `EntityStatsPanel` `LVL n` line +
+4th **Upgrade** action button (`upgrade_structure { entityId }`).
+
+The pure curve (`src/core/leveling/structureLevel.ts`), the message/wire/UI
+detail, and the regression locks are documented canonically in
+[leveling-and-upgrades.md](leveling-and-upgrades.md) ("WS-B4 — structure
+leveling").
+
 ## Test scenario trigger (the bespoke E2E primitive)
 
 The place-ahead UI stacks multiple placements at the same spot (overlap →

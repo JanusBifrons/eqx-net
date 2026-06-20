@@ -22,6 +22,12 @@
  * the mineral streams do. The single Phase-3 flow material is `minerals`.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import {
+  canUpgradeStructure,
+  effectiveStructureMaxHealth,
+  structureLevelFactor,
+  structureUpgradeCost,
+} from '../../core/leveling/structureLevel.js';
 import { getWeapon, isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle } from '../../core/structures/Grid.js';
@@ -181,7 +187,13 @@ export class StructureGridSubsystem {
         rec.turretTargetEntityId = undefined;
         continue;
       }
-      const target = this.hooks.findNearestDrone(rec.x, rec.y, kind.weaponRange);
+      // Phase 4 WS-B4 — a leveled turret targets FARTHER + hits HARDER. The
+      // single scalar factor (alloc-free) scales the kind's catalogue range +
+      // damage; level 1 is the identity (byte-identical to pre-WS-B4).
+      const lvlMul = structureLevelFactor(rec.level);
+      const range = kind.weaponRange * lvlMul;
+      const damage = (kind.weaponDamage ?? 0) * lvlMul;
+      const target = this.hooks.findNearestDrone(rec.x, rec.y, range);
       rec.turretTargetEntityId = target?.entityId;
       if (!target) continue;
       const def = getWeapon(mountWeaponId);
@@ -189,7 +201,7 @@ export class StructureGridSubsystem {
         // Continuous beam: a steady stream of small hits the client renders as
         // one beam (Issue 5). DPS-budget DoT on the beam cadence.
         const { cooldownMs, perHitDamage } = resolveTurretBeam(
-          kind.weaponDamage ?? 0,
+          damage,
           kind.fireRateMs ?? 600,
           def.cooldownTicks,
         );
@@ -205,7 +217,7 @@ export class StructureGridSubsystem {
         const cadence = kind.fireRateMs ?? 600;
         if (nowMs - (rec.lastTurretFireMs ?? -Infinity) < cadence) continue;
         rec.lastTurretFireMs = nowMs;
-        this.fireTurretShot(rec, kind.radius, kind.weaponDamage, def, target.x, target.y);
+        this.fireTurretShot(rec, kind.radius, damage, def, target.x, target.y);
       } else if (def.mode === 'missile') {
         // SHOT model: one homing missile per the kind's `fireRateMs` (a slow
         // salvo). The missile homes via MissileSimulation — restricted to DRONES
@@ -624,10 +636,77 @@ export class StructureGridSubsystem {
     return true;
   }
 
-  /** Find a built Capital with minerals that can route to `targetId`. */
+  /**
+   * Phase 4 WS-B4 — player-triggered "upgrade this structure": start a PAID
+   * build phase that, on completion (handled in `processConstruction`),
+   * increments the structure's level and applies the per-level stat grant.
+   *
+   * Validates: the structure exists, is fully BUILT (a half-built blueprint
+   * can't be upgraded), is NOT deconstructing, and is below the level cap. A
+   * structure already mid-upgrade (its `upgradeTargetLevel` is set) is rejected.
+   * Owner-gating is the CALLER's responsibility (the room resolves owner before
+   * calling this, like `reconnect`/`clearConnections`).
+   *
+   * The COST is `structureUpgradeCost(constructionCost, level)` (escalating per
+   * level). The cost is NOT pre-charged here — it's drained DURING the build by
+   * the construction pulse (the SAME machinery the initial build uses), so an
+   * upgrade started against an empty bank simply waits until minerals arrive,
+   * exactly like a fresh blueprint. We reset `constructionProgress` to 0 and set
+   * `constructionCost` to the upgrade cost so the pulse fills toward it.
+   *
+   * Returns true if an upgrade build phase was started, false otherwise (unknown
+   * / unbuilt / deconstructing / capped / already upgrading).
+   */
+  upgradeStructure(id: string): boolean {
+    const rec = this.hooks.registry.get(id);
+    if (!rec) return false;
+    if (!rec.isConstructed || rec.isDeconstructing) return false;
+    if (rec.upgradeTargetLevel !== undefined) return false; // already upgrading
+    if (!canUpgradeStructure(rec.level)) return false; // at the cap
+    const baseCost = getStructureKind(rec.kind).constructionCost;
+    const cost = structureUpgradeCost(baseCost, rec.level);
+    // Review must-fix #2 (2026-06-20): the Capital's `constructionCost` is 0, so
+    // its upgrade `cost` is 0 — a BALANCE oddity (a free capital upgrade,
+    // contradicts D14 "costs resources"; recorded as a follow-up, NOT this fix).
+    // It does NOT mean the build "completes on the first pulse": `process-
+    // Construction` reaches the FUNDING gate (`findStorageRoute`) BEFORE the
+    // `constructionProgress >= constructionCost` completion check, so the upgrade
+    // only completes once the capital is routable as a funder. That funding is
+    // exactly why a mid-upgrade Capital must stay funding-capable + grid-
+    // traversable — see `findStorageRoute` + `structureToGridNode`. The upgrade
+    // is gated on `canUpgradeStructure`, not a non-zero cost.
+    rec.isConstructed = false;
+    rec.constructionProgress = 0;
+    rec.constructionCost = cost;
+    rec.upgradeTargetLevel = rec.level + 1;
+    // A node mid-upgrade is inert (the `isConstructed` gate in structureGridView
+    // already projects 0 power for an unbuilt node), so the topology must rebuild
+    // so the grid stops counting its power/relaying through it while it rebuilds.
+    this.hooks.registry.topologyDirty = true;
+    return true;
+  }
+
+  /** Find a Capital with minerals that can route to `targetId`.
+   *
+   *  Review must-fix #2 (2026-06-20, plan effervescent-umbrella): a Capital that
+   *  is MID-UPGRADE (`upgradeTargetLevel !== undefined`) STILL counts as a funder.
+   *  The Capital is the grid's ONLY mineral bank, and an Upgrade flips its
+   *  `isConstructed` false to run a visible re-build (`upgradeStructure`). If the
+   *  plain `!rec.isConstructed` exclusion stood, upgrading the Capital would brick
+   *  the ENTIRE grid: `findStorageRoute` would return null for EVERY blueprint
+   *  (including the capital itself), so `processConstruction` `continue`s before
+   *  the completion check — the capital's own upgrade NEVER completes (permanent
+   *  blueprint) AND every other structure's construction/upgrade/repair stalls for
+   *  the duration. So a mid-upgrade Capital remains funding-capable; it is an
+   *  already-operational bank being re-built, not a fresh blueprint. Its
+   *  grid-traversability as a route SOURCE is preserved by the matching
+   *  `structureToGridNode` projection (a mid-upgrade capital projects
+   *  `isConstructed: true` so `Grid.route` accepts it as source + relay). */
   private findStorageRoute(targetId: string): { capital: StructureRecord; route: readonly string[] } | null {
     for (const rec of this.hooks.registry.all()) {
-      if (rec.kind !== 'capital' || !rec.isConstructed || rec.minerals <= 0) continue;
+      if (rec.kind !== 'capital' || rec.minerals <= 0) continue;
+      const fundingCapable = rec.isConstructed || rec.upgradeTargetLevel !== undefined;
+      if (!fundingCapable) continue;
       const route = this.grid.route(rec.id, targetId);
       if (route) return { capital: rec, route };
     }
@@ -671,7 +750,18 @@ export class StructureGridSubsystem {
       if (bp.constructionProgress >= bp.constructionCost) {
         bp.constructionProgress = bp.constructionCost;
         bp.isConstructed = true;
-        this.hooks.setHealth(bp.id, getStructureKind(bp.kind).maxHealth);
+        // Phase 4 WS-B4 — an UPGRADE build (upgradeTargetLevel set) increments
+        // the level on completion + applies the per-level stat grant; a normal
+        // (initial) build leaves the level untouched. The HP seed uses the
+        // LEVELED effective max so a leveled structure builds up to its full
+        // (boosted) hull. After an upgrade, restore `constructionCost` to the
+        // kind's base so a SUBSEQUENT upgrade re-derives the next cost cleanly.
+        if (bp.upgradeTargetLevel !== undefined) {
+          bp.level = bp.upgradeTargetLevel;
+          bp.upgradeTargetLevel = undefined;
+          bp.constructionCost = getStructureKind(bp.kind).constructionCost;
+        }
+        this.hooks.setHealth(bp.id, effectiveStructureMaxHealth(getStructureKind(bp.kind).maxHealth, bp.level));
         this.hooks.registry.topologyDirty = true; // it now relays
         this.hooks.onConstructed?.(bp.owner, bp.kind);
       }

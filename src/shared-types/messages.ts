@@ -20,6 +20,13 @@ export {
   PlaceStructureSchema,
   RemoveStructureSchema,
   StructureActionSchema,
+  UpgradeStructureSchema,
+  PilotShipSchema,
+  StatIdSchema,
+  StatAllocSchema,
+  ApplyShipUpgradeSchema,
+  RespecShipSchema,
+  ActivateMountSchema,
   ClientMessageSchema,
 } from './messages/clientMessages.js';
 export type {
@@ -32,6 +39,13 @@ export type {
   PlaceStructureMessage,
   RemoveStructureMessage,
   StructureActionMessage,
+  UpgradeStructureMessage,
+  PilotShipMessage,
+  StatId,
+  WireStatAlloc,
+  ApplyShipUpgradeMessage,
+  RespecShipMessage,
+  ActivateMountMessage,
   ClientMessage,
 } from './messages/clientMessages.js';
 
@@ -43,11 +57,19 @@ export {
   CollisionResolvedMessageSchema,
   HitAckSchema,
   DamageEventSchema,
+  ShipLevelUpEventSchema,
+  ShipUpgradeAppliedEventSchema,
+  WireActivatedMountSchema,
+  MountActivatedEventSchema,
 } from './messages/combatMessages.js';
 export type {
   HitAckMessage,
   DamageEvent,
   DestroyEvent,
+  ShipLevelUpEvent,
+  ShipUpgradeAppliedEvent,
+  WireActivatedMount,
+  MountActivatedEvent,
   ShieldEventMessage,
   RespawnAckMessage,
   LaserFiredEvent,

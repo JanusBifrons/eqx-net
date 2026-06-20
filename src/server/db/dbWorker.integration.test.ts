@@ -166,6 +166,130 @@ describe('dbWorker (real worker, temp file DB)', () => {
     expect(drained).toBeGreaterThanOrEqual(0);
   });
 
+  it('PLAYER_SHIP_PUT round-trips the Phase 4 leveling columns', async () => {
+    worker = await spawnAndAwaitReady();
+    const post = (msg: WorkerInbound): void => worker.postMessage(msg);
+    const acks: number[] = [];
+    worker.on('message', (msg: WorkerOutbound) => {
+      if (msg.type === 'BATCH_ACK') acks.push(msg.batchId);
+    });
+
+    const now = Date.now();
+    post({
+      type: 'BATCH',
+      batchId: 1,
+      ops: [
+        {
+          type: 'PLAYER_SHIP_PUT',
+          shipId: 'ship-lvl-1',
+          playerId: 'p1',
+          userId: null,
+          kind: 'fighter',
+          kindVersion: 1,
+          health: 100,
+          lastSectorKey: 'sol-prime',
+          lastX: 1, lastY: 2, lastVx: 0, lastVy: 0, lastAngle: 0, lastAngvel: 0,
+          lastFireClientTick: 0,
+          isActive: false,
+          activeRoomId: null,
+          expiresAt: 0,
+          level: 5,
+          xp: 4321,
+          statAllocJson: JSON.stringify({ hull: 2, damage: 1 }),
+          mountsJson: JSON.stringify([{ slotId: 'wing-l', weaponId: 'laser_beam' }]),
+          ts: now,
+        },
+      ],
+    });
+    await new Promise<void>((resolve) => {
+      const tick = (): void => (acks.includes(1) ? resolve() : void setTimeout(tick, 5));
+      tick();
+    });
+
+    await shutdownAndWaitForExit(worker, post);
+
+    const ro = new DatabaseSync(dbPath, { readOnly: true });
+    const row = ro
+      .prepare('SELECT level, xp, stat_alloc, mounts FROM player_ships WHERE ship_id = ?')
+      .get('ship-lvl-1') as { level: number; xp: number; stat_alloc: string; mounts: string };
+    expect(row.level).toBe(5);
+    expect(row.xp).toBe(4321);
+    expect(JSON.parse(row.stat_alloc)).toEqual({ hull: 2, damage: 1 });
+    expect(JSON.parse(row.mounts)).toEqual([{ slotId: 'wing-l', weaponId: 'laser_beam' }]);
+    ro.close();
+  });
+
+  it('the idempotent ALTER adds the leveling columns to a pre-existing DB without them', async () => {
+    // Simulate a DB created by an OLDER deploy: the player_ships table exists
+    // but lacks the Phase 4 leveling columns. The worker's idempotent
+    // PLAYER_SHIPS_MIGRATIONS must add them on boot, so a PLAYER_SHIP_PUT then
+    // succeeds and the existing row gains the column DEFAULTs.
+    const seed = new DatabaseSync(dbPath);
+    seed.exec('PRAGMA journal_mode=WAL');
+    seed.exec(
+      'CREATE TABLE player_ships (' +
+        'ship_id TEXT PRIMARY KEY, player_id TEXT NOT NULL, user_id TEXT, kind TEXT NOT NULL, ' +
+        'kind_version INTEGER NOT NULL DEFAULT 1, health REAL NOT NULL, last_sector_key TEXT NOT NULL, ' +
+        'last_x REAL NOT NULL, last_y REAL NOT NULL, last_vx REAL NOT NULL, last_vy REAL NOT NULL, ' +
+        'last_angle REAL NOT NULL, last_angvel REAL NOT NULL, last_fire_client_tick INTEGER NOT NULL DEFAULT 0, ' +
+        'is_active INTEGER NOT NULL DEFAULT 0, active_room_id TEXT, expires_at INTEGER NOT NULL, ' +
+        'created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)',
+    );
+    seed
+      .prepare(
+        'INSERT INTO player_ships (ship_id, player_id, user_id, kind, kind_version, health, ' +
+          'last_sector_key, last_x, last_y, last_vx, last_vy, last_angle, last_angvel, ' +
+          'last_fire_client_tick, is_active, active_room_id, expires_at, created_at, updated_at) ' +
+          'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      )
+      .run('old-ship', 'p-old', null, 'scout', 1, 60, 'sol-prime', 0, 0, 0, 0, 0, 0, 0, 0, null, 0, 0, 0);
+    seed.close();
+
+    // Boot the real worker against the column-less DB — the migrations run.
+    worker = await spawnAndAwaitReady();
+    const post = (msg: WorkerInbound): void => worker.postMessage(msg);
+    const acks: number[] = [];
+    worker.on('message', (msg: WorkerOutbound) => {
+      if (msg.type === 'BATCH_ACK') acks.push(msg.batchId);
+    });
+    const now = Date.now();
+    post({
+      type: 'BATCH',
+      batchId: 1,
+      ops: [
+        {
+          type: 'PLAYER_SHIP_PUT',
+          shipId: 'new-ship', playerId: 'p-new', userId: null, kind: 'fighter', kindVersion: 1,
+          health: 100, lastSectorKey: 'sol-prime', lastX: 0, lastY: 0, lastVx: 0, lastVy: 0,
+          lastAngle: 0, lastAngvel: 0, lastFireClientTick: 0, isActive: false, activeRoomId: null,
+          expiresAt: 0, level: 3, xp: 99, statAllocJson: '{}', mountsJson: '[]', ts: now,
+        },
+      ],
+    });
+    await new Promise<void>((resolve) => {
+      const tick = (): void => (acks.includes(1) ? resolve() : void setTimeout(tick, 5));
+      tick();
+    });
+    await shutdownAndWaitForExit(worker, post);
+
+    const ro = new DatabaseSync(dbPath, { readOnly: true });
+    // The migrated old row carries the column DEFAULTs (1 / 0 / {} / []).
+    const oldRow = ro
+      .prepare('SELECT level, xp, stat_alloc, mounts FROM player_ships WHERE ship_id = ?')
+      .get('old-ship') as { level: number; xp: number; stat_alloc: string; mounts: string };
+    expect(oldRow.level).toBe(1);
+    expect(oldRow.xp).toBe(0);
+    expect(oldRow.stat_alloc).toBe('{}');
+    expect(oldRow.mounts).toBe('[]');
+    // The new write landed its non-default values.
+    const newRow = ro
+      .prepare('SELECT level, xp FROM player_ships WHERE ship_id = ?')
+      .get('new-ship') as { level: number; xp: number };
+    expect(newRow.level).toBe(3);
+    expect(newRow.xp).toBe(99);
+    ro.close();
+  });
+
   it('GAME_LEAVE for a non-existent play_id is a silent no-op', async () => {
     worker = await spawnAndAwaitReady();
     const post = (msg: WorkerInbound): void => worker.postMessage(msg);

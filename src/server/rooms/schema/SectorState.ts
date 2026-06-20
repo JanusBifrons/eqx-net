@@ -1,6 +1,7 @@
 import { Schema, MapSchema, type } from '@colyseus/schema';
 import { SHIP_MAX_HEALTH } from '../../../core/combat/Weapons.js';
 import { DEFAULT_SHIP_KIND } from '../../../shared-types/shipKinds.js';
+import type { StatAlloc, ActivatedMount } from '../../playerShips/PlayerShipStore.js';
 
 // Wire-traffic invariant (network-discipline P1, see plan):
 // Spatial fields (x/y/vx/vy/angle/angvel) MUST NOT live on this schema.
@@ -50,6 +51,40 @@ export class ShipState extends Schema {
   // (polygon collision). Seeded to kind.shieldMax on spawn/respawn.
   shield = 0;
   shieldLastDamageTick = 0;
+
+  // -- Level (Phase 4 Leveling & XP, WS-B1) ------------------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: like shield /
+  // energy, the PUBLIC level reaches clients via the per-recipient
+  // SnapshotMessage.states[id].level slice (emit-when > 1), NOT the Colyseus
+  // diff. Mirrored from the roster row's `level` on spawn/restore and
+  // incremented in-place by the XP-award path (SHIP_DESTROYED → applyKillXp).
+  // Source of truth is the roster (PlayerShipStore); this is the live mirror
+  // the broadcaster reads. Defaults to 1 (a fresh, un-levelled hull).
+  level = 1;
+
+  // -- Stat allocation (Phase 4 Leveling & XP, WS-B2) --------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
+  // spent stat-point allocation. Mirrored from the roster row's `statAlloc` on
+  // spawn/restore + on an `apply_ship_upgrade`/`respec_ship`. The PHYSICS
+  // multipliers (topSpeed/turnRate) are pushed to the worker (SET_STAT_MUL) AND
+  // ride the OWN-ship snapshot slice so the client predWorld scales movement
+  // identically (risk #1). The non-physics factors (hull/energy/damage/shield)
+  // are read off THIS field by the server caps + fire path — `effectiveShip*`
+  // (maxHull/shield/energy seed + denominators in ShieldHullRouter/tickEnergy/
+  // entity_stats) and `mul.damage` in PlayerFireResolver (review must-fix #1,
+  // 2026-06-20 — these were dead code before). `{}` = un-upgraded.
+  statAlloc: StatAlloc = {};
+
+  // -- Activated dynamic mounts (Phase 4 WS-B3) --------------------------
+  // PLAIN instance field, intentionally NOT @type-decorated: the per-instance
+  // ACTIVATED latent mount slots (`{ slotId, weaponId }[]`). Mirrored from the
+  // roster row's `mounts` on spawn/restore + on an `activate_mount`. PUBLIC —
+  // rides the per-recipient SnapshotMessage.states[id].mounts slice (emit-when-
+  // non-empty, for active AND lingering hulls) so OTHER players see the extra
+  // turrets, NOT the Colyseus diff. The per-instance fire/aim/render mount list
+  // is `[...kind.mounts, ...activated]` (geometry looked up by `slotId` from the
+  // catalogue, never on the wire). `[]` = no activated mounts (the default).
+  mounts: ActivatedMount[] = [];
 
   // -- Energy (weapons/energy/AI overhaul, 2026-06-01) -------------------
   // PLAIN instance field, intentionally NOT @type-decorated: the
