@@ -50,6 +50,11 @@ export interface ConnectorVisual {
   pulseColor?: number;
   pulseAlpha?: number;
   pulseWidth?: number;
+  /** WS-D (#6) — a DOTTED-line dash pattern (world units), set ONLY on the
+   *  'deferred' placement-preview class (could-but-won't connect). Pixi v8 has no
+   *  native dashed stroke, so the renderer walks the segment emitting `on`-length
+   *  dashes separated by `off`-length gaps. Absent (or `on <= 0`) ⇒ a solid line. */
+  dash?: { on: number; off: number };
 }
 
 /** Comet segment endpoints (reused-into scratch — the renderer holds one). */
@@ -72,11 +77,31 @@ export const PREVIEW_BLOCKED_COLOR = 0xcc4444;
  *  from the dim LOS-blocked red, so the player reads "in range + legal but the
  *  cap is full, this one won't link". */
 export const PREVIEW_OVERFLOW_COLOR = 0xff4422;
+/** WS-D (#6) — the DOTTED-green "deferred" tint: an in-range, legal pairing that
+ *  lost the multi-connect cap race (could-but-won't connect). A softer/cooler
+ *  green than the solid `ok`/`selected` so the dotted line reads as "available
+ *  but not chosen", NOT as an error (the old over-cap RED read as a problem). */
+export const PREVIEW_DEFERRED_COLOR = 0x88ddaa;
+
+/** WS-D (#6) — a 'deferred' dotted line's dash pattern (world units at scale 1):
+ *  6 u on, 5 u off. Scaled by 1/zoom in `previewLineVisualParams` so the dotting
+ *  density stays ~constant on screen (same idiom as the scale-aware line width). */
+const PREVIEW_DASH_ON = 6;
+const PREVIEW_DASH_OFF = 5;
 
 /** A placement-preview segment's outcome, mirroring `canConnect`'s result
  *  partition collapsed to what the preview draws. `overflow` (WS-5 R2.17) is a
- *  segment that WOULD connect but is past the `PLACEMENT_MAX_CONNECTIONS` cap. */
-export type PreviewLineKind = 'ok' | 'blocked' | 'overflow' | 'skip';
+ *  segment that WOULD connect but is past the `PLACEMENT_MAX_CONNECTIONS` cap.
+ *  WS-D (#6) restyles the would-connect partition into `selected` (SOLID green,
+ *  the hub that WILL connect) vs `deferred` (DOTTED green, could-but-won't past
+ *  the cap) — `ok`/`overflow` are kept as aliases for back-compat. */
+export type PreviewLineKind =
+  | 'ok'
+  | 'selected'
+  | 'deferred'
+  | 'blocked'
+  | 'overflow'
+  | 'skip';
 
 /**
  * Pure visual params for ONE placement-preview segment (ghost → existing
@@ -89,7 +114,9 @@ export type PreviewLineKind = 'ok' | 'blocked' | 'overflow' | 'skip';
  */
 export function previewLineVisualParams(kind: PreviewLineKind, scale: number): ConnectorVisual {
   const safeScale = scale > 0 ? scale : 1;
-  if (kind === 'ok') {
+  // WS-D (#6) — 'selected' is the restyle name for the chosen hub; keep 'ok' as
+  // the back-compat alias (both = the SOLID green that WILL connect).
+  if (kind === 'ok' || kind === 'selected') {
     const width = Math.max(1 / safeScale, 2);
     return {
       color: PREVIEW_OK_COLOR,
@@ -97,6 +124,21 @@ export function previewLineVisualParams(kind: PreviewLineKind, scale: number): C
       width,
       glowAlpha: 0.25,
       glowWidth: width * 3,
+    };
+  }
+  if (kind === 'deferred') {
+    // DOTTED green — in-range + legal but past the multi-connect cap (won't
+    // link). A softer green than the solid selected line + a dash pattern (Pixi
+    // v8 has no native dash → the renderer walks the segment). No glow: a dotted
+    // glow smears into a solid line, defeating the dotting.
+    const width = Math.max(1 / safeScale, 2);
+    return {
+      color: PREVIEW_DEFERRED_COLOR,
+      alpha: 0.7,
+      width,
+      glowAlpha: 0,
+      glowWidth: 0,
+      dash: { on: PREVIEW_DASH_ON / safeScale, off: PREVIEW_DASH_OFF / safeScale },
     };
   }
   if (kind === 'overflow') {

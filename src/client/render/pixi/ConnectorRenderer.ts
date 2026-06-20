@@ -77,8 +77,29 @@ export class ConnectorRenderer {
    * or the in-range legal hubs are at/below the cap. Sibling test hook to
    * `placementPreviewConnectionCount` (the drawn lines aren't headlessly
    * inspectable, so this is the observable — feedback-test-observable lesson).
+   *
+   * WS-D (#6) — kept as the back-compat alias of `placementPreviewDeferredCount`
+   * (the over-cap remainder is now drawn DOTTED green, not red).
    */
   placementPreviewOverflowCount = 0;
+
+  /**
+   * WS-D (#6) — number of SOLID-green 'selected' preview lines the LAST
+   * `update()` drew: the hubs that WILL connect on confirm (capped at the placed
+   * kind's `maxConnections` AND the global `PLACEMENT_MAX_CONNECTIONS`). Identical
+   * to `placementPreviewConnectionCount`; named for the restyle's solid/dotted
+   * split. 0 when no preview is up.
+   */
+  placementPreviewSelectedCount = 0;
+
+  /**
+   * WS-D (#6) — number of DOTTED-green 'deferred' preview lines the LAST
+   * `update()` drew: in-range, legal hubs that lost the multi-connect cap race
+   * (could-but-won't connect). Identical count to `placementPreviewOverflowCount`
+   * — the restyle only changes the COLOUR (red → dotted green), not the cap. 0
+   * when no preview is up or the in-range legal hubs are at/below the cap.
+   */
+  placementPreviewDeferredCount = 0;
 
   /**
    * WS-10 (R2.3) — the world-unit RADIUS of the connection-range ring the LAST
@@ -146,6 +167,8 @@ export class ConnectorRenderer {
     // preview always publishes 0.
     this.placementPreviewConnectionCount = 0;
     this.placementPreviewOverflowCount = 0;
+    this.placementPreviewSelectedCount = 0;
+    this.placementPreviewDeferredCount = 0;
     this.lastRangeCircleRadius = 0;
     if (swarm) this.drawPlacementPreview(mirror, swarm, scale);
     if (!structures || !swarm || structures.size === 0) {
@@ -477,10 +500,16 @@ export class ConnectorRenderer {
     // but past the cap → RED overflow (won't link).
     const greenCount = Math.min(okHubs.length, ghost.maxConnections, PLACEMENT_MAX_CONNECTIONS);
     for (let i = 0; i < okHubs.length; i++) {
-      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'ok' : 'overflow', scale);
+      // WS-D (#6) restyle: the chosen (within-cap) hubs draw SOLID green
+      // ('selected' = the ones that WILL connect); the over-cap remainder draws
+      // DOTTED green ('deferred' = could-but-won't), NOT the old red overflow.
+      this.drawPreviewSegment(ax, ay, okHubs[i]!, i < greenCount ? 'selected' : 'deferred', scale);
     }
+    const deferredCount = okHubs.length - greenCount;
     this.placementPreviewConnectionCount = greenCount;
-    this.placementPreviewOverflowCount = okHubs.length - greenCount;
+    this.placementPreviewSelectedCount = greenCount;
+    this.placementPreviewOverflowCount = deferredCount;
+    this.placementPreviewDeferredCount = deferredCount;
   }
 
   /** Draw ONE placement-preview segment (ghost → hub) for the given outcome
@@ -501,6 +530,28 @@ export class ConnectorRenderer {
       g.moveTo(ax, ay);
       g.lineTo(bx, by);
       g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
+    }
+    // WS-D (#6) — a 'deferred' line is DOTTED: Pixi v8 has no native dash, so
+    // walk the segment emitting short `on`-length dashes separated by `off`-length
+    // gaps. Alloc-free (scalar march; runs every frame during build mode, #14).
+    if (v.dash && v.dash.on > 0) {
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy);
+      if (len > 0.001) {
+        const ux = dx / len;
+        const uy = dy / len;
+        const period = v.dash.on + v.dash.off;
+        let t = 0;
+        while (t < len) {
+          const segEnd = Math.min(t + v.dash.on, len);
+          g.moveTo(ax + ux * t, ay + uy * t);
+          g.lineTo(ax + ux * segEnd, ay + uy * segEnd);
+          g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+          t += period;
+        }
+      }
+      return;
     }
     g.moveTo(ax, ay);
     g.lineTo(bx, by);
