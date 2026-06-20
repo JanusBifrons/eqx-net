@@ -166,3 +166,84 @@ describe('__resetDiagCache() — also clears the autocapture latch', () => {
     expect(mod.isAutoCaptureEnabled()).toBe(false); // re-evaluated
   });
 });
+
+/**
+ * Account-gated default-on streaming auto-capture (2026-06-20). Streaming
+ * is DEFAULT-ON for the persisted account email(s) in
+ * AUTOCAPTURE_ACCOUNT_EMAILS — no `?autocapture=1` needed — while every
+ * other account and ALL automation stay off. The persisted email is read
+ * from localStorage (written by authStore.setAuth) at latch-resolution time.
+ */
+async function freshModuleWithEmail(opts: {
+  webdriver: boolean;
+  search: string;
+  email: string | null;
+}): Promise<Mod> {
+  vi.resetModules();
+  vi.stubGlobal('navigator', { webdriver: opts.webdriver } as Navigator);
+  vi.stubGlobal('window', { location: { search: opts.search } } as unknown as Window & typeof globalThis);
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => (k === 'eqxAuthEmail' ? opts.email : null),
+    setItem: () => {},
+    removeItem: () => {},
+  } as unknown as Storage);
+  return import('./ClientLogger');
+}
+
+describe('isAutoCaptureEnabled() — account-gated default-on', () => {
+  const ACCOUNT = 'alecvickers@hotmail.com';
+
+  it('exports the gated account in AUTOCAPTURE_ACCOUNT_EMAILS', async () => {
+    const mod = await freshModuleWithEmail({ webdriver: false, search: '', email: null });
+    expect(mod.AUTOCAPTURE_ACCOUNT_EMAILS).toContain(ACCOUNT);
+  });
+
+  // [webdriver, search, email, expected, label]
+  const matrix: Array<[boolean, string, string | null, boolean, string]> = [
+    [false, '', ACCOUNT, true, 'gated account, no flag → ON (default-on)'],
+    [false, '', ACCOUNT.toUpperCase(), true, 'gated account UPPER-CASE → ON (case-insensitive)'],
+    [false, '', 'someone@else.com', false, 'other account → off'],
+    [false, '', null, false, 'not logged in → off'],
+    [false, '?autocapture=0', ACCOUNT, false, 'gated account + ?autocapture=0 → OFF (kill-switch wins)'],
+    [true, '', ACCOUNT, false, 'gated account UNDER WEBDRIVER → off (automation never auto-streams)'],
+    [false, '?autocapture=1', null, true, 'no email + ?autocapture=1 → ON (explicit opt-in preserved)'],
+    [true, '?autocapture=1', null, true, 'webdriver + ?autocapture=1 → ON (E2E streaming spec overrides wd)'],
+  ];
+
+  for (const [webdriver, search, email, expected, label] of matrix) {
+    it(`{ webdriver:${webdriver}, search:'${search}', email:${email} } → ${expected}  (${label})`, async () => {
+      const mod = await freshModuleWithEmail({ webdriver, search, email });
+      expect(mod.isAutoCaptureEnabled()).toBe(expected);
+    });
+  }
+});
+
+describe('refreshAutoCaptureLatch() — re-activates after a fresh login', () => {
+  it('flips false→true once the gated email is persisted, and updates the window mirror', async () => {
+    // Boot: latch resolves BEFORE auth → no email yet → false.
+    let email: string | null = null;
+    vi.resetModules();
+    vi.stubGlobal('navigator', { webdriver: false } as Navigator);
+    vi.stubGlobal('window', { location: { search: '' } } as unknown as Window & typeof globalThis);
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (k === 'eqxAuthEmail' ? email : null),
+      setItem: () => {},
+      removeItem: () => {},
+    } as unknown as Storage);
+    const mod = await import('./ClientLogger');
+    mod.installWindowLogger();
+    const w = globalThis.window as unknown as { __eqxAutoCaptureEnabled: boolean };
+
+    expect(mod.isAutoCaptureEnabled()).toBe(false); // latched false at boot
+    expect(w.__eqxAutoCaptureEnabled).toBe(false);
+
+    // Login persists the gated email; the cached latch must NOT auto-update…
+    email = 'alecvickers@hotmail.com';
+    expect(mod.isAutoCaptureEnabled()).toBe(false); // still cached
+
+    // …until the App auth effect re-evaluates it.
+    expect(mod.refreshAutoCaptureLatch()).toBe(true);
+    expect(mod.isAutoCaptureEnabled()).toBe(true);
+    expect(w.__eqxAutoCaptureEnabled).toBe(true); // window mirror refreshed
+  });
+});

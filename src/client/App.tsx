@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { installWindowLogger } from './debug/ClientLogger';
+import { installWindowLogger, refreshAutoCaptureLatch } from './debug/ClientLogger';
 import { installStreamingDiag } from './debug/streamingDiag';
 import { installTestLeakHook } from './debug/testLeakHook';
 import { Box } from '@mui/material';
@@ -872,6 +872,19 @@ export function App(): JSX.Element {
   useMountLog('App');
   usePhaseChangeLog(phase);
   useServerHealthPoll();
+
+  // Account-gated streaming auto-capture (2026-06-20). The boot-time
+  // installStreamingDiag() at this module's top level runs BEFORE auth
+  // resolves, so on a fresh login the email isn't persisted yet and the
+  // latch resolved false. Once the user is known (boot auto-login OR
+  // interactive login), re-evaluate the latch against the now-persisted
+  // email and idempotently install streaming for this session. No-op for
+  // non-gated accounts and all automation — see isAutoCaptureEnabled().
+  const userEmail = user?.email;
+  useEffect(() => {
+    if (!userEmail) return;
+    if (refreshAutoCaptureLatch()) installStreamingDiag();
+  }, [userEmail]);
 
   const handleSelectRoom = useCallback((roomName: string) => {
     setRoomNameOverride(roomName);
